@@ -1,0 +1,5 @@
+export const SESSION_COOKIE = 'almog_sid';
+export const RESEND_COOLDOWN_SECONDS = 60;
+export const RESET_TOKEN_LIFETIME_MIN = 60;
+export const SESSION_LIFETIME_DAYS_REMEMBER = 30;
+export const SESSION_LIFETIME_HOURS_DEFAULT = 24;
