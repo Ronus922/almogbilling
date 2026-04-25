@@ -33,7 +33,7 @@ const MAIN_MENU: MenuItem[] = [
 const MANAGE_MENU: MenuItem[] = [
   { label: 'ייבוא נתונים', icon: Upload, href: '/import' },
   { label: 'ייצוא נתונים', icon: Download },
-  { label: 'ניהול סטטוס חיובים', icon: Sliders },
+  { label: 'ניהול סטטוס חיובים', icon: Sliders, href: '/statuses' },
   { label: 'תבניות ווטסאפ', icon: MessageCircle },
   { label: 'ניהול אזורים', icon: MapPin },
   { label: 'הרשאות', icon: Shield },

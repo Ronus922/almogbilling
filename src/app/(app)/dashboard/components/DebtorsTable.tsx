@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { format } from 'date-fns';
@@ -63,6 +63,26 @@ export function DebtorsTable({
   const [panelOpen, setPanelOpen] = useState(false);
   const [markDone, setMarkDone] = useState<MarkDoneTarget | null>(null);
   const [marking, setMarking] = useState(false);
+
+  // Deep-link support: ?apt=X&open=details opens the panel for that debtor
+  // (used from /statuses → "linked debtors" navigation). Strips the params
+  // afterwards so the URL doesn't keep filtering the table to one row.
+  useEffect(() => {
+    if (searchParams.get('open') !== 'details') return;
+    const apt = searchParams.get('apt');
+    if (!apt) return;
+    const row = rows.find((d) => d.apartment_number === apt);
+    if (!row) return;
+    setSelectedId(row.id);
+    setPanelOpen(true);
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete('apt');
+    next.delete('open');
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+    // run-once on mount/initial rows; subsequent searchParams changes are user-driven.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const isActionsTab = currentTab === 'actions';
 
