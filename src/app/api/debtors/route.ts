@@ -9,7 +9,7 @@ const VALID_TABS: TabKey[] = ['active', 'warning', 'legal-care', 'legal-proceedi
 
 export async function GET(req: NextRequest) {
   try {
-    await requirePermission('dashboard', 'view');
+    await requirePermission('contacts', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

@@ -14,7 +14,7 @@ interface RouteCtx {
 
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
   try {
-    await requirePermission('dashboard', 'view');
+    await requirePermission('contacts', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -31,7 +31,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   try {
-    await requirePermission('dashboard', 'edit');
+    await requirePermission('contacts', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

@@ -21,7 +21,7 @@ const FALLBACK_DESCRIPTION = '(ללא תיאור)';
 export async function POST(_req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
-    actor = await requirePermission('dashboard', 'edit');
+    actor = await requirePermission('contacts', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

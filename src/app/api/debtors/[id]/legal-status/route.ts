@@ -17,7 +17,7 @@ interface PutBody {
 export async function PUT(req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
-    actor = await requirePermission('dashboard', 'edit');
+    actor = await requirePermission('status_management', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
