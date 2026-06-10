@@ -1,0 +1,33 @@
+-- Phase 0 security remediation.
+-- 1. Brute-force protection store for auth entry points.
+-- 2. Migrate existing PLAINTEXT reset/invite tokens to SHA-256 hashes in place,
+--    so already-emailed links keep working (the app hashes the incoming raw
+--    token before lookup) while no plaintext token remains at rest.
+
+begin;
+
+create extension if not exists pgcrypto;
+
+-- ── Rate limiting ────────────────────────────────────────────────────────────
+create table if not exists public.auth_rate_limits (
+  id      bigint generated always as identity primary key,
+  bucket  text not null,
+  hit_at  timestamptz not null default now()
+);
+create index if not exists auth_rate_limits_bucket_time_idx
+  on public.auth_rate_limits (bucket, hit_at);
+
+-- ── Token hashing (in-place migration) ───────────────────────────────────────
+-- A raw token is base64url(32 bytes) = 43 chars; a SHA-256 hex hash = 64 chars.
+-- The length<>64 guard makes this idempotent (won't re-hash already-hashed rows).
+update public.password_reset_tokens
+   set token = encode(digest(token, 'sha256'), 'hex')
+ where token is not null
+   and length(token) <> 64;
+
+update public.user_invites
+   set token = encode(digest(token, 'sha256'), 'hex')
+ where token is not null
+   and length(token) <> 64;
+
+commit;
