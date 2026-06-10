@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import {
   requireSuperAdmin,
   requireCanManageRole,
+  type Actor,
 } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { query } from '@/lib/db';
@@ -12,8 +13,8 @@ import {
 } from '@/lib/db/users';
 import {
   generateInviteToken,
+  hashInviteToken,
   inviteExpiryFromNow,
-  INVITE_TOKEN_LIFETIME_HOURS,
 } from '@/lib/auth/inviteTokens';
 import { sendUserInviteEmail } from '@/services/email';
 import { MODULES, ROLES, type Role } from '@/lib/permissions/constants';
@@ -77,7 +78,7 @@ interface PostBody {
 }
 
 export async function POST(req: NextRequest) {
-  let actor;
+  let actor: Actor;
   try {
     actor = await requireSuperAdmin();
   } catch (err) {
@@ -125,7 +126,7 @@ export async function POST(req: NextRequest) {
     ? sanitizeCustomPermissions(body.permissions)
     : null;
 
-  const token = generateInviteToken();
+  const rawToken = generateInviteToken();
   const expiresAt = inviteExpiryFromNow();
 
   const r = await query<{ id: string }>(
@@ -133,14 +134,14 @@ export async function POST(req: NextRequest) {
      values ($1, $2, $3, $4, $5, $6, $7)
      returning id`,
     [
-      email, full_name, role, token, actor.id, expiresAt.toISOString(),
+      email, full_name, role, hashInviteToken(rawToken), actor.id, expiresAt.toISOString(),
       customPermissions ? JSON.stringify(customPermissions) : null,
     ],
   );
   const inviteId = r.rows[0]!.id;
 
   const origin = appUrl();
-  const acceptUrl = `${origin}/accept-invite?token=${encodeURIComponent(token)}`;
+  const acceptUrl = `${origin}/accept-invite?token=${encodeURIComponent(rawToken)}`;
   const inviterName = actor.full_name?.trim() || actor.email;
   const roleLabel = ROLES.find((x) => x.value === role)?.label ?? role;
 

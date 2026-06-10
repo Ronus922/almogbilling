@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { getSession } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/actor';
+import type { Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { queryOne } from '@/lib/db';
 import {
@@ -22,16 +22,13 @@ interface RouteCtx {
 // is_system rows: name/description/color/notification_emails are editable;
 // is_active and is_default cannot be turned off.
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('status_management', 'edit');
+    actor = await requirePermission('status_management', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
     throw err;
-  }
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   const { id } = await ctx.params;
@@ -72,7 +69,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 
   try {
-    const updated = await updateStatus(id, result.value, { userId: session.user.id });
+    const updated = await updateStatus(id, result.value, { userId: actor.id });
     return NextResponse.json(updated);
   } catch (err) {
     const e = err as { code?: string; constraint?: string };

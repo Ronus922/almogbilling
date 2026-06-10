@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/actor';
+import type { Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { sendWithRetry } from '@/lib/email/send';
 
@@ -18,16 +18,13 @@ function escapeHtml(s: string): string {
 }
 
 export async function POST(req: Request) {
+  let actor: Actor;
   try {
-    await requirePermission('settings', 'edit');
+    actor = await requirePermission('settings', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
     throw err;
-  }
-  const sess = await getSession();
-  if (!sess) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   let body: { to?: unknown };
@@ -42,7 +39,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'כתובת אימייל לא תקינה' }, { status: 400 });
   }
 
-  const senderLabel = sess.user.full_name?.trim() || sess.user.email;
+  const senderLabel = actor.full_name?.trim() || actor.email;
   const sentAt = new Date().toLocaleString('he-IL', {
     timeZone: 'Asia/Jerusalem',
     dateStyle: 'medium',

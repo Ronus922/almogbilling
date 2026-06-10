@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { getSession } from '@/lib/auth/session';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { withTransaction } from '@/lib/db';
 import { insertCompletedAction } from '@/lib/db/completedActions';
@@ -20,18 +19,17 @@ interface DebtorRow {
 const FALLBACK_DESCRIPTION = '(ללא תיאור)';
 
 export async function POST(_req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('contacts', 'edit');
+    actor = await requirePermission('dashboard', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
     throw err;
   }
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const { id } = await ctx.params;
-  const userName = session.user.full_name || session.user.username;
+  const userName = actor.full_name || actor.username;
 
   try {
     await withTransaction(async (client) => {
@@ -53,7 +51,7 @@ export async function POST(_req: NextRequest, ctx: RouteCtx) {
         apartment_number: row.apartment_number,
         description: row.next_action_description ?? FALLBACK_DESCRIPTION,
         due_date: row.next_action_date,
-        completed_by: session.user.id,
+        completed_by: actor.id,
         completed_by_name: userName,
       });
 

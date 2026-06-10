@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { getSession } from '@/lib/auth/session';
+import { requirePermission } from '@/lib/auth/actor';
+import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listDebtors, ALL_SORT_KEYS, type TabKey, type SortKey } from '@/lib/db/debtors';
 
 export const runtime = 'nodejs';
@@ -7,9 +8,12 @@ export const runtime = 'nodejs';
 const VALID_TABS: TabKey[] = ['active', 'warning', 'legal-care', 'legal-proceeding', 'actions', 'archived'];
 
 export async function GET(req: NextRequest) {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  try {
+    await requirePermission('dashboard', 'view');
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
   }
 
   const sp = req.nextUrl.searchParams;

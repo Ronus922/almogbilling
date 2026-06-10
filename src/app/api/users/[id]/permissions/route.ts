@@ -84,6 +84,12 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
   }
   const canView = body.can_view === true;
   const canEdit = body.can_edit === true;
+  if (canEdit && !canView) {
+    return NextResponse.json(
+      { error: 'לא ניתן לאפשר עריכה ללא הרשאת צפייה' },
+      { status: 400 },
+    );
+  }
 
   await query(
     `insert into public.user_permissions (user_id, module, can_view, can_edit)

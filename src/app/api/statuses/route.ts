@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { getSession } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/actor';
+import type { Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   listStatusesWithCounts,
@@ -17,9 +17,12 @@ export const runtime = 'nodejs';
 // Response always includes `linked_count` and the new admin fields
 // (`is_system`, `notification_emails`). Older consumers ignore the extras.
 export async function GET(req: NextRequest) {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  try {
+    await requirePermission('status_management', 'view');
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
   }
   const includeAll = req.nextUrl.searchParams.get('include') === 'all';
   const rows = await listStatusesWithCounts(includeAll);
@@ -28,16 +31,13 @@ export async function GET(req: NextRequest) {
 
 // POST /api/statuses (status_management:edit)
 export async function POST(req: NextRequest) {
+  let actor: Actor;
   try {
-    await requirePermission('status_management', 'edit');
+    actor = await requirePermission('status_management', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
     throw err;
-  }
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   let body: unknown;
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const created = await createStatus(result.value, { userId: session.user.id });
+    const created = await createStatus(result.value, { userId: actor.id });
     return NextResponse.json(created, { status: 201 });
   } catch (err) {
     const e = err as { code?: string; constraint?: string; message?: string };

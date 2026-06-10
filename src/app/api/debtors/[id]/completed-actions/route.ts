@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { getSession } from '@/lib/auth/session';
+import { requirePermission } from '@/lib/auth/actor';
+import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listCompletedActionsByDebtor } from '@/lib/db/completedActions';
 
 export const runtime = 'nodejs';
@@ -9,8 +10,13 @@ interface RouteCtx {
 }
 
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  try {
+    await requirePermission('dashboard', 'view');
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
+  }
 
   const { id } = await ctx.params;
   const rows = await listCompletedActionsByDebtor(id);

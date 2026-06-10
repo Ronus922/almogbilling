@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth/session';
+import { requirePermission, requireAdmin, type Actor } from '@/lib/auth/actor';
+import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { verifyPassword } from '@/lib/auth/password';
 import { queryOne } from '@/lib/db';
 import { createImportRun, type ImportMode } from '@/lib/db/importRuns';
@@ -8,9 +9,13 @@ import { runImport } from '@/lib/import/runner';
 export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  let actor: Actor;
+  try {
+    actor = await requirePermission('import', 'edit');
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
   }
 
   let form: FormData;
@@ -30,13 +35,23 @@ export async function POST(req: Request) {
   }
 
   if (mode === 'replace') {
+    // Destructive replace requires admin (super_admin/admin) in addition to import:edit.
+    try {
+      await requireAdmin();
+    } catch (err) {
+      const r = authErrorResponse(err);
+      if (r) return r;
+      throw err;
+    }
+
+    // Extra factor: re-authenticate with the actor's own password.
     const adminPassword = String(form.get('adminPassword') ?? '');
     if (!adminPassword) {
       return NextResponse.json({ error: 'password_required' }, { status: 400 });
     }
     const userRow = await queryOne<{ password_hash: string }>(
       `select password_hash from public.users where id = $1`,
-      [session.user.id],
+      [actor.id],
     );
     if (!userRow) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -48,7 +63,7 @@ export async function POST(req: Request) {
   }
 
   const buffer = await file.arrayBuffer();
-  const runId = await createImportRun(mode, session.user.id);
+  const runId = await createImportRun(mode, actor.id);
 
   // Fire-and-forget; the function never throws (errors recorded into import_runs row).
   void runImport(buffer, mode, runId);

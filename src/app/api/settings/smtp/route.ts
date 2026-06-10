@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/actor';
+import type { Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   AppSettingsValidationError,
@@ -31,16 +31,13 @@ interface PutBody {
 }
 
 export async function PUT(req: Request) {
+  let actor: Actor;
   try {
-    await requirePermission('settings', 'edit');
+    actor = await requirePermission('settings', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
     throw err;
-  }
-  const sess = await getSession();
-  if (!sess) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
   let body: PutBody;
@@ -67,7 +64,7 @@ export async function PUT(req: Request) {
   try {
     await updateSmtpSettings(
       { user: fromEmail, fromName, pass: passwordRaw || undefined },
-      sess.user.id,
+      actor.id,
     );
   } catch (err) {
     if (err instanceof AppSettingsValidationError) {

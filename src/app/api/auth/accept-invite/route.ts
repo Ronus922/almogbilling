@@ -4,6 +4,9 @@ import { hashPassword } from '@/lib/auth/password';
 import { createSession } from '@/lib/auth/session';
 import { getDefaultPermissions } from '@/lib/permissions/check';
 import { isValidPassword } from '@/lib/auth/passwordPolicy';
+import { hashInviteToken } from '@/lib/auth/inviteTokens';
+import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { ACCEPT_INVITE_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
 import { MODULES, type ModulePermission, type Role } from '@/lib/permissions/constants';
 
 export const runtime = 'nodejs';
@@ -61,12 +64,27 @@ export async function POST(req: Request) {
   const token = typeof body.token === 'string' ? body.token : '';
   const password = typeof body.password === 'string' ? body.password : '';
 
+  // Rate limit by IP to throttle invite-token brute forcing.
+  const { allowed, retryAfterSec } = await checkRateLimit('accept-invite:ip:' + clientIp(req), {
+    max: ACCEPT_INVITE_MAX_PER_IP,
+    windowSec: AUTH_RATE_WINDOW_SEC,
+  });
+  if (!allowed) {
+    return NextResponse.json(
+      { error: 'rate_limited' },
+      { status: 429, headers: { 'Retry-After': String(retryAfterSec) } },
+    );
+  }
+
   if (!token) {
     return NextResponse.json({ error: 'invalid_or_expired_token' }, { status: 400 });
   }
   if (!isValidPassword(password)) {
     return NextResponse.json({ error: 'הסיסמה לא עומדת בדרישות' }, { status: 400 });
   }
+
+  // Storage is hash-only: look up by the SHA-256 of the raw token from the body.
+  const tokenHash = hashInviteToken(token);
 
   let userId: string;
   try {
@@ -76,7 +94,7 @@ export async function POST(req: Request) {
            from public.user_invites
            where token = $1
            for update`,
-        [token],
+        [tokenHash],
       );
       const invite = rows[0];
       if (!invite) throw new Error('invalid_or_expired_token');

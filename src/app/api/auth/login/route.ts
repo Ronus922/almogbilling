@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { queryOne } from '@/lib/db';
 import { verifyPassword } from '@/lib/auth/password';
 import { createSession } from '@/lib/auth/session';
+import { checkRateLimit, clearRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { AUTH_RATE_WINDOW_SEC, LOGIN_MAX_PER_USER, LOGIN_MAX_PER_IP } from '@/lib/constants';
 
 export const runtime = 'nodejs';
 
@@ -27,6 +29,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'invalid_credentials' }, { status: 401 });
   }
 
+  // Brute-force protection: throttle by IP and by username before any
+  // password verification. Either bucket being exhausted blocks the attempt.
+  const ipBucket = 'login:ip:' + clientIp(req);
+  const userBucket = 'login:user:' + username.toLowerCase();
+  const ipLimit = await checkRateLimit(ipBucket, {
+    max: LOGIN_MAX_PER_IP,
+    windowSec: AUTH_RATE_WINDOW_SEC,
+  });
+  const userLimit = await checkRateLimit(userBucket, {
+    max: LOGIN_MAX_PER_USER,
+    windowSec: AUTH_RATE_WINDOW_SEC,
+  });
+  if (!ipLimit.allowed || !userLimit.allowed) {
+    const retryAfterSec = Math.max(ipLimit.retryAfterSec, userLimit.retryAfterSec);
+    return NextResponse.json(
+      { error: 'rate_limited' },
+      { status: 429, headers: { 'Retry-After': String(retryAfterSec) } },
+    );
+  }
+
   const user = await queryOne<UserRow>(
     `select id, password_hash, is_active
      from public.users
@@ -43,6 +65,10 @@ export async function POST(req: Request) {
   if (!ok) {
     return NextResponse.json({ error: 'invalid_credentials' }, { status: 401 });
   }
+
+  // Successful login: clear the user bucket so a legitimate user is never
+  // locked out by their own earlier failed attempts.
+  await clearRateLimit(userBucket);
 
   await createSession(user.id, remember);
 

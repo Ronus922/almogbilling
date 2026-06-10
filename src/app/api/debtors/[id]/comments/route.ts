@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { getSession } from '@/lib/auth/session';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorApartmentNumber } from '@/lib/db/debtors';
 import { createComment, listCommentsByDebtor } from '@/lib/db/comments';
@@ -12,8 +11,13 @@ interface RouteCtx {
 }
 
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  try {
+    await requirePermission('dashboard', 'view');
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
+  }
 
   const { id } = await ctx.params;
   const notes = await listCommentsByDebtor(id);
@@ -21,15 +25,14 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 }
 
 export async function POST(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('contacts', 'edit');
+    actor = await requirePermission('dashboard', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
     throw err;
   }
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const { id } = await ctx.params;
 
@@ -53,9 +56,9 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     debtor_id: id,
     apartment_number: apt,
     content,
-    author_id: session.user.id,
-    author_name: session.user.full_name || session.user.username,
-    author_email: session.user.email,
+    author_id: actor.id,
+    author_name: actor.full_name || actor.username,
+    author_email: actor.email,
   });
 
   return NextResponse.json(note, { status: 201 });

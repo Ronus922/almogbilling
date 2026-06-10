@@ -1,8 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requireSuperAdmin } from '@/lib/auth/actor';
+import { requireSuperAdmin, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { query, queryOne } from '@/lib/db';
-import { inviteExpiryFromNow } from '@/lib/auth/inviteTokens';
+import {
+  generateInviteToken,
+  hashInviteToken,
+  inviteExpiryFromNow,
+} from '@/lib/auth/inviteTokens';
 import { sendUserInviteEmail } from '@/services/email';
 import { ROLES, type Role } from '@/lib/permissions/constants';
 import { appUrl } from '@/lib/config';
@@ -18,12 +22,11 @@ interface InviteRow {
   email: string;
   full_name: string;
   role: Role;
-  token: string;
   accepted_at: string | null;
 }
 
 export async function POST(req: NextRequest, ctx: RouteCtx) {
-  let actor;
+  let actor: Actor;
   try {
     actor = await requireSuperAdmin();
   } catch (err) {
@@ -34,7 +37,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
 
   const { id } = await ctx.params;
   const invite = await queryOne<InviteRow>(
-    `select id, email, full_name, role, token, accepted_at
+    `select id, email, full_name, role, accepted_at
        from public.user_invites
        where id = $1
        limit 1`,
@@ -46,14 +49,17 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'ההזמנה כבר נוצלה' }, { status: 409 });
   }
 
+  // Stored token is a SHA-256 hash and cannot be re-sent. Regenerate a fresh
+  // raw token, persist only its hash, and email the raw accept-URL.
+  const rawToken = generateInviteToken();
   const newExpiry = inviteExpiryFromNow();
   await query(
-    `update public.user_invites set expires_at = $1 where id = $2`,
-    [newExpiry.toISOString(), id],
+    `update public.user_invites set token = $1, expires_at = $2 where id = $3`,
+    [hashInviteToken(rawToken), newExpiry.toISOString(), id],
   );
 
   const origin = appUrl();
-  const acceptUrl = `${origin}/accept-invite?token=${encodeURIComponent(invite.token)}`;
+  const acceptUrl = `${origin}/accept-invite?token=${encodeURIComponent(rawToken)}`;
   const inviterName = actor.full_name?.trim() || actor.email;
   const roleLabel = ROLES.find((x) => x.value === invite.role)?.label ?? invite.role;
 

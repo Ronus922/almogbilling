@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { getSession } from '@/lib/auth/session';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorById, updateDebtorLegalStatus } from '@/lib/db/debtors';
 import { sendStatusChangeNotification } from '@/services/email';
@@ -16,15 +15,14 @@ interface PutBody {
 }
 
 export async function PUT(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('status_management', 'edit');
+    actor = await requirePermission('dashboard', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
     throw err;
   }
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const { id } = await ctx.params;
 
@@ -38,13 +36,13 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'missing_status_id' }, { status: 400 });
   }
 
-  const changerName = session.user.full_name || session.user.username;
+  const changerName = actor.full_name || actor.username;
   let result;
   try {
     result = await updateDebtorLegalStatus(
       id,
       body.status_id ?? null,
-      { id: session.user.id, name: changerName },
+      { id: actor.id, name: changerName },
     );
   } catch (err) {
     const msg = (err as Error).message;

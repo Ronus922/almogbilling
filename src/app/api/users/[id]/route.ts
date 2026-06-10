@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requireSuperAdmin } from '@/lib/auth/actor';
+import { requireSuperAdmin, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { query, withTransaction } from '@/lib/db';
 import {
@@ -61,7 +61,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 }
 
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
-  let actor;
+  let actor: Actor;
   try {
     actor = await requireSuperAdmin();
   } catch (err) {
@@ -201,7 +201,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 }
 
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
-  let actor;
+  let actor: Actor;
   try {
     actor = await requireSuperAdmin();
   } catch (err) {

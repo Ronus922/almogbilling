@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth/session';
+import { requirePermission } from '@/lib/auth/actor';
+import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getImportRun } from '@/lib/db/importRuns';
 
 export const runtime = 'nodejs';
@@ -8,9 +9,12 @@ export async function GET(
   _req: Request,
   ctx: { params: Promise<{ runId: string }> },
 ) {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  try {
+    await requirePermission('import', 'view');
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
   }
 
   const { runId } = await ctx.params;
