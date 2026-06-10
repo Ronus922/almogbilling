@@ -1,47 +1,59 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth/session';
+import { requireAdmin } from '@/lib/auth/actor';
+import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { createImportRun } from '@/lib/db/importRuns';
+import { syncDebtorsFromCrm } from '@/lib/sync/bllinkPull';
 
 export const runtime = 'nodejs';
+export const maxDuration = 120;
 
+/**
+ * "Sync now" — refreshes the dashboard's debt data from Bllink.
+ *
+ * 1. Best-effort: trigger the CRM cron so it re-scrapes Bllink into the CRM's
+ *    debtor_records (kept best-effort — a scrape failure must not block the
+ *    pull, which can still merge the last good snapshot).
+ * 2. Pull debtor_records into this app's public.debtors via the same merge
+ *    pipeline as a manual import — this is what actually updates the data the
+ *    dashboard reads and resets the freshness indicator (last_imported_at).
+ */
 export async function POST() {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  if (!session.user.is_admin) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  }
-
-  const url = process.env.CRM_SYNC_URL;
-  const secret = process.env.CRM_CRON_SECRET;
-  if (!url || !secret) {
-    return NextResponse.json({ error: 'misconfigured' }, { status: 500 });
-  }
-
-  let upstream: Response;
+  let actorId: string;
   try {
-    upstream = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'x-cron-secret': secret,
-        'content-type': 'application/json',
-      },
-      cache: 'no-store',
-    });
-  } catch {
-    return NextResponse.json({ error: 'upstream_unreachable' }, { status: 502 });
+    const actor = await requireAdmin();
+    actorId = actor.id;
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
   }
 
-  const raw = await upstream.text();
-  let data: unknown = raw;
+  // Step 1 — ask the CRM to re-scrape Bllink (best-effort; awaited so the pull
+  // below sees the fresh snapshot when the scrape succeeds).
+  const cronUrl = process.env.CRM_SYNC_URL;
+  const cronSecret = process.env.CRM_CRON_SECRET;
+  let scrapeTriggered = false;
+  if (cronUrl && cronSecret) {
+    try {
+      const upstream = await fetch(cronUrl, {
+        method: 'POST',
+        headers: { 'x-cron-secret': cronSecret, 'content-type': 'application/json' },
+        cache: 'no-store',
+      });
+      scrapeTriggered = upstream.ok;
+    } catch {
+      // ignore — fall through to pull the last good snapshot
+    }
+  }
+
+  // Step 2 — pull the CRM snapshot into public.debtors (this is the part that
+  // actually refreshes the dashboard data).
   try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    // keep as text
+    const runId = await createImportRun('merge', actorId);
+    const merged = await syncDebtorsFromCrm(runId);
+    return NextResponse.json({ ok: true, merged, scrapeTriggered, runId });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'sync_failed';
+    return NextResponse.json({ ok: false, error: message }, { status: 502 });
   }
-
-  return NextResponse.json(
-    { ok: upstream.ok, status: upstream.status, data },
-    { status: upstream.ok ? 200 : 502 },
-  );
 }

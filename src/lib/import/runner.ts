@@ -23,8 +23,23 @@ export async function runImport(
   mode: ImportMode,
   runId: string,
 ): Promise<void> {
+  const { rows, skipped } = parseDebtorsWorkbook(buffer);
+  await importParsedRows(rows, skipped, mode, runId);
+}
+
+/**
+ * Core import — shared by the Excel upload (runImport) and the Bllink pull
+ * (lib/sync/bllinkPull). Applies the exact same merge/replace + zero-out rules
+ * so a sync writes identical data to a manual import. Never throws; errors are
+ * recorded on the import run.
+ */
+export async function importParsedRows(
+  rows: ParsedDebtorRow[],
+  skipped: number,
+  mode: ImportMode,
+  runId: string,
+): Promise<void> {
   try {
-    const { rows, skipped } = parseDebtorsWorkbook(buffer);
     await setRunTotal(runId, rows.length);
     if (skipped > 0) await bumpRunProgress(runId, { skipped });
 
