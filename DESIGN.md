@@ -380,6 +380,88 @@ const ils = (v: number) => `₪ ${numFmt.format(v)}`;
 
 ---
 
+## 9b. Entity List Cards
+
+תצוגת רשימה של ישויות (משתמשים, ספקים, וכו') בקלפי-שורה במקום
+טבלה. השתמש כשיש metadata עשיר (avatar + badges + status) שלא
+מתאים לעמודות של טבלה.
+
+### Container
+```tsx
+<div className="space-y-2">
+  {items.map((item) => <Card key={item.id} {...} />)}
+</div>
+```
+
+### Single card (clickable row)
+```tsx
+<button
+  type="button"
+  onClick={() => onSelect(item.id)}
+  className="w-full rounded-lg border border-slate-200 bg-white p-4 text-start
+             hover:bg-slate-50 transition-colors cursor-pointer
+             flex items-center gap-3"
+>
+  {/* Avatar — sect 23 */}
+  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full
+                   bg-blue-100 text-blue-700 text-xs font-bold">
+    {initials}
+  </span>
+
+  {/* Details — center, takes remaining space */}
+  <div className="min-w-0 flex-1">
+    <div className="text-base font-semibold text-slate-900 truncate">
+      {primaryText}
+    </div>
+    <div dir="ltr" className="text-sm text-muted-foreground tabular-nums truncate text-start">
+      {secondaryText}
+    </div>
+  </div>
+
+  {/* Status dot + label (sect 23 active-dot) */}
+  <div className="flex items-center gap-1.5 text-xs text-slate-600 shrink-0">
+    <span className={cn('h-1.5 w-1.5 rounded-full',
+      isActive ? 'bg-emerald-500' : 'bg-slate-400')} />
+    {isActive ? 'פעיל' : 'מושבת'}
+  </div>
+
+  {/* Role/category badge */}
+  <span className="inline-flex items-center rounded-full px-2.5 py-0.5
+                   text-xs font-medium bg-{tone}-100 text-{tone}-700 shrink-0">
+    {roleLabel}
+  </span>
+</button>
+```
+
+### Non-clickable variant
+אם הקלף אינו לחיץ (למשל הזמנה ממתינה — רק כפתורי inline פעולה
+פעילים), השתמש ב-`<div>` במקום `<button>`, וסיר את `cursor-pointer` /
+`hover:bg-slate-50`. הצמד את האייקונים ב-cell ייחודי עם
+`onClick={(e) => e.stopPropagation()}`.
+
+### Action variant (with inline icon buttons)
+בקלף שדורש פעולות inline (resend / cancel וכו'), הוסף את האייקונים
+בקצה השמאלי (end ב-RTL) ב-cell עם `stopPropagation`:
+```tsx
+<div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+  <Tooltip>
+    <TooltipTrigger render={<button type="button" className="p-1.5 rounded
+                                     text-blue-600 hover:text-blue-700
+                                     hover:bg-blue-50 transition-colors" />}>
+      <RotateCw className="h-4 w-4" />
+    </TooltipTrigger>
+    <TooltipContent>שלח שוב</TooltipContent>
+  </Tooltip>
+  {/* X icon similar with rose tone */}
+</div>
+```
+
+### Loading state
+‏5×–10× שורות `h-20 rounded-lg bg-muted/60 animate-pulse` כתחליף לקלפים
+הריאליים (גובה תואם בערך לקלף 1-line של avatar 9×9 + padding 4).
+
+---
+
 ## 10. Badges & Pills
 
 ### Status pill (config-driven, hex from DB)
@@ -437,6 +519,24 @@ const ils = (v: number) => `₪ ${numFmt.format(v)}`;
 ---
 
 ## 12. Modals / Sheets / Dialogs
+
+### When to use Sheet vs Dialog
+
+**Project rule (overrides side-panel skill triggers)**: any **CREATE or
+EDIT** operation on an entity (user, debtor, supplier, task, status,
+etc.) opens in a **Sheet (side panel)** — not a Dialog — even if the
+form is simple.
+
+| Pattern | Use |
+|---|---|
+| **Sheet (side panel)** | All CRUD on entities: create / edit / details / list-of-related |
+| **Dialog (modal)** | Confirmation prompts (Confirm/Alert) — destructive actions • Single-field quick edits (e.g. `EditPhoneDialog`) • Static info (about / help) |
+
+This rule supersedes the side-panel skill's "trigger" criteria around
+form complexity. Consistency of CRUD UX wins over the cost of a
+heavier panel for a 3-field create form. If you find yourself
+reaching for `<Dialog>` to build a Create/Edit form, stop and use
+`<Sheet>` instead — even for trivial 2-field forms.
 
 ### Sheet (full-side panel)
 דפוס מלא ב-skill `~/.claude/skills/side-panel/SKILL.md`. עיקרי:
@@ -547,11 +647,10 @@ toast.info('...');
 <p className="text-xs text-slate-400 py-2 text-center">אין הערות עדיין.</p>
 ```
 
-### Skeleton card
-```tsx
-<div className="h-40 rounded-xl bg-muted/60 animate-pulse" />
-```
-שורה: `h-4 w-{width} rounded bg-muted animate-pulse`.
+### Skeleton card variants
+- **KPI / section card**: `h-40 rounded-xl bg-muted/60 animate-pulse`
+- **Entity list row** (sect 9b): `h-20 rounded-lg bg-muted/60 animate-pulse`
+- **Inline thin line**: `h-4 w-{width} rounded bg-muted animate-pulse`
 
 ### Spinning icon (sync button)
 ```tsx
@@ -672,6 +771,117 @@ toast.info('...');
 - **`<kbd>`** keyboard shortcut: `rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-500`
 - **Avatar** with initials: `h-9 w-9 rounded-full bg-blue-100 text-blue-700 text-xs font-bold` + 2-letter initials
 - **Tooltip on disabled button**: לעטוף עם `<TooltipTrigger render={<span className="block" />}>` כדי שה-`disabled` button לא יבלע את ה-pointer events.
+- **Active dot** (status indicator): `inline-flex items-center gap-1.5 text-xs text-slate-600` עם `<span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />` (פעיל) או `bg-slate-400` (מושבת/לא פעיל). הצמד טקסט "פעיל"/"מושבת" אחרי הנקודה. בשימוש ב-Entity List Cards (sect 9b).
+
+---
+
+## 24. Email templates
+
+מיקום: `src/templates/email/<name>.ts`. כל template הוא פונקציה שמקבלת
+ארגומנטים ומחזירה `{ subject, html, text }`. כל template חייב להיות
+רשום ב-`src/lib/email-templates.ts` תחת `renderTemplate()` עם טיפוס
+`EmailTemplateName` מורחב.
+
+### כללי HTML למייל
+
+- **inline CSS בלבד** — אין `class`, אין `<style>`, אין Tailwind. רוב
+  קליינטי המייל מתעלמים או חוסמים את אלה.
+- **hex equivalents** במקום Tailwind tokens (Tailwind לא קיים בקונטקסט
+  של המייל):
+
+  | Token | Hex |
+  |---|---|
+  | `blue-600` | `#2563eb` |
+  | `blue-700` | `#1d4ed8` |
+  | `slate-900` | `#0f172a` |
+  | `slate-500` | `#64748b` |
+  | `slate-400` | `#94a3b8` |
+  | `slate-200` | `#e2e8f0` |
+  | `slate-100` | `#f1f5f9` |
+  | `slate-700` | `#334155` |
+
+- `<body dir="rtl" style="font-family:'Heebo',Arial,sans-serif;">` חובה
+  על תג ה-body. גם על `<a>` של ה-CTA — חלק מהקליינטים לא יורשים
+  font-family לתוך לינקים.
+- **Heebo** דרך `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;600;700;800&display=swap">`
+  ב-`<head>`. Arial = fallback (Gmail/Outlook web יחסמו את ה-link
+  לעיתים — תפול חזרה ל-Arial וזה בסדר).
+- **Layout**: outer `<table width="100%">` + inner `<table width="600">`
+  ממורכז. **לא** `<div>` — Outlook (במיוחד desktop) לא מבין flex/grid.
+  ה-Tables משתמשות ב-`role="presentation"` כדי לא לבלבל screen readers.
+- **CTA button**: `<a>` עם `display:inline-block` + `background:#2563eb`
+  + `color:#ffffff` + `padding:12px 32px` + `border-radius:8px` +
+  `font-weight:700` + `text-decoration:none`. אין `<button>` — לא נתמך
+  בקליינטים רבים.
+- **לוגו = טקסט בלבד** ("אלמוג", `font-size:28px; font-weight:800;
+  color:#0f172a`). אין `<img>` — Gmail חוסם תמונות מ-senders לא
+  מאומתים, פחות נקודות כשל ופחות סיכון להיכנס לספאם.
+- **escape ל-HTML** של כל מחרוזת user-supplied (`userName` וכד') לפני
+  הזרקה לתבנית — ראה `escapeHtml()` ב-`reset-password.ts`.
+
+### Plain-text version (חובה)
+
+כל template מחזיר **גם** `text` (גרסת plaintext) ולא רק `html`. סיבה:
+deliverability — קליינטי spam-filters מורידים את ה-score לרסיברים שלא
+שולחים `text/plain` במקביל ל-`text/html` ב-multipart. ה-`text` חייב
+לכלול את ה-`resetUrl` (או כל לינק רלוונטי) במלואו, גלוי לקריאה.
+
+### Sending mechanics
+
+`sendWithRetry({ to, subject, html, text })` מ-`src/lib/email/send.ts`:
+- Pool דרך `getTransporter()` ב-`src/lib/email/transporter.ts` (singleton
+  על `globalThis` עם hash-cache של user+pass+fromName).
+- 3 ניסיונות סך הכל (initial + 2 retries) עם backoff `1s, 2s` רק על
+  שגיאות transient (`ETIMEDOUT/ECONNRESET/ECONNREFUSED/ESOCKET/EDNS/
+  EHOSTUNREACH` או SMTP 4xx). Auth failures (`EAUTH`) ו-SMTP 5xx →
+  throw מיידי.
+
+### Settings
+
+הגדרות ה-SMTP נטענות מ-DB (`app_settings.smtp`); אם אין רשומה — fallback
+ל-env (`SMTP_USER` / `SMTP_PASS` / `SMTP_FROM_NAME`). `SMTP_HOST=smtp.gmail.com`
+ו-`SMTP_PORT=587` קבועים בקוד (Gmail-only). App Password נשמר ב-DB
+מוצפן AES-256-GCM עם `SETTINGS_ENC_KEY`.
+
+---
+
+## 25. Permissions model
+
+המערכת משתמשת ב-2 רמות הרשאה למודול: **צפייה** (view) ו-**עריכה** (edit).
+
+- **צפייה** — פתיחת המודול, קריאת נתונים, ייצוא בסיסי לתצוגה.
+- **עריכה** — כל פעולת mutation במודול: יצירה, עדכון, מחיקה, שליחת
+  הודעות חיצוניות (WhatsApp/SMS/Email), ייצוא נתונים גולמי. אם
+  המשתמש יכול לערוך — הוא יכול לעשות את כל מה שניתן לעשות במודול.
+
+**אין רמת "מחיקה" נפרדת**. ההפרדה הקודמת (view/edit/delete) נמצאה
+overengineered — כל מודול מטופל יחידה, וההבחנה בין "עורך טקסט" ל-
+"מוחק שורה" לא מצדיקה שדה DB נפרד.
+
+### UI implications
+- ב-`PermissionMatrix` יש 2 עמודות בלבד: "צפייה" / "עריכה".
+- כפתורי delete/destructive בתוך מודול נפתחים תחת אותו gate של edit.
+- ה-Sidebar מסונן רק לפי view (מודולים ללא view מוסתרים).
+
+### Checkbox vs Switch in the matrix
+המטריצה משתמשת ב-**תיבות סימון (Checkbox)** ולא ב-Switch. Checkbox
+מתאים לבחירה של הרשאה (selection — האם להעניק את ההרשאה הזו), Switch
+מתאים להגדרה דחופה (state toggle — האם תכונה פעילה כעת). הרשאות הן
+configuration שנקבעת לפני submit / שמירה — ולכן Checkbox.
+
+### Code shape
+- `Action = 'view' | 'edit'`
+- `ModulePermission = { module, canView, canEdit }`
+- `hasPermission(role, perms, module, action)` — super_admin: true תמיד;
+  admin: true פרט ל-`SUPER_ADMIN_ONLY`; manager/viewer: לפי המטריצה.
+
+### Matrix component modes
+ה-`PermissionMatrix` תומכת בשני מצבים:
+- **Auto-save** (UserSidePanel): רק `userId` + `permissions` + `onMutated`.
+  כל toggle שולח `PUT /api/users/{userId}/permissions` ומציג toast.
+- **Controlled** (InviteUserPanel): `value` + `onChange`. הקומפוננטה לא
+  מבצעת קריאת API ולא מציגה toast — ה-parent מחזיק state ושולח כשהוא
+  מוכן (למשל יחד עם invite creation).
 
 ---
 
