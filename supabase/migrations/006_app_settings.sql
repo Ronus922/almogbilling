@@ -1,0 +1,20 @@
+-- 006_app_settings.sql
+-- Slice 5b — generic key/value app settings (jsonb).
+-- Used initially for SMTP credentials (key='smtp'); App Password is stored
+-- AES-256-GCM-encrypted with SETTINGS_ENC_KEY.
+--
+-- Run: docker exec -i supabase-db psql -U postgres -d proj_billing < supabase/migrations/006_app_settings.sql
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS public.app_settings (
+  key         text PRIMARY KEY,
+  value       jsonb NOT NULL,
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  updated_by  uuid REFERENCES public.users(id) ON DELETE SET NULL
+);
+
+COMMENT ON TABLE  public.app_settings IS 'Generic admin-only key/value settings store (jsonb).';
+COMMENT ON COLUMN public.app_settings.value IS 'Schema is per-key. For key=smtp: { user, fromName, passEnc:{ iv, ct, tag } } where passEnc fields are base64.';
+
+COMMIT;
