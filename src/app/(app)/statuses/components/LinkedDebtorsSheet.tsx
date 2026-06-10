@@ -10,6 +10,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import type { StatusAdminRow, LinkedDebtorRow } from '@/lib/db/statuses';
+import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 
 const numFmt = new Intl.NumberFormat('he-IL', { maximumFractionDigits: 0 });
 const ils = (v: number) => `₪ ${numFmt.format(v)}`;
@@ -24,6 +25,7 @@ export function LinkedDebtorsSheet({
   onNavigate: (apartment: string) => void;
 }) {
   const open = status !== null;
+  useEscapeKey(open, () => onOpenChange(false));
   const [rows, setRows] = useState<LinkedDebtorRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

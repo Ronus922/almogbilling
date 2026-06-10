@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { validatePhone } from '@/lib/validation';
+import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 
 export type PhoneField = 'phone_owner' | 'phone_tenant';
 
@@ -37,6 +38,8 @@ export function EditPhoneDialog({ open, field, initialValue, onOpenChange, onSav
       setSaving(false);
     }
   }, [open, initialValue]);
+
+  useEscapeKey(open && !saving, () => onOpenChange(false));
 
   const trimmed = value.trim();
   const willClear = trimmed === '';

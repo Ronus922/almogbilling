@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils';
 import type { Debtor, SortKey, TabKey } from '@/lib/db/debtors';
 import { formatPhoneDisplay, getPrimaryPhone } from '@/lib/phone';
 import { TenantDetailPanel } from '@/components/tenant-detail-panel/TenantDetailPanel';
+import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 
 const numFmt = new Intl.NumberFormat('he-IL', { maximumFractionDigits: 0 });
 const ils = (v: number) => `₪ ${numFmt.format(v)}`;
@@ -63,6 +64,8 @@ export function DebtorsTable({
   const [panelOpen, setPanelOpen] = useState(false);
   const [markDone, setMarkDone] = useState<MarkDoneTarget | null>(null);
   const [marking, setMarking] = useState(false);
+
+  useEscapeKey(markDone !== null && !marking, () => setMarkDone(null));
 
   // Deep-link support: ?apt=X&open=details opens the panel for that debtor
   // (used from /statuses → "linked debtors" navigation). Strips the params

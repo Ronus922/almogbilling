@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 
 export function ReplaceConfirmDialog({
   open,
@@ -23,6 +24,8 @@ export function ReplaceConfirmDialog({
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEscapeKey(open && !submitting, () => { reset(); onOpenChange(false); });
 
   function reset() {
     setStage(1);

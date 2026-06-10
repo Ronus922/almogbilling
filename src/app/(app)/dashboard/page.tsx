@@ -43,7 +43,8 @@ export default async function DashboardPage({
 
   const session = await getSession();
   // Layout already redirects if no session — but TS still needs the narrow.
-  const isAdmin = session?.user.is_admin ?? false;
+  const role = session?.user.role;
+  const isAdmin = role === 'super_admin' || role === 'admin';
 
   const [kpis, lastImportAt, tabCounts, listing] = await Promise.all([
     getDashboardKpis(),

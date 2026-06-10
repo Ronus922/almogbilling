@@ -24,7 +24,8 @@ import { NextActionCard, type NextActionDraft } from './NextActionCard';
 import { LegalManagementCard } from './LegalManagementCard';
 import { CommentsSection } from './CommentsSection';
 import { CompletedActionsCard } from './CompletedActionsCard';
-import { PanelFooter } from './PanelFooter';
+import { PanelFooter } from '@/components/side-panel/PanelFooter';
+import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { PanelTabs, type PanelTabKey } from './PanelTabs';
 import { EditPhoneDialog, type PhoneField } from './EditPhoneDialog';
 
@@ -110,6 +111,11 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
   }, [tenant, nextActionDraft]);
 
   const isDirty = hasMutated || nextActionDirty;
+
+  // Defensive ESC: panel only listens when no nested overlay is open.
+  useEscapeKey(open && !confirmCloseOpen && editField === null, () => requestClose());
+  useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
+  useEscapeKey(editField !== null, () => setEditField(null));
 
   // Close request — intercepts X / overlay / ESC / footer "סגור".
   // If anything was touched, show a confirm dialog before discarding.
@@ -371,11 +377,14 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
           {/* Footer */}
           {!isLoading && tenant && (
             <PanelFooter
-              isAdmin={isAdmin}
-              isDirty={isDirty}
-              isSaving={saving}
               onClose={requestClose}
               onSave={handleSaveChanges}
+              saveDisabled={!isAdmin || !isDirty || saving}
+              saveLabel={saving ? 'שומר…' : 'שמור שינויים'}
+              saveDisabledReason={!isAdmin ? 'אין הרשאה — כניסה כצופה' : undefined}
+              showPrinter
+              showExport
+              showHistory
             />
           )}
         </SheetContent>

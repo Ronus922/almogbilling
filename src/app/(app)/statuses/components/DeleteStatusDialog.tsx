@@ -8,6 +8,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import type { StatusAdminRow } from '@/lib/db/statuses';
+import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 
 export function DeleteStatusDialog({
   target,
@@ -20,6 +21,7 @@ export function DeleteStatusDialog({
 }) {
   const [busy, setBusy] = useState(false);
   const open = target !== null;
+  useEscapeKey(open && !busy, () => onOpenChange(false));
   const linkedCount = target?.linked_count ?? 0;
   const hasLinked = linkedCount > 0;
 

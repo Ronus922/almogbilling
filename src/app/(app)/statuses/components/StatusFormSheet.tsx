@@ -22,6 +22,7 @@ import {
   type StatusFormInput,
 } from '@/lib/validation/status';
 import type { StatusAdminRow } from '@/lib/db/statuses';
+import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 
 const EMPTY: StatusFormInput = {
   name: '',
@@ -137,6 +138,9 @@ export function StatusFormSheet({
     }
     onOpenChange(false);
   }
+
+  useEscapeKey(open && !confirmExit, () => attemptClose(false));
+  useEscapeKey(confirmExit, () => setConfirmExit(false));
 
   return (
     <>
