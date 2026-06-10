@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { FeaturesCard } from './FeaturesCard';
 import { Card } from '@/components/ui/card';
 
-type Variant = 'login' | 'forgot' | 'reset';
+type Variant = 'login' | 'forgot' | 'reset' | 'invite';
 
 /**
  * Two-column auth layout (form-left, features-right) with a soft gradient backdrop.

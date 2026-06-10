@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth/session';
+import { requirePermission } from '@/lib/auth/actor';
+import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorById, updateDebtorLegalStatus } from '@/lib/db/debtors';
 import { sendStatusChangeNotification } from '@/services/email';
 
@@ -14,11 +16,15 @@ interface PutBody {
 }
 
 export async function PUT(req: NextRequest, ctx: RouteCtx) {
+  try {
+    await requirePermission('status_management', 'edit');
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
+  }
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  if (!session.user.is_admin) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  }
 
   const { id } = await ctx.params;
 

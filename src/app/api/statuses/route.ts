@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth/session';
+import { requirePermission } from '@/lib/auth/actor';
+import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   listStatusesWithCounts,
   findStatusByLowerName,
@@ -24,14 +26,18 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(rows);
 }
 
-// POST /api/statuses (admin)
+// POST /api/statuses (status_management:edit)
 export async function POST(req: NextRequest) {
+  try {
+    await requirePermission('status_management', 'edit');
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
+  }
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  if (!session.user.is_admin) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   }
 
   let body: unknown;

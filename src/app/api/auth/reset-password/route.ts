@@ -3,6 +3,7 @@ import { query } from '@/lib/db';
 import { hashPassword } from '@/lib/auth/password';
 import { consumeResetToken } from '@/lib/auth/tokens';
 import { deleteAllUserSessions } from '@/lib/auth/session';
+import { isValidPassword } from '@/lib/auth/passwordPolicy';
 
 export const runtime = 'nodejs';
 
@@ -17,7 +18,7 @@ export async function POST(req: Request) {
   const token = typeof body.token === 'string' ? body.token : '';
   const password = typeof body.password === 'string' ? body.password : '';
 
-  if (!token || password.length < 8) {
+  if (!token || !isValidPassword(password)) {
     return NextResponse.json({ error: 'invalid_request' }, { status: 400 });
   }
 

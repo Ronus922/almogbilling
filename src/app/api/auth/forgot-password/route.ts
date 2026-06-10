@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { queryOne } from '@/lib/db';
 import { generateResetToken } from '@/lib/auth/tokens';
-import { sendPasswordReset } from '@/services/email';
+import { sendResetPasswordEmail } from '@/services/email';
+import { appUrl } from '@/lib/config';
 
 export const runtime = 'nodejs';
 
@@ -17,16 +18,23 @@ export async function POST(req: Request) {
   const email = typeof body.email === 'string' ? body.email.trim() : '';
   if (!email) return NextResponse.json({ ok: true });
 
-  const user = await queryOne<{ id: string }>(
-    `select id from public.users where lower(email) = lower($1) limit 1`,
+  const user = await queryOne<{ id: string; email: string; full_name: string | null }>(
+    `select id, email, full_name from public.users where lower(email) = lower($1) limit 1`,
     [email],
   );
 
   if (user) {
     const token = await generateResetToken(user.id);
-    const origin = new URL(req.url).origin;
+    const origin = appUrl();
     const resetUrl = `${origin}/reset-password?token=${encodeURIComponent(token)}`;
-    await sendPasswordReset(email, resetUrl);
+    const userName = user.full_name?.trim() || user.email.split('@')[0] || 'משתמש';
+
+    try {
+      await sendResetPasswordEmail(user.email, { userName, resetUrl });
+    } catch (err) {
+      // Anti-enumeration: do not leak send failures to caller.
+      console.error('[forgot-password] email send failed', err);
+    }
   }
 
   // Always 200 to prevent enumeration

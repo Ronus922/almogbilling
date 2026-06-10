@@ -7,13 +7,14 @@ import {
   SESSION_LIFETIME_DAYS_REMEMBER,
   SESSION_LIFETIME_HOURS_DEFAULT,
 } from '@/lib/constants';
+import type { Role } from '@/lib/permissions/constants';
 
 export interface SessionUser {
   id: string;
   username: string;
   email: string;
   full_name: string | null;
-  is_admin: boolean;
+  role: Role;
 }
 
 function newSessionId(): string {
@@ -39,7 +40,6 @@ export async function createSession(userId: string, remember: boolean): Promise<
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
-    // remember=true → persistent cookie. remember=false → session cookie (no maxAge).
     maxAge: remember ? lifetimeSec : undefined,
   });
 
@@ -53,7 +53,7 @@ interface SessionRow {
   email: string;
   full_name: string | null;
   is_active: boolean;
-  is_admin: boolean;
+  role: Role;
 }
 
 export async function getSession(): Promise<{ sid: string; user: SessionUser } | null> {
@@ -62,7 +62,7 @@ export async function getSession(): Promise<{ sid: string; user: SessionUser } |
   if (!sid) return null;
 
   const row = await queryOne<SessionRow>(
-    `select s.id as sid, u.id as user_id, u.username, u.email, u.full_name, u.is_active, u.is_admin
+    `select s.id as sid, u.id as user_id, u.username, u.email, u.full_name, u.is_active, u.role
      from public.sessions s
      join public.users u on u.id = s.user_id
      where s.id = $1
@@ -80,9 +80,28 @@ export async function getSession(): Promise<{ sid: string; user: SessionUser } |
       username: row.username,
       email: row.email,
       full_name: row.full_name,
-      is_admin: row.is_admin,
+      role: row.role,
     },
   };
+}
+
+/**
+ * Returns the session id from cookie if a row exists in DB, regardless
+ * of the user's is_active state. Used ONLY by (app)/layout.tsx to
+ * distinguish "no session at all" from "session exists but user was
+ * disabled". For all other cases use getSession() which fail-closes
+ * on is_active=false.
+ */
+export async function getActiveSessionId(): Promise<string | null> {
+  const cookieStore = await cookies();
+  const sid = cookieStore.get(SESSION_COOKIE)?.value;
+  if (!sid) return null;
+
+  const row = await queryOne<{ id: string }>(
+    `select id from public.sessions where id = $1 and expires_at > now() limit 1`,
+    [sid],
+  );
+  return row ? row.id : null;
 }
 
 export async function deleteSession(): Promise<void> {

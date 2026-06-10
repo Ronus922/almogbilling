@@ -10,12 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-
-const reqs = (p: string) => ({
-  length: p.length >= 8,
-  letter: /[a-zA-Z֐-׿]/.test(p),
-  digit: /\d/.test(p),
-});
+import { passwordRequirements } from '@/lib/auth/passwordPolicy';
 
 export function ResetPasswordForm({ token }: { token: string | null }) {
   const router = useRouter();
@@ -41,7 +36,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
     );
   }
 
-  const r = reqs(password);
+  const r = passwordRequirements(password);
   const allValid = r.length && r.letter && r.digit;
   const matches = password.length > 0 && password === confirm;
 

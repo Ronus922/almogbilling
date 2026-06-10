@@ -1,7 +1,7 @@
 import { AlmogLogo } from '@/components/common/AlmogLogo';
 import { Users, FileSpreadsheet, History, Zap, Mail } from 'lucide-react';
 
-type Variant = 'login' | 'forgot' | 'reset';
+type Variant = 'login' | 'forgot' | 'reset' | 'invite';
 
 interface Feature {
   icon: React.ComponentType<{ className?: string }>;
@@ -21,6 +21,12 @@ const FORGOT_STEPS: Feature[] = [
   { icon: Zap, text: 'מתחברים מחדש עם הסיסמה החדשה' },
 ];
 
+const INVITE_STEPS: Feature[] = [
+  { icon: Users, text: 'ברוכים הבאים ל-ALMOG CRM — מערכת ניהול דיירים וגבייה' },
+  { icon: FileSpreadsheet, text: 'הגדירו סיסמה חזקה — לפחות 8 תווים, אות וספרה' },
+  { icon: Zap, text: 'מיד אחרי הגדרת הסיסמה תיכנסו אוטומטית למערכת' },
+];
+
 const TITLES: Record<Variant, { headline: string; sub?: string }> = {
   login: {
     headline: 'הכל מה שצריך לניהול גבייה בבניין — במקום אחד.',
@@ -34,10 +40,17 @@ const TITLES: Record<Variant, { headline: string; sub?: string }> = {
     headline: 'שכחת סיסמה? קורה לכולם.',
     sub: 'בחירת סיסמה חדשה ומאובטחת. שניות בודדות וזה מאחוריך.',
   },
+  invite: {
+    headline: 'הוזמנת להצטרף ל-ALMOG CRM.',
+    sub: 'הגדר סיסמה חזקה כדי להפעיל את החשבון. הקישור תקף 24 שעות.',
+  },
 };
 
 export function FeaturesCard({ variant }: { variant: Variant }) {
-  const features = variant === 'login' ? LOGIN_FEATURES : FORGOT_STEPS;
+  const features =
+    variant === 'login' ? LOGIN_FEATURES :
+    variant === 'invite' ? INVITE_STEPS :
+    FORGOT_STEPS;
   const { headline, sub } = TITLES[variant];
 
   return (

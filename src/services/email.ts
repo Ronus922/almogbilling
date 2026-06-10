@@ -1,12 +1,40 @@
-// Stub email service. TODO: replace with real SMTP (Resend) in phase B.
+import 'server-only';
+import { sendWithRetry } from '@/lib/email/send';
+import { renderTemplate } from '@/lib/email-templates';
 
-export interface EmailMessage {
+/**
+ * Real Gmail-SMTP send (Slice 5).
+ */
+export async function sendResetPasswordEmail(
+  to: string,
+  args: { userName: string; resetUrl: string },
+): Promise<void> {
+  const { subject, html, text } = renderTemplate('reset-password', args);
+  await sendWithRetry({ to, subject, html, text });
+}
+
+/**
+ * User invite email (Slice 6).
+ */
+export async function sendUserInviteEmail(
+  to: string,
+  args: { inviterName: string; inviteeName: string; roleLabel: string; acceptUrl: string },
+): Promise<void> {
+  const { subject, html, text } = renderTemplate('user-invite', { ...args, validHours: 24 });
+  await sendWithRetry({ to, subject, html, text });
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// LEGACY — Slice 3 stub kept untouched. Will migrate in a separate slice.
+// ──────────────────────────────────────────────────────────────────────
+
+interface EmailMessage {
   to: string;
   subject: string;
   body: string;
 }
 
-export async function sendEmail(msg: EmailMessage): Promise<{ ok: true; mocked: true }> {
+async function sendEmailStub(msg: EmailMessage): Promise<{ ok: true; mocked: true }> {
   console.log('\n[email:stub] ────────────────────────');
   console.log(`  To:      ${msg.to}`);
   console.log(`  Subject: ${msg.subject}`);
@@ -14,18 +42,6 @@ export async function sendEmail(msg: EmailMessage): Promise<{ ok: true; mocked: 
   msg.body.split('\n').forEach((l) => console.log('    ' + l));
   console.log('─────────────────────────────────────\n');
   return { ok: true, mocked: true };
-}
-
-export async function sendPasswordReset(email: string, resetUrl: string) {
-  return sendEmail({
-    to: email,
-    subject: 'איפוס סיסמה ל-ALMOG CRM',
-    body:
-      `שלום,\n\n` +
-      `לחץ על הקישור הבא כדי לאפס את הסיסמה שלך:\n${resetUrl}\n\n` +
-      `הקישור יפוג תוקף תוך 60 דקות.\n\n` +
-      `אם לא ביקשת איפוס סיסמה, התעלם מהמייל.`,
-  });
 }
 
 export interface StatusChangeEmailArgs {
@@ -62,7 +78,7 @@ export async function sendStatusChangeNotification(args: StatusChangeEmailArgs):
 
   for (const to of args.recipients) {
     try {
-      await sendEmail({ to, subject, body });
+      await sendEmailStub({ to, subject, body });
     } catch (err) {
       console.error('[sendStatusChangeNotification] failed for', to, err);
     }

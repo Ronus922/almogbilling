@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth/session';
+import { requirePermission } from '@/lib/auth/actor';
+import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorApartmentNumber } from '@/lib/db/debtors';
 import { createComment, listCommentsByDebtor } from '@/lib/db/comments';
 
@@ -19,11 +21,15 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 }
 
 export async function POST(req: NextRequest, ctx: RouteCtx) {
+  try {
+    await requirePermission('contacts', 'edit');
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
+  }
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  if (!session.user.is_admin) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  }
 
   const { id } = await ctx.params;
 

@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth/session';
+import { requirePermission } from '@/lib/auth/actor';
+import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { queryOne } from '@/lib/db';
 import {
   findStatusByLowerName,
@@ -20,12 +22,16 @@ interface RouteCtx {
 // is_system rows: name/description/color/notification_emails are editable;
 // is_active and is_default cannot be turned off.
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
+  try {
+    await requirePermission('status_management', 'edit');
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
+  }
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  if (!session.user.is_admin) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   }
 
   const { id } = await ctx.params;
@@ -81,14 +87,14 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 }
 
-// DELETE /api/statuses/[id] (admin)
+// DELETE /api/statuses/[id] (status_management:delete)
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  }
-  if (!session.user.is_admin) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  try {
+    await requirePermission('status_management', 'edit');
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
   }
 
   const { id } = await ctx.params;
