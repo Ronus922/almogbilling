@@ -1,0 +1,123 @@
+'use client';
+
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table';
+import { cn } from '@/lib/utils';
+import {
+  supplierStatusMeta,
+  supplierTypeMeta,
+  type DesignTone,
+} from '@/lib/constants/suppliers';
+import { formatPhoneDisplay } from '@/lib/phone';
+import type { SupplierListItem, SupplierStatus } from '@/lib/types/suppliers';
+
+// DESIGN.md §2 tone → badge classes. Only the tones the status palette uses.
+const STATUS_TONE: Record<DesignTone, string> = {
+  emerald: 'bg-emerald-100 text-emerald-700',
+  slate: 'bg-slate-100 text-slate-600',
+  amber: 'bg-amber-100 text-amber-700',
+};
+
+export function SupplierTable({
+  rows,
+  loading,
+  onRowClick,
+}: {
+  rows: SupplierListItem[];
+  loading: boolean;
+  onRowClick: (id: string) => void;
+}) {
+  if (loading) {
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className="h-12 rounded-lg bg-muted/60 animate-pulse" />
+        ))}
+      </div>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-lg border bg-card p-12 text-center text-sm text-muted-foreground">
+        לא נמצאו ספקים. הוסיפו ספק חדש כדי להתחיל.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+      <Table>
+        <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
+          <TableRow className="bg-slate-50 hover:bg-slate-50">
+            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">שם</TableHead>
+            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">תחום</TableHead>
+            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">איש קשר</TableHead>
+            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">טלפון</TableHead>
+            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500 max-md:hidden">נייד</TableHead>
+            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500 max-lg:hidden">אימייל</TableHead>
+            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">סטטוס</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((s) => {
+            const typeMeta = supplierTypeMeta(s.supplier_type);
+            const TypeIcon = typeMeta.icon;
+            const phone = formatPhoneDisplay(s.phone);
+            const mobile = formatPhoneDisplay(s.mobile);
+            return (
+              <TableRow
+                key={s.id}
+                onClick={() => onRowClick(s.id)}
+                className="cursor-pointer border-b border-slate-100 hover:bg-slate-50 h-12"
+              >
+                <TableCell className="px-4 py-3 text-right text-sm">
+                  <span className="block font-bold text-slate-900">{s.display_name}</span>
+                  {s.company_name && (
+                    <span className="block text-xs text-slate-500">{s.company_name}</span>
+                  )}
+                </TableCell>
+                <TableCell className="px-4 py-3 text-right">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                    <TypeIcon className="h-3.5 w-3.5" />
+                    {typeMeta.label}
+                  </span>
+                </TableCell>
+                <TableCell className="px-4 py-3 text-right text-sm text-slate-700">
+                  {s.contact_person || '—'}
+                </TableCell>
+                <TableCell dir="ltr" className="px-4 py-3 text-center text-sm text-slate-500 tabular-nums">
+                  {phone ?? '—'}
+                </TableCell>
+                <TableCell dir="ltr" className="px-4 py-3 text-center text-sm text-slate-500 tabular-nums max-md:hidden">
+                  {mobile ?? '—'}
+                </TableCell>
+                <TableCell dir="ltr" className="px-4 py-3 text-center text-sm text-slate-500 max-lg:hidden">
+                  {s.email || '—'}
+                </TableCell>
+                <TableCell className="px-4 py-3 text-center">
+                  <StatusBadge status={s.status} />
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: SupplierStatus }) {
+  const meta = supplierStatusMeta(status);
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full px-3 py-0.5 text-xs font-semibold',
+        STATUS_TONE[meta.tone],
+      )}
+    >
+      {meta.label}
+    </span>
+  );
+}

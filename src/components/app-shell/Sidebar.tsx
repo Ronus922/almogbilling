@@ -23,7 +23,7 @@ const MAIN_MENU: MenuItem[] = [
   { label: 'לוח מחוונים משימות', icon: LayoutDashboard, module: 'analytics' },
   { label: 'ניהול חיובים',       icon: LayoutGrid, href: '/dashboard', module: 'dashboard' },
   { label: 'רשימת דיירים',       icon: Users, module: 'contacts' },
-  { label: 'ספקים',              icon: Truck, module: 'suppliers' },
+  { label: 'ספקים',              icon: Truck, href: '/suppliers', module: 'suppliers' },
   { label: 'משימות',             icon: CheckSquare, module: 'tasks' },
   { label: 'תקלות',              icon: AlertTriangle, module: 'issues' },
   { label: 'יומן',               icon: Calendar, module: 'calendar' },
