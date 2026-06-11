@@ -1,0 +1,68 @@
+-- Suppliers module — single-tenant (no tenant_id), central-audit deferred (v1),
+-- no supplier_links in v1. Additive only.
+
+begin;
+
+create table if not exists public.suppliers (
+  id              uuid primary key default gen_random_uuid(),
+  display_name    text not null,
+  company_name    text not null default '',
+  contact_person  text not null default '',
+  supplier_type   text not null default 'general',
+  status          text not null default 'active',
+  phone           text not null default '',
+  mobile          text not null default '',
+  email           text not null default '',
+  website         text not null default '',
+  address         text not null default '',
+  city            text not null default '',
+  tax_id          text not null default '',
+  bank_name       text not null default '',
+  bank_branch     text not null default '',
+  bank_account    text not null default '',
+  payment_terms   text not null default 'net_30',
+  notes           text not null default '',
+  internal_notes  text not null default '',
+  rating          int,
+  created_by      uuid,
+  created_by_name text,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  deleted_at      timestamptz
+);
+
+create index if not exists idx_suppliers_status on public.suppliers (status) where deleted_at is null;
+create index if not exists idx_suppliers_type   on public.suppliers (supplier_type) where deleted_at is null;
+
+do $$ begin
+  alter table public.suppliers add constraint suppliers_status_check
+    check (status in ('active','inactive','archived'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table public.suppliers add constraint suppliers_payment_terms_check
+    check (payment_terms in ('immediate','net_15','net_30','net_45','net_60','net_90','other'));
+exception when duplicate_object then null; end $$;
+
+-- updated_at: follow the project convention (public.touch_updated_at() trigger, as on debtors/statuses).
+drop trigger if exists suppliers_touch_updated_at on public.suppliers;
+create trigger suppliers_touch_updated_at
+  before update on public.suppliers
+  for each row execute function public.touch_updated_at();
+
+create table if not exists public.supplier_documents (
+  id              uuid primary key default gen_random_uuid(),
+  supplier_id     uuid not null references public.suppliers(id) on delete cascade,
+  file_name       text not null,
+  file_url        text not null,
+  file_size_bytes int not null default 0,
+  mime_type       text not null default '',
+  doc_type        text not null default 'general',
+  uploaded_by     uuid,
+  uploaded_by_name text,
+  created_at      timestamptz not null default now()
+);
+
+create index if not exists idx_supplier_docs_supplier on public.supplier_documents (supplier_id);
+
+commit;
