@@ -1,4 +1,5 @@
-import { getSession } from '@/lib/auth/session';
+import { getCurrentActor } from '@/lib/auth/actor';
+import { hasPermission } from '@/lib/permissions/check';
 import {
   getDashboardKpis,
   getLastImportedAt,
@@ -41,10 +42,13 @@ export default async function DashboardPage({
     : 'total_debt_desc';
   const page = Math.max(1, Number(sp.page ?? '1') || 1);
 
-  const session = await getSession();
+  const actor = await getCurrentActor();
   // Layout already redirects if no session — but TS still needs the narrow.
-  const role = session?.user.role;
+  const role = actor?.role;
   const isAdmin = role === 'super_admin' || role === 'admin';
+  const canArchive = actor
+    ? hasPermission(actor.role, actor.permissions, 'contacts', 'edit')
+    : false;
 
   const [kpis, lastImportAt, tabCounts, listing] = await Promise.all([
     getDashboardKpis(),
@@ -73,6 +77,7 @@ export default async function DashboardPage({
           currentSort={sort}
           currentTab={tab}
           isAdmin={isAdmin}
+          canArchive={canArchive}
         />
       </div>
     </div>

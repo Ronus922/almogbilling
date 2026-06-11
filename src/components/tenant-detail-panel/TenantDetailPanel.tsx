@@ -24,6 +24,7 @@ import { NextActionCard, type NextActionDraft } from './NextActionCard';
 import { LegalManagementCard } from './LegalManagementCard';
 import { CommentsSection } from './CommentsSection';
 import { CompletedActionsCard } from './CompletedActionsCard';
+import { HistoryTimeline } from './HistoryTimeline';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { PanelTabs, type PanelTabKey } from './PanelTabs';
@@ -325,6 +326,12 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
                 </div>
                 <div className="h-56 rounded-xl bg-muted/60 animate-pulse" />
               </div>
+            ) : activeTab === 'history' ? (
+              <HistoryTimeline
+                debtorId={tenant.id}
+                isAdmin={isAdmin}
+                onLogged={() => { setHasMutated(true); router.refresh(); }}
+              />
             ) : (
               <div className="space-y-4">
                 {!isAdmin && (

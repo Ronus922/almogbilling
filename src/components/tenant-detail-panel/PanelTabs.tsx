@@ -17,7 +17,7 @@ interface TabDef {
 const TABS: TabDef[] = [
   { key: 'details',   label: 'פרטי דייר', icon: Home },
   { key: 'documents', label: 'מסמכים',     icon: FileText, disabled: true },
-  { key: 'history',   label: 'היסטוריה',   icon: Clock,    disabled: true },
+  { key: 'history',   label: 'היסטוריה',   icon: Clock },
 ];
 
 interface Props {

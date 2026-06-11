@@ -7,7 +7,7 @@ import { format } from 'date-fns';
 import { toast } from 'sonner';
 import type { LucideIcon } from 'lucide-react';
 import {
-  ArrowUp, ArrowDown, Archive, MessageSquare, MessageCircle,
+  ArrowUp, ArrowDown, Archive, ArchiveRestore, MessageSquare, MessageCircle,
   ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2,
 } from 'lucide-react';
 import {
@@ -23,6 +23,7 @@ import type { Debtor, SortKey, TabKey } from '@/lib/db/debtors';
 import { formatPhoneDisplay, getPrimaryPhone } from '@/lib/phone';
 import { TenantDetailPanel } from '@/components/tenant-detail-panel/TenantDetailPanel';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
+import { QuickDocPopover } from './QuickDocPopover';
 
 const numFmt = new Intl.NumberFormat('he-IL', { maximumFractionDigits: 0 });
 const ils = (v: number) => `₪ ${numFmt.format(v)}`;
@@ -41,6 +42,12 @@ interface MarkDoneTarget {
   due_date: string | null;
 }
 
+interface ArchiveTarget {
+  debtorId: string;
+  apartment: string;
+  owner: string | null;
+}
+
 export function DebtorsTable({
   rows,
   page,
@@ -48,6 +55,7 @@ export function DebtorsTable({
   currentSort,
   currentTab,
   isAdmin,
+  canArchive,
 }: {
   rows: Debtor[];
   page: number;
@@ -55,6 +63,7 @@ export function DebtorsTable({
   currentSort: SortKey;
   currentTab: TabKey;
   isAdmin: boolean;
+  canArchive: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -64,8 +73,14 @@ export function DebtorsTable({
   const [panelOpen, setPanelOpen] = useState(false);
   const [markDone, setMarkDone] = useState<MarkDoneTarget | null>(null);
   const [marking, setMarking] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
+  const [archiving, setArchiving] = useState(false);
+  const [unarchiveTarget, setUnarchiveTarget] = useState<ArchiveTarget | null>(null);
+  const [unarchiving, setUnarchiving] = useState(false);
 
   useEscapeKey(markDone !== null && !marking, () => setMarkDone(null));
+  useEscapeKey(archiveTarget !== null && !archiving, () => setArchiveTarget(null));
+  useEscapeKey(unarchiveTarget !== null && !unarchiving, () => setUnarchiveTarget(null));
 
   // Deep-link support: ?apt=X&open=details opens the panel for that debtor
   // (used from /statuses → "linked debtors" navigation). Strips the params
@@ -88,6 +103,51 @@ export function DebtorsTable({
   }, []);
 
   const isActionsTab = currentTab === 'actions';
+  const isArchivedTab = currentTab === 'archived';
+
+  async function confirmArchive() {
+    if (!archiveTarget || archiving) return;
+    setArchiving(true);
+    try {
+      const res = await fetch(`/api/debtors/${archiveTarget.debtorId}/archive`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${res.status}`);
+      }
+      toast.success('הדייר הועבר לארכיון');
+      setArchiveTarget(null);
+      router.refresh();
+    } catch (err) {
+      toast.error(`כישלון: ${(err as Error).message}`);
+    } finally {
+      setArchiving(false);
+    }
+  }
+
+  async function confirmUnarchive() {
+    if (!unarchiveTarget || unarchiving) return;
+    setUnarchiving(true);
+    try {
+      const res = await fetch(`/api/debtors/${unarchiveTarget.debtorId}/archive`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${res.status}`);
+      }
+      toast.success('הדייר הוחזר מהארכיון');
+      setUnarchiveTarget(null);
+      router.refresh();
+    } catch (err) {
+      toast.error(`כישלון: ${(err as Error).message}`);
+    } finally {
+      setUnarchiving(false);
+    }
+  }
 
   async function confirmMarkDone() {
     if (!markDone || marking) return;
@@ -156,6 +216,9 @@ export function DebtorsTable({
                   <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">תאריך יעד</TableHead>
                 </>
               )}
+              {isArchivedTab && (
+                <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">הועבר לארכיון</TableHead>
+              )}
               <TableHead className="h-11 px-4 text-left text-sm font-semibold text-slate-500">פעולות</TableHead>
             </TableRow>
           </TableHeader>
@@ -172,7 +235,10 @@ export function DebtorsTable({
                     {d.apartment_number}
                   </TableCell>
                   <TableCell className="px-4 py-3 text-right text-sm font-medium text-slate-800">
-                    {d.owner_name ?? '—'}
+                    <span className="inline-flex items-center gap-1.5">
+                      <span>{d.owner_name ?? '—'}</span>
+                      <DocIndicator count={d.doc_count} lastAt={d.last_doc_at} />
+                    </span>
                   </TableCell>
                   <TableCell className="px-4 py-3 text-center text-sm text-slate-500 tabular-nums" dir="ltr">
                     {phone ?? '—'}
@@ -203,8 +269,17 @@ export function DebtorsTable({
                       </TableCell>
                     </>
                   )}
+                  {isArchivedTab && (
+                    <TableCell className="px-4 py-3 text-center text-sm text-slate-600 tabular-nums" dir="ltr">
+                      {formatDueDate(d.archived_at)}
+                    </TableCell>
+                  )}
                   <TableCell className="px-4 py-3 text-left" onClick={(e) => e.stopPropagation()}>
                     <RowActions
+                      debtorId={d.id}
+                      apartment={d.apartment_number}
+                      owner={d.owner_name}
+                      canEdit={canArchive}
                       showCheck={isActionsTab && isAdmin}
                       onCheck={() => setMarkDone({
                         debtorId: d.id,
@@ -212,6 +287,16 @@ export function DebtorsTable({
                         description: d.next_action_description,
                         due_date: d.next_action_date,
                       })}
+                      onArchive={canArchive && !isArchivedTab ? () => setArchiveTarget({
+                        debtorId: d.id,
+                        apartment: d.apartment_number,
+                        owner: d.owner_name,
+                      }) : undefined}
+                      onUnarchive={canArchive && isArchivedTab ? () => setUnarchiveTarget({
+                        debtorId: d.id,
+                        apartment: d.apartment_number,
+                        owner: d.owner_name,
+                      }) : undefined}
                     />
                   </TableCell>
                 </TableRow>
@@ -277,6 +362,56 @@ export function DebtorsTable({
             >
               <CheckCircle2 className="h-4 w-4" />
               {marking ? 'מסמן…' : 'סמן כבוצעה'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={archiveTarget !== null}
+        onOpenChange={(o) => { if (!o) setArchiveTarget(null); }}
+      >
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>להעביר לארכיון?</AlertDialogTitle>
+            <AlertDialogDescription className="text-right">
+              {archiveTarget && `דירה ${archiveTarget.apartment}${archiveTarget.owner ? ` · ${archiveTarget.owner}` : ''} תוסר מרשימת החייבים ותעבור לטאב הארכיון.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={archiving}>ביטול</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmArchive}
+              disabled={archiving}
+              className="gap-2 bg-orange-500 text-white hover:bg-orange-600"
+            >
+              <Archive className="h-4 w-4" />
+              {archiving ? 'מעביר…' : 'העבר לארכיון'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={unarchiveTarget !== null}
+        onOpenChange={(o) => { if (!o) setUnarchiveTarget(null); }}
+      >
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>להחזיר מהארכיון?</AlertDialogTitle>
+            <AlertDialogDescription className="text-right">
+              {unarchiveTarget && `דירה ${unarchiveTarget.apartment}${unarchiveTarget.owner ? ` · ${unarchiveTarget.owner}` : ''} תוחזר לרשימת החייבים.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={unarchiving}>ביטול</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmUnarchive}
+              disabled={unarchiving}
+              className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+            >
+              <ArchiveRestore className="h-4 w-4" />
+              {unarchiving ? 'מחזיר…' : 'החזר מהארכיון'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -385,6 +520,23 @@ function SortHead({
   );
 }
 
+// Small documentation badge next to the owner name: count of comments + events,
+// shown only when > 0, with the last-documented date in the tooltip.
+function DocIndicator({ count, lastAt }: { count: number; lastAt: unknown }) {
+  if (!count || count <= 0) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex" />}>
+        <span className="inline-flex items-center gap-0.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-500 tabular-nums">
+          <MessageSquare className="h-3 w-3" />
+          {count}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>תיעוד אחרון: {formatDueDate(lastAt)}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function LegalStatusPill({
   name, color, isDefault,
 }: { name: string | null; color: string | null; isDefault: boolean | null }) {
@@ -411,20 +563,31 @@ interface ActionDef {
   className: string;
 }
 
-// Order per user's latest screenshot (LTR visual: Archive | Comment | WhatsApp).
-// dir="ltr" on the wrapper preserves this physical order inside the RTL page.
-const ACTIONS: ActionDef[] = [
-  { icon: Archive,       label: 'ארכוב',    className: 'text-orange-500 hover:text-orange-600' },
-  { icon: MessageSquare, label: 'הערה',     className: 'text-slate-400 hover:text-slate-500' },
+// dir="ltr" on the wrapper preserves physical order inside the RTL page.
+// Archive/restore and the quick-doc comment icon are wired separately; WhatsApp
+// stays a disabled placeholder ("בקרוב").
+const DISABLED_ACTIONS: ActionDef[] = [
   { icon: MessageCircle, label: 'WhatsApp', className: 'text-green-500 hover:text-green-600' },
 ];
 
 function RowActions({
+  debtorId,
+  apartment,
+  owner,
+  canEdit,
   showCheck,
   onCheck,
+  onArchive,
+  onUnarchive,
 }: {
+  debtorId: string;
+  apartment: string;
+  owner: string | null;
+  canEdit: boolean;
   showCheck?: boolean;
   onCheck?: () => void;
+  onArchive?: () => void;
+  onUnarchive?: () => void;
 }) {
   return (
     <div dir="ltr" className="flex items-center justify-start gap-3">
@@ -443,7 +606,38 @@ function RowActions({
           <TooltipContent>סמן כבוצעה</TooltipContent>
         </Tooltip>
       )}
-      {ACTIONS.map((it) => (
+      {onArchive && (
+        <Tooltip>
+          <TooltipTrigger render={<span />}>
+            <button
+              type="button"
+              onClick={onArchive}
+              aria-label="העבר לארכיון"
+              className="inline-flex items-center justify-center text-orange-500 hover:text-orange-600 transition-colors"
+            >
+              <Archive className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>העבר לארכיון</TooltipContent>
+        </Tooltip>
+      )}
+      {onUnarchive && (
+        <Tooltip>
+          <TooltipTrigger render={<span />}>
+            <button
+              type="button"
+              onClick={onUnarchive}
+              aria-label="החזר מהארכיון"
+              className="inline-flex items-center justify-center text-blue-600 hover:text-blue-700 transition-colors"
+            >
+              <ArchiveRestore className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>החזר מהארכיון</TooltipContent>
+        </Tooltip>
+      )}
+      <QuickDocPopover debtorId={debtorId} apartment={apartment} owner={owner} canEdit={canEdit} />
+      {DISABLED_ACTIONS.map((it) => (
         <Tooltip key={it.label}>
           <TooltipTrigger render={<span />}>
             <button
