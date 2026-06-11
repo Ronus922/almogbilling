@@ -49,6 +49,9 @@ export default async function DashboardPage({
   const canArchive = actor
     ? hasPermission(actor.role, actor.permissions, 'contacts', 'edit')
     : false;
+  const canSendWhatsapp = actor
+    ? hasPermission(actor.role, actor.permissions, 'whatsapp', 'edit')
+    : false;
 
   const [kpis, lastImportAt, tabCounts, listing] = await Promise.all([
     getDashboardKpis(),
@@ -78,6 +81,7 @@ export default async function DashboardPage({
           currentTab={tab}
           isAdmin={isAdmin}
           canArchive={canArchive}
+          canSendWhatsapp={canSendWhatsapp}
         />
       </div>
     </div>

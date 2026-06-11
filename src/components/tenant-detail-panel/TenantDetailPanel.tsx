@@ -25,6 +25,7 @@ import { LegalManagementCard } from './LegalManagementCard';
 import { CommentsSection } from './CommentsSection';
 import { CompletedActionsCard } from './CompletedActionsCard';
 import { HistoryTimeline } from './HistoryTimeline';
+import { WhatsAppHistorySection } from './WhatsAppHistorySection';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { PanelTabs, type PanelTabKey } from './PanelTabs';
@@ -377,6 +378,8 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
                   isAdmin={isAdmin}
                   onAddComment={handleAddComment}
                 />
+
+                <WhatsAppHistorySection debtorId={tenant.id} />
               </div>
             )}
           </div>

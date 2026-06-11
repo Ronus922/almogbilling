@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-import type { LucideIcon } from 'lucide-react';
 import {
   ArrowUp, ArrowDown, Archive, ArchiveRestore, MessageSquare, MessageCircle,
   ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2,
@@ -22,6 +21,7 @@ import { cn } from '@/lib/utils';
 import type { Debtor, SortKey, TabKey } from '@/lib/db/debtors';
 import { formatPhoneDisplay, getPrimaryPhone } from '@/lib/phone';
 import { TenantDetailPanel } from '@/components/tenant-detail-panel/TenantDetailPanel';
+import { WhatsAppSendPanel, type WhatsAppRecipient } from '@/components/whatsapp/WhatsAppSendPanel';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { QuickDocPopover } from './QuickDocPopover';
 
@@ -56,6 +56,7 @@ export function DebtorsTable({
   currentTab,
   isAdmin,
   canArchive,
+  canSendWhatsapp,
 }: {
   rows: Debtor[];
   page: number;
@@ -64,6 +65,7 @@ export function DebtorsTable({
   currentTab: TabKey;
   isAdmin: boolean;
   canArchive: boolean;
+  canSendWhatsapp: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -77,6 +79,8 @@ export function DebtorsTable({
   const [archiving, setArchiving] = useState(false);
   const [unarchiveTarget, setUnarchiveTarget] = useState<ArchiveTarget | null>(null);
   const [unarchiving, setUnarchiving] = useState(false);
+  const [whatsappTarget, setWhatsappTarget] = useState<WhatsAppRecipient | null>(null);
+  const [whatsappOpen, setWhatsappOpen] = useState(false);
 
   useEscapeKey(markDone !== null && !marking, () => setMarkDone(null));
   useEscapeKey(archiveTarget !== null && !archiving, () => setArchiveTarget(null));
@@ -174,6 +178,20 @@ export function DebtorsTable({
   function openPanel(id: string) {
     setSelectedId(id);
     setPanelOpen(true);
+  }
+
+  function openWhatsapp(d: Debtor) {
+    setWhatsappTarget({
+      id: d.id,
+      apartment_number: d.apartment_number,
+      owner_name: d.owner_name,
+      tenant_name: d.tenant_name,
+      phone_owner: d.phone_owner,
+      phone_tenant: d.phone_tenant,
+      total_debt: d.total_debt,
+      address: d.address,
+    });
+    setWhatsappOpen(true);
   }
 
   function setSort(next: SortKey) {
@@ -280,6 +298,8 @@ export function DebtorsTable({
                       apartment={d.apartment_number}
                       owner={d.owner_name}
                       canEdit={canArchive}
+                      whatsappReason={!canSendWhatsapp ? 'אין הרשאה' : !phone ? 'אין מספר טלפון' : null}
+                      onWhatsApp={() => openWhatsapp(d)}
                       showCheck={isActionsTab && isAdmin}
                       onCheck={() => setMarkDone({
                         debtorId: d.id,
@@ -340,6 +360,16 @@ export function DebtorsTable({
           setPanelOpen(o);
           if (!o) setSelectedId(null);
         }}
+      />
+
+      <WhatsAppSendPanel
+        open={whatsappOpen}
+        recipient={whatsappTarget}
+        onOpenChange={(o) => {
+          setWhatsappOpen(o);
+          if (!o) setWhatsappTarget(null);
+        }}
+        onSent={() => router.refresh()}
       />
 
       <AlertDialog
@@ -557,24 +587,13 @@ function LegalStatusPill({
   );
 }
 
-interface ActionDef {
-  icon: LucideIcon;
-  label: string;
-  className: string;
-}
-
-// dir="ltr" on the wrapper preserves physical order inside the RTL page.
-// Archive/restore and the quick-doc comment icon are wired separately; WhatsApp
-// stays a disabled placeholder ("בקרוב").
-const DISABLED_ACTIONS: ActionDef[] = [
-  { icon: MessageCircle, label: 'WhatsApp', className: 'text-green-500 hover:text-green-600' },
-];
-
 function RowActions({
   debtorId,
   apartment,
   owner,
   canEdit,
+  whatsappReason,
+  onWhatsApp,
   showCheck,
   onCheck,
   onArchive,
@@ -584,6 +603,9 @@ function RowActions({
   apartment: string;
   owner: string | null;
   canEdit: boolean;
+  /** null = enabled; a string = disabled reason shown in the tooltip. */
+  whatsappReason: string | null;
+  onWhatsApp: () => void;
   showCheck?: boolean;
   onCheck?: () => void;
   onArchive?: () => void;
@@ -637,24 +659,20 @@ function RowActions({
         </Tooltip>
       )}
       <QuickDocPopover debtorId={debtorId} apartment={apartment} owner={owner} canEdit={canEdit} />
-      {DISABLED_ACTIONS.map((it) => (
-        <Tooltip key={it.label}>
-          <TooltipTrigger render={<span />}>
-            <button
-              type="button"
-              disabled
-              aria-label={it.label}
-              className={cn(
-                'inline-flex items-center justify-center transition-colors disabled:cursor-default',
-                it.className,
-              )}
-            >
-              <it.icon className="h-4 w-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>בקרוב</TooltipContent>
-        </Tooltip>
-      ))}
+      <Tooltip>
+        <TooltipTrigger render={<span />}>
+          <button
+            type="button"
+            onClick={whatsappReason ? undefined : onWhatsApp}
+            disabled={whatsappReason !== null}
+            aria-label="שליחת WhatsApp"
+            className="inline-flex items-center justify-center text-green-500 transition-colors hover:text-green-600 disabled:cursor-default disabled:text-slate-300"
+          >
+            <MessageCircle className="h-4 w-4" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{whatsappReason ?? 'שליחת WhatsApp'}</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

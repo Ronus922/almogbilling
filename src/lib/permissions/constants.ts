@@ -35,11 +35,12 @@ export interface ModuleMeta {
 }
 
 export const MODULES: ModuleMeta[] = [
-  // Main (11)
+  // Main (12)
   { key: 'analytics',          label: 'אנליטיקה',           group: 'main' },
   { key: 'dashboard',          label: 'ניהול חיובים',       group: 'main' },
   { key: 'contacts',           label: 'רשימת דיירים',       group: 'main' },
   { key: 'suppliers',          label: 'ספקים',              group: 'main' },
+  { key: 'whatsapp',           label: 'שליחת ווטסאפ',       group: 'main' },
   { key: 'tasks',              label: 'משימות',             group: 'main' },
   { key: 'issues',             label: 'תקלות',              group: 'main' },
   { key: 'calendar',           label: 'יומן',               group: 'main' },
@@ -75,6 +76,7 @@ export const DEFAULT_MANAGER: ModulePermission[] = [
   perm('dashboard',     true,  true),
   perm('contacts',      true,  true),
   perm('suppliers',     true,  true),
+  perm('whatsapp',      true,  true),
   perm('tasks',         true,  true),
   perm('issues',        true,  true),
   perm('calendar',      true,  true),
@@ -98,6 +100,7 @@ export const DEFAULT_VIEWER: ModulePermission[] = [
   perm('dashboard',     true, false),
   perm('contacts',      true, false),
   perm('suppliers',     true, false),
+  perm('whatsapp',      true, false),
   perm('tasks',         true, false),
   perm('issues',        true, false),
   perm('calendar',      true, false),

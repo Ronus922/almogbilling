@@ -479,3 +479,30 @@ export async function getDebtorApartmentNumber(id: string): Promise<string | nul
   );
   return r?.apartment_number ?? null;
 }
+
+// ─────────────────────── WhatsApp send ───────────────────────
+// The subset of fields the WhatsApp send route needs: phone resolution,
+// placeholder interpolation ({{name}}/{{debt}}/{{apartment}}/{{building_name}})
+// and the audit/timeline title. `address` backs {{building_name}}.
+export interface DebtorContact {
+  id: string;
+  apartment_number: string;
+  owner_name: string | null;
+  tenant_name: string | null;
+  phone_owner: string | null;
+  phone_tenant: string | null;
+  total_debt: number;
+  address: string | null;
+}
+
+export async function getDebtorContact(id: string): Promise<DebtorContact | null> {
+  return queryOne<DebtorContact>(
+    `select id, apartment_number, owner_name, tenant_name,
+            phone_owner, phone_tenant,
+            total_debt::float8 as total_debt,
+            address
+       from public.debtors
+      where id = $1`,
+    [id],
+  );
+}
