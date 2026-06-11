@@ -31,6 +31,19 @@ function defaultsFor(role: Role): ModulePermission[] {
   return getDefaultPermissions(role) ?? [];
 }
 
+// True only when the current matrix diverges from the role's defaults. When it
+// matches (or the role has no matrix), the invite stores custom_permissions =
+// NULL and accept-invite falls back to role defaults — preserving legacy behavior.
+function permsDifferFromDefaults(current: ModulePermission[], role: Role): boolean {
+  const defaults = defaultsFor(role);
+  if (defaults.length === 0) return false;
+  const byModule = new Map(current.map((p) => [p.module, p]));
+  return defaults.some((d) => {
+    const c = byModule.get(d.module);
+    return !c || c.canView !== d.canView || c.canEdit !== d.canEdit;
+  });
+}
+
 export function InviteUserPanel({ open, onOpenChange }: Props) {
   const router = useRouter();
   const [fullName, setFullName] = useState('');
@@ -93,7 +106,9 @@ export function InviteUserPanel({ open, onOpenChange }: Props) {
         email: trimmedEmail.toLowerCase(),
         role,
       };
-      if (role === 'manager' || role === 'viewer') {
+      // Only send the matrix when the admin actually tweaked it. Unchanged →
+      // omit → server stores custom_permissions = NULL → role defaults at accept.
+      if ((role === 'manager' || role === 'viewer') && permsDifferFromDefaults(permissions, role)) {
         body.permissions = permissions.map((p) => ({
           module: p.module,
           can_view: p.canView,
