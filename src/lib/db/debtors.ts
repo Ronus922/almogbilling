@@ -25,7 +25,12 @@ export interface Debtor {
   next_action_description: string | null;
   next_action_date: string | null;
   is_archived: boolean;
+  archived_at: Date | null;
   last_imported_at: Date | null;
+  // Documentation indicator (list query only): comments + events count and the
+  // most recent of the two timestamps. 0 / null when nothing is documented.
+  doc_count: number;
+  last_doc_at: Date | null;
 }
 
 export interface DashboardKpis {
@@ -224,7 +229,16 @@ const SELECT_COLUMNS = `
   d.next_action_description,
   d.next_action_date,
   d.is_archived,
-  d.last_imported_at
+  d.archived_at,
+  d.last_imported_at,
+  (
+    coalesce((select count(*) from public.comments c       where c.debtor_id = d.id), 0)
+    + coalesce((select count(*) from public.debtor_events e where e.debtor_id = d.id), 0)
+  )::int as doc_count,
+  greatest(
+    (select max(c.created_at) from public.comments c       where c.debtor_id = d.id),
+    (select max(e.created_at) from public.debtor_events e   where e.debtor_id = d.id)
+  ) as last_doc_at
 `;
 
 export async function listDebtors(params: ListDebtorsParams): Promise<ListDebtorsResult> {
@@ -454,6 +468,9 @@ export async function updateDebtorLegalStatus(
     };
   });
 }
+
+// Archive / restore now live in the archive route (transactional, with event
+// logging via logDebtorEvent). See src/app/api/debtors/[id]/archive/route.ts.
 
 export async function getDebtorApartmentNumber(id: string): Promise<string | null> {
   const r = await queryOne<{ apartment_number: string }>(
