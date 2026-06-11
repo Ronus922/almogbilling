@@ -43,8 +43,8 @@ export function SuppliersPageClient({
         credentials: 'include',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as SupplierListItem[];
-      setSuppliers(data);
+      const data = (await res.json()) as { suppliers?: SupplierListItem[] };
+      setSuppliers(Array.isArray(data.suppliers) ? data.suppliers : []);
     } catch (err) {
       toast.error(`טעינת הספקים נכשלה: ${(err as Error).message}`);
       setSuppliers([]);

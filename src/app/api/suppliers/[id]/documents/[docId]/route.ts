@@ -1,13 +1,36 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requireAdmin } from '@/lib/auth/actor';
+import { requireAdmin, requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getSupplierDocument, deleteSupplierDocumentRow } from '@/lib/db/suppliers';
-import { removeSupplierFile } from '@/lib/storage/supplierStorage';
+import { removeSupplierFile, signedUrlForPath } from '@/lib/storage/supplierStorage';
 
 export const runtime = 'nodejs';
 
 interface RouteCtx {
   params: Promise<{ id: string; docId: string }>;
+}
+
+// GET /api/suppliers/[id]/documents/[docId] (view) — fresh signed URL for viewing.
+export async function GET(_req: NextRequest, ctx: RouteCtx) {
+  try {
+    await requirePermission('suppliers', 'view');
+  } catch (err) {
+    const r = authErrorResponse(err);
+    if (r) return r;
+    throw err;
+  }
+
+  const { docId } = await ctx.params;
+  const doc = await getSupplierDocument(docId);
+  if (!doc) {
+    return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  }
+
+  const signed_url = await signedUrlForPath(doc.file_url);
+  if (!signed_url) {
+    return NextResponse.json({ error: 'signed_url_unavailable' }, { status: 502 });
+  }
+  return NextResponse.json({ signed_url });
 }
 
 // DELETE /api/suppliers/[id]/documents/[docId] (admin) — physical delete.
