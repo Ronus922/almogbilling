@@ -74,7 +74,7 @@ export default async function DashboardPage({
 
       <DebtorsTabs active={tab} counts={tabCounts} />
 
-      <div className="space-y-3 rounded-2xl border border-line bg-white p-4 shadow-soft-sm">
+      <div className="mx-auto w-[85%] space-y-3 rounded-2xl border border-line bg-white p-4 shadow-soft-sm">
         <DebtorsToolbar totalRows={listing.total} />
         <DebtorsTable
           rows={listing.rows}
