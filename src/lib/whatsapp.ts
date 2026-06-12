@@ -10,6 +10,13 @@ import type { ChatStatus } from '@/types/whatsapp';
 
 const GREEN_API_BASE = 'https://api.green-api.com';
 
+/** Per-instance API host (Green assigns regional hosts). Falls back to the
+ *  default. Trailing slashes stripped so URL concatenation is safe. */
+function baseFor(args: { apiUrl?: string | null }): string {
+  const v = (args.apiUrl ?? '').trim().replace(/\/+$/, '');
+  return v || GREEN_API_BASE;
+}
+
 /** Thrown for anything WhatsApp-specific. Route layer maps to a real HTTP error
  *  (never a 200) so the client toast reflects the true outcome. */
 export class WhatsAppError extends Error {
@@ -523,6 +530,8 @@ export function parseLastIncomingItem(item: unknown): ParsedIncoming | null {
 interface SendArgs {
   instanceId: string;
   token: string;
+  /** Per-instance API host; omitted → default green-api.com. */
+  apiUrl?: string;
   chatId: string;
   message: string;
 }
@@ -544,7 +553,7 @@ function safeJson(raw: string): Record<string, unknown> | null {
  * Returns the idMessage on success; throws WhatsAppError otherwise.
  */
 export async function sendWhatsAppMessage(args: SendArgs): Promise<{ idMessage: string }> {
-  const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/sendMessage/${args.token}`;
+  const url = `${baseFor(args)}/waInstance${args.instanceId}/sendMessage/${args.token}`;
 
   let res: Response;
   let raw: string;
@@ -585,6 +594,7 @@ export async function sendWhatsAppMessage(args: SendArgs): Promise<{ idMessage: 
 interface SendFileArgs {
   instanceId: string;
   token: string;
+  apiUrl?: string;
   chatId: string;
   /** Publicly reachable file URL. */
   urlFile: string;
@@ -600,7 +610,7 @@ interface SendFileArgs {
  * Returns the idMessage on success; throws WhatsAppError otherwise.
  */
 export async function sendWhatsAppFileByUrl(args: SendFileArgs): Promise<{ idMessage: string }> {
-  const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/sendFileByUrl/${args.token}`;
+  const url = `${baseFor(args)}/waInstance${args.instanceId}/sendFileByUrl/${args.token}`;
 
   let res: Response;
   let raw: string;
@@ -638,6 +648,8 @@ export async function sendWhatsAppFileByUrl(args: SendFileArgs): Promise<{ idMes
 interface ProbeArgs {
   instanceId: string;
   token: string;
+  /** Per-instance API host; omitted → default green-api.com. */
+  apiUrl?: string;
 }
 
 /**
@@ -646,7 +658,7 @@ interface ProbeArgs {
  * Used by the Settings "test connection" button.
  */
 export async function getInstanceState(args: ProbeArgs): Promise<{ stateInstance: string }> {
-  const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/getStateInstance/${args.token}`;
+  const url = `${baseFor(args)}/waInstance${args.instanceId}/getStateInstance/${args.token}`;
 
   let res: Response;
   let raw: string;
@@ -690,7 +702,7 @@ export async function getInstanceState(args: ProbeArgs): Promise<{ stateInstance
 export async function getAvatar(
   args: ProbeArgs & { chatId: string },
 ): Promise<{ urlAvatar: string | null; available: boolean }> {
-  const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/getAvatar/${args.token}`;
+  const url = `${baseFor(args)}/waInstance${args.instanceId}/getAvatar/${args.token}`;
   // Bound the call with an explicit timeout: refreshStaleAvatars runs a serial
   // loop behind a process-level guard, so a single hung fetch would otherwise
   // stall ALL future avatar refreshes (and leak a socket). An aborted fetch
@@ -758,14 +770,14 @@ export async function getIncomingMessages(
   args: ProbeArgs & { minutes?: number },
 ): Promise<unknown[]> {
   const minutes = args.minutes && args.minutes > 0 ? Math.floor(args.minutes) : 1440;
-  const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/lastIncomingMessages/${args.token}?minutes=${minutes}`;
+  const url = `${baseFor(args)}/waInstance${args.instanceId}/lastIncomingMessages/${args.token}?minutes=${minutes}`;
   const data = await greenApiGet(url);
   return Array.isArray(data) ? data : [];
 }
 
 /** GET waInstance{id}/getSettings/{token} — current instance settings (webhook). */
 export async function getWebhookSettings(args: ProbeArgs): Promise<Record<string, unknown>> {
-  const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/getSettings/${args.token}`;
+  const url = `${baseFor(args)}/waInstance${args.instanceId}/getSettings/${args.token}`;
   const data = await greenApiGet(url);
   return Array.isArray(data) ? {} : data;
 }
@@ -782,14 +794,15 @@ export async function getWebhookSettings(args: ProbeArgs): Promise<Record<string
 export async function setWebhookSettings(
   args: ProbeArgs & { webhookUrl: string; webhookToken?: string },
 ): Promise<void> {
-  const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/setSettings/${args.token}`;
+  const url = `${baseFor(args)}/waInstance${args.instanceId}/setSettings/${args.token}`;
   const payload: Record<string, string> = {
     webhookUrl: args.webhookUrl,
     incomingWebhook: 'yes',
     outgoingWebhook: 'yes',
     outgoingMessageWebhook: 'yes',
     outgoingAPIMessageWebhook: 'yes',
-    stateWebhook: 'no',
+    // Track instance auth/connection changes (drives the per-employee state badge).
+    stateWebhook: 'yes',
   };
   if (args.webhookToken) payload.webhookUrlToken = args.webhookToken;
 
@@ -813,4 +826,82 @@ export async function setWebhookSettings(
       `HTTP ${res.status}`;
     throw new WhatsAppError(`Green API שגיאה (${res.status}): ${detail}`);
   }
+}
+
+export type QrResult =
+  | { type: 'qrCode'; message: string }      // base64 PNG (no data: prefix)
+  | { type: 'alreadyLogged' }                 // instance already authorized
+  | { type: 'error'; message: string };
+
+/**
+ * GET waInstance{id}/qr/{token} — the linking QR for an unauthorized instance.
+ * Green API returns { type: 'qrCode'|'alreadyLogged'|'error', message }. The QR
+ * rotates every ~20s, so the UI must re-poll. Best-effort: gateway errors map to
+ * { type:'error' } rather than throwing (the caller just keeps polling).
+ */
+export async function getQrCode(args: ProbeArgs): Promise<QrResult> {
+  const url = `${baseFor(args)}/waInstance${args.instanceId}/qr/${args.token}`;
+  let res: Response;
+  let raw: string;
+  try {
+    res = await fetch(url, { method: 'GET' });
+    raw = await res.text();
+  } catch (err) {
+    return { type: 'error', message: (err as Error).message };
+  }
+  if (!res.ok) {
+    return { type: 'error', message: `HTTP ${res.status}` };
+  }
+  const parsed = safeJson(raw);
+  const type = parsed && typeof parsed.type === 'string' ? parsed.type : '';
+  const message = parsed && typeof parsed.message === 'string' ? parsed.message : '';
+  if (type === 'qrCode' && message) return { type: 'qrCode', message };
+  if (type === 'alreadyLogged') return { type: 'alreadyLogged' };
+  return { type: 'error', message: message || 'QR לא זמין' };
+}
+
+/**
+ * GET waInstance{id}/logout/{token} — disconnect the WhatsApp account from the
+ * instance (the device must re-scan a QR to reconnect). Returns true on success.
+ */
+export async function logoutInstance(args: ProbeArgs): Promise<boolean> {
+  const url = `${baseFor(args)}/waInstance${args.instanceId}/logout/${args.token}`;
+  let res: Response;
+  let raw: string;
+  try {
+    res = await fetch(url, { method: 'GET' });
+    raw = await res.text();
+  } catch (err) {
+    throw new WhatsAppError(`החיבור ל-Green API נכשל: ${(err as Error).message}`);
+  }
+  if (!res.ok) {
+    const parsed = safeJson(raw);
+    const detail =
+      (parsed && (parsed.invokeStatus || parsed.message)) ||
+      raw.slice(0, 200).replace(/\s+/g, ' ').trim() ||
+      `HTTP ${res.status}`;
+    throw new WhatsAppError(`Green API שגיאה (${res.status}): ${detail}`);
+  }
+  const parsed = safeJson(raw);
+  return parsed?.isLogout === true;
+}
+
+/**
+ * Parse a `stateInstanceChanged` webhook → the new state string (validated
+ * against our InstanceState set), or null for any other notification.
+ */
+export function parseStateInstanceChanged(payload: unknown): string | null {
+  const body = asObj(payload);
+  if (body.typeWebhook !== 'stateInstanceChanged') return null;
+  const s = asStr(body.stateInstance);
+  return s;
+}
+
+/** The Green API idInstance carried on every webhook notification, or null. */
+export function webhookInstanceId(payload: unknown): string | null {
+  const body = asObj(payload);
+  const data = asObj(body.instanceData);
+  const id = data.idInstance;
+  if (typeof id === 'number' && Number.isFinite(id)) return String(id);
+  return asStr(id);
 }

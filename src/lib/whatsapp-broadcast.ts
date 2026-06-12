@@ -6,7 +6,10 @@ import {
   bumpBroadcastCounters,
   finishBroadcast,
 } from '@/lib/db/whatsappBroadcasts';
-import { getGreenApiSettings } from '@/lib/db/greenApiSettings';
+import {
+  getInstanceCredsForUser,
+  type InstanceCreds,
+} from '@/lib/db/whatsappInstances';
 import {
   normalizePhone,
   cleanPhoneField,
@@ -135,8 +138,7 @@ async function runBroadcast(
   recipients: BroadcastRecipient[],
   body: string,
   actorId: string,
-  instanceId: string,
-  token: string,
+  creds: InstanceCreds,
 ): Promise<void> {
   try {
     for (let i = 0; i < recipients.length; i++) {
@@ -145,7 +147,10 @@ async function runBroadcast(
       const chatId = `${phoneIntl}@c.us`;
 
       try {
-        const { idMessage } = await sendWhatsAppMessage({ instanceId, token, chatId, message });
+        const { idMessage } = await sendWhatsAppMessage({
+          instanceId: creds.greenInstanceId, token: creds.token, apiUrl: creds.apiUrl,
+          chatId, message,
+        });
         await insertChatMessage({
           debtorId: debtor.id,
           contactPhone: phoneIntl,
@@ -156,6 +161,7 @@ async function runBroadcast(
           status: 'sent',
           sentBy: actorId,
           broadcastId,
+          instanceId: creds.id,
         });
         await bumpBroadcastCounters(broadcastId, { sent: 1 });
       } catch (err) {
@@ -172,6 +178,7 @@ async function runBroadcast(
             errorDetail: detail,
             sentBy: actorId,
             broadcastId,
+            instanceId: creds.id,
           });
         } catch (logErr) {
           console.error('[broadcast] failed to record failed row', logErr);
@@ -205,7 +212,8 @@ export async function startBroadcast(
   input: { name: string; body: string; audience: BroadcastAudience },
   actor: Actor,
 ): Promise<Broadcast> {
-  const { instanceId, token } = await getGreenApiSettings();
+  // Broadcast sends through the CREATOR's own instance.
+  const creds = await getInstanceCredsForUser(actor.id);
 
   const recipients = await resolveBroadcastRecipients(input.audience);
   if (recipients.length === 0) {
@@ -218,11 +226,12 @@ export async function startBroadcast(
     audience: input.audience,
     totalCount: recipients.length,
     createdBy: actor.id,
+    instanceId: creds.id,
   });
 
   // Fire-and-forget — do NOT await; the request returns now and the loop runs in
   // the background of the server process.
-  void runBroadcast(broadcast.id, recipients, input.body, actor.id, instanceId, token);
+  void runBroadcast(broadcast.id, recipients, input.body, actor.id, creds);
 
   return broadcast;
 }

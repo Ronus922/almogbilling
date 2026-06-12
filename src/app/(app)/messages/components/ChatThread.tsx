@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import {
   ArrowRight, Check, CheckCheck, Clock, AlertCircle, Send, Loader2,
-  MessageCircle, FileText,
+  MessageCircle, FileText, Paperclip, RotateCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Textarea } from '@/components/ui/textarea';
@@ -18,6 +18,7 @@ export function ChatThread({
   messages,
   loading,
   canEdit,
+  instanceId,
   onSent,
   onBack,
   className,
@@ -26,6 +27,7 @@ export function ChatThread({
   messages: ThreadMessage[];
   loading: boolean;
   canEdit: boolean;
+  instanceId: string | null;
   onSent: () => void;
   onBack: () => void;
   className?: string;
@@ -120,7 +122,7 @@ export function ChatThread({
                     </span>
                   </div>
                 )}
-                <Bubble message={m} />
+                <Bubble message={m} canEdit={canEdit} onResent={onSent} />
               </div>
             );
           })
@@ -129,7 +131,7 @@ export function ChatThread({
 
       {/* Composer */}
       {canEdit ? (
-        <Composer chatId={conversation.chat_id} onSent={onSent} />
+        <Composer chatId={conversation.chat_id} instanceId={instanceId} onSent={onSent} />
       ) : (
         <div className="border-t border-slate-200 bg-white px-4 py-3 text-center text-xs text-muted-foreground">
           אין הרשאת שליחת הודעות
@@ -139,8 +141,36 @@ export function ChatThread({
   );
 }
 
-function Bubble({ message: m }: { message: ThreadMessage }) {
+function Bubble({
+  message: m,
+  canEdit,
+  onResent,
+}: {
+  message: ThreadMessage;
+  canEdit: boolean;
+  onResent: () => void;
+}) {
   const isSent = m.direction === 'sent';
+  const [resending, setResending] = useState(false);
+
+  async function resend() {
+    if (resending) return;
+    setResending(true);
+    try {
+      const r = await fetch(`/api/whatsapp/messages/${m.id}/resend`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(data.error || `שליחה נכשלה (HTTP ${r.status})`);
+      onResent();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'שליחה נכשלה');
+    } finally {
+      setResending(false);
+    }
+  }
+
   return (
     <div className={cn('flex', isSent ? 'justify-end' : 'justify-start')}>
       <div
@@ -152,8 +182,10 @@ function Bubble({ message: m }: { message: ThreadMessage }) {
         )}
       >
         {m.message_type === 'image' && m.media_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={m.media_url} alt="תמונה" className="mb-1 max-h-56 rounded-lg object-cover" />
+          <a href={m.media_url} target="_blank" rel="noopener noreferrer">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={m.media_url} alt="תמונה" className="mb-1 max-h-56 rounded-lg object-cover" />
+          </a>
         ) : m.message_type === 'document' && m.media_url ? (
           <a
             href={m.media_url}
@@ -175,8 +207,21 @@ function Bubble({ message: m }: { message: ThreadMessage }) {
         </div>
 
         {m.status === 'failed' && (
-          <div className="mt-0.5 text-[10px] font-medium text-red-500">
-            {m.error_detail || 'שליחה נכשלה'}
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <span className="text-[10px] font-medium text-red-500">
+              {m.error_detail || 'שליחה נכשלה'}
+            </span>
+            {isSent && canEdit && (
+              <button
+                type="button"
+                onClick={() => void resend()}
+                disabled={resending}
+                className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+              >
+                {resending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
+                שלח שוב
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -202,9 +247,21 @@ function StatusTick({ status }: { status: ChatStatus }) {
   }
 }
 
-function Composer({ chatId, onSent }: { chatId: string; onSent: () => void }) {
+const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50MB — Green API limit
+
+function Composer({
+  chatId,
+  instanceId,
+  onSent,
+}: {
+  chatId: string;
+  instanceId: string | null;
+  onSent: () => void;
+}) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   async function send() {
     const body = text.trim();
@@ -215,7 +272,7 @@ function Composer({ chatId, onSent }: { chatId: string; onSent: () => void }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ chat_id: chatId, text: body }),
+        body: JSON.stringify({ chat_id: chatId, text: body, instance_id: instanceId }),
       });
       const data = (await r.json().catch(() => ({}))) as { error?: string; warning?: string };
       if (!r.ok) throw new Error(data.error || `שליחה נכשלה (HTTP ${r.status})`);
@@ -229,6 +286,37 @@ function Composer({ chatId, onSent }: { chatId: string; onSent: () => void }) {
     }
   }
 
+  async function sendFile(file: File) {
+    if (uploading) return;
+    if (file.size > MAX_FILE_BYTES) {
+      toast.error('הקובץ גדול מדי (מקסימום 50MB)');
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('chat_id', chatId);
+      if (instanceId) fd.append('instance_id', instanceId);
+      const caption = text.trim();
+      if (caption) fd.append('caption', caption);
+      const r = await fetch('/api/whatsapp/chat-send-file', {
+        method: 'POST',
+        credentials: 'include',
+        body: fd,
+      });
+      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(data.error || `שליחה נכשלה (HTTP ${r.status})`);
+      setText('');
+      onSent();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'שליחת הקובץ נכשלה');
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -236,11 +324,22 @@ function Composer({ chatId, onSent }: { chatId: string; onSent: () => void }) {
     }
   }
 
-  const canSend = text.trim().length > 0 && !sending;
+  const busy = sending || uploading;
+  const canSend = text.trim().length > 0 && !busy;
 
   return (
     <div className="border-t border-slate-200 bg-white p-3">
       <div className="relative">
+        <input
+          ref={fileRef}
+          type="file"
+          hidden
+          accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.zip"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void sendFile(f);
+          }}
+        />
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -248,9 +347,21 @@ function Composer({ chatId, onSent }: { chatId: string; onSent: () => void }) {
           placeholder="כתוב הודעה… (Enter לשליחה, Shift+Enter לשורה חדשה)"
           rows={1}
           dir="rtl"
-          disabled={sending}
-          className="max-h-32 resize-none pe-14"
+          disabled={busy}
+          className="max-h-32 resize-none pe-24"
         />
+        {/* Attach (Part E) */}
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          aria-label="צרף קובץ"
+          className={cn(
+            'absolute bottom-2 end-12 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50',
+          )}
+        >
+          {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+        </button>
         <button
           type="button"
           onClick={() => void send()}

@@ -1,18 +1,19 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { pullGreenApiMessages } from '@/lib/whatsapp-inbound';
-import { GreenApiNotConfiguredError } from '@/lib/db/greenApiSettings';
+import { getInstanceCredsForUser, InstanceNotConfiguredError } from '@/lib/db/whatsappInstances';
 import { WhatsAppError } from '@/lib/whatsapp';
 
 export const runtime = 'nodejs';
 
 // POST /api/whatsapp/pull — proactive fallback: pull the last N minutes of
-// incoming messages from Green API and store the new ones. Gated on whatsapp:edit
-// (it writes inbound rows). Returns { received, skipped }.
+// incoming messages from the acting user's instance and store the new ones.
+// Gated on whatsapp:edit (it writes inbound rows). Returns { received, skipped }.
 export async function POST(req: NextRequest) {
+  let actor: Actor;
   try {
-    await requirePermission('whatsapp', 'edit');
+    actor = await requirePermission('whatsapp', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -31,10 +32,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await pullGreenApiMessages(minutes);
+    const creds = await getInstanceCredsForUser(actor.id);
+    const result = await pullGreenApiMessages(creds, minutes);
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
-    if (err instanceof GreenApiNotConfiguredError) {
+    if (err instanceof InstanceNotConfiguredError) {
       return NextResponse.json({ error: err.message }, { status: 503 });
     }
     const detail = err instanceof WhatsAppError ? err.message : (err as Error).message;

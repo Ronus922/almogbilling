@@ -4,9 +4,11 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorContactByPhone } from '@/lib/db/debtors';
 import { insertChatMessage } from '@/lib/db/chatMessages';
 import {
-  getGreenApiSettings,
-  GreenApiNotConfiguredError,
-} from '@/lib/db/greenApiSettings';
+  resolveViewInstanceId,
+  getInstanceCredsById,
+  InstanceNotConfiguredError,
+  type InstanceCreds,
+} from '@/lib/db/whatsappInstances';
 import {
   normalizePhone,
   chatIdToLocalPhone,
@@ -21,6 +23,8 @@ interface PostBody {
   chat_id?: unknown;
   phone?: unknown;
   text?: unknown;
+  /** Selected instance (admins viewing another employee's inbox). */
+  instance_id?: unknown;
 }
 
 // POST /api/whatsapp/chat-send — send a free-text message from the inbox composer.
@@ -84,13 +88,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'יש לציין chat_id או phone' }, { status: 400 });
   }
 
-  // Credentials.
-  let instanceId: string;
-  let token: string;
+  // Resolve the sending instance: the selected instance (admin) or the actor's
+  // own. Send always goes through a connected instance the actor is allowed to use.
+  const requestedInstanceId = typeof body.instance_id === 'string' ? body.instance_id.trim() : '';
+  let creds: InstanceCreds;
   try {
-    ({ instanceId, token } = await getGreenApiSettings());
+    const instanceDbId = await resolveViewInstanceId(actor, requestedInstanceId || null);
+    const resolved = instanceDbId ? await getInstanceCredsById(instanceDbId) : null;
+    if (!resolved) throw new InstanceNotConfiguredError();
+    creds = resolved;
   } catch (err) {
-    if (err instanceof GreenApiNotConfiguredError) {
+    if (err instanceof InstanceNotConfiguredError) {
       return NextResponse.json({ error: err.message }, { status: 503 });
     }
     throw err;
@@ -99,7 +107,10 @@ export async function POST(req: NextRequest) {
   // Group conversation — direct send, no debtor link / timeline event.
   if (isGroup) {
     try {
-      const { idMessage } = await sendWhatsAppMessage({ instanceId, token, chatId, message: text });
+      const { idMessage } = await sendWhatsAppMessage({
+        instanceId: creds.greenInstanceId, token: creds.token, apiUrl: creds.apiUrl,
+        chatId, message: text,
+      });
       await insertChatMessage({
         debtorId: null,
         contactPhone: chatId,
@@ -109,6 +120,7 @@ export async function POST(req: NextRequest) {
         content: text,
         status: 'sent',
         sentBy: actor.id,
+        instanceId: creds.id,
       });
       return NextResponse.json({ ok: true, idMessage, chat_id: chatId });
     } catch (err) {
@@ -116,7 +128,8 @@ export async function POST(req: NextRequest) {
       try {
         await insertChatMessage({
           debtorId: null, contactPhone: chatId, chatId, externalMessageId: null,
-          direction: 'sent', content: text, status: 'failed', errorDetail: detail, sentBy: actor.id,
+          direction: 'sent', content: text, status: 'failed', errorDetail: detail,
+          sentBy: actor.id, instanceId: creds.id,
         });
       } catch { /* best-effort */ }
       return NextResponse.json({ error: `שליחה נכשלה: ${detail}` }, { status: 502 });
@@ -136,7 +149,7 @@ export async function POST(req: NextRequest) {
   }
 
   const debtor = localPhone ? await getDebtorContactByPhone(localPhone) : null;
-  const result = await sendChatMessageToPhone({ phoneIntl, text, debtor, actor, instanceId, token });
+  const result = await sendChatMessageToPhone({ phoneIntl, text, debtor, actor, creds });
 
   if (!result.ok) {
     return NextResponse.json({ error: `שליחה נכשלה: ${result.error}` }, { status: 502 });

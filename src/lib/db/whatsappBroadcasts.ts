@@ -17,13 +17,15 @@ export async function createBroadcast(input: {
   audience: BroadcastAudience;
   totalCount: number;
   createdBy: string;
+  /** Sending Green API instance (uuid). */
+  instanceId?: string | null;
 }): Promise<Broadcast> {
   const row = await queryOne<Broadcast>(
     `insert into public.whatsapp_broadcasts
-       (name, body, audience_filter, total_count, status, created_by)
-     values ($1, $2, $3::jsonb, $4, 'running', $5)
+       (name, body, audience_filter, total_count, status, created_by, instance_id)
+     values ($1, $2, $3::jsonb, $4, 'running', $5, $6)
      returning ${SELECT_COLUMNS}`,
-    [input.name, input.body, JSON.stringify(input.audience), input.totalCount, input.createdBy],
+    [input.name, input.body, JSON.stringify(input.audience), input.totalCount, input.createdBy, input.instanceId ?? null],
   );
   return row as Broadcast;
 }

@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { markConversationRead } from '@/lib/db/whatsappConversations';
+import { resolveViewInstanceId } from '@/lib/db/whatsappInstances';
 
 export const runtime = 'nodejs';
 
@@ -9,12 +10,13 @@ interface RouteCtx {
   params: Promise<{ chatId: string }>;
 }
 
-// POST /api/whatsapp/conversations/[chatId]/read — mark a conversation read.
-// A side-effect of opening it; gated on whatsapp_chat:view (viewers may use the
-// inbox). chatId is URL-encoded ("972…%40c.us").
-export async function POST(_req: NextRequest, ctx: RouteCtx) {
+// POST /api/whatsapp/conversations/[chatId]/read?instance_id=… — mark a
+// conversation read (scoped to the selected instance). A side-effect of opening
+// it; gated on whatsapp_chat:view. chatId is URL-encoded ("972…%40c.us").
+export async function POST(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('whatsapp_chat', 'view');
+    actor = await requirePermission('whatsapp_chat', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -27,6 +29,7 @@ export async function POST(_req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'chat_id חסר' }, { status: 400 });
   }
 
-  const marked = await markConversationRead(decoded);
+  const instanceId = await resolveViewInstanceId(actor, req.nextUrl.searchParams.get('instance_id'));
+  const marked = await markConversationRead(decoded, instanceId);
   return NextResponse.json({ ok: true, marked });
 }

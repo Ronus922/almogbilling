@@ -4,6 +4,7 @@ import { sendWhatsAppMessage, WhatsAppError } from '@/lib/whatsapp';
 import { sendAndRecordWhatsApp } from '@/lib/whatsapp-send';
 import type { Actor } from '@/lib/auth/actor';
 import type { DebtorContact } from '@/lib/db/debtors';
+import type { InstanceCreds } from '@/lib/db/whatsappInstances';
 
 // Send one free-text message from the /messages inbox composer.
 //   • Linked conversation (debtor known) → reuse sendAndRecordWhatsApp so the
@@ -26,10 +27,9 @@ export async function sendChatMessageToPhone(args: {
   text: string;
   debtor: DebtorContact | null;
   actor: Actor;
-  instanceId: string;
-  token: string;
+  creds: InstanceCreds;
 }): Promise<ChatSendResult> {
-  const { phoneIntl, text, debtor, actor, instanceId, token } = args;
+  const { phoneIntl, text, debtor, actor, creds } = args;
 
   if (debtor) {
     return sendAndRecordWhatsApp({
@@ -38,14 +38,19 @@ export async function sendChatMessageToPhone(args: {
       rawMessage: text,
       templateId: null,
       actor,
-      instanceId,
-      token,
+      creds,
     });
   }
 
   const chatId = `${phoneIntl}@c.us`;
   try {
-    const { idMessage } = await sendWhatsAppMessage({ instanceId, token, chatId, message: text });
+    const { idMessage } = await sendWhatsAppMessage({
+      instanceId: creds.greenInstanceId,
+      token: creds.token,
+      apiUrl: creds.apiUrl,
+      chatId,
+      message: text,
+    });
     await insertChatMessage({
       debtorId: null,
       contactPhone: phoneIntl,
@@ -55,6 +60,7 @@ export async function sendChatMessageToPhone(args: {
       content: text,
       status: 'sent',
       sentBy: actor.id,
+      instanceId: creds.id,
     });
     return { ok: true, idMessage };
   } catch (err) {
@@ -70,6 +76,7 @@ export async function sendChatMessageToPhone(args: {
         status: 'failed',
         errorDetail: detail,
         sentBy: actor.id,
+        instanceId: creds.id,
       });
     } catch (logErr) {
       console.error('[whatsapp/chat-send] failed to record failed row', logErr);

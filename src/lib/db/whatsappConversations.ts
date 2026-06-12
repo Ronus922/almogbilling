@@ -38,7 +38,11 @@ interface ConvRow {
  * `search` matches: debtor name (ILIKE), apartment number (ILIKE), or phone by
  * normalized digit substring (so "050…", "972…" and "53…" all hit).
  */
-export async function listConversations(search = '', limit = 200): Promise<Conversation[]> {
+export async function listConversations(
+  search = '',
+  instanceId: string | null = null,
+  limit = 200,
+): Promise<Conversation[]> {
   const term = search.trim();
   const like = `%${term}%`;
   const digits = term.replace(/\D+/g, '');
@@ -60,6 +64,7 @@ export async function listConversations(search = '', limit = 200): Promise<Conve
           (array_agg(m.direction order by m.created_at desc))[1]             as last_direction
         from public.chat_messages m
         where m.chat_id is not null
+          and ($6::uuid is null or m.instance_id = $6::uuid)
         group by m.chat_id
      ),
      keyed as (
@@ -100,7 +105,7 @@ export async function listConversations(search = '', limit = 200): Promise<Conve
              or ($4 <> '' and k.convkey is not null and k.convkey like '%' || $4 || '%'))
       order by k.last_at desc
       limit $5`,
-    [term, like, digits, digitsTrim, Math.max(1, Math.min(500, limit))],
+    [term, like, digits, digitsTrim, Math.max(1, Math.min(500, limit)), instanceId],
   );
 
   return r.rows.map((row): Conversation => {
@@ -130,6 +135,7 @@ export async function listConversations(search = '', limit = 200): Promise<Conve
 export async function listThread(
   chatId: string,
   before: string | null,
+  instanceId: string | null = null,
   limit = 50,
 ): Promise<ThreadMessage[]> {
   const r = await query<ThreadMessage>(
@@ -143,21 +149,24 @@ export async function listThread(
        left join public.users u on u.id = m.sent_by
       where m.chat_id = $1
         and ($2::timestamptz is null or m.created_at < $2::timestamptz)
+        and ($4::uuid is null or m.instance_id = $4::uuid)
       order by m.created_at desc
       limit $3`,
-    [chatId, before, Math.max(1, Math.min(200, limit))],
+    [chatId, before, Math.max(1, Math.min(200, limit)), instanceId],
   );
   // Reverse to chronological (oldest → newest) for rendering.
   return r.rows.reverse();
 }
 
-/** Mark every unread inbound message in a conversation as read. Returns the count. */
-export async function markConversationRead(chatId: string): Promise<number> {
+/** Mark every unread inbound message in a conversation as read. Returns the count.
+ *  Scoped to an instance when provided (admins viewing a specific employee's inbox). */
+export async function markConversationRead(chatId: string, instanceId: string | null = null): Promise<number> {
   const r = await query(
     `update public.chat_messages
         set read_at = now()
-      where chat_id = $1 and direction = 'received' and read_at is null`,
-    [chatId],
+      where chat_id = $1 and direction = 'received' and read_at is null
+        and ($2::uuid is null or instance_id = $2::uuid)`,
+    [chatId, instanceId],
   );
   return r.rowCount ?? 0;
 }

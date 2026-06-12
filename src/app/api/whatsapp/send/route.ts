@@ -3,9 +3,10 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorContact } from '@/lib/db/debtors';
 import {
-  getGreenApiSettings,
-  GreenApiNotConfiguredError,
-} from '@/lib/db/greenApiSettings';
+  getInstanceCredsForUser,
+  InstanceNotConfiguredError,
+  type InstanceCreds,
+} from '@/lib/db/whatsappInstances';
 import { normalizePhone, parsePhoneCandidates, WhatsAppError } from '@/lib/whatsapp';
 import { sendAndRecordWhatsApp } from '@/lib/whatsapp-send';
 
@@ -87,13 +88,12 @@ export async function POST(req: NextRequest) {
     phone = candidates[0].phone;
   }
 
-  // Resolve credentials. Missing config is a real error (not a send attempt).
-  let instanceId: string;
-  let token: string;
+  // Resolve the sender's own instance. Missing config is a real error (not a send).
+  let creds: InstanceCreds;
   try {
-    ({ instanceId, token } = await getGreenApiSettings());
+    creds = await getInstanceCredsForUser(actor.id);
   } catch (err) {
-    if (err instanceof GreenApiNotConfiguredError) {
+    if (err instanceof InstanceNotConfiguredError) {
       return NextResponse.json({ error: err.message }, { status: 503 });
     }
     throw err;
@@ -107,8 +107,7 @@ export async function POST(req: NextRequest) {
     rawMessage: message,
     templateId,
     actor,
-    instanceId,
-    token,
+    creds,
   });
 
   if (!result.ok) {

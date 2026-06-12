@@ -37,6 +37,8 @@ export interface InsertChatMessageArgs {
   sentBy: string | null;
   /** Campaign id when this row is part of a broadcast. */
   broadcastId?: string | null;
+  /** Sending/receiving Green API instance (uuid FK → whatsapp_instances). */
+  instanceId?: string | null;
   /** Inbound gateway timestamp (unix seconds). Omitted → DB default now(). */
   createdAtUnix?: number | null;
 }
@@ -53,9 +55,9 @@ export async function insertChatMessage(
     `insert into public.chat_messages
        (debtor_id, contact_phone, chat_id, external_message_id,
         direction, message_type, link_status, content, status, error_detail, sent_by,
-        media_url, broadcast_id, created_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-             coalesce(to_timestamp($14), now()))
+        media_url, broadcast_id, instance_id, created_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+             coalesce(to_timestamp($15), now()))
      on conflict (external_message_id) do nothing
      returning id`,
     [
@@ -72,6 +74,7 @@ export async function insertChatMessage(
       args.sentBy,
       args.mediaUrl ?? null,
       args.broadcastId ?? null,
+      args.instanceId ?? null,
       args.createdAtUnix ?? null,
     ],
   );
@@ -114,6 +117,48 @@ export async function updateMessageStatusByExternalId(
     [externalMessageId, status],
   );
   return { matched: r.rows[0]?.matched ?? false, advanced: r.rows[0]?.advanced ?? false };
+}
+
+export interface ResendableMessage {
+  id: string;
+  chat_id: string | null;
+  contact_phone: string;
+  content: string | null;
+  message_type: ChatMessageType;
+  media_url: string | null;
+  instance_id: string | null;
+  debtor_id: string | null;
+}
+
+/** Fetch a failed OUTBOUND message for a resend attempt (null if not eligible). */
+export async function getResendableMessage(id: string): Promise<ResendableMessage | null> {
+  const r = await query<ResendableMessage>(
+    `select id, chat_id, contact_phone, content, message_type, media_url, instance_id, debtor_id
+       from public.chat_messages
+      where id = $1 and direction = 'sent' and status = 'failed'
+      limit 1`,
+    [id],
+  );
+  return r.rows[0] ?? null;
+}
+
+/** Resend succeeded — flip the existing row to 'sent' with its new Green API id
+ *  (no new row, so the bubble updates in place). */
+export async function markMessageResent(id: string, externalMessageId: string): Promise<void> {
+  await query(
+    `update public.chat_messages
+        set status = 'sent', external_message_id = $2, error_detail = null, created_at = now()
+      where id = $1`,
+    [id, externalMessageId],
+  );
+}
+
+/** Resend failed again — refresh the error detail, keep the row 'failed'. */
+export async function markMessageResendFailed(id: string, detail: string): Promise<void> {
+  await query(
+    `update public.chat_messages set error_detail = $2 where id = $1`,
+    [id, detail],
+  );
 }
 
 /** Convenience overload for the transactional success path. */

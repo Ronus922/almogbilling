@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
 import { SmtpSettingsCard } from '@/components/settings/SmtpSettingsCard';
-import { GreenApiSettingsCard } from '@/components/settings/GreenApiSettingsCard';
+import { WhatsAppConnections } from './components/WhatsAppConnections';
 
 export const runtime = 'nodejs';
 
@@ -13,6 +13,8 @@ export default async function SettingsPage() {
     redirect('/dashboard');
   }
 
+  const isAdmin = actor.role === 'admin' || actor.role === 'super_admin';
+
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
       <div>
@@ -21,7 +23,7 @@ export default async function SettingsPage() {
       </div>
 
       <SmtpSettingsCard />
-      <GreenApiSettingsCard />
+      <WhatsAppConnections isAdmin={isAdmin} currentUserId={actor.id} />
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getTemplateById } from '@/lib/db/whatsappTemplates';
 import { listRecentBroadcasts } from '@/lib/db/whatsappBroadcasts';
-import { GreenApiNotConfiguredError } from '@/lib/db/greenApiSettings';
+import { InstanceNotConfiguredError } from '@/lib/db/whatsappInstances';
 import { startBroadcast, BroadcastValidationError } from '@/lib/whatsapp-broadcast';
 import type { BroadcastAudience, BroadcastAudienceType } from '@/types/whatsapp';
 
@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
     if (err instanceof BroadcastValidationError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
-    if (err instanceof GreenApiNotConfiguredError) {
+    if (err instanceof InstanceNotConfiguredError) {
       return NextResponse.json({ error: err.message }, { status: 503 });
     }
     throw err;

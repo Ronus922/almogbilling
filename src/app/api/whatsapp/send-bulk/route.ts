@@ -2,7 +2,11 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorContact } from '@/lib/db/debtors';
-import { getGreenApiSettings, GreenApiNotConfiguredError } from '@/lib/db/greenApiSettings';
+import {
+  getInstanceCredsForUser,
+  InstanceNotConfiguredError,
+  type InstanceCreds,
+} from '@/lib/db/whatsappInstances';
 import { cleanPhoneField, normalizePhone } from '@/lib/whatsapp';
 import { sendAndRecordWhatsApp } from '@/lib/whatsapp-send';
 import type { BulkSendProgress, BulkSendSummary } from '@/types/whatsapp';
@@ -55,12 +59,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'ההודעה ארוכה מדי (מקסימום 4096 תווים)' }, { status: 400 });
   }
 
-  let instanceId: string;
-  let token: string;
+  let creds: InstanceCreds;
   try {
-    ({ instanceId, token } = await getGreenApiSettings());
+    creds = await getInstanceCredsForUser(actor.id);
   } catch (err) {
-    if (err instanceof GreenApiNotConfiguredError) {
+    if (err instanceof InstanceNotConfiguredError) {
       return NextResponse.json({ error: err.message }, { status: 503 });
     }
     throw err;
@@ -118,8 +121,7 @@ export async function POST(req: NextRequest) {
                     rawMessage: message,
                     templateId,
                     actor,
-                    instanceId,
-                    token,
+                    creds,
                   });
                   if (result.ok) {
                     summary.sent++;

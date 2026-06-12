@@ -5,7 +5,7 @@ import { MessageCircle, Plus, Megaphone } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { Conversation, ThreadMessage } from '@/types/whatsapp';
+import type { Conversation, ThreadMessage, InstanceOption } from '@/types/whatsapp';
 import { ConversationList } from './ConversationList';
 import { ChatThread } from './ChatThread';
 import { NewConversationDialog } from './NewConversationDialog';
@@ -19,9 +19,13 @@ type Tab = 'chats' | 'templates';
 export function MessagesClient({
   canEdit,
   canManageTemplates,
+  isAdmin,
+  currentUserId,
 }: {
   canEdit: boolean;
   canManageTemplates: boolean;
+  isAdmin: boolean;
+  currentUserId: string;
 }) {
   const [tab, setTab] = useState<Tab>('chats');
   const [search, setSearch] = useState('');
@@ -33,18 +37,32 @@ export function MessagesClient({
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
 
-  // Keep the latest selected chat id available to the polling closure.
+  // Multi-instance: admins can switch which employee's inbox they view. The
+  // selected instance scopes the conversation list, threads, sending and reads.
+  const [instances, setInstances] = useState<InstanceOption[]>([]);
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+
+  // Keep the latest selected chat id + filters available to the polling closure.
   const selectedIdRef = useRef<string | null>(null);
   const searchRef = useRef('');
+  const instanceRef = useRef<string | null>(null);
   selectedIdRef.current = selected?.chat_id ?? null;
   searchRef.current = search;
+  instanceRef.current = selectedInstanceId;
+
+  /** `&instance_id=…` suffix for the currently selected instance (or ''). */
+  const instParam = useCallback(
+    () => (instanceRef.current ? `&instance_id=${encodeURIComponent(instanceRef.current)}` : ''),
+    [],
+  );
 
   const fetchConversations = useCallback(async (q: string, silent = false) => {
     if (!silent) setLoadingConvos(true);
     try {
-      const r = await fetch(`/api/whatsapp/conversations?search=${encodeURIComponent(q)}`, {
-        credentials: 'include',
-      });
+      const r = await fetch(
+        `/api/whatsapp/conversations?search=${encodeURIComponent(q)}${instParam()}`,
+        { credentials: 'include' },
+      );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = (await r.json()) as Conversation[];
       setConversations(data);
@@ -53,14 +71,15 @@ export function MessagesClient({
     } finally {
       if (!silent) setLoadingConvos(false);
     }
-  }, []);
+  }, [instParam]);
 
   const fetchThread = useCallback(async (chatId: string, silent = false) => {
     if (!silent) setLoadingThread(true);
     try {
-      const r = await fetch(`/api/whatsapp/thread?chat_id=${encodeURIComponent(chatId)}`, {
-        credentials: 'include',
-      });
+      const r = await fetch(
+        `/api/whatsapp/thread?chat_id=${encodeURIComponent(chatId)}${instParam()}`,
+        { credentials: 'include' },
+      );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = (await r.json()) as ThreadMessage[];
       // Ignore a late response for a conversation the user already left.
@@ -70,12 +89,34 @@ export function MessagesClient({
     } finally {
       if (!silent) setLoadingThread(false);
     }
-  }, []);
+  }, [instParam]);
 
-  // Initial load.
+  // Load the instances this user may view; default to their own, else the first.
   useEffect(() => {
-    void fetchConversations('');
-  }, [fetchConversations]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch('/api/whatsapp/instances', { credentials: 'include' });
+        if (!r.ok) return;
+        const data = (await r.json()) as InstanceOption[];
+        if (cancelled) return;
+        setInstances(data);
+        const own = data.find((i) => i.user_id === currentUserId);
+        setSelectedInstanceId(own?.id ?? data[0]?.id ?? null);
+      } catch {
+        /* selector is optional — inbox still works on the server default */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentUserId]);
+
+  // Initial load + reload whenever the viewed instance changes (admin switch).
+  // Clears the open conversation since chat ids are scoped per instance.
+  useEffect(() => {
+    setSelected(null);
+    setThread([]);
+    void fetchConversations(searchRef.current);
+  }, [selectedInstanceId, fetchConversations]);
 
   // Debounced search.
   useEffect(() => {
@@ -95,7 +136,8 @@ export function MessagesClient({
 
   const markRead = useCallback(async (chatId: string) => {
     try {
-      await fetch(`/api/whatsapp/conversations/${encodeURIComponent(chatId)}/read`, {
+      const q = instanceRef.current ? `?instance_id=${encodeURIComponent(instanceRef.current)}` : '';
+      await fetch(`/api/whatsapp/conversations/${encodeURIComponent(chatId)}/read${q}`, {
         method: 'POST',
         credentials: 'include',
       });
@@ -176,6 +218,10 @@ export function MessagesClient({
             search={search}
             onSearch={setSearch}
             loading={loadingConvos}
+            instances={instances}
+            selectedInstanceId={selectedInstanceId}
+            onSelectInstance={setSelectedInstanceId}
+            showInstanceSelector={isAdmin && instances.length > 1}
             className={cn(selected && 'hidden md:flex')}
           />
           <ChatThread
@@ -183,6 +229,7 @@ export function MessagesClient({
             messages={thread}
             loading={loadingThread}
             canEdit={canEdit}
+            instanceId={selectedInstanceId}
             onSent={handleSent}
             onBack={() => setSelected(null)}
             className={cn(!selected && 'hidden md:flex')}

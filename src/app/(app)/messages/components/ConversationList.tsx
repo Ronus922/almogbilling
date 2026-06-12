@@ -1,9 +1,9 @@
 'use client';
 
-import { Search, MessageCircle } from 'lucide-react';
+import { Search, MessageCircle, Smartphone } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import type { Conversation } from '@/types/whatsapp';
+import type { Conversation, InstanceOption } from '@/types/whatsapp';
 import { conversationTitle, previewText, formatListStamp } from './format';
 import { ChatAvatar } from './ChatAvatar';
 
@@ -14,6 +14,10 @@ export function ConversationList({
   search,
   onSearch,
   loading,
+  instances,
+  selectedInstanceId,
+  onSelectInstance,
+  showInstanceSelector,
   className,
 }: {
   conversations: Conversation[];
@@ -22,6 +26,10 @@ export function ConversationList({
   search: string;
   onSearch: (v: string) => void;
   loading: boolean;
+  instances: InstanceOption[];
+  selectedInstanceId: string | null;
+  onSelectInstance: (id: string) => void;
+  showInstanceSelector: boolean;
   className?: string;
 }) {
   return (
@@ -31,6 +39,28 @@ export function ConversationList({
         className,
       )}
     >
+      {/* Instance selector (admins viewing per-employee inboxes) */}
+      {showInstanceSelector && (
+        <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
+          <Smartphone className="h-4 w-4 shrink-0 text-slate-400" />
+          <select
+            value={selectedInstanceId ?? ''}
+            onChange={(e) => onSelectInstance(e.target.value)}
+            dir="rtl"
+            aria-label="בחירת חיבור וואטסאפ"
+            className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700 focus:border-emerald-400 focus:outline-none"
+          >
+            {instances.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.display_name}
+                {i.owner_name ? ` · ${i.owner_name}` : ''}
+                {i.state !== 'authorized' ? ' (מנותק)' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* Search */}
       <div className="border-b border-slate-100 p-3">
         <div className="relative">

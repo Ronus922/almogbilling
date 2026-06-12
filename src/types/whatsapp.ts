@@ -166,6 +166,23 @@ export interface Conversation {
 /** A message inside an open thread (left panel). Same shape as ChatMessage. */
 export type ThreadMessage = ChatMessage;
 
+export type InstanceState =
+  | 'notAuthorized' | 'authorized' | 'blocked' | 'starting' | 'yellowCard' | 'sleepMode';
+
+/** A WhatsApp instance as exposed to the inbox selector (token-free). */
+export interface InstanceOption {
+  id: string;
+  user_id: string;
+  display_name: string;
+  green_instance_id: string;
+  api_url: string;
+  state: InstanceState;
+  state_checked_at: string | null;
+  created_at: string;
+  owner_name: string | null;
+  owner_username: string | null;
+}
+
 /** Resolved target for "new conversation" / composer send. */
 export interface NewChatTarget {
   /** Phone in international form ("972XXXXXXXXX"). */

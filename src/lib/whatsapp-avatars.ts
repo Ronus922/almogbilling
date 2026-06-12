@@ -1,5 +1,5 @@
 import 'server-only';
-import { getGreenApiSettings, GreenApiNotConfiguredError } from '@/lib/db/greenApiSettings';
+import type { InstanceCreds } from '@/lib/db/whatsappInstances';
 import { getAvatar } from '@/lib/whatsapp';
 import { listStaleAvatarChats, upsertAvatar } from '@/lib/db/whatsappAvatars';
 
@@ -26,24 +26,20 @@ function sleep(ms: number): Promise<void> {
  * for MAX_AGE_DAYS). Never throws; avatars are decorative and must never break
  * the inbox. No-op when Green API isn't configured or a refresh is already running.
  */
-export async function refreshStaleAvatars(chatIds: string[]): Promise<void> {
-  if (refreshing || chatIds.length === 0) return;
+export async function refreshStaleAvatars(
+  chatIds: string[],
+  creds: InstanceCreds | null,
+): Promise<void> {
+  if (refreshing || chatIds.length === 0 || !creds) return;
   refreshing = true;
   try {
     const stale = await listStaleAvatarChats(chatIds, MAX_PER_REQUEST, MAX_AGE_DAYS);
     if (stale.length === 0) return;
 
-    let instanceId: string;
-    let token: string;
-    try {
-      ({ instanceId, token } = await getGreenApiSettings());
-    } catch (err) {
-      if (err instanceof GreenApiNotConfiguredError) return;
-      throw err;
-    }
-
     for (const chatId of stale) {
-      const { urlAvatar } = await getAvatar({ instanceId, token, chatId });
+      const { urlAvatar } = await getAvatar({
+        instanceId: creds.greenInstanceId, token: creds.token, apiUrl: creds.apiUrl, chatId,
+      });
       // urlAvatar is null when unavailable — cached as NULL with a fresh
       // fetched_at so we don't hammer Green API for the same empty contact.
       await upsertAvatar(chatId, urlAvatar);

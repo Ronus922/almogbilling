@@ -1,7 +1,7 @@
 import 'server-only';
 import { queryOne } from '@/lib/db';
 import { insertChatMessage } from '@/lib/db/chatMessages';
-import { getGreenApiSettings } from '@/lib/db/greenApiSettings';
+import type { InstanceCreds } from '@/lib/db/whatsappInstances';
 import {
   getIncomingMessages,
   parseLastIncomingItem,
@@ -43,7 +43,10 @@ export type ProcessResult = 'inserted' | 'duplicate';
  * (linked / unlinked) and insert with idempotent dedup. Returns 'duplicate' when
  * the message was already stored (ON CONFLICT suppressed the insert).
  */
-export async function processIncomingMessage(parsed: ParsedIncoming): Promise<ProcessResult> {
+export async function processIncomingMessage(
+  parsed: ParsedIncoming,
+  instanceId: string | null = null,
+): Promise<ProcessResult> {
   // Groups (…@g.us) are one conversation keyed on the group id, never matched to
   // a single debtor — the sender's phone is still kept for reference.
   const debtorId = parsed.isGroup ? null : await findDebtorIdByPhone(parsed.senderPhoneLocal);
@@ -63,6 +66,7 @@ export async function processIncomingMessage(parsed: ParsedIncoming): Promise<Pr
     status: 'sent', // inbound = already delivered; the status column is only meaningful for outbound
     errorDetail: null,
     sentBy: null,
+    instanceId,
     createdAtUnix: parsed.timestamp,
   });
 
@@ -74,7 +78,10 @@ export async function processIncomingMessage(parsed: ParsedIncoming): Promise<Pr
  * API echo). Mirrors processIncomingMessage but direction='sent'. Dedup by
  * external_message_id makes the API echo of a message we already stored a no-op.
  */
-export async function processOutgoingMessage(parsed: ParsedOutgoing): Promise<ProcessResult> {
+export async function processOutgoingMessage(
+  parsed: ParsedOutgoing,
+  instanceId: string | null = null,
+): Promise<ProcessResult> {
   const debtorId = await findDebtorIdByPhone(parsed.recipientPhoneLocal);
 
   const id = await insertChatMessage({
@@ -90,6 +97,7 @@ export async function processOutgoingMessage(parsed: ParsedOutgoing): Promise<Pr
     status: 'sent',
     errorDetail: null,
     sentBy: null,
+    instanceId,
     createdAtUnix: parsed.timestamp,
   });
 
@@ -107,9 +115,13 @@ export interface PullResult {
  * processIncomingMessage() the webhook uses. Dedup makes this safe to re-run.
  * `received` = newly stored; `skipped` = duplicates + unparseable items.
  */
-export async function pullGreenApiMessages(minutes = 1440): Promise<PullResult> {
-  const { instanceId, token } = await getGreenApiSettings();
-  const items = await getIncomingMessages({ instanceId, token, minutes });
+export async function pullGreenApiMessages(creds: InstanceCreds, minutes = 1440): Promise<PullResult> {
+  const items = await getIncomingMessages({
+    instanceId: creds.greenInstanceId,
+    token: creds.token,
+    apiUrl: creds.apiUrl,
+    minutes,
+  });
 
   let received = 0;
   let skipped = 0;
@@ -120,7 +132,7 @@ export async function pullGreenApiMessages(minutes = 1440): Promise<PullResult> 
       continue;
     }
     try {
-      const r = await processIncomingMessage(parsed);
+      const r = await processIncomingMessage(parsed, creds.id);
       if (r === 'inserted') received++;
       else skipped++;
     } catch (err) {

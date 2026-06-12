@@ -3,6 +3,7 @@ import type { Actor } from '@/lib/auth/actor';
 import { withTransaction } from '@/lib/db';
 import type { DebtorContact } from '@/lib/db/debtors';
 import { insertChatMessage, insertChatMessageTx } from '@/lib/db/chatMessages';
+import type { InstanceCreds } from '@/lib/db/whatsappInstances';
 import { sendWhatsAppMessage, WhatsAppError } from '@/lib/whatsapp';
 import { interpolateTemplate } from '@/lib/whatsapp-template';
 import { logDebtorEvent, EVENT_TYPE_META } from '@/lib/debtor-events';
@@ -31,12 +32,12 @@ export interface SendAndRecordArgs {
   /** Template id for the timeline metadata, or null for free text. */
   templateId: string | null;
   actor: Actor;
-  instanceId: string;
-  token: string;
+  /** The sending instance (Green id + token + host + our uuid). */
+  creds: InstanceCreds;
 }
 
 export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<SendAndRecordResult> {
-  const { debtor, phoneIntl, rawMessage, templateId, actor, instanceId, token } = args;
+  const { debtor, phoneIntl, rawMessage, templateId, actor, creds } = args;
 
   // Interpolate on the server with authoritative debtor data — the single source
   // of truth (the UI preview uses the very same interpolateTemplate()).
@@ -45,7 +46,13 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
 
   let idMessage: string;
   try {
-    ({ idMessage } = await sendWhatsAppMessage({ instanceId, token, chatId, message: finalMessage }));
+    ({ idMessage } = await sendWhatsAppMessage({
+      instanceId: creds.greenInstanceId,
+      token: creds.token,
+      apiUrl: creds.apiUrl,
+      chatId,
+      message: finalMessage,
+    }));
   } catch (err) {
     const detail = err instanceof WhatsAppError ? err.message : 'שגיאה לא ידועה';
     // Record the failed attempt (no external id, no last_whatsapp_sent_at, no
@@ -61,6 +68,7 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
         status: 'failed',
         errorDetail: detail,
         sentBy: actor.id,
+        instanceId: creds.id,
       });
     } catch (logErr) {
       console.error('[whatsapp/send] failed to record failed message', logErr);
@@ -83,6 +91,7 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
         status: 'sent',
         errorDetail: null,
         sentBy: actor.id,
+        instanceId: creds.id,
       });
 
       await client.query(

@@ -4,12 +4,23 @@ import {
   parseWebhookNotificationFull,
   parseOutgoingStatus,
   parseOutgoingMessage,
+  parseStateInstanceChanged,
+  webhookInstanceId,
 } from '@/lib/whatsapp';
 import { processIncomingMessage, processOutgoingMessage } from '@/lib/whatsapp-inbound';
 import { updateMessageStatusByExternalId } from '@/lib/db/chatMessages';
+import {
+  getInstanceByGreenId,
+  updateInstanceState,
+  type InstanceState,
+} from '@/lib/db/whatsappInstances';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+const KNOWN_STATES: readonly InstanceState[] = [
+  'notAuthorized', 'authorized', 'blocked', 'starting', 'yellowCard', 'sleepMode',
+];
 
 // POST /api/webhooks/greenapi?secret=… — PUBLIC (no session). The canonical
 // Green API inbound webhook for the messaging module. Authenticated by a shared
@@ -50,10 +61,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  // Identify the receiving instance from instanceData.idInstance. Every inbound /
+  // status / state notification is attributed to ONE employee's instance.
+  const greenId = webhookInstanceId(payload);
+  const typeWebhook =
+    typeof (payload as { typeWebhook?: unknown })?.typeWebhook === 'string'
+      ? (payload as { typeWebhook: string }).typeWebhook
+      : 'unknown';
+
+  const instance = greenId ? await getInstanceByGreenId(greenId) : null;
+  // One-line audit of every notification (typeWebhook + idInstance + resolved row).
+  console.info(
+    `[webhooks/greenapi] type=${typeWebhook} idInstance=${greenId ?? '—'} instance=${instance?.id ?? 'UNKNOWN'}`,
+  );
+
+  if (!instance) {
+    // A notification for an instance we don't manage (a freshly-created instance
+    // whose row hasn't been saved, or a stale registration). Warn + ack.
+    console.warn(`[webhooks/greenapi] notification for unknown instance idInstance=${greenId ?? '—'} (type=${typeWebhook})`);
+    return NextResponse.json({ ok: true });
+  }
+
   try {
     const incoming = parseWebhookNotificationFull(payload);
     if (incoming) {
-      await processIncomingMessage(incoming);
+      await processIncomingMessage(incoming, instance.id);
       return NextResponse.json({ ok: true });
     }
 
@@ -75,7 +107,14 @@ export async function POST(req: NextRequest) {
 
     const outgoing = parseOutgoingMessage(payload);
     if (outgoing) {
-      await processOutgoingMessage(outgoing);
+      await processOutgoingMessage(outgoing, instance.id);
+      return NextResponse.json({ ok: true });
+    }
+
+    // Connection state change — keep the per-employee state badge fresh.
+    const newState = parseStateInstanceChanged(payload);
+    if (newState && (KNOWN_STATES as readonly string[]).includes(newState)) {
+      await updateInstanceState(instance.id, newState as InstanceState);
       return NextResponse.json({ ok: true });
     }
   } catch (err) {
