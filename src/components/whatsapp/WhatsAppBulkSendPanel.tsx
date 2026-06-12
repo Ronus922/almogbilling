@@ -263,7 +263,12 @@ export function WhatsAppBulkSendPanel({
                 <Label className="text-base font-medium text-muted-foreground">תבנית</Label>
                 <Select value={templateId} onValueChange={selectTemplate}>
                   <SelectTrigger className="w-full data-[size=default]:h-10">
-                    <SelectValue placeholder="בחר תבנית או כתיבה חופשית" />
+                    <SelectValue placeholder="בחר תבנית או כתיבה חופשית">
+                      {(value: string | null) => {
+                        if (!value || value === FREE_TEXT) return 'כתיבה חופשית';
+                        return templates.find((t) => t.id === value)?.name ?? 'תבנית';
+                      }}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={FREE_TEXT}>כתיבה חופשית</SelectItem>
