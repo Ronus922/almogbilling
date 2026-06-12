@@ -1,0 +1,12 @@
+{
+  "//": "tsconfig used ONLY for `npx tsx --tsconfig scripts/tsconfig.scripts.json ...`. Stubs the server-only/client-only guards so scripts can import src/lib/db/* directly. The root tsconfig.json is untouched, so the app build still enforces the real guard.",
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "..",
+    "paths": {
+      "@/*": ["src/*"],
+      "server-only": ["scripts/server-only.stub.ts"],
+      "client-only": ["scripts/server-only.stub.ts"]
+    }
+  }
+}

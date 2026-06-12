@@ -183,6 +183,28 @@ export interface UpsertContactOpts {
   protectManualFields?: boolean;
   /** Stamped onto created_by when the row is first inserted. */
   createdBy?: string | null;
+  /**
+   * Whitelist of writable columns the upsert may touch. When provided, any
+   * column NOT in this list is dropped from the payload entirely — neither
+   * inserted nor updated (apartment_number/last_synced_at are always managed).
+   * Lets a sync (Track B) declare exactly which fields it owns so it can never
+   * clobber a column it never meant to write.
+   */
+  allowedFields?: string[];
+}
+
+/**
+ * Normalize an incoming upsert value: blank/whitespace-only strings become null
+ * so they merge as "no value" (preserve existing) instead of overwriting with
+ * ''. This makes the function safe to call DIRECTLY from sync code (Track B),
+ * which bypasses the HTTP validation layer that would otherwise null empties.
+ */
+function sanitizeUpsertValue(v: unknown): unknown {
+  if (typeof v === 'string') {
+    const t = v.trim();
+    return t === '' ? null : t;
+  }
+  return v;
 }
 
 export interface UpsertContactResult {
@@ -221,12 +243,15 @@ async function _upsertContactByApartment(
 
   // DO UPDATE side: only the provided writable fields, each per its merge rule.
   const setClauses: string[] = ['last_synced_at = now()'];
+  const allowed = opts.allowedFields ? new Set(opts.allowedFields) : null;
 
   for (const c of WRITABLE_COLUMNS) {
     if (c === 'last_synced_at') continue; // managed above
+    if (allowed && !allowed.has(c)) continue; // not owned by this sync — leave untouched
     if (!(c in rec) || rec[c] === undefined) continue;
 
-    vals.push(rec[c]);
+    // Blank strings collapse to null → merge as "no value" (preserve existing).
+    vals.push(sanitizeUpsertValue(rec[c]));
     const ph = `$${vals.length}`;
     cols.push(c);
     insertExprs.push(ph);
