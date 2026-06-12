@@ -6,6 +6,8 @@
 // and render the recipient picker. The network functions below take an explicit
 // instanceId/token (no secret import), so they're never wired from the browser.
 
+import type { ChatStatus } from '@/types/whatsapp';
+
 const GREEN_API_BASE = 'https://api.green-api.com';
 
 /** Thrown for anything WhatsApp-specific. Route layer maps to a real HTTP error
@@ -223,15 +225,19 @@ export type IncomingMessageType = 'text' | 'image' | 'document';
 export interface ParsedIncoming {
   /** Green API idMessage — the dedup key (chat_messages.external_message_id). */
   externalMessageId: string;
-  /** Full Green API chat id, e.g. "972541234567@c.us". */
+  /** Full Green API chat id, e.g. "972541234567@c.us" (or a group "…@g.us"). */
   chatId: string;
-  /** Sender phone in the DB-canonical local form "0XXXXXXXXX". */
+  /** Sender phone in the DB-canonical local form "0XXXXXXXXX". For groups this
+   *  is the participant who sent the message (Green API senderData.sender). */
   senderPhoneLocal: string;
   messageType: IncomingMessageType;
   /** Text body, or — for files — the Green API downloadUrl. */
   content: string;
   /** Unix seconds from the gateway, or null (then the DB default now() applies). */
   timestamp: number | null;
+  /** true when chatId is a WhatsApp group ("…@g.us") — never matched to a single
+   *  debtor (the conversation keys on the group id, not the sender). */
+  isGroup?: boolean;
 }
 
 /**
@@ -318,6 +324,144 @@ export function parseWebhookNotification(payload: unknown): ParsedIncoming | nul
     externalMessageId,
     chatId,
     senderPhoneLocal,
+    messageType: classified.messageType,
+    content: classified.content,
+    timestamp: asNum(body.timestamp),
+  };
+}
+
+/**
+ * Group-aware variant of parseWebhookNotification used by the canonical webhook
+ * (/api/webhooks/greenapi). Identical to the person-only parser, except:
+ *   • The conversation key (chatId) is senderData.chatId verbatim — a group id
+ *     "…@g.us" is kept (the group is one conversation) instead of being skipped.
+ *   • senderPhoneLocal comes from senderData.sender (the participant) for groups,
+ *     falling back to chatId for person chats where sender === chatId.
+ *   • isGroup is set so the inbound processor never matches a group to a single
+ *     debtor.
+ * Returns null only when there's no usable id / chat / sender / supported body.
+ */
+export function parseWebhookNotificationFull(payload: unknown): ParsedIncoming | null {
+  const body = asObj(payload);
+  if (body.typeWebhook !== 'incomingMessageReceived') return null;
+
+  const externalMessageId = asStr(body.idMessage);
+  if (!externalMessageId) return null;
+
+  const senderData = asObj(body.senderData);
+  const chatId = asStr(senderData.chatId);
+  if (!chatId) return null;
+
+  const isGroup = chatId.toLowerCase().endsWith('@g.us');
+  // For groups the sender is the participant; for person chats sender === chatId.
+  const sender = asStr(senderData.sender) ?? chatId;
+  const senderPhoneLocal = chatIdToLocalPhone(sender);
+  if (!senderPhoneLocal) return null; // can't attribute the message → skip
+
+  const messageData = asObj(body.messageData);
+  const typeMessage = asStr(messageData.typeMessage) ?? '';
+  const textMessageData = asObj(messageData.textMessageData);
+  const extendedTextMessageData = asObj(messageData.extendedTextMessageData);
+  const fileMessageData = asObj(messageData.fileMessageData);
+
+  const classified = classifyIncoming(typeMessage, {
+    text: asStr(textMessageData.textMessage) ?? asStr(extendedTextMessageData.text),
+    downloadUrl: asStr(fileMessageData.downloadUrl),
+  });
+  if (!classified) return null;
+
+  return {
+    externalMessageId,
+    chatId,
+    senderPhoneLocal,
+    messageType: classified.messageType,
+    content: classified.content,
+    timestamp: asNum(body.timestamp),
+    isGroup,
+  };
+}
+
+/** Maps a Green API outgoing status string to our ChatStatus, or null if it
+ *  isn't a status we track (then the row keeps its current status). */
+function mapOutgoingStatus(raw: string): ChatStatus | null {
+  switch (raw) {
+    case 'sent':       return 'sent';
+    case 'delivered':  return 'delivered';
+    case 'read':
+    case 'played':     return 'read';
+    case 'failed':
+    case 'noAccount':
+    case 'notInGroup':
+    case 'yellowCard': return 'failed';
+    case 'pending':    return 'queued';
+    default:           return null;
+  }
+}
+
+export interface ParsedOutgoingStatus {
+  externalMessageId: string;
+  status: ChatStatus;
+}
+
+/** Parse an `outgoingMessageStatus` webhook → the message id + mapped status, or
+ *  null for any other notification / untracked status. */
+export function parseOutgoingStatus(payload: unknown): ParsedOutgoingStatus | null {
+  const body = asObj(payload);
+  if (body.typeWebhook !== 'outgoingMessageStatus') return null;
+  const externalMessageId = asStr(body.idMessage);
+  if (!externalMessageId) return null;
+  const status = mapOutgoingStatus(asStr(body.status) ?? '');
+  if (!status) return null;
+  return { externalMessageId, status };
+}
+
+export interface ParsedOutgoing {
+  externalMessageId: string;
+  chatId: string;
+  /** Recipient phone, local form. */
+  recipientPhoneLocal: string;
+  messageType: IncomingMessageType;
+  content: string;
+  timestamp: number | null;
+}
+
+/**
+ * Parse an `outgoingMessageReceived` (sent from the phone) or
+ * `outgoingAPIMessageReceived` (sent via the API) webhook into an outbound row.
+ * Lets the inbox reflect messages a user sent from the actual WhatsApp app.
+ * Dedup downstream (ON CONFLICT external_message_id) makes API-originated echoes
+ * — which we already stored at send time — harmless. Groups are skipped.
+ */
+export function parseOutgoingMessage(payload: unknown): ParsedOutgoing | null {
+  const body = asObj(payload);
+  const t = body.typeWebhook;
+  if (t !== 'outgoingMessageReceived' && t !== 'outgoingAPIMessageReceived') return null;
+
+  const externalMessageId = asStr(body.idMessage);
+  if (!externalMessageId) return null;
+
+  const senderData = asObj(body.senderData);
+  const chatId = asStr(senderData.chatId);
+  if (!chatId) return null;
+  const recipientPhoneLocal = chatIdToLocalPhone(chatId);
+  if (!recipientPhoneLocal) return null; // groups / unparseable → skip
+
+  const messageData = asObj(body.messageData);
+  const typeMessage = asStr(messageData.typeMessage) ?? '';
+  const textMessageData = asObj(messageData.textMessageData);
+  const extendedTextMessageData = asObj(messageData.extendedTextMessageData);
+  const fileMessageData = asObj(messageData.fileMessageData);
+
+  const classified = classifyIncoming(typeMessage, {
+    text: asStr(textMessageData.textMessage) ?? asStr(extendedTextMessageData.text),
+    downloadUrl: asStr(fileMessageData.downloadUrl),
+  });
+  if (!classified) return null;
+
+  return {
+    externalMessageId,
+    chatId,
+    recipientPhoneLocal,
     messageType: classified.messageType,
     content: classified.content,
     timestamp: asNum(body.timestamp),
@@ -420,6 +564,59 @@ export async function sendWhatsAppMessage(args: SendArgs): Promise<{ idMessage: 
   return { idMessage };
 }
 
+interface SendFileArgs {
+  instanceId: string;
+  token: string;
+  chatId: string;
+  /** Publicly reachable file URL. */
+  urlFile: string;
+  /** Filename shown to the recipient. */
+  fileName: string;
+  /** Optional caption (text under the media). */
+  caption?: string;
+}
+
+/**
+ * Sends a media message by URL via Green API.
+ *   POST waInstance{id}/sendFileByUrl/{token}  body: { chatId, urlFile, fileName, caption? }
+ * Returns the idMessage on success; throws WhatsAppError otherwise.
+ */
+export async function sendWhatsAppFileByUrl(args: SendFileArgs): Promise<{ idMessage: string }> {
+  const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/sendFileByUrl/${args.token}`;
+
+  let res: Response;
+  let raw: string;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chatId: args.chatId,
+        urlFile: args.urlFile,
+        fileName: args.fileName,
+        ...(args.caption ? { caption: args.caption } : {}),
+      }),
+    });
+    raw = await res.text();
+  } catch (err) {
+    throw new WhatsAppError(`החיבור ל-Green API נכשל: ${(err as Error).message}`);
+  }
+
+  const parsed = safeJson(raw);
+  if (!res.ok) {
+    const detail =
+      (parsed && (parsed.invokeStatus || parsed.message)) ||
+      raw.slice(0, 200).replace(/\s+/g, ' ').trim() ||
+      `HTTP ${res.status}`;
+    throw new WhatsAppError(`Green API שגיאה (${res.status}): ${detail}`);
+  }
+  const idMessage = parsed && typeof parsed.idMessage === 'string' ? parsed.idMessage : '';
+  if (!idMessage) {
+    throw new WhatsAppError('Green API לא החזיר idMessage');
+  }
+  return { idMessage };
+}
+
 interface ProbeArgs {
   instanceId: string;
   token: string;
@@ -515,26 +712,35 @@ export async function getWebhookSettings(args: ProbeArgs): Promise<Record<string
 }
 
 /**
- * POST waInstance{id}/setSettings/{token} — register our inbound webhook.
- * Sets webhookUrl + webhookUrlToken (the bearer secret Green API echoes back in
- * the Authorization header) and turns incomingWebhook on. The instance reboots
- * for a few seconds afterwards (Green API behaviour).
+ * POST waInstance{id}/setSettings/{token} — register our webhook.
+ * Enables the full notification set the inbox needs: incoming messages, outgoing
+ * messages (sent from the API or the phone) and outgoing delivery status
+ * (delivered/read). webhookUrlToken is optional — the canonical webhook
+ * authenticates with a `?secret=` query param baked into webhookUrl, so the
+ * bearer token is defence-in-depth only. The instance reboots for a few seconds
+ * afterwards (Green API behaviour).
  */
 export async function setWebhookSettings(
-  args: ProbeArgs & { webhookUrl: string; webhookToken: string },
+  args: ProbeArgs & { webhookUrl: string; webhookToken?: string },
 ): Promise<void> {
   const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/setSettings/${args.token}`;
+  const payload: Record<string, string> = {
+    webhookUrl: args.webhookUrl,
+    incomingWebhook: 'yes',
+    outgoingWebhook: 'yes',
+    outgoingMessageWebhook: 'yes',
+    outgoingAPIMessageWebhook: 'yes',
+    stateWebhook: 'no',
+  };
+  if (args.webhookToken) payload.webhookUrlToken = args.webhookToken;
+
   let res: Response;
   let raw: string;
   try {
     res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        webhookUrl: args.webhookUrl,
-        webhookUrlToken: args.webhookToken,
-        incomingWebhook: 'yes',
-      }),
+      body: JSON.stringify(payload),
     });
     raw = await res.text();
   } catch (err) {

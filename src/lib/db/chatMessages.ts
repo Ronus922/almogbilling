@@ -30,9 +30,13 @@ export interface InsertChatMessageArgs {
   /** Defaults to 'linked'. Inbound messages with no matching debtor pass 'unlinked'. */
   linkStatus?: ChatLinkStatus;
   content: string | null;
+  /** Media URL for image/document messages (mirrors content for inbound files). */
+  mediaUrl?: string | null;
   status: ChatStatus;
   errorDetail?: string | null;
   sentBy: string | null;
+  /** Campaign id when this row is part of a broadcast. */
+  broadcastId?: string | null;
   /** Inbound gateway timestamp (unix seconds). Omitted → DB default now(). */
   createdAtUnix?: number | null;
 }
@@ -48,9 +52,10 @@ export async function insertChatMessage(
   const r = await exec.query<{ id: string }>(
     `insert into public.chat_messages
        (debtor_id, contact_phone, chat_id, external_message_id,
-        direction, message_type, link_status, content, status, error_detail, sent_by, created_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-             coalesce(to_timestamp($12), now()))
+        direction, message_type, link_status, content, status, error_detail, sent_by,
+        media_url, broadcast_id, created_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+             coalesce(to_timestamp($14), now()))
      on conflict (external_message_id) do nothing
      returning id`,
     [
@@ -65,10 +70,34 @@ export async function insertChatMessage(
       args.status,
       args.errorDetail ?? null,
       args.sentBy,
+      args.mediaUrl ?? null,
+      args.broadcastId ?? null,
       args.createdAtUnix ?? null,
     ],
   );
   return r.rows[0]?.id ?? null;
+}
+
+/**
+ * Update the delivery status of an outbound message by its Green API idMessage.
+ * Monotonic: never downgrades (a late 'delivered' won't overwrite a 'read'); a
+ * 'failed' always applies. Returns true when a row was updated.
+ */
+export async function updateMessageStatusByExternalId(
+  externalMessageId: string,
+  status: ChatStatus,
+): Promise<boolean> {
+  const r = await query(
+    `update public.chat_messages
+        set status = $2
+      where external_message_id = $1
+        and direction = 'sent'
+        and ($2 = 'failed'
+             or (case status when 'sent' then 1 when 'delivered' then 2 when 'read' then 3 else 0 end)
+                < (case $2     when 'sent' then 1 when 'delivered' then 2 when 'read' then 3 else 0 end))`,
+    [externalMessageId, status],
+  );
+  return (r.rowCount ?? 0) > 0;
 }
 
 /** Convenience overload for the transactional success path. */
@@ -133,10 +162,10 @@ export async function listChatMessagesByDebtor(debtorId: string): Promise<ChatMe
   const r = await query<ChatMessage>(
     `select
         m.id, m.debtor_id, m.contact_phone, m.chat_id, m.external_message_id,
-        m.link_status, m.direction, m.message_type, m.content, m.status,
+        m.link_status, m.direction, m.message_type, m.content, m.media_url, m.status,
         m.error_detail, m.sent_by,
         u.full_name as sent_by_name,
-        m.created_at
+        m.broadcast_id, m.read_at, m.created_at
        from public.chat_messages m
        left join public.users u on u.id = m.sent_by
       where m.debtor_id = $1

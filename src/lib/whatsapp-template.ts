@@ -14,6 +14,8 @@ export function formatDebt(value: number | null | undefined): string {
 export interface TemplateDebtor {
   owner_name?: string | null;
   tenant_name?: string | null;
+  /** {{apartment}} — apartment number (`apartment_number`). */
+  apartment_number?: string | null;
   /** {{debt}} — total debt (`total_debt`). */
   total_debt?: number | null;
   /** {{monthly}} — monthly management-fee debt. In proj_billing this is the
@@ -26,10 +28,11 @@ export interface TemplateDebtor {
 
 /** Supported placeholders — also drives the insert buttons in the composer. */
 export const TEMPLATE_PLACEHOLDERS: ReadonlyArray<{ token: string; label: string }> = [
-  { token: '{{name}}',    label: 'שם הדייר' },
-  { token: '{{debt}}',    label: 'סה״כ חוב' },
-  { token: '{{monthly}}', label: 'דמי ניהול' },
-  { token: '{{special}}', label: 'חוב מיוחד' },
+  { token: '{{name}}',      label: 'שם הדייר' },
+  { token: '{{apartment}}', label: 'דירה' },
+  { token: '{{debt}}',      label: 'סה״כ חוב' },
+  { token: '{{monthly}}',   label: 'דמי ניהול' },
+  { token: '{{special}}',   label: 'חוב מיוחד' },
 ] as const;
 
 /** owner_name → tenant_name (first non-empty), trimming separator chars like
@@ -52,6 +55,7 @@ function resolveName(debtor: TemplateDebtor): string {
 export function interpolateTemplate(content: string, debtor: TemplateDebtor): string {
   const values: Record<string, string> = {
     name: resolveName(debtor),
+    apartment: (debtor.apartment_number ?? '').trim(),
     debt: formatDebt(debtor.total_debt ?? 0),
     monthly: formatDebt(debtor.management_fees ?? 0),
     special: formatDebt(debtor.special_debt ?? 0),

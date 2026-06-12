@@ -509,6 +509,24 @@ export async function getDebtorContact(id: string): Promise<DebtorContact | null
   );
 }
 
+/** Find the debtor whose clean phone field matches `localPhone` ("0XXXXXXXXX").
+ *  Used by the inbox composer to link an outbound message to a debtor. Prefers a
+ *  live (non-archived) match. */
+export async function getDebtorContactByPhone(localPhone: string): Promise<DebtorContact | null> {
+  return queryOne<DebtorContact>(
+    `select id, apartment_number, owner_name, tenant_name,
+            phone_owner, phone_tenant,
+            total_debt::float8      as total_debt,
+            management_fees::float8 as management_fees,
+            special_debt::float8    as special_debt
+       from public.debtors
+      where phone_owner = $1 or phone_tenant = $1
+      order by is_archived asc, created_at asc
+      limit 1`,
+    [localPhone],
+  );
+}
+
 // Lightweight debtor lookup for the "link inbound message to debtor" dialog:
 // matches by apartment number, owner OR tenant name, across all debtors.
 export interface DebtorSearchResult {

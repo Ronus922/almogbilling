@@ -6,6 +6,7 @@ import {
   getIncomingMessages,
   parseLastIncomingItem,
   type ParsedIncoming,
+  type ParsedOutgoing,
 } from '@/lib/whatsapp';
 
 // Inbound message handling (phase 2). Both the live webhook and the
@@ -33,7 +34,9 @@ export type ProcessResult = 'inserted' | 'duplicate';
  * the message was already stored (ON CONFLICT suppressed the insert).
  */
 export async function processIncomingMessage(parsed: ParsedIncoming): Promise<ProcessResult> {
-  const debtorId = await findDebtorIdByPhone(parsed.senderPhoneLocal);
+  // Groups (…@g.us) are one conversation keyed on the group id, never matched to
+  // a single debtor — the sender's phone is still kept for reference.
+  const debtorId = parsed.isGroup ? null : await findDebtorIdByPhone(parsed.senderPhoneLocal);
 
   const id = await insertChatMessage({
     debtorId,
@@ -44,7 +47,37 @@ export async function processIncomingMessage(parsed: ParsedIncoming): Promise<Pr
     messageType: parsed.messageType,
     linkStatus: debtorId ? 'linked' : 'unlinked',
     content: parsed.content,
+    // For media messages content holds the Green API downloadUrl; mirror it into
+    // media_url so the inbox can render it as media, not a raw link.
+    mediaUrl: parsed.messageType === 'text' ? null : parsed.content,
     status: 'sent', // inbound = already delivered; the status column is only meaningful for outbound
+    errorDetail: null,
+    sentBy: null,
+    createdAtUnix: parsed.timestamp,
+  });
+
+  return id ? 'inserted' : 'duplicate';
+}
+
+/**
+ * Store an outbound message reported by the webhook (sent from the phone, or the
+ * API echo). Mirrors processIncomingMessage but direction='sent'. Dedup by
+ * external_message_id makes the API echo of a message we already stored a no-op.
+ */
+export async function processOutgoingMessage(parsed: ParsedOutgoing): Promise<ProcessResult> {
+  const debtorId = await findDebtorIdByPhone(parsed.recipientPhoneLocal);
+
+  const id = await insertChatMessage({
+    debtorId,
+    contactPhone: parsed.recipientPhoneLocal,
+    chatId: parsed.chatId,
+    externalMessageId: parsed.externalMessageId,
+    direction: 'sent',
+    messageType: parsed.messageType,
+    linkStatus: 'linked', // outbound — never surfaced in the unlinked inbox
+    content: parsed.content,
+    mediaUrl: parsed.messageType === 'text' ? null : parsed.content,
+    status: 'sent',
     errorDetail: null,
     sentBy: null,
     createdAtUnix: parsed.timestamp,

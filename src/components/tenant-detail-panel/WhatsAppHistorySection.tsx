@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { MessageCircle, Check, X as XIcon, Clock, Paperclip, Image as ImageIcon, ExternalLink } from 'lucide-react';
+import { MessageCircle, Check, CheckCheck, X as XIcon, Clock, Paperclip, Image as ImageIcon, ExternalLink } from 'lucide-react';
 import { Section } from './Section';
 import { cn } from '@/lib/utils';
 import type { ChatMessage, ChatStatus } from '@/types/whatsapp';
@@ -17,9 +17,12 @@ function formatTime(iso: string): string {
 }
 
 const STATUS_META: Record<ChatStatus, { label: string; cls: string; icon: typeof Check }> = {
-  sent:    { label: 'נשלח',  cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', icon: Check },
-  failed:  { label: 'נכשל',  cls: 'bg-red-50 text-red-700 ring-red-200',             icon: XIcon },
-  pending: { label: 'ממתין', cls: 'bg-slate-100 text-slate-600 ring-slate-200',      icon: Clock },
+  sent:      { label: 'נשלח',  cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', icon: Check },
+  delivered: { label: 'נמסר',  cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', icon: CheckCheck },
+  read:      { label: 'נקרא',  cls: 'bg-sky-50 text-sky-700 ring-sky-200',             icon: CheckCheck },
+  failed:    { label: 'נכשל',  cls: 'bg-red-50 text-red-700 ring-red-200',             icon: XIcon },
+  pending:   { label: 'ממתין', cls: 'bg-slate-100 text-slate-600 ring-slate-200',      icon: Clock },
+  queued:    { label: 'בתור',  cls: 'bg-slate-100 text-slate-600 ring-slate-200',      icon: Clock },
 };
 
 function StatusBadge({ status }: { status: ChatStatus }) {

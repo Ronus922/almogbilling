@@ -12,8 +12,19 @@ import type { GreenApiWebhookStatus } from '@/types/whatsapp';
 
 export const runtime = 'nodejs';
 
+function webhookSecret(): string {
+  return (process.env.GREEN_API_WEBHOOK_SECRET ?? '').trim();
+}
+
+/** Canonical webhook URL — carries the shared secret as a query param. */
 function webhookUrl(): string {
-  return `${appUrl()}/api/whatsapp/webhook`;
+  const s = webhookSecret();
+  return `${appUrl()}/api/webhooks/greenapi${s ? `?secret=${s}` : ''}`;
+}
+
+/** Hide the secret value before sending a URL to the admin client. */
+function maskSecret(url: string): string {
+  return url.replace(/([?&]secret=)[^&]*/i, '$1•••');
 }
 
 // GET — current inbound-webhook registration status (admin only).
@@ -38,7 +49,7 @@ export async function GET() {
         registered: false,
         incomingEnabled: false,
         webhookUrl: null,
-        expectedUrl,
+        expectedUrl: maskSecret(expectedUrl),
       };
       return NextResponse.json(status);
     }
@@ -52,8 +63,8 @@ export async function GET() {
     const status: GreenApiWebhookStatus = {
       registered: currentUrl === expectedUrl && incomingEnabled,
       incomingEnabled,
-      webhookUrl: currentUrl || null,
-      expectedUrl,
+      webhookUrl: currentUrl ? maskSecret(currentUrl) : null,
+      expectedUrl: maskSecret(expectedUrl),
     };
     return NextResponse.json(status);
   } catch (err) {
@@ -74,6 +85,13 @@ export async function POST() {
     throw err;
   }
 
+  if (!webhookSecret()) {
+    return NextResponse.json(
+      { error: 'GREEN_API_WEBHOOK_SECRET לא מוגדר בשרת. הוסף אותו ל-billing.env ואתחל את השירות.' },
+      { status: 500 },
+    );
+  }
+
   let instanceId: string;
   let token: string;
   try {
@@ -85,6 +103,8 @@ export async function POST() {
     throw err;
   }
 
+  // Optional bearer token (defence-in-depth; the canonical webhook authenticates
+  // on the ?secret query param baked into the URL).
   let webhookToken: string;
   try {
     webhookToken = await ensureGreenApiWebhookToken(actor.id);
@@ -102,5 +122,5 @@ export async function POST() {
     return NextResponse.json({ error: detail }, { status: 502 });
   }
 
-  return NextResponse.json({ ok: true, webhookUrl: webhookUrl() });
+  return NextResponse.json({ ok: true, webhookUrl: maskSecret(webhookUrl()) });
 }

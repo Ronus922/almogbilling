@@ -31,7 +31,7 @@ const MAIN_MENU: MenuItem[] = [
   { label: 'תקלות',              icon: AlertTriangle, module: 'issues' },
   { label: 'יומן',               icon: Calendar, module: 'calendar' },
   { label: 'מסמכים',             icon: FileText, module: 'documents' },
-  { label: 'צ׳אט ווטסאפ',        icon: MessageCircle, module: 'whatsapp_chat' },
+  { label: 'הודעות',             icon: MessageCircle, href: '/messages', module: 'whatsapp_chat' },
   { label: 'צ׳אט פנימי',         icon: MessagesSquare, module: 'internal_chat' },
   { label: 'תזכורות',            icon: Bell, module: 'reminders' },
 ];

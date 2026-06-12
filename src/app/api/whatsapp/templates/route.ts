@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, type Actor } from '@/lib/auth/actor';
+import { requireActor, requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { hasPermission } from '@/lib/permissions/check';
 import {
   listActiveTemplates,
   listAllTemplates,
@@ -10,13 +11,24 @@ import {
 export const runtime = 'nodejs';
 
 // GET /api/whatsapp/templates
-//   default        → active templates (for the send composer)   — whatsapp:view
-//   ?scope=all     → all templates (for the management screen)   — whatsapp_templates:view
+//   default        → active templates (send composer / inbox)
+//                    — whatsapp:view OR whatsapp_chat:view
+//   ?scope=all     → all templates (management screen)   — whatsapp_templates:view
 export async function GET(req: NextRequest) {
   const scope = req.nextUrl.searchParams.get('scope');
   const all = scope === 'all';
   try {
-    await requirePermission(all ? 'whatsapp_templates' : 'whatsapp', 'view');
+    if (all) {
+      await requirePermission('whatsapp_templates', 'view');
+    } else {
+      const actor = await requireActor();
+      const ok =
+        hasPermission(actor.role, actor.permissions, 'whatsapp', 'view') ||
+        hasPermission(actor.role, actor.permissions, 'whatsapp_chat', 'view');
+      if (!ok) {
+        return NextResponse.json({ error: 'אין הרשאה לבצע את הפעולה' }, { status: 403 });
+      }
+    }
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

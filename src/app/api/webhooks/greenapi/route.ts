@@ -1,0 +1,77 @@
+import { NextResponse, type NextRequest } from 'next/server';
+import { timingSafeEqual } from 'node:crypto';
+import {
+  parseWebhookNotificationFull,
+  parseOutgoingStatus,
+  parseOutgoingMessage,
+} from '@/lib/whatsapp';
+import { processIncomingMessage, processOutgoingMessage } from '@/lib/whatsapp-inbound';
+import { updateMessageStatusByExternalId } from '@/lib/db/chatMessages';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+// POST /api/webhooks/greenapi?secret=… — PUBLIC (no session). The canonical
+// Green API inbound webhook for the messaging module. Authenticated by a shared
+// `secret` query param compared (constant-time) against GREEN_API_WEBHOOK_SECRET.
+//
+// Handles, by typeWebhook:
+//   • incomingMessageReceived   → store inbound (person + groups, debtor match)
+//   • outgoingMessageStatus     → update an outbound row's status (delivered/read)
+//   • outgoingAPIMessageReceived / outgoingMessageReceived
+//                               → store/echo an outbound message (sent from phone)
+//
+// Hard rules:
+//   • Wrong / missing secret → 401, no body.
+//   • ALWAYS 200 on authenticated calls (even unknown types) so Green API never
+//     queues retries; failures are logged internally. Dedup is downstream
+//     (ON CONFLICT external_message_id DO NOTHING).
+
+function secretMatches(provided: string, expected: string): boolean {
+  if (!provided || !expected) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+export async function POST(req: NextRequest) {
+  const expected = process.env.GREEN_API_WEBHOOK_SECRET ?? '';
+  const provided = req.nextUrl.searchParams.get('secret') ?? '';
+  if (!secretMatches(provided, expected)) {
+    return new NextResponse(null, { status: 401 });
+  }
+
+  let payload: unknown;
+  try {
+    payload = await req.json();
+  } catch {
+    // Malformed body — ack so Green API stops retrying.
+    return NextResponse.json({ ok: true });
+  }
+
+  try {
+    const incoming = parseWebhookNotificationFull(payload);
+    if (incoming) {
+      await processIncomingMessage(incoming);
+      return NextResponse.json({ ok: true });
+    }
+
+    const status = parseOutgoingStatus(payload);
+    if (status) {
+      await updateMessageStatusByExternalId(status.externalMessageId, status.status);
+      return NextResponse.json({ ok: true });
+    }
+
+    const outgoing = parseOutgoingMessage(payload);
+    if (outgoing) {
+      await processOutgoingMessage(outgoing);
+      return NextResponse.json({ ok: true });
+    }
+  } catch (err) {
+    console.error('[webhooks/greenapi] processing failed', err);
+  }
+
+  // Unknown / unsupported notification — acknowledge and ignore.
+  return NextResponse.json({ ok: true });
+}

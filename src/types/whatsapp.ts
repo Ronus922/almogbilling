@@ -20,7 +20,10 @@
 //   GET/POST /api/settings/green-api/webhook    inbound webhook status / register (admin)
 
 export type ChatDirection = 'sent' | 'received';
-export type ChatStatus = 'pending' | 'sent' | 'failed';
+/** Outgoing delivery lifecycle. Inbound rows are stored as 'sent' (already
+ *  delivered). 'queued' is used while a broadcast is in flight; 'delivered' /
+ *  'read' come from the outgoingMessageStatus webhook. */
+export type ChatStatus = 'pending' | 'queued' | 'sent' | 'delivered' | 'read' | 'failed';
 export type ChatMessageType = 'text' | 'image' | 'document';
 export type ChatLinkStatus = 'linked' | 'unlinked';
 
@@ -50,10 +53,13 @@ export interface ChatMessage {
   direction: ChatDirection;
   message_type: ChatMessageType;
   content: string | null;
+  media_url: string | null;
   status: ChatStatus;
   error_detail: string | null;
   sent_by: string | null;
   sent_by_name: string | null;
+  broadcast_id: string | null;
+  read_at: string | null;
   created_at: string;
 }
 
@@ -123,4 +129,82 @@ export interface BulkSendSummary {
   failed: number;
   skipped: number;
   failures: BulkSendFailure[];
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Conversational inbox (Slice 6) — the /messages two-panel chat.
+// A conversation groups chat_messages by chat_id (the "<digits>@c.us" key,
+// stable across inbound + outbound). Threads, sending and broadcasts all key
+// off chat_id. There is no separate contacts table in this project, so a
+// conversation links to a `debtor` (matched by phone), not a generic contact.
+// ─────────────────────────────────────────────────────────────────────
+
+/** One row in the conversation list (right panel). */
+export interface Conversation {
+  /** Grouping key — the Green API chat id ("972XXXXXXXXX@c.us" or a group "…@g.us"). */
+  chat_id: string;
+  /** Sender phone in local form ("0XXXXXXXXX"), or the raw value for groups. */
+  phone: string | null;
+  /** true when chat_id ends with @g.us (a WhatsApp group). */
+  is_group: boolean;
+  /** Linked debtor id, or null for an unmatched number. */
+  debtor_id: string | null;
+  /** Display name: the linked debtor's name, else null (UI falls back to phone). */
+  display_name: string | null;
+  apartment_number: string | null;
+  /** Last message preview. */
+  last_content: string | null;
+  last_type: ChatMessageType;
+  last_direction: ChatDirection;
+  last_at: string;
+  /** Count of inbound messages not yet marked read. */
+  unread: number;
+}
+
+/** A message inside an open thread (left panel). Same shape as ChatMessage. */
+export type ThreadMessage = ChatMessage;
+
+/** Resolved target for "new conversation" / composer send. */
+export interface NewChatTarget {
+  /** Phone in international form ("972XXXXXXXXX"). */
+  phoneIntl: string;
+  chat_id: string;
+  debtor_id: string | null;
+}
+
+// ─── Broadcasts ───
+
+export type BroadcastStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+/** Audience kinds. "owners"/"tenants" pick the matching debtor phone field;
+ *  "all" = every non-archived debtor with any valid phone; "debtor_ids" = an
+ *  explicit list (the task's contact_ids, mapped to debtors). */
+export type BroadcastAudienceType = 'all' | 'owners' | 'tenants';
+
+export interface BroadcastAudience {
+  type: BroadcastAudienceType | 'debtor_ids';
+  /** Present only when type === 'debtor_ids'. */
+  debtor_ids?: string[];
+}
+
+export interface Broadcast {
+  id: string;
+  name: string;
+  body: string;
+  audience_filter: BroadcastAudience;
+  total_count: number;
+  sent_count: number;
+  failed_count: number;
+  status: BroadcastStatus;
+  created_by: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface BroadcastInput {
+  name: string;
+  /** Free-text body. Mutually exclusive with template_id (one is required). */
+  body?: string | null;
+  template_id?: string | null;
+  audience: BroadcastAudience;
 }
