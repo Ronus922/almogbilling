@@ -20,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import type { Debtor, SortKey, TabKey } from '@/lib/db/debtors';
 import { formatPhoneDisplay, getPrimaryPhone } from '@/lib/phone';
+import { cleanPhoneField } from '@/lib/whatsapp';
 import { TenantDetailPanel } from '@/components/tenant-detail-panel/TenantDetailPanel';
 import { WhatsAppSendPanel, type WhatsAppRecipient } from '@/components/whatsapp/WhatsAppSendPanel';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
@@ -189,7 +190,8 @@ export function DebtorsTable({
       phone_owner: d.phone_owner,
       phone_tenant: d.phone_tenant,
       total_debt: d.total_debt,
-      address: d.address,
+      management_fees: d.management_fees,
+      special_debt: d.special_debt,
     });
     setWhatsappOpen(true);
   }
@@ -243,6 +245,11 @@ export function DebtorsTable({
           <TableBody>
             {rows.map((d) => {
               const phone = formatPhoneDisplay(getPrimaryPhone(d));
+              // Clean fields hold one local number each; cleanPhoneField also
+              // copes with any legacy compound value still in the column.
+              const waHasValidPhone = Boolean(
+                cleanPhoneField(d.phone_owner) || cleanPhoneField(d.phone_tenant),
+              );
               return (
                 <TableRow
                   key={d.id}
@@ -298,7 +305,7 @@ export function DebtorsTable({
                       apartment={d.apartment_number}
                       owner={d.owner_name}
                       canEdit={canArchive}
-                      whatsappReason={!canSendWhatsapp ? 'אין הרשאה' : !phone ? 'אין מספר טלפון' : null}
+                      whatsappReason={!canSendWhatsapp ? 'אין הרשאה' : !waHasValidPhone ? 'אין מספר טלפון תקין' : null}
                       onWhatsApp={() => openWhatsapp(d)}
                       showCheck={isActionsTab && isAdmin}
                       onCheck={() => setMarkDone({

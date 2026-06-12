@@ -53,6 +53,9 @@ export interface SendWhatsAppInput {
   debtor_id: string;
   message: string;
   template_id?: string | null;
+  /** Selected recipient number (international form). Re-validated server-side
+   *  against the debtor's parsed candidates. Omitted → first valid candidate. */
+  phone?: string | null;
 }
 
 export interface GreenApiSettingsPublic {

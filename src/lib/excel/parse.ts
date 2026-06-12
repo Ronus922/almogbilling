@@ -1,21 +1,27 @@
 import * as XLSX from 'xlsx';
+import { splitOwnerTenantPhones } from '@/lib/whatsapp';
 
 /**
  * Parsed row from the debtors Excel file.
  * Column mapping (row 1 is the header, parsing starts from row 2):
  *   A → apartment_number
  *   B → owner_name
- *   C → phone (raw)
+ *   C → phone (raw) — split into clean local owner/tenant numbers on parse
  *   D → total_debt
  *   E → management_fees
  *   F → monthly_debt (text — e.g. "12,11,10")
  *   G → hot_water_debt
  *   H → details
+ *
+ * Phone policy: DB fields hold a single clean local number (0XXXXXXXXX). The raw
+ * cell may be compound ("054… (בעלים) 050… (שוכר/ת)"), Markdown or tel: — all
+ * normalised + split here via the shared splitOwnerTenantPhones().
  */
 export interface ParsedDebtorRow {
   apartment_number: string;
   owner_name: string | null;
-  phone_raw: string | null;
+  phone_owner: string | null;
+  phone_tenant: string | null;
   total_debt: number;
   management_fees: number;
   monthly_debt: string | null;
@@ -67,10 +73,13 @@ export function parseDebtorsWorkbook(buffer: ArrayBuffer | Buffer): ParseResult 
       skipped++;
       continue;
     }
+    const rawPhone = r[2] == null ? null : String(r[2]);
+    const phones = splitOwnerTenantPhones(rawPhone);
     rows.push({
       apartment_number: apt,
       owner_name: toText(r[1]),
-      phone_raw: toText(r[2]),
+      phone_owner: phones.owner,
+      phone_tenant: phones.tenant,
       total_debt: toNumber(r[3]),
       management_fees: toNumber(r[4]),
       monthly_debt: toText(r[5]),

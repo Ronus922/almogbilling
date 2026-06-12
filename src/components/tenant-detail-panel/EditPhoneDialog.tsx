@@ -87,7 +87,16 @@ export function EditPhoneDialog({ open, field, initialValue, onOpenChange, onSav
               errorToShow && 'border-red-400 bg-red-50 focus-visible:ring-red-200',
             )}
             value={value}
-            onChange={(e) => { setValue(e.target.value); setSubmitError(null); }}
+            onChange={(e) => {
+              // Allow only digits, dashes, spaces and a leading + while typing.
+              setValue(e.target.value.replace(/[^\d\s+-]/g, ''));
+              setSubmitError(null);
+            }}
+            onBlur={() => {
+              // Normalise to the canonical form on blur (only when valid).
+              const v = validatePhone(value.trim());
+              if (v.valid) setValue(v.normalized);
+            }}
             onKeyDown={(e) => { if (e.key === 'Enter' && !saving && canSave) handleSave(); }}
             placeholder="052-1234567"
             autoFocus

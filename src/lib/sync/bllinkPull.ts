@@ -1,5 +1,6 @@
 import 'server-only';
 import { importParsedRows } from '@/lib/import/runner';
+import { splitOwnerTenantPhones } from '@/lib/whatsapp';
 import type { ParsedDebtorRow } from '@/lib/excel/parse';
 
 /**
@@ -17,7 +18,8 @@ import type { ParsedDebtorRow } from '@/lib/excel/parse';
  *   CRM debtor_records        →  billing debtors (ParsedDebtorRow)
  *   apartment_number          →  apartment_number
  *   owner_name                →  owner_name
- *   phone_primary             →  phone_raw      (merge keeps existing if set)
+ *   phone_primary             →  phone_owner / phone_tenant (split by label;
+ *                                merge keeps existing per field if set)
  *   total_debt        (col D) →  total_debt
  *   monthly_debt      (col E) →  management_fees
  *   management_months (col F) →  monthly_debt   (text month-range)
@@ -52,10 +54,14 @@ function toText(v: string | null): string | null {
 function mapRow(r: CrmDebtorRecord): ParsedDebtorRow | null {
   const apt = toText(r.apartment_number);
   if (!apt) return null;
+  // phone_primary may be compound/labelled ("054… (בעלים) 050… (שוכר/ת)") —
+  // split into clean local owner/tenant numbers before writing.
+  const phones = splitOwnerTenantPhones(r.phone_primary);
   return {
     apartment_number: apt,
     owner_name: toText(r.owner_name),
-    phone_raw: toText(r.phone_primary),
+    phone_owner: phones.owner,
+    phone_tenant: phones.tenant,
     total_debt: toNum(r.total_debt),
     management_fees: toNum(r.monthly_debt),
     monthly_debt: toText(r.management_months_raw),

@@ -90,14 +90,15 @@ async function fetchExistingApts(): Promise<Set<string>> {
 async function insertDebtor(r: ParsedDebtorRow): Promise<void> {
   await query(
     `insert into public.debtors
-       (apartment_number, owner_name, phone_owner,
+       (apartment_number, owner_name, phone_owner, phone_tenant,
         total_debt, management_fees, monthly_debt, hot_water_debt, details,
         last_imported_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
     [
       r.apartment_number,
       r.owner_name,
-      r.phone_raw,
+      r.phone_owner,
+      r.phone_tenant,
       r.total_debt,
       r.management_fees,
       r.monthly_debt,
@@ -111,24 +112,27 @@ async function updateDebtorMerge(r: ParsedDebtorRow): Promise<void> {
   // Per merge rules:
   //   - apartment_number, owner_name, monthly_debt, management_fees, total_debt,
   //     hot_water_debt, details → always updated from Excel
-  //   - phone_owner → only updated if currently empty (coalesce keeps existing if not null/empty)
-  //   - phone_tenant, email_*, tenant_name, phones_raw, operator_id, legal_status_id,
+  //   - phone_owner, phone_tenant → only filled if currently empty (existing
+  //     value, incl. manual edits, is preserved). phone_owner rule unchanged.
+  //   - email_*, tenant_name, phones_raw, operator_id, legal_status_id,
   //     is_archived, notes, next_action_*, last_contact_date, phones_manual_override → never touched
   await query(
     `update public.debtors set
        owner_name      = $2,
        phone_owner     = case when phone_owner is null or phone_owner = '' then $3 else phone_owner end,
-       total_debt      = $4,
-       management_fees = $5,
-       monthly_debt    = $6,
-       hot_water_debt  = $7,
-       details         = $8,
+       phone_tenant    = case when phone_tenant is null or phone_tenant = '' then $4 else phone_tenant end,
+       total_debt      = $5,
+       management_fees = $6,
+       monthly_debt    = $7,
+       hot_water_debt  = $8,
+       details         = $9,
        last_imported_at = now()
      where apartment_number = $1`,
     [
       r.apartment_number,
       r.owner_name,
-      r.phone_raw,
+      r.phone_owner,
+      r.phone_tenant,
       r.total_debt,
       r.management_fees,
       r.monthly_debt,

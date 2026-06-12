@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  MessageCircle, X, Send, Loader2, Home, Phone, Wallet, User as UserIcon,
+  MessageCircle, X, Send, Loader2, Home, Phone, Wallet, User as UserIcon, AlertTriangle,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import {
@@ -17,7 +17,8 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
-import { formatPhoneDisplay, getPrimaryPhone } from '@/lib/phone';
+import { formatPhoneDisplay } from '@/lib/phone';
+import { parsePhoneCandidates, cleanPhoneField, type PhoneCandidate } from '@/lib/whatsapp';
 import {
   interpolateTemplate, formatDebt, TEMPLATE_PLACEHOLDERS,
 } from '@/lib/whatsapp-template';
@@ -31,7 +32,8 @@ export interface WhatsAppRecipient {
   phone_owner: string | null;
   phone_tenant: string | null;
   total_debt: number;
-  address: string | null;
+  management_fees: number;
+  special_debt: number;
 }
 
 const FREE_TEXT = '__free__';
@@ -52,10 +54,14 @@ export function WhatsAppSendPanel({
   const [content, setContent] = useState('');
   const [sending, setSending] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
+  const [candidates, setCandidates] = useState<PhoneCandidate[]>([]);
+  const [selectedPhone, setSelectedPhone] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const recipientName = recipient?.owner_name || recipient?.tenant_name || 'ללא שם';
-  const phoneDisplay = recipient ? formatPhoneDisplay(getPrimaryPhone(recipient)) : null;
+  const selectedCandidate = candidates.find((c) => c.phone === selectedPhone) ?? null;
+  const phoneDisplay = selectedCandidate ? formatPhoneDisplay(selectedCandidate.phone) : null;
+  const noValidPhone = candidates.length === 0;
 
   // Load active templates + reset state each time the panel opens.
   useEffect(() => {
@@ -64,6 +70,12 @@ export function WhatsAppSendPanel({
     setContent('');
     setSending(false);
     setConfirmClose(false);
+    // Primary path: clean fields hold one local number each — label comes from
+    // the field's semantics (owner / tenant), not the string. Fall back to
+    // parsePhoneCandidates only for legacy/abnormal values still in the field.
+    const cands = buildRecipientCandidates(recipient);
+    setCandidates(cands);
+    setSelectedPhone(cands[0]?.phone ?? null);
     let cancelled = false;
     (async () => {
       try {
@@ -84,7 +96,7 @@ export function WhatsAppSendPanel({
   );
 
   const isDirty = content.trim().length > 0;
-  const canSend = isDirty && !sending && Boolean(recipient);
+  const canSend = isDirty && !sending && Boolean(recipient) && selectedPhone !== null;
 
   function requestClose() {
     if (sending) return;
@@ -125,7 +137,7 @@ export function WhatsAppSendPanel({
   }
 
   async function handleSend() {
-    if (!canSend || !recipient) return;
+    if (!canSend || !recipient || !selectedPhone) return;
     setSending(true);
     try {
       const res = await fetch('/api/whatsapp/send', {
@@ -136,6 +148,7 @@ export function WhatsAppSendPanel({
           debtor_id: recipient.id,
           message: content.trim(),
           template_id: templateId === FREE_TEXT ? null : templateId,
+          phone: selectedPhone,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; warning?: string };
@@ -211,6 +224,55 @@ export function WhatsAppSendPanel({
                 tone="danger"
               />
             </div>
+
+            {/* Recipient number — picker when several, notice when none */}
+            {noValidPhone ? (
+              <div className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>לא נמצא מספר טלפון תקין לחייב זה. לא ניתן לשלוח הודעה.</span>
+              </div>
+            ) : candidates.length > 1 ? (
+              <div className="space-y-1.5">
+                <Label className="text-base font-medium text-muted-foreground">בחירת נמען</Label>
+                <div role="radiogroup" className="space-y-2">
+                  {candidates.map((c) => {
+                    const checked = c.phone === selectedPhone;
+                    return (
+                      <label
+                        key={c.phone}
+                        className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors ${
+                          checked ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="wa-recipient"
+                          value={c.phone}
+                          checked={checked}
+                          onChange={() => setSelectedPhone(c.phone)}
+                          disabled={sending}
+                          className="h-4 w-4 accent-emerald-600"
+                        />
+                        <span className="text-sm font-bold text-slate-900 tabular-nums" dir="ltr">
+                          {formatPhoneDisplay(c.phone)}
+                        </span>
+                        {c.label && (
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                            {c.label}
+                          </span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : selectedCandidate?.label ? (
+              <p className="text-xs text-slate-500">
+                נשלח אל <span className="font-semibold text-slate-700">{selectedCandidate.label}</span>
+                {' · '}
+                <span dir="ltr" className="tabular-nums">{phoneDisplay}</span>
+              </p>
+            ) : null}
 
             {/* Template picker */}
             <div className="space-y-1.5">
@@ -313,6 +375,20 @@ export function WhatsAppSendPanel({
       </AlertDialog>
     </>
   );
+}
+
+// Build recipient candidates from the clean phone fields: phone_owner → "בעלים",
+// phone_tenant → "שוכר/ת". Labels derive from the field, not the string. If both
+// fields are empty/invalid (legacy compound value still lurking), fall back to
+// parsePhoneCandidates over the combined raw fields.
+function buildRecipientCandidates(r: WhatsAppRecipient): PhoneCandidate[] {
+  const owner = cleanPhoneField(r.phone_owner);
+  const tenant = cleanPhoneField(r.phone_tenant);
+  const primary: PhoneCandidate[] = [];
+  if (owner) primary.push({ phone: owner, label: 'בעלים' });
+  if (tenant && tenant !== owner) primary.push({ phone: tenant, label: 'שוכר/ת' });
+  if (primary.length > 0) return primary;
+  return parsePhoneCandidates(`${r.phone_owner ?? ''} ${r.phone_tenant ?? ''}`);
 }
 
 function InfoCell({
