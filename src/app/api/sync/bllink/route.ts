@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { createImportRun } from '@/lib/db/importRuns';
+import { createSyncRun, finishSyncRunSuccess, finishSyncRunError } from '@/lib/db/syncRuns';
 import { syncDebtorsFromCrm } from '@/lib/sync/bllinkPull';
 
 export const runtime = 'nodejs';
@@ -46,14 +47,25 @@ export async function POST() {
     }
   }
 
+  // Track this sync in its own ledger (sync_runs) — distinct from file imports.
+  const syncRunId = await createSyncRun(actorId);
+
   // Step 2 — pull the CRM snapshot into public.debtors (this is the part that
   // actually refreshes the dashboard data).
   try {
     const runId = await createImportRun('merge', actorId);
     const merged = await syncDebtorsFromCrm(runId);
-    return NextResponse.json({ ok: true, merged, scrapeTriggered, runId });
+    await finishSyncRunSuccess(syncRunId);
+    return NextResponse.json({
+      ok: true,
+      merged,
+      scrapeTriggered,
+      runId,
+      syncedAt: new Date().toISOString(),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'sync_failed';
+    await finishSyncRunError(syncRunId, message);
     return NextResponse.json({ ok: false, error: message }, { status: 502 });
   }
 }

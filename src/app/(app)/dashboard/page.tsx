@@ -9,6 +9,7 @@ import {
   type TabKey,
   type SortKey,
 } from '@/lib/db/debtors';
+import { getLastSuccessfulSyncAt } from '@/lib/db/syncRuns';
 import { KpiGrid } from './components/KpiGrid';
 import { LastImportIndicator } from './components/LastImportIndicator';
 import { DebtorsTabs } from './components/DebtorsTabs';
@@ -53,9 +54,10 @@ export default async function DashboardPage({
     ? hasPermission(actor.role, actor.permissions, 'whatsapp', 'edit')
     : false;
 
-  const [kpis, lastImportAt, tabCounts, listing] = await Promise.all([
+  const [kpis, lastImportAt, lastSyncAt, tabCounts, listing] = await Promise.all([
     getDashboardKpis(),
     getLastImportedAt(),
+    getLastSuccessfulSyncAt(),
     getTabCounts(),
     listDebtors({ tab, q, apt, sort, page }),
   ]);
@@ -66,12 +68,13 @@ export default async function DashboardPage({
 
       <LastImportIndicator
         lastImportAt={lastImportAt}
+        lastSyncAt={lastSyncAt}
         isAdmin={isAdmin}
       />
 
       <DebtorsTabs active={tab} counts={tabCounts} />
 
-      <div className="space-y-3 rounded-lg bg-card p-4 border">
+      <div className="space-y-3 rounded-2xl border border-line bg-white p-4 shadow-soft-sm">
         <DebtorsToolbar totalRows={listing.total} />
         <DebtorsTable
           rows={listing.rows}

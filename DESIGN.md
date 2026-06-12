@@ -153,48 +153,45 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
 
 ---
 
-## 5b. Sync & Import buttons (LastImportIndicator pattern)
+## 5b. Sync & Import indicator (LastImportIndicator pattern)
 
-מערכת כפתורים סטנדרטית למסכי נתונים שמציגים מצב עדכון אחרון (Dashboard, וכו').
+אינדיקטור טריות-נתונים לדשבורד. מציג **שני טיימסטמפים מובחנים**: **ייבוא אחרון**
+(מ-`debtors.last_imported_at` — מניע את חומרת ה-severity) ו**סנכרון אחרון**
+(מ-`sync_runs` — מידע משני). סנכרון וייבוא הן פעולות נפרדות במכוון.
 
-### Button — "סנכרן עכשיו"
+### Container — כרטיס לבן, צל רך, צבע לפי severity
 ```tsx
-<Button
-  type="button"
-  onClick={syncNow}
-  disabled={syncing}
-  className="h-9 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold gap-2"
->
+<div className={cn('flex flex-col gap-3 rounded-2xl border px-5 py-3.5 shadow-soft-xs md:flex-row md:items-center md:justify-between', styles.wrap)}>
+```
+
+| Severity | תנאי (ייבוא) | bg | border |
+|---|---|---|---|
+| `ok`     | < 24h           | `bg-white`        | `border-line` |
+| `yellow` | 24–48h          | `bg-[#fff6e6]`    | `border-[#e08700]/30` |
+| `red`    | > 48h / null    | `bg-[#feefef]`    | `border-[#e5484d]/30` |
+
+### צד ימין (start ב-RTL) — chip + שני טיימסטמפים
+- chip לוח-שנה: `grid h-10 w-10 place-items-center rounded-xl {iconBg} {iconFg}` (`CalendarSync`).
+- שורה ראשית (`font-semibold`): `ייבוא אחרון: <תאריך ב-font-num>` או `טרם בוצע ייבוא`.
+- שורה משנית (`text-sm text-ink-2`): אייקון `RefreshCw` זעיר + `סנכרון אחרון: <תאריך ב-font-num>` / `טרם בוצע סנכרון` (`text-ink-3`).
+- הערת severity (`text-xs opacity-80`) רק כש-severity != `ok`.
+
+### Button — "סנכרן עכשיו" (ירוק gradient, צל ירוק רך)
+```tsx
+<Button className="h-9 gap-2 rounded-lg bg-gradient-to-l from-[#16a34a] to-[#0c7a37] px-4 text-sm font-bold text-white shadow-[0_4px_14px_rgba(22,163,74,0.3)] hover:brightness-105">
   <RefreshCw className={cn('h-4 w-4', syncing && 'animate-spin')} />
   <span>{syncing ? 'מסנכרן…' : 'סנכרן עכשיו'}</span>
 </Button>
 ```
+קורא ל-`POST /api/sync/bllink` (same-origin, admin-only); נרשם ב-`sync_runs`; אחרי הצלחה — מרענן את שני הטיימסטמפים מ-`GET /api/sync/status` + `router.refresh()`, `toast` הצלחה; בכישלון — `toast.error` (דפוס שגיאות §7).
 
-### Button — "ייבוא נתונים"
+### Button — "ייבוא נתונים" (כחול brand)
 ```tsx
-<Button
-  type="button"
-  onClick={() => router.push('/import')}
-  className="h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold gap-2"
->
-  <Upload className="h-4 w-4" />
-  <span>ייבוא נתונים</span>
+<Button className="h-9 gap-2 rounded-lg bg-brand px-4 text-sm font-bold text-white hover:bg-brand-dark">
+  <Upload className="h-4 w-4" /> <span>ייבוא נתונים</span>
 </Button>
 ```
-- מוצג **רק** כש-`isAdmin && showWarning` (כלומר severity != 'ok'). במצב OK אין צורך לדחוף את המשתמש לייבוא.
-
-### Container (LastImportIndicator) — color by severity
-```tsx
-<div className={cn('flex flex-col gap-3 rounded-xl border px-5 py-3 md:flex-row md:items-center md:justify-between', styles.wrap)}>
-```
-
-| Severity | תנאי | bg | border |
-|---|---|---|---|
-| `ok`     | < 24h           | `bg-white`        | `border-slate-200` |
-| `yellow` | 24–48h          | `bg-[#fef9c3]`    | `border-yellow-300` |
-| `red`    | > 48h / null    | `bg-[#fee2e2]`    | `border-red-300` |
-
-Icon-circle בצד ימין (start ב-RTL): `grid h-10 w-10 place-items-center rounded-full {iconBg} {iconFg}`.
+- מוצג **רק** כש-`isAdmin && severity != 'ok'`. במצב OK אין צורך לדחוף את המשתמש לייבוא.
 
 ---
 
