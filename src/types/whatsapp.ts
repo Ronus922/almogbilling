@@ -159,6 +159,8 @@ export interface Conversation {
   last_at: string;
   /** Count of inbound messages not yet marked read. */
   unread: number;
+  /** Cached WhatsApp profile-picture URL (an expiring CDN link), or null. */
+  avatar_url: string | null;
 }
 
 /** A message inside an open thread (left panel). Same shape as ChatMessage. */

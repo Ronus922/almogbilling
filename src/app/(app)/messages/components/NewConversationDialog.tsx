@@ -44,6 +44,7 @@ function buildConversation(args: {
     last_direction: 'sent',
     last_at: new Date().toISOString(),
     unread: 0,
+    avatar_url: null,
   };
 }
 

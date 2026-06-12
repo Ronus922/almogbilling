@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import {
   ArrowRight, Check, CheckCheck, Clock, AlertCircle, Send, Loader2,
-  Users, MessageCircle, FileText,
+  MessageCircle, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,6 +11,7 @@ import { formatPhoneDisplay } from '@/lib/phone';
 import { cn } from '@/lib/utils';
 import type { Conversation, ThreadMessage, ChatStatus } from '@/types/whatsapp';
 import { conversationTitle, formatTime, formatRelativeDay } from './format';
+import { ChatAvatar } from './ChatAvatar';
 
 export function ChatThread({
   conversation,
@@ -73,12 +74,7 @@ export function ChatThread({
         >
           <ArrowRight className="h-5 w-5" />
         </button>
-        <span className={cn(
-          'grid h-10 w-10 shrink-0 place-items-center rounded-full text-xs font-bold',
-          conversation.is_group ? 'bg-sky-100 text-sky-600' : 'bg-emerald-100 text-emerald-700',
-        )}>
-          {conversation.is_group ? <Users className="h-5 w-5" /> : initials(title)}
-        </span>
+        <ChatAvatar title={title} isGroup={conversation.is_group} avatarUrl={conversation.avatar_url} />
         <div className="min-w-0">
           <div className="truncate text-sm font-bold text-slate-900">{title}</div>
           <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -272,14 +268,3 @@ function Composer({ chatId, onSent }: { chatId: string; onSent: () => void }) {
   );
 }
 
-function initials(title: string): string {
-  return (
-    title
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((w) => w[0])
-      .join('')
-      .toUpperCase() || '?'
-  );
-}

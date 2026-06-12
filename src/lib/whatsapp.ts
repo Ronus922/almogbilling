@@ -117,6 +117,24 @@ function intlToLocal(intl: string): string {
 }
 
 /**
+ * The phone-matching key: the last 9 digits of a number in ANY form. Local
+ * "0501234567", international "972501234567", a chat-id stem "972501234567", and
+ * a formatted "050-123-4567" all reduce to "501234567". Returns null when fewer
+ * than 9 digits are present.
+ *
+ * Used to match a WhatsApp number to a debtor robustly. The chat_messages
+ * contact_phone column is historically inconsistent (outbound rows stored the
+ * international form, inbound rows the local form), and debtor phone fields may
+ * carry either — so an exact string match misses. WhatsApp numbers are mobiles,
+ * for which the last 9 digits are a stable identity.
+ */
+export function phoneDigitsKey(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  const digits = String(raw).replace(/\D+/g, '');
+  return digits.length >= 9 ? digits.slice(-9) : null;
+}
+
+/**
  * Parses a debtor phone field that may be a compound string such as
  * "0525460546 (בעלים) 0000000000 (שוכר/ת)" into a de-duplicated list of valid
  * candidates with their role label.
@@ -657,6 +675,47 @@ export async function getInstanceState(args: ProbeArgs): Promise<{ stateInstance
   }
 
   return { stateInstance };
+}
+
+/**
+ * POST waInstance{id}/getAvatar/{token}  body: { chatId }
+ * Returns the contact/group profile-picture URL and an `available` flag.
+ *
+ * IMPORTANT: urlAvatar is a WhatsApp CDN link that EXPIRES — it must be cached
+ * and refreshed periodically (see whatsapp_avatars / refreshStaleAvatars), never
+ * fetched per render. Best-effort: on ANY gateway error this resolves to
+ * { urlAvatar: null, available: false } instead of throwing, because a missing
+ * avatar must never break the conversation list.
+ */
+export async function getAvatar(
+  args: ProbeArgs & { chatId: string },
+): Promise<{ urlAvatar: string | null; available: boolean }> {
+  const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/getAvatar/${args.token}`;
+  // Bound the call with an explicit timeout: refreshStaleAvatars runs a serial
+  // loop behind a process-level guard, so a single hung fetch would otherwise
+  // stall ALL future avatar refreshes (and leak a socket). An aborted fetch
+  // rejects and is swallowed below — the loop continues and the guard releases.
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chatId: args.chatId }),
+      signal: ctl.signal,
+    });
+    if (!res.ok) return { urlAvatar: null, available: false };
+    const parsed = safeJson(await res.text());
+    if (!parsed) return { urlAvatar: null, available: false };
+    const urlAvatar =
+      typeof parsed.urlAvatar === 'string' && parsed.urlAvatar.trim() ? parsed.urlAvatar : null;
+    const available = parsed.available === true && urlAvatar !== null;
+    return { urlAvatar: available ? urlAvatar : null, available };
+  } catch {
+    return { urlAvatar: null, available: false };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────

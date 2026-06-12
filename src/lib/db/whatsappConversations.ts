@@ -21,16 +21,31 @@ interface ConvRow {
   owner_name: string | null;
   tenant_name: string | null;
   apartment_number: string | null;
+  avatar_url: string | null;
 }
 
 /**
  * List conversations newest-first. Groups by chat_id; the most-recent message
- * supplies the preview, and a LATERAL join resolves the linked debtor's name.
- * `search` (optional) matches the phone, debtor name or apartment number.
+ * supplies the preview.
+ *
+ * The linked debtor is resolved by a LATERAL join that prefers the stored
+ * debtor_id but falls back to a NORMALIZED phone match (last 9 digits of the
+ * chat_id, compared against both debtor phone fields). This makes the name /
+ * apartment display — and the name/apartment search — work even for
+ * conversations whose rows predate the linking fix. A second join attaches the
+ * cached profile picture (migration 019).
+ *
+ * `search` matches: debtor name (ILIKE), apartment number (ILIKE), or phone by
+ * normalized digit substring (so "050…", "972…" and "53…" all hit).
  */
 export async function listConversations(search = '', limit = 200): Promise<Conversation[]> {
   const term = search.trim();
   const like = `%${term}%`;
+  const digits = term.replace(/\D+/g, '');
+  // Israeli local numbers carry a trunk "0" that the stored international form
+  // ("972…") and the last-9 convkey both drop — so a user typing "0525460546"
+  // must also match by the leading-zero-stripped form ("525460546").
+  const digitsTrim = digits.replace(/^0+/, '');
   const r = await query<ConvRow>(
     `with convo as (
         select
@@ -39,27 +54,53 @@ export async function listConversations(search = '', limit = 200): Promise<Conve
           count(*) filter (where m.direction = 'received' and m.read_at is null) as unread,
           (array_agg(m.contact_phone order by m.created_at desc))[1]          as contact_phone,
           (array_agg(m.debtor_id order by m.created_at desc)
-             filter (where m.debtor_id is not null))[1]                       as debtor_id,
+             filter (where m.debtor_id is not null))[1]                       as stored_debtor_id,
           (array_agg(coalesce(m.content, '') order by m.created_at desc))[1]  as last_content,
           (array_agg(m.message_type order by m.created_at desc))[1]          as last_type,
           (array_agg(m.direction order by m.created_at desc))[1]             as last_direction
         from public.chat_messages m
         where m.chat_id is not null
         group by m.chat_id
+     ),
+     keyed as (
+        select c.*,
+          case
+            when c.chat_id ilike '%@g.us%' then null
+            -- Exactly phoneDigitsKey(): last 9 digits, but NULL when the stem has
+            -- fewer than 9 digits (Postgres right(s,9) would otherwise return the
+            -- whole short string, diverging from the JS helper).
+            when length(regexp_replace(split_part(c.chat_id, '@', 1), '[^0-9]', '', 'g')) >= 9
+              then right(regexp_replace(split_part(c.chat_id, '@', 1), '[^0-9]', '', 'g'), 9)
+            else null
+          end as convkey
+        from convo c
      )
-     select c.chat_id, c.contact_phone, c.debtor_id, c.last_content, c.last_type,
-            c.last_direction, c.last_at, c.unread::text as unread,
-            d.owner_name, d.tenant_name, d.apartment_number
-       from convo c
-       left join public.debtors d on d.id = c.debtor_id
+     select k.chat_id, k.contact_phone, k.last_content, k.last_type,
+            k.last_direction, k.last_at, k.unread::text as unread,
+            d.id as debtor_id, d.owner_name, d.tenant_name, d.apartment_number,
+            av.avatar_url
+       from keyed k
+       left join lateral (
+          select d.id, d.owner_name, d.tenant_name, d.apartment_number
+            from public.debtors d
+           where (k.stored_debtor_id is not null and d.id = k.stored_debtor_id)
+              or (k.stored_debtor_id is null and k.convkey is not null
+                  and (right(regexp_replace(coalesce(d.phone_owner,''),  '[^0-9]', '', 'g'), 9) = k.convkey
+                    or right(regexp_replace(coalesce(d.phone_tenant,''), '[^0-9]', '', 'g'), 9) = k.convkey))
+           order by d.is_archived asc, d.created_at asc
+           limit 1
+       ) d on true
+       left join public.whatsapp_avatars av on av.chat_id = k.chat_id
       where ($1 = ''
-             or c.contact_phone ilike $2
-             or d.owner_name     ilike $2
-             or d.tenant_name    ilike $2
-             or d.apartment_number ilike $2)
-      order by c.last_at desc
-      limit $3`,
-    [term, like, Math.max(1, Math.min(500, limit))],
+             or d.owner_name      ilike $2
+             or d.tenant_name     ilike $2
+             or d.apartment_number ilike $2
+             or ($3 <> '' and regexp_replace(coalesce(k.contact_phone,''), '[^0-9]', '', 'g') like '%' || $3 || '%')
+             or ($4 <> '' and regexp_replace(coalesce(k.contact_phone,''), '[^0-9]', '', 'g') like '%' || $4 || '%')
+             or ($4 <> '' and k.convkey is not null and k.convkey like '%' || $4 || '%'))
+      order by k.last_at desc
+      limit $5`,
+    [term, like, digits, digitsTrim, Math.max(1, Math.min(500, limit))],
   );
 
   return r.rows.map((row): Conversation => {
@@ -77,6 +118,7 @@ export async function listConversations(search = '', limit = 200): Promise<Conve
       last_direction: row.last_direction,
       last_at: row.last_at,
       unread: Number(row.unread ?? 0),
+      avatar_url: row.avatar_url,
     };
   });
 }

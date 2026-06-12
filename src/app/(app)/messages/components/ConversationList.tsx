@@ -1,10 +1,11 @@
 'use client';
 
-import { Search, Users, MessageCircle } from 'lucide-react';
+import { Search, MessageCircle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import type { Conversation } from '@/types/whatsapp';
 import { conversationTitle, previewText, formatListStamp } from './format';
+import { ChatAvatar } from './ChatAvatar';
 
 export function ConversationList({
   conversations,
@@ -74,10 +75,17 @@ export function ConversationList({
                       isActive ? 'bg-emerald-50/70' : 'hover:bg-slate-50',
                     )}
                   >
-                    <Avatar title={title} isGroup={c.is_group} />
+                    <ChatAvatar title={title} isGroup={c.is_group} avatarUrl={c.avatar_url} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-semibold text-slate-900">{title}</span>
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate text-sm font-semibold text-slate-900">{title}</span>
+                          {c.apartment_number && (
+                            <span className="shrink-0 text-[11px] font-medium text-slate-400">
+                              · דירה {c.apartment_number}
+                            </span>
+                          )}
+                        </span>
                         <span className="shrink-0 text-[11px] tabular-nums text-slate-400">
                           {formatListStamp(c.last_at)}
                         </span>
@@ -93,11 +101,6 @@ export function ConversationList({
                           </span>
                         )}
                       </div>
-                      {c.apartment_number && (
-                        <span className="mt-0.5 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
-                          דירה {c.apartment_number}
-                        </span>
-                      )}
                     </div>
                   </button>
                 </li>
@@ -107,27 +110,5 @@ export function ConversationList({
         )}
       </div>
     </div>
-  );
-}
-
-function Avatar({ title, isGroup }: { title: string; isGroup: boolean }) {
-  if (isGroup) {
-    return (
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-sky-100 text-sky-600">
-        <Users className="h-5 w-5" />
-      </span>
-    );
-  }
-  const initials = title
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase();
-  return (
-    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700">
-      {initials || '?'}
-    </span>
   );
 }

@@ -767,6 +767,7 @@ toast.info('...');
 
 - **`<kbd>`** keyboard shortcut: `rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-500`
 - **Avatar** with initials: `h-9 w-9 rounded-full bg-blue-100 text-blue-700 text-xs font-bold` + 2-letter initials
+  - **WhatsApp messages variant** (`messages/components/ChatAvatar.tsx`): `h-10 w-10` עם פלטת ה-WhatsApp הירוקה (`bg-emerald-100 text-emerald-700`); קבוצה → `bg-sky-100 text-sky-600` + אייקון `Users`. כשיש תמונת פרופיל מ-Green API מציג `<img object-cover>` עם `onError` שנופל חזרה לראשי-התיבות (קישורי ה-CDN פגים). זוהי וריאציה מכוונת של מודול ה-WhatsApp — לא להחליף לכחול.
 - **Tooltip on disabled button**: לעטוף עם `<TooltipTrigger render={<span className="block" />}>` כדי שה-`disabled` button לא יבלע את ה-pointer events.
 - **Active dot** (status indicator): `inline-flex items-center gap-1.5 text-xs text-slate-600` עם `<span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />` (פעיל) או `bg-slate-400` (מושבת/לא פעיל). הצמד טקסט "פעיל"/"מושבת" אחרי הנקודה. בשימוש ב-Entity List Cards (sect 9b).
 

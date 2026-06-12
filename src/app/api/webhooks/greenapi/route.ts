@@ -59,7 +59,17 @@ export async function POST(req: NextRequest) {
 
     const status = parseOutgoingStatus(payload);
     if (status) {
-      await updateMessageStatusByExternalId(status.externalMessageId, status.status);
+      const { matched } = await updateMessageStatusByExternalId(status.externalMessageId, status.status);
+      if (!matched) {
+        // A status arrived for a message we have NO record of (sent from the
+        // phone before inbound storage, or a stale id). Warn so a systemic
+        // "statuses never reach us" problem is visible — but NOT on the duplicate
+        // / out-of-order status webhooks Green API routinely re-delivers for a
+        // known message (those are matched-but-not-advanced, and are normal).
+        console.warn(
+          `[webhooks/greenapi] outgoing status '${status.status}' for unknown message ${status.externalMessageId}`,
+        );
+      }
       return NextResponse.json({ ok: true });
     }
 

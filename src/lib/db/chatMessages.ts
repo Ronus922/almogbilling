@@ -81,23 +81,39 @@ export async function insertChatMessage(
 /**
  * Update the delivery status of an outbound message by its Green API idMessage.
  * Monotonic: never downgrades (a late 'delivered' won't overwrite a 'read'); a
- * 'failed' always applies. Returns true when a row was updated.
+ * 'failed' always applies.
+ *
+ * Returns { matched, advanced } in one round-trip:
+ *   • matched  — an outbound row with this idMessage exists (so the caller can
+ *     warn ONLY on a genuinely unknown message, not on the duplicate / out-of-order
+ *     status webhooks Green API routinely re-delivers).
+ *   • advanced — the status actually moved forward (a row was updated).
  */
 export async function updateMessageStatusByExternalId(
   externalMessageId: string,
   status: ChatStatus,
-): Promise<boolean> {
-  const r = await query(
-    `update public.chat_messages
-        set status = $2
-      where external_message_id = $1
-        and direction = 'sent'
-        and ($2 = 'failed'
-             or (case status when 'sent' then 1 when 'delivered' then 2 when 'read' then 3 else 0 end)
-                < (case $2     when 'sent' then 1 when 'delivered' then 2 when 'read' then 3 else 0 end))`,
+): Promise<{ matched: boolean; advanced: boolean }> {
+  const r = await query<{ matched: boolean; advanced: boolean }>(
+    `with existing as (
+        select 1 from public.chat_messages
+         where external_message_id = $1 and direction = 'sent'
+         limit 1
+     ),
+     upd as (
+        update public.chat_messages
+           set status = $2
+         where external_message_id = $1
+           and direction = 'sent'
+           and ($2 = 'failed'
+                or (case status when 'sent' then 1 when 'delivered' then 2 when 'read' then 3 else 0 end)
+                   < (case $2     when 'sent' then 1 when 'delivered' then 2 when 'read' then 3 else 0 end))
+        returning 1
+     )
+     select exists(select 1 from existing) as matched,
+            exists(select 1 from upd)      as advanced`,
     [externalMessageId, status],
   );
-  return (r.rowCount ?? 0) > 0;
+  return { matched: r.rows[0]?.matched ?? false, advanced: r.rows[0]?.advanced ?? false };
 }
 
 /** Convenience overload for the transactional success path. */
@@ -131,28 +147,38 @@ export async function countUnlinkedMessages(): Promise<number> {
 
 /**
  * Link an unlinked message to a debtor. To attach the whole conversation in one
- * action, EVERY unlinked message from the same contact_phone is linked too.
- * Returns the number of rows linked, or null if the id is unknown / already linked.
+ * action, EVERY unlinked message in the same conversation is linked too — keyed
+ * on the stable chat_id (the "972…@c.us" grouping key), which is consistent
+ * across inbound + outbound rows. Falls back to contact_phone for the rare row
+ * with no chat_id. Returns the number of rows linked, or null if the id is
+ * unknown / already linked.
  */
 export async function linkMessagesToDebtor(
   messageId: string,
   debtorId: string,
 ): Promise<number | null> {
   return withTransaction(async (client) => {
-    const target = await client.query<{ contact_phone: string }>(
-      `select contact_phone from public.chat_messages
+    const target = await client.query<{ chat_id: string | null; contact_phone: string }>(
+      `select chat_id, contact_phone from public.chat_messages
         where id = $1 and link_status = 'unlinked'
         for update`,
       [messageId],
     );
     if (target.rowCount === 0) return null;
-    const phone = target.rows[0].contact_phone;
-    const upd = await client.query(
-      `update public.chat_messages
-          set debtor_id = $1, link_status = 'linked'
-        where link_status = 'unlinked' and contact_phone = $2`,
-      [debtorId, phone],
-    );
+    const { chat_id, contact_phone } = target.rows[0];
+    const upd = chat_id
+      ? await client.query(
+          `update public.chat_messages
+              set debtor_id = $1, link_status = 'linked'
+            where link_status = 'unlinked' and chat_id = $2`,
+          [debtorId, chat_id],
+        )
+      : await client.query(
+          `update public.chat_messages
+              set debtor_id = $1, link_status = 'linked'
+            where link_status = 'unlinked' and contact_phone = $2`,
+          [debtorId, contact_phone],
+        );
     return upd.rowCount ?? 0;
   });
 }

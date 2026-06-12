@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizePhone, parsePhoneCandidates, cleanPhoneField, splitOwnerTenantPhones,
-  stripPhoneMarkup, WhatsAppError,
+  stripPhoneMarkup, phoneDigitsKey, WhatsAppError,
 } from '@/lib/whatsapp';
 import { interpolateTemplate, formatDebt } from '@/lib/whatsapp-template';
 
@@ -205,6 +205,33 @@ describe('splitOwnerTenantPhones — entry-point split by label', () => {
   it('empty → both null', () => {
     expect(splitOwnerTenantPhones('')).toEqual({ owner: null, tenant: null });
     expect(splitOwnerTenantPhones('0000000000')).toEqual({ owner: null, tenant: null });
+  });
+});
+
+describe('phoneDigitsKey — normalized last-9 matching key', () => {
+  it('unifies local / international / chat-id-stem / formatted forms', () => {
+    // Same mobile, four representations → one key.
+    expect(phoneDigitsKey('0525460546')).toBe('525460546');
+    expect(phoneDigitsKey('972525460546')).toBe('525460546');
+    expect(phoneDigitsKey('972525460546@c.us'.split('@')[0])).toBe('525460546');
+    expect(phoneDigitsKey('052-546-0546')).toBe('525460546');
+    expect(phoneDigitsKey('+972 52 546 0546')).toBe('525460546');
+  });
+
+  it('local and intl forms of the same number share a key (the linking guarantee)', () => {
+    expect(phoneDigitsKey('0541234567')).toBe(phoneDigitsKey('972541234567'));
+    expect(phoneDigitsKey('0521112222')).toBe(phoneDigitsKey('972521112222'));
+  });
+
+  it('distinct numbers do NOT collide', () => {
+    expect(phoneDigitsKey('0541234567')).not.toBe(phoneDigitsKey('0541234568'));
+  });
+
+  it('fewer than 9 digits → null', () => {
+    expect(phoneDigitsKey('12345')).toBeNull();
+    expect(phoneDigitsKey('')).toBeNull();
+    expect(phoneDigitsKey(null)).toBeNull();
+    expect(phoneDigitsKey(undefined)).toBeNull();
   });
 });
 

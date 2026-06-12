@@ -5,6 +5,7 @@ import { getGreenApiSettings } from '@/lib/db/greenApiSettings';
 import {
   getIncomingMessages,
   parseLastIncomingItem,
+  phoneDigitsKey,
   type ParsedIncoming,
   type ParsedOutgoing,
 } from '@/lib/whatsapp';
@@ -14,14 +15,23 @@ import {
 // dedup + debtor cross-reference + insert behave identically and a double run is
 // safe (ON CONFLICT (external_message_id) DO NOTHING).
 
-/** Match a received sender to a debtor by the clean local phone fields. */
+/**
+ * Match a received sender to a debtor by the NORMALIZED phone key (last 9
+ * digits, non-digits stripped on both sides). This unifies the local "0…" form
+ * an inbound message carries with a debtor field that may be stored as "0…",
+ * "972…" or formatted — the old exact `phone_owner = $1` match silently missed
+ * those, leaving conversations unlinked (and thus unsearchable by name).
+ */
 async function findDebtorIdByPhone(localPhone: string): Promise<string | null> {
+  const key = phoneDigitsKey(localPhone);
+  if (!key) return null;
   const row = await queryOne<{ id: string }>(
     `select id from public.debtors
-      where phone_owner = $1 or phone_tenant = $1
+      where right(regexp_replace(coalesce(phone_owner,''),  '[^0-9]', '', 'g'), 9) = $1
+         or right(regexp_replace(coalesce(phone_tenant,''), '[^0-9]', '', 'g'), 9) = $1
       order by is_archived asc, created_at asc
       limit 1`,
-    [localPhone],
+    [key],
   );
   return row?.id ?? null;
 }

@@ -1,5 +1,6 @@
 import 'server-only';
 import { query, queryOne, withTransaction } from '@/lib/db';
+import { phoneDigitsKey } from '@/lib/whatsapp';
 import type { Tenant } from '@/types/tenant';
 
 export interface Debtor {
@@ -509,10 +510,13 @@ export async function getDebtorContact(id: string): Promise<DebtorContact | null
   );
 }
 
-/** Find the debtor whose clean phone field matches `localPhone` ("0XXXXXXXXX").
- *  Used by the inbox composer to link an outbound message to a debtor. Prefers a
- *  live (non-archived) match. */
+/** Find the debtor whose phone field matches `localPhone` by the NORMALIZED key
+ *  (last 9 digits, non-digits stripped on both sides). Used by the inbox composer
+ *  to link an outbound message to a debtor; the normalized match unifies local /
+ *  international / formatted stored forms. Prefers a live (non-archived) match. */
 export async function getDebtorContactByPhone(localPhone: string): Promise<DebtorContact | null> {
+  const key = phoneDigitsKey(localPhone);
+  if (!key) return null;
   return queryOne<DebtorContact>(
     `select id, apartment_number, owner_name, tenant_name,
             phone_owner, phone_tenant,
@@ -520,10 +524,11 @@ export async function getDebtorContactByPhone(localPhone: string): Promise<Debto
             management_fees::float8 as management_fees,
             special_debt::float8    as special_debt
        from public.debtors
-      where phone_owner = $1 or phone_tenant = $1
+      where right(regexp_replace(coalesce(phone_owner,''),  '[^0-9]', '', 'g'), 9) = $1
+         or right(regexp_replace(coalesce(phone_tenant,''), '[^0-9]', '', 'g'), 9) = $1
       order by is_archived asc, created_at asc
       limit 1`,
-    [localPhone],
+    [key],
   );
 }
 
