@@ -225,10 +225,18 @@ git log --oneline -5
 
 ## הערות נוספות
 
-- **Postbuild Gotcha** (PROJECT_CONTEXT.md TODO): `npm run build`
-  דורס את `.next/standalone/` בלי לעשות `systemctl restart`.
+- **Postbuild Gotcha → תמיד `npm run deploy`**: `npm run build` לבד
+  דורס את `.next/standalone/` על הדיסק אבל התהליך הרץ ממשיך להחזיק
+  ב-manifests של ה-build הישן בזיכרון → מגיש HTML/RSC עם שמות chunks
+  שכבר לא קיימים → 404 → `ChunkLoadError` → "This page couldn't load".
+  **לכן כל שינוי קוד שמיועד לפרודקשן מסתיים ב-`npm run deploy`**
+  (build → restart → אימות שהשירות `active` ושהתהליך החדש עלה אחרי
+  כתיבת `.next/BUILD_ID`). `npm run build` לבד מותר **רק** לבדיקת
+  קומפילציה — לעולם לא כ-deploy. הסקריפט: `scripts/deploy.sh`.
+  ה-restart ללא סיסמה מורשה דרך `/etc/sudoers.d/billing-deploy`
+  (scoped ל-`systemctl restart`/`is-active` של `billing.service` בלבד).
   אם הדחיפה כוללת שינוי קוד שמשפיע על runtime, הזכר למשתמש
-  לעשות deploy אחרי merge.
+  להריץ `npm run deploy` אחרי merge.
 - **שגיאות נפוצות**:
   - `non-fast-forward` → `git pull --rebase` ראשון
   - `permission denied` → בדוק SSH key / credentials

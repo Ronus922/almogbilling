@@ -15,6 +15,7 @@
 8. **DRY Components** - מבנה שחוזר → קומפוננטה רוחבית עם props לתוכן/צבעים. אין קוד כפול!
 9. **CSS Cleanup** - כשמוחקים/מבטלים אלמנט → תמיד שאל: "למחוק גם את ה-CSS שלו?" אל תשאיר CSS יתום!
 10. **ניהול context (קריטי!)** - אחרי כל 2 משימות חייבים להריץ `/compact`. אם המשתמש מסרב - להזהיר: "השיחה תתקע בקרוב ולא יהיה אפשר לשחזר". לפני סגירה - `/end`. **אסור לחכות ל-3+ משימות בלי compact!**
+11. **Deploy = `npm run deploy` (לא `npm run build` לבד!)** - כל שינוי קוד שמיועד לפרודקשן **חייב** להסתיים ב-`npm run deploy` (build → `systemctl restart billing.service` → אימות שהשירות `active` ושהתהליך החדש עלה אחרי כתיבת `.next/BUILD_ID`). `npm run build` לבד דורס את `.next/standalone/` בלי restart → התהליך הרץ מגיש chunks ישנים → "This page couldn't load". `npm run build` לבד מותר **רק** לבדיקת קומפילציה, לעולם לא כ-deploy. הסקריפט: `scripts/deploy.sh`.
 
 
 ---
