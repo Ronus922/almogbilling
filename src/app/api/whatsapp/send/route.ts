@@ -8,8 +8,10 @@ import {
   getGreenApiSettings,
   GreenApiNotConfiguredError,
 } from '@/lib/db/greenApiSettings';
-import { normalizePhone, sendWhatsAppMessage, WhatsAppError } from '@/lib/whatsapp';
-import { getPrimaryPhone } from '@/lib/phone';
+import {
+  normalizePhone, parsePhoneCandidates, sendWhatsAppMessage, WhatsAppError,
+} from '@/lib/whatsapp';
+import { interpolateTemplate } from '@/lib/whatsapp-template';
 import { logDebtorEvent, EVENT_TYPE_META } from '@/lib/debtor-events';
 
 export const runtime = 'nodejs';
@@ -18,6 +20,7 @@ interface PostBody {
   debtor_id?: unknown;
   message?: unknown;
   template_id?: unknown;
+  phone?: unknown;
 }
 
 // POST /api/whatsapp/send — send an outbound WhatsApp message to a debtor.
@@ -43,6 +46,7 @@ export async function POST(req: NextRequest) {
   const debtorId = typeof body.debtor_id === 'string' ? body.debtor_id : '';
   const message = typeof body.message === 'string' ? body.message.trim() : '';
   const templateId = typeof body.template_id === 'string' ? body.template_id : null;
+  const requestedPhone = typeof body.phone === 'string' ? body.phone : null;
 
   if (!debtorId) {
     return NextResponse.json({ error: 'debtor_id חסר' }, { status: 400 });
@@ -59,22 +63,46 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'החייב לא נמצא' }, { status: 404 });
   }
 
-  const rawPhone = getPrimaryPhone(debtor);
-  if (!rawPhone) {
+  // SINGLE SOURCE OF TRUTH: interpolate on the server with authoritative debtor
+  // data. The panel preview uses the very same interpolateTemplate(). The body
+  // arrives as the raw template ({{name}} …); we send the resolved text.
+  const finalMessage = interpolateTemplate(message, debtor);
+  if (finalMessage.trim().length < 1) {
+    return NextResponse.json({ error: 'תוכן ההודעה ריק' }, { status: 400 });
+  }
+  if (finalMessage.length > 4096) {
+    return NextResponse.json({ error: 'ההודעה ארוכה מדי (מקסימום 4096 תווים)' }, { status: 400 });
+  }
+
+  // Parse the debtor's (possibly compound) phone field(s) into valid candidates.
+  const candidates = parsePhoneCandidates(
+    `${debtor.phone_owner ?? ''} ${debtor.phone_tenant ?? ''}`,
+  );
+  if (candidates.length === 0) {
     return NextResponse.json({ error: 'לחייב אין מספר טלפון תקין' }, { status: 400 });
   }
 
-  // Normalise phone — bad numbers are a 400, not a server error.
+  // Re-validate the client's selected number server-side: it must normalise AND
+  // belong to the debtor's candidate set. Absent → default to the first.
   let phone: string;
-  let chatId: string;
-  try {
-    ({ phone, chatId } = normalizePhone(rawPhone));
-  } catch (err) {
-    if (err instanceof WhatsAppError) {
-      return NextResponse.json({ error: err.message }, { status: 400 });
+  if (requestedPhone) {
+    let normalized: string;
+    try {
+      ({ phone: normalized } = normalizePhone(requestedPhone));
+    } catch (err) {
+      if (err instanceof WhatsAppError) {
+        return NextResponse.json({ error: `מספר הטלפון שנבחר אינו תקין: ${err.message}` }, { status: 400 });
+      }
+      throw err;
     }
-    throw err;
+    if (!candidates.some((c) => c.phone === normalized)) {
+      return NextResponse.json({ error: 'המספר שנבחר אינו שייך לחייב זה' }, { status: 400 });
+    }
+    phone = normalized;
+  } else {
+    phone = candidates[0].phone;
   }
+  const chatId = `${phone}@c.us`;
 
   // Resolve credentials. Missing config is a real error (not a send attempt).
   let instanceId: string;
@@ -91,7 +119,7 @@ export async function POST(req: NextRequest) {
   // Attempt the send.
   let idMessage: string;
   try {
-    ({ idMessage } = await sendWhatsAppMessage({ instanceId, token, chatId, message }));
+    ({ idMessage } = await sendWhatsAppMessage({ instanceId, token, chatId, message: finalMessage }));
   } catch (err) {
     const detail = err instanceof WhatsAppError ? err.message : 'שגיאה לא ידועה';
     // Record the failed attempt (no external id, no last_whatsapp_sent_at,
@@ -103,7 +131,7 @@ export async function POST(req: NextRequest) {
         chatId,
         externalMessageId: null,
         direction: 'sent',
-        content: message,
+        content: finalMessage,
         status: 'failed',
         errorDetail: detail,
         sentBy: actor.id,
@@ -126,7 +154,7 @@ export async function POST(req: NextRequest) {
         chatId,
         externalMessageId: idMessage,
         direction: 'sent',
-        content: message,
+        content: finalMessage,
         status: 'sent',
         errorDetail: null,
         sentBy: actor.id,
@@ -141,7 +169,7 @@ export async function POST(req: NextRequest) {
         debtorId,
         eventType: 'WHATSAPP',
         title: EVENT_TYPE_META.WHATSAPP.label,
-        description: message,
+        description: finalMessage,
         metadata: {
           external_message_id: idMessage,
           chat_id: chatId,
