@@ -139,7 +139,7 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 
 ## 📚 מדריכים לפי נושא
 
-טען את המדריך הרלוונטי לפי הצורך (נוצר אוטומטית — 67 skills, 24 agents):
+טען את המדריך הרלוונטי לפי הצורך (נוצר אוטומטית — 68 skills, 25 agents):
 
 | Skill | תיאור |
 |------|------|
@@ -149,6 +149,7 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 | `/anthropic-skills` | Anthropic official skills suite — master skill loading MCP Builder, Skill Creator, Doc… |
 | `/api` | Backend & API development guidelines for Next.js 15 - Route handlers, Server Actions,… |
 | `/architecture` | Chat Style Architecture - VSCode Claude Code panel CSS layout and flow for applying custom… |
+| `/big-calendar` | React Big Calendar patterns for Hebrew RTL scheduling UIs - לוח שנה, אירועים,… |
 | `/charts` | Recharts patterns for Hebrew RTL dashboards - graphs, charts, data visualization with… |
 | `/cli-anything` | CLI-Anything — מסגרת להפיכת תוכנה בעלת source code ל-CLI agent-native. |
 | `/clone-website` | AI Website Cloner — reverse-engineers any website into a pixel-perfect Next.js clone using… |
@@ -222,6 +223,7 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 | Animation Agent | `@.claude/agents/animations.md` | Motion & Animation Expert - GSAP Full Club, Framer Motion, ScrollTrigger |
 | Anthropic Skills | `@.claude/agents/anthropic-skills.md` | Anthropic Official Skills Agent — handles MCP server development, skill… |
 | CLI-Anything Agent | `@.claude/agents/cli-anything.md` | Software → Agent-Native CLI Generator - הופך כל תוכנה בעלת source code ל-CLI מובנה עבור AI… |
+| Calendar Agent | `@.claude/agents/calendar.md` | Scheduling & Calendar Expert - React Big Calendar, ניהול אירועים, RTL, drag-and-drop,… |
 | Clone Website Agent | `@.claude/agents/clone-website.md` | AI Website Cloner — Reverse-engineers any website into a pixel-perfect Next.js clone using… |
 | Content Agent | `@.claude/agents/content.md` | Hebrew Content Expert - Copy, Landing Pages |
 | Design Agent | `@.claude/agents/design.md` | UI/UX Build Expert - Creates components, pages, and layouts with Tailwind, RTL, and… |
