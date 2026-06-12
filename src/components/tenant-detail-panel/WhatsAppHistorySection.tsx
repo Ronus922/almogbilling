@@ -103,7 +103,14 @@ function MessageBubble({ m }: { m: ChatMessage }) {
   );
 }
 
-export function WhatsAppHistorySection({ debtorId }: { debtorId: string }) {
+export function WhatsAppHistorySection({
+  debtorId,
+  reloadKey = 0,
+}: {
+  debtorId: string;
+  /** Bump to force a re-fetch after a message is sent from the same panel. */
+  reloadKey?: number;
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,7 +134,7 @@ export function WhatsAppHistorySection({ debtorId }: { debtorId: string }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [debtorId]);
+  }, [debtorId, reloadKey]);
 
   return (
     <Section

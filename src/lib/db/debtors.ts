@@ -315,10 +315,12 @@ export async function getDebtorById(id: string): Promise<Tenant | null> {
     `select
        d.id, d.apartment_number, d.owner_name, d.tenant_name,
        d.phone_owner, d.phone_tenant,
+       d.email_owner, d.email_tenant,
        coalesce(d.phones_manual_override, false) as phones_manual_override,
        d.total_debt::float8       as total_debt,
        d.management_fees::float8  as management_fees,
        d.hot_water_debt::float8   as hot_water_debt,
+       d.special_debt::float8     as special_debt,
        d.monthly_debt,
        d.details,
        d.last_imported_at,

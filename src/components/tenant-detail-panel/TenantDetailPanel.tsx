@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Info, X } from 'lucide-react';
+import { ChevronRight, Info, X } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
@@ -30,20 +30,27 @@ import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { PanelTabs, type PanelTabKey } from './PanelTabs';
 import { EditPhoneDialog, type PhoneField } from './EditPhoneDialog';
+import { cleanPhoneField } from '@/lib/whatsapp';
+import {
+  WhatsAppSendForm, type WhatsAppRecipient, type WhatsAppSendFormHandle,
+} from '@/components/whatsapp/WhatsAppSendForm';
 
 interface Props {
   open: boolean;
   debtorId: string | null;
   isAdmin: boolean;
+  canSendWhatsapp: boolean;
   onOpenChange: (open: boolean) => void;
 }
+
+type PanelView = 'details' | 'whatsapp';
 
 function dateToIsoStr(raw: string | null): string {
   if (!raw) return '';
   return String(raw).slice(0, 10);
 }
 
-export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Props) {
+export function TenantDetailPanel({ open, debtorId, isAdmin, canSendWhatsapp, onOpenChange }: Props) {
   const router = useRouter();
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [statuses, setStatuses] = useState<LegalStatus[]>([]);
@@ -59,6 +66,10 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
   const [hasMutated, setHasMutated] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<PanelTabKey>('details');
+  // Quick-actions WhatsApp swaps the panel body in-place (no second sheet).
+  const [view, setView] = useState<PanelView>('details');
+  const [waHistoryKey, setWaHistoryKey] = useState(0);
+  const waFormRef = useRef<WhatsAppSendFormHandle | null>(null);
 
   useEffect(() => {
     if (!open || !debtorId) {
@@ -67,10 +78,11 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
       setCompletedActions([]);
       setError(null);
       setHasMutated(false);
+      setView('details');
       return;
     }
     let cancelled = false;
-    setLoading(true); setError(null); setTenant(null); setNotes([]); setCompletedActions([]); setHasMutated(false);
+    setLoading(true); setError(null); setTenant(null); setNotes([]); setCompletedActions([]); setHasMutated(false); setView('details');
     Promise.all([
       fetch(`/api/debtors/${debtorId}`, { credentials: 'include' })
         .then((r) => r.ok ? r.json() : Promise.reject(new Error(`tenant HTTP ${r.status}`))),
@@ -114,8 +126,10 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
 
   const isDirty = hasMutated || nextActionDirty;
 
-  // Defensive ESC: panel only listens when no nested overlay is open.
-  useEscapeKey(open && !confirmCloseOpen && editField === null, () => requestClose());
+  // Defensive ESC: panel only listens in the details view when no nested
+  // overlay is open. In the WhatsApp view the inline form owns ESC (its own
+  // dirty guard), so the panel stands down.
+  useEscapeKey(open && view === 'details' && !confirmCloseOpen && editField === null, () => requestClose());
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
   useEscapeKey(editField !== null, () => setEditField(null));
 
@@ -124,6 +138,13 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
   function requestClose() {
     if (isDirty) setConfirmCloseOpen(true);
     else onOpenChange(false);
+  }
+
+  // X / overlay are shared between views: in the WhatsApp view they pop back to
+  // the details view (through the form's dirty guard) rather than closing.
+  function handleDismiss() {
+    if (view === 'whatsapp') waFormRef.current?.requestClose();
+    else requestClose();
   }
 
   function confirmDiscardClose() {
@@ -241,9 +262,35 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
 
   const isLoading = loading || (open && !tenant && !error);
 
+  // Quick-actions derived state — same rules as the debtors-table row icon.
+  const waHasValidPhone = Boolean(
+    tenant && (cleanPhoneField(tenant.phone_owner) || cleanPhoneField(tenant.phone_tenant)),
+  );
+  const waReason = !canSendWhatsapp
+    ? 'אין הרשאה'
+    : !waHasValidPhone
+      ? 'אין מספר טלפון תקין'
+      : null;
+  const tenantEmail = tenant?.email_owner?.trim() || tenant?.email_tenant?.trim() || null;
+  const emailHref = tenantEmail ? `mailto:${tenantEmail}` : null;
+  const waRecipient: WhatsAppRecipient | null = useMemo(
+    () => (tenant ? {
+      id: tenant.id,
+      apartment_number: tenant.apartment_number,
+      owner_name: tenant.owner_name,
+      tenant_name: tenant.tenant_name,
+      phone_owner: tenant.phone_owner,
+      phone_tenant: tenant.phone_tenant,
+      total_debt: tenant.total_debt,
+      management_fees: tenant.management_fees,
+      special_debt: tenant.special_debt,
+    } : null),
+    [tenant],
+  );
+
   return (
     <>
-      <Sheet open={open} onOpenChange={(o) => { if (!o) requestClose(); else onOpenChange(o); }}>
+      <Sheet open={open} onOpenChange={(o) => { if (!o) handleDismiss(); else onOpenChange(o); }}>
         <SheetContent
           side="left"
           dir="rtl"
@@ -292,7 +339,7 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
                 </div>
                 <button
                   type="button"
-                  onClick={requestClose}
+                  onClick={handleDismiss}
                   aria-label="סגור"
                   className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-white/25 bg-white/5 text-white transition-colors hover:bg-white/15 hover:border-white/50"
                 >
@@ -302,11 +349,38 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
             ) : null}
           </SheetHeader>
 
-          {/* Tabs row */}
-          {!isLoading && tenant && (
+          {/* Tabs row — details view only */}
+          {!isLoading && tenant && view === 'details' && (
             <PanelTabs active={activeTab} onChange={setActiveTab} />
           )}
 
+          {view === 'whatsapp' && tenant && waRecipient ? (
+            <>
+              {/* Back to the details view (RTL: chevron points back/right) */}
+              <div className="flex-none border-b border-slate-200 bg-white px-5 py-3">
+                <button
+                  type="button"
+                  onClick={() => waFormRef.current?.requestClose()}
+                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700 transition-colors hover:text-slate-900"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                  חזרה לפרטי הדייר
+                </button>
+              </div>
+              <WhatsAppSendForm
+                key={tenant.id}
+                ref={waFormRef}
+                recipient={waRecipient}
+                escActive={open && view === 'whatsapp'}
+                onClose={() => setView('details')}
+                onSent={() => {
+                  setWaHistoryKey((k) => k + 1);
+                  router.refresh();
+                }}
+              />
+            </>
+          ) : (
+          <>
           {/* Scroll area */}
           <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5">
             {error ? (
@@ -352,7 +426,11 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
                     onEditPhone={(f) => setEditField(f)}
                   />
                   <AdditionalInfoCard tenant={tenant} />
-                  <QuickActionsCard />
+                  <QuickActionsCard
+                    onWhatsApp={() => setView('whatsapp')}
+                    whatsappDisabledReason={waReason}
+                    emailHref={emailHref}
+                  />
                 </div>
 
                 <DebtsCard tenant={tenant} />
@@ -379,7 +457,7 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
                   onAddComment={handleAddComment}
                 />
 
-                <WhatsAppHistorySection debtorId={tenant.id} />
+                <WhatsAppHistorySection debtorId={tenant.id} reloadKey={waHistoryKey} />
               </div>
             )}
           </div>
@@ -396,6 +474,8 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, onOpenChange }: Pro
               showExport
               showHistory
             />
+          )}
+          </>
           )}
         </SheetContent>
       </Sheet>

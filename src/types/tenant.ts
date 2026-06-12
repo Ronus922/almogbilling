@@ -28,10 +28,13 @@ export interface Tenant {
   tenant_name: string | null;
   phone_owner: string | null;
   phone_tenant: string | null;
+  email_owner: string | null;
+  email_tenant: string | null;
   phones_manual_override: boolean;
   total_debt: number;
   management_fees: number;
   hot_water_debt: number;
+  special_debt: number;
   monthly_debt: string | null;
   details: string | null;
   last_imported_at: string | null;

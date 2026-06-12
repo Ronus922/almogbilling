@@ -445,6 +445,7 @@ export function DebtorsTable({
         open={panelOpen}
         debtorId={selectedId}
         isAdmin={isAdmin}
+        canSendWhatsapp={canSendWhatsapp}
         onOpenChange={(o) => {
           setPanelOpen(o);
           if (!o) setSelectedId(null);
