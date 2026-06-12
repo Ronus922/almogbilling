@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { MessageCircle, Check, X as XIcon, Clock } from 'lucide-react';
+import { MessageCircle, Check, X as XIcon, Clock, Paperclip, Image as ImageIcon, ExternalLink } from 'lucide-react';
 import { Section } from './Section';
 import { cn } from '@/lib/utils';
 import type { ChatMessage, ChatStatus } from '@/types/whatsapp';
@@ -30,6 +30,73 @@ function StatusBadge({ status }: { status: ChatStatus }) {
       <Icon className="h-3 w-3" />
       {m.label}
     </span>
+  );
+}
+
+// File messages (inbound) store the Green API downloadUrl in `content`.
+function FileLink({ type, url }: { type: 'image' | 'document'; url: string }) {
+  const Icon = type === 'image' ? ImageIcon : Paperclip;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700 hover:underline"
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      {type === 'image' ? 'תמונה' : 'קובץ מצורף'}
+      <ExternalLink className="h-3 w-3 opacity-70" />
+    </a>
+  );
+}
+
+function MessageBubble({ m }: { m: ChatMessage }) {
+  const inbound = m.direction === 'received';
+  const isFile = m.message_type === 'image' || m.message_type === 'document';
+
+  return (
+    <li className={cn('flex', inbound ? 'justify-start' : 'justify-end')}>
+      <div
+        className={cn(
+          'max-w-[82%] rounded-2xl border p-3',
+          inbound
+            ? 'rounded-ss-sm border-slate-200 bg-white'
+            : m.status === 'failed'
+              ? 'rounded-se-sm border-red-200 bg-red-50/50'
+              : 'rounded-se-sm border-emerald-200 bg-emerald-50/60',
+        )}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[11px] font-semibold text-slate-500">
+            {inbound ? 'התקבלה' : 'נשלחה'}
+          </span>
+          {!inbound && <StatusBadge status={m.status} />}
+        </div>
+
+        <div className="mt-1.5 text-sm leading-relaxed text-slate-800">
+          {isFile && m.content ? (
+            <FileLink type={m.message_type as 'image' | 'document'} url={m.content} />
+          ) : (
+            <p className="whitespace-pre-wrap break-words">
+              {m.content ?? <span className="text-slate-400">—</span>}
+            </p>
+          )}
+        </div>
+
+        <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-slate-400">
+          <span className="tabular-nums" dir="ltr">{formatTime(m.created_at)}</span>
+          {inbound
+            ? null
+            : <span className="truncate">{m.sent_by_name ?? 'מערכת'}</span>}
+        </div>
+
+        {!inbound && m.status === 'failed' && m.error_detail && (
+          <p className="mt-1 truncate text-[11px] text-red-500" title={m.error_detail}>
+            {m.error_detail}
+          </p>
+        )}
+      </div>
+    </li>
   );
 }
 
@@ -75,36 +142,10 @@ export function WhatsAppHistorySection({ debtorId }: { debtorId: string }) {
         ) : error ? (
           <p className="py-3 text-center text-xs text-red-500">טעינת ההיסטוריה נכשלה: {error}</p>
         ) : messages.length === 0 ? (
-          <p className="py-4 text-center text-xs text-slate-400">לא נשלחו הודעות WhatsApp לדייר זה.</p>
+          <p className="py-4 text-center text-xs text-slate-400">אין הודעות WhatsApp לדייר זה.</p>
         ) : (
-          <ul className="space-y-2">
-            {messages.map((m) => (
-              <li
-                key={m.id}
-                className={cn(
-                  'rounded-lg border bg-white p-3',
-                  m.status === 'failed' ? 'border-red-200 bg-red-50/40' : 'border-slate-200',
-                )}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <StatusBadge status={m.status} />
-                  <span className="text-xs text-slate-400 tabular-nums" dir="ltr">
-                    {formatTime(m.created_at)}
-                  </span>
-                </div>
-                <p className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-700">
-                  {m.content ?? <span className="text-slate-400">—</span>}
-                </p>
-                <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-400">
-                  <span>נשלח ע״י {m.sent_by_name ?? 'מערכת'}</span>
-                  {m.status === 'failed' && m.error_detail && (
-                    <span className="truncate text-red-500" title={m.error_detail}>
-                      {m.error_detail}
-                    </span>
-                  )}
-                </div>
-              </li>
-            ))}
+          <ul className="space-y-2.5">
+            {messages.map((m) => <MessageBubble key={m.id} m={m} />)}
           </ul>
         )}
       </div>

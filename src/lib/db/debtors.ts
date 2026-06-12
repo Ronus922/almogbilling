@@ -508,3 +508,33 @@ export async function getDebtorContact(id: string): Promise<DebtorContact | null
     [id],
   );
 }
+
+// Lightweight debtor lookup for the "link inbound message to debtor" dialog:
+// matches by apartment number, owner OR tenant name, across all debtors.
+export interface DebtorSearchResult {
+  id: string;
+  apartment_number: string;
+  owner_name: string | null;
+  tenant_name: string | null;
+  phone_owner: string | null;
+  phone_tenant: string | null;
+  is_archived: boolean;
+}
+
+export async function searchDebtors(q: string, limit = 20): Promise<DebtorSearchResult[]> {
+  const term = q.trim();
+  if (!term) return [];
+  const like = `%${term}%`;
+  const r = await query<DebtorSearchResult>(
+    `select id, apartment_number, owner_name, tenant_name,
+            phone_owner, phone_tenant, is_archived
+       from public.debtors
+      where apartment_number ilike $1
+         or owner_name        ilike $1
+         or tenant_name       ilike $1
+      order by is_archived asc, apartment_number asc
+      limit $2`,
+    [like, Math.max(1, Math.min(50, limit))],
+  );
+  return r.rows;
+}

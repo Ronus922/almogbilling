@@ -210,6 +210,154 @@ export function splitOwnerTenantPhones(
   return { owner, tenant };
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Inbound (phase 2) — pure parsing of Green API notifications.
+// Both the live webhook POST and the lastIncomingMessages pull are reduced to
+// one normalised ParsedIncoming shape so a single processIncomingMessage()
+// (server-only) handles dedup + debtor cross-reference + insert. These helpers
+// are pure (no DB / no secret) so they're fully unit-testable.
+// ─────────────────────────────────────────────────────────────────────
+
+export type IncomingMessageType = 'text' | 'image' | 'document';
+
+export interface ParsedIncoming {
+  /** Green API idMessage — the dedup key (chat_messages.external_message_id). */
+  externalMessageId: string;
+  /** Full Green API chat id, e.g. "972541234567@c.us". */
+  chatId: string;
+  /** Sender phone in the DB-canonical local form "0XXXXXXXXX". */
+  senderPhoneLocal: string;
+  messageType: IncomingMessageType;
+  /** Text body, or — for files — the Green API downloadUrl. */
+  content: string;
+  /** Unix seconds from the gateway, or null (then the DB default now() applies). */
+  timestamp: number | null;
+}
+
+/**
+ * Green API person chat id ("972XXXXXXXXX@c.us") → local "0XXXXXXXXX".
+ * Group chats ("…@g.us") and anything that doesn't resolve to a valid IL number
+ * return null (skipped — not a debtor DM).
+ */
+export function chatIdToLocalPhone(chatId: string | null | undefined): string | null {
+  if (!chatId || typeof chatId !== 'string') return null;
+  const at = chatId.indexOf('@');
+  const suffix = at >= 0 ? chatId.slice(at + 1) : '';
+  if (suffix && suffix.toLowerCase() !== 'c.us') return null; // groups / broadcasts
+  const digits = (at >= 0 ? chatId.slice(0, at) : chatId).replace(/\D+/g, '');
+  const intl = normalizeParsedDigits(digits);
+  return intl ? intlToLocal(intl) : null;
+}
+
+/** Map a Green API typeMessage + raw fields to our (messageType, content), or null. */
+function classifyIncoming(
+  typeMessage: string,
+  fields: { text: string | null; downloadUrl: string | null },
+): { messageType: IncomingMessageType; content: string } | null {
+  switch (typeMessage) {
+    case 'textMessage':
+    case 'extendedTextMessage':
+    case 'quotedMessage': {
+      const text = (fields.text ?? '').trim();
+      return text ? { messageType: 'text', content: text } : null;
+    }
+    case 'imageMessage':
+      return fields.downloadUrl ? { messageType: 'image', content: fields.downloadUrl } : null;
+    case 'documentMessage':
+    case 'videoMessage':
+    case 'audioMessage':
+    case 'voiceMessage':
+      // Any non-image file is stored as a 'document' link (the schema's file types).
+      return fields.downloadUrl ? { messageType: 'document', content: fields.downloadUrl } : null;
+    default:
+      return null;
+  }
+}
+
+function asStr(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+function asNum(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+function asObj(v: unknown): Record<string, unknown> {
+  return typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
+}
+
+/**
+ * Parse a live webhook POST body (shape: { typeWebhook, idMessage, senderData,
+ * messageData, timestamp }). Returns null for any non-incoming notification
+ * (delivery receipts, state changes, outgoing, groups, unsupported types).
+ */
+export function parseWebhookNotification(payload: unknown): ParsedIncoming | null {
+  const body = asObj(payload);
+  if (body.typeWebhook !== 'incomingMessageReceived') return null;
+
+  const externalMessageId = asStr(body.idMessage);
+  if (!externalMessageId) return null;
+
+  const senderData = asObj(body.senderData);
+  const chatId = asStr(senderData.chatId);
+  if (!chatId) return null;
+  const senderPhoneLocal = chatIdToLocalPhone(chatId);
+  if (!senderPhoneLocal) return null;
+
+  const messageData = asObj(body.messageData);
+  const typeMessage = asStr(messageData.typeMessage) ?? '';
+  const textMessageData = asObj(messageData.textMessageData);
+  const extendedTextMessageData = asObj(messageData.extendedTextMessageData);
+  const fileMessageData = asObj(messageData.fileMessageData);
+
+  const classified = classifyIncoming(typeMessage, {
+    text: asStr(textMessageData.textMessage) ?? asStr(extendedTextMessageData.text),
+    downloadUrl: asStr(fileMessageData.downloadUrl),
+  });
+  if (!classified) return null;
+
+  return {
+    externalMessageId,
+    chatId,
+    senderPhoneLocal,
+    messageType: classified.messageType,
+    content: classified.content,
+    timestamp: asNum(body.timestamp),
+  };
+}
+
+/**
+ * Parse one item from the lastIncomingMessages pull response. That endpoint
+ * returns a flat array where the message fields are inlined on the item (not
+ * nested under messageData), so it needs its own adapter to the shared shape.
+ */
+export function parseLastIncomingItem(item: unknown): ParsedIncoming | null {
+  const it = asObj(item);
+
+  const externalMessageId = asStr(it.idMessage);
+  if (!externalMessageId) return null;
+
+  const chatId = asStr(it.chatId) ?? asStr(asObj(it.senderData).chatId);
+  if (!chatId) return null;
+  const senderPhoneLocal = chatIdToLocalPhone(chatId);
+  if (!senderPhoneLocal) return null;
+
+  const typeMessage = asStr(it.typeMessage) ?? '';
+  const extended = asObj(it.extendedTextMessage);
+  const classified = classifyIncoming(typeMessage, {
+    text: asStr(it.textMessage) ?? asStr(extended.text),
+    downloadUrl: asStr(it.downloadUrl),
+  });
+  if (!classified) return null;
+
+  return {
+    externalMessageId,
+    chatId,
+    senderPhoneLocal,
+    messageType: classified.messageType,
+    content: classified.content,
+    timestamp: asNum(it.timestamp),
+  };
+}
+
 interface SendArgs {
   instanceId: string;
   token: string;
@@ -312,4 +460,92 @@ export async function getInstanceState(args: ProbeArgs): Promise<{ stateInstance
   }
 
   return { stateInstance };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Inbound network client (phase 2): pull + webhook registration.
+// Like the senders above, these take explicit instanceId/token and never import
+// a secret, so they're safe in this non-`server-only` module.
+// ─────────────────────────────────────────────────────────────────────
+
+/** Shared GET → text → JSON wrapper that surfaces Green API gateway errors. */
+async function greenApiGet(url: string): Promise<Record<string, unknown> | unknown[]> {
+  let res: Response;
+  let raw: string;
+  try {
+    res = await fetch(url, { method: 'GET' });
+    raw = await res.text();
+  } catch (err) {
+    throw new WhatsAppError(`החיבור ל-Green API נכשל: ${(err as Error).message}`);
+  }
+  if (!res.ok) {
+    const parsed = safeJson(raw);
+    const detail =
+      (parsed && (parsed.invokeStatus || parsed.message)) ||
+      raw.slice(0, 200).replace(/\s+/g, ' ').trim() ||
+      `HTTP ${res.status}`;
+    throw new WhatsAppError(`Green API שגיאה (${res.status}): ${detail}`);
+  }
+  try {
+    return JSON.parse(raw) as Record<string, unknown> | unknown[];
+  } catch {
+    throw new WhatsAppError('Green API החזיר תגובה לא צפויה (לא JSON)');
+  }
+}
+
+/**
+ * GET waInstance{id}/lastIncomingMessages/{token}?minutes=N — the pull fallback.
+ * Returns the raw array of incoming-message items (each parsed via
+ * parseLastIncomingItem). Default window 1440 minutes (24h).
+ */
+export async function getIncomingMessages(
+  args: ProbeArgs & { minutes?: number },
+): Promise<unknown[]> {
+  const minutes = args.minutes && args.minutes > 0 ? Math.floor(args.minutes) : 1440;
+  const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/lastIncomingMessages/${args.token}?minutes=${minutes}`;
+  const data = await greenApiGet(url);
+  return Array.isArray(data) ? data : [];
+}
+
+/** GET waInstance{id}/getSettings/{token} — current instance settings (webhook). */
+export async function getWebhookSettings(args: ProbeArgs): Promise<Record<string, unknown>> {
+  const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/getSettings/${args.token}`;
+  const data = await greenApiGet(url);
+  return Array.isArray(data) ? {} : data;
+}
+
+/**
+ * POST waInstance{id}/setSettings/{token} — register our inbound webhook.
+ * Sets webhookUrl + webhookUrlToken (the bearer secret Green API echoes back in
+ * the Authorization header) and turns incomingWebhook on. The instance reboots
+ * for a few seconds afterwards (Green API behaviour).
+ */
+export async function setWebhookSettings(
+  args: ProbeArgs & { webhookUrl: string; webhookToken: string },
+): Promise<void> {
+  const url = `${GREEN_API_BASE}/waInstance${args.instanceId}/setSettings/${args.token}`;
+  let res: Response;
+  let raw: string;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        webhookUrl: args.webhookUrl,
+        webhookUrlToken: args.webhookToken,
+        incomingWebhook: 'yes',
+      }),
+    });
+    raw = await res.text();
+  } catch (err) {
+    throw new WhatsAppError(`החיבור ל-Green API נכשל: ${(err as Error).message}`);
+  }
+  if (!res.ok) {
+    const parsed = safeJson(raw);
+    const detail =
+      (parsed && (parsed.invokeStatus || parsed.message)) ||
+      raw.slice(0, 200).replace(/\s+/g, ' ').trim() ||
+      `HTTP ${res.status}`;
+    throw new WhatsAppError(`Green API שגיאה (${res.status}): ${detail}`);
+  }
 }
