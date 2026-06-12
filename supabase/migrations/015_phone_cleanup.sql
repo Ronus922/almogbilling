@@ -1,0 +1,30 @@
+-- 015_phone_cleanup.sql
+-- Phone-field data policy: debtors.phone_owner / phone_tenant now hold a SINGLE
+-- clean local number each (0XXXXXXXXX) — no role labels "(בעלים)"/"(שוכר/ת)", no
+-- Markdown links, no "tel:", no multiple numbers per field. The role is derived
+-- from the field's semantics (phone_owner = owner, phone_tenant = tenant).
+--
+-- This file is the ADDITIVE schema part only: it adds backup columns that the
+-- one-shot data migration fills with the pre-cleanup raw values before rewriting
+-- the live columns. The data transform itself lives in
+-- scripts/clean-phone-fields.ts (TypeScript, so it reuses the exact same
+-- splitOwnerTenantPhones()/cleanPhoneField() helpers as the import/sync entry
+-- points — full parity with runtime).
+--
+-- Run order:
+--   1. docker exec -i supabase-db psql -U postgres -d proj_billing < supabase/migrations/015_phone_cleanup.sql
+--   2. npx tsx scripts/clean-phone-fields.ts            # dry-run preview
+--   3. npx tsx scripts/clean-phone-fields.ts --apply    # backup + clean
+
+BEGIN;
+
+ALTER TABLE public.debtors
+  ADD COLUMN IF NOT EXISTS phone_owner_raw_backup  text,
+  ADD COLUMN IF NOT EXISTS phone_tenant_raw_backup text;
+
+COMMENT ON COLUMN public.debtors.phone_owner_raw_backup IS
+  'Pre-015 raw phone_owner snapshot (rollback source for the phone cleanup).';
+COMMENT ON COLUMN public.debtors.phone_tenant_raw_backup IS
+  'Pre-015 raw phone_tenant snapshot (rollback source for the phone cleanup).';
+
+COMMIT;
