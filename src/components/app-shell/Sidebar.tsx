@@ -1,16 +1,19 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, LayoutGrid, Users, Truck, CheckSquare, AlertTriangle, Calendar,
   FileText, MessageCircle, MessagesSquare, Bell, Upload, Download, Sliders, MapPin,
-  UserCog, Settings as SettingsIcon, Inbox,
+  UserCog, Settings as SettingsIcon, Inbox, ChevronRight, ChevronLeft,
   type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/lib/auth/context';
+
+const STORAGE_KEY = 'almog:sidebar-collapsed';
 
 interface MenuItem {
   label: string;
@@ -47,33 +50,49 @@ const MANAGE_MENU: MenuItem[] = [
 export function Sidebar() {
   const pathname = usePathname();
   const { can } = usePermissions();
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Persisted collapse state (read after mount to avoid a hydration mismatch).
+  useEffect(() => {
+    setCollapsed(localStorage.getItem(STORAGE_KEY) === '1');
+  }, []);
+
+  function toggle() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem(STORAGE_KEY, next ? '1' : '0');
+      return next;
+    });
+  }
 
   const mainVisible = MAIN_MENU.filter((it) => can(it.module, 'view'));
   const manageVisible = MANAGE_MENU.filter((it) => can(it.module, 'view'));
 
   return (
-    <aside className="hidden w-64 shrink-0 border-l bg-card md:flex md:flex-col">
-      <div className="flex items-center justify-between border-b px-4 py-3">
-        <h2 className="text-lg font-extrabold">ניהול אלמוג</h2>
-        <button
-          type="button"
-          className="relative grid h-9 w-9 place-items-center rounded-full text-muted-foreground hover:bg-muted"
-          aria-label="התראות"
-        >
-          <Bell className="h-5 w-5" />
-          <span className="absolute -top-0.5 -right-0.5 grid h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
-            +9
-          </span>
-        </button>
-      </div>
+    <aside
+      className={cn(
+        'relative hidden shrink-0 border-l border-line bg-white transition-[width] duration-200 md:flex md:flex-col',
+        collapsed ? 'w-[68px]' : 'w-[248px]',
+      )}
+    >
+      {/* Collapse / expand toggle — straddles the sidebar's inner (leading) edge. */}
+      <button
+        type="button"
+        onClick={toggle}
+        aria-label={collapsed ? 'פתח תפריט' : 'כווץ תפריט'}
+        aria-expanded={!collapsed}
+        className="absolute top-1/2 left-0 z-20 grid h-6 w-6 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-line bg-white text-ink-2 shadow-soft-sm transition-colors hover:bg-row-hover hover:text-brand"
+      >
+        {collapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+      </button>
 
-      <nav className="flex-1 overflow-y-auto p-3">
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden p-3">
         {mainVisible.length > 0 && (
-          <Section title="תפריט ראשי" items={mainVisible} pathname={pathname} />
+          <Section title="תפריט ראשי" items={mainVisible} pathname={pathname} collapsed={collapsed} />
         )}
         {manageVisible.length > 0 && (
-          <div className={cn(mainVisible.length > 0 && 'mt-6')}>
-            <Section title="ניהול" items={manageVisible} pathname={pathname} />
+          <div className={cn(mainVisible.length > 0 && 'mt-4 border-t border-line-soft pt-4')}>
+            <Section title="ניהול" items={manageVisible} pathname={pathname} collapsed={collapsed} />
           </div>
         )}
       </nav>
@@ -81,10 +100,16 @@ export function Sidebar() {
   );
 }
 
-function Section({ title, items, pathname }: { title: string; items: MenuItem[]; pathname: string }) {
+function Section({
+  title, items, pathname, collapsed,
+}: { title: string; items: MenuItem[]; pathname: string; collapsed: boolean }) {
   return (
     <div>
-      <h3 className="mb-2 px-3 text-xs font-medium text-muted-foreground">{title}</h3>
+      {collapsed ? (
+        <div className="mx-2 mb-2 h-px bg-line-soft" aria-hidden />
+      ) : (
+        <h3 className="mb-2 px-3 text-[11px] font-bold tracking-[0.06em] text-ink-ghost">{title}</h3>
+      )}
       <ul className="space-y-0.5">
         {items.map((it) => {
           const isActive = !!it.href && (pathname === it.href || pathname.startsWith(it.href + '/'));
@@ -92,28 +117,34 @@ function Section({ title, items, pathname }: { title: string; items: MenuItem[];
           const body = (
             <span
               className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
-                isActive && 'bg-primary/10 text-primary font-medium',
-                !isActive && isReady && 'hover:bg-muted',
-                !isReady && 'text-muted-foreground cursor-not-allowed opacity-60',
+                'relative flex h-10 items-center gap-3 rounded-[10px] text-[13.5px] transition-colors',
+                collapsed ? 'justify-center px-0' : 'px-3',
+                isActive && 'bg-brand-soft font-semibold text-brand-text',
+                !isActive && isReady && 'text-ink-2 hover:bg-row-hover',
+                !isReady && 'text-ink-ghost cursor-not-allowed',
               )}
             >
-              <it.icon className="h-4 w-4 shrink-0" />
-              <span className="truncate">{it.label}</span>
+              {isActive && (
+                <span className="absolute inset-y-1.5 right-0 w-[3px] rounded-full bg-brand" aria-hidden />
+              )}
+              <it.icon className={cn('h-[18px] w-[18px] shrink-0', isActive && 'text-brand')} />
+              {!collapsed && <span className="truncate">{it.label}</span>}
             </span>
           );
-          return (
-            <li key={it.label}>
-              {isReady ? (
-                <Link href={it.href!}>{body}</Link>
-              ) : (
-                <Tooltip>
-                  <TooltipTrigger render={<span />}>{body}</TooltipTrigger>
-                  <TooltipContent side="left">בקרוב</TooltipContent>
-                </Tooltip>
-              )}
-            </li>
-          );
+          // When collapsed, every item gets a label tooltip; otherwise only the
+          // not-yet-ready items show the "בקרוב" tooltip (unchanged behaviour).
+          const wrapped =
+            collapsed || !isReady ? (
+              <Tooltip>
+                <TooltipTrigger render={<span className="block" />}>
+                  {isReady ? <Link href={it.href!}>{body}</Link> : body}
+                </TooltipTrigger>
+                <TooltipContent side="left">{isReady ? it.label : 'בקרוב'}</TooltipContent>
+              </Tooltip>
+            ) : (
+              <Link href={it.href!}>{body}</Link>
+            );
+          return <li key={it.label}>{wrapped}</li>;
         })}
       </ul>
     </div>

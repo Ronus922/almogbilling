@@ -30,7 +30,17 @@ import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { QuickDocPopover } from './QuickDocPopover';
 
 const numFmt = new Intl.NumberFormat('he-IL', { maximumFractionDigits: 0 });
-const ils = (v: number) => `₪ ${numFmt.format(v)}`;
+
+/** Amount cell — Inter tabular number with a small ₪ on its right (RTL order:
+ *  ₪ is the first child so it sits on the right; the digits stay LTR). */
+function Amount({ value, className }: { value: number; className?: string }) {
+  return (
+    <span className={cn('inline-flex items-baseline justify-center gap-1 font-num font-bold tabular-nums', className)}>
+      <span className="text-[0.72em] font-semibold opacity-70">₪</span>
+      <span dir="ltr">{numFmt.format(value)}</span>
+    </span>
+  );
+}
 
 type SortField = 'apt' | 'owner' | 'total_debt' | 'management_fees' | 'hot_water_debt' | 'legal_status';
 
@@ -234,7 +244,7 @@ export function DebtorsTable({
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-lg border bg-card p-12 text-center text-sm text-muted-foreground">
+      <div className="rounded-xl border border-line bg-surface-2 p-12 text-center text-sm text-ink-2">
         אין נתונים להצגה. ייבוא ראשון יבצע אכלוס של הטבלה.
       </div>
     );
@@ -270,10 +280,10 @@ export function DebtorsTable({
           </div>
         </div>
       )}
-      <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+      <div className="overflow-hidden rounded-xl border border-line">
         <Table>
-          <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
-            <TableRow className="bg-slate-50 hover:bg-slate-50">
+          <TableHeader className="[&_tr]:border-b [&_tr]:border-line">
+            <TableRow className="bg-surface-2 hover:bg-surface-2">
               {canSendWhatsapp && (
                 <TableHead className="h-11 w-10 px-4 text-center">
                   <Checkbox
@@ -286,21 +296,21 @@ export function DebtorsTable({
               )}
               <SortHead field="apt" label="מס׳ דירה" align="right" currentSort={currentSort} onSort={handleSortClick} />
               <SortHead field="owner" label="שם בעל הדירה" align="right" currentSort={currentSort} onSort={handleSortClick} />
-              <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">טלפון</TableHead>
-              <SortHead field="total_debt" label="סה״כ חוב" align="center" toneColor="text-orange-500" toneHover="hover:text-orange-600" currentSort={currentSort} onSort={handleSortClick} />
+              <TableHead className="h-11 px-4 text-center text-xs font-semibold text-ink-2">טלפון</TableHead>
+              <SortHead field="total_debt" label="סה״כ חוב" align="center" currentSort={currentSort} onSort={handleSortClick} />
               <SortHead field="management_fees" label="דמי ניהול" align="center" currentSort={currentSort} onSort={handleSortClick} />
               <SortHead field="hot_water_debt" label="מים חמים" align="center" currentSort={currentSort} onSort={handleSortClick} />
               <SortHead field="legal_status" label="מצב משפטי" align="center" currentSort={currentSort} onSort={handleSortClick} />
               {isActionsTab && (
                 <>
-                  <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">פעולה לביצוע</TableHead>
-                  <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">תאריך יעד</TableHead>
+                  <TableHead className="h-11 px-4 text-right text-xs font-semibold text-ink-2">פעולה לביצוע</TableHead>
+                  <TableHead className="h-11 px-4 text-center text-xs font-semibold text-ink-2">תאריך יעד</TableHead>
                 </>
               )}
               {isArchivedTab && (
-                <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">הועבר לארכיון</TableHead>
+                <TableHead className="h-11 px-4 text-center text-xs font-semibold text-ink-2">הועבר לארכיון</TableHead>
               )}
-              <TableHead className="h-11 px-4 text-left text-sm font-semibold text-slate-500">פעולות</TableHead>
+              <TableHead className="h-11 px-4 text-left text-xs font-semibold text-ink-2">פעולות</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -316,7 +326,7 @@ export function DebtorsTable({
                   key={d.id}
                   onClick={() => openPanel(d.id)}
                   className={cn(
-                    'cursor-pointer border-b border-slate-100 hover:bg-slate-50 h-12',
+                    'h-[46px] cursor-pointer border-b border-line-soft hover:bg-row-hover',
                     selectedIds.has(d.id) && 'bg-emerald-50/40 hover:bg-emerald-50/60',
                   )}
                 >
@@ -329,32 +339,31 @@ export function DebtorsTable({
                       />
                     </TableCell>
                   )}
-                  <TableCell className="px-4 py-3 text-right text-sm font-bold text-slate-900 tabular-nums">
+                  <TableCell className="px-4 py-3 text-right text-sm font-num font-bold tabular-nums text-ink">
                     {d.apartment_number}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-right text-sm font-medium text-slate-800">
+                  <TableCell className="px-4 py-3 text-right text-sm font-medium text-ink">
                     <span className="inline-flex items-center gap-1.5">
-                      <span>{d.owner_name ?? '—'}</span>
+                      <span>{d.owner_name ?? <span className="text-ink-ghost">—</span>}</span>
                       <DocIndicator count={d.doc_count} lastAt={d.last_doc_at} />
                     </span>
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-center text-sm text-slate-500 tabular-nums" dir="ltr">
-                    {phone ?? '—'}
+                  <TableCell className="px-4 py-3 text-center text-sm font-num tabular-nums text-ink-2" dir="ltr">
+                    {phone ?? <span className="text-ink-ghost">—</span>}
                   </TableCell>
-                  <TableCell dir="ltr" className="px-4 py-3 text-center text-sm font-bold text-red-600 tabular-nums">
-                    {ils(d.total_debt)}
+                  <TableCell className="px-4 py-3 text-center text-sm">
+                    <Amount value={d.total_debt} className="text-[#e5484d]" />
                   </TableCell>
-                  <TableCell dir="ltr" className="px-4 py-3 text-center text-sm font-bold text-blue-700 tabular-nums">
-                    {ils(d.management_fees)}
+                  <TableCell className="px-4 py-3 text-center text-sm">
+                    <Amount value={d.management_fees} className="text-brand" />
                   </TableCell>
-                  <TableCell dir="ltr" className="px-4 py-3 text-center text-sm font-bold text-purple-600 tabular-nums">
-                    {ils(d.hot_water_debt)}
+                  <TableCell className="px-4 py-3 text-center text-sm">
+                    <Amount value={d.hot_water_debt} className="text-[#7c5cfc]" />
                   </TableCell>
                   <TableCell className="px-4 py-3 text-center">
                     <LegalStatusPill
                       name={d.legal_status_name}
                       color={d.legal_status_color}
-                      isDefault={d.legal_status_is_default}
                     />
                   </TableCell>
                   {isActionsTab && (
@@ -609,13 +618,11 @@ function withPage(sp: URLSearchParams, p: number) {
 }
 
 function SortHead({
-  field, label, align, toneColor, toneHover, currentSort, onSort,
+  field, label, align, currentSort, onSort,
 }: {
   field: SortField;
   label: string;
   align: 'right' | 'center' | 'left';
-  toneColor?: string;
-  toneHover?: string;
   currentSort: SortKey;
   onSort: (field: SortField) => void;
 }) {
@@ -624,9 +631,9 @@ function SortHead({
   const ArrowIcon = isActive && dir === 'asc' ? ArrowUp : ArrowDown;
 
   const textAlign = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
-  const base = toneColor ?? 'text-slate-500';
-  const hover = toneHover ?? 'hover:text-slate-700';
-  const activeClr = toneColor ? '' : 'text-slate-700';
+  // RTL justify: start = right, end = left — so the header label sits exactly
+  // over the body cell content (which uses the matching text-align).
+  const justify = align === 'right' ? 'justify-start' : align === 'center' ? 'justify-center' : 'justify-end';
 
   return (
     <TableHead className={cn('h-11 px-4', textAlign)}>
@@ -634,9 +641,9 @@ function SortHead({
         type="button"
         onClick={() => onSort(field)}
         className={cn(
-          'group inline-flex items-center gap-1 text-sm font-semibold transition-colors',
-          base, hover,
-          isActive && activeClr,
+          'group flex w-full items-center gap-1 text-xs font-semibold transition-colors',
+          justify,
+          isActive ? 'text-[#e5484d]' : 'text-ink-2 hover:text-ink',
         )}
       >
         {label}
@@ -669,20 +676,26 @@ function DocIndicator({ count, lastAt }: { count: number; lastAt: unknown }) {
 }
 
 function LegalStatusPill({
-  name, color, isDefault,
-}: { name: string | null; color: string | null; isDefault: boolean | null }) {
-  if (!name || isDefault) {
+  name, color,
+}: { name: string | null; color: string | null }) {
+  // Pill tinted by the status's chosen colour: soft fill + matching border +
+  // a solid dot of the same hue, with the status name (incl. "רגיל"). Rows with
+  // no status at all show a neutral em-dash.
+  if (!name) {
     return (
-      <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-0.5 text-xs font-semibold text-slate-500">
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-ink-3">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink-ghost" aria-hidden />
         —
       </span>
     );
   }
+  const c = color ?? '#8a92a6';
   return (
     <span
-      className="inline-flex items-center rounded-full px-3 py-0.5 text-xs font-semibold text-slate-900"
-      style={{ backgroundColor: color ?? '#e5e7eb' }}
+      className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold text-ink"
+      style={{ backgroundColor: `${c}24`, borderColor: `${c}59` }}
     >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: c }} aria-hidden />
       {name}
     </span>
   );
@@ -713,7 +726,7 @@ function RowActions({
   onUnarchive?: () => void;
 }) {
   return (
-    <div dir="ltr" className="flex items-center justify-start gap-3">
+    <div dir="ltr" className="flex items-center justify-start gap-1.5">
       {showCheck && onCheck && (
         <Tooltip>
           <TooltipTrigger render={<span />}>
@@ -721,9 +734,9 @@ function RowActions({
               type="button"
               onClick={onCheck}
               aria-label="סמן כבוצעה"
-              className="inline-flex items-center justify-center text-emerald-600 hover:text-emerald-700 transition-colors"
+              className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-lg text-[#16a34a] transition-colors hover:bg-[#e9fbf0]"
             >
-              <CheckCircle2 className="h-5 w-5" />
+              <CheckCircle2 className="h-[18px] w-[18px]" />
             </button>
           </TooltipTrigger>
           <TooltipContent>סמן כבוצעה</TooltipContent>
@@ -736,7 +749,7 @@ function RowActions({
               type="button"
               onClick={onArchive}
               aria-label="העבר לארכיון"
-              className="inline-flex items-center justify-center text-orange-500 hover:text-orange-600 transition-colors"
+              className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-lg text-[#f2620f] transition-colors hover:bg-[#fff0e6]"
             >
               <Archive className="h-4 w-4" />
             </button>
@@ -751,7 +764,7 @@ function RowActions({
               type="button"
               onClick={onUnarchive}
               aria-label="החזר מהארכיון"
-              className="inline-flex items-center justify-center text-blue-600 hover:text-blue-700 transition-colors"
+              className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-lg text-brand transition-colors hover:bg-brand-soft"
             >
               <ArchiveRestore className="h-4 w-4" />
             </button>
@@ -767,7 +780,7 @@ function RowActions({
             onClick={whatsappReason ? undefined : onWhatsApp}
             disabled={whatsappReason !== null}
             aria-label="שליחת WhatsApp"
-            className="inline-flex items-center justify-center text-green-500 transition-colors hover:text-green-600 disabled:cursor-default disabled:text-slate-300"
+            className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-lg text-[#16a34a] transition-colors hover:bg-[#e9fbf0] disabled:cursor-default disabled:text-ink-ghost disabled:hover:bg-transparent"
           >
             <MessageCircle className="h-4 w-4" />
           </button>

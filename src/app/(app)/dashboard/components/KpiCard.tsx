@@ -1,16 +1,17 @@
-import { Card } from '@/components/ui/card';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-export type KpiTone = 'purple' | 'sky' | 'amber' | 'yellow' | 'orange' | 'red';
+export type KpiTone = 'purple' | 'cyan' | 'orange' | 'amber' | 'red' | 'green' | 'gray';
 
-const toneStyles: Record<KpiTone, { bg: string; fg: string }> = {
-  purple: { bg: 'bg-purple-50', fg: 'text-purple-600' },
-  sky:    { bg: 'bg-sky-50',    fg: 'text-sky-600' },
-  amber:  { bg: 'bg-amber-50',  fg: 'text-amber-600' },
-  yellow: { bg: 'bg-yellow-50', fg: 'text-yellow-600' },
-  orange: { bg: 'bg-orange-50', fg: 'text-orange-600' },
-  red:    { bg: 'bg-red-50',    fg: 'text-red-600' },
+// Each tone: soft chip background + solid icon color + border in the same shade.
+const toneStyles: Record<KpiTone, { soft: string; solid: string; border: string }> = {
+  purple: { soft: 'bg-[#f1ecff]', solid: 'text-[#7c5cfc]', border: 'border-[#7c5cfc]/25' },
+  cyan:   { soft: 'bg-[#e6fafe]', solid: 'text-[#0ba5c7]', border: 'border-[#0ba5c7]/25' },
+  orange: { soft: 'bg-[#fff0e6]', solid: 'text-[#f2620f]', border: 'border-[#f2620f]/25' },
+  amber:  { soft: 'bg-[#fff6e6]', solid: 'text-[#e08700]', border: 'border-[#e08700]/25' },
+  red:    { soft: 'bg-[#feefef]', solid: 'text-[#e5484d]', border: 'border-[#e5484d]/25' },
+  green:  { soft: 'bg-[#e9fbf0]', solid: 'text-[#16a34a]', border: 'border-[#16a34a]/25' },
+  gray:   { soft: 'bg-[#f1f3f8]', solid: 'text-[#8a92a6]', border: 'border-[#8a92a6]/25' },
 };
 
 export function KpiCard({
@@ -28,17 +29,22 @@ export function KpiCard({
 }) {
   const t = toneStyles[tone];
   return (
-    <Card className="p-5">
+    <div className="rounded-2xl border border-line bg-white p-[18px] shadow-soft-xs transition-all duration-150 hover:-translate-y-0.5 hover:shadow-soft-md">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-sm text-muted-foreground">{title}</div>
-          <div className="mt-2 text-2xl font-extrabold tracking-tight">{value}</div>
-          {subtitle && <div className="mt-1 text-xs text-muted-foreground">{subtitle}</div>}
-        </div>
-        <div className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-full', t.bg, t.fg)}>
+        <div className="min-w-0 pt-0.5 text-[13px] font-medium text-ink-2">{title}</div>
+        <span
+          className={cn(
+            'grid h-10 w-10 shrink-0 place-items-center rounded-xl border',
+            t.soft, t.solid, t.border,
+          )}
+        >
           <Icon className="h-5 w-5" aria-hidden />
-        </div>
+        </span>
       </div>
-    </Card>
+      <div className="mt-3 flex items-baseline gap-2">
+        <div className="font-num text-[26px] font-bold tracking-[-0.5px] text-ink">{value}</div>
+        {subtitle && <div className="text-xs text-ink-3">{subtitle}</div>}
+      </div>
+    </div>
   );
 }

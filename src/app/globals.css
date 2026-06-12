@@ -4,12 +4,45 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ─────────────────────────────────────────────────────────────────────
+   Dashboard design language ("ניהול אלמוג") — visual skin tokens.
+   Literal values so Tailwind v4 generates utilities: bg-app, bg-surface-2,
+   border-line, text-ink, text-brand, bg-brand-soft, shadow-soft-md, etc.
+   ───────────────────────────────────────────────────────────────────── */
+@theme {
+  /* App surfaces */
+  --color-app: #f5f9fd;
+  --color-surface-2: #fafbfe;
+  --color-row-hover: #f5f7fc;
+  /* Lines */
+  --color-line: #e8eaf2;
+  --color-line-soft: #eff1f7;
+  --color-line-strong: #d9ddea;
+  /* Ink (text) */
+  --color-ink: #1a2233;
+  --color-ink-2: #5b6479;
+  --color-ink-3: #8a92a6;
+  --color-ink-ghost: #b4bacb;
+  /* Brand (blue) */
+  --color-brand: #3d5afe;
+  --color-brand-dark: #2c44e0;
+  --color-brand-soft: #ecefff;
+  --color-brand-border: #cfd7ff;
+  --color-brand-text: #243bb5;
+  /* Soft, slightly-blue shadows */
+  --shadow-soft-xs: 0 1px 2px rgba(20, 28, 50, 0.04);
+  --shadow-soft-sm: 0 1px 3px rgba(20, 28, 50, 0.05), 0 1px 2px rgba(20, 28, 50, 0.03);
+  --shadow-soft-md: 0 4px 14px rgba(20, 28, 50, 0.07), 0 2px 4px rgba(20, 28, 50, 0.04);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-heebo);
   --font-mono: var(--font-heebo);
   --font-heading: var(--font-heebo);
+  /* Numbers / amounts / phones — Inter, used via `font-num` + `tabular-nums`. */
+  --font-num: var(--font-inter);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

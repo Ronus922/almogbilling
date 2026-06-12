@@ -18,19 +18,19 @@ export function KpiGrid({ kpis }: { kpis: DashboardKpis }) {
         value={ils.format(kpis.managementDebtTotal)}
       />
       <KpiCard
-        tone="sky"
+        tone="cyan"
         icon={Droplets}
         title="חוב מים חמים"
         value={ils.format(kpis.hotWaterDebtTotal)}
       />
       <KpiCard
-        tone="amber"
+        tone="orange"
         icon={Zap}
         title="לגבייה מיידית"
         value={String(kpis.immediateCollectionCount)}
       />
       <KpiCard
-        tone="yellow"
+        tone="amber"
         icon={Mail}
         title="מכתבי התראה"
         value={String(kpis.warningLetterCount)}

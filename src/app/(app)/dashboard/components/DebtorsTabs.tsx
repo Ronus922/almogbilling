@@ -63,10 +63,10 @@ export function DebtorsTabs({
             onClick={() => !t.disabled && go(t.key)}
             disabled={t.disabled}
             className={cn(
-              'h-10 w-full inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs sm:text-sm font-semibold transition-colors cursor-pointer',
+              'h-[42px] w-full inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-0 text-xs sm:text-sm font-semibold leading-none transition-colors cursor-pointer',
               isActive
-                ? `${t.activeBg} text-white`
-                : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50',
+                ? `${t.activeBg} text-white shadow-soft-sm`
+                : 'bg-white text-ink-2 border border-line hover:bg-row-hover',
               t.disabled && 'cursor-not-allowed opacity-60',
             )}
             aria-current={isActive ? 'page' : undefined}
@@ -75,7 +75,7 @@ export function DebtorsTabs({
             <span>{t.label}</span>
             <span
               className={cn(
-                'inline-flex items-center justify-center text-xs font-bold px-1.5 py-0.5 rounded-full',
+                'inline-flex items-center justify-center rounded-full px-1.5 py-0.5 font-num text-xs font-bold tabular-nums',
                 isActive ? 'bg-white/25 text-white' : t.badgeIdle,
               )}
             >
