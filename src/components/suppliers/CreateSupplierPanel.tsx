@@ -24,10 +24,16 @@ import { validatePhone } from '@/lib/validation';
 import {
   SUPPLIER_TYPES, supplierTypeMeta, PAYMENT_TERMS, paymentTermsLabel,
 } from '@/lib/constants/suppliers';
-import type { SupplierWritableFields, SupplierPaymentTerms } from '@/lib/types/suppliers';
+import type {
+  SupplierWritableFields, SupplierPaymentTerms, SupplierCategory,
+} from '@/lib/types/suppliers';
+
+// Sentinel for "no category" — base-ui Select needs a non-empty value.
+const NONE = '__none__';
 
 interface Props {
   open: boolean;
+  categories: SupplierCategory[];
   onOpenChange: (o: boolean) => void;
   onCreated: () => void;
 }
@@ -36,6 +42,7 @@ interface FormState {
   display_name: string;
   company_name: string;
   supplier_type: string;
+  category_id: string;
   contact_person: string;
   phone: string;
   mobile: string;
@@ -55,6 +62,7 @@ const EMPTY_FORM: FormState = {
   display_name: '',
   company_name: '',
   supplier_type: 'general',
+  category_id: NONE,
   contact_person: '',
   phone: '',
   mobile: '',
@@ -70,7 +78,7 @@ const EMPTY_FORM: FormState = {
   bank_account: '',
 };
 
-export function CreateSupplierPanel({ open, onOpenChange, onCreated }: Props) {
+export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated }: Props) {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
@@ -147,6 +155,7 @@ export function CreateSupplierPanel({ open, onOpenChange, onCreated }: Props) {
         company_name: form.company_name.trim(),
         contact_person: form.contact_person.trim(),
         supplier_type: form.supplier_type,
+        category_id: form.category_id === NONE ? null : form.category_id,
         status: 'active',
         phone: form.phone.trim() ? validatePhone(form.phone).normalized : '',
         mobile: form.mobile.trim() ? validatePhone(form.mobile).normalized : '',
@@ -273,6 +282,29 @@ export function CreateSupplierPanel({ open, onOpenChange, onCreated }: Props) {
                             </SelectItem>
                           );
                         })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-base font-medium text-muted-foreground">קטגוריה</Label>
+                    <Select
+                      value={form.category_id}
+                      onValueChange={(v) => set('category_id', v ?? NONE)}
+                      disabled={submitting}
+                    >
+                      <SelectTrigger className="w-full data-[size=default]:h-10">
+                        <SelectValue placeholder="בחר קטגוריה...">
+                          {(value: string | null) => {
+                            if (!value || value === NONE) return 'ללא קטגוריה';
+                            return categories.find((c) => c.id === value)?.name ?? 'קטגוריה';
+                          }}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NONE}>ללא קטגוריה</SelectItem>
+                        {categories.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>

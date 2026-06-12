@@ -33,12 +33,16 @@ import {
 } from '@/lib/constants/suppliers';
 import type {
   Supplier, SupplierDocument, SupplierWritableFields,
-  SupplierStatus, SupplierPaymentTerms, SupplierDocType,
+  SupplierStatus, SupplierPaymentTerms, SupplierDocType, SupplierCategory,
 } from '@/lib/types/suppliers';
+
+// Sentinel for "no category" — base-ui Select needs a non-empty value.
+const NONE = '__none__';
 
 interface Props {
   supplierId: string | null;
   open: boolean;
+  categories: SupplierCategory[];
   onOpenChange: (o: boolean) => void;
   onChanged: () => void;
   canEdit: boolean;
@@ -59,6 +63,7 @@ function toForm(s: Supplier): FormState {
     company_name: s.company_name,
     contact_person: s.contact_person,
     supplier_type: s.supplier_type,
+    category_id: s.category_id,
     status: s.status,
     phone: s.phone,
     mobile: s.mobile,
@@ -78,7 +83,7 @@ function toForm(s: Supplier): FormState {
 }
 
 export function SupplierDetailPanel({
-  supplierId, open, onOpenChange, onChanged, canEdit, canDelete,
+  supplierId, open, categories, onOpenChange, onChanged, canEdit, canDelete,
 }: Props) {
   const router = useRouter();
   const [supplier, setSupplier] = useState<Supplier | null>(null);
@@ -437,11 +442,13 @@ export function SupplierDetailPanel({
                       set={set}
                       markTouched={markTouched}
                       errFor={errFor}
+                      categories={categories}
                       disabled={saving}
                     />
                   ) : (
                     <ViewDetails
                       supplier={supplier}
+                      categories={categories}
                       canEdit={canEdit}
                       saving={saving}
                       onEdit={startEdit}
@@ -642,13 +649,17 @@ export function SupplierDetailPanel({
 
 interface ViewProps {
   supplier: Supplier;
+  categories: SupplierCategory[];
   canEdit: boolean;
   saving: boolean;
   onEdit: () => void;
   onStatusChange: (next: SupplierStatus) => void;
 }
 
-function ViewDetails({ supplier, canEdit, saving, onEdit, onStatusChange }: ViewProps) {
+function ViewDetails({ supplier, categories, canEdit, saving, onEdit, onStatusChange }: ViewProps) {
+  const categoryName = supplier.category_id
+    ? categories.find((c) => c.id === supplier.category_id)?.name ?? null
+    : null;
   return (
     <>
       {/* Status / edit action buttons by current status */}
@@ -713,6 +724,7 @@ function ViewDetails({ supplier, canEdit, saving, onEdit, onStatusChange }: View
       {/* פרטי קשר */}
       <Section title="פרטי קשר" icon={Phone} iconTone="blue">
         <dl className="space-y-2.5 py-2">
+          <InfoRow icon={Building2} label="קטגוריה" value={categoryName} />
           <InfoRow icon={UserIcon} label="איש קשר" value={supplier.contact_person} />
           <InfoRow
             icon={Phone}
@@ -802,10 +814,11 @@ interface EditFormProps {
   set: <K extends keyof FormState>(key: K, value: FormState[K]) => void;
   markTouched: (key: keyof FormState) => void;
   errFor: (key: keyof FormState) => string | null;
+  categories: SupplierCategory[];
   disabled: boolean;
 }
 
-function EditForm({ form, set, markTouched, errFor, disabled }: EditFormProps) {
+function EditForm({ form, set, markTouched, errFor, categories, disabled }: EditFormProps) {
   return (
     <>
       {/* Section 1 — פרטי הספק */}
@@ -854,6 +867,29 @@ function EditForm({ form, set, markTouched, errFor, disabled }: EditFormProps) {
                     </SelectItem>
                   );
                 })}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-base font-medium text-muted-foreground">קטגוריה</Label>
+            <Select
+              value={form.category_id ?? NONE}
+              onValueChange={(v) => set('category_id', !v || v === NONE ? null : v)}
+              disabled={disabled}
+            >
+              <SelectTrigger className="w-full data-[size=default]:h-10">
+                <SelectValue placeholder="בחר קטגוריה...">
+                  {(value: string | null) => {
+                    if (!value || value === NONE) return 'ללא קטגוריה';
+                    return categories.find((c) => c.id === value)?.name ?? 'קטגוריה';
+                  }}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>ללא קטגוריה</SelectItem>
+                {categories.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

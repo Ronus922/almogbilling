@@ -21,12 +21,27 @@ export type SupplierDocType =
   | 'insurance'
   | 'warranty';
 
+/** A user-managed supplier category (classifies suppliers beyond supplier_type). */
+export interface SupplierCategory {
+  id: string;
+  name: string;
+  is_active: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/** Category row enriched with its live-supplier count (category management sheet). */
+export interface SupplierCategoryWithCount extends SupplierCategory {
+  linked_count: number;
+}
+
 export interface Supplier {
   id: string;
   display_name: string;
   company_name: string;
   contact_person: string;
   supplier_type: string;
+  category_id: string | null;
   status: SupplierStatus;
   phone: string;
   mobile: string;
@@ -49,9 +64,10 @@ export interface Supplier {
   deleted_at: Date | null;
 }
 
-/** A supplier list row — adds a documents_count subquery aggregate. */
+/** A supplier list row — adds a documents_count aggregate + the joined category name. */
 export interface SupplierListItem extends Supplier {
   documents_count: number;
+  category_name: string | null;
 }
 
 export interface SupplierDocument {
@@ -73,6 +89,7 @@ export interface SupplierWritableFields {
   company_name: string;
   contact_person: string;
   supplier_type: string;
+  category_id: string | null;
   status: SupplierStatus;
   phone: string;
   mobile: string;
@@ -94,4 +111,5 @@ export interface SupplierListFilters {
   search?: string;
   status?: SupplierStatus | 'all';
   type?: string | 'all';
+  category?: string | 'all';
 }

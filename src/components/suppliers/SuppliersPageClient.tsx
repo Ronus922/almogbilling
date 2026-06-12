@@ -1,14 +1,19 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, FolderCog } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import type { SupplierListItem, SupplierListFilters } from '@/lib/types/suppliers';
+import type {
+  SupplierListItem,
+  SupplierListFilters,
+  SupplierCategory,
+} from '@/lib/types/suppliers';
 import { SupplierFilters } from './SupplierFilters';
 import { SupplierTable } from './SupplierTable';
 import { CreateSupplierPanel } from './CreateSupplierPanel';
 import { SupplierDetailPanel } from './SupplierDetailPanel';
+import { SupplierCategoriesSheet } from './SupplierCategoriesSheet';
 
 type Filters = Required<SupplierListFilters>;
 
@@ -16,6 +21,7 @@ const INITIAL_FILTERS: Filters = {
   search: '',
   status: 'all',
   type: 'all',
+  category: 'all',
 };
 
 export function SuppliersPageClient({
@@ -26,10 +32,12 @@ export function SuppliersPageClient({
   canDelete: boolean;
 }) {
   const [suppliers, setSuppliers] = useState<SupplierListItem[]>([]);
+  const [categories, setCategories] = useState<SupplierCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showCategories, setShowCategories] = useState(false);
 
   const fetchSuppliers = useCallback(async () => {
     setLoading(true);
@@ -38,6 +46,7 @@ export function SuppliersPageClient({
       if (filters.search.trim()) params.set('search', filters.search.trim());
       if (filters.status !== 'all') params.set('status', filters.status);
       if (filters.type !== 'all') params.set('type', filters.type);
+      if (filters.category !== 'all') params.set('category', filters.category);
       const qs = params.toString();
       const res = await fetch(qs ? `/api/suppliers?${qs}` : '/api/suppliers', {
         credentials: 'include',
@@ -53,9 +62,23 @@ export function SuppliersPageClient({
     }
   }, [filters]);
 
+  const fetchCategories = useCallback(async () => {
+    try {
+      const res = await fetch('/api/suppliers/categories', { credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setCategories((await res.json()) as SupplierCategory[]);
+    } catch (err) {
+      toast.error(`טעינת הקטגוריות נכשלה: ${(err as Error).message}`);
+    }
+  }, []);
+
   useEffect(() => {
     void fetchSuppliers();
   }, [fetchSuppliers]);
+
+  useEffect(() => {
+    void fetchCategories();
+  }, [fetchCategories]);
 
   function updateFilters(next: Partial<SupplierListFilters>) {
     setFilters((prev) => ({ ...prev, ...next }));
@@ -74,15 +97,26 @@ export function SuppliersPageClient({
         </div>
 
         {canEdit && (
-          <Button type="button" onClick={() => setShowCreate(true)} className="gap-2">
-            <Plus className="h-4 w-4" />
-            ספק חדש
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowCategories(true)}
+              className="gap-2"
+            >
+              <FolderCog className="h-4 w-4" />
+              ניהול קטגוריות
+            </Button>
+            <Button type="button" onClick={() => setShowCreate(true)} className="gap-2">
+              <Plus className="h-4 w-4" />
+              ספק חדש
+            </Button>
+          </div>
         )}
       </div>
 
       <div className="space-y-3 rounded-lg bg-card p-4 border">
-        <SupplierFilters filters={filters} onChange={updateFilters} />
+        <SupplierFilters filters={filters} categories={categories} onChange={updateFilters} />
         <SupplierTable
           rows={suppliers}
           loading={loading}
@@ -92,6 +126,7 @@ export function SuppliersPageClient({
 
       <CreateSupplierPanel
         open={showCreate}
+        categories={categories}
         onOpenChange={setShowCreate}
         onCreated={fetchSuppliers}
       />
@@ -99,12 +134,22 @@ export function SuppliersPageClient({
       <SupplierDetailPanel
         supplierId={selectedId}
         open={!!selectedId}
+        categories={categories}
         onOpenChange={(o: boolean) => {
           if (!o) setSelectedId(null);
         }}
         onChanged={fetchSuppliers}
         canEdit={canEdit}
         canDelete={canDelete}
+      />
+
+      <SupplierCategoriesSheet
+        open={showCategories}
+        canEdit={canEdit}
+        onOpenChange={setShowCategories}
+        onChanged={async () => {
+          await Promise.all([fetchCategories(), fetchSuppliers()]);
+        }}
       />
     </div>
   );

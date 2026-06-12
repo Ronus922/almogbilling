@@ -9,7 +9,7 @@ import {
   supplierTypeMeta,
   type DesignTone,
 } from '@/lib/constants/suppliers';
-import { formatPhoneDisplay } from '@/lib/phone';
+import { formatPhoneDisplay, phoneTelHref } from '@/lib/phone';
 import type { SupplierListItem, SupplierStatus } from '@/lib/types/suppliers';
 
 // DESIGN.md §2 tone → badge classes. Only the tones the status palette uses.
@@ -53,6 +53,7 @@ export function SupplierTable({
           <TableRow className="bg-slate-50 hover:bg-slate-50">
             <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">שם</TableHead>
             <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">תחום</TableHead>
+            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500 max-lg:hidden">קטגוריה</TableHead>
             <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">איש קשר</TableHead>
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">טלפון</TableHead>
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500 max-md:hidden">נייד</TableHead>
@@ -84,17 +85,36 @@ export function SupplierTable({
                     {typeMeta.label}
                   </span>
                 </TableCell>
+                <TableCell className="px-4 py-3 text-right max-lg:hidden">
+                  {s.category_name ? (
+                    <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
+                      {s.category_name}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </TableCell>
                 <TableCell className="px-4 py-3 text-right text-sm text-slate-700">
                   {s.contact_person || '—'}
                 </TableCell>
-                <TableCell dir="ltr" className="px-4 py-3 text-center text-sm text-slate-500 tabular-nums">
-                  {phone ?? '—'}
+                <TableCell dir="ltr" className="px-4 py-3 text-center text-sm tabular-nums">
+                  <PhoneLink display={phone} raw={s.phone} />
                 </TableCell>
-                <TableCell dir="ltr" className="px-4 py-3 text-center text-sm text-slate-500 tabular-nums max-md:hidden">
-                  {mobile ?? '—'}
+                <TableCell dir="ltr" className="px-4 py-3 text-center text-sm tabular-nums max-md:hidden">
+                  <PhoneLink display={mobile} raw={s.mobile} />
                 </TableCell>
-                <TableCell dir="ltr" className="px-4 py-3 text-center text-sm text-slate-500 max-lg:hidden">
-                  {s.email || '—'}
+                <TableCell dir="ltr" className="px-4 py-3 text-center text-sm max-lg:hidden">
+                  {s.email ? (
+                    <a
+                      href={`mailto:${s.email}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-blue-600 hover:text-blue-700 hover:underline underline-offset-2"
+                    >
+                      {s.email}
+                    </a>
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
                 </TableCell>
                 <TableCell className="px-4 py-3 text-center">
                   <StatusBadge status={s.status} />
@@ -105,6 +125,21 @@ export function SupplierTable({
         </TableBody>
       </Table>
     </div>
+  );
+}
+
+/** Clickable tel: link from a (display, raw) phone pair, or an em-dash. */
+function PhoneLink({ display, raw }: { display: string | null; raw: string }) {
+  const href = phoneTelHref(raw);
+  if (!display || !href) return <span className="text-slate-500">—</span>;
+  return (
+    <a
+      href={`tel:${href}`}
+      onClick={(e) => e.stopPropagation()}
+      className="text-blue-600 hover:text-blue-700 hover:underline underline-offset-2"
+    >
+      {display}
+    </a>
   );
 }
 

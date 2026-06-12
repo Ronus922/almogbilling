@@ -14,13 +14,15 @@ import {
   SUPPLIER_STATUSES,
   SUPPLIER_TYPES,
 } from '@/lib/constants/suppliers';
-import type { SupplierListFilters } from '@/lib/types/suppliers';
+import type { SupplierListFilters, SupplierCategory } from '@/lib/types/suppliers';
 
 export function SupplierFilters({
   filters,
+  categories,
   onChange,
 }: {
   filters: Required<SupplierListFilters>;
+  categories: SupplierCategory[];
   onChange: (next: Partial<SupplierListFilters>) => void;
 }) {
   return (
@@ -67,6 +69,24 @@ export function SupplierFilters({
             {SUPPLIER_TYPES.map((t) => (
               <SelectItem key={t.value} value={t.value}>
                 {t.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Category select (dynamic, user-managed) */}
+        <Select
+          value={filters.category}
+          onValueChange={(v) => onChange({ category: v ?? 'all' })}
+        >
+          <SelectTrigger className="w-44">
+            <SelectValue placeholder="כל הקטגוריות" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">כל הקטגוריות</SelectItem>
+            {categories.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.name}
               </SelectItem>
             ))}
           </SelectContent>

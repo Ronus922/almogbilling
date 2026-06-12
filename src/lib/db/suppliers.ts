@@ -9,11 +9,20 @@ import type {
 } from '@/lib/types/suppliers';
 
 const SUPPLIER_COLUMNS = `
-  id, display_name, company_name, contact_person, supplier_type, status,
+  id, display_name, company_name, contact_person, supplier_type, category_id, status,
   phone, mobile, email, website, address, city, tax_id,
   bank_name, bank_branch, bank_account, payment_terms,
   notes, internal_notes, rating, created_by, created_by_name,
   created_at, updated_at, deleted_at`;
+
+// Same projection, prefixed for the list join (avoids ambiguity with
+// supplier_categories columns of the same name).
+const SUPPLIER_COLUMNS_S = `
+  s.id, s.display_name, s.company_name, s.contact_person, s.supplier_type, s.category_id, s.status,
+  s.phone, s.mobile, s.email, s.website, s.address, s.city, s.tax_id,
+  s.bank_name, s.bank_branch, s.bank_account, s.payment_terms,
+  s.notes, s.internal_notes, s.rating, s.created_by, s.created_by_name,
+  s.created_at, s.updated_at, s.deleted_at`;
 
 /** List active (non-deleted) suppliers with documents_count, filtered + sorted. */
 export async function listSuppliers(filters: SupplierListFilters): Promise<SupplierListItem[]> {
@@ -36,11 +45,17 @@ export async function listSuppliers(filters: SupplierListFilters): Promise<Suppl
     params.push(filters.type);
     where.push(`s.supplier_type = $${params.length}`);
   }
+  if (filters.category && filters.category !== 'all') {
+    params.push(filters.category);
+    where.push(`s.category_id = $${params.length}`);
+  }
 
   const r = await query<SupplierListItem>(
-    `select ${SUPPLIER_COLUMNS},
+    `select ${SUPPLIER_COLUMNS_S},
+       c.name as category_name,
        (select count(*)::int from public.supplier_documents d where d.supplier_id = s.id) as documents_count
      from public.suppliers s
+     left join public.supplier_categories c on c.id = s.category_id
      where ${where.join(' and ')}
      order by case s.status when 'active' then 0 when 'inactive' then 1 else 2 end,
               s.display_name asc`,
@@ -66,15 +81,15 @@ export async function createSupplier(
        (display_name, company_name, contact_person, supplier_type, status,
         phone, mobile, email, website, address, city, tax_id,
         bank_name, bank_branch, bank_account, payment_terms,
-        notes, internal_notes, rating, created_by, created_by_name)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+        notes, internal_notes, rating, created_by, created_by_name, category_id)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
      returning id`,
     [
       fields.display_name, fields.company_name, fields.contact_person, fields.supplier_type,
       fields.status, fields.phone, fields.mobile, fields.email, fields.website, fields.address,
       fields.city, fields.tax_id, fields.bank_name, fields.bank_branch, fields.bank_account,
       fields.payment_terms, fields.notes, fields.internal_notes, fields.rating,
-      createdBy, createdByName,
+      createdBy, createdByName, fields.category_id,
     ],
   );
   if (!row) throw new Error('failed_to_create_supplier');
@@ -88,13 +103,13 @@ export async function updateSupplier(id: string, fields: SupplierWritableFields)
        display_name=$2, company_name=$3, contact_person=$4, supplier_type=$5, status=$6,
        phone=$7, mobile=$8, email=$9, website=$10, address=$11, city=$12, tax_id=$13,
        bank_name=$14, bank_branch=$15, bank_account=$16, payment_terms=$17,
-       notes=$18, internal_notes=$19, rating=$20
+       notes=$18, internal_notes=$19, rating=$20, category_id=$21
      where id=$1 and deleted_at is null`,
     [
       id, fields.display_name, fields.company_name, fields.contact_person, fields.supplier_type,
       fields.status, fields.phone, fields.mobile, fields.email, fields.website, fields.address,
       fields.city, fields.tax_id, fields.bank_name, fields.bank_branch, fields.bank_account,
-      fields.payment_terms, fields.notes, fields.internal_notes, fields.rating,
+      fields.payment_terms, fields.notes, fields.internal_notes, fields.rating, fields.category_id,
     ],
   );
   return (r.rowCount ?? 0) > 0;
