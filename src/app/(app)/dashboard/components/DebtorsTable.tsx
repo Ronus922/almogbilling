@@ -7,7 +7,7 @@ import { format } from 'date-fns';
 import { toast } from 'sonner';
 import {
   ArrowUp, ArrowDown, Archive, ArchiveRestore, MessageSquare, MessageCircle,
-  ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2,
+  ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Send, X,
 } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -17,12 +17,15 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { Debtor, SortKey, TabKey } from '@/lib/db/debtors';
 import { formatPhoneDisplay, getPrimaryPhone } from '@/lib/phone';
 import { cleanPhoneField } from '@/lib/whatsapp';
 import { TenantDetailPanel } from '@/components/tenant-detail-panel/TenantDetailPanel';
 import { WhatsAppSendPanel, type WhatsAppRecipient } from '@/components/whatsapp/WhatsAppSendPanel';
+import { WhatsAppBulkSendPanel } from '@/components/whatsapp/WhatsAppBulkSendPanel';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { QuickDocPopover } from './QuickDocPopover';
 
@@ -82,6 +85,36 @@ export function DebtorsTable({
   const [unarchiving, setUnarchiving] = useState(false);
   const [whatsappTarget, setWhatsappTarget] = useState<WhatsAppRecipient | null>(null);
   const [whatsappOpen, setWhatsappOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+
+  // Selection is per-page: navigating / re-sorting / changing tab clears it so we
+  // never bulk-send to rows that scrolled out of view.
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [page, currentSort, currentTab]);
+
+  const pageIds = rows.map((d) => d.id);
+  const selectedOnPage = pageIds.filter((id) => selectedIds.has(id));
+  const allSelected = pageIds.length > 0 && selectedOnPage.length === pageIds.length;
+  const someSelected = selectedOnPage.length > 0 && !allSelected;
+
+  function toggleOne(id: string, checked: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function toggleAll(checked: boolean) {
+    setSelectedIds(() => (checked ? new Set(pageIds) : new Set()));
+  }
+
+  const bulkRecipients: WhatsAppRecipient[] = rows
+    .filter((d) => selectedIds.has(d.id))
+    .map(toRecipient);
 
   useEscapeKey(markDone !== null && !marking, () => setMarkDone(null));
   useEscapeKey(archiveTarget !== null && !archiving, () => setArchiveTarget(null));
@@ -182,17 +215,7 @@ export function DebtorsTable({
   }
 
   function openWhatsapp(d: Debtor) {
-    setWhatsappTarget({
-      id: d.id,
-      apartment_number: d.apartment_number,
-      owner_name: d.owner_name,
-      tenant_name: d.tenant_name,
-      phone_owner: d.phone_owner,
-      phone_tenant: d.phone_tenant,
-      total_debt: d.total_debt,
-      management_fees: d.management_fees,
-      special_debt: d.special_debt,
-    });
+    setWhatsappTarget(toRecipient(d));
     setWhatsappOpen(true);
   }
 
@@ -219,10 +242,48 @@ export function DebtorsTable({
 
   return (
     <div className="space-y-3">
+      {canSendWhatsapp && selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-2.5">
+          <span className="text-sm font-semibold text-emerald-900">
+            {selectedIds.size} נבחרו
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setBulkOpen(true)}
+              className="gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
+            >
+              <Send className="h-4 w-4" />
+              שליחת WhatsApp
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelectedIds(new Set())}
+              className="gap-1.5 text-slate-600 hover:text-slate-800"
+            >
+              <X className="h-4 w-4" />
+              נקה בחירה
+            </Button>
+          </div>
+        </div>
+      )}
       <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
         <Table>
           <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
             <TableRow className="bg-slate-50 hover:bg-slate-50">
+              {canSendWhatsapp && (
+                <TableHead className="h-11 w-10 px-4 text-center">
+                  <Checkbox
+                    checked={allSelected}
+                    indeterminate={someSelected}
+                    onCheckedChange={(v) => toggleAll(v === true)}
+                    aria-label="בחר הכל"
+                  />
+                </TableHead>
+              )}
               <SortHead field="apt" label="מס׳ דירה" align="right" currentSort={currentSort} onSort={handleSortClick} />
               <SortHead field="owner" label="שם בעל הדירה" align="right" currentSort={currentSort} onSort={handleSortClick} />
               <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">טלפון</TableHead>
@@ -254,8 +315,20 @@ export function DebtorsTable({
                 <TableRow
                   key={d.id}
                   onClick={() => openPanel(d.id)}
-                  className="cursor-pointer border-b border-slate-100 hover:bg-slate-50 h-12"
+                  className={cn(
+                    'cursor-pointer border-b border-slate-100 hover:bg-slate-50 h-12',
+                    selectedIds.has(d.id) && 'bg-emerald-50/40 hover:bg-emerald-50/60',
+                  )}
                 >
+                  {canSendWhatsapp && (
+                    <TableCell className="w-10 px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedIds.has(d.id)}
+                        onCheckedChange={(v) => toggleOne(d.id, v === true)}
+                        aria-label={`בחר דירה ${d.apartment_number}`}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell className="px-4 py-3 text-right text-sm font-bold text-slate-900 tabular-nums">
                     {d.apartment_number}
                   </TableCell>
@@ -379,6 +452,13 @@ export function DebtorsTable({
         onSent={() => router.refresh()}
       />
 
+      <WhatsAppBulkSendPanel
+        open={bulkOpen}
+        recipients={bulkRecipients}
+        onOpenChange={setBulkOpen}
+        onDone={() => { setSelectedIds(new Set()); router.refresh(); }}
+      />
+
       <AlertDialog
         open={markDone !== null}
         onOpenChange={(o) => { if (!o) setMarkDone(null); }}
@@ -458,6 +538,20 @@ export function DebtorsTable({
 }
 
 // ─── helpers used inside the component file ───
+function toRecipient(d: Debtor): WhatsAppRecipient {
+  return {
+    id: d.id,
+    apartment_number: d.apartment_number,
+    owner_name: d.owner_name,
+    tenant_name: d.tenant_name,
+    phone_owner: d.phone_owner,
+    phone_tenant: d.phone_tenant,
+    total_debt: d.total_debt,
+    management_fees: d.management_fees,
+    special_debt: d.special_debt,
+  };
+}
+
 function truncate(s: string | null, n: number): string {
   if (!s) return '—';
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
