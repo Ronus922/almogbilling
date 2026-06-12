@@ -37,7 +37,7 @@ const MANAGE_MENU: MenuItem[] = [
   { label: 'ייבוא נתונים',       icon: Upload, href: '/import', module: 'import' },
   { label: 'ייצוא נתונים',       icon: Download, module: 'export' },
   { label: 'ניהול סטטוס חיובים', icon: Sliders, href: '/statuses', module: 'status_management' },
-  { label: 'תבניות ווטסאפ',      icon: MessageCircle, module: 'whatsapp_templates' },
+  { label: 'תבניות ווטסאפ',      icon: MessageCircle, href: '/whatsapp-templates', module: 'whatsapp_templates' },
   { label: 'ניהול אזורים',       icon: MapPin, module: 'rooms_areas' },
   { label: 'משתמשים',            icon: UserCog, href: '/settings/users', module: 'users_management' },
   { label: 'הגדרות',             icon: SettingsIcon, href: '/settings', module: 'settings' },

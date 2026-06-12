@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Save, X } from 'lucide-react';
+import { Save, X, MessageSquareText } from 'lucide-react';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -133,17 +133,32 @@ export function WhatsAppTemplateSheet({
           showCloseButton={false}
           className="w-full p-0 sm:w-[55vw] md:min-w-[640px] flex flex-col gap-0 overflow-hidden bg-white"
         >
-          <div className="flex-none border-b border-slate-200 bg-white px-6 py-4">
-            <div className="flex items-center justify-between gap-3">
-              <SheetTitle className="text-lg font-bold text-slate-900">
-                {editing ? 'עריכת תבנית' : 'תבנית חדשה'}
-              </SheetTitle>
-              <Button type="button" variant="ghost" size="icon" onClick={() => attemptClose(false)} aria-label="סגור">
-                <X className="h-4 w-4" />
-              </Button>
+          {/* Header — gradient (DESIGN canonical, matches the tenant detail panel) */}
+          <div className="flex-none bg-gradient-to-bl from-slate-900 via-blue-950 to-blue-900 px-6 py-6 text-white">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/10">
+                  <MessageSquareText className="h-5 w-5" />
+                </span>
+                <div className="min-w-0">
+                  <SheetTitle className="text-xl font-bold text-white">
+                    {editing ? 'עריכת תבנית' : 'תבנית חדשה'}
+                  </SheetTitle>
+                  <p className="mt-0.5 text-sm text-white/70">תבנית הודעת WhatsApp</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => attemptClose(false)}
+                aria-label="סגור"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-white/25 bg-white/5 text-white transition-colors hover:border-white/50 hover:bg-white/15"
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
           </div>
 
+          {/* Body */}
           <div className="flex-1 overflow-y-auto bg-slate-50/60 p-6">
             <div className="mx-auto max-w-lg space-y-5">
               <div className="space-y-1.5">
@@ -172,7 +187,7 @@ export function WhatsAppTemplateSheet({
                         type="button"
                         onClick={() => insertPlaceholder(p.token)}
                         disabled={saving}
-                        className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+                        className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50"
                       >
                         {p.label}
                       </button>
@@ -184,7 +199,7 @@ export function WhatsAppTemplateSheet({
                   ref={contentRef}
                   value={values.content}
                   onChange={(e) => set('content', e.target.value)}
-                  placeholder="שלום {{name}}, נותר חוב של {{debt}} בגין דירה {{apartment}}..."
+                  placeholder="שלום {{name}}, נותר חוב של {{debt}}. דמי ניהול: {{monthly}}..."
                   rows={6}
                   className="resize-none"
                   disabled={saving}
@@ -215,6 +230,7 @@ export function WhatsAppTemplateSheet({
             </div>
           </div>
 
+          {/* Footer */}
           <div className="flex-none border-t border-slate-200 bg-white px-6 py-3">
             <div className="flex items-center justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => attemptClose(false)} disabled={saving}>
@@ -224,7 +240,7 @@ export function WhatsAppTemplateSheet({
                 type="button"
                 onClick={submit}
                 disabled={saving}
-                className="gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
+                className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
               >
                 <Save className="h-4 w-4" />
                 {saving ? 'שומר…' : 'שמור'}
