@@ -5,16 +5,107 @@ import { MessageCircle, Plus, Megaphone } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { Conversation, ThreadMessage, InstanceOption } from '@/types/whatsapp';
+import type {
+  Conversation, ThreadMessage, InstanceOption, ChatStatus, ChatDirection, ChatMessageType, WaStreamEvent,
+} from '@/types/whatsapp';
 import { ConversationList } from './ConversationList';
 import { ChatThread } from './ChatThread';
 import { NewConversationDialog } from './NewConversationDialog';
 import { BroadcastPanel } from './BroadcastPanel';
 import { TemplatesTab } from './TemplatesTab';
 
-const POLL_MS = 5000;
+// Real-time: SSE pushes updates instantly. Polling is now only a gap-filler —
+// infrequent while the stream is healthy, dense while it's down.
+const FALLBACK_SYNC_MS = 30_000; // SSE connected → reconcile every 30s
+const DENSE_POLL_MS = 4_000;     // SSE down → fall back to dense polling
 
 type Tab = 'chats' | 'templates';
+
+/** Result the composer reports back after the send round-trip resolves. */
+export interface SendResolution {
+  ok: boolean;
+  message_id?: string | null;
+  idMessage?: string | null;
+  error?: string;
+  /** The fetch threw (network/unknown outcome) — the send may or may not have
+   *  gone out, so we must NOT leave a terminal 'failed' bubble (it would
+   *  duplicate the real row on the next sync if it actually sent). */
+  unknown?: boolean;
+}
+
+// ─── pure thread/list merge helpers (no refetch — point updates) ───
+
+// Monotonic status ranking so a late 'delivered' never overwrites a 'read'.
+const STATUS_RANK: Record<ChatStatus, number> = {
+  pending: 0, queued: 0, sent: 1, failed: 1, delivered: 2, read: 3,
+};
+
+function msgKey(m: ThreadMessage): string {
+  return m.external_message_id || m.id;
+}
+
+function sortByCreated(list: ThreadMessage[]): ThreadMessage[] {
+  return [...list].sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
+}
+
+/** Insert or merge a message by external-id/id (no duplicates). */
+function upsertThread(prev: ThreadMessage[], msg: ThreadMessage): ThreadMessage[] {
+  const k = msgKey(msg);
+  const i = prev.findIndex((m) => msgKey(m) === k || m.id === msg.id);
+  if (i >= 0) {
+    const next = [...prev];
+    next[i] = { ...next[i], ...msg };
+    return next;
+  }
+  return sortByCreated([...prev, msg]);
+}
+
+/** Advance a message's delivery status (the ✓ ticks), monotonically. */
+function applyStatus(prev: ThreadMessage[], externalId: string, status: ChatStatus): ThreadMessage[] {
+  let changed = false;
+  const next = prev.map((m) => {
+    if (m.external_message_id === externalId && STATUS_RANK[status] > STATUS_RANK[m.status]) {
+      changed = true;
+      return { ...m, status };
+    }
+    return m;
+  });
+  return changed ? next : prev;
+}
+
+/** Replace the thread with server data but keep in-flight optimistic bubbles
+ *  (tmp- ids the server hasn't caught up on yet). */
+function reconcileThread(server: ThreadMessage[], prev: ThreadMessage[]): ThreadMessage[] {
+  const serverKeys = new Set(server.map(msgKey));
+  const serverIds = new Set(server.map((m) => m.id));
+  const keepTmp = prev.filter(
+    (m) => m.id.startsWith('tmp-')
+      && !(m.external_message_id && serverKeys.has(m.external_message_id))
+      && !serverIds.has(m.id),
+  );
+  return keepTmp.length ? sortByCreated([...server, ...keepTmp]) : server;
+}
+
+/** Bump a conversation's preview + move it to the top; optionally +1 unread. */
+function bumpConversation(
+  prev: Conversation[],
+  chatId: string,
+  patch: { content: string | null; type: ChatMessageType; direction: ChatDirection; incUnread: boolean },
+  nowIso: string,
+): Conversation[] {
+  const i = prev.findIndex((c) => c.chat_id === chatId);
+  if (i < 0) return prev;
+  const c = prev[i];
+  const updated: Conversation = {
+    ...c,
+    last_content: patch.content,
+    last_type: patch.type,
+    last_direction: patch.direction,
+    last_at: nowIso,
+    unread: patch.incUnread ? c.unread + 1 : c.unread,
+  };
+  return [updated, ...prev.filter((_, idx) => idx !== i)];
+}
 
 export function MessagesClient({
   canEdit,
@@ -37,26 +128,29 @@ export function MessagesClient({
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
 
-  // Multi-instance: admins can switch which employee's inbox they view. The
-  // selected instance scopes the conversation list, threads, sending and reads.
   const [instances, setInstances] = useState<InstanceOption[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+  const [sseUp, setSseUp] = useState(false);
+  // Set when the stream repeatedly fails to even open (e.g. the session expired):
+  // we stop reconnecting AND back the fallback poll off, so a dead auth state
+  // can't turn into a 4s reconnect/poll storm against the server.
+  const [sseFatal, setSseFatal] = useState(false);
 
-  // Keep the latest selected chat id + filters available to the polling closure.
   const selectedIdRef = useRef<string | null>(null);
   const searchRef = useRef('');
   const instanceRef = useRef<string | null>(null);
+  const tmpCounter = useRef(0);
   selectedIdRef.current = selected?.chat_id ?? null;
   searchRef.current = search;
   instanceRef.current = selectedInstanceId;
 
-  /** `&instance_id=…` suffix for the currently selected instance (or ''). */
   const instParam = useCallback(
     () => (instanceRef.current ? `&instance_id=${encodeURIComponent(instanceRef.current)}` : ''),
     [],
   );
 
   const fetchConversations = useCallback(async (q: string, silent = false) => {
+    const reqInstance = instanceRef.current;
     if (!silent) setLoadingConvos(true);
     try {
       const r = await fetch(
@@ -65,6 +159,8 @@ export function MessagesClient({
       );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = (await r.json()) as Conversation[];
+      // Drop a stale response: the user switched instance while it was in flight.
+      if (instanceRef.current !== reqInstance) return;
       setConversations(data);
     } catch {
       if (!silent) toast.error('טעינת השיחות נכשלה');
@@ -82,57 +178,14 @@ export function MessagesClient({
       );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = (await r.json()) as ThreadMessage[];
-      // Ignore a late response for a conversation the user already left.
-      if (selectedIdRef.current === chatId) setThread(data);
+      // Reconcile (keep in-flight optimistic) and only for the still-open chat.
+      if (selectedIdRef.current === chatId) setThread((prev) => reconcileThread(data, prev));
     } catch {
       if (!silent) toast.error('טעינת השיחה נכשלה');
     } finally {
       if (!silent) setLoadingThread(false);
     }
   }, [instParam]);
-
-  // Load the instances this user may view; default to their own, else the first.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const r = await fetch('/api/whatsapp/instances', { credentials: 'include' });
-        if (!r.ok) return;
-        const data = (await r.json()) as InstanceOption[];
-        if (cancelled) return;
-        setInstances(data);
-        const own = data.find((i) => i.user_id === currentUserId);
-        setSelectedInstanceId(own?.id ?? data[0]?.id ?? null);
-      } catch {
-        /* selector is optional — inbox still works on the server default */
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [currentUserId]);
-
-  // Initial load + reload whenever the viewed instance changes (admin switch).
-  // Clears the open conversation since chat ids are scoped per instance.
-  useEffect(() => {
-    setSelected(null);
-    setThread([]);
-    void fetchConversations(searchRef.current);
-  }, [selectedInstanceId, fetchConversations]);
-
-  // Debounced search.
-  useEffect(() => {
-    const t = setTimeout(() => void fetchConversations(searchRef.current, true), 300);
-    return () => clearTimeout(t);
-  }, [search, fetchConversations]);
-
-  // Polling — refresh the list and the open thread every few seconds.
-  useEffect(() => {
-    const id = setInterval(() => {
-      void fetchConversations(searchRef.current, true);
-      const cid = selectedIdRef.current;
-      if (cid) void fetchThread(cid, true);
-    }, POLL_MS);
-    return () => clearInterval(id);
-  }, [fetchConversations, fetchThread]);
 
   const markRead = useCallback(async (chatId: string) => {
     try {
@@ -146,22 +199,212 @@ export function MessagesClient({
     }
   }, []);
 
+  // ─── real-time event handling (point updates, no refetch) ───
+  const handleEvent = useCallback((ev: WaStreamEvent) => {
+    if (ev.type === 'message_status') {
+      setThread((prev) => applyStatus(prev, ev.external_message_id, ev.status));
+      return;
+    }
+    const msg = ev.message;
+    const isOpen = selectedIdRef.current === ev.chat_id;
+    // A self-sent echo can beat the composer's own HTTP resolve back to this tab.
+    // Adopt the matching still-pending optimistic bubble instead of appending a
+    // duplicate (keeps multi-tab working: other tabs have no pending bubble and
+    // just upsert normally).
+    const isSelfEcho = ev.type === 'message_sent' && msg.sent_by === currentUserId;
+    if (isOpen) {
+      setThread((prev) => {
+        if (isSelfEcho) {
+          const i = prev.findIndex(
+            (m) => m.id.startsWith('tmp-') && m.status === 'pending'
+              && m.direction === 'sent' && m.content === msg.content,
+          );
+          if (i >= 0) {
+            const next = [...prev];
+            next[i] = { ...next[i], id: msg.id, external_message_id: msg.external_message_id, status: msg.status };
+            return next;
+          }
+        }
+        return upsertThread(prev, msg);
+      });
+      if (ev.type === 'message_received') void markRead(ev.chat_id);
+    }
+    setConversations((prev) => {
+      if (!prev.some((c) => c.chat_id === ev.chat_id)) {
+        // New conversation — pull it in (with debtor name/avatar) silently.
+        void fetchConversations(searchRef.current, true);
+        return prev;
+      }
+      return bumpConversation(prev, ev.chat_id, {
+        content: msg.content,
+        type: msg.message_type,
+        direction: msg.direction,
+        incUnread: ev.type === 'message_received' && !isOpen,
+      }, msg.created_at);
+    });
+  }, [fetchConversations, markRead]);
+
+  // Latest-callback refs so the SSE/poll effects don't reconnect on every render.
+  const fetchConversationsRef = useRef(fetchConversations);
+  const fetchThreadRef = useRef(fetchThread);
+  const handleEventRef = useRef(handleEvent);
+  fetchConversationsRef.current = fetchConversations;
+  fetchThreadRef.current = fetchThread;
+  handleEventRef.current = handleEvent;
+
+  // Load instances; default to own, else first.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch('/api/whatsapp/instances', { credentials: 'include' });
+        if (!r.ok) return;
+        const data = (await r.json()) as InstanceOption[];
+        if (cancelled) return;
+        setInstances(data);
+        const own = data.find((i) => i.user_id === currentUserId);
+        setSelectedInstanceId(own?.id ?? data[0]?.id ?? null);
+      } catch {
+        /* selector optional */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentUserId]);
+
+  // Initial load + reload when the viewed instance changes.
+  useEffect(() => {
+    setSelected(null);
+    setThread([]);
+    void fetchConversations(searchRef.current);
+  }, [selectedInstanceId, fetchConversations]);
+
+  // Debounced search.
+  useEffect(() => {
+    const t = setTimeout(() => void fetchConversations(searchRef.current, true), 300);
+    return () => clearTimeout(t);
+  }, [search, fetchConversations]);
+
+  // SSE stream — instant push of received/sent/status. Manual reconnect with
+  // exponential backoff; reconnects when the viewed instance changes.
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
+    let stopped = false;
+    let backoff = 1000;
+    let failStreak = 0; // consecutive cycles that errored WITHOUT ever opening
+    let reconnect: ReturnType<typeof setTimeout> | null = null;
+    let es: EventSource | null = null;
+    setSseFatal(false); // fresh chance whenever the instance (effect) changes
+
+    const connect = () => {
+      let openedThisCycle = false;
+      const q = instanceRef.current ? `?instance_id=${encodeURIComponent(instanceRef.current)}` : '';
+      es = new EventSource(`/api/whatsapp/stream${q}`, { withCredentials: true });
+
+      es.addEventListener('open', () => {
+        openedThisCycle = true;
+        failStreak = 0;
+        backoff = 1000;
+        setSseUp(true);
+        setSseFatal(false);
+        // Catch up on anything missed during (re)connect.
+        void fetchConversationsRef.current(searchRef.current, true);
+        const cid = selectedIdRef.current;
+        if (cid) void fetchThreadRef.current(cid, true);
+      });
+
+      const onEvt = (e: MessageEvent) => {
+        try { handleEventRef.current(JSON.parse(e.data) as WaStreamEvent); } catch { /* ignore */ }
+      };
+      es.addEventListener('message_received', onEvt);
+      es.addEventListener('message_sent', onEvt);
+      es.addEventListener('message_status', onEvt);
+
+      es.addEventListener('error', () => {
+        setSseUp(false);
+        es?.close();
+        es = null;
+        if (stopped) return;
+        failStreak = openedThisCycle ? 0 : failStreak + 1;
+        // Never opened across several tries → treat as fatal (likely auth/session
+        // gone). Stop reconnecting; the fallback poll backs off too.
+        if (failStreak >= 4) {
+          setSseFatal(true);
+          return;
+        }
+        reconnect = setTimeout(connect, backoff);
+        backoff = Math.min(backoff * 2, 30_000);
+      });
+    };
+
+    connect();
+    return () => {
+      stopped = true;
+      if (reconnect) clearTimeout(reconnect);
+      es?.close();
+      setSseUp(false);
+    };
+  }, [selectedInstanceId]);
+
+  // Fallback sync: rare while SSE is healthy; dense while it's transiently down;
+  // backed off again once the stream is deemed fatally down (no storm on auth loss).
+  useEffect(() => {
+    const ms = sseUp || sseFatal ? FALLBACK_SYNC_MS : DENSE_POLL_MS;
+    const id = setInterval(() => {
+      void fetchConversationsRef.current(searchRef.current, true);
+      const cid = selectedIdRef.current;
+      if (cid) void fetchThreadRef.current(cid, true);
+    }, ms);
+    return () => clearInterval(id);
+  }, [sseUp, sseFatal]);
+
   const selectConversation = useCallback(
     (c: Conversation) => {
       setSelected(c);
       setThread([]);
       void fetchThread(c.chat_id);
-      // Optimistically clear the unread badge, then persist + refresh.
-      setConversations((prev) =>
-        prev.map((x) => (x.chat_id === c.chat_id ? { ...x, unread: 0 } : x)),
-      );
-      if (c.unread > 0) {
-        void markRead(c.chat_id).then(() => fetchConversations(searchRef.current, true));
-      }
+      setConversations((prev) => prev.map((x) => (x.chat_id === c.chat_id ? { ...x, unread: 0 } : x)));
+      if (c.unread > 0) void markRead(c.chat_id);
     },
-    [fetchThread, markRead, fetchConversations],
+    [fetchThread, markRead],
   );
 
+  // ─── optimistic send (instant bubble, server resolves in the background) ───
+  const optimisticSend = useCallback((chatId: string, text: string): string => {
+    tmpCounter.current += 1;
+    const tmpId = `tmp-${Date.now()}-${tmpCounter.current}`;
+    const nowIso = new Date().toISOString();
+    const optimistic: ThreadMessage = {
+      id: tmpId, debtor_id: null, contact_phone: '', chat_id: chatId, external_message_id: null,
+      link_status: 'linked', direction: 'sent', message_type: 'text', content: text, media_url: null,
+      status: 'pending', error_detail: null, sent_by: currentUserId, sent_by_name: null,
+      broadcast_id: null, read_at: null, created_at: nowIso,
+    };
+    if (selectedIdRef.current === chatId) setThread((prev) => sortByCreated([...prev, optimistic]));
+    setConversations((prev) => bumpConversation(prev, chatId, {
+      content: text, type: 'text', direction: 'sent', incUnread: false,
+    }, nowIso));
+    return tmpId;
+  }, [currentUserId]);
+
+  const resolveSend = useCallback((tmpId: string, res: SendResolution) => {
+    // Unknown outcome (fetch threw): the message may have gone out. Drop the
+    // optimistic bubble and let the SSE echo / a thread refetch show the true
+    // state — never a stuck 'failed' that would duplicate a real sent row.
+    if (!res.ok && res.unknown) {
+      setThread((prev) => prev.filter((m) => m.id !== tmpId));
+      const cid = selectedIdRef.current;
+      if (cid) void fetchThreadRef.current(cid, true);
+      return;
+    }
+    setThread((prev) => prev.map((m) => {
+      if (m.id !== tmpId) return m;
+      return res.ok
+        ? { ...m, id: res.message_id ?? m.id, external_message_id: res.idMessage ?? null, status: 'sent' as ChatStatus }
+        : { ...m, id: res.message_id ?? m.id, status: 'failed' as ChatStatus, error_detail: res.error ?? 'שליחה נכשלה' };
+    }));
+  }, []);
+
+  // After a non-optimistic action (file send / resend) refresh point-wise.
   const handleSent = useCallback(() => {
     const cid = selectedIdRef.current;
     if (cid) void fetchThread(cid, true);
@@ -183,12 +426,7 @@ export function MessagesClient({
         </div>
         {canEdit && (
           <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setNewChatOpen(true)}
-              className="gap-2"
-            >
+            <Button type="button" variant="outline" onClick={() => setNewChatOpen(true)} className="gap-2">
               <Plus className="h-4 w-4" /> שיחה חדשה
             </Button>
             <Button
@@ -230,6 +468,8 @@ export function MessagesClient({
             loading={loadingThread}
             canEdit={canEdit}
             instanceId={selectedInstanceId}
+            onOptimisticSend={optimisticSend}
+            onResolveSend={resolveSend}
             onSent={handleSent}
             onBack={() => setSelected(null)}
             className={cn(!selected && 'hidden md:flex')}

@@ -13,12 +13,24 @@ import type { Conversation, ThreadMessage, ChatStatus } from '@/types/whatsapp';
 import { conversationTitle, formatTime, formatRelativeDay } from './format';
 import { ChatAvatar } from './ChatAvatar';
 
+/** Resolution the composer reports after the chat-send round-trip completes. */
+export interface ComposerSendResolution {
+  ok: boolean;
+  message_id?: string | null;
+  idMessage?: string | null;
+  error?: string;
+  /** The fetch threw — outcome unknown (don't render a terminal failure). */
+  unknown?: boolean;
+}
+
 export function ChatThread({
   conversation,
   messages,
   loading,
   canEdit,
   instanceId,
+  onOptimisticSend,
+  onResolveSend,
   onSent,
   onBack,
   className,
@@ -28,6 +40,11 @@ export function ChatThread({
   loading: boolean;
   canEdit: boolean;
   instanceId: string | null;
+  /** Render an instant pending bubble; returns its temp id. */
+  onOptimisticSend: (chatId: string, text: string) => string;
+  /** Resolve that bubble to sent/failed once the server responds. */
+  onResolveSend: (tmpId: string, res: ComposerSendResolution) => void;
+  /** Non-optimistic refresh (file send / resend). */
   onSent: () => void;
   onBack: () => void;
   className?: string;
@@ -131,7 +148,13 @@ export function ChatThread({
 
       {/* Composer */}
       {canEdit ? (
-        <Composer chatId={conversation.chat_id} instanceId={instanceId} onSent={onSent} />
+        <Composer
+          chatId={conversation.chat_id}
+          instanceId={instanceId}
+          onOptimisticSend={onOptimisticSend}
+          onResolveSend={onResolveSend}
+          onSent={onSent}
+        />
       ) : (
         <div className="border-t border-slate-200 bg-white px-4 py-3 text-center text-xs text-muted-foreground">
           אין הרשאת שליחת הודעות
@@ -252,38 +275,51 @@ const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50MB — Green API limit
 function Composer({
   chatId,
   instanceId,
+  onOptimisticSend,
+  onResolveSend,
   onSent,
 }: {
   chatId: string;
   instanceId: string | null;
+  onOptimisticSend: (chatId: string, text: string) => string;
+  onResolveSend: (tmpId: string, res: ComposerSendResolution) => void;
   onSent: () => void;
 }) {
   const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  async function send() {
+  // Optimistic: render the bubble instantly, clear the box, then resolve the
+  // server round-trip in the background (sent ✓ / failed). Never blocks typing,
+  // so messages can be fired in quick succession.
+  function send() {
     const body = text.trim();
-    if (!body || sending) return;
-    setSending(true);
-    try {
-      const r = await fetch('/api/whatsapp/chat-send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ chat_id: chatId, text: body, instance_id: instanceId }),
-      });
-      const data = (await r.json().catch(() => ({}))) as { error?: string; warning?: string };
-      if (!r.ok) throw new Error(data.error || `שליחה נכשלה (HTTP ${r.status})`);
-      if (data.warning) toast.warning(data.warning);
-      setText('');
-      onSent();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'שליחה נכשלה');
-    } finally {
-      setSending(false);
-    }
+    if (!body) return;
+    setText('');
+    const tmpId = onOptimisticSend(chatId, body);
+    void (async () => {
+      try {
+        const r = await fetch('/api/whatsapp/chat-send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ chat_id: chatId, text: body, instance_id: instanceId }),
+        });
+        const data = (await r.json().catch(() => ({}))) as {
+          error?: string; warning?: string; message_id?: string | null; idMessage?: string | null;
+        };
+        if (!r.ok) {
+          onResolveSend(tmpId, { ok: false, message_id: data.message_id, error: data.error || `שליחה נכשלה (HTTP ${r.status})` });
+          return;
+        }
+        if (data.warning) toast.warning(data.warning);
+        onResolveSend(tmpId, { ok: true, message_id: data.message_id, idMessage: data.idMessage });
+      } catch (err) {
+        // Network/transport failure — outcome unknown.
+        toast.error(err instanceof Error ? err.message : 'שליחה נכשלה');
+        onResolveSend(tmpId, { ok: false, unknown: true, error: err instanceof Error ? err.message : 'שליחה נכשלה' });
+      }
+    })();
   }
 
   async function sendFile(file: File) {
@@ -320,12 +356,12 @@ function Composer({
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      void send();
+      send();
     }
   }
 
-  const busy = sending || uploading;
-  const canSend = text.trim().length > 0 && !busy;
+  const busy = uploading;
+  const canSend = text.trim().length > 0 && !uploading;
 
   return (
     <div className="border-t border-slate-200 bg-white p-3">
@@ -364,7 +400,7 @@ function Composer({
         </button>
         <button
           type="button"
-          onClick={() => void send()}
+          onClick={() => send()}
           disabled={!canSend}
           aria-label="שלח"
           className={cn(
@@ -372,7 +408,7 @@ function Composer({
             canSend ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'cursor-not-allowed bg-slate-200 text-slate-400',
           )}
         >
-          {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          <Send className="h-4 w-4" />
         </button>
       </div>
     </div>

@@ -102,15 +102,53 @@ function credsFromRow(r: { id: string; green_instance_id: string; green_token_en
   };
 }
 
-/** Resolve the acting user's own instance credentials. Throws if they have none. */
-export async function getInstanceCredsForUser(userId: string): Promise<InstanceCreds> {
-  const row = await queryOne<{ id: string; green_instance_id: string; green_token_enc: EncryptedBlob; api_url: string }>(
-    `select id, green_instance_id, green_token_enc, api_url
-       from public.whatsapp_instances where user_id = $1 limit 1`,
+type CredsRow = { id: string; green_instance_id: string; green_token_enc: EncryptedBlob; api_url: string };
+const CREDS_COLS = 'id, green_instance_id, green_token_enc, api_url';
+
+/** Acting user's own instance credentials, or null. */
+async function credsByUser(userId: string): Promise<InstanceCreds | null> {
+  const row = await queryOne<CredsRow>(
+    `select ${CREDS_COLS} from public.whatsapp_instances where user_id = $1 limit 1`,
     [userId],
   );
-  if (!row) throw new InstanceNotConfiguredError();
-  return credsFromRow(row);
+  return row ? credsFromRow(row) : null;
+}
+
+/** Resolve the acting user's own instance credentials. Throws if they have none. */
+export async function getInstanceCredsForUser(userId: string): Promise<InstanceCreds> {
+  const creds = await credsByUser(userId);
+  if (!creds) throw new InstanceNotConfiguredError();
+  return creds;
+}
+
+/**
+ * Resolve the credentials a send should go out through, in the FEWEST queries
+ * (the old path did resolveViewInstanceId + getInstanceCredsById = 2+ round-trips
+ * on the hot send path). Rules mirror resolveViewInstanceId:
+ *   • admin/super_admin with a selected instance → that instance (1 query);
+ *   • otherwise → the actor's own instance (1 query);
+ *   • admin with neither → fall back to the first instance.
+ * Throws InstanceNotConfiguredError when nothing is connected.
+ */
+export async function resolveSendCreds(actor: Actor, requestedId: string | null): Promise<InstanceCreds> {
+  const isAdmin = actor.role === 'admin' || actor.role === 'super_admin';
+
+  if (isAdmin && requestedId) {
+    const byId = await getInstanceCredsById(requestedId);
+    if (byId) return byId;
+  }
+
+  const own = await credsByUser(actor.id);
+  if (own) return own;
+
+  if (isAdmin) {
+    const first = await queryOne<CredsRow>(
+      `select ${CREDS_COLS} from public.whatsapp_instances order by created_at asc limit 1`,
+    );
+    if (first) return credsFromRow(first);
+  }
+
+  throw new InstanceNotConfiguredError();
 }
 
 /** Resolve credentials for a specific instance id (admin sending via a chosen

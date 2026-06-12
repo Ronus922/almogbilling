@@ -166,6 +166,18 @@ export interface Conversation {
 /** A message inside an open thread (left panel). Same shape as ChatMessage. */
 export type ThreadMessage = ChatMessage;
 
+/**
+ * Real-time events pushed over GET /api/whatsapp/stream (SSE). Each carries the
+ * instance_id so the client can ignore events for an instance it isn't viewing.
+ *   • message_received — a new inbound message arrived.
+ *   • message_sent     — a new outbound message was stored (composer / phone echo).
+ *   • message_status   — an outbound message's delivery status advanced (the ✓ ticks).
+ */
+export type WaStreamEvent =
+  | { type: 'message_received'; instance_id: string; chat_id: string; message: ThreadMessage }
+  | { type: 'message_sent'; instance_id: string; chat_id: string; message: ThreadMessage }
+  | { type: 'message_status'; instance_id: string; external_message_id: string; status: ChatStatus };
+
 export type InstanceState =
   | 'notAuthorized' | 'authorized' | 'blocked' | 'starting' | 'yellowCard' | 'sleepMode';
 

@@ -17,6 +17,9 @@ import { logDebtorEvent, EVENT_TYPE_META } from '@/lib/debtor-events';
 export interface SendAndRecordResult {
   ok: boolean;
   idMessage?: string;
+  /** The chat_messages row id (success or recorded-failure) — lets the inbox
+   *  reconcile its optimistic bubble with the canonical row. */
+  messageId?: string;
   /** Set when the message was delivered but our bookkeeping transaction failed. */
   warning?: string;
   /** Set when the send itself failed (Hebrew detail). */
@@ -57,8 +60,9 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
     const detail = err instanceof WhatsAppError ? err.message : 'שגיאה לא ידועה';
     // Record the failed attempt (no external id, no last_whatsapp_sent_at, no
     // timeline event) so the failure is visible in the debtor's history.
+    let failedId: string | null = null;
     try {
-      await insertChatMessage({
+      failedId = await insertChatMessage({
         debtorId: debtor.id,
         contactPhone: phoneIntl,
         chatId,
@@ -73,15 +77,16 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
     } catch (logErr) {
       console.error('[whatsapp/send] failed to record failed message', logErr);
     }
-    return { ok: false, error: detail };
+    return { ok: false, error: detail, messageId: failedId ?? undefined };
   }
 
   // Success: persist the message, bump last_whatsapp_sent_at, and log a WHATSAPP
   // event on the unified timeline — all atomically.
   const actorName = actor.full_name || actor.username;
+  let messageId: string | null = null;
   try {
     await withTransaction(async (client) => {
-      await insertChatMessageTx(client, {
+      messageId = await insertChatMessageTx(client, {
         debtorId: debtor.id,
         contactPhone: phoneIntl,
         chatId,
@@ -119,5 +124,5 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
     return { ok: true, idMessage, warning: 'ההודעה נשלחה אך תיעוד ההיסטוריה נכשל' };
   }
 
-  return { ok: true, idMessage };
+  return { ok: true, idMessage, messageId: messageId ?? undefined };
 }

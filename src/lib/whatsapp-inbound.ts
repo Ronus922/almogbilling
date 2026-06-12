@@ -2,6 +2,8 @@ import 'server-only';
 import { queryOne } from '@/lib/db';
 import { insertChatMessage } from '@/lib/db/chatMessages';
 import type { InstanceCreds } from '@/lib/db/whatsappInstances';
+import { emitWa } from '@/lib/whatsapp-events';
+import type { ThreadMessage } from '@/types/whatsapp';
 import {
   getIncomingMessages,
   parseLastIncomingItem,
@@ -9,6 +11,11 @@ import {
   type ParsedIncoming,
   type ParsedOutgoing,
 } from '@/lib/whatsapp';
+
+/** ISO timestamp from a Green API unix-seconds value, or now. */
+function isoFromUnix(ts: number | null): string {
+  return new Date(ts ? ts * 1000 : Date.now()).toISOString();
+}
 
 // Inbound message handling (phase 2). Both the live webhook and the
 // lastIncomingMessages pull funnel through processIncomingMessage(), so the
@@ -70,6 +77,31 @@ export async function processIncomingMessage(
     createdAtUnix: parsed.timestamp,
   });
 
+  // Push to open inboxes the instant it's stored (only on a real insert — a
+  // duplicate must not re-notify).
+  if (id && instanceId) {
+    const message: ThreadMessage = {
+      id,
+      debtor_id: debtorId,
+      contact_phone: parsed.senderPhoneLocal,
+      chat_id: parsed.chatId,
+      external_message_id: parsed.externalMessageId,
+      link_status: debtorId ? 'linked' : 'unlinked',
+      direction: 'received',
+      message_type: parsed.messageType,
+      content: parsed.content,
+      media_url: parsed.messageType === 'text' ? null : parsed.content,
+      status: 'sent',
+      error_detail: null,
+      sent_by: null,
+      sent_by_name: null,
+      broadcast_id: null,
+      read_at: null,
+      created_at: isoFromUnix(parsed.timestamp),
+    };
+    emitWa({ type: 'message_received', instance_id: instanceId, chat_id: parsed.chatId, message });
+  }
+
   return id ? 'inserted' : 'duplicate';
 }
 
@@ -100,6 +132,29 @@ export async function processOutgoingMessage(
     instanceId,
     createdAtUnix: parsed.timestamp,
   });
+
+  if (id && instanceId) {
+    const message: ThreadMessage = {
+      id,
+      debtor_id: debtorId,
+      contact_phone: parsed.recipientPhoneLocal,
+      chat_id: parsed.chatId,
+      external_message_id: parsed.externalMessageId,
+      link_status: 'linked',
+      direction: 'sent',
+      message_type: parsed.messageType,
+      content: parsed.content,
+      media_url: parsed.messageType === 'text' ? null : parsed.content,
+      status: 'sent',
+      error_detail: null,
+      sent_by: null,
+      sent_by_name: null,
+      broadcast_id: null,
+      read_at: null,
+      created_at: isoFromUnix(parsed.timestamp),
+    };
+    emitWa({ type: 'message_sent', instance_id: instanceId, chat_id: parsed.chatId, message });
+  }
 
   return id ? 'inserted' : 'duplicate';
 }

@@ -17,6 +17,8 @@ import type { InstanceCreds } from '@/lib/db/whatsappInstances';
 export interface ChatSendResult {
   ok: boolean;
   idMessage?: string;
+  /** chat_messages row id (success or recorded-failure) for optimistic reconcile. */
+  messageId?: string;
   error?: string;
   warning?: string;
 }
@@ -51,7 +53,7 @@ export async function sendChatMessageToPhone(args: {
       chatId,
       message: text,
     });
-    await insertChatMessage({
+    const messageId = await insertChatMessage({
       debtorId: null,
       contactPhone: phoneIntl,
       chatId,
@@ -62,11 +64,12 @@ export async function sendChatMessageToPhone(args: {
       sentBy: actor.id,
       instanceId: creds.id,
     });
-    return { ok: true, idMessage };
+    return { ok: true, idMessage, messageId: messageId ?? undefined };
   } catch (err) {
     const detail = err instanceof WhatsAppError ? err.message : 'שגיאה לא ידועה';
+    let failedId: string | null = null;
     try {
-      await insertChatMessage({
+      failedId = await insertChatMessage({
         debtorId: null,
         contactPhone: phoneIntl,
         chatId,
@@ -81,6 +84,6 @@ export async function sendChatMessageToPhone(args: {
     } catch (logErr) {
       console.error('[whatsapp/chat-send] failed to record failed row', logErr);
     }
-    return { ok: false, error: detail };
+    return { ok: false, error: detail, messageId: failedId ?? undefined };
   }
 }

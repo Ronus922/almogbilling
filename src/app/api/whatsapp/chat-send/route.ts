@@ -4,8 +4,7 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorContactByPhone } from '@/lib/db/debtors';
 import { insertChatMessage } from '@/lib/db/chatMessages';
 import {
-  resolveViewInstanceId,
-  getInstanceCredsById,
+  resolveSendCreds,
   InstanceNotConfiguredError,
   type InstanceCreds,
 } from '@/lib/db/whatsappInstances';
@@ -16,8 +15,45 @@ import {
   WhatsAppError,
 } from '@/lib/whatsapp';
 import { sendChatMessageToPhone } from '@/lib/whatsapp-chat-send';
+import { emitWa } from '@/lib/whatsapp-events';
+import type { ThreadMessage } from '@/types/whatsapp';
 
 export const runtime = 'nodejs';
+
+/** Push a just-sent outbound message to other open inboxes (real-time). */
+function emitSent(args: {
+  instanceId: string;
+  chatId: string;
+  contactPhone: string;
+  messageId: string | undefined;
+  idMessage: string | undefined;
+  content: string;
+  debtorId: string | null;
+  sentBy: string;
+  sentByName: string | null;
+}): void {
+  if (!args.messageId) return;
+  const message: ThreadMessage = {
+    id: args.messageId,
+    debtor_id: args.debtorId,
+    contact_phone: args.contactPhone,
+    chat_id: args.chatId,
+    external_message_id: args.idMessage ?? null,
+    link_status: 'linked',
+    direction: 'sent',
+    message_type: 'text',
+    content: args.content,
+    media_url: null,
+    status: 'sent',
+    error_detail: null,
+    sent_by: args.sentBy,
+    sent_by_name: args.sentByName,
+    broadcast_id: null,
+    read_at: null,
+    created_at: new Date().toISOString(),
+  };
+  emitWa({ type: 'message_sent', instance_id: args.instanceId, chat_id: args.chatId, message });
+}
 
 interface PostBody {
   chat_id?: unknown;
@@ -88,21 +124,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'יש לציין chat_id או phone' }, { status: 400 });
   }
 
-  // Resolve the sending instance: the selected instance (admin) or the actor's
-  // own. Send always goes through a connected instance the actor is allowed to use.
+  // Resolve the sending instance in a single query (selected instance for admin,
+  // else the actor's own). Send always goes through a connected instance the actor
+  // is allowed to use.
   const requestedInstanceId = typeof body.instance_id === 'string' ? body.instance_id.trim() : '';
   let creds: InstanceCreds;
   try {
-    const instanceDbId = await resolveViewInstanceId(actor, requestedInstanceId || null);
-    const resolved = instanceDbId ? await getInstanceCredsById(instanceDbId) : null;
-    if (!resolved) throw new InstanceNotConfiguredError();
-    creds = resolved;
+    creds = await resolveSendCreds(actor, requestedInstanceId || null);
   } catch (err) {
     if (err instanceof InstanceNotConfiguredError) {
       return NextResponse.json({ error: err.message }, { status: 503 });
     }
     throw err;
   }
+  const sentByName = actor.full_name || actor.username;
 
   // Group conversation — direct send, no debtor link / timeline event.
   if (isGroup) {
@@ -111,7 +146,7 @@ export async function POST(req: NextRequest) {
         instanceId: creds.greenInstanceId, token: creds.token, apiUrl: creds.apiUrl,
         chatId, message: text,
       });
-      await insertChatMessage({
+      const messageId = await insertChatMessage({
         debtorId: null,
         contactPhone: chatId,
         chatId,
@@ -122,17 +157,19 @@ export async function POST(req: NextRequest) {
         sentBy: actor.id,
         instanceId: creds.id,
       });
-      return NextResponse.json({ ok: true, idMessage, chat_id: chatId });
+      emitSent({ instanceId: creds.id, chatId, contactPhone: chatId, messageId: messageId ?? undefined, idMessage, content: text, debtorId: null, sentBy: actor.id, sentByName });
+      return NextResponse.json({ ok: true, idMessage, message_id: messageId, chat_id: chatId });
     } catch (err) {
       const detail = err instanceof WhatsAppError ? err.message : 'שגיאה לא ידועה';
+      let failedId: string | null = null;
       try {
-        await insertChatMessage({
+        failedId = await insertChatMessage({
           debtorId: null, contactPhone: chatId, chatId, externalMessageId: null,
           direction: 'sent', content: text, status: 'failed', errorDetail: detail,
           sentBy: actor.id, instanceId: creds.id,
         });
       } catch { /* best-effort */ }
-      return NextResponse.json({ error: `שליחה נכשלה: ${detail}` }, { status: 502 });
+      return NextResponse.json({ error: `שליחה נכשלה: ${detail}`, message_id: failedId }, { status: 502 });
     }
   }
 
@@ -152,11 +189,16 @@ export async function POST(req: NextRequest) {
   const result = await sendChatMessageToPhone({ phoneIntl, text, debtor, actor, creds });
 
   if (!result.ok) {
-    return NextResponse.json({ error: `שליחה נכשלה: ${result.error}` }, { status: 502 });
+    return NextResponse.json({ error: `שליחה נכשלה: ${result.error}`, message_id: result.messageId ?? null }, { status: 502 });
   }
+  emitSent({
+    instanceId: creds.id, chatId, contactPhone: phoneIntl, messageId: result.messageId, idMessage: result.idMessage,
+    content: text, debtorId: debtor?.id ?? null, sentBy: actor.id, sentByName,
+  });
   return NextResponse.json({
     ok: true,
     idMessage: result.idMessage,
+    message_id: result.messageId,
     chat_id: chatId,
     ...(result.warning ? { warning: result.warning } : {}),
   });

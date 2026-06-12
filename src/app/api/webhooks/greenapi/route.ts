@@ -9,6 +9,7 @@ import {
 } from '@/lib/whatsapp';
 import { processIncomingMessage, processOutgoingMessage } from '@/lib/whatsapp-inbound';
 import { updateMessageStatusByExternalId } from '@/lib/db/chatMessages';
+import { emitWa } from '@/lib/whatsapp-events';
 import {
   getInstanceByGreenId,
   updateInstanceState,
@@ -91,7 +92,16 @@ export async function POST(req: NextRequest) {
 
     const status = parseOutgoingStatus(payload);
     if (status) {
-      const { matched } = await updateMessageStatusByExternalId(status.externalMessageId, status.status);
+      const { matched, advanced } = await updateMessageStatusByExternalId(status.externalMessageId, status.status);
+      if (advanced) {
+        // Push the ✓ update to open inboxes (the bubble matches by external id).
+        emitWa({
+          type: 'message_status',
+          instance_id: instance.id,
+          external_message_id: status.externalMessageId,
+          status: status.status,
+        });
+      }
       if (!matched) {
         // A status arrived for a message we have NO record of (sent from the
         // phone before inbound storage, or a stale id). Warn so a systemic
