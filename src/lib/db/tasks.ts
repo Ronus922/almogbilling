@@ -10,10 +10,15 @@ import type {
   TaskWritableFields,
 } from '@/lib/types/tasks';
 
+// Date/timestamp columns are cast to text so they cross the RSC boundary as
+// strings (matching the declared `string` types) — pg otherwise returns `date`
+// and `timestamptz` as JS Date objects, which crash when rendered in JSX.
 const TASK_COLUMNS = `
-  id, title, description, status, priority, due_date, due_time,
+  id, title, description, status, priority,
+  due_date::text as due_date, due_time::text as due_time,
   assigned_to_user_id, debtor_id, apartment_number, sort_order, is_archived,
-  created_by, created_by_name, created_at, updated_at
+  created_by, created_by_name,
+  created_at::text as created_at, updated_at::text as updated_at
 `;
 
 // Columns a create/update may set (title + created_by handled explicitly on create).

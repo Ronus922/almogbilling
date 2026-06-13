@@ -57,7 +57,10 @@ function EventChip({
       >
         <CheckSquare className="h-3 w-3 shrink-0 text-slate-500" />
         {t && <span dir="ltr" className="shrink-0 tabular-nums text-[10px] text-slate-400">{t}</span>}
-        <span className="truncate">{item.title}</span>
+        <span className="truncate">
+          <span className="font-semibold text-slate-400">משימה · </span>
+          {item.title}
+        </span>
       </button>
     );
   }
