@@ -89,6 +89,33 @@ export async function listTasks(filters: TaskListFilters): Promise<TaskWithAssig
   return r.rows;
 }
 
+/**
+ * Tasks with a due_date inside [from, to] (inclusive) — for the calendar's
+ * read-only task overlay. Excludes archived tasks. from/to are 'YYYY-MM-DD'.
+ */
+export async function listTasksWithDueDateInRange(
+  from: string,
+  to: string,
+): Promise<{ id: string; title: string; due_date: string; due_time: string | null; priority: string; status: string }[]> {
+  const r = await query<{
+    id: string;
+    title: string;
+    due_date: string;
+    due_time: string | null;
+    priority: string;
+    status: string;
+  }>(
+    `select id, title, due_date::text as due_date, due_time::text as due_time, priority, status
+       from public.tasks
+      where is_archived = false
+        and due_date is not null
+        and due_date >= $1 and due_date <= $2
+      order by due_date asc, due_time asc nulls first`,
+    [from, to],
+  );
+  return r.rows;
+}
+
 export async function getTaskById(id: string): Promise<TaskWithAssignee | null> {
   return queryOne<TaskWithAssignee>(
     `select ${TASK_COLUMNS.split(',').map((c) => 't.' + c.trim()).join(', ')},

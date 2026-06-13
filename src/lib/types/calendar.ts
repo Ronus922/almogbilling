@@ -1,0 +1,133 @@
+// Calendar (יומן) domain types — Module 3.
+// Reuses the generic reminders engine (entity_type='calendar_event').
+
+import type { ReminderChannel } from '@/lib/types/tasks';
+
+export type CalendarItemKind = 'meeting' | 'event';
+export type CalendarEventStatus = 'scheduled' | 'completed' | 'cancelled';
+export type RecurrenceType = 'daily' | 'weekly' | 'monthly' | 'yearly';
+export type RecurrenceEndType = 'never' | 'until_date' | 'count';
+export type CalendarSourceType = 'manual' | 'generated_occurrence';
+export type ParticipantSource = 'user' | 'contact';
+export type AttendanceStatus = 'pending' | 'accepted' | 'declined';
+
+/** color_key values map to the DESIGN.md §2 tone palette. */
+export type CalendarColorKey =
+  | 'blue'
+  | 'emerald'
+  | 'amber'
+  | 'rose'
+  | 'violet'
+  | 'sky'
+  | 'slate';
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  item_kind: CalendarItemKind;
+  event_date: string; // 'YYYY-MM-DD'
+  start_datetime: string | null; // ISO timestamptz
+  end_datetime: string | null; // ISO timestamptz
+  is_all_day: boolean;
+  location: string | null;
+  description: string | null;
+  color_key: string;
+  status: CalendarEventStatus;
+  owner_user_id: string | null;
+
+  recurrence_enabled: boolean;
+  recurrence_type: RecurrenceType | null;
+  recurrence_interval: number;
+  recurrence_end_type: RecurrenceEndType;
+  recurrence_until_date: string | null; // 'YYYY-MM-DD'
+  recurrence_count: number | null;
+
+  parent_series_id: string | null;
+  is_exception: boolean;
+  source_type: CalendarSourceType;
+
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CalendarEventParticipant {
+  id: string;
+  event_id: string;
+  participant_source: ParticipantSource;
+  participant_id: string;
+  display_name_cache: string | null;
+  email_cache: string | null;
+  attendance_status: AttendanceStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+/** An event enriched with its participants (for detail / panel load). */
+export interface CalendarEventWithParticipants extends CalendarEvent {
+  participants: CalendarEventParticipant[];
+}
+
+/** Recurrence rule supplied by the client when creating/editing a series. */
+export interface RecurrenceRule {
+  type: RecurrenceType;
+  interval: number; // >= 1
+  endType: RecurrenceEndType;
+  untilDate: string | null; // 'YYYY-MM-DD' when endType='until_date'
+  count: number | null; // when endType='count'
+}
+
+/** A participant the client wants attached to the event. */
+export interface ParticipantInput {
+  participant_source: ParticipantSource;
+  participant_id: string;
+  display_name_cache: string | null;
+  email_cache: string | null;
+}
+
+/** A reminder the client wants attached (mirrors the tasks reminder shape). */
+export interface CalendarReminderInput {
+  remind_at: string; // ISO timestamptz
+  channel: ReminderChannel;
+}
+
+/** Core event fields a create/update may set (excludes recurrence bookkeeping). */
+export interface CalendarEventWritableFields {
+  title: string;
+  item_kind: CalendarItemKind;
+  event_date: string; // 'YYYY-MM-DD'
+  start_datetime: string | null;
+  end_datetime: string | null;
+  is_all_day: boolean;
+  location: string | null;
+  description: string | null;
+  color_key: string;
+  status: CalendarEventStatus;
+  owner_user_id: string | null;
+}
+
+/** Full create payload (validated server-side). */
+export interface CreateCalendarEventInput extends CalendarEventWritableFields {
+  recurrence: RecurrenceRule | null; // null → single event
+  participants: ParticipantInput[];
+  reminders: CalendarReminderInput[];
+}
+
+/** Scope for editing/deleting a recurring occurrence. */
+export type SeriesEditScope = 'single' | 'future';
+
+/**
+ * A calendar item as returned by GET /api/calendar — either a real event or a
+ * read-only projection of a task that has a due_date in range.
+ */
+export type CalendarItem =
+  | (CalendarEventWithParticipants & { kind: 'event' })
+  | {
+      kind: 'task';
+      id: string;
+      title: string;
+      event_date: string; // task.due_date
+      due_time: string | null;
+      priority: string;
+      status: string;
+      action_url: string; // '/tasks?task=<id>'
+    };

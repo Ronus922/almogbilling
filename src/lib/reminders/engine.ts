@@ -4,6 +4,7 @@ import { listDueReminders, markReminderSent } from '@/lib/db/reminders';
 import { createNotification } from '@/lib/db/notifications';
 import { getTaskById } from '@/lib/db/tasks';
 import { getIssueById } from '@/lib/db/issues';
+import { getEventById } from '@/lib/db/calendarEvents';
 import { findUserById } from '@/lib/db/users';
 import { sendTaskNotificationEmail } from '@/services/email';
 import { priorityLabel } from '@/services/notifications';
@@ -63,6 +64,27 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
           priority = issue.priority === 'urgent' ? 'urgent' : 'normal';
           emailDetails = [{ label: 'עדיפות', value: priorityLabel(issue.priority) }];
         }
+      } else if (reminder.entity_type === 'calendar_event') {
+        const event = await getEventById(reminder.entity_id);
+        if (event) {
+          title = event.title;
+          message = 'תזכורת לאירוע ביומן';
+          actionUrl = '/calendar';
+          const details: { label: string; value: string }[] = [
+            { label: 'תאריך', value: event.event_date },
+          ];
+          if (event.location) details.push({ label: 'מיקום', value: event.location });
+          if (event.start_datetime && !event.is_all_day) {
+            const t = new Date(event.start_datetime);
+            if (!Number.isNaN(t.getTime())) {
+              details.push({
+                label: 'שעה',
+                value: t.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }),
+              });
+            }
+          }
+          emailDetails = details;
+        }
       }
 
       const wantInApp = reminder.channel === 'in_app' || reminder.channel === 'both';
@@ -77,7 +99,12 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
               type: 'reminder',
               title,
               message,
-              sourceModule: reminder.entity_type === 'task' ? 'tasks' : reminder.entity_type,
+              sourceModule:
+                reminder.entity_type === 'task'
+                  ? 'tasks'
+                  : reminder.entity_type === 'calendar_event'
+                    ? 'calendar'
+                    : reminder.entity_type,
               sourceEntityType: reminder.entity_type,
               sourceEntityId: reminder.entity_id,
               actionUrl,
@@ -98,7 +125,14 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
           if (user?.email && user.is_active) {
             await sendTaskNotificationEmail(user.email, {
               recipientName: user.full_name ?? user.username,
-              heading: reminder.entity_type === 'task' ? 'תזכורת למשימה' : 'תזכורת',
+              heading:
+                reminder.entity_type === 'task'
+                  ? 'תזכורת למשימה'
+                  : reminder.entity_type === 'calendar_event'
+                    ? 'תזכורת לאירוע ביומן'
+                    : reminder.entity_type === 'issue'
+                      ? 'תזכורת לתקלה'
+                      : 'תזכורת',
               taskTitle: title,
               details: emailDetails,
               taskUrl: actionUrl ? `${appUrl()}${actionUrl}` : appUrl(),

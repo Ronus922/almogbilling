@@ -29,7 +29,7 @@ const MAIN_MENU: MenuItem[] = [
   { label: 'ספקים',              icon: Truck, href: '/suppliers', module: 'suppliers' },
   { label: 'משימות',             icon: CheckSquare, href: '/tasks', module: 'tasks' },
   { label: 'תקלות',              icon: AlertTriangle, href: '/issues', module: 'issues' },
-  { label: 'יומן',               icon: Calendar, module: 'calendar' },
+  { label: 'יומן',               icon: Calendar, href: '/calendar', module: 'calendar' },
   { label: 'מסמכים',             icon: FileText, module: 'documents' },
   { label: 'הודעות',             icon: MessageCircle, href: '/messages', module: 'whatsapp_chat' },
   { label: 'צ׳אט פנימי',         icon: MessagesSquare, module: 'internal_chat' },
