@@ -1,0 +1,134 @@
+'use client';
+
+import { ArrowDown, ArrowUp, MessageSquare, ImageIcon, Link2, MapPin } from 'lucide-react';
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table';
+import { cn } from '@/lib/utils';
+import {
+  ISSUE_STATUS_BADGE, ISSUE_PRIORITY_BADGE, issueStatusLabel, issuePriorityLabel,
+  issueLocationTypeLabel,
+} from '@/lib/constants/issues';
+import type { IssueSort, IssueWithMeta } from '@/lib/types/issues';
+
+interface Props {
+  issues: IssueWithMeta[];
+  sort: IssueSort;
+  onSortChange: (s: IssueSort) => void;
+  onSelect: (issue: IssueWithMeta) => void;
+}
+
+function locationLabel(i: IssueWithMeta): string {
+  if (i.location_type === 'apartment') {
+    return i.location_text ? `דירה ${i.location_text}` : 'דירה';
+  }
+  if (i.location_type === 'area') {
+    return i.location_text || issueLocationTypeLabel('area');
+  }
+  return i.location_text || issueLocationTypeLabel('general');
+}
+
+export function IssuesTable({ issues, sort, onSortChange, onSelect }: Props) {
+  if (issues.length === 0) {
+    return (
+      <div className="rounded-lg border bg-card p-12 text-center text-sm text-muted-foreground">
+        אין תקלות להצגה. דווח על תקלה חדשה כדי להתחיל.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <Table>
+        <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
+          <TableRow className="bg-slate-50 hover:bg-slate-50">
+            <SortHead label="כותרת" col="created_desc" sort={sort} onSortChange={onSortChange} align="right" />
+            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">מיקום</TableHead>
+            <SortHead label="סטטוס" col="status_asc" sort={sort} onSortChange={onSortChange} align="center" />
+            <SortHead label="דחיפות" col="priority_desc" sort={sort} onSortChange={onSortChange} align="center" />
+            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">משויך</TableHead>
+            <SortHead label="עודכן" col="updated_desc" sort={sort} onSortChange={onSortChange} align="center" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {issues.map((i) => (
+            <TableRow
+              key={i.id}
+              onClick={() => onSelect(i)}
+              className="h-12 cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+            >
+              <TableCell className="px-4 py-3 text-right text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-slate-900">{i.title}</span>
+                  {i.images.length > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-xs text-slate-400">
+                      <ImageIcon className="h-3.5 w-3.5" />
+                      {i.images.length}
+                    </span>
+                  )}
+                  {i.comment_count > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-xs text-slate-400">
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      {i.comment_count}
+                    </span>
+                  )}
+                  {i.linked_task_id && (
+                    <span className="inline-flex items-center gap-0.5 text-xs text-blue-500" title="משויכת משימה">
+                      <Link2 className="h-3.5 w-3.5" />
+                    </span>
+                  )}
+                </div>
+              </TableCell>
+              <TableCell className="px-4 py-3 text-center text-sm text-slate-600">
+                <span className="inline-flex items-center gap-1">
+                  <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                  {locationLabel(i)}
+                </span>
+              </TableCell>
+              <TableCell className="px-4 py-3 text-center text-sm">
+                <span className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium', ISSUE_STATUS_BADGE[i.status])}>
+                  {issueStatusLabel(i.status)}
+                </span>
+              </TableCell>
+              <TableCell className="px-4 py-3 text-center text-sm">
+                <span className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium', ISSUE_PRIORITY_BADGE[i.priority])}>
+                  {issuePriorityLabel(i.priority)}
+                </span>
+              </TableCell>
+              <TableCell className="px-4 py-3 text-center text-sm text-slate-600">
+                {i.assigned_to_name ?? '—'}
+              </TableCell>
+              <TableCell dir="ltr" className="px-4 py-3 text-center text-sm tabular-nums text-slate-500">
+                {new Date(i.updated_at).toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function SortHead({
+  label, col, sort, onSortChange, align,
+}: {
+  label: string;
+  col: IssueSort;
+  sort: IssueSort;
+  onSortChange: (s: IssueSort) => void;
+  align: 'right' | 'center';
+}) {
+  const active = sort === col;
+  return (
+    <TableHead className={cn('h-11 px-4 text-sm font-semibold text-slate-500', align === 'right' ? 'text-right' : 'text-center')}>
+      <button
+        type="button"
+        onClick={() => onSortChange(col)}
+        className={cn('group inline-flex items-center gap-1 cursor-pointer', active ? 'text-slate-700' : 'hover:text-slate-700')}
+      >
+        {label}
+        {active ? <ArrowDown className="h-3.5 w-3.5 opacity-100" /> : <ArrowUp className="h-3.5 w-3.5 opacity-0 group-hover:opacity-40" />}
+      </button>
+    </TableHead>
+  );
+}

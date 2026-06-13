@@ -3,6 +3,7 @@ import { withTransaction } from '@/lib/db';
 import { listDueReminders, markReminderSent } from '@/lib/db/reminders';
 import { createNotification } from '@/lib/db/notifications';
 import { getTaskById } from '@/lib/db/tasks';
+import { getIssueById } from '@/lib/db/issues';
 import { findUserById } from '@/lib/db/users';
 import { sendTaskNotificationEmail } from '@/services/email';
 import { priorityLabel } from '@/services/notifications';
@@ -52,6 +53,15 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
           priority = task.priority === 'urgent' ? 'urgent' : 'normal';
           emailDetails = [{ label: 'עדיפות', value: priorityLabel(task.priority) }];
           if (task.due_date) emailDetails.push({ label: 'תאריך יעד', value: task.due_date });
+        }
+      } else if (reminder.entity_type === 'issue') {
+        const issue = await getIssueById(reminder.entity_id);
+        if (issue) {
+          title = issue.title;
+          message = 'תזכורת לתקלה';
+          actionUrl = `/issues?issue=${issue.id}`;
+          priority = issue.priority === 'urgent' ? 'urgent' : 'normal';
+          emailDetails = [{ label: 'עדיפות', value: priorityLabel(issue.priority) }];
         }
       }
 

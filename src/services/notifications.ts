@@ -77,3 +77,62 @@ export async function notifyTask(opts: {
 
   return { notified: notification !== null, emailed };
 }
+
+/**
+ * Notify a user about an issue: create an in-app notification (deduped) and,
+ * when requested + the user has an email, send an email. Reuses the same email
+ * template + best-effort semantics as notifyTask — email failures are swallowed
+ * and never block the originating mutation.
+ */
+export async function notifyIssue(opts: {
+  userId: string;
+  type: string;
+  heading: string;
+  issue: { id: string; title: string; priority?: TaskPriority };
+  notificationPriority?: CreateNotificationInput['priority'];
+  dedupeKey?: string | null;
+  channel?: ReminderChannel;
+  extraDetails?: { label: string; value: string }[];
+}): Promise<{ notified: boolean; emailed: boolean }> {
+  const issueUrl = `${appUrl()}/issues?issue=${opts.issue.id}`;
+
+  const notification = await createNotification({
+    userId: opts.userId,
+    type: opts.type,
+    title: opts.issue.title,
+    message: opts.heading,
+    sourceModule: 'issues',
+    sourceEntityType: 'issue',
+    sourceEntityId: opts.issue.id,
+    actionUrl: `/issues?issue=${opts.issue.id}`,
+    priority: opts.notificationPriority ?? 'normal',
+    dedupeKey: opts.dedupeKey ?? null,
+  });
+
+  const wantEmail = opts.channel === undefined || opts.channel === 'email' || opts.channel === 'both';
+  let emailed = false;
+
+  if (wantEmail) {
+    try {
+      const user = await findUserById(opts.userId);
+      if (user?.email && user.is_active) {
+        const details: { label: string; value: string }[] = [];
+        if (opts.issue.priority) details.push({ label: 'עדיפות', value: priorityLabel(opts.issue.priority) });
+        if (opts.extraDetails) details.push(...opts.extraDetails);
+
+        await sendTaskNotificationEmail(user.email, {
+          recipientName: user.full_name ?? user.username,
+          heading: opts.heading,
+          taskTitle: opts.issue.title,
+          details,
+          taskUrl: issueUrl,
+        });
+        emailed = true;
+      }
+    } catch (err) {
+      console.error('[notifyIssue] email failed', err);
+    }
+  }
+
+  return { notified: notification !== null, emailed };
+}
