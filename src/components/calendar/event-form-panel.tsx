@@ -661,14 +661,6 @@ export function EventFormPanel({
                       ))}
                     </div>
                   </div>
-
-                  {/* Created-by — read-only; ownership = the creator, derived from the session. */}
-                  {creatorName && (
-                    <p className="flex items-center gap-1.5 text-xs text-slate-500">
-                      <UserCircle className="h-3.5 w-3.5 shrink-0" />
-                      <span>נוצר ע״י: <span className="font-medium text-slate-600">{creatorName}</span></span>
-                    </p>
-                  )}
                 </div>
               </Section>
 
@@ -919,6 +911,14 @@ export function EventFormPanel({
                     <Trash className="h-4 w-4" /> מחק אירוע
                   </Button>
                 </div>
+              )}
+
+              {/* Created-by — read-only metadata, anchored at the end of the panel. */}
+              {creatorName && (
+                <p className="flex items-center gap-1.5 border-t border-slate-100 pt-3 text-xs text-slate-500">
+                  <UserCircle className="h-3.5 w-3.5 shrink-0" />
+                  <span>נוצר ע״י: <span className="font-medium text-slate-600">{creatorName}</span></span>
+                </p>
               )}
             </div>
           </div>
