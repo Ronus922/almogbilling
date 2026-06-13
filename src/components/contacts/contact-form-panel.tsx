@@ -215,6 +215,14 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
 
   const disabled = submitting || !canEdit;
 
+  // The secondary-contact section is stored in the tenant_* fields, but its
+  // labels follow the resident type: a 'tenant' shows "שוכר", an 'operator'
+  // shows "מפעיל". It is hidden when the resident is the owner.
+  const secondary =
+    form.resident_type === 'operator'
+      ? { title: 'פרטי המפעיל', name: 'שם מפעיל', phone: 'טלפון מפעיל', email: 'אימייל מפעיל', tone: 'amber' as const }
+      : { title: 'פרטי השוכר', name: 'שם שוכר', phone: 'טלפון שוכר', email: 'אימייל שוכר', tone: 'violet' as const };
+
   return (
     <>
       <Sheet open={open} onOpenChange={(o) => { if (!o) requestClose(); else onOpenChange(o); }}>
@@ -312,20 +320,20 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
                 </div>
               </Section>
 
-              {/* Tenant — only when resident_type is 'tenant' */}
-              {form.resident_type === 'tenant' && (
-                <Section title="פרטי השוכר" icon={User} iconTone="violet">
+              {/* Secondary contact — shown for tenant OR operator; labels follow the type. */}
+              {form.resident_type !== 'owner' && (
+                <Section title={secondary.title} icon={User} iconTone={secondary.tone}>
                   <div className="space-y-4 py-2">
-                    <Field id="tenant-name" label="שם שוכר" value={form.tenant_name}
+                    <Field id="tenant-name" label={secondary.name} value={form.tenant_name}
                       onChange={(v) => set('tenant_name', v)} disabled={disabled} />
-                    <Field id="tenant-phone" label="טלפון שוכר" value={form.tenant_phone}
+                    <Field id="tenant-phone" label={secondary.phone} value={form.tenant_phone}
                       onChange={(v) => set('tenant_phone', v)} onBlur={() => markTouched('tenant_phone')}
                       error={errFor('tenant_phone')} disabled={disabled}
                       dir="ltr" tabularNums inputMode="tel" placeholder="052-1234567" />
-                    <Field id="tenant-email" label="אימייל שוכר" type="email" value={form.tenant_email}
+                    <Field id="tenant-email" label={secondary.email} type="email" value={form.tenant_email}
                       onChange={(v) => set('tenant_email', v)} onBlur={() => markTouched('tenant_email')}
                       error={errFor('tenant_email')} disabled={disabled}
-                      dir="ltr" placeholder="tenant@example.com" />
+                      dir="ltr" placeholder="name@example.com" />
                     <CheckboxRow
                       id="tenant-primary"
                       label="מקבל הודעות"
