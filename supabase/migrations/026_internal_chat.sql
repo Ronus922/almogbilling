@@ -1,0 +1,73 @@
+-- 026_internal_chat.sql
+-- Module 4 — Internal Chat (צ׳אט פנימי) between system users. Reuses Module 1's
+-- notifications infrastructure (023) for new-message alerts. Tables:
+--   internal_conversations + internal_conversation_participants + internal_messages.
+--
+-- ADDITIVE ONLY. Creates three new tables (no existing tables touched). Idempotent
+-- (IF NOT EXISTS / CREATE OR REPLACE / DROP ... IF EXISTS) — safe to re-run. No
+-- data is deleted.
+--
+-- type is text with a CHECK constraint (project convention — see tasks/issues/
+-- import_runs — avoids hard pg ENUM migrations).
+--
+-- Run: psql "$DIRECT_URL" -f supabase/migrations/026_internal_chat.sql
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- 1. internal_conversations
+--    A direct (1:1) or group conversation. created_by snapshots the creator
+--    (FK set null on delete + a name snapshot so history survives user removal).
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.internal_conversations (
+  id              uuid primary key default gen_random_uuid(),
+  type            text not null default 'direct'
+                    check (type in ('direct', 'group')),
+  name            text,                       -- group name (null for direct)
+  created_by      uuid references public.users(id) on delete set null,
+  created_by_name text,                       -- creator snapshot
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()  -- bumped on each new message
+);
+
+create index if not exists internal_conversations_type_idx
+  on public.internal_conversations (type);
+create index if not exists internal_conversations_updated_idx
+  on public.internal_conversations (updated_at desc);
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- 2. internal_conversation_participants
+--    Membership + per-user read cursor (last_read_at drives the unread count).
+--    Unique (conversation_id, user_id) — a user joins a conversation once.
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.internal_conversation_participants (
+  id              uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.internal_conversations(id) on delete cascade,
+  user_id         uuid not null references public.users(id) on delete cascade,
+  last_read_at    timestamptz not null default now(),
+  joined_at       timestamptz not null default now(),
+  unique (conversation_id, user_id)
+);
+
+create index if not exists internal_participants_user_idx
+  on public.internal_conversation_participants (user_id);
+create index if not exists internal_participants_conversation_idx
+  on public.internal_conversation_participants (conversation_id);
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- 3. internal_messages
+--    A single message. sender snapshot (FK set null + name) so the bubble
+--    keeps the author even after the user is removed. content length is
+--    enforced in the server layer (<= 4000 chars) — a DB CHECK is kept as a
+--    defense-in-depth backstop.
+-- ─────────────────────────────────────────────────────────────────────────
+create table if not exists public.internal_messages (
+  id              uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.internal_conversations(id) on delete cascade,
+  sender_user_id  uuid references public.users(id) on delete set null,
+  sender_name     text,                       -- sender snapshot
+  content         text not null
+                    check (char_length(content) >= 1 and char_length(content) <= 4000),
+  created_at      timestamptz not null default now()
+);
+
+create index if not exists internal_messages_conversation_idx
+  on public.internal_messages (conversation_id, created_at);

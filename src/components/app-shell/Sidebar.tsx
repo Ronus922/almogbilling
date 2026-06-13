@@ -32,7 +32,7 @@ const MAIN_MENU: MenuItem[] = [
   { label: 'יומן',               icon: Calendar, href: '/calendar', module: 'calendar' },
   { label: 'מסמכים',             icon: FileText, module: 'documents' },
   { label: 'הודעות',             icon: MessageCircle, href: '/messages', module: 'whatsapp_chat' },
-  { label: 'צ׳אט פנימי',         icon: MessagesSquare, module: 'internal_chat' },
+  { label: 'צ׳אט פנימי',         icon: MessagesSquare, href: '/chat', module: 'internal_chat' },
   { label: 'תזכורות',            icon: Bell, module: 'reminders' },
 ];
 
