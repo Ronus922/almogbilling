@@ -33,7 +33,7 @@ const MAIN_MENU: MenuItem[] = [
   { label: 'מסמכים',             icon: FileText, module: 'documents' },
   { label: 'הודעות',             icon: MessageCircle, href: '/messages', module: 'whatsapp_chat' },
   { label: 'צ׳אט פנימי',         icon: MessagesSquare, href: '/chat', module: 'internal_chat' },
-  { label: 'תזכורות',            icon: Bell, module: 'reminders' },
+  { label: 'תזכורות',            icon: Bell, href: '/user-reminders', module: 'user_reminders' },
 ];
 
 const MANAGE_MENU: MenuItem[] = [
