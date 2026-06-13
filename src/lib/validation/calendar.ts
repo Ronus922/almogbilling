@@ -25,7 +25,10 @@ const COLOR_KEYS: readonly CalendarColorKey[] = [
 const REC_TYPES: readonly RecurrenceType[] = ['daily', 'weekly', 'monthly', 'yearly'];
 const REC_END_TYPES: readonly RecurrenceEndType[] = ['never', 'until_date', 'count'];
 const CHANNELS: readonly ReminderChannel[] = ['in_app', 'email', 'both'];
-const SOURCES = ['user', 'contact'] as const;
+// 'user'/'external' are the only sources the UI creates. 'contact' is accepted
+// for backward-compat (legacy rows) but the picker no longer emits it.
+const SOURCES = ['user', 'contact', 'external'] as const;
+const EXTERNAL_NAME_MAX = 100;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -201,15 +204,57 @@ export function coerceParticipants(body: Record<string, unknown>): ParticipantsV
     if (!source || !SOURCES.includes(source as (typeof SOURCES)[number])) {
       return { ok: false, error: 'invalid_participant_source' };
     }
+
+    if (source === 'external') {
+      // Free-text attendee: no entity id (server-forced NULL — never trust the
+      // client), a trimmed non-empty name capped at 100 chars.
+      const name = strOrNull(rec.display_name_cache);
+      if (!name) return { ok: false, error: 'invalid_external_name' };
+      if (name.length > EXTERNAL_NAME_MAX) return { ok: false, error: 'external_name_too_long' };
+
+      const key = `external:${name.toLowerCase()}`;
+      if (seen.has(key)) continue; // dedupe by name (case-insensitive)
+      seen.add(key);
+
+      out.push({
+        participant_source: 'external',
+        participant_id: null, // hard NULL — external attendees never carry a real id
+        display_name_cache: name,
+        email_cache: null,
+      });
+      continue;
+    }
+
     const pid = strOrNull(rec.participant_id);
+
+    if (source === 'contact') {
+      // Legacy contacts are never CREATED by the UI — only round-tripped on a
+      // save of an old event. Preserve them defensively: keep a valid id when
+      // present, else fall back to a name-only row so a save never drops them.
+      const name = strOrNull(rec.display_name_cache);
+      const validId = pid && UUID_RE.test(pid) ? pid : null;
+      if (!validId && !name) continue; // nothing to preserve
+      const key = `contact:${validId ?? name?.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        participant_source: 'contact',
+        participant_id: validId,
+        display_name_cache: name,
+        email_cache: null,
+      });
+      continue;
+    }
+
+    // 'user': must carry a valid entity uuid.
     if (!pid || !UUID_RE.test(pid)) return { ok: false, error: 'invalid_participant_id' };
 
-    const key = `${source}:${pid}`;
+    const key = `user:${pid}`;
     if (seen.has(key)) continue; // dedupe silently
     seen.add(key);
 
     out.push({
-      participant_source: source as ParticipantInput['participant_source'],
+      participant_source: 'user',
       participant_id: pid,
       display_name_cache: strOrNull(rec.display_name_cache),
       email_cache: strOrNull(rec.email_cache),

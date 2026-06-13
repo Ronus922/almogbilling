@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  X, CalendarDays, MapPin, Repeat, Users, Bell, Plus, Trash2, Search, Palette, Trash,
+  X, CalendarDays, MapPin, Repeat, Users, Bell, Plus, Trash2, Search, Palette, Trash, UserPlus,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
@@ -31,7 +31,7 @@ import {
 } from '@/lib/constants/calendar';
 import type {
   CalendarColorKey, CalendarEventStatus, CalendarEventWithParticipants, CalendarItemKind,
-  ParticipantInput, ParticipantSource, RecurrenceEndType, RecurrenceType,
+  ParticipantInput, RecurrenceEndType, RecurrenceType,
 } from '@/lib/types/calendar';
 import type { ReminderChannel } from '@/lib/types/tasks';
 
@@ -40,17 +40,44 @@ interface Owner { id: string; name: string }
 interface ReminderRow { offset: ReminderOffset; channel: ReminderChannel }
 type ReminderOffset = 'none' | '15m' | '1h' | '1d';
 
-interface ParticipantRow {
-  source: ParticipantSource;
-  id: string;
+/** A registered (system-user) participant chosen from the picker. */
+interface RegisteredRow {
+  id: string; // users.id
   name: string;
-  email: string | null;
 }
 
-interface SearchResult {
-  users: { source: 'user'; id: string; name: string; email: string | null; hint: string | null }[];
-  contacts: { source: 'contact'; id: string; name: string; email: string | null; hint: string | null }[];
+/**
+ * An external (free-text) attendee, or a legacy 'contact' row loaded for
+ * read-only display. `source` distinguishes new externals from legacy contacts.
+ */
+interface ExternalRow {
+  key: string; // client-only React key (externals have no entity id)
+  source: 'external' | 'contact';
+  name: string;
+  /** Legacy 'contact' rows preserve their original entity id for a faithful round-trip. */
+  legacyId?: string | null;
 }
+
+/** Picker response — active system users only (no contacts). */
+interface SearchResult {
+  users: { source: 'user'; id: string; name: string }[];
+}
+
+/** Initials badge for a registered user (first letters of up to two words). */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2);
+  return parts[0][0] + parts[parts.length - 1][0];
+}
+
+let externalKeySeq = 0;
+function nextExternalKey(): string {
+  externalKeySeq += 1;
+  return `ext-${externalKeySeq}-${Date.now()}`;
+}
+
+const EXTERNAL_NAME_MAX = 100;
 
 interface Props {
   open: boolean;
@@ -147,7 +174,10 @@ export function EventFormPanel({
   const [form, setForm] = useState<FormState>(emptyForm(presetDate, currentUserId));
   const [initial, setInitial] = useState<FormState>(emptyForm(presetDate, currentUserId));
   const [recurrence, setRecurrence] = useState<RecurrenceState>(EMPTY_RECURRENCE);
-  const [participants, setParticipants] = useState<ParticipantRow[]>([]);
+  const [registered, setRegistered] = useState<RegisteredRow[]>([]);
+  const [externals, setExternals] = useState<ExternalRow[]>([]);
+  const [externalDraft, setExternalDraft] = useState('');
+  const [externalError, setExternalError] = useState<string | null>(null);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
   const [loadedEvent, setLoadedEvent] = useState<CalendarEventWithParticipants | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -156,11 +186,13 @@ export function EventFormPanel({
   const [scopeDialog, setScopeDialog] = useState<null | 'save' | 'delete'>(null);
   const [confirmDeleteSingle, setConfirmDeleteSingle] = useState(false);
 
-  // participant search
+  // registered-participant picker
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<SearchResult | null>(null);
   const [searching, setSearching] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
 
   const isEdit = !!eventId;
   const isRecurringSeries = !!loadedEvent?.recurrence_enabled || !!loadedEvent?.parent_series_id;
@@ -178,14 +210,26 @@ export function EventFormPanel({
       const f = fromEvent(ev);
       setForm(f);
       setInitial(f);
-      setParticipants(
-        ev.participants.map((p) => ({
-          source: p.participant_source,
-          id: p.participant_id,
-          name: p.display_name_cache ?? 'משתתף',
-          email: p.email_cache,
-        })),
-      );
+      // Split into registered (system users) and external (free-text + legacy contacts).
+      const reg: RegisteredRow[] = [];
+      const ext: ExternalRow[] = [];
+      for (const p of ev.participants) {
+        if (p.participant_source === 'user' && p.participant_id) {
+          reg.push({ id: p.participant_id, name: p.display_name_cache ?? 'משתמש' });
+        } else {
+          // 'external' (new) or legacy 'contact' → shown under external attendees.
+          // Legacy contacts keep their original id so a save round-trips them faithfully.
+          const isContact = p.participant_source === 'contact';
+          ext.push({
+            key: nextExternalKey(),
+            source: isContact ? 'contact' : 'external',
+            name: p.display_name_cache ?? 'משתתף',
+            legacyId: isContact ? p.participant_id : null,
+          });
+        }
+      }
+      setRegistered(reg);
+      setExternals(ext);
       // map reminders back to offsets relative to start
       const startMs = ev.start_datetime ? Date.parse(ev.start_datetime)
         : Date.parse(`${ev.event_date}T09:00:00`);
@@ -207,19 +251,23 @@ export function EventFormPanel({
     setForm(f);
     setInitial(f);
     setRecurrence(EMPTY_RECURRENCE);
-    setParticipants([]);
+    setRegistered([]);
+    setExternals([]);
+    setExternalDraft('');
+    setExternalError(null);
     setReminders([]);
     setLoadedEvent(null);
     setTitleTouched(false);
     setSubmitting(false);
     setSearch('');
     setResults(null);
+    setPickerOpen(false);
     setScopeDialog(null);
     setConfirmDeleteSingle(false);
     if (eventId) void loadDetail(eventId);
   }, [open, eventId, presetDate, currentUserId, loadDetail]);
 
-  // debounced participant search
+  // debounced registered-user search
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
     if (!open) return;
@@ -237,6 +285,18 @@ export function EventFormPanel({
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
   }, [search, open]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // close the registered-user dropdown on outside click
+  useEffect(() => {
+    if (!pickerOpen) return;
+    function onDocClick(e: MouseEvent) {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setPickerOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [pickerOpen]);
+
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
@@ -248,9 +308,10 @@ export function EventFormPanel({
     () =>
       JSON.stringify(form) !== JSON.stringify(initial) ||
       recurrence.enabled ||
-      participants.length > 0 ||
+      registered.length > 0 ||
+      externals.length > 0 ||
       reminders.length > 0,
-    [form, initial, recurrence.enabled, participants, reminders],
+    [form, initial, recurrence.enabled, registered, externals, reminders],
   );
   const canSubmit = canEdit && !!form.title.trim() && !!form.event_date && !submitting;
   const disabled = submitting || !canEdit;
@@ -269,14 +330,33 @@ export function EventFormPanel({
     onOpenChange(false);
   }
 
-  // ── participants ──
-  function addParticipant(p: ParticipantRow) {
-    setParticipants((prev) =>
-      prev.some((x) => x.source === p.source && x.id === p.id) ? prev : [...prev, p],
-    );
+  // ── registered participants (system users) ──
+  function addRegistered(u: { id: string; name: string }) {
+    setRegistered((prev) => (prev.some((x) => x.id === u.id) ? prev : [...prev, u]));
+    setSearch('');
+    setResults(null);
+    setPickerOpen(false);
   }
-  function removeParticipant(idx: number) {
-    setParticipants((prev) => prev.filter((_, i) => i !== idx));
+  function removeRegistered(id: string) {
+    setRegistered((prev) => prev.filter((x) => x.id !== id));
+  }
+
+  // ── external participants (free text) ──
+  function addExternal() {
+    const name = externalDraft.trim();
+    if (!name) { setExternalError('יש להזין שם'); return; }
+    if (name.length > EXTERNAL_NAME_MAX) {
+      setExternalError(`עד ${EXTERNAL_NAME_MAX} תווים`);
+      return;
+    }
+    const exists = externals.some((x) => x.name.trim().toLowerCase() === name.toLowerCase());
+    if (exists) { setExternalError('שם זה כבר נוסף'); return; }
+    setExternals((prev) => [...prev, { key: nextExternalKey(), source: 'external', name }]);
+    setExternalDraft('');
+    setExternalError(null);
+  }
+  function removeExternal(key: string) {
+    setExternals((prev) => prev.filter((x) => x.key !== key));
   }
 
   // ── reminders ──
@@ -321,12 +401,23 @@ export function EventFormPanel({
       color_key: form.color_key,
       status: form.status,
       owner_user_id: form.owner_user_id || null,
-      participants: participants.map<ParticipantInput>((p) => ({
-        participant_source: p.source,
-        participant_id: p.id,
-        display_name_cache: p.name,
-        email_cache: p.email,
-      })),
+      participants: [
+        ...registered.map<ParticipantInput>((u) => ({
+          participant_source: 'user',
+          participant_id: u.id,
+          display_name_cache: u.name,
+          email_cache: null,
+        })),
+        // New externals are sent with participant_id = null (the server also
+        // forces this — never trusts the client). Legacy 'contact' rows keep
+        // their original id so a save doesn't silently drop them.
+        ...externals.map<ParticipantInput>((e) => ({
+          participant_source: e.source,
+          participant_id: e.source === 'contact' ? (e.legacyId ?? null) : null,
+          display_name_cache: e.name,
+          email_cache: null,
+        })),
+      ],
     };
   }
 
@@ -636,58 +727,130 @@ export function EventFormPanel({
 
               {/* Participants */}
               <Section title="משתתפים" icon={Users} iconTone="emerald">
-                <div className="space-y-3 py-2">
-                  {!disabled && (
-                    <div className="relative">
-                      <Search className="pointer-events-none absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                      <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="חיפוש משתמש או איש קשר…" className="h-10 pe-9" />
+                <div className="space-y-5 py-2">
+                  {/* ── Registered participants (system users) ── */}
+                  <div className="space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-sm font-semibold text-slate-700">משתתפים רשומים</h4>
+                      <span className="text-[11px] text-slate-400">משתמשי מערכת</span>
                     </div>
-                  )}
-                  {!disabled && results && (search.trim() || (results.users.length > 0)) && (
-                    <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1">
-                      {searching && <p className="px-2 py-1 text-xs text-slate-400">מחפש…</p>}
-                      {[...results.users, ...results.contacts].map((o) => (
-                        <button
-                          key={o.source + o.id} type="button"
-                          onClick={() => addParticipant({ source: o.source, id: o.id, name: o.name, email: o.email })}
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-slate-50"
-                        >
-                          <span className={cn('inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold',
-                            o.source === 'user' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700')}>
-                            {o.source === 'user' ? 'מ' : 'ק'}
-                          </span>
-                          <span className="flex-1 truncate text-slate-800">{o.name}</span>
-                          {o.hint && <span className="shrink-0 text-[11px] text-slate-400">{o.hint}</span>}
-                        </button>
-                      ))}
-                      {!searching && results.users.length === 0 && results.contacts.length === 0 && (
-                        <p className="px-2 py-1 text-xs text-slate-400">לא נמצאו תוצאות.</p>
-                      )}
-                    </div>
-                  )}
-                  {participants.length === 0 ? (
-                    <p className="py-2 text-center text-xs text-slate-400">לא נבחרו משתתפים.</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {participants.map((p, idx) => (
-                        <div key={p.source + p.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
-                          <span className={cn('inline-flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-bold',
-                            p.source === 'user' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700')}>
-                            {p.source === 'user' ? 'מ' : 'ק'}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium text-slate-800">{p.name}</div>
-                            {p.email && <div dir="ltr" className="truncate text-[11px] text-slate-400">{p.email}</div>}
+                    {!disabled && (
+                      <div ref={pickerRef} className="relative">
+                        <Search className="pointer-events-none absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                        <Input
+                          value={search}
+                          onChange={(e) => { setSearch(e.target.value); setPickerOpen(true); }}
+                          onFocus={() => setPickerOpen(true)}
+                          placeholder="חיפוש משתמש…"
+                          className="h-10 pe-9"
+                        />
+                        {pickerOpen && (() => {
+                          const available = (results?.users ?? []).filter(
+                            (u) => !registered.some((r) => r.id === u.id),
+                          );
+                          const show = searching || available.length > 0 || !!search.trim();
+                          if (!show) return null;
+                          return (
+                            <div className="absolute z-20 mt-1 max-h-48 w-full space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+                              {searching && <p className="px-2 py-1 text-xs text-slate-400">מחפש…</p>}
+                              {available.map((u) => (
+                                <button
+                                  key={u.id} type="button"
+                                  onClick={() => addRegistered({ id: u.id, name: u.name })}
+                                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-slate-50"
+                                >
+                                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700">
+                                    {initials(u.name)}
+                                  </span>
+                                  <span className="flex-1 truncate text-slate-800">{u.name}</span>
+                                </button>
+                              ))}
+                              {!searching && available.length === 0 && (
+                                <p className="px-2 py-1 text-xs text-slate-400">לא נמצאו משתמשים.</p>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+                    {registered.length === 0 ? (
+                      <p className="py-1 text-center text-xs text-slate-400">לא נבחרו משתתפים רשומים.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {registered.map((u) => (
+                          <div key={u.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
+                            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700">
+                              {initials(u.name)}
+                            </span>
+                            <div className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">{u.name}</div>
+                            {!disabled && (
+                              <button type="button" onClick={() => removeRegistered(u.id)} aria-label="הסר משתתף" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600">
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
                           </div>
-                          {!disabled && (
-                            <button type="button" onClick={() => removeParticipant(idx)} aria-label="הסר משתתף" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600">
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── External participants (free text) ── */}
+                  <div className="space-y-2.5 border-t border-slate-100 pt-4">
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-sm font-semibold text-slate-700">משתתפים חיצוניים</h4>
+                      <span className="text-[11px] text-slate-400">טקסט חופשי — עו״ד, קבלן, נציג עירייה…</span>
                     </div>
-                  )}
+                    {!disabled && (
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1">
+                          <Input
+                            value={externalDraft}
+                            maxLength={EXTERNAL_NAME_MAX}
+                            onChange={(e) => { setExternalDraft(e.target.value); if (externalError) setExternalError(null); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addExternal(); } }}
+                            placeholder="שם משתתף חיצוני…"
+                            className={cn('h-10', externalError && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
+                          />
+                          {externalError && <p className="mt-1 text-[12px] font-semibold text-red-500 text-right">⚠️ {externalError}</p>}
+                        </div>
+                        <Button
+                          type="button" variant="outline" onClick={addExternal}
+                          disabled={!externalDraft.trim()}
+                          className="h-10 shrink-0 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+                        >
+                          <UserPlus className="h-4 w-4" /> הוסף
+                        </Button>
+                      </div>
+                    )}
+                    {externals.length === 0 ? (
+                      <p className="py-1 text-center text-xs text-slate-400">לא נוספו משתתפים חיצוניים.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {externals.map((e) => (
+                          <span
+                            key={e.key}
+                            className={cn(
+                              'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm',
+                              e.source === 'contact'
+                                ? 'border-slate-200 bg-slate-50 text-slate-600'
+                                : 'border-emerald-200 bg-emerald-50 text-emerald-800',
+                            )}
+                          >
+                            <span className="max-w-[180px] truncate font-medium">{e.name}</span>
+                            {e.source === 'contact' && <span className="text-[10px] text-slate-400">(איש קשר)</span>}
+                            {!disabled && (
+                              <button
+                                type="button" onClick={() => removeExternal(e.key)} aria-label={`הסר ${e.name}`}
+                                className="grid h-6 w-6 place-items-center rounded-full text-current/60 transition-colors hover:bg-rose-100 hover:text-rose-600"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </Section>
 

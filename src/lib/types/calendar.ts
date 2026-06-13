@@ -8,7 +8,10 @@ export type CalendarEventStatus = 'scheduled' | 'completed' | 'cancelled';
 export type RecurrenceType = 'daily' | 'weekly' | 'monthly' | 'yearly';
 export type RecurrenceEndType = 'never' | 'until_date' | 'count';
 export type CalendarSourceType = 'manual' | 'generated_occurrence';
-export type ParticipantSource = 'user' | 'contact';
+// 'user'     = system user (picker, has a login)
+// 'external'  = free-text attendee (lawyer, contractor, …) — display_name only, no id
+// 'contact'   = legacy; kept for backward-compat read-only display, never created via the UI
+export type ParticipantSource = 'user' | 'contact' | 'external';
 export type AttendanceStatus = 'pending' | 'accepted' | 'declined';
 
 /** color_key values map to the DESIGN.md §2 tone palette. */
@@ -54,7 +57,8 @@ export interface CalendarEventParticipant {
   id: string;
   event_id: string;
   participant_source: ParticipantSource;
-  participant_id: string;
+  /** A real entity id for 'user'/'contact'; NULL for 'external' (free-text). */
+  participant_id: string | null;
   display_name_cache: string | null;
   email_cache: string | null;
   attendance_status: AttendanceStatus;
@@ -76,10 +80,14 @@ export interface RecurrenceRule {
   count: number | null; // when endType='count'
 }
 
-/** A participant the client wants attached to the event. */
+/**
+ * A participant the client wants attached to the event.
+ * 'user' → participant_id is a real users.id.
+ * 'external' → participant_id is NULL; display_name_cache holds the typed name.
+ */
 export interface ParticipantInput {
   participant_source: ParticipantSource;
-  participant_id: string;
+  participant_id: string | null;
   display_name_cache: string | null;
   email_cache: string | null;
 }
