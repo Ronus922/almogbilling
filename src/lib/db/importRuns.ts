@@ -21,7 +21,7 @@ export interface ImportRun {
 
 export async function createImportRun(mode: ImportMode, userId: string): Promise<string> {
   const row = await queryOne<{ id: string }>(
-    `insert into public.import_runs (mode, initiated_by) values ($1, $2) returning id`,
+    `insert into public.import_runs (mode, initiated_by, kind) values ($1, $2, 'debtors') returning id`,
     [mode, userId],
   );
   if (!row) throw new Error('Failed to create import_run');
