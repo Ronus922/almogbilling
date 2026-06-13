@@ -1,5 +1,6 @@
-import { Bell, Building2 } from 'lucide-react';
+import { Building2 } from 'lucide-react';
 import { UserMenu } from './UserMenu';
+import { NotificationBell } from './NotificationBell';
 
 export function Header() {
   return (
@@ -14,16 +15,7 @@ export function Header() {
 
       {/* Left (RTL end): notifications + user */}
       <div className="flex items-center gap-3">
-        <button
-          type="button"
-          aria-label="התראות"
-          className="relative grid h-[38px] w-[38px] place-items-center rounded-[10px] border border-line bg-surface-2 text-ink-2 transition-colors hover:bg-row-hover"
-        >
-          <Bell className="h-[18px] w-[18px]" />
-          <span className="absolute -top-1 -right-1 grid h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-white bg-[#e5484d] px-1 text-[10px] font-bold leading-none text-white">
-            9+
-          </span>
-        </button>
+        <NotificationBell />
         <span className="h-7 w-px bg-line" aria-hidden />
         <UserMenu />
       </div>

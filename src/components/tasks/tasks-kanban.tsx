@@ -1,0 +1,115 @@
+'use client';
+
+import { useState } from 'react';
+import { MessageSquare, User, Calendar } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import {
+  TASK_STATUSES, STATUS_DOT, PRIORITY_BADGE, taskPriorityLabel,
+} from '@/lib/constants/tasks';
+import type { TaskStatus, TaskWithAssignee } from '@/lib/types/tasks';
+
+interface Props {
+  tasks: TaskWithAssignee[];
+  canEdit: boolean;
+  onSelect: (task: TaskWithAssignee) => void;
+  /** Persist a move (status change + reorder). */
+  onMove: (taskId: string, toStatus: TaskStatus, toIndex: number) => void;
+}
+
+function isOverdue(t: TaskWithAssignee): boolean {
+  if (!t.due_date) return false;
+  if (t.status === 'done' || t.status === 'cancelled') return false;
+  return t.due_date < new Date().toISOString().slice(0, 10);
+}
+
+export function TasksKanban({ tasks, canEdit, onSelect, onMove }: Props) {
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overCol, setOverCol] = useState<TaskStatus | null>(null);
+
+  const byStatus = (s: TaskStatus) =>
+    tasks
+      .filter((t) => t.status === s)
+      .sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at));
+
+  function handleDrop(status: TaskStatus) {
+    if (!dragId) return;
+    const colCount = byStatus(status).length;
+    onMove(dragId, status, colCount);
+    setDragId(null);
+    setOverCol(null);
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {TASK_STATUSES.map((col) => {
+        const items = byStatus(col.value);
+        return (
+          <div
+            key={col.value}
+            onDragOver={(e) => { if (canEdit && dragId) { e.preventDefault(); setOverCol(col.value); } }}
+            onDragLeave={() => setOverCol((c) => (c === col.value ? null : c))}
+            onDrop={() => handleDrop(col.value)}
+            className={cn(
+              'flex flex-col rounded-xl border bg-slate-50/60 transition-colors',
+              overCol === col.value ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200',
+            )}
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <span className={cn('h-2 w-2 rounded-full', STATUS_DOT[col.value])} />
+                <h3 className="text-sm font-bold text-slate-700">{col.label}</h3>
+              </div>
+              <span className="inline-flex items-center justify-center rounded-full bg-white px-2 py-0.5 text-xs font-bold text-slate-500 ring-1 ring-slate-200">
+                {items.length}
+              </span>
+            </div>
+
+            <div className="flex flex-1 flex-col gap-2 p-3">
+              {items.length === 0 && (
+                <p className="py-6 text-center text-xs text-slate-400">אין משימות</p>
+              )}
+              {items.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  draggable={canEdit}
+                  onDragStart={() => setDragId(t.id)}
+                  onDragEnd={() => { setDragId(null); setOverCol(null); }}
+                  onClick={() => onSelect(t)}
+                  className={cn(
+                    'w-full rounded-lg border border-slate-200 bg-white p-3 text-start shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-shadow hover:shadow-md',
+                    canEdit && 'cursor-grab active:cursor-grabbing',
+                    dragId === t.id && 'opacity-50',
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-sm font-semibold text-slate-900">{t.title}</span>
+                    <span className={cn('inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-medium', PRIORITY_BADGE[t.priority])}>
+                      {taskPriorityLabel(t.priority)}
+                    </span>
+                  </div>
+                  {t.description && (
+                    <p className="mt-1 line-clamp-2 text-xs text-slate-500">{t.description}</p>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
+                    {t.assigned_to_name && (
+                      <span className="inline-flex items-center gap-1"><User className="h-3 w-3" />{t.assigned_to_name}</span>
+                    )}
+                    {t.due_date && (
+                      <span dir="ltr" className={cn('inline-flex items-center gap-1 tabular-nums', isOverdue(t) && 'font-bold text-rose-600')}>
+                        <Calendar className="h-3 w-3" />{t.due_date}
+                      </span>
+                    )}
+                    {t.comment_count > 0 && (
+                      <span className="inline-flex items-center gap-0.5"><MessageSquare className="h-3 w-3" />{t.comment_count}</span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

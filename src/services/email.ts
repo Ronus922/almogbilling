@@ -24,6 +24,23 @@ export async function sendUserInviteEmail(
   await sendWithRetry({ to, subject, html, text });
 }
 
+/**
+ * Task notification email (Module 1) — used for assignment + reminders.
+ */
+export async function sendTaskNotificationEmail(
+  to: string,
+  args: {
+    recipientName: string;
+    heading: string;
+    taskTitle: string;
+    details: { label: string; value: string }[];
+    taskUrl: string;
+  },
+): Promise<void> {
+  const { subject, html, text } = renderTemplate('task-notification', args);
+  await sendWithRetry({ to, subject, html, text });
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // LEGACY — Slice 3 stub kept untouched. Will migrate in a separate slice.
 // ──────────────────────────────────────────────────────────────────────

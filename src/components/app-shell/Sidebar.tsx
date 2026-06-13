@@ -27,7 +27,7 @@ const MAIN_MENU: MenuItem[] = [
   { label: 'ניהול חיובים',       icon: LayoutGrid, href: '/dashboard', module: 'dashboard' },
   { label: 'רשימת דיירים',       icon: Users, href: '/contacts', module: 'contacts' },
   { label: 'ספקים',              icon: Truck, href: '/suppliers', module: 'suppliers' },
-  { label: 'משימות',             icon: CheckSquare, module: 'tasks' },
+  { label: 'משימות',             icon: CheckSquare, href: '/tasks', module: 'tasks' },
   { label: 'תקלות',              icon: AlertTriangle, module: 'issues' },
   { label: 'יומן',               icon: Calendar, module: 'calendar' },
   { label: 'מסמכים',             icon: FileText, module: 'documents' },

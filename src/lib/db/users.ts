@@ -45,6 +45,23 @@ export async function listOpenInvites(): Promise<InviteListRow[]> {
   return r.rows;
 }
 
+/** Minimal id+name list of active users — for assignee pickers. */
+export interface AssignableUser {
+  id: string;
+  full_name: string | null;
+  username: string;
+}
+
+export async function listAssignableUsers(): Promise<AssignableUser[]> {
+  const r = await query<AssignableUser>(
+    `select id, full_name, username
+       from public.users
+      where is_active = true
+      order by full_name asc nulls last, username asc`,
+  );
+  return r.rows;
+}
+
 export async function findUserById(id: string): Promise<UserListRow | null> {
   return queryOne<UserListRow>(
     `select id, username, email, full_name, role, is_active, created_at

@@ -1,0 +1,257 @@
+import 'server-only';
+import { query, queryOne, withTransaction } from '@/lib/db';
+import type { PoolClient } from 'pg';
+import type {
+  Task,
+  TaskComment,
+  TaskKpis,
+  TaskListFilters,
+  TaskWithAssignee,
+  TaskWritableFields,
+} from '@/lib/types/tasks';
+
+const TASK_COLUMNS = `
+  id, title, description, status, priority, due_date, due_time,
+  assigned_to_user_id, debtor_id, apartment_number, sort_order, is_archived,
+  created_by, created_by_name, created_at, updated_at
+`;
+
+// Columns a create/update may set (title + created_by handled explicitly on create).
+const WRITABLE_COLUMNS: (keyof TaskWritableFields)[] = [
+  'title',
+  'description',
+  'status',
+  'priority',
+  'due_date',
+  'due_time',
+  'assigned_to_user_id',
+  'debtor_id',
+  'apartment_number',
+];
+
+// ── List ──────────────────────────────────────────────────────────────────
+export async function listTasks(filters: TaskListFilters): Promise<TaskWithAssignee[]> {
+  const where: string[] = [];
+  const vals: unknown[] = [];
+
+  if (!filters.includeArchived) {
+    where.push('t.is_archived = false');
+  }
+  if (filters.status) {
+    vals.push(filters.status);
+    where.push(`t.status = $${vals.length}`);
+  }
+  if (filters.priority) {
+    vals.push(filters.priority);
+    where.push(`t.priority = $${vals.length}`);
+  }
+  if (filters.assignedTo) {
+    vals.push(filters.assignedTo);
+    where.push(`t.assigned_to_user_id = $${vals.length}`);
+  }
+  if (filters.search) {
+    vals.push(`%${filters.search}%`);
+    where.push(`(t.title ilike $${vals.length} or t.description ilike $${vals.length})`);
+  }
+
+  let orderBy: string;
+  switch (filters.sort) {
+    case 'due_asc':
+      orderBy = 't.due_date asc nulls last, t.due_time asc nulls last';
+      break;
+    case 'priority_desc':
+      // urgent > high > normal > low
+      orderBy = `case t.priority when 'urgent' then 0 when 'high' then 1 when 'normal' then 2 else 3 end asc, t.created_at desc`;
+      break;
+    case 'updated_desc':
+      orderBy = 't.updated_at desc';
+      break;
+    default:
+      orderBy = 't.created_at desc';
+  }
+
+  const whereSql = where.length ? `where ${where.join(' and ')}` : '';
+  const r = await query<TaskWithAssignee>(
+    `select ${TASK_COLUMNS.split(',').map((c) => 't.' + c.trim()).join(', ')},
+            u.full_name as assigned_to_name,
+            coalesce(cc.cnt, 0)::int as comment_count
+       from public.tasks t
+       left join public.users u on u.id = t.assigned_to_user_id
+       left join (
+         select task_id, count(*)::int as cnt
+           from public.task_comments
+          group by task_id
+       ) cc on cc.task_id = t.id
+       ${whereSql}
+       order by ${orderBy}`,
+    vals,
+  );
+  return r.rows;
+}
+
+export async function getTaskById(id: string): Promise<TaskWithAssignee | null> {
+  return queryOne<TaskWithAssignee>(
+    `select ${TASK_COLUMNS.split(',').map((c) => 't.' + c.trim()).join(', ')},
+            u.full_name as assigned_to_name,
+            coalesce(cc.cnt, 0)::int as comment_count
+       from public.tasks t
+       left join public.users u on u.id = t.assigned_to_user_id
+       left join (
+         select task_id, count(*)::int as cnt
+           from public.task_comments
+          group by task_id
+       ) cc on cc.task_id = t.id
+      where t.id = $1
+      limit 1`,
+    [id],
+  );
+}
+
+// ── Create ──────────────────────────────────────────────────────────────────
+export async function createTask(
+  data: Partial<TaskWritableFields> & { title: string },
+  createdBy: string | null,
+  createdByName: string | null,
+): Promise<Task> {
+  const rec = data as Record<string, unknown>;
+  const cols: string[] = ['created_by', 'created_by_name'];
+  const vals: unknown[] = [createdBy, createdByName];
+
+  // sort_order: append to the end of its status column.
+  const status = (data.status ?? 'open') as string;
+  const nextSort = await queryOne<{ next: number }>(
+    `select coalesce(max(sort_order), -1) + 1 as next from public.tasks where status = $1`,
+    [status],
+  );
+
+  for (const c of WRITABLE_COLUMNS) {
+    if (c in rec && rec[c] !== undefined) {
+      cols.push(c);
+      vals.push(rec[c]);
+    }
+  }
+  cols.push('sort_order');
+  vals.push(nextSort?.next ?? 0);
+
+  const placeholders = vals.map((_, i) => `$${i + 1}`);
+  const row = await queryOne<Task>(
+    `insert into public.tasks (${cols.join(', ')})
+     values (${placeholders.join(', ')})
+     returning ${TASK_COLUMNS}`,
+    vals,
+  );
+  if (!row) throw new Error('failed_to_create_task');
+  return row;
+}
+
+// ── Update ──────────────────────────────────────────────────────────────────
+export async function updateTask(
+  id: string,
+  data: Partial<TaskWritableFields> & { is_archived?: boolean },
+): Promise<Task | null> {
+  const rec = { ...data } as Record<string, unknown>;
+  const set: string[] = [];
+  const vals: unknown[] = [id];
+
+  const updatable = [...WRITABLE_COLUMNS, 'is_archived' as const];
+  for (const c of updatable) {
+    if (c in rec && rec[c] !== undefined) {
+      vals.push(rec[c]);
+      set.push(`${c} = $${vals.length}`);
+    }
+  }
+  if (set.length === 0) {
+    const t = await getTaskById(id);
+    return t as Task | null;
+  }
+  return queryOne<Task>(
+    `update public.tasks set ${set.join(', ')} where id = $1 returning ${TASK_COLUMNS}`,
+    vals,
+  );
+}
+
+export async function deleteTask(id: string): Promise<boolean> {
+  const r = await query(`delete from public.tasks where id = $1`, [id]);
+  return (r.rowCount ?? 0) > 0;
+}
+
+/** Read just the assignee of a task (for assignment-change detection). */
+export async function getTaskAssignee(id: string): Promise<string | null | undefined> {
+  const row = await queryOne<{ assigned_to_user_id: string | null }>(
+    `select assigned_to_user_id from public.tasks where id = $1`,
+    [id],
+  );
+  return row === null ? undefined : row.assigned_to_user_id;
+}
+
+// ── Kanban batch reorder ─────────────────────────────────────────────────────
+export interface ReorderItem {
+  id: string;
+  status: string;
+  sort_order: number;
+}
+
+/** Apply a batch of {id, status, sort_order} updates atomically. */
+export async function reorderTasks(items: ReorderItem[]): Promise<void> {
+  if (items.length === 0) return;
+  await withTransaction(async (client: PoolClient) => {
+    for (const it of items) {
+      await client.query(
+        `update public.tasks set status = $2, sort_order = $3 where id = $1`,
+        [it.id, it.status, it.sort_order],
+      );
+    }
+  });
+}
+
+// ── Comments ─────────────────────────────────────────────────────────────────
+export async function listTaskComments(taskId: string): Promise<TaskComment[]> {
+  const r = await query<TaskComment>(
+    `select id, task_id, content, author_id, author_name, created_at, updated_at
+       from public.task_comments
+      where task_id = $1
+      order by created_at asc`,
+    [taskId],
+  );
+  return r.rows;
+}
+
+export async function createTaskComment(
+  taskId: string,
+  content: string,
+  authorId: string | null,
+  authorName: string | null,
+): Promise<TaskComment> {
+  const row = await queryOne<TaskComment>(
+    `insert into public.task_comments (task_id, content, author_id, author_name)
+     values ($1, $2, $3, $4)
+     returning id, task_id, content, author_id, author_name, created_at, updated_at`,
+    [taskId, content, authorId, authorName],
+  );
+  if (!row) throw new Error('failed_to_create_comment');
+  return row;
+}
+
+// ── KPIs ──────────────────────────────────────────────────────────────────
+export async function getTaskKpis(): Promise<TaskKpis> {
+  const row = await queryOne<{ open: number; overdue: number; done_this_month: number }>(
+    `select
+        count(*) filter (where status in ('open','in_progress') and is_archived = false)::int as open,
+        count(*) filter (
+          where status in ('open','in_progress')
+            and is_archived = false
+            and due_date is not null
+            and due_date < current_date
+        )::int as overdue,
+        count(*) filter (
+          where status = 'done'
+            and updated_at >= date_trunc('month', now())
+        )::int as done_this_month
+       from public.tasks`,
+  );
+  return {
+    open: row?.open ?? 0,
+    overdue: row?.overdue ?? 0,
+    doneThisMonth: row?.done_this_month ?? 0,
+  };
+}
