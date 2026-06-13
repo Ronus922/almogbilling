@@ -18,6 +18,13 @@ export default async function CalendarPage() {
 
   const userRows = await listAssignableUsers();
   const owners = userRows.map((u) => ({ id: u.id, name: u.full_name ?? u.username }));
+  const currentUserName = actor.full_name ?? actor.username;
 
-  return <CalendarPageClient canEdit={canEdit} owners={owners} currentUserId={actor.id} />;
+  return (
+    <CalendarPageClient
+      canEdit={canEdit}
+      owners={owners}
+      currentUserName={currentUserName}
+    />
+  );
 }

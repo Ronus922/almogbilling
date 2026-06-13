@@ -18,7 +18,7 @@ interface Owner { id: string; name: string }
 interface Props {
   canEdit: boolean;
   owners: Owner[];
-  currentUserId: string;
+  currentUserName: string;
 }
 
 const VIEW_LABEL: Record<CalendarView, string> = { month: 'חודש', week: 'שבוע', day: 'יום' };
@@ -36,7 +36,7 @@ function rangeFor(view: CalendarView, cursor: Date): { from: string; to: string 
   return { from: toDateKey(cursor), to: toDateKey(cursor) };
 }
 
-export function CalendarPageClient({ canEdit, owners, currentUserId }: Props) {
+export function CalendarPageClient({ canEdit, owners, currentUserName }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -204,7 +204,7 @@ export function CalendarPageClient({ canEdit, owners, currentUserId }: Props) {
         presetDate={presetDate}
         canEdit={canEdit}
         owners={owners}
-        currentUserId={currentUserId}
+        currentUserName={currentUserName}
         onOpenChange={handlePanelChange}
         onSaved={fetchItems}
       />

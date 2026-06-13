@@ -120,11 +120,11 @@ export function coerceEventInput(
     fields[key] = v;
   }
 
-  if (has(body, 'owner_user_id')) {
-    const id = strOrNull(body.owner_user_id);
-    if (id !== null && !UUID_RE.test(id)) return { ok: false, error: 'invalid_owner_user_id' };
-    fields.owner_user_id = id;
-  }
+  // owner_user_id is intentionally NOT accepted from the client payload.
+  // Ownership is the creator, derived from the session on POST and never
+  // mutable on PATCH — so any owner_user_id in the body is silently ignored
+  // (never validated, never written). This blocks ownership forgery and
+  // reassignment via either create or edit.
 
   // Cross-field: end must not precede start (when both present and not all-day).
   if (fields.start_datetime && fields.end_datetime) {

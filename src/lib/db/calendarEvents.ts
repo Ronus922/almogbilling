@@ -26,10 +26,18 @@ const PARTICIPANT_COLUMNS = `
   email_cache, attendance_status, created_at, updated_at
 `;
 
-// Columns the row writer sets from the writable-fields payload.
-const WRITABLE_COLUMNS: (keyof CalendarEventWritableFields)[] = [
+// Columns the INSERT writer sets from the writable-fields payload. owner_user_id
+// is set here once at creation (from the session actor — see the POST route).
+const INSERT_COLUMNS: (keyof CalendarEventWritableFields)[] = [
   'title', 'item_kind', 'event_date', 'start_datetime', 'end_datetime',
   'is_all_day', 'location', 'description', 'color_key', 'status', 'owner_user_id',
+];
+
+// Columns an UPDATE/PATCH may touch. owner_user_id is intentionally EXCLUDED:
+// ownership is fixed to the original creator and can never be changed on edit.
+const UPDATABLE_COLUMNS: (keyof CalendarEventWritableFields)[] = [
+  'title', 'item_kind', 'event_date', 'start_datetime', 'end_datetime',
+  'is_all_day', 'location', 'description', 'color_key', 'status',
 ];
 
 // ── Reads ──────────────────────────────────────────────────────────────────
@@ -107,7 +115,7 @@ async function insertEventRow(
   const cols: string[] = [];
   const vals: unknown[] = [];
   const rec = fields as unknown as Record<string, unknown>;
-  for (const c of WRITABLE_COLUMNS) {
+  for (const c of INSERT_COLUMNS) {
     cols.push(c);
     vals.push(rec[c] ?? null);
   }
@@ -240,7 +248,7 @@ export async function updateSingleEvent(
     const rec = fields as Record<string, unknown>;
     const set: string[] = [];
     const vals: unknown[] = [id];
-    for (const c of WRITABLE_COLUMNS) {
+    for (const c of UPDATABLE_COLUMNS) {
       if (Object.prototype.hasOwnProperty.call(rec, c) && rec[c] !== undefined) {
         vals.push(rec[c]);
         set.push(`${c} = $${vals.length}`);
@@ -312,7 +320,7 @@ export async function updateSeriesFuture(
     const rec = fields as Record<string, unknown>;
     const set: string[] = [];
     const baseVals: unknown[] = [];
-    for (const c of WRITABLE_COLUMNS) {
+    for (const c of UPDATABLE_COLUMNS) {
       if (c === 'event_date') continue;
       if (Object.prototype.hasOwnProperty.call(rec, c) && rec[c] !== undefined) {
         baseVals.push(rec[c]);

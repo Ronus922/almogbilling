@@ -59,7 +59,9 @@ export async function POST(req: NextRequest) {
     description: fields.description ?? null,
     color_key: fields.color_key ?? 'blue',
     status: fields.status ?? 'scheduled',
-    owner_user_id: fields.owner_user_id ?? actor.id,
+    // Owner = the creator, always derived from the session. Any owner_user_id
+    // in the client payload is ignored — ownership cannot be forged or assigned.
+    owner_user_id: actor.id,
     recurrence: rec.rule,
     participants: parts.participants,
     reminders: rems.reminders,

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  X, CalendarDays, MapPin, Repeat, Users, Bell, Plus, Trash2, Search, Palette, Trash, UserPlus,
+  X, CalendarDays, MapPin, Repeat, Users, Bell, Plus, Trash2, Search, Palette, Trash, UserPlus, UserCircle,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
@@ -85,8 +85,10 @@ interface Props {
   eventId: string | null;
   presetDate: string | null;
   canEdit: boolean;
+  /** Assignable users — used only to resolve an event's owner id → display name. */
   owners: Owner[];
-  currentUserId: string;
+  /** The logged-in user's display name — shown as the creator on new events. */
+  currentUserName: string;
   onOpenChange: (o: boolean) => void;
   onSaved: () => void;
 }
@@ -102,7 +104,6 @@ interface FormState {
   description: string;
   color_key: CalendarColorKey;
   status: CalendarEventStatus;
-  owner_user_id: string;
 }
 
 interface RecurrenceState {
@@ -124,7 +125,7 @@ const OFFSET_MS: Record<Exclude<ReminderOffset, 'none'>, number> = {
   '15m': 15 * 60_000, '1h': 60 * 60_000, '1d': 24 * 60 * 60_000,
 };
 
-function emptyForm(presetDate: string | null, currentUserId: string): FormState {
+function emptyForm(presetDate: string | null): FormState {
   return {
     title: '',
     item_kind: 'meeting',
@@ -136,7 +137,6 @@ function emptyForm(presetDate: string | null, currentUserId: string): FormState 
     description: '',
     color_key: 'blue',
     status: 'scheduled',
-    owner_user_id: currentUserId,
   };
 }
 
@@ -164,15 +164,14 @@ function fromEvent(ev: CalendarEventWithParticipants): FormState {
     description: ev.description ?? '',
     color_key: (ev.color_key as CalendarColorKey) ?? 'blue',
     status: ev.status,
-    owner_user_id: ev.owner_user_id ?? '',
   };
 }
 
 export function EventFormPanel({
-  open, eventId, presetDate, canEdit, owners, currentUserId, onOpenChange, onSaved,
+  open, eventId, presetDate, canEdit, owners, currentUserName, onOpenChange, onSaved,
 }: Props) {
-  const [form, setForm] = useState<FormState>(emptyForm(presetDate, currentUserId));
-  const [initial, setInitial] = useState<FormState>(emptyForm(presetDate, currentUserId));
+  const [form, setForm] = useState<FormState>(emptyForm(presetDate));
+  const [initial, setInitial] = useState<FormState>(emptyForm(presetDate));
   const [recurrence, setRecurrence] = useState<RecurrenceState>(EMPTY_RECURRENCE);
   const [registered, setRegistered] = useState<RegisteredRow[]>([]);
   const [externals, setExternals] = useState<ExternalRow[]>([]);
@@ -196,6 +195,18 @@ export function EventFormPanel({
 
   const isEdit = !!eventId;
   const isRecurringSeries = !!loadedEvent?.recurrence_enabled || !!loadedEvent?.parent_series_id;
+
+  // Creator display name: on edit, resolve the original owner id from the
+  // assignable-users list; on create, it is the logged-in user. Read-only —
+  // ownership is the creator and is never selectable.
+  const creatorName = useMemo(() => {
+    if (isEdit) {
+      const ownerId = loadedEvent?.owner_user_id ?? null;
+      if (!ownerId) return null;
+      return owners.find((o) => o.id === ownerId)?.name ?? null;
+    }
+    return currentUserName;
+  }, [isEdit, loadedEvent?.owner_user_id, owners, currentUserName]);
 
   const loadDetail = useCallback(async (id: string) => {
     try {
@@ -247,7 +258,7 @@ export function EventFormPanel({
 
   useEffect(() => {
     if (!open) return;
-    const f = emptyForm(presetDate, currentUserId);
+    const f = emptyForm(presetDate);
     setForm(f);
     setInitial(f);
     setRecurrence(EMPTY_RECURRENCE);
@@ -265,7 +276,7 @@ export function EventFormPanel({
     setScopeDialog(null);
     setConfirmDeleteSingle(false);
     if (eventId) void loadDetail(eventId);
-  }, [open, eventId, presetDate, currentUserId, loadDetail]);
+  }, [open, eventId, presetDate, loadDetail]);
 
   // debounced registered-user search
   useEffect(() => {
@@ -400,7 +411,8 @@ export function EventFormPanel({
       description: form.description.trim() || null,
       color_key: form.color_key,
       status: form.status,
-      owner_user_id: form.owner_user_id || null,
+      // owner_user_id is deliberately NOT sent — the server derives ownership
+      // from the session on create and never changes it on edit.
       participants: [
         ...registered.map<ParticipantInput>((u) => ({
           participant_source: 'user',
@@ -650,19 +662,13 @@ export function EventFormPanel({
                     </div>
                   </div>
 
-                  {/* Owner */}
-                  <div className="space-y-2">
-                    <Label className="text-base font-medium text-muted-foreground">בעלים</Label>
-                    <Select value={form.owner_user_id || '__none__'} onValueChange={(v) => { if (v) set('owner_user_id', v === '__none__' ? '' : v); }} disabled={disabled}>
-                      <SelectTrigger className="w-full data-[size=default]:h-10">
-                        <SelectValue>{(v: string | null) => { if (!v || v === '__none__') return 'ללא'; return owners.find((o) => o.id === v)?.name ?? 'משתמש'; }}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">ללא</SelectItem>
-                        {owners.map((o) => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {/* Created-by — read-only; ownership = the creator, derived from the session. */}
+                  {creatorName && (
+                    <p className="flex items-center gap-1.5 text-xs text-slate-500">
+                      <UserCircle className="h-3.5 w-3.5 shrink-0" />
+                      <span>נוצר ע״י: <span className="font-medium text-slate-600">{creatorName}</span></span>
+                    </p>
+                  )}
                 </div>
               </Section>
 
