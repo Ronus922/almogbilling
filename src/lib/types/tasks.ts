@@ -4,6 +4,10 @@
 export type TaskStatus = 'open' | 'in_progress' | 'done' | 'cancelled';
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
+/** Generic polymorphic link target. debtor_id stays the primary debtor link;
+ *  this is the additive, optional cross-entity reference (migration 028). */
+export type RelatedEntityType = 'debtor' | 'building' | 'supplier' | 'contact';
+
 export interface Task {
   id: string;
   title: string;
@@ -15,8 +19,11 @@ export interface Task {
   assigned_to_user_id: string | null;
   debtor_id: string | null;
   apartment_number: string | null;
+  related_entity_type: RelatedEntityType | null;
+  related_entity_id: string | null;
   sort_order: number;
   is_archived: boolean;
+  completed_at: string | null; // stamped on status→done, cleared when it leaves done
   created_by: string | null;
   created_by_name: string | null;
   created_at: string;
@@ -29,7 +36,9 @@ export interface TaskWithAssignee extends Task {
   comment_count: number;
 }
 
-/** Fields a client may write on create/update. All optional on update. */
+/** Fields a client may write on create/update. All optional on update.
+ *  completed_at is NOT here — it's derived server-side from status, never
+ *  client-settable. */
 export interface TaskWritableFields {
   title: string;
   description: string | null;
@@ -40,6 +49,8 @@ export interface TaskWritableFields {
   assigned_to_user_id: string | null;
   debtor_id: string | null;
   apartment_number: string | null;
+  related_entity_type: RelatedEntityType | null;
+  related_entity_id: string | null;
 }
 
 export type TaskSort = 'created_desc' | 'due_asc' | 'priority_desc' | 'updated_desc';
@@ -48,6 +59,8 @@ export interface TaskListFilters {
   status?: TaskStatus;
   priority?: TaskPriority;
   assignedTo?: string;
+  relatedEntityType?: RelatedEntityType;
+  relatedEntityId?: string;
   search?: string;
   sort?: TaskSort;
   includeArchived?: boolean;

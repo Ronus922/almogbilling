@@ -16,12 +16,15 @@ import type {
 const TASK_COLUMNS = `
   id, title, description, status, priority,
   due_date::text as due_date, due_time::text as due_time,
-  assigned_to_user_id, debtor_id, apartment_number, sort_order, is_archived,
+  assigned_to_user_id, debtor_id, apartment_number,
+  related_entity_type, related_entity_id, sort_order, is_archived,
+  completed_at::text as completed_at,
   created_by, created_by_name,
   created_at::text as created_at, updated_at::text as updated_at
 `;
 
-// Columns a create/update may set (title + created_by handled explicitly on create).
+// Columns a create/update may set (title + created_by handled explicitly on
+// create; completed_at is derived from status server-side, never client-writable).
 const WRITABLE_COLUMNS: (keyof TaskWritableFields)[] = [
   'title',
   'description',
@@ -32,6 +35,8 @@ const WRITABLE_COLUMNS: (keyof TaskWritableFields)[] = [
   'assigned_to_user_id',
   'debtor_id',
   'apartment_number',
+  'related_entity_type',
+  'related_entity_id',
 ];
 
 // ── List ──────────────────────────────────────────────────────────────────
@@ -53,6 +58,14 @@ export async function listTasks(filters: TaskListFilters): Promise<TaskWithAssig
   if (filters.assignedTo) {
     vals.push(filters.assignedTo);
     where.push(`t.assigned_to_user_id = $${vals.length}`);
+  }
+  if (filters.relatedEntityType) {
+    vals.push(filters.relatedEntityType);
+    where.push(`t.related_entity_type = $${vals.length}`);
+  }
+  if (filters.relatedEntityId) {
+    vals.push(filters.relatedEntityId);
+    where.push(`t.related_entity_id = $${vals.length}`);
   }
   if (filters.search) {
     vals.push(`%${filters.search}%`);
@@ -165,6 +178,13 @@ export async function createTask(
   cols.push('sort_order');
   vals.push(nextSort?.next ?? 0);
 
+  // completed_at: stamp it when a task is created already in 'done' (edge case;
+  // tasks default to 'open'). Mirrors the status→done logic in updateTask.
+  if (status === 'done') {
+    cols.push('completed_at');
+    vals.push(new Date().toISOString());
+  }
+
   const placeholders = vals.map((_, i) => `$${i + 1}`);
   const row = await queryOne<Task>(
     `insert into public.tasks (${cols.join(', ')})
@@ -192,6 +212,20 @@ export async function updateTask(
       set.push(`${c} = $${vals.length}`);
     }
   }
+
+  // completed_at follows status. Bare `status` / `completed_at` in these SET
+  // expressions reference the OLD row values (Postgres UPDATE semantics):
+  //  • entering 'done'  → stamp now(), but keep an existing time if it was
+  //    already done (so re-saving a done task doesn't reset completion).
+  //  • leaving  'done'  → clear to null (reopened / cancelled).
+  if ('status' in rec && rec.status !== undefined) {
+    set.push(
+      rec.status === 'done'
+        ? `completed_at = case when status is distinct from 'done' then now() else completed_at end`
+        : `completed_at = null`,
+    );
+  }
+
   if (set.length === 0) {
     const t = await getTaskById(id);
     return t as Task | null;
@@ -202,9 +236,19 @@ export async function updateTask(
   );
 }
 
+/**
+ * Soft-delete: archive the task (is_archived = true) — the project's
+ * soft-delete convention (like debtors). Tasks are never hard-deleted, so the
+ * row, its comments and history are retained. Idempotent: re-deleting an
+ * already-archived task still returns true. Returns false only when the id
+ * doesn't exist.
+ */
 export async function deleteTask(id: string): Promise<boolean> {
-  const r = await query(`delete from public.tasks where id = $1`, [id]);
-  return (r.rowCount ?? 0) > 0;
+  const row = await queryOne<{ id: string }>(
+    `update public.tasks set is_archived = true where id = $1 returning id`,
+    [id],
+  );
+  return row !== null;
 }
 
 /** Read just the assignee of a task (for assignment-change detection). */
@@ -228,8 +272,18 @@ export async function reorderTasks(items: ReorderItem[]): Promise<void> {
   if (items.length === 0) return;
   await withTransaction(async (client: PoolClient) => {
     for (const it of items) {
+      // completed_at tracks the status change here too, so dragging a card
+      // into / out of the "done" column behaves like editing its status.
       await client.query(
-        `update public.tasks set status = $2, sort_order = $3 where id = $1`,
+        `update public.tasks
+            set status = $2,
+                sort_order = $3,
+                completed_at = case
+                  when $2 = 'done' and status is distinct from 'done' then now()
+                  when $2 <> 'done' then null
+                  else completed_at
+                end
+          where id = $1`,
         [it.id, it.status, it.sort_order],
       );
     }

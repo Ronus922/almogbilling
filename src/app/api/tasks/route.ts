@@ -6,6 +6,7 @@ import { createReminder } from '@/lib/db/reminders';
 import { coerceTaskInput, coerceReminders } from '@/lib/validation/tasks';
 import { notifyTask } from '@/services/notifications';
 import type {
+  RelatedEntityType,
   TaskPriority,
   TaskSort,
   TaskStatus,
@@ -17,8 +18,15 @@ export const runtime = 'nodejs';
 const STATUSES: readonly TaskStatus[] = ['open', 'in_progress', 'done', 'cancelled'];
 const PRIORITIES: readonly TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
 const SORTS: readonly TaskSort[] = ['created_desc', 'due_asc', 'priority_desc', 'updated_desc'];
+const RELATED_ENTITY_TYPES: readonly RelatedEntityType[] = [
+  'debtor',
+  'building',
+  'supplier',
+  'contact',
+];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// GET /api/tasks?status&priority&assignedTo&search&sort&kpis  (tasks:view)
+// GET /api/tasks?status&priority&assignedTo&relatedEntityType&relatedEntityId&search&sort&kpis  (tasks:view)
 export async function GET(req: NextRequest) {
   try {
     await requirePermission('tasks', 'view');
@@ -45,12 +53,29 @@ export async function GET(req: NextRequest) {
   const assignedToRaw = sp.get('assignedTo')?.trim();
   const assignedTo = assignedToRaw && assignedToRaw !== 'all' ? assignedToRaw : undefined;
 
+  const retRaw = sp.get('relatedEntityType')?.trim();
+  const relatedEntityType =
+    retRaw && retRaw !== 'all' && RELATED_ENTITY_TYPES.includes(retRaw as RelatedEntityType)
+      ? (retRaw as RelatedEntityType)
+      : undefined;
+
+  const reidRaw = sp.get('relatedEntityId')?.trim();
+  const relatedEntityId = reidRaw && UUID_RE.test(reidRaw) ? reidRaw : undefined;
+
   const search = sp.get('search')?.trim() || undefined;
 
   const sortRaw = sp.get('sort')?.trim();
   const sort = sortRaw && SORTS.includes(sortRaw as TaskSort) ? (sortRaw as TaskSort) : undefined;
 
-  const items = await listTasks({ status, priority, assignedTo, search, sort });
+  const items = await listTasks({
+    status,
+    priority,
+    assignedTo,
+    relatedEntityType,
+    relatedEntityId,
+    search,
+    sort,
+  });
 
   if (sp.get('kpis') === '1') {
     const kpis = await getTaskKpis();

@@ -10,6 +10,7 @@
 
 import type {
   ReminderChannel,
+  RelatedEntityType,
   TaskPriority,
   TaskStatus,
   TaskWritableFields,
@@ -18,6 +19,12 @@ import type {
 const STATUSES: readonly TaskStatus[] = ['open', 'in_progress', 'done', 'cancelled'];
 const PRIORITIES: readonly TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
 const CHANNELS: readonly ReminderChannel[] = ['in_app', 'email', 'both'];
+const RELATED_ENTITY_TYPES: readonly RelatedEntityType[] = [
+  'debtor',
+  'building',
+  'supplier',
+  'contact',
+];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^\d{2}:\d{2}(:\d{2})?$/;
@@ -89,11 +96,19 @@ export function coerceTaskInput(
     fields.due_time = t;
   }
 
-  for (const key of ['assigned_to_user_id', 'debtor_id'] as const) {
+  for (const key of ['assigned_to_user_id', 'debtor_id', 'related_entity_id'] as const) {
     if (!has(body, key)) continue;
     const id = strOrNull(body[key]);
     if (id !== null && !UUID_RE.test(id)) return { ok: false, error: `invalid_${key}` };
     fields[key] = id;
+  }
+
+  if (has(body, 'related_entity_type')) {
+    const ret = strOrNull(body.related_entity_type);
+    if (ret !== null && !RELATED_ENTITY_TYPES.includes(ret as RelatedEntityType)) {
+      return { ok: false, error: 'invalid_related_entity_type' };
+    }
+    fields.related_entity_type = ret as RelatedEntityType | null;
   }
 
   return { ok: true, fields };
