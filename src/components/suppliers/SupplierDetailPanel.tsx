@@ -450,9 +450,11 @@ export function SupplierDetailPanel({
                       supplier={supplier}
                       categories={categories}
                       canEdit={canEdit}
+                      canDelete={canDelete}
                       saving={saving}
                       onEdit={startEdit}
                       onStatusChange={handleStatusChange}
+                      onRequestDelete={() => setConfirmDeleteOpen(true)}
                     />
                   )}
                 </TabsContent>
@@ -550,10 +552,10 @@ export function SupplierDetailPanel({
                   {canDelete && (
                     <Button
                       type="button"
-                      variant="outline"
+                      variant="delete"
                       onClick={() => setConfirmDeleteOpen(true)}
                       disabled={saving}
-                      className="gap-2 border-red-200 text-red-600 hover:bg-red-50"
+                      className="gap-2"
                     >
                       <Trash2 className="h-4 w-4" />
                       מחק ספק
@@ -651,71 +653,90 @@ interface ViewProps {
   supplier: Supplier;
   categories: SupplierCategory[];
   canEdit: boolean;
+  canDelete: boolean;
   saving: boolean;
   onEdit: () => void;
   onStatusChange: (next: SupplierStatus) => void;
+  onRequestDelete: () => void;
 }
 
-function ViewDetails({ supplier, categories, canEdit, saving, onEdit, onStatusChange }: ViewProps) {
+function ViewDetails({
+  supplier, categories, canEdit, canDelete, saving, onEdit, onStatusChange, onRequestDelete,
+}: ViewProps) {
   const categoryName = supplier.category_id
     ? categories.find((c) => c.id === supplier.category_id)?.name ?? null
     : null;
   return (
     <>
-      {/* Status / edit action buttons by current status */}
-      {canEdit && (
+      {/* Status / edit / delete action buttons by current status */}
+      {(canEdit || canDelete) && (
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onEdit}
-            disabled={saving}
-            className="gap-2"
-          >
-            <Pencil className="h-4 w-4" /> ערוך
-          </Button>
-          {supplier.status === 'active' && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onStatusChange('inactive')}
-              disabled={saving}
-              className="gap-2 border-slate-200 text-slate-600 hover:bg-slate-50"
-            >
-              <PowerOff className="h-4 w-4" /> השבת
-            </Button>
+          {canEdit && (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onEdit}
+                disabled={saving}
+                className="gap-2"
+              >
+                <Pencil className="h-4 w-4" /> ערוך
+              </Button>
+              {supplier.status === 'active' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onStatusChange('inactive')}
+                  disabled={saving}
+                  className="gap-2 border-slate-200 text-slate-600 hover:bg-slate-50"
+                >
+                  <PowerOff className="h-4 w-4" /> השבת
+                </Button>
+              )}
+              {supplier.status === 'inactive' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onStatusChange('active')}
+                  disabled={saving}
+                  className="gap-2 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                >
+                  <Power className="h-4 w-4" /> הפעל
+                </Button>
+              )}
+              {supplier.status !== 'archived' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onStatusChange('archived')}
+                  disabled={saving}
+                  className="gap-2 border-amber-200 text-amber-700 hover:bg-amber-50"
+                >
+                  <Archive className="h-4 w-4" /> העבר לארכיון
+                </Button>
+              )}
+              {supplier.status === 'archived' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onStatusChange('active')}
+                  disabled={saving}
+                  className="gap-2 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                >
+                  <Power className="h-4 w-4" /> שחזר מארכיון
+                </Button>
+              )}
+            </>
           )}
-          {supplier.status === 'inactive' && (
+          {canDelete && (
             <Button
               type="button"
-              variant="outline"
-              onClick={() => onStatusChange('active')}
+              variant="delete"
+              onClick={onRequestDelete}
               disabled={saving}
-              className="gap-2 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+              className="gap-2"
             >
-              <Power className="h-4 w-4" /> הפעל
-            </Button>
-          )}
-          {supplier.status !== 'archived' && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onStatusChange('archived')}
-              disabled={saving}
-              className="gap-2 border-amber-200 text-amber-700 hover:bg-amber-50"
-            >
-              <Archive className="h-4 w-4" /> העבר לארכיון
-            </Button>
-          )}
-          {supplier.status === 'archived' && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onStatusChange('active')}
-              disabled={saving}
-              className="gap-2 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-            >
-              <Power className="h-4 w-4" /> שחזר מארכיון
+              <Trash2 className="h-4 w-4" /> מחק ספק
             </Button>
           )}
         </div>
