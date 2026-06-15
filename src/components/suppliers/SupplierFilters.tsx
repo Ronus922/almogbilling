@@ -10,10 +10,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import {
-  SUPPLIER_STATUS_FILTERS,
-  SUPPLIER_TYPES,
-} from '@/lib/constants/suppliers';
+import { SUPPLIER_STATUS_FILTERS } from '@/lib/constants/suppliers';
 import type { SupplierListFilters, SupplierCategory } from '@/lib/types/suppliers';
 
 export function SupplierFilters({
@@ -56,34 +53,21 @@ export function SupplierFilters({
           ))}
         </div>
 
-        {/* Type select */}
-        <Select
-          value={filters.type}
-          onValueChange={(v) => onChange({ type: v ?? 'all' })}
-        >
-          <SelectTrigger className="w-44">
-            <SelectValue placeholder="כל הסוגים" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">כל הסוגים</SelectItem>
-            {SUPPLIER_TYPES.map((t) => (
-              <SelectItem key={t.value} value={t.value}>
-                {t.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
         {/* Category select (dynamic, user-managed) */}
         <Select
           value={filters.category}
           onValueChange={(v) => onChange({ category: v ?? 'all' })}
         >
           <SelectTrigger className="w-44">
-            <SelectValue placeholder="כל הקטגוריות" />
+            <SelectValue placeholder="הכל">
+              {(value: string | null) => {
+                if (!value || value === 'all') return 'הכל';
+                return categories.find((c) => c.id === value)?.name ?? 'קטגוריה';
+              }}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">כל הקטגוריות</SelectItem>
+            <SelectItem value="all">הכל</SelectItem>
             {categories.map((c) => (
               <SelectItem key={c.id} value={c.id}>
                 {c.name}

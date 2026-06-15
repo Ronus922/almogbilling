@@ -52,7 +52,7 @@ export const SUPPLIER_STATUS_FILTERS: ReadonlyArray<{
   label: string;
 }> = [
   { value: 'active', label: 'פעיל' },
-  { value: 'inactive_archived', label: 'לא פעיל / ארכיון' },
+  { value: 'inactive_archived', label: 'לא פעיל' },
 ];
 
 export const PAYMENT_TERMS: ReadonlyArray<{ value: SupplierPaymentTerms; label: string }> = [

@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils';
 import { validatePhone } from '@/lib/validation';
 import { formatPhoneDisplay } from '@/lib/phone';
 import {
-  SUPPLIER_TYPES, supplierTypeMeta, supplierStatusMeta,
+  supplierStatusMeta,
   PAYMENT_TERMS, paymentTermsLabel,
   DOC_TYPES, docTypeLabel, ALLOWED_DOC_TYPES, MAX_DOC_SIZE_BYTES,
 } from '@/lib/constants/suppliers';
@@ -353,8 +353,10 @@ export function SupplierDetailPanel({
   }
 
   const statusMeta = supplier ? supplierStatusMeta(supplier.status) : null;
-  const typeMeta = supplier ? supplierTypeMeta(supplier.supplier_type) : null;
-  const TypeIcon = typeMeta?.icon ?? Building2;
+  const headerCategoryName =
+    supplier?.category_id
+      ? categories.find((c) => c.id === supplier.category_id)?.name ?? null
+      : null;
 
   return (
     <>
@@ -387,8 +389,8 @@ export function SupplierDetailPanel({
                     </span>
                   </div>
                   <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-white/70">
-                    <TypeIcon className="h-3.5 w-3.5" />
-                    {typeMeta?.label}
+                    <Building2 className="h-3.5 w-3.5" />
+                    {headerCategoryName ?? 'ללא קטגוריה'}
                     {supplier.company_name && (
                       <>
                         <span className="mx-1 text-white/40">•</span>
@@ -854,43 +856,6 @@ function EditForm({ form, set, markTouched, errFor, categories, disabled }: Edit
             id="esup-company-name" label="שם החברה"
             value={form.company_name} onChange={(v) => set('company_name', v)} disabled={disabled}
           />
-          <div className="space-y-2">
-            <Label className="text-base font-medium text-muted-foreground">סוג ספק</Label>
-            <Select
-              value={form.supplier_type}
-              onValueChange={(v) => { if (v) set('supplier_type', v); }}
-              disabled={disabled}
-            >
-              <SelectTrigger className="w-full data-[size=default]:h-10">
-                <SelectValue placeholder="בחר סוג...">
-                  {(value: string | null) => {
-                    if (!value) return null;
-                    const meta = supplierTypeMeta(value);
-                    const Icon = meta.icon;
-                    return (
-                      <span className="inline-flex items-center gap-2">
-                        <Icon className="h-4 w-4 text-slate-500" />
-                        {meta.label}
-                      </span>
-                    );
-                  }}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {SUPPLIER_TYPES.map((t) => {
-                  const Icon = t.icon;
-                  return (
-                    <SelectItem key={t.value} value={t.value}>
-                      <span className="inline-flex items-center gap-2">
-                        <Icon className="h-4 w-4 text-slate-500" />
-                        {t.label}
-                      </span>
-                    </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </Select>
-          </div>
           <div className="space-y-2">
             <Label className="text-base font-medium text-muted-foreground">קטגוריה</Label>
             <Select

@@ -6,7 +6,6 @@ import {
 import { cn } from '@/lib/utils';
 import {
   supplierStatusMeta,
-  supplierTypeMeta,
   type DesignTone,
 } from '@/lib/constants/suppliers';
 import { formatPhoneDisplay, phoneTelHref } from '@/lib/phone';
@@ -52,8 +51,7 @@ export function SupplierTable({
         <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
           <TableRow className="bg-slate-50 hover:bg-slate-50">
             <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">שם</TableHead>
-            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">תחום</TableHead>
-            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500 max-lg:hidden">קטגוריה</TableHead>
+            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">קטגוריה</TableHead>
             <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">איש קשר</TableHead>
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">טלפון</TableHead>
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500 max-md:hidden">נייד</TableHead>
@@ -63,8 +61,6 @@ export function SupplierTable({
         </TableHeader>
         <TableBody>
           {rows.map((s) => {
-            const typeMeta = supplierTypeMeta(s.supplier_type);
-            const TypeIcon = typeMeta.icon;
             const phone = formatPhoneDisplay(s.phone);
             const mobile = formatPhoneDisplay(s.mobile);
             return (
@@ -80,12 +76,6 @@ export function SupplierTable({
                   )}
                 </TableCell>
                 <TableCell className="px-4 py-3 text-right">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-                    <TypeIcon className="h-3.5 w-3.5" />
-                    {typeMeta.label}
-                  </span>
-                </TableCell>
-                <TableCell className="px-4 py-3 text-right max-lg:hidden">
                   {s.category_name ? (
                     <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
                       {s.category_name}
