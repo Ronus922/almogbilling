@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import {
-  SUPPLIER_STATUSES,
+  SUPPLIER_STATUS_FILTERS,
   SUPPLIER_TYPES,
 } from '@/lib/constants/suppliers';
 import type { SupplierListFilters, SupplierCategory } from '@/lib/types/suppliers';
@@ -46,7 +46,7 @@ export function SupplierFilters({
             active={filters.status === 'all'}
             onClick={() => onChange({ status: 'all' })}
           />
-          {SUPPLIER_STATUSES.map((s) => (
+          {SUPPLIER_STATUS_FILTERS.map((s) => (
             <StatusPill
               key={s.value}
               label={s.label}

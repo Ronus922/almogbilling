@@ -107,9 +107,15 @@ export interface SupplierWritableFields {
   rating: number | null;
 }
 
+// Status filter "tabs" for the suppliers list. 'all' = main view (active +
+// inactive, EXCLUDING archived); 'inactive_archived' = the combined
+// "לא פעיל / ארכיון" tab (inactive + archived). The raw SupplierStatus values
+// stay supported for completeness.
+export type SupplierStatusFilter = SupplierStatus | 'all' | 'inactive_archived';
+
 export interface SupplierListFilters {
   search?: string;
-  status?: SupplierStatus | 'all';
+  status?: SupplierStatusFilter;
   type?: string | 'all';
   category?: string | 'all';
 }

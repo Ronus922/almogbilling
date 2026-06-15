@@ -37,9 +37,16 @@ export async function listSuppliers(filters: SupplierListFilters): Promise<Suppl
         or s.phone ilike ${p} or s.mobile ilike ${p} or s.email ilike ${p})`,
     );
   }
-  if (filters.status && filters.status !== 'all') {
+  // Status tabs: the combined "לא פעיל / ארכיון" tab → inactive + archived;
+  // an exact status → equals; otherwise ('all' / unset = the main view) hide
+  // archived suppliers so they only appear under the combined tab.
+  if (filters.status === 'inactive_archived') {
+    where.push(`s.status in ('inactive', 'archived')`);
+  } else if (filters.status && filters.status !== 'all') {
     params.push(filters.status);
     where.push(`s.status = $${params.length}`);
+  } else {
+    where.push(`s.status <> 'archived'`);
   }
   if (filters.type && filters.type !== 'all') {
     params.push(filters.type);

@@ -3,11 +3,13 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listSuppliers, createSupplier } from '@/lib/db/suppliers';
 import { coerceAndValidateSupplier } from '@/lib/validation/suppliers';
-import type { SupplierStatus } from '@/lib/types/suppliers';
+import type { SupplierStatusFilter } from '@/lib/types/suppliers';
 
 export const runtime = 'nodejs';
 
-const STATUSES: readonly SupplierStatus[] = ['active', 'inactive', 'archived'];
+const STATUS_FILTERS: readonly SupplierStatusFilter[] = [
+  'active', 'inactive', 'archived', 'inactive_archived',
+];
 
 // GET /api/suppliers?search&status&type&category (suppliers:view)
 export async function GET(req: NextRequest) {
@@ -24,8 +26,8 @@ export async function GET(req: NextRequest) {
 
   const statusRaw = sp.get('status')?.trim();
   const status =
-    statusRaw && statusRaw !== 'all' && STATUSES.includes(statusRaw as SupplierStatus)
-      ? (statusRaw as SupplierStatus)
+    statusRaw && statusRaw !== 'all' && STATUS_FILTERS.includes(statusRaw as SupplierStatusFilter)
+      ? (statusRaw as SupplierStatusFilter)
       : undefined;
 
   const typeRaw = sp.get('type')?.trim();

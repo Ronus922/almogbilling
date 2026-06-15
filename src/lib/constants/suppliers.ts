@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import type {
   SupplierStatus,
+  SupplierStatusFilter,
   SupplierPaymentTerms,
   SupplierDocType,
 } from '@/lib/types/suppliers';
@@ -40,6 +41,19 @@ export const SUPPLIER_STATUSES: ReadonlyArray<{
 export function supplierStatusMeta(status: SupplierStatus) {
   return SUPPLIER_STATUSES.find((s) => s.value === status) ?? SUPPLIER_STATUSES[0];
 }
+
+/**
+ * Filter "tabs" for the suppliers list (next to the "הכל" pill). "לא פעיל"
+ * and "ארכיון" are UNIFIED into one tab — archived suppliers are hidden from
+ * the main "הכל" view and only surface here.
+ */
+export const SUPPLIER_STATUS_FILTERS: ReadonlyArray<{
+  value: Exclude<SupplierStatusFilter, 'all'>;
+  label: string;
+}> = [
+  { value: 'active', label: 'פעיל' },
+  { value: 'inactive_archived', label: 'לא פעיל / ארכיון' },
+];
 
 export const PAYMENT_TERMS: ReadonlyArray<{ value: SupplierPaymentTerms; label: string }> = [
   { value: 'immediate', label: 'מיידי' },
