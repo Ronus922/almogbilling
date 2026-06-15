@@ -12,7 +12,7 @@ import type {
 // which crash when rendered in JSX. Mirrors the tasks module convention.
 const COLUMNS = `
   id, title, remind_at::text as remind_at, status,
-  entity_type, entity_id, assigned_to, created_by,
+  entity_type, entity_id, assigned_to, created_by, category_id,
   completed_at::text as completed_at, is_archived,
   created_at::text as created_at, updated_at::text as updated_at
 `;
@@ -26,6 +26,7 @@ const WRITABLE_COLUMNS: (keyof UserReminderWritableFields)[] = [
   'entity_type',
   'entity_id',
   'assigned_to',
+  'category_id',
 ];
 
 function prefixed(alias: string): string {
@@ -52,6 +53,18 @@ export async function listUserReminders(
     vals.push(filters.assignedTo);
     where.push(`r.assigned_to = $${vals.length}`);
   }
+  if (filters.createdBy) {
+    vals.push(filters.createdBy);
+    where.push(`r.created_by = $${vals.length}`);
+  }
+  if (filters.involvingUser) {
+    vals.push(filters.involvingUser);
+    where.push(`(r.created_by = $${vals.length} or r.assigned_to = $${vals.length})`);
+  }
+  if (filters.categoryId) {
+    vals.push(filters.categoryId);
+    where.push(`r.category_id = $${vals.length}`);
+  }
   if (filters.entityType) {
     vals.push(filters.entityType);
     where.push(`r.entity_type = $${vals.length}`);
@@ -69,10 +82,13 @@ export async function listUserReminders(
   const r = await query<UserReminderWithNames>(
     `select ${prefixed('r')},
             ua.full_name as assigned_to_name,
-            uc.full_name as created_by_name
+            uc.full_name as created_by_name,
+            cat.name as category_name,
+            cat.color as category_color
        from public.user_reminders r
        left join public.users ua on ua.id = r.assigned_to
        left join public.users uc on uc.id = r.created_by
+       left join public.reminder_categories cat on cat.id = r.category_id
        ${whereSql}
        order by r.remind_at asc`,
     vals,
@@ -84,10 +100,13 @@ export async function getUserReminderById(id: string): Promise<UserReminderWithN
   return queryOne<UserReminderWithNames>(
     `select ${prefixed('r')},
             ua.full_name as assigned_to_name,
-            uc.full_name as created_by_name
+            uc.full_name as created_by_name,
+            cat.name as category_name,
+            cat.color as category_color
        from public.user_reminders r
        left join public.users ua on ua.id = r.assigned_to
        left join public.users uc on uc.id = r.created_by
+       left join public.reminder_categories cat on cat.id = r.category_id
       where r.id = $1
       limit 1`,
     [id],

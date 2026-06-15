@@ -34,11 +34,29 @@ export async function GET(req: NextRequest) {
   const assignedToRaw = sp.get('assignedTo')?.trim();
   const assignedTo = assignedToRaw && assignedToRaw !== 'all' ? assignedToRaw : undefined;
 
+  const createdByRaw = sp.get('createdBy')?.trim();
+  const createdBy = createdByRaw && createdByRaw !== 'all' ? createdByRaw : undefined;
+
+  const involvingRaw = sp.get('involvingUser')?.trim();
+  const involvingUser = involvingRaw && involvingRaw !== 'all' ? involvingRaw : undefined;
+
+  const categoryRaw = sp.get('categoryId')?.trim();
+  const categoryId = categoryRaw && categoryRaw !== 'all' ? categoryRaw : undefined;
+
   const entityType = sp.get('entityType')?.trim() || undefined;
   const entityId = sp.get('entityId')?.trim() || undefined;
   const due = sp.get('due') === '1';
 
-  const items = await listUserReminders({ status, assignedTo, entityType, entityId, due });
+  const items = await listUserReminders({
+    status,
+    assignedTo,
+    createdBy,
+    involvingUser,
+    categoryId,
+    entityType,
+    entityId,
+    due,
+  });
   return NextResponse.json({ items });
 }
 

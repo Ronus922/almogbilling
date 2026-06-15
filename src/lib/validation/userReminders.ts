@@ -78,5 +78,12 @@ export function coerceUserReminderInput(
     fields.assigned_to = id;
   }
 
+  // category_id — optional FK to reminder_categories, nullable (uncategorized).
+  if (has(body, 'category_id')) {
+    const id = strOrNull(body.category_id);
+    if (id !== null && !UUID_RE.test(id)) return { ok: false, error: 'invalid_category_id' };
+    fields.category_id = id;
+  }
+
   return { ok: true, fields };
 }
