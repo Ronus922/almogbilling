@@ -78,6 +78,9 @@
 ### Status colors מ-DB (statuses table)
 לסטטוסים משפטיים — צבע hex נשמר ב-`statuses.color` ונרנדר עם inline `style={{ backgroundColor: hex }}`. טקסט תמיד `text-slate-900`. **לא** מחליפים ל-Tailwind tokens.
 
+### Category colors מ-DB (reminder_categories table)
+אותו עיקרון: צבע קטגוריית תזכורת נשמר ב-`reminder_categories.color` (hex שהמשתמש בוחר) — **דאטה, לא טוקן עיצוב**. נרנדר עם inline `style={{ backgroundColor: hex }}` כנקודת-צבע ברשימת הקטגוריות וכפס-צד (side-stripe) על כרטיס התזכורת. בורר הצבע מציע פלטה מותגית (`REMINDER_CATEGORY_COLORS` ב-`@/lib/constants/userReminders`) **וגם** קלט hex חופשי. תזכורת ללא קטגוריה → פס ניטרלי `UNCATEGORIZED_COLOR` (`#e8eaf2`, תואם `border-line`). אין להמיר את צבעי הקטגוריות ל-Tailwind tokens.
+
 ---
 
 ## 3. Typography
