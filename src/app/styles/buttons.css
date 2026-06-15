@@ -1,0 +1,55 @@
+/* ─────────────────────────────────────────────────────────────────────
+   Flat button system (מערכת כפתורים שטוחה) — source-of-truth CSS.
+   Documented in DESIGN.md ("כפתורים / Buttons"). Fully flat: no gradients,
+   no shadows, no hover-lift. Solid fills, smooth color-only hover. Heebo, RTL.
+
+   This is the PORTABLE plain-CSS implementation (for anchors / non-React
+   markup). The React `<Button>` component (src/components/ui/button.tsx)
+   implements the SAME system via cva + Tailwind utilities so that call-site
+   className overrides merge predictably (tailwind-merge). Keep the two in sync.
+   ───────────────────────────────────────────────────────────────────── */
+
+:root{
+  --brand:#3D5AFE; --brand-dark:#2C44E0; --brand-soft:#ECEFFF; --brand-border:#CFD7FF; --brand-ink:#243BB5;
+  --green:#16A34A; --green-dark:#0F9040;
+  --red:#E5484D; --red-dark:#C9353A; --red-soft:#FEEFEF; --red-border:#F8D2D3; --red-ink:#B01B20;
+  --ink:#1A2233; --ink-muted:#5B6479; --ink-ghost:#B4BACB;
+  --panel:#FFFFFF; --hover:#F5F7FC; --border-strong:#D9DDEA;
+}
+.btn{
+  height:44px; padding:0 22px; border-radius:11px; cursor:pointer;
+  font-family:"Heebo",sans-serif; font-size:14.5px; font-weight:700; line-height:1;
+  display:inline-flex; align-items:center; gap:9px; border:1.5px solid transparent;
+  transition:background .15s, border-color .15s, color .15s; white-space:nowrap; user-select:none;
+}
+.btn:active{filter:brightness(.96);}
+.btn:focus-visible{outline:2px solid var(--brand); outline-offset:2px;}
+.btn:disabled,.btn.is-disabled{opacity:.5; cursor:not-allowed; pointer-events:none;}
+
+/* sizes */
+.btn.sm{height:36px; padding:0 16px; font-size:13px; border-radius:9px; gap:7px;}
+.btn.lg{height:52px; padding:0 28px; font-size:16px; border-radius:13px; gap:11px;}
+.btn.icon{width:44px; padding:0; justify-content:center;}
+.btn.icon.sm{width:36px;}
+.btn.block{width:100%; justify-content:center;}
+
+/* variants */
+.btn-primary{background:var(--brand); color:#fff;}
+.btn-primary:hover{background:var(--brand-dark);}
+
+.btn-secondary{background:var(--panel); border-color:var(--border-strong); color:var(--ink);}
+.btn-secondary:hover{background:var(--hover); border-color:var(--ink-ghost);}
+
+.btn-approve{background:var(--green); color:#fff;}
+.btn-approve:hover{background:var(--green-dark);}
+
+.btn-newfolder{background:var(--brand-soft); border-color:var(--brand-border); color:var(--brand-ink);}
+.btn-newfolder:hover{background:#E0E6FF; border-color:var(--brand);}
+
+.btn-delete{background:var(--panel); border-color:var(--red-border); color:var(--red-ink);}
+.btn-delete:hover{background:var(--red-soft); border-color:var(--red); color:var(--red-dark);}
+.btn-delete.solid{background:var(--red); border-color:transparent; color:#fff;}
+.btn-delete.solid:hover{background:var(--red-dark);}
+
+.btn-ghost{background:transparent; border-color:transparent; color:var(--ink-muted);}
+.btn-ghost:hover{background:var(--hover); color:var(--ink);}
