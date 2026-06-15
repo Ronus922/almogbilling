@@ -499,7 +499,7 @@ export function SupplierDetailPanel({
                           type="button"
                           onClick={handleUpload}
                           disabled={!uploadFile || uploading}
-                          className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+                          className="gap-2"
                         >
                           <Upload className="h-4 w-4" />
                           {uploading ? 'מעלה…' : 'העלה מסמך'}
@@ -568,7 +568,7 @@ export function SupplierDetailPanel({
                     type="button"
                     onClick={handleSaveEdit}
                     disabled={!canSaveEdit}
-                    className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+                    className="gap-2"
                   >
                     {saving ? 'שומר…' : 'שמור שינויים'}
                   </Button>

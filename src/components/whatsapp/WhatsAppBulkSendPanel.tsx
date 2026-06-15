@@ -329,7 +329,7 @@ export function WhatsAppBulkSendPanel({
         <footer className="flex-none border-t border-slate-200 bg-white px-5 py-3">
           <div className="flex items-center justify-end gap-2">
             {phase === 'done' ? (
-              <Button type="button" onClick={() => onOpenChange(false)} className="bg-emerald-600 text-white hover:bg-emerald-700">
+              <Button type="button" onClick={() => onOpenChange(false)} variant="approve">
                 סיום
               </Button>
             ) : (
@@ -341,7 +341,8 @@ export function WhatsAppBulkSendPanel({
                   type="button"
                   onClick={handleSend}
                   disabled={!canSend}
-                  className="gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
+                  variant="approve"
+                  className="gap-2"
                 >
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   {sending ? 'שולח…' : `שלח ל-${validRecipients.length} נמענים`}

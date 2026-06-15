@@ -241,7 +241,7 @@ export function StatusFormSheet({
                 type="button"
                 onClick={submit}
                 disabled={saving}
-                className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+                className="gap-2"
               >
                 <Save className="h-4 w-4" />
                 {saving ? 'שומר…' : 'שמור'}

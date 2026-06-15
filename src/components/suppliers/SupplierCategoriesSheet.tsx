@@ -214,7 +214,7 @@ export function SupplierCategoriesSheet({
                       type="button"
                       onClick={addCategory}
                       disabled={adding || newName.trim() === ''}
-                      className="shrink-0 gap-2 bg-blue-600 text-white hover:bg-blue-700"
+                      className="shrink-0 gap-2"
                     >
                       <Plus className="h-4 w-4" />
                       הוסף

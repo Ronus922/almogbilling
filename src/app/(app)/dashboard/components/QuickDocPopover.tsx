@@ -161,7 +161,7 @@ export function QuickDocPopover({ debtorId, apartment, owner, canEdit }: Props) 
             size="sm"
             onClick={handleSave}
             disabled={!canSave}
-            className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+            className="gap-2"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             {saving ? 'שומר…' : 'הוסף תיעוד'}

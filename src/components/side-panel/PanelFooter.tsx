@@ -76,7 +76,7 @@ export function PanelFooter({
           {saveDisabled && saveDisabledReason ? (
             <Tooltip>
               <TooltipTrigger render={<span className="block" />}>
-                <Button type="button" disabled className="gap-2 bg-blue-600 text-white">
+                <Button type="button" disabled className="gap-2">
                   <Save className="h-4 w-4" />
                   {saveLabel}
                 </Button>
@@ -88,7 +88,7 @@ export function PanelFooter({
               type="button"
               onClick={onSave}
               disabled={saveDisabled}
-              className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+              className="gap-2"
             >
               <Save className="h-4 w-4" />
               {saveLabel}

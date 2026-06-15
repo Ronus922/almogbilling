@@ -211,7 +211,7 @@ export function ContactImportPanel({
                       <div className="text-xs text-slate-500 tabular-nums">{formatSize(file.size)}</div>
                     </div>
                   </div>
-                  <Button type="button" className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+                  <Button type="button" className="gap-2"
                     onClick={startImport} disabled={starting}>
                     <Upload className="h-4 w-4" /> {starting ? 'מתחיל…' : 'התחל ייבוא'}
                   </Button>

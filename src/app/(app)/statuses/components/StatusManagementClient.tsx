@@ -174,7 +174,7 @@ function Header({ onCreate }: { onCreate: () => void }) {
       <Button
         type="button"
         onClick={onCreate}
-        className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+        className="gap-2"
       >
         <Plus className="h-4 w-4" />
         צור סטטוס חדש
@@ -409,7 +409,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
       <Button
         type="button"
         onClick={onCreate}
-        className="mt-2 gap-2 bg-blue-600 text-white hover:bg-blue-700"
+        className="mt-2 gap-2"
       >
         <Plus className="h-4 w-4" />
         צור סטטוס חדש

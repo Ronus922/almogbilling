@@ -94,7 +94,7 @@ export function WhatsAppTemplatesClient() {
         <Button
           type="button"
           onClick={openCreate}
-          className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+          className="gap-2"
         >
           <Plus className="h-4 w-4" />
           תבנית חדשה
@@ -234,7 +234,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
       </span>
       <h3 className="text-base font-semibold text-slate-900">טרם נוצרו תבניות</h3>
       <p className="text-sm text-muted-foreground">צור תבנית ראשונה כדי להתחיל לשלוח הודעות מהירות.</p>
-      <Button type="button" onClick={onCreate} className="mt-2 gap-2 bg-blue-600 text-white hover:bg-blue-700">
+      <Button type="button" onClick={onCreate} className="mt-2 gap-2">
         <Plus className="h-4 w-4" />
         תבנית חדשה
       </Button>

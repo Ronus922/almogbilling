@@ -34,7 +34,7 @@ export function UsersToolbar({
         <Button
           type="button"
           onClick={onCreate}
-          className="h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold gap-2"
+          className="h-9 px-4 rounded-lg text-sm font-bold gap-2"
         >
           <UserPlus className="h-4 w-4" />
           צור משתמש

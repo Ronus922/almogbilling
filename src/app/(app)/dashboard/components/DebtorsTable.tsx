@@ -261,8 +261,9 @@ export function DebtorsTable({
             <Button
               type="button"
               size="sm"
+              variant="approve"
               onClick={() => setBulkOpen(true)}
-              className="gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
+              className="gap-2"
             >
               <Send className="h-4 w-4" />
               שליחת WhatsApp

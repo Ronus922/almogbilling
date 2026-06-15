@@ -199,8 +199,9 @@ export function GreenApiSettingsCard() {
         <div className="flex flex-wrap items-center gap-2 pt-2">
           <Button
             type="submit"
+            variant="approve"
             disabled={loading || saving}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2"
+            className="gap-2"
           >
             {saving ? 'שומר…' : 'שמור'}
           </Button>

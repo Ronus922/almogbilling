@@ -176,7 +176,7 @@ function QrPanel({ instance, open, onOpenChange, onConnected }: QrPanelProps) {
               <Button
                 type="button"
                 onClick={() => onOpenChange(false)}
-                className="mt-2 gap-2 bg-blue-600 text-white hover:bg-blue-700"
+                className="mt-2 gap-2"
               >
                 סגור
               </Button>
@@ -515,7 +515,7 @@ function UpsertPanel({ mode, instance, users, open, onOpenChange, onDone }: Upse
               type="submit"
               form="upsert-wa-form"
               disabled={saving}
-              className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+              className="gap-2"
             >
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {saving ? 'שומר…' : mode === 'create' ? 'צור חיבור' : 'שמור שינויים'}
@@ -573,8 +573,9 @@ function InstanceCard({ instance, isAdmin, onConnect, onEdit, onLogout, onDelete
             <Button
               type="button"
               size="sm"
+              variant="approve"
               onClick={() => onConnect(instance)}
-              className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 h-9 px-3"
+              className="gap-1.5 h-9 px-3"
             >
               <QrCode className="h-4 w-4" />
               <span className="hidden sm:inline">חבר מכשיר</span>
@@ -766,7 +767,7 @@ export function WhatsAppConnections({
           <Button
             type="button"
             onClick={handleCreate}
-            className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+            className="gap-2"
           >
             <Plus className="h-4 w-4" />
             הוסף חיבור

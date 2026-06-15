@@ -432,7 +432,8 @@ export function MessagesClient({
             <Button
               type="button"
               onClick={() => setBroadcastOpen(true)}
-              className="gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
+              variant="approve"
+              className="gap-2"
             >
               <Megaphone className="h-4 w-4" /> תפוצה
             </Button>

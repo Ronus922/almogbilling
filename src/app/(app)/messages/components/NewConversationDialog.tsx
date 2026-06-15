@@ -210,7 +210,7 @@ export function NewConversationDialog({
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>ביטול</Button>
           {mode === 'phone' && (
-            <Button onClick={startByPhone} className="gap-2 bg-emerald-600 text-white hover:bg-emerald-700">
+            <Button onClick={startByPhone} variant="approve" className="gap-2">
               פתח שיחה
             </Button>
           )}

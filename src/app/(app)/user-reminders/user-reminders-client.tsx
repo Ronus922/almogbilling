@@ -194,7 +194,7 @@ export function UserRemindersClient({
           <span className="text-sm text-muted-foreground">תזכורות אישיות ומשותפות</span>
         </div>
         {canEdit && (
-          <Button onClick={openCreateReminder} className="gap-2 bg-blue-600 text-white hover:bg-blue-700">
+          <Button onClick={openCreateReminder} className="gap-2">
             <Plus className="h-4 w-4" /> תזכורת חדשה
           </Button>
         )}
@@ -441,7 +441,7 @@ function EmptyReminders({
             : 'אין כאן תזכורות עדיין.'}
       </p>
       {canEdit && !filtered && (
-        <Button onClick={onCreate} className="mt-1 gap-2 bg-blue-600 text-white hover:bg-blue-700">
+        <Button onClick={onCreate} className="mt-1 gap-2">
           <Plus className="h-4 w-4" /> תזכורת חדשה
         </Button>
       )}

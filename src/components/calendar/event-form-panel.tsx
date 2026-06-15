@@ -981,7 +981,7 @@ export function EventFormPanel({
             </Button>
             <Button
               type="button"
-              className={cn('justify-start', scopeDialog === 'delete' ? 'bg-destructive text-white hover:bg-destructive/90' : 'bg-blue-600 text-white hover:bg-blue-700')}
+              className={cn('justify-start', scopeDialog === 'delete' ? 'bg-destructive text-white hover:bg-destructive/90' : '')}
               onClick={() => { const action = scopeDialog; setScopeDialog(null); if (action === 'delete') void doDelete('future'); else void doUpdate('future'); }}
             >
               כל הסדרה מכאן והלאה

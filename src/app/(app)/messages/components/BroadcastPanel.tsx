@@ -343,7 +343,8 @@ export function BroadcastPanel({
                 type="button"
                 onClick={handleSend}
                 disabled={!canSend}
-                className="gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
+                variant="approve"
+                className="gap-2"
               >
                 {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 {sending ? 'שולח…' : `שלח לתפוצה${count ? ` (${count})` : ''}`}

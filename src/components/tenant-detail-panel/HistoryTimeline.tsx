@@ -288,7 +288,7 @@ function LogCallButton({ isAdmin, onClick }: { isAdmin: boolean; onClick: () => 
     return (
       <Tooltip>
         <TooltipTrigger render={<span className="block" />}>
-          <Button type="button" disabled className="gap-2 bg-blue-600 text-white hover:bg-blue-700">
+          <Button type="button" disabled className="gap-2">
             <Phone className="h-4 w-4" /> תיעוד שיחה
           </Button>
         </TooltipTrigger>
@@ -297,7 +297,7 @@ function LogCallButton({ isAdmin, onClick }: { isAdmin: boolean; onClick: () => 
     );
   }
   return (
-    <Button type="button" onClick={onClick} className="gap-2 bg-blue-600 text-white hover:bg-blue-700">
+    <Button type="button" onClick={onClick} className="gap-2">
       <Phone className="h-4 w-4" /> תיעוד שיחה
     </Button>
   );
@@ -411,7 +411,7 @@ function LogCallDialog({
             type="button"
             onClick={handleSave}
             disabled={!canSave}
-            className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+            className="gap-2"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Phone className="h-4 w-4" />}
             {saving ? 'שומר…' : 'שמור תיעוד'}

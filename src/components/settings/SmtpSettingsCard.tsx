@@ -203,7 +203,7 @@ export function SmtpSettingsCard() {
           <Button
             type="submit"
             disabled={loading || saving}
-            className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
+            className="gap-2"
           >
             {saving ? 'שומר…' : 'שמור'}
           </Button>
@@ -247,7 +247,7 @@ export function SmtpSettingsCard() {
             <Button
               onClick={onSendTest}
               disabled={testSending}
-              className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
+              className="gap-2"
             >
               <Send className="h-4 w-4" />
               {testSending ? 'שולח…' : 'שלח'}
