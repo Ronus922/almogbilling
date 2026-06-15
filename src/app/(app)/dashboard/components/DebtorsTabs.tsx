@@ -63,7 +63,7 @@ export function DebtorsTabs({
             onClick={() => !t.disabled && go(t.key)}
             disabled={t.disabled}
             className={cn(
-              'h-[42px] w-full inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-0 text-xs sm:text-sm font-semibold leading-none transition-colors cursor-pointer',
+              'h-[60px] w-full inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-0 text-xs sm:text-sm font-semibold leading-none transition-colors cursor-pointer',
               isActive
                 ? `${t.activeBg} text-white shadow-soft-sm`
                 : 'bg-white text-ink-2 border border-line hover:bg-row-hover',
