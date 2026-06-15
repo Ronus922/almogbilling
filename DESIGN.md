@@ -116,6 +116,13 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
 
 ## 5. Buttons
 
+> **עודכן 15/06/2026 — מערכת הכפתורים הקנונית היא ה"מערכת השטוחה" (Flat).**
+> ראה הסקשן **"כפתורים / Buttons — מערכת שטוחה (Flat System)"** בתחתית המסמך —
+> הוא מקור-האמת לצבעים, גבהים, רדיוסים ו-variants של כל כפתור. הצבעים/הגבהים
+> שמתוארים כאן ב-§5 (למשל `bg-blue-600`, `h-9`) **הוחלפו** על-ידי המערכת השטוחה
+> (primary = `#3D5AFE` flat, גובה ברירת-מחדל 44px). הדפוסים המבניים שב-§5 (icon
+> button + tooltip, floating-round send, disabled placeholder) **עדיין תקפים**.
+
 ### Primary (default Button variant)
 ```tsx
 <Button type="submit" className="gap-2 bg-blue-600 text-white hover:bg-blue-700">
@@ -960,6 +967,74 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 | טקסט בועה | `text-[14px] leading-[1.7] text-[#111b21]` |
 | highlight של `{{var}}` | `rounded bg-brand-soft px-1 font-num font-semibold text-brand-text` |
 | חותמת + ✓✓ | `text-[#667781]`, שעה ב-`font-num`, `<CheckCheck/>` |
+
+---
+
+## כפתורים / Buttons — מערכת שטוחה (Flat System)
+
+> **מקור-האמת לכל כפתור בפרויקט (מ-15/06/2026).** מחליף את צבעי/גבהי §5.
+> מימוש: React דרך `@/components/ui/button` (cva, Tailwind) + CSS נייד דרך
+> `src/app/styles/buttons.css` (`.btn .btn-*`, מיובא ב-`globals.css`). שתי
+> ההטמעות מיישמות **אותה** מערכת — יש לשמור אותן מסונכרנות.
+
+### עקרונות
+כפתורים **שטוחים לחלוטין** — בלי gradients, בלי צללים, בלי הרמה ב-hover. צבעים
+מלאים אחידים, מעבר צבע חלק ב-hover בלבד. פונט Heebo, RTL. `:active` = `brightness(.96)`
+(בלי translate). Focus = `outline` 2px מותג, offset 2px. Disabled = `opacity .5`.
+
+### מידות בסיס (אחיד לכל הכפתורים)
+| מאפיין | רגיל | קטן (sm) | גדול (lg) |
+|---|---|---|---|
+| גובה | 44px | 36px | 52px |
+| רדיוס פינות | 11px | 9px | 13px |
+| Padding אופקי | 22px | 16px | 28px |
+| גודל טקסט | 14.5px | 13px | 16px |
+| מרווח אייקון (gap) | 9px | 7px | 11px |
+
+- טקסט: משקל **700** · אייקונים 16–17px (`size-4`) · גבול **1.5px**.
+- Icon-only: ריבוע 44px (`size="icon"`) · 36px (`size="icon-sm"`).
+- Block: `className="w-full"` (או `.btn.block`).
+
+### וריאנטים
+| # | שם (React `variant`) | רקע | גבול | טקסט | hover |
+|---|---|---|---|---|---|
+| 1 | **`default`** (Primary) | `#3D5AFE` | — | לבן | `#2C44E0` |
+| 2 | **`secondary`** / `outline` | `#FFFFFF` | `#D9DDEA` | `#1A2233` | רקע `#F5F7FC` + גבול `#B4BACB` |
+| 3 | **`approve`** (אישור) | `#16A34A` | — | לבן | `#0F9040` |
+| 4 | **`newfolder`** (תיקייה חדשה) | `#ECEFFF` | `#CFD7FF` | `#243BB5` | רקע `#E0E6FF` + גבול `#3D5AFE` |
+| 5 | **`delete`** (מחק — עדין) | `#FFFFFF` | `#F8D2D3` | `#B01B20` | רקע `#FEEFEF` + גבול `#E5484D` + טקסט `#C9353A` |
+| 5s | **`destructive`** (מחק — מלא) | `#E5484D` | — | לבן | `#C9353A` |
+| 6 | **`ghost`** | שקוף | — | `#5B6479` | רקע `#F5F7FC` + טקסט `#1A2233` |
+
+> צבעי ה-brand (`#3D5AFE`/`#2C44E0`/`#ECEFFF`/`#CFD7FF`/`#243BB5`) זהים ל-skin
+> tokens הקיימים ב-`@theme` (§2), ולכן ה-`Button` משתמש ב-utilities `bg-brand`,
+> `bg-brand-dark`, `border-line-strong`, `text-ink`, `bg-row-hover` וכו'.
+
+### היררכיה בשורת פעולות (RTL)
+ראשי (`default`) הכי ימינה, אחריו משני/ביטול (`secondary`); `delete`/`newfolder`
+בצד הנגדי (שמאל). תואם §12 (PanelFooter: "סגור" ב-start, "שמור" primary ב-end).
+
+### React (`<Button>`)
+```tsx
+<Button>שמור</Button>                       {/* primary, 44px */}
+<Button variant="secondary">ביטול</Button>
+<Button variant="approve">אישור</Button>
+<Button variant="newfolder">תיקייה חדשה</Button>
+<Button variant="delete">מחק</Button>        {/* soft */}
+<Button variant="destructive">מחק</Button>   {/* solid */}
+<Button variant="ghost" size="icon"><X /></Button>
+```
+**אין** להוסיף `bg-blue-600 text-white hover:bg-blue-700` ל-`<Button>` — ה-`default`
+כבר primary שטוח. ל-CTA ירוק/אדום השתמש ב-`variant` ("approve"/"destructive"),
+לא ב-class צבע ידני. כפתורי **אישור ב-`AlertDialog`** (מחיקה/יציאה) ממשיכים
+להשתמש ב-`bg-destructive text-white` ב-className (הם `AlertDialogAction`, לא `<Button>`)
+— אדום מלא שטוח, עקבי עם variant 5s.
+
+### CSS נייד (`.btn`) — `src/app/styles/buttons.css`
+לשימוש ב-markup שאינו React (`<a class="btn btn-primary">`). מקור-אמת זהה
+ל-`<Button>`. מחלקות: `.btn` + `.sm`/`.lg`/`.icon`/`.block` + `.btn-primary` /
+`.btn-secondary` / `.btn-approve` / `.btn-newfolder` / `.btn-delete`(`.solid`) /
+`.btn-ghost`. הקובץ מכיל את ה-`:root` vars וה-CSS המלא (verbatim מהמפרט).
 
 ---
 
