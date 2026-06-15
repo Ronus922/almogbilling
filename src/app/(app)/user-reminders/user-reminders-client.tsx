@@ -138,6 +138,26 @@ export function UserRemindersClient({
     setCategoryPanelOpen(true);
   }
 
+  // Quick "mark as done" from the card hover-action — PATCH status only.
+  async function markDone(r: UserReminderWithNames) {
+    try {
+      const res = await fetch(`/api/user-reminders/${r.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status: 'done' }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(reminderErrorMessage(data.error));
+      }
+      toast.success('התזכורת סומנה כהושלמה');
+      await fetchData();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  }
+
   async function confirmDelete() {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -211,10 +231,11 @@ export function UserRemindersClient({
         })}
       </div>
 
-      {/* Two-column: reminders (left/main) + categories (right). flex-row-reverse
-          keeps categories on the visual right in RTL while reminders stay first
-          (top) on mobile. */}
-      <div className="flex flex-col gap-6 lg:flex-row-reverse">
+      {/* Two-column. DOM order is [categories, reminders]. On desktop (RTL)
+          flex-row puts the first child (categories) at the inline-start = RIGHT,
+          reminders fill the left. On mobile flex-col-reverse flips the stack so
+          the reminders list sits on TOP and categories below it. */}
+      <div className="flex flex-col-reverse gap-6 lg:flex-row">
         {/* Categories column */}
         <aside className="lg:w-72 lg:shrink-0">
           <div className="rounded-lg border bg-card p-4">
@@ -338,6 +359,7 @@ export function UserRemindersClient({
                     canEdit={canEdit}
                     overdue={isOverdue(r)}
                     onOpen={() => openEditReminder(r)}
+                    onComplete={() => void markDone(r)}
                     onDelete={() => setDeleteTarget({ kind: 'reminder', id: r.id, name: r.title })}
                   />
                 ))

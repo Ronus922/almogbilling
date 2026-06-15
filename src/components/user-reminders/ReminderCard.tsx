@@ -1,6 +1,6 @@
 'use client';
 
-import { CalendarClock, User, Tag, Trash2, AlarmClockOff } from 'lucide-react';
+import { CalendarClock, User, Tag, Trash2, AlarmClockOff, CircleCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { UserReminderWithNames } from '@/lib/types/userReminders';
 import {
@@ -14,10 +14,11 @@ interface Props {
   /** True when remind_at is in the past and the reminder is still pending. */
   overdue: boolean;
   onOpen: () => void;
+  onComplete: () => void;
   onDelete: () => void;
 }
 
-export function ReminderCard({ reminder: r, canEdit, overdue, onOpen, onDelete }: Props) {
+export function ReminderCard({ reminder: r, canEdit, overdue, onOpen, onComplete, onDelete }: Props) {
   const stripe = r.category_color ?? UNCATEGORIZED_COLOR;
 
   return (
@@ -82,17 +83,33 @@ export function ReminderCard({ reminder: r, canEdit, overdue, onOpen, onDelete }
       </div>
 
       {canEdit && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          aria-label="מחיקת תזכורת"
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 opacity-0 transition-all hover:bg-rose-50 hover:text-rose-600 focus-visible:opacity-100 group-hover:opacity-100"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {r.status !== 'done' && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onComplete();
+              }}
+              aria-label="סמן כהושלם"
+              title="סמן כהושלם"
+              className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 opacity-0 transition-all hover:bg-emerald-50 hover:text-emerald-600 focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              <CircleCheck className="h-4 w-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            aria-label="מחיקת תזכורת"
+            className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 opacity-0 transition-all hover:bg-rose-50 hover:text-rose-600 focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
       )}
     </div>
   );
