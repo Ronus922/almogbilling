@@ -30,7 +30,7 @@ const MAIN_MENU: MenuItem[] = [
   { label: 'משימות',             icon: CheckSquare, href: '/tasks', module: 'tasks' },
   { label: 'תקלות',              icon: AlertTriangle, href: '/issues', module: 'issues' },
   { label: 'יומן',               icon: Calendar, href: '/calendar', module: 'calendar' },
-  { label: 'מסמכים',             icon: FileText, module: 'documents' },
+  { label: 'מסמכים',             icon: FileText, href: '/documents', module: 'documents' },
   { label: 'הודעות',             icon: MessageCircle, href: '/messages', module: 'whatsapp_chat' },
   { label: 'צ׳אט פנימי',         icon: MessagesSquare, href: '/chat', module: 'internal_chat' },
   { label: 'תזכורות',            icon: Bell, module: 'user_reminders' },
