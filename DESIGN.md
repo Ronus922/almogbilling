@@ -16,7 +16,7 @@
 1. **RTL-aware**: השתמש ב-`start-*` / `end-*` / `ms-*` / `me-*` / `pe-*` / `ps-*` — לא ב-`left-*` / `right-*` (אלא אם פיזי קריטי, למשל border על קצה הפאנל).
 2. **shadcn קודם**: השתמש ברכיבי `@/components/ui/*` הקיימים. בקש להתקין רכיב חדש (`npx shadcn@latest add ...`) רק אם אין מתאים.
 3. **Tailwind tokens, לא inline-style**: למעט במקרים של dynamic colors מ-DB (סטטוסים).
-4. **Heebo בלבד**: אין להחדיר Inter/Roboto/Arial.
+4. **Heebo לטקסט, Inter למספרים**: כל טקסט עברי/אנגלי ב-Heebo. **Inter** הוא פונט המספרים המאושר, חשוף דרך ה-utility **`font-num`** (מחווט ב-`layout.tsx` + `globals.css`: `--font-num: var(--font-inter)`) — לשימוש עם `tabular-nums` על סכומים, טלפונים, שעות, ו-tokens מסוג `{{var}}`. אין להחדיר פונט **אחר** (Roboto/Arial וכו').
 5. **רוחב קונטיינר**: עמודים בתוך `(app)` משתמשים ב-`max-w-3xl` (טפסים) או full-width (טבלאות / dashboard).
 
 ---
@@ -35,6 +35,31 @@
 | Muted | `text-muted-foreground`, `text-slate-500` |
 | Card background | `bg-white` / `bg-card` |
 | Page background | `bg-background` / `bg-slate-50/60` (פנים-פאנל) |
+
+### Skin tokens ("ניהול אלמוג" — מוגדרים ב-`globals.css @theme`)
+מערכת הסקין הויזואלית. ערכים ליטרליים → Tailwind מייצר utilities (`bg-brand`, `text-ink-2`, `border-line`, `shadow-soft-md` וכו'). **זהו הברנד הקנוני** לצד ה-`blue-600` הסמנטי; השתמש בו בפאנלים מודרניים.
+
+| קבוצה | Utility | Hex |
+|---|---|---|
+| **Brand** | `bg-brand` / `text-brand` | `#3d5afe` |
+| | `bg-brand-dark` | `#2c44e0` |
+| | `bg-brand-soft` | `#ecefff` |
+| | `border-brand-border` | `#cfd7ff` |
+| | `text-brand-text` | `#243bb5` |
+| **Ink (טקסט)** | `text-ink` | `#1a2233` |
+| | `text-ink-2` | `#5b6479` |
+| | `text-ink-3` | `#8a92a6` |
+| | `text-ink-ghost` (placeholder/רפאים) | `#b4bacb` |
+| **Lines** | `border-line` | `#e8eaf2` |
+| | `border-line-soft` | `#eff1f7` |
+| | `border-line-strong` | `#d9ddea` |
+| **Surfaces** | `bg-app` | `#f5f9fd` |
+| | `bg-surface-2` (משטח משני) | `#fafbfe` |
+| | `bg-row-hover` | `#f5f7fc` |
+| **Shadows** | `shadow-soft-xs` / `shadow-soft-sm` / `shadow-soft-md` | צללים רכים בגוון כחלחל |
+
+**Focus ring מותגי** (שדות בפאנלים מודרניים): `focus-visible:border-brand focus-visible:ring-4 focus-visible:ring-[rgba(61,90,254,0.12)]`.
+**אדום חובה/שגיאה** (כוכבית שדה): `#e5484d` (זהה ל-severity האדום ב-§5b).
 
 ### Tone Variants (עבור Status / KPI / Sections)
 מבסיס Tailwind, באותו patterning של `{tone}-50/100/200/600/700`:
@@ -72,7 +97,7 @@
 | Body | `text-sm` |
 | Caption / chip | `text-xs` |
 | Form label | `text-base font-medium text-muted-foreground` (פאנל) / `text-sm font-medium` (auth) |
-| Numeric data | `tabular-nums` (חובה לכסף ולטלפונים) |
+| Numeric data | `font-num tabular-nums` (Inter — חובה לכסף, טלפונים, שעות, ו-tokens `{{var}}`) |
 
 **Font weights**: `font-extrabold` (800) > `font-bold` (700) > `font-semibold` (600) > `font-medium` (500) > `font-normal` (400).
 
@@ -880,6 +905,58 @@ configuration שנקבעת לפני submit / שמירה — ולכן Checkbox.
 - **Controlled** (InviteUserPanel): `value` + `onChange`. הקומפוננטה לא
   מבצעת קריאת API ולא מציגה toast — ה-parent מחזיק state ושולח כשהוא
   מוכן (למשל יחד עם invite creation).
+
+---
+
+## 26. WhatsApp template editor (composer panel)
+
+דפוסי ה-UI של חלונית עריכת/יצירת תבנית WhatsApp
+(`whatsapp-templates/components/WhatsAppTemplateSheet.tsx`). אזור התוכן
+של הפאנל בנוי כ-2 עמודות עם **container query**: טופס מימין, תצוגה
+מקדימה חיה משמאל. `<div className="@container">` עוטף
+`grid gap-6 @2xl:grid-cols-[minmax(0,1fr)_19rem]` (מתחת לרוחב הזה — נערם).
+רקע הגוף: `bg-surface-2`. מרווח בין שדות: `space-y-6`.
+
+### Field label (variant פאנל מותגי)
+תווית מודגשת לפאנלי composer: `text-[13.5px] font-bold text-ink-2`, כוכבית
+חובה `<span className="text-[#e5484d]">*</span>`. (וריאציה ל-§6; ה-label
+הסטנדרטי נשאר `text-base font-medium text-muted-foreground`.)
+
+### שדות מותגיים (Input / Textarea)
+`border-[1.5px] border-line bg-white text-sm placeholder:text-ink-ghost`
++ focus ring מותגי (§2). Textarea: `min-h-[184px] resize-none leading-[1.85]`.
+
+### Variable insert chips (pills מעל ה-textarea)
+כפתורי הזרקת `{{var}}` למיקום הסמן (הלוגיקה ב-`insertPlaceholder`). pill
+מלא רדיוס:
+```tsx
+<button className="inline-flex items-center gap-1 rounded-full border border-brand-border bg-brand-soft px-3 py-1.5 text-xs font-semibold text-brand-text transition-colors hover:border-brand hover:bg-brand hover:text-white hover:shadow-soft-sm disabled:opacity-50">
+  <span>{label}</span> <Plus className="h-3 w-3 opacity-70" />
+</button>
+```
+Hover = מילוי מותג מלא + טקסט לבן + צל רך. **ללא transform/lift** (כלל §21).
+
+### שורת "משתנים נתמכים"
+`flex flex-wrap items-center gap-1.5 rounded-[7px] border border-line-soft bg-surface-2 px-3 py-2`,
+טקסט `text-xs text-ink-3`, וכל token כתג: `rounded-[5px] border border-line bg-white px-1.5 py-0.5 font-num text-[11px] text-ink-2` עם `dir="ltr"`.
+
+### Active toggle card + Switch גדול
+כרטיס מתג סטטוס: `rounded-xl border p-4`. פעיל = `border-[#beedcf] bg-gradient-to-bl from-[#e9fbf0] to-white`; כבוי = `border-line bg-white`. כותרת `text-sm font-bold text-ink` + הסבר `text-xs text-ink-2`.
+ה-`Switch` תומך ב-`size="lg"` (52×30, ידית 24px) — תוספת additive ל-
+primitive (`ui/switch.tsx`); ברירת המחדל ללא שינוי. כאן עם `className="data-checked:bg-[#16a34a]"` (ירוק = פעיל).
+
+### WhatsApp message preview (תצוגה מקדימה חיה)
+render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מודגשים. כותרת `<Eye/> תצוגה מקדימה`. כרטיס טלפון: `overflow-hidden rounded-xl border border-line shadow-soft-md`.
+פלטת WhatsApp (tokens חדשים, ייחודיים לפריוויו זה):
+
+| חלק | ערך |
+|---|---|
+| פס עליון (gradient) | `from-[#075e54] to-[#054c44]` + `text-white`, אווטאר `bg-white/15` |
+| רקע צ'אט | `#e5ddd5` + טקסטורת נקודות (`radial-gradient` inline, `14px`) |
+| בועה | `bg-[#dcf8c6]`, רדיוס 12 עם פינה תחתונה-מובילה חדה (`rounded-es-[3px]`), `me-auto max-w-[88%]` |
+| טקסט בועה | `text-[14px] leading-[1.7] text-[#111b21]` |
+| highlight של `{{var}}` | `rounded bg-brand-soft px-1 font-num font-semibold text-brand-text` |
+| חותמת + ✓✓ | `text-[#667781]`, שעה ב-`font-num`, `<CheckCheck/>` |
 
 ---
 
