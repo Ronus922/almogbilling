@@ -6,7 +6,7 @@ import {
   uploadDocumentFile,
   signedUrlForPath,
 } from '@/lib/storage/documentStorage';
-import { ALLOWED_DOC_TYPES, MAX_DOC_SIZE_BYTES } from '@/lib/constants/documents';
+import { ALLOWED_DOC_TYPES, MAX_DOC_SIZE_BYTES, MAX_FILE_NAME_LEN } from '@/lib/constants/documents';
 import { UUID_RE } from '@/lib/validation/documents';
 import { writeAudit } from '@/lib/db/audit';
 import type { DocumentWithSignedUrl } from '@/lib/types/documents';
@@ -41,14 +41,18 @@ export async function GET(req: NextRequest) {
   // Attach a fresh signed URL per row (private bucket) — mirrors the suppliers
   // documents endpoint. signedUrlForPath never throws (returns null on failure).
   const withUrls: DocumentWithSignedUrl[] = await Promise.all(
-    documents.map(async (d) => ({ ...d, signed_url: await signedUrlForPath(d.storage_path) })),
+    documents.map(async (d) => ({
+      ...d,
+      signed_url: await signedUrlForPath(d.storage_path, d.file_name),
+    })),
   );
 
   return NextResponse.json({ documents: withUrls });
 }
 
 // POST /api/documents  (documents:edit) — multipart upload.
-// Fields: file (required), folder_id?, entity_type?, entity_id?
+// Fields: file (required), file_name? (readable display name; defaults to the
+// uploaded file's name), folder_id?, entity_type?, entity_id?
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try {
@@ -88,6 +92,12 @@ export async function POST(req: NextRequest) {
   const entityType = (form.get('entity_type') as string | null)?.trim() || null;
   const entityId = (form.get('entity_id') as string | null)?.trim() || null;
 
+  // Readable display name (separate from the ASCII storage key). The user may
+  // edit it before upload; default to the original file name. Clamped to the
+  // column limit so an oversized name can never reject the row.
+  const customName = (form.get('file_name') as string | null)?.trim();
+  const displayName = (customName || file.name).slice(0, MAX_FILE_NAME_LEN);
+
   let upload: { path: string; sizeBytes: number; mimeType: string };
   try {
     upload = await uploadDocumentFile(file, {
@@ -108,7 +118,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const document = await insertDocument({
-      fileName: file.name,
+      fileName: displayName,
       storagePath: upload.path,
       mimeType: upload.mimeType || null,
       sizeBytes: upload.sizeBytes,
@@ -127,7 +137,7 @@ export async function POST(req: NextRequest) {
       metadata: { storage_path: upload.path, size_bytes: upload.sizeBytes },
     });
 
-    const signed_url = await signedUrlForPath(document.storage_path);
+    const signed_url = await signedUrlForPath(document.storage_path, document.file_name);
     return NextResponse.json({ document: { ...document, signed_url } }, { status: 201 });
   } catch (err) {
     const e = err as { code?: string };

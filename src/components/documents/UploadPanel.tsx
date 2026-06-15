@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { X, UploadCloud, Check, Loader2, Trash2, AlertCircle } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Input } from '@/components/ui/input';
 import { Section } from '@/components/side-panel/Section';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
@@ -26,6 +27,8 @@ type Status = 'pending' | 'uploading' | 'done' | 'error';
 interface Item {
   id: string;
   file: File;
+  /** Editable display name sent as file_name (defaults to the original name). */
+  name: string;
   status: Status;
   error?: string;
 }
@@ -70,6 +73,7 @@ export function UploadPanel({
       return {
         id: globalThis.crypto?.randomUUID?.() ?? `${file.name}-${file.size}-${file.lastModified}`,
         file,
+        name: file.name,
         status: err ? ('error' as const) : ('pending' as const),
         error: err ?? undefined,
       };
@@ -83,6 +87,10 @@ export function UploadPanel({
 
   function removeItem(id: string) {
     setItems((prev) => prev.filter((i) => i.id !== id));
+  }
+
+  function setItemName(id: string, value: string) {
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, name: value } : i)));
   }
 
   useEscapeKey(open, () => requestClose());
@@ -107,6 +115,9 @@ export function UploadPanel({
       try {
         const fd = new FormData();
         fd.append('file', target.file);
+        // Readable display name (may be Hebrew); the server keeps the storage
+        // key ASCII-safe regardless. Fall back to the original on empty.
+        fd.append('file_name', target.name.trim() || target.file.name);
         if (folderId) fd.append('folder_id', folderId);
 
         const res = await fetch('/api/documents', {
@@ -210,6 +221,7 @@ export function UploadPanel({
                 <div className="space-y-2">
                   {items.map((item) => {
                     const { Icon, tone } = fileMeta(item.file.type);
+                    const editable = item.status === 'pending' || item.status === 'error';
                     return (
                       <div
                         key={item.id}
@@ -218,10 +230,19 @@ export function UploadPanel({
                         <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-lg', tone)}>
                           <Icon className="h-4 w-4" />
                         </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium text-ink">{item.file.name}</div>
-                          <div className="text-xs text-ink-3">
-                            <span className="font-num tabular-nums">{formatBytes(item.file.size)}</span>
+                        <div className="min-w-0 flex-1 space-y-1">
+                          {/* Editable display name (file_name) — does not affect the storage key. */}
+                          <Input
+                            value={item.name}
+                            onChange={(e) => setItemName(item.id, e.target.value)}
+                            disabled={!editable}
+                            aria-label="שם הקובץ"
+                            placeholder={item.file.name}
+                            className="h-10 disabled:opacity-100"
+                          />
+                          <div className="truncate text-xs text-ink-3">
+                            <span>מקור: {item.file.name}</span>
+                            <span className="font-num tabular-nums"> · {formatBytes(item.file.size)}</span>
                             {item.status === 'error' && item.error && (
                               <span className="text-rose-600"> · {item.error}</span>
                             )}

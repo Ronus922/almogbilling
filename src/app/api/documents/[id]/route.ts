@@ -33,7 +33,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   const document = await getDocumentById(id);
   if (!document) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  const signed_url = await signedUrlForPath(document.storage_path);
+  const signed_url = await signedUrlForPath(document.storage_path, document.file_name);
   return NextResponse.json({ document: { ...document, signed_url } });
 }
 

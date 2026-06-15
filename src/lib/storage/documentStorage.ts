@@ -30,16 +30,29 @@ function getStorage(): StorageClient {
   });
 }
 
-function safeName(name: string): string {
-  return name.replace(/[^\w.\-֐-׿]+/g, '_').slice(0, 120) || 'file';
+/**
+ * Storage object keys must be ASCII — Supabase Storage rejects non-ASCII keys
+ * with "Invalid key". Keep only [A-Za-z0-9._-]; drop everything else. NEVER use
+ * a user-supplied (possibly Hebrew) file name to build a key — the readable name
+ * lives in documents.file_name, separate from storage_path.
+ */
+function asciiSegment(s: string): string {
+  return s.replace(/[^A-Za-z0-9._-]+/g, '');
+}
+
+/** ASCII file extension (lowercased, with the dot) or '' — derived from a name. */
+function extOf(name: string): string {
+  const m = /\.([A-Za-z0-9]{1,12})$/.exec(name.trim());
+  return m ? `.${m[1].toLowerCase()}` : '';
 }
 
 /**
- * Builds an organized object prefix:
+ * Builds an organized, ASCII-only object prefix:
  *   - entity-attached → "<entity_type>/<entity_id>"
  *   - foldered        → "folder/<folder_id>"
  *   - otherwise       → "unfiled"
- * (Pure path-building; never throws.)
+ * (Pure path-building; never throws. Components are ids/known kinds — already
+ * ASCII — but slugged defensively so the key is guaranteed valid.)
  */
 function buildPrefix(opts: {
   entityType?: string | null;
@@ -47,9 +60,9 @@ function buildPrefix(opts: {
   folderId?: string | null;
 }): string {
   if (opts.entityType && opts.entityId) {
-    return `${safeName(opts.entityType)}/${safeName(opts.entityId)}`;
+    return `${asciiSegment(opts.entityType) || 'entity'}/${asciiSegment(opts.entityId) || 'id'}`;
   }
-  if (opts.folderId) return `folder/${safeName(opts.folderId)}`;
+  if (opts.folderId) return `folder/${asciiSegment(opts.folderId) || 'id'}`;
   return 'unfiled';
 }
 
@@ -73,14 +86,19 @@ async function ensureBucket(storage: StorageClient): Promise<void> {
   }
 }
 
-/** Uploads a file under <prefix>/<uuid>-<name>. Returns the storage path. */
+/**
+ * Uploads a file under <prefix>/<uuid><.ext>. The key is fully ASCII and derived
+ * from a random UUID + the original extension only — the (possibly Hebrew) file
+ * name is NOT part of the key (Supabase rejects non-ASCII keys). The readable
+ * name is stored separately in documents.file_name. Returns the storage path.
+ */
 export async function uploadDocumentFile(
   file: File,
   opts: { entityType?: string | null; entityId?: string | null; folderId?: string | null },
 ): Promise<{ path: string; sizeBytes: number; mimeType: string }> {
   const storage = getStorage();
   await ensureBucket(storage);
-  const path = `${buildPrefix(opts)}/${randomUUID()}-${safeName(file.name)}`;
+  const path = `${buildPrefix(opts)}/${randomUUID()}${extOf(file.name)}`;
   const buffer = Buffer.from(await file.arrayBuffer());
   const { error } = await storage.from(BUCKET).upload(path, buffer, {
     contentType: file.type || 'application/octet-stream',
@@ -90,12 +108,24 @@ export async function uploadDocumentFile(
   return { path, sizeBytes: buffer.byteLength, mimeType: file.type || '' };
 }
 
-/** Short-lived signed URL for a stored object path (null if it cannot be signed). */
-export async function signedUrlForPath(path: string): Promise<string | null> {
+/**
+ * Short-lived signed URL for a stored object path (null if it cannot be signed).
+ * When `downloadName` is given, the URL forces a download whose filename is that
+ * name (Supabase sets Content-Disposition) — pass the readable documents.file_name
+ * so the (Hebrew) display name is used on download, NOT the ASCII storage key.
+ */
+export async function signedUrlForPath(
+  path: string,
+  downloadName?: string | null,
+): Promise<string | null> {
   try {
     const { data, error } = await getStorage()
       .from(BUCKET)
-      .createSignedUrl(path, SIGNED_URL_TTL_SEC);
+      .createSignedUrl(
+        path,
+        SIGNED_URL_TTL_SEC,
+        downloadName ? { download: downloadName } : undefined,
+      );
     if (error || !data) return null;
     return data.signedUrl;
   } catch {
