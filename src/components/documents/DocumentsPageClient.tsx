@@ -92,11 +92,17 @@ export function DocumentsPageClient({ canEdit }: { canEdit: boolean }) {
   }
 
   function openFile(doc: DocumentWithSignedUrl) {
-    if (doc.signed_url) {
-      window.open(doc.signed_url, '_blank', 'noopener,noreferrer');
-    } else {
-      toast.error('הקובץ אינו זמין כעת — נסה לרענן');
-    }
+    // Download via our proxy route — it sets Content-Disposition (the Hebrew
+    // file_name + real extension, RFC 5987) and Content-Type (mime_type), so the
+    // file saves with the readable name and opens correctly. Same-origin link
+    // carries the session cookie; the server's attachment disposition keeps the
+    // app page in place.
+    const a = document.createElement('a');
+    a.href = `/api/documents/${doc.id}/download`;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   // ── Delete (soft) ───────────────────────────────────────────────────────

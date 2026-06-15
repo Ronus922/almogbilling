@@ -41,7 +41,7 @@ function asciiSegment(s: string): string {
 }
 
 /** ASCII file extension (lowercased, with the dot) or '' — derived from a name. */
-function extOf(name: string): string {
+export function extOf(name: string): string {
   const m = /\.([A-Za-z0-9]{1,12})$/.exec(name.trim());
   return m ? `.${m[1].toLowerCase()}` : '';
 }
@@ -131,6 +131,20 @@ export async function signedUrlForPath(
   } catch {
     return null;
   }
+}
+
+/**
+ * Downloads the raw object bytes for a stored path. Returns null if the object
+ * is missing / cannot be read. Throws 'supabase_storage_not_configured' if the
+ * service key is missing (so the caller can return a clear 503). Used by the
+ * download proxy route, which sets Content-Type / Content-Disposition itself —
+ * giving full control over the (Hebrew) filename, unlike a raw signed URL.
+ */
+export async function downloadDocumentFile(path: string): Promise<Blob | null> {
+  const storage = getStorage(); // throws if SUPABASE_SERVICE_ROLE_KEY is missing
+  const { data, error } = await storage.from(BUCKET).download(path);
+  if (error || !data) return null;
+  return data;
 }
 
 /** Removes the object from storage (best-effort; row state is authoritative). */
