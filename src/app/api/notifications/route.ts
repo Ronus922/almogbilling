@@ -12,7 +12,13 @@ export const runtime = 'nodejs';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// GET /api/notifications?unread=1&limit=30 — the CURRENT user's notifications only.
+// Bell-panel tabs → list filter. 'all' = every active row; 'unread' = is_read
+// false; a module name = that source_module. Always active-only (cleared_at IS
+// NULL is enforced in the db layer).
+const MODULE_TABS = new Set(['tasks', 'issues', 'calendar', 'whatsapp', 'internal_chat']);
+
+// GET /api/notifications?tab=all|unread|<module>&limit=10 — the CURRENT user's
+// ACTIVE notifications only. Legacy ?unread=1 still honoured.
 export async function GET(req: NextRequest) {
   let actor: Actor;
   try {
@@ -24,12 +30,15 @@ export async function GET(req: NextRequest) {
   }
 
   const sp = req.nextUrl.searchParams;
-  const onlyUnread = sp.get('unread') === '1';
+  const tab = sp.get('tab') ?? '';
   const limitRaw = Math.trunc(Number(sp.get('limit')));
   const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? limitRaw : 30;
 
+  const onlyUnread = tab === 'unread' || sp.get('unread') === '1';
+  const module = MODULE_TABS.has(tab) ? tab : undefined;
+
   const [items, unreadCount] = await Promise.all([
-    listNotifications(actor.id, { onlyUnread, limit }),
+    listNotifications(actor.id, { onlyUnread, module, limit }),
     countUnread(actor.id),
   ]);
   return NextResponse.json({ items, unreadCount });
