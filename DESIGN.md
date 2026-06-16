@@ -230,14 +230,63 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
 
 ---
 
+## 5c. Toolbar export / print buttons (Printer · Excel · PDF)
+
+כפתורי-אייקון מרובעים (34px) בטולבר טבלה לייצוא/הדפסה של **כל הסט המסונן הנוכחי**
+(טאב + חיפוש + מיון), לא רק העמוד הנראה. בנויים על `Button variant="outline"
+size="icon"` עם override של גודל ו-tone, עטופים ב-`Tooltip`, ומציגים `Loader2`
+מסתובב בזמן עבודה.
+
+| פעולה | אייקון (lucide) | Tone |
+|---|---|---|
+| הדפסה | `Printer` | ניטרלי `text-ink-2 hover:bg-row-hover hover:text-ink` |
+| ייצוא Excel | `FileSpreadsheet` | ירוק `text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700` |
+| ייצוא PDF | `FileText` | אדום `text-red-600 hover:bg-red-50 hover:text-red-700` |
+
+```tsx
+<Tooltip>
+  <TooltipTrigger render={<span />}>
+    <Button type="button" variant="outline" size="icon" onClick={onClick}
+      disabled={busy} aria-label={label}
+      className={cn('h-[34px] w-[34px] rounded-lg border-line bg-surface-2', tone)}>
+      {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
+    </Button>
+  </TooltipTrigger>
+  <TooltipContent>{label}</TooltipContent>
+</Tooltip>
+```
+- **Excel** = SheetJS (`xlsx`, dependency קיים); כספים כ-numbers אמיתיים (לסיכום באקסל), טלפון כ-string; שם גיליון "חייבים"; קובץ `debtors_YYYY-MM-DD.xlsx`.
+- **PDF** = `jspdf` + `jspdf-autotable` + **Heebo מוטמע** (`src/lib/pdf-heebo.ts`, base64 subset). jsPDF ללא bidi → היפוך תווי-עברית ידני (מחרוזת שמכילה עברית בלבד) + היפוך סדר העמודות ל-RTL; מספרים/תאריך כ-LTR (התאריך ב-`text()` נפרד כדי לא להתהפך). קובץ `debtors_YYYY-MM-DD.pdf`.
+- **הדפסה** = `@media print` (`app/styles/print.css`) שמסתיר `body > *:not(#debtors-print-root)` ומציג רק קומפוננטת print (portal ל-`document.body`); כותרת "טבלת חייבים" + "סה״כ N רשומות" + תאריך + טבלה נקייה (עמודות §6 ללא "פעולות"), `₪` + `tabular-nums`, A4 landscape.
+- `toast.success('הקובץ יוצא')` / `toast.error` בכל ייצוא.
+
 ## 6. Form Fields
 
 ### Input (default size)
 - Default: `h-8` (shadcn). **בפאנלים מודרניים השתמש ב-`h-10`** (40px) לאחידות עם Select.
 - Number/phone: `dir="ltr"` + `tabular-nums`.
-- Padding for icons: `pe-9` (icon end) או `ps-9` (icon start).
+- Padding for icons: `pe-9` (icon end) או `ps-9` (icon start). **חובה לרפד את הצד של האייקון** — אחרת הטקסט/placeholder יושב מתחת לאייקון. אייקון ב-`start-3` ⇒ `ps-9`; אייקון ב-`end-3` ⇒ `pe-9`.
 - Focus state: ירש מ-shadcn (ring blue).
 - Error state: `border-red-400 bg-red-50 focus:ring-red-200`.
+
+### Clearable search input (חיפוש עם X)
+שדה חיפוש עם אייקון `Search` ב-start וכפתור ניקוי `X` ב-end שמופיע **רק כשיש ערך**.
+ריפוד משני הצדדים כשה-X נוכח כדי שהטקסט לא יחפוף לאף אלמנט.
+```tsx
+<div className="relative">
+  <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-3" />
+  <Input value={value} onChange={(e) => onChange(e.target.value)}
+    className={cn('ps-9', value && 'pe-9')} />
+  {value && (
+    <button type="button" aria-label="נקה חיפוש" onClick={() => onChange('')}
+      className="absolute end-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+      <X className="h-4 w-4" />
+    </button>
+  )}
+</div>
+```
+- `ps-9` תמיד (אייקון החיפוש); `pe-9` רק כשיש ערך (כפתור ה-X).
+- ניקוי מאפס את הסינון של אותו שדה (מחזיר לתצוגה לא-מסוננת לפיו).
 
 ### Select (shadcn)
 ```tsx
