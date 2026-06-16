@@ -572,6 +572,72 @@ const ils = (v: number) => `₪ ${numFmt.format(v)}`;
   +9
 </span>
 ```
+ספירת unread: מציגים את המספר; כש-`unread > 9` מציגים `+9`.
+
+### Notification row (פעמון + דף /notifications)
+שורת התראה אחידה — אייקון-chip לפי **`type`** (לא לפי priority), כותרת bold + הודעה
+muted + זמן יחסי, ונקודת unread. ה-`type → icon/tone` מגיע **אך ורק** מה-registry
+המרכזי `@/lib/notifications/registry` (`getNotificationVisual`) — אין למפות אייקונים/צבעים
+ידנית בקומפוננטה. ה-tone ממופה ל-tokens של §2 דרך `TONE_ICON`
+(`info`→blue, `warning`→amber, `danger`→rose, `default`→slate); עדיפות → pill דרך
+`PRIORITY_PILL` (§10). זמן יחסי דרך `formatRelativeTime` (date-fns + locale `he`).
+השורה היא `<li>` flex עם **שני אחים** (אסור button בתוך button): כפתור-תוכן ראשי
+(`flex-1`, לחיצה → מסמן נקרא + ניווט) וכפתור **מחיקה** (`Trash2`) בקצה הלוגי. ה-hover
+וה-`bg-blue-50/40` עוברים ל-`<li>` עצמו (`group`) כדי שכל השורה תידלק יחד.
+```tsx
+const v = getNotificationVisual(n.type); const Icon = v.icon;
+<li className={cn('group flex items-stretch transition-colors hover:bg-slate-50', !n.is_read && 'bg-blue-50/40')}>
+  <button onClick={...} className="flex min-w-0 flex-1 items-start gap-2.5 px-4 py-3 text-start">
+    <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', v.toneClass, n.is_read && 'opacity-60')}>
+      <Icon className="h-4 w-4" />
+    </span>
+    <span className="min-w-0 flex-1">
+      <span className="block truncate text-sm font-semibold text-slate-900">{n.title}</span>
+      <span className="block truncate text-xs text-slate-500">{n.message}</span>
+      <span className="mt-0.5 block text-[11px] text-slate-400">{formatRelativeTime(n.created_at)}</span>
+    </span>
+    {!n.is_read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-500" />}
+  </button>
+  {/* מחיקה (soft-clear שורה בודדת) — touch target w-11, danger tone ב-hover */}
+  <button type="button" aria-label="מחק התראה" onClick={() => clearOne(n.id)}
+    className="grid w-11 shrink-0 place-items-center text-slate-300 hover:text-rose-600 focus-visible:text-rose-600">
+    <Trash2 className="h-4 w-4" />
+  </button>
+</li>
+```
+- שורה **נקראה** מוצגת מעומעמת וללא הנקודה הכחולה: כותרת `text-slate-500`, הודעה
+  `text-slate-400`, ה-icon-chip `opacity-60`. רקע `bg-blue-50/40` רק ללא-נקראה.
+- **לחיצה על שורה = מסמנת נקרא** (`is_read=true`, השורה נדלקת מעומעמת **במקום**); ניווט
+  ל-`action_url` + סגירת הפאנל **רק אם יש** url, אחרת הפאנל נשאר פתוח כדי שהחיווי ייראה.
+- **מחיקת שורה בודדת** = soft-clear (`PATCH /api/notifications/[id]/clear` → `cleared_at=now()`),
+  אופטימי (השורה נעלמת מיד) + עדכון badge מה-`unreadCount` שחוזר. אייקון `Trash2` בגוון
+  `text-slate-300` שהופך `rose-600` ב-hover (גוון danger §2). **אין מחיקה קשה** — עקבי עם "נקה הכל".
+- בטבלת `/notifications` (§9) אותו `getNotificationVisual` מזין את עמודת "סוג"
+  (icon-chip `h-7 w-7` + תווית), המקור הוא pill ניטרלי `bg-slate-100 text-slate-600`,
+  והעדיפות `PRIORITY_PILL`. שורה לא-נקראה → `bg-blue-50/40`. עמודת **"מחיקה"** אחרונה
+  (`w-16`, מיושרת מרכז) — כפתור `Trash2` (`h-9 w-9 rounded-md`, `stopPropagation` כדי לא
+  להפעיל את בחירת השורה) → אותו `/[id]/clear` + toast "ההתראה נמחקה".
+
+### Notification panel (פאנל הפעמון — Popover עם טאבים + 2 פעולות)
+ה-Popover של הפעמון הוא ה**חריג המאושר** למוסכמת ה-Side Panel (§12) — נשאר Popover,
+רק עשיר יותר. רוחב `w-[380px]`, `dir="rtl"`, `align="end"`, `p-0`. מבנה אנכי:
+1. **כותרת + 2 פעולות** (`flex justify-between border-b px-4 py-3`): "התראות" (start);
+   ב-end שתי פעולות טקסטואליות — **"סמן הכל כנקרא"** (`text-blue-600`, אייקון `CheckCheck`,
+   מוצג כש-`unread>0` → `/read-all`) ו-**"נקה הכל"** (`text-slate-500`, אייקון `Eraser`,
+   מוצג כשיש פעילות → `/clear-all`). שתי הפעולות **נפרדות**: read ≠ clear.
+2. **רצועת טאבים** (`flex flex-wrap items-center gap-1.5 border-b px-2 py-2`) —
+   **גולשת ל-2 שורות** (לא גלילה אופקית) כדי שכל 7 הטאבים יישארו גלויים ב-`w-[380px]`:
+   הכל · לא נקראו `[badge unread]` · משימות · תקלות · יומן · וואטסאפ · צ׳אט פנימי.
+   ברירת מחדל "הכל". טאב נבחר `bg-blue-50 font-semibold text-blue-700`, אחר
+   `text-slate-500 hover:bg-slate-50`; כל טאב = `rounded-md px-3 py-1.5 text-xs whitespace-nowrap`.
+   תוויות המודולים מגיעות מ-`SOURCE_MODULE_LABEL`; כל טאב טוען מ-`/api/notifications?tab=<value>`.
+3. **רשימה** (`max-h-96 overflow-y-auto`) — שורות לפי הדפוס למעלה; ריק → "אין התראות חדשות"
+   (טאב לא-נקראו) / "אין התראות" (אחר).
+4. **Footer** (`border-t px-4 py-2.5`): קישור מרוכז "צפה בכל ההתראות" → `/notifications`.
+- **סמנטיקת אופציה א'** (ראה Decisions Log): לחיצה/סימון-נקרא → `is_read=true` (השורה נשארת
+  בפעיל, יוצאת מטאב "לא נקראו"); "נקה הכל" → `cleared_at=now()` (soft-clear, נעלם מכל
+  הטאבים, השורה נשמרת ב-DB); **מחיקת שורה בודדת** (פח בכל שורה) → אותו `cleared_at=now()`
+  לשורה אחת (`/[id]/clear`). אין מחיקה קשה בשום מסלול.
 
 ---
 
