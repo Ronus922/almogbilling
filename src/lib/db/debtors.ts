@@ -301,6 +301,50 @@ export async function listDebtors(params: ListDebtorsParams): Promise<ListDebtor
   };
 }
 
+/**
+ * Same tab/search/sort filter as listDebtors but WITHOUT pagination — returns
+ * every matching row. Backs the toolbar export/print (Excel / PDF / print),
+ * whose scope is the full current filtered set, not just the visible page.
+ * Capped defensively at 100k rows (the building has ~300).
+ */
+export async function listAllDebtorsForExport(
+  params: { tab: TabKey; q?: string; apt?: string; sort?: SortKey },
+): Promise<Debtor[]> {
+  const args: unknown[] = [];
+  const where: string[] = [];
+
+  const tab = tabFilter(params.tab);
+  let tabSql = tab.sql;
+  for (let i = 0; i < tab.params.length; i++) {
+    args.push(tab.params[i]);
+    tabSql = tabSql.replace(`$P${i + 1}`, `$${args.length}`);
+  }
+  where.push(tabSql);
+
+  if (params.q) {
+    args.push(`%${params.q}%`);
+    where.push(`d.owner_name ilike $${args.length}`);
+  }
+  if (params.apt) {
+    args.push(`%${params.apt}%`);
+    where.push(`d.apartment_number ilike $${args.length}`);
+  }
+
+  const orderBy = params.tab === 'actions'
+    ? 'd.next_action_date asc nulls last'
+    : sortToSql(params.sort ?? 'total_debt_desc');
+
+  const res = await query<Debtor>(
+    `select ${SELECT_COLUMNS}
+       from ${DEBTORS_JOIN}
+       where ${where.join(' and ')}
+       order by ${orderBy}
+       limit 100000`,
+    args,
+  );
+  return res.rows;
+}
+
 export async function getAllApartmentNumbers(): Promise<Set<string>> {
   const r = await query<{ apartment_number: string }>(
     `select apartment_number from public.debtors`,

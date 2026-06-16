@@ -1,0 +1,80 @@
+/* ─────────────────────────────────────────────────────────────────────
+   Print styles for the debtors table export (Printer button).
+   The PrintableDebtorsTable renders into a portal on document.body
+   (#debtors-print-root). On screen it is hidden; in print we hide every
+   other direct child of <body> (the app shell: sidebar, header, toolbar,
+   pagination, toasts) and show only the print root.
+   ───────────────────────────────────────────────────────────────────── */
+
+#debtors-print-root {
+  display: none;
+}
+
+@media print {
+  /* Reveal ONLY the print root — hide the entire app + every body-level portal. */
+  body > *:not(#debtors-print-root) {
+    display: none !important;
+  }
+
+  #debtors-print-root {
+    display: block !important;
+    direction: rtl;
+    font-family: 'Heebo', system-ui, sans-serif;
+    color: #1a2233;
+    padding: 0;
+    margin: 0;
+  }
+
+  .debtors-print-head {
+    margin-bottom: 12px;
+  }
+  .debtors-print-head h1 {
+    margin: 0 0 4px;
+    font-size: 20px;
+    font-weight: 800;
+  }
+  .debtors-print-meta {
+    display: flex;
+    gap: 18px;
+    font-size: 12px;
+    color: #5b6479;
+  }
+
+  .debtors-print-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .debtors-print-table th {
+    background: #f1f5f9;
+    color: #334155;
+    font-weight: 700;
+    text-align: right;
+    padding: 6px 8px;
+    border: 1px solid #e2e8f0;
+  }
+  .debtors-print-table td {
+    text-align: right;
+    padding: 5px 8px;
+    border: 1px solid #eef2f7;
+  }
+  .debtors-print-table td.num {
+    font-variant-numeric: tabular-nums;
+  }
+  .debtors-print-table td.ltr {
+    direction: ltr;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .debtors-print-table thead {
+    display: table-header-group; /* repeat header on each printed page */
+  }
+  .debtors-print-table tr {
+    break-inside: avoid;
+  }
+
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+}

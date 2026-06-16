@@ -297,21 +297,21 @@ export function DebtorsTable({
               )}
               <SortHead field="apt" label="מס׳ דירה" align="right" currentSort={currentSort} onSort={handleSortClick} />
               <SortHead field="owner" label="שם בעל הדירה" align="right" currentSort={currentSort} onSort={handleSortClick} />
-              <TableHead className="h-11 px-4 text-center text-xs font-semibold text-ink-2">טלפון</TableHead>
+              <TableHead className="h-11 px-4 text-center text-[18px] font-semibold text-ink-2">טלפון</TableHead>
               <SortHead field="total_debt" label="סה״כ חוב" align="center" currentSort={currentSort} onSort={handleSortClick} />
               <SortHead field="management_fees" label="דמי ניהול" align="center" currentSort={currentSort} onSort={handleSortClick} />
               <SortHead field="hot_water_debt" label="מים חמים" align="center" currentSort={currentSort} onSort={handleSortClick} />
               <SortHead field="legal_status" label="מצב משפטי" align="center" currentSort={currentSort} onSort={handleSortClick} />
               {isActionsTab && (
                 <>
-                  <TableHead className="h-11 px-4 text-right text-xs font-semibold text-ink-2">פעולה לביצוע</TableHead>
-                  <TableHead className="h-11 px-4 text-center text-xs font-semibold text-ink-2">תאריך יעד</TableHead>
+                  <TableHead className="h-11 px-4 text-right text-[18px] font-semibold text-ink-2">פעולה לביצוע</TableHead>
+                  <TableHead className="h-11 px-4 text-center text-[18px] font-semibold text-ink-2">תאריך יעד</TableHead>
                 </>
               )}
               {isArchivedTab && (
-                <TableHead className="h-11 px-4 text-center text-xs font-semibold text-ink-2">הועבר לארכיון</TableHead>
+                <TableHead className="h-11 px-4 text-center text-[18px] font-semibold text-ink-2">הועבר לארכיון</TableHead>
               )}
-              <TableHead className="h-11 px-4 text-left text-xs font-semibold text-ink-2">פעולות</TableHead>
+              <TableHead className="h-11 px-4 text-left text-[18px] font-semibold text-ink-2">פעולות</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -643,7 +643,7 @@ function SortHead({
         type="button"
         onClick={() => onSort(field)}
         className={cn(
-          'group flex w-full items-center gap-1 text-xs font-semibold transition-colors',
+          'group flex w-full items-center gap-1 text-[18px] font-semibold transition-colors',
           justify,
           isActive ? 'text-[#e5484d]' : 'text-ink-2 hover:text-ink',
         )}
