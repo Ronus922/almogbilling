@@ -92,6 +92,8 @@ export interface Notification {
   title: string;
   message: string | null;
   is_read: boolean;
+  read_at: string | null;
+  cleared_at: string | null;
   source_module: string | null;
   source_entity_type: string | null;
   source_entity_id: string | null;

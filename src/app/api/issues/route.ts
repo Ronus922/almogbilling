@@ -3,8 +3,10 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listIssues, createIssue, getIssueKpis } from '@/lib/db/issues';
 import { coerceIssueInput } from '@/lib/validation/issues';
-import { notifyIssue } from '@/services/notifications';
+import { notifyIssue, createNotification } from '@/services/notifications';
+import { listActiveAdmins } from '@/lib/db/users';
 import type {
+  Issue,
   IssuePriority,
   IssueSort,
   IssueStatus,
@@ -12,6 +14,37 @@ import type {
 } from '@/lib/types/issues';
 
 export const runtime = 'nodejs';
+
+/**
+ * Notify every active admin (super_admin + admin) — except the reporter — that a
+ * new issue was opened. Complements the per-assignee `issue_assigned`: this is
+ * the "תקלה חדשה נפתחה" broadcast. Best-effort, deduped per (issue, admin);
+ * never throws (fire-and-forget after the issue is already persisted).
+ */
+async function notifyAdminsOfIssueReported(issue: Issue, actorId: string): Promise<void> {
+  try {
+    const desc = issue.description?.trim();
+    const message = desc ? `${issue.title} — ${desc.slice(0, 120)}` : issue.title;
+    const admins = await listActiveAdmins();
+    for (const admin of admins) {
+      if (admin.id === actorId) continue;
+      await createNotification({
+        userId: admin.id,
+        type: 'issue_reported',
+        title: 'תקלה חדשה נפתחה',
+        message,
+        sourceModule: 'issues',
+        sourceEntityType: 'Issue',
+        sourceEntityId: issue.id,
+        actionUrl: `/issues?issue=${issue.id}`,
+        priority: 'high',
+        dedupeKey: `issue_reported:${issue.id}:${admin.id}`,
+      });
+    }
+  } catch (err) {
+    console.error('[issues] issue_reported notification failed', err);
+  }
+}
 
 const STATUSES: readonly IssueStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
 const PRIORITIES: readonly IssuePriority[] = ['low', 'normal', 'high', 'urgent'];
@@ -89,6 +122,10 @@ export async function POST(req: NextRequest) {
       actor.id,
       actor.full_name ?? actor.username,
     );
+
+    // "תקלה חדשה נפתחה" → every active admin except the reporter. Fire-and-forget
+    // after the real insert so the response isn't blocked by the fan-out.
+    void notifyAdminsOfIssueReported(issue, actor.id);
 
     // Assignment notification (only when assigned to someone other than the creator).
     if (issue.assigned_to_user_id && issue.assigned_to_user_id !== actor.id) {

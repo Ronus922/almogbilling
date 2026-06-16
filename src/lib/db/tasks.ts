@@ -134,6 +134,44 @@ export async function listTasksWithDueDateInRange(
   return r.rows;
 }
 
+/**
+ * Open / in-progress (not completed), non-archived tasks whose due_date falls in
+ * [from, to] — the scheduled task_due_soon scan (cron). from/to are 'YYYY-MM-DD'
+ * computed in Asia/Jerusalem. Returns the assignee so the cron can target them
+ * (null → the cron fans out to active admins instead).
+ */
+export async function listTasksDueSoon(
+  from: string,
+  to: string,
+): Promise<{
+  id: string;
+  title: string;
+  due_date: string;
+  due_time: string | null;
+  priority: string;
+  assigned_to_user_id: string | null;
+}[]> {
+  const r = await query<{
+    id: string;
+    title: string;
+    due_date: string;
+    due_time: string | null;
+    priority: string;
+    assigned_to_user_id: string | null;
+  }>(
+    `select id, title, due_date::text as due_date, due_time::text as due_time,
+            priority, assigned_to_user_id
+       from public.tasks
+      where is_archived = false
+        and status in ('open', 'in_progress')
+        and due_date is not null
+        and due_date >= $1 and due_date <= $2
+      order by due_date asc, due_time asc nulls first`,
+    [from, to],
+  );
+  return r.rows;
+}
+
 export async function getTaskById(id: string): Promise<TaskWithAssignee | null> {
   return queryOne<TaskWithAssignee>(
     `select ${TASK_COLUMNS.split(',').map((c) => 't.' + c.trim()).join(', ')},

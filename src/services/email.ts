@@ -41,6 +41,54 @@ export async function sendTaskNotificationEmail(
   await sendWithRetry({ to, subject, html, text });
 }
 
+/**
+ * Generic notification email (Notifications module) — the email channel of the
+ * createNotification() fan-out. Used for any notification type whose registry
+ * channels include 'email' and that has no richer dedicated template (task /
+ * issue keep their `task-notification` template via notifyTask/notifyIssue).
+ * Built on the same sendWithRetry transporter — no new transport.
+ */
+export async function sendNotificationEmail(
+  to: string,
+  args: {
+    recipientName: string;
+    title: string;
+    message: string;
+    actionUrl?: string | null;
+    priorityLabel?: string | null;
+  },
+): Promise<void> {
+  const safe = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const subject = args.title;
+  const lines = [
+    `שלום ${safe(args.recipientName)},`,
+    '',
+    safe(args.message),
+    args.priorityLabel ? `\nעדיפות: ${safe(args.priorityLabel)}` : '',
+  ].filter(Boolean);
+  const text = `${lines.join('\n')}${args.actionUrl ? `\n\nצפייה: ${args.actionUrl}` : ''}\n\n— ALMOG CRM`;
+
+  const button = args.actionUrl
+    ? `<div style="margin-top:20px"><a href="${args.actionUrl}" style="display:inline-block;background:#3d5afe;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:600">צפייה במערכת</a></div>`
+    : '';
+  const priority = args.priorityLabel
+    ? `<p style="margin:4px 0 0;color:#8a92a6;font-size:13px">עדיפות: ${safe(args.priorityLabel)}</p>`
+    : '';
+  const html = `
+    <div dir="rtl" style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;padding:24px;background:#ffffff;color:#1a2233;text-align:right">
+      <h2 style="margin:0 0 12px;font-size:18px;color:#1a2233">${safe(args.title)}</h2>
+      <p style="margin:0;color:#5b6479;font-size:14px">שלום ${safe(args.recipientName)},</p>
+      <p style="margin:8px 0 0;color:#1a2233;font-size:15px;line-height:1.6">${safe(args.message)}</p>
+      ${priority}
+      ${button}
+      <hr style="margin:24px 0 12px;border:none;border-top:1px solid #e8eaf2" />
+      <p style="margin:0;color:#b4bacb;font-size:12px">ALMOG CRM</p>
+    </div>`;
+
+  await sendWithRetry({ to, subject, html, text });
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // LEGACY — Slice 3 stub kept untouched. Will migrate in a separate slice.
 // ──────────────────────────────────────────────────────────────────────

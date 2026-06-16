@@ -3,6 +3,9 @@ import { queryOne } from '@/lib/db';
 import { insertChatMessage } from '@/lib/db/chatMessages';
 import type { InstanceCreds } from '@/lib/db/whatsappInstances';
 import { emitWa } from '@/lib/whatsapp-events';
+import { listActiveAdmins } from '@/lib/db/users';
+import { createNotification } from '@/services/notifications';
+import { todayInJerusalem } from '@/lib/dates';
 import type { ThreadMessage } from '@/types/whatsapp';
 import {
   getIncomingMessages,
@@ -41,6 +44,55 @@ async function findDebtorIdByPhone(localPhone: string): Promise<string | null> {
     [key],
   );
   return row?.id ?? null;
+}
+
+/** Debtor display name for the notification copy — owner first, then tenant,
+ *  then apartment, else null (caller falls back to the phone). */
+async function getDebtorDisplayName(debtorId: string): Promise<string | null> {
+  const row = await queryOne<{ owner_name: string | null; tenant_name: string | null; apartment_number: string | null }>(
+    `select owner_name, tenant_name, apartment_number from public.debtors where id = $1 limit 1`,
+    [debtorId],
+  );
+  if (!row) return null;
+  const owner = row.owner_name?.trim();
+  const tenant = row.tenant_name?.trim();
+  if (owner) return owner;
+  if (tenant) return tenant;
+  return row.apartment_number ? `דירה ${row.apartment_number}` : null;
+}
+
+/**
+ * Notify active admins (super_admin + admin) of an inbound WhatsApp message.
+ * Anti-flood: dedupe per CONTACT-per-DAY so a debtor who sends ten messages
+ * produces ONE notification per admin that day (createNotification's
+ * ON CONFLICT(dedupe_key) DO NOTHING enforces it). Best-effort — never throws.
+ */
+async function notifyAdminsOfInbound(parsed: ParsedIncoming, debtorId: string | null, messageId: string): Promise<void> {
+  try {
+    const name = debtorId ? await getDebtorDisplayName(debtorId) : null;
+    const contactLabel = name ?? parsed.senderPhoneLocal;
+    // Per-Israel-day bucket (not UTC) so evening messages don't split/merge
+    // across the UTC midnight rollover.
+    const today = todayInJerusalem();
+    const dedupeContact = debtorId ?? parsed.senderPhoneLocal;
+
+    const admins = await listActiveAdmins();
+    for (const admin of admins) {
+      await createNotification({
+        userId: admin.id,
+        type: 'whatsapp_message_received',
+        title: 'הודעת WhatsApp חדשה',
+        message: `הודעה מ-${contactLabel}`,
+        sourceModule: 'whatsapp',
+        sourceEntityType: 'ChatMessage',
+        sourceEntityId: messageId,
+        actionUrl: '/messages',
+        dedupeKey: `whatsapp_message_received:${dedupeContact}:${admin.id}:${today}`,
+      });
+    }
+  } catch (err) {
+    console.error('[whatsapp-inbound] admin notification failed', err);
+  }
 }
 
 export type ProcessResult = 'inserted' | 'duplicate';
@@ -100,6 +152,13 @@ export async function processIncomingMessage(
       created_at: isoFromUnix(parsed.timestamp),
     };
     emitWa({ type: 'message_received', instance_id: instanceId, chat_id: parsed.chatId, message });
+  }
+
+  // Notify staff of the inbound message. Fire-and-forget so the webhook responds
+  // immediately (Green API retries on slow ACKs); only on a REAL insert — a
+  // duplicate must never re-notify. Outbound messages never reach here.
+  if (id) {
+    void notifyAdminsOfInbound(parsed, debtorId, id);
   }
 
   return id ? 'inserted' : 'duplicate';

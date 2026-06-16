@@ -2,13 +2,14 @@ import 'server-only';
 import { withTransaction } from '@/lib/db';
 import { listDueReminders, markReminderSent } from '@/lib/db/reminders';
 import { createNotification } from '@/lib/db/notifications';
-import { getTaskById } from '@/lib/db/tasks';
+import { getTaskById, listTasksDueSoon } from '@/lib/db/tasks';
 import { getIssueById } from '@/lib/db/issues';
 import { getEventById } from '@/lib/db/calendarEvents';
-import { findUserById } from '@/lib/db/users';
+import { findUserById, listActiveAdmins } from '@/lib/db/users';
 import { sendTaskNotificationEmail } from '@/services/email';
-import { priorityLabel } from '@/services/notifications';
+import { priorityLabel, createNotification as emitNotification } from '@/services/notifications';
 import { appUrl } from '@/lib/config';
+import { todayInJerusalem, addDaysToIsoDate } from '@/lib/dates';
 
 export interface ReminderRunResult {
   due: number;
@@ -16,6 +17,52 @@ export interface ReminderRunResult {
   notified: number;
   emailed: number;
   failed: number;
+  /** task_due_soon notifications fanned out this run (deduped per task/user/day). */
+  dueSoon: number;
+}
+
+/**
+ * Scan for not-completed tasks whose due_date is today or tomorrow (Asia/Jerusalem)
+ * — the 24h-forward horizon at date granularity — and fan out a `task_due_soon`
+ * notification to the assignee (or, when unassigned, to every active admin).
+ *
+ * Idempotent: the per-task/per-user/per-day dedupeKey means re-running the cron
+ * (every 5 min) never duplicates — at most one alert per task per recipient per
+ * day. Uses the registry-driven createNotification (high priority → email +
+ * gated WhatsApp). Best-effort; never throws to the caller. Returns the number
+ * of notifications enqueued (deduped ones still count as enqueued attempts).
+ */
+async function scanTasksDueSoon(): Promise<number> {
+  const today = todayInJerusalem();
+  const tomorrow = addDaysToIsoDate(today, 1);
+  const tasks = await listTasksDueSoon(today, tomorrow);
+  if (tasks.length === 0) return 0;
+
+  let count = 0;
+  for (const task of tasks) {
+    const dueLabel = task.due_time ? `${task.due_date} ${task.due_time.slice(0, 5)}` : task.due_date;
+    const message = `המשימה "${task.title}" מתקרבת למועד היעד (${dueLabel})`;
+    const recipients = task.assigned_to_user_id
+      ? [task.assigned_to_user_id]
+      : (await listActiveAdmins()).map((a) => a.id);
+
+    for (const userId of recipients) {
+      await emitNotification({
+        userId,
+        type: 'task_due_soon',
+        title: 'משימה מתקרבת למועד',
+        message,
+        sourceModule: 'tasks',
+        sourceEntityType: 'Task',
+        sourceEntityId: task.id,
+        actionUrl: `/tasks?task=${task.id}`,
+        priority: 'high',
+        dedupeKey: `task_due_soon:${task.id}:${userId}:${today}`,
+      });
+      count++;
+    }
+  }
+  return count;
 }
 
 /**
@@ -35,6 +82,7 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
     notified: 0,
     emailed: 0,
     failed: 0,
+    dueSoon: 0,
   };
 
   for (const reminder of due) {
@@ -96,7 +144,10 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
           await createNotification(
             {
               userId: reminder.user_id,
-              type: 'reminder',
+              // Calendar reminders carry the first-class 'calendar_reminder' type
+              // (registry icon/tone). Task/issue reminders keep the legacy
+              // 'reminder' type unchanged.
+              type: reminder.entity_type === 'calendar_event' ? 'calendar_reminder' : 'reminder',
               title,
               message,
               sourceModule:
@@ -149,6 +200,14 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
       result.failed++;
       console.error('[runReminders] failed for reminder', reminder.id, err);
     }
+  }
+
+  // Scheduled task_due_soon scan — independent of the explicit-reminders loop, so
+  // a failure here never aborts reminder delivery (and vice-versa).
+  try {
+    result.dueSoon = await scanTasksDueSoon();
+  } catch (err) {
+    console.error('[runReminders] task_due_soon scan failed', err);
   }
 
   return result;

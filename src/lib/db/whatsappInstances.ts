@@ -151,6 +151,21 @@ export async function resolveSendCreds(actor: Actor, requestedId: string | null)
   throw new InstanceNotConfiguredError();
 }
 
+/**
+ * Credentials for a SYSTEM-initiated send (no acting user) — the notification
+ * WhatsApp fan-out. Prefers a currently authorized instance, else the oldest
+ * instance, else null when nothing is connected. Best-effort: the gated
+ * notification channel simply skips WhatsApp when this returns null.
+ */
+export async function getDefaultSendCreds(): Promise<InstanceCreds | null> {
+  const row = await queryOne<CredsRow>(
+    `select ${CREDS_COLS} from public.whatsapp_instances
+      order by (state = 'authorized') desc, created_at asc
+      limit 1`,
+  );
+  return row ? credsFromRow(row) : null;
+}
+
 /** Resolve credentials for a specific instance id (admin sending via a chosen
  *  instance, webhook registration, QR polling). Returns null if absent. */
 export async function getInstanceCredsById(instanceId: string): Promise<InstanceCreds | null> {

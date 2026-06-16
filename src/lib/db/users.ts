@@ -62,6 +62,42 @@ export async function listAssignableUsers(): Promise<AssignableUser[]> {
   return r.rows;
 }
 
+/** Active super_admin + admin users — recipients of system-wide notifications
+ *  (e.g. an inbound WhatsApp message). id + name only. */
+export async function listActiveAdmins(): Promise<{ id: string; name: string }[]> {
+  const r = await query<{ id: string; full_name: string | null; username: string }>(
+    `select id, full_name, username
+       from public.users
+      where is_active = true and role in ('super_admin', 'admin')
+      order by created_at asc`,
+  );
+  return r.rows.map((u) => ({ id: u.id, name: u.full_name ?? u.username }));
+}
+
+/** The fan-out recipient profile for a user: address + phone + per-channel
+ *  opt-in flags. Null when the user doesn't exist. */
+export interface NotificationRecipient {
+  id: string;
+  email: string;
+  full_name: string | null;
+  username: string;
+  is_active: boolean;
+  notification_phone: string | null;
+  notify_email: boolean;
+  notify_whatsapp: boolean;
+}
+
+export async function getNotificationRecipient(userId: string): Promise<NotificationRecipient | null> {
+  return queryOne<NotificationRecipient>(
+    `select id, email, full_name, username, is_active,
+            notification_phone, notify_email, notify_whatsapp
+       from public.users
+      where id = $1
+      limit 1`,
+    [userId],
+  );
+}
+
 export async function findUserById(id: string): Promise<UserListRow | null> {
   return queryOne<UserListRow>(
     `select id, username, email, full_name, role, is_active, created_at
