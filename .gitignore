@@ -33,6 +33,19 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# secret/editor backups — never commit (covers names .env* misses, e.g. prod.env.bak)
+*.env.bak
+*.env.save
+*.env.old
+*.swp
+*~
+*.bak
+*.save
+*.orig
+
+# local audit reports (not committed)
+SECURITY_AUDIT.md
+
 # vercel
 .vercel
 
