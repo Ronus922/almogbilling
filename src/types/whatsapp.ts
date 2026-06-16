@@ -13,11 +13,10 @@
 //   GET    /api/whatsapp/unlinked               → UnlinkedMessage[]    (inbound, no debtor)
 //   POST   /api/whatsapp/messages/[id]/link     body: { debtor_id } → { ok, linked }
 //   POST   /api/whatsapp/pull                   pull inbound (fallback) → { received, skipped }
-//   POST   /api/whatsapp/webhook                PUBLIC — Green API inbound (bearer token)
+//   POST   /api/webhooks/greenapi              PUBLIC — Green API inbound (canonical; ?secret= query param)
 //   GET    /api/debtors/search?q=…              → DebtorSearchResult[] (link dialog)
-//   GET/PUT /api/settings/green-api             credentials (admin only)
-//   POST    /api/settings/green-api/test        getStateInstance probe (admin only)
-//   GET/POST /api/settings/green-api/webhook    inbound webhook status / register (admin)
+//   (Per-employee Green API instances are managed via /api/whatsapp/instances/*;
+//    the canonical inbound webhook receiver is POST /api/webhooks/greenapi.)
 
 export type ChatDirection = 'sent' | 'received';
 /** Outgoing delivery lifecycle. Inbound rows are stored as 'sent' (already
