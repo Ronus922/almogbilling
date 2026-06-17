@@ -15,6 +15,20 @@
 8. **DRY Components** - מבנה שחוזר → קומפוננטה רוחבית עם props לתוכן/צבעים. אין קוד כפול!
 9. **CSS Cleanup** - כשמוחקים/מבטלים אלמנט → תמיד שאל: "למחוק גם את ה-CSS שלו?" אל תשאיר CSS יתום!
 10. **ניהול context (קריטי!)** - אחרי כל 2 משימות חייבים להריץ `/compact`. אם המשתמש מסרב - להזהיר: "השיחה תתקע בקרוב ולא יהיה אפשר לשחזר". לפני סגירה - `/end`. **אסור לחכות ל-3+ משימות בלי compact!**
+11. **Deploy = `npm run deploy` (לא `npm run build` לבד!)** - כל שינוי קוד שמיועד לפרודקשן **חייב** להסתיים ב-`npm run deploy` (build → `systemctl restart billing.service` → אימות שהשירות `active` ושהתהליך החדש עלה אחרי כתיבת `.next/BUILD_ID`). `npm run build` לבד דורס את `.next/standalone/` בלי restart → התהליך הרץ מגיש chunks ישנים → "This page couldn't load". `npm run build` לבד מותר **רק** לבדיקת קומפילציה, לעולם לא כ-deploy. הסקריפט: `scripts/deploy.sh`.
+
+
+---
+
+## 🎨 חוק עיצוב מחייב (DESIGN LAW — אסור לחרוג!)
+
+**לפני בנייה או שינוי של כל קומפוננטת UI — חובה (ללא יוצא מן הכלל):**
+
+1. **לקרוא את `DESIGN.md`** (מקור-האמת היחיד לעיצוב) ואת הסקילים **`/design-system`** ו-**`/side-panel`**, **וליישם אותם אחד-לאחד**. אין להתחיל UI בלי זה.
+2. **כל CREATE / EDIT נפתח ב-Side Panel** — `Sheet` עם `side="left"` ו-`sm:w-[55vw]` — **ולעולם לא ב-`Dialog`**. `Dialog`/`AlertDialog` שמורים אך ורק ל**אישורים** (מחיקה/יציאה-ללא-שמירה) ול**עריכת שדה בודד**.
+3. **טבלאות, טפסים, ריווחים, צבעים וטיפוגרפיה — אך ורק לפי `DESIGN.md`.** משתמשים בקומפוננטות המשותפות הקיימות (`@/components/side-panel/Section`, `PanelFooter`, ה-`Field` הסטנדרטי, פלטת ה-tones של `DESIGN.md`).
+4. **אסור לאלתר עיצוב, אסור לפרש מחדש, ואסור להסתמך על ברירות-המחדל של shadcn** כאשר קיימת הגדרה ב-`DESIGN.md` (למשל גובה Input `h-10` בפאנלים, `SelectValue` עם children-function כשיש JSX, error state `border-red-400 bg-red-50`).
+5. **סטייה מהכללים נחשבת באג לכל דבר** — מתקנים אותה כמו באג, לא "בהזדמנות". בכל קובץ UI שנוגעים בו במשימה — מוודאים תאימות מלאה ל-`DESIGN.md` ומתקנים סטיות קיימות באותו קובץ.
 
 
 ---
@@ -139,13 +153,14 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 
 ## 📚 מדריכים לפי נושא
 
-טען את המדריך הרלוונטי לפי הצורך (נוצר אוטומטית — 68 skills, 25 agents):
+טען את המדריך הרלוונטי לפי הצורך (נוצר אוטומטית — 71 skills, 28 agents):
 
 | Skill | תיאור |
 |------|------|
 | **מצב הפרויקט** | `@PROJECT.md` |
 | `/agent-browser` | Browser automation CLI for AI agents (vercel-labs/agent-browser) — drives headless Chrome… |
 | `/agent-skills-2026` | Agent Skills 2026 master skill — loads Code Reviewer, Excalidraw diagram generator, Google… |
+| `/agent-zero` | Deploy & manage Agent Zero (agent0ai) — an autonomous, "organic" multi-agent framework that… |
 | `/anthropic-skills` | Anthropic official skills suite — master skill loading MCP Builder, Skill Creator, Doc… |
 | `/api` | Backend & API development guidelines for Next.js 15 - Route handlers, Server Actions,… |
 | `/architecture` | Chat Style Architecture - VSCode Claude Code panel CSS layout and flow for applying custom… |
@@ -166,7 +181,7 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 | `/doc-coauthoring` | Structured 3-stage workflow for co-authoring documentation, proposals, technical specs,… |
 | `/docker-dev` | Docker optimization and security — Dockerfile optimization for size/speed/layers,… |
 | `/end` | End of Day - summarize work, update docs, commit, plan next session |
-| `/engineering-pro` | Engineering Pro — Master skill that loads all 7 engineering excellence skills: skill… |
+| `/engineering-pro` | 'Engineering Pro — Master skill that loads all 7 engineering excellence skills: skill… |
 | `/excalidraw` | Generate publication-ready architecture diagrams from natural language descriptions using… |
 | `/features` | Ready-made feature patterns and components - Icons, Authentication, Dashboard, CRUD,… |
 | `/figma` | Figma MCP integration - Extract designs, tokens, components, screenshots. |
@@ -175,12 +190,14 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 | `/gsd` | Get Shit Done - Meta-prompting system for structured, spec-driven development with Claude Code. |
 | `/gws` | Google Workspace orchestration via MCP tools — Gmail, Google Calendar, Drive, Docs, Sheets. |
 | `/hermes` | Deploy and manage a self-hosted Hermes Agent (Nous Research) Docker container —… |
+| `/hermes-workspace` | Deploy & run Hermes Workspace (outsourc-e) — a web + Electron control plane that sits ON… |
 | `/incident-commander` | Incident response framework for production outages — severity classification, timeline… |
 | `/init` | Initialize or update project documentation (CLAUDE.md, PROJECT.md) based on codebase analysis |
 | `/keyboard-shortcuts` | Complete keyboard shortcuts & tooltips system for Next.js/React apps — ShortcutDef types,… |
 | `/manychat` | ManyChat Infrastructure Template - Server-side orchestration, WhatsApp/IG chatbot, state… |
 | `/mcp-builder` | Guide for building MCP (Model Context Protocol) servers — integrates external APIs/services… |
 | `/migrations` | Supabase Database Migrations - CLI workflow, safe schema changes, rolling migrations,… |
+| `/mission-control` | Deploy & operate Mission Control (builderz-labs) — a self-hosted Next.js dashboard for… |
 | `/mobile` | Responsive Adaptation - Makes pages/components fully responsive across 9 screen sizes from… |
 | `/monitoring` | Error Monitoring & Alerting - Sentry + Next.js 15, Better Stack, Error Boundaries,… |
 | `/native` | React Native & Expo development - Monorepo architecture, code sharing between web and… |
@@ -220,6 +237,7 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 | API Agent | `@.claude/agents/api.md` | Backend & Data Expert - Next.js, Supabase |
 | Agent Browser | `@.claude/agents/agent-browser.md` | CLI Browser Automation Expert (vercel-labs/agent-browser) - headless Chrome from the shell… |
 | Agent Skills 2026 | `@.claude/agents/agent-skills-2026.md` | Agent Skills 2026 — handles code quality review, Excalidraw architecture diagrams, Google… |
+| Agent Zero | `@.claude/agents/agent-zero.md` | Deploy & manage Agent Zero (agent0ai) — autonomous multi-agent Docker platform with code… |
 | Animation Agent | `@.claude/agents/animations.md` | Motion & Animation Expert - GSAP Full Club, Framer Motion, ScrollTrigger |
 | Anthropic Skills | `@.claude/agents/anthropic-skills.md` | Anthropic Official Skills Agent — handles MCP server development, skill… |
 | CLI-Anything Agent | `@.claude/agents/cli-anything.md` | Software → Agent-Native CLI Generator - הופך כל תוכנה בעלת source code ל-CLI מובנה עבור AI… |
@@ -231,7 +249,9 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 | Figma Agent | `@.claude/agents/figma.md` | Figma-to-Code Expert - Extracts designs, tokens, and components from Figma via MCP and… |
 | Fullstack Agent | `@.claude/agents/fullstack.md` | Complete Project Expert - All Skills |
 | Hermes | `@.claude/agents/hermes.md` | Deploy & manage self-hosted Hermes Agent (Nous Research) Docker containers — gateway API,… |
+| Hermes Workspace | `@.claude/agents/hermes-workspace.md` | Deploy & run Hermes Workspace (outsourc-e) — web + Electron control plane over the Nous… |
 | ManyChat Agent | `@.claude/agents/manychat.md` | ManyChat Infrastructure Expert - Server-side chatbot orchestration, WhatsApp/IG flows,… |
+| Mission Control | `@.claude/agents/mission-control.md` | Deploy & operate Mission Control (builderz-labs) — self-hosted Next.js dashboard for… |
 | Mobile Agent | `@.claude/agents/mobile.md` | Responsive Adaptation Expert - Makes every page/component fully responsive across 9 screen… |
 | Native Agent | `@.claude/agents/native.md` | React Native & Expo Expert - Native mobile app development with Monorepo architecture |
 | Performance Agent | `@.claude/agents/performance.md` | Optimization Expert - Web Vitals, Caching |
