@@ -17,7 +17,7 @@ import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { RoleSelector } from './RoleSelector';
 import { PermissionMatrix } from './PermissionMatrix';
 import { getDefaultPermissions } from '@/lib/permissions/check';
-import type { ModulePermission, Role } from '@/lib/permissions/constants';
+import { roleLabel, type ModulePermission, type Role } from '@/lib/permissions/constants';
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEFAULT_ROLE: Role = 'manager';
@@ -25,6 +25,8 @@ const DEFAULT_ROLE: Role = 'manager';
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Role of the acting user — scopes which roles can be invited. */
+  currentUserRole: Role;
 }
 
 function defaultsFor(role: Role): ModulePermission[] {
@@ -44,8 +46,13 @@ function permsDifferFromDefaults(current: ModulePermission[], role: Role): boole
   });
 }
 
-export function InviteUserPanel({ open, onOpenChange }: Props) {
+export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) {
   const router = useRouter();
+  // super_admin may invite any role (incl. super_admin); admin may invite
+  // manager/viewer only. Enforced again server-side in POST /api/users.
+  const creatableRoles: Role[] = currentUserRole === 'super_admin'
+    ? ['super_admin', 'admin', 'manager', 'viewer']
+    : ['manager', 'viewer'];
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<Role>(DEFAULT_ROLE);
@@ -209,7 +216,7 @@ export function InviteUserPanel({ open, onOpenChange }: Props) {
                     value={role}
                     onChange={setRole}
                     disabled={submitting}
-                    excludeSuperAdmin
+                    allowedRoles={creatableRoles}
                   />
                 </div>
               </Section>
@@ -232,7 +239,7 @@ export function InviteUserPanel({ open, onOpenChange }: Props) {
                 </Section>
               ) : (
                 <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-                  תפקיד &quot;מנהל&quot; מקבל גישה מלאה לכל המודולים פרט לניהול משתמשים והרשאות. אין צורך בכוונון מטריצה.
+                  תפקיד &quot;{roleLabel(role)}&quot; אינו משתמש במטריצת הרשאות — ההרשאות נקבעות לפי התפקיד. אין צורך בכוונון.
                 </div>
               )}
             </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { ROLES, ROLE_STYLES, type Role } from '@/lib/permissions/constants';
+import { ROLE_STYLES, roleLabel } from '@/lib/permissions/constants';
 import { cn } from '@/lib/utils';
 import type { UserListRow } from '@/lib/db/users';
 
@@ -18,10 +18,6 @@ function initialsFromName(fullName: string | null, fallback: string): string {
     return (parts[0]!.charAt(0) + parts[1]!.charAt(0)).toUpperCase();
   }
   return src.slice(0, 2).toUpperCase();
-}
-
-function roleLabel(r: Role): string {
-  return ROLES.find((x) => x.value === r)?.label ?? r;
 }
 
 export function UserCard({ user, isSelf, onSelect }: Props) {

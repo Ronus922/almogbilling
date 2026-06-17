@@ -9,12 +9,13 @@ export interface UserListRow {
   full_name: string | null;
   role: Role;
   is_active: boolean;
+  allow_google_auth: boolean;
   created_at: string;
 }
 
 export async function listUsers(): Promise<UserListRow[]> {
   const r = await query<UserListRow>(
-    `select id, username, email, full_name, role, is_active, created_at
+    `select id, username, email, full_name, role, is_active, allow_google_auth, created_at
        from public.users
        order by is_active desc, created_at asc`,
   );
@@ -100,7 +101,7 @@ export async function getNotificationRecipient(userId: string): Promise<Notifica
 
 export async function findUserById(id: string): Promise<UserListRow | null> {
   return queryOne<UserListRow>(
-    `select id, username, email, full_name, role, is_active, created_at
+    `select id, username, email, full_name, role, is_active, allow_google_auth, created_at
        from public.users
        where id = $1
        limit 1`,

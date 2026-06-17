@@ -1,12 +1,13 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requireSuperAdmin, type Actor } from '@/lib/auth/actor';
+import { requireAdmin, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { query, withTransaction } from '@/lib/db';
 import {
   findUserById,
   countActiveSuperAdminsExcluding,
 } from '@/lib/db/users';
-import { getDefaultPermissions } from '@/lib/permissions/check';
+import { getDefaultPermissions, canManageRole } from '@/lib/permissions/check';
+import { writeAudit } from '@/lib/db/audit';
 import type { ModulePermission, Role } from '@/lib/permissions/constants';
 
 export const runtime = 'nodejs';
@@ -19,6 +20,7 @@ interface PatchBody {
   full_name?: unknown;
   role?: unknown;
   is_active?: unknown;
+  allow_google_auth?: unknown;
 }
 
 interface PermissionRow {
@@ -31,7 +33,7 @@ const ASSIGNABLE_ROLES: readonly Role[] = ['admin', 'manager', 'viewer', 'super_
 
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
   try {
-    await requireSuperAdmin();
+    await requireAdmin();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -63,7 +65,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
-    actor = await requireSuperAdmin();
+    actor = await requireAdmin();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -73,6 +75,15 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   const { id } = await ctx.params;
   const target = await findUserById(id);
   if (!target) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+  // Role-scope guard: an admin may only manage manager/viewer. Touching an admin
+  // or super_admin (role change, disable, profile) → 403. super_admin passes.
+  if (!canManageRole(actor.role, target.role)) {
+    return NextResponse.json(
+      { error: 'אין הרשאה לנהל משתמש בתפקיד זה' },
+      { status: 403 },
+    );
+  }
 
   let body: PatchBody;
   try {
@@ -84,6 +95,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   const wantsFullName = 'full_name' in body;
   const wantsRole = 'role' in body;
   const wantsActive = 'is_active' in body;
+  const wantsGoogleAuth = 'allow_google_auth' in body;
 
   let nextFullName: string | null = target.full_name;
   if (wantsFullName) {
@@ -111,6 +123,24 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     nextActive = body.is_active;
   }
 
+  let nextGoogleAuth: boolean = target.allow_google_auth;
+  if (wantsGoogleAuth) {
+    if (typeof body.allow_google_auth !== 'boolean') {
+      return NextResponse.json({ error: 'allow_google_auth חייב להיות boolean' }, { status: 400 });
+    }
+    nextGoogleAuth = body.allow_google_auth;
+  }
+
+  // ── Role-assignment scope ───────────────────────────────────────
+  // The actor may only assign a role they are allowed to manage. Blocks an
+  // admin from promoting a manager/viewer up to admin or super_admin.
+  if (wantsRole && nextRole !== target.role && !canManageRole(actor.role, nextRole)) {
+    return NextResponse.json(
+      { error: 'אין הרשאה להקצות תפקיד זה' },
+      { status: 403 },
+    );
+  }
+
   // ── Self-protection ─────────────────────────────────────────────
   if (target.id === actor.id && wantsRole && nextRole !== target.role) {
     return NextResponse.json({ error: 'אסור לשנות תפקיד של עצמך' }, { status: 403 });
@@ -119,33 +149,18 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'אסור להשבית את עצמך' }, { status: 403 });
   }
 
-  // ── Cannot demote/disable another super_admin ───────────────────
-  if (target.role === 'super_admin' && target.id !== actor.id) {
-    if (wantsRole && nextRole !== 'super_admin') {
-      return NextResponse.json(
-        { error: 'אסור לשנות תפקיד של סופר אדמין אחר' },
-        { status: 403 },
-      );
-    }
-    if (wantsActive && nextActive === false) {
-      return NextResponse.json(
-        { error: 'אסור להשבית סופר אדמין אחר' },
-        { status: 403 },
-      );
-    }
-  }
-
-  // ── Last-admin guard ───────────────────────────────────────────
-  // If demoting/disabling a super_admin (including self via active flag check
-  // that was rejected above), ensure at least one other active super_admin remains.
+  // ── Last-super-admin guard ──────────────────────────────────────
+  // A super_admin may manage other super_admins (demote / disable), but the
+  // system must never be left with 0 active super_admins. Demoting or disabling
+  // a super_admin when no OTHER active super_admin remains → 403.
   const willDemote = target.role === 'super_admin' && wantsRole && nextRole !== 'super_admin';
   const willDisable = target.role === 'super_admin' && target.is_active && wantsActive && nextActive === false;
   if (willDemote || willDisable) {
     const remaining = await countActiveSuperAdminsExcluding(target.id);
     if (remaining === 0) {
       return NextResponse.json(
-        { error: 'לא ניתן להשאיר את המערכת ללא סופר אדמין פעיל' },
-        { status: 409 },
+        { error: 'לא ניתן להסיר את הסופר אדמין האחרון — חייב להישאר לפחות סופר אדמין פעיל אחד' },
+        { status: 403 },
       );
     }
   }
@@ -156,9 +171,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   await withTransaction(async (client) => {
     await client.query(
       `update public.users
-         set full_name = $1, role = $2, is_active = $3
-         where id = $4`,
-      [nextFullName, nextRole, nextActive, target.id],
+         set full_name = $1, role = $2, is_active = $3, allow_google_auth = $4
+         where id = $5`,
+      [nextFullName, nextRole, nextActive, nextGoogleAuth, target.id],
     );
 
     if (roleChanged) {
@@ -196,6 +211,28 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     }
   });
 
+  await writeAudit({
+    actorUserId: actor.id,
+    action: 'updated',
+    entityType: 'user',
+    entityId: target.id,
+    changes: {
+      before: {
+        full_name: target.full_name, role: target.role,
+        is_active: target.is_active, allow_google_auth: target.allow_google_auth,
+      },
+      after: {
+        full_name: nextFullName, role: nextRole,
+        is_active: nextActive, allow_google_auth: nextGoogleAuth,
+      },
+    },
+    metadata: {
+      roleChanged, activeChanged,
+      googleAuthChanged: nextGoogleAuth !== target.allow_google_auth,
+      actor_role: actor.role,
+    },
+  });
+
   const updated = await findUserById(target.id);
   return NextResponse.json({ user: updated });
 }
@@ -203,7 +240,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
-    actor = await requireSuperAdmin();
+    actor = await requireAdmin();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -214,6 +251,15 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   const target = await findUserById(id);
   if (!target) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
+  // Role-scope guard: admin may only disable manager/viewer; never an admin or
+  // super_admin. super_admin passes (last-super-admin guard below still applies).
+  if (!canManageRole(actor.role, target.role)) {
+    return NextResponse.json(
+      { error: 'אין הרשאה לנהל משתמש בתפקיד זה' },
+      { status: 403 },
+    );
+  }
+
   if (target.id === actor.id) {
     return NextResponse.json({ error: 'אסור להשבית את עצמך' }, { status: 403 });
   }
@@ -222,8 +268,8 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
     const remaining = await countActiveSuperAdminsExcluding(target.id);
     if (remaining === 0) {
       return NextResponse.json(
-        { error: 'לא ניתן להשבית את הסופר אדמין האחרון' },
-        { status: 409 },
+        { error: 'לא ניתן להסיר את הסופר אדמין האחרון — חייב להישאר לפחות סופר אדמין פעיל אחד' },
+        { status: 403 },
       );
     }
   }
@@ -237,6 +283,14 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
       `delete from public.sessions where user_id = $1`,
       [target.id],
     );
+  });
+
+  await writeAudit({
+    actorUserId: actor.id,
+    action: 'disabled',
+    entityType: 'user',
+    entityId: target.id,
+    metadata: { email: target.email, role: target.role, actor_role: actor.role },
   });
 
   return NextResponse.json({ ok: true });

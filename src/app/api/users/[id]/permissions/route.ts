@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requireSuperAdmin } from '@/lib/auth/actor';
+import { requireAdmin, type Actor } from '@/lib/auth/actor';
+import { canManageRole } from '@/lib/permissions/check';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { writeAudit } from '@/lib/db/audit';
 import { query } from '@/lib/db';
 import { findUserById } from '@/lib/db/users';
 import { MODULES, type ModulePermission } from '@/lib/permissions/constants';
@@ -26,8 +28,9 @@ interface PermissionRow {
 const VALID_MODULES = new Set(MODULES.map((m) => m.key));
 
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requireSuperAdmin();
+    actor = await requireAdmin();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -37,6 +40,9 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   const { id } = await ctx.params;
   const target = await findUserById(id);
   if (!target) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!canManageRole(actor.role, target.role)) {
+    return NextResponse.json({ error: 'אין הרשאה לנהל משתמש בתפקיד זה' }, { status: 403 });
+  }
 
   const r = await query<PermissionRow>(
     `select module, can_view, can_edit
@@ -53,8 +59,9 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 }
 
 export async function PUT(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requireSuperAdmin();
+    actor = await requireAdmin();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -64,9 +71,12 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
   const { id } = await ctx.params;
   const target = await findUserById(id);
   if (!target) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!canManageRole(actor.role, target.role)) {
+    return NextResponse.json({ error: 'אין הרשאה לנהל משתמש בתפקיד זה' }, { status: 403 });
+  }
   if (target.role !== 'manager' && target.role !== 'viewer') {
     return NextResponse.json(
-      { error: 'מטריצת הרשאות חלה רק על מנהל פעילות וצופה' },
+      { error: 'מטריצת הרשאות חלה רק על מנהל וצופה' },
       { status: 400 },
     );
   }
@@ -100,6 +110,15 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
            updated_at = now()`,
     [target.id, module, canView, canEdit],
   );
+
+  await writeAudit({
+    actorUserId: actor.id,
+    action: 'updated',
+    entityType: 'user_permission',
+    entityId: target.id,
+    changes: { after: { module, can_view: canView, can_edit: canEdit } },
+    metadata: { actor_role: actor.role },
+  });
 
   return NextResponse.json({ ok: true });
 }

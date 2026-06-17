@@ -15,11 +15,19 @@ export interface RoleMeta {
 }
 
 export const ROLES: RoleMeta[] = [
-  { value: 'super_admin', label: 'סופר אדמין',  description: 'גישה מלאה לכל המערכת',                     level: 4 },
-  { value: 'admin',       label: 'מנהל',        description: 'גישה לכל המודולים פרט לניהול משתמשים',     level: 3 },
-  { value: 'manager',     label: 'מנהל פעילות', description: 'הרשאות לפי מטריצה — ערוך מודולים תפעוליים', level: 2 },
-  { value: 'viewer',      label: 'צופה',        description: 'הרשאות לפי מטריצה — צפייה בלבד',           level: 1 },
+  { value: 'super_admin', label: 'סופר אדמין', description: 'גישה מלאה לכל המערכת',                     level: 4 },
+  { value: 'admin',       label: 'אדמין',      description: 'גישה לכל המודולים פרט לניהול משתמשים',     level: 3 },
+  { value: 'manager',     label: 'מנהל',       description: 'הרשאות לפי מטריצה — ערוך מודולים תפעוליים', level: 2 },
+  { value: 'viewer',      label: 'צופה',       description: 'הרשאות לפי מטריצה — צפייה בלבד',           level: 1 },
 ];
+
+/**
+ * Single source of truth for a role's Hebrew display label. Use everywhere a
+ * role name is shown (tabs, cards, panels, emails) so labels never drift.
+ */
+export function roleLabel(role: Role): string {
+  return ROLES.find((r) => r.value === role)?.label ?? role;
+}
 
 export const ROLE_STYLES: Record<Role, { bg: string; fg: string; ring: string }> = {
   super_admin: { bg: 'bg-violet-50',  fg: 'text-violet-700',  ring: 'ring-violet-200'  },

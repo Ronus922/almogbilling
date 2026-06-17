@@ -8,8 +8,12 @@ interface Props {
   value: Role;
   onChange: (r: Role) => void;
   disabled?: boolean;
-  /** Hide super_admin option (used in invite dialog — only super_admin can be created via SQL). */
-  excludeSuperAdmin?: boolean;
+  /**
+   * Restrict the offered roles to this allow-list (order preserved from ROLES).
+   * Used to scope what the current actor may assign — e.g. an admin only sees
+   * manager / viewer. When omitted, all roles are shown.
+   */
+  allowedRoles?: Role[];
 }
 
 const ROLE_ICONS: Record<Role, LucideIcon> = {
@@ -19,8 +23,10 @@ const ROLE_ICONS: Record<Role, LucideIcon> = {
   viewer: Eye,
 };
 
-export function RoleSelector({ value, onChange, disabled, excludeSuperAdmin }: Props) {
-  const options = excludeSuperAdmin ? ROLES.filter((r) => r.value !== 'super_admin') : ROLES;
+export function RoleSelector({ value, onChange, disabled, allowedRoles }: Props) {
+  const options = allowedRoles
+    ? ROLES.filter((r) => allowedRoles.includes(r.value))
+    : ROLES;
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
       {options.map((meta) => {

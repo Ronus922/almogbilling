@@ -9,7 +9,10 @@ export const dynamic = 'force-dynamic';
 export default async function UsersSettingsPage() {
   const actor = await getCurrentActor();
   if (!actor) redirect('/login');
-  if (actor.role !== 'super_admin') redirect('/dashboard');
+  // Page is open to admin + super_admin. Per-action authority (who may touch
+  // whom) is enforced both in the UI (UsersClient) and server-side in the
+  // /api/users routes.
+  if (actor.role !== 'super_admin' && actor.role !== 'admin') redirect('/dashboard');
 
   const [users, invites] = await Promise.all([listUsers(), listOpenInvites()]);
 
@@ -19,6 +22,7 @@ export default async function UsersSettingsPage() {
         initialUsers={users}
         initialInvites={invites}
         currentUserId={actor.id}
+        currentUserRole={actor.role}
       />
     </div>
   );

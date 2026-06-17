@@ -4,13 +4,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
-  X, User as UserIcon, Shield, Activity, KeyRound, Power, PowerOff,
+  X, User as UserIcon, Shield, Activity, KeyRound, Power, PowerOff, LogIn,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -21,8 +22,9 @@ import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { RoleSelector } from './RoleSelector';
 import { PermissionMatrix } from './PermissionMatrix';
 import {
-  ROLES, ROLE_STYLES, type ModulePermission, type Role,
+  ROLE_STYLES, roleLabel, type ModulePermission, type Role,
 } from '@/lib/permissions/constants';
+import { canManageRole } from '@/lib/permissions/check';
 import { cn } from '@/lib/utils';
 import type { UserListRow } from '@/lib/db/users';
 
@@ -30,6 +32,7 @@ interface Props {
   open: boolean;
   userId: string | null;
   currentUserId: string;
+  currentUserRole: Role;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -38,7 +41,7 @@ interface UserResponse {
   permissions: ModulePermission[];
 }
 
-export function UserSidePanel({ open, userId, currentUserId, onOpenChange }: Props) {
+export function UserSidePanel({ open, userId, currentUserId, currentUserRole, onOpenChange }: Props) {
   const router = useRouter();
   const [user, setUser] = useState<UserListRow | null>(null);
   const [permissions, setPermissions] = useState<ModulePermission[]>([]);
@@ -83,7 +86,22 @@ export function UserSidePanel({ open, userId, currentUserId, onOpenChange }: Pro
   }, [open, userId]);
 
   const isSelf = user?.id === currentUserId;
-  const isSuper = user?.role === 'super_admin';
+  // Does the acting user have authority over this target's role at all?
+  // admin → only manager/viewer; super_admin → everyone (incl. other super_admins).
+  const canManageTarget = user ? canManageRole(currentUserRole, user.role) : false;
+  const lacksAuthority = !!user && !canManageTarget;
+  // Lifecycle actions (role change, enable/disable) are blocked only when acting
+  // on self or on a target outside the actor's scope. The server additionally
+  // refuses any change that would leave 0 active super_admins (last-admin guard).
+  const actionsDisabled = isSelf || lacksAuthority;
+  // Roles the actor may assign. admin managing manager/viewer → those two only;
+  // otherwise the full list (selector is disabled anyway, but the current role
+  // still highlights).
+  const editableRoles: Role[] = currentUserRole === 'super_admin'
+    ? ['super_admin', 'admin', 'manager', 'viewer']
+    : canManageTarget
+      ? ['manager', 'viewer']
+      : ['super_admin', 'admin', 'manager', 'viewer'];
 
   const draftDirty = useMemo(() => {
     if (!user) return false;
@@ -172,6 +190,30 @@ export function UserSidePanel({ open, userId, currentUserId, onOpenChange }: Pro
     }
   }
 
+  async function toggleGoogleAuth() {
+    if (!user) return;
+    const previous = user;
+    const next = !user.allow_google_auth;
+    setUser({ ...user, allow_google_auth: next }); // optimistic
+
+    try {
+      const r = await fetch(`/api/users/${user.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ allow_google_auth: next }),
+      });
+      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(data.error ?? 'עדכון נכשל');
+      setHasMutated(true);
+      toast.success(next ? 'כניסה עם Google הופעלה' : 'כניסה עם Google כובתה');
+      router.refresh();
+    } catch (e) {
+      setUser(previous); // rollback
+      toast.error((e as Error).message);
+    }
+  }
+
   function handleMatrixMutated() {
     setHasMutated(true);
     router.refresh();
@@ -179,7 +221,7 @@ export function UserSidePanel({ open, userId, currentUserId, onOpenChange }: Pro
 
   const matrixVisible = role === 'manager' || role === 'viewer';
   const styles = user ? ROLE_STYLES[user.role] : null;
-  const roleLabel = user ? (ROLES.find((r) => r.value === user.role)?.label ?? user.role) : '';
+  const roleLabelText = user ? roleLabel(user.role) : '';
 
   return (
     <>
@@ -208,7 +250,7 @@ export function UserSidePanel({ open, userId, currentUserId, onOpenChange }: Pro
                       'inline-flex items-center rounded-full px-3 py-0.5 text-xs font-semibold ring-1',
                       styles.bg, styles.fg, styles.ring,
                     )}>
-                      {roleLabel}
+                      {roleLabelText}
                     </span>
                     {!user.is_active && (
                       <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-0.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
@@ -306,7 +348,7 @@ export function UserSidePanel({ open, userId, currentUserId, onOpenChange }: Pro
                           if (user.is_active) setConfirmDisableOpen(true);
                           else void toggleActive();
                         }}
-                        disabled={isSelf || (isSuper && !isSelf)}
+                        disabled={actionsDisabled}
                         className={cn(
                           'gap-2 shrink-0',
                           user.is_active
@@ -319,6 +361,28 @@ export function UserSidePanel({ open, userId, currentUserId, onOpenChange }: Pro
                       </Button>
                     </div>
                   </Section>
+
+                  <Section title="כניסה עם Google" icon={LogIn} iconTone="blue">
+                    <div className="flex items-center justify-between gap-4 py-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-800">
+                          {user.allow_google_auth ? 'מאופשרת' : 'כבויה'}
+                        </div>
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          {user.allow_google_auth
+                            ? 'המשתמש יכול להתחבר עם חשבון Google התואם לאימייל שלו.'
+                            : 'התחברות עם Google חסומה. כניסה עם שם משתמש וסיסמה תמיד זמינה.'}
+                        </div>
+                      </div>
+                      <Switch
+                        checked={user.allow_google_auth}
+                        onCheckedChange={() => void toggleGoogleAuth()}
+                        disabled={lacksAuthority}
+                        aria-label="אפשר כניסה עם Google"
+                        className="shrink-0"
+                      />
+                    </div>
+                  </Section>
                 </TabsContent>
 
                 <TabsContent value="permissions" className="mt-5 space-y-4">
@@ -327,11 +391,14 @@ export function UserSidePanel({ open, userId, currentUserId, onOpenChange }: Pro
                       <RoleSelector
                         value={role}
                         onChange={setRole}
-                        disabled={isSelf || (isSuper && !isSelf)}
+                        disabled={actionsDisabled}
+                        allowedRoles={editableRoles}
                       />
-                      {(isSelf || (isSuper && !isSelf)) && (
+                      {actionsDisabled && (
                         <p className="mt-3 text-xs text-slate-500">
-                          {isSelf ? 'אסור לשנות תפקיד של עצמך.' : 'תפקיד של סופר אדמין אחר אינו ניתן לשינוי.'}
+                          {isSelf
+                            ? 'אסור לשנות תפקיד של עצמך.'
+                            : 'אין לך הרשאה לנהל משתמש בתפקיד זה.'}
                         </p>
                       )}
                     </div>
@@ -342,7 +409,7 @@ export function UserSidePanel({ open, userId, currentUserId, onOpenChange }: Pro
                       title="מטריצת הרשאות"
                       icon={KeyRound}
                       iconTone="blue"
-                      subtitle="חל רק על מנהל פעילות וצופה. שינוי שמור מיד."
+                      subtitle="חל רק על מנהל וצופה. שינוי שמור מיד."
                     >
                       <div className="py-2">
                         <PermissionMatrix
@@ -362,7 +429,7 @@ export function UserSidePanel({ open, userId, currentUserId, onOpenChange }: Pro
 
                   {!matrixVisible && (
                     <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                      סופר אדמין ומנהל לא משתמשים במטריצה — ההרשאות הן לפי הגדרות התפקיד.
+                      סופר אדמין ואדמין לא משתמשים במטריצה — ההרשאות הן לפי הגדרות התפקיד.
                     </div>
                   )}
                 </TabsContent>

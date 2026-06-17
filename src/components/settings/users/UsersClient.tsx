@@ -10,18 +10,20 @@ import { InviteCard } from './InviteCard';
 import { InviteUserPanel } from './InviteUserPanel';
 import { UserSidePanel } from './UserSidePanel';
 import type { UserListRow, InviteListRow } from '@/lib/db/users';
+import type { Role } from '@/lib/permissions/constants';
 
 interface Props {
   initialUsers: UserListRow[];
   initialInvites: InviteListRow[];
   currentUserId: string;
+  currentUserRole: Role;
 }
 
 function matchesSearch(haystack: string, needle: string): boolean {
   return haystack.toLowerCase().includes(needle);
 }
 
-export function UsersClient({ initialUsers, initialInvites, currentUserId }: Props) {
+export function UsersClient({ initialUsers, initialInvites, currentUserId, currentUserRole }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
 
@@ -144,12 +146,14 @@ export function UsersClient({ initialUsers, initialInvites, currentUserId }: Pro
       <InviteUserPanel
         open={inviteOpen}
         onOpenChange={setInviteOpen}
+        currentUserRole={currentUserRole}
       />
 
       <UserSidePanel
         open={!!activeUserId}
         userId={activeUserId}
         currentUserId={currentUserId}
+        currentUserRole={currentUserRole}
         onOpenChange={(o) => { if (!o) setActiveUserId(null); }}
       />
     </>

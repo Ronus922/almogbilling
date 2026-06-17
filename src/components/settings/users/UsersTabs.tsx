@@ -3,6 +3,7 @@
 import {
   Users, Crown, Shield, Briefcase, Eye, Clock, type LucideIcon,
 } from 'lucide-react';
+import { roleLabel } from '@/lib/permissions/constants';
 import { cn } from '@/lib/utils';
 
 export type UsersTabKey = 'all' | 'super_admin' | 'admin' | 'manager' | 'viewer' | 'invites';
@@ -24,13 +25,15 @@ interface TabDef {
   badgeIdle: string;
 }
 
+// Role-tab labels come from the central roleLabel() dictionary — never hardcode
+// them here (avoids drift with ROLES). 'all' / 'invites' are not roles.
 const TABS: TabDef[] = [
-  { key: 'all',         label: 'הכל',         icon: Users,     activeBg: 'bg-slate-600',   badgeIdle: 'bg-slate-100 text-slate-600' },
-  { key: 'super_admin', label: 'סופר אדמין',  icon: Crown,     activeBg: 'bg-violet-600',  badgeIdle: 'bg-violet-100 text-violet-700' },
-  { key: 'admin',       label: 'מנהל',        icon: Shield,    activeBg: 'bg-blue-600',    badgeIdle: 'bg-blue-100 text-blue-700' },
-  { key: 'manager',     label: 'מנהל פעילות', icon: Briefcase, activeBg: 'bg-emerald-600', badgeIdle: 'bg-emerald-100 text-emerald-700' },
-  { key: 'viewer',      label: 'צופה',        icon: Eye,       activeBg: 'bg-slate-600',   badgeIdle: 'bg-slate-100 text-slate-600' },
-  { key: 'invites',     label: 'ממתינים',     icon: Clock,     activeBg: 'bg-amber-600',   badgeIdle: 'bg-amber-100 text-amber-700' },
+  { key: 'all',         label: 'הכל',                    icon: Users,     activeBg: 'bg-slate-600',   badgeIdle: 'bg-slate-100 text-slate-600' },
+  { key: 'super_admin', label: roleLabel('super_admin'), icon: Crown,     activeBg: 'bg-violet-600',  badgeIdle: 'bg-violet-100 text-violet-700' },
+  { key: 'admin',       label: roleLabel('admin'),       icon: Shield,    activeBg: 'bg-blue-600',    badgeIdle: 'bg-blue-100 text-blue-700' },
+  { key: 'manager',     label: roleLabel('manager'),     icon: Briefcase, activeBg: 'bg-emerald-600', badgeIdle: 'bg-emerald-100 text-emerald-700' },
+  { key: 'viewer',      label: roleLabel('viewer'),      icon: Eye,       activeBg: 'bg-slate-600',   badgeIdle: 'bg-slate-100 text-slate-600' },
+  { key: 'invites',     label: 'ממתינים',                icon: Clock,     activeBg: 'bg-amber-600',   badgeIdle: 'bg-amber-100 text-amber-700' },
 ];
 
 export function UsersTabs({

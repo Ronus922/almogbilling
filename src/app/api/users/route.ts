@@ -1,10 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import {
-  requireSuperAdmin,
-  requireCanManageRole,
+  requireAdmin,
   type Actor,
 } from '@/lib/auth/actor';
+import { canManageRole } from '@/lib/permissions/check';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { writeAudit } from '@/lib/db/audit';
 import { query } from '@/lib/db';
 import {
   listUsers,
@@ -23,7 +24,9 @@ import { appUrl } from '@/lib/config';
 export const runtime = 'nodejs';
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const ASSIGNABLE_ROLES: readonly Role[] = ['admin', 'manager', 'viewer'];
+// Any real role is a syntactically valid invite target; WHO may actually grant
+// each role is enforced per-actor below via canManageRole().
+const VALID_ROLES: readonly Role[] = ['super_admin', 'admin', 'manager', 'viewer'];
 const VALID_MODULES = new Set(MODULES.map((m) => m.key));
 
 interface CustomPermissionEntry {
@@ -59,7 +62,7 @@ function sanitizeCustomPermissions(input: unknown): CustomPermissionEntry[] | nu
 
 export async function GET() {
   try {
-    await requireSuperAdmin();
+    await requireAdmin();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -80,7 +83,7 @@ interface PostBody {
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try {
-    actor = await requireSuperAdmin();
+    actor = await requireAdmin();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -104,16 +107,20 @@ export async function POST(req: NextRequest) {
   if (full_name.length < 2 || full_name.length > 80) {
     return NextResponse.json({ error: 'שם מלא חייב להיות 2-80 תווים' }, { status: 400 });
   }
-  if (!(ASSIGNABLE_ROLES as readonly string[]).includes(role)) {
+  if (!(VALID_ROLES as readonly string[]).includes(role)) {
     return NextResponse.json({ error: 'תפקיד לא תקין' }, { status: 400 });
   }
 
-  try {
-    await requireCanManageRole(role);
-  } catch (err) {
-    const r = authErrorResponse(err);
-    if (r) return r;
-    throw err;
+  // Server-side role-scope enforcement (never trust the UI):
+  //   admin       → may invite manager / viewer only
+  //   super_admin → may invite super_admin / admin / manager / viewer
+  // canManageRole() returns true for super_admin on any role, and for admin only
+  // on manager/viewer — so an admin inviting admin/super_admin gets 403 here.
+  if (!canManageRole(actor.role, role)) {
+    return NextResponse.json(
+      { error: 'אין הרשאה ליצור משתמש בתפקיד זה' },
+      { status: 403 },
+    );
   }
 
   if (await emailExistsAsUserOrOpenInvite(email)) {
@@ -139,6 +146,14 @@ export async function POST(req: NextRequest) {
     ],
   );
   const inviteId = r.rows[0]!.id;
+
+  await writeAudit({
+    actorUserId: actor.id,
+    action: 'created',
+    entityType: 'user_invite',
+    entityId: inviteId,
+    metadata: { email, full_name, role, actor_role: actor.role },
+  });
 
   const origin = appUrl();
   const acceptUrl = `${origin}/accept-invite?token=${encodeURIComponent(rawToken)}`;

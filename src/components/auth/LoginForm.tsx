@@ -19,6 +19,13 @@ const REASON_TOASTS: Record<string, string> = {
   disabled: 'החשבון שלך הושבת. פנה למנהל המערכת.',
 };
 
+// Map ?error=… query params (Google OAuth callback outcomes) to a toast.
+const ERROR_TOASTS: Record<string, string> = {
+  google_not_allowed: 'כניסה עם Google לא אושרה לחשבונך. פנה למנהל המערכת.',
+  google_failed: 'ההתחברות עם Google נכשלה. נסה שוב.',
+  google_unavailable: 'כניסה עם Google אינה זמינה כרגע.',
+};
+
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -31,8 +38,12 @@ export function LoginForm() {
 
   useEffect(() => {
     const reason = searchParams.get('reason');
+    const errorCode = searchParams.get('error');
     if (reason && REASON_TOASTS[reason]) {
       toast.error(REASON_TOASTS[reason]);
+      router.replace('/login', { scroll: false });
+    } else if (errorCode && ERROR_TOASTS[errorCode]) {
+      toast.error(ERROR_TOASTS[errorCode]);
       router.replace('/login', { scroll: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

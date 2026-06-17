@@ -8,7 +8,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
-import { ROLES, type Role } from '@/lib/permissions/constants';
+import { roleLabel } from '@/lib/permissions/constants';
 import { cn } from '@/lib/utils';
 import type { InviteListRow } from '@/lib/db/users';
 
@@ -26,10 +26,6 @@ function initialsFromName(fullName: string, fallback: string): string {
     return (parts[0]!.charAt(0) + parts[1]!.charAt(0)).toUpperCase();
   }
   return src.slice(0, 2).toUpperCase();
-}
-
-function roleLabel(r: Role): string {
-  return ROLES.find((x) => x.value === r)?.label ?? r;
 }
 
 function daysUntil(iso: string): number {

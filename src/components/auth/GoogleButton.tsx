@@ -1,16 +1,17 @@
 'use client';
 
 import { Button } from '@/components/ui/button';
-import { toast } from 'sonner';
 
 export function GoogleButton() {
   function onClick() {
-    toast.info("התחברות עם Google תהיה זמינה בפאזה הבאה");
+    // Full navigation to the server start route — it sets the one-shot
+    // state/nonce/PKCE cookies and redirects on to Google's consent screen.
+    window.location.href = '/api/auth/google/start';
   }
   return (
     <Button type="button" variant="outline" className="w-full gap-2" onClick={onClick}>
       <GoogleIcon />
-      <span>התחבר</span>
+      <span>התחבר עם Google</span>
     </Button>
   );
 }

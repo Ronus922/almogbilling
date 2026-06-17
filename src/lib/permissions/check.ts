@@ -25,12 +25,19 @@ export function hasPermission(
 }
 
 /**
- * Can `actorRole` create / delete / change role of a user with `targetRole`?
- * Per spec: only super_admin may manage user lifecycle (admin can edit profiles
- * of manager/viewer but cannot create/delete or change role).
+ * Can `actorRole` perform lifecycle management (create / change-role / disable /
+ * delete) on a user whose role is `targetRole`?
+ *
+ *  - super_admin manages everyone. The super_admin-vs-super_admin business rules
+ *    (self-protection, last-admin guard, no demoting/disabling another
+ *    super_admin) are enforced separately in the route handlers.
+ *  - admin manages only manager / viewer. An admin may never create, edit the
+ *    role of, disable, or delete another admin or a super_admin.
  */
-export function canManageRole(actorRole: Role, _targetRole: Role): boolean {
-  return actorRole === 'super_admin';
+export function canManageRole(actorRole: Role, targetRole: Role): boolean {
+  if (actorRole === 'super_admin') return true;
+  if (actorRole === 'admin') return targetRole === 'manager' || targetRole === 'viewer';
+  return false;
 }
 
 /**
