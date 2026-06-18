@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, LayoutGrid, Users, Truck, CheckSquare, AlertTriangle, Calendar,
   FileText, MessageCircle, MessagesSquare, Bell, Upload, Download, Sliders, MapPin,
-  Wrench, UserCog, Settings as SettingsIcon, ChevronRight, ChevronLeft,
+  UserCog, Settings as SettingsIcon, ChevronRight, ChevronLeft,
   type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -45,7 +45,6 @@ const MANAGE_MENU: MenuItem[] = [
   { label: 'ניהול סטטוס חיובים', icon: Sliders, href: '/statuses', module: 'status_management' },
   { label: 'תבניות ווטסאפ',      icon: MessageCircle, href: '/whatsapp-templates', module: 'whatsapp_templates' },
   { label: 'ניהול אזורים',       icon: MapPin, href: '/areas', module: 'rooms_areas' },
-  { label: 'ספקים',              icon: Wrench, href: '/vendors', module: 'vendors' },
   { label: 'משתמשים',            icon: UserCog, href: '/settings/users', module: 'users_management' },
   { label: 'הגדרות',             icon: SettingsIcon, href: '/settings', module: 'settings' },
 ];
