@@ -48,6 +48,10 @@ SECURITY_AUDIT.md
 RBAC_BUG_REPORT.md
 RBAC_MANAGER_AUDIT.md
 
+# auto-generated kit catalog (regenerated locally by gen-catalog.sh; kit
+# templates are the source of truth) — kept out of git so it stops churning.
+AGENTS.md
+
 # vercel
 .vercel
 
