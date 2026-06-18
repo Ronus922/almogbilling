@@ -15,6 +15,9 @@ import type {
   TaskStatus,
   TaskWritableFields,
 } from '@/lib/types/tasks';
+import type { TargetType } from '@/lib/types/targets';
+
+const TARGET_TYPES: readonly TargetType[] = ['room', 'area'];
 
 const STATUSES: readonly TaskStatus[] = ['open', 'in_progress', 'done', 'cancelled'];
 const PRIORITIES: readonly TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
@@ -109,6 +112,21 @@ export function coerceTaskInput(
       return { ok: false, error: 'invalid_related_entity_type' };
     }
     fields.related_entity_type = ret as RelatedEntityType | null;
+  }
+
+  // Optional target (יעד): target_type ∈ {room, area} + target_id uuid; both
+  // nullable. FK existence not enforced (target_id points at two tables).
+  if (has(body, 'target_type')) {
+    const tt = strOrNull(body.target_type);
+    if (tt !== null && !TARGET_TYPES.includes(tt as TargetType)) {
+      return { ok: false, error: 'invalid_target_type' };
+    }
+    fields.target_type = tt as TargetType | null;
+  }
+  if (has(body, 'target_id')) {
+    const id = strOrNull(body.target_id);
+    if (id !== null && !UUID_RE.test(id)) return { ok: false, error: 'invalid_target_id' };
+    fields.target_id = id;
   }
 
   return { ok: true, fields };

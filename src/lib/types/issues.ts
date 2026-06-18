@@ -1,6 +1,8 @@
 // Issues (תקלות) domain types — Module 2.
 // Reuses the Module 1 Notifications + Reminders infrastructure.
 
+import type { TargetType } from './targets';
+
 export type IssueStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type IssuePriority = 'low' | 'normal' | 'high' | 'urgent';
 export type IssueLocationType = 'apartment' | 'area' | 'general';
@@ -11,6 +13,9 @@ export interface Issue {
   description: string | null;
   location_type: IssueLocationType;
   location_text: string | null;
+  /** Optional polymorphic target: 'room' → debtors.id, 'area' → areas.id. */
+  target_type: TargetType | null;
+  target_id: string | null;
   priority: IssuePriority;
   status: IssueStatus;
   assigned_to_user_id: string | null;
@@ -37,6 +42,8 @@ export interface IssueWritableFields {
   description: string | null;
   location_type: IssueLocationType;
   location_text: string | null;
+  target_type: TargetType | null;
+  target_id: string | null;
   priority: IssuePriority;
   status: IssueStatus;
   assigned_to_user_id: string | null;

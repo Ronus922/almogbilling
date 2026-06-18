@@ -1153,6 +1153,39 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 
 ---
 
+## 27. Combobox (searchable select)
+
+כש-`Select` רגיל (§6) לא מספיק כי הרשימה ארוכה וצריך **חיפוש בתוך הרשימה** —
+משתמשים ב-`Combobox` (`@/components/ui/combobox`). בנוי על `Popover` (base-ui) +
+שדה חיפוש + רשימה מסוננת **client-side** (ללא תלות `cmdk`). single-select.
+
+```tsx
+<Combobox
+  value={id}                         // string | null
+  onChange={(v) => setId(v)}         // (string | null) => void
+  options={items.map((x) => ({ value: x.id, label: x.name, keywords: x.extra, trailing: <Badge/> }))}
+  placeholder="בחר דירה"
+  searchPlaceholder="חיפוש..."
+  emptyText="לא נמצאו תוצאות"
+  disabled={disabled}
+/>
+```
+
+- **Trigger**: כפתור בגובה `h-10` (אחיד עם `Select`), `border-input`, צ'בון `ChevronsUpDown`
+  בקצה הלוגי; placeholder ב-`text-ink-ghost`. focus ring מותגי (§2).
+- **Popup**: `PopoverContent` ברוחב ה-trigger (`w-(--anchor-width) min-w-72 p-0`),
+  `dir="rtl"`. בראש — שדה חיפוש עם אייקון `Search` ב-start (`autoFocus`); מתחת —
+  רשימה גלילה `max-h-64`. כל פריט: `Check` (גלוי לנבחר) + תווית + `trailing` אופציונלי
+  (badge). הנבחר `bg-blue-50 text-blue-700`.
+- **חיפוש**: סינון client-side על `label`+`keywords` (כבר טעון בזיכרון). `Enter` בוחר
+  את התוצאה הראשונה. ריק → `emptyText`.
+- **RTL (קריטי)**: `dir="rtl"` + `flex-row` רגיל. **אסור** `flex-row-reverse` בתוך
+  אב RTL (היפוך כפול).
+- **אופציונלי/ניקוי**: `value=null` = לא נבחר. ניקוי בחירה דרך ה-parent (לדוגמה
+  `TargetField` עם כפתור "נקה" + בורר-סוג של 2 אופציות בדפוס Mode selector §19).
+
+---
+
 ## אם משהו חסר כאן
 
 לפני שאתה מנחש — בדוק שתי קומפוננטות קיימות באותה משפחה (טבלאות, קלפים, וכו'). אם אין דפוס קיים — שאל את המשתמש לפני שאתה ממציא וריאציה חדשה. עדכון ל-DESIGN.md הוא חלק מ-MR — לא משאיר decision לא-מתועד.

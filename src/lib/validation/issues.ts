@@ -12,6 +12,9 @@ import type {
   IssueStatus,
   IssueWritableFields,
 } from '@/lib/types/issues';
+import type { TargetType } from '@/lib/types/targets';
+
+const TARGET_TYPES: readonly TargetType[] = ['room', 'area'];
 
 const STATUSES: readonly IssueStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
 const PRIORITIES: readonly IssuePriority[] = ['low', 'normal', 'high', 'urgent'];
@@ -99,6 +102,21 @@ export function coerceIssueInput(
     const id = strOrNull(body.assigned_to_user_id);
     if (id !== null && !UUID_RE.test(id)) return { ok: false, error: 'invalid_assigned_to_user_id' };
     fields.assigned_to_user_id = id;
+  }
+
+  // Optional target (יעד): target_type ∈ {room, area} + target_id uuid; both
+  // nullable. FK existence not enforced (target_id points at two tables).
+  if (has(body, 'target_type')) {
+    const tt = strOrNull(body.target_type);
+    if (tt !== null && !TARGET_TYPES.includes(tt as TargetType)) {
+      return { ok: false, error: 'invalid_target_type' };
+    }
+    fields.target_type = tt as TargetType | null;
+  }
+  if (has(body, 'target_id')) {
+    const id = strOrNull(body.target_id);
+    if (id !== null && !UUID_RE.test(id)) return { ok: false, error: 'invalid_target_id' };
+    fields.target_id = id;
   }
 
   // Business rule: closing as 'resolved' requires resolution notes.

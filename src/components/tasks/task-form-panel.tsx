@@ -26,6 +26,8 @@ import {
 import type {
   ReminderChannel, Task, TaskComment, TaskPriority, TaskStatus,
 } from '@/lib/types/tasks';
+import type { TargetType } from '@/lib/types/targets';
+import { TargetField } from '@/components/targets/TargetField';
 
 interface Assignee {
   id: string;
@@ -63,6 +65,8 @@ interface FormState {
   due_time: string;
   assigned_to_user_id: string; // '' = none
   apartment_number: string;
+  target_type: TargetType | null;
+  target_id: string | null;
 }
 
 const EMPTY_FORM: FormState = {
@@ -74,6 +78,8 @@ const EMPTY_FORM: FormState = {
   due_time: '',
   assigned_to_user_id: '',
   apartment_number: '',
+  target_type: null,
+  target_id: null,
 };
 
 const CHANNEL_LABEL: Record<ReminderChannel, string> = {
@@ -92,6 +98,8 @@ function fromTask(t: Task): FormState {
     due_time: t.due_time ? t.due_time.slice(0, 5) : '',
     assigned_to_user_id: t.assigned_to_user_id ?? '',
     apartment_number: t.apartment_number ?? '',
+    target_type: t.target_type,
+    target_id: t.target_id,
   };
 }
 
@@ -222,6 +230,9 @@ export function TaskFormPanel({ open, task, canEdit, assignees, onOpenChange, on
         due_time: form.due_time || null,
         assigned_to_user_id: form.assigned_to_user_id || null,
         apartment_number: form.apartment_number.trim() || null,
+        // Target is optional. A type without a value persists as no target.
+        target_type: form.target_id ? form.target_type : null,
+        target_id: form.target_id || null,
       };
       // Only send reminders array if it changed (replacement semantics).
       const remindersChanged =
@@ -444,6 +455,11 @@ export function TaskFormPanel({ open, task, canEdit, assignees, onOpenChange, on
                       className="h-10 tabular-nums"
                     />
                   </div>
+                  <TargetField
+                    value={{ type: form.target_type, id: form.target_id }}
+                    onChange={(t) => setForm((prev) => ({ ...prev, target_type: t.type, target_id: t.id }))}
+                    disabled={disabled}
+                  />
                 </div>
               </Section>
 

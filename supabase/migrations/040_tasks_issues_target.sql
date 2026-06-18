@@ -1,0 +1,39 @@
+-- 040_tasks_issues_target.sql
+-- Adds an OPTIONAL "target" (יעד) to tasks and issues: a polymorphic pointer to
+-- either an apartment (debtors row, target_type='room') or an area
+-- (areas row, target_type='area'). Both columns are nullable — the field is
+-- fully optional. No cross-table FK (target_id points at two tables by type),
+-- matching the project's existing related_entity_type/related_entity_id pattern.
+--
+-- Additive only and idempotent.
+--
+-- Run: set -a; source <(sudo cat /etc/billing/billing.env); set +a
+--      psql "$DIRECT_URL" -f supabase/migrations/040_tasks_issues_target.sql
+
+BEGIN;
+
+-- ── tasks ──────────────────────────────────────────────────────────────────
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS target_type text;
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS target_id   uuid;
+
+DO $$ BEGIN
+  ALTER TABLE public.tasks ADD CONSTRAINT tasks_target_type_check
+    CHECK (target_type IN ('room', 'area'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_tasks_target
+  ON public.tasks (target_type, target_id) WHERE target_id IS NOT NULL;
+
+-- ── issues ─────────────────────────────────────────────────────────────────
+ALTER TABLE public.issues ADD COLUMN IF NOT EXISTS target_type text;
+ALTER TABLE public.issues ADD COLUMN IF NOT EXISTS target_id   uuid;
+
+DO $$ BEGIN
+  ALTER TABLE public.issues ADD CONSTRAINT issues_target_type_check
+    CHECK (target_type IN ('room', 'area'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_issues_target
+  ON public.issues (target_type, target_id) WHERE target_id IS NOT NULL;
+
+COMMIT;

@@ -17,7 +17,7 @@ const TASK_COLUMNS = `
   id, title, description, status, priority,
   due_date::text as due_date, due_time::text as due_time,
   assigned_to_user_id, debtor_id, apartment_number,
-  related_entity_type, related_entity_id, sort_order, is_archived,
+  related_entity_type, related_entity_id, target_type, target_id, sort_order, is_archived,
   completed_at::text as completed_at,
   created_by, created_by_name,
   created_at::text as created_at, updated_at::text as updated_at
@@ -37,6 +37,8 @@ const WRITABLE_COLUMNS: (keyof TaskWritableFields)[] = [
   'apartment_number',
   'related_entity_type',
   'related_entity_id',
+  'target_type',
+  'target_id',
 ];
 
 // ── List ──────────────────────────────────────────────────────────────────

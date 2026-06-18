@@ -30,6 +30,8 @@ import {
 import type {
   Issue, IssueComment, IssueImage, IssueLocationType, IssuePriority, IssueStatus,
 } from '@/lib/types/issues';
+import type { TargetType } from '@/lib/types/targets';
+import { TargetField } from '@/components/targets/TargetField';
 
 interface Assignee {
   id: string;
@@ -55,6 +57,8 @@ interface FormState {
   status: IssueStatus;
   assigned_to_user_id: string; // '' = none
   resolution_notes: string;
+  target_type: TargetType | null;
+  target_id: string | null;
 }
 
 const EMPTY_FORM: FormState = {
@@ -66,6 +70,8 @@ const EMPTY_FORM: FormState = {
   status: 'open',
   assigned_to_user_id: '',
   resolution_notes: '',
+  target_type: null,
+  target_id: null,
 };
 
 function fromIssue(i: Issue): FormState {
@@ -78,6 +84,8 @@ function fromIssue(i: Issue): FormState {
     status: i.status,
     assigned_to_user_id: i.assigned_to_user_id ?? '',
     resolution_notes: i.resolution_notes ?? '',
+    target_type: i.target_type,
+    target_id: i.target_id,
   };
 }
 
@@ -190,6 +198,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
         status: form.status,
         assigned_to_user_id: form.assigned_to_user_id || null,
         resolution_notes: form.resolution_notes.trim() || null,
+        // Target is optional. A type without a value persists as no target.
+        target_type: form.target_id ? form.target_type : null,
+        target_id: form.target_id || null,
       };
 
       const url = isEdit ? `/api/issues/${issue!.id}` : '/api/issues';
@@ -463,6 +474,13 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
                       className={cn('h-10', form.location_type === 'apartment' && 'tabular-nums')}
                     />
                   </div>
+                </div>
+                <div className="pb-2">
+                  <TargetField
+                    value={{ type: form.target_type, id: form.target_id }}
+                    onChange={(t) => setForm((prev) => ({ ...prev, target_type: t.type, target_id: t.id }))}
+                    disabled={disabled}
+                  />
                 </div>
               </Section>
 

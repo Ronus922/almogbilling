@@ -1,5 +1,7 @@
 // Tasks / Notifications / Reminders domain types — Module 1.
 
+import type { TargetType } from './targets';
+
 // ── Tasks ────────────────────────────────────────────────────────────────
 export type TaskStatus = 'open' | 'in_progress' | 'done' | 'cancelled';
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
@@ -21,6 +23,9 @@ export interface Task {
   apartment_number: string | null;
   related_entity_type: RelatedEntityType | null;
   related_entity_id: string | null;
+  /** Optional polymorphic target: 'room' → debtors.id, 'area' → areas.id. */
+  target_type: TargetType | null;
+  target_id: string | null;
   sort_order: number;
   is_archived: boolean;
   completed_at: string | null; // stamped on status→done, cleared when it leaves done
@@ -51,6 +56,8 @@ export interface TaskWritableFields {
   apartment_number: string | null;
   related_entity_type: RelatedEntityType | null;
   related_entity_id: string | null;
+  target_type: TargetType | null;
+  target_id: string | null;
 }
 
 export type TaskSort = 'created_desc' | 'due_asc' | 'priority_desc' | 'updated_desc';

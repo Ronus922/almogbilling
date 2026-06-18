@@ -12,7 +12,7 @@ import type {
 } from '@/lib/types/issues';
 
 const ISSUE_COLUMNS = `
-  id, title, description, location_type, location_text, priority, status,
+  id, title, description, location_type, location_text, target_type, target_id, priority, status,
   assigned_to_user_id, images, resolution_notes, resolved_at, is_archived,
   created_by, created_by_name, created_at, updated_at
 `;
@@ -23,6 +23,8 @@ const WRITABLE_COLUMNS: (keyof IssueWritableFields)[] = [
   'description',
   'location_type',
   'location_text',
+  'target_type',
+  'target_id',
   'priority',
   'status',
   'assigned_to_user_id',
