@@ -2,7 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listIssues, createIssue, getIssueKpis } from '@/lib/db/issues';
+import { createReminder } from '@/lib/db/reminders';
 import { coerceIssueInput } from '@/lib/validation/issues';
+// Generic, entity-agnostic reminders coercion (reused from the tasks module).
+import { coerceReminders } from '@/lib/validation/tasks';
 import { notifyIssue, createNotification } from '@/services/notifications';
 import { listActiveAdmins } from '@/lib/db/users';
 import type {
@@ -116,12 +119,30 @@ export async function POST(req: NextRequest) {
   const result = coerceIssueInput(bodyRec, 'create');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
 
+  const reminders = coerceReminders(bodyRec);
+  if (reminders && !reminders.ok) {
+    return NextResponse.json({ error: reminders.error }, { status: 400 });
+  }
+
   try {
     const issue = await createIssue(
       result.fields as Partial<IssueWritableFields> & { title: string },
       actor.id,
       actor.full_name ?? actor.username,
     );
+
+    // Reminders attached to this issue (entity_type='issue' → fired by the cron engine).
+    if (reminders && reminders.ok) {
+      for (const r of reminders.reminders) {
+        await createReminder({
+          entityType: 'issue',
+          entityId: issue.id,
+          userId: issue.assigned_to_user_id ?? actor.id,
+          remindAt: r.remind_at,
+          channel: r.channel,
+        });
+      }
+    }
 
     // "תקלה חדשה נפתחה" → every active admin except the reporter. Fire-and-forget
     // after the real insert so the response isn't blocked by the fan-out.

@@ -32,6 +32,9 @@ import type {
 } from '@/lib/types/issues';
 import type { TargetType } from '@/lib/types/targets';
 import { TargetField } from '@/components/targets/TargetField';
+import {
+  RemindersSection, splitRemindAt, buildRemindersPayload, type ReminderRow,
+} from '@/components/reminders/RemindersSection';
 
 interface Assignee {
   id: string;
@@ -102,6 +105,8 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
   const [comments, setComments] = useState<IssueComment[]>([]);
   const [images, setImages] = useState<IssueImage[]>([]);
+  const [reminders, setReminders] = useState<ReminderRow[]>([]);
+  const [initialReminders, setInitialReminders] = useState<ReminderRow[]>([]);
   const [linkedTaskId, setLinkedTaskId] = useState<string | null>(null);
   const [commentInput, setCommentInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -120,9 +125,16 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
         issue?: Issue & { linked_task_id?: string | null };
         comments?: IssueComment[];
         images?: IssueImage[];
+        reminders?: { id: string; remind_at: string; channel: ReminderRow['channel'] }[];
       };
       setComments(Array.isArray(data.comments) ? data.comments : []);
       setImages(Array.isArray(data.images) ? data.images : []);
+      const rem = (data.reminders ?? []).map((x) => {
+        const { date, time } = splitRemindAt(x.remind_at);
+        return { date, time, channel: x.channel };
+      });
+      setReminders(rem);
+      setInitialReminders(rem);
       // linked task id comes back on the enriched issue row
       const lt = (data.issue as { linked_task_id?: string | null } | undefined)?.linked_task_id;
       setLinkedTaskId(lt ?? null);
@@ -138,6 +150,8 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
       setInitial(init);
       setComments([]);
       setImages([]);
+      setReminders([]);
+      setInitialReminders([]);
       setLinkedTaskId(null);
       setCommentInput('');
       setTitleTouched(false);
@@ -157,8 +171,10 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
     form.status === 'resolved' && !form.resolution_notes.trim();
 
   const dirty = useMemo(
-    () => JSON.stringify(form) !== JSON.stringify(initial),
-    [form, initial],
+    () =>
+      JSON.stringify(form) !== JSON.stringify(initial) ||
+      JSON.stringify(reminders) !== JSON.stringify(initialReminders),
+    [form, initial, reminders, initialReminders],
   );
   const canSubmit = canEdit && !!form.title.trim() && !resolutionMissing && !submitting;
 
@@ -181,6 +197,11 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
       if (resolutionMissing) toast.error('יש להזין הערות טיפול לסטטוס "טופלה"');
       return;
     }
+    const remindersPayload = buildRemindersPayload(reminders);
+    if (remindersPayload === null) {
+      toast.error('תאריך תזכורת לא תקין');
+      return;
+    }
     setSubmitting(true);
     try {
       const body: Record<string, unknown> = {
@@ -194,6 +215,10 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
         target_type: form.target_id ? form.target_type : null,
         target_id: form.target_id || null,
       };
+      // Only send reminders array if it changed (replacement semantics — same as tasks).
+      const remindersChanged =
+        JSON.stringify(reminders) !== JSON.stringify(initialReminders);
+      if (remindersChanged) body.reminders = remindersPayload;
 
       const url = isEdit ? `/api/issues/${issue!.id}` : '/api/issues';
       const method = isEdit ? 'PATCH' : 'POST';
@@ -473,6 +498,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
                   </Select>
                 </div>
               </Section>
+
+              {/* Reminders (shared component — also used by the task form). Optional. */}
+              <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} />
 
               {/* Images — edit mode only (need an issue id to attach to) */}
               {isEdit && (

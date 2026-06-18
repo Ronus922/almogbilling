@@ -8,8 +8,14 @@ import {
   deleteIssue,
   listIssueComments,
 } from '@/lib/db/issues';
+import {
+  listRemindersForEntity, createReminder, deleteRemindersForEntity,
+} from '@/lib/db/reminders';
 import { signedUrlForIssueImage, removeIssueImages } from '@/lib/storage/issueStorage';
 import { coerceIssueInput, isUuid } from '@/lib/validation/issues';
+// Generic reminders coercion lives in the tasks validation module (it is
+// entity-agnostic — {remind_at, channel}); reused here for issue reminders.
+import { coerceReminders } from '@/lib/validation/tasks';
 import { notifyIssue } from '@/services/notifications';
 import type { IssueImage } from '@/lib/types/issues';
 
@@ -34,16 +40,17 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   const issue = await getIssueById(id);
   if (!issue) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  const [comments, images] = await Promise.all([
+  const [comments, images, reminders] = await Promise.all([
     listIssueComments(id),
     Promise.all(
       issue.images.map(
         async (path): Promise<IssueImage> => ({ path, signed_url: await signedUrlForIssueImage(path) }),
       ),
     ),
+    listRemindersForEntity('issue', id),
   ]);
 
-  return NextResponse.json({ issue, comments, images });
+  return NextResponse.json({ issue, comments, images, reminders });
 }
 
 // PATCH /api/issues/[id]  (issues:edit)
@@ -70,6 +77,11 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
   const result = coerceIssueInput(bodyRec, 'update');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+
+  const reminders = coerceReminders(bodyRec);
+  if (reminders && !reminders.ok) {
+    return NextResponse.json({ error: reminders.error }, { status: 400 });
+  }
 
   // is_archived passthrough (boolean).
   const patch: Record<string, unknown> = { ...result.fields };
@@ -100,6 +112,20 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
     const issue = await updateIssue(id, patch);
     if (!issue) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+    // Replace reminders if the client sent a reminders array (same as tasks).
+    if (reminders && reminders.ok) {
+      await deleteRemindersForEntity('issue', id);
+      for (const r of reminders.reminders) {
+        await createReminder({
+          entityType: 'issue',
+          entityId: id,
+          userId: issue.assigned_to_user_id ?? actor.id,
+          remindAt: r.remind_at,
+          channel: r.channel,
+        });
+      }
+    }
 
     // Notify on assignment CHANGE to a new, different user (not the editor).
     const newAssignee = issue.assigned_to_user_id;
@@ -165,7 +191,9 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
 
   // Best-effort image cleanup (storage), then delete the row.
   // issue_comments cascade via FK; tasks.issue_id is ON DELETE SET NULL.
+  // Reminders use a generic entity_id (no FK), so clean them up explicitly.
   await removeIssueImages(issue.images);
+  await deleteRemindersForEntity('issue', id);
   const ok = await deleteIssue(id);
   if (!ok) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   return new NextResponse(null, { status: 204 });
