@@ -16,7 +16,7 @@ import type {
 const TASK_COLUMNS = `
   id, title, description, status, priority,
   due_date::text as due_date, due_time::text as due_time,
-  assigned_to_user_id, debtor_id, apartment_number,
+  assigned_to_user_id, supplier_id, debtor_id, apartment_number,
   related_entity_type, related_entity_id, target_type, target_id, sort_order, is_archived,
   completed_at::text as completed_at,
   created_by, created_by_name,
@@ -33,6 +33,7 @@ const WRITABLE_COLUMNS: (keyof TaskWritableFields)[] = [
   'due_date',
   'due_time',
   'assigned_to_user_id',
+  'supplier_id',
   'debtor_id',
   'related_entity_type',
   'related_entity_id',
@@ -59,6 +60,10 @@ export async function listTasks(filters: TaskListFilters): Promise<TaskWithAssig
   if (filters.assignedTo) {
     vals.push(filters.assignedTo);
     where.push(`t.assigned_to_user_id = $${vals.length}`);
+  }
+  if (filters.supplier_id) {
+    vals.push(filters.supplier_id);
+    where.push(`t.supplier_id = $${vals.length}`);
   }
   if (filters.relatedEntityType) {
     vals.push(filters.relatedEntityType);
@@ -93,9 +98,11 @@ export async function listTasks(filters: TaskListFilters): Promise<TaskWithAssig
   const r = await query<TaskWithAssignee>(
     `select ${TASK_COLUMNS.split(',').map((c) => 't.' + c.trim()).join(', ')},
             u.full_name as assigned_to_name,
+            s.display_name as supplier_display_name,
             coalesce(cc.cnt, 0)::int as comment_count
        from public.tasks t
        left join public.users u on u.id = t.assigned_to_user_id
+       left join public.suppliers s on s.id = t.supplier_id
        left join (
          select task_id, count(*)::int as cnt
            from public.task_comments
@@ -177,9 +184,11 @@ export async function getTaskById(id: string): Promise<TaskWithAssignee | null> 
   return queryOne<TaskWithAssignee>(
     `select ${TASK_COLUMNS.split(',').map((c) => 't.' + c.trim()).join(', ')},
             u.full_name as assigned_to_name,
+            s.display_name as supplier_display_name,
             coalesce(cc.cnt, 0)::int as comment_count
        from public.tasks t
        left join public.users u on u.id = t.assigned_to_user_id
+       left join public.suppliers s on s.id = t.supplier_id
        left join (
          select task_id, count(*)::int as cnt
            from public.task_comments

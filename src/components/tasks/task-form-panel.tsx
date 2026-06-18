@@ -27,7 +27,9 @@ import type {
   ReminderChannel, Task, TaskComment, TaskPriority, TaskStatus,
 } from '@/lib/types/tasks';
 import type { TargetType } from '@/lib/types/targets';
+import type { AssigneeType, SupplierOption } from '@/lib/types/assignee';
 import { TargetField } from '@/components/targets/TargetField';
+import { AssigneeField } from '@/components/assignee/AssigneeField';
 import {
   RemindersSection, splitRemindAt, buildRemindersPayload, type ReminderRow,
 } from '@/components/reminders/RemindersSection';
@@ -49,6 +51,7 @@ interface Props {
   task: Task | null;
   canEdit: boolean;
   assignees: Assignee[];
+  suppliers: SupplierOption[];
   onOpenChange: (o: boolean) => void;
   onSaved: () => void;
 }
@@ -60,7 +63,10 @@ interface FormState {
   priority: TaskPriority;
   due_date: string;
   due_time: string;
+  /** Mutually-exclusive handler model (shared with issues). */
+  assignee_type: AssigneeType;
   assigned_to_user_id: string; // '' = none
+  supplier_id: string;         // '' = none
   target_type: TargetType | null;
   target_id: string | null;
 }
@@ -72,12 +78,16 @@ const EMPTY_FORM: FormState = {
   priority: 'normal',
   due_date: '',
   due_time: '',
+  assignee_type: 'none',
   assigned_to_user_id: '',
+  supplier_id: '',
   target_type: null,
   target_id: null,
 };
 
 function fromTask(t: Task): FormState {
+  const assignee_type: AssigneeType =
+    t.supplier_id ? 'supplier' : t.assigned_to_user_id ? 'user' : 'none';
   return {
     title: t.title,
     description: t.description ?? '',
@@ -85,16 +95,21 @@ function fromTask(t: Task): FormState {
     priority: t.priority,
     due_date: t.due_date ?? '',
     due_time: t.due_time ? t.due_time.slice(0, 5) : '',
+    assignee_type,
     assigned_to_user_id: t.assigned_to_user_id ?? '',
+    supplier_id: t.supplier_id ?? '',
     target_type: t.target_type,
     target_id: t.target_id,
   };
 }
 
-export function TaskFormPanel({ open, task, canEdit, assignees, onOpenChange, onSaved }: Props) {
+export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, onOpenChange, onSaved }: Props) {
   const isEdit = !!task;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
+  // Display name for a linked supplier that may be soft-deleted (absent from the
+  // active `suppliers` picker list) — keeps the trigger label correct.
+  const [supplierFallback, setSupplierFallback] = useState<string | null>(null);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
   const [initialReminders, setInitialReminders] = useState<ReminderRow[]>([]);
   const [comments, setComments] = useState<TaskComment[]>([]);
@@ -108,9 +123,11 @@ export function TaskFormPanel({ open, task, canEdit, assignees, onOpenChange, on
       const r = await fetch(`/api/tasks/${id}`, { credentials: 'include' });
       if (!r.ok) return;
       const data = (await r.json()) as {
+        task?: { supplier_display_name?: string | null };
         comments?: TaskComment[];
         reminders?: ServerReminder[];
       };
+      setSupplierFallback(data.task?.supplier_display_name ?? null);
       setComments(Array.isArray(data.comments) ? data.comments : []);
       const rem = (data.reminders ?? []).map((x) => {
         const { date, time } = splitRemindAt(x.remind_at);
@@ -128,6 +145,7 @@ export function TaskFormPanel({ open, task, canEdit, assignees, onOpenChange, on
       const init = task ? fromTask(task) : EMPTY_FORM;
       setForm(init);
       setInitial(init);
+      setSupplierFallback(null);
       setComments([]);
       setCommentInput('');
       setReminders([]);
@@ -184,7 +202,9 @@ export function TaskFormPanel({ open, task, canEdit, assignees, onOpenChange, on
         priority: form.priority,
         due_date: form.due_date || null,
         due_time: form.due_time || null,
-        assigned_to_user_id: form.assigned_to_user_id || null,
+        // Mutually-exclusive handler: send exactly one side (the other null).
+        assigned_to_user_id: form.assignee_type === 'user' ? (form.assigned_to_user_id || null) : null,
+        supplier_id: form.assignee_type === 'supplier' ? (form.supplier_id || null) : null,
         // Target is optional. A type without a value persists as no target.
         target_type: form.target_id ? form.target_type : null,
         target_id: form.target_id || null,
@@ -381,30 +401,26 @@ export function TaskFormPanel({ open, task, canEdit, assignees, onOpenChange, on
                 </div>
               </Section>
 
-              {/* Assignment */}
-              <Section title="שיוך" icon={User} iconTone="violet">
-                <div className="space-y-2 py-2">
-                  <Label className="text-base font-medium text-muted-foreground">משויך אל</Label>
-                  <Select
-                    value={form.assigned_to_user_id || '__none__'}
-                    onValueChange={(v) => { if (v) set('assigned_to_user_id', v === '__none__' ? '' : v); }}
+              {/* Handler — internal user OR external supplier (shared AssigneeField) */}
+              <Section title="גורם מטפל" icon={User} iconTone="violet">
+                <div className="py-2">
+                  <AssigneeField
+                    value={{
+                      type: form.assignee_type,
+                      userId: form.assigned_to_user_id || null,
+                      supplierId: form.supplier_id || null,
+                    }}
+                    onChange={(v) => setForm((prev) => ({
+                      ...prev,
+                      assignee_type: v.type,
+                      assigned_to_user_id: v.userId ?? '',
+                      supplier_id: v.supplierId ?? '',
+                    }))}
+                    users={assignees}
+                    suppliers={suppliers}
+                    supplierFallbackLabel={supplierFallback}
                     disabled={disabled}
-                  >
-                    <SelectTrigger className="w-full data-[size=default]:h-10">
-                      <SelectValue>
-                        {(v: string | null) => {
-                          if (!v || v === '__none__') return 'ללא שיוך';
-                          return assignees.find((a) => a.id === v)?.name ?? 'משתמש';
-                        }}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">ללא שיוך</SelectItem>
-                      {assignees.map((a) => (
-                        <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  />
                 </div>
               </Section>
 

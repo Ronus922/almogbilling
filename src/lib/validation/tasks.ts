@@ -16,6 +16,7 @@ import type {
   TaskWritableFields,
 } from '@/lib/types/tasks';
 import type { TargetType } from '@/lib/types/targets';
+import { assertSingleAssignee } from '@/lib/validation/assignee';
 
 const TARGET_TYPES: readonly TargetType[] = ['room', 'area'];
 
@@ -93,7 +94,7 @@ export function coerceTaskInput(
     fields.due_time = t;
   }
 
-  for (const key of ['assigned_to_user_id', 'debtor_id', 'related_entity_id'] as const) {
+  for (const key of ['assigned_to_user_id', 'supplier_id', 'debtor_id', 'related_entity_id'] as const) {
     if (!has(body, key)) continue;
     const id = strOrNull(body[key]);
     if (id !== null && !UUID_RE.test(id)) return { ok: false, error: `invalid_${key}` };
@@ -122,6 +123,12 @@ export function coerceTaskInput(
     if (id !== null && !UUID_RE.test(id)) return { ok: false, error: 'invalid_target_id' };
     fields.target_id = id;
   }
+
+  // Mutual-exclusive handler (shared with issues): a task is handled by EITHER an
+  // internal user OR an external supplier — never both. Rejects both-set; otherwise
+  // the set side clears the other (even on a partial PATCH).
+  const conflict = assertSingleAssignee(fields);
+  if (conflict) return { ok: false, error: conflict };
 
   return { ok: true, fields };
 }

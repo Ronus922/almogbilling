@@ -22,6 +22,7 @@ import {
 import type {
   Task, TaskKpis, TaskPriority, TaskSort, TaskStatus, TaskWithAssignee,
 } from '@/lib/types/tasks';
+import type { SupplierOption } from '@/lib/types/assignee';
 
 type ViewMode = 'kanban' | 'table';
 
@@ -34,11 +35,13 @@ export function TasksPageClient({
   initialTasks,
   initialKpis,
   assignees,
+  suppliers,
   canEdit,
 }: {
   initialTasks: TaskWithAssignee[];
   initialKpis: TaskKpis;
   assignees: Assignee[];
+  suppliers: SupplierOption[];
   canEdit: boolean;
 }) {
   const searchParams = useSearchParams();
@@ -50,6 +53,7 @@ export function TasksPageClient({
   const [statusFilter, setStatusFilter] = useState<TaskStatus | 'all'>('all');
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | 'all'>('all');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
+  const [supplierFilter, setSupplierFilter] = useState<string>('all');
   const [sort, setSort] = useState<TaskSort>('created_desc');
 
   const [formOpen, setFormOpen] = useState(false);
@@ -64,6 +68,7 @@ export function TasksPageClient({
       if (statusFilter !== 'all') params.set('status', statusFilter);
       if (priorityFilter !== 'all') params.set('priority', priorityFilter);
       if (assigneeFilter !== 'all') params.set('assignedTo', assigneeFilter);
+      if (supplierFilter !== 'all') params.set('supplier_id', supplierFilter);
       params.set('sort', sort);
       params.set('kpis', '1');
       const res = await fetch(`/api/tasks?${params.toString()}`, { credentials: 'include' });
@@ -74,7 +79,7 @@ export function TasksPageClient({
     } catch (err) {
       toast.error(`טעינת המשימות נכשלה: ${(err as Error).message}`);
     }
-  }, [search, statusFilter, priorityFilter, assigneeFilter, sort]);
+  }, [search, statusFilter, priorityFilter, assigneeFilter, supplierFilter, sort]);
 
   // Initial data is server-rendered; refetch when filters/sort change.
   useEffect(() => {
@@ -234,6 +239,21 @@ export function TasksPageClient({
               {assignees.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
             </SelectContent>
           </Select>
+
+          <Select value={supplierFilter} onValueChange={(v) => { if (v) setSupplierFilter(v); }}>
+            <SelectTrigger className="h-10 w-40 data-[size=default]:h-10">
+              <SelectValue>
+                {(v: string | null) => {
+                  if (!v || v === 'all') return 'כל הספקים';
+                  return suppliers.find((s) => s.id === v)?.display_name ?? 'ספק';
+                }}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">כל הספקים</SelectItem>
+              {suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.display_name}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -249,6 +269,7 @@ export function TasksPageClient({
         task={editing}
         canEdit={canEdit}
         assignees={assignees}
+        suppliers={suppliers}
         onOpenChange={setFormOpen}
         onSaved={() => void fetchTasks()}
       />

@@ -1,0 +1,22 @@
+-- 045_tasks_supplier.sql
+-- Tasks → supplier handler link. Mirrors 044 (issues): a task is handled by
+-- EITHER an internal user (assigned_to_user_id) OR an external supplier
+-- (supplier_id) — never both (enforced server-side via assertSingleAssignee).
+--
+-- Additive only: one nullable column + FK + index. No existing column is touched.
+-- NOTE: this is the dedicated handler column — distinct from the existing generic
+-- related_entity_type/related_entity_id pointer (which is NOT part of the XOR
+-- handler model). FK is ON DELETE SET NULL so deleting a supplier never deletes
+-- tasks — it only detaches them.
+--
+-- Run: docker exec -i supabase-db psql -U postgres -d proj_billing < supabase/migrations/045_tasks_supplier.sql
+
+begin;
+
+alter table public.tasks
+  add column if not exists supplier_id uuid
+    references public.suppliers(id) on delete set null;
+
+create index if not exists idx_tasks_supplier on public.tasks (supplier_id);
+
+commit;

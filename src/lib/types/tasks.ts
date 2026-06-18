@@ -19,6 +19,9 @@ export interface Task {
   due_date: string | null; // 'YYYY-MM-DD'
   due_time: string | null; // 'HH:MM' / 'HH:MM:SS'
   assigned_to_user_id: string | null;
+  /** External supplier handling the task → suppliers.id. Mutually exclusive with
+   *  assigned_to_user_id (the internal user). Separate from related_entity_*. */
+  supplier_id: string | null;
   debtor_id: string | null;
   apartment_number: string | null;
   related_entity_type: RelatedEntityType | null;
@@ -35,9 +38,10 @@ export interface Task {
   updated_at: string;
 }
 
-/** Task enriched with the assignee's display name (LEFT JOIN users). */
+/** Task enriched with the assignee + supplier display names (LEFT JOINs). */
 export interface TaskWithAssignee extends Task {
   assigned_to_name: string | null;
+  supplier_display_name: string | null;
   comment_count: number;
 }
 
@@ -52,6 +56,7 @@ export interface TaskWritableFields {
   due_date: string | null;
   due_time: string | null;
   assigned_to_user_id: string | null;
+  supplier_id: string | null;
   debtor_id: string | null;
   related_entity_type: RelatedEntityType | null;
   related_entity_id: string | null;
@@ -65,6 +70,7 @@ export interface TaskListFilters {
   status?: TaskStatus;
   priority?: TaskPriority;
   assignedTo?: string;
+  supplier_id?: string;
   relatedEntityType?: RelatedEntityType;
   relatedEntityId?: string;
   search?: string;

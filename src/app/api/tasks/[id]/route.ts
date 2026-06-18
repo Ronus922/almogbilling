@@ -13,6 +13,7 @@ import {
   deleteRemindersForEntity,
 } from '@/lib/db/reminders';
 import { listTaskComments } from '@/lib/db/tasks';
+import { supplierExists } from '@/lib/db/suppliers';
 import { coerceTaskInput, coerceReminders } from '@/lib/validation/tasks';
 import { notifyTask } from '@/services/notifications';
 
@@ -66,6 +67,11 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
   const result = coerceTaskInput(bodyRec, 'update');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+
+  // A linked supplier must exist and not be soft-deleted (when (re)assigning one).
+  if (result.fields.supplier_id && !(await supplierExists(result.fields.supplier_id))) {
+    return NextResponse.json({ error: 'supplier_not_found' }, { status: 400 });
+  }
 
   // is_archived passthrough (boolean).
   const patch: Record<string, unknown> = { ...result.fields };

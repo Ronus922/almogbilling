@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listTasks, createTask, getTaskById, getTaskKpis } from '@/lib/db/tasks';
+import { supplierExists } from '@/lib/db/suppliers';
 import { createReminder } from '@/lib/db/reminders';
 import { coerceTaskInput, coerceReminders } from '@/lib/validation/tasks';
 import { notifyTask } from '@/services/notifications';
@@ -53,6 +54,10 @@ export async function GET(req: NextRequest) {
   const assignedToRaw = sp.get('assignedTo')?.trim();
   const assignedTo = assignedToRaw && assignedToRaw !== 'all' ? assignedToRaw : undefined;
 
+  const supplierIdRaw = sp.get('supplier_id')?.trim();
+  const supplier_id =
+    supplierIdRaw && supplierIdRaw !== 'all' && UUID_RE.test(supplierIdRaw) ? supplierIdRaw : undefined;
+
   const retRaw = sp.get('relatedEntityType')?.trim();
   const relatedEntityType =
     retRaw && retRaw !== 'all' && RELATED_ENTITY_TYPES.includes(retRaw as RelatedEntityType)
@@ -71,6 +76,7 @@ export async function GET(req: NextRequest) {
     status,
     priority,
     assignedTo,
+    supplier_id,
     relatedEntityType,
     relatedEntityId,
     search,
@@ -105,6 +111,11 @@ export async function POST(req: NextRequest) {
 
   const result = coerceTaskInput(bodyRec, 'create');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+
+  // A linked supplier must exist and not be soft-deleted (when assigning one).
+  if (result.fields.supplier_id && !(await supplierExists(result.fields.supplier_id))) {
+    return NextResponse.json({ error: 'supplier_not_found' }, { status: 400 });
+  }
 
   const reminders = coerceReminders(bodyRec);
   if (reminders && !reminders.ok) {
