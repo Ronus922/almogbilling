@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  X, ClipboardList, User, Bell, MessageSquare, Plus, Trash2, Send,
+  X, ClipboardList, User, MapPin, MessageSquare, Send,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
@@ -28,16 +28,13 @@ import type {
 } from '@/lib/types/tasks';
 import type { TargetType } from '@/lib/types/targets';
 import { TargetField } from '@/components/targets/TargetField';
+import {
+  RemindersSection, splitRemindAt, buildRemindersPayload, type ReminderRow,
+} from '@/components/reminders/RemindersSection';
 
 interface Assignee {
   id: string;
   name: string;
-}
-
-interface ReminderRow {
-  date: string; // YYYY-MM-DD
-  time: string; // HH:MM
-  channel: ReminderChannel;
 }
 
 interface ServerReminder {
@@ -80,12 +77,6 @@ const EMPTY_FORM: FormState = {
   target_id: null,
 };
 
-const CHANNEL_LABEL: Record<ReminderChannel, string> = {
-  in_app: 'בתוך המערכת',
-  email: 'אימייל',
-  both: 'שניהם',
-};
-
 function fromTask(t: Task): FormState {
   return {
     title: t.title,
@@ -97,16 +88,6 @@ function fromTask(t: Task): FormState {
     assigned_to_user_id: t.assigned_to_user_id ?? '',
     target_type: t.target_type,
     target_id: t.target_id,
-  };
-}
-
-function splitRemindAt(iso: string): { date: string; time: string } {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return { date: '', time: '' };
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return {
-    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
-    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
   };
 }
 
@@ -184,34 +165,12 @@ export function TaskFormPanel({ open, task, canEdit, assignees, onOpenChange, on
     onOpenChange(false);
   }
 
-  function addReminder() {
-    setReminders((prev) => [...prev, { date: '', time: '09:00', channel: 'both' }]);
-  }
-  function updateReminder(idx: number, patch: Partial<ReminderRow>) {
-    setReminders((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
-  }
-  function removeReminder(idx: number) {
-    setReminders((prev) => prev.filter((_, i) => i !== idx));
-  }
-
-  function buildRemindersPayload(): { remind_at: string; channel: ReminderChannel }[] | null {
-    const out: { remind_at: string; channel: ReminderChannel }[] = [];
-    for (const r of reminders) {
-      if (!r.date) continue; // skip incomplete rows silently
-      const time = r.time || '09:00';
-      const local = new Date(`${r.date}T${time}:00`);
-      if (Number.isNaN(local.getTime())) return null;
-      out.push({ remind_at: local.toISOString(), channel: r.channel });
-    }
-    return out;
-  }
-
   async function handleSubmit() {
     if (!canSubmit) {
       setTitleTouched(true);
       return;
     }
-    const remindersPayload = buildRemindersPayload();
+    const remindersPayload = buildRemindersPayload(reminders);
     if (remindersPayload === null) {
       toast.error('תאריך תזכורת לא תקין');
       return;
@@ -411,32 +370,9 @@ export function TaskFormPanel({ open, task, canEdit, assignees, onOpenChange, on
                 </div>
               </Section>
 
-              {/* Assignment + link */}
-              <Section title="שיוך וקישור" icon={User} iconTone="violet">
-                <div className="space-y-4 py-2">
-                  <div className="space-y-2">
-                    <Label className="text-base font-medium text-muted-foreground">משויך אל</Label>
-                    <Select
-                      value={form.assigned_to_user_id || '__none__'}
-                      onValueChange={(v) => { if (v) set('assigned_to_user_id', v === '__none__' ? '' : v); }}
-                      disabled={disabled}
-                    >
-                      <SelectTrigger className="w-full data-[size=default]:h-10">
-                        <SelectValue>
-                          {(v: string | null) => {
-                            if (!v || v === '__none__') return 'ללא שיוך';
-                            return assignees.find((a) => a.id === v)?.name ?? 'משתמש';
-                          }}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">ללא שיוך</SelectItem>
-                        {assignees.map((a) => (
-                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+              {/* Location / target — order matches the issue form (מיקום then שיוך) */}
+              <Section title="מיקום" icon={MapPin} iconTone="amber">
+                <div className="py-2">
                   <TargetField
                     value={{ type: form.target_type, id: form.target_id }}
                     onChange={(t) => setForm((prev) => ({ ...prev, target_type: t.type, target_id: t.id }))}
@@ -445,81 +381,35 @@ export function TaskFormPanel({ open, task, canEdit, assignees, onOpenChange, on
                 </div>
               </Section>
 
-              {/* Reminders */}
-              <Section
-                title="תזכורות"
-                icon={Bell}
-                iconTone="amber"
-                headerSlot={
-                  !disabled ? (
-                    <button
-                      type="button"
-                      onClick={addReminder}
-                      className="inline-flex h-8 items-center gap-1 rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200"
-                    >
-                      <Plus className="h-3.5 w-3.5" /> הוסף
-                    </button>
-                  ) : undefined
-                }
-              >
-                <div className="space-y-3 py-2">
-                  {reminders.length === 0 && (
-                    <p className="py-2 text-center text-xs text-slate-400">אין תזכורות. הוסף תזכורת כדי לקבל התראה.</p>
-                  )}
-                  {reminders.map((r, idx) => (
-                    <div key={idx} className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 sm:flex-row sm:items-end">
-                      <div className="flex-1 space-y-1">
-                        <Label className="text-xs text-muted-foreground">תאריך</Label>
-                        <Input
-                          type="date"
-                          value={r.date}
-                          onChange={(e) => updateReminder(idx, { date: e.target.value })}
-                          disabled={disabled}
-                          onClick={(e) => {
-                            const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-                            try { el.showPicker?.(); } catch { /* */ }
-                          }}
-                          className="h-10 cursor-pointer"
-                        />
-                      </div>
-                      <div className="w-full space-y-1 sm:w-28">
-                        <Label className="text-xs text-muted-foreground">שעה</Label>
-                        <Input
-                          type="time"
-                          value={r.time}
-                          onChange={(e) => updateReminder(idx, { time: e.target.value })}
-                          disabled={disabled}
-                          dir="ltr"
-                          className="h-10 cursor-pointer tabular-nums"
-                        />
-                      </div>
-                      <div className="w-full space-y-1 sm:w-36">
-                        <Label className="text-xs text-muted-foreground">ערוץ</Label>
-                        <Select value={r.channel} onValueChange={(v) => { if (v) updateReminder(idx, { channel: v as ReminderChannel }); }} disabled={disabled}>
-                          <SelectTrigger className="w-full data-[size=default]:h-10">
-                            <SelectValue>{(v: string | null) => (v ? CHANNEL_LABEL[v as ReminderChannel] : null)}</SelectValue>
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="in_app">{CHANNEL_LABEL.in_app}</SelectItem>
-                            <SelectItem value="email">{CHANNEL_LABEL.email}</SelectItem>
-                            <SelectItem value="both">{CHANNEL_LABEL.both}</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      {!disabled && (
-                        <button
-                          type="button"
-                          onClick={() => removeReminder(idx)}
-                          aria-label="הסר תזכורת"
-                          className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
+              {/* Assignment */}
+              <Section title="שיוך" icon={User} iconTone="violet">
+                <div className="space-y-2 py-2">
+                  <Label className="text-base font-medium text-muted-foreground">משויך אל</Label>
+                  <Select
+                    value={form.assigned_to_user_id || '__none__'}
+                    onValueChange={(v) => { if (v) set('assigned_to_user_id', v === '__none__' ? '' : v); }}
+                    disabled={disabled}
+                  >
+                    <SelectTrigger className="w-full data-[size=default]:h-10">
+                      <SelectValue>
+                        {(v: string | null) => {
+                          if (!v || v === '__none__') return 'ללא שיוך';
+                          return assignees.find((a) => a.id === v)?.name ?? 'משתמש';
+                        }}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">ללא שיוך</SelectItem>
+                      {assignees.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </Section>
+
+              {/* Reminders (shared component — also used by the issue form) */}
+              <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} />
 
               {/* Comments — edit mode only */}
               {isEdit && (
