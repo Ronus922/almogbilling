@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requireAdmin, requirePermission } from '@/lib/auth/actor';
+import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getSupplierDocument, deleteSupplierDocumentRow } from '@/lib/db/suppliers';
 import { removeSupplierFile, signedUrlForPath } from '@/lib/storage/supplierStorage';
@@ -33,10 +33,10 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   return NextResponse.json({ signed_url });
 }
 
-// DELETE /api/suppliers/[id]/documents/[docId] (admin) — physical delete.
+// DELETE /api/suppliers/[id]/documents/[docId] (suppliers:edit) — physical delete.
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   try {
-    await requireAdmin();
+    await requirePermission('suppliers', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

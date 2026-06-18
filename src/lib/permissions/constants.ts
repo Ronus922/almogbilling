@@ -76,9 +76,10 @@ function perm(module: string, view: boolean, edit: boolean): ModulePermission {
   return { module, canView: view, canEdit: edit };
 }
 
-// Manager defaults — main modules editable, import/export/status_management view-only,
-// other admin modules off. "edit" covers all mutations within the module (delete, export,
-// send-message, etc).
+// Manager defaults — full operational access: view+edit on EVERY module except
+// settings / users_management / roles_management (admin-only — the line that
+// separates manager from admin). "edit" covers all mutations within the module
+// (delete, export, send-message, sync, status change, etc).
 export const DEFAULT_MANAGER: ModulePermission[] = [
   perm('analytics',     true,  true),
   perm('dashboard',     true,  true),
@@ -92,11 +93,11 @@ export const DEFAULT_MANAGER: ModulePermission[] = [
   perm('whatsapp_chat', true,  true),
   perm('internal_chat', true,  true),
   perm('user_reminders', true,  true),
-  perm('import',            true,  false),
-  perm('export',            true,  false),
-  perm('status_management', true,  false),
-  noPerm('whatsapp_templates'),
-  noPerm('rooms_areas'),
+  perm('import',            true,  true),
+  perm('export',            true,  true),
+  perm('status_management', true,  true),
+  perm('whatsapp_templates', true, true),
+  perm('rooms_areas',       true,  true),
   noPerm('roles_management'),
   noPerm('users_management'),
   noPerm('settings'),

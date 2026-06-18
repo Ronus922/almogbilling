@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, requireAdmin } from '@/lib/auth/actor';
+import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getSupplierById, updateSupplier, softDeleteSupplier } from '@/lib/db/suppliers';
 import { coerceAndValidateSupplier } from '@/lib/validation/suppliers';
@@ -68,10 +68,10 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 }
 
-// DELETE /api/suppliers/[id] (admin) — soft delete.
+// DELETE /api/suppliers/[id] (suppliers:edit) — soft delete.
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   try {
-    await requireAdmin();
+    await requirePermission('suppliers', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

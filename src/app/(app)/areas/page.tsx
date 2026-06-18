@@ -15,7 +15,7 @@ export default async function AreasPage() {
   }
 
   const canEdit = hasPermission(actor.role, actor.permissions, 'rooms_areas', 'edit');
-  const isAdmin = actor.role === 'super_admin' || actor.role === 'admin';
 
-  return <AreasPageClient canEdit={canEdit} canDelete={isAdmin} />;
+  // Delete is a rooms_areas:edit mutation (no separate delete level in the matrix).
+  return <AreasPageClient canEdit={canEdit} canDelete={canEdit} />;
 }

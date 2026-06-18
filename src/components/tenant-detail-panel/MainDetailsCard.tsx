@@ -8,11 +8,11 @@ import type { PhoneField } from './EditPhoneDialog';
 
 interface Props {
   tenant: Tenant;
-  isAdmin: boolean;
+  canEdit: boolean;
   onEditPhone: (field: PhoneField) => void;
 }
 
-export function MainDetailsCard({ tenant, isAdmin, onEditPhone }: Props) {
+export function MainDetailsCard({ tenant, canEdit, onEditPhone }: Props) {
   return (
     <Section title="פרטים עיקריים" icon={Home} iconTone="slate">
       <dl className="space-y-2.5 text-sm">
@@ -25,13 +25,13 @@ export function MainDetailsCard({ tenant, isAdmin, onEditPhone }: Props) {
         <PhoneRow
           label="טלפון בעלים"
           value={tenant.phone_owner}
-          editable={isAdmin}
+          editable={canEdit}
           onEdit={() => onEditPhone('phone_owner')}
         />
         <PhoneRow
           label="טלפון שוכר"
           value={tenant.phone_tenant}
-          editable={isAdmin}
+          editable={canEdit}
           onEdit={() => onEditPhone('phone_tenant')}
         />
       </dl>

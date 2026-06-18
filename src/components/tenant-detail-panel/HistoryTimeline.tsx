@@ -30,7 +30,7 @@ import type { DebtorHistoryEntry, HistorySource } from '@/lib/db/debtorHistory';
 
 interface Props {
   debtorId: string;
-  isAdmin: boolean;
+  canEdit: boolean;
   /** Called after a manual documentation entry is saved (panel marks dirty + refreshes). */
   onLogged?: () => void;
 }
@@ -106,7 +106,7 @@ function relativeTime(iso: string): string {
   return Number.isNaN(d.getTime()) ? '' : formatDistanceToNow(d, { addSuffix: true, locale: he });
 }
 
-export function HistoryTimeline({ debtorId, isAdmin, onLogged }: Props) {
+export function HistoryTimeline({ debtorId, canEdit, onLogged }: Props) {
   const [items, setItems] = useState<DebtorHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -148,7 +148,7 @@ export function HistoryTimeline({ debtorId, isAdmin, onLogged }: Props) {
       {/* Header — title + log-call action */}
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-lg font-bold text-slate-900">היסטוריה ותיעוד</h3>
-        <LogCallButton isAdmin={isAdmin} onClick={() => setDialogOpen(true)} />
+        <LogCallButton canEdit={canEdit} onClick={() => setDialogOpen(true)} />
       </div>
 
       {/* Filter chips */}
@@ -283,8 +283,8 @@ function TimelineSkeleton() {
   );
 }
 
-function LogCallButton({ isAdmin, onClick }: { isAdmin: boolean; onClick: () => void }) {
-  if (!isAdmin) {
+function LogCallButton({ canEdit, onClick }: { canEdit: boolean; onClick: () => void }) {
+  if (!canEdit) {
     return (
       <Tooltip>
         <TooltipTrigger render={<span className="block" />}>

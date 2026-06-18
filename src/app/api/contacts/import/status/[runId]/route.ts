@@ -1,15 +1,15 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/auth/actor';
+import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getContactsImportRun } from '@/lib/contacts/import-runner';
 
 export const runtime = 'nodejs';
 
-// GET /api/contacts/import/status/[runId] — admin only. 404 if the run doesn't
+// GET /api/contacts/import/status/[runId] — contacts:view. 404 if the run doesn't
 // exist OR isn't a contacts import (a debtors runId won't match kind='contacts').
 export async function GET(_req: Request, ctx: { params: Promise<{ runId: string }> }) {
   try {
-    await requireAdmin();
+    await requirePermission('contacts', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

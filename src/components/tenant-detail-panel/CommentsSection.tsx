@@ -9,7 +9,7 @@ import type { TenantNote } from '@/types/tenant';
 
 interface Props {
   notes: TenantNote[];
-  isAdmin: boolean;
+  canEdit: boolean;
   onAddComment: (content: string) => Promise<void>;
 }
 
@@ -39,13 +39,13 @@ function Avatar({ name }: { name: string }) {
   );
 }
 
-export function CommentsSection({ notes, isAdmin, onAddComment }: Props) {
+export function CommentsSection({ notes, canEdit, onAddComment }: Props) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   const trimmed = draft.trim();
-  const canSend = trimmed.length > 0 && !sending && isAdmin;
+  const canSend = trimmed.length > 0 && !sending && canEdit;
 
   async function handleSend() {
     if (!canSend) return;
@@ -80,7 +80,7 @@ export function CommentsSection({ notes, isAdmin, onAddComment }: Props) {
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="הוסיפו הערה..."
-              disabled={!isAdmin || sending}
+              disabled={!canEdit || sending}
               rows={3}
               className="resize-none pb-14"
             />

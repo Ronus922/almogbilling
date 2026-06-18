@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { requireAdmin, type Actor } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listContacts, createContact, ConflictError } from '@/lib/db/contacts';
 import { coerceContactInput } from '@/lib/validation/contacts';
@@ -34,11 +34,11 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ items });
 }
 
-// POST /api/contacts — admin only.
+// POST /api/contacts — contacts:edit.
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try {
-    actor = await requireAdmin();
+    actor = await requirePermission('contacts', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

@@ -38,7 +38,8 @@ import {
 interface Props {
   open: boolean;
   debtorId: string | null;
-  isAdmin: boolean;
+  canEdit: boolean;
+  canChangeStatus: boolean;
   canSendWhatsapp: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -50,7 +51,7 @@ function dateToIsoStr(raw: string | null): string {
   return String(raw).slice(0, 10);
 }
 
-export function TenantDetailPanel({ open, debtorId, isAdmin, canSendWhatsapp, onOpenChange }: Props) {
+export function TenantDetailPanel({ open, debtorId, canEdit, canChangeStatus, canSendWhatsapp, onOpenChange }: Props) {
   const router = useRouter();
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [statuses, setStatuses] = useState<LegalStatus[]>([]);
@@ -404,12 +405,12 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, canSendWhatsapp, on
             ) : activeTab === 'history' ? (
               <HistoryTimeline
                 debtorId={tenant.id}
-                isAdmin={isAdmin}
+                canEdit={canEdit}
                 onLogged={() => { setHasMutated(true); router.refresh(); }}
               />
             ) : (
               <div className="space-y-4">
-                {!isAdmin && (
+                {!canEdit && (
                   <Alert className="border-amber-200 bg-amber-50 text-amber-900">
                     <Info className="h-4 w-4" />
                     <AlertTitle className="text-amber-900">אתה מחובר כצופה</AlertTitle>
@@ -422,7 +423,7 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, canSendWhatsapp, on
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <MainDetailsCard
                     tenant={tenant}
-                    isAdmin={isAdmin}
+                    canEdit={canEdit}
                     onEditPhone={(f) => setEditField(f)}
                   />
                   <AdditionalInfoCard tenant={tenant} />
@@ -439,12 +440,12 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, canSendWhatsapp, on
                   <NextActionCard
                     value={nextActionDraft}
                     onChange={setNextActionDraft}
-                    disabled={!isAdmin}
+                    disabled={!canEdit}
                   />
                   <LegalManagementCard
                     tenant={tenant}
                     statuses={statuses}
-                    disabled={!isAdmin}
+                    disabled={!canChangeStatus}
                     onSaveLegalStatus={handleSaveLegalStatus}
                   />
                 </div>
@@ -453,7 +454,7 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, canSendWhatsapp, on
 
                 <CommentsSection
                   notes={notes}
-                  isAdmin={isAdmin}
+                  canEdit={canEdit}
                   onAddComment={handleAddComment}
                 />
 
@@ -467,9 +468,9 @@ export function TenantDetailPanel({ open, debtorId, isAdmin, canSendWhatsapp, on
             <PanelFooter
               onClose={requestClose}
               onSave={handleSaveChanges}
-              saveDisabled={!isAdmin || !isDirty || saving}
+              saveDisabled={!canEdit || !isDirty || saving}
               saveLabel={saving ? 'שומר…' : 'שמור שינויים'}
-              saveDisabledReason={!isAdmin ? 'אין הרשאה — כניסה כצופה' : undefined}
+              saveDisabledReason={!canEdit ? 'אין הרשאה — כניסה כצופה' : undefined}
               showPrinter
               showExport
               showHistory

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { requireAdmin } from '@/lib/auth/actor';
+import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getContactById, updateContact, deleteContact } from '@/lib/db/contacts';
 import { coerceContactInput } from '@/lib/validation/contacts';
@@ -22,10 +22,10 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   return NextResponse.json({ contact });
 }
 
-// PATCH /api/contacts/[id] — admin only. apartment_number is ignored (immutable).
+// PATCH /api/contacts/[id] — contacts:edit. apartment_number is ignored (immutable).
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   try {
-    await requireAdmin();
+    await requirePermission('contacts', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -60,10 +60,10 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 }
 
-// DELETE /api/contacts/[id] — admin only. debtors.contact_id resets via FK ON DELETE SET NULL.
+// DELETE /api/contacts/[id] — contacts:edit. debtors.contact_id resets via FK ON DELETE SET NULL.
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   try {
-    await requireAdmin();
+    await requirePermission('contacts', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

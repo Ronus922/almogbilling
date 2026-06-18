@@ -44,14 +44,19 @@ export default async function DashboardPage({
   const page = Math.max(1, Number(sp.page ?? '1') || 1);
 
   const actor = await getCurrentActor();
-  // Layout already redirects if no session — but TS still needs the narrow.
-  const role = actor?.role;
-  const isAdmin = role === 'super_admin' || role === 'admin';
+  // Per-module capability flags drive every operational gate in the dashboard —
+  // no blanket role check, so a manager with the permission gets the action.
   const canArchive = actor
     ? hasPermission(actor.role, actor.permissions, 'contacts', 'edit')
     : false;
   const canSendWhatsapp = actor
     ? hasPermission(actor.role, actor.permissions, 'whatsapp', 'edit')
+    : false;
+  const canSync = actor
+    ? hasPermission(actor.role, actor.permissions, 'import', 'edit')
+    : false;
+  const canChangeStatus = actor
+    ? hasPermission(actor.role, actor.permissions, 'status_management', 'edit')
     : false;
 
   const [kpis, lastImportAt, lastSyncAt, tabCounts, listing] = await Promise.all([
@@ -69,7 +74,7 @@ export default async function DashboardPage({
       <LastImportIndicator
         lastImportAt={lastImportAt}
         lastSyncAt={lastSyncAt}
-        isAdmin={isAdmin}
+        canSync={canSync}
       />
 
       <DebtorsTabs active={tab} counts={tabCounts} />
@@ -82,7 +87,7 @@ export default async function DashboardPage({
           totalPages={listing.totalPages}
           currentSort={sort}
           currentTab={tab}
-          isAdmin={isAdmin}
+          canChangeStatus={canChangeStatus}
           canArchive={canArchive}
           canSendWhatsapp={canSendWhatsapp}
         />

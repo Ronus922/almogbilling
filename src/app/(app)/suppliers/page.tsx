@@ -14,7 +14,7 @@ export default async function SuppliersPage() {
   }
 
   const canEdit = hasPermission(actor.role, actor.permissions, 'suppliers', 'edit');
-  const isAdmin = actor.role === 'super_admin' || actor.role === 'admin';
 
-  return <SuppliersPageClient canEdit={canEdit} canDelete={isAdmin} />;
+  // Delete is a suppliers:edit mutation (no separate delete level in the matrix).
+  return <SuppliersPageClient canEdit={canEdit} canDelete={canEdit} />;
 }

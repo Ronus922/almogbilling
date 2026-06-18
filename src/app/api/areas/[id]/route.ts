@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, requireAdmin } from '@/lib/auth/actor';
+import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getAreaById, updateArea, deleteArea } from '@/lib/db/areas';
 import { coerceAndValidateArea } from '@/lib/validation/areas';
@@ -64,10 +64,10 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 }
 
-// DELETE /api/areas/[id] (admin) — hard delete.
+// DELETE /api/areas/[id] (rooms_areas:edit) — hard delete.
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   try {
-    await requireAdmin();
+    await requirePermission('rooms_areas', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

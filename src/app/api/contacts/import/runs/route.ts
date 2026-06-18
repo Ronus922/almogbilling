@@ -1,15 +1,15 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/auth/actor';
+import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listContactsImportRuns } from '@/lib/contacts/import-runner';
 
 export const runtime = 'nodejs';
 
-// GET /api/contacts/import/runs — admin only. Last 10 contacts import runs, for
+// GET /api/contacts/import/runs — contacts:view. Last 10 contacts import runs, for
 // an import-history UI.
 export async function GET() {
   try {
-    await requireAdmin();
+    await requirePermission('contacts', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

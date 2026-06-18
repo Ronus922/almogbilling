@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/auth/actor';
+import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { createImportRun } from '@/lib/db/importRuns';
 import { createSyncRun, finishSyncRunSuccess, finishSyncRunError } from '@/lib/db/syncRuns';
@@ -21,7 +21,7 @@ export const maxDuration = 120;
 export async function POST() {
   let actorId: string;
   try {
-    const actor = await requireAdmin();
+    const actor = await requirePermission('import', 'edit');
     actorId = actor.id;
   } catch (err) {
     const r = authErrorResponse(err);

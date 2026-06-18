@@ -1,18 +1,18 @@
 import { NextResponse } from 'next/server';
 import { writeFile } from 'node:fs/promises';
-import { requireAdmin, type Actor } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { createContactsImportRun, runContactsImport } from '@/lib/contacts/import-runner';
 
 export const runtime = 'nodejs';
 
-// POST /api/contacts/import — admin only. Accepts an .xlsx/.xls residents file,
+// POST /api/contacts/import — contacts:edit. Accepts an .xlsx/.xls residents file,
 // creates the import run, kicks off the async runner, and returns the runId
 // immediately (merge-only; no mode parameter is exposed).
 export async function POST(req: Request) {
   let actor: Actor;
   try {
-    actor = await requireAdmin();
+    actor = await requirePermission('contacts', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

@@ -68,7 +68,7 @@ export function DebtorsTable({
   totalPages,
   currentSort,
   currentTab,
-  isAdmin,
+  canChangeStatus,
   canArchive,
   canSendWhatsapp,
 }: {
@@ -77,7 +77,7 @@ export function DebtorsTable({
   totalPages: number;
   currentSort: SortKey;
   currentTab: TabKey;
-  isAdmin: boolean;
+  canChangeStatus: boolean;
   canArchive: boolean;
   canSendWhatsapp: boolean;
 }) {
@@ -390,7 +390,7 @@ export function DebtorsTable({
                       canEdit={canArchive}
                       whatsappReason={!canSendWhatsapp ? 'אין הרשאה' : !waHasValidPhone ? 'אין מספר טלפון תקין' : null}
                       onWhatsApp={() => openWhatsapp(d)}
-                      showCheck={isActionsTab && isAdmin}
+                      showCheck={isActionsTab && canArchive}
                       onCheck={() => setMarkDone({
                         debtorId: d.id,
                         apartment: d.apartment_number,
@@ -445,7 +445,8 @@ export function DebtorsTable({
       <TenantDetailPanel
         open={panelOpen}
         debtorId={selectedId}
-        isAdmin={isAdmin}
+        canEdit={canArchive}
+        canChangeStatus={canChangeStatus}
         canSendWhatsapp={canSendWhatsapp}
         onOpenChange={(o) => {
           setPanelOpen(o);

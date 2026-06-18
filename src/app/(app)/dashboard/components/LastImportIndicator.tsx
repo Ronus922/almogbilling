@@ -32,11 +32,11 @@ function formatStamp(d: Date) {
 export function LastImportIndicator({
   lastImportAt,
   lastSyncAt,
-  isAdmin,
+  canSync,
 }: {
   lastImportAt: Date | null;
   lastSyncAt: Date | null;
-  isAdmin: boolean;
+  canSync: boolean;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -132,7 +132,7 @@ export function LastImportIndicator({
         </div>
       </div>
       <div className="flex items-center gap-2">
-        {isAdmin && (
+        {canSync && (
           <Button
             type="button"
             onClick={syncNow}
@@ -143,7 +143,7 @@ export function LastImportIndicator({
             <span>{syncing ? 'מסנכרן…' : 'סנכרן עכשיו'}</span>
           </Button>
         )}
-        {isAdmin && showWarning && (
+        {canSync && showWarning && (
           <Button
             type="button"
             onClick={() => router.push('/import')}
