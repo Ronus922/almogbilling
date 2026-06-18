@@ -1,0 +1,35 @@
+-- 037_areas.sql
+-- "ניהול אזורים" (Areas management) — a small admin-managed lookup of building
+-- areas/zones. Each area optionally points at a responsible CONTACT (איש קשר),
+-- NOT a system user, so the FK targets public.contacts. Matches the existing
+-- `rooms_areas` permission module (super_admin + admin by default).
+--
+-- Additive only and idempotent:
+--   - areas: id / name / description / responsible_contact_id / created_by + timestamps.
+--   - responsible_contact_id → contacts(id) ON DELETE SET NULL so removing a
+--     contact never deletes the area, it just clears its responsible person.
+--   - public.touch_updated_at() trigger (project convention, as on suppliers/debtors).
+--
+-- Run: docker exec -i supabase-db psql -U postgres -d proj_billing < supabase/migrations/037_areas.sql
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS public.areas (
+  id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                    text NOT NULL,
+  description             text,
+  responsible_contact_id  uuid REFERENCES public.contacts(id) ON DELETE SET NULL,
+  created_by              uuid,
+  created_at              timestamptz NOT NULL DEFAULT now(),
+  updated_at              timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_areas_responsible_contact
+  ON public.areas (responsible_contact_id);
+
+DROP TRIGGER IF EXISTS areas_touch_updated_at ON public.areas;
+CREATE TRIGGER areas_touch_updated_at
+  BEFORE UPDATE ON public.areas
+  FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
+
+COMMIT;

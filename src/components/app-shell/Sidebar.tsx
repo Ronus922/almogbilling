@@ -42,7 +42,7 @@ const MANAGE_MENU: MenuItem[] = [
   { label: 'ניהול סטטוס חיובים', icon: Sliders, href: '/statuses', module: 'status_management' },
   { label: 'תבניות ווטסאפ',      icon: MessageCircle, href: '/whatsapp-templates', module: 'whatsapp_templates' },
   { label: 'הודעות לא משויכות',  icon: Inbox, href: '/whatsapp-unlinked', module: 'whatsapp' },
-  { label: 'ניהול אזורים',       icon: MapPin, module: 'rooms_areas' },
+  { label: 'ניהול אזורים',       icon: MapPin, href: '/areas', module: 'rooms_areas' },
   { label: 'משתמשים',            icon: UserCog, href: '/settings/users', module: 'users_management' },
   { label: 'הגדרות',             icon: SettingsIcon, href: '/settings', module: 'settings' },
 ];

@@ -1,0 +1,20 @@
+-- 039_areas_drop_responsible_contact.sql
+-- Drops the orphaned responsible_contact_id column from public.areas.
+--
+-- 037 created areas with responsible_contact_id (+ FK → contacts + index). The
+-- final Areas schema has no responsible-contact concept (038 added area_type +
+-- color and the application stopped reading/writing the column). This removes
+-- the now-dead column so the DB matches the final schema exactly. Dropping the
+-- column also drops its FK constraint and idx_areas_responsible_contact index.
+--
+-- Safe: the column holds no application data (always null/unused). Idempotent
+-- via IF EXISTS.
+--
+-- Run: set -a; source <(sudo cat /etc/billing/billing.env); set +a
+--      psql "$DIRECT_URL" -f supabase/migrations/039_areas_drop_responsible_contact.sql
+
+BEGIN;
+
+ALTER TABLE public.areas DROP COLUMN IF EXISTS responsible_contact_id;
+
+COMMIT;
