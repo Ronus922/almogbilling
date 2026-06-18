@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import {
   ArrowRight, Check, CheckCheck, Clock, AlertCircle, Send, Loader2,
-  MessageCircle, FileText, Paperclip, RotateCw,
+  MessageCircle, FileText, Paperclip, RotateCw, Link2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Textarea } from '@/components/ui/textarea';
@@ -28,10 +28,12 @@ export function ChatThread({
   messages,
   loading,
   canEdit,
+  canLink,
   instanceId,
   onOptimisticSend,
   onResolveSend,
   onSent,
+  onRequestLink,
   onBack,
   className,
 }: {
@@ -39,6 +41,8 @@ export function ChatThread({
   messages: ThreadMessage[];
   loading: boolean;
   canEdit: boolean;
+  /** May attach an unlinked conversation to a debtor (whatsapp:edit). */
+  canLink: boolean;
   instanceId: string | null;
   /** Render an instant pending bubble; returns its temp id. */
   onOptimisticSend: (chatId: string, text: string) => string;
@@ -46,6 +50,8 @@ export function ChatThread({
   onResolveSend: (tmpId: string, res: ComposerSendResolution) => void;
   /** Non-optimistic refresh (file send / resend). */
   onSent: () => void;
+  /** Open the "link to apartment" dialog for the current unlinked conversation. */
+  onRequestLink: () => void;
   onBack: () => void;
   className?: string;
 }) {
@@ -94,7 +100,7 @@ export function ChatThread({
           <ArrowRight className="h-5 w-5" />
         </button>
         <ChatAvatar title={title} isGroup={conversation.is_group} avatarUrl={conversation.avatar_url} />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-bold text-slate-900">{title}</div>
           <div className="flex items-center gap-2 text-xs text-slate-500">
             {!conversation.is_group && conversation.phone && (
@@ -106,10 +112,20 @@ export function ChatThread({
               </span>
             )}
             {!conversation.debtor_id && !conversation.is_group && (
-              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600">לא משויך</span>
+              <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">לא משויך</span>
             )}
           </div>
         </div>
+        {!conversation.debtor_id && !conversation.is_group && canLink && (
+          <button
+            type="button"
+            onClick={onRequestLink}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-50"
+          >
+            <Link2 className="h-4 w-4" />
+            שייך לדירה
+          </button>
+        )}
       </div>
 
       {/* Messages */}

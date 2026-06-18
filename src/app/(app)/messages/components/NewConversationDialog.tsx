@@ -31,14 +31,25 @@ function buildConversation(args: {
   debtor?: DebtorResult | null;
 }): Conversation {
   const local = '0' + args.phoneIntl.slice(3);
-  const name = args.debtor ? (args.debtor.owner_name || args.debtor.tenant_name || '').trim() || null : null;
+  const d = args.debtor;
+  const name = d ? (d.owner_name || d.tenant_name || '').trim() || null : null;
+  // Match the dialed number against the debtor's phone fields to label the role.
+  const convkey = args.phoneIntl.replace(/\D+/g, '').slice(-9);
+  const last9 = (s: string | null) => (s || '').replace(/\D+/g, '').slice(-9);
+  let role: Conversation['role'] = null;
+  if (d) {
+    if (last9(d.phone_owner) === convkey) role = 'owner';
+    else if (last9(d.phone_tenant) === convkey) role = 'tenant';
+  }
   return {
     chat_id: `${args.phoneIntl}@c.us`,
     phone: local,
     is_group: false,
-    debtor_id: args.debtor?.id ?? null,
+    debtor_id: d?.id ?? null,
     display_name: name,
-    apartment_number: args.debtor?.apartment_number ?? null,
+    apartment_number: d?.apartment_number ?? null,
+    role,
+    tenant_name: d?.tenant_name ?? null,
     last_content: null,
     last_type: 'text',
     last_direction: 'sent',

@@ -21,6 +21,7 @@ interface ConvRow {
   owner_name: string | null;
   tenant_name: string | null;
   apartment_number: string | null;
+  role: 'owner' | 'tenant' | null;
   avatar_url: string | null;
 }
 
@@ -83,10 +84,17 @@ export async function listConversations(
      select k.chat_id, k.contact_phone, k.last_content, k.last_type,
             k.last_direction, k.last_at, k.unread::text as unread,
             d.id as debtor_id, d.owner_name, d.tenant_name, d.apartment_number,
+            case
+              when d.id is null or k.convkey is null then null
+              when right(regexp_replace(coalesce(d.phone_owner,''),  '[^0-9]', '', 'g'), 9) = k.convkey then 'owner'
+              when right(regexp_replace(coalesce(d.phone_tenant,''), '[^0-9]', '', 'g'), 9) = k.convkey then 'tenant'
+              else null
+            end as role,
             av.avatar_url
        from keyed k
        left join lateral (
-          select d.id, d.owner_name, d.tenant_name, d.apartment_number
+          select d.id, d.owner_name, d.tenant_name, d.apartment_number,
+                 d.phone_owner, d.phone_tenant
             from public.debtors d
            where (k.stored_debtor_id is not null and d.id = k.stored_debtor_id)
               or (k.stored_debtor_id is null and k.convkey is not null
@@ -118,6 +126,8 @@ export async function listConversations(
       debtor_id: row.debtor_id,
       display_name: debtorName,
       apartment_number: row.apartment_number,
+      role: row.debtor_id ? row.role : null,
+      tenant_name: (row.tenant_name || '').trim() || null,
       last_content: row.last_content,
       last_type: row.last_type,
       last_direction: row.last_direction,

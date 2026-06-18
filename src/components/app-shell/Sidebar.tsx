@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, LayoutGrid, Users, Truck, CheckSquare, AlertTriangle, Calendar,
   FileText, MessageCircle, MessagesSquare, Bell, Upload, Download, Sliders, MapPin,
-  UserCog, Settings as SettingsIcon, Inbox, ChevronRight, ChevronLeft,
+  UserCog, Settings as SettingsIcon, ChevronRight, ChevronLeft,
   type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -31,7 +31,7 @@ const MAIN_MENU: MenuItem[] = [
   { label: 'תקלות',              icon: AlertTriangle, href: '/issues', module: 'issues' },
   { label: 'יומן',               icon: Calendar, href: '/calendar', module: 'calendar' },
   { label: 'מסמכים',             icon: FileText, href: '/documents', module: 'documents' },
-  { label: 'הודעות',             icon: MessageCircle, href: '/messages', module: 'whatsapp_chat' },
+  { label: 'צ׳אט וואטסאפ',       icon: MessageCircle, href: '/messages', module: 'whatsapp_chat' },
   { label: 'צ׳אט פנימי',         icon: MessagesSquare, href: '/chat', module: 'internal_chat' },
   { label: 'תזכורות',            icon: Bell, href: '/user-reminders', module: 'user_reminders' },
 ];
@@ -44,7 +44,6 @@ const MANAGE_MENU: MenuItem[] = [
   // { label: 'ייצוא נתונים',       icon: Download, module: 'export' },
   { label: 'ניהול סטטוס חיובים', icon: Sliders, href: '/statuses', module: 'status_management' },
   { label: 'תבניות ווטסאפ',      icon: MessageCircle, href: '/whatsapp-templates', module: 'whatsapp_templates' },
-  { label: 'הודעות לא משויכות',  icon: Inbox, href: '/whatsapp-unlinked', module: 'whatsapp' },
   { label: 'ניהול אזורים',       icon: MapPin, href: '/areas', module: 'rooms_areas' },
   { label: 'משתמשים',            icon: UserCog, href: '/settings/users', module: 'users_management' },
   { label: 'הגדרות',             icon: SettingsIcon, href: '/settings', module: 'settings' },

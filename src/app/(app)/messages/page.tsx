@@ -14,12 +14,14 @@ export default async function MessagesPage() {
   }
 
   const canEdit = hasPermission(actor.role, actor.permissions, 'whatsapp_chat', 'edit');
+  const canLink = hasPermission(actor.role, actor.permissions, 'whatsapp', 'edit');
   const canManageTemplates = hasPermission(actor.role, actor.permissions, 'whatsapp_templates', 'edit');
   const isAdmin = actor.role === 'admin' || actor.role === 'super_admin';
 
   return (
     <MessagesClient
       canEdit={canEdit}
+      canLink={canLink}
       canManageTemplates={canManageTemplates}
       isAdmin={isAdmin}
       currentUserId={actor.id}

@@ -151,6 +151,12 @@ export interface Conversation {
   /** Display name: the linked debtor's name, else null (UI falls back to phone). */
   display_name: string | null;
   apartment_number: string | null;
+  /** Which debtor phone field this conversation's number matched — drives the
+   *  "בעלים" / "שוכר: {name}" role line in the list. null when unlinked or when
+   *  a manually-linked debtor's phones don't include this number. */
+  role: 'owner' | 'tenant' | null;
+  /** The linked debtor's tenant name (for the "שוכר: {name}" role line). */
+  tenant_name: string | null;
   /** Last message preview. */
   last_content: string | null;
   last_type: ChatMessageType;

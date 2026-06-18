@@ -15,6 +15,18 @@ export function previewText(content: string | null, type: ChatMessageType): stri
   return (content ?? '').trim();
 }
 
+/** Role line for a linked conversation: "בעלים" or "שוכר: {name}" (the name is
+ *  dropped when it would just repeat the title). null for unlinked / unknown. */
+export function roleLine(c: Conversation): string | null {
+  if (!c.debtor_id) return null;
+  if (c.role === 'owner') return 'בעלים';
+  if (c.role === 'tenant') {
+    const name = (c.tenant_name ?? '').trim();
+    return name && name !== c.display_name ? `שוכר: ${name}` : 'שוכר';
+  }
+  return null;
+}
+
 export function formatTime(iso: string): string {
   return new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 }

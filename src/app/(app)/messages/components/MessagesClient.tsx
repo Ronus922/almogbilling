@@ -6,13 +6,15 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type {
-  Conversation, ThreadMessage, InstanceOption, ChatStatus, ChatDirection, ChatMessageType, WaStreamEvent,
+  Conversation, ThreadMessage, InstanceOption, ChatStatus, ChatDirection, ChatMessageType,
+  WaStreamEvent, UnlinkedMessage,
 } from '@/types/whatsapp';
 import { ConversationList } from './ConversationList';
 import { ChatThread } from './ChatThread';
 import { NewConversationDialog } from './NewConversationDialog';
 import { BroadcastPanel } from './BroadcastPanel';
 import { TemplatesTab } from './TemplatesTab';
+import { LinkDebtorDialog } from './LinkDebtorDialog';
 
 // Real-time: SSE pushes updates instantly. Polling is now only a gap-filler —
 // infrequent while the stream is healthy, dense while it's down.
@@ -109,11 +111,13 @@ function bumpConversation(
 
 export function MessagesClient({
   canEdit,
+  canLink,
   canManageTemplates,
   isAdmin,
   currentUserId,
 }: {
   canEdit: boolean;
+  canLink: boolean;
   canManageTemplates: boolean;
   isAdmin: boolean;
   currentUserId: string;
@@ -127,6 +131,7 @@ export function MessagesClient({
   const [loadingThread, setLoadingThread] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
 
   const [instances, setInstances] = useState<InstanceOption[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
@@ -411,6 +416,47 @@ export function MessagesClient({
     void fetchConversations(searchRef.current, true);
   }, [fetchThread, fetchConversations]);
 
+  // After a successful link: refetch the list, promote the now-linked conversation
+  // into the open header (no manual refresh), and reload its thread.
+  const handleLinked = useCallback(async () => {
+    setLinkOpen(false);
+    const cid = selectedIdRef.current;
+    try {
+      const r = await fetch(
+        `/api/whatsapp/conversations?search=${encodeURIComponent(searchRef.current)}${instParam()}`,
+        { credentials: 'include' },
+      );
+      if (r.ok) {
+        const data = (await r.json()) as Conversation[];
+        setConversations(data);
+        if (cid) {
+          const updated = data.find((c) => c.chat_id === cid);
+          if (updated) setSelected(updated);
+        }
+      }
+    } catch {
+      /* the fallback poll will reconcile */
+    }
+    if (cid) void fetchThread(cid, true);
+  }, [instParam, fetchThread]);
+
+  // Build the link-dialog target from the open conversation: any still-unlinked
+  // message in the thread supplies the id the link endpoint keys off (it then
+  // links every unlinked row sharing that chat_id).
+  const linkTarget: UnlinkedMessage | null = (() => {
+    if (!linkOpen || !selected) return null;
+    const unlinked = thread.find((m) => m.link_status === 'unlinked') ?? thread[0];
+    if (!unlinked) return null;
+    return {
+      id: unlinked.id,
+      contact_phone: selected.phone ?? unlinked.contact_phone,
+      chat_id: selected.chat_id,
+      message_type: unlinked.message_type,
+      content: unlinked.content,
+      created_at: unlinked.created_at,
+    };
+  })();
+
   return (
     <div className="flex h-[calc(100vh-7rem)] flex-col gap-3">
       {/* Page header */}
@@ -468,10 +514,12 @@ export function MessagesClient({
             messages={thread}
             loading={loadingThread}
             canEdit={canEdit}
+            canLink={canLink}
             instanceId={selectedInstanceId}
             onOptimisticSend={optimisticSend}
             onResolveSend={resolveSend}
             onSent={handleSent}
+            onRequestLink={() => setLinkOpen(true)}
             onBack={() => setSelected(null)}
             className={cn(!selected && 'hidden md:flex')}
           />
@@ -495,6 +543,14 @@ export function MessagesClient({
           />
           <BroadcastPanel open={broadcastOpen} onOpenChange={setBroadcastOpen} />
         </>
+      )}
+
+      {canLink && (
+        <LinkDebtorDialog
+          message={linkTarget}
+          onOpenChange={(o) => { if (!o) setLinkOpen(false); }}
+          onLinked={handleLinked}
+        />
       )}
     </div>
   );

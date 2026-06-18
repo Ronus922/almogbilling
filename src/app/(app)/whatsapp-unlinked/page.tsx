@@ -1,18 +1,11 @@
 import { redirect } from 'next/navigation';
-import { getCurrentActor } from '@/lib/auth/actor';
-import { hasPermission } from '@/lib/permissions/check';
-import { WhatsAppUnlinkedClient } from './components/WhatsAppUnlinkedClient';
 
 export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
 
-export default async function WhatsAppUnlinkedPage() {
-  const actor = await getCurrentActor();
-  if (!actor) redirect('/login');
-  if (!hasPermission(actor.role, actor.permissions, 'whatsapp', 'view')) {
-    redirect('/dashboard');
-  }
-  const canLink = hasPermission(actor.role, actor.permissions, 'whatsapp', 'edit');
-
-  return <WhatsAppUnlinkedClient canLink={canLink} />;
+// The unlinked inbox was merged into /messages — unlinked conversations now show
+// in the main conversation list (with a "לא משויך" label and an in-thread "שייך
+// לדירה" action). This route is kept only as a redirect so old links/bookmarks
+// don't 404.
+export default function WhatsAppUnlinkedPage() {
+  redirect('/messages');
 }

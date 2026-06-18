@@ -4,7 +4,7 @@ import { Search, MessageCircle, Smartphone } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import type { Conversation, InstanceOption } from '@/types/whatsapp';
-import { conversationTitle, previewText, formatListStamp } from './format';
+import { conversationTitle, previewText, formatListStamp, roleLine } from './format';
 import { ChatAvatar } from './ChatAvatar';
 
 export function ConversationList({
@@ -95,6 +95,8 @@ export function ConversationList({
               const title = conversationTitle(c);
               const isActive = c.chat_id === selectedChatId;
               const preview = previewText(c.last_content, c.last_type);
+              const isUnlinked = !c.debtor_id && !c.is_group;
+              const role = roleLine(c);
               return (
                 <li key={c.chat_id}>
                   <button
@@ -110,16 +112,25 @@ export function ConversationList({
                       <div className="flex items-center justify-between gap-2">
                         <span className="flex min-w-0 items-center gap-1.5">
                           <span className="truncate text-sm font-semibold text-slate-900">{title}</span>
-                          {c.apartment_number && (
+                          {c.apartment_number ? (
                             <span className="shrink-0 text-[11px] font-medium text-slate-400">
                               · דירה {c.apartment_number}
                             </span>
-                          )}
+                          ) : isUnlinked ? (
+                            <span className="shrink-0 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">
+                              לא משויך
+                            </span>
+                          ) : null}
                         </span>
                         <span className="shrink-0 text-[11px] tabular-nums text-slate-400">
                           {formatListStamp(c.last_at)}
                         </span>
                       </div>
+                      {role && (
+                        <div className="mt-0.5 truncate text-[11px] font-medium text-slate-500">
+                          {role}
+                        </div>
+                      )}
                       <div className="mt-0.5 flex items-center justify-between gap-2">
                         <span className={cn('truncate text-xs', c.unread > 0 ? 'font-medium text-slate-700' : 'text-slate-500')}>
                           {c.last_direction === 'sent' && preview && <span className="text-slate-400">↩ </span>}
