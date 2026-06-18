@@ -54,13 +54,6 @@ export interface IssueWritableFields {
   resolution_notes: string | null;
 }
 
-/** Supplier option for the issue supplier picker + filter (subset of a supplier). */
-export interface IssueSupplierOption {
-  id: string;
-  display_name: string;
-  phone: string;
-}
-
 export type IssueSort = 'created_desc' | 'priority_desc' | 'updated_desc' | 'status_asc';
 
 export interface IssueListFilters {

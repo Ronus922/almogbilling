@@ -12,6 +12,7 @@ import type {
   IssueWritableFields,
 } from '@/lib/types/issues';
 import type { TargetType } from '@/lib/types/targets';
+import { assertSingleAssignee } from '@/lib/validation/assignee';
 
 const TARGET_TYPES: readonly TargetType[] = ['room', 'area'];
 
@@ -96,16 +97,11 @@ export function coerceIssueInput(
     fields.supplier_id = id;
   }
 
-  // Mutual-exclusive handler: an issue is handled by EITHER an internal user OR
-  // an external supplier — never both. Reject when both are explicitly set;
-  // otherwise setting one side clears the other (so assigning a supplier also
-  // detaches any previous user, and vice-versa — even on a partial PATCH).
-  // Enforced here (server-side) so the persisted row always satisfies the rule.
-  const userId = fields.assigned_to_user_id ?? null;
-  const supplierId = fields.supplier_id ?? null;
-  if (userId && supplierId) return { ok: false, error: 'assignee_conflict' };
-  if (supplierId) fields.assigned_to_user_id = null;
-  else if (userId) fields.supplier_id = null;
+  // Mutual-exclusive handler (shared with tasks): an issue is handled by EITHER an
+  // internal user OR an external supplier — never both. Rejects both-set; otherwise
+  // the set side clears the other (even on a partial PATCH).
+  const conflict = assertSingleAssignee(fields);
+  if (conflict) return { ok: false, error: conflict };
 
   // Optional target (יעד): target_type ∈ {room, area} + target_id uuid; both
   // nullable. FK existence not enforced (target_id points at two tables).

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   X, AlertTriangle, MapPin, User, Images, MessageSquare, Trash2, Send,
-  ListTodo, Link2, CheckCircle2, Upload, Loader2, Wrench, Phone,
+  ListTodo, Link2, CheckCircle2, Upload, Loader2,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
@@ -13,7 +13,6 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Combobox } from '@/components/ui/combobox';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -23,17 +22,18 @@ import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { ImageLightbox } from './ImageLightbox';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
-import { formatPhoneDisplay, phoneTelHref } from '@/lib/phone';
 import {
   ISSUE_STATUSES, ISSUE_PRIORITIES,
   issueStatusLabel, issuePriorityLabel,
   ISSUE_ALLOWED_IMAGE_TYPES, ISSUE_MAX_IMAGE_SIZE_BYTES, ISSUE_MAX_IMAGES,
 } from '@/lib/constants/issues';
 import type {
-  Issue, IssueComment, IssueImage, IssuePriority, IssueStatus, IssueSupplierOption,
+  Issue, IssueComment, IssueImage, IssuePriority, IssueStatus,
 } from '@/lib/types/issues';
 import type { TargetType } from '@/lib/types/targets';
+import type { AssigneeType, SupplierOption } from '@/lib/types/assignee';
 import { TargetField } from '@/components/targets/TargetField';
+import { AssigneeField } from '@/components/assignee/AssigneeField';
 import {
   RemindersSection, splitRemindAt, buildRemindersPayload, type ReminderRow,
 } from '@/components/reminders/RemindersSection';
@@ -43,16 +43,13 @@ interface Assignee {
   name: string;
 }
 
-/** The handler is EITHER an internal user OR an external supplier — never both. */
-type AssigneeType = 'none' | 'user' | 'supplier';
-
 interface Props {
   open: boolean;
   /** null → create mode; an issue → edit mode. */
   issue: Issue | null;
   canEdit: boolean;
   assignees: Assignee[];
-  suppliers: IssueSupplierOption[];
+  suppliers: SupplierOption[];
   onOpenChange: (o: boolean) => void;
   onSaved: () => void;
 }
@@ -186,19 +183,6 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onO
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
-
-  // Switching the handler type clears the other side's selection (mutual model).
-  function setAssigneeType(t: AssigneeType) {
-    setForm((prev) => ({
-      ...prev,
-      assignee_type: t,
-      assigned_to_user_id: t === 'user' ? prev.assigned_to_user_id : '',
-      supplier_id: t === 'supplier' ? prev.supplier_id : '',
-    }));
-  }
-
-  const selectedSupplierPhone =
-    suppliers.find((s) => s.id === form.supplier_id)?.phone ?? null;
 
   const titleError = titleTouched && !form.title.trim() ? 'כותרת היא שדה חובה' : null;
   const resolutionMissing =
@@ -508,77 +492,26 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onO
                 </div>
               </Section>
 
-              {/* Handler — internal user OR external supplier (mutually exclusive) */}
+              {/* Handler — internal user OR external supplier (shared AssigneeField) */}
               <Section title="גורם מטפל" icon={User} iconTone="violet">
-                <div className="space-y-3 py-2">
-                  {/* Type selector */}
-                  <div className="inline-flex w-full gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
-                    <AssigneeTypeButton
-                      active={form.assignee_type === 'none'}
-                      onClick={() => setAssigneeType('none')}
-                      disabled={disabled}
-                    >
-                      ללא שיוך
-                    </AssigneeTypeButton>
-                    <AssigneeTypeButton
-                      active={form.assignee_type === 'user'}
-                      onClick={() => setAssigneeType('user')}
-                      disabled={disabled}
-                      icon={User}
-                    >
-                      עובד פנימי
-                    </AssigneeTypeButton>
-                    <AssigneeTypeButton
-                      active={form.assignee_type === 'supplier'}
-                      onClick={() => setAssigneeType('supplier')}
-                      disabled={disabled}
-                      icon={Wrench}
-                    >
-                      ספק חיצוני
-                    </AssigneeTypeButton>
-                  </div>
-
-                  {/* Matching searchable picker */}
-                  {form.assignee_type === 'user' && (
-                    <Combobox
-                      value={form.assigned_to_user_id || null}
-                      onChange={(v) => set('assigned_to_user_id', v ?? '')}
-                      options={assignees.map((a) => ({ value: a.id, label: a.name }))}
-                      placeholder="בחר עובד…"
-                      searchPlaceholder="חיפוש עובד…"
-                      emptyText="לא נמצאו עובדים"
-                      disabled={disabled}
-                    />
-                  )}
-
-                  {form.assignee_type === 'supplier' && (
-                    <div className="space-y-2">
-                      <Combobox
-                        value={form.supplier_id || null}
-                        onChange={(v) => set('supplier_id', v ?? '')}
-                        options={suppliers.map((s) => ({
-                          value: s.id,
-                          label: s.display_name,
-                          keywords: s.phone,
-                        }))}
-                        placeholder="בחר ספק…"
-                        searchPlaceholder="חיפוש ספק…"
-                        emptyText="לא נמצאו ספקים"
-                        fallbackLabel={supplierFallback ?? undefined}
-                        disabled={disabled}
-                      />
-                      {selectedSupplierPhone && phoneTelHref(selectedSupplierPhone) && (
-                        <a
-                          href={`tel:${phoneTelHref(selectedSupplierPhone)}`}
-                          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline underline-offset-2"
-                          dir="ltr"
-                        >
-                          <Phone className="h-3.5 w-3.5" />
-                          <span className="tabular-nums">{formatPhoneDisplay(selectedSupplierPhone)}</span>
-                        </a>
-                      )}
-                    </div>
-                  )}
+                <div className="py-2">
+                  <AssigneeField
+                    value={{
+                      type: form.assignee_type,
+                      userId: form.assigned_to_user_id || null,
+                      supplierId: form.supplier_id || null,
+                    }}
+                    onChange={(v) => setForm((prev) => ({
+                      ...prev,
+                      assignee_type: v.type,
+                      assigned_to_user_id: v.userId ?? '',
+                      supplier_id: v.supplierId ?? '',
+                    }))}
+                    users={assignees}
+                    suppliers={suppliers}
+                    supplierFallbackLabel={supplierFallback}
+                    disabled={disabled}
+                  />
                 </div>
               </Section>
 
@@ -756,33 +689,5 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onO
         </AlertDialogContent>
       </AlertDialog>
     </>
-  );
-}
-
-/** One segment of the handler-type selector (ללא / עובד / ספק). */
-function AssigneeTypeButton({
-  active, onClick, disabled, icon: Icon, children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  disabled?: boolean;
-  icon?: typeof User;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        'inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-        active
-          ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
-          : 'text-slate-500 hover:text-slate-700',
-      )}
-    >
-      {Icon && <Icon className="h-4 w-4" />}
-      {children}
-    </button>
   );
 }

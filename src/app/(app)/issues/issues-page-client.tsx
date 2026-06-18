@@ -18,8 +18,9 @@ import {
   ISSUE_STATUSES, ISSUE_PRIORITIES, issueStatusLabel, issuePriorityLabel,
 } from '@/lib/constants/issues';
 import type {
-  Issue, IssueKpis, IssuePriority, IssueSort, IssueStatus, IssueWithMeta, IssueSupplierOption,
+  Issue, IssueKpis, IssuePriority, IssueSort, IssueStatus, IssueWithMeta,
 } from '@/lib/types/issues';
+import type { SupplierOption } from '@/lib/types/assignee';
 
 interface Assignee {
   id: string;
@@ -36,7 +37,7 @@ export function IssuesPageClient({
   initialIssues: IssueWithMeta[];
   initialKpis: IssueKpis;
   assignees: Assignee[];
-  suppliers: IssueSupplierOption[];
+  suppliers: SupplierOption[];
   canEdit: boolean;
 }) {
   const searchParams = useSearchParams();
