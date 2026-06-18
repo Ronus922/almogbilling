@@ -390,7 +390,7 @@ function UpsertPanel({ mode, instance, users, open, onOpenChange, onDone }: Upse
           <div className="space-y-5">
             {/* Info note */}
             <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-              את ה-Instance ID, ה-Token וכתובת ה-API יוצרים ידנית בקונסולת Green API (console.green-api.com) — צור Instance חדש לעובד והעתק את הפרטים לכאן.
+              את ה-idInstance, ה-apiTokenInstance וכתובת ה-API יוצרים ידנית בקונסולת Green API (console.green-api.com) — צור Instance חדש לעובד והעתק את הפרטים לכאן.
             </div>
 
             {/* Employee (create only) */}
@@ -446,7 +446,7 @@ function UpsertPanel({ mode, instance, users, open, onOpenChange, onDone }: Upse
             {/* Instance ID */}
             <div className="space-y-1.5">
               <Label htmlFor="wa-instance-id" className="text-base font-medium text-muted-foreground">
-                Instance ID<span className="text-red-500">*</span>
+                idInstance<span className="text-red-500">*</span>
               </Label>
               <Input
                 id="wa-instance-id"
@@ -464,14 +464,14 @@ function UpsertPanel({ mode, instance, users, open, onOpenChange, onDone }: Upse
             {/* Token */}
             <div className="space-y-1.5">
               <Label htmlFor="wa-token" className="text-base font-medium text-muted-foreground">
-                Token{mode === 'create' && <span className="text-red-500">*</span>}
+                apiTokenInstance{mode === 'create' && <span className="text-red-500">*</span>}
               </Label>
               <Input
                 id="wa-token"
                 type="password"
                 value={form.token}
                 onChange={(e) => setField('token', e.target.value)}
-                placeholder={mode === 'edit' ? 'השאר ריק כדי לא לשנות' : 'הדבק את ה-Token מ-Green API'}
+                placeholder={mode === 'edit' ? 'השאר ריק כדי לא לשנות' : 'הדבק את ה-apiTokenInstance מ-Green API'}
                 className="h-10"
                 dir="ltr"
                 disabled={saving}
@@ -563,7 +563,7 @@ function InstanceCard({ instance, isAdmin, onConnect, onEdit, onLogout, onDelete
             </p>
           )}
           <p dir="ltr" className="mt-0.5 text-xs text-slate-400 tabular-nums text-start">
-            Instance: {instance.green_instance_id}
+            idInstance: {instance.green_instance_id}
           </p>
         </div>
 
