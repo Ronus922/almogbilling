@@ -37,8 +37,11 @@ const MAIN_MENU: MenuItem[] = [
 ];
 
 const MANAGE_MENU: MenuItem[] = [
-  { label: 'ייבוא נתונים',       icon: Upload, href: '/import', module: 'import' },
-  { label: 'ייצוא נתונים',       icon: Download, module: 'export' },
+  // Hidden from the nav 2026-06-18 — data import/export. Pages, routes, /import,
+  // import_runs and all logic remain intact; restore = uncomment these two lines
+  // (Upload/Download icons are kept imported for that). Routes still reachable by URL.
+  // { label: 'ייבוא נתונים',       icon: Upload, href: '/import', module: 'import' },
+  // { label: 'ייצוא נתונים',       icon: Download, module: 'export' },
   { label: 'ניהול סטטוס חיובים', icon: Sliders, href: '/statuses', module: 'status_management' },
   { label: 'תבניות ווטסאפ',      icon: MessageCircle, href: '/whatsapp-templates', module: 'whatsapp_templates' },
   { label: 'הודעות לא משויכות',  icon: Inbox, href: '/whatsapp-unlinked', module: 'whatsapp' },
