@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowDown, ArrowUp, MessageSquare, ImageIcon, Link2, MapPin } from 'lucide-react';
+import { ArrowDown, ArrowUp, MessageSquare, ImageIcon, Link2, MapPin, User, Wrench } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -46,7 +46,7 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect }: Props) {
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">מיקום</TableHead>
             <SortHead label="סטטוס" col="status_asc" sort={sort} onSortChange={onSortChange} align="center" />
             <SortHead label="דחיפות" col="priority_desc" sort={sort} onSortChange={onSortChange} align="center" />
-            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">משויך</TableHead>
+            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">מטפל</TableHead>
             <SortHead label="עודכן" col="updated_desc" sort={sort} onSortChange={onSortChange} align="center" />
           </TableRow>
         </TableHeader>
@@ -95,8 +95,8 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect }: Props) {
                   {issuePriorityLabel(i.priority)}
                 </span>
               </TableCell>
-              <TableCell className="px-4 py-3 text-center text-sm text-slate-600">
-                {i.assigned_to_name ?? '—'}
+              <TableCell className="px-4 py-3 text-center text-sm">
+                <HandlerCell issue={i} />
               </TableCell>
               <TableCell dir="ltr" className="px-4 py-3 text-center text-sm tabular-nums text-slate-500">
                 {new Date(i.updated_at).toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: '2-digit' })}
@@ -107,6 +107,28 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect }: Props) {
       </Table>
     </div>
   );
+}
+
+/** Handler cell — an internal user OR an external supplier, with a small visual
+ *  distinction (icon + tone). Em-dash when unassigned. */
+function HandlerCell({ issue: i }: { issue: IssueWithMeta }) {
+  if (i.supplier_id) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+        <Wrench className="h-3.5 w-3.5" />
+        {i.supplier_display_name ?? 'ספק'}
+      </span>
+    );
+  }
+  if (i.assigned_to_user_id) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700">
+        <User className="h-3.5 w-3.5" />
+        {i.assigned_to_name ?? 'משתמש'}
+      </span>
+    );
+  }
+  return <span className="text-slate-400">—</span>;
 }
 
 function SortHead({

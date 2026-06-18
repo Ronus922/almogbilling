@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listIssues, createIssue, getIssueKpis } from '@/lib/db/issues';
+import { supplierExists } from '@/lib/db/suppliers';
 import { createReminder } from '@/lib/db/reminders';
 import { coerceIssueInput } from '@/lib/validation/issues';
 // Generic, entity-agnostic reminders coercion (reused from the tasks module).
@@ -118,6 +119,11 @@ export async function POST(req: NextRequest) {
 
   const result = coerceIssueInput(bodyRec, 'create');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+
+  // A linked supplier must exist and not be soft-deleted.
+  if (result.fields.supplier_id && !(await supplierExists(result.fields.supplier_id))) {
+    return NextResponse.json({ error: 'supplier_not_found' }, { status: 400 });
+  }
 
   const reminders = coerceReminders(bodyRec);
   if (reminders && !reminders.ok) {

@@ -13,7 +13,7 @@ import type {
 
 const ISSUE_COLUMNS = `
   id, title, description, location_type, location_text, target_type, target_id, priority, status,
-  assigned_to_user_id, images, resolution_notes, resolved_at, is_archived,
+  assigned_to_user_id, supplier_id, images, resolution_notes, resolved_at, is_archived,
   created_by, created_by_name, created_at, updated_at
 `;
 
@@ -28,12 +28,14 @@ const WRITABLE_COLUMNS: (keyof IssueWritableFields)[] = [
   'priority',
   'status',
   'assigned_to_user_id',
+  'supplier_id',
   'resolution_notes',
 ];
 
 const META_SELECT = `
   ${ISSUE_COLUMNS.split(',').map((c) => 'i.' + c.trim()).join(', ')},
   u.full_name as assigned_to_name,
+  s.display_name as supplier_display_name,
   coalesce(cc.cnt, 0)::int as comment_count,
   lt.id as linked_task_id
 `;
@@ -41,6 +43,7 @@ const META_SELECT = `
 const META_JOINS = `
   from public.issues i
   left join public.users u on u.id = i.assigned_to_user_id
+  left join public.suppliers s on s.id = i.supplier_id
   left join (
     select issue_id, count(*)::int as cnt
       from public.issue_comments
@@ -73,6 +76,10 @@ export async function listIssues(filters: IssueListFilters): Promise<IssueWithMe
   if (filters.assignedTo) {
     vals.push(filters.assignedTo);
     where.push(`i.assigned_to_user_id = $${vals.length}`);
+  }
+  if (filters.supplier_id) {
+    vals.push(filters.supplier_id);
+    where.push(`i.supplier_id = $${vals.length}`);
   }
   if (filters.search) {
     vals.push(`%${filters.search}%`);

@@ -130,6 +130,16 @@ export async function softDeleteSupplier(id: string): Promise<boolean> {
   return (r.rowCount ?? 0) > 0;
 }
 
+/** True when a supplier exists and is not soft-deleted — the guard for linking a
+ *  supplier to another entity (e.g. an issue's supplier_id). */
+export async function supplierExists(id: string): Promise<boolean> {
+  const row = await queryOne<{ ok: boolean }>(
+    `select true as ok from public.suppliers where id = $1 and deleted_at is null limit 1`,
+    [id],
+  );
+  return row?.ok ?? false;
+}
+
 // ── Documents ─────────────────────────────────────────────────────────────
 export async function listSupplierDocuments(supplierId: string): Promise<SupplierDocument[]> {
   const r = await query<SupplierDocument>(

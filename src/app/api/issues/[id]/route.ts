@@ -8,6 +8,7 @@ import {
   deleteIssue,
   listIssueComments,
 } from '@/lib/db/issues';
+import { supplierExists } from '@/lib/db/suppliers';
 import {
   listRemindersForEntity, createReminder, deleteRemindersForEntity,
 } from '@/lib/db/reminders';
@@ -77,6 +78,11 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
   const result = coerceIssueInput(bodyRec, 'update');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+
+  // A linked supplier must exist and not be soft-deleted (only when (re)assigning one).
+  if (result.fields.supplier_id && !(await supplierExists(result.fields.supplier_id))) {
+    return NextResponse.json({ error: 'supplier_not_found' }, { status: 400 });
+  }
 
   const reminders = coerceReminders(bodyRec);
   if (reminders && !reminders.ok) {

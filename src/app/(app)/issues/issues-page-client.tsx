@@ -18,7 +18,7 @@ import {
   ISSUE_STATUSES, ISSUE_PRIORITIES, issueStatusLabel, issuePriorityLabel,
 } from '@/lib/constants/issues';
 import type {
-  Issue, IssueKpis, IssuePriority, IssueSort, IssueStatus, IssueWithMeta,
+  Issue, IssueKpis, IssuePriority, IssueSort, IssueStatus, IssueWithMeta, IssueSupplierOption,
 } from '@/lib/types/issues';
 
 interface Assignee {
@@ -30,11 +30,13 @@ export function IssuesPageClient({
   initialIssues,
   initialKpis,
   assignees,
+  suppliers,
   canEdit,
 }: {
   initialIssues: IssueWithMeta[];
   initialKpis: IssueKpis;
   assignees: Assignee[];
+  suppliers: IssueSupplierOption[];
   canEdit: boolean;
 }) {
   const searchParams = useSearchParams();
@@ -45,6 +47,7 @@ export function IssuesPageClient({
   const [statusFilter, setStatusFilter] = useState<IssueStatus | 'all'>('all');
   const [priorityFilter, setPriorityFilter] = useState<IssuePriority | 'all'>('all');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
+  const [supplierFilter, setSupplierFilter] = useState<string>('all');
   const [sort, setSort] = useState<IssueSort>('created_desc');
 
   const [formOpen, setFormOpen] = useState(false);
@@ -59,6 +62,7 @@ export function IssuesPageClient({
       if (statusFilter !== 'all') params.set('status', statusFilter);
       if (priorityFilter !== 'all') params.set('priority', priorityFilter);
       if (assigneeFilter !== 'all') params.set('assignedTo', assigneeFilter);
+      if (supplierFilter !== 'all') params.set('supplier_id', supplierFilter);
       params.set('sort', sort);
       params.set('kpis', '1');
       const res = await fetch(`/api/issues?${params.toString()}`, { credentials: 'include' });
@@ -69,7 +73,7 @@ export function IssuesPageClient({
     } catch (err) {
       toast.error(`טעינת התקלות נכשלה: ${(err as Error).message}`);
     }
-  }, [search, statusFilter, priorityFilter, assigneeFilter, sort]);
+  }, [search, statusFilter, priorityFilter, assigneeFilter, supplierFilter, sort]);
 
   // Initial data is server-rendered; refetch when filters/sort change.
   useEffect(() => {
@@ -178,6 +182,21 @@ export function IssuesPageClient({
               {assignees.map((a) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
             </SelectContent>
           </Select>
+
+          <Select value={supplierFilter} onValueChange={(v) => { if (v) setSupplierFilter(v); }}>
+            <SelectTrigger className="h-10 w-40 data-[size=default]:h-10">
+              <SelectValue>
+                {(v: string | null) => {
+                  if (!v || v === 'all') return 'כל הספקים';
+                  return suppliers.find((s) => s.id === v)?.display_name ?? 'ספק';
+                }}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">כל הספקים</SelectItem>
+              {suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.display_name}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -189,6 +208,7 @@ export function IssuesPageClient({
         issue={editing}
         canEdit={canEdit}
         assignees={assignees}
+        suppliers={suppliers}
         onOpenChange={setFormOpen}
         onSaved={() => void fetchIssues()}
       />

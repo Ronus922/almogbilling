@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   X, AlertTriangle, MapPin, User, Images, MessageSquare, Trash2, Send,
-  ListTodo, Link2, CheckCircle2, Upload, Loader2,
+  ListTodo, Link2, CheckCircle2, Upload, Loader2, Wrench, Phone,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -22,13 +23,14 @@ import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { ImageLightbox } from './ImageLightbox';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
+import { formatPhoneDisplay, phoneTelHref } from '@/lib/phone';
 import {
   ISSUE_STATUSES, ISSUE_PRIORITIES,
   issueStatusLabel, issuePriorityLabel,
   ISSUE_ALLOWED_IMAGE_TYPES, ISSUE_MAX_IMAGE_SIZE_BYTES, ISSUE_MAX_IMAGES,
 } from '@/lib/constants/issues';
 import type {
-  Issue, IssueComment, IssueImage, IssuePriority, IssueStatus,
+  Issue, IssueComment, IssueImage, IssuePriority, IssueStatus, IssueSupplierOption,
 } from '@/lib/types/issues';
 import type { TargetType } from '@/lib/types/targets';
 import { TargetField } from '@/components/targets/TargetField';
@@ -41,12 +43,16 @@ interface Assignee {
   name: string;
 }
 
+/** The handler is EITHER an internal user OR an external supplier — never both. */
+type AssigneeType = 'none' | 'user' | 'supplier';
+
 interface Props {
   open: boolean;
   /** null → create mode; an issue → edit mode. */
   issue: Issue | null;
   canEdit: boolean;
   assignees: Assignee[];
+  suppliers: IssueSupplierOption[];
   onOpenChange: (o: boolean) => void;
   onSaved: () => void;
 }
@@ -56,7 +62,10 @@ interface FormState {
   description: string;
   priority: IssuePriority;
   status: IssueStatus;
+  /** Mutually-exclusive handler model. */
+  assignee_type: AssigneeType;
   assigned_to_user_id: string; // '' = none
+  supplier_id: string;         // '' = none
   resolution_notes: string;
   target_type: TargetType | null;
   target_id: string | null;
@@ -67,19 +76,26 @@ const EMPTY_FORM: FormState = {
   description: '',
   priority: 'normal',
   status: 'open',
+  assignee_type: 'none',
   assigned_to_user_id: '',
+  supplier_id: '',
   resolution_notes: '',
   target_type: null,
   target_id: null,
 };
 
 function fromIssue(i: Issue): FormState {
+  // Derive the handler type from whichever field is populated (no extra column).
+  const assignee_type: AssigneeType =
+    i.supplier_id ? 'supplier' : i.assigned_to_user_id ? 'user' : 'none';
   return {
     title: i.title,
     description: i.description ?? '',
     priority: i.priority,
     status: i.status,
+    assignee_type,
     assigned_to_user_id: i.assigned_to_user_id ?? '',
+    supplier_id: i.supplier_id ?? '',
     resolution_notes: i.resolution_notes ?? '',
     target_type: i.target_type,
     target_id: i.target_id,
@@ -99,10 +115,13 @@ function mapError(code: string | undefined, fallback: string): string {
   return (code && ERROR_MESSAGES[code]) || fallback;
 }
 
-export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, onSaved }: Props) {
+export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onOpenChange, onSaved }: Props) {
   const isEdit = !!issue;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
+  // Display name for a linked supplier that may be soft-deleted (and thus absent
+  // from the active `suppliers` picker list) — keeps the trigger label correct.
+  const [supplierFallback, setSupplierFallback] = useState<string | null>(null);
   const [comments, setComments] = useState<IssueComment[]>([]);
   const [images, setImages] = useState<IssueImage[]>([]);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
@@ -122,11 +141,12 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
       const r = await fetch(`/api/issues/${id}`, { credentials: 'include' });
       if (!r.ok) return;
       const data = (await r.json()) as {
-        issue?: Issue & { linked_task_id?: string | null };
+        issue?: Issue & { linked_task_id?: string | null; supplier_display_name?: string | null };
         comments?: IssueComment[];
         images?: IssueImage[];
         reminders?: { id: string; remind_at: string; channel: ReminderRow['channel'] }[];
       };
+      setSupplierFallback(data.issue?.supplier_display_name ?? null);
       setComments(Array.isArray(data.comments) ? data.comments : []);
       setImages(Array.isArray(data.images) ? data.images : []);
       const rem = (data.reminders ?? []).map((x) => {
@@ -148,6 +168,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
       const init = issue ? fromIssue(issue) : EMPTY_FORM;
       setForm(init);
       setInitial(init);
+      setSupplierFallback(null);
       setComments([]);
       setImages([]);
       setReminders([]);
@@ -165,6 +186,19 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
+
+  // Switching the handler type clears the other side's selection (mutual model).
+  function setAssigneeType(t: AssigneeType) {
+    setForm((prev) => ({
+      ...prev,
+      assignee_type: t,
+      assigned_to_user_id: t === 'user' ? prev.assigned_to_user_id : '',
+      supplier_id: t === 'supplier' ? prev.supplier_id : '',
+    }));
+  }
+
+  const selectedSupplierPhone =
+    suppliers.find((s) => s.id === form.supplier_id)?.phone ?? null;
 
   const titleError = titleTouched && !form.title.trim() ? 'כותרת היא שדה חובה' : null;
   const resolutionMissing =
@@ -209,7 +243,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
         description: form.description.trim() || null,
         priority: form.priority,
         status: form.status,
-        assigned_to_user_id: form.assigned_to_user_id || null,
+        // Mutually-exclusive handler: send exactly one side (the other null).
+        assigned_to_user_id: form.assignee_type === 'user' ? (form.assigned_to_user_id || null) : null,
+        supplier_id: form.assignee_type === 'supplier' ? (form.supplier_id || null) : null,
         resolution_notes: form.resolution_notes.trim() || null,
         // Target is optional. A type without a value persists as no target.
         target_type: form.target_id ? form.target_type : null,
@@ -472,30 +508,77 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
                 </div>
               </Section>
 
-              {/* Assignment */}
-              <Section title="שיוך" icon={User} iconTone="violet">
-                <div className="space-y-2 py-2">
-                  <Label className="text-base font-medium text-muted-foreground">משויך אל</Label>
-                  <Select
-                    value={form.assigned_to_user_id || '__none__'}
-                    onValueChange={(v) => { if (v) set('assigned_to_user_id', v === '__none__' ? '' : v); }}
-                    disabled={disabled}
-                  >
-                    <SelectTrigger className="w-full data-[size=default]:h-10">
-                      <SelectValue>
-                        {(v: string | null) => {
-                          if (!v || v === '__none__') return 'ללא שיוך';
-                          return assignees.find((a) => a.id === v)?.name ?? 'משתמש';
-                        }}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">ללא שיוך</SelectItem>
-                      {assignees.map((a) => (
-                        <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              {/* Handler — internal user OR external supplier (mutually exclusive) */}
+              <Section title="גורם מטפל" icon={User} iconTone="violet">
+                <div className="space-y-3 py-2">
+                  {/* Type selector */}
+                  <div className="inline-flex w-full gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+                    <AssigneeTypeButton
+                      active={form.assignee_type === 'none'}
+                      onClick={() => setAssigneeType('none')}
+                      disabled={disabled}
+                    >
+                      ללא שיוך
+                    </AssigneeTypeButton>
+                    <AssigneeTypeButton
+                      active={form.assignee_type === 'user'}
+                      onClick={() => setAssigneeType('user')}
+                      disabled={disabled}
+                      icon={User}
+                    >
+                      עובד פנימי
+                    </AssigneeTypeButton>
+                    <AssigneeTypeButton
+                      active={form.assignee_type === 'supplier'}
+                      onClick={() => setAssigneeType('supplier')}
+                      disabled={disabled}
+                      icon={Wrench}
+                    >
+                      ספק חיצוני
+                    </AssigneeTypeButton>
+                  </div>
+
+                  {/* Matching searchable picker */}
+                  {form.assignee_type === 'user' && (
+                    <Combobox
+                      value={form.assigned_to_user_id || null}
+                      onChange={(v) => set('assigned_to_user_id', v ?? '')}
+                      options={assignees.map((a) => ({ value: a.id, label: a.name }))}
+                      placeholder="בחר עובד…"
+                      searchPlaceholder="חיפוש עובד…"
+                      emptyText="לא נמצאו עובדים"
+                      disabled={disabled}
+                    />
+                  )}
+
+                  {form.assignee_type === 'supplier' && (
+                    <div className="space-y-2">
+                      <Combobox
+                        value={form.supplier_id || null}
+                        onChange={(v) => set('supplier_id', v ?? '')}
+                        options={suppliers.map((s) => ({
+                          value: s.id,
+                          label: s.display_name,
+                          keywords: s.phone,
+                        }))}
+                        placeholder="בחר ספק…"
+                        searchPlaceholder="חיפוש ספק…"
+                        emptyText="לא נמצאו ספקים"
+                        fallbackLabel={supplierFallback ?? undefined}
+                        disabled={disabled}
+                      />
+                      {selectedSupplierPhone && phoneTelHref(selectedSupplierPhone) && (
+                        <a
+                          href={`tel:${phoneTelHref(selectedSupplierPhone)}`}
+                          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline underline-offset-2"
+                          dir="ltr"
+                        >
+                          <Phone className="h-3.5 w-3.5" />
+                          <span className="tabular-nums">{formatPhoneDisplay(selectedSupplierPhone)}</span>
+                        </a>
+                      )}
+                    </div>
+                  )}
                 </div>
               </Section>
 
@@ -673,5 +756,33 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+/** One segment of the handler-type selector (ללא / עובד / ספק). */
+function AssigneeTypeButton({
+  active, onClick, disabled, icon: Icon, children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+  icon?: typeof User;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        'inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+        active
+          ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
+          : 'text-slate-500 hover:text-slate-700',
+      )}
+    >
+      {Icon && <Icon className="h-4 w-4" />}
+      {children}
+    </button>
   );
 }

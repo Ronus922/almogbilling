@@ -19,6 +19,9 @@ export interface Issue {
   priority: IssuePriority;
   status: IssueStatus;
   assigned_to_user_id: string | null;
+  /** External contractor/vendor handling the fault → suppliers.id. Separate from
+   *  location (where) and assigned_to_user_id (the internal employee). */
+  supplier_id: string | null;
   images: string[]; // storage object paths (not URLs)
   resolution_notes: string | null;
   resolved_at: string | null;
@@ -32,6 +35,8 @@ export interface Issue {
 /** Issue enriched with the assignee display name + comment count + linked task. */
 export interface IssueWithMeta extends Issue {
   assigned_to_name: string | null;
+  /** Linked supplier's display name (suppliers.display_name), joined for display. */
+  supplier_display_name: string | null;
   comment_count: number;
   linked_task_id: string | null;
 }
@@ -45,7 +50,15 @@ export interface IssueWritableFields {
   priority: IssuePriority;
   status: IssueStatus;
   assigned_to_user_id: string | null;
+  supplier_id: string | null;
   resolution_notes: string | null;
+}
+
+/** Supplier option for the issue supplier picker + filter (subset of a supplier). */
+export interface IssueSupplierOption {
+  id: string;
+  display_name: string;
+  phone: string;
 }
 
 export type IssueSort = 'created_desc' | 'priority_desc' | 'updated_desc' | 'status_asc';
@@ -54,6 +67,7 @@ export interface IssueListFilters {
   status?: IssueStatus;
   priority?: IssuePriority;
   assignedTo?: string;
+  supplier_id?: string;
   search?: string;
   sort?: IssueSort;
   includeArchived?: boolean;
