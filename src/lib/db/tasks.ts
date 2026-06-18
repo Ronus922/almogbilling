@@ -34,7 +34,6 @@ const WRITABLE_COLUMNS: (keyof TaskWritableFields)[] = [
   'due_time',
   'assigned_to_user_id',
   'debtor_id',
-  'apartment_number',
   'related_entity_type',
   'related_entity_id',
   'target_type',

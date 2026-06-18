@@ -64,7 +64,6 @@ interface FormState {
   due_date: string;
   due_time: string;
   assigned_to_user_id: string; // '' = none
-  apartment_number: string;
   target_type: TargetType | null;
   target_id: string | null;
 }
@@ -77,7 +76,6 @@ const EMPTY_FORM: FormState = {
   due_date: '',
   due_time: '',
   assigned_to_user_id: '',
-  apartment_number: '',
   target_type: null,
   target_id: null,
 };
@@ -97,7 +95,6 @@ function fromTask(t: Task): FormState {
     due_date: t.due_date ?? '',
     due_time: t.due_time ? t.due_time.slice(0, 5) : '',
     assigned_to_user_id: t.assigned_to_user_id ?? '',
-    apartment_number: t.apartment_number ?? '',
     target_type: t.target_type,
     target_id: t.target_id,
   };
@@ -229,7 +226,6 @@ export function TaskFormPanel({ open, task, canEdit, assignees, onOpenChange, on
         due_date: form.due_date || null,
         due_time: form.due_time || null,
         assigned_to_user_id: form.assigned_to_user_id || null,
-        apartment_number: form.apartment_number.trim() || null,
         // Target is optional. A type without a value persists as no target.
         target_type: form.target_id ? form.target_type : null,
         target_id: form.target_id || null,
@@ -440,20 +436,6 @@ export function TaskFormPanel({ open, task, canEdit, assignees, onOpenChange, on
                         ))}
                       </SelectContent>
                     </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="task-apt" className="text-base font-medium text-muted-foreground">
-                      מספר דירה (אופציונלי)
-                    </Label>
-                    <Input
-                      id="task-apt"
-                      value={form.apartment_number}
-                      onChange={(e) => set('apartment_number', e.target.value)}
-                      disabled={disabled}
-                      dir="ltr"
-                      placeholder="לדוגמה 42"
-                      className="h-10 tabular-nums"
-                    />
                   </div>
                   <TargetField
                     value={{ type: form.target_type, id: form.target_id }}

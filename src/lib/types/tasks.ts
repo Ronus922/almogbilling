@@ -53,7 +53,6 @@ export interface TaskWritableFields {
   due_time: string | null;
   assigned_to_user_id: string | null;
   debtor_id: string | null;
-  apartment_number: string | null;
   related_entity_type: RelatedEntityType | null;
   related_entity_id: string | null;
   target_type: TargetType | null;

@@ -65,12 +65,6 @@ export function coerceTaskInput(
     if (d && d.length > 20000) return { ok: false, error: 'description_too_long' };
     fields.description = d;
   }
-  if (has(body, 'apartment_number')) {
-    const a = strOrNull(body.apartment_number);
-    if (a && a.length > 50) return { ok: false, error: 'apartment_number_too_long' };
-    fields.apartment_number = a;
-  }
-
   if (has(body, 'status')) {
     const s = strOrNull(body.status);
     if (!s || !STATUSES.includes(s as TaskStatus)) {
