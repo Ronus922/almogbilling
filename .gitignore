@@ -45,6 +45,8 @@ yarn-error.log*
 
 # local audit reports (not committed)
 SECURITY_AUDIT.md
+RBAC_BUG_REPORT.md
+RBAC_MANAGER_AUDIT.md
 
 # vercel
 .vercel
