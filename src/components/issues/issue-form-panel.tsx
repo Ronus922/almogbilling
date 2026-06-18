@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  X, AlertTriangle, MapPin, User, Images, MessageSquare, Plus, Trash2, Send,
+  X, AlertTriangle, MapPin, User, Images, MessageSquare, Trash2, Send,
   ListTodo, Link2, CheckCircle2, Upload, Loader2,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -23,12 +23,12 @@ import { ImageLightbox } from './ImageLightbox';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
 import {
-  ISSUE_STATUSES, ISSUE_PRIORITIES, ISSUE_LOCATION_TYPES,
-  issueStatusLabel, issuePriorityLabel, issueLocationTypeLabel, locationTextLabel,
+  ISSUE_STATUSES, ISSUE_PRIORITIES,
+  issueStatusLabel, issuePriorityLabel,
   ISSUE_ALLOWED_IMAGE_TYPES, ISSUE_MAX_IMAGE_SIZE_BYTES, ISSUE_MAX_IMAGES,
 } from '@/lib/constants/issues';
 import type {
-  Issue, IssueComment, IssueImage, IssueLocationType, IssuePriority, IssueStatus,
+  Issue, IssueComment, IssueImage, IssuePriority, IssueStatus,
 } from '@/lib/types/issues';
 import type { TargetType } from '@/lib/types/targets';
 import { TargetField } from '@/components/targets/TargetField';
@@ -51,8 +51,6 @@ interface Props {
 interface FormState {
   title: string;
   description: string;
-  location_type: IssueLocationType;
-  location_text: string;
   priority: IssuePriority;
   status: IssueStatus;
   assigned_to_user_id: string; // '' = none
@@ -64,8 +62,6 @@ interface FormState {
 const EMPTY_FORM: FormState = {
   title: '',
   description: '',
-  location_type: 'general',
-  location_text: '',
   priority: 'normal',
   status: 'open',
   assigned_to_user_id: '',
@@ -78,8 +74,6 @@ function fromIssue(i: Issue): FormState {
   return {
     title: i.title,
     description: i.description ?? '',
-    location_type: i.location_type,
-    location_text: i.location_text ?? '',
     priority: i.priority,
     status: i.status,
     assigned_to_user_id: i.assigned_to_user_id ?? '',
@@ -192,8 +186,6 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
       const body: Record<string, unknown> = {
         title: form.title.trim(),
         description: form.description.trim() || null,
-        location_type: form.location_type,
-        location_text: form.location_text.trim() || null,
         priority: form.priority,
         status: form.status,
         assigned_to_user_id: form.assigned_to_user_id || null,
@@ -444,38 +436,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, onOpenChange, 
                 </div>
               </Section>
 
-              {/* Location */}
+              {/* Location / target */}
               <Section title="מיקום" icon={MapPin} iconTone="amber">
-                <div className="grid grid-cols-1 gap-4 py-2 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label className="text-base font-medium text-muted-foreground">סוג מיקום</Label>
-                    <Select value={form.location_type} onValueChange={(v) => { if (v) set('location_type', v as IssueLocationType); }} disabled={disabled}>
-                      <SelectTrigger className="w-full data-[size=default]:h-10">
-                        <SelectValue>{(v: string | null) => (v ? issueLocationTypeLabel(v as IssueLocationType) : null)}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ISSUE_LOCATION_TYPES.map((t) => (
-                          <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="issue-loc-text" className="text-base font-medium text-muted-foreground">
-                      {locationTextLabel(form.location_type)}
-                    </Label>
-                    <Input
-                      id="issue-loc-text"
-                      value={form.location_text}
-                      onChange={(e) => set('location_text', e.target.value)}
-                      disabled={disabled}
-                      dir={form.location_type === 'apartment' ? 'ltr' : 'rtl'}
-                      placeholder={form.location_type === 'apartment' ? 'לדוגמה 42' : 'לדוגמה: חניון תת-קרקעי'}
-                      className={cn('h-10', form.location_type === 'apartment' && 'tabular-nums')}
-                    />
-                  </div>
-                </div>
-                <div className="pb-2">
+                <div className="py-2">
                   <TargetField
                     value={{ type: form.target_type, id: form.target_id }}
                     onChange={(t) => setForm((prev) => ({ ...prev, target_type: t.type, target_id: t.id }))}

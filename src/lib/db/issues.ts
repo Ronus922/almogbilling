@@ -21,8 +21,8 @@ const ISSUE_COLUMNS = `
 const WRITABLE_COLUMNS: (keyof IssueWritableFields)[] = [
   'title',
   'description',
-  'location_type',
-  'location_text',
+  // location_type / location_text are deprecated (Base44 remnants) — kept as DB
+  // columns + read in ISSUE_COLUMNS, but no longer written from the form.
   'target_type',
   'target_id',
   'priority',

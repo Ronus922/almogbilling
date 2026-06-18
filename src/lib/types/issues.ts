@@ -40,8 +40,6 @@ export interface IssueWithMeta extends Issue {
 export interface IssueWritableFields {
   title: string;
   description: string | null;
-  location_type: IssueLocationType;
-  location_text: string | null;
   target_type: TargetType | null;
   target_id: string | null;
   priority: IssuePriority;

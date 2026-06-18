@@ -7,7 +7,6 @@
 // - Pure (no DB, no server-only): safe to import anywhere.
 
 import type {
-  IssueLocationType,
   IssuePriority,
   IssueStatus,
   IssueWritableFields,
@@ -18,7 +17,6 @@ const TARGET_TYPES: readonly TargetType[] = ['room', 'area'];
 
 const STATUSES: readonly IssueStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
 const PRIORITIES: readonly IssuePriority[] = ['low', 'normal', 'high', 'urgent'];
-const LOCATION_TYPES: readonly IssueLocationType[] = ['apartment', 'area', 'general'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** True when `id` is a well-formed UUID. Used by routes to reject malformed
@@ -60,20 +58,6 @@ export function coerceIssueInput(
     const d = strOrNull(body.description);
     if (d && d.length > 20000) return { ok: false, error: 'description_too_long' };
     fields.description = d;
-  }
-
-  if (has(body, 'location_type')) {
-    const lt = strOrNull(body.location_type);
-    if (!lt || !LOCATION_TYPES.includes(lt as IssueLocationType)) {
-      return { ok: false, error: 'invalid_location_type' };
-    }
-    fields.location_type = lt as IssueLocationType;
-  }
-
-  if (has(body, 'location_text')) {
-    const t = strOrNull(body.location_text);
-    if (t && t.length > 200) return { ok: false, error: 'location_text_too_long' };
-    fields.location_text = t;
   }
 
   if (has(body, 'status')) {
