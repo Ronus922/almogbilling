@@ -29,14 +29,23 @@ describe('hasPermission — RBAC matrix (the authorization model)', () => {
     expect(hasPermission('viewer', DEFAULT_VIEWER, 'status_management', 'view')).toBe(false);
     // viewer has no settings
     expect(hasPermission('viewer', DEFAULT_VIEWER, 'settings', 'view')).toBe(false);
+    // viewer can VIEW vendors but not edit them
+    expect(hasPermission('viewer', DEFAULT_VIEWER, 'vendors', 'view')).toBe(true);
+    expect(hasPermission('viewer', DEFAULT_VIEWER, 'vendors', 'edit')).toBe(false);
   });
 
-  it('manager (default matrix) has import VIEW only, not edit', () => {
+  // Manager policy as of 48af9c1: full operational access — view+edit on every
+  // module EXCEPT settings / users_management / roles_management.
+  it('manager (default matrix) has full operational access (view+edit)', () => {
     expect(hasPermission('manager', DEFAULT_MANAGER, 'import', 'view')).toBe(true);
-    expect(hasPermission('manager', DEFAULT_MANAGER, 'import', 'edit')).toBe(false);
+    expect(hasPermission('manager', DEFAULT_MANAGER, 'import', 'edit')).toBe(true);
     expect(hasPermission('manager', DEFAULT_MANAGER, 'dashboard', 'edit')).toBe(true);
     expect(hasPermission('manager', DEFAULT_MANAGER, 'status_management', 'view')).toBe(true);
-    expect(hasPermission('manager', DEFAULT_MANAGER, 'status_management', 'edit')).toBe(false);
+    expect(hasPermission('manager', DEFAULT_MANAGER, 'status_management', 'edit')).toBe(true);
+    expect(hasPermission('manager', DEFAULT_MANAGER, 'vendors', 'edit')).toBe(true);
+    // …but still locked out of the admin-only line.
+    expect(hasPermission('manager', DEFAULT_MANAGER, 'settings', 'edit')).toBe(false);
+    expect(hasPermission('manager', DEFAULT_MANAGER, 'users_management', 'view')).toBe(false);
   });
 
   it('a permission not present in the matrix is denied (fail-closed)', () => {

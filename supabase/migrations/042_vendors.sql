@@ -1,0 +1,70 @@
+-- 042_vendors.sql
+-- Vendors module (lightweight service-provider directory) — Wave 2.
+-- Additive only: two new tables (vendor_categories, vendors), a seed of the
+-- default trade categories, and a permission backfill for the new 'vendors'
+-- module (manager view+edit, viewer view-only) — mirroring 014_whatsapp.
+--
+-- Deliberately DISTINCT from the existing heavyweight `suppliers` module
+-- (procurement registry: company / tax_id / bank details / documents). `vendors`
+-- is a simple operational contacts directory for the building's service
+-- providers (plumber, electrician, elevators, …).
+--
+-- Run: docker exec -i supabase-db psql -U postgres -d proj_billing < supabase/migrations/042_vendors.sql
+
+begin;
+
+-- ── vendor_categories ──────────────────────────────────────────────────
+create table if not exists public.vendor_categories (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null unique,
+  is_active   boolean not null default true,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+-- updated_at: project convention (public.touch_updated_at() trigger).
+drop trigger if exists vendor_categories_touch_updated_at on public.vendor_categories;
+create trigger vendor_categories_touch_updated_at
+  before update on public.vendor_categories
+  for each row execute function public.touch_updated_at();
+
+-- ── vendors ────────────────────────────────────────────────────────────
+create table if not exists public.vendors (
+  id              uuid primary key default gen_random_uuid(),
+  name            text not null,
+  category_id     uuid references public.vendor_categories(id) on delete set null,
+  contact_person  text not null default '',
+  phone           text not null default '',
+  email           text not null default '',
+  address         text not null default '',
+  notes           text not null default '',
+  is_active       boolean not null default true,
+  created_by      uuid references public.users(id) on delete set null,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+
+create index if not exists idx_vendors_category on public.vendors (category_id);
+create index if not exists idx_vendors_active   on public.vendors (is_active);
+
+drop trigger if exists vendors_touch_updated_at on public.vendors;
+create trigger vendors_touch_updated_at
+  before update on public.vendors
+  for each row execute function public.touch_updated_at();
+
+-- ── Seed default trade categories (idempotent via the name unique index) ──
+insert into public.vendor_categories (name)
+values ('אינסטלציה'), ('חשמל'), ('מעליות'), ('ניקיון'), ('גינון'), ('אינטרקום'), ('כללי')
+on conflict (name) do nothing;
+
+-- ── RBAC backfill — the new 'vendors' module for existing manager / viewer
+-- users, so the module's defaults apply to people already in the system.
+-- Pattern mirrors 014_whatsapp: manager → view+edit, viewer → view-only.
+-- super_admin / admin are hardcoded in code and never have rows here.
+insert into public.user_permissions (user_id, module, can_view, can_edit)
+select u.id, 'vendors', true, (u.role = 'manager')
+  from public.users u
+ where u.role in ('manager', 'viewer')
+on conflict (user_id, module) do nothing;
+
+commit;
