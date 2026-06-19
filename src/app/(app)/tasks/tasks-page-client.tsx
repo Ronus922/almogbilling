@@ -20,15 +20,18 @@ import {
   TASK_STATUSES, TASK_PRIORITIES, taskStatusLabel, taskPriorityLabel,
 } from '@/lib/constants/tasks';
 import type {
-  Task, TaskKpis, TaskPriority, TaskSort, TaskStatus, TaskWithAssignee,
+  TaskKpis, TaskPriority, TaskSort, TaskStatus, TaskWithAssignee,
 } from '@/lib/types/tasks';
 import type { SupplierOption } from '@/lib/types/assignee';
+import type { NotifyUserContact } from '@/lib/notify/selection';
 
 type ViewMode = 'kanban' | 'table';
 
 interface Assignee {
   id: string;
   name: string;
+  hasEmail?: boolean;
+  hasPhone?: boolean;
 }
 
 export function TasksPageClient({
@@ -36,12 +39,14 @@ export function TasksPageClient({
   initialKpis,
   assignees,
   suppliers,
+  currentUser,
   canEdit,
 }: {
   initialTasks: TaskWithAssignee[];
   initialKpis: TaskKpis;
   assignees: Assignee[];
   suppliers: SupplierOption[];
+  currentUser: NotifyUserContact;
   canEdit: boolean;
 }) {
   const searchParams = useSearchParams();
@@ -57,7 +62,7 @@ export function TasksPageClient({
   const [sort, setSort] = useState<TaskSort>('created_desc');
 
   const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<Task | null>(null);
+  const [editing, setEditing] = useState<TaskWithAssignee | null>(null);
 
   const didMount = useRef(false);
 
@@ -99,7 +104,7 @@ export function TasksPageClient({
           try {
             const r = await fetch(`/api/tasks/${id}`, { credentials: 'include' });
             if (r.ok) {
-              const d = (await r.json()) as { task?: Task };
+              const d = (await r.json()) as { task?: TaskWithAssignee };
               if (d.task) { setEditing(d.task); setFormOpen(true); }
             }
           } catch { /* ignore */ }
@@ -270,6 +275,7 @@ export function TasksPageClient({
         canEdit={canEdit}
         assignees={assignees}
         suppliers={suppliers}
+        currentUser={currentUser}
         onOpenChange={setFormOpen}
         onSaved={() => void fetchTasks()}
       />

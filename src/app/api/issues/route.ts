@@ -7,7 +7,10 @@ import { createReminder } from '@/lib/db/reminders';
 import { coerceIssueInput } from '@/lib/validation/issues';
 // Generic, entity-agnostic reminders coercion (reused from the tasks module).
 import { coerceReminders } from '@/lib/validation/tasks';
+import { coerceAssignees } from '@/lib/validation/assignee';
 import { notifyIssue, createNotification } from '@/services/notifications';
+import { dispatchCreateNotifications, buildMatrixRecipients } from '@/services/createNotify';
+import { coerceNotifySelection } from '@/lib/notify/selection';
 import { listActiveAdmins } from '@/lib/db/users';
 import type {
   Issue,
@@ -120,9 +123,16 @@ export async function POST(req: NextRequest) {
   const result = coerceIssueInput(bodyRec, 'create');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
 
-  // A linked supplier must exist and not be soft-deleted.
-  if (result.fields.supplier_id && !(await supplierExists(result.fields.supplier_id))) {
-    return NextResponse.json({ error: 'supplier_not_found' }, { status: 400 });
+  // Assignees (mixed users + suppliers). Each supplier must exist + not be deleted.
+  const assigneesV = coerceAssignees(bodyRec);
+  if (assigneesV && !assigneesV.ok) {
+    return NextResponse.json({ error: assigneesV.error }, { status: 400 });
+  }
+  const assignees = assigneesV && assigneesV.ok ? assigneesV.assignees : [];
+  for (const a of assignees) {
+    if (a.assignee_type === 'supplier' && !(await supplierExists(a.id))) {
+      return NextResponse.json({ error: 'supplier_not_found' }, { status: 400 });
+    }
   }
 
   const reminders = coerceReminders(bodyRec);
@@ -133,37 +143,61 @@ export async function POST(req: NextRequest) {
   try {
     const issue = await createIssue(
       result.fields as Partial<IssueWritableFields> & { title: string },
+      assignees,
       actor.id,
       actor.full_name ?? actor.username,
     );
 
-    // Reminders attached to this issue (entity_type='issue' → fired by the cron engine).
+    const userIds = issue.assignees.map((a) => a.user_id).filter((v): v is string => v !== null);
+
+    // Reminders → one per user assignee, or the reporter when there are none.
     if (reminders && reminders.ok) {
+      const reminderUsers = userIds.length > 0 ? userIds : [actor.id];
       for (const r of reminders.reminders) {
-        await createReminder({
-          entityType: 'issue',
-          entityId: issue.id,
-          userId: issue.assigned_to_user_id ?? actor.id,
-          remindAt: r.remind_at,
-          channel: r.channel,
-        });
+        for (const uid of reminderUsers) {
+          await createReminder({
+            entityType: 'issue',
+            entityId: issue.id,
+            userId: uid,
+            remindAt: r.remind_at,
+            channel: r.channel,
+          });
+        }
       }
     }
 
-    // "תקלה חדשה נפתחה" → every active admin except the reporter. Fire-and-forget
-    // after the real insert so the response isn't blocked by the fan-out.
+    // "תקלה חדשה נפתחה" → every active admin except the reporter (fire-and-forget).
     void notifyAdminsOfIssueReported(issue, actor.id);
 
-    // Assignment notification (only when assigned to someone other than the creator).
-    if (issue.assigned_to_user_id && issue.assigned_to_user_id !== actor.id) {
+    // In-app assignment bell → each user assignee other than the reporter
+    // (channel:'in_app' suppresses the auto-email; external is matrix-driven).
+    for (const uid of userIds) {
+      if (uid === actor.id) continue;
       await notifyIssue({
-        userId: issue.assigned_to_user_id,
+        userId: uid,
         type: 'issue_assigned',
         heading: 'תקלה חדשה הוקצתה לך',
         issue: { id: issue.id, title: issue.title, priority: issue.priority },
         notificationPriority: issue.priority === 'urgent' ? 'urgent' : 'normal',
-        dedupeKey: `issue_assigned:${issue.id}:${issue.assigned_to_user_id}`,
+        dedupeKey: `issue_assigned:${issue.id}:${uid}`,
+        channel: 'in_app',
         extraDetails: [{ label: 'דווח על ידי', value: actor.full_name ?? actor.username }],
+      });
+    }
+
+    // External notifications (email / WhatsApp) — ONLY the creator's matrix picks.
+    const recipients = buildMatrixRecipients({
+      selection: coerceNotifySelection(bodyRec.notify),
+      meUserId: actor.id,
+      assignees: issue.assignees,
+      meMessage: `דיווחת על תקלה חדשה: ${issue.title}`,
+      assigneeMessage: () => `הוקצתה לך תקלה חדשה: ${issue.title}`,
+    });
+    if (recipients.length > 0) {
+      void dispatchCreateNotifications({
+        title: `תקלה: ${issue.title}`,
+        actionUrl: `/issues?issue=${issue.id}`,
+        recipients,
       });
     }
 

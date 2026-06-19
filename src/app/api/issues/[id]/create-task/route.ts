@@ -42,10 +42,11 @@ export async function POST(_req: NextRequest, ctx: RouteCtx) {
       return NextResponse.json({ error: 'task_already_linked' }, { status: 409 });
     }
 
-    // Notify the assignee about the new task (when it isn't the creator).
-    if (task.assigned_to_user_id && task.assigned_to_user_id !== actor.id) {
+    // Notify each copied user assignee about the new task (except the creator).
+    for (const uid of task.assigned_user_ids) {
+      if (uid === actor.id) continue;
       await notifyTask({
-        userId: task.assigned_to_user_id,
+        userId: uid,
         type: 'task_assigned',
         heading: 'משימה חדשה הוקצתה לך (מתקלה)',
         task: {
@@ -55,7 +56,7 @@ export async function POST(_req: NextRequest, ctx: RouteCtx) {
           due_date: task.due_date,
         },
         notificationPriority: task.priority === 'urgent' ? 'urgent' : 'normal',
-        dedupeKey: `task_assigned:${task.id}:${task.assigned_to_user_id}`,
+        dedupeKey: `task_assigned:${task.id}:${uid}`,
         extraDetails: [{ label: 'נוצר מתקלה', value: issue.title }],
       });
     }

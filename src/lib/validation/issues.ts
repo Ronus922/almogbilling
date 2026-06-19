@@ -12,7 +12,6 @@ import type {
   IssueWritableFields,
 } from '@/lib/types/issues';
 import type { TargetType } from '@/lib/types/targets';
-import { assertSingleAssignee } from '@/lib/validation/assignee';
 
 const TARGET_TYPES: readonly TargetType[] = ['room', 'area'];
 
@@ -83,25 +82,8 @@ export function coerceIssueInput(
     fields.resolution_notes = r;
   }
 
-  if (has(body, 'assigned_to_user_id')) {
-    const id = strOrNull(body.assigned_to_user_id);
-    if (id !== null && !UUID_RE.test(id)) return { ok: false, error: 'invalid_assigned_to_user_id' };
-    fields.assigned_to_user_id = id;
-  }
-
-  // Optional supplier link (external contractor). uuid or null here (format only);
-  // the route layer verifies the supplier exists + is not soft-deleted.
-  if (has(body, 'supplier_id')) {
-    const id = strOrNull(body.supplier_id);
-    if (id !== null && !UUID_RE.test(id)) return { ok: false, error: 'invalid_supplier_id' };
-    fields.supplier_id = id;
-  }
-
-  // Mutual-exclusive handler (shared with tasks): an issue is handled by EITHER an
-  // internal user OR an external supplier — never both. Rejects both-set; otherwise
-  // the set side clears the other (even on a partial PATCH).
-  const conflict = assertSingleAssignee(fields);
-  if (conflict) return { ok: false, error: conflict };
+  // Assignees (users + suppliers) are validated separately via coerceAssignees
+  // and written to the entity_assignees junction — no longer scalar fields here.
 
   // Optional target (יעד): target_type ∈ {room, area} + target_id uuid; both
   // nullable. FK existence not enforced (target_id points at two tables).

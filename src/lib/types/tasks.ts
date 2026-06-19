@@ -1,6 +1,7 @@
 // Tasks / Notifications / Reminders domain types — Module 1.
 
 import type { TargetType } from './targets';
+import type { AssigneeRef } from './assignee';
 
 // ── Tasks ────────────────────────────────────────────────────────────────
 export type TaskStatus = 'open' | 'in_progress' | 'done' | 'cancelled';
@@ -18,10 +19,10 @@ export interface Task {
   priority: TaskPriority;
   due_date: string | null; // 'YYYY-MM-DD'
   due_time: string | null; // 'HH:MM' / 'HH:MM:SS'
-  assigned_to_user_id: string | null;
-  /** External supplier handling the task → suppliers.id. Mutually exclusive with
-   *  assigned_to_user_id (the internal user). Separate from related_entity_*. */
-  supplier_id: string | null;
+  // Handlers (users + suppliers) now live in the entity_assignees junction
+  // (migration 047), exposed as `assignees` on TaskWithAssignee — NOT as scalar
+  // columns here. The legacy assigned_to_user_id / supplier_id columns remain in
+  // the DB (frozen) but the app no longer reads or writes them.
   debtor_id: string | null;
   apartment_number: string | null;
   related_entity_type: RelatedEntityType | null;
@@ -38,10 +39,9 @@ export interface Task {
   updated_at: string;
 }
 
-/** Task enriched with the assignee + supplier display names (LEFT JOINs). */
+/** Task enriched with its assignee set (json-agg over the junction) + comment count. */
 export interface TaskWithAssignee extends Task {
-  assigned_to_name: string | null;
-  supplier_display_name: string | null;
+  assignees: AssigneeRef[];
   comment_count: number;
 }
 
@@ -55,8 +55,6 @@ export interface TaskWritableFields {
   priority: TaskPriority;
   due_date: string | null;
   due_time: string | null;
-  assigned_to_user_id: string | null;
-  supplier_id: string | null;
   debtor_id: string | null;
   related_entity_type: RelatedEntityType | null;
   related_entity_id: string | null;

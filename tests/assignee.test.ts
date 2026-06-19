@@ -1,39 +1,77 @@
 import { describe, it, expect } from 'vitest';
-import { assertSingleAssignee, type AssigneeFields } from '@/lib/validation/assignee';
+import { coerceAssignees } from '@/lib/validation/assignee';
 
-const U = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-const S = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+const U1 = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+const U2 = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+const S1 = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 
-describe('assertSingleAssignee — shared user-XOR-supplier rule', () => {
-  it('rejects when BOTH a user and a supplier are set', () => {
-    expect(assertSingleAssignee({ assigned_to_user_id: U, supplier_id: S })).toBe('assignee_conflict');
+describe('coerceAssignees — mixed many-to-many handler model', () => {
+  it('absent key → null (PATCH partial: leave the junction untouched)', () => {
+    expect(coerceAssignees({ title: 'x' })).toBeNull();
   });
 
-  it('setting a supplier clears the user (added as null)', () => {
-    const f: AssigneeFields = { supplier_id: S };
-    expect(assertSingleAssignee(f)).toBeNull();
-    expect(f.supplier_id).toBe(S);
-    expect(f.assigned_to_user_id).toBeNull();
+  it('explicit null / [] → ok with empty set (clear all)', () => {
+    expect(coerceAssignees({ assignees: null })).toEqual({ ok: true, assignees: [] });
+    expect(coerceAssignees({ assignees: [] })).toEqual({ ok: true, assignees: [] });
   });
 
-  it('setting a user clears the supplier (added as null)', () => {
-    const f: AssigneeFields = { assigned_to_user_id: U };
-    expect(assertSingleAssignee(f)).toBeNull();
-    expect(f.assigned_to_user_id).toBe(U);
-    expect(f.supplier_id).toBeNull();
+  it('accepts a MIX of users and suppliers together', () => {
+    const r = coerceAssignees({
+      assignees: [
+        { assignee_type: 'user', id: U1 },
+        { assignee_type: 'supplier', id: S1 },
+        { assignee_type: 'user', id: U2 },
+      ],
+    });
+    expect(r).toEqual({
+      ok: true,
+      assignees: [
+        { assignee_type: 'user', id: U1 },
+        { assignee_type: 'supplier', id: S1 },
+        { assignee_type: 'user', id: U2 },
+      ],
+    });
   });
 
-  it('neither set → untouched (no keys added)', () => {
-    const f: AssigneeFields = {};
-    expect(assertSingleAssignee(f)).toBeNull();
-    expect('assigned_to_user_id' in f).toBe(false);
-    expect('supplier_id' in f).toBe(false);
+  it('de-duplicates identical (kind,id) pairs', () => {
+    const r = coerceAssignees({
+      assignees: [
+        { assignee_type: 'user', id: U1 },
+        { assignee_type: 'user', id: U1 },
+      ],
+    });
+    expect(r && r.ok).toBe(true);
+    if (r && r.ok) expect(r.assignees).toEqual([{ assignee_type: 'user', id: U1 }]);
   });
 
-  it('both explicitly null ("ללא שיוך") → ok, both stay null', () => {
-    const f: AssigneeFields = { assigned_to_user_id: null, supplier_id: null };
-    expect(assertSingleAssignee(f)).toBeNull();
-    expect(f.assigned_to_user_id).toBeNull();
-    expect(f.supplier_id).toBeNull();
+  it('keeps same id under different kinds (user vs supplier are distinct)', () => {
+    const r = coerceAssignees({
+      assignees: [
+        { assignee_type: 'user', id: U1 },
+        { assignee_type: 'supplier', id: U1 },
+      ],
+    });
+    expect(r && r.ok).toBe(true);
+    if (r && r.ok) expect(r.assignees).toHaveLength(2);
+  });
+
+  it('rejects a non-array assignees', () => {
+    const r = coerceAssignees({ assignees: 'nope' });
+    expect(r).toEqual({ ok: false, error: 'invalid_assignees' });
+  });
+
+  it('rejects a bad kind', () => {
+    const r = coerceAssignees({ assignees: [{ assignee_type: 'robot', id: U1 }] });
+    expect(r).toEqual({ ok: false, error: 'invalid_assignee_type' });
+  });
+
+  it('rejects a non-uuid id', () => {
+    const r = coerceAssignees({ assignees: [{ assignee_type: 'user', id: 'not-a-uuid' }] });
+    expect(r).toEqual({ ok: false, error: 'invalid_assignee_id' });
+  });
+
+  it('rejects a non-object item', () => {
+    const r = coerceAssignees({ assignees: ['nope'] });
+    expect(r).toEqual({ ok: false, error: 'invalid_assignee_item' });
   });
 });

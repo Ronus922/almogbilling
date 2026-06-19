@@ -9,14 +9,23 @@ import type {
   TaskWithAssignee,
   TaskWritableFields,
 } from '@/lib/types/tasks';
+import type { AssigneeInput } from '@/lib/types/assignee';
+import {
+  assigneesJsonExpr,
+  assigneeExistsSql,
+  replaceEntityAssignees,
+  listEntityUserIds,
+} from '@/lib/db/entityAssignees';
 
 // Date/timestamp columns are cast to text so they cross the RSC boundary as
 // strings (matching the declared `string` types) — pg otherwise returns `date`
 // and `timestamptz` as JS Date objects, which crash when rendered in JSX.
+// Handlers live in entity_assignees (migration 047) — the legacy
+// assigned_to_user_id / supplier_id columns are frozen and no longer projected.
 const TASK_COLUMNS = `
   id, title, description, status, priority,
   due_date::text as due_date, due_time::text as due_time,
-  assigned_to_user_id, supplier_id, debtor_id, apartment_number,
+  debtor_id, apartment_number,
   related_entity_type, related_entity_id, target_type, target_id, sort_order, is_archived,
   completed_at::text as completed_at,
   created_by, created_by_name,
@@ -24,7 +33,8 @@ const TASK_COLUMNS = `
 `;
 
 // Columns a create/update may set (title + created_by handled explicitly on
-// create; completed_at is derived from status server-side, never client-writable).
+// create; completed_at is derived from status server-side, never client-writable;
+// assignees are written separately to the junction).
 const WRITABLE_COLUMNS: (keyof TaskWritableFields)[] = [
   'title',
   'description',
@@ -32,8 +42,6 @@ const WRITABLE_COLUMNS: (keyof TaskWritableFields)[] = [
   'priority',
   'due_date',
   'due_time',
-  'assigned_to_user_id',
-  'supplier_id',
   'debtor_id',
   'related_entity_type',
   'related_entity_id',
@@ -59,11 +67,11 @@ export async function listTasks(filters: TaskListFilters): Promise<TaskWithAssig
   }
   if (filters.assignedTo) {
     vals.push(filters.assignedTo);
-    where.push(`t.assigned_to_user_id = $${vals.length}`);
+    where.push(assigneeExistsSql('task', 't', 'user', vals.length));
   }
   if (filters.supplier_id) {
     vals.push(filters.supplier_id);
-    where.push(`t.supplier_id = $${vals.length}`);
+    where.push(assigneeExistsSql('task', 't', 'supplier', vals.length));
   }
   if (filters.relatedEntityType) {
     vals.push(filters.relatedEntityType);
@@ -97,12 +105,9 @@ export async function listTasks(filters: TaskListFilters): Promise<TaskWithAssig
   const whereSql = where.length ? `where ${where.join(' and ')}` : '';
   const r = await query<TaskWithAssignee>(
     `select ${TASK_COLUMNS.split(',').map((c) => 't.' + c.trim()).join(', ')},
-            u.full_name as assigned_to_name,
-            s.display_name as supplier_display_name,
+            ${assigneesJsonExpr('task', 't')},
             coalesce(cc.cnt, 0)::int as comment_count
        from public.tasks t
-       left join public.users u on u.id = t.assigned_to_user_id
-       left join public.suppliers s on s.id = t.supplier_id
        left join (
          select task_id, count(*)::int as cnt
            from public.task_comments
@@ -145,8 +150,8 @@ export async function listTasksWithDueDateInRange(
 /**
  * Open / in-progress (not completed), non-archived tasks whose due_date falls in
  * [from, to] — the scheduled task_due_soon scan (cron). from/to are 'YYYY-MM-DD'
- * computed in Asia/Jerusalem. Returns the assignee so the cron can target them
- * (null → the cron fans out to active admins instead).
+ * computed in Asia/Jerusalem. Returns the set of user assignees so the cron can
+ * target them (empty → the cron fans out to active admins instead).
  */
 export async function listTasksDueSoon(
   from: string,
@@ -157,7 +162,7 @@ export async function listTasksDueSoon(
   due_date: string;
   due_time: string | null;
   priority: string;
-  assigned_to_user_id: string | null;
+  assigned_user_ids: string[];
 }[]> {
   const r = await query<{
     id: string;
@@ -165,16 +170,21 @@ export async function listTasksDueSoon(
     due_date: string;
     due_time: string | null;
     priority: string;
-    assigned_to_user_id: string | null;
+    assigned_user_ids: string[];
   }>(
-    `select id, title, due_date::text as due_date, due_time::text as due_time,
-            priority, assigned_to_user_id
-       from public.tasks
-      where is_archived = false
-        and status in ('open', 'in_progress')
-        and due_date is not null
-        and due_date >= $1 and due_date <= $2
-      order by due_date asc, due_time asc nulls first`,
+    `select t.id, t.title, t.due_date::text as due_date, t.due_time::text as due_time,
+            t.priority,
+            coalesce((
+              select array_agg(ea.user_id)
+                from public.entity_assignees ea
+               where ea.entity_type = 'task' and ea.entity_id = t.id and ea.user_id is not null
+            ), '{}') as assigned_user_ids
+       from public.tasks t
+      where t.is_archived = false
+        and t.status in ('open', 'in_progress')
+        and t.due_date is not null
+        and t.due_date >= $1 and t.due_date <= $2
+      order by t.due_date asc, t.due_time asc nulls first`,
     [from, to],
   );
   return r.rows;
@@ -183,12 +193,9 @@ export async function listTasksDueSoon(
 export async function getTaskById(id: string): Promise<TaskWithAssignee | null> {
   return queryOne<TaskWithAssignee>(
     `select ${TASK_COLUMNS.split(',').map((c) => 't.' + c.trim()).join(', ')},
-            u.full_name as assigned_to_name,
-            s.display_name as supplier_display_name,
+            ${assigneesJsonExpr('task', 't')},
             coalesce(cc.cnt, 0)::int as comment_count
        from public.tasks t
-       left join public.users u on u.id = t.assigned_to_user_id
-       left join public.suppliers s on s.id = t.supplier_id
        left join (
          select task_id, count(*)::int as cnt
            from public.task_comments
@@ -203,52 +210,66 @@ export async function getTaskById(id: string): Promise<TaskWithAssignee | null> 
 // ── Create ──────────────────────────────────────────────────────────────────
 export async function createTask(
   data: Partial<TaskWritableFields> & { title: string },
+  assignees: AssigneeInput[],
   createdBy: string | null,
   createdByName: string | null,
-): Promise<Task> {
+): Promise<TaskWithAssignee> {
   const rec = data as Record<string, unknown>;
-  const cols: string[] = ['created_by', 'created_by_name'];
-  const vals: unknown[] = [createdBy, createdByName];
-
-  // sort_order: append to the end of its status column.
   const status = (data.status ?? 'open') as string;
-  const nextSort = await queryOne<{ next: number }>(
-    `select coalesce(max(sort_order), -1) + 1 as next from public.tasks where status = $1`,
-    [status],
-  );
 
-  for (const c of WRITABLE_COLUMNS) {
-    if (c in rec && rec[c] !== undefined) {
-      cols.push(c);
-      vals.push(rec[c]);
+  // Task row + junction rows commit atomically (the assignee no longer rides on
+  // the task INSERT).
+  const id = await withTransaction(async (client: PoolClient) => {
+    const cols: string[] = ['created_by', 'created_by_name'];
+    const vals: unknown[] = [createdBy, createdByName];
+
+    const nextSort = await client.query<{ next: number }>(
+      `select coalesce(max(sort_order), -1) + 1 as next from public.tasks where status = $1`,
+      [status],
+    );
+
+    for (const c of WRITABLE_COLUMNS) {
+      if (c in rec && rec[c] !== undefined) {
+        cols.push(c);
+        vals.push(rec[c]);
+      }
     }
-  }
-  cols.push('sort_order');
-  vals.push(nextSort?.next ?? 0);
+    cols.push('sort_order');
+    vals.push(nextSort.rows[0]?.next ?? 0);
 
-  // completed_at: stamp it when a task is created already in 'done' (edge case;
-  // tasks default to 'open'). Mirrors the status→done logic in updateTask.
-  if (status === 'done') {
-    cols.push('completed_at');
-    vals.push(new Date().toISOString());
-  }
+    // completed_at: stamp when created already in 'done' (edge case; default 'open').
+    if (status === 'done') {
+      cols.push('completed_at');
+      vals.push(new Date().toISOString());
+    }
 
-  const placeholders = vals.map((_, i) => `$${i + 1}`);
-  const row = await queryOne<Task>(
-    `insert into public.tasks (${cols.join(', ')})
-     values (${placeholders.join(', ')})
-     returning ${TASK_COLUMNS}`,
-    vals,
-  );
-  if (!row) throw new Error('failed_to_create_task');
-  return row;
+    const placeholders = vals.map((_, i) => `$${i + 1}`);
+    const row = await client.query<{ id: string }>(
+      `insert into public.tasks (${cols.join(', ')})
+       values (${placeholders.join(', ')})
+       returning id`,
+      vals,
+    );
+    const newId = row.rows[0]?.id;
+    if (!newId) throw new Error('failed_to_create_task');
+    await replaceEntityAssignees(client, 'task', newId, assignees, createdBy);
+    return newId;
+  });
+
+  const task = await getTaskById(id);
+  if (!task) throw new Error('failed_to_create_task');
+  return task;
 }
 
 // ── Update ──────────────────────────────────────────────────────────────────
+// `assignees === undefined` → leave the junction untouched (partial PATCH);
+// an array (possibly empty) → replace the full assignee set.
 export async function updateTask(
   id: string,
   data: Partial<TaskWritableFields> & { is_archived?: boolean },
-): Promise<Task | null> {
+  assignees?: AssigneeInput[],
+  actorId?: string | null,
+): Promise<TaskWithAssignee | null> {
   const rec = { ...data } as Record<string, unknown>;
   const set: string[] = [];
   const vals: unknown[] = [id];
@@ -261,11 +282,8 @@ export async function updateTask(
     }
   }
 
-  // completed_at follows status. Bare `status` / `completed_at` in these SET
-  // expressions reference the OLD row values (Postgres UPDATE semantics):
-  //  • entering 'done'  → stamp now(), but keep an existing time if it was
-  //    already done (so re-saving a done task doesn't reset completion).
-  //  • leaving  'done'  → clear to null (reopened / cancelled).
+  // completed_at follows status (bare `status`/`completed_at` reference the OLD
+  // row values per Postgres UPDATE semantics).
   if ('status' in rec && rec.status !== undefined) {
     set.push(
       rec.status === 'done'
@@ -274,14 +292,29 @@ export async function updateTask(
     );
   }
 
-  if (set.length === 0) {
-    const t = await getTaskById(id);
-    return t as Task | null;
-  }
-  return queryOne<Task>(
-    `update public.tasks set ${set.join(', ')} where id = $1 returning ${TASK_COLUMNS}`,
-    vals,
-  );
+  const existed = await withTransaction(async (client: PoolClient) => {
+    let exists: boolean;
+    if (set.length > 0) {
+      const r = await client.query<{ id: string }>(
+        `update public.tasks set ${set.join(', ')} where id = $1 returning id`,
+        vals,
+      );
+      exists = (r.rowCount ?? 0) > 0;
+    } else {
+      const r = await client.query<{ id: string }>(
+        `select id from public.tasks where id = $1`,
+        [id],
+      );
+      exists = (r.rowCount ?? 0) > 0;
+    }
+    if (exists && assignees !== undefined) {
+      await replaceEntityAssignees(client, 'task', id, assignees, actorId ?? null);
+    }
+    return exists;
+  });
+
+  if (!existed) return null;
+  return getTaskById(id);
 }
 
 /**
@@ -299,13 +332,12 @@ export async function deleteTask(id: string): Promise<boolean> {
   return row !== null;
 }
 
-/** Read just the assignee of a task (for assignment-change detection). */
-export async function getTaskAssignee(id: string): Promise<string | null | undefined> {
-  const row = await queryOne<{ assigned_to_user_id: string | null }>(
-    `select assigned_to_user_id from public.tasks where id = $1`,
-    [id],
-  );
-  return row === null ? undefined : row.assigned_to_user_id;
+/** The set of user-kind assignee ids of a task, or null if the task does not
+ *  exist — used by PATCH to compute newly-added assignees (set-diff) and to 404. */
+export async function getTaskUserAssignees(id: string): Promise<string[] | null> {
+  const exists = await queryOne<{ id: string }>(`select id from public.tasks where id = $1`, [id]);
+  if (!exists) return null;
+  return listEntityUserIds('task', id);
 }
 
 // ── Kanban batch reorder ─────────────────────────────────────────────────────

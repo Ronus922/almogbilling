@@ -18,13 +18,16 @@ import {
   ISSUE_STATUSES, ISSUE_PRIORITIES, issueStatusLabel, issuePriorityLabel,
 } from '@/lib/constants/issues';
 import type {
-  Issue, IssueKpis, IssuePriority, IssueSort, IssueStatus, IssueWithMeta,
+  IssueKpis, IssuePriority, IssueSort, IssueStatus, IssueWithMeta,
 } from '@/lib/types/issues';
 import type { SupplierOption } from '@/lib/types/assignee';
+import type { NotifyUserContact } from '@/lib/notify/selection';
 
 interface Assignee {
   id: string;
   name: string;
+  hasEmail?: boolean;
+  hasPhone?: boolean;
 }
 
 export function IssuesPageClient({
@@ -32,12 +35,14 @@ export function IssuesPageClient({
   initialKpis,
   assignees,
   suppliers,
+  currentUser,
   canEdit,
 }: {
   initialIssues: IssueWithMeta[];
   initialKpis: IssueKpis;
   assignees: Assignee[];
   suppliers: SupplierOption[];
+  currentUser: NotifyUserContact;
   canEdit: boolean;
 }) {
   const searchParams = useSearchParams();
@@ -52,7 +57,7 @@ export function IssuesPageClient({
   const [sort, setSort] = useState<IssueSort>('created_desc');
 
   const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<Issue | null>(null);
+  const [editing, setEditing] = useState<IssueWithMeta | null>(null);
 
   const didMount = useRef(false);
 
@@ -94,7 +99,7 @@ export function IssuesPageClient({
           try {
             const r = await fetch(`/api/issues/${id}`, { credentials: 'include' });
             if (r.ok) {
-              const d = (await r.json()) as { issue?: Issue };
+              const d = (await r.json()) as { issue?: IssueWithMeta };
               if (d.issue) { setEditing(d.issue); setFormOpen(true); }
             }
           } catch { /* ignore */ }
@@ -210,6 +215,7 @@ export function IssuesPageClient({
         canEdit={canEdit}
         assignees={assignees}
         suppliers={suppliers}
+        currentUser={currentUser}
         onOpenChange={setFormOpen}
         onSaved={() => void fetchIssues()}
       />

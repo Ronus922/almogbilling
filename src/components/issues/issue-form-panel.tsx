@@ -28,28 +28,38 @@ import {
   ISSUE_ALLOWED_IMAGE_TYPES, ISSUE_MAX_IMAGE_SIZE_BYTES, ISSUE_MAX_IMAGES,
 } from '@/lib/constants/issues';
 import type {
-  Issue, IssueComment, IssueImage, IssuePriority, IssueStatus,
+  Issue, IssueComment, IssueImage, IssuePriority, IssueStatus, IssueWithMeta,
 } from '@/lib/types/issues';
 import type { TargetType } from '@/lib/types/targets';
-import type { AssigneeType, SupplierOption } from '@/lib/types/assignee';
+import type { AssigneeInput, SupplierOption } from '@/lib/types/assignee';
 import { TargetField } from '@/components/targets/TargetField';
-import { AssigneeField } from '@/components/assignee/AssigneeField';
+import { AssigneeMultiSelect } from '@/components/assignee/AssigneeMultiSelect';
 import {
   RemindersSection, splitRemindAt, buildRemindersPayload, type ReminderRow,
 } from '@/components/reminders/RemindersSection';
+import { NotifyMatrix, type NotifyRecipient } from '@/components/notify/NotifyMatrix';
+import {
+  EMPTY_NOTIFY_SELECTION,
+  recipientKey,
+  type NotifySelection,
+  type NotifyUserContact,
+} from '@/lib/notify/selection';
 
 interface Assignee {
   id: string;
   name: string;
+  hasEmail?: boolean;
+  hasPhone?: boolean;
 }
 
 interface Props {
   open: boolean;
   /** null → create mode; an issue → edit mode. */
-  issue: Issue | null;
+  issue: IssueWithMeta | null;
   canEdit: boolean;
   assignees: Assignee[];
   suppliers: SupplierOption[];
+  currentUser: NotifyUserContact;
   onOpenChange: (o: boolean) => void;
   onSaved: () => void;
 }
@@ -59,10 +69,8 @@ interface FormState {
   description: string;
   priority: IssuePriority;
   status: IssueStatus;
-  /** Mutually-exclusive handler model. */
-  assignee_type: AssigneeType;
-  assigned_to_user_id: string; // '' = none
-  supplier_id: string;         // '' = none
+  /** Mixed handlers: any combination of users + suppliers. */
+  assignees: AssigneeInput[];
   resolution_notes: string;
   target_type: TargetType | null;
   target_id: string | null;
@@ -73,26 +81,22 @@ const EMPTY_FORM: FormState = {
   description: '',
   priority: 'normal',
   status: 'open',
-  assignee_type: 'none',
-  assigned_to_user_id: '',
-  supplier_id: '',
+  assignees: [],
   resolution_notes: '',
   target_type: null,
   target_id: null,
 };
 
-function fromIssue(i: Issue): FormState {
-  // Derive the handler type from whichever field is populated (no extra column).
-  const assignee_type: AssigneeType =
-    i.supplier_id ? 'supplier' : i.assigned_to_user_id ? 'user' : 'none';
+function fromIssue(i: IssueWithMeta): FormState {
   return {
     title: i.title,
     description: i.description ?? '',
     priority: i.priority,
     status: i.status,
-    assignee_type,
-    assigned_to_user_id: i.assigned_to_user_id ?? '',
-    supplier_id: i.supplier_id ?? '',
+    assignees: i.assignees.map((a) => ({
+      assignee_type: a.assignee_type,
+      id: (a.user_id ?? a.supplier_id) as string,
+    })),
     resolution_notes: i.resolution_notes ?? '',
     target_type: i.target_type,
     target_id: i.target_id,
@@ -112,13 +116,12 @@ function mapError(code: string | undefined, fallback: string): string {
   return (code && ERROR_MESSAGES[code]) || fallback;
 }
 
-export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onOpenChange, onSaved }: Props) {
+export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, currentUser, onOpenChange, onSaved }: Props) {
   const isEdit = !!issue;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
-  // Display name for a linked supplier that may be soft-deleted (and thus absent
-  // from the active `suppliers` picker list) — keeps the trigger label correct.
-  const [supplierFallback, setSupplierFallback] = useState<string | null>(null);
+  // Create-form notification matrix (recipient × channel). Default = nothing.
+  const [notify, setNotify] = useState<NotifySelection>(EMPTY_NOTIFY_SELECTION);
   const [comments, setComments] = useState<IssueComment[]>([]);
   const [images, setImages] = useState<IssueImage[]>([]);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
@@ -138,12 +141,11 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onO
       const r = await fetch(`/api/issues/${id}`, { credentials: 'include' });
       if (!r.ok) return;
       const data = (await r.json()) as {
-        issue?: Issue & { linked_task_id?: string | null; supplier_display_name?: string | null };
+        issue?: Issue & { linked_task_id?: string | null };
         comments?: IssueComment[];
         images?: IssueImage[];
         reminders?: { id: string; remind_at: string; channel: ReminderRow['channel'] }[];
       };
-      setSupplierFallback(data.issue?.supplier_display_name ?? null);
       setComments(Array.isArray(data.comments) ? data.comments : []);
       setImages(Array.isArray(data.images) ? data.images : []);
       const rem = (data.reminders ?? []).map((x) => {
@@ -165,7 +167,6 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onO
       const init = issue ? fromIssue(issue) : EMPTY_FORM;
       setForm(init);
       setInitial(init);
-      setSupplierFallback(null);
       setComments([]);
       setImages([]);
       setReminders([]);
@@ -176,6 +177,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onO
       setSubmitting(false);
       setUploading(false);
       setCreatingTask(false);
+      setNotify(EMPTY_NOTIFY_SELECTION);
       if (issue) void loadDetail(issue.id);
     }
   }, [open, issue, loadDetail]);
@@ -183,6 +185,39 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onO
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
+
+  // Fallback names for the picker chips (covers a soft-deleted supplier still
+  // assigned in edit mode, absent from the active option lists).
+  const knownNames = useMemo<Record<string, string>>(() => {
+    const m: Record<string, string> = {};
+    for (const a of issue?.assignees ?? []) {
+      const id = a.user_id ?? a.supplier_id;
+      if (id && a.display_name) m[`${a.assignee_type}:${id}`] = a.display_name;
+    }
+    return m;
+  }, [issue]);
+
+  // Notification matrix recipients: "אליי" always, then one row per selected
+  // assignee (user OR supplier). A user assignee that is the reporter is covered
+  // by "אליי" (skipped).
+  const notifyRecipients = useMemo<NotifyRecipient[]>(() => {
+    const list: NotifyRecipient[] = [
+      { key: 'me', label: 'אליי', name: currentUser.name, hasEmail: currentUser.hasEmail, hasPhone: currentUser.hasPhone },
+    ];
+    for (const a of form.assignees) {
+      if (a.assignee_type === 'user') {
+        if (a.id === currentUser.id) continue;
+        const u = assignees.find((x) => x.id === a.id);
+        const name = u?.name ?? knownNames[`user:${a.id}`] ?? 'עובד';
+        list.push({ key: recipientKey('user', a.id), label: name, name, hasEmail: !!u?.hasEmail, hasPhone: !!u?.hasPhone });
+      } else {
+        const s = suppliers.find((x) => x.id === a.id);
+        const name = s?.display_name ?? knownNames[`supplier:${a.id}`] ?? 'ספק';
+        list.push({ key: recipientKey('supplier', a.id), label: name, name, hasEmail: !!s?.email, hasPhone: !!(s?.mobile || s?.phone) });
+      }
+    }
+    return list;
+  }, [form.assignees, assignees, suppliers, currentUser, knownNames]);
 
   const titleError = titleTouched && !form.title.trim() ? 'כותרת היא שדה חובה' : null;
   const resolutionMissing =
@@ -227,9 +262,8 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onO
         description: form.description.trim() || null,
         priority: form.priority,
         status: form.status,
-        // Mutually-exclusive handler: send exactly one side (the other null).
-        assigned_to_user_id: form.assignee_type === 'user' ? (form.assigned_to_user_id || null) : null,
-        supplier_id: form.assignee_type === 'supplier' ? (form.supplier_id || null) : null,
+        // Mixed handlers (users + suppliers) → entity_assignees junction.
+        assignees: form.assignees,
         resolution_notes: form.resolution_notes.trim() || null,
         // Target is optional. A type without a value persists as no target.
         target_type: form.target_id ? form.target_type : null,
@@ -239,6 +273,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onO
       const remindersChanged =
         JSON.stringify(reminders) !== JSON.stringify(initialReminders);
       if (remindersChanged) body.reminders = remindersPayload;
+
+      // Notification matrix selections — create only.
+      if (!isEdit) body.notify = notify;
 
       const url = isEdit ? `/api/issues/${issue!.id}` : '/api/issues';
       const method = isEdit ? 'PATCH' : 'POST';
@@ -492,24 +529,24 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onO
                 </div>
               </Section>
 
-              {/* Handler — internal user OR external supplier (shared AssigneeField) */}
+              {/* Handlers — any mix of internal users + external suppliers */}
               <Section title="גורם מטפל" icon={User} iconTone="violet">
                 <div className="py-2">
-                  <AssigneeField
-                    value={{
-                      type: form.assignee_type,
-                      userId: form.assigned_to_user_id || null,
-                      supplierId: form.supplier_id || null,
-                    }}
-                    onChange={(v) => setForm((prev) => ({
-                      ...prev,
-                      assignee_type: v.type,
-                      assigned_to_user_id: v.userId ?? '',
-                      supplier_id: v.supplierId ?? '',
-                    }))}
+                  <AssigneeMultiSelect
                     users={assignees}
                     suppliers={suppliers}
-                    supplierFallbackLabel={supplierFallback}
+                    value={form.assignees}
+                    onChange={(next) => {
+                      set('assignees', next);
+                      // Drop matrix selections for assignees no longer present.
+                      setNotify((prev) => {
+                        const allowed = new Set(['me', ...next.map((a) => `${a.assignee_type}:${a.id}`)]);
+                        const pruned: NotifySelection = {};
+                        for (const [k, v] of Object.entries(prev)) if (allowed.has(k)) pruned[k] = v;
+                        return pruned;
+                      });
+                    }}
+                    knownNames={knownNames}
                     disabled={disabled}
                   />
                 </div>
@@ -517,6 +554,16 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, onO
 
               {/* Reminders (shared component — also used by the task form). Optional. */}
               <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} />
+
+              {/* Notification matrix — create mode only (above the save button) */}
+              {!isEdit && (
+                <NotifyMatrix
+                  recipients={notifyRecipients}
+                  value={notify}
+                  onChange={setNotify}
+                  disabled={disabled}
+                />
+              )}
 
               {/* Images — edit mode only (need an issue id to attach to) */}
               {isEdit && (

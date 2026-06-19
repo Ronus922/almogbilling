@@ -5,7 +5,10 @@ import { listTasks, createTask, getTaskById, getTaskKpis } from '@/lib/db/tasks'
 import { supplierExists } from '@/lib/db/suppliers';
 import { createReminder } from '@/lib/db/reminders';
 import { coerceTaskInput, coerceReminders } from '@/lib/validation/tasks';
+import { coerceAssignees } from '@/lib/validation/assignee';
 import { notifyTask } from '@/services/notifications';
+import { dispatchCreateNotifications, buildMatrixRecipients } from '@/services/createNotify';
+import { coerceNotifySelection } from '@/lib/notify/selection';
 import type {
   RelatedEntityType,
   TaskPriority,
@@ -112,9 +115,16 @@ export async function POST(req: NextRequest) {
   const result = coerceTaskInput(bodyRec, 'create');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
 
-  // A linked supplier must exist and not be soft-deleted (when assigning one).
-  if (result.fields.supplier_id && !(await supplierExists(result.fields.supplier_id))) {
-    return NextResponse.json({ error: 'supplier_not_found' }, { status: 400 });
+  // Assignees (mixed users + suppliers). Each supplier must exist + not be deleted.
+  const assigneesV = coerceAssignees(bodyRec);
+  if (assigneesV && !assigneesV.ok) {
+    return NextResponse.json({ error: assigneesV.error }, { status: 400 });
+  }
+  const assignees = assigneesV && assigneesV.ok ? assigneesV.assignees : [];
+  for (const a of assignees) {
+    if (a.assignee_type === 'supplier' && !(await supplierExists(a.id))) {
+      return NextResponse.json({ error: 'supplier_not_found' }, { status: 400 });
+    }
   }
 
   const reminders = coerceReminders(bodyRec);
@@ -125,33 +135,61 @@ export async function POST(req: NextRequest) {
   try {
     const task = await createTask(
       result.fields as Partial<TaskWritableFields> & { title: string },
+      assignees,
       actor.id,
       actor.full_name ?? actor.username,
     );
 
-    // Reminders attached to this task.
+    const userIds = task.assignees
+      .map((a) => a.user_id)
+      .filter((v): v is string => v !== null);
+
+    // Reminders → one per user assignee, or the creator when there are none.
     if (reminders && reminders.ok) {
+      const reminderUsers = userIds.length > 0 ? userIds : [actor.id];
       for (const r of reminders.reminders) {
-        await createReminder({
-          entityType: 'task',
-          entityId: task.id,
-          userId: task.assigned_to_user_id ?? actor.id,
-          remindAt: r.remind_at,
-          channel: r.channel,
-        });
+        for (const uid of reminderUsers) {
+          await createReminder({
+            entityType: 'task',
+            entityId: task.id,
+            userId: uid,
+            remindAt: r.remind_at,
+            channel: r.channel,
+          });
+        }
       }
     }
 
-    // Assignment notification (only when assigned to someone other than the creator).
-    if (task.assigned_to_user_id && task.assigned_to_user_id !== actor.id) {
+    // In-app assignment bell → each user assignee other than the creator
+    // (channel:'in_app' suppresses the auto-email; external is matrix-driven).
+    for (const uid of userIds) {
+      if (uid === actor.id) continue;
       await notifyTask({
-        userId: task.assigned_to_user_id,
+        userId: uid,
         type: 'task_assigned',
         heading: 'משימה חדשה הוקצתה לך',
         task: { id: task.id, title: task.title, priority: task.priority, due_date: task.due_date },
         notificationPriority: task.priority === 'urgent' ? 'urgent' : 'normal',
-        dedupeKey: `task_assigned:${task.id}:${task.assigned_to_user_id}`,
+        dedupeKey: `task_assigned:${task.id}:${uid}`,
+        channel: 'in_app',
         extraDetails: [{ label: 'הוקצה על ידי', value: actor.full_name ?? actor.username }],
+      });
+    }
+
+    // External notifications (email / WhatsApp) — ONLY the creator's matrix picks,
+    // one row per recipient (me + each selected assignee). Best-effort.
+    const recipients = buildMatrixRecipients({
+      selection: coerceNotifySelection(bodyRec.notify),
+      meUserId: actor.id,
+      assignees: task.assignees,
+      meMessage: `יצרת משימה חדשה: ${task.title}`,
+      assigneeMessage: () => `הוקצתה לך משימה חדשה: ${task.title}`,
+    });
+    if (recipients.length > 0) {
+      void dispatchCreateNotifications({
+        title: `משימה: ${task.title}`,
+        actionUrl: `/tasks?task=${task.id}`,
+        recipients,
       });
     }
 

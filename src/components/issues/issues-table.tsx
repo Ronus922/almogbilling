@@ -1,9 +1,10 @@
 'use client';
 
-import { ArrowDown, ArrowUp, MessageSquare, ImageIcon, Link2, MapPin, User, Wrench } from 'lucide-react';
+import { ArrowDown, ArrowUp, MessageSquare, ImageIcon, Link2, MapPin } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { cn } from '@/lib/utils';
 import {
   ISSUE_STATUS_BADGE, ISSUE_PRIORITY_BADGE, issueStatusLabel, issuePriorityLabel,
@@ -109,26 +110,9 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect }: Props) {
   );
 }
 
-/** Handler cell — an internal user OR an external supplier, with a small visual
- *  distinction (icon + tone). Em-dash when unassigned. */
+/** Handler cell — the issue's mixed assignees as pills (users + suppliers). */
 function HandlerCell({ issue: i }: { issue: IssueWithMeta }) {
-  if (i.supplier_id) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
-        <Wrench className="h-3.5 w-3.5" />
-        {i.supplier_display_name ?? 'ספק'}
-      </span>
-    );
-  }
-  if (i.assigned_to_user_id) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700">
-        <User className="h-3.5 w-3.5" />
-        {i.assigned_to_name ?? 'משתמש'}
-      </span>
-    );
-  }
-  return <span className="text-slate-400">—</span>;
+  return <AssigneePills assignees={i.assignees} />;
 }
 
 function SortHead({

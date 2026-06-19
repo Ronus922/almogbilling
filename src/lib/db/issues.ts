@@ -10,14 +10,25 @@ import type {
   IssueWithMeta,
   IssueWritableFields,
 } from '@/lib/types/issues';
+import type { AssigneeInput } from '@/lib/types/assignee';
+import {
+  assigneesJsonExpr,
+  assigneeExistsSql,
+  replaceEntityAssignees,
+  copyEntityAssignees,
+  listEntityUserIds,
+} from '@/lib/db/entityAssignees';
 
+// Handlers live in entity_assignees (migration 047) — the legacy
+// assigned_to_user_id / supplier_id columns are frozen and no longer projected.
 const ISSUE_COLUMNS = `
   id, title, description, location_type, location_text, target_type, target_id, priority, status,
-  assigned_to_user_id, supplier_id, images, resolution_notes, resolved_at, is_archived,
+  images, resolution_notes, resolved_at, is_archived,
   created_by, created_by_name, created_at, updated_at
 `;
 
-// Columns a create/update may set (title + created_by handled explicitly on create).
+// Columns a create/update may set (title + created_by handled explicitly on
+// create; assignees are written separately to the junction).
 const WRITABLE_COLUMNS: (keyof IssueWritableFields)[] = [
   'title',
   'description',
@@ -27,23 +38,18 @@ const WRITABLE_COLUMNS: (keyof IssueWritableFields)[] = [
   'target_id',
   'priority',
   'status',
-  'assigned_to_user_id',
-  'supplier_id',
   'resolution_notes',
 ];
 
 const META_SELECT = `
   ${ISSUE_COLUMNS.split(',').map((c) => 'i.' + c.trim()).join(', ')},
-  u.full_name as assigned_to_name,
-  s.display_name as supplier_display_name,
+  ${assigneesJsonExpr('issue', 'i')},
   coalesce(cc.cnt, 0)::int as comment_count,
   lt.id as linked_task_id
 `;
 
 const META_JOINS = `
   from public.issues i
-  left join public.users u on u.id = i.assigned_to_user_id
-  left join public.suppliers s on s.id = i.supplier_id
   left join (
     select issue_id, count(*)::int as cnt
       from public.issue_comments
@@ -75,11 +81,11 @@ export async function listIssues(filters: IssueListFilters): Promise<IssueWithMe
   }
   if (filters.assignedTo) {
     vals.push(filters.assignedTo);
-    where.push(`i.assigned_to_user_id = $${vals.length}`);
+    where.push(assigneeExistsSql('issue', 'i', 'user', vals.length));
   }
   if (filters.supplier_id) {
     vals.push(filters.supplier_id);
-    where.push(`i.supplier_id = $${vals.length}`);
+    where.push(assigneeExistsSql('issue', 'i', 'supplier', vals.length));
   }
   if (filters.search) {
     vals.push(`%${filters.search}%`);
@@ -121,42 +127,56 @@ export async function getIssueById(id: string): Promise<IssueWithMeta | null> {
 // ── Create ──────────────────────────────────────────────────────────────────
 export async function createIssue(
   data: Partial<IssueWritableFields> & { title: string },
+  assignees: AssigneeInput[],
   createdBy: string | null,
   createdByName: string | null,
-): Promise<Issue> {
+): Promise<IssueWithMeta> {
   const rec = data as Record<string, unknown>;
-  const cols: string[] = ['created_by', 'created_by_name'];
-  const vals: unknown[] = [createdBy, createdByName];
 
-  for (const c of WRITABLE_COLUMNS) {
-    if (c in rec && rec[c] !== undefined) {
-      cols.push(c);
-      vals.push(rec[c]);
+  const id = await withTransaction(async (client: PoolClient) => {
+    const cols: string[] = ['created_by', 'created_by_name'];
+    const vals: unknown[] = [createdBy, createdByName];
+
+    for (const c of WRITABLE_COLUMNS) {
+      if (c in rec && rec[c] !== undefined) {
+        cols.push(c);
+        vals.push(rec[c]);
+      }
     }
-  }
 
-  // resolved_at follows status on create.
-  if (data.status === 'resolved') {
-    cols.push('resolved_at');
-    vals.push(new Date().toISOString());
-  }
+    // resolved_at follows status on create.
+    if (data.status === 'resolved') {
+      cols.push('resolved_at');
+      vals.push(new Date().toISOString());
+    }
 
-  const placeholders = vals.map((_, i) => `$${i + 1}`);
-  const row = await queryOne<Issue>(
-    `insert into public.issues (${cols.join(', ')})
-     values (${placeholders.join(', ')})
-     returning ${ISSUE_COLUMNS}`,
-    vals,
-  );
-  if (!row) throw new Error('failed_to_create_issue');
-  return row;
+    const placeholders = vals.map((_, i) => `$${i + 1}`);
+    const row = await client.query<{ id: string }>(
+      `insert into public.issues (${cols.join(', ')})
+       values (${placeholders.join(', ')})
+       returning id`,
+      vals,
+    );
+    const newId = row.rows[0]?.id;
+    if (!newId) throw new Error('failed_to_create_issue');
+    await replaceEntityAssignees(client, 'issue', newId, assignees, createdBy);
+    return newId;
+  });
+
+  const issue = await getIssueById(id);
+  if (!issue) throw new Error('failed_to_create_issue');
+  return issue;
 }
 
 // ── Update ──────────────────────────────────────────────────────────────────
+// `assignees === undefined` → leave the junction untouched (partial PATCH);
+// an array (possibly empty) → replace the full assignee set.
 export async function updateIssue(
   id: string,
   data: Partial<IssueWritableFields> & { is_archived?: boolean },
-): Promise<Issue | null> {
+  assignees?: AssigneeInput[],
+  actorId?: string | null,
+): Promise<IssueWithMeta | null> {
   const rec = { ...data } as Record<string, unknown>;
   const set: string[] = [];
   const vals: unknown[] = [id];
@@ -172,36 +192,62 @@ export async function updateIssue(
   // resolved_at transitions: set when entering 'resolved', clear when leaving it.
   if (data.status !== undefined) {
     if (data.status === 'resolved') {
-      // Only stamp if not already resolved (keep the first resolution time).
       set.push(`resolved_at = coalesce(resolved_at, now())`);
     } else {
       set.push(`resolved_at = null`);
     }
   }
 
-  if (set.length === 0) {
-    const t = await getIssueById(id);
-    return t as Issue | null;
-  }
-  return queryOne<Issue>(
-    `update public.issues set ${set.join(', ')} where id = $1 returning ${ISSUE_COLUMNS}`,
-    vals,
-  );
+  const existed = await withTransaction(async (client: PoolClient) => {
+    let exists: boolean;
+    if (set.length > 0) {
+      const r = await client.query<{ id: string }>(
+        `update public.issues set ${set.join(', ')} where id = $1 returning id`,
+        vals,
+      );
+      exists = (r.rowCount ?? 0) > 0;
+    } else {
+      const r = await client.query<{ id: string }>(
+        `select id from public.issues where id = $1`,
+        [id],
+      );
+      exists = (r.rowCount ?? 0) > 0;
+    }
+    if (exists && assignees !== undefined) {
+      await replaceEntityAssignees(client, 'issue', id, assignees, actorId ?? null);
+    }
+    return exists;
+  });
+
+  if (!existed) return null;
+  return getIssueById(id);
 }
 
 export async function deleteIssue(id: string): Promise<boolean> {
-  const r = await query(`delete from public.issues where id = $1`, [id]);
-  return (r.rowCount ?? 0) > 0;
+  // entity_id is polymorphic (no FK), so the junction rows don't cascade — clean
+  // them up atomically with the hard delete.
+  return withTransaction(async (client: PoolClient) => {
+    await client.query(
+      `delete from public.entity_assignees where entity_type = 'issue' and entity_id = $1`,
+      [id],
+    );
+    const r = await client.query(`delete from public.issues where id = $1`, [id]);
+    return (r.rowCount ?? 0) > 0;
+  });
 }
 
-/** Read just the assignee + status of an issue (for assignment/status-change detection). */
+/** The set of user-kind assignee ids + status of an issue, or null if it does
+ *  not exist — used by PATCH for assignment-change set-diff + status-change notify. */
 export async function getIssueAssigneeStatus(
   id: string,
-): Promise<{ assigned_to_user_id: string | null; status: IssueStatus } | null> {
-  return queryOne<{ assigned_to_user_id: string | null; status: IssueStatus }>(
-    `select assigned_to_user_id, status from public.issues where id = $1`,
+): Promise<{ assignedUserIds: string[]; status: IssueStatus } | null> {
+  const row = await queryOne<{ status: IssueStatus }>(
+    `select status from public.issues where id = $1`,
     [id],
   );
+  if (!row) return null;
+  const assignedUserIds = await listEntityUserIds('issue', id);
+  return { assignedUserIds, status: row.status };
 }
 
 // ── Images ───────────────────────────────────────────────────────────────────
@@ -313,14 +359,16 @@ export interface CreatedTaskFromIssue {
   id: string;
   title: string;
   priority: string;
-  assigned_to_user_id: string | null;
   due_date: string | null;
+  /** User-kind assignees copied onto the task — for the assignment notification. */
+  assigned_user_ids: string[];
 }
 
 /**
  * Create a task linked to an issue, in a single transaction. Copies title,
- * description, priority and assignee from the issue, and sets tasks.issue_id.
- * Returns the new task (or null if a task is already linked to this issue).
+ * description, priority and the FULL assignee set (users + suppliers) from the
+ * issue's junction into the task's junction, and sets tasks.issue_id. Returns
+ * the new task (or null if a task is already linked to this issue).
  */
 export async function createTaskFromIssue(
   issue: Issue,
@@ -342,24 +390,34 @@ export async function createTaskFromIssue(
     );
     const sortOrder = next.rows[0]?.next ?? 0;
 
-    const r = await client.query<CreatedTaskFromIssue>(
+    const r = await client.query<{ id: string; title: string; priority: string; due_date: string | null }>(
       `insert into public.tasks
-         (title, description, priority, status, assigned_to_user_id, issue_id,
+         (title, description, priority, status, issue_id,
           sort_order, created_by, created_by_name)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       returning id, title, priority, assigned_to_user_id, due_date`,
+       values ($1, $2, $3, $4, $5, $6, $7, $8)
+       returning id, title, priority, due_date::text as due_date`,
       [
         issue.title,
         issue.description,
         issue.priority,
         status,
-        issue.assigned_to_user_id,
         issue.id,
         sortOrder,
         createdBy,
         createdByName,
       ],
     );
-    return r.rows[0] ?? null;
+    const task = r.rows[0];
+    if (!task) return null;
+
+    // Copy the issue's full handler set (users + suppliers) onto the task.
+    await copyEntityAssignees(client, 'issue', issue.id, 'task', task.id, createdBy);
+
+    const users = await client.query<{ user_id: string }>(
+      `select user_id from public.entity_assignees
+        where entity_type = 'task' and entity_id = $1 and user_id is not null`,
+      [task.id],
+    );
+    return { ...task, assigned_user_ids: users.rows.map((u) => u.user_id) };
   });
 }

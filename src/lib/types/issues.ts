@@ -2,6 +2,7 @@
 // Reuses the Module 1 Notifications + Reminders infrastructure.
 
 import type { TargetType } from './targets';
+import type { AssigneeRef } from './assignee';
 
 export type IssueStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type IssuePriority = 'low' | 'normal' | 'high' | 'urgent';
@@ -18,10 +19,9 @@ export interface Issue {
   target_id: string | null;
   priority: IssuePriority;
   status: IssueStatus;
-  assigned_to_user_id: string | null;
-  /** External contractor/vendor handling the fault → suppliers.id. Separate from
-   *  location (where) and assigned_to_user_id (the internal employee). */
-  supplier_id: string | null;
+  // Handlers (users + suppliers) now live in the entity_assignees junction
+  // (migration 047), exposed as `assignees` on IssueWithMeta — NOT scalar
+  // columns here. Legacy assigned_to_user_id / supplier_id stay frozen in the DB.
   images: string[]; // storage object paths (not URLs)
   resolution_notes: string | null;
   resolved_at: string | null;
@@ -32,11 +32,9 @@ export interface Issue {
   updated_at: string;
 }
 
-/** Issue enriched with the assignee display name + comment count + linked task. */
+/** Issue enriched with its assignee set (json-agg over the junction) + comment count + linked task. */
 export interface IssueWithMeta extends Issue {
-  assigned_to_name: string | null;
-  /** Linked supplier's display name (suppliers.display_name), joined for display. */
-  supplier_display_name: string | null;
+  assignees: AssigneeRef[];
   comment_count: number;
   linked_task_id: string | null;
 }
@@ -49,8 +47,6 @@ export interface IssueWritableFields {
   target_id: string | null;
   priority: IssuePriority;
   status: IssueStatus;
-  assigned_to_user_id: string | null;
-  supplier_id: string | null;
   resolution_notes: string | null;
 }
 

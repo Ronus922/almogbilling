@@ -46,16 +46,20 @@ export async function listOpenInvites(): Promise<InviteListRow[]> {
   return r.rows;
 }
 
-/** Minimal id+name list of active users — for assignee pickers. */
+/** Minimal id+name list of active users — for assignee pickers. Also carries
+ *  contact-detail presence (email / notification_phone) for the create-form
+ *  notification matrix's cell availability. */
 export interface AssignableUser {
   id: string;
   full_name: string | null;
   username: string;
+  email: string;
+  notification_phone: string | null;
 }
 
 export async function listAssignableUsers(): Promise<AssignableUser[]> {
   const r = await query<AssignableUser>(
-    `select id, full_name, username
+    `select id, full_name, username, email, notification_phone
        from public.users
       where is_active = true
       order by full_name asc nulls last, username asc`,

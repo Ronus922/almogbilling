@@ -42,8 +42,8 @@ async function scanTasksDueSoon(): Promise<number> {
   for (const task of tasks) {
     const dueLabel = task.due_time ? `${task.due_date} ${task.due_time.slice(0, 5)}` : task.due_date;
     const message = `המשימה "${task.title}" מתקרבת למועד היעד (${dueLabel})`;
-    const recipients = task.assigned_to_user_id
-      ? [task.assigned_to_user_id]
+    const recipients = task.assigned_user_ids.length > 0
+      ? task.assigned_user_ids
       : (await listActiveAdmins()).map((a) => a.id);
 
     for (const userId of recipients) {

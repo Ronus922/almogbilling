@@ -24,12 +24,28 @@ export default async function IssuesPage() {
     listAssignableUsers(),
     listSuppliers({}), // reuse the existing suppliers DB layer for the picker/filter
   ]);
-  const assignees = assigneeRows.map((u) => ({ id: u.id, name: u.full_name ?? u.username }));
+  const assignees = assigneeRows.map((u) => ({
+    id: u.id,
+    name: u.full_name ?? u.username,
+    hasEmail: !!u.email,
+    hasPhone: !!u.notification_phone,
+  }));
   const suppliers = supplierRows.map((s) => ({
     id: s.id,
     display_name: s.display_name,
     phone: s.phone,
+    mobile: s.mobile,
+    email: s.email,
   }));
+
+  // Contact-detail availability for "אליי" in the notification matrix.
+  const meRow = assigneeRows.find((u) => u.id === actor.id);
+  const currentUser = {
+    id: actor.id,
+    name: actor.full_name ?? actor.username,
+    hasEmail: meRow ? !!meRow.email : !!actor.email,
+    hasPhone: meRow ? !!meRow.notification_phone : false,
+  };
 
   return (
     <IssuesPageClient
@@ -37,6 +53,7 @@ export default async function IssuesPage() {
       initialKpis={kpis}
       assignees={assignees}
       suppliers={suppliers}
+      currentUser={currentUser}
       canEdit={canEdit}
     />
   );

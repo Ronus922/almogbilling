@@ -1,9 +1,10 @@
 'use client';
 
-import { ArrowDown, ArrowUp, MessageSquare, User, Wrench } from 'lucide-react';
+import { ArrowDown, ArrowUp, MessageSquare } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { cn } from '@/lib/utils';
 import {
   STATUS_BADGE, PRIORITY_BADGE, taskStatusLabel, taskPriorityLabel,
@@ -90,26 +91,9 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect }: Props) {
   );
 }
 
-/** Handler cell — an internal user OR an external supplier, with a small visual
- *  distinction (icon + tone). Em-dash when unassigned. */
+/** Handler cell — the task's mixed assignees as pills (users + suppliers). */
 function HandlerCell({ task: t }: { task: TaskWithAssignee }) {
-  if (t.supplier_id) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
-        <Wrench className="h-3.5 w-3.5" />
-        {t.supplier_display_name ?? 'ספק'}
-      </span>
-    );
-  }
-  if (t.assigned_to_user_id) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700">
-        <User className="h-3.5 w-3.5" />
-        {t.assigned_to_name ?? 'משתמש'}
-      </span>
-    );
-  }
-  return <span className="text-slate-400">—</span>;
+  return <AssigneePills assignees={t.assignees} />;
 }
 
 function SortHead({

@@ -24,19 +24,28 @@ import {
   TASK_STATUSES, TASK_PRIORITIES, taskStatusLabel, taskPriorityLabel,
 } from '@/lib/constants/tasks';
 import type {
-  ReminderChannel, Task, TaskComment, TaskPriority, TaskStatus,
+  ReminderChannel, TaskComment, TaskPriority, TaskStatus, TaskWithAssignee,
 } from '@/lib/types/tasks';
 import type { TargetType } from '@/lib/types/targets';
-import type { AssigneeType, SupplierOption } from '@/lib/types/assignee';
+import type { AssigneeInput, SupplierOption } from '@/lib/types/assignee';
 import { TargetField } from '@/components/targets/TargetField';
-import { AssigneeField } from '@/components/assignee/AssigneeField';
+import { AssigneeMultiSelect } from '@/components/assignee/AssigneeMultiSelect';
 import {
   RemindersSection, splitRemindAt, buildRemindersPayload, type ReminderRow,
 } from '@/components/reminders/RemindersSection';
+import { NotifyMatrix, type NotifyRecipient } from '@/components/notify/NotifyMatrix';
+import {
+  EMPTY_NOTIFY_SELECTION,
+  recipientKey,
+  type NotifySelection,
+  type NotifyUserContact,
+} from '@/lib/notify/selection';
 
 interface Assignee {
   id: string;
   name: string;
+  hasEmail?: boolean;
+  hasPhone?: boolean;
 }
 
 interface ServerReminder {
@@ -48,10 +57,11 @@ interface ServerReminder {
 interface Props {
   open: boolean;
   /** null → create mode; a task → edit mode. */
-  task: Task | null;
+  task: TaskWithAssignee | null;
   canEdit: boolean;
   assignees: Assignee[];
   suppliers: SupplierOption[];
+  currentUser: NotifyUserContact;
   onOpenChange: (o: boolean) => void;
   onSaved: () => void;
 }
@@ -63,10 +73,8 @@ interface FormState {
   priority: TaskPriority;
   due_date: string;
   due_time: string;
-  /** Mutually-exclusive handler model (shared with issues). */
-  assignee_type: AssigneeType;
-  assigned_to_user_id: string; // '' = none
-  supplier_id: string;         // '' = none
+  /** Mixed handlers: any combination of users + suppliers. */
+  assignees: AssigneeInput[];
   target_type: TargetType | null;
   target_id: string | null;
 }
@@ -78,16 +86,12 @@ const EMPTY_FORM: FormState = {
   priority: 'normal',
   due_date: '',
   due_time: '',
-  assignee_type: 'none',
-  assigned_to_user_id: '',
-  supplier_id: '',
+  assignees: [],
   target_type: null,
   target_id: null,
 };
 
-function fromTask(t: Task): FormState {
-  const assignee_type: AssigneeType =
-    t.supplier_id ? 'supplier' : t.assigned_to_user_id ? 'user' : 'none';
+function fromTask(t: TaskWithAssignee): FormState {
   return {
     title: t.title,
     description: t.description ?? '',
@@ -95,21 +99,21 @@ function fromTask(t: Task): FormState {
     priority: t.priority,
     due_date: t.due_date ?? '',
     due_time: t.due_time ? t.due_time.slice(0, 5) : '',
-    assignee_type,
-    assigned_to_user_id: t.assigned_to_user_id ?? '',
-    supplier_id: t.supplier_id ?? '',
+    assignees: t.assignees.map((a) => ({
+      assignee_type: a.assignee_type,
+      id: (a.user_id ?? a.supplier_id) as string,
+    })),
     target_type: t.target_type,
     target_id: t.target_id,
   };
 }
 
-export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, onOpenChange, onSaved }: Props) {
+export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, currentUser, onOpenChange, onSaved }: Props) {
   const isEdit = !!task;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
-  // Display name for a linked supplier that may be soft-deleted (absent from the
-  // active `suppliers` picker list) — keeps the trigger label correct.
-  const [supplierFallback, setSupplierFallback] = useState<string | null>(null);
+  // Create-form notification matrix (recipient × channel). Default = nothing.
+  const [notify, setNotify] = useState<NotifySelection>(EMPTY_NOTIFY_SELECTION);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
   const [initialReminders, setInitialReminders] = useState<ReminderRow[]>([]);
   const [comments, setComments] = useState<TaskComment[]>([]);
@@ -123,11 +127,9 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, onOpe
       const r = await fetch(`/api/tasks/${id}`, { credentials: 'include' });
       if (!r.ok) return;
       const data = (await r.json()) as {
-        task?: { supplier_display_name?: string | null };
         comments?: TaskComment[];
         reminders?: ServerReminder[];
       };
-      setSupplierFallback(data.task?.supplier_display_name ?? null);
       setComments(Array.isArray(data.comments) ? data.comments : []);
       const rem = (data.reminders ?? []).map((x) => {
         const { date, time } = splitRemindAt(x.remind_at);
@@ -145,13 +147,13 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, onOpe
       const init = task ? fromTask(task) : EMPTY_FORM;
       setForm(init);
       setInitial(init);
-      setSupplierFallback(null);
       setComments([]);
       setCommentInput('');
       setReminders([]);
       setInitialReminders([]);
       setTitleTouched(false);
       setSubmitting(false);
+      setNotify(EMPTY_NOTIFY_SELECTION);
       if (task) void loadDetail(task.id);
     }
   }, [open, task, loadDetail]);
@@ -159,6 +161,39 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, onOpe
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
+
+  // Fallback names for the picker chips (covers a soft-deleted supplier still
+  // assigned in edit mode, absent from the active option lists).
+  const knownNames = useMemo<Record<string, string>>(() => {
+    const m: Record<string, string> = {};
+    for (const a of task?.assignees ?? []) {
+      const id = a.user_id ?? a.supplier_id;
+      if (id && a.display_name) m[`${a.assignee_type}:${id}`] = a.display_name;
+    }
+    return m;
+  }, [task]);
+
+  // Notification matrix recipients: "אליי" always, then one row per selected
+  // assignee (user OR supplier). A user assignee that is the creator is covered
+  // by "אליי" (skipped). Cell availability comes from the option lists.
+  const notifyRecipients = useMemo<NotifyRecipient[]>(() => {
+    const list: NotifyRecipient[] = [
+      { key: 'me', label: 'אליי', name: currentUser.name, hasEmail: currentUser.hasEmail, hasPhone: currentUser.hasPhone },
+    ];
+    for (const a of form.assignees) {
+      if (a.assignee_type === 'user') {
+        if (a.id === currentUser.id) continue;
+        const u = assignees.find((x) => x.id === a.id);
+        const name = u?.name ?? knownNames[`user:${a.id}`] ?? 'עובד';
+        list.push({ key: recipientKey('user', a.id), label: name, name, hasEmail: !!u?.hasEmail, hasPhone: !!u?.hasPhone });
+      } else {
+        const s = suppliers.find((x) => x.id === a.id);
+        const name = s?.display_name ?? knownNames[`supplier:${a.id}`] ?? 'ספק';
+        list.push({ key: recipientKey('supplier', a.id), label: name, name, hasEmail: !!s?.email, hasPhone: !!(s?.mobile || s?.phone) });
+      }
+    }
+    return list;
+  }, [form.assignees, assignees, suppliers, currentUser, knownNames]);
 
   const titleError = titleTouched && !form.title.trim() ? 'כותרת היא שדה חובה' : null;
 
@@ -202,9 +237,8 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, onOpe
         priority: form.priority,
         due_date: form.due_date || null,
         due_time: form.due_time || null,
-        // Mutually-exclusive handler: send exactly one side (the other null).
-        assigned_to_user_id: form.assignee_type === 'user' ? (form.assigned_to_user_id || null) : null,
-        supplier_id: form.assignee_type === 'supplier' ? (form.supplier_id || null) : null,
+        // Mixed handlers (users + suppliers) → entity_assignees junction.
+        assignees: form.assignees,
         // Target is optional. A type without a value persists as no target.
         target_type: form.target_id ? form.target_type : null,
         target_id: form.target_id || null,
@@ -213,6 +247,9 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, onOpe
       const remindersChanged =
         JSON.stringify(reminders) !== JSON.stringify(initialReminders);
       if (remindersChanged) body.reminders = remindersPayload;
+
+      // Notification matrix selections — create only.
+      if (!isEdit) body.notify = notify;
 
       const url = isEdit ? `/api/tasks/${task!.id}` : '/api/tasks';
       const method = isEdit ? 'PATCH' : 'POST';
@@ -401,24 +438,24 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, onOpe
                 </div>
               </Section>
 
-              {/* Handler — internal user OR external supplier (shared AssigneeField) */}
+              {/* Handlers — any mix of internal users + external suppliers */}
               <Section title="גורם מטפל" icon={User} iconTone="violet">
                 <div className="py-2">
-                  <AssigneeField
-                    value={{
-                      type: form.assignee_type,
-                      userId: form.assigned_to_user_id || null,
-                      supplierId: form.supplier_id || null,
-                    }}
-                    onChange={(v) => setForm((prev) => ({
-                      ...prev,
-                      assignee_type: v.type,
-                      assigned_to_user_id: v.userId ?? '',
-                      supplier_id: v.supplierId ?? '',
-                    }))}
+                  <AssigneeMultiSelect
                     users={assignees}
                     suppliers={suppliers}
-                    supplierFallbackLabel={supplierFallback}
+                    value={form.assignees}
+                    onChange={(next) => {
+                      set('assignees', next);
+                      // Drop matrix selections for assignees no longer present.
+                      setNotify((prev) => {
+                        const allowed = new Set(['me', ...next.map((a) => `${a.assignee_type}:${a.id}`)]);
+                        const pruned: NotifySelection = {};
+                        for (const [k, v] of Object.entries(prev)) if (allowed.has(k)) pruned[k] = v;
+                        return pruned;
+                      });
+                    }}
+                    knownNames={knownNames}
                     disabled={disabled}
                   />
                 </div>
@@ -426,6 +463,16 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, onOpe
 
               {/* Reminders (shared component — also used by the issue form) */}
               <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} />
+
+              {/* Notification matrix — create mode only (above the save button) */}
+              {!isEdit && (
+                <NotifyMatrix
+                  recipients={notifyRecipients}
+                  value={notify}
+                  onChange={setNotify}
+                  disabled={disabled}
+                />
+              )}
 
               {/* Comments — edit mode only */}
               {isEdit && (

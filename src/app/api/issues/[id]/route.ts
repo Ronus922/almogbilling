@@ -14,6 +14,7 @@ import {
 } from '@/lib/db/reminders';
 import { signedUrlForIssueImage, removeIssueImages } from '@/lib/storage/issueStorage';
 import { coerceIssueInput, isUuid } from '@/lib/validation/issues';
+import { coerceAssignees } from '@/lib/validation/assignee';
 // Generic reminders coercion lives in the tasks validation module (it is
 // entity-agnostic — {remind_at, channel}); reused here for issue reminders.
 import { coerceReminders } from '@/lib/validation/tasks';
@@ -79,9 +80,18 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   const result = coerceIssueInput(bodyRec, 'update');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
 
-  // A linked supplier must exist and not be soft-deleted (only when (re)assigning one).
-  if (result.fields.supplier_id && !(await supplierExists(result.fields.supplier_id))) {
-    return NextResponse.json({ error: 'supplier_not_found' }, { status: 400 });
+  // Assignees (optional on PATCH). If sent, each supplier must exist + not be deleted.
+  const assigneesV = coerceAssignees(bodyRec);
+  if (assigneesV && !assigneesV.ok) {
+    return NextResponse.json({ error: assigneesV.error }, { status: 400 });
+  }
+  const assignees = assigneesV && assigneesV.ok ? assigneesV.assignees : undefined;
+  if (assignees) {
+    for (const a of assignees) {
+      if (a.assignee_type === 'supplier' && !(await supplierExists(a.id))) {
+        return NextResponse.json({ error: 'supplier_not_found' }, { status: 400 });
+      }
+    }
   }
 
   const reminders = coerceReminders(bodyRec);
@@ -116,53 +126,60 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       }
     }
 
-    const issue = await updateIssue(id, patch);
+    const issue = await updateIssue(id, patch, assignees, actor.id);
     if (!issue) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-    // Replace reminders if the client sent a reminders array (same as tasks).
+    const userIds = issue.assignees.map((a) => a.user_id).filter((v): v is string => v !== null);
+
+    // Replace reminders if the client sent a reminders array → one per user
+    // assignee (or the editor when there are none).
     if (reminders && reminders.ok) {
       await deleteRemindersForEntity('issue', id);
+      const reminderUsers = userIds.length > 0 ? userIds : [actor.id];
       for (const r of reminders.reminders) {
-        await createReminder({
-          entityType: 'issue',
-          entityId: id,
-          userId: issue.assigned_to_user_id ?? actor.id,
-          remindAt: r.remind_at,
-          channel: r.channel,
-        });
+        for (const uid of reminderUsers) {
+          await createReminder({
+            entityType: 'issue',
+            entityId: id,
+            userId: uid,
+            remindAt: r.remind_at,
+            channel: r.channel,
+          });
+        }
       }
     }
 
-    // Notify on assignment CHANGE to a new, different user (not the editor).
-    const newAssignee = issue.assigned_to_user_id;
-    if (newAssignee && newAssignee !== prev.assigned_to_user_id && newAssignee !== actor.id) {
+    // Notify each NEWLY-ADDED user assignee (set diff), excluding the editor.
+    const prevSet = new Set(prev.assignedUserIds);
+    for (const uid of userIds) {
+      if (prevSet.has(uid) || uid === actor.id) continue;
       await notifyIssue({
-        userId: newAssignee,
+        userId: uid,
         type: 'issue_assigned',
         heading: 'תקלה הוקצתה לך',
         issue: { id: issue.id, title: issue.title, priority: issue.priority },
         notificationPriority: issue.priority === 'urgent' ? 'urgent' : 'normal',
-        dedupeKey: `issue_assigned:${issue.id}:${newAssignee}`,
+        dedupeKey: `issue_assigned:${issue.id}:${uid}`,
         extraDetails: [{ label: 'הוקצה על ידי', value: actor.full_name ?? actor.username }],
       });
     }
 
-    // Notify the assignee on a status change they didn't make themselves.
-    if (
-      result.fields.status !== undefined &&
-      result.fields.status !== prev.status &&
-      issue.assigned_to_user_id &&
-      issue.assigned_to_user_id !== actor.id
-    ) {
-      await notifyIssue({
-        userId: issue.assigned_to_user_id,
-        type: 'issue_status_changed',
-        heading: `סטטוס התקלה עודכן`,
-        issue: { id: issue.id, title: issue.title, priority: issue.priority },
-        notificationPriority: 'normal',
-        // One status-change notification per (issue, assignee, status) tuple.
-        dedupeKey: `issue_status:${issue.id}:${issue.assigned_to_user_id}:${issue.status}`,
-      });
+    // Notify every PRE-EXISTING user assignee (≠ editor) on a status change.
+    // A user added in this same PATCH already got the 'assigned' notification
+    // above, so skip them here to avoid a double notification.
+    if (result.fields.status !== undefined && result.fields.status !== prev.status) {
+      for (const uid of userIds) {
+        if (uid === actor.id || !prevSet.has(uid)) continue;
+        await notifyIssue({
+          userId: uid,
+          type: 'issue_status_changed',
+          heading: `סטטוס התקלה עודכן`,
+          issue: { id: issue.id, title: issue.title, priority: issue.priority },
+          notificationPriority: 'normal',
+          // One status-change notification per (issue, assignee, status) tuple.
+          dedupeKey: `issue_status:${issue.id}:${uid}:${issue.status}`,
+        });
+      }
     }
 
     return NextResponse.json({ issue });

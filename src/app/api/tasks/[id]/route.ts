@@ -3,7 +3,7 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   getTaskById,
-  getTaskAssignee,
+  getTaskUserAssignees,
   updateTask,
   deleteTask,
 } from '@/lib/db/tasks';
@@ -15,6 +15,7 @@ import {
 import { listTaskComments } from '@/lib/db/tasks';
 import { supplierExists } from '@/lib/db/suppliers';
 import { coerceTaskInput, coerceReminders } from '@/lib/validation/tasks';
+import { coerceAssignees } from '@/lib/validation/assignee';
 import { notifyTask } from '@/services/notifications';
 
 export const runtime = 'nodejs';
@@ -68,9 +69,18 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   const result = coerceTaskInput(bodyRec, 'update');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
 
-  // A linked supplier must exist and not be soft-deleted (when (re)assigning one).
-  if (result.fields.supplier_id && !(await supplierExists(result.fields.supplier_id))) {
-    return NextResponse.json({ error: 'supplier_not_found' }, { status: 400 });
+  // Assignees (optional on PATCH). If sent, each supplier must exist + not be deleted.
+  const assigneesV = coerceAssignees(bodyRec);
+  if (assigneesV && !assigneesV.ok) {
+    return NextResponse.json({ error: assigneesV.error }, { status: 400 });
+  }
+  const assignees = assigneesV && assigneesV.ok ? assigneesV.assignees : undefined;
+  if (assignees) {
+    for (const a of assignees) {
+      if (a.assignee_type === 'supplier' && !(await supplierExists(a.id))) {
+        return NextResponse.json({ error: 'supplier_not_found' }, { status: 400 });
+      }
+    }
   }
 
   // is_archived passthrough (boolean).
@@ -88,38 +98,45 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 
   try {
-    const prevAssignee = await getTaskAssignee(id);
-    if (prevAssignee === undefined) {
+    const prevUsers = await getTaskUserAssignees(id);
+    if (prevUsers === null) {
       return NextResponse.json({ error: 'not_found' }, { status: 404 });
     }
 
-    const task = await updateTask(id, patch);
+    const task = await updateTask(id, patch, assignees, actor.id);
     if (!task) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-    // Replace reminders if the client sent a reminders array.
+    const userIds = task.assignees.map((a) => a.user_id).filter((v): v is string => v !== null);
+
+    // Replace reminders if the client sent a reminders array → one per user
+    // assignee (or the editor when there are none).
     if (reminders && reminders.ok) {
       await deleteRemindersForEntity('task', id);
+      const reminderUsers = userIds.length > 0 ? userIds : [actor.id];
       for (const r of reminders.reminders) {
-        await createReminder({
-          entityType: 'task',
-          entityId: id,
-          userId: task.assigned_to_user_id ?? actor.id,
-          remindAt: r.remind_at,
-          channel: r.channel,
-        });
+        for (const uid of reminderUsers) {
+          await createReminder({
+            entityType: 'task',
+            entityId: id,
+            userId: uid,
+            remindAt: r.remind_at,
+            channel: r.channel,
+          });
+        }
       }
     }
 
-    // Notify on assignment CHANGE to a new, different user (not the editor).
-    const newAssignee = task.assigned_to_user_id;
-    if (newAssignee && newAssignee !== prevAssignee && newAssignee !== actor.id) {
+    // Notify each NEWLY-ADDED user assignee (set diff), excluding the editor.
+    const prevSet = new Set(prevUsers);
+    for (const uid of userIds) {
+      if (prevSet.has(uid) || uid === actor.id) continue;
       await notifyTask({
-        userId: newAssignee,
+        userId: uid,
         type: 'task_assigned',
         heading: 'משימה הוקצתה לך',
         task: { id: task.id, title: task.title, priority: task.priority, due_date: task.due_date },
         notificationPriority: task.priority === 'urgent' ? 'urgent' : 'normal',
-        dedupeKey: `task_assigned:${task.id}:${newAssignee}`,
+        dedupeKey: `task_assigned:${task.id}:${uid}`,
         extraDetails: [{ label: 'הוקצה על ידי', value: actor.full_name ?? actor.username }],
       });
     }
