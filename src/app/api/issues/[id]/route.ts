@@ -9,6 +9,7 @@ import {
   listIssueComments,
 } from '@/lib/db/issues';
 import { supplierExists } from '@/lib/db/suppliers';
+import { listEntityAssigneeKeys } from '@/lib/db/entityAssignees';
 import {
   listRemindersForEntity, createReminder, deleteRemindersForEntity,
 } from '@/lib/db/reminders';
@@ -19,6 +20,12 @@ import { coerceAssignees } from '@/lib/validation/assignee';
 // entity-agnostic — {remind_at, channel}); reused here for issue reminders.
 import { coerceReminders } from '@/lib/validation/tasks';
 import { notifyIssue } from '@/services/notifications';
+import {
+  dispatchCreateNotifications,
+  buildMatrixRecipients,
+  filterAddedAssignees,
+} from '@/services/createNotify';
+import { coerceNotifySelection } from '@/lib/notify/selection';
 import type { IssueImage } from '@/lib/types/issues';
 
 export const runtime = 'nodejs';
@@ -111,6 +118,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   try {
     const prev = await getIssueAssigneeStatus(id);
     if (!prev) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    // Full previous key set (users + suppliers) → drives the "added set" the
+    // edit-form notification matrix governs.
+    const prevKeys = new Set(await listEntityAssigneeKeys('issue', id));
 
     // Business rule: resolving requires resolution notes (either in this patch
     // or already persisted). Enforced here against the live row.
@@ -149,7 +159,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       }
     }
 
-    // Notify each NEWLY-ADDED user assignee (set diff), excluding the editor.
+    // In-app assignment bell → each NEWLY-ADDED user assignee (set diff), except
+    // the editor. channel:'in_app' suppresses the auto-email — external delivery
+    // (email / WhatsApp) is now matrix-driven (opt-in), same as the create form.
     const prevSet = new Set(prev.assignedUserIds);
     for (const uid of userIds) {
       if (prevSet.has(uid) || uid === actor.id) continue;
@@ -160,7 +172,27 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
         issue: { id: issue.id, title: issue.title, priority: issue.priority },
         notificationPriority: issue.priority === 'urgent' ? 'urgent' : 'normal',
         dedupeKey: `issue_assigned:${issue.id}:${uid}`,
+        channel: 'in_app',
         extraDetails: [{ label: 'הוקצה על ידי', value: actor.full_name ?? actor.username }],
+      });
+    }
+
+    // External notifications (email / WhatsApp) — the editor's matrix picks only,
+    // one row per recipient: "me" + each NEWLY-ADDED assignee (user OR supplier).
+    // Pre-existing assignees are excluded (the status-change notification below
+    // covers them on its own terms). Best-effort, never blocks the edit.
+    const recipients = buildMatrixRecipients({
+      selection: coerceNotifySelection(bodyRec.notify),
+      meUserId: actor.id,
+      assignees: filterAddedAssignees(prevKeys, issue.assignees),
+      meMessage: `עדכנת תקלה: ${issue.title}`,
+      assigneeMessage: () => `הוקצתה לך תקלה: ${issue.title}`,
+    });
+    if (recipients.length > 0) {
+      void dispatchCreateNotifications({
+        title: `תקלה: ${issue.title}`,
+        actionUrl: `/issues?issue=${issue.id}`,
+        recipients,
       });
     }
 

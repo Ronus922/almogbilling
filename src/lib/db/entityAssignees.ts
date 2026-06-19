@@ -124,6 +124,22 @@ export async function listEntityUserIds(
   return r.rows.map((x) => x.user_id);
 }
 
+/** All assignee keys for an entity — `user:<id>` / `supplier:<id>` (users AND
+ *  suppliers). The edit-form notification matrix diffs the post-update assignees
+ *  against this previous set to find who was NEWLY added; `listEntityUserIds`
+ *  (users only) is insufficient because suppliers must also count as "added". */
+export async function listEntityAssigneeKeys(
+  entityType: EntityType,
+  entityId: string,
+): Promise<string[]> {
+  const r = await query<{ assignee_type: AssigneeKind; user_id: string | null; supplier_id: string | null }>(
+    `select assignee_type, user_id, supplier_id from public.entity_assignees
+      where entity_type = $1 and entity_id = $2`,
+    [entityType, entityId],
+  );
+  return r.rows.map((x) => `${x.assignee_type}:${x.user_id ?? x.supplier_id ?? ''}`);
+}
+
 /** Delete all junction rows for an entity (issue hard-delete cleanup — entity_id
  *  is polymorphic and has no FK, so it does not cascade on its own). */
 export async function deleteEntityAssignees(

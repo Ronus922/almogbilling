@@ -7,6 +7,7 @@ import {
   updateTask,
   deleteTask,
 } from '@/lib/db/tasks';
+import { listEntityAssigneeKeys } from '@/lib/db/entityAssignees';
 import {
   listRemindersForEntity,
   createReminder,
@@ -17,6 +18,12 @@ import { supplierExists } from '@/lib/db/suppliers';
 import { coerceTaskInput, coerceReminders } from '@/lib/validation/tasks';
 import { coerceAssignees } from '@/lib/validation/assignee';
 import { notifyTask } from '@/services/notifications';
+import {
+  dispatchCreateNotifications,
+  buildMatrixRecipients,
+  filterAddedAssignees,
+} from '@/services/createNotify';
+import { coerceNotifySelection } from '@/lib/notify/selection';
 
 export const runtime = 'nodejs';
 
@@ -102,6 +109,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     if (prevUsers === null) {
       return NextResponse.json({ error: 'not_found' }, { status: 404 });
     }
+    // Full previous key set (users + suppliers) → drives the "added set" the
+    // edit-form notification matrix governs.
+    const prevKeys = new Set(await listEntityAssigneeKeys('task', id));
 
     const task = await updateTask(id, patch, assignees, actor.id);
     if (!task) return NextResponse.json({ error: 'not_found' }, { status: 404 });
@@ -126,7 +136,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       }
     }
 
-    // Notify each NEWLY-ADDED user assignee (set diff), excluding the editor.
+    // In-app assignment bell → each NEWLY-ADDED user assignee (set diff), except
+    // the editor. channel:'in_app' suppresses the auto-email — external delivery
+    // (email / WhatsApp) is now matrix-driven (opt-in), same as the create form.
     const prevSet = new Set(prevUsers);
     for (const uid of userIds) {
       if (prevSet.has(uid) || uid === actor.id) continue;
@@ -137,7 +149,26 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
         task: { id: task.id, title: task.title, priority: task.priority, due_date: task.due_date },
         notificationPriority: task.priority === 'urgent' ? 'urgent' : 'normal',
         dedupeKey: `task_assigned:${task.id}:${uid}`,
+        channel: 'in_app',
         extraDetails: [{ label: 'הוקצה על ידי', value: actor.full_name ?? actor.username }],
+      });
+    }
+
+    // External notifications (email / WhatsApp) — the editor's matrix picks only,
+    // one row per recipient: "me" + each NEWLY-ADDED assignee (user OR supplier).
+    // Pre-existing assignees are excluded (already notified). Best-effort.
+    const recipients = buildMatrixRecipients({
+      selection: coerceNotifySelection(bodyRec.notify),
+      meUserId: actor.id,
+      assignees: filterAddedAssignees(prevKeys, task.assignees),
+      meMessage: `עדכנת משימה: ${task.title}`,
+      assigneeMessage: () => `הוקצתה לך משימה: ${task.title}`,
+    });
+    if (recipients.length > 0) {
+      void dispatchCreateNotifications({
+        title: `משימה: ${task.title}`,
+        actionUrl: `/tasks?task=${task.id}`,
+        recipients,
       });
     }
 

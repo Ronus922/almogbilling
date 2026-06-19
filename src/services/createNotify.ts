@@ -118,6 +118,26 @@ export async function dispatchCreateNotifications(
   }
 }
 
+/** The matrix key for an assignee row — `user:<id>` / `supplier:<id>`. Mirrors
+ *  the client `${assignee_type}:${id}` keys and `listEntityAssigneeKeys`. */
+export function assigneeRefKey(a: AssigneeRef): string {
+  return `${a.assignee_type}:${a.user_id ?? a.supplier_id ?? ''}`;
+}
+
+/**
+ * The assignees NEWLY added in this update — `current` minus those whose key is
+ * in `prevKeys`. The edit-form matrix governs only the added set (a pre-existing
+ * assignee already got their notification and must not be re-notified), so the
+ * PATCH routes feed this filtered list (not the full assignee list) into
+ * `buildMatrixRecipients`.
+ */
+export function filterAddedAssignees(
+  prevKeys: Set<string>,
+  current: AssigneeRef[],
+): AssigneeRef[] {
+  return current.filter((a) => !prevKeys.has(assigneeRefKey(a)));
+}
+
 /**
  * Build the matrix recipient list from a recipient-keyed selection + the entity's
  * assignees. Rows: "me" (key 'me') plus one per assignee (key `user:<id>` /

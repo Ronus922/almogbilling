@@ -197,14 +197,27 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
     return m;
   }, [issue]);
 
+  // Keys of assignees present when the panel opened. In edit mode the matrix
+  // shows ONLY newly-added assignees (added set); pre-existing ones already got
+  // their notification and must not be re-notified. Empty in create mode.
+  const initialAssigneeKeys = useMemo<Set<string>>(() => {
+    const s = new Set<string>();
+    for (const a of issue?.assignees ?? []) {
+      const id = a.user_id ?? a.supplier_id;
+      if (id) s.add(`${a.assignee_type}:${id}`);
+    }
+    return s;
+  }, [issue]);
+
   // Notification matrix recipients: "אליי" always, then one row per selected
-  // assignee (user OR supplier). A user assignee that is the reporter is covered
-  // by "אליי" (skipped).
+  // assignee (user OR supplier) — in edit, restricted to the added set. A user
+  // assignee that is the reporter is covered by "אליי" (skipped).
   const notifyRecipients = useMemo<NotifyRecipient[]>(() => {
     const list: NotifyRecipient[] = [
       { key: 'me', label: 'אליי', name: currentUser.name, hasEmail: currentUser.hasEmail, hasPhone: currentUser.hasPhone },
     ];
     for (const a of form.assignees) {
+      if (isEdit && initialAssigneeKeys.has(`${a.assignee_type}:${a.id}`)) continue;
       if (a.assignee_type === 'user') {
         if (a.id === currentUser.id) continue;
         const u = assignees.find((x) => x.id === a.id);
@@ -217,7 +230,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
       }
     }
     return list;
-  }, [form.assignees, assignees, suppliers, currentUser, knownNames]);
+  }, [form.assignees, assignees, suppliers, currentUser, knownNames, isEdit, initialAssigneeKeys]);
 
   const titleError = titleTouched && !form.title.trim() ? 'כותרת היא שדה חובה' : null;
   const resolutionMissing =
@@ -274,8 +287,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
         JSON.stringify(reminders) !== JSON.stringify(initialReminders);
       if (remindersChanged) body.reminders = remindersPayload;
 
-      // Notification matrix selections — create only.
-      if (!isEdit) body.notify = notify;
+      // Notification matrix selections — create AND edit. In edit the matrix
+      // only ever holds keys for "me" + newly-added assignees (added set).
+      body.notify = notify;
 
       const url = isEdit ? `/api/issues/${issue!.id}` : '/api/issues';
       const method = isEdit ? 'PATCH' : 'POST';
@@ -395,6 +409,12 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
   }
 
   const disabled = submitting || !canEdit;
+
+  // Single definition — placed after Reminders in create, at the very bottom
+  // (above the save footer) in edit, per the matrix's "bottom of the form" spec.
+  const notifyMatrix = (
+    <NotifyMatrix recipients={notifyRecipients} value={notify} onChange={setNotify} disabled={disabled} />
+  );
 
   return (
     <>
@@ -555,15 +575,8 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
               {/* Reminders (shared component — also used by the task form). Optional. */}
               <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} />
 
-              {/* Notification matrix — create mode only (above the save button) */}
-              {!isEdit && (
-                <NotifyMatrix
-                  recipients={notifyRecipients}
-                  value={notify}
-                  onChange={setNotify}
-                  disabled={disabled}
-                />
-              )}
+              {/* Notification matrix — create: here (above the save button). */}
+              {!isEdit && notifyMatrix}
 
               {/* Images — edit mode only (need an issue id to attach to) */}
               {isEdit && (
@@ -706,6 +719,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
                   </div>
                 </Section>
               )}
+
+              {/* Notification matrix — edit: at the bottom, above the save button. */}
+              {isEdit && notifyMatrix}
             </div>
           </div>
 
