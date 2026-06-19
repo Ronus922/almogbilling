@@ -18,6 +18,7 @@ import {
   copyEntityAssignees,
   listEntityUserIds,
 } from '@/lib/db/entityAssignees';
+import { targetLabelSql } from '@/lib/db/targets';
 
 // Handlers live in entity_assignees (migration 047) — the legacy
 // assigned_to_user_id / supplier_id columns are frozen and no longer projected.
@@ -44,6 +45,7 @@ const WRITABLE_COLUMNS: (keyof IssueWritableFields)[] = [
 const META_SELECT = `
   ${ISSUE_COLUMNS.split(',').map((c) => 'i.' + c.trim()).join(', ')},
   ${assigneesJsonExpr('issue', 'i')},
+  ${targetLabelSql('i')},
   coalesce(cc.cnt, 0)::int as comment_count,
   lt.id as linked_task_id
 `;

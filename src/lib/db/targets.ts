@@ -25,3 +25,18 @@ export async function listAreaTargets(): Promise<AreaTarget[]> {
   );
   return r.rows;
 }
+
+/**
+ * SQL scalar subquery that resolves a task/issue's polymorphic target to a
+ * display label — the apartment number for a 'room' (debtors), the area name for
+ * an 'area' (areas) — inlined into a tasks/issues list/detail SELECT. `alias` is
+ * a controlled identifier (never user input), so direct interpolation is safe.
+ * Reads the SAME tables `listRoomTargets`/`listAreaTargets` (and TargetField)
+ * use, so the table label matches the picker. NULL when there is no target.
+ */
+export function targetLabelSql(alias: string): string {
+  return `case ${alias}.target_type
+    when 'room' then (select d.apartment_number from public.debtors d where d.id = ${alias}.target_id)
+    when 'area' then (select a.name from public.areas a where a.id = ${alias}.target_id)
+  end as target_label`;
+}

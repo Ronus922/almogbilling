@@ -5,6 +5,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { AssigneePills } from '@/components/assignee/AssigneePills';
+import { TargetCell } from '@/components/targets/TargetCell';
 import { cn } from '@/lib/utils';
 import {
   STATUS_BADGE, PRIORITY_BADGE, taskStatusLabel, taskPriorityLabel,
@@ -43,7 +44,7 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect }: Props) {
             <SortHead label="עדיפות" col="priority_desc" sort={sort} onSortChange={onSortChange} align="center" />
             <SortHead label="תאריך יעד" col="due_asc" sort={sort} onSortChange={onSortChange} align="center" />
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">מטפל</TableHead>
-            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">דירה</TableHead>
+            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">יעד</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -80,8 +81,8 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect }: Props) {
               <TableCell className="px-4 py-3 text-center text-sm">
                 <HandlerCell task={t} />
               </TableCell>
-              <TableCell dir="ltr" className="px-4 py-3 text-center text-sm tabular-nums text-slate-500">
-                {t.apartment_number ?? '—'}
+              <TableCell className="px-4 py-3 text-center text-sm">
+                <TargetCell type={t.target_type} label={t.target_label} />
               </TableCell>
             </TableRow>
           ))}

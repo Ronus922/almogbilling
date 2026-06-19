@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { MessageSquare, Calendar } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AssigneePills } from '@/components/assignee/AssigneePills';
+import { TargetCell } from '@/components/targets/TargetCell';
 import {
   TASK_STATUSES, STATUS_DOT, PRIORITY_BADGE, taskPriorityLabel,
 } from '@/lib/constants/tasks';
@@ -94,6 +95,9 @@ export function TasksKanban({ tasks, canEdit, onSelect, onMove }: Props) {
                   )}
                   <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
                     {t.assignees.length > 0 && <AssigneePills assignees={t.assignees} size="sm" />}
+                    {t.target_type && t.target_label && (
+                      <TargetCell type={t.target_type} label={t.target_label} size="sm" />
+                    )}
                     {t.due_date && (
                       <span dir="ltr" className={cn('inline-flex items-center gap-1 tabular-nums', isOverdue(t) && 'font-bold text-rose-600')}>
                         <Calendar className="h-3 w-3" />{t.due_date}

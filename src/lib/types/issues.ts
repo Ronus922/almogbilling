@@ -37,6 +37,9 @@ export interface IssueWithMeta extends Issue {
   assignees: AssigneeRef[];
   comment_count: number;
   linked_task_id: string | null;
+  /** Resolved display label for the optional target (apartment number / area
+   *  name), derived in the list/detail query. null when there is no target. */
+  target_label: string | null;
 }
 
 /** Fields a client may write on create/update (all optional on update). */

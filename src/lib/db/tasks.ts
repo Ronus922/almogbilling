@@ -16,6 +16,7 @@ import {
   replaceEntityAssignees,
   listEntityUserIds,
 } from '@/lib/db/entityAssignees';
+import { targetLabelSql } from '@/lib/db/targets';
 
 // Date/timestamp columns are cast to text so they cross the RSC boundary as
 // strings (matching the declared `string` types) — pg otherwise returns `date`
@@ -106,6 +107,7 @@ export async function listTasks(filters: TaskListFilters): Promise<TaskWithAssig
   const r = await query<TaskWithAssignee>(
     `select ${TASK_COLUMNS.split(',').map((c) => 't.' + c.trim()).join(', ')},
             ${assigneesJsonExpr('task', 't')},
+            ${targetLabelSql('t')},
             coalesce(cc.cnt, 0)::int as comment_count
        from public.tasks t
        left join (
@@ -194,6 +196,7 @@ export async function getTaskById(id: string): Promise<TaskWithAssignee | null> 
   return queryOne<TaskWithAssignee>(
     `select ${TASK_COLUMNS.split(',').map((c) => 't.' + c.trim()).join(', ')},
             ${assigneesJsonExpr('task', 't')},
+            ${targetLabelSql('t')},
             coalesce(cc.cnt, 0)::int as comment_count
        from public.tasks t
        left join (
