@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   X, Building2, MapPin, CreditCard, FileText, Activity, Phone, Mail, Globe,
-  User as UserIcon, StickyNote, Pencil, Power, PowerOff, Archive, Trash2,
+  User as UserIcon, StickyNote, Pencil, Power, Archive, Trash2,
   Upload, Download, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Eye,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -21,7 +21,11 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 import { Section } from '@/components/side-panel/Section';
+import { SupplierActivity } from './SupplierActivity';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
 import { validatePhone } from '@/lib/validation';
@@ -51,7 +55,6 @@ interface Props {
 
 const STATUS_TONE: Record<SupplierStatus, string> = {
   active: 'bg-emerald-100 text-emerald-700',
-  inactive: 'bg-slate-100 text-slate-600',
   archived: 'bg-amber-100 text-amber-700',
 };
 
@@ -103,7 +106,17 @@ export function SupplierDetailPanel({
   // Documents upload row state.
   const [uploadDocType, setUploadDocType] = useState<SupplierDocType>('general');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadName, setUploadName] = useState('');
   const [uploading, setUploading] = useState(false);
+
+  // Rename-document dialog (single-field edit → Dialog per DESIGN law).
+  const [renameDoc, setRenameDoc] = useState<SupplierDocument | null>(null);
+
+  // Bumped after any mutation so the Activity tab refetches its log.
+  const [activityVersion, setActivityVersion] = useState(0);
+  function bumpActivity() {
+    setActivityVersion((v) => v + 1);
+  }
 
   // Fetch supplier + documents on open.
   useEffect(() => {
@@ -163,7 +176,7 @@ export function SupplierDetailPanel({
 
   const isDirty = editing; // edit mode is the only unsaved-state surface
 
-  useEscapeKey(open && !confirmCloseOpen && !confirmDeleteOpen && confirmDeleteDocId === null, () => requestClose());
+  useEscapeKey(open && !confirmCloseOpen && !confirmDeleteOpen && confirmDeleteDocId === null && renameDoc === null, () => requestClose());
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
   useEscapeKey(confirmDeleteOpen, () => setConfirmDeleteOpen(false));
   useEscapeKey(confirmDeleteDocId !== null, () => setConfirmDeleteDocId(null));
@@ -206,6 +219,7 @@ export function SupplierDetailPanel({
     if (!r.ok) throw new Error(data.error ?? 'שמירה נכשלה');
     if (data.supplier) setSupplier(data.supplier);
     toast.success(successMsg);
+    bumpActivity();
     onChanged();
     router.refresh();
     return true;
@@ -300,6 +314,7 @@ export function SupplierDetailPanel({
       const fd = new FormData();
       fd.append('file', uploadFile);
       fd.append('doc_type', uploadDocType);
+      fd.append('file_name', uploadName.trim() || uploadFile.name);
       const r = await fetch(`/api/suppliers/${supplierId}/documents`, {
         method: 'POST',
         credentials: 'include',
@@ -309,8 +324,10 @@ export function SupplierDetailPanel({
       if (!r.ok || !data.document) throw new Error(data.error ?? 'העלאה נכשלה');
       setDocuments((prev) => [data.document as SupplierDocument, ...prev]);
       setUploadFile(null);
+      setUploadName('');
       setUploadDocType('general');
       toast.success('המסמך הועלה');
+      bumpActivity();
       onChanged();
     } catch (e) {
       toast.error((e as Error).message);
@@ -344,12 +361,30 @@ export function SupplierDetailPanel({
       }
       setDocuments((prev) => prev.filter((d) => d.id !== docId));
       toast.success('המסמך נמחק');
+      bumpActivity();
       onChanged();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
       setConfirmDeleteDocId(null);
     }
+  }
+
+  async function handleRenameDocument(docId: string, fileName: string) {
+    if (!supplierId) return;
+    const r = await fetch(`/api/suppliers/${supplierId}/documents/${docId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ file_name: fileName }),
+    });
+    const data = (await r.json().catch(() => ({}))) as { document?: SupplierDocument; error?: string };
+    if (!r.ok || !data.document) throw new Error(data.error ?? 'שינוי השם נכשל');
+    const updated = data.document;
+    setDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, file_name: updated.file_name } : d)));
+    toast.success('שם המסמך עודכן');
+    bumpActivity();
+    onChanged();
   }
 
   const statusMeta = supplier ? supplierStatusMeta(supplier.status) : null;
@@ -492,13 +527,32 @@ export function SupplierDetailPanel({
                             type="file"
                             disabled={uploading}
                             accept={ALLOWED_DOC_TYPES.join(',')}
-                            onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0] ?? null;
+                              setUploadFile(f);
+                              setUploadName(f ? f.name : '');
+                            }}
                             className="h-10 pt-1.5"
                           />
                           <p className="text-xs text-slate-500">
                             עד 10MB. תמונות, PDF, Word או Excel.
                           </p>
                         </div>
+                        {uploadFile && (
+                          <div className="space-y-2">
+                            <Label htmlFor="sup-doc-name" className="text-base font-medium text-muted-foreground">
+                              שם המסמך
+                            </Label>
+                            <Input
+                              id="sup-doc-name"
+                              value={uploadName}
+                              onChange={(e) => setUploadName(e.target.value)}
+                              disabled={uploading}
+                              placeholder="שם לתצוגה"
+                              className="h-10"
+                            />
+                          </div>
+                        )}
                         <Button
                           type="button"
                           onClick={handleUpload}
@@ -523,8 +577,10 @@ export function SupplierDetailPanel({
                           <DocumentRow
                             key={doc.id}
                             doc={doc}
+                            canEdit={canEdit}
                             canDelete={canDelete}
                             onView={() => handleViewDocument(doc.id)}
+                            onRename={() => setRenameDoc(doc)}
                             onDelete={() => setConfirmDeleteDocId(doc.id)}
                           />
                         ))}
@@ -533,14 +589,9 @@ export function SupplierDetailPanel({
                   </Section>
                 </TabsContent>
 
-                {/* TAB — פעילות */}
+                {/* TAB — פעילות (automatic log from the central audit_log) */}
                 <TabsContent value="activity" className="mt-5">
-                  <div className="rounded-xl bg-white p-12 text-center ring-1 ring-slate-200/70">
-                    <Activity className="mx-auto h-8 w-8 text-slate-300" />
-                    <p className="mt-3 text-sm text-muted-foreground">
-                      יומן פעילות יתווסף בהמשך
-                    </p>
-                  </div>
+                  <SupplierActivity supplierId={supplier.id} refreshSignal={activityVersion} />
                 </TabsContent>
               </Tabs>
             )}
@@ -645,7 +696,89 @@ export function SupplierDetailPanel({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Rename document — single-field edit (Dialog, per DESIGN law) */}
+      <RenameDocumentDialog
+        doc={renameDoc}
+        onOpenChange={(o) => { if (!o) setRenameDoc(null); }}
+        onSave={handleRenameDocument}
+      />
     </>
+  );
+}
+
+/* ---------- Rename document dialog (single-field edit) ---------- */
+
+function RenameDocumentDialog({
+  doc,
+  onOpenChange,
+  onSave,
+}: {
+  doc: SupplierDocument | null;
+  onOpenChange: (open: boolean) => void;
+  onSave: (docId: string, fileName: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (doc) {
+      setValue(doc.file_name);
+      setError(null);
+      setSaving(false);
+    }
+  }, [doc]);
+
+  const trimmed = value.trim();
+  const canSave = trimmed.length > 0 && !saving;
+
+  async function handleSave() {
+    if (!doc || !canSave) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(doc.id, trimmed);
+      onOpenChange(false);
+    } catch (err) {
+      setError((err as Error).message || 'שינוי השם נכשל');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={doc !== null} onOpenChange={onOpenChange}>
+      <DialogContent dir="rtl" className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>שינוי שם מסמך</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label htmlFor="doc-rename-input" className="text-sm font-medium text-muted-foreground">
+            שם המסמך
+          </Label>
+          <Input
+            id="doc-rename-input"
+            value={value}
+            onChange={(e) => { setValue(e.target.value); setError(null); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && canSave) void handleSave(); }}
+            disabled={saving}
+            placeholder="שם לתצוגה"
+            autoFocus
+            className={cn('h-10', error && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
+          />
+          {error && (
+            <p className="text-[12px] font-semibold text-red-500 text-right">⚠️ {error}</p>
+          )}
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ביטול</Button>
+          <Button onClick={handleSave} disabled={!canSave}>
+            {saving ? 'שומר…' : 'שמור'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -685,28 +818,6 @@ function ViewDetails({
                 <Pencil className="h-4 w-4" /> ערוך
               </Button>
               {supplier.status === 'active' && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => onStatusChange('inactive')}
-                  disabled={saving}
-                  className="gap-2 border-slate-200 text-slate-600 hover:bg-slate-50"
-                >
-                  <PowerOff className="h-4 w-4" /> השבת
-                </Button>
-              )}
-              {supplier.status === 'inactive' && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => onStatusChange('active')}
-                  disabled={saving}
-                  className="gap-2 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-                >
-                  <Power className="h-4 w-4" /> הפעל
-                </Button>
-              )}
-              {supplier.status !== 'archived' && (
                 <Button
                   type="button"
                   variant="outline"
@@ -1024,8 +1135,10 @@ function EditField({
 
 interface DocRowProps {
   doc: SupplierDocument;
+  canEdit: boolean;
   canDelete: boolean;
   onView: () => void;
+  onRename: () => void;
   onDelete: () => void;
 }
 
@@ -1050,7 +1163,7 @@ function formatDate(value: Date | string): string {
   });
 }
 
-function DocumentRow({ doc, canDelete, onView, onDelete }: DocRowProps) {
+function DocumentRow({ doc, canEdit, canDelete, onView, onRename, onDelete }: DocRowProps) {
   const Icon = iconForMime(doc.mime_type);
   return (
     <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3">
@@ -1079,6 +1192,16 @@ function DocumentRow({ doc, canDelete, onView, onDelete }: DocRowProps) {
           <span className="hidden sm:inline">צפייה</span>
           <Download className="h-3.5 w-3.5 sm:hidden" />
         </button>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={onRename}
+            aria-label="שנה שם"
+            className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
+        )}
         {canDelete && (
           <button
             type="button"

@@ -6,6 +6,7 @@ import type {
   SupplierListFilters,
   SupplierDocument,
   SupplierWritableFields,
+  SupplierActivityEntry,
 } from '@/lib/types/suppliers';
 
 const SUPPLIER_COLUMNS = `
@@ -37,16 +38,12 @@ export async function listSuppliers(filters: SupplierListFilters): Promise<Suppl
         or s.phone ilike ${p} or s.mobile ilike ${p} or s.email ilike ${p})`,
     );
   }
-  // Status tabs: the combined "לא פעיל / ארכיון" tab → inactive + archived;
-  // an exact status → equals; otherwise ('all' / unset = the main view) hide
-  // archived suppliers so they only appear under the combined tab.
-  if (filters.status === 'inactive_archived') {
-    where.push(`s.status in ('inactive', 'archived')`);
-  } else if (filters.status && filters.status !== 'all') {
+  // Status tabs (exactly three): 'active' → only active; 'archived' → only
+  // archived; 'all' / unset → both (no status predicate). Default on load is
+  // 'active', sent explicitly by the client.
+  if (filters.status === 'active' || filters.status === 'archived') {
     params.push(filters.status);
     where.push(`s.status = $${params.length}`);
-  } else {
-    where.push(`s.status <> 'archived'`);
   }
   if (filters.type && filters.type !== 'all') {
     params.push(filters.type);
@@ -64,7 +61,7 @@ export async function listSuppliers(filters: SupplierListFilters): Promise<Suppl
      from public.suppliers s
      left join public.supplier_categories c on c.id = s.category_id
      where ${where.join(' and ')}
-     order by case s.status when 'active' then 0 when 'inactive' then 1 else 2 end,
+     order by case s.status when 'active' then 0 else 1 end,
               s.display_name asc`,
     params,
   );
@@ -103,15 +100,21 @@ export async function createSupplier(
   return row.id;
 }
 
-/** Whole-object update (the panel saves the full supplier in one PATCH). */
-export async function updateSupplier(id: string, fields: SupplierWritableFields): Promise<boolean> {
-  const r = await query(
+/** Whole-object update (the panel saves the full supplier in one PATCH).
+ *  Returns the updated row (for the activity diff + live UI) or null if the
+ *  supplier does not exist / is soft-deleted. */
+export async function updateSupplier(
+  id: string,
+  fields: SupplierWritableFields,
+): Promise<Supplier | null> {
+  return queryOne<Supplier>(
     `update public.suppliers set
        display_name=$2, company_name=$3, contact_person=$4, supplier_type=$5, status=$6,
        phone=$7, mobile=$8, email=$9, website=$10, address=$11, city=$12, tax_id=$13,
        bank_name=$14, bank_branch=$15, bank_account=$16, payment_terms=$17,
        notes=$18, internal_notes=$19, rating=$20, category_id=$21
-     where id=$1 and deleted_at is null`,
+     where id=$1 and deleted_at is null
+     returning ${SUPPLIER_COLUMNS}`,
     [
       id, fields.display_name, fields.company_name, fields.contact_person, fields.supplier_type,
       fields.status, fields.phone, fields.mobile, fields.email, fields.website, fields.address,
@@ -119,7 +122,6 @@ export async function updateSupplier(id: string, fields: SupplierWritableFields)
       fields.payment_terms, fields.notes, fields.internal_notes, fields.rating, fields.category_id,
     ],
   );
-  return (r.rowCount ?? 0) > 0;
 }
 
 export async function softDeleteSupplier(id: string): Promise<boolean> {
@@ -128,6 +130,26 @@ export async function softDeleteSupplier(id: string): Promise<boolean> {
     [id],
   );
   return (r.rowCount ?? 0) > 0;
+}
+
+/** Contact details for an active supplier — used by the create-form notification
+ *  matrix to email/WhatsApp a supplier assignee. phone prefers mobile (for
+ *  WhatsApp), falling back to the landline. Null when missing/soft-deleted. */
+export interface SupplierNotifyContact {
+  display_name: string;
+  email: string | null;
+  phone: string | null;
+}
+
+export async function getSupplierNotifyContact(id: string): Promise<SupplierNotifyContact | null> {
+  return queryOne<SupplierNotifyContact>(
+    `select display_name,
+            nullif(email, '')  as email,
+            coalesce(nullif(mobile, ''), nullif(phone, '')) as phone
+       from public.suppliers
+      where id = $1 and deleted_at is null`,
+    [id],
+  );
 }
 
 /** True when a supplier exists and is not soft-deleted — the guard for linking a
@@ -190,4 +212,36 @@ export async function getSupplierDocument(docId: string): Promise<SupplierDocume
 export async function deleteSupplierDocumentRow(docId: string): Promise<boolean> {
   const r = await query(`delete from public.supplier_documents where id = $1`, [docId]);
   return (r.rowCount ?? 0) > 0;
+}
+
+/** Rename a document's display name (file_name) only — the stored object path
+ *  (file_url, a UUID) is immutable, so the bytes are untouched. */
+export async function renameSupplierDocument(
+  docId: string,
+  fileName: string,
+): Promise<SupplierDocument | null> {
+  return queryOne<SupplierDocument>(
+    `update public.supplier_documents set file_name = $2
+       where id = $1
+       returning id, supplier_id, file_name, file_url, file_size_bytes, mime_type, doc_type,
+                 uploaded_by, uploaded_by_name, created_at`,
+    [docId, fileName],
+  );
+}
+
+// ── Activity (central audit_log, entity_type='supplier') ────────────────────
+export async function listSupplierActivity(
+  supplierId: string,
+): Promise<SupplierActivityEntry[]> {
+  const r = await query<SupplierActivityEntry>(
+    `select a.id, a.action, a.changes, a.metadata,
+            coalesce(u.full_name, u.username) as actor_name,
+            a.created_at
+       from public.audit_log a
+       left join public.users u on u.id = a.actor_user_id
+      where a.entity_type = 'supplier' and a.entity_id = $1
+      order by a.created_at desc`,
+    [supplierId],
+  );
+  return r.rows;
 }

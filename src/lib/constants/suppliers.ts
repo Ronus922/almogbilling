@@ -34,8 +34,7 @@ export const SUPPLIER_STATUSES: ReadonlyArray<{
   tone: DesignTone;
 }> = [
   { value: 'active', label: 'פעיל', tone: 'emerald' },
-  { value: 'inactive', label: 'לא פעיל', tone: 'slate' },
-  { value: 'archived', label: 'בארכיון', tone: 'amber' },
+  { value: 'archived', label: 'ארכיון', tone: 'amber' },
 ];
 
 export function supplierStatusMeta(status: SupplierStatus) {
@@ -43,16 +42,16 @@ export function supplierStatusMeta(status: SupplierStatus) {
 }
 
 /**
- * Filter "tabs" for the suppliers list (next to the "הכל" pill). "לא פעיל"
- * and "ארכיון" are UNIFIED into one tab — archived suppliers are hidden from
- * the main "הכל" view and only surface here.
+ * Filter "tabs" for the suppliers list — exactly three, in this order:
+ * פעיל (active, the load default) · ארכיון (archived) · הכל (all = both).
  */
 export const SUPPLIER_STATUS_FILTERS: ReadonlyArray<{
-  value: Exclude<SupplierStatusFilter, 'all'>;
+  value: SupplierStatusFilter;
   label: string;
 }> = [
   { value: 'active', label: 'פעיל' },
-  { value: 'inactive_archived', label: 'לא פעיל' },
+  { value: 'archived', label: 'ארכיון' },
+  { value: 'all', label: 'הכל' },
 ];
 
 export const PAYMENT_TERMS: ReadonlyArray<{ value: SupplierPaymentTerms; label: string }> = [

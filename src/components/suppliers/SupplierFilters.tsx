@@ -36,13 +36,8 @@ export function SupplierFilters({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {/* Status filter pills */}
+        {/* Status filter pills — exactly three: פעיל / ארכיון / הכל */}
         <div className="flex flex-wrap items-center gap-1.5">
-          <StatusPill
-            label="הכל"
-            active={filters.status === 'all'}
-            onClick={() => onChange({ status: 'all' })}
-          />
           {SUPPLIER_STATUS_FILTERS.map((s) => (
             <StatusPill
               key={s.value}

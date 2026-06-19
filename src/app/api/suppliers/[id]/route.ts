@@ -1,8 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getSupplierById, updateSupplier, softDeleteSupplier } from '@/lib/db/suppliers';
-import { coerceAndValidateSupplier } from '@/lib/validation/suppliers';
+import { coerceAndValidateSupplier, supplierChangedFields } from '@/lib/validation/suppliers';
+import { writeAudit } from '@/lib/db/audit';
 
 export const runtime = 'nodejs';
 
@@ -30,8 +31,9 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 
 // PATCH /api/suppliers/[id] (suppliers:edit) — whole-object save.
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('suppliers', 'edit');
+    actor = await requirePermission('suppliers', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -53,11 +55,35 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 
   try {
-    const ok = await updateSupplier(id, result.fields);
-    if (!ok) {
+    const before = await getSupplierById(id);
+    if (!before) {
       return NextResponse.json({ error: 'not_found' }, { status: 404 });
     }
-    return NextResponse.json({ ok: true });
+
+    const supplier = await updateSupplier(id, result.fields);
+    if (!supplier) {
+      return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    }
+
+    // Activity log: one row per save. A status flip to/from 'archived' is
+    // recorded as a distinct verb; any other field change is 'updated' with the
+    // list of changed field keys (the UI renders Hebrew labels, not raw values).
+    const changed = supplierChangedFields(before, result.fields);
+    if (changed.length > 0) {
+      const statusFlipped = before.status !== result.fields.status;
+      const action = statusFlipped
+        ? result.fields.status === 'archived' ? 'archived' : 'restored'
+        : 'updated';
+      await writeAudit({
+        actorUserId: actor.id,
+        action,
+        entityType: 'supplier',
+        entityId: id,
+        changes: { fields: changed },
+      });
+    }
+
+    return NextResponse.json({ supplier });
   } catch (err) {
     const e = err as { code?: string };
     if (e.code === '23503') {
@@ -70,8 +96,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
 // DELETE /api/suppliers/[id] (suppliers:edit) — soft delete.
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('suppliers', 'edit');
+    actor = await requirePermission('suppliers', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -79,9 +106,17 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   }
 
   const { id } = await ctx.params;
+  const before = await getSupplierById(id);
   const ok = await softDeleteSupplier(id);
   if (!ok) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 });
   }
+  await writeAudit({
+    actorUserId: actor.id,
+    action: 'deleted',
+    entityType: 'supplier',
+    entityId: id,
+    metadata: before ? { display_name: before.display_name } : undefined,
+  });
   return NextResponse.json({ ok: true });
 }

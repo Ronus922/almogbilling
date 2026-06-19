@@ -3,13 +3,12 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listSuppliers, createSupplier } from '@/lib/db/suppliers';
 import { coerceAndValidateSupplier } from '@/lib/validation/suppliers';
+import { writeAudit } from '@/lib/db/audit';
 import type { SupplierStatusFilter } from '@/lib/types/suppliers';
 
 export const runtime = 'nodejs';
 
-const STATUS_FILTERS: readonly SupplierStatusFilter[] = [
-  'active', 'inactive', 'archived', 'inactive_archived',
-];
+const STATUS_FILTERS: readonly SupplierStatusFilter[] = ['active', 'archived'];
 
 // GET /api/suppliers?search&status&type&category (suppliers:view)
 export async function GET(req: NextRequest) {
@@ -65,6 +64,13 @@ export async function POST(req: NextRequest) {
 
   try {
     const id = await createSupplier(result.fields, actor.id, actor.full_name ?? actor.username);
+    await writeAudit({
+      actorUserId: actor.id,
+      action: 'created',
+      entityType: 'supplier',
+      entityId: id,
+      metadata: { display_name: result.fields.display_name },
+    });
     return NextResponse.json({ id }, { status: 201 });
   } catch (err) {
     const e = err as { code?: string };

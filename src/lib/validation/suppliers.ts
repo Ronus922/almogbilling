@@ -11,12 +11,13 @@
 
 import { cleanPhoneField } from '@/lib/whatsapp';
 import type {
+  Supplier,
   SupplierStatus,
   SupplierPaymentTerms,
   SupplierWritableFields,
 } from '@/lib/types/suppliers';
 
-const STATUSES: readonly SupplierStatus[] = ['active', 'inactive', 'archived'];
+const STATUSES: readonly SupplierStatus[] = ['active', 'archived'];
 const PAYMENT_TERMS: readonly SupplierPaymentTerms[] = [
   'immediate', 'net_15', 'net_30', 'net_45', 'net_60', 'net_90', 'other',
 ];
@@ -113,6 +114,25 @@ export function coerceAndValidateSupplier(body: Record<string, unknown>): Suppli
       rating,
     },
   };
+}
+
+/**
+ * The writable supplier fields, compared before/after a PATCH to build the
+ * activity log. Returns the list of changed field keys (empty = no-op save).
+ * Pure — used by the PATCH route to feed writeAudit.
+ */
+const WRITABLE_KEYS: readonly (keyof SupplierWritableFields)[] = [
+  'display_name', 'company_name', 'contact_person', 'supplier_type', 'category_id',
+  'status', 'phone', 'mobile', 'email', 'website', 'address', 'city', 'tax_id',
+  'bank_name', 'bank_branch', 'bank_account', 'payment_terms', 'notes',
+  'internal_notes', 'rating',
+];
+
+export function supplierChangedFields(
+  before: Supplier,
+  after: SupplierWritableFields,
+): (keyof SupplierWritableFields)[] {
+  return WRITABLE_KEYS.filter((k) => (before[k] ?? null) !== (after[k] ?? null));
 }
 
 // ─── Category form ────────────────────────────────────────────────────────

@@ -1,7 +1,9 @@
 // Supplier domain types. Single-tenant (no tenant_id). Audit deferred to a
 // later slice; supplier_links not in v1.
 
-export type SupplierStatus = 'active' | 'inactive' | 'archived';
+// Unified status vocabulary (migration 046): one active state + one archived
+// state. The legacy 'inactive' value was folded into 'archived'.
+export type SupplierStatus = 'active' | 'archived';
 
 export type SupplierPaymentTerms =
   | 'immediate'
@@ -83,6 +85,18 @@ export interface SupplierDocument {
   created_at: Date;
 }
 
+/** One row of a supplier's automatic activity log (central audit_log,
+ *  entity_type='supplier'). `changes` / `metadata` are the raw jsonb payloads
+ *  written by writeAudit; the UI decides what to render per `action`. */
+export interface SupplierActivityEntry {
+  id: string;
+  action: string;
+  changes: unknown;
+  metadata: unknown;
+  actor_name: string | null;
+  created_at: Date;
+}
+
 /** Fields a client may write — the panel saves the whole supplier in one PATCH. */
 export interface SupplierWritableFields {
   display_name: string;
@@ -107,11 +121,9 @@ export interface SupplierWritableFields {
   rating: number | null;
 }
 
-// Status filter "tabs" for the suppliers list. 'all' = main view (active +
-// inactive, EXCLUDING archived); 'inactive_archived' = the combined
-// "לא פעיל / ארכיון" tab (inactive + archived). The raw SupplierStatus values
-// stay supported for completeness.
-export type SupplierStatusFilter = SupplierStatus | 'all' | 'inactive_archived';
+// Status filter "tabs" for the suppliers list — exactly three, in order:
+// 'active' (פעיל, the default) · 'archived' (ארכיון) · 'all' (הכל = both).
+export type SupplierStatusFilter = SupplierStatus | 'all';
 
 export interface SupplierListFilters {
   search?: string;

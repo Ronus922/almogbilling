@@ -19,7 +19,7 @@ type Filters = Required<SupplierListFilters>;
 
 const INITIAL_FILTERS: Filters = {
   search: '',
-  status: 'all',
+  status: 'active', // default load view = active suppliers only
   type: 'all',
   category: 'all',
 };
