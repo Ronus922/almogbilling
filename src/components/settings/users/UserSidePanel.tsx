@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
-  X, User as UserIcon, Shield, Activity, KeyRound, Power, PowerOff, LogIn,
+  X, User as UserIcon, Shield, Activity, KeyRound, Power, PowerOff, LogIn, Lock,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -25,6 +25,9 @@ import {
   ROLE_STYLES, roleLabel, type ModulePermission, type Role,
 } from '@/lib/permissions/constants';
 import { canManageRole } from '@/lib/permissions/check';
+import { validatePhone } from '@/lib/validation';
+import { isValidPassword } from '@/lib/auth/passwordPolicy';
+import { PasswordField, PasswordRequirements } from '@/components/auth/PasswordField';
 import { cn } from '@/lib/utils';
 import type { UserListRow } from '@/lib/db/users';
 
@@ -50,6 +53,8 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
 
   // Draft fields (persisted via "שמור שינויים" button).
   const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
   const [role, setRole] = useState<Role>('viewer');
 
   const [saving, setSaving] = useState(false);
@@ -78,6 +83,8 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
         setUser(data.user);
         setPermissions(data.permissions);
         setFullName(data.user.full_name ?? '');
+        setPhone(data.user.notification_phone ?? '');
+        setPassword('');
         setRole(data.user.role);
       })
       .catch((err: Error) => { if (!cancelled) setError(err.message); })
@@ -103,10 +110,25 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
       ? ['manager', 'viewer']
       : ['super_admin', 'admin', 'manager', 'viewer'];
 
+  // Live phone validation — empty is allowed (the phone is optional); a non-empty
+  // bad format shows an inline error and blocks save (same policy as suppliers).
+  const phoneError = useMemo<string | null>(() => {
+    const t = phone.trim();
+    if (!t) return null;
+    const v = validatePhone(t);
+    return v.valid ? null : (v.error ?? 'מספר טלפון לא תקין');
+  }, [phone]);
+
+  // New password is optional; non-empty must meet the policy. Empty = unchanged.
+  const passwordInvalid = password.length > 0 && !isValidPassword(password);
+
   const draftDirty = useMemo(() => {
     if (!user) return false;
-    return (fullName.trim() !== (user.full_name ?? '')) || (role !== user.role);
-  }, [user, fullName, role]);
+    return (fullName.trim() !== (user.full_name ?? ''))
+      || (phone.trim() !== (user.notification_phone ?? ''))
+      || (password.length > 0)
+      || (role !== user.role);
+  }, [user, fullName, phone, password, role]);
 
   const isDirty = hasMutated || draftDirty;
 
@@ -135,15 +157,29 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
     }
 
     const trimName = fullName.trim();
-    if (trimName.length < 2 || trimName.length > 80) {
+    const nameChanged = trimName !== (user.full_name ?? '');
+    if (nameChanged && (trimName.length < 2 || trimName.length > 80)) {
       toast.error('שם מלא חייב להיות 2-80 תווים');
+      return;
+    }
+    if (phoneError) {
+      toast.error(phoneError);
+      return;
+    }
+    if (passwordInvalid) {
+      toast.error('הסיסמה לא עומדת בדרישות');
       return;
     }
 
     setSaving(true);
     try {
       const body: Record<string, unknown> = {};
-      if (trimName !== (user.full_name ?? '')) body.full_name = trimName;
+      if (nameChanged) body.full_name = trimName;
+      if (phone.trim() !== (user.notification_phone ?? '')) {
+        const t = phone.trim();
+        body.notification_phone = t ? validatePhone(t).normalized : null;
+      }
+      if (password.length > 0) body.password = password;
       if (role !== user.role) body.role = role;
 
       const r = await fetch(`/api/users/${user.id}`, {
@@ -319,11 +355,53 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
                         <Input value={user.email} disabled dir="ltr" className="h-10" />
                       </div>
                       <div className="space-y-2">
+                        <Label htmlFor="user-phone" className="text-base font-medium text-muted-foreground">טלפון</Label>
+                        <Input
+                          id="user-phone"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          dir="ltr"
+                          inputMode="tel"
+                          placeholder="0501234567"
+                          className={cn(
+                            'h-10 tabular-nums',
+                            phoneError && 'border-red-400 bg-red-50 focus-visible:ring-red-200',
+                          )}
+                        />
+                        {phoneError ? (
+                          <p className="text-[12px] font-semibold text-red-500 text-right">⚠️ {phoneError}</p>
+                        ) : (
+                          <p className="text-xs text-slate-500">משמש לקבלת התראות וואטסאפ. השאר ריק אם אין.</p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
                         <Label className="text-base font-medium text-muted-foreground">שם משתמש</Label>
                         <Input value={user.username} disabled dir="ltr" className="h-10" />
                       </div>
                     </div>
                   </Section>
+
+                  {!actionsDisabled && (
+                    <Section title="סיסמה" icon={Lock} iconTone="blue">
+                      <div className="space-y-3 py-2">
+                        <PasswordField
+                          id="user-new-password"
+                          label="סיסמה חדשה"
+                          value={password}
+                          onChange={setPassword}
+                          disabled={saving}
+                          error={passwordInvalid ? 'הסיסמה לא עומדת בדרישות' : null}
+                        />
+                        {password.length > 0 ? (
+                          <PasswordRequirements value={password} />
+                        ) : (
+                          <p className="text-xs text-slate-500">
+                            השאר ריק כדי לא לשנות. קביעת סיסמה חדשה תנתק את הסשנים הקיימים של המשתמש.
+                          </p>
+                        )}
+                      </div>
+                    </Section>
+                  )}
 
                   <Section
                     title="סטטוס פעילות"
@@ -448,7 +526,7 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
             <PanelFooter
               onClose={requestClose}
               onSave={handleSaveChanges}
-              saveDisabled={!isDirty || saving}
+              saveDisabled={!isDirty || saving || !!phoneError || passwordInvalid}
               saveLabel={saving ? 'שומר…' : 'שמור שינויים'}
               showHistory
             />

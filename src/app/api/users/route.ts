@@ -3,10 +3,12 @@ import {
   requireAdmin,
   type Actor,
 } from '@/lib/auth/actor';
-import { canManageRole } from '@/lib/permissions/check';
+import { canManageRole, getDefaultPermissions } from '@/lib/permissions/check';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { writeAudit } from '@/lib/db/audit';
-import { query } from '@/lib/db';
+import { query, withTransaction } from '@/lib/db';
+import { hashPassword } from '@/lib/auth/password';
+import { isValidPassword } from '@/lib/auth/passwordPolicy';
 import {
   listUsers,
   listOpenInvites,
@@ -78,6 +80,9 @@ interface PostBody {
   full_name?: unknown;
   role?: unknown;
   permissions?: unknown;
+  /** Optional. When provided + valid → create the user directly with this
+   *  password (username = email, no invite email). Absent/empty → invite flow. */
+  password?: unknown;
 }
 
 export async function POST(req: NextRequest) {
@@ -132,6 +137,66 @@ export async function POST(req: NextRequest) {
   const customPermissions = (role === 'manager' || role === 'viewer')
     ? sanitizeCustomPermissions(body.permissions)
     : null;
+
+  // ── Direct create (password set by admin) ───────────────────────────────
+  // When the admin supplies a password, create the user row immediately —
+  // username = email, password hashed — and skip the invite token + email.
+  // An empty/absent password falls through to the existing invite flow below.
+  const password = typeof body.password === 'string' ? body.password : '';
+  if (password.length > 0) {
+    if (!isValidPassword(password)) {
+      return NextResponse.json({ error: 'הסיסמה לא עומדת בדרישות' }, { status: 400 });
+    }
+    const password_hash = await hashPassword(password);
+    // Normalize both sources to snake_case rows for user_permissions:
+    // sanitizeCustomPermissions → {module,can_view,can_edit}; getDefaultPermissions
+    // → {module,canView,canEdit}. Admin/super_admin seed nothing (no matrix).
+    const permsToSeed: { module: string; can_view: boolean; can_edit: boolean }[] =
+      customPermissions ??
+      ((role === 'manager' || role === 'viewer')
+        ? (getDefaultPermissions(role) ?? []).map((p) => ({
+            module: p.module, can_view: p.canView, can_edit: p.canEdit,
+          }))
+        : []);
+
+    let userId: string;
+    try {
+      userId = await withTransaction(async (client) => {
+        const ins = await client.query<{ id: string }>(
+          `insert into public.users (username, email, full_name, password_hash, role, is_active)
+           values ($1, $2, $3, $4, $5, true)
+           returning id`,
+          [email, email, full_name, password_hash, role],
+        );
+        const newId = ins.rows[0]!.id;
+        for (const p of permsToSeed) {
+          await client.query(
+            `insert into public.user_permissions (user_id, module, can_view, can_edit)
+             values ($1, $2, $3, $4)`,
+            [newId, p.module, p.can_view, p.can_edit],
+          );
+        }
+        return newId;
+      });
+    } catch (err) {
+      const e = err as { code?: string };
+      if (e.code === '23505') {
+        return NextResponse.json({ error: 'כתובת המייל כבר רשומה במערכת' }, { status: 409 });
+      }
+      console.error('[users POST direct-create]', err);
+      return NextResponse.json({ error: 'server_error' }, { status: 500 });
+    }
+
+    await writeAudit({
+      actorUserId: actor.id,
+      action: 'created',
+      entityType: 'user',
+      entityId: userId,
+      metadata: { email, full_name, role, actor_role: actor.role, method: 'password' },
+    });
+
+    return NextResponse.json({ id: userId }, { status: 201 });
+  }
 
   const rawToken = generateInviteToken();
   const expiresAt = inviteExpiryFromNow();

@@ -10,12 +10,15 @@ export interface UserListRow {
   role: Role;
   is_active: boolean;
   allow_google_auth: boolean;
+  /** Canonical local phone (0XXXXXXXXX) for WhatsApp notifications, or null.
+   *  Set by admins in the user edit panel; drives the matrix WhatsApp cells. */
+  notification_phone: string | null;
   created_at: string;
 }
 
 export async function listUsers(): Promise<UserListRow[]> {
   const r = await query<UserListRow>(
-    `select id, username, email, full_name, role, is_active, allow_google_auth, created_at
+    `select id, username, email, full_name, role, is_active, allow_google_auth, notification_phone, created_at
        from public.users
        order by is_active desc, created_at asc`,
   );
@@ -105,7 +108,7 @@ export async function getNotificationRecipient(userId: string): Promise<Notifica
 
 export async function findUserById(id: string): Promise<UserListRow | null> {
   return queryOne<UserListRow>(
-    `select id, username, email, full_name, role, is_active, allow_google_auth, created_at
+    `select id, username, email, full_name, role, is_active, allow_google_auth, notification_phone, created_at
        from public.users
        where id = $1
        limit 1`,

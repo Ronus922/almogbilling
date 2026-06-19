@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { X, User as UserIcon, Shield, KeyRound } from 'lucide-react';
+import { X, User as UserIcon, Shield, KeyRound, Lock } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,7 +16,9 @@ import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { RoleSelector } from './RoleSelector';
 import { PermissionMatrix } from './PermissionMatrix';
+import { PasswordField, PasswordRequirements } from '@/components/auth/PasswordField';
 import { getDefaultPermissions } from '@/lib/permissions/check';
+import { isValidPassword } from '@/lib/auth/passwordPolicy';
 import { roleLabel, type ModulePermission, type Role } from '@/lib/permissions/constants';
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -55,6 +57,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
     : ['manager', 'viewer'];
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [role, setRole] = useState<Role>(DEFAULT_ROLE);
   const [permissions, setPermissions] = useState<ModulePermission[]>(() => defaultsFor(DEFAULT_ROLE));
   const [submitting, setSubmitting] = useState(false);
@@ -65,6 +68,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
     if (open) {
       setFullName('');
       setEmail('');
+      setPassword('');
       setRole(DEFAULT_ROLE);
       setPermissions(defaultsFor(DEFAULT_ROLE));
     }
@@ -75,17 +79,20 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
     setPermissions(defaultsFor(role));
   }, [role]);
 
-  // Dirty = user typed in either text field. Role/permission tinkering doesn't
+  // Dirty = user typed in any text field. Role/permission tinkering doesn't
   // count — the role selector has a default, and matrix has defaults; closing
   // without filling name/email loses no real work.
-  const dirty = fullName.trim().length > 0 || email.trim().length > 0;
+  const dirty = fullName.trim().length > 0 || email.trim().length > 0 || password.length > 0;
 
   const trimmedName = fullName.trim();
   const trimmedEmail = email.trim();
+  // Password is OPTIONAL: empty → invite email; non-empty → must meet the policy.
+  const passwordInvalid = password.length > 0 && !isValidPassword(password);
   const canSubmit =
     trimmedName.length >= 2 &&
     trimmedName.length <= 80 &&
     EMAIL_RX.test(trimmedEmail) &&
+    !passwordInvalid &&
     !submitting;
 
   // Defensive ESC: panel listens unless the cancel-confirm dialog is open.
@@ -108,11 +115,14 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
 
     setSubmitting(true);
     try {
+      const withPassword = password.length > 0;
       const body: Record<string, unknown> = {
         full_name: trimmedName,
         email: trimmedEmail.toLowerCase(),
         role,
       };
+      // Password present → direct create (no invite email). Empty → invite.
+      if (withPassword) body.password = password;
       // Only send the matrix when the admin actually tweaked it. Unchanged →
       // omit → server stores custom_permissions = NULL → role defaults at accept.
       if ((role === 'manager' || role === 'viewer') && permsDifferFromDefaults(permissions, role)) {
@@ -131,7 +141,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
       });
       const data = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) throw new Error(data.error ?? 'יצירת המשתמש נכשלה');
-      toast.success('המשתמש נוצר והוזמן');
+      toast.success(withPassword ? 'המשתמש נוצר' : 'המשתמש נוצר והוזמן');
       router.refresh();
       onOpenChange(false);
     } catch (e) {
@@ -159,7 +169,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
               <div className="min-w-0 flex-1">
                 <SheetTitle className="text-2xl font-bold text-white">צור משתמש</SheetTitle>
                 <p className="mt-1 text-sm text-white/70">
-                  המוזמן יקבל מייל עם קישור להגדרת סיסמה. הקישור תקף 24 שעות.
+                  מלא סיסמה כדי ליצור עובד מיד, או השאר ריק כדי לשלוח מייל הזמנה (תקף 24 שעות).
                 </p>
               </div>
               <button
@@ -207,6 +217,26 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
                       placeholder="user@example.com"
                     />
                   </div>
+                </div>
+              </Section>
+
+              <Section title="סיסמה (אופציונלי)" icon={Lock} iconTone="blue">
+                <div className="space-y-3 py-2">
+                  <PasswordField
+                    id="invite-password"
+                    label="סיסמה"
+                    value={password}
+                    onChange={setPassword}
+                    disabled={submitting}
+                    error={passwordInvalid ? 'הסיסמה לא עומדת בדרישות' : null}
+                  />
+                  {password.length > 0 ? (
+                    <PasswordRequirements value={password} />
+                  ) : (
+                    <p className="text-xs text-slate-500">
+                      מלא סיסמה כדי ליצור עובד מיד (שם משתמש = האימייל, ללא מייל הזמנה). השאר ריק כדי לשלוח הזמנה.
+                    </p>
+                  )}
                 </div>
               </Section>
 

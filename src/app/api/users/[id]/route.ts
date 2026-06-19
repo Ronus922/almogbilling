@@ -7,6 +7,9 @@ import {
   countActiveSuperAdminsExcluding,
 } from '@/lib/db/users';
 import { getDefaultPermissions, canManageRole } from '@/lib/permissions/check';
+import { cleanPhoneField } from '@/lib/whatsapp';
+import { hashPassword } from '@/lib/auth/password';
+import { isValidPassword } from '@/lib/auth/passwordPolicy';
 import { writeAudit } from '@/lib/db/audit';
 import type { ModulePermission, Role } from '@/lib/permissions/constants';
 
@@ -21,6 +24,9 @@ interface PatchBody {
   role?: unknown;
   is_active?: unknown;
   allow_google_auth?: unknown;
+  notification_phone?: unknown;
+  /** Optional. Non-empty → set/reset the user's password. Empty/absent → unchanged. */
+  password?: unknown;
 }
 
 interface PermissionRow {
@@ -96,6 +102,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   const wantsRole = 'role' in body;
   const wantsActive = 'is_active' in body;
   const wantsGoogleAuth = 'allow_google_auth' in body;
+  const wantsPhone = 'notification_phone' in body;
 
   let nextFullName: string | null = target.full_name;
   if (wantsFullName) {
@@ -130,6 +137,36 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     }
     nextGoogleAuth = body.allow_google_auth;
   }
+
+  // notification_phone (optional) — stored as ONE canonical local number
+  // (0XXXXXXXXX) via cleanPhoneField, the same policy as supplier/contact phones.
+  // Empty / null clears it. Anything unparseable → 400.
+  let nextPhone: string | null = target.notification_phone;
+  if (wantsPhone) {
+    const raw = body.notification_phone;
+    if (raw === null || (typeof raw === 'string' && raw.trim() === '')) {
+      nextPhone = null;
+    } else if (typeof raw === 'string') {
+      const cleaned = cleanPhoneField(raw);
+      if (!cleaned) {
+        return NextResponse.json({ error: 'מספר טלפון לא תקין' }, { status: 400 });
+      }
+      nextPhone = cleaned;
+    } else {
+      return NextResponse.json({ error: 'מספר טלפון לא תקין' }, { status: 400 });
+    }
+  }
+
+  // Optional password set/reset. Non-empty → validate + bcrypt-hash; empty/absent
+  // → leave the current password unchanged.
+  let nextPasswordHash: string | null = null;
+  if (typeof body.password === 'string' && body.password.length > 0) {
+    if (!isValidPassword(body.password)) {
+      return NextResponse.json({ error: 'הסיסמה לא עומדת בדרישות' }, { status: 400 });
+    }
+    nextPasswordHash = await hashPassword(body.password);
+  }
+  const passwordChanged = nextPasswordHash !== null;
 
   // ── Role-assignment scope ───────────────────────────────────────
   // The actor may only assign a role they are allowed to manage. Blocks an
@@ -169,11 +206,19 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   const activeChanged = nextActive !== target.is_active;
 
   await withTransaction(async (client) => {
+    const setCols = [
+      'full_name = $1', 'role = $2', 'is_active = $3',
+      'allow_google_auth = $4', 'notification_phone = $5',
+    ];
+    const setVals: unknown[] = [nextFullName, nextRole, nextActive, nextGoogleAuth, nextPhone];
+    if (passwordChanged) {
+      setVals.push(nextPasswordHash);
+      setCols.push(`password_hash = $${setVals.length}`);
+    }
+    setVals.push(target.id);
     await client.query(
-      `update public.users
-         set full_name = $1, role = $2, is_active = $3, allow_google_auth = $4
-         where id = $5`,
-      [nextFullName, nextRole, nextActive, nextGoogleAuth, target.id],
+      `update public.users set ${setCols.join(', ')} where id = $${setVals.length}`,
+      setVals,
     );
 
     if (roleChanged) {
@@ -202,8 +247,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       }
     }
 
-    // Force re-login on role/active change so the actor refreshes from DB.
-    if (roleChanged || activeChanged) {
+    // Force re-login on role/active/password change so the user refreshes from
+    // DB (and a reset password logs out anyone holding the old one).
+    if (roleChanged || activeChanged || passwordChanged) {
       await client.query(
         `delete from public.sessions where user_id = $1`,
         [target.id],
@@ -220,15 +266,19 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       before: {
         full_name: target.full_name, role: target.role,
         is_active: target.is_active, allow_google_auth: target.allow_google_auth,
+        notification_phone: target.notification_phone,
       },
       after: {
         full_name: nextFullName, role: nextRole,
         is_active: nextActive, allow_google_auth: nextGoogleAuth,
+        notification_phone: nextPhone,
       },
     },
     metadata: {
       roleChanged, activeChanged,
       googleAuthChanged: nextGoogleAuth !== target.allow_google_auth,
+      phoneChanged: nextPhone !== target.notification_phone,
+      passwordChanged,
       actor_role: actor.role,
     },
   });
