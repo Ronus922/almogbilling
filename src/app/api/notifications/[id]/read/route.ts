@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireActor, type Actor } from '@/lib/auth/actor';
+import { requireNotificationsAccess, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { markNotificationReadOwned, countUnread } from '@/lib/db/notifications';
 
@@ -13,7 +13,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export async function PATCH(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   let actor: Actor;
   try {
-    actor = await requireActor();
+    actor = await requireNotificationsAccess();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

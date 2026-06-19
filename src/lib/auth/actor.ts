@@ -75,6 +75,38 @@ export async function requirePermission(module: string, action: Action): Promise
   return actor;
 }
 
+/**
+ * Pass if the actor satisfies ANY of the given module/action checks (logical OR).
+ * For endpoints that legitimately serve more than one module — e.g. the debtors
+ * screen reads, which a `dashboard` viewer OR a `contacts` manager may read, or
+ * the target picker (`tasks` OR `issues`). Additive only: it never narrows an
+ * existing single-module guard, so higher roles keep their current access.
+ */
+export async function requireAnyPermission(
+  checks: ReadonlyArray<{ module: string; action: Action }>,
+): Promise<Actor> {
+  const actor = await requireActor();
+  if (checks.some((c) => hasPermission(actor.role, actor.permissions, c.module, c.action))) {
+    return actor;
+  }
+  throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
+}
+
+/**
+ * Notifications (bell + /notifications) are personal infrastructure, not an RBAC
+ * matrix module — so they're available to every role EXCEPT the read-only
+ * `viewer`, who is scoped to the debtors screen only. Same contract as
+ * requireActor() but fails closed for viewers, keeping the API consistent with
+ * the hidden bell + the /notifications redirect.
+ */
+export async function requireNotificationsAccess(): Promise<Actor> {
+  const actor = await requireActor();
+  if (actor.role === 'viewer') {
+    throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
+  }
+  return actor;
+}
+
 export async function requireCanManageRole(targetRole: Role): Promise<Actor> {
   const actor = await requireActor();
   if (!canManageRole(actor.role, targetRole)) {

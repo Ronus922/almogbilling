@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireActor, type Actor } from '@/lib/auth/actor';
+import { requireNotificationsAccess, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { clearAllNotifications, countUnread } from '@/lib/db/notifications';
 
@@ -11,7 +11,7 @@ export const runtime = 'nodejs';
 export async function PATCH() {
   let actor: Actor;
   try {
-    actor = await requireActor();
+    actor = await requireNotificationsAccess();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

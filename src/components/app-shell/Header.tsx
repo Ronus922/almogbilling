@@ -1,8 +1,18 @@
+'use client';
+
 import { Building2 } from 'lucide-react';
 import { UserMenu } from './UserMenu';
 import { NotificationBell } from './NotificationBell';
+import { useAuth } from '@/lib/auth/context';
 
 export function Header() {
+  // Notifications (bell) are hidden from the read-only `viewer`, who is scoped to
+  // the debtors screen only — same boundary enforced on /notifications and the
+  // /api/notifications/* routes. Gating here (not inside NotificationBell) keeps
+  // the bell from ever mounting/polling for a viewer.
+  const { user } = useAuth();
+  const showNotifications = user.role !== 'viewer';
+
   return (
     <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-line bg-white px-6">
       {/* Right (RTL start): brand */}
@@ -15,8 +25,12 @@ export function Header() {
 
       {/* Left (RTL end): notifications + user */}
       <div className="flex items-center gap-3">
-        <NotificationBell />
-        <span className="h-7 w-px bg-line" aria-hidden />
+        {showNotifications && (
+          <>
+            <NotificationBell />
+            <span className="h-7 w-px bg-line" aria-hidden />
+          </>
+        )}
         <UserMenu />
       </div>
     </header>

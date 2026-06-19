@@ -21,7 +21,7 @@ import { PrintableDebtorsTable } from './PrintableDebtorsTable';
 
 type Busy = null | 'excel' | 'pdf' | 'print';
 
-export function DebtorsToolbar({ totalRows }: { totalRows: number }) {
+export function DebtorsToolbar({ totalRows, canExport }: { totalRows: number; canExport: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -144,32 +144,38 @@ export function DebtorsToolbar({ totalRows }: { totalRows: number }) {
           </SelectContent>
         </Select>
 
-        <span className="mx-0.5 h-6 w-px bg-line" aria-hidden />
+        {/* Bulk export / print — `export` permission (manager+). Hidden for a
+            read-only viewer, whose API call to /api/debtors/export would 403. */}
+        {canExport && (
+          <>
+            <span className="mx-0.5 h-6 w-px bg-line" aria-hidden />
 
-        <ExportIconButton
-          label="הדפסה"
-          icon={Printer}
-          onClick={handlePrint}
-          busy={busy === 'print'}
-          disabled={busy !== null}
-          tone="text-ink-2 hover:bg-row-hover hover:text-ink"
-        />
-        <ExportIconButton
-          label="ייצוא Excel"
-          icon={FileSpreadsheet}
-          onClick={handleExcel}
-          busy={busy === 'excel'}
-          disabled={busy !== null}
-          tone="text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
-        />
-        <ExportIconButton
-          label="ייצוא PDF"
-          icon={FileText}
-          onClick={handlePdf}
-          busy={busy === 'pdf'}
-          disabled={busy !== null}
-          tone="text-red-600 hover:bg-red-50 hover:text-red-700"
-        />
+            <ExportIconButton
+              label="הדפסה"
+              icon={Printer}
+              onClick={handlePrint}
+              busy={busy === 'print'}
+              disabled={busy !== null}
+              tone="text-ink-2 hover:bg-row-hover hover:text-ink"
+            />
+            <ExportIconButton
+              label="ייצוא Excel"
+              icon={FileSpreadsheet}
+              onClick={handleExcel}
+              busy={busy === 'excel'}
+              disabled={busy !== null}
+              tone="text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+            />
+            <ExportIconButton
+              label="ייצוא PDF"
+              icon={FileText}
+              onClick={handlePdf}
+              busy={busy === 'pdf'}
+              disabled={busy !== null}
+              tone="text-red-600 hover:bg-red-50 hover:text-red-700"
+            />
+          </>
+        )}
       </div>
 
       {printRows && <PrintableDebtorsTable rows={printRows} />}

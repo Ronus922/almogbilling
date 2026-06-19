@@ -31,6 +31,25 @@ describe('hasPermission — RBAC matrix (the authorization model)', () => {
     expect(hasPermission('viewer', DEFAULT_VIEWER, 'settings', 'view')).toBe(false);
   });
 
+  // Viewer is locked to the DEBTORS SCREEN (dashboard) ONLY — read-only, no other
+  // module visible. The debtors detail-panel reads (debtor / comments / history /
+  // status display) are granted at the route layer via requireAnyPermission()
+  // against `dashboard`, NOT via a `contacts` / `status_management` grant here.
+  it('viewer sees ONLY the dashboard (debtors screen) — every other module is off', () => {
+    // dashboard = the one allowed module (view-only).
+    expect(hasPermission('viewer', DEFAULT_VIEWER, 'dashboard', 'view')).toBe(true);
+    // Everything else: no view, no edit.
+    for (const m of [
+      'analytics', 'contacts', 'suppliers', 'whatsapp', 'tasks', 'issues',
+      'calendar', 'documents', 'whatsapp_chat', 'internal_chat', 'user_reminders',
+      'import', 'export', 'status_management', 'whatsapp_templates', 'rooms_areas',
+      'roles_management', 'users_management', 'settings',
+    ]) {
+      expect(hasPermission('viewer', DEFAULT_VIEWER, m, 'view')).toBe(false);
+      expect(hasPermission('viewer', DEFAULT_VIEWER, m, 'edit')).toBe(false);
+    }
+  });
+
   // Manager policy as of 48af9c1: full operational access — view+edit on every
   // module EXCEPT settings / users_management / roles_management.
   it('manager (default matrix) has full operational access (view+edit)', () => {

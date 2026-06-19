@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { requireAnyPermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   listDebtorHistory,
@@ -13,10 +13,14 @@ interface RouteCtx {
 }
 
 // GET /api/debtors/[id]/history — unified timeline (comments + status changes +
-// completed actions + events), newest first. Read access = contacts:view.
+// completed actions + events), newest first. Debtors screen read — granted by
+// `dashboard` (viewer) OR `contacts` (manager).
 export async function GET(req: NextRequest, ctx: RouteCtx) {
   try {
-    await requirePermission('contacts', 'view');
+    await requireAnyPermission([
+      { module: 'dashboard', action: 'view' },
+      { module: 'contacts', action: 'view' },
+    ]);
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

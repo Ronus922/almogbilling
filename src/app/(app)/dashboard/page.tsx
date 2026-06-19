@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
 import {
@@ -44,20 +45,23 @@ export default async function DashboardPage({
   const page = Math.max(1, Number(sp.page ?? '1') || 1);
 
   const actor = await getCurrentActor();
+  if (!actor) redirect('/login');
+  // Defense-in-depth: the debtors screen sits behind `dashboard` view. Every real
+  // role has it (manager default + admin/super bypass + viewer); a principal
+  // without it has no business server-rendering debtor data here.
+  if (!hasPermission(actor.role, actor.permissions, 'dashboard', 'view')) {
+    redirect('/login');
+  }
+
   // Per-module capability flags drive every operational gate in the dashboard —
   // no blanket role check, so a manager with the permission gets the action.
-  const canArchive = actor
-    ? hasPermission(actor.role, actor.permissions, 'contacts', 'edit')
-    : false;
-  const canSendWhatsapp = actor
-    ? hasPermission(actor.role, actor.permissions, 'whatsapp', 'edit')
-    : false;
-  const canSync = actor
-    ? hasPermission(actor.role, actor.permissions, 'import', 'edit')
-    : false;
-  const canChangeStatus = actor
-    ? hasPermission(actor.role, actor.permissions, 'status_management', 'edit')
-    : false;
+  const canArchive = hasPermission(actor.role, actor.permissions, 'contacts', 'edit');
+  const canSendWhatsapp = hasPermission(actor.role, actor.permissions, 'whatsapp', 'edit');
+  const canSync = hasPermission(actor.role, actor.permissions, 'import', 'edit');
+  const canChangeStatus = hasPermission(actor.role, actor.permissions, 'status_management', 'edit');
+  // Bulk export / print (`export`) — manager+ only; a read-only viewer cannot
+  // bulk-download the debtors list, only read the on-screen table.
+  const canExport = hasPermission(actor.role, actor.permissions, 'export', 'view');
 
   const [kpis, lastImportAt, lastSyncAt, tabCounts, listing] = await Promise.all([
     getDashboardKpis(),
@@ -80,7 +84,7 @@ export default async function DashboardPage({
       <DebtorsTabs active={tab} counts={tabCounts} />
 
       <div className="space-y-3 rounded-2xl border border-line bg-white p-4 shadow-soft-sm">
-        <DebtorsToolbar totalRows={listing.total} />
+        <DebtorsToolbar totalRows={listing.total} canExport={canExport} />
         <DebtorsTable
           rows={listing.rows}
           page={listing.page}

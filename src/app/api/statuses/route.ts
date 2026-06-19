@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, requireAnyPermission } from '@/lib/auth/actor';
 import type { Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
@@ -17,14 +17,25 @@ export const runtime = 'nodejs';
 // Response always includes `linked_count` and the new admin fields
 // (`is_system`, `notification_emails`). Older consumers ignore the extras.
 export async function GET(req: NextRequest) {
+  const includeAll = req.nextUrl.searchParams.get('include') === 'all';
   try {
-    await requirePermission('status_management', 'view');
+    if (includeAll) {
+      // Admin /statuses screen — full rows incl. archived + admin fields.
+      await requirePermission('status_management', 'view');
+    } else {
+      // Default (active rows) feeds the debtor detail panel's status display, so
+      // a debtors-screen viewer (`dashboard`) may read it too — without granting
+      // access to the standalone status-management screen.
+      await requireAnyPermission([
+        { module: 'dashboard', action: 'view' },
+        { module: 'status_management', action: 'view' },
+      ]);
+    }
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
     throw err;
   }
-  const includeAll = req.nextUrl.searchParams.get('include') === 'all';
   const rows = await listStatusesWithCounts(includeAll);
   return NextResponse.json(rows);
 }

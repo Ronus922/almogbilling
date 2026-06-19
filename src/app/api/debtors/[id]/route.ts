@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, requireAnyPermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorById, updateDebtorFields } from '@/lib/db/debtors';
 import { listCommentsByDebtor } from '@/lib/db/comments';
@@ -14,7 +14,11 @@ interface RouteCtx {
 
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
   try {
-    await requirePermission('contacts', 'view');
+    // Debtors screen read — granted by `dashboard` (viewer) OR `contacts` (manager).
+    await requireAnyPermission([
+      { module: 'dashboard', action: 'view' },
+      { module: 'contacts', action: 'view' },
+    ]);
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

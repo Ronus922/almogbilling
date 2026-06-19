@@ -103,22 +103,31 @@ export const DEFAULT_MANAGER: ModulePermission[] = [
   noPerm('settings'),
 ];
 
-// Viewer defaults — main view-only, export view-only, rest off.
+// Viewer defaults — read-only access to the DEBTORS SCREEN (dashboard) ONLY.
+// Every other module is fully off (no view, no edit). The debtors screen lives
+// at /dashboard ("ניהול חיובים"): the table, KPIs, status tabs (warning / legal /
+// actions / archived) and the per-debtor detail panel (detail, comments,
+// history, completed-actions, status display). Those panel reads are granted to
+// a viewer via the `dashboard` permission in their route guards — see
+// requireAnyPermission() in /api/debtors/* and /api/statuses — so a viewer can
+// read the whole debtors screen WITHOUT holding `contacts` or `status_management`
+// (which would otherwise expose the standalone tenants list / status-admin
+// screens). Export/print is intentionally withheld (no `export`) → read-only.
 export const DEFAULT_VIEWER: ModulePermission[] = [
-  perm('analytics',     true, false),
-  perm('dashboard',     true, false),
-  perm('contacts',      true, false),
-  perm('suppliers',     true, false),
-  perm('whatsapp',      true, false),
-  perm('tasks',         true, false),
-  perm('issues',        true, false),
-  perm('calendar',      true, false),
-  perm('documents',     true, false),
-  perm('whatsapp_chat', true, false),
-  perm('internal_chat', true, false),
-  perm('user_reminders', true, false),
+  noPerm('analytics'),
+  perm('dashboard', true, false),
+  noPerm('contacts'),
+  noPerm('suppliers'),
+  noPerm('whatsapp'),
+  noPerm('tasks'),
+  noPerm('issues'),
+  noPerm('calendar'),
+  noPerm('documents'),
+  noPerm('whatsapp_chat'),
+  noPerm('internal_chat'),
+  noPerm('user_reminders'),
   noPerm('import'),
-  perm('export',            true, false),
+  noPerm('export'),
   noPerm('status_management'),
   noPerm('whatsapp_templates'),
   noPerm('rooms_areas'),

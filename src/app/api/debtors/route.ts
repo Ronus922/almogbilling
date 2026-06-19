@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { requireAnyPermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listDebtors, ALL_SORT_KEYS, type TabKey, type SortKey } from '@/lib/db/debtors';
 
@@ -9,7 +9,11 @@ const VALID_TABS: TabKey[] = ['active', 'warning', 'legal-care', 'legal-proceedi
 
 export async function GET(req: NextRequest) {
   try {
-    await requirePermission('contacts', 'view');
+    // Debtors screen read — granted by `dashboard` (viewer) OR `contacts` (manager).
+    await requireAnyPermission([
+      { module: 'dashboard', action: 'view' },
+      { module: 'contacts', action: 'view' },
+    ]);
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

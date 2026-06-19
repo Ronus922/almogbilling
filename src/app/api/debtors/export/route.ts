@@ -12,13 +12,15 @@ export const runtime = 'nodejs';
 
 const VALID_TABS: TabKey[] = ['active', 'warning', 'legal-care', 'legal-proceeding', 'actions', 'archived'];
 
-// GET /api/debtors/export?tab&q&apt&sort  (dashboard:view)
+// GET /api/debtors/export?tab&q&apt&sort  (export:view)
 // Returns ALL debtor rows matching the current filter (tab + search + sort) —
 // no pagination. Used by the toolbar's Excel / PDF / Print, whose scope is the
-// full filtered set, not just the visible page.
+// full filtered set, not just the visible page. Bulk download is a privileged
+// capability (`export`), held by manager+ but NOT by a read-only viewer — so a
+// viewer can read the on-screen debtors table but cannot bulk-export it.
 export async function GET(req: NextRequest) {
   try {
-    await requirePermission('dashboard', 'view');
+    await requirePermission('export', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
