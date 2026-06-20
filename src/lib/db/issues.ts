@@ -24,8 +24,8 @@ import { targetLabelSql } from '@/lib/db/targets';
 // assigned_to_user_id / supplier_id columns are frozen and no longer projected.
 const ISSUE_COLUMNS = `
   id, title, description, location_type, location_text, target_type, target_id, priority, status,
-  images, resolution_notes, resolved_at, is_archived, sort_order,
-  created_by, created_by_name, created_at, updated_at
+  images, resolution_notes, resolved_at::text as resolved_at, is_archived, sort_order,
+  created_by, created_by_name, created_at::text as created_at, updated_at::text as updated_at
 `;
 
 // Columns a create/update may set (title + created_by handled explicitly on
