@@ -15,6 +15,7 @@ import { KpiCard } from '@/app/(app)/dashboard/components/KpiCard';
 import { IssuesTable } from '@/components/issues/issues-table';
 import { IssueFormPanel } from '@/components/issues/issue-form-panel';
 import { cn } from '@/lib/utils';
+import { urgentFirst } from '@/lib/priority-sort';
 import {
   ISSUE_STATUSES, ISSUE_PRIORITIES, issueStatusLabel, issuePriorityLabel,
   ACTIVE_ISSUE_STATUSES, isCompletedIssueStatus,
@@ -253,8 +254,9 @@ export function IssuesPageClient({
         </div>
       </div>
 
-      {/* Table */}
-      <IssuesTable issues={shown} sort={sort} onSortChange={setSort} onSelect={openEdit} />
+      {/* Table — urgent first, then the selected sort within each group.
+          (Issues have no due-date field, so "due date asc" is N/A here.) */}
+      <IssuesTable issues={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} />
 
       <IssueFormPanel
         open={formOpen}

@@ -16,6 +16,7 @@ import { TasksKanban } from '@/components/tasks/tasks-kanban';
 import { TasksTable } from '@/components/tasks/tasks-table';
 import { TaskFormPanel } from '@/components/tasks/task-form-panel';
 import { cn } from '@/lib/utils';
+import { urgentFirst } from '@/lib/priority-sort';
 import {
   TASK_STATUSES, TASK_PRIORITIES, taskStatusLabel, taskPriorityLabel,
   ACTIVE_TASK_STATUSES, isCompletedTaskStatus,
@@ -61,7 +62,9 @@ export function TasksPageClient({
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | 'all'>('all');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
   const [supplierFilter, setSupplierFilter] = useState<string>('all');
-  const [sort, setSort] = useState<TaskSort>('created_desc');
+  // Default: due date asc — combined with the urgent-first table ordering this
+  // is "urgent above all, then due date ascending".
+  const [sort, setSort] = useState<TaskSort>('due_asc');
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<TaskWithAssignee | null>(null);
@@ -317,7 +320,7 @@ export function TasksPageClient({
       {tab === 'active' && view === 'kanban' ? (
         <TasksKanban tasks={shown} canEdit={canEdit} onSelect={openEdit} onMove={handleMove} statuses={ACTIVE_TASK_STATUSES} />
       ) : (
-        <TasksTable tasks={shown} sort={sort} onSortChange={setSort} onSelect={openEdit} />
+        <TasksTable tasks={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} />
       )}
 
       <TaskFormPanel

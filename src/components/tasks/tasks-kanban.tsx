@@ -35,10 +35,20 @@ export function TasksKanban({ tasks, canEdit, onSelect, onMove, statuses }: Prop
     ? TASK_STATUSES.filter((c) => statuses.includes(c.value))
     : TASK_STATUSES;
 
+  // Ordering: urgent first, then due date ascending (no due date last), then the
+  // manual drag order (sort_order) as a tiebreaker.
   const byStatus = (s: TaskStatus) =>
     tasks
       .filter((t) => t.status === s)
-      .sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at));
+      .sort((a, b) => {
+        const au = a.priority === 'urgent' ? 0 : 1;
+        const bu = b.priority === 'urgent' ? 0 : 1;
+        if (au !== bu) return au - bu;
+        const ad = a.due_date ?? '9999-12-31';
+        const bd = b.due_date ?? '9999-12-31';
+        if (ad !== bd) return ad < bd ? -1 : 1;
+        return a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at);
+      });
 
   function handleDrop(status: TaskStatus) {
     if (!dragId) return;
