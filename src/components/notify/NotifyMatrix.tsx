@@ -1,7 +1,7 @@
 'use client';
 
 import { Bell, Mail, MessageCircle, Lock, Check } from 'lucide-react';
-import { Section } from '@/components/side-panel/Section';
+import { Section, SectionHint } from '@/components/side-panel/Section';
 import { cn } from '@/lib/utils';
 import { channelFor, type NotifySelection } from '@/lib/notify/selection';
 
@@ -69,7 +69,12 @@ export function NotifyMatrix({
   const anySelected = summary.length > 0;
 
   return (
-    <Section title="שליחת התראה (אופציונלי)" icon={Bell} iconTone="blue">
+    <Section
+      title="שליחת התראה"
+      icon={Bell}
+      iconTone="blue"
+      headerSlot={<SectionHint>אופציונלי</SectionHint>}
+    >
       <div className="space-y-3 py-2">
         <div className="grid grid-cols-[1fr_5.5rem_5.5rem] items-center gap-x-2 gap-y-1.5">
           {/* Header row */}

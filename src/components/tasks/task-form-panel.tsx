@@ -16,7 +16,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Section } from '@/components/side-panel/Section';
+import { Section, SectionHint } from '@/components/side-panel/Section';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
@@ -316,8 +316,8 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
 
   const disabled = submitting || !canEdit;
 
-  // Single definition — placed after Reminders in create, at the very bottom
-  // (above the save footer) in edit, per the matrix's "bottom of the form" spec.
+  // Single definition — rendered once, directly under the handler section
+  // (HTML order: handler → notify → reminders), in both create and edit.
   const notifyMatrix = (
     <NotifyMatrix recipients={notifyRecipients} value={notify} onChange={setNotify} disabled={disabled} />
   );
@@ -453,7 +453,12 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
               </Section>
 
               {/* Location / target — order matches the issue form (מיקום then שיוך) */}
-              <Section title="מיקום" icon={MapPin} iconTone="amber">
+              <Section
+                title="מיקום"
+                icon={MapPin}
+                iconTone="amber"
+                headerSlot={<SectionHint>יעד (אופציונלי)</SectionHint>}
+              >
                 <div className="py-2">
                   <TargetField
                     value={{ type: form.target_type, id: form.target_id }}
@@ -464,7 +469,12 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
               </Section>
 
               {/* Handlers — internal users + external suppliers as two pickers */}
-              <Section title="גורם מטפל" icon={User} iconTone="violet" subtitle="אפשר לשלב את שניהם">
+              <Section
+                title="גורם מטפל"
+                icon={User}
+                iconTone="violet"
+                headerSlot={<SectionHint>אפשר לשלב את שניהם</SectionHint>}
+              >
                 <AssigneeSplitFields
                   users={assignees}
                   suppliers={suppliers}
@@ -484,11 +494,11 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
                 />
               </Section>
 
+              {/* Notification — directly under the handler (HTML order). */}
+              {notifyMatrix}
+
               {/* Reminders (shared component — also used by the issue form) */}
               <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} />
-
-              {/* Notification matrix — create: here (above the save button). */}
-              {!isEdit && notifyMatrix}
 
               {/* Comments — edit mode only */}
               {isEdit && (
@@ -536,9 +546,6 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
                   </div>
                 </Section>
               )}
-
-              {/* Notification matrix — edit: at the bottom, above the save button. */}
-              {isEdit && notifyMatrix}
             </div>
           </div>
 

@@ -28,7 +28,7 @@ const KIND_META: Record<AssigneeKind, KindMeta> = {
     icon: User,
     iconColor: 'text-violet-500',
     chip: 'bg-violet-50 text-violet-700',
-    label: 'עובד / משתמש בארגון',
+    label: 'עובד / משתמש אחראי',
     placeholder: 'בחר עובד…',
     search: 'חיפוש עובד…',
     empty: 'אין עובדים',
@@ -244,6 +244,8 @@ export function AssigneeSplitFields({
         knownNames={knownNames}
         disabled={disabled}
       />
+      {/* Separator between the internal-user picker and the supplier picker. */}
+      <div className="h-px bg-slate-100" />
       <AssigneeKindSelect
         kind="supplier"
         options={supplierOptions}

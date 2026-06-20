@@ -49,3 +49,9 @@ export function Section({
     </Card>
   );
 }
+
+/** Muted hint rendered at the end of a Section header row (via `headerSlot`).
+ *  Matches the design's inline-end section hints (12px / medium / slate-400). */
+export function SectionHint({ children }: { children: React.ReactNode }) {
+  return <span className="text-xs font-medium text-slate-400">{children}</span>;
+}
