@@ -25,6 +25,7 @@ const CHANNEL_LABEL: Record<ReminderChannel, string> = {
   in_app: 'בתוך המערכת',
   email: 'אימייל',
   both: 'שניהם',
+  whatsapp: 'וואטסאפ',
 };
 
 /** Map a server reminder's ISO remind_at into the {date,time} a row needs. */
@@ -132,6 +133,7 @@ export function RemindersSection({ reminders, onChange, disabled = false }: Prop
                   <SelectItem value="in_app">{CHANNEL_LABEL.in_app}</SelectItem>
                   <SelectItem value="email">{CHANNEL_LABEL.email}</SelectItem>
                   <SelectItem value="both">{CHANNEL_LABEL.both}</SelectItem>
+                  <SelectItem value="whatsapp">{CHANNEL_LABEL.whatsapp}</SelectItem>
                 </SelectContent>
               </Select>
             </div>

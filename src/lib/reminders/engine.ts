@@ -6,6 +6,9 @@ import { getTaskById, listTasksDueSoon } from '@/lib/db/tasks';
 import { getIssueById } from '@/lib/db/issues';
 import { getEventById } from '@/lib/db/calendarEvents';
 import { findUserById, listActiveAdmins } from '@/lib/db/users';
+import { listEntityUserIds } from '@/lib/db/entityAssignees';
+import { getDefaultSendCreds } from '@/lib/db/whatsappInstances';
+import { sendWhatsAppMessage, normalizePhone } from '@/lib/whatsapp';
 import { sendTaskNotificationEmail } from '@/services/email';
 import { priorityLabel, createNotification as emitNotification } from '@/services/notifications';
 import { appUrl } from '@/lib/config';
@@ -16,6 +19,8 @@ export interface ReminderRunResult {
   processed: number;
   notified: number;
   emailed: number;
+  /** WhatsApp reminder messages sent this run (channel='whatsapp', per recipient). */
+  whatsapped: number;
   failed: number;
   /** task_due_soon notifications fanned out this run (deduped per task/user/day). */
   dueSoon: number;
@@ -81,6 +86,7 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
     processed: 0,
     notified: 0,
     emailed: 0,
+    whatsapped: 0,
     failed: 0,
     dueSoon: 0,
   };
@@ -137,61 +143,108 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
 
       const wantInApp = reminder.channel === 'in_app' || reminder.channel === 'both';
       const wantEmail = reminder.channel === 'email' || reminder.channel === 'both';
+      const wantWhatsApp = reminder.channel === 'whatsapp';
 
-      // Notification insert + mark-sent in one transaction (idempotent re-runs).
+      // Resolve recipients at FIRE TIME: the entity's CURRENT user-assignees,
+      // falling back to the reminder's stored user_id (creator/owner) when there
+      // are none — and always for entity types with no assignees junction
+      // (calendar_event). One reminder row → fans out to every assignee here, so
+      // the create/edit routes never duplicate a row per assignee.
+      let recipientIds: string[] = [];
+      if (reminder.entity_type === 'task' || reminder.entity_type === 'issue') {
+        recipientIds = await listEntityUserIds(reminder.entity_type, reminder.entity_id);
+      }
+      if (recipientIds.length === 0) recipientIds = [reminder.user_id];
+      recipientIds = Array.from(new Set(recipientIds));
+
+      const heading =
+        reminder.entity_type === 'task'
+          ? 'תזכורת למשימה'
+          : reminder.entity_type === 'calendar_event'
+            ? 'תזכורת לאירוע ביומן'
+            : reminder.entity_type === 'issue'
+              ? 'תזכורת לתקלה'
+              : 'תזכורת';
+
+      // In-app inserts (one per recipient) + mark-sent in one transaction
+      // (idempotent re-runs — the dedupeKey is per recipient).
       await withTransaction(async (client) => {
         if (wantInApp) {
-          await createNotification(
-            {
-              userId: reminder.user_id,
-              // Calendar reminders carry the first-class 'calendar_reminder' type
-              // (registry icon/tone). Task/issue reminders keep the legacy
-              // 'reminder' type unchanged.
-              type: reminder.entity_type === 'calendar_event' ? 'calendar_reminder' : 'reminder',
-              title,
-              message,
-              sourceModule:
-                reminder.entity_type === 'task'
-                  ? 'tasks'
-                  : reminder.entity_type === 'calendar_event'
-                    ? 'calendar'
-                    : reminder.entity_type,
-              sourceEntityType: reminder.entity_type,
-              sourceEntityId: reminder.entity_id,
-              actionUrl,
-              priority,
-              dedupeKey: `reminder:${reminder.id}`,
-            },
-            client,
-          );
+          for (const uid of recipientIds) {
+            await createNotification(
+              {
+                userId: uid,
+                // Calendar reminders carry the first-class 'calendar_reminder' type
+                // (registry icon/tone). Task/issue reminders keep the legacy
+                // 'reminder' type unchanged.
+                type: reminder.entity_type === 'calendar_event' ? 'calendar_reminder' : 'reminder',
+                title,
+                message,
+                sourceModule:
+                  reminder.entity_type === 'task'
+                    ? 'tasks'
+                    : reminder.entity_type === 'calendar_event'
+                      ? 'calendar'
+                      : reminder.entity_type,
+                sourceEntityType: reminder.entity_type,
+                sourceEntityId: reminder.entity_id,
+                actionUrl,
+                priority,
+                dedupeKey: `reminder:${reminder.id}:${uid}`,
+              },
+              client,
+            );
+          }
         }
         await markReminderSent(reminder.id, client);
       });
-      if (wantInApp) result.notified++;
+      if (wantInApp) result.notified += recipientIds.length;
 
-      // Email is best-effort and outside the transaction (network I/O).
+      // Email — best-effort, per recipient, outside the transaction (network I/O).
       if (wantEmail) {
-        try {
-          const user = await findUserById(reminder.user_id);
-          if (user?.email && user.is_active) {
-            await sendTaskNotificationEmail(user.email, {
-              recipientName: user.full_name ?? user.username,
-              heading:
-                reminder.entity_type === 'task'
-                  ? 'תזכורת למשימה'
-                  : reminder.entity_type === 'calendar_event'
-                    ? 'תזכורת לאירוע ביומן'
-                    : reminder.entity_type === 'issue'
-                      ? 'תזכורת לתקלה'
-                      : 'תזכורת',
-              taskTitle: title,
-              details: emailDetails,
-              taskUrl: actionUrl ? `${appUrl()}${actionUrl}` : appUrl(),
-            });
-            result.emailed++;
+        for (const uid of recipientIds) {
+          try {
+            const user = await findUserById(uid);
+            if (user?.email && user.is_active) {
+              await sendTaskNotificationEmail(user.email, {
+                recipientName: user.full_name ?? user.username,
+                heading,
+                taskTitle: title,
+                details: emailDetails,
+                taskUrl: actionUrl ? `${appUrl()}${actionUrl}` : appUrl(),
+              });
+              result.emailed++;
+            }
+          } catch (err) {
+            console.error('[runReminders] email failed for reminder', reminder.id, err);
           }
-        } catch (err) {
-          console.error('[runReminders] email failed for reminder', reminder.id, err);
+        }
+      }
+
+      // WhatsApp — best-effort, per recipient. channel='whatsapp' is an EXPLICIT
+      // per-reminder choice, so it sends whenever the recipient has a
+      // notification phone (NOT gated on the passive notify_whatsapp opt-in, which
+      // only governs the automatic notification stream). Fires only here
+      // (scheduled), never at create time.
+      if (wantWhatsApp) {
+        const creds = await getDefaultSendCreds();
+        for (const uid of recipientIds) {
+          try {
+            const user = await findUserById(uid);
+            if (creds && user?.is_active && user.notification_phone) {
+              const { chatId } = normalizePhone(user.notification_phone);
+              await sendWhatsAppMessage({
+                instanceId: creds.greenInstanceId,
+                token: creds.token,
+                apiUrl: creds.apiUrl,
+                chatId,
+                message: `${heading}\n${title}`,
+              });
+              result.whatsapped++;
+            }
+          } catch (err) {
+            console.error('[runReminders] whatsapp failed for reminder', reminder.id, err);
+          }
         }
       }
 

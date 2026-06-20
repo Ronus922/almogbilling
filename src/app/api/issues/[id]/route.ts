@@ -141,21 +141,20 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
     const userIds = issue.assignees.map((a) => a.user_id).filter((v): v is string => v !== null);
 
-    // Replace reminders if the client sent a reminders array → one per user
-    // assignee (or the editor when there are none).
+    // Replace reminders if the client sent a reminders array → ONE row per
+    // reminder, owned by the editor. The engine fans out to the issue's CURRENT
+    // user-assignees at fire time (falling back to this owner when there are
+    // none), so a single reminder is never duplicated per assignee.
     if (reminders && reminders.ok) {
       await deleteRemindersForEntity('issue', id);
-      const reminderUsers = userIds.length > 0 ? userIds : [actor.id];
       for (const r of reminders.reminders) {
-        for (const uid of reminderUsers) {
-          await createReminder({
-            entityType: 'issue',
-            entityId: id,
-            userId: uid,
-            remindAt: r.remind_at,
-            channel: r.channel,
-          });
-        }
+        await createReminder({
+          entityType: 'issue',
+          entityId: id,
+          userId: actor.id,
+          remindAt: r.remind_at,
+          channel: r.channel,
+        });
       }
     }
 

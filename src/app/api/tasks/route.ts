@@ -144,19 +144,19 @@ export async function POST(req: NextRequest) {
       .map((a) => a.user_id)
       .filter((v): v is string => v !== null);
 
-    // Reminders → one per user assignee, or the creator when there are none.
+    // Reminders → ONE row per reminder, owned by the creator. The engine fans out
+    // to the task's CURRENT user-assignees at fire time (falling back to this
+    // owner when there are none), so a single reminder is never duplicated per
+    // assignee.
     if (reminders && reminders.ok) {
-      const reminderUsers = userIds.length > 0 ? userIds : [actor.id];
       for (const r of reminders.reminders) {
-        for (const uid of reminderUsers) {
-          await createReminder({
-            entityType: 'task',
-            entityId: task.id,
-            userId: uid,
-            remindAt: r.remind_at,
-            channel: r.channel,
-          });
-        }
+        await createReminder({
+          entityType: 'task',
+          entityId: task.id,
+          userId: actor.id,
+          remindAt: r.remind_at,
+          channel: r.channel,
+        });
       }
     }
 

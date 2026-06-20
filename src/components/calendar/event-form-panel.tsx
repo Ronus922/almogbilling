@@ -116,7 +116,7 @@ interface RecurrenceState {
 }
 
 const CHANNEL_LABEL: Record<ReminderChannel, string> = {
-  in_app: 'בתוך המערכת', email: 'אימייל', both: 'שניהם',
+  in_app: 'בתוך המערכת', email: 'אימייל', both: 'שניהם', whatsapp: 'וואטסאפ',
 };
 const OFFSET_LABEL: Record<ReminderOffset, string> = {
   none: 'ללא', '15m': '15 דקות לפני', '1h': 'שעה לפני', '1d': 'יום לפני',
@@ -888,6 +888,7 @@ export function EventFormPanel({
                             <SelectItem value="in_app">{CHANNEL_LABEL.in_app}</SelectItem>
                             <SelectItem value="email">{CHANNEL_LABEL.email}</SelectItem>
                             <SelectItem value="both">{CHANNEL_LABEL.both}</SelectItem>
+                            <SelectItem value="whatsapp">{CHANNEL_LABEL.whatsapp}</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>

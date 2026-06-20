@@ -131,7 +131,7 @@ export interface CreateNotificationInput {
 }
 
 // ── Reminders ───────────────────────────────────────────────────────────────
-export type ReminderChannel = 'in_app' | 'email' | 'both';
+export type ReminderChannel = 'in_app' | 'email' | 'both' | 'whatsapp';
 
 export interface Reminder {
   id: string;
