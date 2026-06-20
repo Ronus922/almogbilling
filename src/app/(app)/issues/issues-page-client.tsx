@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
-  Plus, Search, AlertTriangle, Flame, CircleCheckBig,
+  Plus, Search, AlertTriangle, Flame, CircleCheckBig, LayoutGrid, List,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { KpiCard } from '@/app/(app)/dashboard/components/KpiCard';
 import { IssuesTable } from '@/components/issues/issues-table';
+import { IssuesKanban } from '@/components/issues/issues-kanban';
 import { IssueFormPanel } from '@/components/issues/issue-form-panel';
 import { cn } from '@/lib/utils';
 import { urgentFirst } from '@/lib/priority-sort';
@@ -29,6 +30,8 @@ import type {
 } from '@/lib/types/issues';
 import type { SupplierOption } from '@/lib/types/assignee';
 import type { NotifyUserContact } from '@/lib/notify/selection';
+
+type ViewMode = 'kanban' | 'table';
 
 interface Assignee {
   id: string;
@@ -56,6 +59,7 @@ export function IssuesPageClient({
   const [issues, setIssues] = useState<IssueWithMeta[]>(initialIssues);
   const [kpis, setKpis] = useState<IssueKpis>(initialKpis);
 
+  const [view, setView] = useState<ViewMode>('kanban');
   const [tab, setTab] = useState<'active' | 'completed'>('active');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<IssueStatus | 'all'>('all');
@@ -95,10 +99,12 @@ export function IssuesPageClient({
   const activeIssues = useMemo(() => issues.filter((i) => !isCompletedIssueStatus(i.status)), [issues]);
   const completedIssues = useMemo(() => issues.filter((i) => isCompletedIssueStatus(i.status)), [issues]);
   const tabIssues = tab === 'active' ? activeIssues : completedIssues;
+  // The status dropdown narrows further, but only in table view (the kanban
+  // always shows its full set of columns).
   const shown = useMemo(() => {
-    if (statusFilter !== 'all') return tabIssues.filter((i) => i.status === statusFilter);
+    if (view === 'table' && statusFilter !== 'all') return tabIssues.filter((i) => i.status === statusFilter);
     return tabIssues;
-  }, [tabIssues, statusFilter]);
+  }, [tabIssues, statusFilter, view]);
 
   // Initial data is server-rendered; refetch when filters/sort change.
   useEffect(() => {
@@ -148,6 +154,29 @@ export function IssuesPageClient({
       void fetchIssues();
     } catch (err) {
       toast.error(`מחיקה נכשלה: ${(err as Error).message}`);
+    }
+  }
+
+  // Cross-column kanban drag → status change. Issues have no manual sort_order, so
+  // a move only persists the new status (the active board exposes open/in_progress
+  // columns, so 'resolved' — which requires resolution notes — is never a drag target).
+  async function handleMove(issueId: string, toStatus: IssueStatus) {
+    const prev = issues;
+    const moved = issues.find((i) => i.id === issueId);
+    if (!moved || moved.status === toStatus) return;
+    setIssues(issues.map((i) => (i.id === issueId ? { ...i, status: toStatus } : i)));
+    try {
+      const r = await fetch(`/api/issues/${issueId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status: toStatus }),
+      });
+      if (!r.ok) throw new Error('שמירת הסטטוס נכשלה');
+      void fetchIssues();
+    } catch (e) {
+      setIssues(prev);
+      toast.error((e as Error).message);
     }
   }
 
@@ -203,8 +232,36 @@ export function IssuesPageClient({
         })}
       </div>
 
-      {/* Toolbar: search + filters */}
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
+      {/* Toolbar: view toggle + filters */}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        {/* View toggle — completed tab is table-only */}
+        {tab === 'active' ? (
+          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+            <button
+              type="button"
+              onClick={() => setView('kanban')}
+              className={cn(
+                'inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors cursor-pointer',
+                view === 'kanban' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50',
+              )}
+            >
+              <LayoutGrid className="h-4 w-4" /> קנבן
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('table')}
+              className={cn(
+                'inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors cursor-pointer',
+                view === 'table' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50',
+              )}
+            >
+              <List className="h-4 w-4" /> טבלה
+            </button>
+          </div>
+        ) : (
+          <div />
+        )}
+
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 start-3" />
@@ -216,8 +273,9 @@ export function IssuesPageClient({
             />
           </div>
 
-          {/* Status filter — active tab only (completed tab is the two terminal statuses). */}
-          {tab === 'active' && (
+          {/* Status filter — table view of the active tab only (completed tab and
+              the kanban already scope their statuses). */}
+          {view === 'table' && tab === 'active' && (
             <Select value={statusFilter} onValueChange={(v) => { if (v) setStatusFilter(v as IssueStatus | 'all'); }}>
               <SelectTrigger className="h-10 w-36 data-[size=default]:h-10">
                 <SelectValue>{(v: string | null) => (v && v !== 'all' ? issueStatusLabel(v as IssueStatus) : 'כל הסטטוסים')}</SelectValue>
@@ -273,9 +331,13 @@ export function IssuesPageClient({
         </div>
       </div>
 
-      {/* Table — urgent first, then the selected sort within each group.
-          (Issues have no due-date field, so "due date asc" is N/A here.) */}
-      <IssuesTable issues={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} onDelete={canEdit ? setDeleteTarget : undefined} />
+      {/* Board / Table — completed tab is always a table. The table is urgent-first
+          then the selected sort within each group (issues have no due-date field). */}
+      {tab === 'active' && view === 'kanban' ? (
+        <IssuesKanban issues={shown} canEdit={canEdit} onSelect={openEdit} onMove={(id, status) => void handleMove(id, status)} statuses={ACTIVE_ISSUE_STATUSES} onDelete={canEdit ? setDeleteTarget : undefined} />
+      ) : (
+        <IssuesTable issues={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} onDelete={canEdit ? setDeleteTarget : undefined} />
+      )}
 
       <IssueFormPanel
         open={formOpen}

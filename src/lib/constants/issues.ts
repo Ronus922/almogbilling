@@ -78,6 +78,14 @@ export const ISSUE_PRIORITY_BADGE: Record<IssuePriority, string> = {
   urgent: 'bg-rose-100 text-rose-700',
 };
 
+// Kanban column accent dot — mirrors tasks STATUS_DOT, keyed to the badge tones.
+export const ISSUE_STATUS_DOT: Record<IssueStatus, string> = {
+  open: 'bg-rose-500',
+  in_progress: 'bg-blue-500',
+  resolved: 'bg-emerald-500',
+  closed: 'bg-slate-400',
+};
+
 // ── Image upload validation (server-enforced; mirrored in the client) ────────
 export const ISSUE_ALLOWED_IMAGE_TYPES: readonly string[] = [
   'image/jpeg',
