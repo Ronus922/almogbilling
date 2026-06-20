@@ -16,12 +16,12 @@ import type {
   TaskWritableFields,
 } from '@/lib/types/tasks';
 import type { TargetType } from '@/lib/types/targets';
+import { coerceChannels } from '@/lib/notify/channels';
 
 const TARGET_TYPES: readonly TargetType[] = ['room', 'area'];
 
 const STATUSES: readonly TaskStatus[] = ['open', 'in_progress', 'done', 'cancelled'];
 const PRIORITIES: readonly TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
-const CHANNELS: readonly ReminderChannel[] = ['in_app', 'email', 'both', 'whatsapp'];
 const RELATED_ENTITY_TYPES: readonly RelatedEntityType[] = [
   'debtor',
   'building',
@@ -131,7 +131,7 @@ export function coerceTaskInput(
 // ── Reminders embedded in the task body ──────────────────────────────────────
 export interface ReminderInput {
   remind_at: string; // ISO timestamptz
-  channel: ReminderChannel;
+  channels: ReminderChannel[]; // non-empty subset of in_app/email/whatsapp
 }
 
 export type RemindersValidation =
@@ -139,9 +139,9 @@ export type RemindersValidation =
   | { ok: false; error: string };
 
 /**
- * Coerce body.reminders (optional array of {remind_at, channel}) into a
+ * Coerce body.reminders (optional array of {remind_at, channels[]}) into a
  * validated list. Absent → null (caller leaves reminders untouched). Present →
- * full replacement set.
+ * full replacement set. Each reminder must select at least one channel.
  */
 export function coerceReminders(body: Record<string, unknown>): RemindersValidation | null {
   if (!has(body, 'reminders')) return null;
@@ -158,11 +158,9 @@ export function coerceReminders(body: Record<string, unknown>): RemindersValidat
     if (!remindAt || Number.isNaN(Date.parse(remindAt))) {
       return { ok: false, error: 'invalid_reminder_time' };
     }
-    const ch = strOrNull(rec.channel) ?? 'both';
-    if (!CHANNELS.includes(ch as ReminderChannel)) {
-      return { ok: false, error: 'invalid_reminder_channel' };
-    }
-    out.push({ remind_at: remindAt, channel: ch as ReminderChannel });
+    const chRes = coerceChannels(rec.channels);
+    if (!chRes.ok) return { ok: false, error: chRes.error };
+    out.push({ remind_at: remindAt, channels: chRes.channels });
   }
   return { ok: true, reminders: out };
 }

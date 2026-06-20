@@ -25,6 +25,7 @@ import { Section } from '@/components/side-panel/Section';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
+import { REMINDER_CHANNELS, effectiveChannels } from '@/lib/notify/channels';
 import {
   ITEM_KINDS, EVENT_STATUSES, RECURRENCE_TYPES, COLOR_OPTIONS,
   itemKindLabel, eventStatusLabel, recurrenceTypeLabel,
@@ -37,7 +38,7 @@ import type { ReminderChannel } from '@/lib/types/tasks';
 
 interface Owner { id: string; name: string }
 
-interface ReminderRow { offset: ReminderOffset; channel: ReminderChannel }
+interface ReminderRow { offset: ReminderOffset; channels: ReminderChannel[] }
 type ReminderOffset = 'none' | '15m' | '1h' | '1d';
 
 /** A registered (system-user) participant chosen from the picker. */
@@ -116,7 +117,7 @@ interface RecurrenceState {
 }
 
 const CHANNEL_LABEL: Record<ReminderChannel, string> = {
-  in_app: 'בתוך המערכת', email: 'אימייל', both: 'שניהם', whatsapp: 'וואטסאפ',
+  in_app: 'בתוך המערכת', email: 'אימייל', whatsapp: 'וואטסאפ',
 };
 const OFFSET_LABEL: Record<ReminderOffset, string> = {
   none: 'ללא', '15m': '15 דקות לפני', '1h': 'שעה לפני', '1d': 'יום לפני',
@@ -214,7 +215,7 @@ export function EventFormPanel({
       if (!r.ok) return;
       const data = (await r.json()) as {
         event: CalendarEventWithParticipants;
-        reminders?: { remind_at: string; channel: ReminderChannel }[];
+        reminders?: { remind_at: string; channel: string; channels: ReminderChannel[] | null }[];
       };
       const ev = data.event;
       setLoadedEvent(ev);
@@ -250,7 +251,7 @@ export function EventFormPanel({
         if (Math.abs(diff - OFFSET_MS['15m']) < 60_000) offset = '15m';
         else if (Math.abs(diff - OFFSET_MS['1h']) < 60_000) offset = '1h';
         else if (Math.abs(diff - OFFSET_MS['1d']) < 60_000) offset = '1d';
-        return { offset, channel: rem.channel };
+        return { offset, channels: effectiveChannels(rem.channels, rem.channel) };
       });
       setReminders(rows);
     } catch { /* non-fatal */ }
@@ -372,7 +373,7 @@ export function EventFormPanel({
 
   // ── reminders ──
   function addReminder() {
-    setReminders((prev) => [...prev, { offset: '1h', channel: 'both' }]);
+    setReminders((prev) => [...prev, { offset: '1h', channels: ['in_app'] }]);
   }
   function updateReminder(idx: number, patch: Partial<ReminderRow>) {
     setReminders((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
@@ -380,17 +381,29 @@ export function EventFormPanel({
   function removeReminder(idx: number) {
     setReminders((prev) => prev.filter((_, i) => i !== idx));
   }
+  function toggleReminderChannel(idx: number, ch: ReminderChannel) {
+    setReminders((prev) =>
+      prev.map((r, i) => {
+        if (i !== idx) return r;
+        const has = r.channels.includes(ch);
+        let next = has ? r.channels.filter((c) => c !== ch) : [...r.channels, ch];
+        if (next.length === 0) next = [ch]; // keep at least one
+        return { ...r, channels: next };
+      }),
+    );
+  }
 
   /** Build the reminders payload (remind_at relative to event start). */
-  function buildRemindersPayload(): { remind_at: string; channel: ReminderChannel }[] {
-    const out: { remind_at: string; channel: ReminderChannel }[] = [];
+  function buildRemindersPayload(): { remind_at: string; channels: ReminderChannel[] }[] {
+    const out: { remind_at: string; channels: ReminderChannel[] }[] = [];
     const baseTime = form.is_all_day ? '09:00' : (form.start_time || '09:00');
     const startMs = Date.parse(`${form.event_date}T${baseTime}:00`);
     if (Number.isNaN(startMs)) return out;
     for (const r of reminders) {
       if (r.offset === 'none') continue;
+      if (r.channels.length === 0) continue;
       const remindMs = startMs - OFFSET_MS[r.offset];
-      out.push({ remind_at: new Date(remindMs).toISOString(), channel: r.channel });
+      out.push({ remind_at: new Date(remindMs).toISOString(), channels: r.channels });
     }
     return out;
   }
@@ -878,19 +891,31 @@ export function EventFormPanel({
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="w-full space-y-1 sm:w-40">
-                        <Label className="text-xs text-muted-foreground">ערוץ</Label>
-                        <Select value={r.channel} onValueChange={(v) => { if (v) updateReminder(idx, { channel: v as ReminderChannel }); }} disabled={disabled}>
-                          <SelectTrigger className="w-full data-[size=default]:h-10">
-                            <SelectValue>{(v: string | null) => (v ? CHANNEL_LABEL[v as ReminderChannel] : null)}</SelectValue>
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="in_app">{CHANNEL_LABEL.in_app}</SelectItem>
-                            <SelectItem value="email">{CHANNEL_LABEL.email}</SelectItem>
-                            <SelectItem value="both">{CHANNEL_LABEL.both}</SelectItem>
-                            <SelectItem value="whatsapp">{CHANNEL_LABEL.whatsapp}</SelectItem>
-                          </SelectContent>
-                        </Select>
+                      <div className="w-full space-y-1 sm:w-auto">
+                        <Label className="text-xs text-muted-foreground">ערוצים</Label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {REMINDER_CHANNELS.map((ch) => {
+                            const active = r.channels.includes(ch);
+                            return (
+                              <button
+                                key={ch}
+                                type="button"
+                                disabled={disabled}
+                                onClick={() => toggleReminderChannel(idx, ch)}
+                                aria-pressed={active}
+                                className={cn(
+                                  'h-9 rounded-lg border px-3 text-xs font-semibold transition-colors',
+                                  active
+                                    ? 'border-blue-600 bg-blue-600 text-white'
+                                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                                  disabled && 'cursor-not-allowed opacity-50',
+                                )}
+                              >
+                                {CHANNEL_LABEL[ch]}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                       {!disabled && (
                         <button type="button" onClick={() => removeReminder(idx)} aria-label="הסר תזכורת" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600">

@@ -95,7 +95,7 @@ export interface ParticipantInput {
 /** A reminder the client wants attached (mirrors the tasks reminder shape). */
 export interface CalendarReminderInput {
   remind_at: string; // ISO timestamptz
-  channel: ReminderChannel;
+  channels: ReminderChannel[];
 }
 
 /** Core event fields a create/update may set (excludes recurrence bookkeeping). */

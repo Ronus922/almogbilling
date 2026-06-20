@@ -27,7 +27,7 @@ export function priorityLabel(p: TaskPriority): string {
  * when requested + the user has an email, send an email. Email failures are
  * swallowed (logged) — never block the originating mutation.
  *
- * `channel` controls email: 'in_app' → no email; 'email'/'both' → email.
+ * `channel` controls email: 'in_app' → no email; 'email'/undefined → email.
  */
 export async function notifyTask(opts: {
   userId: string;
@@ -55,7 +55,7 @@ export async function notifyTask(opts: {
     dedupeKey: opts.dedupeKey ?? null,
   });
 
-  const wantEmail = opts.channel === undefined || opts.channel === 'email' || opts.channel === 'both';
+  const wantEmail = opts.channel === undefined || opts.channel === 'email';
   let emailed = false;
 
   if (wantEmail) {
@@ -115,7 +115,7 @@ export async function notifyIssue(opts: {
     dedupeKey: opts.dedupeKey ?? null,
   });
 
-  const wantEmail = opts.channel === undefined || opts.channel === 'email' || opts.channel === 'both';
+  const wantEmail = opts.channel === undefined || opts.channel === 'email';
   let emailed = false;
 
   if (wantEmail) {

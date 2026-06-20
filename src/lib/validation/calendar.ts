@@ -14,7 +14,7 @@ import type {
   RecurrenceRule,
   RecurrenceType,
 } from '@/lib/types/calendar';
-import type { ReminderChannel } from '@/lib/types/tasks';
+import { coerceChannels } from '@/lib/notify/channels';
 import { parseDateOnly } from '@/lib/calendar/recurrence';
 
 const ITEM_KINDS: readonly CalendarItemKind[] = ['meeting', 'event'];
@@ -24,7 +24,6 @@ const COLOR_KEYS: readonly CalendarColorKey[] = [
 ];
 const REC_TYPES: readonly RecurrenceType[] = ['daily', 'weekly', 'monthly', 'yearly'];
 const REC_END_TYPES: readonly RecurrenceEndType[] = ['never', 'until_date', 'count'];
-const CHANNELS: readonly ReminderChannel[] = ['in_app', 'email', 'both'];
 // 'user'/'external' are the only sources the UI creates. 'contact' is accepted
 // for backward-compat (legacy rows) but the picker no longer emits it.
 const SOURCES = ['user', 'contact', 'external'] as const;
@@ -267,7 +266,7 @@ export type CalReminderValidation =
   | { ok: true; reminders: CalendarReminderInput[] }
   | { ok: false; error: string };
 
-/** Coerce body.reminders (optional array of {remind_at, channel}). Absent → empty. */
+/** Coerce body.reminders (optional array of {remind_at, channels[]}). Absent → empty. */
 export function coerceCalendarReminders(body: Record<string, unknown>): CalReminderValidation {
   if (!has(body, 'reminders') || body.reminders === null) return { ok: true, reminders: [] };
   const raw = body.reminders;
@@ -282,11 +281,9 @@ export function coerceCalendarReminders(body: Record<string, unknown>): CalRemin
     if (!remindAt || Number.isNaN(Date.parse(remindAt))) {
       return { ok: false, error: 'invalid_reminder_time' };
     }
-    const ch = strOrNull(rec.channel) ?? 'both';
-    if (!CHANNELS.includes(ch as ReminderChannel)) {
-      return { ok: false, error: 'invalid_reminder_channel' };
-    }
-    out.push({ remind_at: remindAt, channel: ch as ReminderChannel });
+    const chRes = coerceChannels(rec.channels);
+    if (!chRes.ok) return { ok: false, error: chRes.error };
+    out.push({ remind_at: remindAt, channels: chRes.channels });
   }
   return { ok: true, reminders: out };
 }

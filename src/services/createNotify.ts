@@ -5,6 +5,7 @@ import { getSupplierNotifyContact } from '@/lib/db/suppliers';
 import { sendNotificationEmail } from '@/services/email';
 import { sendWhatsAppMessage, normalizePhone } from '@/lib/whatsapp';
 import { getDefaultSendCreds } from '@/lib/db/whatsappInstances';
+import { getSignature, signatureWhatsApp } from '@/lib/notify/signature';
 import {
   channelFor,
   recipientKey,
@@ -90,13 +91,15 @@ async function sendToRecipient(
           console.warn('[createNotify] skipped whatsapp — no send credentials configured');
         } else {
           const { chatId } = normalizePhone(contact.phone);
-          const body = title && title !== r.message ? `${title}\n${r.message}` : r.message;
+          const sig = await getSignature();
+          // Create messages carry NO "תזכורת:" prefix — only the fixed signature.
+          const base = title && title !== r.message ? `${title}\n${r.message}` : r.message;
           await sendWhatsAppMessage({
             instanceId: creds.greenInstanceId,
             token: creds.token,
             apiUrl: creds.apiUrl,
             chatId,
-            message: body,
+            message: `${base}${signatureWhatsApp(sig)}`,
           });
         }
       } catch (err) {

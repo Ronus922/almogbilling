@@ -31,7 +31,7 @@ import type { AssigneeInput, SupplierOption } from '@/lib/types/assignee';
 import { TargetField } from '@/components/targets/TargetField';
 import { AssigneeMultiSelect } from '@/components/assignee/AssigneeMultiSelect';
 import {
-  RemindersSection, splitRemindAt, buildRemindersPayload, type ReminderRow,
+  RemindersSection, splitRemindAt, buildRemindersPayload, rowChannels, type ReminderRow,
 } from '@/components/reminders/RemindersSection';
 import { NotifyMatrix, type NotifyRecipient } from '@/components/notify/NotifyMatrix';
 import {
@@ -51,7 +51,8 @@ interface Assignee {
 interface ServerReminder {
   id: string;
   remind_at: string;
-  channel: ReminderChannel;
+  channel: string; // legacy single value (may be 'both' on old rows)
+  channels: ReminderChannel[] | null;
 }
 
 interface Props {
@@ -133,7 +134,7 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       setComments(Array.isArray(data.comments) ? data.comments : []);
       const rem = (data.reminders ?? []).map((x) => {
         const { date, time } = splitRemindAt(x.remind_at);
-        return { date, time, channel: x.channel };
+        return { date, time, channels: rowChannels(x.channels, x.channel) };
       });
       setReminders(rem);
       setInitialReminders(rem);

@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
           entityId: issue.id,
           userId: actor.id,
           remindAt: r.remind_at,
-          channel: r.channel,
+          channels: r.channels,
         });
       }
     }

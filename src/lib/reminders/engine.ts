@@ -11,6 +11,8 @@ import { getDefaultSendCreds } from '@/lib/db/whatsappInstances';
 import { sendWhatsAppMessage, normalizePhone } from '@/lib/whatsapp';
 import { sendTaskNotificationEmail } from '@/services/email';
 import { priorityLabel, createNotification as emitNotification } from '@/services/notifications';
+import { effectiveChannels } from '@/lib/notify/channels';
+import { getSignature, signatureWhatsApp } from '@/lib/notify/signature';
 import { appUrl } from '@/lib/config';
 import { todayInJerusalem, addDaysToIsoDate } from '@/lib/dates';
 
@@ -141,9 +143,13 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
         }
       }
 
-      const wantInApp = reminder.channel === 'in_app' || reminder.channel === 'both';
-      const wantEmail = reminder.channel === 'email' || reminder.channel === 'both';
-      const wantWhatsApp = reminder.channel === 'whatsapp';
+      // Multi-select channels (migration 049). Falls back to the legacy single
+      // `channel` (incl. 'both' → in_app+email) for rows written before 049 /
+      // before the backfill — critical so existing rows never silently drop.
+      const chans = effectiveChannels(reminder.channels, reminder.channel);
+      const wantInApp = chans.includes('in_app');
+      const wantEmail = chans.includes('email');
+      const wantWhatsApp = chans.includes('whatsapp');
 
       // Resolve recipients at FIRE TIME: the entity's CURRENT user-assignees,
       // falling back to the reminder's stored user_id (creator/owner) when there
@@ -157,14 +163,10 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
       if (recipientIds.length === 0) recipientIds = [reminder.user_id];
       recipientIds = Array.from(new Set(recipientIds));
 
-      const heading =
-        reminder.entity_type === 'task'
-          ? 'תזכורת למשימה'
-          : reminder.entity_type === 'calendar_event'
-            ? 'תזכורת לאירוע ביומן'
-            : reminder.entity_type === 'issue'
-              ? 'תזכורת לתקלה'
-              : 'תזכורת';
+      // Reminder messages open with "תזכורת: <title>" (the email template renders
+      // `${heading}: ${title}`, so heading is just "תזכורת"). Create messages have
+      // no such prefix — this is the reminder path only.
+      const heading = 'תזכורת';
 
       // In-app inserts (one per recipient) + mark-sent in one transaction
       // (idempotent re-runs — the dedupeKey is per recipient).
@@ -228,6 +230,9 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
       // (scheduled), never at create time.
       if (wantWhatsApp) {
         const creds = await getDefaultSendCreds();
+        const sig = await getSignature();
+        // Prefix "תזכורת: <title>" + the fixed signature at the end.
+        const waBody = `תזכורת: ${title}${signatureWhatsApp(sig)}`;
         for (const uid of recipientIds) {
           try {
             const user = await findUserById(uid);
@@ -238,7 +243,7 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
                 token: creds.token,
                 apiUrl: creds.apiUrl,
                 chatId,
-                message: `${heading}\n${title}`,
+                message: waBody,
               });
               result.whatsapped++;
             }

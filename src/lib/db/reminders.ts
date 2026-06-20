@@ -4,7 +4,7 @@ import type { PoolClient } from 'pg';
 import type { CreateReminderInput, Reminder } from '@/lib/types/tasks';
 
 const COLUMNS = `
-  id, entity_type, entity_id, user_id, remind_at, channel, sent_at, created_at, updated_at
+  id, entity_type, entity_id, user_id, remind_at, channel, channels, sent_at, created_at, updated_at
 `;
 
 type Queryable = Pick<PoolClient, 'query'>;
@@ -13,16 +13,21 @@ export async function createReminder(
   input: CreateReminderInput,
   client?: Queryable,
 ): Promise<Reminder> {
+  const channels = input.channels.length > 0 ? input.channels : ['in_app'];
+  // `channel` is the frozen legacy column (NOT NULL, dropped in a later
+  // migration) — write a representative value so it stays valid; the engine
+  // reads `channels`.
   const params = [
     input.entityType,
     input.entityId,
     input.userId,
     input.remindAt,
-    input.channel ?? 'both',
+    channels[0],
+    channels,
   ];
   const sql = `
-    insert into public.reminders (entity_type, entity_id, user_id, remind_at, channel)
-    values ($1, $2, $3, $4, $5)
+    insert into public.reminders (entity_type, entity_id, user_id, remind_at, channel, channels)
+    values ($1, $2, $3, $4, $5, $6)
     returning ${COLUMNS}
   `;
   if (client) {

@@ -1,11 +1,15 @@
 interface Args {
   recipientName: string;
-  /** Heading line, e.g. "משימה חדשה הוקצתה לך" or "תזכורת למשימה". */
+  /** Heading line, e.g. "משימה חדשה הוקצתה לך" or "תזכורת". */
   heading: string;
   taskTitle: string;
   /** Optional detail lines (priority, due date, assigner) already humanized. */
   details: { label: string; value: string }[];
   taskUrl: string;
+  /** Fixed signature block (pre-rendered HTML) appended before the footer. */
+  signatureHtml: string;
+  /** Fixed signature (plain text) appended to the text part. */
+  signatureText: string;
 }
 
 interface Rendered {
@@ -90,7 +94,12 @@ export function taskNotificationTemplate(args: Args): Rendered {
           </td>
         </tr>
         <tr>
-          <td style="padding:32px 40px 32px 40px;">
+          <td style="padding:20px 40px 0 40px;">
+            ${args.signatureHtml}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:24px 40px 32px 40px;">
             <div style="border-top:1px solid #e2e8f0;padding-top:16px;font-size:12px;color:#64748b;text-align:center;">
               ALMOG CRM &bull; <a href="https://billing.bios.co.il" style="color:#64748b;text-decoration:none;">billing.bios.co.il</a>
             </div>
@@ -110,6 +119,8 @@ ${detailsText}
 
 פתח את המשימה:
 ${args.taskUrl}
+
+${args.signatureText}
 
 —
 ALMOG CRM

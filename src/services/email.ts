@@ -1,6 +1,7 @@
 import 'server-only';
 import { sendWithRetry } from '@/lib/email/send';
 import { renderTemplate } from '@/lib/email-templates';
+import { getSignature, signatureHtml, signaturePlainLines } from '@/lib/notify/signature';
 
 /**
  * Real Gmail-SMTP send (Slice 5).
@@ -37,7 +38,12 @@ export async function sendTaskNotificationEmail(
     taskUrl: string;
   },
 ): Promise<void> {
-  const { subject, html, text } = renderTemplate('task-notification', args);
+  const sig = await getSignature();
+  const { subject, html, text } = renderTemplate('task-notification', {
+    ...args,
+    signatureHtml: signatureHtml(sig),
+    signatureText: signaturePlainLines(sig),
+  });
   await sendWithRetry({ to, subject, html, text });
 }
 
@@ -58,6 +64,7 @@ export async function sendNotificationEmail(
     priorityLabel?: string | null;
   },
 ): Promise<void> {
+  const sig = await getSignature();
   const safe = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const subject = args.title;
@@ -67,7 +74,7 @@ export async function sendNotificationEmail(
     safe(args.message),
     args.priorityLabel ? `\nעדיפות: ${safe(args.priorityLabel)}` : '',
   ].filter(Boolean);
-  const text = `${lines.join('\n')}${args.actionUrl ? `\n\nצפייה: ${args.actionUrl}` : ''}\n\n— ALMOG CRM`;
+  const text = `${lines.join('\n')}${args.actionUrl ? `\n\nצפייה: ${args.actionUrl}` : ''}\n\n${signaturePlainLines(sig)}\n\n— ALMOG CRM`;
 
   const button = args.actionUrl
     ? `<div style="margin-top:20px"><a href="${args.actionUrl}" style="display:inline-block;background:#3d5afe;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:600">צפייה במערכת</a></div>`
@@ -82,6 +89,7 @@ export async function sendNotificationEmail(
       <p style="margin:8px 0 0;color:#1a2233;font-size:15px;line-height:1.6">${safe(args.message)}</p>
       ${priority}
       ${button}
+      ${signatureHtml(sig)}
       <hr style="margin:24px 0 12px;border:none;border-top:1px solid #e8eaf2" />
       <p style="margin:0;color:#b4bacb;font-size:12px">ALMOG CRM</p>
     </div>`;

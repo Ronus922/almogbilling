@@ -131,7 +131,11 @@ export interface CreateNotificationInput {
 }
 
 // ── Reminders ───────────────────────────────────────────────────────────────
-export type ReminderChannel = 'in_app' | 'email' | 'both' | 'whatsapp';
+// The atomic notification channels a reminder can fire on. Multi-select: a
+// reminder carries a non-empty SET of these (see `channels`). The legacy single
+// "both" pseudo-channel is retired (→ {in_app,email}); it survives only as a
+// possible value of the frozen legacy `channel` column, read via legacyToArray.
+export type ReminderChannel = 'in_app' | 'email' | 'whatsapp';
 
 export interface Reminder {
   id: string;
@@ -139,7 +143,10 @@ export interface Reminder {
   entity_id: string;
   user_id: string;
   remind_at: string;
-  channel: ReminderChannel;
+  /** Legacy single channel (frozen column; may still be 'both' on old rows). */
+  channel: string;
+  /** Multi-select channels (migration 049). Empty/absent → fall back to `channel`. */
+  channels: ReminderChannel[] | null;
   sent_at: string | null;
   created_at: string;
   updated_at: string;
@@ -150,5 +157,6 @@ export interface CreateReminderInput {
   entityId: string;
   userId: string;
   remindAt: string; // ISO timestamptz
-  channel?: ReminderChannel;
+  /** Non-empty set of channels to fire on. */
+  channels: ReminderChannel[];
 }

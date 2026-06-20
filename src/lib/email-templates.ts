@@ -20,6 +20,8 @@ interface RenderArgs {
     taskTitle: string;
     details: { label: string; value: string }[];
     taskUrl: string;
+    signatureHtml: string;
+    signatureText: string;
   };
 }
 

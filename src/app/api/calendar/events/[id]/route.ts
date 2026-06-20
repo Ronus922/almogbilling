@@ -121,7 +121,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
           entityId: anchorId,
           userId: actor.id,
           remindAt: r.remind_at,
-          channel: r.channel,
+          channels: r.channels,
         });
       }
     }
