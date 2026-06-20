@@ -49,7 +49,11 @@ export const NOTIFICATION_REGISTRY: Record<NotificationType, NotificationRegistr
   calendar_reminder:         { icon: Calendar,      tone: 'info',    sourceModule: 'calendar',      defaultPriority: 'normal', channels: ['inapp', 'email', 'whatsapp'] },
   task_assigned:             { icon: CheckCircle2,  tone: 'default', sourceModule: 'tasks',         defaultPriority: 'normal', channels: ['inapp', 'email'] },
   task_due_soon:             { icon: Clock,         tone: 'warning', sourceModule: 'tasks',         defaultPriority: 'high',   channels: ['inapp', 'email', 'whatsapp'] },
-  issue_reported:            { icon: AlertTriangle, tone: 'danger',  sourceModule: 'issues',        defaultPriority: 'high',   channels: ['inapp', 'email', 'whatsapp'] },
+  // In-app ONLY: the "new issue reported" admin bell must never email/WhatsApp on
+  // every create. External delivery (email/WhatsApp) is opt-in via the create
+  // form's NotifyMatrix, and admins are not matrix recipients. Its sole producer
+  // is notifyAdminsOfIssueReported (POST /api/issues).
+  issue_reported:            { icon: AlertTriangle, tone: 'danger',  sourceModule: 'issues',        defaultPriority: 'high',   channels: ['inapp'] },
   issue_assigned:            { icon: AlertTriangle, tone: 'default', sourceModule: 'issues',        defaultPriority: 'normal', channels: ['inapp', 'email'] },
   chat_message:              { icon: MessageCircle, tone: 'default', sourceModule: 'internal_chat', defaultPriority: 'low',    channels: ['inapp'] },
   internal_chat_message:     { icon: MessageCircle, tone: 'default', sourceModule: 'internal_chat', defaultPriority: 'low',    channels: ['inapp'] },
