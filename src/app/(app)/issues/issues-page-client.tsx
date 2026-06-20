@@ -11,6 +11,10 @@ import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { KpiCard } from '@/app/(app)/dashboard/components/KpiCard';
 import { IssuesTable } from '@/components/issues/issues-table';
 import { IssueFormPanel } from '@/components/issues/issue-form-panel';
@@ -62,6 +66,7 @@ export function IssuesPageClient({
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<IssueWithMeta | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<IssueWithMeta | null>(null);
 
   const didMount = useRef(false);
 
@@ -130,6 +135,20 @@ export function IssuesPageClient({
   function openEdit(i: IssueWithMeta) {
     setEditing(i);
     setFormOpen(true);
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    try {
+      const res = await fetch(`/api/issues/${deleteTarget.id}`, { method: 'DELETE', credentials: 'include' });
+      if (res.status !== 204 && !res.ok) throw new Error(`HTTP ${res.status}`);
+      toast.success('התקלה נמחקה');
+      if (editing?.id === deleteTarget.id) setFormOpen(false);
+      setDeleteTarget(null);
+      void fetchIssues();
+    } catch (err) {
+      toast.error(`מחיקה נכשלה: ${(err as Error).message}`);
+    }
   }
 
   return (
@@ -256,7 +275,7 @@ export function IssuesPageClient({
 
       {/* Table — urgent first, then the selected sort within each group.
           (Issues have no due-date field, so "due date asc" is N/A here.) */}
-      <IssuesTable issues={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} />
+      <IssuesTable issues={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} onDelete={canEdit ? setDeleteTarget : undefined} />
 
       <IssueFormPanel
         open={formOpen}
@@ -267,7 +286,25 @@ export function IssuesPageClient({
         currentUser={currentUser}
         onOpenChange={setFormOpen}
         onSaved={() => void fetchIssues()}
+        onDelete={canEdit && editing ? () => setDeleteTarget(editing) : undefined}
       />
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>למחוק את התקלה?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget ? `"${deleteTarget.title}" תימחק. לא ניתן לשחזר.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ביטול</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-white hover:bg-destructive/90">
+              מחק
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

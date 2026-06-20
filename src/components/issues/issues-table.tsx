@@ -6,6 +6,7 @@ import {
 } from '@/components/ui/table';
 import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { TargetCell } from '@/components/targets/TargetCell';
+import { RowActions } from '@/components/shared/RowActions';
 import { cn } from '@/lib/utils';
 import {
   ISSUE_STATUS_BADGE, ISSUE_PRIORITY_BADGE, issueStatusLabel, issuePriorityLabel,
@@ -17,9 +18,11 @@ interface Props {
   sort: IssueSort;
   onSortChange: (s: IssueSort) => void;
   onSelect: (issue: IssueWithMeta) => void;
+  /** When provided, a delete action is shown per row (RBAC-gated by the caller). */
+  onDelete?: (issue: IssueWithMeta) => void;
 }
 
-export function IssuesTable({ issues, sort, onSortChange, onSelect }: Props) {
+export function IssuesTable({ issues, sort, onSortChange, onSelect, onDelete }: Props) {
   if (issues.length === 0) {
     return (
       <div className="rounded-lg border bg-card p-12 text-center text-sm text-muted-foreground">
@@ -39,6 +42,7 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect }: Props) {
             <SortHead label="דחיפות" col="priority_desc" sort={sort} onSortChange={onSortChange} align="center" />
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">מטפל</TableHead>
             <SortHead label="עודכן" col="updated_desc" sort={sort} onSortChange={onSortChange} align="center" />
+            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">פעולות</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -88,6 +92,9 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect }: Props) {
               </TableCell>
               <TableCell dir="ltr" className="px-4 py-3 text-center text-sm tabular-nums text-slate-500">
                 {new Date(i.updated_at).toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+              </TableCell>
+              <TableCell className="px-4 py-3 text-center text-sm">
+                <RowActions onEdit={() => onSelect(i)} onDelete={onDelete ? () => onDelete(i) : undefined} />
               </TableCell>
             </TableRow>
           ))}

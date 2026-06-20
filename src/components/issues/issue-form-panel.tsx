@@ -62,6 +62,9 @@ interface Props {
   currentUser: NotifyUserContact;
   onOpenChange: (o: boolean) => void;
   onSaved: () => void;
+  /** Edit mode + canEdit: shows a delete button in the footer. The caller owns
+   *  the confirmation dialog + the actual delete. */
+  onDelete?: () => void;
 }
 
 interface FormState {
@@ -116,7 +119,7 @@ function mapError(code: string | undefined, fallback: string): string {
   return (code && ERROR_MESSAGES[code]) || fallback;
 }
 
-export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, currentUser, onOpenChange, onSaved }: Props) {
+export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete }: Props) {
   const isEdit = !!issue;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
@@ -729,6 +732,8 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
             saveDisabled={!canSubmit}
             saveDisabledReason={!canEdit ? 'אין הרשאה — כניסה כצופה' : undefined}
             saveLabel={submitting ? 'שומר…' : isEdit ? 'שמור שינויים' : 'צור תקלה'}
+            onDelete={isEdit && canEdit && onDelete ? onDelete : undefined}
+            deleteLabel="מחק תקלה"
           />
         </SheetContent>
       </Sheet>

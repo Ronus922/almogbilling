@@ -6,6 +6,7 @@ import {
 } from '@/components/ui/table';
 import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { TargetCell } from '@/components/targets/TargetCell';
+import { RowActions } from '@/components/shared/RowActions';
 import { cn } from '@/lib/utils';
 import {
   STATUS_BADGE, PRIORITY_BADGE, taskStatusLabel, taskPriorityLabel,
@@ -17,6 +18,8 @@ interface Props {
   sort: TaskSort;
   onSortChange: (s: TaskSort) => void;
   onSelect: (task: TaskWithAssignee) => void;
+  /** When provided, a delete action is shown per row (RBAC-gated by the caller). */
+  onDelete?: (task: TaskWithAssignee) => void;
 }
 
 function isOverdue(t: TaskWithAssignee): boolean {
@@ -25,7 +28,7 @@ function isOverdue(t: TaskWithAssignee): boolean {
   return t.due_date < new Date().toISOString().slice(0, 10);
 }
 
-export function TasksTable({ tasks, sort, onSortChange, onSelect }: Props) {
+export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Props) {
   if (tasks.length === 0) {
     return (
       <div className="rounded-lg border bg-card p-12 text-center text-sm text-muted-foreground">
@@ -45,6 +48,7 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect }: Props) {
             <SortHead label="תאריך יעד" col="due_asc" sort={sort} onSortChange={onSortChange} align="center" />
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">מטפל</TableHead>
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">יעד</TableHead>
+            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">פעולות</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -83,6 +87,9 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect }: Props) {
               </TableCell>
               <TableCell className="px-4 py-3 text-center text-sm">
                 <TargetCell type={t.target_type} label={t.target_label} />
+              </TableCell>
+              <TableCell className="px-4 py-3 text-center text-sm">
+                <RowActions onEdit={() => onSelect(t)} onDelete={onDelete ? () => onDelete(t) : undefined} />
               </TableCell>
             </TableRow>
           ))}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { MessageSquare, Calendar } from 'lucide-react';
+import { MessageSquare, Calendar, Pencil, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { TargetCell } from '@/components/targets/TargetCell';
@@ -19,6 +19,8 @@ interface Props {
   /** Which status columns to render. Defaults to all. The "פעילות" tab passes the
    *  active statuses so completed tasks don't appear on the board. */
   statuses?: TaskStatus[];
+  /** When provided, a delete action is shown per card (RBAC-gated by the caller). */
+  onDelete?: (task: TaskWithAssignee) => void;
 }
 
 function isOverdue(t: TaskWithAssignee): boolean {
@@ -27,7 +29,7 @@ function isOverdue(t: TaskWithAssignee): boolean {
   return t.due_date < new Date().toISOString().slice(0, 10);
 }
 
-export function TasksKanban({ tasks, canEdit, onSelect, onMove, statuses }: Props) {
+export function TasksKanban({ tasks, canEdit, onSelect, onMove, statuses, onDelete }: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overCol, setOverCol] = useState<TaskStatus | null>(null);
 
@@ -88,24 +90,50 @@ export function TasksKanban({ tasks, canEdit, onSelect, onMove, statuses }: Prop
                 <p className="py-6 text-center text-xs text-slate-400">אין משימות</p>
               )}
               {items.map((t) => (
-                <button
+                <div
                   key={t.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   draggable={canEdit}
                   onDragStart={() => setDragId(t.id)}
                   onDragEnd={() => { setDragId(null); setOverCol(null); }}
                   onClick={() => onSelect(t)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSelect(t); } }}
                   className={cn(
-                    'w-full rounded-lg border border-slate-200 bg-white p-3 text-start shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-shadow hover:shadow-md',
+                    'group w-full rounded-lg border border-slate-200 bg-white p-3 text-start shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-shadow hover:shadow-md',
                     canEdit && 'cursor-grab active:cursor-grabbing',
                     dragId === t.id && 'opacity-50',
                   )}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-sm font-semibold text-slate-900">{t.title}</span>
-                    <span className={cn('inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-medium', PRIORITY_BADGE[t.priority])}>
-                      {taskPriorityLabel(t.priority)}
-                    </span>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {canEdit && (
+                        <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                          <button
+                            type="button"
+                            aria-label="ערוך"
+                            onClick={(e) => { e.stopPropagation(); onSelect(t); }}
+                            className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          {onDelete && (
+                            <button
+                              type="button"
+                              aria-label="מחק"
+                              onClick={(e) => { e.stopPropagation(); onDelete(t); }}
+                              className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium', PRIORITY_BADGE[t.priority])}>
+                        {taskPriorityLabel(t.priority)}
+                      </span>
+                    </div>
                   </div>
                   {t.description && (
                     <p className="mt-1 line-clamp-2 text-xs text-slate-500">{t.description}</p>
@@ -124,7 +152,7 @@ export function TasksKanban({ tasks, canEdit, onSelect, onMove, statuses }: Prop
                       <span className="inline-flex items-center gap-0.5"><MessageSquare className="h-3 w-3" />{t.comment_count}</span>
                     )}
                   </div>
-                </button>
+                </div>
               ))}
             </div>
           </div>

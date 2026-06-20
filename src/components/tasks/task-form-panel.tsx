@@ -65,6 +65,9 @@ interface Props {
   currentUser: NotifyUserContact;
   onOpenChange: (o: boolean) => void;
   onSaved: () => void;
+  /** Edit mode + canEdit: shows a delete button in the footer. The caller owns
+   *  the confirmation dialog + the actual delete. */
+  onDelete?: () => void;
 }
 
 interface FormState {
@@ -109,7 +112,7 @@ function fromTask(t: TaskWithAssignee): FormState {
   };
 }
 
-export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, currentUser, onOpenChange, onSaved }: Props) {
+export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete }: Props) {
   const isEdit = !!task;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
@@ -545,6 +548,8 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
             saveDisabled={!canSubmit}
             saveDisabledReason={!canEdit ? 'אין הרשאה — כניסה כצופה' : undefined}
             saveLabel={submitting ? 'שומר…' : isEdit ? 'שמור שינויים' : 'צור משימה'}
+            onDelete={isEdit && canEdit && onDelete ? onDelete : undefined}
+            deleteLabel="מחק משימה"
           />
         </SheetContent>
       </Sheet>

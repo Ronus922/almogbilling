@@ -1,6 +1,6 @@
 'use client';
 
-import { Clock, FileDown, Printer, Save } from 'lucide-react';
+import { Clock, FileDown, Printer, Save, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -18,6 +18,10 @@ export interface PanelFooterProps {
   showPrinter?: boolean;
   showExport?: boolean;
   showHistory?: boolean;
+  /** When provided, a destructive "מחק" button is shown on the start side.
+   *  Caller is responsible for the confirmation dialog + RBAC gating. */
+  onDelete?: () => void;
+  deleteLabel?: string;
 }
 
 export function PanelFooter({
@@ -29,15 +33,28 @@ export function PanelFooter({
   showPrinter = false,
   showExport = false,
   showHistory = false,
+  onDelete,
+  deleteLabel = 'מחק',
 }: PanelFooterProps) {
   return (
     <footer className="flex-none border-t border-slate-200 bg-white px-5 py-3">
       <div className="flex items-center justify-between gap-3">
-        {/* Right side (start in RTL): סגור + optional printer/export */}
+        {/* Right side (start in RTL): סגור + optional delete/printer/export */}
         <div className="flex items-center gap-2">
           <Button type="button" variant="outline" onClick={onClose}>
             סגור
           </Button>
+          {onDelete && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onDelete}
+              className="gap-2 border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+            >
+              <Trash2 className="h-4 w-4" />
+              {deleteLabel}
+            </Button>
+          )}
           {showPrinter && (
             <Tooltip>
               <TooltipTrigger render={<span className="block" />}>

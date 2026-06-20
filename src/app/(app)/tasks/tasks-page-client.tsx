@@ -11,6 +11,10 @@ import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { KpiCard } from '@/app/(app)/dashboard/components/KpiCard';
 import { TasksKanban } from '@/components/tasks/tasks-kanban';
 import { TasksTable } from '@/components/tasks/tasks-table';
@@ -68,6 +72,7 @@ export function TasksPageClient({
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<TaskWithAssignee | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TaskWithAssignee | null>(null);
 
   const didMount = useRef(false);
 
@@ -138,6 +143,20 @@ export function TasksPageClient({
   function openEdit(t: TaskWithAssignee) {
     setEditing(t);
     setFormOpen(true);
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    try {
+      const res = await fetch(`/api/tasks/${deleteTarget.id}`, { method: 'DELETE', credentials: 'include' });
+      if (res.status !== 204 && !res.ok) throw new Error(`HTTP ${res.status}`);
+      toast.success('המשימה נמחקה');
+      if (editing?.id === deleteTarget.id) setFormOpen(false);
+      setDeleteTarget(null);
+      void fetchTasks();
+    } catch (err) {
+      toast.error(`מחיקה נכשלה: ${(err as Error).message}`);
+    }
   }
 
   async function handleMove(taskId: string, toStatus: TaskStatus, toIndex: number) {
@@ -318,9 +337,9 @@ export function TasksPageClient({
 
       {/* Board / Table — completed tab is always a table */}
       {tab === 'active' && view === 'kanban' ? (
-        <TasksKanban tasks={shown} canEdit={canEdit} onSelect={openEdit} onMove={handleMove} statuses={ACTIVE_TASK_STATUSES} />
+        <TasksKanban tasks={shown} canEdit={canEdit} onSelect={openEdit} onMove={handleMove} statuses={ACTIVE_TASK_STATUSES} onDelete={canEdit ? setDeleteTarget : undefined} />
       ) : (
-        <TasksTable tasks={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} />
+        <TasksTable tasks={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} onDelete={canEdit ? setDeleteTarget : undefined} />
       )}
 
       <TaskFormPanel
@@ -332,7 +351,25 @@ export function TasksPageClient({
         currentUser={currentUser}
         onOpenChange={setFormOpen}
         onSaved={() => void fetchTasks()}
+        onDelete={canEdit && editing ? () => setDeleteTarget(editing) : undefined}
       />
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>למחוק את המשימה?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget ? `"${deleteTarget.title}" תימחק. לא ניתן לשחזר.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ביטול</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-white hover:bg-destructive/90">
+              מחק
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
