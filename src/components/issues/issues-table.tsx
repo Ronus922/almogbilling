@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowDown, ArrowUp, MessageSquare, ImageIcon, Link2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, MessageSquare, ImageIcon } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -65,11 +65,6 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect, onDelete }: 
                     <span className="inline-flex items-center gap-0.5 text-xs text-slate-400">
                       <MessageSquare className="h-3.5 w-3.5" />
                       {i.comment_count}
-                    </span>
-                  )}
-                  {i.linked_task_id && (
-                    <span className="inline-flex items-center gap-0.5 text-xs text-blue-500" title="משויכת משימה">
-                      <Link2 className="h-3.5 w-3.5" />
                     </span>
                   )}
                 </div>

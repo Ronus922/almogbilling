@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   X, AlertTriangle, MapPin, User, Images, MessageSquare, Trash2, Send,
-  ListTodo, Link2, CheckCircle2, Upload, Loader2,
+  Upload, Loader2,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
@@ -112,7 +112,6 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_file_type: 'סוג קובץ לא נתמך (JPG / PNG / WebP בלבד)',
   file_too_large: 'הקובץ גדול מדי (עד 5MB)',
   too_many_images: `ניתן לצרף עד ${ISSUE_MAX_IMAGES} תמונות`,
-  task_already_linked: 'כבר קיימת משימה מקושרת לתקלה זו',
 };
 
 function mapError(code: string | undefined, fallback: string): string {
@@ -129,11 +128,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
   const [images, setImages] = useState<IssueImage[]>([]);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
   const [initialReminders, setInitialReminders] = useState<ReminderRow[]>([]);
-  const [linkedTaskId, setLinkedTaskId] = useState<string | null>(null);
   const [commentInput, setCommentInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [creatingTask, setCreatingTask] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [titleTouched, setTitleTouched] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
@@ -144,7 +141,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
       const r = await fetch(`/api/issues/${id}`, { credentials: 'include' });
       if (!r.ok) return;
       const data = (await r.json()) as {
-        issue?: Issue & { linked_task_id?: string | null };
+        issue?: Issue;
         comments?: IssueComment[];
         images?: IssueImage[];
         reminders?: { id: string; remind_at: string; channel: string; channels: ReminderRow['channels'] | null }[];
@@ -157,9 +154,6 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
       });
       setReminders(rem);
       setInitialReminders(rem);
-      // linked task id comes back on the enriched issue row
-      const lt = (data.issue as { linked_task_id?: string | null } | undefined)?.linked_task_id;
-      setLinkedTaskId(lt ?? null);
     } catch {
       /* non-fatal */
     }
@@ -174,12 +168,10 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
       setImages([]);
       setReminders([]);
       setInitialReminders([]);
-      setLinkedTaskId(null);
       setCommentInput('');
       setTitleTouched(false);
       setSubmitting(false);
       setUploading(false);
-      setCreatingTask(false);
       setNotify(EMPTY_NOTIFY_SELECTION);
       if (issue) void loadDetail(issue.id);
     }
@@ -388,26 +380,6 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
       setCommentInput('');
     } catch (e) {
       toast.error((e as Error).message);
-    }
-  }
-
-  async function createTaskFromIssue() {
-    if (!issue) return;
-    setCreatingTask(true);
-    try {
-      const r = await fetch(`/api/issues/${issue.id}/create-task`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-      const data = (await r.json().catch(() => ({}))) as { task?: { id: string }; error?: string };
-      if (!r.ok || !data.task) throw new Error(mapError(data.error, 'יצירת המשימה נכשלה'));
-      setLinkedTaskId(data.task.id);
-      toast.success('נוצרה משימה מקושרת');
-      onSaved();
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setCreatingTask(false);
     }
   }
 
@@ -650,35 +622,6 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
                           </div>
                         ))}
                       </div>
-                    )}
-                  </div>
-                </Section>
-              )}
-
-              {/* Linked task / create-task — edit mode only */}
-              {isEdit && (
-                <Section title="משימה מקושרת" icon={ListTodo} iconTone="emerald">
-                  <div className="py-2">
-                    {linkedTaskId ? (
-                      <a
-                        href={`/tasks?task=${linkedTaskId}`}
-                        className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-100"
-                      >
-                        <Link2 className="h-4 w-4" />
-                        פתח את המשימה המקושרת
-                      </a>
-                    ) : canEdit ? (
-                      <button
-                        type="button"
-                        onClick={() => void createTaskFromIssue()}
-                        disabled={creatingTask}
-                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-60"
-                      >
-                        {creatingTask ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                        {creatingTask ? 'יוצר משימה…' : 'צור משימה מתקלה'}
-                      </button>
-                    ) : (
-                      <p className="py-2 text-center text-xs text-slate-400">אין משימה מקושרת.</p>
                     )}
                   </div>
                 </Section>
