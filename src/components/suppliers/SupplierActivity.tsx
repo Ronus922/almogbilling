@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Activity, Plus, Pencil, Archive, RotateCcw, Upload, FileText, Trash2,
+  Activity, Plus, Pencil, Archive, RotateCcw, Upload, FileText, Trash2, User,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -10,7 +10,7 @@ import type { SupplierActivityEntry } from '@/lib/types/suppliers';
 
 // Hebrew labels for the writable supplier fields (used by the 'updated' verb).
 const FIELD_LABELS: Record<string, string> = {
-  display_name: 'שם תצוגה',
+  display_name: 'שם החברה',
   company_name: 'שם החברה',
   contact_person: 'איש קשר',
   supplier_type: 'סוג ספק',
@@ -35,21 +35,21 @@ const FIELD_LABELS: Record<string, string> = {
 interface ActionMeta {
   label: string;
   icon: LucideIcon;
-  tone: string; // chip classes
+  tone: string; // node chip classes (light bg + colored icon) — reference §28.4
 }
 
 const ACTION_META: Record<string, ActionMeta> = {
-  created: { label: 'הספק נוצר', icon: Plus, tone: 'bg-emerald-100 text-emerald-700' },
-  updated: { label: 'פרטים עודכנו', icon: Pencil, tone: 'bg-blue-100 text-blue-700' },
-  archived: { label: 'הועבר לארכיון', icon: Archive, tone: 'bg-amber-100 text-amber-700' },
-  restored: { label: 'שוחזר מארכיון', icon: RotateCcw, tone: 'bg-emerald-100 text-emerald-700' },
-  document_uploaded: { label: 'מסמך הועלה', icon: Upload, tone: 'bg-blue-100 text-blue-700' },
-  document_renamed: { label: 'שם מסמך שונה', icon: FileText, tone: 'bg-slate-100 text-slate-600' },
-  document_deleted: { label: 'מסמך נמחק', icon: Trash2, tone: 'bg-rose-100 text-rose-600' },
+  created: { label: 'הספק נוצר', icon: Plus, tone: 'bg-[#e7f7ee] text-[#16a34a]' },
+  updated: { label: 'פרטים עודכנו', icon: Pencil, tone: 'bg-[#e8f0ff] text-[#2563eb]' },
+  archived: { label: 'הועבר לארכיון', icon: Archive, tone: 'bg-[#fff3e6] text-[#ea8a18]' },
+  restored: { label: 'שוחזר מארכיון', icon: RotateCcw, tone: 'bg-[#e7f7ee] text-[#16a34a]' },
+  document_uploaded: { label: 'מסמך הועלה', icon: Upload, tone: 'bg-[#fff3e6] text-[#ea8a18]' },
+  document_renamed: { label: 'שם מסמך שונה', icon: FileText, tone: 'bg-[#eef2f7] text-[#475569]' },
+  document_deleted: { label: 'מסמך נמחק', icon: Trash2, tone: 'bg-[#ffe4e6] text-[#e11d48]' },
 };
 
 function fallbackMeta(action: string): ActionMeta {
-  return { label: action, icon: Activity, tone: 'bg-slate-100 text-slate-600' };
+  return { label: action, icon: Activity, tone: 'bg-[#eef2f7] text-[#475569]' };
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -134,46 +134,70 @@ export function SupplierActivity({
 
   if (entries.length === 0) {
     return (
-      <div className="rounded-xl bg-white p-12 text-center ring-1 ring-slate-200/70">
+      <div className="rounded-[14px] border border-[#e9edf4] bg-white p-12 text-center">
         <Activity className="mx-auto h-8 w-8 text-slate-300" />
         <p className="mt-3 text-sm text-muted-foreground">אין עדיין פעילות מתועדת</p>
       </div>
     );
   }
 
+  // DESIGN.md §28.4 activity timeline — heading + vertical rail + nodes + cards.
   return (
-    <ol className="space-y-2">
-      {entries.map((entry) => {
-        const meta = ACTION_META[entry.action] ?? fallbackMeta(entry.action);
-        const Icon = meta.icon;
-        const detail = describe(entry);
-        return (
-          <li
-            key={entry.id}
-            className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"
-          >
-            <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-lg', meta.tone)}>
-              <Icon className="h-4 w-4" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                <span className="text-sm font-semibold text-slate-800">{meta.label}</span>
-                <span dir="ltr" className="text-xs tabular-nums text-slate-400">
+    <div>
+      {/* section heading (violet icon + title + count) */}
+      <div className="mb-5 flex items-center gap-[11px]">
+        <span className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px] bg-[#eef2ff] text-[#4f46e5]">
+          <Activity className="h-[17px] w-[17px]" />
+        </span>
+        <div>
+          <h2 className="text-lg font-extrabold text-slate-900">היסטוריית פעילות</h2>
+          <p className="text-[13px] font-medium text-[#94a3b8]">{entries.length} אירועים אחרונים</p>
+        </div>
+      </div>
+
+      <ol className="relative">
+        {/* rail on the logical-start edge */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute top-[10px] bottom-[30px] right-[21px] w-0.5 bg-[linear-gradient(#dbe2ec,#eef1f6)]"
+        />
+        {entries.map((entry) => {
+          const meta = ACTION_META[entry.action] ?? fallbackMeta(entry.action);
+          const Icon = meta.icon;
+          const detail = describe(entry);
+          return (
+            <li key={entry.id} className="relative flex items-stretch gap-[18px] pb-[14px] last:pb-0">
+              <div className="z-[1] flex w-11 shrink-0 justify-center">
+                <span
+                  className={cn(
+                    'grid h-11 w-11 place-items-center rounded-[13px] border-[3px] border-[#f4f6fb]',
+                    meta.tone,
+                  )}
+                >
+                  <Icon className="h-[19px] w-[19px]" />
+                </span>
+              </div>
+              <div className="flex flex-1 items-start justify-between gap-4 rounded-[14px] border border-[#e9edf4] bg-white px-[18px] py-[15px] shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+                <div className="min-w-0 text-right">
+                  <h3 className="text-[15.5px] font-bold text-[#0f172a]">{meta.label}</h3>
+                  {detail && (
+                    <p className="mt-[5px] truncate text-[13.5px] font-medium text-[#475569]" title={detail}>
+                      {detail}
+                    </p>
+                  )}
+                  <p className="mt-[7px] flex items-center gap-[5px] text-[12.5px] font-medium text-[#94a3b8]">
+                    <User className="h-[13px] w-[13px] text-[#cbd5e1]" />
+                    {entry.actor_name ?? 'מערכת'}
+                  </p>
+                </div>
+                <span dir="ltr" className="shrink-0 whitespace-nowrap text-[12.5px] font-medium tabular-nums text-[#94a3b8]">
                   {formatDateTime(entry.created_at)}
                 </span>
               </div>
-              {detail && (
-                <p className="mt-0.5 truncate text-sm text-slate-600" title={detail}>
-                  {detail}
-                </p>
-              )}
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {entry.actor_name ?? 'מערכת'}
-              </p>
-            </div>
-          </li>
-        );
-      })}
-    </ol>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }

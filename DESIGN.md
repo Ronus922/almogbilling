@@ -1186,6 +1186,90 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 
 ---
 
+## 28. Suppliers design language — Section A (standard)
+
+> **זהו ה-design-language הסטנדרטי החדש של המערכת.** הטוקנים נגזרו פיקסל-אחר-פיקסל
+> מ-5 מוקאפי הרפרנס של מודול הספקים (`ref/_decoded/{table,new,view,docs,history}.html`;
+> מקור מלא: `ref/SUPPLIERS_REDESIGN_SPEC.md`). **כל מודול חדש נבנה לפי הסטנדרט הזה.**
+> דיוק מוחלט — בכל פער בין קוד לרפרנס הרפרנס מנצח; משתמשים ב-arbitrary values מדויקים
+> (`h-[42px]`, `rounded-[14px]`, `bg-[#16308a]`) כשאין טוקן Tailwind מדויק. מיישמים
+> per-instance על קומפוננטות הספקים (לא נוגעים ב-`Section`/`Tabs`/`PanelFooter`/`Button`
+> המשותפים — הם עדיין משרתים מודולים שלא הוסבו).
+
+### 28.1 gradient-CTA (פעולה ראשית מודגשת)
+`bg-gradient-to-l from-[#1d4ed8] to-[#2563eb] text-white font-bold` + hover
+`from-[#1e40af] to-[#1d4ed8]`. צל לפי הקשר: top-bar `shadow-[0_10px_22px_-8px_rgba(37,99,235,0.6)]`
+(`h-[46px] rounded-[13px]`); footer DETAIL `shadow-[0_8px_18px_-6px_rgba(37,99,235,0.5)]`.
+**יוצא דופן — CREATE:** "צור ספק" **שטוח** `bg-[#2563eb] hover:bg-[#1d4ed8] shadow-[0_6px_16px_rgba(37,99,235,0.28)]`.
+
+### 28.2 entity dark-header — שתי משפחות
+**CREATE** (`new.html`, כחול-בהיר אופקי): `bg-[linear-gradient(to_left,#142a63_0%,#1d4ed8_70%,#2563eb_100%)]
+px-[26px] py-[18px]`; כותרת `text-[21px] font-extrabold`; תת `text-[12.5px] text-[#c7dbff]/[0.78]`;
+סגירה `h-[38px] w-[38px] rounded-[11px] bg-white/[0.14] hover:bg-white/[0.26]` (בלי border), X 19px stroke 2.2.
+**DETAIL** (`view/docs/history`, נייבי אלכסוני): `bg-[linear-gradient(120deg,#0e1f4d_0%,#16308a_55%,#1d4ed8_100%)]
+px-8 py-5`; כותרת `text-[26px] font-extrabold`; תת `text-[13.5px] text-[#c7dbff]/80` (קטגוריה + אייקון 15px);
+סגירה `h-[46px] w-[46px] rounded-[13px] bg-white/[0.14] hover:bg-white/[0.26]` (בלי border).
+
+### 28.3 in-sheet tab-bar
+container `rounded-[14px] border border-[#e9edf4] bg-white p-[6px] gap-[8px]`; טאב `h-[42px] rounded-[10px] text-[14.5px]`;
+פעיל `bg-[#2563eb] text-white font-bold`, לא-פעיל `text-[#64748b] font-semibold`.
+
+### 28.4 activity timeline
+כותרת-מקטע: אייקון 34×34 `rounded-[10px] bg-[#eef2ff] text-[#4f46e5]` + h2 18px/800 + תת 13px/#94a3b8.
+פס אנכי בקצה-התחלה: `right-[21px] w-0.5 top-[10px] bottom-[30px] bg-[linear-gradient(#dbe2ec,#eef1f6)]`.
+צומת 44×44 `rounded-[13px] border-[3px] border-[#f4f6fb]` (svg 19), גוון לפי פעולה (edit `bg-[#e8f0ff] text-[#2563eb]`,
+upload `bg-[#fff3e6] text-[#ea8a18]`, create `bg-[#e7f7ee] text-[#16a34a]`, delete `bg-[#ffe4e6] text-[#e11d48]`); gap לכרטיס 18px.
+כרטיס `rounded-[14px] border border-[#e9edf4] px-[18px] py-[15px] shadow-[0_1px_2px_rgba(15,23,42,0.04)]`;
+כותרת 15.5px/700/#0f172a; פירוט 13.5px/#475569 (`mt-[5px]`); שחקן 12.5px/#94a3b8 + user-icon 13px/#cbd5e1; תאריך 12.5px/#94a3b8 `dir=ltr`.
+
+### 28.5 upload dropzone
+`border-2 border-dashed border-[#d8e0ec] rounded-[14px] bg-[#fafbfd] p-[26px]` hover `border-[#93b4f0] bg-[#f5f9ff]`;
+אייקון 48×48 `rounded-[13px] bg-[#e8f0ff] text-[#2563eb]` (svg 22); כותרת 14px/600/#334155; רמז 12.5px/#94a3b8.
+שדות העלאה (select/קובץ) `h-[46px] rounded-[11px]`; כפתור "העלה מסמך" = gradient-CTA `h-[46px] rounded-[12px]`.
+
+### 28.6 document row
+`rounded-[13px] border border-[#eef1f6] bg-[#fafbfd] px-4 py-[14px]` hover `border-[#dbe2ec] bg-white`;
+אייקון-קובץ 44×44 `rounded-[11px]` tone-לפי-MIME (PDF `bg-[#fef2f2] text-[#dc2626]`, תמונה blue, גיליון emerald, אחר slate);
+שם 15px/700/#0f172a; מטא 12.5px/#94a3b8 בסדר **תאריך • גודל [badge]** (dot 3px #cbd5e1);
+badge `rounded-full bg-[#e8f0ff] text-[#2563eb] px-[9px] py-[3px] 11.5px/600`; פעולות צפייה/שינוי-שם/מחיקה
+`h-9 rounded-[9px]` בגווני `#2563eb`/`#64748b`/`#dc2626` (hover `#eff5ff`/`#eef2f7`/`#fef2f2`).
+
+### 28.7 entity section-card — שתי משפחות (קומפוננטה `SupplierSection`)
+**CREATE:** `rounded-[14px] border border-[#e7ebf1] px-5 py-[18px]`; אייקון 30×30 `rounded-[9px]` (svg 16); h2 16px/700.
+**DETAIL:** `rounded-[18px] border border-[#e9edf4] px-[26px] py-[22px]`; אייקון 34×34 `rounded-[10px]` (svg 17); h2 18px/800.
+גווני אייקון: blue `bg-[#e8f0ff] text-[#2563eb]`, amber `bg-[#fff3e6] text-[#ea8a18]`, emerald `bg-[#e7f7ee] text-[#16a34a]`,
+slate `bg-[#eef2f7] text-[#475569]`, violet `bg-[#eef2ff] text-[#4f46e5]`. מיושם ב-`SupplierSection.tsx` (variant `create`/`detail`).
+
+### 28.8 entity form-field
+label 12.5px/600/#64748b (`text-xs`), `mb-1.5`; כוכבית חובה `text-red-500`.
+input editable: `h-[42px] rounded-[10px] border-[#e2e8f0] px-[13px] text-[14px] text-[#0f172a]`,
+focus `focus-visible:border-[#2563eb] focus-visible:ring-[3px] focus-visible:ring-[#2563eb]/[0.12]`, error `border-red-400 bg-red-50`.
+ה-`SelectTrigger` בטפסים = `h-[42px] rounded-[10px]` (בלי פער מול input).
+**readonly box (צפייה):** `min-h-[44px] rounded-[10px] border border-[#e7ebf1] bg-[#f8fafc] px-[13px] py-[10px]
+text-[14px] font-medium text-[#0f172a]`; ריק → `text-[#94a3b8]` "—"; אימייל/אתר → `text-[#2563eb]`.
+
+### 28.9 suppliers table + toolbar
+top-bar: icon-chip 48×48 `rounded-[14px] bg-[#e8f0ff] text-[#2563eb]` (Truck 24) + כותרת `text-[27px] font-black` +
+תת `text-[13.5px] text-[#94a3b8]` עם ספירה inline; כפתורים "ספק חדש" (gradient, ימין) + "ניהול קטגוריות" (outline `h-[46px] rounded-[13px]`, שמאל).
+קארד יחיד `rounded-[18px] border border-[#e9edf4] bg-white overflow-hidden`: toolbar (`border-b border-[#eef1f6] px-[22px] py-4`) → טבלה.
+toolbar: pills (start) + dropdown-pill קטגוריה, search (end) `h-10 w-[300px] rounded-[11px] bg-[#fafbfd] border-[#e7ebf1]` אייקון 17px start.
+pill: `h-9 rounded-full px-4 text-[13.5px]`, פעיל `bg-[#2563eb] text-white font-bold`, idle `border border-[#e2e8f0] bg-white text-[#475569] font-semibold`.
+טבלה = CSS grid `grid-cols-[1.6fr_1.3fr_1.1fr_1fr_1.3fr_1.6fr_0.9fr] gap-3`; כותרות `12.5px/700 #94a3b8 bg-[#fafbfd] px-6 py-[14px]`;
+שורות `px-6 py-[18px] border-b border-[#f1f4f8] hover:bg-[#fafbfd]`; שם=ימין 14.5px/700, השאר=center; טלפון/נייד/אימייל `#2563eb dir=ltr`; em-dash `#cbd5e1`.
+status pill `rounded-full px-[11px] py-[4px] gap-[5px] text-xs font-semibold` (active `bg-green-100 text-green-700` dot 6px `bg-green-500`).
+category badge **צבע-לפי-קטגוריה** (hash→פלטה; `rounded-full px-[11px] py-[4px] text-xs font-semibold`). מודל-הנתונים חסר `color` — מומלצת מיגרציה additive `supplier_categories.color`.
+
+### 28.10 category-management sheet
+Side panel (`side="left"`) — header DETAIL (`§28.2`) אך כותרת `text-[23px]`, תת `text-[13px]`, סגירה `h-11 w-11 rounded-[13px]`.
+body `bg-[#f4f6fb] p-6` → `SupplierSection` (detail) "קטגוריות" אייקון `Folder` blue.
+add-row: input `h-[46px] flex-1 rounded-[11px] border-[#e2e8f0] px-[14px]` + "הוסף" gradient-CTA `h-[46px] rounded-[11px] px-[22px]` (mb-2).
+row: `flex items-center justify-between px-[6px] py-[14px] border-b border-[#f1f4f8]`; שם=ימין 15px/700/#0f172a; controls=שמאל (gap-[6px]):
+count badge `rounded-full bg-[#eef2f7] text-[#64748b] px-[10px] py-[4px] 12px/600`,
+toggle 42×24 `rounded-full` (on `bg-[#2563eb]` knob 18 left-[3px] / off `bg-slate-300` knob right-[3px]),
+rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 rounded-[9px] text-[#dc2626] hover:bg-[#fef2f2]` (נעול=`text-[#d4dbe6]` ללא פעולה כשמשויכים ספקים).
+
+---
+
 ## אם משהו חסר כאן
 
 לפני שאתה מנחש — בדוק שתי קומפוננטות קיימות באותה משפחה (טבלאות, קלפים, וכו'). אם אין דפוס קיים — שאל את המשתמש לפני שאתה ממציא וריאציה חדשה. עדכון ל-DESIGN.md הוא חלק מ-MR — לא משאיר decision לא-מתועד.

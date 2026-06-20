@@ -58,3 +58,6 @@ AGENTS.md
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# design reference bundles (not committed)
+ref/

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, FolderCog } from 'lucide-react';
+import { Plus, FolderCog, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import type {
@@ -86,36 +86,46 @@ export function SuppliersPageClient({
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Top bar — DESIGN.md §28 */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-baseline gap-3">
-          <h1 className="text-2xl font-extrabold text-slate-900">ספקים</h1>
-          <span className="text-sm text-muted-foreground">ניהול ספקי השירות של הבניין</span>
-          <span className="inline-flex items-center justify-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">
-            {suppliers.length}
+        <div className="flex items-center gap-[13px]">
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[14px] bg-[#e8f0ff] text-[#2563eb]">
+            <Truck className="h-6 w-6" />
           </span>
+          <div>
+            <h1 className="text-[27px] font-black tracking-[-0.02em] text-[#0f172a]">ספקים</h1>
+            <p className="text-[13.5px] font-medium text-[#94a3b8]">
+              ניהול ספקי השירות של הבניין · {suppliers.length}
+            </p>
+          </div>
         </div>
 
         {canEdit && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {/* gradient CTA (RTL start = right) */}
+            <Button
+              type="button"
+              onClick={() => setShowCreate(true)}
+              className="h-[46px] gap-2 rounded-[13px] bg-gradient-to-l from-[#1d4ed8] to-[#2563eb] px-5 text-[14.5px] font-bold text-white shadow-[0_10px_22px_-8px_rgba(37,99,235,0.6)] hover:from-[#1e40af] hover:to-[#1d4ed8]"
+            >
+              <Plus className="h-[17px] w-[17px]" strokeWidth={2.3} />
+              ספק חדש
+            </Button>
             <Button
               type="button"
               variant="outline"
               onClick={() => setShowCategories(true)}
-              className="gap-2"
+              className="h-[46px] gap-2 rounded-[13px] border-[#e2e8f0] bg-white px-[18px] text-sm font-semibold text-[#475569]"
             >
               <FolderCog className="h-4 w-4" />
               ניהול קטגוריות
-            </Button>
-            <Button type="button" onClick={() => setShowCreate(true)} className="gap-2">
-              <Plus className="h-4 w-4" />
-              ספק חדש
             </Button>
           </div>
         )}
       </div>
 
-      <div className="space-y-3 rounded-lg bg-card p-4 border">
+      {/* Single card: toolbar (border-bottom) → table */}
+      <div className="overflow-hidden rounded-[18px] border border-[#e9edf4] bg-white">
         <SupplierFilters filters={filters} categories={categories} onChange={updateFilters} />
         <SupplierTable
           rows={suppliers}

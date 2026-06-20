@@ -3,12 +3,16 @@
 import { Clock, FileDown, Printer, Save, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 
 export interface PanelFooterProps {
   onClose: () => void;
   onSave: () => void;
   saveDisabled?: boolean;
   saveLabel?: string;
+  /** Optional extra classes merged onto the primary save button (e.g. a
+   *  gradient CTA). Additive — callers that omit it keep the flat default. */
+  saveClassName?: string;
   /**
    * Optional tooltip text shown when save button is disabled — useful for
    * explaining WHY (e.g., "אין הרשאה — כניסה כצופה"). Wraps the disabled
@@ -29,6 +33,7 @@ export function PanelFooter({
   onSave,
   saveDisabled = false,
   saveLabel = 'שמור שינויים',
+  saveClassName,
   saveDisabledReason,
   showPrinter = false,
   showExport = false,
@@ -105,7 +110,7 @@ export function PanelFooter({
               type="button"
               onClick={onSave}
               disabled={saveDisabled}
-              className="gap-2"
+              className={cn('gap-2', saveClassName)}
             >
               <Save className="h-4 w-4" />
               {saveLabel}

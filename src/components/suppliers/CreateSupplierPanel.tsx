@@ -6,7 +6,6 @@ import {
   X, Building2, MapPin, CreditCard,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -16,10 +15,10 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Section } from '@/components/side-panel/Section';
+import { SupplierSection } from './SupplierSection';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
+import { SupplierField, FIELD_LABEL } from './SupplierField';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
-import { cn } from '@/lib/utils';
 import { validatePhone } from '@/lib/validation';
 import { PAYMENT_TERMS, paymentTermsLabel } from '@/lib/constants/suppliers';
 import type {
@@ -201,12 +200,12 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
           showCloseButton={false}
           className="w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
         >
-          {/* Header */}
-          <SheetHeader className="flex-none gap-2 bg-gradient-to-bl from-slate-900 via-blue-950 to-blue-900 px-6 py-6 text-white">
+          {/* Header — CREATE family (bright-blue horizontal gradient) */}
+          <SheetHeader className="flex-none gap-2 bg-[linear-gradient(to_left,#142a63_0%,#1d4ed8_70%,#2563eb_100%)] px-[26px] py-[18px] text-white">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
-                <SheetTitle className="text-2xl font-bold text-white">ספק חדש</SheetTitle>
-                <p className="mt-1 text-sm text-white/70">
+                <SheetTitle className="text-[21px] font-extrabold text-white">ספק חדש</SheetTitle>
+                <p className="mt-[3px] text-[12.5px] font-medium text-[#c7dbff]/[0.78]">
                   מלא את פרטי הספק. ניתן לערוך ולהוסיף מסמכים לאחר היצירה.
                 </p>
               </div>
@@ -215,22 +214,22 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
                 onClick={requestClose}
                 aria-label="סגור"
                 disabled={submitting}
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-white/25 bg-white/5 text-white transition-colors hover:bg-white/15 hover:border-white/50 disabled:opacity-60"
+                className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] bg-white/[0.14] text-white transition-colors hover:bg-white/[0.26] disabled:opacity-60"
               >
-                <X className="h-5 w-5" />
+                <X className="h-[19px] w-[19px]" strokeWidth={2.2} />
               </button>
             </div>
           </SheetHeader>
 
           {/* Body */}
-          <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5">
-            <div className="space-y-4">
+          <div className="flex-1 overflow-y-auto bg-[#eef1f6] p-[18px]">
+            <div className="space-y-[14px]">
               {/* Section 1 — פרטי הספק */}
-              <Section title="פרטי הספק" icon={Building2} iconTone="blue">
-                <div className="space-y-4 py-2">
-                  <Field
+              <SupplierSection title="פרטי הספק" icon={Building2} iconTone="blue" variant="create">
+                <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
+                  <SupplierField
                     id="sup-display-name"
-                    label="שם תצוגה"
+                    label="שם החברה"
                     required
                     value={form.display_name}
                     onChange={(v) => set('display_name', v)}
@@ -238,22 +237,16 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
                     error={errFor('display_name')}
                     disabled={submitting}
                     autoFocus
+                    placeholder="שם רשמי של החברה"
                   />
-                  <Field
-                    id="sup-company-name"
-                    label="שם החברה"
-                    value={form.company_name}
-                    onChange={(v) => set('company_name', v)}
-                    disabled={submitting}
-                  />
-                  <div className="space-y-2">
-                    <Label className="text-base font-medium text-muted-foreground">קטגוריה</Label>
+                  <div className="space-y-1.5">
+                    <Label className={FIELD_LABEL}>קטגוריה</Label>
                     <Select
                       value={form.category_id}
                       onValueChange={(v) => set('category_id', v ?? NONE)}
                       disabled={submitting}
                     >
-                      <SelectTrigger className="w-full data-[size=default]:h-10">
+                      <SelectTrigger className="w-full rounded-[10px] border-[#e2e8f0] data-[size=default]:h-[42px]">
                         <SelectValue placeholder="בחר קטגוריה...">
                           {(value: string | null) => {
                             if (!value || value === NONE) return 'ללא קטגוריה';
@@ -269,14 +262,15 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
                       </SelectContent>
                     </Select>
                   </div>
-                  <Field
+                  <SupplierField
                     id="sup-contact-person"
                     label="איש קשר"
                     value={form.contact_person}
                     onChange={(v) => set('contact_person', v)}
                     disabled={submitting}
+                    placeholder="שם איש הקשר"
                   />
-                  <Field
+                  <SupplierField
                     id="sup-phone"
                     label="טלפון"
                     value={form.phone}
@@ -289,7 +283,7 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
                     tabularNums
                     placeholder="03-1234567"
                   />
-                  <Field
+                  <SupplierField
                     id="sup-mobile"
                     label="נייד"
                     value={form.mobile}
@@ -302,7 +296,7 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
                     tabularNums
                     placeholder="052-1234567"
                   />
-                  <Field
+                  <SupplierField
                     id="sup-email"
                     label="אימייל"
                     type="email"
@@ -313,26 +307,28 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
                     placeholder="supplier@example.com"
                   />
                 </div>
-              </Section>
+              </SupplierSection>
 
               {/* Section 2 — כתובת ופרטים נוספים */}
-              <Section title="כתובת ופרטים נוספים" icon={MapPin} iconTone="slate">
-                <div className="space-y-4 py-2">
-                  <Field
+              <SupplierSection title="כתובת ופרטים נוספים" icon={MapPin} iconTone="amber" variant="create">
+                <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
+                  <SupplierField
                     id="sup-address"
                     label="כתובת"
                     value={form.address}
                     onChange={(v) => set('address', v)}
                     disabled={submitting}
+                    placeholder="רחוב ומספר"
                   />
-                  <Field
+                  <SupplierField
                     id="sup-city"
                     label="עיר"
                     value={form.city}
                     onChange={(v) => set('city', v)}
                     disabled={submitting}
+                    placeholder="עיר"
                   />
-                  <Field
+                  <SupplierField
                     id="sup-website"
                     label="אתר אינטרנט"
                     value={form.website}
@@ -341,7 +337,7 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
                     dir="ltr"
                     placeholder="https://"
                   />
-                  <Field
+                  <SupplierField
                     id="sup-tax-id"
                     label="ח.פ / עוסק מורשה"
                     value={form.tax_id}
@@ -349,31 +345,33 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
                     disabled={submitting}
                     dir="ltr"
                     tabularNums
+                    placeholder="מספר זיהוי"
                   />
-                  <div className="space-y-2">
-                    <Label htmlFor="sup-notes" className="text-base font-medium text-muted-foreground">הערות</Label>
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <Label htmlFor="sup-notes" className={FIELD_LABEL}>הערות</Label>
                     <Textarea
                       id="sup-notes"
                       value={form.notes}
                       onChange={(e) => set('notes', e.target.value)}
                       disabled={submitting}
-                      className="min-h-24"
+                      placeholder="הערות פנימיות על הספק…"
+                      className="min-h-[74px] rounded-[10px] border-[#e2e8f0] px-[13px] py-[11px] text-[14px]"
                     />
                   </div>
                 </div>
-              </Section>
+              </SupplierSection>
 
               {/* Section 3 — תנאי תשלום */}
-              <Section title="תנאי תשלום" icon={CreditCard} iconTone="emerald">
-                <div className="space-y-4 py-2">
-                  <div className="space-y-2">
-                    <Label className="text-base font-medium text-muted-foreground">תנאי תשלום</Label>
+              <SupplierSection title="תנאי תשלום" icon={CreditCard} iconTone="emerald" variant="create">
+                <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label className={FIELD_LABEL}>תנאי תשלום</Label>
                     <Select
                       value={form.payment_terms}
                       onValueChange={(v) => { if (v) set('payment_terms', v as SupplierPaymentTerms); }}
                       disabled={submitting}
                     >
-                      <SelectTrigger className="w-full data-[size=default]:h-10">
+                      <SelectTrigger className="w-full rounded-[10px] border-[#e2e8f0] data-[size=default]:h-[42px]">
                         <SelectValue placeholder="בחר תנאי תשלום...">
                           {(value: string | null) => (value ? paymentTermsLabel(value) : null)}
                         </SelectValue>
@@ -385,14 +383,15 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
                       </SelectContent>
                     </Select>
                   </div>
-                  <Field
+                  <SupplierField
                     id="sup-bank-name"
                     label="שם הבנק"
                     value={form.bank_name}
                     onChange={(v) => set('bank_name', v)}
                     disabled={submitting}
+                    placeholder="שם הבנק"
                   />
-                  <Field
+                  <SupplierField
                     id="sup-bank-branch"
                     label="סניף"
                     value={form.bank_branch}
@@ -400,8 +399,9 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
                     disabled={submitting}
                     dir="ltr"
                     tabularNums
+                    placeholder="מספר סניף"
                   />
-                  <Field
+                  <SupplierField
                     id="sup-bank-account"
                     label="מספר חשבון"
                     value={form.bank_account}
@@ -409,9 +409,10 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
                     disabled={submitting}
                     dir="ltr"
                     tabularNums
+                    placeholder="מספר חשבון"
                   />
                 </div>
-              </Section>
+              </SupplierSection>
             </div>
           </div>
 
@@ -421,6 +422,7 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
             onSave={handleSubmit}
             saveDisabled={!canSubmit}
             saveLabel={submitting ? 'יוצר…' : 'צור ספק'}
+            saveClassName="bg-[#2563eb] text-white hover:bg-[#1d4ed8] shadow-[0_6px_16px_rgba(37,99,235,0.28)]"
           />
         </SheetContent>
       </Sheet>
@@ -446,59 +448,5 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
         </AlertDialogContent>
       </AlertDialog>
     </>
-  );
-}
-
-interface FieldProps {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  onBlur?: () => void;
-  error?: string | null;
-  required?: boolean;
-  disabled?: boolean;
-  type?: string;
-  dir?: 'ltr' | 'rtl';
-  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
-  tabularNums?: boolean;
-  placeholder?: string;
-  autoFocus?: boolean;
-}
-
-/** Field-error pattern mirrors EditPhoneDialog / ResetPasswordForm (ring + message). */
-function Field({
-  id, label, value, onChange, onBlur, error, required, disabled,
-  type, dir, inputMode, tabularNums, placeholder, autoFocus,
-}: FieldProps) {
-  return (
-    <div className="space-y-2">
-      <Label htmlFor={id} className="text-base font-medium text-muted-foreground">
-        {label}
-        {required && <span className="text-red-500"> *</span>}
-      </Label>
-      <Input
-        id={id}
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={onBlur}
-        disabled={disabled}
-        dir={dir}
-        inputMode={inputMode}
-        placeholder={placeholder}
-        autoFocus={autoFocus}
-        className={cn(
-          'h-10',
-          tabularNums && 'tabular-nums',
-          error && 'border-red-400 bg-red-50 focus-visible:ring-red-200',
-        )}
-      />
-      {error && (
-        <p className="text-[12px] font-semibold text-red-500 text-right">
-          ⚠️ {error}
-        </p>
-      )}
-    </div>
   );
 }

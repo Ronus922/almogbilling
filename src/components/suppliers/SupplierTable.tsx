@@ -1,22 +1,12 @@
 'use client';
 
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import {
-  supplierStatusMeta,
-  type DesignTone,
-} from '@/lib/constants/suppliers';
 import { formatPhoneDisplay, phoneTelHref } from '@/lib/phone';
-import type { SupplierListItem, SupplierStatus } from '@/lib/types/suppliers';
+import type { SupplierListItem } from '@/lib/types/suppliers';
+import { SupplierStatusPill, SupplierCategoryBadge } from './SupplierBadges';
 
-// DESIGN.md §2 tone → badge classes. Only the tones the status palette uses.
-const STATUS_TONE: Record<DesignTone, string> = {
-  emerald: 'bg-emerald-100 text-emerald-700',
-  slate: 'bg-slate-100 text-slate-600',
-  amber: 'bg-amber-100 text-amber-700',
-};
+// DESIGN.md §28 suppliers table — CSS grid, reference column ratios.
+const COLS = 'grid-cols-[1.6fr_1.3fr_1.1fr_1fr_1.3fr_1.6fr_0.9fr]';
 
 export function SupplierTable({
   rows,
@@ -29,7 +19,7 @@ export function SupplierTable({
 }) {
   if (loading) {
     return (
-      <div className="space-y-2">
+      <div className="space-y-2 p-4">
         {Array.from({ length: 8 }).map((_, i) => (
           <div key={i} className="h-12 rounded-lg bg-muted/60 animate-pulse" />
         ))}
@@ -39,110 +29,88 @@ export function SupplierTable({
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-lg border bg-card p-12 text-center text-sm text-muted-foreground">
+      <div className="p-12 text-center text-sm text-muted-foreground">
         לא נמצאו ספקים. הוסיפו ספק חדש כדי להתחיל.
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-      <Table>
-        <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
-          <TableRow className="bg-slate-50 hover:bg-slate-50">
-            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">שם</TableHead>
-            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">קטגוריה</TableHead>
-            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">איש קשר</TableHead>
-            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">טלפון</TableHead>
-            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500 max-md:hidden">נייד</TableHead>
-            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500 max-lg:hidden">אימייל</TableHead>
-            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">סטטוס</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((s) => {
-            const phone = formatPhoneDisplay(s.phone);
-            const mobile = formatPhoneDisplay(s.mobile);
-            return (
-              <TableRow
-                key={s.id}
-                onClick={() => onRowClick(s.id)}
-                className="cursor-pointer border-b border-slate-100 hover:bg-slate-50 h-12"
-              >
-                <TableCell className="px-4 py-3 text-right text-sm">
-                  <span className="block font-bold text-slate-900">{s.display_name}</span>
-                  {s.company_name && (
-                    <span className="block text-xs text-slate-500">{s.company_name}</span>
-                  )}
-                </TableCell>
-                <TableCell className="px-4 py-3 text-right">
-                  {s.category_name ? (
-                    <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
-                      {s.category_name}
-                    </span>
-                  ) : (
-                    <span className="text-slate-400">—</span>
-                  )}
-                </TableCell>
-                <TableCell className="px-4 py-3 text-right text-sm text-slate-700">
-                  {s.contact_person || '—'}
-                </TableCell>
-                <TableCell dir="ltr" className="px-4 py-3 text-center text-sm tabular-nums">
-                  <PhoneLink display={phone} raw={s.phone} />
-                </TableCell>
-                <TableCell dir="ltr" className="px-4 py-3 text-center text-sm tabular-nums max-md:hidden">
-                  <PhoneLink display={mobile} raw={s.mobile} />
-                </TableCell>
-                <TableCell dir="ltr" className="px-4 py-3 text-center text-sm max-lg:hidden">
-                  {s.email ? (
-                    <a
-                      href={`mailto:${s.email}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-blue-600 hover:text-blue-700 hover:underline underline-offset-2"
-                    >
-                      {s.email}
-                    </a>
-                  ) : (
-                    <span className="text-slate-500">—</span>
-                  )}
-                </TableCell>
-                <TableCell className="px-4 py-3 text-center">
-                  <StatusBadge status={s.status} />
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+    <div className="overflow-x-auto">
+      <div className="min-w-[880px]">
+        {/* head */}
+        <div className={cn('grid gap-3 border-b border-[#eef1f6] bg-[#fafbfd] px-6 py-[14px]', COLS)}>
+          <span className="text-[12.5px] font-bold text-[#94a3b8] text-right">שם</span>
+          <span className="text-[12.5px] font-bold text-[#94a3b8] text-center">קטגוריה</span>
+          <span className="text-[12.5px] font-bold text-[#94a3b8] text-center">איש קשר</span>
+          <span className="text-[12.5px] font-bold text-[#94a3b8] text-center">טלפון</span>
+          <span className="text-[12.5px] font-bold text-[#94a3b8] text-center">נייד</span>
+          <span className="text-[12.5px] font-bold text-[#94a3b8] text-center">אימייל</span>
+          <span className="text-[12.5px] font-bold text-[#94a3b8] text-center">סטטוס</span>
+        </div>
+
+        {/* rows */}
+        {rows.map((s) => (
+          <div
+            key={s.id}
+            onClick={() => onRowClick(s.id)}
+            className={cn(
+              'grid cursor-pointer items-center gap-3 border-b border-[#f1f4f8] px-6 py-[18px] transition-colors last:border-0 hover:bg-[#fafbfd]',
+              COLS,
+            )}
+          >
+            <span className="truncate text-right text-[14.5px] font-bold text-[#0f172a]">
+              {s.display_name}
+            </span>
+            <span className="flex justify-center">
+              <SupplierCategoryBadge name={s.category_name} />
+            </span>
+            <span className="truncate text-center text-[14px] font-medium text-[#475569]">
+              {s.contact_person || <em className="not-italic text-[#cbd5e1]">—</em>}
+            </span>
+            <span className="text-center">
+              <PhoneCell raw={s.phone} />
+            </span>
+            <span className="text-center">
+              <PhoneCell raw={s.mobile} />
+            </span>
+            <span className="text-center">
+              {s.email ? (
+                <a
+                  href={`mailto:${s.email}`}
+                  dir="ltr"
+                  onClick={(e) => e.stopPropagation()}
+                  className="block truncate text-[13.5px] font-medium text-[#2563eb] hover:underline underline-offset-2"
+                >
+                  {s.email}
+                </a>
+              ) : (
+                <span className="text-[#cbd5e1]">—</span>
+              )}
+            </span>
+            <span className="flex justify-center">
+              <SupplierStatusPill status={s.status} />
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
-/** Clickable tel: link from a (display, raw) phone pair, or an em-dash. */
-function PhoneLink({ display, raw }: { display: string | null; raw: string }) {
+/** Centered tel: link (#2563eb, dir=ltr) from a raw phone, or a light em-dash. */
+function PhoneCell({ raw }: { raw: string }) {
+  const display = formatPhoneDisplay(raw);
   const href = phoneTelHref(raw);
-  if (!display || !href) return <span className="text-slate-500">—</span>;
+  if (!display || !href) return <span className="text-[#cbd5e1]">—</span>;
   return (
     <a
       href={`tel:${href}`}
+      dir="ltr"
       onClick={(e) => e.stopPropagation()}
-      className="text-blue-600 hover:text-blue-700 hover:underline underline-offset-2"
+      className="text-[14px] font-semibold tabular-nums text-[#2563eb] hover:underline underline-offset-2"
     >
       {display}
     </a>
-  );
-}
-
-function StatusBadge({ status }: { status: SupplierStatus }) {
-  const meta = supplierStatusMeta(status);
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded-full px-3 py-0.5 text-xs font-semibold',
-        STATUS_TONE[meta.tone],
-      )}
-    >
-      {meta.label}
-    </span>
   );
 }

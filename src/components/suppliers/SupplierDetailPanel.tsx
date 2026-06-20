@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
-  X, Building2, MapPin, CreditCard, FileText, Activity, Phone, Mail, Globe,
-  User as UserIcon, StickyNote, Pencil, Power, Archive, Trash2,
+  X, Building2, MapPin, CreditCard, FileText, Activity, Phone,
+  StickyNote, Pencil, Power, Archive, Trash2,
   Upload, Download, Image as ImageIcon, FileSpreadsheet, File as FileIcon, Eye,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -24,8 +24,9 @@ import {
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { Section } from '@/components/side-panel/Section';
+import { SupplierSection } from './SupplierSection';
 import { SupplierActivity } from './SupplierActivity';
+import { SupplierField, ReadonlyField, FIELD_LABEL } from './SupplierField';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
 import { validatePhone } from '@/lib/validation';
@@ -52,11 +53,6 @@ interface Props {
   canEdit: boolean;
   canDelete: boolean;
 }
-
-const STATUS_TONE: Record<SupplierStatus, string> = {
-  active: 'bg-emerald-100 text-emerald-700',
-  archived: 'bg-amber-100 text-amber-700',
-};
 
 type FormState = SupplierWritableFields;
 
@@ -402,8 +398,8 @@ export function SupplierDetailPanel({
           showCloseButton={false}
           className="w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
         >
-          {/* Header */}
-          <SheetHeader className="flex-none gap-2 bg-gradient-to-bl from-slate-900 via-blue-950 to-blue-900 px-6 py-6 text-white">
+          {/* Header — DETAIL family (navy diagonal gradient) */}
+          <SheetHeader className="flex-none gap-2 bg-[linear-gradient(120deg,#0e1f4d_0%,#16308a_55%,#1d4ed8_100%)] px-8 py-5 text-white">
             {loading ? (
               <div className="space-y-2">
                 <div className="h-8 w-56 rounded bg-white/10 animate-pulse" />
@@ -412,42 +408,28 @@ export function SupplierDetailPanel({
             ) : supplier && statusMeta ? (
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <SheetTitle className="text-2xl font-bold text-white">
-                      {supplier.display_name}
-                    </SheetTitle>
-                    <span className={cn(
-                      'inline-flex items-center rounded-full px-3 py-0.5 text-xs font-semibold',
-                      STATUS_TONE[supplier.status],
-                    )}>
-                      {statusMeta.label}
-                    </span>
-                  </div>
-                  <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-white/70">
-                    <Building2 className="h-3.5 w-3.5" />
+                  <SheetTitle className="text-[26px] font-extrabold text-white">
+                    {supplier.display_name}
+                  </SheetTitle>
+                  <p className="mt-[6px] inline-flex items-center gap-[7px] text-[13.5px] font-medium text-[#c7dbff]/80">
+                    <Building2 className="h-[15px] w-[15px]" />
                     {headerCategoryName ?? 'ללא קטגוריה'}
-                    {supplier.company_name && (
-                      <>
-                        <span className="mx-1 text-white/40">•</span>
-                        {supplier.company_name}
-                      </>
-                    )}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={requestClose}
                   aria-label="סגור"
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-white/25 bg-white/5 text-white transition-colors hover:bg-white/15 hover:border-white/50"
+                  className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[13px] bg-white/[0.14] text-white transition-colors hover:bg-white/[0.26]"
                 >
-                  <X className="h-5 w-5" />
+                  <X className="h-5 w-5" strokeWidth={2.2} />
                 </button>
               </div>
             ) : null}
           </SheetHeader>
 
           {/* Body */}
-          <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5">
+          <div className="flex-1 overflow-y-auto bg-[#f4f6fb] p-6">
             {error ? (
               <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
                 שגיאה בטעינת הפרטים: {error}
@@ -459,16 +441,21 @@ export function SupplierDetailPanel({
               </div>
             ) : (
               <Tabs defaultValue="details" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="details" className="gap-2">
-                    <Building2 className="h-4 w-4" /> פרטים
-                  </TabsTrigger>
-                  <TabsTrigger value="documents" className="gap-2">
-                    <FileText className="h-4 w-4" /> מסמכים
-                  </TabsTrigger>
-                  <TabsTrigger value="activity" className="gap-2">
-                    <Activity className="h-4 w-4" /> פעילות
-                  </TabsTrigger>
+                {/* DESIGN.md §28.3 in-sheet tab-bar — white card + blue active pill. */}
+                <TabsList className="grid w-full grid-cols-3 gap-[8px] rounded-[14px] border border-[#e9edf4] bg-white p-[6px] group-data-horizontal/tabs:h-auto">
+                  {[
+                    { value: 'details', icon: Building2, label: 'פרטים' },
+                    { value: 'documents', icon: FileText, label: 'מסמכים' },
+                    { value: 'activity', icon: Activity, label: 'פעילות' },
+                  ].map(({ value, icon: TabIcon, label }) => (
+                    <TabsTrigger
+                      key={value}
+                      value={value}
+                      className="h-[42px] gap-2 rounded-[10px] text-[14.5px] font-semibold text-[#64748b] data-active:bg-[#2563eb] data-active:font-bold data-active:text-white group-data-[variant=default]/tabs-list:data-active:shadow-none"
+                    >
+                      <TabIcon className="h-4 w-4" /> {label}
+                    </TabsTrigger>
+                  ))}
                 </TabsList>
 
                 {/* TAB — פרטים */}
@@ -483,32 +470,23 @@ export function SupplierDetailPanel({
                       disabled={saving}
                     />
                   ) : (
-                    <ViewDetails
-                      supplier={supplier}
-                      categories={categories}
-                      canEdit={canEdit}
-                      canDelete={canDelete}
-                      saving={saving}
-                      onEdit={startEdit}
-                      onStatusChange={handleStatusChange}
-                      onRequestDelete={() => setConfirmDeleteOpen(true)}
-                    />
+                    <ViewDetails supplier={supplier} categories={categories} />
                   )}
                 </TabsContent>
 
                 {/* TAB — מסמכים */}
                 <TabsContent value="documents" className="mt-5 space-y-4">
                   {canEdit && (
-                    <Section title="העלאת מסמך" icon={Upload} iconTone="blue">
+                    <SupplierSection title="העלאת מסמך" icon={Upload} iconTone="blue">
                       <div className="space-y-3 py-2">
                         <div className="space-y-2">
-                          <Label className="text-base font-medium text-muted-foreground">סוג מסמך</Label>
+                          <Label className={FIELD_LABEL}>סוג מסמך</Label>
                           <Select
                             value={uploadDocType}
                             onValueChange={(v) => { if (v) setUploadDocType(v as SupplierDocType); }}
                             disabled={uploading}
                           >
-                            <SelectTrigger className="w-full data-[size=default]:h-10">
+                            <SelectTrigger className="w-full rounded-[11px] border-[#e2e8f0] data-[size=default]:h-[46px]">
                               <SelectValue placeholder="בחר סוג...">
                                 {(value: string | null) => (value ? docTypeLabel(value) : null)}
                               </SelectValue>
@@ -520,27 +498,47 @@ export function SupplierDetailPanel({
                             </SelectContent>
                           </Select>
                         </div>
+                        {/* DESIGN.md §28.5 upload dropzone */}
                         <div className="space-y-2">
-                          <Label htmlFor="sup-doc-file" className="text-base font-medium text-muted-foreground">קובץ</Label>
-                          <Input
-                            id="sup-doc-file"
-                            type="file"
-                            disabled={uploading}
-                            accept={ALLOWED_DOC_TYPES.join(',')}
-                            onChange={(e) => {
-                              const f = e.target.files?.[0] ?? null;
-                              setUploadFile(f);
-                              setUploadName(f ? f.name : '');
+                          <Label htmlFor="sup-doc-file" className={FIELD_LABEL}>קובץ</Label>
+                          <label
+                            htmlFor="sup-doc-file"
+                            aria-disabled={uploading}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              if (uploading) return;
+                              const f = e.dataTransfer.files?.[0] ?? null;
+                              if (f) { setUploadFile(f); setUploadName(f.name); }
                             }}
-                            className="h-10 pt-1.5"
-                          />
-                          <p className="text-xs text-slate-500">
-                            עד 10MB. תמונות, PDF, Word או Excel.
-                          </p>
+                            className="flex cursor-pointer flex-col items-center gap-2 rounded-[14px] border-2 border-dashed border-[#d8e0ec] bg-[#fafbfd] p-[26px] text-center transition-colors hover:border-[#93b4f0] hover:bg-[#f5f9ff] aria-disabled:pointer-events-none aria-disabled:opacity-60"
+                          >
+                            <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[#e8f0ff] text-[#2563eb]">
+                              <Upload className="h-[22px] w-[22px]" />
+                            </span>
+                            <span className="text-sm font-semibold text-[#334155]">
+                              {uploadFile ? uploadFile.name : 'גררו קובץ לכאן או לחצו לבחירה'}
+                            </span>
+                            <span className="text-[12.5px] text-[#94a3b8]">
+                              עד 10MB · תמונות, PDF, Word או Excel
+                            </span>
+                            <input
+                              id="sup-doc-file"
+                              type="file"
+                              disabled={uploading}
+                              accept={ALLOWED_DOC_TYPES.join(',')}
+                              onChange={(e) => {
+                                const f = e.target.files?.[0] ?? null;
+                                setUploadFile(f);
+                                setUploadName(f ? f.name : '');
+                              }}
+                              className="sr-only"
+                            />
+                          </label>
                         </div>
                         {uploadFile && (
                           <div className="space-y-2">
-                            <Label htmlFor="sup-doc-name" className="text-base font-medium text-muted-foreground">
+                            <Label htmlFor="sup-doc-name" className={FIELD_LABEL}>
                               שם המסמך
                             </Label>
                             <Input
@@ -549,24 +547,26 @@ export function SupplierDetailPanel({
                               onChange={(e) => setUploadName(e.target.value)}
                               disabled={uploading}
                               placeholder="שם לתצוגה"
-                              className="h-10"
+                              className="h-[46px] rounded-[11px] border-[#e2e8f0]"
                             />
                           </div>
                         )}
-                        <Button
-                          type="button"
-                          onClick={handleUpload}
-                          disabled={!uploadFile || uploading}
-                          className="gap-2"
-                        >
-                          <Upload className="h-4 w-4" />
-                          {uploading ? 'מעלה…' : 'העלה מסמך'}
-                        </Button>
+                        <div className="flex justify-start">
+                          <Button
+                            type="button"
+                            onClick={handleUpload}
+                            disabled={!uploadFile || uploading}
+                            className="h-[46px] gap-2 rounded-[12px] bg-gradient-to-l from-[#1d4ed8] to-[#2563eb] px-[22px] text-[14.5px] font-bold text-white shadow-[0_8px_18px_-6px_rgba(37,99,235,0.5)] hover:from-[#1e40af] hover:to-[#1d4ed8]"
+                          >
+                            <Upload className="h-4 w-4" />
+                            {uploading ? 'מעלה…' : 'העלה מסמך'}
+                          </Button>
+                        </div>
                       </div>
-                    </Section>
+                    </SupplierSection>
                   )}
 
-                  <Section title="מסמכים" icon={FileText} iconTone="slate">
+                  <SupplierSection title="מסמכים" icon={FileText} iconTone="slate">
                     {documents.length === 0 ? (
                       <p className="py-6 text-center text-sm text-muted-foreground">
                         אין מסמכים עדיין.
@@ -586,7 +586,7 @@ export function SupplierDetailPanel({
                         ))}
                       </div>
                     )}
-                  </Section>
+                  </SupplierSection>
                 </TabsContent>
 
                 {/* TAB — פעילות (automatic log from the central audit_log) */}
@@ -596,6 +596,60 @@ export function SupplierDetailPanel({
               </Tabs>
             )}
           </div>
+
+          {/* Footer — view mode actions (sticky, matches view.html) */}
+          {!loading && supplier && !editing && (canEdit || canDelete) && (
+            <footer className="flex-none flex items-center justify-between gap-3 border-t border-[#e7ebf1] bg-white px-8 py-[14px]">
+              {/* right (RTL start): delete + archive/restore */}
+              <div className="flex items-center gap-[10px]">
+                {canDelete && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteOpen(true)}
+                    disabled={saving}
+                    className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-[#fecaca] bg-white px-[18px] text-[14px] font-semibold text-[#dc2626] transition-colors hover:border-[#fca5a5] hover:bg-[#fef2f2] disabled:opacity-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    מחק ספק
+                  </button>
+                )}
+                {canEdit && supplier.status === 'active' && (
+                  <button
+                    type="button"
+                    onClick={() => handleStatusChange('archived')}
+                    disabled={saving}
+                    className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-[#fcd9a8] bg-white px-[18px] text-[14px] font-semibold text-[#c2700a] transition-colors hover:border-[#f8c574] hover:bg-[#fff8ee] disabled:opacity-50"
+                  >
+                    <Archive className="h-4 w-4" />
+                    העבר לארכיון
+                  </button>
+                )}
+                {canEdit && supplier.status === 'archived' && (
+                  <button
+                    type="button"
+                    onClick={() => handleStatusChange('active')}
+                    disabled={saving}
+                    className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-[#bbf7d0] bg-white px-[18px] text-[14px] font-semibold text-[#15803d] transition-colors hover:border-[#86efac] hover:bg-[#f0fdf4] disabled:opacity-50"
+                  >
+                    <Power className="h-4 w-4" />
+                    שחזר מארכיון
+                  </button>
+                )}
+              </div>
+              {/* left (RTL end): edit (gradient primary) */}
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={startEdit}
+                  disabled={saving}
+                  className="inline-flex h-11 items-center gap-2 rounded-[11px] bg-gradient-to-l from-[#1d4ed8] to-[#2563eb] px-[24px] text-[14px] font-bold text-white shadow-[0_8px_18px_-6px_rgba(37,99,235,0.5)] transition-colors hover:from-[#1e40af] hover:to-[#1d4ed8] disabled:opacity-50"
+                >
+                  <Pencil className="h-4 w-4" />
+                  ערוך
+                </button>
+              )}
+            </footer>
+          )}
 
           {/* Footer — only in edit mode */}
           {!loading && supplier && editing && (
@@ -623,7 +677,7 @@ export function SupplierDetailPanel({
                     type="button"
                     onClick={handleSaveEdit}
                     disabled={!canSaveEdit}
-                    className="gap-2"
+                    className="gap-2 bg-gradient-to-l from-blue-700 to-blue-600 text-white hover:from-blue-800 hover:to-blue-700 shadow-[0_8px_18px_-6px_rgba(37,99,235,0.5)]"
                   >
                     {saving ? 'שומר…' : 'שמור שינויים'}
                   </Button>
@@ -787,120 +841,50 @@ function RenameDocumentDialog({
 interface ViewProps {
   supplier: Supplier;
   categories: SupplierCategory[];
-  canEdit: boolean;
-  canDelete: boolean;
-  saving: boolean;
-  onEdit: () => void;
-  onStatusChange: (next: SupplierStatus) => void;
-  onRequestDelete: () => void;
 }
 
-function ViewDetails({
-  supplier, categories, canEdit, canDelete, saving, onEdit, onStatusChange, onRequestDelete,
-}: ViewProps) {
+function ViewDetails({ supplier, categories }: ViewProps) {
   const categoryName = supplier.category_id
     ? categories.find((c) => c.id === supplier.category_id)?.name ?? null
     : null;
   return (
     <>
-      {/* Status / edit / delete action buttons by current status */}
-      {(canEdit || canDelete) && (
-        <div className="flex flex-wrap items-center gap-2">
-          {canEdit && (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onEdit}
-                disabled={saving}
-                className="gap-2"
-              >
-                <Pencil className="h-4 w-4" /> ערוך
-              </Button>
-              {supplier.status === 'active' && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => onStatusChange('archived')}
-                  disabled={saving}
-                  className="gap-2 border-amber-200 text-amber-700 hover:bg-amber-50"
-                >
-                  <Archive className="h-4 w-4" /> העבר לארכיון
-                </Button>
-              )}
-              {supplier.status === 'archived' && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => onStatusChange('active')}
-                  disabled={saving}
-                  className="gap-2 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-                >
-                  <Power className="h-4 w-4" /> שחזר מארכיון
-                </Button>
-              )}
-            </>
-          )}
-          {canDelete && (
-            <Button
-              type="button"
-              variant="delete"
-              onClick={onRequestDelete}
-              disabled={saving}
-              className="gap-2"
-            >
-              <Trash2 className="h-4 w-4" /> מחק ספק
-            </Button>
-          )}
+      {/* פרטי קשר — readonly boxes (DESIGN.md §28.8) */}
+      <SupplierSection title="פרטי קשר" icon={Phone} iconTone="blue">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <ReadonlyField label="קטגוריה" value={categoryName} />
+          <ReadonlyField label="איש קשר" value={supplier.contact_person || null} />
+          <ReadonlyField label="טלפון" value={formatPhoneDisplay(supplier.phone)} ltr />
+          <ReadonlyField label="נייד" value={formatPhoneDisplay(supplier.mobile)} ltr />
+          <ReadonlyField label="אימייל" value={supplier.email || null} ltr accent />
+          <ReadonlyField label="אתר" value={supplier.website || null} ltr accent />
         </div>
-      )}
-
-      {/* פרטי קשר */}
-      <Section title="פרטי קשר" icon={Phone} iconTone="blue">
-        <dl className="space-y-2.5 py-2">
-          <InfoRow icon={Building2} label="קטגוריה" value={categoryName} />
-          <InfoRow icon={UserIcon} label="איש קשר" value={supplier.contact_person} />
-          <InfoRow
-            icon={Phone}
-            label="טלפון"
-            value={formatPhoneDisplay(supplier.phone)}
-            ltr
-          />
-          <InfoRow
-            icon={Phone}
-            label="נייד"
-            value={formatPhoneDisplay(supplier.mobile)}
-            ltr
-          />
-          <InfoRow icon={Mail} label="אימייל" value={supplier.email || null} ltr />
-          <InfoRow icon={Globe} label="אתר" value={supplier.website || null} ltr />
-        </dl>
-      </Section>
+      </SupplierSection>
 
       {/* כתובת */}
-      <Section title="כתובת" icon={MapPin} iconTone="slate">
-        <dl className="space-y-2.5 py-2">
-          <InfoRow icon={MapPin} label="כתובת" value={supplier.address || null} />
-          <InfoRow icon={MapPin} label="עיר" value={supplier.city || null} />
-          <InfoRow icon={FileText} label="ח.פ / עוסק" value={supplier.tax_id || null} ltr />
-        </dl>
-      </Section>
+      <SupplierSection title="כתובת" icon={MapPin} iconTone="amber">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <ReadonlyField label="כתובת" value={supplier.address || null} />
+          <ReadonlyField label="עיר" value={supplier.city || null} />
+          <ReadonlyField label="ח.פ / עוסק" value={supplier.tax_id || null} ltr />
+        </div>
+      </SupplierSection>
 
       {/* תנאי תשלום */}
-      <Section title="תנאי תשלום" icon={CreditCard} iconTone="emerald">
-        <dl className="space-y-2.5 py-2">
-          <InfoRow icon={CreditCard} label="תנאי תשלום" value={paymentTermsLabel(supplier.payment_terms)} />
-          <InfoRow icon={Building2} label="בנק" value={supplier.bank_name || null} />
-          <InfoRow icon={Building2} label="סניף" value={supplier.bank_branch || null} ltr />
-          <InfoRow icon={CreditCard} label="מספר חשבון" value={supplier.bank_account || null} ltr />
-        </dl>
-      </Section>
+      <SupplierSection title="תנאי תשלום" icon={CreditCard} iconTone="emerald">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <ReadonlyField label="תנאי תשלום" value={paymentTermsLabel(supplier.payment_terms)} />
+          <ReadonlyField label="בנק" value={supplier.bank_name || null} />
+          <ReadonlyField label="סניף" value={supplier.bank_branch || null} ltr />
+          <ReadonlyField label="מספר חשבון" value={supplier.bank_account || null} ltr />
+        </div>
+      </SupplierSection>
 
       {/* הערות */}
       {supplier.notes && (
-        <Section title="הערות" icon={StickyNote} iconTone="slate">
+        <SupplierSection title="הערות" icon={StickyNote} iconTone="slate">
           <p className="whitespace-pre-wrap py-2 text-sm text-slate-700">{supplier.notes}</p>
-        </Section>
+        </SupplierSection>
       )}
 
       {/* internal_notes — distinct amber section (DESIGN §8 amber tone) */}
@@ -914,30 +898,6 @@ function ViewDetails({
         </div>
       )}
     </>
-  );
-}
-
-interface InfoRowProps {
-  icon: typeof Phone;
-  label: string;
-  value: string | null;
-  ltr?: boolean;
-}
-
-function InfoRow({ icon: Icon, label, value, ltr }: InfoRowProps) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <dt className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-        <Icon className="h-3.5 w-3.5 text-slate-400" />
-        {label}
-      </dt>
-      <dd
-        dir={ltr ? 'ltr' : undefined}
-        className={cn('text-sm font-medium text-slate-800', ltr && 'tabular-nums')}
-      >
-        {value ?? '—'}
-      </dd>
-    </div>
   );
 }
 
@@ -956,25 +916,21 @@ function EditForm({ form, set, markTouched, errFor, categories, disabled }: Edit
   return (
     <>
       {/* Section 1 — פרטי הספק */}
-      <Section title="פרטי הספק" icon={Building2} iconTone="blue">
-        <div className="space-y-4 py-2">
-          <EditField
-            id="esup-display-name" label="שם תצוגה" required
+      <SupplierSection title="פרטי הספק" icon={Building2} iconTone="blue">
+        <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
+          <SupplierField
+            id="esup-display-name" label="שם החברה" required
             value={form.display_name} onChange={(v) => set('display_name', v)}
             onBlur={() => markTouched('display_name')} error={errFor('display_name')} disabled={disabled}
           />
-          <EditField
-            id="esup-company-name" label="שם החברה"
-            value={form.company_name} onChange={(v) => set('company_name', v)} disabled={disabled}
-          />
-          <div className="space-y-2">
-            <Label className="text-base font-medium text-muted-foreground">קטגוריה</Label>
+          <div className="space-y-1.5">
+            <Label className={FIELD_LABEL}>קטגוריה</Label>
             <Select
               value={form.category_id ?? NONE}
               onValueChange={(v) => set('category_id', !v || v === NONE ? null : v)}
               disabled={disabled}
             >
-              <SelectTrigger className="w-full data-[size=default]:h-10">
+              <SelectTrigger className="w-full rounded-[10px] border-[#e2e8f0] data-[size=default]:h-[42px]">
                 <SelectValue placeholder="בחר קטגוריה...">
                   {(value: string | null) => {
                     if (!value || value === NONE) return 'ללא קטגוריה';
@@ -990,61 +946,61 @@ function EditForm({ form, set, markTouched, errFor, categories, disabled }: Edit
               </SelectContent>
             </Select>
           </div>
-          <EditField
+          <SupplierField
             id="esup-contact-person" label="איש קשר"
             value={form.contact_person} onChange={(v) => set('contact_person', v)} disabled={disabled}
           />
-          <EditField
+          <SupplierField
             id="esup-phone" label="טלפון"
             value={form.phone} onChange={(v) => set('phone', v)}
             onBlur={() => markTouched('phone')} error={errFor('phone')} disabled={disabled}
             inputMode="tel" dir="ltr" tabularNums placeholder="03-1234567"
           />
-          <EditField
+          <SupplierField
             id="esup-mobile" label="נייד"
             value={form.mobile} onChange={(v) => set('mobile', v)}
             onBlur={() => markTouched('mobile')} error={errFor('mobile')} disabled={disabled}
             inputMode="tel" dir="ltr" tabularNums placeholder="052-1234567"
           />
-          <EditField
+          <SupplierField
             id="esup-email" label="אימייל" type="email"
             value={form.email} onChange={(v) => set('email', v)} disabled={disabled}
             dir="ltr" placeholder="supplier@example.com"
           />
         </div>
-      </Section>
+      </SupplierSection>
 
       {/* Section 2 — כתובת ופרטים נוספים */}
-      <Section title="כתובת ופרטים נוספים" icon={MapPin} iconTone="slate">
-        <div className="space-y-4 py-2">
-          <EditField id="esup-address" label="כתובת" value={form.address} onChange={(v) => set('address', v)} disabled={disabled} />
-          <EditField id="esup-city" label="עיר" value={form.city} onChange={(v) => set('city', v)} disabled={disabled} />
-          <EditField id="esup-website" label="אתר אינטרנט" value={form.website} onChange={(v) => set('website', v)} disabled={disabled} dir="ltr" placeholder="https://" />
-          <EditField id="esup-tax-id" label="ח.פ / עוסק מורשה" value={form.tax_id} onChange={(v) => set('tax_id', v)} disabled={disabled} dir="ltr" tabularNums />
-          <div className="space-y-2">
-            <Label htmlFor="esup-notes" className="text-base font-medium text-muted-foreground">הערות</Label>
+      <SupplierSection title="כתובת ופרטים נוספים" icon={MapPin} iconTone="amber">
+        <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
+          <SupplierField id="esup-address" label="כתובת" value={form.address} onChange={(v) => set('address', v)} disabled={disabled} />
+          <SupplierField id="esup-city" label="עיר" value={form.city} onChange={(v) => set('city', v)} disabled={disabled} />
+          <SupplierField id="esup-website" label="אתר אינטרנט" value={form.website} onChange={(v) => set('website', v)} disabled={disabled} dir="ltr" placeholder="https://" />
+          <SupplierField id="esup-tax-id" label="ח.פ / עוסק מורשה" value={form.tax_id} onChange={(v) => set('tax_id', v)} disabled={disabled} dir="ltr" tabularNums />
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="esup-notes" className={FIELD_LABEL}>הערות</Label>
             <Textarea
               id="esup-notes"
               value={form.notes}
               onChange={(e) => set('notes', e.target.value)}
               disabled={disabled}
-              className="min-h-24"
+              className="min-h-[74px] rounded-[10px] border-[#e2e8f0] px-[13px] py-[11px] text-[14px]"
             />
           </div>
         </div>
-      </Section>
+      </SupplierSection>
 
       {/* Section 3 — תנאי תשלום */}
-      <Section title="תנאי תשלום" icon={CreditCard} iconTone="emerald">
-        <div className="space-y-4 py-2">
-          <div className="space-y-2">
-            <Label className="text-base font-medium text-muted-foreground">תנאי תשלום</Label>
+      <SupplierSection title="תנאי תשלום" icon={CreditCard} iconTone="emerald">
+        <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label className={FIELD_LABEL}>תנאי תשלום</Label>
             <Select
               value={form.payment_terms}
               onValueChange={(v) => { if (v) set('payment_terms', v as SupplierPaymentTerms); }}
               disabled={disabled}
             >
-              <SelectTrigger className="w-full data-[size=default]:h-10">
+              <SelectTrigger className="w-full rounded-[10px] border-[#e2e8f0] data-[size=default]:h-[42px]">
                 <SelectValue placeholder="בחר תנאי תשלום...">
                   {(value: string | null) => (value ? paymentTermsLabel(value) : null)}
                 </SelectValue>
@@ -1056,11 +1012,11 @@ function EditForm({ form, set, markTouched, errFor, categories, disabled }: Edit
               </SelectContent>
             </Select>
           </div>
-          <EditField id="esup-bank-name" label="שם הבנק" value={form.bank_name} onChange={(v) => set('bank_name', v)} disabled={disabled} />
-          <EditField id="esup-bank-branch" label="סניף" value={form.bank_branch} onChange={(v) => set('bank_branch', v)} disabled={disabled} dir="ltr" tabularNums />
-          <EditField id="esup-bank-account" label="מספר חשבון" value={form.bank_account} onChange={(v) => set('bank_account', v)} disabled={disabled} dir="ltr" tabularNums />
+          <SupplierField id="esup-bank-name" label="שם הבנק" value={form.bank_name} onChange={(v) => set('bank_name', v)} disabled={disabled} />
+          <SupplierField id="esup-bank-branch" label="סניף" value={form.bank_branch} onChange={(v) => set('bank_branch', v)} disabled={disabled} dir="ltr" tabularNums />
+          <SupplierField id="esup-bank-account" label="מספר חשבון" value={form.bank_account} onChange={(v) => set('bank_account', v)} disabled={disabled} dir="ltr" tabularNums />
         </div>
-      </Section>
+      </SupplierSection>
 
       {/* internal_notes — amber section in edit mode too */}
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
@@ -1080,57 +1036,6 @@ function EditForm({ form, set, markTouched, errFor, categories, disabled }: Edit
   );
 }
 
-interface EditFieldProps {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  onBlur?: () => void;
-  error?: string | null;
-  required?: boolean;
-  disabled?: boolean;
-  type?: string;
-  dir?: 'ltr' | 'rtl';
-  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
-  tabularNums?: boolean;
-  placeholder?: string;
-}
-
-function EditField({
-  id, label, value, onChange, onBlur, error, required, disabled,
-  type, dir, inputMode, tabularNums, placeholder,
-}: EditFieldProps) {
-  return (
-    <div className="space-y-2">
-      <Label htmlFor={id} className="text-base font-medium text-muted-foreground">
-        {label}
-        {required && <span className="text-red-500"> *</span>}
-      </Label>
-      <Input
-        id={id}
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={onBlur}
-        disabled={disabled}
-        dir={dir}
-        inputMode={inputMode}
-        placeholder={placeholder}
-        className={cn(
-          'h-10',
-          tabularNums && 'tabular-nums',
-          error && 'border-red-400 bg-red-50 focus-visible:ring-red-200',
-        )}
-      />
-      {error && (
-        <p className="text-[12px] font-semibold text-red-500 text-right">
-          ⚠️ {error}
-        </p>
-      )}
-    </div>
-  );
-}
-
 /* ---------- Document row ---------- */
 
 interface DocRowProps {
@@ -1142,11 +1047,13 @@ interface DocRowProps {
   onDelete: () => void;
 }
 
-function iconForMime(mime: string): typeof FileIcon {
-  if (mime.startsWith('image/')) return ImageIcon;
-  if (mime.includes('spreadsheet') || mime.includes('excel')) return FileSpreadsheet;
-  if (mime === 'application/pdf') return FileText;
-  return FileIcon;
+function iconForMime(mime: string): { Icon: typeof FileIcon; tone: string } {
+  if (mime.startsWith('image/')) return { Icon: ImageIcon, tone: 'bg-blue-50 text-blue-600' };
+  if (mime.includes('spreadsheet') || mime.includes('excel')) {
+    return { Icon: FileSpreadsheet, tone: 'bg-emerald-50 text-emerald-600' };
+  }
+  if (mime === 'application/pdf') return { Icon: FileText, tone: 'bg-red-50 text-red-600' };
+  return { Icon: FileIcon, tone: 'bg-slate-100 text-slate-500' };
 }
 
 function formatSize(bytes: number): string {
@@ -1164,21 +1071,23 @@ function formatDate(value: Date | string): string {
 }
 
 function DocumentRow({ doc, canEdit, canDelete, onView, onRename, onDelete }: DocRowProps) {
-  const Icon = iconForMime(doc.mime_type);
+  const { Icon, tone } = iconForMime(doc.mime_type);
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3">
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500">
-        <Icon className="h-4 w-4" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-slate-800">{doc.file_name}</div>
-        <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
-          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600">
-            {docTypeLabel(doc.doc_type)}
-          </span>
-          <span dir="ltr" className="tabular-nums">{formatSize(doc.file_size_bytes)}</span>
-          <span className="text-slate-300">•</span>
-          <span dir="ltr" className="tabular-nums">{formatDate(doc.created_at)}</span>
+    <div className="flex items-center justify-between gap-4 rounded-[13px] border border-[#eef1f6] bg-[#fafbfd] px-4 py-[14px] transition-colors hover:border-[#dbe2ec] hover:bg-white">
+      <div className="flex min-w-0 items-center gap-3.5">
+        <span className={cn('grid h-11 w-11 shrink-0 place-items-center rounded-[11px]', tone)}>
+          <Icon className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <div className="truncate text-[15px] font-bold text-[#0f172a]">{doc.file_name}</div>
+          <div className="mt-1 flex flex-wrap items-center gap-[9px] text-[12.5px] font-medium text-[#94a3b8]">
+            <span dir="ltr" className="tabular-nums">{formatDate(doc.created_at)}</span>
+            <span className="h-[3px] w-[3px] rounded-full bg-[#cbd5e1]" />
+            <span dir="ltr" className="tabular-nums">{formatSize(doc.file_size_bytes)}</span>
+            <span className="inline-flex items-center rounded-full bg-[#e8f0ff] px-[9px] py-[3px] text-[11.5px] font-semibold text-[#2563eb]">
+              {docTypeLabel(doc.doc_type)}
+            </span>
+          </div>
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
@@ -1186,7 +1095,7 @@ function DocumentRow({ doc, canEdit, canDelete, onView, onRename, onDelete }: Do
           type="button"
           onClick={onView}
           aria-label="צפייה"
-          className="inline-flex items-center gap-1 rounded p-1.5 text-sm text-blue-600 transition-colors hover:bg-blue-50 hover:text-blue-700"
+          className="inline-flex h-9 items-center gap-1.5 rounded-[9px] px-[13px] text-[13.5px] font-semibold text-[#2563eb] transition-colors hover:bg-[#eff5ff]"
         >
           <Eye className="h-4 w-4" />
           <span className="hidden sm:inline">צפייה</span>
@@ -1197,7 +1106,7 @@ function DocumentRow({ doc, canEdit, canDelete, onView, onRename, onDelete }: Do
             type="button"
             onClick={onRename}
             aria-label="שנה שם"
-            className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+            className="grid h-9 w-9 place-items-center rounded-[9px] text-[#64748b] transition-colors hover:bg-[#eef2f7]"
           >
             <Pencil className="h-4 w-4" />
           </button>
@@ -1207,7 +1116,7 @@ function DocumentRow({ doc, canEdit, canDelete, onView, onRename, onDelete }: Do
             type="button"
             onClick={onDelete}
             aria-label="מחק מסמך"
-            className="rounded p-1.5 text-rose-500 transition-colors hover:bg-rose-50 hover:text-rose-600"
+            className="grid h-9 w-9 place-items-center rounded-[9px] text-[#dc2626] transition-colors hover:bg-[#fef2f2]"
           >
             <Trash2 className="h-4 w-4" />
           </button>
