@@ -1,0 +1,43 @@
+-- 049_reminders_channels_multi.sql
+-- Additive: move reminders from a single `channel` value to a multi-select
+-- `channels text[]` (any combination of in_app / email / whatsapp). The single
+-- "both" pseudo-channel is retired — it maps to {in_app, email}.
+--
+-- NON-destructive: ADD COLUMN + backfill + CHECK only. The legacy `channel`
+-- column is KEPT (frozen; a separate later migration may DROP it). Existing rows
+-- are backfilled, and the reminders engine also falls back to `channel` at read
+-- time, so nothing breaks between this migration and the code deploy.
+-- Idempotent (add-if-not-exists + guarded constraint, no DROP).
+--
+-- Run via DIRECT_URL (session pooler :5432), not the transaction pooler:
+--   psql "$DIRECT_URL" -f supabase/migrations/049_reminders_channels_multi.sql
+
+alter table public.reminders
+  add column if not exists channels text[];
+
+-- Backfill from the legacy single value: 'both' → {in_app,email}, else {value}.
+update public.reminders
+   set channels = case channel
+        when 'both' then array['in_app', 'email']
+        else array[channel]
+      end
+ where channels is null;
+
+-- Elements must be a non-empty subset of the three real channels. NULL is still
+-- allowed (transition safety); new writes always set a non-empty array.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'reminders_channels_valid'
+      and conrelid = 'public.reminders'::regclass
+  ) then
+    alter table public.reminders
+      add constraint reminders_channels_valid
+      check (
+        channels is null
+        or (array_length(channels, 1) >= 1
+            and channels <@ array['in_app', 'email', 'whatsapp']::text[])
+      );
+  end if;
+end $$;
