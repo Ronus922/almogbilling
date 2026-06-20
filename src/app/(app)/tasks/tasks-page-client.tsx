@@ -360,7 +360,7 @@ export function TasksPageClient({
           <AlertDialogHeader>
             <AlertDialogTitle>למחוק את המשימה?</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget ? `"${deleteTarget.title}" תימחק. לא ניתן לשחזר.` : ''}
+              {deleteTarget ? `המשימה "${deleteTarget.title}" תועבר לארכיון. ניתן לשחזר אותה בהמשך.` : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

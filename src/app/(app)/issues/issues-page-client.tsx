@@ -360,7 +360,7 @@ export function IssuesPageClient({
           <AlertDialogHeader>
             <AlertDialogTitle>למחוק את התקלה?</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget ? `"${deleteTarget.title}" תימחק. לא ניתן לשחזר.` : ''}
+              {deleteTarget ? `התקלה "${deleteTarget.title}" תימחק לצמיתות. לא ניתן לשחזר אותה לאחר המחיקה.` : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
