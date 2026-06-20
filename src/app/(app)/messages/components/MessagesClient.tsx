@@ -493,7 +493,7 @@ export function MessagesClient({
       {/* Page header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-600">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-green-50 text-green-600">
             <MessageCircle className="h-5 w-5" />
           </span>
           <div>
@@ -509,7 +509,6 @@ export function MessagesClient({
             <Button
               type="button"
               onClick={() => setBroadcastOpen(true)}
-              variant="approve"
               className="gap-2"
             >
               <Megaphone className="h-4 w-4" /> תפוצה
@@ -518,8 +517,8 @@ export function MessagesClient({
         )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-2">
+      {/* Tabs — segmented control (DESIGN §16 colors: active blue, idle muted) */}
+      <div className="inline-flex w-fit items-center gap-1 rounded-xl bg-slate-100 p-1">
         <TabButton active={tab === 'chats'} onClick={() => setTab('chats')}>שיחות</TabButton>
         <TabButton active={tab === 'templates'} onClick={() => setTab('templates')}>תבניות</TabButton>
       </div>
@@ -611,8 +610,8 @@ function TabButton({
       className={cn(
         'cursor-pointer rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors',
         active
-          ? 'bg-emerald-600 text-white'
-          : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
+          ? 'bg-blue-600 text-white shadow-sm'
+          : 'bg-transparent text-slate-600 hover:bg-white',
       )}
     >
       {children}

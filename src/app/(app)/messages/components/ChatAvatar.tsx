@@ -1,13 +1,17 @@
 'use client';
 
 import { useState } from 'react';
-import { Users } from 'lucide-react';
+import { User, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // Conversation avatar shared by the list and the thread header. Renders the
 // cached WhatsApp profile picture when present, with a hard fallback to the
 // group icon / initials. The fallback is essential: Green API avatar URLs are
 // expiring CDN links, so an <img> that 404s must degrade gracefully (onError).
+//
+// Fallback tone carries linkage state (color language §2): a linked contact
+// (debtor/supplier) gets the blue initials chip; an unlinked phone-only number
+// gets a neutral slate user-icon chip — never green/amber/purple.
 
 function initials(title: string): string {
   return (
@@ -24,11 +28,14 @@ function initials(title: string): string {
 export function ChatAvatar({
   title,
   isGroup,
+  linked = false,
   avatarUrl,
   className,
 }: {
   title: string;
   isGroup: boolean;
+  /** Linked to a debtor or supplier → blue initials chip; otherwise neutral. */
+  linked?: boolean;
   avatarUrl?: string | null;
   className?: string;
 }) {
@@ -62,8 +69,18 @@ export function ChatAvatar({
     );
   }
 
+  // Unlinked phone-only number — neutral slate chip with a user glyph.
+  if (!linked) {
+    return (
+      <span className={cn(box, 'bg-slate-100 text-slate-500')}>
+        <User className="h-5 w-5" />
+      </span>
+    );
+  }
+
+  // Linked contact — blue initials chip.
   return (
-    <span className={cn(box, 'bg-emerald-100 text-xs font-bold text-emerald-700')}>
+    <span className={cn(box, 'bg-blue-100 text-xs font-bold text-blue-700')}>
       {initials(title)}
     </span>
   );

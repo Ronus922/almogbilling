@@ -1,6 +1,6 @@
 'use client';
 
-import { Search, MessageCircle, Smartphone, Wrench } from 'lucide-react';
+import { Search, MessageCircle, Smartphone, Wrench, Reply } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import type { Conversation, InstanceOption } from '@/types/whatsapp';
@@ -35,7 +35,7 @@ export function ConversationList({
   return (
     <div
       className={cn(
-        'flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white',
+        'flex min-h-0 flex-col overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
         className,
       )}
     >
@@ -48,7 +48,7 @@ export function ConversationList({
             onChange={(e) => onSelectInstance(e.target.value)}
             dir="rtl"
             aria-label="בחירת חיבור וואטסאפ"
-            className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700 focus:border-emerald-400 focus:outline-none"
+            className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700 focus:border-blue-400 focus:outline-none"
           >
             {instances.map((i) => (
               <option key={i.id} value={i.id}>
@@ -64,12 +64,12 @@ export function ConversationList({
       {/* Search */}
       <div className="border-b border-slate-100 p-3">
         <div className="relative">
-          <Search className="pointer-events-none absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <Input
             value={search}
             onChange={(e) => onSearch(e.target.value)}
             placeholder="חיפוש לפי שם, טלפון או דירה"
-            className="h-10 pe-9"
+            className="h-10 ps-9"
           />
         </div>
       </div>
@@ -102,16 +102,33 @@ export function ConversationList({
                   <button
                     type="button"
                     onClick={() => onSelect(c)}
+                    // Active highlight: logical start-border (RTL → right edge).
+                    // Color via inline style so it wins over the row's border
+                    // shorthand (same pattern as AreaCards).
+                    style={isActive ? { borderInlineStartColor: 'var(--color-blue-600)' } : undefined}
                     className={cn(
                       'flex w-full items-center gap-3 border-b border-slate-50 p-3 text-start transition-colors',
-                      isActive ? 'bg-emerald-50/70' : 'hover:bg-slate-50',
+                      isActive ? 'border-s-[3px] bg-blue-50' : 'hover:bg-slate-50',
                     )}
                   >
-                    <ChatAvatar title={title} isGroup={c.is_group} avatarUrl={c.avatar_url} />
+                    <ChatAvatar
+                      title={title}
+                      isGroup={c.is_group}
+                      linked={!!(c.debtor_id || c.supplier_id)}
+                      avatarUrl={c.avatar_url}
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <span className="flex min-w-0 items-center gap-1.5">
-                          <span className="truncate text-sm font-semibold text-slate-900">{title}</span>
+                          <span
+                            className={cn(
+                              'truncate text-sm font-semibold text-slate-900',
+                              isUnlinked && 'tabular-nums',
+                            )}
+                            dir={isUnlinked ? 'ltr' : undefined}
+                          >
+                            {title}
+                          </span>
                           {c.apartment_number ? (
                             <span className="shrink-0 text-[11px] font-medium text-slate-400">
                               · דירה {c.apartment_number}
@@ -122,12 +139,12 @@ export function ConversationList({
                               ספק
                             </span>
                           ) : isUnlinked ? (
-                            <span className="shrink-0 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">
+                            <span className="shrink-0 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-600">
                               לא משויך
                             </span>
                           ) : null}
                         </span>
-                        <span className="shrink-0 text-[11px] tabular-nums text-slate-400">
+                        <span dir="ltr" className="shrink-0 text-[11px] tabular-nums text-slate-400">
                           {formatListStamp(c.last_at)}
                         </span>
                       </div>
@@ -137,12 +154,23 @@ export function ConversationList({
                         </div>
                       )}
                       <div className="mt-0.5 flex items-center justify-between gap-2">
-                        <span className={cn('truncate text-xs', c.unread > 0 ? 'font-medium text-slate-700' : 'text-slate-500')}>
-                          {c.last_direction === 'sent' && preview && <span className="text-slate-400">↩ </span>}
-                          {preview || '—'}
+                        <span
+                          className={cn(
+                            'flex min-w-0 items-center gap-1 truncate text-xs',
+                            c.last_direction === 'sent'
+                              ? 'font-medium text-green-600'
+                              : c.unread > 0
+                                ? 'font-medium text-slate-700'
+                                : 'text-slate-500',
+                          )}
+                        >
+                          {c.last_direction === 'sent' && preview && (
+                            <Reply className="h-3 w-3 shrink-0" />
+                          )}
+                          <span className="truncate">{preview || '—'}</span>
                         </span>
                         {c.unread > 0 && (
-                          <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-emerald-600 px-1.5 text-[11px] font-bold text-white tabular-nums">
+                          <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 px-1.5 text-[11px] font-bold text-white tabular-nums">
                             {c.unread}
                           </span>
                         )}

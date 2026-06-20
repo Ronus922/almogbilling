@@ -79,12 +79,12 @@ export function ChatThread({
     return (
       <div
         className={cn(
-          'flex min-h-0 flex-col items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white p-8 text-center',
+          'flex min-h-0 flex-col items-center justify-center gap-4 rounded-xl bg-white p-8 text-center ring-1 ring-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
           className,
         )}
       >
-        <span className="grid h-14 w-14 place-items-center rounded-full bg-emerald-50 text-emerald-500">
-          <MessageCircle className="h-7 w-7" />
+        <span className="grid h-20 w-20 place-items-center rounded-full bg-green-50 text-green-600">
+          <MessageCircle className="h-9 w-9" />
         </span>
         <p className="text-sm text-muted-foreground">בחר שיחה מהרשימה כדי להציג את ההתכתבות</p>
       </div>
@@ -94,7 +94,7 @@ export function ChatThread({
   const title = conversationTitle(conversation);
 
   return (
-    <div className={cn('flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white', className)}>
+    <div className={cn('flex min-h-0 flex-col overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)]', className)}>
       {/* Thread header */}
       <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3">
         <button
@@ -105,7 +105,12 @@ export function ChatThread({
         >
           <ArrowRight className="h-5 w-5" />
         </button>
-        <ChatAvatar title={title} isGroup={conversation.is_group} avatarUrl={conversation.avatar_url} />
+        <ChatAvatar
+          title={title}
+          isGroup={conversation.is_group}
+          linked={!!(conversation.debtor_id || conversation.supplier_id)}
+          avatarUrl={conversation.avatar_url}
+        />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-bold text-slate-900">{title}</div>
           <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -124,7 +129,7 @@ export function ChatThread({
               </span>
             )}
             {!conversation.debtor_id && !conversation.supplier_id && !conversation.is_group && (
-              <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">לא משויך</span>
+              <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-600">לא משויך</span>
             )}
           </div>
         </div>
