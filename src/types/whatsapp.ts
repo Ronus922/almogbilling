@@ -11,7 +11,11 @@
 //                                                 BulkSendProgress… + BulkSendSummary
 //   GET    /api/whatsapp/messages?debtor_id=…   → ChatMessage[]        (chronological)
 //   GET    /api/whatsapp/unlinked               → UnlinkedMessage[]    (inbound, no debtor)
-//   POST   /api/whatsapp/messages/[id]/link     body: { debtor_id } → { ok, linked }
+//   POST   /api/whatsapp/messages/[id]/link     body: { debtor_id } | { supplier_id } | { unlink: true } → { ok, linked }
+//                                                 (XOR: a conversation links to a debtor OR a supplier OR neither)
+//   POST   /api/whatsapp/messages/[id]/create-supplier  body: { display_name, category_id? } → { id, linked }
+//                                                 (creates a supplier from the conversation's number, then links it)
+//   GET    /api/suppliers/search?q=…             → SupplierSearchResult[] (supplier link dialog; whatsapp:edit)
 //   POST   /api/whatsapp/pull                   pull inbound (fallback) → { received, skipped }
 //   POST   /api/webhooks/greenapi              PUBLIC — Green API inbound (canonical; ?secret= query param)
 //   GET    /api/debtors/search?q=…              → DebtorSearchResult[] (link dialog)
@@ -45,6 +49,9 @@ export interface TemplateInput {
 export interface ChatMessage {
   id: string;
   debtor_id: string | null;
+  /** Linked supplier id — set instead of debtor_id when the conversation is
+   *  attached to an external supplier (XOR with debtor_id). */
+  supplier_id: string | null;
   contact_phone: string;
   chat_id: string | null;
   external_message_id: string | null;
@@ -57,9 +64,23 @@ export interface ChatMessage {
   error_detail: string | null;
   sent_by: string | null;
   sent_by_name: string | null;
+  /** Joined supplier display name when supplier_id is set, else null. */
+  supplier_display_name: string | null;
   broadcast_id: string | null;
   read_at: string | null;
   created_at: string;
+}
+
+/** Lightweight supplier row for the "link conversation to supplier" dialog.
+ *  Served by GET /api/suppliers/search (gated on whatsapp:edit, NOT
+ *  suppliers:view) so the linking flow works without supplier-read access —
+ *  mirrors DebtorSearchResult / /api/debtors/search. */
+export interface SupplierSearchResult {
+  id: string;
+  display_name: string;
+  phone: string;
+  mobile: string;
+  category_name: string | null;
 }
 
 export interface SendWhatsAppInput {
@@ -148,6 +169,12 @@ export interface Conversation {
   is_group: boolean;
   /** Linked debtor id, or null for an unmatched number. */
   debtor_id: string | null;
+  /** Linked supplier id (XOR with debtor_id), or null. When set, the conversation
+   *  is attached to an external supplier rather than an apartment. */
+  supplier_id: string | null;
+  /** Joined supplier name when supplier_id is set — drives the amber supplier
+   *  badge in the thread header. */
+  supplier_display_name: string | null;
   /** Display name: the linked debtor's name, else null (UI falls back to phone). */
   display_name: string | null;
   apartment_number: string | null;

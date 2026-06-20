@@ -15,6 +15,7 @@ export default async function MessagesPage() {
 
   const canEdit = hasPermission(actor.role, actor.permissions, 'whatsapp_chat', 'edit');
   const canLink = hasPermission(actor.role, actor.permissions, 'whatsapp', 'edit');
+  const canCreateSupplier = hasPermission(actor.role, actor.permissions, 'suppliers', 'edit');
   const canManageTemplates = hasPermission(actor.role, actor.permissions, 'whatsapp_templates', 'edit');
   const isAdmin = actor.role === 'admin' || actor.role === 'super_admin';
 
@@ -22,6 +23,7 @@ export default async function MessagesPage() {
     <MessagesClient
       canEdit={canEdit}
       canLink={canLink}
+      canCreateSupplier={canCreateSupplier}
       canManageTemplates={canManageTemplates}
       isAdmin={isAdmin}
       currentUserId={actor.id}

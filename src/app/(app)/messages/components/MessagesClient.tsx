@@ -15,6 +15,7 @@ import { NewConversationDialog } from './NewConversationDialog';
 import { BroadcastPanel } from './BroadcastPanel';
 import { TemplatesTab } from './TemplatesTab';
 import { LinkDebtorDialog } from './LinkDebtorDialog';
+import { LinkSupplierDialog } from './LinkSupplierDialog';
 
 // Real-time: SSE pushes updates instantly. Polling is now only a gap-filler —
 // infrequent while the stream is healthy, dense while it's down.
@@ -112,12 +113,15 @@ function bumpConversation(
 export function MessagesClient({
   canEdit,
   canLink,
+  canCreateSupplier,
   canManageTemplates,
   isAdmin,
   currentUserId,
 }: {
   canEdit: boolean;
   canLink: boolean;
+  /** suppliers:edit — gates the "create supplier from this number" path. */
+  canCreateSupplier: boolean;
   canManageTemplates: boolean;
   isAdmin: boolean;
   currentUserId: string;
@@ -132,6 +136,7 @@ export function MessagesClient({
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
+  const [supplierLinkOpen, setSupplierLinkOpen] = useState(false);
 
   const [instances, setInstances] = useState<InstanceOption[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
@@ -379,10 +384,10 @@ export function MessagesClient({
     const tmpId = `tmp-${Date.now()}-${tmpCounter.current}`;
     const nowIso = new Date().toISOString();
     const optimistic: ThreadMessage = {
-      id: tmpId, debtor_id: null, contact_phone: '', chat_id: chatId, external_message_id: null,
-      link_status: 'linked', direction: 'sent', message_type: 'text', content: text, media_url: null,
-      status: 'pending', error_detail: null, sent_by: currentUserId, sent_by_name: null,
-      broadcast_id: null, read_at: null, created_at: nowIso,
+      id: tmpId, debtor_id: null, supplier_id: null, contact_phone: '', chat_id: chatId,
+      external_message_id: null, link_status: 'linked', direction: 'sent', message_type: 'text',
+      content: text, media_url: null, status: 'pending', error_detail: null, sent_by: currentUserId,
+      sent_by_name: null, supplier_display_name: null, broadcast_id: null, read_at: null, created_at: nowIso,
     };
     if (selectedIdRef.current === chatId) setThread((prev) => sortByCreated([...prev, optimistic]));
     setConversations((prev) => bumpConversation(prev, chatId, {
@@ -420,6 +425,7 @@ export function MessagesClient({
   // into the open header (no manual refresh), and reload its thread.
   const handleLinked = useCallback(async () => {
     setLinkOpen(false);
+    setSupplierLinkOpen(false);
     const cid = selectedIdRef.current;
     try {
       const r = await fetch(
@@ -440,22 +446,47 @@ export function MessagesClient({
     if (cid) void fetchThread(cid, true);
   }, [instParam, fetchThread]);
 
-  // Build the link-dialog target from the open conversation: any still-unlinked
-  // message in the thread supplies the id the link endpoint keys off (it then
-  // links every unlinked row sharing that chat_id).
-  const linkTarget: UnlinkedMessage | null = (() => {
-    if (!linkOpen || !selected) return null;
-    const unlinked = thread.find((m) => m.link_status === 'unlinked') ?? thread[0];
-    if (!unlinked) return null;
+  // Build a link-dialog target from the open conversation: any message in the
+  // thread supplies the id the link endpoint keys off (it then updates every row
+  // sharing that chat_id). Prefers an unlinked row, else the first message — so
+  // it works for both initial linking and re-linking an already-linked chat.
+  const buildLinkTarget = useCallback((): UnlinkedMessage | null => {
+    if (!selected) return null;
+    const m = thread.find((x) => x.link_status === 'unlinked') ?? thread[0];
+    if (!m) return null;
     return {
-      id: unlinked.id,
-      contact_phone: selected.phone ?? unlinked.contact_phone,
+      id: m.id,
+      contact_phone: selected.phone ?? m.contact_phone,
       chat_id: selected.chat_id,
-      message_type: unlinked.message_type,
-      content: unlinked.content,
-      created_at: unlinked.created_at,
+      message_type: m.message_type,
+      content: m.content,
+      created_at: m.created_at,
     };
-  })();
+  }, [selected, thread]);
+
+  const linkTarget: UnlinkedMessage | null = linkOpen ? buildLinkTarget() : null;
+  const supplierLinkTarget: UnlinkedMessage | null = supplierLinkOpen ? buildLinkTarget() : null;
+
+  // Detach the open conversation (XOR-safe — clears both debtor + supplier). Keys
+  // off any message id; the endpoint updates the whole chat_id back to unlinked.
+  const handleUnlink = useCallback(async () => {
+    const target = buildLinkTarget();
+    if (!target) return;
+    try {
+      const r = await fetch(`/api/whatsapp/messages/${target.id}/link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ unlink: true }),
+      });
+      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      toast.success('השיוך נותק');
+      await handleLinked();
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  }, [buildLinkTarget, handleLinked]);
 
   return (
     <div className="flex h-[calc(100vh-7rem)] flex-col gap-3">
@@ -520,6 +551,8 @@ export function MessagesClient({
             onResolveSend={resolveSend}
             onSent={handleSent}
             onRequestLink={() => setLinkOpen(true)}
+            onRequestLinkSupplier={() => setSupplierLinkOpen(true)}
+            onUnlink={handleUnlink}
             onBack={() => setSelected(null)}
             className={cn(!selected && 'hidden md:flex')}
           />
@@ -546,11 +579,19 @@ export function MessagesClient({
       )}
 
       {canLink && (
-        <LinkDebtorDialog
-          message={linkTarget}
-          onOpenChange={(o) => { if (!o) setLinkOpen(false); }}
-          onLinked={handleLinked}
-        />
+        <>
+          <LinkDebtorDialog
+            message={linkTarget}
+            onOpenChange={(o) => { if (!o) setLinkOpen(false); }}
+            onLinked={handleLinked}
+          />
+          <LinkSupplierDialog
+            message={supplierLinkTarget}
+            canCreate={canCreateSupplier}
+            onOpenChange={(o) => { if (!o) setSupplierLinkOpen(false); }}
+            onLinked={handleLinked}
+          />
+        </>
       )}
     </div>
   );

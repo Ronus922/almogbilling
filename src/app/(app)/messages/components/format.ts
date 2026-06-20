@@ -5,6 +5,9 @@ import type { Conversation, ChatMessageType } from '@/types/whatsapp';
 
 export function conversationTitle(c: Conversation): string {
   if (c.display_name) return c.display_name;
+  // Supplier-linked conversations have no debtor display_name — show the supplier
+  // name as the title (XOR: a chat is debtor- OR supplier-linked, never both).
+  if (c.supplier_id && c.supplier_display_name) return c.supplier_display_name;
   if (c.is_group) return 'קבוצת וואטסאפ';
   return (c.phone && formatPhoneDisplay(c.phone)) || 'לא ידוע';
 }
@@ -15,8 +18,9 @@ export function previewText(content: string | null, type: ChatMessageType): stri
   return (content ?? '').trim();
 }
 
-/** Role line for a linked conversation: "בעלים" or "שוכר: {name}" (the name is
- *  dropped when it would just repeat the title). null for unlinked / unknown. */
+/** Role line for a debtor-linked conversation: "בעלים" or "שוכר: {name}" (the
+ *  name is dropped when it would just repeat the title). null for supplier /
+ *  unlinked / unknown — a supplier chat is marked by the "ספק" badge instead. */
 export function roleLine(c: Conversation): string | null {
   if (!c.debtor_id) return null;
   if (c.role === 'owner') return 'בעלים';

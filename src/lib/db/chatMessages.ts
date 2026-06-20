@@ -1,6 +1,7 @@
 import 'server-only';
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { query, withTransaction } from '@/lib/db';
+import { normalizeChatLink } from '@/lib/whatsapp-link';
 import type {
   ChatMessage,
   ChatDirection,
@@ -22,6 +23,9 @@ interface Executor {
 
 export interface InsertChatMessageArgs {
   debtorId: string | null;
+  /** Linked supplier id (XOR with debtorId) — set when the inbound/outbound
+   *  number matched a supplier rather than a debtor. Defaults to null. */
+  supplierId?: string | null;
   contactPhone: string;
   chatId: string | null;
   externalMessageId: string | null;
@@ -53,15 +57,16 @@ export async function insertChatMessage(
 ): Promise<string | null> {
   const r = await exec.query<{ id: string }>(
     `insert into public.chat_messages
-       (debtor_id, contact_phone, chat_id, external_message_id,
+       (debtor_id, supplier_id, contact_phone, chat_id, external_message_id,
         direction, message_type, link_status, content, status, error_detail, sent_by,
         media_url, broadcast_id, instance_id, created_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-             coalesce(to_timestamp($15), now()))
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+             coalesce(to_timestamp($16), now()))
      on conflict (external_message_id) do nothing
      returning id`,
     [
       args.debtorId,
+      args.supplierId ?? null,
       args.contactPhone,
       args.chatId,
       args.externalMessageId,
@@ -191,54 +196,72 @@ export async function countUnlinkedMessages(): Promise<number> {
 }
 
 /**
- * Link an unlinked message to a debtor. To attach the whole conversation in one
- * action, EVERY unlinked message in the same conversation is linked too — keyed
- * on the stable chat_id (the "972…@c.us" grouping key), which is consistent
- * across inbound + outbound rows. Falls back to contact_phone for the rare row
- * with no chat_id. Returns the number of rows linked, or null if the id is
- * unknown / already linked.
+ * Set (or clear) a whole conversation's link target, enforcing the XOR rule: a
+ * conversation is attached to a debtor OR a supplier OR neither — linking to one
+ * clears the other. The target message id identifies the conversation; EVERY row
+ * sharing its chat_id is updated (so inbound + outbound stay consistent), keyed
+ * on the stable chat_id (the "972…@c.us" grouping key) with a contact_phone
+ * fallback for the rare row with no chat_id.
+ *
+ * Unlike the old debtor-only helper, this acts regardless of current
+ * link_status, so it powers the initial link, re-linking (debtor↔supplier) and
+ * unlinking alike. `link_status` is derived from the normalized target. Returns
+ * the number of rows updated, or null if the message id is unknown.
  */
-export async function linkMessagesToDebtor(
+export async function setConversationLink(
   messageId: string,
-  debtorId: string,
+  target: { debtorId?: string | null; supplierId?: string | null },
 ): Promise<number | null> {
+  const { debtorId, supplierId, linkStatus } = normalizeChatLink(target);
   return withTransaction(async (client) => {
-    const target = await client.query<{ chat_id: string | null; contact_phone: string }>(
+    const row = await client.query<{ chat_id: string | null; contact_phone: string }>(
       `select chat_id, contact_phone from public.chat_messages
-        where id = $1 and link_status = 'unlinked'
+        where id = $1
         for update`,
       [messageId],
     );
-    if (target.rowCount === 0) return null;
-    const { chat_id, contact_phone } = target.rows[0];
+    if (row.rowCount === 0) return null;
+    const { chat_id, contact_phone } = row.rows[0];
     const upd = chat_id
       ? await client.query(
           `update public.chat_messages
-              set debtor_id = $1, link_status = 'linked'
-            where link_status = 'unlinked' and chat_id = $2`,
-          [debtorId, chat_id],
+              set debtor_id = $1, supplier_id = $2, link_status = $3
+            where chat_id = $4`,
+          [debtorId, supplierId, linkStatus, chat_id],
         )
       : await client.query(
           `update public.chat_messages
-              set debtor_id = $1, link_status = 'linked'
-            where link_status = 'unlinked' and contact_phone = $2`,
-          [debtorId, contact_phone],
+              set debtor_id = $1, supplier_id = $2, link_status = $3
+            where contact_phone = $4`,
+          [debtorId, supplierId, linkStatus, contact_phone],
         );
     return upd.rowCount ?? 0;
   });
+}
+
+/** Contact phone (DB-canonical local form) of the conversation a message belongs
+ *  to — used to seed a "create supplier from this number" flow. Null if unknown. */
+export async function getMessageContactPhone(messageId: string): Promise<string | null> {
+  const r = await query<{ contact_phone: string }>(
+    `select contact_phone from public.chat_messages where id = $1 limit 1`,
+    [messageId],
+  );
+  return r.rows[0]?.contact_phone ?? null;
 }
 
 /** Messages for one debtor, oldest → newest (chat order). Joins the sender name. */
 export async function listChatMessagesByDebtor(debtorId: string): Promise<ChatMessage[]> {
   const r = await query<ChatMessage>(
     `select
-        m.id, m.debtor_id, m.contact_phone, m.chat_id, m.external_message_id,
+        m.id, m.debtor_id, m.supplier_id, m.contact_phone, m.chat_id, m.external_message_id,
         m.link_status, m.direction, m.message_type, m.content, m.media_url, m.status,
         m.error_detail, m.sent_by,
         u.full_name as sent_by_name,
+        s.display_name as supplier_display_name,
         m.broadcast_id, m.read_at, m.created_at
        from public.chat_messages m
        left join public.users u on u.id = m.sent_by
+       left join public.suppliers s on s.id = m.supplier_id
       where m.debtor_id = $1
       order by m.created_at asc`,
     [debtorId],

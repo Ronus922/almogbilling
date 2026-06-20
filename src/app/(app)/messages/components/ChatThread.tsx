@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import {
   ArrowRight, Check, CheckCheck, Clock, AlertCircle, Send, Loader2,
-  MessageCircle, FileText, Paperclip, RotateCw, Link2,
+  MessageCircle, FileText, Paperclip, RotateCw, Link2, Wrench, Unlink,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Textarea } from '@/components/ui/textarea';
@@ -34,6 +34,8 @@ export function ChatThread({
   onResolveSend,
   onSent,
   onRequestLink,
+  onRequestLinkSupplier,
+  onUnlink,
   onBack,
   className,
 }: {
@@ -50,8 +52,12 @@ export function ChatThread({
   onResolveSend: (tmpId: string, res: ComposerSendResolution) => void;
   /** Non-optimistic refresh (file send / resend). */
   onSent: () => void;
-  /** Open the "link to apartment" dialog for the current unlinked conversation. */
+  /** Open the "link to apartment" (debtor) dialog. */
   onRequestLink: () => void;
+  /** Open the "link to supplier" dialog. */
+  onRequestLinkSupplier: () => void;
+  /** Detach the conversation (XOR-safe; clears both debtor + supplier). */
+  onUnlink: () => void;
   onBack: () => void;
   className?: string;
 }) {
@@ -111,20 +117,40 @@ export function ChatThread({
                 דירה {conversation.apartment_number}
               </span>
             )}
-            {!conversation.debtor_id && !conversation.is_group && (
+            {conversation.supplier_id && (
+              <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                <Wrench className="h-3 w-3" />
+                ספק
+              </span>
+            )}
+            {!conversation.debtor_id && !conversation.supplier_id && !conversation.is_group && (
               <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">לא משויך</span>
             )}
           </div>
         </div>
-        {!conversation.debtor_id && !conversation.is_group && canLink && (
-          <button
-            type="button"
-            onClick={onRequestLink}
-            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-50"
-          >
-            <Link2 className="h-4 w-4" />
-            שייך לדירה
-          </button>
+
+        {/* Link controls (XOR): attach/re-attach to a debtor OR a supplier, or
+            detach. The two link buttons double as "change" when already linked. */}
+        {!conversation.is_group && canLink && (
+          <div className="flex shrink-0 items-center gap-1.5">
+            <LinkActionButton
+              icon={Link2}
+              label="שייך לדירה"
+              tone="emerald"
+              active={!!conversation.debtor_id}
+              onClick={onRequestLink}
+            />
+            <LinkActionButton
+              icon={Wrench}
+              label="שייך לספק"
+              tone="amber"
+              active={!!conversation.supplier_id}
+              onClick={onRequestLinkSupplier}
+            />
+            {(conversation.debtor_id || conversation.supplier_id) && (
+              <LinkActionButton icon={Unlink} label="נתק" tone="slate" onClick={onUnlink} iconOnly />
+            )}
+          </div>
         )}
       </div>
 
@@ -177,6 +203,53 @@ export function ChatThread({
         </div>
       )}
     </div>
+  );
+}
+
+const LINK_TONES = {
+  emerald: 'border-emerald-200 text-emerald-700 hover:bg-emerald-50',
+  amber: 'border-amber-200 text-amber-700 hover:bg-amber-50',
+  slate: 'border-slate-200 text-slate-600 hover:bg-slate-50',
+} as const;
+
+const LINK_TONES_ACTIVE = {
+  emerald: 'border-emerald-300 bg-emerald-50 text-emerald-800',
+  amber: 'border-amber-300 bg-amber-50 text-amber-800',
+  slate: 'border-slate-300 bg-slate-50 text-slate-700',
+} as const;
+
+/** Compact header action for the conversation link controls. When `active` it
+ *  renders filled (the current link target); `iconOnly` drops the label (נתק). */
+function LinkActionButton({
+  icon: Icon,
+  label,
+  tone,
+  active = false,
+  iconOnly = false,
+  onClick,
+}: {
+  icon: typeof Link2;
+  label: string;
+  tone: keyof typeof LINK_TONES;
+  active?: boolean;
+  iconOnly?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={cn(
+        'inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border bg-white text-xs font-semibold transition-colors',
+        iconOnly ? 'w-9' : 'px-2.5',
+        active ? LINK_TONES_ACTIVE[tone] : LINK_TONES[tone],
+      )}
+    >
+      <Icon className="h-4 w-4" />
+      {!iconOnly && <span className="hidden sm:inline">{label}</span>}
+    </button>
   );
 }
 

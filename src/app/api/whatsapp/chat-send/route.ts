@@ -36,6 +36,7 @@ function emitSent(args: {
   const message: ThreadMessage = {
     id: args.messageId,
     debtor_id: args.debtorId,
+    supplier_id: null,
     contact_phone: args.contactPhone,
     chat_id: args.chatId,
     external_message_id: args.idMessage ?? null,
@@ -48,6 +49,7 @@ function emitSent(args: {
     error_detail: null,
     sent_by: args.sentBy,
     sent_by_name: args.sentByName,
+    supplier_display_name: null,
     broadcast_id: null,
     read_at: null,
     created_at: new Date().toISOString(),

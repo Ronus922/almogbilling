@@ -46,6 +46,8 @@ function buildConversation(args: {
     phone: local,
     is_group: false,
     debtor_id: d?.id ?? null,
+    supplier_id: null,
+    supplier_display_name: null,
     display_name: name,
     apartment_number: d?.apartment_number ?? null,
     role,

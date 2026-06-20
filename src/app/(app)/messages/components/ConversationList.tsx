@@ -1,6 +1,6 @@
 'use client';
 
-import { Search, MessageCircle, Smartphone } from 'lucide-react';
+import { Search, MessageCircle, Smartphone, Wrench } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import type { Conversation, InstanceOption } from '@/types/whatsapp';
@@ -95,7 +95,7 @@ export function ConversationList({
               const title = conversationTitle(c);
               const isActive = c.chat_id === selectedChatId;
               const preview = previewText(c.last_content, c.last_type);
-              const isUnlinked = !c.debtor_id && !c.is_group;
+              const isUnlinked = !c.debtor_id && !c.supplier_id && !c.is_group;
               const role = roleLine(c);
               return (
                 <li key={c.chat_id}>
@@ -115,6 +115,11 @@ export function ConversationList({
                           {c.apartment_number ? (
                             <span className="shrink-0 text-[11px] font-medium text-slate-400">
                               · דירה {c.apartment_number}
+                            </span>
+                          ) : c.supplier_id ? (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                              <Wrench className="h-3 w-3" />
+                              ספק
                             </span>
                           ) : isUnlinked ? (
                             <span className="shrink-0 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">

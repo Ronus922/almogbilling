@@ -1,5 +1,6 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
+import { phoneDigitsKey } from '@/lib/whatsapp';
 import type {
   Supplier,
   SupplierListItem,
@@ -8,6 +9,7 @@ import type {
   SupplierWritableFields,
   SupplierActivityEntry,
 } from '@/lib/types/suppliers';
+import type { SupplierSearchResult } from '@/types/whatsapp';
 
 const SUPPLIER_COLUMNS = `
   id, display_name, company_name, contact_person, supplier_type, category_id, status,
@@ -66,6 +68,53 @@ export async function listSuppliers(filters: SupplierListFilters): Promise<Suppl
     params,
   );
   return r.rows;
+}
+
+/** Lightweight supplier lookup for the WhatsApp "link conversation to supplier"
+ *  dialog — matches name / company / contact / phone / mobile. Returns id +
+ *  display fields only (no bank/notes). Gated by the route on whatsapp:edit, so
+ *  it deliberately exposes nothing sensitive. Empty query → []. */
+export async function searchSuppliers(q: string, limit = 20): Promise<SupplierSearchResult[]> {
+  const term = q.trim();
+  if (!term) return [];
+  const like = `%${term}%`;
+  const r = await query<SupplierSearchResult>(
+    `select s.id, s.display_name, s.phone, s.mobile, c.name as category_name
+       from public.suppliers s
+       left join public.supplier_categories c on c.id = s.category_id
+      where s.deleted_at is null
+        and (s.display_name ilike $1 or s.company_name ilike $1 or s.contact_person ilike $1
+             or s.phone ilike $1 or s.mobile ilike $1)
+      order by case s.status when 'active' then 0 else 1 end, s.display_name asc
+      limit $2`,
+    [like, Math.max(1, Math.min(50, limit))],
+  );
+  return r.rows;
+}
+
+/**
+ * Find an active supplier whose phone OR mobile matches the given local number
+ * by the NORMALIZED last-9-digits key (same rule as the debtor cross-reference).
+ * Used by the inbound cross-reference AFTER a debtor match fails, so a WhatsApp
+ * message from a known supplier's number auto-links to that supplier. Soft-deleted
+ * suppliers are excluded. Null when nothing matches.
+ */
+export async function findSupplierIdByPhone(localPhone: string): Promise<string | null> {
+  const key = phoneDigitsKey(localPhone);
+  if (!key) return null;
+  return (
+    (
+      await queryOne<{ id: string }>(
+        `select id from public.suppliers
+          where deleted_at is null
+            and (right(regexp_replace(coalesce(phone,''),  '[^0-9]', '', 'g'), 9) = $1
+              or right(regexp_replace(coalesce(mobile,''), '[^0-9]', '', 'g'), 9) = $1)
+          order by case status when 'active' then 0 else 1 end, created_at asc
+          limit 1`,
+        [key],
+      )
+    )?.id ?? null
+  );
 }
 
 export async function getSupplierById(id: string): Promise<Supplier | null> {

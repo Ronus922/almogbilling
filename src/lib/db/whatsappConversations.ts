@@ -13,6 +13,8 @@ interface ConvRow {
   chat_id: string;
   contact_phone: string | null;
   debtor_id: string | null;
+  supplier_id: string | null;
+  supplier_display_name: string | null;
   last_content: string | null;
   last_type: Conversation['last_type'];
   last_direction: Conversation['last_direction'];
@@ -60,6 +62,8 @@ export async function listConversations(
           (array_agg(m.contact_phone order by m.created_at desc))[1]          as contact_phone,
           (array_agg(m.debtor_id order by m.created_at desc)
              filter (where m.debtor_id is not null))[1]                       as stored_debtor_id,
+          (array_agg(m.supplier_id order by m.created_at desc)
+             filter (where m.supplier_id is not null))[1]                     as supplier_id,
           (array_agg(coalesce(m.content, '') order by m.created_at desc))[1]  as last_content,
           (array_agg(m.message_type order by m.created_at desc))[1]          as last_type,
           (array_agg(m.direction order by m.created_at desc))[1]             as last_direction
@@ -84,6 +88,7 @@ export async function listConversations(
      select k.chat_id, k.contact_phone, k.last_content, k.last_type,
             k.last_direction, k.last_at, k.unread::text as unread,
             d.id as debtor_id, d.owner_name, d.tenant_name, d.apartment_number,
+            k.supplier_id, sup.display_name as supplier_display_name,
             case
               when d.id is null or k.convkey is null then null
               when right(regexp_replace(coalesce(d.phone_owner,''),  '[^0-9]', '', 'g'), 9) = k.convkey then 'owner'
@@ -97,12 +102,16 @@ export async function listConversations(
                  d.phone_owner, d.phone_tenant
             from public.debtors d
            where (k.stored_debtor_id is not null and d.id = k.stored_debtor_id)
-              or (k.stored_debtor_id is null and k.convkey is not null
+              -- Phone fallback ONLY when not supplier-linked: a supplier-linked
+              -- conversation has debtor_id cleared (XOR), so it must not pick up a
+              -- phantom debtor that happens to share the number.
+              or (k.stored_debtor_id is null and k.supplier_id is null and k.convkey is not null
                   and (right(regexp_replace(coalesce(d.phone_owner,''),  '[^0-9]', '', 'g'), 9) = k.convkey
                     or right(regexp_replace(coalesce(d.phone_tenant,''), '[^0-9]', '', 'g'), 9) = k.convkey))
            order by d.is_archived asc, d.created_at asc
            limit 1
        ) d on true
+       left join public.suppliers sup on sup.id = k.supplier_id
        left join public.whatsapp_avatars av on av.chat_id = k.chat_id
       where ($1 = ''
              or d.owner_name      ilike $2
@@ -124,6 +133,8 @@ export async function listConversations(
       phone: isGroup ? null : chatIdToLocalPhone(row.chat_id) ?? row.contact_phone,
       is_group: isGroup,
       debtor_id: row.debtor_id,
+      supplier_id: row.debtor_id ? null : row.supplier_id,
+      supplier_display_name: row.debtor_id ? null : row.supplier_display_name,
       display_name: debtorName,
       apartment_number: row.apartment_number,
       role: row.debtor_id ? row.role : null,
@@ -150,13 +161,15 @@ export async function listThread(
 ): Promise<ThreadMessage[]> {
   const r = await query<ThreadMessage>(
     `select
-        m.id, m.debtor_id, m.contact_phone, m.chat_id, m.external_message_id,
+        m.id, m.debtor_id, m.supplier_id, m.contact_phone, m.chat_id, m.external_message_id,
         m.link_status, m.direction, m.message_type, m.content, m.media_url, m.status,
         m.error_detail, m.sent_by,
         u.full_name as sent_by_name,
+        s.display_name as supplier_display_name,
         m.broadcast_id, m.read_at, m.created_at
        from public.chat_messages m
        left join public.users u on u.id = m.sent_by
+       left join public.suppliers s on s.id = m.supplier_id
       where m.chat_id = $1
         and ($2::timestamptz is null or m.created_at < $2::timestamptz)
         and ($4::uuid is null or m.instance_id = $4::uuid)

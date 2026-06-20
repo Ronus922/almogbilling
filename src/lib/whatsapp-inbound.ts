@@ -1,6 +1,7 @@
 import 'server-only';
 import { queryOne } from '@/lib/db';
 import { insertChatMessage } from '@/lib/db/chatMessages';
+import { findSupplierIdByPhone } from '@/lib/db/suppliers';
 import type { InstanceCreds } from '@/lib/db/whatsappInstances';
 import { emitWa } from '@/lib/whatsapp-events';
 import { listActiveAdmins } from '@/lib/db/users';
@@ -109,15 +110,22 @@ export async function processIncomingMessage(
   // Groups (…@g.us) are one conversation keyed on the group id, never matched to
   // a single debtor — the sender's phone is still kept for reference.
   const debtorId = parsed.isGroup ? null : await findDebtorIdByPhone(parsed.senderPhoneLocal);
+  // Cross-reference order: debtor first, supplier second, else unlinked. Only
+  // probe suppliers when no debtor matched (XOR — a conversation is one or the
+  // other). This is what makes "create supplier from this number" stick: future
+  // inbound from that number auto-links to the supplier.
+  const supplierId =
+    !parsed.isGroup && !debtorId ? await findSupplierIdByPhone(parsed.senderPhoneLocal) : null;
 
   const id = await insertChatMessage({
     debtorId,
+    supplierId,
     contactPhone: parsed.senderPhoneLocal,
     chatId: parsed.chatId,
     externalMessageId: parsed.externalMessageId,
     direction: 'received',
     messageType: parsed.messageType,
-    linkStatus: debtorId ? 'linked' : 'unlinked',
+    linkStatus: debtorId || supplierId ? 'linked' : 'unlinked',
     content: parsed.content,
     // For media messages content holds the Green API downloadUrl; mirror it into
     // media_url so the inbox can render it as media, not a raw link.
@@ -135,10 +143,11 @@ export async function processIncomingMessage(
     const message: ThreadMessage = {
       id,
       debtor_id: debtorId,
+      supplier_id: supplierId,
       contact_phone: parsed.senderPhoneLocal,
       chat_id: parsed.chatId,
       external_message_id: parsed.externalMessageId,
-      link_status: debtorId ? 'linked' : 'unlinked',
+      link_status: debtorId || supplierId ? 'linked' : 'unlinked',
       direction: 'received',
       message_type: parsed.messageType,
       content: parsed.content,
@@ -147,6 +156,7 @@ export async function processIncomingMessage(
       error_detail: null,
       sent_by: null,
       sent_by_name: null,
+      supplier_display_name: null,
       broadcast_id: null,
       read_at: null,
       created_at: isoFromUnix(parsed.timestamp),
@@ -174,9 +184,13 @@ export async function processOutgoingMessage(
   instanceId: string | null = null,
 ): Promise<ProcessResult> {
   const debtorId = await findDebtorIdByPhone(parsed.recipientPhoneLocal);
+  // Debtor first, supplier second — mirror the inbound cross-reference so an
+  // outbound row to a supplier's number carries the supplier link too.
+  const supplierId = !debtorId ? await findSupplierIdByPhone(parsed.recipientPhoneLocal) : null;
 
   const id = await insertChatMessage({
     debtorId,
+    supplierId,
     contactPhone: parsed.recipientPhoneLocal,
     chatId: parsed.chatId,
     externalMessageId: parsed.externalMessageId,
@@ -196,6 +210,7 @@ export async function processOutgoingMessage(
     const message: ThreadMessage = {
       id,
       debtor_id: debtorId,
+      supplier_id: supplierId,
       contact_phone: parsed.recipientPhoneLocal,
       chat_id: parsed.chatId,
       external_message_id: parsed.externalMessageId,
@@ -208,6 +223,7 @@ export async function processOutgoingMessage(
       error_detail: null,
       sent_by: null,
       sent_by_name: null,
+      supplier_display_name: null,
       broadcast_id: null,
       read_at: null,
       created_at: isoFromUnix(parsed.timestamp),
