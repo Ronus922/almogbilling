@@ -3,14 +3,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { User, Eye, EyeOff } from 'lucide-react';
+import { User, Lock, Eye, EyeOff, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Separator } from '@/components/ui/separator';
 import { GoogleButton } from './GoogleButton';
 
 // Map ?reason=… query params to a user-facing toast.
@@ -82,8 +81,8 @@ export function LoginForm() {
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
       <div>
-        <h1 className="text-2xl font-extrabold">התחברות למערכת</h1>
-        <p className="mt-1 text-sm text-muted-foreground">נא להזין שם משתמש וסיסמה.</p>
+        <h1 className="text-[26px] font-extrabold tracking-tight text-slate-900">התחברות</h1>
+        <p className="mt-1.5 text-sm text-muted-foreground">הזן שם משתמש וסיסמה כדי להיכנס למערכת</p>
       </div>
 
       {error && (
@@ -93,7 +92,7 @@ export function LoginForm() {
       )}
 
       <div className="space-y-2">
-        <Label htmlFor="username">שם משתמש</Label>
+        <Label htmlFor="username" className="text-[13px] font-semibold text-slate-700">שם משתמש</Label>
         <div className="relative">
           <Input
             id="username"
@@ -101,16 +100,16 @@ export function LoginForm() {
             autoComplete="username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            className="pe-9"
+            className="h-12 rounded-xl pe-11"
             required
             dir="ltr"
           />
-          <User className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <User className="pointer-events-none absolute start-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
         </div>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="password">סיסמה</Label>
+        <Label htmlFor="password" className="text-[13px] font-semibold text-slate-700">סיסמה</Label>
         <div className="relative">
           <Input
             id="password"
@@ -119,55 +118,63 @@ export function LoginForm() {
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="pe-9"
+            className="h-12 rounded-xl px-11"
             required
             dir="ltr"
           />
+          <Lock className="pointer-events-none absolute start-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
           <button
             type="button"
             onClick={() => setShowPassword((v) => !v)}
-            className="absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            className="absolute end-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg text-slate-400 hover:text-slate-600"
             aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'}
             tabIndex={-1}
           >
-            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            {showPassword ? <EyeOff className="h-[18px] w-[18px]" /> : <Eye className="h-[18px] w-[18px]" />}
           </button>
         </div>
       </div>
 
       <div className="flex items-center justify-between text-sm">
-        <label className="flex items-center gap-2 cursor-pointer">
+        <label className="flex cursor-pointer items-center gap-2">
           <Checkbox
             checked={remember}
             onCheckedChange={(v) => setRemember(v === true)}
             id="remember"
           />
-          <span>זכור אותי במכשיר זה</span>
+          <span className="text-slate-600">זכור אותי במכשיר זה</span>
         </label>
-        <Link href="/forgot-password" className="text-primary hover:underline">
+        <Link href="/forgot-password" className="font-semibold text-blue-600 hover:underline">
           שכחת סיסמה?
         </Link>
       </div>
 
-      <Button type="submit" className="w-full" disabled={submitting}>
-        {submitting ? 'מתחבר…' : 'התחבר'}
+      <Button
+        type="submit"
+        size="lg"
+        disabled={submitting}
+        className="w-full gap-2 bg-gradient-to-l from-blue-700 to-blue-600 text-white shadow-[0_12px_24px_-6px_rgba(37,99,235,0.5)] hover:from-blue-800 hover:to-blue-700"
+      >
+        {submitting ? (
+          'מתחבר…'
+        ) : (
+          <>
+            התחבר
+            <ArrowLeft className="h-[18px] w-[18px]" />
+          </>
+        )}
       </Button>
 
-      <div className="relative">
-        <Separator />
-        <span className="absolute inset-x-0 -top-2.5 mx-auto w-fit bg-card px-2 text-xs text-muted-foreground">
-          או
-        </span>
+      <div className="flex items-center gap-3">
+        <span className="h-px flex-1 bg-slate-200" />
+        <span className="text-xs text-slate-400">או</span>
+        <span className="h-px flex-1 bg-slate-200" />
       </div>
 
       <GoogleButton />
 
-      <p className="text-center text-xs text-muted-foreground">
-        בלחיצה על &quot;התחבר&quot; הינך מסכים{' '}
-        <Link href="#" className="text-primary hover:underline">
-          לתנאי השימוש ולמדיניות הפרטיות
-        </Link>
-        .
+      <p className="mt-2 text-center text-xs text-slate-400">
+        © {new Date().getFullYear()} ALMOG CRM — כל הזכויות שמורות
       </p>
     </form>
   );

@@ -9,9 +9,15 @@ export function GoogleButton() {
     window.location.href = '/api/auth/google/start';
   }
   return (
-    <Button type="button" variant="outline" className="w-full gap-2" onClick={onClick}>
+    <Button
+      type="button"
+      variant="outline"
+      size="lg"
+      className="w-full gap-2.5 rounded-xl font-semibold"
+      onClick={onClick}
+    >
       <GoogleIcon />
-      <span>התחבר עם Google</span>
+      <span>התחברות עם Google</span>
     </Button>
   );
 }
