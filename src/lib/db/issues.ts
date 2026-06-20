@@ -24,7 +24,7 @@ import { targetLabelSql } from '@/lib/db/targets';
 // assigned_to_user_id / supplier_id columns are frozen and no longer projected.
 const ISSUE_COLUMNS = `
   id, title, description, location_type, location_text, target_type, target_id, priority, status,
-  images, resolution_notes, resolved_at, is_archived,
+  images, resolution_notes, resolved_at, is_archived, sort_order,
   created_by, created_by_name, created_at, updated_at
 `;
 
@@ -235,6 +235,28 @@ export async function deleteIssue(id: string): Promise<boolean> {
     );
     const r = await client.query(`delete from public.issues where id = $1`, [id]);
     return (r.rowCount ?? 0) > 0;
+  });
+}
+
+// ── Kanban batch reorder (migration 050) ─────────────────────────────────────
+export interface IssueReorderItem {
+  id: string;
+  status: string;
+  sort_order: number;
+}
+
+/** Apply a batch of {id, status, sort_order} updates to issues atomically. The
+ *  active board only drags between open/in_progress, so this never resolves an
+ *  issue (resolution_notes stays a panel-only flow). */
+export async function reorderIssues(items: IssueReorderItem[]): Promise<void> {
+  if (items.length === 0) return;
+  await withTransaction(async (client: PoolClient) => {
+    for (const it of items) {
+      await client.query(
+        `update public.issues set status = $2, sort_order = $3 where id = $1`,
+        [it.id, it.status, it.sort_order],
+      );
+    }
   });
 }
 

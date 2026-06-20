@@ -157,22 +157,26 @@ export function IssuesPageClient({
     }
   }
 
-  // Cross-column kanban drag → status change. Issues have no manual sort_order, so
-  // a move only persists the new status (the active board exposes open/in_progress
-  // columns, so 'resolved' — which requires resolution notes — is never a drag target).
-  async function handleMove(issueId: string, toStatus: IssueStatus) {
+  // Persist a column's full order after a kanban drag (cross-column status change
+  // AND within-column manual reorder), symmetric to tasks. The active board exposes
+  // open/in_progress columns only, so 'resolved' (which needs resolution notes via
+  // the panel) is never a drag target. Status change here is silent — same as the
+  // tasks board; panel edits still fire the status-change notifications.
+  async function handleReorder(status: IssueStatus, orderedIds: string[]) {
     const prev = issues;
-    const moved = issues.find((i) => i.id === issueId);
-    if (!moved || moved.status === toStatus) return;
-    setIssues(issues.map((i) => (i.id === issueId ? { ...i, status: toStatus } : i)));
+    const orderMap = new Map(orderedIds.map((id, i) => [id, i] as const));
+    setIssues(issues.map((i) =>
+      orderMap.has(i.id) ? { ...i, status, sort_order: orderMap.get(i.id)! } : i,
+    ));
     try {
-      const r = await fetch(`/api/issues/${issueId}`, {
+      const items = orderedIds.map((id, i) => ({ id, status, sort_order: i }));
+      const r = await fetch('/api/issues/reorder', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ status: toStatus }),
+        body: JSON.stringify({ items }),
       });
-      if (!r.ok) throw new Error('שמירת הסטטוס נכשלה');
+      if (!r.ok) throw new Error('שמירת הסידור נכשלה');
       void fetchIssues();
     } catch (e) {
       setIssues(prev);
@@ -334,7 +338,7 @@ export function IssuesPageClient({
       {/* Board / Table — completed tab is always a table. The table is urgent-first
           then the selected sort within each group (issues have no due-date field). */}
       {tab === 'active' && view === 'kanban' ? (
-        <IssuesKanban issues={shown} canEdit={canEdit} onSelect={openEdit} onMove={(id, status) => void handleMove(id, status)} statuses={ACTIVE_ISSUE_STATUSES} onDelete={canEdit ? setDeleteTarget : undefined} />
+        <IssuesKanban issues={shown} canEdit={canEdit} onSelect={openEdit} onReorder={handleReorder} statuses={ACTIVE_ISSUE_STATUSES} onDelete={canEdit ? setDeleteTarget : undefined} />
       ) : (
         <IssuesTable issues={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} onDelete={canEdit ? setDeleteTarget : undefined} />
       )}

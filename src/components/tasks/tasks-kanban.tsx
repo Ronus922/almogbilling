@@ -14,8 +14,11 @@ interface Props {
   tasks: TaskWithAssignee[];
   canEdit: boolean;
   onSelect: (task: TaskWithAssignee) => void;
-  /** Persist a move (status change + reorder). */
-  onMove: (taskId: string, toStatus: TaskStatus, toIndex: number) => void;
+  /** Persist a destination column's full top-to-bottom order after a drag — this
+   *  covers BOTH cross-column moves (status change) and within-column manual
+   *  reorder. `orderedIds` is the column's new card order; the caller renumbers
+   *  sort_order = position and sets status for every id. */
+  onReorder: (status: TaskStatus, orderedIds: string[]) => void;
   /** Which status columns to render. Defaults to all. The "פעילות" tab passes the
    *  active statuses so completed tasks don't appear on the board. */
   statuses?: TaskStatus[];
@@ -29,16 +32,18 @@ function isOverdue(t: TaskWithAssignee): boolean {
   return t.due_date < new Date().toISOString().slice(0, 10);
 }
 
-export function TasksKanban({ tasks, canEdit, onSelect, onMove, statuses, onDelete }: Props) {
+export function TasksKanban({ tasks, canEdit, onSelect, onReorder, statuses, onDelete }: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overCol, setOverCol] = useState<TaskStatus | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
 
   const columns = statuses
     ? TASK_STATUSES.filter((c) => statuses.includes(c.value))
     : TASK_STATUSES;
 
-  // Ordering: urgent first, then due date ascending (no due date last), then the
-  // manual drag order (sort_order) as a tiebreaker.
+  // Ordering: urgent first (pinned on top), then the manual drag order
+  // (sort_order), then created_at as a stable tiebreaker. Due-date sorting lives
+  // in the table view; the board is manually orderable per the reorder spec.
   const byStatus = (s: TaskStatus) =>
     tasks
       .filter((t) => t.status === s)
@@ -46,18 +51,27 @@ export function TasksKanban({ tasks, canEdit, onSelect, onMove, statuses, onDele
         const au = a.priority === 'urgent' ? 0 : 1;
         const bu = b.priority === 'urgent' ? 0 : 1;
         if (au !== bu) return au - bu;
-        const ad = a.due_date ?? '9999-12-31';
-        const bd = b.due_date ?? '9999-12-31';
-        if (ad !== bd) return ad < bd ? -1 : 1;
-        return a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at);
+        if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+        return a.created_at.localeCompare(b.created_at);
       });
 
-  function handleDrop(status: TaskStatus) {
+  // Build the destination column's new id order with the dragged card inserted
+  // before the card at `index` (null → append to the end), then persist.
+  function dropInto(status: TaskStatus, index: number | null) {
     if (!dragId) return;
-    const colCount = byStatus(status).length;
-    onMove(dragId, status, colCount);
+    const items = byStatus(status);
+    const order = items.map((t) => t.id).filter((id) => id !== dragId);
+    const targetId = index === null ? null : items[index]?.id;
+    let pos = order.length;
+    if (targetId && targetId !== dragId) {
+      const idx = order.indexOf(targetId);
+      if (idx !== -1) pos = idx;
+    }
+    order.splice(pos, 0, dragId);
+    onReorder(status, order);
     setDragId(null);
     setOverCol(null);
+    setOverIndex(null);
   }
 
   return (
@@ -67,9 +81,9 @@ export function TasksKanban({ tasks, canEdit, onSelect, onMove, statuses, onDele
         return (
           <div
             key={col.value}
-            onDragOver={(e) => { if (canEdit && dragId) { e.preventDefault(); setOverCol(col.value); } }}
+            onDragOver={(e) => { if (canEdit && dragId) { e.preventDefault(); setOverCol(col.value); setOverIndex(null); } }}
             onDragLeave={() => setOverCol((c) => (c === col.value ? null : c))}
-            onDrop={() => handleDrop(col.value)}
+            onDrop={() => dropInto(col.value, null)}
             className={cn(
               'flex flex-col rounded-xl border bg-slate-50/60 transition-colors',
               overCol === col.value ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200',
@@ -89,20 +103,23 @@ export function TasksKanban({ tasks, canEdit, onSelect, onMove, statuses, onDele
               {items.length === 0 && (
                 <p className="py-6 text-center text-xs text-slate-400">אין משימות</p>
               )}
-              {items.map((t) => (
+              {items.map((t, idx) => (
                 <div
                   key={t.id}
                   role="button"
                   tabIndex={0}
                   draggable={canEdit}
                   onDragStart={() => setDragId(t.id)}
-                  onDragEnd={() => { setDragId(null); setOverCol(null); }}
+                  onDragEnd={() => { setDragId(null); setOverCol(null); setOverIndex(null); }}
+                  onDragOver={(e) => { if (canEdit && dragId && dragId !== t.id) { e.preventDefault(); e.stopPropagation(); setOverCol(col.value); setOverIndex(idx); } }}
+                  onDrop={(e) => { e.stopPropagation(); dropInto(col.value, idx); }}
                   onClick={() => onSelect(t)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSelect(t); } }}
                   className={cn(
                     'group w-full rounded-lg border border-slate-200 bg-white p-3 text-start shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-shadow hover:shadow-md',
                     canEdit && 'cursor-grab active:cursor-grabbing',
                     dragId === t.id && 'opacity-50',
+                    overCol === col.value && overIndex === idx && dragId !== t.id && 'ring-2 ring-blue-300',
                   )}
                 >
                   <div className="flex items-start justify-between gap-2">

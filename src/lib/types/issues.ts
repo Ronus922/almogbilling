@@ -26,6 +26,8 @@ export interface Issue {
   resolution_notes: string | null;
   resolved_at: string | null;
   is_archived: boolean;
+  /** Manual kanban order within a status column (migration 050). */
+  sort_order: number;
   created_by: string | null;
   created_by_name: string | null;
   created_at: string;

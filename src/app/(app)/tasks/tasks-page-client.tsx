@@ -159,23 +159,24 @@ export function TasksPageClient({
     }
   }
 
-  async function handleMove(taskId: string, toStatus: TaskStatus, toIndex: number) {
-    // Optimistic: update local state immediately.
+  // Persist a column's full order after a kanban drag (cross-column status change
+  // AND within-column manual reorder). Renumber sort_order = position for every id
+  // in the destination column and batch-PATCH them.
+  async function handleReorder(status: TaskStatus, orderedIds: string[]) {
     const prev = tasks;
-    const moved = tasks.find((t) => t.id === taskId);
-    if (!moved) return;
-    const next = tasks.map((t) =>
-      t.id === taskId ? { ...t, status: toStatus, sort_order: toIndex } : t,
-    );
-    setTasks(next);
+    const orderMap = new Map(orderedIds.map((id, i) => [id, i] as const));
+    setTasks(tasks.map((t) =>
+      orderMap.has(t.id) ? { ...t, status, sort_order: orderMap.get(t.id)! } : t,
+    ));
     try {
+      const items = orderedIds.map((id, i) => ({ id, status, sort_order: i }));
       const r = await fetch('/api/tasks/reorder', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ items: [{ id: taskId, status: toStatus, sort_order: toIndex }] }),
+        body: JSON.stringify({ items }),
       });
-      if (!r.ok) throw new Error('שמירת המיקום נכשלה');
+      if (!r.ok) throw new Error('שמירת הסידור נכשלה');
       void fetchTasks();
     } catch (e) {
       setTasks(prev);
@@ -337,7 +338,7 @@ export function TasksPageClient({
 
       {/* Board / Table — completed tab is always a table */}
       {tab === 'active' && view === 'kanban' ? (
-        <TasksKanban tasks={shown} canEdit={canEdit} onSelect={openEdit} onMove={handleMove} statuses={ACTIVE_TASK_STATUSES} onDelete={canEdit ? setDeleteTarget : undefined} />
+        <TasksKanban tasks={shown} canEdit={canEdit} onSelect={openEdit} onReorder={handleReorder} statuses={ACTIVE_TASK_STATUSES} onDelete={canEdit ? setDeleteTarget : undefined} />
       ) : (
         <TasksTable tasks={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} onDelete={canEdit ? setDeleteTarget : undefined} />
       )}

@@ -1,9 +1,9 @@
 'use client';
 
-// Issues kanban — twin of tasks-kanban (same drag state machine, column grid and
-// card chrome). Differences: issues have no due_date, so there is no overdue/date
-// chip; ordering is urgent-first then creation order. Cross-column drag persists a
-// status change via PATCH /api/issues/[id] (the owning page's onMove).
+// Issues kanban — twin of tasks-kanban (same drag state machine, column grid, card
+// chrome and within-column reorder). Differences: issues have no due_date, so there
+// is no overdue/date chip. Cross-column drag changes status and within-column drag
+// reorders; both persist via the column's onReorder (PATCH /api/issues/reorder).
 
 import { useState } from 'react';
 import { MessageSquare, ImageIcon, Pencil, Trash2 } from 'lucide-react';
@@ -19,8 +19,9 @@ interface Props {
   issues: IssueWithMeta[];
   canEdit: boolean;
   onSelect: (issue: IssueWithMeta) => void;
-  /** Persist a move (status change). toIndex kept for signature symmetry. */
-  onMove: (issueId: string, toStatus: IssueStatus, toIndex: number) => void;
+  /** Persist a destination column's full top-to-bottom order after a drag — covers
+   *  cross-column moves (status change) and within-column manual reorder. */
+  onReorder: (status: IssueStatus, orderedIds: string[]) => void;
   /** Which status columns to render. Defaults to all. The "פעילות" tab passes the
    *  active statuses so completed issues don't appear on the board. */
   statuses?: IssueStatus[];
@@ -28,16 +29,17 @@ interface Props {
   onDelete?: (issue: IssueWithMeta) => void;
 }
 
-export function IssuesKanban({ issues, canEdit, onSelect, onMove, statuses, onDelete }: Props) {
+export function IssuesKanban({ issues, canEdit, onSelect, onReorder, statuses, onDelete }: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overCol, setOverCol] = useState<IssueStatus | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
 
   const columns = statuses
     ? ISSUE_STATUSES.filter((c) => statuses.includes(c.value))
     : ISSUE_STATUSES;
 
-  // Ordering: urgent first, then creation order (issues have no due_date / manual
-  // sort_order yet — see the reorder gap).
+  // Ordering: urgent first (pinned), then manual drag order (sort_order), then
+  // creation order (issues have no due_date).
   const byStatus = (s: IssueStatus) =>
     issues
       .filter((i) => i.status === s)
@@ -45,15 +47,27 @@ export function IssuesKanban({ issues, canEdit, onSelect, onMove, statuses, onDe
         const au = a.priority === 'urgent' ? 0 : 1;
         const bu = b.priority === 'urgent' ? 0 : 1;
         if (au !== bu) return au - bu;
+        if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
         return a.created_at.localeCompare(b.created_at);
       });
 
-  function handleDrop(status: IssueStatus) {
+  // Build the destination column's new id order with the dragged card inserted
+  // before the card at `index` (null → append), then persist.
+  function dropInto(status: IssueStatus, index: number | null) {
     if (!dragId) return;
-    const colCount = byStatus(status).length;
-    onMove(dragId, status, colCount);
+    const items = byStatus(status);
+    const order = items.map((i) => i.id).filter((id) => id !== dragId);
+    const targetId = index === null ? null : items[index]?.id;
+    let pos = order.length;
+    if (targetId && targetId !== dragId) {
+      const idx = order.indexOf(targetId);
+      if (idx !== -1) pos = idx;
+    }
+    order.splice(pos, 0, dragId);
+    onReorder(status, order);
     setDragId(null);
     setOverCol(null);
+    setOverIndex(null);
   }
 
   return (
@@ -63,9 +77,9 @@ export function IssuesKanban({ issues, canEdit, onSelect, onMove, statuses, onDe
         return (
           <div
             key={col.value}
-            onDragOver={(e) => { if (canEdit && dragId) { e.preventDefault(); setOverCol(col.value); } }}
+            onDragOver={(e) => { if (canEdit && dragId) { e.preventDefault(); setOverCol(col.value); setOverIndex(null); } }}
             onDragLeave={() => setOverCol((c) => (c === col.value ? null : c))}
-            onDrop={() => handleDrop(col.value)}
+            onDrop={() => dropInto(col.value, null)}
             className={cn(
               'flex flex-col rounded-xl border bg-slate-50/60 transition-colors',
               overCol === col.value ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200',
@@ -85,20 +99,23 @@ export function IssuesKanban({ issues, canEdit, onSelect, onMove, statuses, onDe
               {items.length === 0 && (
                 <p className="py-6 text-center text-xs text-slate-400">אין תקלות</p>
               )}
-              {items.map((i) => (
+              {items.map((i, idx) => (
                 <div
                   key={i.id}
                   role="button"
                   tabIndex={0}
                   draggable={canEdit}
                   onDragStart={() => setDragId(i.id)}
-                  onDragEnd={() => { setDragId(null); setOverCol(null); }}
+                  onDragEnd={() => { setDragId(null); setOverCol(null); setOverIndex(null); }}
+                  onDragOver={(e) => { if (canEdit && dragId && dragId !== i.id) { e.preventDefault(); e.stopPropagation(); setOverCol(col.value); setOverIndex(idx); } }}
+                  onDrop={(e) => { e.stopPropagation(); dropInto(col.value, idx); }}
                   onClick={() => onSelect(i)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSelect(i); } }}
                   className={cn(
                     'group w-full rounded-lg border border-slate-200 bg-white p-3 text-start shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-shadow hover:shadow-md',
                     canEdit && 'cursor-grab active:cursor-grabbing',
                     dragId === i.id && 'opacity-50',
+                    overCol === col.value && overIndex === idx && dragId !== i.id && 'ring-2 ring-blue-300',
                   )}
                 >
                   <div className="flex items-start justify-between gap-2">
