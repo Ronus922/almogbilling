@@ -29,7 +29,7 @@ import type {
 import type { TargetType } from '@/lib/types/targets';
 import type { AssigneeInput, SupplierOption } from '@/lib/types/assignee';
 import { TargetField } from '@/components/targets/TargetField';
-import { AssigneeMultiSelect } from '@/components/assignee/AssigneeMultiSelect';
+import { AssigneeSplitFields } from '@/components/assignee/AssigneeSplitFields';
 import {
   RemindersSection, splitRemindAt, buildRemindersPayload, rowChannels, type ReminderRow,
 } from '@/components/reminders/RemindersSection';
@@ -460,27 +460,25 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
                 </div>
               </Section>
 
-              {/* Handlers — any mix of internal users + external suppliers */}
-              <Section title="גורם מטפל" icon={User} iconTone="violet">
-                <div className="py-2">
-                  <AssigneeMultiSelect
-                    users={assignees}
-                    suppliers={suppliers}
-                    value={form.assignees}
-                    onChange={(next) => {
-                      set('assignees', next);
-                      // Drop matrix selections for assignees no longer present.
-                      setNotify((prev) => {
-                        const allowed = new Set(['me', ...next.map((a) => `${a.assignee_type}:${a.id}`)]);
-                        const pruned: NotifySelection = {};
-                        for (const [k, v] of Object.entries(prev)) if (allowed.has(k)) pruned[k] = v;
-                        return pruned;
-                      });
-                    }}
-                    knownNames={knownNames}
-                    disabled={disabled}
-                  />
-                </div>
+              {/* Handlers — internal users + external suppliers as two pickers */}
+              <Section title="גורם מטפל" icon={User} iconTone="violet" subtitle="אפשר לשלב את שניהם">
+                <AssigneeSplitFields
+                  users={assignees}
+                  suppliers={suppliers}
+                  value={form.assignees}
+                  onChange={(next) => {
+                    set('assignees', next);
+                    // Drop matrix selections for assignees no longer present.
+                    setNotify((prev) => {
+                      const allowed = new Set(['me', ...next.map((a) => `${a.assignee_type}:${a.id}`)]);
+                      const pruned: NotifySelection = {};
+                      for (const [k, v] of Object.entries(prev)) if (allowed.has(k)) pruned[k] = v;
+                      return pruned;
+                    });
+                  }}
+                  knownNames={knownNames}
+                  disabled={disabled}
+                />
               </Section>
 
               {/* Reminders (shared component — also used by the issue form) */}
