@@ -7,6 +7,14 @@ export const ISSUE_STATUSES: { value: IssueStatus; label: string; tone: string }
   { value: 'closed', label: 'סגורה', tone: 'slate' },
 ];
 
+// Active vs completed split for the "פעילות" / "הושלמו" tabs (filter only — no
+// new status). Completed = terminal statuses (resolved / closed).
+export const COMPLETED_ISSUE_STATUSES: IssueStatus[] = ['resolved', 'closed'];
+export const ACTIVE_ISSUE_STATUSES: IssueStatus[] = ['open', 'in_progress'];
+export function isCompletedIssueStatus(s: IssueStatus): boolean {
+  return COMPLETED_ISSUE_STATUSES.includes(s);
+}
+
 export const ISSUE_PRIORITIES: { value: IssuePriority; label: string; tone: string }[] = [
   { value: 'low', label: 'נמוכה', tone: 'slate' },
   { value: 'normal', label: 'רגילה', tone: 'blue' },

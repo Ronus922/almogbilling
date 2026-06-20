@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   Plus, Search, LayoutGrid, List, ListTodo, AlarmClock, CircleCheckBig,
@@ -18,6 +18,7 @@ import { TaskFormPanel } from '@/components/tasks/task-form-panel';
 import { cn } from '@/lib/utils';
 import {
   TASK_STATUSES, TASK_PRIORITIES, taskStatusLabel, taskPriorityLabel,
+  ACTIVE_TASK_STATUSES, isCompletedTaskStatus,
 } from '@/lib/constants/tasks';
 import type {
   TaskKpis, TaskPriority, TaskSort, TaskStatus, TaskWithAssignee,
@@ -53,6 +54,7 @@ export function TasksPageClient({
   const [tasks, setTasks] = useState<TaskWithAssignee[]>(initialTasks);
   const [kpis, setKpis] = useState<TaskKpis>(initialKpis);
   const [view, setView] = useState<ViewMode>('kanban');
+  const [tab, setTab] = useState<'active' | 'completed'>('active');
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<TaskStatus | 'all'>('all');
@@ -70,7 +72,8 @@ export function TasksPageClient({
     try {
       const params = new URLSearchParams();
       if (search.trim()) params.set('search', search.trim());
-      if (statusFilter !== 'all') params.set('status', statusFilter);
+      // status is NOT sent to the API — the active/completed tab + the status
+      // dropdown both filter client-side, so the tab counts stay accurate.
       if (priorityFilter !== 'all') params.set('priority', priorityFilter);
       if (assigneeFilter !== 'all') params.set('assignedTo', assigneeFilter);
       if (supplierFilter !== 'all') params.set('supplier_id', supplierFilter);
@@ -84,7 +87,18 @@ export function TasksPageClient({
     } catch (err) {
       toast.error(`טעינת המשימות נכשלה: ${(err as Error).message}`);
     }
-  }, [search, statusFilter, priorityFilter, assigneeFilter, supplierFilter, sort]);
+  }, [search, priorityFilter, assigneeFilter, supplierFilter, sort]);
+
+  // Active / completed partition (client-side — "filter only", no new status).
+  const activeTasks = useMemo(() => tasks.filter((t) => !isCompletedTaskStatus(t.status)), [tasks]);
+  const completedTasks = useMemo(() => tasks.filter((t) => isCompletedTaskStatus(t.status)), [tasks]);
+  const tabTasks = tab === 'active' ? activeTasks : completedTasks;
+  // The status dropdown narrows further, but only in table view (the kanban
+  // always shows its full set of columns).
+  const shown = useMemo(() => {
+    if (view === 'table' && statusFilter !== 'all') return tabTasks.filter((t) => t.status === statusFilter);
+    return tabTasks;
+  }, [tabTasks, statusFilter, view]);
 
   // Initial data is server-rendered; refetch when filters/sort change.
   useEffect(() => {
@@ -171,30 +185,64 @@ export function TasksPageClient({
         <KpiCard title="הושלמו החודש" value={String(kpis.doneThisMonth)} tone="green" icon={CircleCheckBig} />
       </div>
 
+      {/* Active / completed tabs (filter only — terminal statuses move here) */}
+      <div className="flex flex-wrap gap-2">
+        {([
+          { key: 'active', label: 'פעילות', count: activeTasks.length },
+          { key: 'completed', label: 'הושלמו', count: completedTasks.length },
+        ] as const).map((t) => {
+          const on = tab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => { setTab(t.key); setStatusFilter('all'); }}
+              className={cn(
+                'inline-flex h-11 cursor-pointer items-center gap-2 rounded-lg px-4 text-sm font-semibold transition-colors',
+                on ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+              )}
+            >
+              {t.label}
+              <span className={cn(
+                'inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-bold tabular-nums',
+                on ? 'bg-white/25 text-white' : 'bg-blue-100 text-blue-700',
+              )}>
+                {t.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       {/* Toolbar: view toggle + filters */}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
-          <button
-            type="button"
-            onClick={() => setView('kanban')}
-            className={cn(
-              'inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors cursor-pointer',
-              view === 'kanban' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50',
-            )}
-          >
-            <LayoutGrid className="h-4 w-4" /> קנבן
-          </button>
-          <button
-            type="button"
-            onClick={() => setView('table')}
-            className={cn(
-              'inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors cursor-pointer',
-              view === 'table' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50',
-            )}
-          >
-            <List className="h-4 w-4" /> טבלה
-          </button>
-        </div>
+        {/* View toggle — completed tab is table-only */}
+        {tab === 'active' ? (
+          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+            <button
+              type="button"
+              onClick={() => setView('kanban')}
+              className={cn(
+                'inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors cursor-pointer',
+                view === 'kanban' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50',
+              )}
+            >
+              <LayoutGrid className="h-4 w-4" /> קנבן
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('table')}
+              className={cn(
+                'inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors cursor-pointer',
+                view === 'table' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50',
+              )}
+            >
+              <List className="h-4 w-4" /> טבלה
+            </button>
+          </div>
+        ) : (
+          <div />
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
@@ -207,15 +255,18 @@ export function TasksPageClient({
             />
           </div>
 
-          {/* Status filter — only meaningful in table view; kanban shows all columns. */}
-          {view === 'table' && (
+          {/* Status filter — table view of the active tab only (completed tab and
+              the kanban already scope their statuses). */}
+          {view === 'table' && tab === 'active' && (
             <Select value={statusFilter} onValueChange={(v) => { if (v) setStatusFilter(v as TaskStatus | 'all'); }}>
               <SelectTrigger className="h-10 w-36 data-[size=default]:h-10">
                 <SelectValue>{(v: string | null) => (v && v !== 'all' ? taskStatusLabel(v as TaskStatus) : 'כל הסטטוסים')}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">כל הסטטוסים</SelectItem>
-                {TASK_STATUSES.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+                {TASK_STATUSES.filter((s) => ACTIVE_TASK_STATUSES.includes(s.value)).map((s) => (
+                  <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           )}
@@ -262,11 +313,11 @@ export function TasksPageClient({
         </div>
       </div>
 
-      {/* Board / Table */}
-      {view === 'kanban' ? (
-        <TasksKanban tasks={tasks} canEdit={canEdit} onSelect={openEdit} onMove={handleMove} />
+      {/* Board / Table — completed tab is always a table */}
+      {tab === 'active' && view === 'kanban' ? (
+        <TasksKanban tasks={shown} canEdit={canEdit} onSelect={openEdit} onMove={handleMove} statuses={ACTIVE_TASK_STATUSES} />
       ) : (
-        <TasksTable tasks={tasks} sort={sort} onSortChange={setSort} onSelect={openEdit} />
+        <TasksTable tasks={shown} sort={sort} onSortChange={setSort} onSelect={openEdit} />
       )}
 
       <TaskFormPanel

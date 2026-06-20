@@ -7,6 +7,14 @@ export const TASK_STATUSES: { value: TaskStatus; label: string; tone: string }[]
   { value: 'cancelled', label: 'בוטל', tone: 'rose' },
 ];
 
+// Active vs completed split for the "פעילות" / "הושלמו" tabs (filter only — no
+// new status). Completed = terminal statuses (done / cancelled).
+export const COMPLETED_TASK_STATUSES: TaskStatus[] = ['done', 'cancelled'];
+export const ACTIVE_TASK_STATUSES: TaskStatus[] = ['open', 'in_progress'];
+export function isCompletedTaskStatus(s: TaskStatus): boolean {
+  return COMPLETED_TASK_STATUSES.includes(s);
+}
+
 export const TASK_PRIORITIES: { value: TaskPriority; label: string; tone: string }[] = [
   { value: 'low', label: 'נמוכה', tone: 'slate' },
   { value: 'normal', label: 'רגילה', tone: 'blue' },

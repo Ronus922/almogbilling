@@ -16,6 +16,9 @@ interface Props {
   onSelect: (task: TaskWithAssignee) => void;
   /** Persist a move (status change + reorder). */
   onMove: (taskId: string, toStatus: TaskStatus, toIndex: number) => void;
+  /** Which status columns to render. Defaults to all. The "פעילות" tab passes the
+   *  active statuses so completed tasks don't appear on the board. */
+  statuses?: TaskStatus[];
 }
 
 function isOverdue(t: TaskWithAssignee): boolean {
@@ -24,9 +27,13 @@ function isOverdue(t: TaskWithAssignee): boolean {
   return t.due_date < new Date().toISOString().slice(0, 10);
 }
 
-export function TasksKanban({ tasks, canEdit, onSelect, onMove }: Props) {
+export function TasksKanban({ tasks, canEdit, onSelect, onMove, statuses }: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overCol, setOverCol] = useState<TaskStatus | null>(null);
+
+  const columns = statuses
+    ? TASK_STATUSES.filter((c) => statuses.includes(c.value))
+    : TASK_STATUSES;
 
   const byStatus = (s: TaskStatus) =>
     tasks
@@ -42,8 +49,8 @@ export function TasksKanban({ tasks, canEdit, onSelect, onMove }: Props) {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {TASK_STATUSES.map((col) => {
+    <div className={cn('grid grid-cols-1 gap-4 sm:grid-cols-2', columns.length <= 2 ? 'lg:grid-cols-2' : 'lg:grid-cols-4')}>
+      {columns.map((col) => {
         const items = byStatus(col.value);
         return (
           <div
