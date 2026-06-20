@@ -63,7 +63,7 @@ export function SupplierTable({
               {s.display_name}
             </span>
             <span className="flex justify-center">
-              <SupplierCategoryBadge name={s.category_name} />
+              <SupplierCategoryBadge name={s.category_name} color={s.category_color} />
             </span>
             <span className="truncate text-center text-[14px] font-medium text-[#475569]">
               {s.contact_person || <em className="not-italic text-[#cbd5e1]">—</em>}

@@ -2,7 +2,7 @@ import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import type { SupplierCategory, SupplierCategoryWithCount } from '@/lib/types/suppliers';
 
-const CATEGORY_COLUMNS = `id, name, is_active, created_at, updated_at`;
+const CATEGORY_COLUMNS = `id, name, color, is_active, created_at, updated_at`;
 
 /** Active categories only — used by the filter and the supplier-form Select. */
 export async function listActiveSupplierCategories(): Promise<SupplierCategory[]> {
@@ -18,7 +18,7 @@ export async function listActiveSupplierCategories(): Promise<SupplierCategory[]
 /** All categories with their live-supplier count — used by the management sheet. */
 export async function listSupplierCategoriesWithCounts(): Promise<SupplierCategoryWithCount[]> {
   const r = await query<SupplierCategoryWithCount>(
-    `select c.id, c.name, c.is_active, c.created_at, c.updated_at,
+    `select c.id, c.name, c.color, c.is_active, c.created_at, c.updated_at,
             coalesce(count(s.id) filter (where s.deleted_at is null), 0)::int as linked_count
        from public.supplier_categories c
        left join public.suppliers s on s.category_id = c.id
@@ -54,19 +54,22 @@ export async function findSupplierCategoryByLowerName(
   );
 }
 
-export async function createSupplierCategory(name: string): Promise<SupplierCategory> {
+export async function createSupplierCategory(
+  name: string,
+  color: string | null = null,
+): Promise<SupplierCategory> {
   const row = await queryOne<SupplierCategory>(
-    `insert into public.supplier_categories (name)
-     values ($1)
+    `insert into public.supplier_categories (name, color)
+     values ($1, $2)
      returning ${CATEGORY_COLUMNS}`,
-    [name],
+    [name, color],
   );
   return row as SupplierCategory;
 }
 
 export async function updateSupplierCategory(
   id: string,
-  patch: { name?: string; is_active?: boolean },
+  patch: { name?: string; is_active?: boolean; color?: string | null },
 ): Promise<SupplierCategory | null> {
   const sets: string[] = [];
   const args: unknown[] = [];
@@ -77,6 +80,10 @@ export async function updateSupplierCategory(
   if (patch.is_active !== undefined) {
     args.push(patch.is_active);
     sets.push(`is_active = $${args.length}`);
+  }
+  if (patch.color !== undefined) {
+    args.push(patch.color);
+    sets.push(`color = $${args.length}`);
   }
   if (sets.length === 0) return getSupplierCategoryById(id);
   args.push(id);

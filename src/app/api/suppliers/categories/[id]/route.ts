@@ -10,6 +10,7 @@ import {
 } from '@/lib/db/supplierCategories';
 import {
   validateSupplierCategoryForm,
+  normalizeCategoryColor,
   canDeleteSupplierCategory,
 } from '@/lib/validation/suppliers';
 
@@ -42,7 +43,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
   }
 
-  const patch: { name?: string; is_active?: boolean } = {};
+  const patch: { name?: string; is_active?: boolean; color?: string | null } = {};
 
   if ('name' in body) {
     const result = validateSupplierCategoryForm({ name: body.name });
@@ -61,6 +62,14 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
   if ('is_active' in body) {
     patch.is_active = body.is_active === true;
+  }
+
+  if ('color' in body) {
+    const color = normalizeCategoryColor(body.color);
+    if (!color.ok) {
+      return NextResponse.json({ error: 'validation', errors: { color: 'צבע לא תקין' } }, { status: 400 });
+    }
+    patch.color = color.value;
   }
 
   try {

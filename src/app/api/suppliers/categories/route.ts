@@ -7,7 +7,7 @@ import {
   findSupplierCategoryByLowerName,
   createSupplierCategory,
 } from '@/lib/db/supplierCategories';
-import { validateSupplierCategoryForm } from '@/lib/validation/suppliers';
+import { validateSupplierCategoryForm, normalizeCategoryColor } from '@/lib/validation/suppliers';
 
 export const runtime = 'nodejs';
 
@@ -52,6 +52,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'validation', errors: result.errors }, { status: 400 });
   }
 
+  const color = normalizeCategoryColor((body as Record<string, unknown>).color);
+  if (!color.ok) {
+    return NextResponse.json(
+      { error: 'validation', errors: { color: 'צבע לא תקין' } },
+      { status: 400 },
+    );
+  }
+
   const clash = await findSupplierCategoryByLowerName(result.value.name, null);
   if (clash) {
     return NextResponse.json(
@@ -61,7 +69,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const created = await createSupplierCategory(result.value.name);
+    const created = await createSupplierCategory(result.value.name, color.value);
     return NextResponse.json(created, { status: 201 });
   } catch (err) {
     const e = err as { code?: string };

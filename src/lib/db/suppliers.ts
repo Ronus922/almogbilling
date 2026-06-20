@@ -59,6 +59,7 @@ export async function listSuppliers(filters: SupplierListFilters): Promise<Suppl
   const r = await query<SupplierListItem>(
     `select ${SUPPLIER_COLUMNS_S},
        c.name as category_name,
+       c.color as category_color,
        (select count(*)::int from public.supplier_documents d where d.supplier_id = s.id) as documents_count
      from public.suppliers s
      left join public.supplier_categories c on c.id = s.category_id

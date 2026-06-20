@@ -10,6 +10,7 @@
 // Pure (no DB, no server-only): cleanPhoneField is a pure helper.
 
 import { cleanPhoneField } from '@/lib/whatsapp';
+import { COLOR_HEX_RE } from '@/lib/validation/status';
 import type {
   Supplier,
   SupplierStatus,
@@ -152,6 +153,21 @@ export function validateSupplierCategoryForm(input: {
   }
   if (Object.keys(errors).length > 0) return { ok: false, errors };
   return { ok: true, value: { name } };
+}
+
+/**
+ * Category color (additive, migration 052). Accepts a 6-digit hex; empty / null
+ * → null (clears the color → app falls back to the name-hash tone). Used by the
+ * categories POST/PATCH routes.
+ */
+export function normalizeCategoryColor(
+  value: unknown,
+): { ok: true; value: string | null } | { ok: false } {
+  if (value == null || value === '') return { ok: true, value: null };
+  if (typeof value === 'string' && COLOR_HEX_RE.test(value.trim())) {
+    return { ok: true, value: value.trim() };
+  }
+  return { ok: false };
 }
 
 /**

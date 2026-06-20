@@ -27,6 +27,8 @@ export type SupplierDocType =
 export interface SupplierCategory {
   id: string;
   name: string;
+  /** User-chosen hex ('#2563eb'); null → app falls back to a name-hash tone. */
+  color: string | null;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -70,6 +72,7 @@ export interface Supplier {
 export interface SupplierListItem extends Supplier {
   documents_count: number;
   category_name: string | null;
+  category_color: string | null;
 }
 
 export interface SupplierDocument {

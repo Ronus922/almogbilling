@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Check, X, FolderCog } from 'lucide-react';
+import { Plus, Pencil, Trash2, Check, X, Folder, Ban } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -10,10 +10,11 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Section } from '@/components/side-panel/Section';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { SupplierSection } from './SupplierSection';
 import { cn } from '@/lib/utils';
+import { REMINDER_CATEGORY_COLORS } from '@/lib/constants/userReminders';
 import type { SupplierCategoryWithCount } from '@/lib/types/suppliers';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 
@@ -34,6 +35,7 @@ export function SupplierCategoriesSheet({
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const [newName, setNewName] = useState('');
+  const [newColor, setNewColor] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -59,6 +61,7 @@ export function SupplierCategoriesSheet({
     if (open) {
       setLoading(true);
       setNewName('');
+      setNewColor(null);
       setEditingId(null);
       void refetch();
     }
@@ -73,7 +76,7 @@ export function SupplierCategoriesSheet({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, color: newColor }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -82,6 +85,7 @@ export function SupplierCategoriesSheet({
       }
       toast.success('הקטגוריה נוספה');
       setNewName('');
+      setNewColor(null);
       await refetch();
       await onChanged();
     } catch (err) {
@@ -143,6 +147,32 @@ export function SupplierCategoriesSheet({
     }
   }
 
+  async function saveColor(cat: SupplierCategoryWithCount, color: string | null) {
+    if (cat.color === color) return;
+    setBusyId(cat.id);
+    const prev = rows;
+    setRows((rs) => rs.map((r) => (r.id === cat.id ? { ...r, color } : r)));
+    try {
+      const res = await fetch(`/api/suppliers/categories/${cat.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ color }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || `HTTP ${res.status}`);
+      }
+      toast.success('הצבע עודכן');
+      await onChanged();
+    } catch (err) {
+      setRows(prev);
+      toast.error((err as Error).message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function confirmDelete() {
     if (!deleteTarget) return;
     setBusyId(deleteTarget.id);
@@ -176,12 +206,12 @@ export function SupplierCategoriesSheet({
           showCloseButton={false}
           className="w-full p-0 sm:w-[55vw] md:min-w-[640px] flex flex-col gap-0 overflow-hidden bg-white"
         >
-          {/* Header — site panel gradient (matches Create/Detail supplier panels) */}
-          <SheetHeader className="flex-none gap-2 bg-gradient-to-bl from-slate-900 via-blue-950 to-blue-900 px-6 py-6 text-white">
+          {/* Header — DETAIL family (navy diagonal gradient) */}
+          <SheetHeader className="flex-none gap-2 bg-[linear-gradient(120deg,#0e1f4d_0%,#16308a_55%,#1d4ed8_100%)] px-8 py-5 text-white">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
-                <SheetTitle className="text-2xl font-bold text-white">ניהול קטגוריות</SheetTitle>
-                <p className="mt-1 text-sm text-white/70">
+                <SheetTitle className="text-[23px] font-extrabold text-white">ניהול קטגוריות</SheetTitle>
+                <p className="mt-1 text-[13px] font-medium text-[#c7dbff]/80">
                   הוספה, שינוי שם, השבתה ומחיקה של קטגוריות הספקים.
                 </p>
               </div>
@@ -189,178 +219,190 @@ export function SupplierCategoriesSheet({
                 type="button"
                 onClick={() => onOpenChange(false)}
                 aria-label="סגור"
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-white/25 bg-white/5 text-white transition-colors hover:bg-white/15 hover:border-white/50"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[13px] bg-white/[0.14] text-white transition-colors hover:bg-white/[0.26]"
               >
-                <X className="h-5 w-5" />
+                <X className="h-5 w-5" strokeWidth={2.2} />
               </button>
             </div>
           </SheetHeader>
 
           {/* Body */}
-          <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5">
-            <Section title="קטגוריות" icon={FolderCog} iconTone="blue">
-              <div className="space-y-3 py-2">
-                {/* Add row */}
-                {canEdit && (
-                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                    <Input
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') void addCategory(); }}
-                      placeholder="שם קטגוריה חדשה..."
-                      className="h-10"
-                    />
-                    <Button
-                      type="button"
-                      onClick={addCategory}
-                      disabled={adding || newName.trim() === ''}
-                      className="shrink-0 gap-2"
-                    >
-                      <Plus className="h-4 w-4" />
-                      הוסף
-                    </Button>
-                  </div>
-                )}
+          <div className="flex-1 overflow-y-auto bg-[#f4f6fb] p-6">
+            <SupplierSection title="קטגוריות" icon={Folder} iconTone="blue">
+              {/* Add row */}
+              {canEdit && (
+                <div className="mb-2 flex gap-[10px]">
+                  <ColorSwatchPicker
+                    value={newColor}
+                    onChange={setNewColor}
+                    disabled={adding}
+                    triggerClassName="h-[46px] w-[46px] rounded-[11px]"
+                  />
+                  <Input
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') void addCategory(); }}
+                    placeholder="שם קטגוריה חדשה…"
+                    className="h-[46px] flex-1 rounded-[11px] border-[#e2e8f0] px-[14px] text-[14px] text-[#0f172a]"
+                  />
+                  <Button
+                    type="button"
+                    onClick={addCategory}
+                    disabled={adding || newName.trim() === ''}
+                    className="h-[46px] shrink-0 gap-[7px] rounded-[11px] bg-gradient-to-l from-[#1d4ed8] to-[#2563eb] px-[22px] text-[14px] font-bold text-white shadow-[0_8px_18px_-6px_rgba(37,99,235,0.5)] hover:from-[#1e40af] hover:to-[#1d4ed8]"
+                  >
+                    <Plus className="h-4 w-4" strokeWidth={2.3} />
+                    הוסף
+                  </Button>
+                </div>
+              )}
 
-                {/* List */}
-                {loading ? (
-                  <div className="space-y-2">
-                    <div className="h-11 rounded-lg bg-slate-100 animate-pulse" />
-                    <div className="h-11 rounded-lg bg-slate-100 animate-pulse" />
-                    <div className="h-11 rounded-lg bg-slate-100 animate-pulse" />
-                  </div>
-                ) : rows.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
-                    <span className="grid h-12 w-12 place-items-center rounded-full bg-blue-50 text-blue-600">
-                      <FolderCog className="h-5 w-5" />
-                    </span>
-                    <p className="text-sm text-muted-foreground">טרם הוגדרו קטגוריות.</p>
-                  </div>
-                ) : (
-                  <ul className="divide-y divide-slate-100">
-                    {rows.map((cat) => {
-                      const isEditing = editingId === cat.id;
-                      const rowBusy = busyId === cat.id;
-                      const blocked = cat.linked_count > 0;
-                      return (
-                        <li
-                          key={cat.id}
-                          className={cn(
-                            'flex items-center gap-3 py-2.5',
-                            !cat.is_active && 'opacity-60',
-                          )}
-                        >
-                          {isEditing ? (
-                            <>
-                              <Input
-                                value={editName}
-                                onChange={(e) => setEditName(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') void saveRename(cat.id);
-                                  if (e.key === 'Escape') setEditingId(null);
-                                }}
-                                autoFocus
-                                className="h-9"
-                              />
-                              <Button
+              {/* List */}
+              {loading ? (
+                <div className="space-y-2">
+                  <div className="h-12 rounded-lg bg-slate-100 animate-pulse" />
+                  <div className="h-12 rounded-lg bg-slate-100 animate-pulse" />
+                  <div className="h-12 rounded-lg bg-slate-100 animate-pulse" />
+                </div>
+              ) : rows.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+                  <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[#e8f0ff] text-[#2563eb]">
+                    <Folder className="h-5 w-5" />
+                  </span>
+                  <p className="text-sm text-muted-foreground">טרם הוגדרו קטגוריות.</p>
+                </div>
+              ) : (
+                <div>
+                  {rows.map((cat) => {
+                    const isEditing = editingId === cat.id;
+                    const rowBusy = busyId === cat.id;
+                    const blocked = cat.linked_count > 0;
+                    return (
+                      <div
+                        key={cat.id}
+                        className={cn(
+                          'flex items-center justify-between gap-4 border-b border-[#f1f4f8] px-[6px] py-[14px] last:border-0',
+                          !cat.is_active && !isEditing && 'opacity-60',
+                        )}
+                      >
+                        {isEditing ? (
+                          <>
+                            <Input
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') void saveRename(cat.id);
+                                if (e.key === 'Escape') setEditingId(null);
+                              }}
+                              autoFocus
+                              className="h-[42px] flex-1 rounded-[10px] border-[#e2e8f0] px-[13px] text-[14px]"
+                            />
+                            <div className="flex shrink-0 items-center gap-[6px]">
+                              <button
                                 type="button"
-                                variant="ghost"
-                                size="icon"
                                 onClick={() => saveRename(cat.id)}
                                 disabled={rowBusy || editName.trim() === ''}
                                 aria-label="שמור"
-                                className="shrink-0 text-emerald-600 hover:text-emerald-700"
+                                className="grid h-[34px] w-[34px] place-items-center rounded-[9px] text-[#16a34a] transition-colors hover:bg-[#e7f7ee] disabled:opacity-40"
                               >
                                 <Check className="h-4 w-4" />
-                              </Button>
-                              <Button
+                              </button>
+                              <button
                                 type="button"
-                                variant="ghost"
-                                size="icon"
                                 onClick={() => setEditingId(null)}
                                 disabled={rowBusy}
                                 aria-label="ביטול"
-                                className="shrink-0"
+                                className="grid h-[34px] w-[34px] place-items-center rounded-[9px] text-[#64748b] transition-colors hover:bg-[#eef2f7]"
                               >
                                 <X className="h-4 w-4" />
-                              </Button>
-                            </>
-                          ) : (
-                            <>
-                              <span className="flex-1 truncate text-sm font-semibold text-slate-900">
-                                {cat.name}
-                              </span>
-                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 tabular-nums">
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            {/* name (RTL start = right) */}
+                            <span className="truncate text-[15px] font-bold text-[#0f172a]">
+                              {cat.name}
+                            </span>
+                            {/* controls (RTL end = left) */}
+                            <div className="flex shrink-0 items-center gap-[6px]">
+                              {canEdit && (
+                                <ColorSwatchPicker
+                                  value={cat.color}
+                                  onChange={(hex) => saveColor(cat, hex)}
+                                  disabled={rowBusy}
+                                />
+                              )}
+                              <span className="inline-flex items-center rounded-full bg-[#eef2f7] px-[10px] py-[4px] text-xs font-semibold text-[#64748b] whitespace-nowrap">
                                 {cat.linked_count} ספקים
                               </span>
                               {canEdit && (
-                                <div className="flex shrink-0 items-center gap-1">
-                                  <Tooltip>
-                                    <TooltipTrigger render={<span className="inline-flex" />}>
-                                      <Switch
-                                        checked={cat.is_active}
-                                        disabled={rowBusy}
-                                        onCheckedChange={(v) => toggleActive(cat, v)}
-                                        aria-label={cat.is_active ? 'השבת קטגוריה' : 'הפעל קטגוריה'}
-                                      />
-                                    </TooltipTrigger>
-                                    <TooltipContent>{cat.is_active ? 'פעילה' : 'מושבתת'}</TooltipContent>
-                                  </Tooltip>
-                                  <Button
+                                <>
+                                  {/* toggle (42×24) */}
+                                  <button
                                     type="button"
-                                    variant="ghost"
-                                    size="icon"
+                                    role="switch"
+                                    aria-checked={cat.is_active}
+                                    onClick={() => toggleActive(cat, !cat.is_active)}
+                                    disabled={rowBusy}
+                                    aria-label={cat.is_active ? 'השבת קטגוריה' : 'הפעל קטגוריה'}
+                                    className={cn(
+                                      'relative h-6 w-[42px] shrink-0 cursor-pointer rounded-full transition-colors disabled:opacity-50',
+                                      cat.is_active ? 'bg-[#2563eb]' : 'bg-slate-300',
+                                    )}
+                                  >
+                                    <span
+                                      className={cn(
+                                        'absolute top-[3px] h-[18px] w-[18px] rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.2)] transition-all',
+                                        cat.is_active ? 'left-[3px]' : 'right-[3px]',
+                                      )}
+                                    />
+                                  </button>
+                                  {/* rename */}
+                                  <button
+                                    type="button"
                                     onClick={() => { setEditingId(cat.id); setEditName(cat.name); }}
                                     disabled={rowBusy}
                                     aria-label="עריכת שם"
+                                    className="grid h-[34px] w-[34px] place-items-center rounded-[9px] text-[#64748b] transition-colors hover:bg-[#eef2f7]"
                                   >
                                     <Pencil className="h-4 w-4" />
-                                  </Button>
+                                  </button>
+                                  {/* delete (red) or locked (greyed) */}
                                   {blocked ? (
                                     <Tooltip>
                                       <TooltipTrigger render={<span className="inline-flex" />}>
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="icon"
-                                          disabled
+                                        <span
                                           aria-label="לא ניתן למחוק"
-                                          className="text-slate-300"
+                                          className="grid h-[34px] w-[34px] place-items-center rounded-[9px] text-[#d4dbe6]"
                                         >
                                           <Trash2 className="h-4 w-4" />
-                                        </Button>
+                                        </span>
                                       </TooltipTrigger>
                                       <TooltipContent>משויכים ספקים — לא ניתן למחוק</TooltipContent>
                                     </Tooltip>
                                   ) : (
-                                    <Tooltip>
-                                      <TooltipTrigger render={<span className="inline-flex" />}>
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="icon"
-                                          onClick={() => setDeleteTarget(cat)}
-                                          disabled={rowBusy}
-                                          aria-label="מחיקה"
-                                          className="text-red-500 hover:text-red-600"
-                                        >
-                                          <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent>מחיקה</TooltipContent>
-                                    </Tooltip>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDeleteTarget(cat)}
+                                      disabled={rowBusy}
+                                      aria-label="מחיקה"
+                                      className="grid h-[34px] w-[34px] place-items-center rounded-[9px] text-[#dc2626] transition-colors hover:bg-[#fef2f2]"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
                                   )}
-                                </div>
+                                </>
                               )}
-                            </>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
-            </Section>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </SupplierSection>
           </div>
         </SheetContent>
       </Sheet>
@@ -391,5 +433,73 @@ export function SupplierCategoriesSheet({
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+/**
+ * Per-category color picker — a swatch button that opens a palette popover.
+ * `null` = no color (the badge then falls back to the name-hash tone). Reuses the
+ * shared REMINDER_CATEGORY_COLORS palette + free "no color" option.
+ */
+function ColorSwatchPicker({
+  value,
+  onChange,
+  disabled,
+  triggerClassName,
+}: {
+  value: string | null;
+  onChange: (hex: string | null) => void;
+  disabled?: boolean;
+  triggerClassName?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        type="button"
+        disabled={disabled}
+        aria-label="צבע קטגוריה"
+        className={cn(
+          'grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[9px] ring-1 ring-slate-200 transition hover:ring-slate-300 disabled:opacity-50',
+          triggerClassName,
+        )}
+      >
+        <span
+          className="h-4 w-4 rounded-full ring-1 ring-black/5"
+          style={{ backgroundColor: value || '#e8eaf2' }}
+        />
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-auto p-2">
+        <div className="grid grid-cols-6 gap-1.5">
+          <button
+            type="button"
+            onClick={() => { onChange(null); setOpen(false); }}
+            aria-label="ללא צבע"
+            className={cn(
+              'grid h-7 w-7 place-items-center rounded-md bg-white text-slate-400 ring-1 ring-slate-200 transition hover:ring-slate-400',
+              !value && 'ring-2 ring-blue-600 ring-offset-1',
+            )}
+          >
+            <Ban className="h-3.5 w-3.5" />
+          </button>
+          {REMINDER_CATEGORY_COLORS.map((c) => {
+            const selected = value?.toLowerCase() === c.hex.toLowerCase();
+            return (
+              <button
+                key={c.hex}
+                type="button"
+                onClick={() => { onChange(c.hex); setOpen(false); }}
+                aria-label={c.label}
+                className={cn(
+                  'h-7 w-7 rounded-md ring-1 ring-slate-200 transition hover:ring-slate-400',
+                  selected && 'ring-2 ring-blue-600 ring-offset-1',
+                )}
+                style={{ backgroundColor: c.hex }}
+              />
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
