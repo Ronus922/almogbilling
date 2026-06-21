@@ -123,19 +123,28 @@ export interface CreateCalendarEventInput extends CalendarEventWritableFields {
 /** Scope for editing/deleting a recurring occurrence. */
 export type SeriesEditScope = 'single' | 'future';
 
+/** The non-event item kinds merged onto the calendar (read-only projections). */
+export type CalendarOverlayKind = 'task' | 'issue' | 'reminder';
+
 /**
- * A calendar item as returned by GET /api/calendar — either a real event or a
- * read-only projection of a task that has a due_date in range.
+ * A calendar item as returned by GET /api/calendar. Either a real event, or a
+ * read-only projection of another module that has a date in range:
+ *  - 'task'     — a scheduled task (tasks.due_date)
+ *  - 'issue'    — an open/in_progress issue with a due_date (migration 054)
+ *  - 'reminder' — a pending user_reminder the actor is involved in
+ * The three overlay kinds share one shape; `kind` drives color/icon/link.
  */
+export interface CalendarOverlayItem {
+  kind: CalendarOverlayKind;
+  id: string;
+  title: string;
+  event_date: string; // 'YYYY-MM-DD' (local day)
+  due_time: string | null; // 'HH:MM' or null (all-day)
+  priority: string | null; // tasks/issues carry one; reminders → null
+  status: string;
+  action_url: string; // deep link back to the source card
+}
+
 export type CalendarItem =
   | (CalendarEventWithParticipants & { kind: 'event' })
-  | {
-      kind: 'task';
-      id: string;
-      title: string;
-      event_date: string; // task.due_date
-      due_time: string | null;
-      priority: string;
-      status: string;
-      action_url: string; // '/tasks?task=<id>'
-    };
+  | CalendarOverlayItem;

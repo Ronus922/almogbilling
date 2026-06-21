@@ -96,6 +96,44 @@ export async function listUserReminders(
   return r.rows;
 }
 
+/**
+ * Pending reminders the given user is involved in (created_by OR assigned_to),
+ * whose remind_at falls on a local day inside [from, to] (inclusive) — for the
+ * calendar's read-only reminder overlay. from/to are 'YYYY-MM-DD'.
+ *
+ * remind_at is a timestamptz (a single instant); we convert it to the local wall
+ * clock in Asia/Jerusalem (the project tz, matching the reminders cron) to derive
+ * the calendar day + HH:MM. A reminder always carries a time, so it is never an
+ * all-day item. Archived / done / dismissed reminders are excluded.
+ */
+export async function listUserRemindersInRange(
+  from: string,
+  to: string,
+  userId: string,
+): Promise<{ id: string; title: string; event_date: string; due_time: string; status: string }[]> {
+  const r = await query<{
+    id: string;
+    title: string;
+    event_date: string;
+    due_time: string;
+    status: string;
+  }>(
+    `select id, title,
+            to_char(remind_at at time zone 'Asia/Jerusalem', 'YYYY-MM-DD') as event_date,
+            to_char(remind_at at time zone 'Asia/Jerusalem', 'HH24:MI') as due_time,
+            status
+       from public.user_reminders
+      where is_archived = false
+        and status = 'pending'
+        and (created_by = $3 or assigned_to = $3)
+        and (remind_at at time zone 'Asia/Jerusalem')::date >= $1
+        and (remind_at at time zone 'Asia/Jerusalem')::date <= $2
+      order by remind_at asc`,
+    [from, to, userId],
+  );
+  return r.rows;
+}
+
 export async function getUserReminderById(id: string): Promise<UserReminderWithNames | null> {
   return queryOne<UserReminderWithNames>(
     `select ${prefixed('r')},
