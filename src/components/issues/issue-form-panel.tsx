@@ -77,6 +77,9 @@ interface FormState {
   resolution_notes: string;
   target_type: TargetType | null;
   target_id: string | null;
+  /** Optional due date (migration 054) — surfaces the issue on the calendar. */
+  due_date: string;
+  due_time: string;
 }
 
 const EMPTY_FORM: FormState = {
@@ -88,6 +91,8 @@ const EMPTY_FORM: FormState = {
   resolution_notes: '',
   target_type: null,
   target_id: null,
+  due_date: '',
+  due_time: '',
 };
 
 function fromIssue(i: IssueWithMeta): FormState {
@@ -103,6 +108,8 @@ function fromIssue(i: IssueWithMeta): FormState {
     resolution_notes: i.resolution_notes ?? '',
     target_type: i.target_type,
     target_id: i.target_id,
+    due_date: i.due_date ?? '',
+    due_time: i.due_time ? i.due_time.slice(0, 5) : '',
   };
 }
 
@@ -276,6 +283,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
         // Target is optional. A type without a value persists as no target.
         target_type: form.target_id ? form.target_type : null,
         target_id: form.target_id || null,
+        // Optional due date / time (null when empty) — drives calendar visibility.
+        due_date: form.due_date || null,
+        due_time: form.due_time || null,
       };
       // Only send reminders array if it changed (replacement semantics — same as tasks).
       const remindersChanged =
@@ -486,6 +496,37 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
                           ))}
                         </SelectContent>
                       </Select>
+                    </div>
+                  </div>
+
+                  {/* Optional due date / time — an issue with a due date shows on the calendar. */}
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="issue-due-date" className="text-base font-medium text-muted-foreground">תאריך יעד</Label>
+                      <Input
+                        id="issue-due-date"
+                        type="date"
+                        value={form.due_date}
+                        onChange={(e) => set('due_date', e.target.value)}
+                        disabled={disabled}
+                        onClick={(e) => {
+                          const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+                          try { el.showPicker?.(); } catch { /* native fallback */ }
+                        }}
+                        className="h-10 cursor-pointer"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="issue-due-time" className="text-base font-medium text-muted-foreground">שעת יעד</Label>
+                      <Input
+                        id="issue-due-time"
+                        type="time"
+                        value={form.due_time}
+                        onChange={(e) => set('due_time', e.target.value)}
+                        disabled={disabled}
+                        dir="ltr"
+                        className="h-10 cursor-pointer tabular-nums"
+                      />
                     </div>
                   </div>
 

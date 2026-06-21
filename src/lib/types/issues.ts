@@ -19,6 +19,12 @@ export interface Issue {
   target_id: string | null;
   priority: IssuePriority;
   status: IssueStatus;
+  /** Optional due date (migration 054) — an issue with a due_date surfaces on
+   *  the calendar, mirroring tasks. 'YYYY-MM-DD' or null. */
+  due_date: string | null;
+  /** Optional due time-of-day (migration 054) — 'HH:MM' (sliced from HH:MM:SS)
+   *  or null. Without it the issue is an all-day calendar item. */
+  due_time: string | null;
   // Handlers (users + suppliers) now live in the entity_assignees junction
   // (migration 047), exposed as `assignees` on IssueWithMeta — NOT scalar
   // columns here. Legacy assigned_to_user_id / supplier_id stay frozen in the DB.
@@ -53,6 +59,8 @@ export interface IssueWritableFields {
   priority: IssuePriority;
   status: IssueStatus;
   resolution_notes: string | null;
+  due_date: string | null; // 'YYYY-MM-DD'
+  due_time: string | null; // 'HH:MM'
 }
 
 export type IssueSort = 'created_desc' | 'priority_desc' | 'updated_desc' | 'status_asc';

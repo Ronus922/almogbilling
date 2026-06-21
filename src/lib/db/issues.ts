@@ -24,6 +24,7 @@ import { targetLabelSql } from '@/lib/db/targets';
 // assigned_to_user_id / supplier_id columns are frozen and no longer projected.
 const ISSUE_COLUMNS = `
   id, title, description, location_type, location_text, target_type, target_id, priority, status,
+  due_date::text as due_date, due_time::text as due_time,
   images, resolution_notes, resolved_at::text as resolved_at, is_archived, sort_order,
   created_by, created_by_name, created_at::text as created_at, updated_at::text as updated_at
 `;
@@ -40,6 +41,8 @@ const WRITABLE_COLUMNS: (keyof IssueWritableFields)[] = [
   'priority',
   'status',
   'resolution_notes',
+  'due_date',
+  'due_time',
 ];
 
 const META_SELECT = `
@@ -115,6 +118,36 @@ export async function listIssues(filters: IssueListFilters): Promise<IssueWithMe
   const r = await query<IssueWithMeta>(
     `select ${META_SELECT} ${META_JOINS} ${whereSql} order by ${orderBy}`,
     vals,
+  );
+  return r.rows;
+}
+
+/**
+ * Active issues with a due_date inside [from, to] (inclusive) — for the
+ * calendar's read-only issue overlay. Only open / in_progress issues surface on
+ * the calendar (resolved & closed are hidden); archived are always excluded.
+ * from/to are 'YYYY-MM-DD'. Mirrors listTasksWithDueDateInRange.
+ */
+export async function listIssuesWithDueDateInRange(
+  from: string,
+  to: string,
+): Promise<{ id: string; title: string; due_date: string; due_time: string | null; priority: string; status: string }[]> {
+  const r = await query<{
+    id: string;
+    title: string;
+    due_date: string;
+    due_time: string | null;
+    priority: string;
+    status: string;
+  }>(
+    `select id, title, due_date::text as due_date, due_time::text as due_time, priority, status
+       from public.issues
+      where is_archived = false
+        and status in ('open', 'in_progress')
+        and due_date is not null
+        and due_date >= $1 and due_date <= $2
+      order by due_date asc, due_time asc nulls first`,
+    [from, to],
   );
   return r.rows;
 }

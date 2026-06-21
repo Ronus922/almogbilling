@@ -18,6 +18,9 @@ const TARGET_TYPES: readonly TargetType[] = ['room', 'area'];
 const STATUSES: readonly IssueStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
 const PRIORITIES: readonly IssuePriority[] = ['low', 'normal', 'high', 'urgent'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Mirrors the tasks module: due_date is a plain date, due_time is HH:MM(:SS).
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^\d{2}:\d{2}(:\d{2})?$/;
 
 /** True when `id` is a well-formed UUID. Used by routes to reject malformed
  * `[id]` params before they hit a uuid-typed query (avoids a Postgres 22P02
@@ -80,6 +83,19 @@ export function coerceIssueInput(
     const r = strOrNull(body.resolution_notes);
     if (r && r.length > 20000) return { ok: false, error: 'resolution_notes_too_long' };
     fields.resolution_notes = r;
+  }
+
+  // Optional due date / time-of-day (migration 054) — separate nullable fields,
+  // neither required, no cross-field check (mirrors the tasks module).
+  if (has(body, 'due_date')) {
+    const d = strOrNull(body.due_date);
+    if (d !== null && !DATE_RE.test(d)) return { ok: false, error: 'invalid_due_date' };
+    fields.due_date = d;
+  }
+  if (has(body, 'due_time')) {
+    const t = strOrNull(body.due_time);
+    if (t !== null && !TIME_RE.test(t)) return { ok: false, error: 'invalid_due_time' };
+    fields.due_time = t;
   }
 
   // Assignees (users + suppliers) are validated separately via coerceAssignees
