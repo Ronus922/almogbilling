@@ -35,7 +35,7 @@ export function ConversationList({
   return (
     <div
       className={cn(
-        'flex min-h-0 flex-col overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
+        'flex min-h-0 flex-col overflow-hidden rounded-[18px] border border-[#e9edf4] bg-white',
         className,
       )}
     >
@@ -48,7 +48,7 @@ export function ConversationList({
             onChange={(e) => onSelectInstance(e.target.value)}
             dir="rtl"
             aria-label="בחירת חיבור וואטסאפ"
-            className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700 focus:border-blue-400 focus:outline-none"
+            className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700 focus:border-green-500 focus:outline-none"
           >
             {instances.map((i) => (
               <option key={i.id} value={i.id}>
@@ -62,14 +62,14 @@ export function ConversationList({
       )}
 
       {/* Search */}
-      <div className="border-b border-slate-100 p-3">
+      <div className="border-b border-[#eef1f6] p-3.5">
         <div className="relative">
-          <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="pointer-events-none absolute start-[13px] top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-slate-400" />
           <Input
             value={search}
             onChange={(e) => onSearch(e.target.value)}
             placeholder="חיפוש לפי שם, טלפון או דירה"
-            className="h-10 ps-9"
+            className="h-[42px] rounded-[11px] border-[#e7ebf1] bg-[#fafbfd] ps-10"
           />
         </div>
       </div>
@@ -105,10 +105,10 @@ export function ConversationList({
                     // Active highlight: logical start-border (RTL → right edge).
                     // Color via inline style so it wins over the row's border
                     // shorthand (same pattern as AreaCards).
-                    style={isActive ? { borderInlineStartColor: 'var(--color-blue-600)' } : undefined}
+                    style={isActive ? { borderInlineStartColor: 'var(--color-green-600)' } : undefined}
                     className={cn(
-                      'flex w-full items-center gap-3 border-b border-slate-50 p-3 text-start transition-colors',
-                      isActive ? 'border-s-[3px] bg-blue-50' : 'hover:bg-slate-50',
+                      'flex w-full items-center gap-3 border-b border-[#f4f6fa] p-3 text-start transition-colors',
+                      isActive ? 'border-s-[3px] bg-[#f6faf7]' : 'hover:bg-[#f6faf7]',
                     )}
                   >
                     <ChatAvatar
@@ -139,7 +139,7 @@ export function ConversationList({
                               ספק
                             </span>
                           ) : isUnlinked ? (
-                            <span className="shrink-0 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-600">
+                            <span className="shrink-0 rounded-full bg-[#fde8e8] px-2 py-0.5 text-[10px] font-semibold text-[#dc2626]">
                               לא משויך
                             </span>
                           ) : null}
@@ -170,7 +170,7 @@ export function ConversationList({
                           <span className="truncate">{preview || '—'}</span>
                         </span>
                         {c.unread > 0 && (
-                          <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 px-1.5 text-[11px] font-bold text-white tabular-nums">
+                          <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-green-600 px-1.5 text-[11px] font-bold text-white tabular-nums">
                             {c.unread}
                           </span>
                         )}

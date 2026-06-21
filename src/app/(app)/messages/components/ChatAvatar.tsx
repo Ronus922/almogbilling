@@ -9,9 +9,25 @@ import { cn } from '@/lib/utils';
 // group icon / initials. The fallback is essential: Green API avatar URLs are
 // expiring CDN links, so an <img> that 404s must degrade gracefully (onError).
 //
-// Fallback tone carries linkage state (color language §2): a linked contact
-// (debtor/supplier) gets the blue initials chip; an unlinked phone-only number
-// gets a neutral slate user-icon chip — never green/amber/purple.
+// Fallback tone carries linkage state: a linked contact (debtor/supplier) gets
+// the blue initials chip; an unlinked phone-only number gets a WhatsApp-style
+// per-contact color from HASH_TONES (deterministic by identity). Blue is
+// reserved for linked, sky for groups, so both are excluded from the palette.
+const HASH_TONES = [
+  'bg-[#e7f7ee] text-green-600',     // green  (#e7f7ee / #16a34a)
+  'bg-amber-100 text-amber-700',     // amber  (#fef3c7 / #b45309)
+  'bg-violet-100 text-violet-700',   // violet (#ede9fe / #6d28d9)
+  'bg-rose-100 text-rose-600',
+  'bg-teal-100 text-teal-700',
+  'bg-orange-100 text-orange-700',
+] as const;
+
+/** Stable index into HASH_TONES from a contact seed (phone / title). */
+function hashIndex(seed: string, len: number): number {
+  let h = 0;
+  for (let i = 0; i < seed.length; i += 1) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return h % len;
+}
 
 function initials(title: string): string {
   return (
@@ -69,10 +85,10 @@ export function ChatAvatar({
     );
   }
 
-  // Unlinked phone-only number — neutral slate chip with a user glyph.
+  // Unlinked phone-only number — WhatsApp-style per-contact color + user glyph.
   if (!linked) {
     return (
-      <span className={cn(box, 'bg-slate-100 text-slate-500')}>
+      <span className={cn(box, HASH_TONES[hashIndex(title, HASH_TONES.length)])}>
         <User className="h-5 w-5" />
       </span>
     );

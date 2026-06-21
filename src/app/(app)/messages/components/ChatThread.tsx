@@ -79,7 +79,7 @@ export function ChatThread({
     return (
       <div
         className={cn(
-          'flex min-h-0 flex-col items-center justify-center gap-4 rounded-xl bg-white p-8 text-center ring-1 ring-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
+          'flex min-h-0 flex-col items-center justify-center gap-4 rounded-[18px] border border-[#e9edf4] bg-white p-8 text-center',
           className,
         )}
       >
@@ -94,9 +94,9 @@ export function ChatThread({
   const title = conversationTitle(conversation);
 
   return (
-    <div className={cn('flex min-h-0 flex-col overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)]', className)}>
+    <div className={cn('flex min-h-0 flex-col overflow-hidden rounded-[18px] border border-[#e9edf4] bg-white', className)}>
       {/* Thread header */}
-      <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3">
+      <div className="flex items-center gap-3 border-b border-[#eef1f6] px-[18px] py-[13px]">
         <button
           type="button"
           onClick={onBack}
@@ -118,7 +118,7 @@ export function ChatThread({
               <span dir="ltr" className="tabular-nums">{formatPhoneDisplay(conversation.phone)}</span>
             )}
             {conversation.apartment_number && (
-              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
+              <span className="rounded-full bg-[#eaf2ff] px-2 py-0.5 text-[10px] font-semibold text-blue-700">
                 דירה {conversation.apartment_number}
               </span>
             )}
@@ -160,7 +160,11 @@ export function ChatThread({
       </div>
 
       {/* Messages */}
-      <div ref={scrollRef} dir="rtl" className="min-h-0 flex-1 space-y-1.5 overflow-y-auto bg-slate-50/60 p-4">
+      <div
+        ref={scrollRef}
+        dir="rtl"
+        className="min-h-0 flex-1 space-y-2.5 overflow-y-auto bg-[#f7f9fb] px-[22px] py-5 [background-image:radial-gradient(#e9eef0_1.3px,transparent_1.3px)] [background-size:22px_22px]"
+      >
         {loading && messages.length === 0 ? (
           <div className="space-y-2">
             {Array.from({ length: 5 }).map((_, i) => (
@@ -181,7 +185,7 @@ export function ChatThread({
               <div key={m.id}>
                 {showDay && (
                   <div className="my-2 flex justify-center">
-                    <span className="rounded-full bg-white px-3 py-0.5 text-[11px] font-medium text-slate-500 shadow-sm">
+                    <span className="rounded-full border border-[#eef1f6] bg-white px-[13px] py-1 text-[11.5px] font-semibold text-slate-500 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
                       {formatRelativeDay(m.created_at)}
                     </span>
                   </div>
@@ -292,10 +296,12 @@ function Bubble({
     <div className={cn('flex', isSent ? 'justify-end' : 'justify-start')}>
       <div
         className={cn(
-          'max-w-[80%] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm',
+          // RTL-logical tail: incoming → start-start (top-right in RTL),
+          // outgoing → start-end (top-left in RTL). Never physical left/right.
+          'max-w-[72%] rounded-2xl px-[13px] pb-[7px] pt-[9px] text-sm leading-relaxed',
           isSent
-            ? 'rounded-bl-sm border border-emerald-100 bg-emerald-50 text-slate-800'
-            : 'rounded-br-sm border border-slate-200 bg-white text-slate-800',
+            ? 'rounded-se-[5px] bg-[#dcf4e2] text-[#0f3320] shadow-[0_1px_2px_rgba(22,163,74,0.08)]'
+            : 'rounded-ss-[5px] border border-[#eef1f6] bg-white text-[#0f172a] shadow-[0_1px_2px_rgba(15,23,42,0.05)]',
         )}
       >
         {m.message_type === 'image' && m.media_url ? (
@@ -308,7 +314,7 @@ function Bubble({
             href={m.media_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="mb-1 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:underline"
+            className="mb-1 inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 hover:underline"
           >
             <FileText className="h-4 w-4" /> פתח קובץ
           </a>
@@ -318,8 +324,8 @@ function Bubble({
           <div className="whitespace-pre-wrap break-words">{m.content}</div>
         )}
 
-        <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-slate-400">
-          <span dir="ltr" className="tabular-nums">{formatTime(m.created_at)}</span>
+        <div className={cn('mt-1 flex items-center justify-end gap-1 text-[10.5px]', isSent ? 'text-[#5a8c6e]' : 'text-[#94a3b8]')}>
+          <span dir="ltr" className="font-medium tabular-nums">{formatTime(m.created_at)}</span>
           {isSent && <StatusTick status={m.status} />}
         </div>
 
@@ -356,7 +362,7 @@ function StatusTick({ status }: { status: ChatStatus }) {
     case 'delivered':
       return <CheckCheck className="h-3 w-3 text-slate-400" aria-label="נמסר" />;
     case 'read':
-      return <CheckCheck className="h-3 w-3 text-sky-500" aria-label="נקרא" />;
+      return <CheckCheck className="h-3 w-3 text-[#34b7f1]" aria-label="נקרא" />;
     case 'failed':
       return <AlertCircle className="h-3 w-3 text-red-500" aria-label="נכשל" />;
     default:
@@ -458,53 +464,52 @@ function Composer({
   const canSend = text.trim().length > 0 && !uploading;
 
   return (
-    <div className="border-t border-slate-200 bg-white p-3">
-      <div className="relative">
-        <input
-          ref={fileRef}
-          type="file"
-          hidden
-          accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.zip"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void sendFile(f);
-          }}
-        />
-        <Textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="כתוב הודעה… (Enter לשליחה, Shift+Enter לשורה חדשה)"
-          rows={1}
-          dir="rtl"
-          disabled={busy}
-          className="max-h-32 resize-none pe-24"
-        />
-        {/* Attach (Part E) */}
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          disabled={busy}
-          aria-label="צרף קובץ"
-          className={cn(
-            'absolute bottom-2 end-12 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50',
-          )}
-        >
-          {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
-        </button>
-        <button
-          type="button"
-          onClick={() => send()}
-          disabled={!canSend}
-          aria-label="שלח"
-          className={cn(
-            'absolute bottom-2 end-2 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full shadow-sm transition-colors',
-            canSend ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'cursor-not-allowed bg-slate-200 text-slate-400',
-          )}
-        >
-          <Send className="h-4 w-4" />
-        </button>
-      </div>
+    <div className="flex items-end gap-2.5 border-t border-[#eef1f6] bg-white px-[18px] py-[13px]">
+      <input
+        ref={fileRef}
+        type="file"
+        hidden
+        accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.zip"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void sendFile(f);
+        }}
+      />
+      {/* Attach */}
+      <button
+        type="button"
+        onClick={() => fileRef.current?.click()}
+        disabled={busy}
+        aria-label="צרף קובץ"
+        className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl bg-[#f4f6fb] text-slate-500 transition-colors hover:bg-[#eef1f6] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {uploading ? <Loader2 className="h-[19px] w-[19px] animate-spin" /> : <Paperclip className="h-[19px] w-[19px]" />}
+      </button>
+      <Textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder="הקלד הודעה…"
+        rows={1}
+        dir="rtl"
+        disabled={busy}
+        className="max-h-32 min-h-[46px] flex-1 resize-none rounded-[13px] border-[#e7ebf1] bg-[#fafbfd] py-[11px]"
+      />
+      {/* Send — green, RTL-mirrored icon */}
+      <button
+        type="button"
+        onClick={() => send()}
+        disabled={!canSend}
+        aria-label="שלח"
+        className={cn(
+          'flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[13px] transition-colors',
+          canSend
+            ? 'bg-green-600 text-white shadow-[0_8px_18px_-7px_rgba(22,163,74,0.6)] hover:bg-green-700'
+            : 'cursor-not-allowed bg-slate-200 text-slate-400',
+        )}
+      >
+        <Send className="h-[19px] w-[19px] -scale-x-100" />
+      </button>
     </div>
   );
 }
