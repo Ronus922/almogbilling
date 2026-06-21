@@ -17,6 +17,10 @@ import {
   listEntityUserIds,
 } from '@/lib/db/entityAssignees';
 import { targetLabelSql } from '@/lib/db/targets';
+import {
+  computeOccurrences, parseDateOnly, formatDateOnly,
+  type RecurrenceRule, type RecurrenceFrequency,
+} from '@/lib/recurrence/engine';
 
 // Date/timestamp columns are cast to text so they cross the RSC boundary as
 // strings (matching the declared `string` types) — pg otherwise returns `date`
@@ -29,6 +33,8 @@ const TASK_COLUMNS = `
   debtor_id, apartment_number,
   related_entity_type, related_entity_id, target_type, target_id, sort_order, is_archived,
   completed_at::text as completed_at,
+  recurrence_id, is_recurring_template, is_recurring_instance, parent_task_id,
+  occurrence_date::text as occurrence_date,
   created_by, created_by_name,
   created_at::text as created_at, updated_at::text as updated_at
 `;
@@ -129,7 +135,7 @@ export async function listTasks(filters: TaskListFilters): Promise<TaskWithAssig
 export async function listTasksWithDueDateInRange(
   from: string,
   to: string,
-): Promise<{ id: string; title: string; due_date: string; due_time: string | null; priority: string; status: string }[]> {
+): Promise<{ id: string; title: string; due_date: string; due_time: string | null; priority: string; status: string; recurring: boolean }[]> {
   const r = await query<{
     id: string;
     title: string;
@@ -137,8 +143,13 @@ export async function listTasksWithDueDateInRange(
     due_time: string | null;
     priority: string;
     status: string;
+    recurring: boolean;
   }>(
-    `select id, title, due_date::text as due_date, due_time::text as due_time, priority, status
+    // recurring = the row is linked to a series (template or instance) — drives the
+    // recurrence glyph on the calendar chip. A detached occurrence (recurrence_id
+    // cleared) is no longer recurring, so the flag follows recurrence_id.
+    `select id, title, due_date::text as due_date, due_time::text as due_time, priority, status,
+            (recurrence_id is not null) as recurring
        from public.tasks
       where is_archived = false
         and due_date is not null
@@ -147,6 +158,98 @@ export async function listTasksWithDueDateInRange(
     [from, to],
   );
   return r.rows;
+}
+
+/** A recurring series (its TEMPLATE task) + the next future occurrence — for the
+ *  "מחזוריות" tab. Active, non-archived templates only. */
+export interface RecurringSeries {
+  id: string; // the template task id (click → open the task)
+  title: string;
+  frequency: RecurrenceFrequency;
+  interval: number;
+  byweekday: number[] | null;
+  due_time: string | null; // 'HH:MM'
+  next_occurrence: string | null; // 'YYYY-MM-DD' — first occurrence >= today, null if none left
+}
+
+/** How far ahead to look for a series' next occurrence (covers monthly/yearly
+ *  gaps beyond the 45-day materialization horizon). */
+const SERIES_LOOKAHEAD_DAYS = 400;
+
+export async function listRecurringSeries(): Promise<RecurringSeries[]> {
+  const r = await query<{
+    id: string; title: string; due_time: string | null; anchor: string | null;
+    recurrence_id: string;
+    frequency: RecurrenceFrequency; interval: number; byweekday: number[] | null;
+    end_type: RecurrenceRule['endType']; end_date: string | null; end_count: number | null;
+  }>(
+    `select t.id, t.title, t.due_time::text as due_time,
+            coalesce(t.occurrence_date, t.due_date)::text as anchor,
+            t.recurrence_id,
+            r.frequency, r.interval, r.byweekday,
+            r.end_type, r.end_date::text as end_date, r.end_count
+       from public.tasks t
+       join public.task_recurrences r on r.id = t.recurrence_id
+      where t.is_recurring_template = true
+        and t.is_archived = false
+        and r.is_active = true`,
+  );
+  if (r.rows.length === 0) return [];
+
+  // Exceptions per recurrence (one query) → skipped dates don't count as "next".
+  const recIds = r.rows.map((x) => x.recurrence_id);
+  const excRows = await query<{ recurrence_id: string; excluded_date: string }>(
+    `select recurrence_id, excluded_date::text as excluded_date
+       from public.task_recurrence_exceptions
+      where recurrence_id = any($1::uuid[])`,
+    [recIds],
+  );
+  const excByRec = new Map<string, Set<string>>();
+  for (const e of excRows.rows) {
+    const set = excByRec.get(e.recurrence_id) ?? new Set<string>();
+    set.add(e.excluded_date);
+    excByRec.set(e.recurrence_id, set);
+  }
+
+  // "Today" in Asia/Jerusalem (the app's date convention) + the lookahead window.
+  const todayStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+  const today = parseDateOnly(todayStr);
+  const horizon = today ? new Date(today.getTime()) : null;
+  if (horizon) horizon.setUTCDate(horizon.getUTCDate() + SERIES_LOOKAHEAD_DAYS);
+
+  const out: RecurringSeries[] = r.rows.map((row) => {
+    let next: string | null = null;
+    const anchor = row.anchor ? parseDateOnly(row.anchor) : null;
+    if (anchor && horizon && today) {
+      const rule: RecurrenceRule = {
+        frequency: row.frequency, interval: row.interval, byweekday: row.byweekday,
+        endType: row.end_type, endDate: row.end_date, endCount: row.end_count,
+      };
+      const occ = computeOccurrences(rule, anchor, horizon, excByRec.get(row.recurrence_id) ?? new Set())
+        .map(formatDateOnly);
+      next = occ.find((d) => d >= todayStr) ?? null;
+    }
+    return {
+      id: row.id,
+      title: row.title,
+      frequency: row.frequency,
+      interval: row.interval,
+      byweekday: row.byweekday,
+      due_time: row.due_time ? row.due_time.slice(0, 5) : null,
+      next_occurrence: next,
+    };
+  });
+
+  // Sort by next occurrence ascending; series with no upcoming occurrence last.
+  out.sort((a, b) => {
+    if (a.next_occurrence === b.next_occurrence) return a.title.localeCompare(b.title, 'he');
+    if (a.next_occurrence === null) return 1;
+    if (b.next_occurrence === null) return -1;
+    return a.next_occurrence < b.next_occurrence ? -1 : 1;
+  });
+  return out;
 }
 
 /**

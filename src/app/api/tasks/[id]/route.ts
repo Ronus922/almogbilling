@@ -15,8 +15,9 @@ import {
 } from '@/lib/db/reminders';
 import { listTaskComments } from '@/lib/db/tasks';
 import { supplierExists } from '@/lib/db/suppliers';
-import { coerceTaskInput, coerceReminders } from '@/lib/validation/tasks';
+import { coerceTaskInput, coerceReminders, coerceRecurrence } from '@/lib/validation/tasks';
 import { coerceAssignees } from '@/lib/validation/assignee';
+import { applyRecurrenceOnSave, getRecurrenceById } from '@/lib/recurrence/materialize';
 import { notifyTask } from '@/services/notifications';
 import {
   dispatchCreateNotifications,
@@ -49,7 +50,10 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
     listTaskComments(id),
     listRemindersForEntity('task', id),
   ]);
-  return NextResponse.json({ task, comments, reminders });
+  // The recurrence rule (if this task is part of a series) so the edit drawer can
+  // render the rule + the per-occurrence series actions.
+  const recurrence = task.recurrence_id ? await getRecurrenceById(task.recurrence_id) : null;
+  return NextResponse.json({ task, comments, reminders, recurrence });
 }
 
 // PATCH /api/tasks/[id]  (tasks:edit)
@@ -104,6 +108,29 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: reminders.error }, { status: 400 });
   }
 
+  const recurrence = coerceRecurrence(bodyRec);
+  if (recurrence && !recurrence.ok) {
+    return NextResponse.json({ error: recurrence.error }, { status: 400 });
+  }
+
+  // A recurrence rule needs an anchor (the task's due date = series start). If a
+  // rule is being set/kept, the EFFECTIVE due date after this save must exist —
+  // either from this PATCH's due_date or, if the key wasn't sent, the stored one.
+  if (recurrence && recurrence.ok && recurrence.rule) {
+    const f = result.fields as { due_date?: string | null };
+    let effectiveDue: string | null;
+    if (Object.prototype.hasOwnProperty.call(f, 'due_date')) {
+      effectiveDue = f.due_date ?? null;
+    } else {
+      const existing = await getTaskById(id);
+      if (!existing) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+      effectiveDue = existing.due_date ?? null;
+    }
+    if (!effectiveDue) {
+      return NextResponse.json({ error: 'recurrence_requires_due_date' }, { status: 400 });
+    }
+  }
+
   try {
     const prevUsers = await getTaskUserAssignees(id);
     if (prevUsers === null) {
@@ -115,6 +142,13 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
     const task = await updateTask(id, patch, assignees, actor.id);
     if (!task) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+    // Recurrence side-channel (only when the client sent the key): a rule upserts
+    // + re-materializes future instances; null ends + detaches the series. Editing
+    // the rule never touches instances that already exist.
+    if (recurrence && recurrence.ok) {
+      await applyRecurrenceOnSave(id, recurrence.rule, task.due_date, actor.id);
+    }
 
     const userIds = task.assignees.map((a) => a.user_id).filter((v): v is string => v !== null);
 

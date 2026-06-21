@@ -1,0 +1,79 @@
+-- 053_tasks_recurrence.sql
+-- Task recurrence (משימה מחזורית). HORIZON model: a recurring task is a TEMPLATE
+-- whose rule materializes concrete task INSTANCES ahead of time (HORIZON_DAYS).
+-- No cron — the materializer runs on rule save + on the tasks list loader, so
+-- there is NO next_run_at (occurrences are generated up-front, not promoted one
+-- at a time). Additive only, idempotent (IF NOT EXISTS), non-destructive — safe
+-- to re-run. Reversal is a separate migration.
+--
+-- Convention notes (match the rest of the schema):
+--   * frequency / end_type are text + CHECK (like tasks.status / tasks.priority),
+--     NOT native enums.
+--   * byweekday: int[] of 0=Sunday .. 6=Saturday, weekly only.
+--
+-- Run (DIRECT_URL, direct port 5432, for DDL):
+--   psql "$DIRECT_URL" -f supabase/migrations/053_tasks_recurrence.sql
+
+begin;
+
+-- ── Rule table: one row per recurring template ──────────────────────────────
+create table if not exists public.task_recurrences (
+  id              uuid primary key default gen_random_uuid(),
+  task_id         uuid not null references public.tasks(id) on delete cascade,
+  is_active       boolean not null default true,
+  frequency       text not null check (frequency in ('daily','weekly','monthly','yearly')),
+  interval        int not null default 1 check (interval >= 1),
+  byweekday       int[] null,        -- 0=Sun..6=Sat; weekly only
+  end_type        text not null default 'never' check (end_type in ('never','on_date','after_count')),
+  end_date        date null,
+  end_count       int null check (end_count is null or end_count >= 1),
+  last_spawned_at timestamptz null,  -- meta/diagnostics only
+  spawned_count   int not null default 0,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+
+-- One active rule row per template task → enables upsert-by-task_id on save.
+create unique index if not exists task_recurrences_task_uniq
+  on public.task_recurrences(task_id);
+
+-- ── Exceptions: dates skipped / detached from a series ──────────────────────
+-- The materializer never (re)creates an occurrence whose date is listed here.
+create table if not exists public.task_recurrence_exceptions (
+  id            uuid primary key default gen_random_uuid(),
+  recurrence_id uuid not null references public.task_recurrences(id) on delete cascade,
+  excluded_date date not null,
+  created_at    timestamptz not null default now(),
+  unique (recurrence_id, excluded_date)
+);
+
+-- ── Columns on tasks ────────────────────────────────────────────────────────
+alter table public.tasks
+  add column if not exists recurrence_id         uuid null references public.task_recurrences(id) on delete set null,
+  add column if not exists is_recurring_template boolean not null default false,
+  add column if not exists is_recurring_instance boolean not null default false,
+  add column if not exists parent_task_id        uuid null references public.tasks(id) on delete set null,
+  add column if not exists occurrence_date       date null;
+
+-- ── Indexes ─────────────────────────────────────────────────────────────────
+create index if not exists tasks_recurrence_id_idx
+  on public.tasks(recurrence_id);
+create index if not exists tasks_is_recurring_template_idx
+  on public.tasks(is_recurring_template) where is_recurring_template;
+create index if not exists task_recurrence_exceptions_recurrence_id_idx
+  on public.task_recurrence_exceptions(recurrence_id);
+
+-- Idempotency backstop for materialization: at most one task (template OR
+-- instance) per (recurrence_id, occurrence_date). Partial → only indexes the
+-- recurring rows; bare `ON CONFLICT DO NOTHING` inserts rely on it.
+create unique index if not exists tasks_recurrence_occurrence_uniq
+  on public.tasks(recurrence_id, occurrence_date)
+  where recurrence_id is not null and occurrence_date is not null;
+
+-- updated_at touch (same shared trigger fn used by public.tasks).
+drop trigger if exists task_recurrences_touch_updated_at on public.task_recurrences;
+create trigger task_recurrences_touch_updated_at
+  before update on public.task_recurrences
+  for each row execute function public.touch_updated_at();
+
+commit;

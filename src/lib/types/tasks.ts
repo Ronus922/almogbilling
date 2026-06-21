@@ -33,6 +33,14 @@ export interface Task {
   sort_order: number;
   is_archived: boolean;
   completed_at: string | null; // stamped on status→done, cleared when it leaves done
+  // Recurrence (migration 053). A recurring task is either a TEMPLATE (holds the
+  // rule, is the series anchor/first occurrence) or a materialized INSTANCE.
+  // Non-recurring tasks have all of these null/false.
+  recurrence_id: string | null;
+  is_recurring_template: boolean;
+  is_recurring_instance: boolean;
+  parent_task_id: string | null;
+  occurrence_date: string | null; // 'YYYY-MM-DD' — the occurrence this row represents
   created_by: string | null;
   created_by_name: string | null;
   created_at: string;

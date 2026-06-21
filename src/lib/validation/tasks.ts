@@ -17,6 +17,11 @@ import type {
 } from '@/lib/types/tasks';
 import type { TargetType } from '@/lib/types/targets';
 import { coerceChannels } from '@/lib/notify/channels';
+import type {
+  RecurrenceRule,
+  RecurrenceFrequency,
+  RecurrenceEndType,
+} from '@/lib/recurrence/engine';
 
 const TARGET_TYPES: readonly TargetType[] = ['room', 'area'];
 
@@ -163,4 +168,77 @@ export function coerceReminders(body: Record<string, unknown>): RemindersValidat
     out.push({ remind_at: remindAt, channels: chRes.channels });
   }
   return { ok: true, reminders: out };
+}
+
+// ── Recurrence rule embedded in the task body ────────────────────────────────
+const FREQUENCIES: readonly RecurrenceFrequency[] = ['daily', 'weekly', 'monthly', 'yearly'];
+const END_TYPES: readonly RecurrenceEndType[] = ['never', 'on_date', 'after_count'];
+
+export type RecurrenceValidation =
+  | { ok: true; rule: RecurrenceRule | null }
+  | { ok: false; error: string };
+
+/**
+ * Coerce body.recurrence (optional). Semantics:
+ *  - key absent       → null (caller leaves recurrence untouched).
+ *  - value === null   → { rule: null } (disable / end the series).
+ *  - object           → a validated rule (upsert + materialize).
+ * byweekday is forced to null for non-weekly frequencies.
+ */
+export function coerceRecurrence(body: Record<string, unknown>): RecurrenceValidation | null {
+  if (!has(body, 'recurrence')) return null;
+  const raw = body.recurrence;
+  if (raw === null) return { ok: true, rule: null };
+  if (typeof raw !== 'object') return { ok: false, error: 'invalid_recurrence' };
+  const rec = raw as Record<string, unknown>;
+
+  const frequency = strOrNull(rec.frequency);
+  if (!frequency || !FREQUENCIES.includes(frequency as RecurrenceFrequency)) {
+    return { ok: false, error: 'invalid_recurrence_frequency' };
+  }
+
+  const intervalNum = Number(rec.interval);
+  if (!Number.isFinite(intervalNum) || intervalNum < 1 || intervalNum > 365) {
+    return { ok: false, error: 'invalid_recurrence_interval' };
+  }
+  const interval = Math.floor(intervalNum);
+
+  let byweekday: number[] | null = null;
+  if (frequency === 'weekly' && rec.byweekday != null) {
+    if (!Array.isArray(rec.byweekday)) return { ok: false, error: 'invalid_recurrence_byweekday' };
+    const days: number[] = [];
+    for (const d of rec.byweekday) {
+      const n = Number(d);
+      if (!Number.isInteger(n) || n < 0 || n > 6) {
+        return { ok: false, error: 'invalid_recurrence_byweekday' };
+      }
+      if (!days.includes(n)) days.push(n);
+    }
+    byweekday = days.length > 0 ? days.sort((a, b) => a - b) : null;
+  }
+
+  const endTypeRaw = strOrNull(rec.endType);
+  if (!endTypeRaw || !END_TYPES.includes(endTypeRaw as RecurrenceEndType)) {
+    return { ok: false, error: 'invalid_recurrence_end_type' };
+  }
+  const endType = endTypeRaw as RecurrenceEndType;
+
+  let endDate: string | null = null;
+  let endCount: number | null = null;
+  if (endType === 'on_date') {
+    const d = strOrNull(rec.endDate);
+    if (!d || !DATE_RE.test(d)) return { ok: false, error: 'invalid_recurrence_end_date' };
+    endDate = d;
+  } else if (endType === 'after_count') {
+    const c = Number(rec.endCount);
+    if (!Number.isFinite(c) || c < 1 || c > 366) {
+      return { ok: false, error: 'invalid_recurrence_end_count' };
+    }
+    endCount = Math.floor(c);
+  }
+
+  return {
+    ok: true,
+    rule: { frequency: frequency as RecurrenceFrequency, interval, byweekday, endType, endDate, endCount },
+  };
 }

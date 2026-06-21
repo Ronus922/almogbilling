@@ -4,8 +4,9 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listTasks, createTask, getTaskById, getTaskKpis } from '@/lib/db/tasks';
 import { supplierExists } from '@/lib/db/suppliers';
 import { createReminder } from '@/lib/db/reminders';
-import { coerceTaskInput, coerceReminders } from '@/lib/validation/tasks';
+import { coerceTaskInput, coerceReminders, coerceRecurrence } from '@/lib/validation/tasks';
 import { coerceAssignees } from '@/lib/validation/assignee';
+import { applyRecurrenceOnSave } from '@/lib/recurrence/materialize';
 import { notifyTask } from '@/services/notifications';
 import { dispatchCreateNotifications, buildMatrixRecipients } from '@/services/createNotify';
 import { coerceNotifySelection } from '@/lib/notify/selection';
@@ -132,6 +133,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: reminders.error }, { status: 400 });
   }
 
+  const recurrence = coerceRecurrence(bodyRec);
+  if (recurrence && !recurrence.ok) {
+    return NextResponse.json({ error: recurrence.error }, { status: 400 });
+  }
+
+  // A recurrence rule needs an anchor: the task's due date is the series start /
+  // first occurrence. A rule with no due date materializes nothing (dead series),
+  // so reject it before the task is created.
+  if (recurrence && recurrence.ok && recurrence.rule) {
+    const due = (result.fields as { due_date?: string | null }).due_date ?? null;
+    if (!due) {
+      return NextResponse.json({ error: 'recurrence_requires_due_date' }, { status: 400 });
+    }
+  }
+
   try {
     const task = await createTask(
       result.fields as Partial<TaskWritableFields> & { title: string },
@@ -139,6 +155,12 @@ export async function POST(req: NextRequest) {
       actor.id,
       actor.full_name ?? actor.username,
     );
+
+    // Recurrence (optional): make this task the series template, persist the
+    // rule, and materialize upcoming instances. task.due_date is the anchor.
+    if (recurrence && recurrence.ok && recurrence.rule) {
+      await applyRecurrenceOnSave(task.id, recurrence.rule, task.due_date, actor.id);
+    }
 
     const userIds = task.assignees
       .map((a) => a.user_id)
