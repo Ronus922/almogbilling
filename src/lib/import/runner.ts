@@ -8,6 +8,7 @@ import {
   setRunTotal,
   type ImportMode,
 } from '@/lib/db/importRuns';
+import { upsertMonthlyDebtSnapshot } from '@/lib/db/debtors';
 
 const BATCH_SIZE = 50;
 const BATCH_THROTTLE_MS = 50;
@@ -73,6 +74,15 @@ export async function importParsedRows(
     }
 
     await finishRunSuccess(runId);
+
+    // Capture this month's debt snapshot for the dashboard chart. Best-effort:
+    // a snapshot failure must never turn a successful import into a failed run.
+    try {
+      await upsertMonthlyDebtSnapshot();
+    } catch (snapErr) {
+      const m = snapErr instanceof Error ? snapErr.message : String(snapErr);
+      console.error('[import:snapshot]', runId, m);
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[import:error]', runId, msg);

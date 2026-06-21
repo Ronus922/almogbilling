@@ -1,0 +1,31 @@
+-- 056 — monthly_debt_snapshots (new table)
+-- Backs the dashboard Hero "collection vs debt by month" chart + the
+-- collected-this-month / collection-rate KPIs. The debtors table only holds a
+-- *current* snapshot (total_debt is overwritten on every import), so there is no
+-- history to chart. This table records one row per calendar month with the
+-- summed open debt at that point in time; "collection" is later DERIVED in the
+-- service layer as the month-over-month drop in total_debt (no per-payment data
+-- exists). A row is upserted at the end of every successful import/sync
+-- (see lib/import/runner.ts → upsertMonthlyDebtSnapshot), keyed by (year, month)
+-- so repeated imports in the same month overwrite with the latest figure.
+--
+-- NOTE: there is no way to backfill — history starts at the first snapshot, so
+-- the chart fills forward and is partial until ~6 months accumulate.
+
+create table if not exists public.monthly_debt_snapshots (
+  id              uuid primary key default gen_random_uuid(),
+  snapshot_year   int  not null,
+  snapshot_month  int  not null check (snapshot_month between 1 and 12),
+  snapshot_date   date not null,
+  total_debt      numeric(12,2) not null default 0,
+  management_debt numeric(12,2) not null default 0,
+  water_debt      numeric(12,2) not null default 0,
+  special_debt    numeric(12,2) not null default 0,
+  debtor_count    int not null default 0,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+
+-- One row per calendar month — the conflict target for the upsert.
+create unique index if not exists monthly_debt_snapshots_ym_idx
+  on public.monthly_debt_snapshots (snapshot_year, snapshot_month);

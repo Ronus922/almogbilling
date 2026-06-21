@@ -32,6 +32,25 @@ export interface ConversationSummary {
   unread_count: number;
 }
 
+/** One unread conversation for the dashboard widget (lean shape). */
+export interface ChatUnreadConversation {
+  id: string;
+  title: string;
+  last_message_content: string | null;
+  last_message_at: string | null;
+  unread_count: number;
+}
+
+/** Dashboard "internal messages" summary for the current user. */
+export interface ChatUnreadSummary {
+  /** Total unread messages across all the user's conversations. */
+  total: number;
+  /** Number of conversations with at least one unread message. */
+  conversation_count: number;
+  /** Most-recent unread conversations (capped). */
+  conversations: ChatUnreadConversation[];
+}
+
 /** A single message row enriched with whether it belongs to the current user. */
 export interface InternalMessage {
   id: string;

@@ -43,6 +43,36 @@ export interface DashboardKpis {
   legalProceedingCount: number;
 }
 
+/** A single charted month: total open debt + the DERIVED collection for that month. */
+export interface MonthlyDebtPoint {
+  year: number;
+  month: number; // 1-12
+  /** ISO `YYYY-MM` — the UI formats the display label. */
+  ym: string;
+  totalDebt: number;
+  /** prev.totalDebt − this.totalDebt, clamped ≥ 0 (no per-payment data exists). */
+  collection: number;
+  /** collection / prev.totalDebt (0 when there is no prior month or prior debt). */
+  collectionRate: number;
+}
+
+/** Hero KPI trio derived from the snapshot series + live debtor totals. */
+export interface CollectionKpis {
+  /** Derived collection for the current (latest) month. */
+  collectedThisMonth: number;
+  /** Live sum of total_debt over non-archived debtors (current open balance). */
+  openDebtBalance: number;
+  /** Mean collectionRate across the charted window. */
+  avgCollectionRate: number;
+  /** Latest month's rate − previous month's rate (trend arrow). */
+  avgCollectionRateDelta: number;
+}
+
+export interface CollectionVsDebt {
+  series: MonthlyDebtPoint[];
+  kpis: CollectionKpis;
+}
+
 export interface TabCounts {
   active: number;
   warningLetter: number;
@@ -95,6 +125,113 @@ export async function getDashboardKpis(): Promise<DashboardKpis> {
     legalCareCount: Number(row?.legal_care_count ?? 0),
     legalProceedingCount: Number(row?.legal_proceeding_count ?? 0),
   };
+}
+
+// ── Monthly debt snapshots (Hero chart) ─────────────────────────────────────
+// Timezone-anchored to Asia/Jerusalem (matches the calendar's date handling) so
+// the month bucket flips at local midnight, not UTC.
+
+/**
+ * Record (or refresh) the snapshot for the CURRENT month: the summed open debt
+ * over non-archived debtors right now. Keyed by (year, month) — calling it again
+ * the same month overwrites with the latest figure. Best-effort: callers should
+ * not let a snapshot failure fail the import that triggered it.
+ */
+export async function upsertMonthlyDebtSnapshot(): Promise<void> {
+  await query(
+    `insert into public.monthly_debt_snapshots
+       (snapshot_year, snapshot_month, snapshot_date,
+        total_debt, management_debt, water_debt, special_debt, debtor_count)
+     select
+       extract(year  from (now() at time zone 'Asia/Jerusalem'))::int,
+       extract(month from (now() at time zone 'Asia/Jerusalem'))::int,
+       (now() at time zone 'Asia/Jerusalem')::date,
+       coalesce(sum(total_debt)      filter (where is_archived = false), 0),
+       coalesce(sum(management_fees) filter (where is_archived = false), 0),
+       coalesce(sum(hot_water_debt)  filter (where is_archived = false), 0),
+       coalesce(sum(special_debt)    filter (where is_archived = false), 0),
+       count(*) filter (where is_archived = false)
+     from public.debtors
+     on conflict (snapshot_year, snapshot_month) do update set
+       snapshot_date   = excluded.snapshot_date,
+       total_debt      = excluded.total_debt,
+       management_debt = excluded.management_debt,
+       water_debt      = excluded.water_debt,
+       special_debt    = excluded.special_debt,
+       debtor_count    = excluded.debtor_count,
+       updated_at      = now()`,
+  );
+}
+
+/**
+ * Collection-vs-debt series for the last `months` calendar months plus the
+ * derived Hero KPIs. "Collection" is approximated as the month-over-month drop
+ * in total open debt (no per-payment data exists). We fetch one extra (older)
+ * month so the first charted month has a baseline to derive its collection from.
+ */
+export async function getCollectionVsDebt(months = 6): Promise<CollectionVsDebt> {
+  // Newest-first, then reversed to chronological. months+1 → baseline row.
+  const res = await query<{
+    snapshot_year: number;
+    snapshot_month: number;
+    total_debt: string;
+  }>(
+    `select snapshot_year, snapshot_month, total_debt::text
+       from public.monthly_debt_snapshots
+      order by snapshot_year desc, snapshot_month desc
+      limit $1`,
+    [months + 1],
+  );
+
+  const rowsAsc = res.rows
+    .map((r) => ({
+      year: r.snapshot_year,
+      month: r.snapshot_month,
+      totalDebt: Number(r.total_debt),
+    }))
+    .reverse();
+
+  const points: MonthlyDebtPoint[] = rowsAsc.map((cur, i) => {
+    const prev = i > 0 ? rowsAsc[i - 1] : null;
+    const collection = prev ? Math.max(0, prev.totalDebt - cur.totalDebt) : 0;
+    const collectionRate = prev && prev.totalDebt > 0 ? collection / prev.totalDebt : 0;
+    return {
+      year: cur.year,
+      month: cur.month,
+      ym: `${cur.year}-${String(cur.month).padStart(2, '0')}`,
+      totalDebt: cur.totalDebt,
+      collection,
+      collectionRate,
+    };
+  });
+
+  // Drop the baseline-only month → return at most `months` charted points.
+  const series = points.slice(-months);
+
+  const openDebtBalance = await getOpenDebtBalance();
+  const latest = series[series.length - 1];
+  const prevMonth = series.length >= 2 ? series[series.length - 2] : null;
+  const avgCollectionRate =
+    series.length > 0 ? series.reduce((s, p) => s + p.collectionRate, 0) / series.length : 0;
+
+  return {
+    series,
+    kpis: {
+      collectedThisMonth: latest?.collection ?? 0,
+      openDebtBalance,
+      avgCollectionRate,
+      avgCollectionRateDelta: latest && prevMonth ? latest.collectionRate - prevMonth.collectionRate : 0,
+    },
+  };
+}
+
+/** Live current open balance = sum(total_debt) over non-archived debtors. */
+export async function getOpenDebtBalance(): Promise<number> {
+  const row = await queryOne<{ total: string }>(
+    `select coalesce(sum(total_debt) filter (where is_archived = false), 0)::text as total
+       from public.debtors`,
+  );
+  return Number(row?.total ?? 0);
 }
 
 export async function getTabCounts(): Promise<TabCounts> {

@@ -2,6 +2,8 @@ import 'server-only';
 import { query, queryOne, withTransaction } from '@/lib/db';
 import { createNotification } from '@/lib/db/notifications';
 import type {
+  ChatUnreadConversation,
+  ChatUnreadSummary,
   ConversationSummary,
   InternalConversation,
   InternalMessage,
@@ -151,6 +153,79 @@ export async function listConversations(userId: string): Promise<ConversationSum
       unread_count: row.unread_count,
     } satisfies ConversationSummary;
   });
+}
+
+// ── Dashboard unread summary ──────────────────────────────────────────────
+
+/**
+ * Lean unread summary for the dashboard "internal messages" widget: total
+ * unread across the user's conversations, how many conversations carry unread,
+ * and the most-recent unread conversations (capped at `limit`). Same
+ * participant-anchored / unread-cursor logic as listConversations, but trimmed
+ * to the few fields the widget renders.
+ */
+export async function getChatUnreadSummary(
+  userId: string,
+  limit = 5,
+): Promise<ChatUnreadSummary> {
+  const r = await query<{
+    id: string;
+    type: 'direct' | 'group';
+    name: string | null;
+    last_message_content: string | null;
+    last_message_at: string | null;
+    unread_count: number;
+    other_names: string[];
+  }>(
+    `
+    select
+      c.id,
+      c.type,
+      c.name,
+      lm.content    as last_message_content,
+      lm.created_at as last_message_at,
+      uc.unread_count::int as unread_count,
+      coalesce(onp.names, '{}') as other_names
+    from public.internal_conversation_participants me
+    join public.internal_conversations c on c.id = me.conversation_id
+    left join lateral (
+      select m.content, m.created_at
+        from public.internal_messages m
+       where m.conversation_id = c.id
+       order by m.created_at desc
+       limit 1
+    ) lm on true
+    join lateral (
+      select count(*) as unread_count
+        from public.internal_messages m
+       where m.conversation_id = c.id
+         and m.created_at > me.last_read_at
+         and (m.sender_user_id is distinct from $1)
+    ) uc on true
+    left join lateral (
+      select array_agg(coalesce(u.full_name, u.username) order by u.full_name nulls last) as names
+        from public.internal_conversation_participants p
+        join public.users u on u.id = p.user_id
+       where p.conversation_id = c.id and p.user_id <> $1
+    ) onp on true
+    where me.user_id = $1
+      and uc.unread_count > 0
+    order by lm.created_at desc nulls last
+    `,
+    [userId],
+  );
+
+  const total = r.rows.reduce((s, row) => s + row.unread_count, 0);
+  const conversations: ChatUnreadConversation[] = r.rows.slice(0, limit).map((row) => ({
+    id: row.id,
+    title:
+      row.type === 'group' ? (row.name?.trim() || 'קבוצה') : (row.other_names[0] ?? 'משתמש'),
+    last_message_content: row.last_message_content,
+    last_message_at: row.last_message_at,
+    unread_count: row.unread_count,
+  }));
+
+  return { total, conversation_count: r.rows.length, conversations };
 }
 
 // ── Create / find conversations ───────────────────────────────────────────
