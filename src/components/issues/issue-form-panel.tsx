@@ -133,6 +133,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
   const [notify, setNotify] = useState<NotifySelection>(EMPTY_NOTIFY_SELECTION);
   const [comments, setComments] = useState<IssueComment[]>([]);
   const [images, setImages] = useState<IssueImage[]>([]);
+  // Create mode has no issue id yet, so images are staged client-side and
+  // uploaded right after the issue is created. `url` is an object URL for preview.
+  const [staged, setStaged] = useState<{ file: File; url: string }[]>([]);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
   const [initialReminders, setInitialReminders] = useState<ReminderRow[]>([]);
   const [commentInput, setCommentInput] = useState('');
@@ -173,6 +176,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
       setInitial(init);
       setComments([]);
       setImages([]);
+      setStaged((prev) => { prev.forEach((s) => URL.revokeObjectURL(s.url)); return []; });
       setReminders([]);
       setInitialReminders([]);
       setCommentInput('');
@@ -241,8 +245,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
   const dirty = useMemo(
     () =>
       JSON.stringify(form) !== JSON.stringify(initial) ||
-      JSON.stringify(reminders) !== JSON.stringify(initialReminders),
-    [form, initial, reminders, initialReminders],
+      JSON.stringify(reminders) !== JSON.stringify(initialReminders) ||
+      (!isEdit && staged.length > 0),
+    [form, initial, reminders, initialReminders, isEdit, staged.length],
   );
   const canSubmit = canEdit && !!form.title.trim() && !resolutionMissing && !submitting;
 
@@ -304,10 +309,31 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
         credentials: 'include',
         body: JSON.stringify(body),
       });
-      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      const data = (await r.json().catch(() => ({}))) as { issue?: { id: string }; error?: string };
       if (!r.ok) {
         throw new Error(mapError(data.error, isEdit ? 'עדכון התקלה נכשל' : 'יצירת התקלה נכשלה'));
       }
+
+      // Create mode: attach any staged images to the freshly-created issue,
+      // reusing the same endpoint the edit flow uses (one request per file).
+      if (!isEdit && data.issue?.id && staged.length > 0) {
+        const newId = data.issue.id;
+        let uploaded = 0;
+        for (const s of staged) {
+          const fd = new FormData();
+          fd.append('file', s.file);
+          const ur = await fetch(`/api/issues/${newId}/images`, {
+            method: 'POST',
+            credentials: 'include',
+            body: fd,
+          });
+          if (ur.ok) uploaded += 1;
+        }
+        if (uploaded < staged.length) {
+          toast.warning(`התקלה נוצרה, אך ${staged.length - uploaded} תמונות לא הועלו`);
+        }
+      }
+
       toast.success(isEdit ? 'התקלה עודכנה' : 'התקלה נוצרה');
       onSaved();
       onOpenChange(false);
@@ -374,6 +400,29 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
     }
   }
 
+  // Create mode: validate + stage a file locally (no issue id to upload to yet).
+  function handleStage(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    if (staged.length >= ISSUE_MAX_IMAGES) {
+      toast.error(`ניתן לצרף עד ${ISSUE_MAX_IMAGES} תמונות`);
+      return;
+    }
+    const file = files[0];
+    if (!ISSUE_ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      toast.error('סוג קובץ לא נתמך (JPG / PNG / WebP בלבד)');
+    } else if (file.size > ISSUE_MAX_IMAGE_SIZE_BYTES) {
+      toast.error('הקובץ גדול מדי (עד 5MB)');
+    } else {
+      setStaged((prev) => [...prev, { file, url: URL.createObjectURL(file) }]);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  function removeStaged(url: string) {
+    setStaged((prev) => prev.filter((s) => s.url !== url));
+    URL.revokeObjectURL(url);
+  }
+
   async function addComment() {
     const content = commentInput.trim();
     if (!content || !issue) return;
@@ -394,6 +443,14 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
   }
 
   const disabled = submitting || !canEdit;
+
+  // Unified image tiles: server images (edit) or staged previews (create) — one
+  // grid renders both, so the markup stays DRY across modes.
+  const imageCount = isEdit ? images.length : staged.length;
+  const canAddImage = canEdit && imageCount < ISSUE_MAX_IMAGES;
+  const imageTiles = isEdit
+    ? images.map((img) => ({ key: img.path, src: img.signed_url, onRemove: () => void removeImage(img.path) }))
+    : staged.map((s) => ({ key: s.url, src: s.url, onRemove: () => removeStaged(s.url) }));
 
   // Single definition — rendered once, directly under the handler section
   // (HTML order: handler → notify → reminders), in both create and edit.
@@ -602,71 +659,70 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
               {/* Reminders (shared component — also used by the task form). Optional. */}
               <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} />
 
-              {/* Images — edit mode only (need an issue id to attach to) */}
-              {isEdit && (
-                <Section
-                  title="תמונות"
-                  icon={Images}
-                  iconTone="blue"
-                  subtitle={`${images.length}/${ISSUE_MAX_IMAGES} · JPG / PNG / WebP · עד 5MB`}
-                  headerSlot={
-                    canEdit && images.length < ISSUE_MAX_IMAGES ? (
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploading}
-                        className="inline-flex h-8 items-center gap-1 rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 disabled:opacity-60"
-                      >
-                        {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                        {uploading ? 'מעלה…' : 'העלאה'}
-                      </button>
-                    ) : undefined
-                  }
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept={ISSUE_ALLOWED_IMAGE_TYPES.join(',')}
-                    className="hidden"
-                    onChange={(e) => void handleUpload(e.target.files)}
-                  />
-                  <div className="py-2">
-                    {images.length === 0 ? (
-                      <p className="py-2 text-center text-xs text-slate-400">אין תמונות. העלה תמונה כדי לתעד את התקלה.</p>
-                    ) : (
-                      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                        {images.map((img) => (
-                          <div key={img.path} className="group relative aspect-square overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
-                            {img.signed_url ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={img.signed_url}
-                                alt="תמונת תקלה"
-                                onClick={() => setLightbox(img.signed_url)}
-                                className="h-full w-full cursor-zoom-in object-cover transition-transform group-hover:scale-105"
-                              />
-                            ) : (
-                              <div className="grid h-full w-full place-items-center text-slate-400">
-                                <Images className="h-5 w-5" />
-                              </div>
-                            )}
-                            {canEdit && (
-                              <button
-                                type="button"
-                                onClick={() => void removeImage(img.path)}
-                                aria-label="מחק תמונה"
-                                className="absolute top-1 end-1 grid h-7 w-7 place-items-center rounded-md bg-slate-900/60 text-white opacity-0 transition-opacity hover:bg-rose-600 group-hover:opacity-100"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </Section>
-              )}
+              {/* Images — edit attaches to the issue immediately; create stages
+                  files locally and uploads them right after the issue is made. */}
+              <Section
+                title="תמונות"
+                icon={Images}
+                iconTone="blue"
+                subtitle={`${imageCount}/${ISSUE_MAX_IMAGES} · JPG / PNG / WebP · עד 5MB`}
+                headerSlot={
+                  canAddImage ? (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading || submitting}
+                      className="inline-flex h-8 items-center gap-1 rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 disabled:opacity-60"
+                    >
+                      {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                      {uploading ? 'מעלה…' : 'העלאה'}
+                    </button>
+                  ) : undefined
+                }
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={ISSUE_ALLOWED_IMAGE_TYPES.join(',')}
+                  className="hidden"
+                  onChange={(e) => (isEdit ? void handleUpload(e.target.files) : handleStage(e.target.files))}
+                />
+                <div className="py-2">
+                  {imageTiles.length === 0 ? (
+                    <p className="py-2 text-center text-xs text-slate-400">אין תמונות. העלה תמונה כדי לתעד את התקלה.</p>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      {imageTiles.map((t) => (
+                        <div key={t.key} className="group relative aspect-square overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
+                          {t.src ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={t.src}
+                              alt="תמונת תקלה"
+                              onClick={() => t.src && setLightbox(t.src)}
+                              className="h-full w-full cursor-zoom-in object-cover transition-transform group-hover:scale-105"
+                            />
+                          ) : (
+                            <div className="grid h-full w-full place-items-center text-slate-400">
+                              <Images className="h-5 w-5" />
+                            </div>
+                          )}
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={t.onRemove}
+                              aria-label="מחק תמונה"
+                              className="absolute top-1 end-1 grid h-7 w-7 place-items-center rounded-md bg-slate-900/60 text-white opacity-0 transition-opacity hover:bg-rose-600 group-hover:opacity-100"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </Section>
 
               {/* Comments — edit mode only */}
               {isEdit && (
