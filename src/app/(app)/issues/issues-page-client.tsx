@@ -15,7 +15,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { KpiCard } from '@/app/(app)/dashboard/components/KpiCard';
+import { KpiCard } from '@/components/KpiCard';
 import { IssuesTable } from '@/components/issues/issues-table';
 import { IssuesKanban } from '@/components/issues/issues-kanban';
 import { IssueFormPanel } from '@/components/issues/issue-form-panel';

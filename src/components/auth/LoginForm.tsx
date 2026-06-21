@@ -69,8 +69,9 @@ export function LoginForm() {
         setError('שם משתמש או סיסמה שגויים');
         return;
       }
-      // Hard redirect so the session cookie is picked up by middleware on the next request.
-      window.location.href = '/dashboard';
+      // Hard redirect so the session cookie is picked up on the next request.
+      // Land on the root, which role-routes (viewer → /dashboard, else → /overview).
+      window.location.href = '/';
     } catch {
       setError('שגיאה זמנית. נסה שוב בעוד רגע.');
     } finally {

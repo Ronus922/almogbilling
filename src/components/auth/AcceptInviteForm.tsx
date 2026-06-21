@@ -73,8 +73,9 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
         return;
       }
       toast.success('ברוך הבא ל-ALMOG CRM');
-      // Hard nav so the freshly-set session cookie is picked up by middleware.
-      window.location.href = '/dashboard';
+      // Hard nav so the freshly-set session cookie is picked up. Land on the
+      // root, which role-routes (viewer → /dashboard, else → /overview).
+      window.location.href = '/';
     } catch {
       setError('שגיאה זמנית. נסה שוב בעוד רגע.');
     } finally {

@@ -12,6 +12,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/lib/auth/context';
+import type { Role } from '@/lib/permissions/constants';
 
 const STORAGE_KEY = 'almog:sidebar-collapsed';
 
@@ -19,11 +20,15 @@ interface MenuItem {
   label: string;
   href?: string;
   icon: LucideIcon;
-  module: string;
+  module?: string;
+  /** Optional role gate; when present it overrides the module-based `can` check.
+   *  Used for /overview, which is role-gated (any non-viewer) rather than tied
+   *  to a permission module. */
+  visible?: (role: Role) => boolean;
 }
 
 const MAIN_MENU: MenuItem[] = [
-  { label: 'לוח מחוונים משימות', icon: LayoutDashboard, module: 'analytics' },
+  { label: 'לוח מחוונים',        icon: LayoutDashboard, href: '/overview', visible: (role) => role !== 'viewer' },
   { label: 'ניהול חיובים',       icon: LayoutGrid, href: '/dashboard', module: 'dashboard' },
   { label: 'רשימת דיירים',       icon: Users, href: '/contacts', module: 'contacts' },
   { label: 'ספקים',              icon: Truck, href: '/suppliers', module: 'suppliers' },
@@ -51,7 +56,7 @@ const MANAGE_MENU: MenuItem[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { can } = usePermissions();
+  const { can, role } = usePermissions();
   const [collapsed, setCollapsed] = useState(false);
 
   // Persisted collapse state (read after mount to avoid a hydration mismatch).
@@ -67,8 +72,11 @@ export function Sidebar() {
     });
   }
 
-  const mainVisible = MAIN_MENU.filter((it) => can(it.module, 'view'));
-  const manageVisible = MANAGE_MENU.filter((it) => can(it.module, 'view'));
+  // Role-gated items (visible predicate) override the module-based `can` check.
+  const isVisible = (it: MenuItem) =>
+    it.visible ? it.visible(role) : it.module ? can(it.module, 'view') : true;
+  const mainVisible = MAIN_MENU.filter(isVisible);
+  const manageVisible = MANAGE_MENU.filter(isVisible);
 
   return (
     <aside
