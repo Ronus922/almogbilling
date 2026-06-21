@@ -1,6 +1,6 @@
 import 'server-only';
-import { randomUUID } from 'node:crypto';
 import { StorageClient } from '@supabase/storage-js';
+import { buildObjectKey } from './objectKey';
 
 /**
  * WhatsApp media storage on the self-hosted Supabase Storage.
@@ -27,13 +27,10 @@ function getStorage(): StorageClient {
   });
 }
 
-function safeName(name: string): string {
-  return name.replace(/[^\w.\-֐-׿]+/g, '_').slice(0, 120) || 'file';
-}
-
 /**
  * Uploads a WhatsApp media file to the public bucket.
- * Path: <uuid>-<safe-filename>
+ * Path: <uuid><.ext> (ASCII-safe; the original name is sent to Green API as the
+ * fileName param, independent of the storage key)
  * Returns the public URL (reachable by Green API servers), the MIME type, and
  * the file size in bytes.
  *
@@ -54,7 +51,7 @@ export async function uploadWhatsAppMedia(
     // Bucket already exists or non-fatal — continue.
   }
 
-  const path = `${randomUUID()}-${safeName(file.name)}`;
+  const path = buildObjectKey(file.name);
   const buffer = Buffer.from(await file.arrayBuffer());
   const mimeType = file.type || 'application/octet-stream';
 

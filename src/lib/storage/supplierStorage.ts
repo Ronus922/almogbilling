@@ -1,6 +1,6 @@
 import 'server-only';
-import { randomUUID } from 'node:crypto';
 import { StorageClient } from '@supabase/storage-js';
+import { buildObjectKey } from './objectKey';
 
 /**
  * Supplier-document storage on the self-hosted Supabase Storage (db.bios.co.il).
@@ -29,17 +29,15 @@ function getStorage(): StorageClient {
   });
 }
 
-function safeName(name: string): string {
-  return name.replace(/[^\w.\-֐-׿]+/g, '_').slice(0, 120) || 'file';
-}
-
-/** Uploads a file under <supplierId>/<uuid>-<name>. Returns the storage path. */
+/** Uploads a file under <supplierId>/<uuid><.ext>. Returns the storage path. */
 export async function uploadSupplierFile(
   supplierId: string,
   file: File,
 ): Promise<{ path: string; sizeBytes: number; mimeType: string }> {
   const storage = getStorage();
-  const path = `${supplierId}/${randomUUID()}-${safeName(file.name)}`;
+  // ASCII-safe key (uuid + extension only); the Hebrew name is kept as file_name
+  // in the DB for display/download. See buildObjectKey for the why.
+  const path = buildObjectKey(file.name, supplierId);
   const buffer = Buffer.from(await file.arrayBuffer());
   const { error } = await storage.from(BUCKET).upload(path, buffer, {
     contentType: file.type || 'application/octet-stream',

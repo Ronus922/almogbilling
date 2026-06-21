@@ -1,6 +1,6 @@
 import 'server-only';
-import { randomUUID } from 'node:crypto';
 import { StorageClient } from '@supabase/storage-js';
+import { buildObjectKey } from './objectKey';
 
 /**
  * Issue-image storage on the self-hosted Supabase Storage (db.bios.co.il).
@@ -26,23 +26,16 @@ function getStorage(): StorageClient {
   });
 }
 
-/**
- * Sanitise the original filename: keep word chars / dot / dash / Hebrew, collapse
- * everything else to '_'. Strips any path component (no '/', no '..'), so the
- * stored object key can never traverse outside the issue's prefix.
- */
-function safeName(name: string): string {
-  const base = name.split(/[/\\]/).pop() ?? name; // drop any directory part
-  return base.replace(/[^\w.\-֐-׿]+/g, '_').replace(/\.+/g, '.').slice(0, 120) || 'image';
-}
-
-/** Uploads a file under <issueId>/<uuid>-<name>. Returns the storage path. */
+/** Uploads a file under <issueId>/<uuid><.ext>. Returns the storage path. */
 export async function uploadIssueImage(
   issueId: string,
   file: File,
 ): Promise<{ path: string; sizeBytes: number; mimeType: string }> {
   const storage = getStorage();
-  const path = `${issueId}/${randomUUID()}-${safeName(file.name)}`;
+  // ASCII-safe key under the issue's prefix (the original name — Hebrew included —
+  // is never placed in the key). The `${issueId}/` prefix keeps isPathUnderIssue
+  // valid and the upload can never traverse outside this issue. See buildObjectKey.
+  const path = buildObjectKey(file.name, issueId);
   const buffer = Buffer.from(await file.arrayBuffer());
   const { error } = await storage.from(BUCKET).upload(path, buffer, {
     contentType: file.type || 'application/octet-stream',
