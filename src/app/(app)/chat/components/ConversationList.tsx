@@ -36,7 +36,7 @@ export function ConversationList({
   return (
     <div
       className={cn(
-        'flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white',
+        'flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white',
         className,
       )}
     >
@@ -82,14 +82,14 @@ export function ConversationList({
                     type="button"
                     onClick={() => onSelect(c)}
                     className={cn(
-                      'flex w-full items-center gap-3 border-b border-slate-50 p-3 text-start transition-colors',
-                      isActive ? 'bg-brand-soft/70' : 'hover:bg-slate-50',
+                      'flex w-full items-center gap-3 border-b border-slate-50 border-r-[3px] p-3 text-start transition-colors',
+                      isActive ? 'border-r-brand bg-brand-soft/60' : 'border-r-transparent hover:bg-slate-50',
                     )}
                   >
                     <ChatAvatar title={c.title} isGroup={c.type === 'group'} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-semibold text-slate-900">{c.title}</span>
+                        <span className={cn('truncate text-sm text-slate-900', c.unread_count > 0 ? 'font-bold' : 'font-semibold')}>{c.title}</span>
                         <span className="shrink-0 text-[11px] tabular-nums text-slate-400">
                           {formatRelativeStamp(c.last_message_at)}
                         </span>

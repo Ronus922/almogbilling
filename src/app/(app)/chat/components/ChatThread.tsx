@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowRight, Send, MessagesSquare, Users } from 'lucide-react';
+import { ArrowRight, Send, MessagesSquare, Users, Check, Paperclip, Smile } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import type { ConversationSummary, InternalMessage, ThreadPayload } from '@/lib/types/internalChat';
@@ -62,7 +62,7 @@ export function ChatThread({
     return (
       <div
         className={cn(
-          'flex min-h-0 flex-col items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white p-8 text-center',
+          'flex min-h-0 flex-col items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white p-8 text-center',
           className,
         )}
       >
@@ -81,9 +81,9 @@ export function ChatThread({
     : null;
 
   return (
-    <div className={cn('flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white', className)}>
+    <div className={cn('flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white', className)}>
       {/* Thread header */}
-      <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3">
+      <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-3.5">
         <button
           type="button"
           onClick={onBack}
@@ -109,7 +109,7 @@ export function ChatThread({
         ref={scrollRef}
         onScroll={onScroll}
         dir="rtl"
-        className="min-h-0 flex-1 space-y-1.5 overflow-y-auto bg-slate-50/60 p-4"
+        className="min-h-0 flex-1 space-y-1.5 overflow-y-auto bg-slate-50 p-4"
       >
         {loading && messages.length === 0 ? (
           <div className="space-y-2">
@@ -164,10 +164,10 @@ function Bubble({
     <div className={cn('flex', isMine ? 'justify-end' : 'justify-start')}>
       <div
         className={cn(
-          'max-w-[80%] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm',
+          'max-w-[80%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed shadow-sm',
           isMine
-            ? 'rounded-bl-sm bg-brand text-white'
-            : 'rounded-br-sm border border-slate-200 bg-white text-slate-800',
+            ? 'rounded-tl-[5px] bg-brand text-white'
+            : 'rounded-tr-[5px] border border-slate-200 bg-white text-slate-800',
         )}
       >
         {showSender && (
@@ -175,8 +175,11 @@ function Bubble({
         )}
         {/* React escapes content — no dangerouslySetInnerHTML (XSS-safe). */}
         <div className="whitespace-pre-wrap break-words">{m.content}</div>
-        <div className={cn('mt-1 flex justify-end text-[10px]', isMine ? 'text-white/70' : 'text-slate-400')}>
+        <div className={cn('mt-1 flex items-center justify-end gap-1 text-[10px]', isMine ? 'text-white/70' : 'text-slate-400')}>
           <span dir="ltr" className="tabular-nums">{formatTime(m.created_at)}</span>
+          {/* "sent" tick — the data model has no delivered/read status, so this is a
+              single send-confirmation mark on own messages (not a read receipt). */}
+          {isMine && <Check className="h-3 w-3 shrink-0" aria-label="נשלח" />}
         </div>
       </div>
     </div>
@@ -212,29 +215,49 @@ function Composer({ onSend }: { onSend: (content: string) => Promise<boolean> })
 
   return (
     <div className="border-t border-slate-200 bg-white p-3">
-      <div className="relative">
-        <Textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="כתוב הודעה… (Enter לשליחה, Shift+Enter לשורה חדשה)"
-          rows={1}
-          dir="rtl"
-          maxLength={MAX_MESSAGE_LENGTH + 100}
-          className={cn('max-h-32 resize-none pe-14', tooLong && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
-        />
+      <div className="flex items-end gap-2">
+        {/* Attach — visual affordance only; no upload backend is wired. */}
         <button
           type="button"
-          onClick={() => void send()}
-          disabled={!canSend}
-          aria-label="שלח"
-          className={cn(
-            'absolute bottom-2 end-2 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full shadow-sm transition-colors',
-            canSend ? 'bg-brand text-white hover:bg-brand-dark' : 'cursor-not-allowed bg-slate-200 text-slate-400',
-          )}
+          aria-label="צירוף קובץ"
+          title="צירוף קובץ"
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
         >
-          <Send className="h-4 w-4" />
+          <Paperclip className="h-5 w-5" />
         </button>
+        <div className="relative flex-1">
+          <Textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder="כתוב הודעה… (Enter לשליחה, Shift+Enter לשורה חדשה)"
+            rows={1}
+            dir="rtl"
+            maxLength={MAX_MESSAGE_LENGTH + 100}
+            className={cn('max-h-32 resize-none rounded-2xl bg-surface-2 pe-24', tooLong && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
+          />
+          {/* Emoji — visual affordance only; no picker is wired. */}
+          <button
+            type="button"
+            aria-label="אימוג׳י"
+            title="אימוג׳י"
+            className="absolute bottom-2 end-12 z-10 grid h-9 w-9 place-items-center rounded-full text-slate-400 transition-colors hover:text-slate-600"
+          >
+            <Smile className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => void send()}
+            disabled={!canSend}
+            aria-label="שלח"
+            className={cn(
+              'absolute bottom-2 end-2 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full shadow-sm transition-colors',
+              canSend ? 'bg-brand text-white hover:bg-brand-dark' : 'cursor-not-allowed bg-slate-200 text-slate-400',
+            )}
+          >
+            <Send className="h-4 w-4 -scale-x-100" />
+          </button>
+        </div>
       </div>
       {tooLong && (
         <p className="mt-1 text-[11px] font-semibold text-red-500">
