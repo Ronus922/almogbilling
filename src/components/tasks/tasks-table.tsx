@@ -39,17 +39,17 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
       <Table>
         <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
-          <TableRow className="bg-slate-50 hover:bg-slate-50">
+          <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
             <SortHead label="כותרת" col="created_desc" sort={sort} onSortChange={onSortChange} align="right" />
-            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">סטטוס</TableHead>
+            <TableHead className="h-12 px-6 text-center text-[12.5px] font-bold text-slate-400">סטטוס</TableHead>
             <SortHead label="עדיפות" col="priority_desc" sort={sort} onSortChange={onSortChange} align="center" />
             <SortHead label="תאריך יעד" col="due_asc" sort={sort} onSortChange={onSortChange} align="center" />
-            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">מטפל</TableHead>
-            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">יעד</TableHead>
-            <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">פעולות</TableHead>
+            <TableHead className="h-12 px-6 text-center text-[12.5px] font-bold text-slate-400">מטפל</TableHead>
+            <TableHead className="h-12 px-6 text-center text-[12.5px] font-bold text-slate-400">יעד</TableHead>
+            <TableHead className="h-12 px-6 text-center text-[12.5px] font-bold text-slate-400">פעולות</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -59,7 +59,7 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
               onClick={() => onSelect(t)}
               className="h-12 cursor-pointer border-b border-slate-100 hover:bg-slate-50"
             >
-              <TableCell className="px-4 py-3 text-right text-sm">
+              <TableCell className="px-6 py-3.5 text-right text-sm">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-slate-900">{t.title}</span>
                   {(t.is_recurring_template || t.is_recurring_instance) && <RecurringBadge />}
@@ -71,26 +71,26 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
                   )}
                 </div>
               </TableCell>
-              <TableCell className="px-4 py-3 text-center text-sm">
+              <TableCell className="px-6 py-3.5 text-center text-sm">
                 <span className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium', STATUS_BADGE[t.status])}>
                   {taskStatusLabel(t.status)}
                 </span>
               </TableCell>
-              <TableCell className="px-4 py-3 text-center text-sm">
+              <TableCell className="px-6 py-3.5 text-center text-sm">
                 <span className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium', PRIORITY_BADGE[t.priority])}>
                   {taskPriorityLabel(t.priority)}
                 </span>
               </TableCell>
-              <TableCell dir="ltr" className={cn('px-4 py-3 text-center text-sm tabular-nums', isOverdue(t) ? 'font-bold text-rose-600' : 'text-slate-600')}>
+              <TableCell dir="ltr" className={cn('px-6 py-3.5 text-center text-sm tabular-nums', isOverdue(t) ? 'font-bold text-rose-600' : 'text-slate-600')}>
                 {t.due_date ?? '—'}
               </TableCell>
-              <TableCell className="px-4 py-3 text-center text-sm">
+              <TableCell className="px-6 py-3.5 text-center text-sm">
                 <HandlerCell task={t} />
               </TableCell>
-              <TableCell className="px-4 py-3 text-center text-sm">
+              <TableCell className="px-6 py-3.5 text-center text-sm">
                 <TargetCell type={t.target_type} label={t.target_label} />
               </TableCell>
-              <TableCell className="px-4 py-3 text-center text-sm">
+              <TableCell className="px-6 py-3.5 text-center text-sm">
                 <RowActions onEdit={() => onSelect(t)} onDelete={onDelete ? () => onDelete(t) : undefined} />
               </TableCell>
             </TableRow>
@@ -117,7 +117,7 @@ function SortHead({
 }) {
   const active = sort === col;
   return (
-    <TableHead className={cn('h-11 px-4 text-sm font-semibold text-slate-500', align === 'right' ? 'text-right' : 'text-center')}>
+    <TableHead className={cn('h-12 px-6 text-[12.5px] font-bold text-slate-400', align === 'right' ? 'text-right' : 'text-center')}>
       <button
         type="button"
         onClick={() => onSortChange(col)}
