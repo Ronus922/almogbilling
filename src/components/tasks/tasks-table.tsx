@@ -7,6 +7,7 @@ import {
 import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { TargetCell } from '@/components/targets/TargetCell';
 import { RowActions } from '@/components/shared/RowActions';
+import { RecurringBadge } from '@/components/recurrence/RecurringBadge';
 import { cn } from '@/lib/utils';
 import {
   STATUS_BADGE, PRIORITY_BADGE, taskStatusLabel, taskPriorityLabel,
@@ -61,6 +62,7 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
               <TableCell className="px-4 py-3 text-right text-sm">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-slate-900">{t.title}</span>
+                  {(t.is_recurring_template || t.is_recurring_instance) && <RecurringBadge />}
                   {t.comment_count > 0 && (
                     <span className="inline-flex items-center gap-0.5 text-xs text-slate-400">
                       <MessageSquare className="h-3.5 w-3.5" />

@@ -1,9 +1,10 @@
 import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
-import { listTasks, getTaskKpis } from '@/lib/db/tasks';
+import { listTasks, getTaskKpis, listRecurringSeries } from '@/lib/db/tasks';
 import { listAssignableUsers } from '@/lib/db/users';
 import { listSuppliers } from '@/lib/db/suppliers';
+import { materializeAllActive } from '@/lib/recurrence/materialize';
 import { TasksPageClient } from './tasks-page-client';
 
 export const runtime = 'nodejs';
@@ -18,11 +19,20 @@ export default async function TasksPage() {
 
   const canEdit = hasPermission(actor.role, actor.permissions, 'tasks', 'edit');
 
-  const [initialTasks, kpis, assigneeRows, supplierRows] = await Promise.all([
+  // Horizon-fill recurring series before listing (no cron). Best-effort — a
+  // materialization error must never block the tasks page from rendering.
+  try {
+    await materializeAllActive();
+  } catch (err) {
+    console.error('[TasksPage] materializeAllActive', err);
+  }
+
+  const [initialTasks, kpis, assigneeRows, supplierRows, initialSeries] = await Promise.all([
     listTasks({ sort: 'created_desc' }),
     getTaskKpis(),
     listAssignableUsers(),
     listSuppliers({}), // reuse the existing suppliers DB layer for the picker/filter
+    listRecurringSeries(), // for the "מחזוריות" tab (next-occurrence sorted)
   ]);
   const assignees = assigneeRows.map((u) => ({
     id: u.id,
@@ -51,6 +61,7 @@ export default async function TasksPage() {
     <TasksPageClient
       initialTasks={initialTasks}
       initialKpis={kpis}
+      initialSeries={initialSeries}
       assignees={assignees}
       suppliers={suppliers}
       currentUser={currentUser}

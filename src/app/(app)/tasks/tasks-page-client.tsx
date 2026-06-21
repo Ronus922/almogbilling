@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
-  Plus, Search, LayoutGrid, List, ListTodo, AlarmClock, CircleCheckBig,
+  Plus, Search, LayoutGrid, List, ListTodo, AlarmClock, CircleCheckBig, Repeat,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,7 @@ import { KpiCard } from '@/app/(app)/dashboard/components/KpiCard';
 import { TasksKanban } from '@/components/tasks/tasks-kanban';
 import { TasksTable } from '@/components/tasks/tasks-table';
 import { TaskFormPanel } from '@/components/tasks/task-form-panel';
+import { RecurringSeriesList } from '@/components/recurrence/RecurringSeriesList';
 import { cn } from '@/lib/utils';
 import { urgentFirst } from '@/lib/priority-sort';
 import {
@@ -28,6 +29,7 @@ import {
 import type {
   TaskKpis, TaskPriority, TaskSort, TaskStatus, TaskWithAssignee,
 } from '@/lib/types/tasks';
+import type { RecurringSeries } from '@/lib/db/tasks';
 import type { SupplierOption } from '@/lib/types/assignee';
 import type { NotifyUserContact } from '@/lib/notify/selection';
 
@@ -43,6 +45,7 @@ interface Assignee {
 export function TasksPageClient({
   initialTasks,
   initialKpis,
+  initialSeries,
   assignees,
   suppliers,
   currentUser,
@@ -50,6 +53,7 @@ export function TasksPageClient({
 }: {
   initialTasks: TaskWithAssignee[];
   initialKpis: TaskKpis;
+  initialSeries: RecurringSeries[];
   assignees: Assignee[];
   suppliers: SupplierOption[];
   currentUser: NotifyUserContact;
@@ -58,8 +62,9 @@ export function TasksPageClient({
   const searchParams = useSearchParams();
   const [tasks, setTasks] = useState<TaskWithAssignee[]>(initialTasks);
   const [kpis, setKpis] = useState<TaskKpis>(initialKpis);
+  const [series, setSeries] = useState<RecurringSeries[]>(initialSeries);
   const [view, setView] = useState<ViewMode>('kanban');
-  const [tab, setTab] = useState<'active' | 'completed'>('active');
+  const [tab, setTab] = useState<'active' | 'completed' | 'recurring'>('active');
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<TaskStatus | 'all'>('all');
@@ -96,6 +101,19 @@ export function TasksPageClient({
       toast.error(`טעינת המשימות נכשלה: ${(err as Error).message}`);
     }
   }, [search, priorityFilter, assigneeFilter, supplierFilter, sort]);
+
+  // Recurring series for the "מחזוריות" tab. Filter-independent (its own loader),
+  // refreshed after a save/delete. Next-occurrence sorting is done server-side.
+  const fetchSeries = useCallback(async () => {
+    try {
+      const res = await fetch('/api/tasks/recurring', { credentials: 'include' });
+      if (!res.ok) return;
+      const data = (await res.json()) as { series?: RecurringSeries[] };
+      setSeries(Array.isArray(data.series) ? data.series : []);
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
 
   // Active / completed partition (client-side — "filter only", no new status).
   const activeTasks = useMemo(() => tasks.filter((t) => !isCompletedTaskStatus(t.status)), [tasks]);
@@ -144,6 +162,25 @@ export function TasksPageClient({
     setEditing(t);
     setFormOpen(true);
   }
+  // Open a task by id (recurrence tab row → the series' template task). Use the
+  // already-loaded row when present, else fetch it.
+  function openTaskById(id: string) {
+    const found = tasks.find((t) => t.id === id);
+    if (found) { setEditing(found); setFormOpen(true); return; }
+    void (async () => {
+      try {
+        const r = await fetch(`/api/tasks/${id}`, { credentials: 'include' });
+        if (!r.ok) return;
+        const d = (await r.json()) as { task?: TaskWithAssignee };
+        if (d.task) { setEditing(d.task); setFormOpen(true); }
+      } catch { /* ignore */ }
+    })();
+  }
+  // After any mutation refresh both the task list/KPIs and the series tab.
+  function refreshAll() {
+    void fetchTasks();
+    void fetchSeries();
+  }
 
   async function confirmDelete() {
     if (!deleteTarget) return;
@@ -153,7 +190,7 @@ export function TasksPageClient({
       toast.success('המשימה נמחקה');
       if (editing?.id === deleteTarget.id) setFormOpen(false);
       setDeleteTarget(null);
-      void fetchTasks();
+      refreshAll();
     } catch (err) {
       toast.error(`מחיקה נכשלה: ${(err as Error).message}`);
     }
@@ -211,10 +248,12 @@ export function TasksPageClient({
       {/* Active / completed tabs (filter only — terminal statuses move here) */}
       <div className="flex flex-wrap gap-2">
         {([
-          { key: 'active', label: 'פעילות', count: activeTasks.length },
-          { key: 'completed', label: 'הושלמו', count: completedTasks.length },
+          { key: 'active', label: 'פעילות', count: activeTasks.length, icon: null },
+          { key: 'completed', label: 'הושלמו', count: completedTasks.length, icon: null },
+          { key: 'recurring', label: 'מחזוריות', count: series.length, icon: Repeat },
         ] as const).map((t) => {
           const on = tab === t.key;
+          const Icon = t.icon;
           return (
             <button
               key={t.key}
@@ -225,6 +264,7 @@ export function TasksPageClient({
                 on ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
               )}
             >
+              {Icon && <Icon className="h-4 w-4" />}
               {t.label}
               <span className={cn(
                 'inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-bold tabular-nums',
@@ -237,7 +277,8 @@ export function TasksPageClient({
         })}
       </div>
 
-      {/* Toolbar: view toggle + filters */}
+      {/* Toolbar: view toggle + filters — hidden on the recurrence tab */}
+      {tab !== 'recurring' && (
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         {/* View toggle — completed tab is table-only */}
         {tab === 'active' ? (
@@ -335,9 +376,12 @@ export function TasksPageClient({
           </Select>
         </div>
       </div>
+      )}
 
-      {/* Board / Table — completed tab is always a table */}
-      {tab === 'active' && view === 'kanban' ? (
+      {/* Board / Table / Series — completed is always a table; recurring is its own list */}
+      {tab === 'recurring' ? (
+        <RecurringSeriesList series={series} onSelect={openTaskById} />
+      ) : tab === 'active' && view === 'kanban' ? (
         <TasksKanban tasks={shown} canEdit={canEdit} onSelect={openEdit} onReorder={handleReorder} statuses={ACTIVE_TASK_STATUSES} onDelete={canEdit ? setDeleteTarget : undefined} />
       ) : (
         <TasksTable tasks={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} onDelete={canEdit ? setDeleteTarget : undefined} />
@@ -351,7 +395,7 @@ export function TasksPageClient({
         suppliers={suppliers}
         currentUser={currentUser}
         onOpenChange={setFormOpen}
-        onSaved={() => void fetchTasks()}
+        onSaved={refreshAll}
         onDelete={canEdit && editing ? () => setDeleteTarget(editing) : undefined}
       />
 

@@ -143,6 +143,9 @@ export interface CalendarOverlayItem {
   priority: string | null; // tasks/issues carry one; reminders → null
   status: string;
   action_url: string; // deep link back to the source card
+  /** True when this overlay row belongs to a recurring series (tasks only) →
+   *  drives the recurrence glyph on the chip. */
+  recurring?: boolean;
 }
 
 export type CalendarItem =

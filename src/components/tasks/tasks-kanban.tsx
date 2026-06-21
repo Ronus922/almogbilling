@@ -5,6 +5,7 @@ import { MessageSquare, Calendar, Pencil, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { TargetCell } from '@/components/targets/TargetCell';
+import { RecurringBadge } from '@/components/recurrence/RecurringBadge';
 import {
   TASK_STATUSES, STATUS_DOT, PRIORITY_BADGE, taskPriorityLabel,
 } from '@/lib/constants/tasks';
@@ -123,7 +124,10 @@ export function TasksKanban({ tasks, canEdit, onSelect, onReorder, statuses, onD
                   )}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <span className="text-sm font-semibold text-slate-900">{t.title}</span>
+                    <span className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-slate-900">
+                      <span className="truncate">{t.title}</span>
+                      {(t.is_recurring_template || t.is_recurring_instance) && <RecurringBadge />}
+                    </span>
                     <div className="flex shrink-0 items-center gap-1">
                       {canEdit && (
                         <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">

@@ -104,7 +104,7 @@ function ItemChip({
   const tone = chipTone(item.kind, item.kind === 'event' ? item.color_key : undefined);
   const t = timeText(item);
   const Icon = KIND_ICON[item.kind];
-  const recurring = item.kind === 'event' && item.recurrence_enabled;
+  const recurring = item.kind === 'event' ? item.recurrence_enabled : !!item.recurring;
   const cancelled = item.kind === 'event' && item.status === 'cancelled';
   const handle = (e: React.MouseEvent) => { e.stopPropagation(); onSelect(); };
 

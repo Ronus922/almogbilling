@@ -69,6 +69,7 @@ export async function GET(req: NextRequest) {
         priority: t.priority,
         status: t.status,
         action_url: `/tasks?task=${t.id}`,
+        recurring: t.recurring,
       })),
       ...issues.map((i) => ({
         kind: 'issue' as const,

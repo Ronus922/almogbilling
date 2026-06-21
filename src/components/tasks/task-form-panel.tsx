@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  X, ClipboardList, User, MapPin, MessageSquare, Send,
+  X, ClipboardList, User, MapPin, MessageSquare, Send, Repeat,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
@@ -40,6 +40,12 @@ import {
   type NotifySelection,
   type NotifyUserContact,
 } from '@/lib/notify/selection';
+import { RecurrenceSection } from '@/components/recurrence/RecurrenceSection';
+import {
+  EMPTY_RECURRENCE, recurrenceFormToRule, recurrenceRuleToForm,
+  type RecurrenceFormState,
+} from '@/lib/constants/recurrence';
+import type { RecurrenceRule } from '@/lib/recurrence/engine';
 
 interface Assignee {
   id: string;
@@ -120,11 +126,15 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
   const [notify, setNotify] = useState<NotifySelection>(EMPTY_NOTIFY_SELECTION);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
   const [initialReminders, setInitialReminders] = useState<ReminderRow[]>([]);
+  const [recurrence, setRecurrence] = useState<RecurrenceFormState>(EMPTY_RECURRENCE);
+  const [initialRecurrence, setInitialRecurrence] = useState<RecurrenceFormState>(EMPTY_RECURRENCE);
+  const [confirmEndOpen, setConfirmEndOpen] = useState(false);
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [commentInput, setCommentInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [titleTouched, setTitleTouched] = useState(false);
+  const [recurDateTouched, setRecurDateTouched] = useState(false);
 
   const loadDetail = useCallback(async (id: string) => {
     try {
@@ -133,6 +143,7 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       const data = (await r.json()) as {
         comments?: TaskComment[];
         reminders?: ServerReminder[];
+        recurrence?: (RecurrenceRule & { id: string; isActive: boolean }) | null;
       };
       setComments(Array.isArray(data.comments) ? data.comments : []);
       const rem = (data.reminders ?? []).map((x) => {
@@ -141,6 +152,12 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       });
       setReminders(rem);
       setInitialReminders(rem);
+      // Recurrence rule (active series only) → editable/read-only form state.
+      const rf = data.recurrence && data.recurrence.isActive
+        ? recurrenceRuleToForm(data.recurrence)
+        : EMPTY_RECURRENCE;
+      setRecurrence(rf);
+      setInitialRecurrence(rf);
     } catch {
       /* non-fatal */
     }
@@ -155,7 +172,11 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       setCommentInput('');
       setReminders([]);
       setInitialReminders([]);
+      setRecurrence(EMPTY_RECURRENCE);
+      setInitialRecurrence(EMPTY_RECURRENCE);
+      setConfirmEndOpen(false);
       setTitleTouched(false);
+      setRecurDateTouched(false);
       setSubmitting(false);
       setNotify(EMPTY_NOTIFY_SELECTION);
       if (task) void loadDetail(task.id);
@@ -218,10 +239,26 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
   const dirty = useMemo(
     () =>
       JSON.stringify(form) !== JSON.stringify(initial) ||
-      JSON.stringify(reminders) !== JSON.stringify(initialReminders),
-    [form, initial, reminders, initialReminders],
+      JSON.stringify(reminders) !== JSON.stringify(initialReminders) ||
+      JSON.stringify(recurrence) !== JSON.stringify(initialRecurrence),
+    [form, initial, reminders, initialReminders, recurrence, initialRecurrence],
   );
+
+  // Recurrence editing rules: a materialized INSTANCE shows the rule read-only
+  // (editing it must never re-root the series); create / template / non-recurring
+  // tasks edit it freely. Series actions appear for any task already in a series.
+  const isRecurringInstance = !!task?.is_recurring_instance;
+  const recurrenceEditable = !isRecurringInstance;
+  const isSeriesMember = isEdit && !!task?.recurrence_id;
   const canSubmit = canEdit && !!form.title.trim() && !submitting;
+
+  // Recurrence needs an anchor — the due date is the series start / first
+  // occurrence. A rule with no due date materializes nothing, so block the save
+  // (mirrors the API guard 'recurrence_requires_due_date').
+  const recurrenceNeedsDate = recurrenceEditable && recurrence.enabled && !form.due_date;
+  const dueDateError = recurDateTouched && recurrenceNeedsDate
+    ? 'משימה מחזורית מחייבת תאריך יעד'
+    : null;
 
   useEscapeKey(open && !confirmCloseOpen, () => requestClose());
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
@@ -239,6 +276,11 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
   async function handleSubmit() {
     if (!canSubmit) {
       setTitleTouched(true);
+      return;
+    }
+    if (recurrenceNeedsDate) {
+      setRecurDateTouched(true);
+      toast.error('משימה מחזורית מחייבת תאריך יעד — הוא משמש כתאריך הפתיחה של הסדרה');
       return;
     }
     const remindersPayload = buildRemindersPayload(reminders);
@@ -270,6 +312,16 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       // only ever holds keys for "me" + newly-added assignees (added set).
       body.notify = notify;
 
+      // Recurrence — only when editable (never re-root a series from an instance).
+      // Sent when enabled OR when it changed (so turning it OFF ends the series).
+      if (recurrenceEditable) {
+        const recurrenceChanged =
+          JSON.stringify(recurrence) !== JSON.stringify(initialRecurrence);
+        if (recurrence.enabled || recurrenceChanged) {
+          body.recurrence = recurrenceFormToRule(recurrence);
+        }
+      }
+
       const url = isEdit ? `/api/tasks/${task!.id}` : '/api/tasks';
       const method = isEdit ? 'PATCH' : 'POST';
       const r = await fetch(url, {
@@ -282,6 +334,7 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       if (!r.ok) {
         throw new Error(
           data.error === 'title_required' ? 'כותרת היא שדה חובה' :
+          data.error === 'recurrence_requires_due_date' ? 'משימה מחזורית מחייבת תאריך יעד' :
           isEdit ? 'עדכון המשימה נכשל' : 'יצירת המשימה נכשלה',
         );
       }
@@ -292,6 +345,30 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       toast.error((e as Error).message);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  // Per-occurrence / series actions (edit drawer). Each closes the panel and
+  // refreshes the list on success.
+  async function runSeriesAction(action: 'skip' | 'end' | 'detach') {
+    if (!task) return;
+    try {
+      const r = await fetch(`/api/tasks/${task.id}/recurrence`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action }),
+      });
+      if (!r.ok) throw new Error('הפעולה נכשלה');
+      toast.success(
+        action === 'end' ? 'הסדרה הסתיימה'
+          : action === 'skip' ? 'המופע דולג'
+          : 'המופע נותק מהסדרה',
+      );
+      onSaved();
+      onOpenChange(false);
+    } catch (e) {
+      toast.error((e as Error).message);
     }
   }
 
@@ -334,9 +411,17 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
           <SheetHeader className="flex-none gap-2 bg-gradient-to-bl from-slate-900 via-blue-950 to-blue-900 px-6 py-6 text-white">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
-                <SheetTitle className="text-2xl font-bold text-white">
-                  {isEdit ? 'עריכת משימה' : 'משימה חדשה'}
-                </SheetTitle>
+                <div className="flex flex-wrap items-center gap-2">
+                  <SheetTitle className="text-2xl font-bold text-white">
+                    {isEdit ? 'עריכת משימה' : 'משימה חדשה'}
+                  </SheetTitle>
+                  {isSeriesMember && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-2.5 py-0.5 text-xs font-semibold text-white">
+                      <Repeat className="h-3.5 w-3.5" />
+                      {isRecurringInstance ? 'מופע בסדרה' : 'משימה מחזורית'}
+                    </span>
+                  )}
+                </div>
                 <p className="mt-1 text-sm text-white/70">
                   {canEdit
                     ? 'פרטי המשימה, שיוך, תזכורות ותגובות.'
@@ -422,7 +507,9 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
 
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
-                      <Label htmlFor="task-due-date" className="text-base font-medium text-muted-foreground">תאריך יעד</Label>
+                      <Label htmlFor="task-due-date" className="text-base font-medium text-muted-foreground">
+                        תאריך יעד{recurrence.enabled && recurrenceEditable && <span className="text-red-500"> *</span>}
+                      </Label>
                       <Input
                         id="task-due-date"
                         type="date"
@@ -433,8 +520,11 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
                           const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
                           try { el.showPicker?.(); } catch { /* native fallback */ }
                         }}
-                        className="h-10 cursor-pointer"
+                        className={cn('h-10 cursor-pointer', dueDateError && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
                       />
+                      {dueDateError && (
+                        <p className="text-[12px] font-semibold text-red-500 text-right">⚠️ {dueDateError}</p>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="task-due-time" className="text-base font-medium text-muted-foreground">שעת יעד</Label>
@@ -451,6 +541,21 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
                   </div>
                 </div>
               </Section>
+
+              {/* Recurrence (משימה מחזורית) — between "פרטי המשימה" and "מיקום" */}
+              <RecurrenceSection
+                value={recurrence}
+                onChange={setRecurrence}
+                disabled={disabled}
+                hasDueDate={!!form.due_date}
+                editable={recurrenceEditable}
+                series={isSeriesMember ? {
+                  isInstance: isRecurringInstance,
+                  onSkip: () => void runSeriesAction('skip'),
+                  onDetach: () => void runSeriesAction('detach'),
+                  onEnd: () => setConfirmEndOpen(true),
+                } : null}
+              />
 
               {/* Location / target — order matches the issue form (מיקום then שיוך) */}
               <Section
@@ -571,6 +676,26 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
             <AlertDialogCancel>המשך עריכה</AlertDialogCancel>
             <AlertDialogAction onClick={confirmDiscardClose} className="bg-destructive text-white hover:bg-destructive/90">
               צא ללא שמירה
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmEndOpen} onOpenChange={setConfirmEndOpen}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>לסיים את הסדרה?</AlertDialogTitle>
+            <AlertDialogDescription>
+              לא ייווצרו מופעים חדשים. המופעים שכבר נוצרו יישארו ללא שינוי.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ביטול</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { setConfirmEndOpen(false); void runSeriesAction('end'); }}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              סיים סדרה
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
