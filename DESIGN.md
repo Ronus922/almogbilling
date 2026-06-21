@@ -752,21 +752,38 @@ toast.info('...');
 
 ## 14. Sidebar
 
-`src/components/app-shell/Sidebar.tsx`:
-- Container: `hidden w-64 shrink-0 border-l bg-card md:flex md:flex-col`
-- Section header: `mb-2 px-3 text-xs font-medium text-muted-foreground`
-- Item: `flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors`
-- **Active**: `bg-primary/10 text-primary font-medium`
-- **Idle**: `hover:bg-muted`
-- **Disabled**: `text-muted-foreground cursor-not-allowed opacity-60`
-- Icon: `h-4 w-4 shrink-0`
+`src/components/app-shell/Sidebar.tsx` — תפריט צד ימני (RTL), **collapsible**.
+
+- **Container**: `relative hidden shrink-0 flex-col border-l border-line bg-white transition-[width] duration-200 md:flex`. רוחב מתחלף: `w-[266px]` פתוח ↔ `w-[80px]` מכווץ.
+- **Collapse state**: עצמאי בתוך הסיידבר בלבד (`useState` + `localStorage` key `almog:sidebar-collapsed`, נקרא ב-`useEffect` אחרי mount → SSR-safe, בלי hydration mismatch). הסיידבר מצר/מתרחב והתוכן זורם דרך `flex` — **אין נגיעה ב-AppShell / `<main>`**.
+- **Edge toggle**: כפתור עגול `h-7 w-7` שרוכב על הקצה הפנימי (`absolute top-1/2 left-0 -translate-x-1/2`). אייקון `ChevronRight` יחיד שמסתובב `rotate-180` במצב מכווץ.
+- **Brand block** (ראש הסיידבר): לוגו-גרדיאנט `grid h-11 w-11 rounded-[13px] bg-gradient-to-br from-brand to-brand-dark text-white` + `Building2`, וכותרת `text-[22px] font-black tracking-tight text-ink` = "ניהול אלמוג". מכווץ → רק הלוגו, ממורכז.
+- **Sections** (2): כותרות `ראשי` / `ניהול` — `px-3 pb-1.5 pt-4 text-[11px] font-extrabold tracking-[0.06em] text-ink-ghost`. מכווץ → במקום הכותרת קו דק `mx-auto my-2 h-px w-8 bg-line-soft`. סקשן בלי פריטים מורשים מסתתר (RBAC נשמר 1:1). `ראשי` = עבודה יומיומית + תקשורת (צ׳אט וואטסאפ/פנימי); `ניהול` = הגדרות-מערכת (סטטוסים, תבניות, אזורים, משתמשים).
+- **Item**: `group flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-colors`. מכווץ → `justify-center px-0`.
+  - **Active**: `bg-gradient-to-l from-brand-dark to-brand text-white shadow-[0_10px_20px_-9px_rgba(61,90,254,0.6)]` (אייקון `text-white`).
+  - **Idle**: `text-ink-2 hover:bg-row-hover hover:text-ink` (אייקון `text-ink-3 group-hover:text-brand`).
+  - **Disabled (בקרוב)**: `cursor-not-allowed text-ink-ghost` + Tooltip "בקרוב".
+  - אייקון: `h-5 w-5 shrink-0`.
+- **Badge** (אופציונלי, על פריט): `grid h-[21px] min-w-[21px] rounded-full px-1.5 text-[11.5px] font-extrabold`. וריאנטים: `default` (`bg-[#eef1f6] text-[#64748b]`), `warn` (`bg-[#fdecec] text-[#dc2626]`), `green` (`bg-[#e7f7ee] text-[#16a34a]`); על פריט active → `bg-white/25 text-white`. **חוק**: badge מוצג רק כשיש מקור נתונים אמיתי (`item.badge.count`). אסור מספר demo — היכולת קיימת אך רדומה עד שמחווט מקור.
+- **Tooltip**: כל פריט במצב מכווץ (וכל פריט "בקרוב") עטוף ב-`Tooltip side="left"` עם ה-label.
+- **Footer**: `border-t border-line-soft px-3.5 py-3` — `הגדרות` (פריט רגיל, מגודר במודול `settings`) + `התנתק` (`text-[#b91c1c] hover:bg-[#fdecec]`, אייקון `LogOut` `text-[#dc2626]`, קורא ל-`signOut()` מ-`useAuth`).
+- **גריד**: `nav` עם `flex-1 overflow-y-auto overflow-x-hidden px-3.5`, פריטים `space-y-1`.
 
 ---
 
 ## 15. Header (Top bar)
 
-`src/components/app-shell/Header.tsx`:
-- `flex h-16 items-center justify-end border-b bg-card px-6` — UserMenu מיושר לקצה השמאלי (end ב-RTL).
+`src/components/app-shell/Header.tsx` — סרגל עליון מלא-רוחב.
+
+- **Container**: `flex h-[68px] shrink-0 items-center gap-4 border-b border-line bg-white/90 px-6 backdrop-blur`.
+- **חיפוש** (RTL start / ימין): `relative flex w-full max-w-[440px] items-center` — אייקון `Search` ב-`absolute right-3.5 text-ink-3`, ו-`input` `h-11 rounded-[13px] border border-line bg-surface-2 pr-11 pl-4 text-[13.5px] font-medium`, focus `border-brand bg-white ring-4 ring-brand/10`. **ויזואלי בלבד** (אין חיפוש גלובלי מחווט).
+- **`<div className="flex-1" />`** דוחף את הצד השני לקצה.
+- **אזור פעולות** (RTL end / שמאל) `flex items-center gap-2.5`:
+  - `NotificationBell` (הרכיב הקיים, badge אדום אמיתי מ-`/api/notifications/unread-count`) — מוצג רק כש-`role !== 'viewer'`.
+  - אייקוני quick-link `צ׳אט פנימי` (→ `/chat`) ו-`צ׳אט וואטסאפ` (→ `/messages`), מגודרים ב-`can('internal_chat'|'whatsapp_chat','view')`. סגנון זהה לפעמון: `grid h-[38px] w-[38px] rounded-[10px] border border-line bg-surface-2 text-ink-2 hover:bg-row-hover`. **בלי badge** — אין מקור unread בהדר (החוק: בלי מקור → בלי badge).
+  - מפריד `h-[30px] w-px bg-line` (רק אם יש אייקונים).
+  - **User-pill**: `Popover`. Trigger = `flex h-[44px] items-center gap-2.5 rounded-[13px] border border-line bg-white` עם avatar `h-[34px] w-[34px] rounded-[10px] bg-brand-soft text-brand-text` (אות ראשונה), שם `text-[13px] font-extrabold` + תפקיד `text-[10.5px] text-ink-3`, ו-`ChevronDown` שמסתובב כשפתוח. הנתונים מהמשתמש המחובר (`useAuth`); התפקיד מ-`roleLabel(user.role)` (לעולם לא מהשם). תוכן ה-Popover: שם + badge תפקיד (`ROLE_STYLES`) + אימייל + כפתור `התנתק` אדום (`signOut`).
+- ה-Brand עבר לסיידבר (§14); ההדר אינו מציג לוגו.
 
 ---
 
