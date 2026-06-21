@@ -1300,6 +1300,16 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 ### 29.5 טופס אירוע (Side Panel)
 `Sheet side="left" sm:w-[55vw]`. header gradient כהה `bg-[linear-gradient(120deg,#0e1f4d,#16308a_55%,#1d4ed8)]`. 4 sections (`Section` משותף, iconTone: פרטי=blue, חזרתיות=violet, משתתפים=emerald, תזכורות=amber). בורר צבע: 7 עיגולים `h-[34px] w-[34px]`, נבחר `ring-2 ring-[#2563eb] ring-offset-2`. שדות בגובה **44px** (`h-11`) — ראה חריגים מוצהרים.
 
+## 30. אינדיקטור מחזוריות (משימות חוזרות)
+
+משימה חוזרת (template של סדרה **או** מופע ממומש) מסומנת בכל מקום שבו היא מוצגת, באייקון `Repeat` (lucide) בגוון `slate` ניטרלי — מקור-אמת יחיד: `src/components/recurrence/RecurringBadge.tsx` (Iron Rule #10 — DRY, אין שכפול).
+
+- **שורת טבלה / כרטיס קנבן**: `RecurringBadge` (= `Repeat h-3.5 w-3.5 text-slate-400`, עטוף ב-`<span title="משימה חוזרת">` ל-tooltip+a11y), מיד אחרי הכותרת. מוצג כאשר `is_recurring_template || is_recurring_instance`.
+- **chip ביומן** (§29.2): אותו glyph בגודל chip `Repeat h-2.5 w-2.5 opacity-70`, אחרי אייקון הסוג. נדלק מ-`item.recurring` (overlay מסוג task; ה-API מחזיר `recurring = recurrence_id is not null`).
+- **כותרת פאנל המשימה** (header כהה): chip translucent `border-white/25 bg-white/10 px-2.5 py-0.5 rounded-full text-xs` עם `Repeat h-3.5` + טקסט „משימה מחזורית”/„מופע בסדרה”.
+
+**טאב „מחזוריות”** (מסך משימות, שלישי אחרי „פעילות”/„הושלמו”): טבלה (`RecurringSeriesList`) — שורה לכל סדרה פעילה, **ממוינת לפי המופע הבא (עולה)**. עמודות: כותרת (עם glyph) · מחזוריות (`summarizeCadence` → „כל שבוע · ב׳, ה׳”, pill `bg-slate-100 text-slate-600`) · המופע הבא (תאריך+שעה, `CalendarClock`). לחיצה על שורה → פתיחת משימת ה-template. ה-toolbar (מתג תצוגה+פילטרים) מוסתר בטאב זה. המופע הבא מחושב ב-`listRecurringSeries` דרך מנוע ה-`computeOccurrences` המשותף (אופק 400 ימים, מכבד exceptions).
+
 ---
 
 ## אם משהו חסר כאן
