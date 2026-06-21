@@ -1270,6 +1270,46 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 
 ---
 
+## 29. Calendar (יומן) design language
+
+עיצוב 4 מסכי היומן (חודש/שבוע/יום/טופס אירוע) — 1:1 עם `ref/עמוד יומן`, `ref/יומן שבועי`, `ref/יומן יומי`, `ref/אירוע חדש`. רקע עמוד `#f4f6fb`, כרטיס תוכן לבן `border-[#e9edf4] rounded-[18px] overflow-hidden`.
+
+### 29.1 כותרת + toolbar
+- כותרת: אריח אייקון `h-11 w-11 rounded-[13px] bg-[#e8f0ff] text-[#2563eb]` (CalendarDays) + "יומן" `text-[27px] font-black text-[#0f172a]`; כפתור "אירוע חדש" = gradient-CTA `h-[46px] rounded-[13px] bg-gradient-to-l from-[#1d4ed8] to-[#2563eb] shadow-[0_10px_22px_-8px_rgba(37,99,235,.6)]` (§28.1 precedent).
+- toolbar: מתג segmented `rounded-[12px] border-[#e9edf4] bg-white p-1`, כפתורים `h-9 px-[18px] rounded-lg` (פעיל `bg-[#2563eb] text-white font-bold`, לא-פעיל `text-[#475569] font-semibold`); כותרת תקופה `text-[19px] font-extrabold`; "היום" `h-[38px] rounded-[10px] border-[#e2e8f0]`; חצי ניווט `38×38 rounded-[10px] border-[#e2e8f0]` (RTL: הקודם=ChevronRight, הבא=ChevronLeft).
+
+### 29.2 ארבעה סוגי פריטים — הבחנה בצבע בלבד (`chipTone` ב-`constants/calendar.ts`)
+כל הפריטים חולקים מבנה chip זהה; נבדלים רק בצבע + אייקון. נקודה מובילה (חודש) / accent `border-s-[3px]` בקצה ההתחלה (שבוע/יום):
+| סוג | רקע | accent/נקודה | טקסט | אייקון |
+|-----|-----|------|------|--------|
+| אירוע | `bg-{color_key}-100` | `-600` | `-700` | נקודה (Repeat אם חוזר) |
+| משימה | `bg-green-100` `#dcfce7` | `green-500` `#22c55e` | `green-700` `#15803d` | CheckSquare |
+| תקלה | `bg-red-100` `#fee2e2` | `red-500` `#ef4444` | `red-700` `#b91c1c` | AlertTriangle |
+| תזכורת | `bg-slate-100` `#f1f5f9` | `slate-400` `#94a3b8` | `slate-600` `#475569` | Bell |
+אירוע משתמש בצבע שנבחר בטופס (פלטת 7 הגוונים §2). legend בתחתית עם 4 הסוגים.
+
+### 29.3 סימון "היום"
+- חודש: מספר בעיגול `h-6 w-6 rounded-full bg-blue-600 text-white` + תא `bg-[#f5f9ff]`.
+- שבוע: עמודה `bg-[#eef5ff]` + שם יום `text-blue-600` + מספר בעיגול `h-[26px] w-[26px] rounded-full bg-blue-600 text-white`.
+- יום: אין סימון בגריד (נמסר ב-toolbar + טאב פעיל).
+
+### 29.4 גריד התצוגות
+- חודש: גריד `grid-cols-7`, header ימים `bg-[#fafbfd] text-[13px] font-bold text-slate-500`; תא `min-h-[116px] border-[#eef1f6] p-2`; חוץ-לחודש `bg-[#fafbfd]` מספר `text-slate-300`; עד 3 chips + "עוד N…".
+- שבוע + יום: **גריד שעתי 08:00–20:00** (שעות עבודה — חריג מוצהר מ-ref 07:00). שורת שעה `min-h-[58px]`(שבוע)/`min-h-[60px]`(יום) `border-[#f1f4f8]`; עמודת זמן `dir=ltr text-slate-400` (`w-[72px]` שבוע / `w-[84px]` יום). שורת "כל היום" לפריטים ללא שעה (יום=תמיד, שבוע=band עליון כשיש). פריט מחוץ לחלון → **clamp** לשורת הקצה (לפני 08:00→08:00, אחרי 20:00→20:00), לעולם לא מוסתר.
+
+### 29.5 טופס אירוע (Side Panel)
+`Sheet side="left" sm:w-[55vw]`. header gradient כהה `bg-[linear-gradient(120deg,#0e1f4d,#16308a_55%,#1d4ed8)]`. 4 sections (`Section` משותף, iconTone: פרטי=blue, חזרתיות=violet, משתתפים=emerald, תזכורות=amber). בורר צבע: 7 עיגולים `h-[34px] w-[34px]`, נבחר `ring-2 ring-[#2563eb] ring-offset-2`. שדות בגובה **44px** (`h-11`) — ראה חריגים מוצהרים.
+
+---
+
 ## אם משהו חסר כאן
 
 לפני שאתה מנחש — בדוק שתי קומפוננטות קיימות באותה משפחה (טבלאות, קלפים, וכו'). אם אין דפוס קיים — שאל את המשתמש לפני שאתה ממציא וריאציה חדשה. עדכון ל-DESIGN.md הוא חלק מ-MR — לא משאיר decision לא-מתועד.
+
+---
+
+## חריגים מוצהרים
+
+טופס אירוע יומן (`event-form-panel`) — חריג מאושר. שדות בגובה **44px (`h-11`)** במקום `h-10` הסטנדרטי בפאנלים, לפי החלטת המשתמש להתאמה פיקסלית ל-`ref/אירוע חדש`. חל **רק** על טופס האירוע ביומן; שאר הפאנלים (משימות/תקלות/ספקים) נשארים `h-10`.
+
+גריד שבוע/יום ביומן — חריג מאושר. חלון השעות הוא **08:00–20:00** (שעות עבודה) במקום 07:00–20:00 שב-ref, לפי החלטת המשתמש. פריט מחוץ לחלון עובר clamp לשורת הקצה.
