@@ -3,9 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ChevronRight, ChevronLeft, Plus, CalendarDays } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { HE_MONTH_NAMES } from '@/lib/constants/calendar';
+import { HE_MONTH_NAMES, chipTone, ITEM_KIND_LABEL } from '@/lib/constants/calendar';
 import {
   monthGridDays, weekDays, toDateKey, addDays, addMonths, startOfWeek,
 } from '@/lib/calendar/dates';
@@ -21,7 +20,15 @@ interface Props {
   currentUserName: string;
 }
 
-const VIEW_LABEL: Record<CalendarView, string> = { month: 'חודש', week: 'שבוע', day: 'יום' };
+// Segmented control order (RTL → first DOM child sits rightmost): יום · שבוע · חודש.
+const VIEWS: { value: CalendarView; label: string }[] = [
+  { value: 'day', label: 'יום' },
+  { value: 'week', label: 'שבוע' },
+  { value: 'month', label: 'חודש' },
+];
+
+// Legend kinds — color-only distinction between the four item types.
+const LEGEND_KINDS = ['event', 'task', 'issue', 'reminder'] as const;
 
 /** Compute the inclusive [from,to] date range a given view+cursor needs. */
 function rangeFor(view: CalendarView, cursor: Date): { from: string; to: string } {
@@ -96,7 +103,9 @@ export function CalendarPageClient({ canEdit, owners, currentUserName }: Props) 
     setPanelOpen(true);
   }
   function openItem(item: CalendarItem) {
-    if (item.kind === 'task') {
+    // Only manual events open the calendar panel; task/issue/reminder overlays
+    // deep-link back to their own module card.
+    if (item.kind !== 'event') {
       router.push(item.action_url);
       return;
     }
@@ -133,48 +142,72 @@ export function CalendarPageClient({ canEdit, owners, currentUserName }: Props) 
 
   return (
     <main className="flex flex-col gap-4">
-      {/* Toolbar */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {/* Top bar — icon tile + title (right) · gradient CTA (left) */}
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="flex items-center gap-2 text-2xl font-extrabold text-slate-900">
-            <CalendarDays className="h-6 w-6 text-blue-600" /> יומן
-          </h1>
+          <span className="flex h-11 w-11 items-center justify-center rounded-[13px] bg-[#e8f0ff] text-[#2563eb]">
+            <CalendarDays className="h-6 w-6" />
+          </span>
+          <h1 className="text-[27px] font-black leading-none tracking-tight text-[#0f172a]">יומן</h1>
         </div>
         {canEdit && (
-          <Button onClick={() => openCreate()} className="gap-2">
+          <button
+            type="button"
+            onClick={() => openCreate()}
+            className="inline-flex h-[46px] items-center gap-2 rounded-[13px] bg-gradient-to-l from-[#1d4ed8] to-[#2563eb] px-5 text-[14.5px] font-bold text-white shadow-[0_10px_22px_-8px_rgba(37,99,235,0.6)] transition-opacity hover:opacity-95"
+          >
             <Plus className="h-4 w-4" /> אירוע חדש
-          </Button>
+          </button>
         )}
       </div>
 
-      <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
-        {/* Navigation (RTL: previous = right chevron) */}
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={goToday} className="h-9">היום</Button>
-          <div className="flex items-center">
-            <Button variant="outline" size="icon" onClick={() => navigate(-1)} aria-label="הקודם" className="h-9 w-9 rounded-e-none">
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-            <Button variant="outline" size="icon" onClick={() => navigate(1)} aria-label="הבא" className="h-9 w-9 rounded-s-none border-s-0">
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-          </div>
-          <span className="text-lg font-bold text-slate-800">{title}</span>
-        </div>
-
-        {/* View toggle */}
-        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-          {(['month', 'week', 'day'] as CalendarView[]).map((v) => (
+      {/* Toolbar — segmented control (right) · period title + today + nav (left) */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="inline-flex rounded-[12px] border border-[#e9edf4] bg-white p-1">
+          {VIEWS.map((v) => (
             <button
-              key={v} type="button" onClick={() => setView(v)}
+              key={v.value}
+              type="button"
+              onClick={() => setView(v.value)}
               className={cn(
-                'cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
-                view === v ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+                'h-9 cursor-pointer rounded-lg px-[18px] text-sm transition-colors',
+                view === v.value
+                  ? 'bg-[#2563eb] font-bold text-white'
+                  : 'font-semibold text-[#475569] hover:bg-slate-50',
               )}
             >
-              {VIEW_LABEL[v]}
+              {v.label}
             </button>
           ))}
+        </div>
+
+        <div className="flex items-center gap-3">
+          <h2 className="min-w-[110px] text-center text-[19px] font-extrabold text-[#0f172a]">{title}</h2>
+          <button
+            type="button"
+            onClick={goToday}
+            className="h-[38px] rounded-[10px] border border-[#e2e8f0] bg-white px-[18px] text-sm font-semibold text-[#334155] transition-colors hover:bg-slate-50"
+          >
+            היום
+          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              aria-label="הקודם"
+              className="flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#e2e8f0] bg-white text-[#475569] transition-colors hover:bg-slate-50"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(1)}
+              aria-label="הבא"
+              className="flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[#e2e8f0] bg-white text-[#475569] transition-colors hover:bg-slate-50"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -188,14 +221,19 @@ export function CalendarPageClient({ canEdit, owners, currentUserName }: Props) 
         )}
       </div>
 
-      {/* Legend */}
-      <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-3 w-3 rounded border border-blue-300 bg-blue-100" /> אירוע
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-3 w-3 rounded border border-dashed border-slate-300 bg-slate-50" /> משימה (תאריך יעד)
-        </span>
+      {/* Legend — four item types, distinguished by color */}
+      <div className="flex flex-wrap items-center gap-4 text-[12.5px] font-medium text-slate-500">
+        {LEGEND_KINDS.map((kind) => {
+          const tone = chipTone(kind, 'blue');
+          return (
+            <span key={kind} className="inline-flex items-center gap-1.5">
+              <span className={cn('inline-flex h-3.5 w-3.5 items-center justify-center rounded', tone.bg)}>
+                <span className={cn('h-1.5 w-1.5 rounded-full', tone.dot)} />
+              </span>
+              {ITEM_KIND_LABEL[kind]}
+            </span>
+          );
+        })}
       </div>
 
       <EventFormPanel

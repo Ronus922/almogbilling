@@ -548,7 +548,7 @@ export function EventFormPanel({
           showCloseButton={false}
           className="w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
         >
-          <SheetHeader className="flex-none gap-2 bg-gradient-to-bl from-slate-900 via-blue-950 to-blue-900 px-6 py-6 text-white">
+          <SheetHeader className="flex-none gap-2 bg-[linear-gradient(120deg,#0e1f4d_0%,#16308a_55%,#1d4ed8_100%)] px-7 py-[18px] text-white">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
                 <SheetTitle className="text-2xl font-bold text-white">
@@ -581,7 +581,7 @@ export function EventFormPanel({
                       onChange={(e) => set('title', e.target.value)}
                       onBlur={() => setTitleTouched(true)}
                       disabled={disabled} autoFocus={!isEdit} placeholder="כותרת האירוע"
-                      className={cn('h-10', titleError && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
+                      className={cn('h-11', titleError && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
                     />
                     {titleError && <p className="text-[12px] font-semibold text-red-500 text-right">⚠️ {titleError}</p>}
                   </div>
@@ -590,7 +590,7 @@ export function EventFormPanel({
                     <div className="space-y-2">
                       <Label className="text-base font-medium text-muted-foreground">סוג</Label>
                       <Select value={form.item_kind} onValueChange={(v) => { if (v) set('item_kind', v as CalendarItemKind); }} disabled={disabled}>
-                        <SelectTrigger className="w-full data-[size=default]:h-10">
+                        <SelectTrigger className="w-full data-[size=default]:h-11">
                           <SelectValue>{(v: string | null) => (v ? itemKindLabel(v as CalendarItemKind) : null)}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
@@ -601,7 +601,7 @@ export function EventFormPanel({
                     <div className="space-y-2">
                       <Label className="text-base font-medium text-muted-foreground">סטטוס</Label>
                       <Select value={form.status} onValueChange={(v) => { if (v) set('status', v as CalendarEventStatus); }} disabled={disabled}>
-                        <SelectTrigger className="w-full data-[size=default]:h-10">
+                        <SelectTrigger className="w-full data-[size=default]:h-11">
                           <SelectValue>{(v: string | null) => (v ? eventStatusLabel(v as CalendarEventStatus) : null)}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
@@ -620,7 +620,7 @@ export function EventFormPanel({
                       onChange={(e) => set('event_date', e.target.value)}
                       disabled={disabled}
                       onClick={(e) => { const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void }; try { el.showPicker?.(); } catch { /* */ } }}
-                      className={cn('h-10 cursor-pointer', dateError && 'border-red-400 bg-red-50')}
+                      className={cn('h-11 cursor-pointer', dateError && 'border-red-400 bg-red-50')}
                     />
                   </div>
 
@@ -633,11 +633,11 @@ export function EventFormPanel({
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div className="space-y-2">
                         <Label htmlFor="ev-start" className="text-base font-medium text-muted-foreground">שעת התחלה</Label>
-                        <Input id="ev-start" type="time" value={form.start_time} onChange={(e) => set('start_time', e.target.value)} disabled={disabled} dir="ltr" className="h-10 cursor-pointer tabular-nums" />
+                        <Input id="ev-start" type="time" value={form.start_time} onChange={(e) => set('start_time', e.target.value)} disabled={disabled} dir="ltr" className="h-11 cursor-pointer tabular-nums" />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="ev-end" className="text-base font-medium text-muted-foreground">שעת סיום</Label>
-                        <Input id="ev-end" type="time" value={form.end_time} onChange={(e) => set('end_time', e.target.value)} disabled={disabled} dir="ltr" className="h-10 cursor-pointer tabular-nums" />
+                        <Input id="ev-end" type="time" value={form.end_time} onChange={(e) => set('end_time', e.target.value)} disabled={disabled} dir="ltr" className="h-11 cursor-pointer tabular-nums" />
                       </div>
                     </div>
                   )}
@@ -646,7 +646,7 @@ export function EventFormPanel({
                     <Label htmlFor="ev-loc" className="text-base font-medium text-muted-foreground">מיקום</Label>
                     <div className="relative">
                       <MapPin className="pointer-events-none absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                      <Input id="ev-loc" value={form.location} onChange={(e) => set('location', e.target.value)} disabled={disabled} placeholder="היכן מתקיים?" className="h-10 pe-9" />
+                      <Input id="ev-loc" value={form.location} onChange={(e) => set('location', e.target.value)} disabled={disabled} placeholder="היכן מתקיים?" className="h-11 pe-9" />
                     </div>
                   </div>
 
@@ -667,8 +667,10 @@ export function EventFormPanel({
                           onClick={() => set('color_key', c.key)}
                           aria-label={c.label}
                           className={cn(
-                            'h-9 w-9 rounded-full transition-transform', c.dot,
-                            form.color_key === c.key ? 'ring-2 ring-slate-900 ring-offset-2 scale-105' : 'hover:scale-105',
+                            'h-[34px] w-[34px] rounded-full transition-transform', c.dot,
+                            form.color_key === c.key
+                              ? 'ring-2 ring-[#2563eb] ring-offset-2 ring-offset-white'
+                              : 'hover:scale-105',
                           )}
                         />
                       ))}
@@ -691,7 +693,7 @@ export function EventFormPanel({
                           <div className="space-y-2">
                             <Label className="text-sm font-medium text-muted-foreground">תדירות</Label>
                             <Select value={recurrence.type} onValueChange={(v) => { if (v) setRecurrence((p) => ({ ...p, type: v as RecurrenceType })); }} disabled={disabled}>
-                              <SelectTrigger className="w-full data-[size=default]:h-10">
+                              <SelectTrigger className="w-full data-[size=default]:h-11">
                                 <SelectValue>{(v: string | null) => (v ? recurrenceTypeLabel(v as RecurrenceType) : null)}</SelectValue>
                               </SelectTrigger>
                               <SelectContent>
@@ -701,13 +703,13 @@ export function EventFormPanel({
                           </div>
                           <div className="space-y-2">
                             <Label className="text-sm font-medium text-muted-foreground">כל</Label>
-                            <Input type="number" min={1} max={365} value={recurrence.interval} onChange={(e) => setRecurrence((p) => ({ ...p, interval: Math.max(1, Number(e.target.value) || 1) }))} disabled={disabled} dir="ltr" className="h-10 tabular-nums" />
+                            <Input type="number" min={1} max={365} value={recurrence.interval} onChange={(e) => setRecurrence((p) => ({ ...p, interval: Math.max(1, Number(e.target.value) || 1) }))} disabled={disabled} dir="ltr" className="h-11 tabular-nums" />
                           </div>
                         </div>
                         <div className="space-y-2">
                           <Label className="text-sm font-medium text-muted-foreground">מסתיים</Label>
                           <Select value={recurrence.endType} onValueChange={(v) => { if (v) setRecurrence((p) => ({ ...p, endType: v as RecurrenceEndType })); }} disabled={disabled}>
-                            <SelectTrigger className="w-full data-[size=default]:h-10">
+                            <SelectTrigger className="w-full data-[size=default]:h-11">
                               <SelectValue>{(v: string | null) => { const m: Record<string, string> = { never: 'לעולם לא', until_date: 'בתאריך', count: 'אחרי מספר מופעים' }; return v ? m[v] : null; }}</SelectValue>
                             </SelectTrigger>
                             <SelectContent>
@@ -720,13 +722,13 @@ export function EventFormPanel({
                         {recurrence.endType === 'until_date' && (
                           <div className="space-y-2">
                             <Label className="text-sm font-medium text-muted-foreground">עד תאריך</Label>
-                            <Input type="date" value={recurrence.untilDate} onChange={(e) => setRecurrence((p) => ({ ...p, untilDate: e.target.value }))} disabled={disabled} className="h-10 cursor-pointer" />
+                            <Input type="date" value={recurrence.untilDate} onChange={(e) => setRecurrence((p) => ({ ...p, untilDate: e.target.value }))} disabled={disabled} className="h-11 cursor-pointer" />
                           </div>
                         )}
                         {recurrence.endType === 'count' && (
                           <div className="space-y-2">
                             <Label className="text-sm font-medium text-muted-foreground">מספר מופעים</Label>
-                            <Input type="number" min={1} max={78} value={recurrence.count} onChange={(e) => setRecurrence((p) => ({ ...p, count: Math.max(1, Number(e.target.value) || 1) }))} disabled={disabled} dir="ltr" className="h-10 tabular-nums" />
+                            <Input type="number" min={1} max={78} value={recurrence.count} onChange={(e) => setRecurrence((p) => ({ ...p, count: Math.max(1, Number(e.target.value) || 1) }))} disabled={disabled} dir="ltr" className="h-11 tabular-nums" />
                           </div>
                         )}
                         <p className="text-[11px] text-violet-700">עד 78 מופעים או 18 חודשים קדימה, הנמוך מביניהם.</p>
@@ -753,7 +755,7 @@ export function EventFormPanel({
                           onChange={(e) => { setSearch(e.target.value); setPickerOpen(true); }}
                           onFocus={() => setPickerOpen(true)}
                           placeholder="חיפוש משתמש…"
-                          className="h-10 pe-9"
+                          className="h-11 pe-9"
                         />
                         {pickerOpen && (() => {
                           const available = (results?.users ?? []).filter(
@@ -820,14 +822,14 @@ export function EventFormPanel({
                             onChange={(e) => { setExternalDraft(e.target.value); if (externalError) setExternalError(null); }}
                             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addExternal(); } }}
                             placeholder="שם משתתף חיצוני…"
-                            className={cn('h-10', externalError && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
+                            className={cn('h-11', externalError && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
                           />
                           {externalError && <p className="mt-1 text-[12px] font-semibold text-red-500 text-right">⚠️ {externalError}</p>}
                         </div>
                         <Button
                           type="button" variant="outline" onClick={addExternal}
                           disabled={!externalDraft.trim()}
-                          className="h-10 shrink-0 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+                          className="h-11 shrink-0 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
                         >
                           <UserPlus className="h-4 w-4" /> הוסף
                         </Button>
@@ -881,7 +883,7 @@ export function EventFormPanel({
                       <div className="flex-1 space-y-1">
                         <Label className="text-xs text-muted-foreground">מתי</Label>
                         <Select value={r.offset} onValueChange={(v) => { if (v) updateReminder(idx, { offset: v as ReminderOffset }); }} disabled={disabled}>
-                          <SelectTrigger className="w-full data-[size=default]:h-10">
+                          <SelectTrigger className="w-full data-[size=default]:h-11">
                             <SelectValue>{(v: string | null) => (v ? OFFSET_LABEL[v as ReminderOffset] : null)}</SelectValue>
                           </SelectTrigger>
                           <SelectContent>
@@ -918,7 +920,7 @@ export function EventFormPanel({
                         </div>
                       </div>
                       {!disabled && (
-                        <button type="button" onClick={() => removeReminder(idx)} aria-label="הסר תזכורת" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600">
+                        <button type="button" onClick={() => removeReminder(idx)} aria-label="הסר תזכורת" className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600">
                           <Trash2 className="h-4 w-4" />
                         </button>
                       )}
