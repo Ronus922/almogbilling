@@ -757,8 +757,8 @@ toast.info('...');
 - **Container**: `relative hidden shrink-0 flex-col border-l border-line bg-white transition-[width] duration-200 md:flex`. רוחב מתחלף: `w-[266px]` פתוח ↔ `w-[80px]` מכווץ.
 - **Collapse state**: עצמאי בתוך הסיידבר בלבד (`useState` + `localStorage` key `almog:sidebar-collapsed`, נקרא ב-`useEffect` אחרי mount → SSR-safe, בלי hydration mismatch). הסיידבר מצר/מתרחב והתוכן זורם דרך `flex` — **אין נגיעה ב-AppShell / `<main>`**.
 - **Edge toggle**: כפתור עגול `h-7 w-7` שרוכב על הקצה הפנימי (`absolute top-1/2 left-0 -translate-x-1/2`). אייקון `ChevronRight` יחיד שמסתובב `rotate-180` במצב מכווץ.
-- **Brand block** (ראש הסיידבר): לוגו-גרדיאנט `grid h-11 w-11 rounded-[13px] bg-gradient-to-br from-brand to-brand-dark text-white` + `Building2`, וכותרת `text-[22px] font-black tracking-tight text-ink` = "ניהול אלמוג". מכווץ → רק הלוגו, ממורכז.
-- **Sections** (2): כותרות `ראשי` / `ניהול` — `px-3 pb-1.5 pt-4 text-[11px] font-extrabold tracking-[0.06em] text-ink-ghost`. מכווץ → במקום הכותרת קו דק `mx-auto my-2 h-px w-8 bg-line-soft`. סקשן בלי פריטים מורשים מסתתר (RBAC נשמר 1:1). `ראשי` = עבודה יומיומית + תקשורת (צ׳אט וואטסאפ/פנימי); `ניהול` = הגדרות-מערכת (סטטוסים, תבניות, אזורים, משתמשים).
+- **Brand block** (ראש הסיידבר): מיכל `flex h-16 shrink-0 items-center gap-3 border-b border-line` (`px-5`; מכווץ → `justify-center px-0`). **גובהו זהה ל-Header (`h-16`) וה-`border-b` תואם**, כך שהקו התחתון שלו והקו התחתון של ה-Header מתיישרים לקו רציף אחד לאורך ראש המסך (ראה §32). תוכן: לוגו-גרדיאנט `grid h-11 w-11 rounded-[13px] bg-gradient-to-br from-brand to-brand-dark text-white` + `Building2`, וכותרת `text-[22px] font-black tracking-tight text-ink` = "ניהול אלמוג". מכווץ → רק הלוגו, ממורכז.
+- **רשימה אחידה** (ללא כותרות-סקשן): כל פריטי הניווט ברשימה שטוחה אחת — עבודה יומיומית + תקשורת קודם, אחריהם הגדרות-המערכת (סטטוסים, תבניות, אזורים, משתמשים). תמיכת הסקשנים נשמרה בקוד (`title` ריק → לא מרונדרת כותרת/קו): כדי לפצל שוב, מוסיפים entry ל-`SECTIONS` עם `title`. כל פריט עם ה-route + module שלו → RBAC 1:1 (פריט לא-מורשה פשוט מוסתר).
 - **Item**: `group flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-colors`. מכווץ → `justify-center px-0`.
   - **Active**: `bg-gradient-to-l from-brand-dark to-brand text-white shadow-[0_10px_20px_-9px_rgba(61,90,254,0.6)]` (אייקון `text-white`).
   - **Idle**: `text-ink-2 hover:bg-row-hover hover:text-ink` (אייקון `text-ink-3 group-hover:text-brand`).
@@ -775,8 +775,8 @@ toast.info('...');
 
 `src/components/app-shell/Header.tsx` — סרגל עליון מלא-רוחב.
 
-- **Container**: `flex h-[68px] shrink-0 items-center gap-4 border-b border-line bg-white/90 px-6 backdrop-blur`.
-- **חיפוש** (RTL start / ימין): `relative flex w-full max-w-[440px] items-center` — אייקון `Search` ב-`absolute right-3.5 text-ink-3`, ו-`input` `h-11 rounded-[13px] border border-line bg-surface-2 pr-11 pl-4 text-[13.5px] font-medium`, focus `border-brand bg-white ring-4 ring-brand/10`. **ויזואלי בלבד** (אין חיפוש גלובלי מחווט).
+- **Container**: `flex h-16 shrink-0 items-center gap-4 border-b border-line bg-white/90 px-6 backdrop-blur`. יושב **בתוך אזור התוכן בלבד** — לא חוצה מעל הסיידבר (§32). הגובה `h-16` תואם לגובה ה-brand block בראש הסיידבר (§14) → הקווים התחתונים מתיישרים.
+- **חיפוש** (RTL start / ימין): `<GlobalSearch />` בתוך `flex w-full max-w-[440px] items-center`. ה-slot הוא **טריגר ויזואלי** — `button` `h-11 rounded-[13px] border border-line bg-surface-2 pr-11 pl-2.5` עם אייקון `Search` ב-`absolute right-3.5 text-ink-3`, placeholder `text-ink-3`, ו-`kbd` `⌘K`/`Ctrl K` בקצה (מ-`sm:` ומעלה). לחיצה (או `⌘/Ctrl+K` גלובלי) פותחת את ה-Command Palette — ראה **§31 Global Search**.
 - **`<div className="flex-1" />`** דוחף את הצד השני לקצה.
 - **אזור פעולות** (RTL end / שמאל) `flex items-center gap-2.5`:
   - `NotificationBell` (הרכיב הקיים, badge אדום אמיתי מ-`/api/notifications/unread-count`) — מוצג רק כש-`role !== 'viewer'`.
@@ -1326,6 +1326,69 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 - **כותרת פאנל המשימה** (header כהה): chip translucent `border-white/25 bg-white/10 px-2.5 py-0.5 rounded-full text-xs` עם `Repeat h-3.5` + טקסט „משימה מחזורית”/„מופע בסדרה”.
 
 **טאב „מחזוריות”** (מסך משימות, שלישי אחרי „פעילות”/„הושלמו”): טבלה (`RecurringSeriesList`) — שורה לכל סדרה פעילה, **ממוינת לפי המופע הבא (עולה)**. עמודות: כותרת (עם glyph) · מחזוריות (`summarizeCadence` → „כל שבוע · ב׳, ה׳”, pill `bg-slate-100 text-slate-600`) · המופע הבא (תאריך+שעה, `CalendarClock`). לחיצה על שורה → פתיחת משימת ה-template. ה-toolbar (מתג תצוגה+פילטרים) מוסתר בטאב זה. המופע הבא מחושב ב-`listRecurringSeries` דרך מנוע ה-`computeOccurrences` המשותף (אופק 400 ימים, מכבד exceptions).
+
+---
+
+## 31. Global Search (Command Palette)
+
+חיפוש גלובלי מהיר בסגנון ⌘K. מקור-אמת: `src/components/app-shell/GlobalSearch.tsx` (UI) + `src/app/api/search/route.ts` (endpoint) + פרימיטיב `src/components/ui/command.tsx` (**dependency-free**, ללא `cmdk` — תואם לדפוס ה-`Combobox` של §27).
+
+**טריגר (בהדר)**: ה-slot של החיפוש ב-§15 הוא `button` ויזואלי בלבד (לא `input`). לחיצה פותחת את הפלטה; קיצור גלובלי `⌘K` (mac) / `Ctrl+K` מחליף מצב פתוח/סגור מכל מקום במסך. ה-`kbd` מוצג מ-`sm:` ומעלה.
+
+**פלטה (Dialog)**: `CommandDialog` עוטף את `DialogContent` הקיים (§12) עם override: `top-[12vh] -translate-y-0 max-w-[600px] p-0 gap-0` (ממורכז אופקית RTL, מעוגן לראש). `showCloseButton={false}`; `DialogTitle` ב-`sr-only` ל-a11y. ESC / קליק-רקע סוגרים (התנהגות base-ui).
+
+**מבנה הפלטה**:
+- `CommandInput`: שורה עם אייקון `Search` + `input` `h-[52px]`, `border-b border-line`, `autofocus` בפתיחה, `debounce ~250ms` + `AbortController` (מבטל בקשות ישנות).
+- `CommandList`: `max-h-[60vh] overflow-y-auto p-2`.
+- תוצאות **מקובצות לפי סוג** (`CommandGroup` עם `heading`), בסדר קבוע: **דיירים → ספקים → תקלות → מסמכים**. קבוצה מוצגת רק אם יש לה תוצאות.
+- `CommandItem`: avatar-chip `h-9 w-9 rounded-[10px] bg-brand-soft text-brand-text` עם אייקון הסוג (`Users`/`Truck`/`AlertTriangle`/`FileText`), כותרת `text-[13.5px] font-bold` + subtitle `text-[12px] text-ink-3`. שורה פעילה: `bg-row-hover`.
+- **ניווט מקלדת**: `↑`/`↓` מזיזים active על פני כל הקבוצות (index שטוח), `Enter` → `router.push(href)`. גם hover (`onMouseMove`) מסמן active.
+- **מצבים** (עברית קצרה): „הקלד לפחות 2 תווים לחיפוש” (פחות מ-2 תווים) · „מחפש…” + spinner (טעינה) · „לא נמצאו תוצאות עבור «…»” (ריק).
+
+**Result shape** (מערך שטוח אחיד, מקובץ ב-client):
+
+```ts
+{ type: 'debtor' | 'supplier' | 'issue' | 'document'; id: string; title: string; subtitle: string; href: string }[]
+```
+
+`href` נבנה מ-routes קיימים בלבד (לא ממציאים): דייר → `/dashboard?apt=<מס׳ דירה>&open=details` (deep-link קיים, נופל ל-`/dashboard` ללא מס׳ דירה) · תקלה → `/issues?issue=<id>` · ספק → `/suppliers` · מסמך → `/documents` (לשני האחרונים אין deep-link לפריט בודד).
+
+**RBAC (נאכף ב-endpoint, לא רק ב-UI)**: `GET /api/search?q=` דורש session (`getCurrentActor` → אין session → 401); `q` קצר מ-2 תווים → `[]` בלי פנייה ל-DB. כל מקור נשאל **רק** אם למשתמש יש הרשאת `view` אליו — מקור לא-מורשה לא נשאל כלל:
+
+| מקור | טבלה | הרשאה נדרשת |
+|------|------|-------------|
+| דיירים | `debtors` | `dashboard` **או** `contacts` (זהה ל-`/api/debtors`) |
+| ספקים | `suppliers` | `suppliers` |
+| תקלות | `issues` | `issues` |
+| מסמכים | `documents` | `documents` |
+
+תוצאה: `viewer` (יש לו `dashboard:view`) → דיירים בלבד; `admin`/`super_admin` → כל המקורות; `manager` → לפי `user_permissions`. שאילתות `ILIKE '%q%'` פרמטריות (wildcards של המשתמש עוברים escape), `LIMIT 5` לכל מקור, מסננות פריטים מאורכבים (`is_archived=false` / `deleted_at is null`). ללא DDL; `pg_trgm` = שדרוג עתידי, לא צורך נכון לעכשיו.
+
+---
+
+## 32. App Shell (שלד ה-layout)
+
+מקור-אמת: `src/components/app-shell/AppShell.tsx`. השלד הוא **flex ROW מלא-גובה ב-RTL** (ה-`dir="rtl"` הגלובלי מציב את הילד הראשון בצד ימין) — **לא** `flex-col` עם header חוצה למעלה.
+
+```tsx
+<div className="flex h-screen bg-app">         {/* row, RTL → סיידבר בימין */}
+  <Sidebar />                                  {/* עמודה מלאת-גובה בקצה ימין, brand בראשה */}
+  <div className="flex flex-1 flex-col overflow-hidden">
+    <Header />                                 {/* בתוך אזור התוכן בלבד */}
+    <main className="flex-1 overflow-auto bg-app">
+      <div className="mx-auto max-w-[1640px] p-[18px] md:p-6">{children}</div>
+    </main>
+  </div>
+</div>
+```
+
+**עקרונות (מה שמנע את הסטייה):**
+- **הסיידבר הוא עמודה מלאת-גובה בקצה ימין** — נמתח מ-`top` ל-`bottom` של המסך (הילד הראשון ב-row, `align-items: stretch`). ה-brand block בראשו עולה עד הקצה העליון ממש.
+- **ה-Header יושב רק מעל אזור התוכן** — הוא ילד של עמודת התוכן (`flex-1 flex-col`), ולכן **נעצר בגבול הסיידבר ולא חוצה מעליו**. זו הנקודה הקריטית: header אסור שיהיה אח (sibling) של הסיידבר ברמת ה-row.
+- **יישור הקווים התחתונים**: ה-brand block (§14) וה-Header (§15) חולקים `h-16` + `border-b border-line` → שני הקווים התחתונים מתלכדים לקו רציף אחד לרוחב ראש המסך.
+- **Scroll**: רק `<main>` גולל (`overflow-auto`); הסיידבר וההדר קבועים. עמודת התוכן היא `overflow-hidden` כך שה-`<main>` הוא המשטח הגולל היחיד.
+- **רספונסיביות**: הסיידבר `hidden md:flex` — במובייל הוא מוסתר, אזור התוכן תופס את כל הרוחב, וההדר נמתח על פניו (אין סיידבר לחצות מעליו). התנהגות ה-collapse נשמרת בתוך הסיידבר עצמו (§14).
+- **גבול שינוי**: עורכים כאן את **מבנה ה-wrapper בלבד** — לא את `{children}`, לא את ה-`<main>` הפנימי, ולא את לוגיקת הניווט/ההרשאות.
 
 ---
 
