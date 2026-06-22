@@ -158,6 +158,13 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       }
     }
 
+    // Zombie guard (defense in depth): a terminal transition — resolved / closed /
+    // archived — purges any pending reminders so none fire post-resolution.
+    // Idempotent; complements the engine-side skip and the DELETE route.
+    if (issue.is_archived || issue.status === 'resolved' || issue.status === 'closed') {
+      await deleteRemindersForEntity('issue', id);
+    }
+
     // In-app assignment bell → each NEWLY-ADDED user assignee (set diff), except
     // the editor. channel:'in_app' suppresses the auto-email — external delivery
     // (email / WhatsApp) is now matrix-driven (opt-in), same as the create form.

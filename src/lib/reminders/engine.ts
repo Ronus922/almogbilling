@@ -101,9 +101,19 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
       let emailDetails: { label: string; value: string }[] = [];
       let priority: 'low' | 'normal' | 'high' | 'urgent' = 'normal';
 
+      // Zombie guard: a reminder whose entity was DELETED, archived, or reached a
+      // terminal state must NOT fire. Resolve the entity; if it's gone or terminal
+      // we set `skip` → mark the row sent without delivering (skip-not-sent) so it
+      // never reprocesses, and we never emit a generic "ghost" reminder. Mirrors
+      // the PATCH-time cleanup + the DELETE routes (defense in depth).
+      let skip = false;
+
       if (reminder.entity_type === 'task') {
         const task = await getTaskById(reminder.entity_id);
-        if (task) {
+        // Terminal task statuses: 'done' | 'cancelled' (TaskStatus).
+        if (!task || task.is_archived || task.status === 'done' || task.status === 'cancelled') {
+          skip = true;
+        } else {
           title = task.title;
           message = 'תזכורת למשימה';
           actionUrl = `/tasks?task=${task.id}`;
@@ -113,7 +123,10 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
         }
       } else if (reminder.entity_type === 'issue') {
         const issue = await getIssueById(reminder.entity_id);
-        if (issue) {
+        // Terminal issue statuses: 'resolved' | 'closed' (IssueStatus).
+        if (!issue || issue.is_archived || issue.status === 'resolved' || issue.status === 'closed') {
+          skip = true;
+        } else {
           title = issue.title;
           message = 'תזכורת לתקלה';
           actionUrl = `/issues?issue=${issue.id}`;
@@ -122,7 +135,9 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
         }
       } else if (reminder.entity_type === 'calendar_event') {
         const event = await getEventById(reminder.entity_id);
-        if (event) {
+        if (!event) {
+          skip = true;
+        } else {
           title = event.title;
           message = 'תזכורת לאירוע ביומן';
           actionUrl = '/calendar';
@@ -141,6 +156,14 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
           }
           emailDetails = details;
         }
+      }
+
+      // Entity gone / archived / terminal → mark sent WITHOUT delivering anything
+      // (no ghost reminder), so the row drops out of the due set permanently.
+      if (skip) {
+        await markReminderSent(reminder.id);
+        result.processed++;
+        continue;
       }
 
       // Multi-select channels (migration 049). Falls back to the legacy single

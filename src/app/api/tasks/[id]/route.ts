@@ -169,6 +169,13 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       }
     }
 
+    // Zombie guard (defense in depth): a terminal transition — done / cancelled /
+    // archived — purges any pending reminders so none fire post-completion.
+    // Idempotent; complements the engine-side skip and the DELETE route.
+    if (task.is_archived || task.status === 'done' || task.status === 'cancelled') {
+      await deleteRemindersForEntity('task', id);
+    }
+
     // In-app assignment bell → each NEWLY-ADDED user assignee (set diff), except
     // the editor. channel:'in_app' suppresses the auto-email — external delivery
     // (email / WhatsApp) is now matrix-driven (opt-in), same as the create form.
