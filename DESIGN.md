@@ -752,7 +752,7 @@ toast.info('...');
 
 ## 14. Sidebar
 
-`src/components/app-shell/Sidebar.tsx` — תפריט צד ימני (RTL), **collapsible**.
+`src/components/app-shell/Sidebar.tsx` — תפריט צד ימני (RTL), **collapsible**. הקונפיג (`SECTIONS`/`SETTINGS_ITEM`), פונקציית הסינון `filterNav(role, can)`, והרינדור (`NavBrand`/`Section`/`NavLink`/`FooterButton`) חיים ב-**`src/components/app-shell/nav.tsx`** ונצרכים גם ע״י ה-drawer במובייל (§15) — **מקור אמת אחד לרשימה ולסינון**, אסור שתי רשימות שעלולות להיפרד.
 
 - **Container**: `relative hidden shrink-0 flex-col border-l border-line bg-white transition-[width] duration-200 md:flex`. רוחב מתחלף: `w-[266px]` פתוח ↔ `w-[80px]` מכווץ.
 - **Collapse state**: עצמאי בתוך הסיידבר בלבד (`useState` + `localStorage` key `almog:sidebar-collapsed`, נקרא ב-`useEffect` אחרי mount → SSR-safe, בלי hydration mismatch). הסיידבר מצר/מתרחב והתוכן זורם דרך `flex` — **אין נגיעה ב-AppShell / `<main>`**.
@@ -776,7 +776,7 @@ toast.info('...');
 `src/components/app-shell/Header.tsx` — סרגל עליון מלא-רוחב.
 
 - **Container**: `flex h-16 shrink-0 items-center gap-4 border-b border-line bg-white/90 px-6 backdrop-blur`. יושב **בתוך אזור התוכן בלבד** — לא חוצה מעל הסיידבר (§32). הגובה `h-16` תואם לגובה ה-brand block בראש הסיידבר (§14) → הקווים התחתונים מתיישרים.
-- **חיפוש** (RTL start / ימין): `<GlobalSearch />` בתוך `flex w-full max-w-[440px] items-center`. ה-slot הוא **טריגר ויזואלי** — `button` `h-11 rounded-[13px] border border-line bg-surface-2 pr-11 pl-2.5` עם אייקון `Search` ב-`absolute right-3.5 text-ink-3`, placeholder `text-ink-3`, ו-`kbd` `⌘K`/`Ctrl K` בקצה (מ-`sm:` ומעלה). לחיצה (או `⌘/Ctrl+K` גלובלי) פותחת את ה-Command Palette — ראה **§31 Global Search**.
+- **חיפוש** (RTL start / ימין): `<GlobalSearch />` בתוך `flex w-full max-w-[440px] items-center`. ה-slot הוא **טריגר ויזואלי** — `button` `h-11 rounded-[13px] border border-line bg-surface-2 pr-11 pl-2.5` עם אייקון `Search` ב-`absolute right-3.5 text-ink-3`, placeholder `text-ink-3`, ו-`kbd` `⌘K`/`Ctrl K` בקצה (מ-`sm:` ומעלה). לחיצה (או `⌘/Ctrl+K` גלובלי) פותחת את ה-Command Palette — ראה **§31 Global Search**. במובייל (`<md`) ה-slot **מוסתר** (`hidden md:flex`) כדי שההמבורגר יישאר נגיש ולא ייווצר צפיפות — ראה ניווט המובייל למטה.
 - **`<div className="flex-1" />`** דוחף את הצד השני לקצה.
 - **אזור פעולות** (RTL end / שמאל) `flex items-center gap-2.5`:
   - `NotificationBell` (הרכיב הקיים, badge אדום אמיתי מ-`/api/notifications/unread-count`) — מוצג רק כש-`role !== 'viewer'`.
@@ -784,6 +784,7 @@ toast.info('...');
   - מפריד `h-[30px] w-px bg-line` (רק אם יש אייקונים).
   - **User-pill**: `Popover`. Trigger = `flex h-[44px] items-center gap-2.5 rounded-[13px] border border-line bg-white` עם avatar `h-[34px] w-[34px] rounded-[10px] bg-brand-soft text-brand-text` (אות ראשונה), שם `text-[13px] font-extrabold` + תפקיד `text-[10.5px] text-ink-3`, ו-`ChevronDown` שמסתובב כשפתוח. הנתונים מהמשתמש המחובר (`useAuth`); התפקיד מ-`roleLabel(user.role)` (לעולם לא מהשם). תוכן ה-Popover: שם + badge תפקיד (`ROLE_STYLES`) + אימייל + כפתור `התנתק` אדום (`signOut`).
 - ה-Brand עבר לסיידבר (§14); ההדר אינו מציג לוגו.
+- **ניווט מובייל (drawer)**: `MobileNav` — כפתור המבורגר ב-RTL-start (לפני החיפוש), **`md:hidden` בלבד** (בדסקטופ הסיידבר מכסה; אפס כפילות). סגנון זהה לאייקוני ההדר: `grid h-[38px] w-[38px] rounded-[10px] border border-line bg-surface-2 text-ink-2 hover:bg-row-hover`, אייקון `Menu`. לחיצה פותחת `Sheet` עם **`side="right"`** (`w-[280px]`, `bg-white`, `showCloseButton={false}`) — נפתח מהקצה הפיזי הימני, **אותו צד של הסיידבר** (ב-`ui/sheet.tsx`, מבוסס base-ui, ה-`side` ממומש בתכונות CSS פיזיות `right-0`/`left-0` ולכן **אינו מתהפך לפי dir** — `side="right"` דטרמיניסטי). תוכן ה-drawer = אותם פריטים כמו הסיידבר דרך `nav.tsx`: `NavBrand` + `Section`/`NavLink` (active/disabled זהים) + פוטר `הגדרות`/`התנתק`. קליק על פריט קורא ל-`onNavigate` → סוגר את ה-Sheet. הסיידבר הדסקטופי נשאר `hidden md:flex`.
 
 ---
 

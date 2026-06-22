@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { MessageCircle, MessagesSquare, ChevronDown, LogOut, type LucideIcon } from 'lucide-react';
 import { NotificationBell } from './NotificationBell';
 import { GlobalSearch } from './GlobalSearch';
+import { MobileNav } from './MobileNav';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuth, usePermissions } from '@/lib/auth/context';
@@ -27,8 +28,11 @@ export function Header() {
 
   return (
     <header className="flex h-16 shrink-0 items-center gap-4 border-b border-line bg-white/90 px-6 backdrop-blur">
-      {/* Right (RTL start): global search — opens the ⌘K command palette. */}
-      <div className="flex w-full max-w-[440px] items-center">
+      {/* Right (RTL start): mobile nav trigger + global search. The hamburger is
+          md:hidden (the desktop Sidebar covers ≥md); search collapses on mobile
+          so the hamburger is always reachable and nothing gets crammed. */}
+      <MobileNav />
+      <div className="hidden w-full max-w-[440px] items-center md:flex">
         <GlobalSearch />
       </div>
 
