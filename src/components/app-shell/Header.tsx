@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Search, MessageCircle, MessagesSquare, ChevronDown, LogOut, type LucideIcon } from 'lucide-react';
+import { MessageCircle, MessagesSquare, ChevronDown, LogOut, type LucideIcon } from 'lucide-react';
 import { NotificationBell } from './NotificationBell';
+import { GlobalSearch } from './GlobalSearch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuth, usePermissions } from '@/lib/auth/context';
@@ -25,16 +26,10 @@ export function Header() {
   const hasIcons = showNotifications || showChat || showWhatsapp;
 
   return (
-    <header className="flex h-[68px] shrink-0 items-center gap-4 border-b border-line bg-white/90 px-6 backdrop-blur">
-      {/* Right (RTL start): search — visual only, no global-search backend is wired. */}
-      <div className="relative flex w-full max-w-[440px] items-center">
-        <Search className="pointer-events-none absolute right-3.5 h-[18px] w-[18px] text-ink-3" aria-hidden />
-        <input
-          type="search"
-          placeholder="חיפוש דייר, ספק, תקלה או מסמך…"
-          aria-label="חיפוש"
-          className="h-11 w-full rounded-[13px] border border-line bg-surface-2 pr-11 pl-4 text-[13.5px] font-medium text-ink placeholder:text-ink-3 transition-colors focus:border-brand focus:bg-white focus:outline-none focus:ring-4 focus:ring-brand/10"
-        />
+    <header className="flex h-16 shrink-0 items-center gap-4 border-b border-line bg-white/90 px-6 backdrop-blur">
+      {/* Right (RTL start): global search — opens the ⌘K command palette. */}
+      <div className="flex w-full max-w-[440px] items-center">
+        <GlobalSearch />
       </div>
 
       <div className="flex-1" />

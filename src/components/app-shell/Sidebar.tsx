@@ -41,26 +41,24 @@ interface MenuSection {
 // Sections mirror the mockup (ראשי / ניהול / תקשורת). Every item keeps its
 // existing route + permission module — only the grouping/section is new, so
 // RBAC is preserved 1:1 (a section with no permitted items hides itself).
+// Unified single list — no section sub-headers. Order: daily work + comms
+// first, then the system-management entries. Every item keeps its route +
+// permission module, so RBAC stays 1:1 (an unpermitted item just hides).
 const SECTIONS: MenuSection[] = [
   {
-    title: 'ראשי',
+    title: '',
     items: [
-      { label: 'לוח מחוונים',   icon: LayoutDashboard, href: '/overview', visible: (role) => role !== 'viewer' },
-      { label: 'ניהול חיובים',  icon: LayoutGrid, href: '/dashboard', module: 'dashboard' },
-      { label: 'רשימת דיירים',  icon: Users, href: '/contacts', module: 'contacts' },
-      { label: 'צ׳אט וואטסאפ',  icon: MessageCircle, href: '/messages', module: 'whatsapp_chat' },
-      { label: 'צ׳אט פנימי',    icon: MessagesSquare, href: '/chat', module: 'internal_chat' },
-      { label: 'ספקים',         icon: Truck, href: '/suppliers', module: 'suppliers' },
-      { label: 'מסמכים',        icon: FileText, href: '/documents', module: 'documents' },
-      { label: 'תקלות',         icon: AlertTriangle, href: '/issues', module: 'issues' },
-      { label: 'משימות',        icon: CheckSquare, href: '/tasks', module: 'tasks' },
-      { label: 'תזכורות',       icon: Bell, href: '/user-reminders', module: 'user_reminders' },
-      { label: 'יומן',          icon: Calendar, href: '/calendar', module: 'calendar' },
-    ],
-  },
-  {
-    title: 'ניהול',
-    items: [
+      { label: 'לוח מחוונים',        icon: LayoutDashboard, href: '/overview', visible: (role) => role !== 'viewer' },
+      { label: 'ניהול חיובים',       icon: LayoutGrid, href: '/dashboard', module: 'dashboard' },
+      { label: 'רשימת דיירים',       icon: Users, href: '/contacts', module: 'contacts' },
+      { label: 'צ׳אט וואטסאפ',       icon: MessageCircle, href: '/messages', module: 'whatsapp_chat' },
+      { label: 'צ׳אט פנימי',         icon: MessagesSquare, href: '/chat', module: 'internal_chat' },
+      { label: 'ספקים',              icon: Truck, href: '/suppliers', module: 'suppliers' },
+      { label: 'מסמכים',             icon: FileText, href: '/documents', module: 'documents' },
+      { label: 'תקלות',              icon: AlertTriangle, href: '/issues', module: 'issues' },
+      { label: 'משימות',             icon: CheckSquare, href: '/tasks', module: 'tasks' },
+      { label: 'תזכורות',            icon: Bell, href: '/user-reminders', module: 'user_reminders' },
+      { label: 'יומן',               icon: Calendar, href: '/calendar', module: 'calendar' },
       { label: 'ניהול סטטוס חיובים', icon: Sliders, href: '/statuses', module: 'status_management' },
       { label: 'תבניות ווטסאפ',      icon: MessageCircle, href: '/whatsapp-templates', module: 'whatsapp_templates' },
       { label: 'ניהול אזורים',       icon: MapPin, href: '/areas', module: 'rooms_areas' },
@@ -125,10 +123,11 @@ export function Sidebar() {
         <ChevronRight className={cn('h-4 w-4 transition-transform duration-200', collapsed && 'rotate-180')} />
       </button>
 
-      {/* Brand block */}
+      {/* Brand block — same height as the Header (h-16) + matching border, so the
+          two bottom borders align into one continuous line (see DESIGN.md §32). */}
       <div
         className={cn(
-          'flex items-center gap-3 border-b border-line-soft pb-4 pt-5',
+          'flex h-16 shrink-0 items-center gap-3 border-b border-line',
           collapsed ? 'justify-center px-0' : 'px-5',
         )}
       >
@@ -169,12 +168,14 @@ function Section({
 }: { title: string; items: MenuItem[]; pathname: string; collapsed: boolean }) {
   return (
     <div>
-      {collapsed ? (
-        <div className="mx-auto my-2 h-px w-8 bg-line-soft" aria-hidden />
-      ) : (
-        <p className="px-3 pb-1.5 pt-4 text-[11px] font-extrabold tracking-[0.06em] text-ink-ghost">{title}</p>
-      )}
-      <ul className="space-y-1">
+      {title ? (
+        collapsed ? (
+          <div className="mx-auto my-2 h-px w-8 bg-line-soft" aria-hidden />
+        ) : (
+          <p className="px-3 pb-1.5 pt-4 text-[11px] font-extrabold tracking-[0.06em] text-ink-ghost">{title}</p>
+        )
+      ) : null}
+      <ul className="space-y-1 pt-1">
         {items.map((it) => (
           <li key={it.label}>
             <NavLink item={it} pathname={pathname} collapsed={collapsed} />
