@@ -293,14 +293,43 @@ async function loadSeriesTask(client: PoolClient, taskId: string): Promise<Serie
   return r.rows[0] ?? null;
 }
 
-/** End the whole series: deactivate the rule. Existing instances are kept. */
+/** Hard-delete a single materialized instance plus its side rows (assignees,
+ *  reminders). Shared by skip (one occurrence) and end-series (every future
+ *  occurrence) so the cleanup lives in one place. Child rows first, task row
+ *  last, to stay clear of FK ordering. */
+async function deleteInstanceRow(c: PoolClient, taskId: string): Promise<void> {
+  await c.query(`delete from public.entity_assignees where entity_type = 'task' and entity_id = $1`, [taskId]);
+  await c.query(`delete from public.reminders where entity_type = 'task' and entity_id = $1`, [taskId]);
+  await c.query(`delete from public.tasks where id = $1`, [taskId]);
+}
+
+/** End the whole series: deactivate the rule AND delete every future, not-yet-done
+ *  instance (occurrence_date > today, status 'open'). The template, past instances,
+ *  and today's occurrence are kept for history. No per-occurrence exception rows are
+ *  written — is_active=false already stops the materializer. Idempotent: safe when
+ *  the rule is already inactive or no future instances remain. */
 export async function endTaskSeries(taskId: string): Promise<boolean> {
   const t = await queryOne<{ recurrence_id: string | null }>(
     `select recurrence_id from public.tasks where id = $1`,
     [taskId],
   );
   if (!t || !t.recurrence_id) return false;
-  await query(`update public.task_recurrences set is_active = false where id = $1`, [t.recurrence_id]);
+  const today = formatDateOnly(todayInJerusalem());
+  await withTransaction(async (c) => {
+    await c.query(`update public.task_recurrences set is_active = false where id = $1`, [t.recurrence_id]);
+    const future = await c.query<{ id: string }>(
+      `select id from public.tasks
+        where recurrence_id = $1
+          and is_recurring_instance = true
+          and status = 'open'
+          and occurrence_date is not null
+          and occurrence_date > $2::date`,
+      [t.recurrence_id, today],
+    );
+    for (const r of future.rows) {
+      await deleteInstanceRow(c, r.id);
+    }
+  });
   return true;
 }
 
@@ -315,9 +344,7 @@ export async function skipTaskOccurrence(taskId: string): Promise<boolean> {
        values ($1, $2) on conflict do nothing`,
       [row.recurrence_id, row.occurrence_date],
     );
-    await c.query(`delete from public.entity_assignees where entity_type = 'task' and entity_id = $1`, [taskId]);
-    await c.query(`delete from public.reminders where entity_type = 'task' and entity_id = $1`, [taskId]);
-    await c.query(`delete from public.tasks where id = $1`, [taskId]);
+    await deleteInstanceRow(c, taskId);
     return true;
   });
 }

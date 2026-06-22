@@ -686,7 +686,7 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
           <AlertDialogHeader>
             <AlertDialogTitle>לסיים את הסדרה?</AlertDialogTitle>
             <AlertDialogDescription>
-              לא ייווצרו מופעים חדשים. המופעים שכבר נוצרו יישארו ללא שינוי.
+              המופעים העתידיים שטרם בוצעו יימחקו. מופעי העבר יישמרו.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
