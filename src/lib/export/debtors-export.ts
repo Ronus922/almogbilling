@@ -36,27 +36,41 @@ export function todayHe(): string {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
 }
 
-// ── Excel (SheetJS / xlsx, already a dependency) ─────────────────────────────
+// ── Excel (ExcelJS — replaced SheetJS/xlsx, closing its unpatched CVEs) ──────
+const EXPORT_COL_WIDTHS = [10, 24, 16, 12, 12, 12, 16];
+
 export async function exportDebtorsExcel(rows: Debtor[]): Promise<void> {
-  const XLSX = await import('xlsx');
-  // Array-of-arrays keeps column ORDER and preserves number types (so Excel can
-  // SUM the money columns); phone stays a string.
-  const aoa: (string | number)[][] = [DEBTOR_EXPORT_COLUMNS.map((c) => c.header)];
+  // Dynamic import keeps ExcelJS out of the main bundle (as the old xlsx import did).
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  // rightToLeft so the Hebrew sheet opens with "מס׳ דירה" on the right.
+  const ws = wb.addWorksheet('חייבים', { views: [{ rightToLeft: true }] });
+  // Header row + column ORDER + widths preserved; number columns stay numeric so
+  // Excel can SUM the money columns; phone/text stay strings.
+  ws.columns = DEBTOR_EXPORT_COLUMNS.map((c, i) => ({
+    header: c.header,
+    width: EXPORT_COL_WIDTHS[i],
+  }));
   for (const d of rows) {
-    aoa.push(
+    ws.addRow(
       DEBTOR_EXPORT_COLUMNS.map((c) => {
         const v = c.get(d);
         return c.kind === 'number' ? Number(v) : String(v);
       }),
     );
   }
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [
-    { wch: 10 }, { wch: 24 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 16 },
-  ];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'חייבים');
-  XLSX.writeFile(wb, fileName('xlsx'));
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf as ArrayBuffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName('xlsx');
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ── PDF (jsPDF + autotable + embedded Heebo) ─────────────────────────────────

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
+import { importErrorFromCode, importErrorFromThrown } from '@/lib/excel/import-errors';
 
 interface RunStatus {
   status: string;
@@ -33,8 +34,8 @@ function formatSize(bytes: number): string {
 }
 
 function isExcel(name: string): boolean {
-  const l = name.toLowerCase();
-  return l.endsWith('.xlsx') || l.endsWith('.xls');
+  // ExcelJS reads .xlsx only — legacy .xls dropped with the xlsx→exceljs migration.
+  return name.toLowerCase().endsWith('.xlsx');
 }
 
 export function ContactImportPanel({
@@ -75,7 +76,7 @@ export function ContactImportPanel({
 
   function pickFile(f: File | null | undefined) {
     if (!f) return;
-    if (!isExcel(f.name)) { setError('יש לבחור קובץ Excel (.xlsx או .xls)'); return; }
+    if (!isExcel(f.name)) { setError(importErrorFromCode('invalid_file_type')); return; }
     setError(null);
     setFile(f);
   }
@@ -89,10 +90,10 @@ export function ContactImportPanel({
       fd.append('file', file);
       const res = await fetch('/api/contacts/import', { method: 'POST', body: fd, credentials: 'include' });
       const data = (await res.json().catch(() => ({}))) as { runId?: string; error?: string };
-      if (!res.ok || !data.runId) throw new Error(data.error ?? 'הייבוא נכשל');
+      if (!res.ok || !data.runId) { setError(importErrorFromCode(data.error)); return; }
       setRunId(data.runId);
     } catch (e) {
-      setError((e as Error).message);
+      setError(importErrorFromThrown(e));
     } finally {
       setStarting(false);
     }
@@ -191,7 +192,7 @@ export function ContactImportPanel({
                 <input
                   ref={inputRef}
                   type="file"
-                  accept=".xlsx,.xls"
+                  accept=".xlsx"
                   className="hidden"
                   onChange={(e) => { pickFile(e.target.files?.[0]); e.target.value = ''; }}
                 />
@@ -289,7 +290,7 @@ export function ContactImportPanel({
 
               {status.status === 'failed' && status.error_summary && (
                 <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900">
-                  {status.error_summary}
+                  {importErrorFromThrown(status.error_summary)}
                 </div>
               )}
 

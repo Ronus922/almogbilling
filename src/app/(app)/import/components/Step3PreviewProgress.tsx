@@ -10,6 +10,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { ReplaceConfirmDialog } from './ReplaceConfirmDialog';
 import type { ImportMode } from './Step2MappingMode';
+import { importErrorFromCode, importErrorFromThrown } from '@/lib/excel/import-errors';
 
 const UPDATED_FIELDS = [
   'apartment_number', 'owner_name', 'address', 'monthly_debt',
@@ -69,11 +70,7 @@ export function Step3PreviewProgress({
       const res = await fetch('/api/debtors/import', { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) {
-        const msg =
-          data?.error === 'invalid_password' ? 'סיסמה שגויה' :
-          data?.error === 'password_required' ? 'יש להזין סיסמה' :
-          'שגיאה בייבוא';
-        throw new Error(msg);
+        throw new Error(importErrorFromCode(data?.error));
       }
       const runId: string = data.runId;
       setRunning({
@@ -87,7 +84,7 @@ export function Step3PreviewProgress({
         error_message: null,
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'שגיאה');
+      setError(importErrorFromThrown(e));
       throw e;
     } finally {
       setSubmitting(false);
@@ -109,7 +106,7 @@ export function Step3PreviewProgress({
           );
           setTimeout(() => router.push('/dashboard'), 800);
         } else if (next.status === 'error') {
-          setError(next.error_message ?? 'שגיאה לא ידועה');
+          setError(next.error_message ? importErrorFromThrown(next.error_message) : 'שגיאה לא ידועה');
         }
       } catch {/* ignore single poll failure */}
     }, 500);
@@ -127,7 +124,7 @@ export function Step3PreviewProgress({
 
         {running.status === 'error' ? (
           <Alert variant="destructive">
-            <AlertDescription>{running.error_message ?? error}</AlertDescription>
+            <AlertDescription>{running.error_message ? importErrorFromThrown(running.error_message) : error}</AlertDescription>
           </Alert>
         ) : (
           <div className="rounded-md border bg-blue-50 p-4">

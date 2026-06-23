@@ -1,6 +1,7 @@
 import 'server-only';
 import { readFile, unlink } from 'node:fs/promises';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
+import { toArrayBuffer, worksheetToMatrix } from '@/lib/excel/workbook';
 import { query, queryOne } from '@/lib/db';
 import { upsertContactAndLinkDebtor } from '@/lib/db/contacts';
 import type { ContactWritableFields } from '@/lib/types/contacts';
@@ -110,16 +111,11 @@ export async function runContactsImport(runId: string, filePath: string): Promis
     await query(`update public.import_runs set status = 'parsing' where id = $1`, [runId]);
 
     const buf = await readFile(filePath);
-    const workbook = XLSX.read(buf, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const matrix: unknown[][] = sheetName
-      ? XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], {
-          header: 1,
-          range: 1, // skip header row
-          defval: null,
-          blankrows: false,
-        })
-      : [];
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(toArrayBuffer(buf));
+    const sheet = workbook.worksheets[0];
+    // header:1 (array of arrays) · range:1 (skip header) · defval:null · blankrows:false
+    const matrix: unknown[][] = sheet ? worksheetToMatrix(sheet) : [];
 
     const total = matrix.length;
     await query(`update public.import_runs set total_rows = $2 where id = $1`, [runId, total]);

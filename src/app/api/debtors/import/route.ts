@@ -5,6 +5,7 @@ import { verifyPassword } from '@/lib/auth/password';
 import { queryOne } from '@/lib/db';
 import { createImportRun, type ImportMode } from '@/lib/db/importRuns';
 import { runImport } from '@/lib/import/runner';
+import { MAX_EXCEL_BYTES } from '@/lib/excel/workbook';
 
 export const runtime = 'nodejs';
 
@@ -32,6 +33,16 @@ export async function POST(req: Request) {
 
   if (!(file instanceof File) || !mode) {
     return NextResponse.json({ error: 'invalid_request' }, { status: 400 });
+  }
+  if (file.size === 0) {
+    return NextResponse.json({ error: 'file_required' }, { status: 400 });
+  }
+  if (file.size > MAX_EXCEL_BYTES) {
+    return NextResponse.json({ error: 'file_too_large' }, { status: 400 });
+  }
+  // ExcelJS reads .xlsx only (legacy .xls dropped with the xlsx→exceljs migration).
+  if (!(file.name || '').toLowerCase().endsWith('.xlsx')) {
+    return NextResponse.json({ error: 'invalid_file_type' }, { status: 400 });
   }
 
   if (mode === 'replace') {

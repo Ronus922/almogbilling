@@ -24,8 +24,16 @@ export async function runImport(
   mode: ImportMode,
   runId: string,
 ): Promise<void> {
-  const { rows, skipped } = parseDebtorsWorkbook(buffer);
-  await importParsedRows(rows, skipped, mode, runId);
+  let parsed: { rows: ParsedDebtorRow[]; skipped: number };
+  try {
+    parsed = await parseDebtorsWorkbook(buffer);
+  } catch (e) {
+    // Parse failures (oversized / corrupt / non-.xlsx) are recorded on the run
+    // row, not thrown — runImport is fire-and-forget (void) from the route.
+    await finishRunError(runId, e instanceof Error ? e.message : String(e));
+    return;
+  }
+  await importParsedRows(parsed.rows, parsed.skipped, mode, runId);
 }
 
 /**

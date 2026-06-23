@@ -2,7 +2,7 @@
 #
 # scripts/test-contacts-import.sh — end-to-end test for the contacts Excel import
 # (Slice 4 Track C). Mints a super_admin session in-DB, builds a small workbook
-# with SheetJS (covering '000000000', empty cells, a no-apartment row, a
+# with ExcelJS (covering '000000000', empty cells, a no-apartment row, a
 # duplicate row, and an empty-phone clobber case), POSTs it, polls the status,
 # and asserts the counters + the "empty never clobbers" rule. Self-cleaning.
 #
@@ -42,9 +42,9 @@ psql "$DB_URL" -tAc "delete from public.contacts where apartment_number in $APTS
 psql "$DB_URL" -tAc "insert into public.contacts (apartment_number, owner_name, owner_phone, notes) values ('970099','קלובר מקורי','0501234567','הערה ידנית');" >/dev/null
 echo "pre-seeded 970099 with owner_phone=0501234567 + manual note"
 
-# --- build the workbook with SheetJS ----------------------------------------
+# --- build the workbook with ExcelJS ----------------------------------------
 XLSX_OUT="$XLSX_FILE" node -e '
-const XLSX = require("xlsx");
+const ExcelJS = require("exceljs");
 const rows = [
   ["דירה","שם בעלים","טלפון בעלים","אימייל בעלים","שם שוכר","טלפון שוכר","אימייל שוכר","תשלום חודשי"],
   ["970001","בעלים א","0501111111","a@x.com","שוכר א","0521111111","ta@x.com",350],
@@ -54,10 +54,12 @@ const rows = [
   ["970001","בעלים א מעודכן","0509999999","","","","",400],   // duplicate apt → update
   ["970099","בעלים קלובר","","c@x.com","","","",350],         // empty owner_phone → must NOT clobber
 ];
-const ws = XLSX.utils.aoa_to_sheet(rows);
-const wb = XLSX.utils.book_new();
-XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-XLSX.writeFile(wb, process.env.XLSX_OUT);
+(async () => {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Sheet1");
+  ws.addRows(rows);
+  await wb.xlsx.writeFile(process.env.XLSX_OUT);
+})().catch((e) => { console.error(e); process.exit(1); });
 '
 echo "built workbook: $XLSX_FILE"
 

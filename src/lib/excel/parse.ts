@@ -1,5 +1,6 @@
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { splitOwnerTenantPhones } from '@/lib/whatsapp';
+import { MAX_EXCEL_BYTES, toArrayBuffer, worksheetToMatrix } from '@/lib/excel/workbook';
 
 /**
  * Parsed row from the debtors Excel file.
@@ -49,20 +50,19 @@ function toText(v: unknown): string | null {
   return s.length === 0 ? null : s;
 }
 
-export function parseDebtorsWorkbook(buffer: ArrayBuffer | Buffer): ParseResult {
-  const workbook = XLSX.read(buffer, { type: 'array' });
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) {
+export async function parseDebtorsWorkbook(buffer: ArrayBuffer | Buffer): Promise<ParseResult> {
+  const byteLen = buffer instanceof ArrayBuffer ? buffer.byteLength : buffer.length;
+  if (byteLen > MAX_EXCEL_BYTES) {
+    throw new Error(`קובץ גדול מדי (מקסימום ${Math.floor(MAX_EXCEL_BYTES / 1024 / 1024)}MB)`);
+  }
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(toArrayBuffer(buffer));
+  const sheet = workbook.worksheets[0];
+  if (!sheet) {
     return { rows: [], skipped: 0 };
   }
-  const sheet = workbook.Sheets[sheetName];
-  // header:1 → array of arrays. range:1 → start from second row (skip header).
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-    header: 1,
-    range: 1,
-    defval: null,
-    blankrows: false,
-  });
+  // header:1 (array of arrays) · range:1 (skip header) · defval:null · blankrows:false
+  const matrix = worksheetToMatrix(sheet);
 
   const rows: ParsedDebtorRow[] = [];
   let skipped = 0;

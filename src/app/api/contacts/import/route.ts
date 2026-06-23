@@ -3,10 +3,11 @@ import { writeFile } from 'node:fs/promises';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { createContactsImportRun, runContactsImport } from '@/lib/contacts/import-runner';
+import { MAX_EXCEL_BYTES } from '@/lib/excel/workbook';
 
 export const runtime = 'nodejs';
 
-// POST /api/contacts/import — contacts:edit. Accepts an .xlsx/.xls residents file,
+// POST /api/contacts/import — contacts:edit. Accepts an .xlsx residents file,
 // creates the import run, kicks off the async runner, and returns the runId
 // immediately (merge-only; no mode parameter is exposed).
 export async function POST(req: Request) {
@@ -30,10 +31,12 @@ export async function POST(req: Request) {
   if (!(file instanceof File) || file.size === 0) {
     return NextResponse.json({ error: 'file_required' }, { status: 400 });
   }
-  // mime is unreliable — gate on the extension.
+  if (file.size > MAX_EXCEL_BYTES) {
+    return NextResponse.json({ error: 'file_too_large' }, { status: 400 });
+  }
+  // mime is unreliable — gate on the extension. ExcelJS reads .xlsx only.
   const name = file.name || '';
-  const lower = name.toLowerCase();
-  if (!lower.endsWith('.xlsx') && !lower.endsWith('.xls')) {
+  if (!name.toLowerCase().endsWith('.xlsx')) {
     return NextResponse.json({ error: 'invalid_file_type' }, { status: 400 });
   }
 

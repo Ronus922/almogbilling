@@ -5,6 +5,8 @@ import { Upload, FileSpreadsheet } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { MAX_EXCEL_BYTES, worksheetToMatrix } from '@/lib/excel/workbook';
+import { importErrorFromThrown } from '@/lib/excel/import-errors';
 
 export function Step1Upload({
   onParsed,
@@ -19,18 +21,16 @@ export function Step1Upload({
     setError(null);
     setWorking(true);
     try {
+      if (file.size > MAX_EXCEL_BYTES) {
+        throw new Error(`קובץ גדול מדי (מקסימום ${Math.floor(MAX_EXCEL_BYTES / 1024 / 1024)}MB)`);
+      }
       const buf = await file.arrayBuffer();
-      const XLSX = await import('xlsx');
-      const wb = XLSX.read(buf, { type: 'array' });
-      const sheetName = wb.SheetNames[0];
-      if (!sheetName) throw new Error('הקובץ ריק');
-      const sheet = wb.Sheets[sheetName];
-      const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-        header: 1,
-        range: 1,
-        defval: null,
-        blankrows: false,
-      });
+      const ExcelJS = (await import('exceljs')).default;
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(buf);
+      const sheet = wb.worksheets[0];
+      if (!sheet) throw new Error('הקובץ ריק');
+      const matrix = worksheetToMatrix(sheet);
       let valid = 0;
       let skipped = 0;
       for (const r of matrix) {
@@ -39,7 +39,7 @@ export function Step1Upload({
       }
       onParsed(file, valid, skipped);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'שגיאה בקריאת הקובץ');
+      setError(importErrorFromThrown(e));
     } finally {
       setWorking(false);
     }
@@ -57,12 +57,12 @@ export function Step1Upload({
           <Upload className="h-8 w-8" />
         </div>
         <h3 className="text-lg font-semibold">העלאת קובץ אקסל</h3>
-        <p className="text-sm text-muted-foreground">בחר קובץ XLS או XLSX עם דוח החייבים</p>
+        <p className="text-sm text-muted-foreground">בחר קובץ XLSX עם דוח החייבים</p>
 
         <input
           ref={inputRef}
           type="file"
-          accept=".xls,.xlsx"
+          accept=".xlsx"
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
@@ -79,7 +79,7 @@ export function Step1Upload({
           <Upload className="h-4 w-4" />
           {working ? 'מעבד…' : 'בחר קובץ Excel'}
         </Button>
-        <p className="text-xs text-muted-foreground">קבצים נתמכים: .xls, .xlsx</p>
+        <p className="text-xs text-muted-foreground">קבצים נתמכים: .xlsx</p>
 
         {error && (
           <Alert variant="destructive" className="mt-2 text-right">
