@@ -15,8 +15,9 @@ export function isCompletedIssueStatus(s: IssueStatus): boolean {
   return COMPLETED_ISSUE_STATUSES.includes(s);
 }
 
+// Priority is the kanban's primary axis: exactly three levels (no low/medium).
+// Select order = רגילה → גבוהה → דחוף (default רגילה).
 export const ISSUE_PRIORITIES: { value: IssuePriority; label: string; tone: string }[] = [
-  { value: 'low', label: 'נמוכה', tone: 'slate' },
   { value: 'normal', label: 'רגילה', tone: 'blue' },
   { value: 'high', label: 'גבוהה', tone: 'amber' },
   { value: 'urgent', label: 'דחופה', tone: 'rose' },
@@ -35,7 +36,6 @@ const STATUS_LABELS: Record<IssueStatus, string> = {
   closed: 'סגורה',
 };
 const PRIORITY_LABELS: Record<IssuePriority, string> = {
-  low: 'נמוכה',
   normal: 'רגילה',
   high: 'גבוהה',
   urgent: 'דחופה',
@@ -72,7 +72,6 @@ export const ISSUE_STATUS_BADGE: Record<IssueStatus, string> = {
 };
 
 export const ISSUE_PRIORITY_BADGE: Record<IssuePriority, string> = {
-  low: 'bg-slate-100 text-slate-500',
   normal: 'bg-blue-100 text-blue-700',
   high: 'bg-amber-100 text-amber-700',
   urgent: 'bg-rose-100 text-rose-700',
@@ -85,6 +84,27 @@ export const ISSUE_STATUS_DOT: Record<IssueStatus, string> = {
   resolved: 'bg-emerald-500',
   closed: 'bg-slate-400',
 };
+
+// ── Kanban board axis (3 priority lanes + terminal "done" lane) ──────────────
+// The board groups active issues by priority into three lanes, plus a fourth
+// "בוצע" drop-lane that resolves the issue (moving it to the completed tab).
+// RTL order right→left: דחוף · גבוהה · רגילה · בוצע.
+export const ISSUE_PRIORITY_DOT: Record<IssuePriority, string> = {
+  urgent: 'bg-rose-500',
+  high: 'bg-amber-500',
+  normal: 'bg-blue-500',
+};
+
+export type IssueKanbanColumn =
+  | { kind: 'priority'; key: IssuePriority; label: string; dot: string }
+  | { kind: 'done'; key: 'done'; label: string; dot: string; status: IssueStatus };
+
+export const ISSUE_KANBAN_COLUMNS: IssueKanbanColumn[] = [
+  { kind: 'priority', key: 'urgent', label: PRIORITY_LABELS.urgent, dot: ISSUE_PRIORITY_DOT.urgent },
+  { kind: 'priority', key: 'high', label: PRIORITY_LABELS.high, dot: ISSUE_PRIORITY_DOT.high },
+  { kind: 'priority', key: 'normal', label: PRIORITY_LABELS.normal, dot: ISSUE_PRIORITY_DOT.normal },
+  { kind: 'done', key: 'done', label: 'בוצע', dot: 'bg-emerald-500', status: 'closed' },
+];
 
 // ── Image upload validation (server-enforced; mirrored in the client) ────────
 export const ISSUE_ALLOWED_IMAGE_TYPES: readonly string[] = [

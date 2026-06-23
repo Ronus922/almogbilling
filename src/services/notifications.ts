@@ -12,7 +12,6 @@ import {
 import type { CreateNotificationInput, ReminderChannel, TaskPriority } from '@/lib/types/tasks';
 
 const PRIORITY_LABELS: Record<TaskPriority, string> = {
-  low: 'נמוכה',
   normal: 'רגילה',
   high: 'גבוהה',
   urgent: 'דחוף',

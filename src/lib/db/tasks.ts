@@ -449,28 +449,21 @@ export async function getTaskUserAssignees(id: string): Promise<string[] | null>
 // ── Kanban batch reorder ─────────────────────────────────────────────────────
 export interface ReorderItem {
   id: string;
-  status: string;
+  priority: string;
   sort_order: number;
 }
 
-/** Apply a batch of {id, status, sort_order} updates atomically. */
+/** Apply a batch of {id, priority, sort_order} updates atomically. The board's
+ *  primary axis is priority — dragging between lanes re-prioritises and reorders.
+ *  Completing ("בוצע") is a separate status change via the [id] PATCH route
+ *  (which stamps completed_at and clears reminders), never here. */
 export async function reorderTasks(items: ReorderItem[]): Promise<void> {
   if (items.length === 0) return;
   await withTransaction(async (client: PoolClient) => {
     for (const it of items) {
-      // completed_at tracks the status change here too, so dragging a card
-      // into / out of the "done" column behaves like editing its status.
       await client.query(
-        `update public.tasks
-            set status = $2,
-                sort_order = $3,
-                completed_at = case
-                  when $2 = 'done' and status is distinct from 'done' then now()
-                  when $2 <> 'done' then null
-                  else completed_at
-                end
-          where id = $1`,
-        [it.id, it.status, it.sort_order],
+        `update public.tasks set priority = $2, sort_order = $3 where id = $1`,
+        [it.id, it.priority, it.sort_order],
       );
     }
   });

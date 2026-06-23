@@ -5,7 +5,7 @@ import type { TargetType } from './targets';
 import type { AssigneeRef } from './assignee';
 
 export type IssueStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
-export type IssuePriority = 'low' | 'normal' | 'high' | 'urgent';
+export type IssuePriority = 'normal' | 'high' | 'urgent';
 export type IssueLocationType = 'apartment' | 'area' | 'general';
 
 export interface Issue {

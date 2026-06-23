@@ -26,7 +26,7 @@ import type {
 const TARGET_TYPES: readonly TargetType[] = ['room', 'area'];
 
 const STATUSES: readonly TaskStatus[] = ['open', 'in_progress', 'done', 'cancelled'];
-const PRIORITIES: readonly TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
+const PRIORITIES: readonly TaskPriority[] = ['normal', 'high', 'urgent'];
 const RELATED_ENTITY_TYPES: readonly RelatedEntityType[] = [
   'debtor',
   'building',

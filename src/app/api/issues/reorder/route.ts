@@ -2,15 +2,16 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { reorderIssues, type IssueReorderItem } from '@/lib/db/issues';
-import type { IssueStatus } from '@/lib/types/issues';
+import type { IssuePriority } from '@/lib/types/issues';
 
 export const runtime = 'nodejs';
 
-const STATUSES: readonly IssueStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
+const PRIORITIES: readonly IssuePriority[] = ['normal', 'high', 'urgent'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// PATCH /api/issues/reorder — batch kanban reorder/status-change (issues:edit)
-// Body: { items: [{ id, status, sort_order }] }
+// PATCH /api/issues/reorder — batch kanban re-prioritise + reorder (issues:edit).
+// The board groups by priority; this writes the dragged lane's priority + order.
+// Body: { items: [{ id, priority, sort_order }] }
 export async function PATCH(req: NextRequest) {
   try {
     await requirePermission('issues', 'edit');
@@ -42,16 +43,16 @@ export async function PATCH(req: NextRequest) {
     }
     const rec = it as Record<string, unknown>;
     const id = typeof rec.id === 'string' ? rec.id : '';
-    const status = typeof rec.status === 'string' ? rec.status : '';
+    const priority = typeof rec.priority === 'string' ? rec.priority : '';
     const sortOrder = typeof rec.sort_order === 'number' ? rec.sort_order : NaN;
     if (!UUID_RE.test(id)) return NextResponse.json({ error: 'invalid_id' }, { status: 400 });
-    if (!STATUSES.includes(status as IssueStatus)) {
-      return NextResponse.json({ error: 'invalid_status' }, { status: 400 });
+    if (!PRIORITIES.includes(priority as IssuePriority)) {
+      return NextResponse.json({ error: 'invalid_priority' }, { status: 400 });
     }
     if (!Number.isInteger(sortOrder) || sortOrder < 0) {
       return NextResponse.json({ error: 'invalid_sort_order' }, { status: 400 });
     }
-    items.push({ id, status, sort_order: sortOrder });
+    items.push({ id, priority, sort_order: sortOrder });
   }
 
   try {

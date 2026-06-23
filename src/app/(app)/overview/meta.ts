@@ -19,7 +19,6 @@ export const TASK_PRIORITY: Record<TaskPriority, Swatch> = {
   urgent: { dot: '#e5484d', pill: 'bg-red-50 text-red-600',       label: 'דחוף' },
   high:   { dot: '#e5484d', pill: 'bg-red-50 text-red-600',       label: 'גבוהה' },
   normal: { dot: '#e08700', pill: 'bg-amber-50 text-amber-700',   label: 'בינונית' },
-  low:    { dot: '#8a92a6', pill: 'bg-slate-100 text-slate-500',  label: 'נמוכה' },
 };
 
 /** Issue priority → severity pill. urgent reads as the loudest ("קריטי"). */
@@ -27,7 +26,6 @@ export const ISSUE_PRIORITY: Record<IssuePriority, { pill: string; label: string
   urgent: { pill: 'bg-red-600 text-white',       label: 'קריטי' },
   high:   { pill: 'bg-red-50 text-red-600',      label: 'גבוה' },
   normal: { pill: 'bg-amber-50 text-amber-700',  label: 'בינוני' },
-  low:    { pill: 'bg-slate-100 text-slate-500', label: 'נמוך' },
 };
 
 /** Calendar dot color per overlaid item kind. */

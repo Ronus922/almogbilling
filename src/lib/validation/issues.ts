@@ -16,7 +16,7 @@ import type { TargetType } from '@/lib/types/targets';
 const TARGET_TYPES: readonly TargetType[] = ['room', 'area'];
 
 const STATUSES: readonly IssueStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
-const PRIORITIES: readonly IssuePriority[] = ['low', 'normal', 'high', 'urgent'];
+const PRIORITIES: readonly IssuePriority[] = ['normal', 'high', 'urgent'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Mirrors the tasks module: due_date is a plain date, due_time is HH:MM(:SS).
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

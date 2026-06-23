@@ -157,19 +157,17 @@ export function IssuesPageClient({
     }
   }
 
-  // Persist a column's full order after a kanban drag (cross-column status change
-  // AND within-column manual reorder), symmetric to tasks. The active board exposes
-  // open/in_progress columns only, so 'resolved' (which needs resolution notes via
-  // the panel) is never a drag target. Status change here is silent — same as the
-  // tasks board; panel edits still fire the status-change notifications.
-  async function handleReorder(status: IssueStatus, orderedIds: string[]) {
+  // Persist a priority lane's full order after a kanban drag — covers cross-lane
+  // moves (re-prioritise) AND within-lane manual reorder, symmetric to tasks. The
+  // board's axis is priority; status is unchanged here. Priority change is silent.
+  async function handleReorder(priority: IssuePriority, orderedIds: string[]) {
     const prev = issues;
     const orderMap = new Map(orderedIds.map((id, i) => [id, i] as const));
     setIssues(issues.map((i) =>
-      orderMap.has(i.id) ? { ...i, status, sort_order: orderMap.get(i.id)! } : i,
+      orderMap.has(i.id) ? { ...i, priority, sort_order: orderMap.get(i.id)! } : i,
     ));
     try {
-      const items = orderedIds.map((id, i) => ({ id, status, sort_order: i }));
+      const items = orderedIds.map((id, i) => ({ id, priority, sort_order: i }));
       const r = await fetch('/api/issues/reorder', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -177,6 +175,29 @@ export function IssuesPageClient({
         body: JSON.stringify({ items }),
       });
       if (!r.ok) throw new Error('שמירת הסידור נכשלה');
+      void fetchIssues();
+    } catch (e) {
+      setIssues(prev);
+      toast.error((e as Error).message);
+    }
+  }
+
+  // Drop onto the "בוצע" lane → close the issue via the [id] PATCH (reminders are
+  // cleared; the issue leaves the active board for the "הושלמו" tab). We use
+  // 'closed' rather than 'resolved' because resolving formally requires resolution
+  // notes (an existing rule the panel enforces) — the quick board action can't
+  // collect them. Optimistically flip its status so it disappears immediately.
+  async function handleComplete(issue: IssueWithMeta) {
+    const prev = issues;
+    setIssues(issues.map((i) => (i.id === issue.id ? { ...i, status: 'closed' as IssueStatus } : i)));
+    try {
+      const r = await fetch(`/api/issues/${issue.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status: 'closed' }),
+      });
+      if (!r.ok) throw new Error('סימון כבוצע נכשל');
       void fetchIssues();
     } catch (e) {
       setIssues(prev);
@@ -338,7 +359,7 @@ export function IssuesPageClient({
       {/* Board / Table — completed tab is always a table. The table is urgent-first
           then the selected sort within each group (issues have no due-date field). */}
       {tab === 'active' && view === 'kanban' ? (
-        <IssuesKanban issues={shown} canEdit={canEdit} onSelect={openEdit} onReorder={handleReorder} statuses={ACTIVE_ISSUE_STATUSES} onDelete={canEdit ? setDeleteTarget : undefined} />
+        <IssuesKanban issues={shown} canEdit={canEdit} onSelect={openEdit} onReorder={handleReorder} onComplete={handleComplete} onDelete={canEdit ? setDeleteTarget : undefined} />
       ) : (
         <IssuesTable issues={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} onDelete={canEdit ? setDeleteTarget : undefined} />
       )}

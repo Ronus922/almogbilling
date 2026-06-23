@@ -54,7 +54,7 @@ async function notifyAdminsOfIssueReported(issue: Issue, actorId: string): Promi
 }
 
 const STATUSES: readonly IssueStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
-const PRIORITIES: readonly IssuePriority[] = ['low', 'normal', 'high', 'urgent'];
+const PRIORITIES: readonly IssuePriority[] = ['normal', 'high', 'urgent'];
 const SORTS: readonly IssueSort[] = ['created_desc', 'priority_desc', 'updated_desc', 'status_asc'];
 
 // GET /api/issues?status&priority&assignedTo&search&sort&kpis  (issues:view)

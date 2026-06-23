@@ -21,7 +21,7 @@ import type {
 export const runtime = 'nodejs';
 
 const STATUSES: readonly TaskStatus[] = ['open', 'in_progress', 'done', 'cancelled'];
-const PRIORITIES: readonly TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
+const PRIORITIES: readonly TaskPriority[] = ['normal', 'high', 'urgent'];
 const SORTS: readonly TaskSort[] = ['created_desc', 'due_asc', 'priority_desc', 'updated_desc'];
 const RELATED_ENTITY_TYPES: readonly RelatedEntityType[] = [
   'debtor',

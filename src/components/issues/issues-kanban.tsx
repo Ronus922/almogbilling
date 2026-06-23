@@ -1,9 +1,10 @@
 'use client';
 
-// Issues kanban — twin of tasks-kanban (same drag state machine, column grid, card
-// chrome and within-column reorder). Differences: issues have no due_date, so there
-// is no overdue/date chip. Cross-column drag changes status and within-column drag
-// reorders; both persist via the column's onReorder (PATCH /api/issues/reorder).
+// Issues kanban — twin of tasks-kanban. The board's primary axis is PRIORITY:
+// three lanes (דחוף / גבוהה / רגילה) plus a terminal "בוצע" drop-lane that
+// resolves the issue (moving it to the completed tab — it leaves the board).
+// Dragging between priority lanes re-prioritises and reorders (PATCH
+// /api/issues/reorder); dropping onto "בוצע" resolves it (via onComplete).
 
 import { useState } from 'react';
 import { MessageSquare, ImageIcon, Pencil, Trash2 } from 'lucide-react';
@@ -11,51 +12,44 @@ import { cn } from '@/lib/utils';
 import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { TargetCell } from '@/components/targets/TargetCell';
 import {
-  ISSUE_STATUSES, ISSUE_STATUS_DOT, ISSUE_PRIORITY_BADGE, issuePriorityLabel,
+  ISSUE_KANBAN_COLUMNS, ISSUE_PRIORITY_BADGE, issuePriorityLabel,
 } from '@/lib/constants/issues';
-import type { IssueStatus, IssueWithMeta } from '@/lib/types/issues';
+import type { IssuePriority, IssueWithMeta } from '@/lib/types/issues';
 
 interface Props {
   issues: IssueWithMeta[];
   canEdit: boolean;
   onSelect: (issue: IssueWithMeta) => void;
-  /** Persist a destination column's full top-to-bottom order after a drag — covers
-   *  cross-column moves (status change) and within-column manual reorder. */
-  onReorder: (status: IssueStatus, orderedIds: string[]) => void;
-  /** Which status columns to render. Defaults to all. The "פעילות" tab passes the
-   *  active statuses so completed issues don't appear on the board. */
-  statuses?: IssueStatus[];
+  /** Persist a priority lane's full top-to-bottom order after a drag — covers
+   *  cross-lane moves (priority change) and within-lane manual reorder. */
+  onReorder: (priority: IssuePriority, orderedIds: string[]) => void;
+  /** Drop onto the terminal "בוצע" lane — resolves the issue (it leaves the board). */
+  onComplete: (issue: IssueWithMeta) => void;
   /** When provided, a delete action is shown per card (RBAC-gated by the caller). */
   onDelete?: (issue: IssueWithMeta) => void;
 }
 
-export function IssuesKanban({ issues, canEdit, onSelect, onReorder, statuses, onDelete }: Props) {
+export function IssuesKanban({ issues, canEdit, onSelect, onReorder, onComplete, onDelete }: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
-  const [overCol, setOverCol] = useState<IssueStatus | null>(null);
+  const [overCol, setOverCol] = useState<string | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
 
-  const columns = statuses
-    ? ISSUE_STATUSES.filter((c) => statuses.includes(c.value))
-    : ISSUE_STATUSES;
-
-  // Ordering: urgent first (pinned), then manual drag order (sort_order), then
-  // creation order (issues have no due_date).
-  const byStatus = (s: IssueStatus) =>
+  // Lanes group by priority; ordering within a lane is the manual drag order
+  // (sort_order) then creation order. Completed issues live in the "הושלמו" tab,
+  // so the terminal "בוצע" lane is always an empty drop-target on this board.
+  const byPriority = (p: IssuePriority) =>
     issues
-      .filter((i) => i.status === s)
+      .filter((i) => i.priority === p)
       .sort((a, b) => {
-        const au = a.priority === 'urgent' ? 0 : 1;
-        const bu = b.priority === 'urgent' ? 0 : 1;
-        if (au !== bu) return au - bu;
         if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
         return a.created_at.localeCompare(b.created_at);
       });
 
-  // Build the destination column's new id order with the dragged card inserted
-  // before the card at `index` (null → append), then persist.
-  function dropInto(status: IssueStatus, index: number | null) {
+  // Build the destination lane's new id order with the dragged card inserted
+  // before the card at `index` (null → append), then persist its priority.
+  function dropInto(priority: IssuePriority, index: number | null) {
     if (!dragId) return;
-    const items = byStatus(status);
+    const items = byPriority(priority);
     const order = items.map((i) => i.id).filter((id) => id !== dragId);
     const targetId = index === null ? null : items[index]?.id;
     let pos = order.length;
@@ -64,30 +58,45 @@ export function IssuesKanban({ issues, canEdit, onSelect, onReorder, statuses, o
       if (idx !== -1) pos = idx;
     }
     order.splice(pos, 0, dragId);
-    onReorder(status, order);
+    onReorder(priority, order);
     setDragId(null);
     setOverCol(null);
     setOverIndex(null);
   }
 
+  // Drop onto "בוצע" → resolve the dragged issue via the [id] PATCH (onComplete);
+  // it then leaves the active board for the completed tab.
+  function completeDragged() {
+    const issue = dragId ? issues.find((i) => i.id === dragId) : null;
+    setDragId(null);
+    setOverCol(null);
+    setOverIndex(null);
+    if (issue) onComplete(issue);
+  }
+
   return (
-    <div className={cn('grid grid-cols-1 gap-4 sm:grid-cols-2', columns.length <= 2 ? 'lg:grid-cols-2' : 'lg:grid-cols-4')}>
-      {columns.map((col) => {
-        const items = byStatus(col.value);
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {ISSUE_KANBAN_COLUMNS.map((col) => {
+        const items = col.kind === 'priority' ? byPriority(col.key) : [];
+        // Closure narrows the column union: priority lanes reorder, "בוצע" completes.
+        const laneDrop = (index: number | null) => {
+          if (col.kind === 'done') completeDragged();
+          else dropInto(col.key, index);
+        };
         return (
           <div
-            key={col.value}
-            onDragOver={(e) => { if (canEdit && dragId) { e.preventDefault(); setOverCol(col.value); setOverIndex(null); } }}
-            onDragLeave={() => setOverCol((c) => (c === col.value ? null : c))}
-            onDrop={() => dropInto(col.value, null)}
+            key={col.key}
+            onDragOver={(e) => { if (canEdit && dragId) { e.preventDefault(); setOverCol(col.key); setOverIndex(null); } }}
+            onDragLeave={() => setOverCol((c) => (c === col.key ? null : c))}
+            onDrop={() => laneDrop(null)}
             className={cn(
-              'flex flex-col rounded-2xl border bg-slate-100 p-3 transition-colors',
-              overCol === col.value ? 'border-blue-300 bg-blue-50/60' : 'border-slate-200',
+              'flex min-h-[440px] flex-col rounded-2xl border bg-slate-100 p-3 transition-colors',
+              overCol === col.key ? 'border-blue-300 bg-blue-50/60' : 'border-slate-200',
             )}
           >
             <div className="flex items-center justify-between gap-2 px-2 pb-3 pt-1">
               <div className="flex items-center gap-2">
-                <span className={cn('h-2.5 w-2.5 rounded-full', ISSUE_STATUS_DOT[col.value])} />
+                <span className={cn('h-2.5 w-2.5 rounded-full', col.dot)} />
                 <h3 className="text-[15px] font-bold text-slate-700">{col.label}</h3>
               </div>
               <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-lg bg-white px-2 text-[13px] font-bold text-slate-500">
@@ -97,7 +106,9 @@ export function IssuesKanban({ issues, canEdit, onSelect, onReorder, statuses, o
 
             <div className="flex flex-1 flex-col gap-2.5">
               {items.length === 0 && (
-                <p className="py-9 text-center text-[13px] font-medium text-slate-400">אין תקלות</p>
+                <p className="py-9 text-center text-[13px] font-medium text-slate-400">
+                  {col.kind === 'done' ? 'גררו לכאן לסימון כבוצע' : 'אין תקלות'}
+                </p>
               )}
               {items.map((i, idx) => (
                 <div
@@ -107,15 +118,15 @@ export function IssuesKanban({ issues, canEdit, onSelect, onReorder, statuses, o
                   draggable={canEdit}
                   onDragStart={() => setDragId(i.id)}
                   onDragEnd={() => { setDragId(null); setOverCol(null); setOverIndex(null); }}
-                  onDragOver={(e) => { if (canEdit && dragId && dragId !== i.id) { e.preventDefault(); e.stopPropagation(); setOverCol(col.value); setOverIndex(idx); } }}
-                  onDrop={(e) => { e.stopPropagation(); dropInto(col.value, idx); }}
+                  onDragOver={(e) => { if (canEdit && dragId && dragId !== i.id) { e.preventDefault(); e.stopPropagation(); setOverCol(col.key); setOverIndex(idx); } }}
+                  onDrop={(e) => { e.stopPropagation(); laneDrop(idx); }}
                   onClick={() => onSelect(i)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSelect(i); } }}
                   className={cn(
                     'group flex items-stretch overflow-hidden rounded-xl border border-slate-200 bg-white text-start shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-all hover:border-slate-300 hover:shadow-[0_10px_22px_-8px_rgba(15,23,42,0.18)]',
                     canEdit && 'cursor-grab active:cursor-grabbing',
                     dragId === i.id && 'opacity-50',
-                    overCol === col.value && overIndex === idx && dragId !== i.id && 'ring-2 ring-blue-300',
+                    overCol === col.key && overIndex === idx && dragId !== i.id && 'ring-2 ring-blue-300',
                   )}
                 >
                   {/* Drag grip — visual affordance only; the whole card stays draggable. */}

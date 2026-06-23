@@ -5,7 +5,7 @@ import type { AssigneeRef } from './assignee';
 
 // ── Tasks ────────────────────────────────────────────────────────────────
 export type TaskStatus = 'open' | 'in_progress' | 'done' | 'cancelled';
-export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type TaskPriority = 'normal' | 'high' | 'urgent';
 
 /** Generic polymorphic link target. debtor_id stays the primary debtor link;
  *  this is the additive, optional cross-entity reference (migration 028). */

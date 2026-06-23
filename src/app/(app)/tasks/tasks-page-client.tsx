@@ -196,17 +196,17 @@ export function TasksPageClient({
     }
   }
 
-  // Persist a column's full order after a kanban drag (cross-column status change
-  // AND within-column manual reorder). Renumber sort_order = position for every id
-  // in the destination column and batch-PATCH them.
-  async function handleReorder(status: TaskStatus, orderedIds: string[]) {
+  // Persist a priority lane's full order after a kanban drag — covers cross-lane
+  // moves (re-prioritise) AND within-lane manual reorder. The board's axis is
+  // priority; status is unchanged here. Renumber sort_order = position per id.
+  async function handleReorder(priority: TaskPriority, orderedIds: string[]) {
     const prev = tasks;
     const orderMap = new Map(orderedIds.map((id, i) => [id, i] as const));
     setTasks(tasks.map((t) =>
-      orderMap.has(t.id) ? { ...t, status, sort_order: orderMap.get(t.id)! } : t,
+      orderMap.has(t.id) ? { ...t, priority, sort_order: orderMap.get(t.id)! } : t,
     ));
     try {
-      const items = orderedIds.map((id, i) => ({ id, status, sort_order: i }));
+      const items = orderedIds.map((id, i) => ({ id, priority, sort_order: i }));
       const r = await fetch('/api/tasks/reorder', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -214,6 +214,27 @@ export function TasksPageClient({
         body: JSON.stringify({ items }),
       });
       if (!r.ok) throw new Error('שמירת הסידור נכשלה');
+      void fetchTasks();
+    } catch (e) {
+      setTasks(prev);
+      toast.error((e as Error).message);
+    }
+  }
+
+  // Drop onto the "בוצע" lane → complete the task via the [id] PATCH (so completed_at
+  // is stamped and reminders are cleared). It then leaves the active board for the
+  // "הושלמו" tab. Optimistically flip its status so it disappears immediately.
+  async function handleComplete(task: TaskWithAssignee) {
+    const prev = tasks;
+    setTasks(tasks.map((t) => (t.id === task.id ? { ...t, status: 'done' as TaskStatus } : t)));
+    try {
+      const r = await fetch(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status: 'done' }),
+      });
+      if (!r.ok) throw new Error('סימון כבוצע נכשל');
       void fetchTasks();
     } catch (e) {
       setTasks(prev);
@@ -382,7 +403,7 @@ export function TasksPageClient({
       {tab === 'recurring' ? (
         <RecurringSeriesList series={series} onSelect={openTaskById} />
       ) : tab === 'active' && view === 'kanban' ? (
-        <TasksKanban tasks={shown} canEdit={canEdit} onSelect={openEdit} onReorder={handleReorder} statuses={ACTIVE_TASK_STATUSES} onDelete={canEdit ? setDeleteTarget : undefined} />
+        <TasksKanban tasks={shown} canEdit={canEdit} onSelect={openEdit} onReorder={handleReorder} onComplete={handleComplete} onDelete={canEdit ? setDeleteTarget : undefined} />
       ) : (
         <TasksTable tasks={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} onDelete={canEdit ? setDeleteTarget : undefined} />
       )}

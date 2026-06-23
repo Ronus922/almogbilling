@@ -274,20 +274,21 @@ export async function deleteIssue(id: string): Promise<boolean> {
 // ── Kanban batch reorder (migration 050) ─────────────────────────────────────
 export interface IssueReorderItem {
   id: string;
-  status: string;
+  priority: string;
   sort_order: number;
 }
 
-/** Apply a batch of {id, status, sort_order} updates to issues atomically. The
- *  active board only drags between open/in_progress, so this never resolves an
- *  issue (resolution_notes stays a panel-only flow). */
+/** Apply a batch of {id, priority, sort_order} updates to issues atomically. The
+ *  board's primary axis is priority — dragging between lanes re-prioritises and
+ *  reorders. Resolving ("בוצע") is a separate status change via the [id] PATCH
+ *  route (which stamps resolved_at and clears reminders), never here. */
 export async function reorderIssues(items: IssueReorderItem[]): Promise<void> {
   if (items.length === 0) return;
   await withTransaction(async (client: PoolClient) => {
     for (const it of items) {
       await client.query(
-        `update public.issues set status = $2, sort_order = $3 where id = $1`,
-        [it.id, it.status, it.sort_order],
+        `update public.issues set priority = $2, sort_order = $3 where id = $1`,
+        [it.id, it.priority, it.sort_order],
       );
     }
   });
