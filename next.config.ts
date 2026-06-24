@@ -1,10 +1,11 @@
 import type { NextConfig } from "next";
 
-// Security headers applied to every route. CSP ships as Report-Only in this
-// first wave — it observes violations (browser console) without blocking, so
-// we can collect the real inline/external sources before switching to an
-// enforcing Content-Security-Policy in a later wave. Do not add report-uri/
-// report-to here (violations are read from the console manually for now).
+// Security headers applied to every route. CSP is ENFORCING (wave 3b): the
+// Report-Only observation wave collected ZERO violations (super_admin, across
+// all exports + the main screens), so the policy matches real behaviour and now
+// blocks anything off-policy. The value is byte-for-byte the previous
+// Report-Only string. Keep it in sync with what the app actually loads; do not
+// add report-uri/report-to here.
 const SECURITY_HEADERS = [
   { key: "Strict-Transport-Security", value: "max-age=31536000" },
   { key: "X-Frame-Options", value: "SAMEORIGIN" },
@@ -12,7 +13,7 @@ const SECURITY_HEADERS = [
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
   {
-    key: "Content-Security-Policy-Report-Only",
+    key: "Content-Security-Policy",
     value:
       "default-src 'self'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' https:; font-src 'self' data:; frame-ancestors 'self'",
   },
