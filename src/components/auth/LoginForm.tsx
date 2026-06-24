@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { todayInJerusalem } from '@/lib/dates';
 import { GoogleButton } from './GoogleButton';
 
 // Map ?reason=… query params to a user-facing toast.
@@ -175,7 +176,7 @@ export function LoginForm() {
       <GoogleButton />
 
       <p className="mt-2 text-center text-xs text-slate-400">
-        © {new Date().getFullYear()} ALMOG CRM — כל הזכויות שמורות
+        © {todayInJerusalem().slice(0, 4)} ALMOG CRM — כל הזכויות שמורות
       </p>
     </form>
   );

@@ -8,6 +8,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
+import { todayInJerusalem } from '@/lib/dates';
 import { roleLabel } from '@/lib/permissions/constants';
 import { cn } from '@/lib/utils';
 import type { InviteListRow } from '@/lib/db/users';
@@ -29,8 +30,15 @@ function initialsFromName(fullName: string, fallback: string): string {
 }
 
 function daysUntil(iso: string): number {
-  const ms = new Date(iso).getTime() - Date.now();
-  return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+  // Calendar-day difference anchored to Jerusalem (server runs UTC) — deterministic
+  // across SSR and hydration, unlike a Date.now() ms diff (which can flip by ±1 day
+  // → React #418).
+  const expiry = new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' });
+  const today = todayInJerusalem();
+  const diffDays = Math.round(
+    (Date.parse(`${expiry}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000,
+  );
+  return Math.max(0, diffDays);
 }
 
 export function InviteCard({ invite, onResend, onCancel }: Props) {

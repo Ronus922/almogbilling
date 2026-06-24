@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
-import { format } from 'date-fns';
+import { todayInJerusalem } from '@/lib/dates';
 import { toast } from 'sonner';
 import {
   ArrowUp, ArrowDown, Archive, ArchiveRestore, MessageSquare, MessageCircle,
@@ -579,20 +579,29 @@ function toDate(input: unknown): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+// dd/MM/yyyy in Asia/Jerusalem (server runs UTC) — deterministic across SSR and
+// hydration, so the cell text never differs by the UTC offset (React #418).
+const dueDateFmt = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Jerusalem',
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+});
+
 function formatDueDate(input: unknown): string {
   const d = toDate(input);
-  return d ? format(d, 'dd/MM/yyyy') : '—';
+  return d ? dueDateFmt.format(d) : '—';
 }
 
 function compareToToday(input: unknown): 'past' | 'today' | 'future' | null {
   const d = toDate(input);
   if (!d) return null;
-  const dayOnly = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const diff = dayOnly.getTime() - today.getTime();
-  if (diff === 0) return 'today';
-  return diff < 0 ? 'past' : 'future';
+  // Anchor the day bucket to Jerusalem so SSR (UTC) and hydration (browser tz)
+  // agree — otherwise the past/today/future branch renders a different subtree.
+  const day = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }); // YYYY-MM-DD
+  const today = todayInJerusalem();
+  if (day === today) return 'today';
+  return day < today ? 'past' : 'future';
 }
 
 function DueDateCell({ iso }: { iso: unknown }) {

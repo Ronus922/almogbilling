@@ -142,12 +142,30 @@ export function getNotificationVisual(type: string): NotificationVisual {
   return LEGACY_VISUAL[type] ?? { icon: Bell, toneClass: TONE_ICON.default, label: type };
 }
 
-/** Hebrew relative time, e.g. "לפני 5 דקות". Falls back to '' on bad input. */
+/** Hebrew relative time, e.g. "לפני 5 דקות". Falls back to '' on bad input.
+ *  NOTE: `Date.now()`-derived → differs between SSR and hydration. Render it only
+ *  after mount (useHasMounted); use formatAbsoluteTime() as the pre-mount value. */
 export function formatRelativeTime(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
     ? ''
     : formatDistanceToNow(d, { addSuffix: true, locale: he });
+}
+
+const ABS_TIME_FMT = new Intl.DateTimeFormat('he-IL', {
+  timeZone: 'Asia/Jerusalem',
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+/** Deterministic absolute stamp (Asia/Jerusalem) — SSR-safe, used pre-mount in
+ *  place of the time-relative formatRelativeTime(). */
+export function formatAbsoluteTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : ABS_TIME_FMT.format(d);
 }
 
 /** Input for the server-side fan-out createNotification(). */

@@ -38,6 +38,7 @@ export function formatDate(iso: string | null): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return '';
   return new Intl.DateTimeFormat('he-IL', {
+    timeZone: 'Asia/Jerusalem', // server runs UTC; anchor to the business tz
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',

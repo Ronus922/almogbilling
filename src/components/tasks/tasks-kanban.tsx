@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { MessageSquare, Calendar } from 'lucide-react';
 import { Pencil, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { todayInJerusalem } from '@/lib/dates';
 import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { TargetCell } from '@/components/targets/TargetCell';
 import { RecurringBadge } from '@/components/recurrence/RecurringBadge';
@@ -34,7 +35,9 @@ interface Props {
 function isOverdue(t: TaskWithAssignee): boolean {
   if (!t.due_date) return false;
   if (t.status === 'done' || t.status === 'cancelled') return false;
-  return t.due_date < new Date().toISOString().slice(0, 10);
+  // "today" anchored to Jerusalem (server runs UTC) so the overdue class matches
+  // between SSR and hydration.
+  return t.due_date < todayInJerusalem();
 }
 
 export function TasksKanban({ tasks, canEdit, onSelect, onReorder, onComplete, onDelete }: Props) {

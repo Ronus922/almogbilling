@@ -1,23 +1,34 @@
 // Hebrew display helpers for the internal-chat module.
+// The server runs in UTC; all calendar/time output is anchored to Asia/Jerusalem
+// so SSR and client hydration render identical text (no React #418 mismatch).
+import { todayInJerusalem, addDaysToIsoDate } from '@/lib/dates';
 
-/** Time only — "14:30". */
-export function formatTime(iso: string): string {
-  return new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+const TZ = 'Asia/Jerusalem';
+
+/** 'YYYY-MM-DD' Jerusalem calendar day for a Date. */
+function jslDay(d: Date): string {
+  return d.toLocaleDateString('en-CA', { timeZone: TZ });
 }
 
-/** "היום" / "אתמול" / dd/mm/yyyy — the day separator inside a thread. */
+/** Time only — "14:30" (Jerusalem). */
+export function formatTime(iso: string): string {
+  return new Intl.DateTimeFormat('he-IL', { timeZone: TZ, hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+}
+
+/** "היום" / "אתמול" / dd/mm/yyyy — the day separator inside a thread.
+ *  Day buckets are Jerusalem-anchored → deterministic across server and client. */
 export function formatRelativeDay(iso: string): string {
   const d = new Date(iso);
-  const now = new Date();
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const diffDays = Math.round((startToday.getTime() - startDate.getTime()) / 86_400_000);
-  if (diffDays === 0) return 'היום';
-  if (diffDays === 1) return 'אתמול';
-  return new Intl.DateTimeFormat('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
+  const day = jslDay(d);
+  const today = todayInJerusalem();
+  if (day === today) return 'היום';
+  if (day === addDaysToIsoDate(today, -1)) return 'אתמול';
+  return new Intl.DateTimeFormat('he-IL', { timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
 }
 
-/** Relative "now/minutes/hours" for recent, else a short date — the list stamp. */
+/** Relative "now/minutes/hours" for recent, else a short date — the list stamp.
+ *  `Date.now()`-relative → render only AFTER mount (useHasMounted); use
+ *  formatStableStamp() as the pre-mount value. Day buckets are Jerusalem-anchored. */
 export function formatRelativeStamp(iso: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -26,13 +37,20 @@ export function formatRelativeStamp(iso: string | null): string {
   if (diffMin < 1) return 'עכשיו';
   if (diffMin < 60) return `לפני ${diffMin} ד׳`;
   const diffH = Math.floor(diffMin / 60);
-  if (d.toDateString() === new Date().toDateString()) {
-    return diffH <= 1 ? 'לפני שעה' : `לפני ${diffH} שע׳`;
-  }
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return 'אתמול';
-  return new Intl.DateTimeFormat('he-IL', { day: '2-digit', month: '2-digit' }).format(d);
+  const day = jslDay(d);
+  const today = todayInJerusalem();
+  if (day === today) return diffH <= 1 ? 'לפני שעה' : `לפני ${diffH} שע׳`;
+  if (day === addDaysToIsoDate(today, -1)) return 'אתמול';
+  return new Intl.DateTimeFormat('he-IL', { timeZone: TZ, day: '2-digit', month: '2-digit' }).format(d);
+}
+
+/** Deterministic absolute stamp (Jerusalem) — SSR-safe pre-mount placeholder for
+ *  formatRelativeStamp(): "HH:MM" when today, else "DD.MM". */
+export function formatStableStamp(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (jslDay(d) === todayInJerusalem()) return formatTime(iso);
+  return new Intl.DateTimeFormat('he-IL', { timeZone: TZ, day: '2-digit', month: '2-digit' }).format(d);
 }
 
 /** Two-letter initials from a display name. */

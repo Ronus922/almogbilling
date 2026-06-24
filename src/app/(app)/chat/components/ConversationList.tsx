@@ -4,8 +4,9 @@ import { Search, MessagesSquare } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import type { ConversationSummary } from '@/lib/types/internalChat';
-import { formatRelativeStamp } from './format';
+import { formatRelativeStamp, formatStableStamp } from './format';
 import { ChatAvatar } from './ChatAvatar';
+import { useHasMounted } from '@/lib/hooks/useHasMounted';
 
 export function ConversationList({
   conversations,
@@ -24,6 +25,9 @@ export function ConversationList({
   loading: boolean;
   className?: string;
 }) {
+  // The list stamp is Date.now()-relative ("לפני X ד׳") → render it only after
+  // mount; the SSR/first paint uses the deterministic absolute stamp (#418-safe).
+  const mounted = useHasMounted();
   const term = search.trim().toLowerCase();
   const filtered = term
     ? conversations.filter(
@@ -91,7 +95,7 @@ export function ConversationList({
                       <div className="flex items-center justify-between gap-2">
                         <span className={cn('truncate text-sm text-slate-900', c.unread_count > 0 ? 'font-bold' : 'font-semibold')}>{c.title}</span>
                         <span className="shrink-0 text-[11px] tabular-nums text-slate-400">
-                          {formatRelativeStamp(c.last_message_at)}
+                          {mounted ? formatRelativeStamp(c.last_message_at) : formatStableStamp(c.last_message_at)}
                         </span>
                       </div>
                       <div className="mt-0.5 flex items-center justify-between gap-2">

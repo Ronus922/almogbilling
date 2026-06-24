@@ -6,11 +6,12 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import {
-  getNotificationVisual, formatRelativeTime,
+  getNotificationVisual, formatRelativeTime, formatAbsoluteTime,
   SOURCE_MODULE_LABEL, PRIORITY_LABEL, PRIORITY_PILL,
   type SourceModule, type Priority,
 } from '@/lib/notifications/registry';
 import type { Notification } from '@/lib/types/tasks';
+import { useHasMounted } from '@/lib/hooks/useHasMounted';
 
 function moduleLabel(m: string | null): string {
   if (!m) return '—';
@@ -26,6 +27,9 @@ export function NotificationsTable({
   onSelect: (n: Notification) => void;
   onClear: (n: Notification) => void;
 }) {
+  // formatRelativeTime is Date.now()-relative → render it only after mount; the
+  // SSR/first paint uses the deterministic absolute stamp (avoids React #418).
+  const mounted = useHasMounted();
   if (items.length === 0) {
     return (
       <div className="rounded-lg border bg-card p-12 text-center text-sm text-muted-foreground">
@@ -89,7 +93,7 @@ export function NotificationsTable({
                   </span>
                 </TableCell>
                 <TableCell className="px-4 py-3 text-center text-sm text-slate-500">
-                  {formatRelativeTime(n.created_at)}
+                  {mounted ? formatRelativeTime(n.created_at) : formatAbsoluteTime(n.created_at)}
                 </TableCell>
                 <TableCell className="px-4 py-3 text-center">
                   <button

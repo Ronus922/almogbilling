@@ -13,6 +13,7 @@ import {
   STATUS_BADGE, PRIORITY_BADGE, taskStatusLabel, taskPriorityLabel,
 } from '@/lib/constants/tasks';
 import type { TaskSort, TaskWithAssignee } from '@/lib/types/tasks';
+import { todayInJerusalem } from '@/lib/dates';
 
 interface Props {
   tasks: TaskWithAssignee[];
@@ -26,7 +27,9 @@ interface Props {
 function isOverdue(t: TaskWithAssignee): boolean {
   if (!t.due_date) return false;
   if (t.status === 'done' || t.status === 'cancelled') return false;
-  return t.due_date < new Date().toISOString().slice(0, 10);
+  // "today" anchored to Jerusalem (server runs UTC) so the overdue class matches
+  // between SSR and hydration.
+  return t.due_date < todayInJerusalem();
 }
 
 export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Props) {

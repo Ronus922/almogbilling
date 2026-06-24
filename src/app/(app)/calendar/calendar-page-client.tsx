@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ChevronRight, ChevronLeft, Plus, CalendarDays } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { todayInJerusalem } from '@/lib/dates';
 import { HE_MONTH_NAMES, chipTone, ITEM_KIND_LABEL } from '@/lib/constants/calendar';
 import {
   monthGridDays, weekDays, toDateKey, addDays, addMonths, startOfWeek,
@@ -48,7 +49,10 @@ export function CalendarPageClient({ canEdit, owners, currentUserName }: Props) 
   const searchParams = useSearchParams();
 
   const [view, setView] = useState<CalendarView>('month');
-  const [cursor, setCursor] = useState<Date>(() => new Date());
+  // Anchor the initial cursor to Jerusalem's "today" at local noon so the month/
+  // day labels (getMonth/getDate/getFullYear) read identically on the UTC server
+  // and the Jerusalem browser — noon is far from any day boundary (no #418).
+  const [cursor, setCursor] = useState<Date>(() => new Date(`${todayInJerusalem()}T12:00:00`));
   const [items, setItems] = useState<CalendarItem[]>([]);
   const [loading, setLoading] = useState(true);
 

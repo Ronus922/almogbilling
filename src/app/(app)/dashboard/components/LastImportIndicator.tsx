@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { computeSeverity, type Severity } from '@/lib/dashboard/syncStatus';
+import { useHasMounted } from '@/lib/hooks/useHasMounted';
 
 const sevStyles: Record<Severity, { wrap: string; iconBg: string; iconFg: string }> = {
   ok:     { wrap: 'bg-white border-line text-ink',                       iconBg: 'bg-brand-soft', iconFg: 'text-brand' },
@@ -15,6 +16,7 @@ const sevStyles: Record<Severity, { wrap: string; iconBg: string; iconFg: string
 };
 
 const formatter = new Intl.DateTimeFormat('he-IL', {
+  timeZone: 'Asia/Jerusalem', // server runs UTC; anchor display to the business tz
   day: '2-digit',
   month: '2-digit',
   year: 'numeric',
@@ -50,7 +52,11 @@ export function LastImportIndicator({
   useEffect(() => { setImportAt(lastImportAt); }, [lastImportAt]);
   useEffect(() => { setSyncAt(lastSyncAt); }, [lastSyncAt]);
 
-  const severity = computeSeverity(importAt, Date.now());
+  // computeSeverity reads Date.now(), which differs between SSR and hydration —
+  // compute it only after mount and render the calm 'ok' state until then, so the
+  // first client paint matches the server markup (avoids React #418).
+  const mounted = useHasMounted();
+  const severity: Severity = mounted ? computeSeverity(importAt, Date.now()) : 'ok';
   const styles = sevStyles[severity];
 
   const importStr = importAt ? formatStamp(importAt) : null;
