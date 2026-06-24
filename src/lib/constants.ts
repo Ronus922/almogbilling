@@ -10,3 +10,6 @@ export const LOGIN_MAX_PER_USER = 5; // failed logins per username per window
 export const LOGIN_MAX_PER_IP = 20; // attempts per IP per window
 export const FORGOT_PASSWORD_MAX_PER_IP = 10; // per IP per window
 export const ACCEPT_INVITE_MAX_PER_IP = 15; // per IP per window
+export const RESET_PASSWORD_MAX_PER_IP = 10; // per IP per window — brute-force guard on reset tokens
+export const SYNC_BLLINK_MAX_PER_IP = 10; // per IP per window — anti double-click on "Sync now"
+export const WHATSAPP_PULL_MAX_PER_IP = 10; // per IP per window — throttle external Green API pulls

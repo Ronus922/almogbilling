@@ -4,6 +4,8 @@ import { hashPassword } from '@/lib/auth/password';
 import { consumeResetToken } from '@/lib/auth/tokens';
 import { deleteAllUserSessions } from '@/lib/auth/session';
 import { isValidPassword } from '@/lib/auth/passwordPolicy';
+import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { RESET_PASSWORD_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
 
 export const runtime = 'nodejs';
 
@@ -17,6 +19,19 @@ export async function POST(req: Request) {
 
   const token = typeof body.token === 'string' ? body.token : '';
   const password = typeof body.password === 'string' ? body.password : '';
+
+  // Brute-force protection: throttle reset-token submissions by IP before any
+  // token lookup. Matches the login 429 shape exactly.
+  const { allowed, retryAfterSec } = await checkRateLimit('reset:ip:' + clientIp(req), {
+    max: RESET_PASSWORD_MAX_PER_IP,
+    windowSec: AUTH_RATE_WINDOW_SEC,
+  });
+  if (!allowed) {
+    return NextResponse.json(
+      { error: 'rate_limited' },
+      { status: 429, headers: { 'Retry-After': String(retryAfterSec) } },
+    );
+  }
 
   if (!token || !isValidPassword(password)) {
     return NextResponse.json({ error: 'invalid_request' }, { status: 400 });

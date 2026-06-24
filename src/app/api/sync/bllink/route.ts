@@ -4,6 +4,8 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { createImportRun } from '@/lib/db/importRuns';
 import { createSyncRun, finishSyncRunSuccess, finishSyncRunError } from '@/lib/db/syncRuns';
 import { syncDebtorsFromCrm } from '@/lib/sync/bllinkPull';
+import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { SYNC_BLLINK_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -18,7 +20,7 @@ export const maxDuration = 120;
  *    pipeline as a manual import — this is what actually updates the data the
  *    dashboard reads and resets the freshness indicator (last_imported_at).
  */
-export async function POST() {
+export async function POST(req: Request) {
   let actorId: string;
   try {
     const actor = await requirePermission('import', 'edit');
@@ -27,6 +29,20 @@ export async function POST() {
     const r = authErrorResponse(err);
     if (r) return r;
     throw err;
+  }
+
+  // IP rate-limit (anti double-click / abuse). Runs AFTER auth so only
+  // authenticated callers are counted, and BEFORE any sync side-effect so a
+  // throttled request never triggers a CRM scrape or debtors merge.
+  const { allowed, retryAfterSec } = await checkRateLimit('sync:bllink:ip:' + clientIp(req), {
+    max: SYNC_BLLINK_MAX_PER_IP,
+    windowSec: AUTH_RATE_WINDOW_SEC,
+  });
+  if (!allowed) {
+    return NextResponse.json(
+      { error: 'rate_limited' },
+      { status: 429, headers: { 'Retry-After': String(retryAfterSec) } },
+    );
   }
 
   // Step 1 — ask the CRM to re-scrape Bllink (best-effort; awaited so the pull
