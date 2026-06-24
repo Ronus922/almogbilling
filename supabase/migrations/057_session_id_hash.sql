@@ -1,0 +1,15 @@
+-- 057_session_id_hash.sql
+-- Security wave 4: session ids are now stored as their SHA-256 hash (hex),
+-- mirroring password_reset_tokens / invite tokens. The raw id lives ONLY in the
+-- almog_sid cookie; the DB keeps hashToken(raw) and looks up sessions by the hash
+-- (src/lib/auth/session.ts: createSession / getSession / getActiveSessionId /
+-- deleteSession).
+--
+-- public.sessions.id stays `text primary key` — a 64-char hex hash fits with no
+-- DDL change, and the primary-key index keeps working. This is additive-only:
+-- NO column or table is dropped.
+--
+-- Existing rows hold PLAINTEXT ids that can never match the new hashed lookup, so
+-- they are dead weight. Clear them — this is a one-time, intended logout of every
+-- active session (all users, including the operator, must sign in again).
+delete from public.sessions;

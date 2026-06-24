@@ -21,7 +21,7 @@ DB_URL="${DIRECT_URL:-${DATABASE_URL:-}}"
 BASE="http://127.0.0.1:${PORT:-3003}"
 TEST_APT="990042"          # sentinel apartment number for this test
 COOKIE=""                  # session id we mint
-SID=""
+SID=""; SID_HASH=""
 
 if [[ -z "$DB_URL" ]]; then echo "FATAL: no DIRECT_URL/DATABASE_URL in env"; exit 1; fi
 
@@ -32,7 +32,7 @@ check() { # check <label> <actual> <expected>
 }
 
 cleanup() {
-  [[ -n "$SID" ]] && psql "$DB_URL" -tAc "delete from public.sessions where id = '$SID';" >/dev/null 2>&1 || true
+  [[ -n "$SID_HASH" ]] && psql "$DB_URL" -tAc "delete from public.sessions where id = '$SID_HASH';" >/dev/null 2>&1 || true
   psql "$DB_URL" -tAc "delete from public.contacts where apartment_number = '$TEST_APT';" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -42,7 +42,9 @@ echo "0) login (mint admin session)"
 ADMIN_ID="$(psql "$DB_URL" -tAc "select id from public.users where role in ('super_admin','admin') and is_active order by created_at limit 1;")"
 if [[ -z "$ADMIN_ID" ]]; then echo "FATAL: no active admin user found"; exit 1; fi
 SID="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
-psql "$DB_URL" -tAc "insert into public.sessions (id, user_id, expires_at, remember) values ('$SID', '$ADMIN_ID', now() + interval '10 minutes', false);" >/dev/null
+# DB stores only the SHA-256 hash of the session id (security wave 4); the cookie keeps the raw id.
+SID_HASH="$(printf '%s' "$SID" | sha256sum | cut -d' ' -f1)"
+psql "$DB_URL" -tAc "insert into public.sessions (id, user_id, expires_at, remember) values ('$SID_HASH', '$ADMIN_ID', now() + interval '10 minutes', false);" >/dev/null
 COOKIE="almog_sid=$SID"
 echo "  ✓ session minted for admin $ADMIN_ID"
 

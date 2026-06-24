@@ -21,7 +21,7 @@ BASE="http://127.0.0.1:${PORT:-3003}"
 CRON_SECRET="$(sudo grep -E '^BILLING_CRON_SECRET=' /etc/billing/billing.env | head -1 | cut -d= -f2-)"
 [[ -z "$CRON_SECRET" ]] && { echo "FATAL: no BILLING_CRON_SECRET"; exit 1; }
 
-SID=""; TASK_ID=""; ASSIGNEE_ID=""
+SID=""; SID_HASH=""; TASK_ID=""; ASSIGNEE_ID=""
 pass=0; fail=0
 check() { if [[ "$2" == "$3" ]]; then echo "  ✓ $1 → $2"; pass=$((pass+1)); else echo "  ✗ $1 → got '$2', expected '$3'"; fail=$((fail+1)); fi; }
 nonzero() { if [[ "${2:-0}" -ge "${3:-1}" ]]; then echo "  ✓ $1 → $2"; pass=$((pass+1)); else echo "  ✗ $1 → got '$2', expected >= ${3:-1}"; fail=$((fail+1)); fi; }
@@ -29,7 +29,7 @@ nonzero() { if [[ "${2:-0}" -ge "${3:-1}" ]]; then echo "  ✓ $1 → $2"; pass=
 cleanup() {
   [[ -n "$TASK_ID" ]] && psql "$DB_URL" -tAc "delete from public.tasks where id='$TASK_ID';" >/dev/null 2>&1 || true
   [[ -n "$ASSIGNEE_ID" ]] && psql "$DB_URL" -tAc "delete from public.notifications where user_id='$ASSIGNEE_ID' and source_module='tasks';" >/dev/null 2>&1 || true
-  [[ -n "$SID" ]] && psql "$DB_URL" -tAc "delete from public.sessions where id='$SID';" >/dev/null 2>&1 || true
+  [[ -n "$SID_HASH" ]] && psql "$DB_URL" -tAc "delete from public.sessions where id='$SID_HASH';" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -40,7 +40,9 @@ ADMIN_ID="$(psql "$DB_URL" -tAc "select id from public.users where role in ('sup
 ASSIGNEE_ID="$(psql "$DB_URL" -tAc "select id from public.users where is_active and id<>'$ADMIN_ID' order by created_at limit 1;")"
 [[ -z "$ASSIGNEE_ID" ]] && ASSIGNEE_ID="$ADMIN_ID"  # fallback: self (no notif expected then)
 SID="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
-psql "$DB_URL" -tAc "insert into public.sessions (id,user_id,expires_at,remember) values ('$SID','$ADMIN_ID',now()+interval '10 minutes',false);" >/dev/null
+# DB stores only the SHA-256 hash of the session id (security wave 4); the cookie keeps the raw id.
+SID_HASH="$(printf '%s' "$SID" | sha256sum | cut -d' ' -f1)"
+psql "$DB_URL" -tAc "insert into public.sessions (id,user_id,expires_at,remember) values ('$SID_HASH','$ADMIN_ID',now()+interval '10 minutes',false);" >/dev/null
 COOKIE="almog_sid=$SID"
 echo "  ✓ admin=$ADMIN_ID assignee=$ASSIGNEE_ID"
 

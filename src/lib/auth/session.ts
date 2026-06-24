@@ -2,6 +2,7 @@ import 'server-only';
 import { cookies } from 'next/headers';
 import { randomBytes } from 'node:crypto';
 import { query, queryOne } from '@/lib/db';
+import { hashToken } from './tokenHash';
 import {
   SESSION_COOKIE,
   SESSION_LIFETIME_DAYS_REMEMBER,
@@ -22,6 +23,8 @@ function newSessionId(): string {
 }
 
 export async function createSession(userId: string, remember: boolean): Promise<string> {
+  // The raw id lives ONLY in the cookie; the DB stores its SHA-256 hash (same as
+  // password-reset / invite tokens), so a DB read can't yield a usable session id.
   const id = newSessionId();
   const lifetimeSec = remember
     ? SESSION_LIFETIME_DAYS_REMEMBER * 24 * 60 * 60
@@ -31,7 +34,7 @@ export async function createSession(userId: string, remember: boolean): Promise<
   await query(
     `insert into public.sessions (id, user_id, expires_at, remember)
      values ($1, $2, $3, $4)`,
-    [id, userId, expiresAt.toISOString(), remember],
+    [hashToken(id), userId, expiresAt.toISOString(), remember],
   );
 
   const cookieStore = await cookies();
@@ -61,6 +64,7 @@ export async function getSession(): Promise<{ sid: string; user: SessionUser } |
   const sid = cookieStore.get(SESSION_COOKIE)?.value;
   if (!sid) return null;
 
+  // The cookie holds the raw id; the DB stores its hash — look up by the hash.
   const row = await queryOne<SessionRow>(
     `select s.id as sid, u.id as user_id, u.username, u.email, u.full_name, u.is_active, u.role
      from public.sessions s
@@ -68,7 +72,7 @@ export async function getSession(): Promise<{ sid: string; user: SessionUser } |
      where s.id = $1
        and s.expires_at > now()
      limit 1`,
-    [sid],
+    [hashToken(sid)],
   );
 
   if (!row || !row.is_active) return null;
@@ -99,7 +103,7 @@ export async function getActiveSessionId(): Promise<string | null> {
 
   const row = await queryOne<{ id: string }>(
     `select id from public.sessions where id = $1 and expires_at > now() limit 1`,
-    [sid],
+    [hashToken(sid)],
   );
   return row ? row.id : null;
 }
@@ -108,7 +112,7 @@ export async function deleteSession(): Promise<void> {
   const cookieStore = await cookies();
   const sid = cookieStore.get(SESSION_COOKIE)?.value;
   if (sid) {
-    await query(`delete from public.sessions where id = $1`, [sid]);
+    await query(`delete from public.sessions where id = $1`, [hashToken(sid)]);
   }
   cookieStore.delete(SESSION_COOKIE);
 }
