@@ -60,6 +60,25 @@ export async function isParticipant(conversationId: string, userId: string): Pro
   return Boolean(row?.ok);
 }
 
+/** All participant user ids of a conversation (for typing fan-out scoping). */
+export async function listParticipantIds(conversationId: string): Promise<string[]> {
+  const r = await query<{ user_id: string }>(
+    `select user_id from public.internal_conversation_participants where conversation_id = $1`,
+    [conversationId],
+  );
+  return r.rows.map((row) => row.user_id);
+}
+
+// ── Presence ──────────────────────────────────────────────────────────────
+
+/** How long after the last heartbeat a user still counts as "online". */
+export const PRESENCE_WINDOW_SECONDS = 60;
+
+/** Refresh the user's realtime-chat heartbeat (called on SSE connect + tick). */
+export async function touchLastSeen(userId: string): Promise<void> {
+  await query(`update public.users set last_seen_at = now() where id = $1`, [userId]);
+}
+
 // ── Conversation list (current-user perspective) ──────────────────────────
 
 interface ConversationListRow {
@@ -73,6 +92,8 @@ interface ConversationListRow {
   participant_names: string[];
   participant_count: number;
   other_names: string[];
+  other_user_id: string | null;
+  other_online: boolean;
 }
 
 /**
@@ -97,7 +118,9 @@ export async function listConversations(userId: string): Promise<ConversationSum
       coalesce(uc.unread_count, 0)::int as unread_count,
       coalesce(pn.names, '{}')          as participant_names,
       coalesce(pn.cnt, 0)::int          as participant_count,
-      coalesce(onp.names, '{}')         as other_names
+      coalesce(onp.names, '{}')         as other_names,
+      od.other_user_id                  as other_user_id,
+      coalesce(od.online, false)        as other_online
     from public.internal_conversation_participants me
     join public.internal_conversations c on c.id = me.conversation_id
     -- last message in the conversation
@@ -131,6 +154,16 @@ export async function listConversations(userId: string): Promise<ConversationSum
         join public.users u on u.id = p.user_id
        where p.conversation_id = c.id and p.user_id <> $1
     ) onp on true
+    -- the single other participant of a DIRECT conversation + their online state
+    left join lateral (
+      select u.id as other_user_id,
+             (u.last_seen_at is not null
+              and u.last_seen_at > now() - interval '60 seconds') as online
+        from public.internal_conversation_participants p
+        join public.users u on u.id = p.user_id
+       where p.conversation_id = c.id and p.user_id <> $1
+       limit 1
+    ) od on c.type = 'direct'
     where me.user_id = $1
     order by coalesce(lm.created_at, c.updated_at) desc
     `,
@@ -151,6 +184,8 @@ export async function listConversations(userId: string): Promise<ConversationSum
       last_message_content: row.last_message_content,
       last_message_at: row.last_message_at,
       unread_count: row.unread_count,
+      other_user_id: row.other_user_id,
+      online: row.type === 'direct' && row.other_online,
     } satisfies ConversationSummary;
   });
 }
@@ -365,8 +400,12 @@ async function getConversationHeader(
   );
   if (!conv) return null;
 
-  const namesRes = await query<{ name: string; is_me: boolean }>(
-    `select coalesce(u.full_name, u.username) as name, (p.user_id = $2) as is_me
+  const namesRes = await query<{ user_id: string; name: string; is_me: boolean; online: boolean }>(
+    `select p.user_id,
+            coalesce(u.full_name, u.username) as name,
+            (p.user_id = $2) as is_me,
+            (u.last_seen_at is not null
+             and u.last_seen_at > now() - make_interval(secs => 60)) as online
        from public.internal_conversation_participants p
        join public.users u on u.id = p.user_id
       where p.conversation_id = $1
@@ -374,11 +413,20 @@ async function getConversationHeader(
     [conversationId, userId],
   );
   const participant_names = namesRes.rows.map((x) => x.name);
-  const others = namesRes.rows.filter((x) => !x.is_me).map((x) => x.name);
+  const others = namesRes.rows.filter((x) => !x.is_me);
   const title =
-    conv.type === 'group' ? (conv.name?.trim() || 'קבוצה') : (others[0] ?? 'משתמש');
+    conv.type === 'group' ? (conv.name?.trim() || 'קבוצה') : (others[0]?.name ?? 'משתמש');
+  // Presence is a direct-conversation concept (one "other"); groups don't show it.
+  const other = conv.type === 'direct' ? (others[0] ?? null) : null;
 
-  return { id: conv.id, type: conv.type, title, participant_names };
+  return {
+    id: conv.id,
+    type: conv.type,
+    title,
+    participant_names,
+    other_user_id: other?.user_id ?? null,
+    online: other?.online ?? false,
+  };
 }
 
 /**

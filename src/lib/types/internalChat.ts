@@ -30,6 +30,10 @@ export interface ConversationSummary {
   last_message_content: string | null;
   last_message_at: string | null;
   unread_count: number;
+  /** Other participant's user id (direct only; null for group) — keys presence. */
+  other_user_id: string | null;
+  /** Other participant currently online (direct only; derived last_seen < 60s). */
+  online: boolean;
 }
 
 /** One unread conversation for the dashboard widget (lean shape). */
@@ -68,6 +72,24 @@ export interface ThreadPayload {
     type: ConversationType;
     title: string;
     participant_names: string[];
+    /** Other participant's user id (direct only; null for group) — keys presence. */
+    other_user_id: string | null;
+    /** Other participant currently online (direct only; derived last_seen < 60s). */
+    online: boolean;
   };
   messages: InternalMessage[];
 }
+
+/** Realtime events on the shared in-process bus (reuses the WhatsApp SSE infra),
+ *  delivered to the internal-chat SSE stream (/api/chat/stream).
+ *  - presence: broadcast to all chat clients; client derives offline by TTL.
+ *  - typing: scoped to `recipient_ids` (the conversation's other participants). */
+export type ChatStreamEvent =
+  | { type: 'presence'; user_id: string; online: boolean }
+  | {
+      type: 'typing';
+      conversation_id: string;
+      user_id: string;
+      user_name: string;
+      recipient_ids: string[];
+    };

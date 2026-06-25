@@ -15,6 +15,7 @@ export function ConversationList({
   search,
   onSearch,
   loading,
+  onlineIds,
   className,
 }: {
   conversations: ConversationSummary[];
@@ -23,6 +24,8 @@ export function ConversationList({
   search: string;
   onSearch: (v: string) => void;
   loading: boolean;
+  /** User ids currently online (live presence) — drives the avatar dot. */
+  onlineIds: Set<string>;
   className?: string;
 }) {
   // The list stamp is Date.now()-relative ("לפני X ד׳") → render it only after
@@ -90,7 +93,11 @@ export function ConversationList({
                       isActive ? 'border-r-brand bg-brand-soft/60' : 'border-r-transparent hover:bg-slate-50',
                     )}
                   >
-                    <ChatAvatar title={c.title} isGroup={c.type === 'group'} />
+                    <ChatAvatar
+                      title={c.title}
+                      isGroup={c.type === 'group'}
+                      online={c.other_user_id ? onlineIds.has(c.other_user_id) : false}
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <span className={cn('truncate text-sm text-slate-900', c.unread_count > 0 ? 'font-bold' : 'font-semibold')}>{c.title}</span>

@@ -3,6 +3,7 @@
 @import "shadcn/tailwind.css";
 @import "./styles/buttons.css";
 @import "./styles/print.css";
+@import "./styles/chat.css";
 
 @custom-variant dark (&:is(.dark *));
 

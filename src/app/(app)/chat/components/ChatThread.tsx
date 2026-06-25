@@ -17,6 +17,9 @@ export function ChatThread({
   currentUserId,
   onSend,
   onBack,
+  online = false,
+  typingName = null,
+  onTyping,
   className,
 }: {
   conversation: ConversationSummary | null;
@@ -27,6 +30,12 @@ export function ChatThread({
   /** Send a message; returns true when accepted by the server. */
   onSend: (content: string) => Promise<boolean>;
   onBack: () => void;
+  /** The other participant is online (direct only) — header presence indicator. */
+  online?: boolean;
+  /** Name of the other participant currently typing in this conversation, or null. */
+  typingName?: string | null;
+  /** Fire a transient "I'm typing" signal (throttled by the caller). */
+  onTyping?: () => void;
   className?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -51,12 +60,12 @@ export function ChatThread({
     if (convChanged) {
       el.scrollTop = el.scrollHeight;
       atBottomRef.current = true;
-    } else if (grew && atBottomRef.current) {
+    } else if ((grew || typingName) && atBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
     prevConvRef.current = conversation?.id ?? null;
     prevCountRef.current = messages.length;
-  }, [conversation?.id, messages.length]);
+  }, [conversation?.id, messages.length, typingName]);
 
   if (!conversation) {
     return (
@@ -92,15 +101,21 @@ export function ChatThread({
         >
           <ArrowRight className="h-5 w-5" />
         </button>
-        <ChatAvatar title={title} isGroup={isGroup} />
+        <ChatAvatar title={title} isGroup={isGroup} online={!isGroup && online} />
         <div className="min-w-0">
           <div className="truncate text-sm font-bold text-slate-900">{title}</div>
-          {isGroup && subtitle && (
+          {isGroup && subtitle ? (
             <div className="flex items-center gap-1 truncate text-xs text-slate-500">
               <Users className="h-3 w-3 shrink-0" />
               <span className="truncate">{subtitle}</span>
             </div>
-          )}
+          ) : !isGroup && online ? (
+            // Presence — emerald is the sanctioned exception (online indicator).
+            <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              מחובר עכשיו
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -143,10 +158,21 @@ export function ChatThread({
             );
           })
         )}
+
+        {/* Typing indicator — the other side is composing (incoming side = right). */}
+        {typingName && (
+          <div className="flex justify-start pt-1">
+            <div className="flex items-center gap-1.5 rounded-2xl rounded-tr-[5px] border border-slate-200 bg-white px-4 py-3 text-slate-400 shadow-sm">
+              <span className="chat-typing-dot" />
+              <span className="chat-typing-dot" />
+              <span className="chat-typing-dot" />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Composer */}
-      <Composer onSend={onSend} />
+      <Composer onSend={onSend} onTyping={onTyping} />
     </div>
   );
 }
@@ -186,7 +212,13 @@ function Bubble({
   );
 }
 
-function Composer({ onSend }: { onSend: (content: string) => Promise<boolean> }) {
+function Composer({
+  onSend,
+  onTyping,
+}: {
+  onSend: (content: string) => Promise<boolean>;
+  onTyping?: () => void;
+}) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
 
@@ -228,7 +260,10 @@ function Composer({ onSend }: { onSend: (content: string) => Promise<boolean> })
         <div className="relative flex-1">
           <Textarea
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setText(e.target.value);
+              if (e.target.value.trim()) onTyping?.();
+            }}
             onKeyDown={onKeyDown}
             placeholder="כתוב הודעה… (Enter לשליחה, Shift+Enter לשורה חדשה)"
             rows={1}
