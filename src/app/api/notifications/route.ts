@@ -6,6 +6,7 @@ import {
   countUnread,
   markNotificationRead,
   markAllNotificationsRead,
+  WHATSAPP_MODULE,
 } from '@/lib/db/notifications';
 
 export const runtime = 'nodejs';
@@ -36,10 +37,22 @@ export async function GET(req: NextRequest) {
 
   const onlyUnread = tab === 'unread' || sp.get('unread') === '1';
   const module = MODULE_TABS.has(tab) ? tab : undefined;
+  const isWhatsapp = module === WHATSAPP_MODULE;
+
+  // The bell surface is everything EXCEPT WhatsApp; the WhatsApp dropdown
+  // (tab=whatsapp) is WhatsApp only. The two never overlap, so the returned
+  // unreadCount matches the surface the caller is rendering (no double-count).
+  const scope = isWhatsapp
+    ? { module: WHATSAPP_MODULE }
+    : module
+      ? { module } // a non-WhatsApp module tab (tasks/issues/calendar/internal_chat)
+      : { excludeModule: WHATSAPP_MODULE }; // all / unread → bell surface
 
   const [items, unreadCount] = await Promise.all([
-    listNotifications(actor.id, { onlyUnread, module, limit }),
-    countUnread(actor.id),
+    listNotifications(actor.id, { onlyUnread, limit, ...scope }),
+    // Badge count tracks the surface: WhatsApp-only for tab=whatsapp, else the
+    // bell count (every active unread except WhatsApp).
+    countUnread(actor.id, isWhatsapp ? { module: WHATSAPP_MODULE } : { excludeModule: WHATSAPP_MODULE }),
   ]);
   return NextResponse.json({ items, unreadCount });
 }

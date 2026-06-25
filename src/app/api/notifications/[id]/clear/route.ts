@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireNotificationsAccess, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
-import { clearNotification, countUnread } from '@/lib/db/notifications';
+import { clearNotification, countUnreadSplit } from '@/lib/db/notifications';
 
 export const runtime = 'nodejs';
 
@@ -26,6 +26,8 @@ export async function PATCH(_req: Request, ctx: { params: Promise<{ id: string }
   const ok = await clearNotification(id, actor.id);
   if (!ok) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  const unreadCount = await countUnread(actor.id);
-  return NextResponse.json({ ok: true, unreadCount });
+  // Both surface counts so either caller (bell or WhatsApp dropdown) reconciles
+  // its own badge from the same snapshot — disjoint, never double-counted.
+  const { bell, whatsapp } = await countUnreadSplit(actor.id);
+  return NextResponse.json({ ok: true, unreadCount: bell, whatsappUnreadCount: whatsapp });
 }

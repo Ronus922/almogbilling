@@ -44,7 +44,10 @@ export interface NotificationRegistryEntry {
 }
 
 export const NOTIFICATION_REGISTRY: Record<NotificationType, NotificationRegistryEntry> = {
-  whatsapp_message_received: { icon: MessageCircle, tone: 'info',    sourceModule: 'whatsapp',      defaultPriority: 'normal', channels: ['inapp', 'email'] },
+  // In-app ONLY: an inbound WhatsApp message must never spawn an email. It lives
+  // solely on the dedicated WhatsApp chat dropdown in the header (source_module
+  // 'whatsapp'); outbound reply happens in /messages, not via email.
+  whatsapp_message_received: { icon: MessageCircle, tone: 'info',    sourceModule: 'whatsapp',      defaultPriority: 'normal', channels: ['inapp'] },
   legal_status_changed:      { icon: Scale,         tone: 'warning', sourceModule: 'legal',         defaultPriority: 'high',   channels: ['inapp', 'email', 'whatsapp'] },
   calendar_reminder:         { icon: Calendar,      tone: 'info',    sourceModule: 'calendar',      defaultPriority: 'normal', channels: ['inapp', 'email', 'whatsapp'] },
   task_assigned:             { icon: CheckCircle2,  tone: 'default', sourceModule: 'tasks',         defaultPriority: 'normal', channels: ['inapp', 'email'] },

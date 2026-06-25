@@ -2,17 +2,20 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, CheckCheck, Eraser, Trash2 } from 'lucide-react';
+import { Bell, CheckCheck, Eraser } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
-import {
-  getNotificationVisual, formatRelativeTime, SOURCE_MODULE_LABEL,
-} from '@/lib/notifications/registry';
+import { SOURCE_MODULE_LABEL } from '@/lib/notifications/registry';
+import { NotificationList } from './NotificationList';
 import type { Notification } from '@/lib/types/tasks';
 
 const POLL_MS = 60_000;
 
-type TabValue = 'all' | 'unread' | 'tasks' | 'issues' | 'calendar' | 'whatsapp' | 'internal_chat';
+// WhatsApp is intentionally absent: inbound WhatsApp notifications now live on the
+// dedicated WhatsApp chat dropdown in the header (WhatsappBell). The bell shows
+// everything EXCEPT WhatsApp — the API excludes source_module='whatsapp' from
+// these tabs and from the bell's unread count, so the two never double-count.
+type TabValue = 'all' | 'unread' | 'tasks' | 'issues' | 'calendar' | 'internal_chat';
 
 const TABS: { value: TabValue; label: string }[] = [
   { value: 'all', label: 'הכל' },
@@ -20,7 +23,6 @@ const TABS: { value: TabValue; label: string }[] = [
   { value: 'tasks', label: SOURCE_MODULE_LABEL.tasks },
   { value: 'issues', label: SOURCE_MODULE_LABEL.issues },
   { value: 'calendar', label: SOURCE_MODULE_LABEL.calendar },
-  { value: 'whatsapp', label: SOURCE_MODULE_LABEL.whatsapp },
   { value: 'internal_chat', label: SOURCE_MODULE_LABEL.internal_chat },
 ];
 
@@ -87,16 +89,18 @@ export function NotificationBell() {
     setItems((prev) => (tab === 'unread' ? [] : prev.map((n) => ({ ...n, is_read: true }))));
     setUnread(0);
     try {
-      await fetch('/api/notifications/read-all', { method: 'PATCH', credentials: 'include' });
+      // surface=bell → never touches WhatsApp unread (that's the dropdown's badge).
+      await fetch('/api/notifications/read-all?surface=bell', { method: 'PATCH', credentials: 'include' });
     } catch { /* ignore */ }
   }
 
   async function clearAll() {
-    // Soft-clear removes items from EVERY tab (including "הכל").
+    // Soft-clear removes items from EVERY bell tab (including "הכל"), but leaves
+    // WhatsApp notifications intact (surface=bell).
     setItems([]);
     setUnread(0);
     try {
-      await fetch('/api/notifications/clear-all', { method: 'PATCH', credentials: 'include' });
+      await fetch('/api/notifications/clear-all?surface=bell', { method: 'PATCH', credentials: 'include' });
     } catch { /* ignore */ }
   }
 
@@ -199,57 +203,12 @@ export function NotificationBell() {
         </div>
 
         {/* List */}
-        <div className="max-h-96 overflow-y-auto">
-          {items.length === 0 ? (
-            <p className="px-4 py-10 text-center text-sm text-slate-400">{emptyMsg}</p>
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {items.map((n) => {
-                const v = getNotificationVisual(n.type);
-                const Icon = v.icon;
-                return (
-                  <li
-                    key={n.id}
-                    className={cn('group flex items-stretch transition-colors hover:bg-slate-50', !n.is_read && 'bg-blue-50/40')}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onItemClick(n)}
-                      className="flex min-w-0 flex-1 items-start gap-2.5 px-4 py-3 text-start cursor-pointer"
-                    >
-                      <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', v.toneClass, n.is_read && 'opacity-60')}>
-                        <Icon className="h-4 w-4" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className={cn('block truncate text-sm font-semibold', n.is_read ? 'text-slate-500' : 'text-slate-900')}>
-                          {n.title}
-                        </span>
-                        {n.message && (
-                          <span className={cn('block truncate text-xs', n.is_read ? 'text-slate-400' : 'text-slate-500')}>
-                            {n.message}
-                          </span>
-                        )}
-                        <span className="mt-0.5 block text-[11px] text-slate-400">
-                          {formatRelativeTime(n.created_at)}
-                        </span>
-                      </span>
-                      {!n.is_read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-500" />}
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="מחק התראה"
-                      title="מחק התראה"
-                      onClick={() => void clearOne(n.id)}
-                      className="grid w-11 shrink-0 place-items-center text-slate-300 transition-colors hover:text-rose-600 focus-visible:text-rose-600 cursor-pointer"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
+        <NotificationList
+          items={items}
+          emptyMsg={emptyMsg}
+          onItemClick={onItemClick}
+          onClear={(id) => void clearOne(id)}
+        />
 
         {/* Footer */}
         <div className="border-t border-slate-200 px-4 py-2.5">

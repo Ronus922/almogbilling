@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { MessageCircle, MessagesSquare, ChevronDown, LogOut, type LucideIcon } from 'lucide-react';
+import { MessagesSquare, ChevronDown, LogOut, type LucideIcon } from 'lucide-react';
 import { NotificationBell } from './NotificationBell';
+import { WhatsappBell } from './WhatsappBell';
 import { GlobalSearch } from './GlobalSearch';
 import { MobileNav } from './MobileNav';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -19,8 +20,10 @@ export function Header() {
   // Notifications (bell) are hidden from the read-only `viewer`, who is scoped to
   // the debtors screen only — same boundary enforced on /notifications and the
   // /api/notifications/* routes. Gating here (not inside NotificationBell) keeps
-  // the bell from ever mounting/polling for a viewer. The chat / WhatsApp quick
-  // links reuse the same per-module RBAC as their sidebar entries (no new gate).
+  // the bell from ever mounting/polling for a viewer. The internal-chat quick link
+  // and the WhatsApp dropdown (WhatsappBell — its own badge + popover, fed by the
+  // WhatsApp slice of /api/notifications) reuse the same per-module RBAC as their
+  // sidebar entries (no new gate).
   const showNotifications = user.role !== 'viewer';
   const showChat = can('internal_chat', 'view');
   const showWhatsapp = can('whatsapp_chat', 'view');
@@ -42,7 +45,7 @@ export function Header() {
       <div className="flex items-center gap-2.5">
         {showNotifications && <NotificationBell />}
         {showChat && <HeaderIconLink href="/chat" label="צ׳אט פנימי" icon={MessagesSquare} />}
-        {showWhatsapp && <HeaderIconLink href="/messages" label="צ׳אט וואטסאפ" icon={MessageCircle} />}
+        {showWhatsapp && <WhatsappBell />}
         {hasIcons && <span className="h-[30px] w-px bg-line" aria-hidden />}
         <UserPill />
       </div>
@@ -51,8 +54,8 @@ export function Header() {
 }
 
 /** Quick-link icon button styled to match NotificationBell's trigger. No badge —
- *  there is no in-header unread source for chat/WhatsApp, so per the badge rule
- *  these stay count-less (a real source can attach one later). */
+ *  the internal-chat link has no in-header unread source, so per the badge rule it
+ *  stays count-less (a real source can attach one later). */
 function HeaderIconLink({ href, label, icon: Icon }: { href: string; label: string; icon: LucideIcon }) {
   return (
     <Tooltip>

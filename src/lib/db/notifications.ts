@@ -11,6 +11,32 @@ const COLUMNS = `
 
 type Queryable = Pick<PoolClient, 'query'>;
 
+/** The source_module that partitions the header's two notification surfaces:
+ *  the bell (everything EXCEPT this) and the dedicated WhatsApp chat dropdown
+ *  (only this). Keeping it a single constant guarantees the two stay disjoint —
+ *  no notification is ever counted in both. */
+export const WHATSAPP_MODULE = 'whatsapp';
+
+/** Narrows a query to one source_module, or to everything EXCEPT one. Used to
+ *  keep the bell (excludeModule) and the WhatsApp dropdown (module) disjoint.
+ *  `is distinct from` keeps NULL-module legacy rows in the bell (NULL <> 'x'
+ *  would drop them). */
+export interface ModuleScope {
+  module?: string;
+  excludeModule?: string;
+}
+
+function applyModuleScope(scope: ModuleScope, conds: string[], params: unknown[]): void {
+  if (scope.module) {
+    params.push(scope.module);
+    conds.push(`source_module = $${params.length}`);
+  }
+  if (scope.excludeModule) {
+    params.push(scope.excludeModule);
+    conds.push(`source_module is distinct from $${params.length}`);
+  }
+}
+
 /**
  * Insert a notification. When dedupeKey is supplied we ON CONFLICT DO NOTHING
  * against the partial unique index — a repeated assignment won't spam the user.
@@ -56,13 +82,13 @@ export async function createNotification(
  */
 export async function listNotifications(
   userId: string,
-  opts: { limit?: number; onlyUnread?: boolean; module?: string } = {},
+  opts: { limit?: number; onlyUnread?: boolean } & ModuleScope = {},
 ): Promise<Notification[]> {
   const limit = Math.min(Math.max(opts.limit ?? 30, 1), 100);
   const conds = ['user_id = $1', 'cleared_at is null'];
   const params: unknown[] = [userId];
   if (opts.onlyUnread) conds.push('is_read = false');
-  if (opts.module) { params.push(opts.module); conds.push(`source_module = $${params.length}`); }
+  applyModuleScope(opts, conds, params);
   const r = await query<Notification>(
     `select ${COLUMNS}
        from public.notifications
@@ -75,15 +101,37 @@ export async function listNotifications(
 }
 
 /** Active unread count (is_read=false AND cleared_at IS NULL) — drives the bell
- *  badge and the "לא נקראו" tab badge. */
-export async function countUnread(userId: string): Promise<number> {
+ *  badge and the "לא נקראו" tab badge. An optional ModuleScope partitions it for
+ *  the bell (excludeModule) vs the WhatsApp dropdown (module). */
+export async function countUnread(userId: string, scope: ModuleScope = {}): Promise<number> {
+  const conds = ['user_id = $1', 'is_read = false', 'cleared_at is null'];
+  const params: unknown[] = [userId];
+  applyModuleScope(scope, conds, params);
   const row = await queryOne<{ count: string }>(
     `select count(*)::int as count
        from public.notifications
-      where user_id = $1 and is_read = false and cleared_at is null`,
-    [userId],
+      where ${conds.join(' and ')}`,
+    params,
   );
   return Number(row?.count ?? 0);
+}
+
+/** Both header badge counts in ONE snapshot: `bell` (every active unread EXCEPT
+ *  WhatsApp) and `whatsapp` (active unread WhatsApp). A single FILTER query so the
+ *  two surfaces partition the same rows atomically — a notification lands in
+ *  exactly one bucket, never double-counted. */
+export async function countUnreadSplit(
+  userId: string,
+): Promise<{ bell: number; whatsapp: number }> {
+  const row = await queryOne<{ bell: string; whatsapp: string }>(
+    `select
+        count(*) filter (where source_module is distinct from $2)::int as bell,
+        count(*) filter (where source_module = $2)::int as whatsapp
+       from public.notifications
+      where user_id = $1 and is_read = false and cleared_at is null`,
+    [userId, WHATSAPP_MODULE],
+  );
+  return { bell: Number(row?.bell ?? 0), whatsapp: Number(row?.whatsapp ?? 0) };
 }
 
 /** Mark a single notification read — scoped to the owner (returns false if not theirs). */
@@ -116,13 +164,21 @@ export async function markNotificationReadOwned(id: string, userId: string): Pro
 }
 
 /** Mark every ACTIVE unread notification read (the cleared ones are already out
- *  of every tab, so they're left untouched). */
-export async function markAllNotificationsRead(userId: string): Promise<number> {
+ *  of every tab, so they're left untouched). An optional ModuleScope limits it to
+ *  the bell surface (excludeModule) or the WhatsApp dropdown (module) so each
+ *  surface's "mark all read" never clears the other's badge. */
+export async function markAllNotificationsRead(
+  userId: string,
+  scope: ModuleScope = {},
+): Promise<number> {
+  const conds = ['user_id = $1', 'is_read = false', 'cleared_at is null'];
+  const params: unknown[] = [userId];
+  applyModuleScope(scope, conds, params);
   const r = await query(
     `update public.notifications
         set is_read = true, read_at = now()
-      where user_id = $1 and is_read = false and cleared_at is null`,
-    [userId],
+      where ${conds.join(' and ')}`,
+    params,
   );
   return r.rowCount ?? 0;
 }
@@ -133,12 +189,18 @@ export async function markAllNotificationsRead(userId: string): Promise<number> 
  * the same dedupe_key still ON CONFLICT DO NOTHING) — but vanish from every tab
  * including "הכל". NEVER a hard delete. Returns how many were cleared.
  */
-export async function clearAllNotifications(userId: string): Promise<number> {
+export async function clearAllNotifications(
+  userId: string,
+  scope: ModuleScope = {},
+): Promise<number> {
+  const conds = ['user_id = $1', 'cleared_at is null'];
+  const params: unknown[] = [userId];
+  applyModuleScope(scope, conds, params);
   const r = await query(
     `update public.notifications
         set cleared_at = now()
-      where user_id = $1 and cleared_at is null`,
-    [userId],
+      where ${conds.join(' and ')}`,
+    params,
   );
   return r.rowCount ?? 0;
 }
