@@ -400,12 +400,21 @@ async function getConversationHeader(
   );
   if (!conv) return null;
 
-  const namesRes = await query<{ user_id: string; name: string; is_me: boolean; online: boolean }>(
+  const namesRes = await query<{
+    user_id: string;
+    name: string;
+    is_me: boolean;
+    online: boolean;
+    last_read_at: string | null;
+    last_seen_at: string | null;
+  }>(
     `select p.user_id,
             coalesce(u.full_name, u.username) as name,
             (p.user_id = $2) as is_me,
             (u.last_seen_at is not null
-             and u.last_seen_at > now() - make_interval(secs => 60)) as online
+             and u.last_seen_at > now() - interval '60 seconds') as online,
+            p.last_read_at,
+            u.last_seen_at
        from public.internal_conversation_participants p
        join public.users u on u.id = p.user_id
       where p.conversation_id = $1
@@ -416,7 +425,8 @@ async function getConversationHeader(
   const others = namesRes.rows.filter((x) => !x.is_me);
   const title =
     conv.type === 'group' ? (conv.name?.trim() || 'קבוצה') : (others[0]?.name ?? 'משתמש');
-  // Presence is a direct-conversation concept (one "other"); groups don't show it.
+  // Presence + receipts are direct-conversation concepts (one "other"); groups
+  // don't show them.
   const other = conv.type === 'direct' ? (others[0] ?? null) : null;
 
   return {
@@ -426,6 +436,8 @@ async function getConversationHeader(
     participant_names,
     other_user_id: other?.user_id ?? null,
     online: other?.online ?? false,
+    other_last_read_at: other?.last_read_at ?? null,
+    other_last_seen_at: other?.last_seen_at ?? null,
   };
 }
 

@@ -1,12 +1,17 @@
 'use client';
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowRight, Send, MessagesSquare, Users, Check, Paperclip, Smile } from 'lucide-react';
+import { ArrowRight, Send, MessagesSquare, Users, Check, CheckCheck, Paperclip, Smile } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
-import type { ConversationSummary, InternalMessage, ThreadPayload } from '@/lib/types/internalChat';
+import type {
+  ConversationSummary,
+  InternalMessage,
+  ReceiptStatus,
+  ThreadPayload,
+} from '@/lib/types/internalChat';
 import { MAX_MESSAGE_LENGTH } from '@/lib/types/internalChat';
-import { formatTime, formatRelativeDay } from './format';
+import { formatTime, formatRelativeDay, receiptStatus } from './format';
 import { ChatAvatar } from './ChatAvatar';
 
 export function ChatThread({
@@ -89,6 +94,15 @@ export function ChatThread({
     ? (header?.participant_names ?? conversation.participant_names).join(', ')
     : null;
 
+  // Receipt of my most-recent message (direct only) — drives the status bar.
+  const lastMine = !isGroup
+    ? [...messages].reverse().find((m) => m.sender_user_id === currentUserId)
+    : undefined;
+  const lastMineStatus =
+    lastMine && header
+      ? receiptStatus(lastMine.created_at, header.other_last_read_at, header.other_last_seen_at)
+      : null;
+
   return (
     <div className={cn('flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white', className)}>
       {/* Thread header */}
@@ -144,6 +158,11 @@ export function ChatThread({
             const showDay =
               !prev || new Date(prev.created_at).toDateString() !== new Date(m.created_at).toDateString();
             const isMine = m.sender_user_id === currentUserId;
+            // Per-bubble ticks: only for my messages in a 1:1.
+            const status =
+              isMine && !isGroup && header
+                ? receiptStatus(m.created_at, header.other_last_read_at, header.other_last_seen_at)
+                : undefined;
             return (
               <div key={m.id}>
                 {showDay && (
@@ -153,7 +172,7 @@ export function ChatThread({
                     </span>
                   </div>
                 )}
-                <Bubble message={m} isMine={isMine} showSender={isGroup && !isMine} />
+                <Bubble message={m} isMine={isMine} showSender={isGroup && !isMine} status={status} />
               </div>
             );
           })
@@ -171,8 +190,31 @@ export function ChatThread({
         )}
       </div>
 
+      {/* Read-receipt status of my latest message (1:1 only). */}
+      {lastMineStatus && <ReceiptBar status={lastMineStatus} />}
+
       {/* Composer */}
       <Composer onSend={onSend} onTyping={onTyping} />
+    </div>
+  );
+}
+
+// Read-receipt milestones for my latest 1:1 message — נשלח / נמסר / נקרא, the
+// reached state highlighted (נקרא = blue). Mirrors the ref's status row.
+function ReceiptBar({ status }: { status: ReceiptStatus }) {
+  const delivered = status === 'delivered' || status === 'read';
+  const read = status === 'read';
+  return (
+    <div className="flex items-center justify-center gap-4 border-t border-slate-100 bg-white py-1.5 text-[11px] font-medium">
+      <span className="inline-flex items-center gap-1 text-slate-400">
+        <Check className="h-3.5 w-3.5" /> נשלח
+      </span>
+      <span className={cn('inline-flex items-center gap-1', delivered ? 'text-slate-400' : 'text-slate-300')}>
+        <CheckCheck className="h-3.5 w-3.5" /> נמסר
+      </span>
+      <span className={cn('inline-flex items-center gap-1', read ? 'text-brand' : 'text-slate-300')}>
+        <CheckCheck className="h-3.5 w-3.5" /> נקרא
+      </span>
     </div>
   );
 }
@@ -181,10 +223,13 @@ function Bubble({
   message: m,
   isMine,
   showSender,
+  status,
 }: {
   message: InternalMessage;
   isMine: boolean;
   showSender: boolean;
+  /** Receipt for my 1:1 messages (undefined for incoming / group → plain sent ✓). */
+  status?: ReceiptStatus;
 }) {
   return (
     <div className={cn('flex', isMine ? 'justify-end' : 'justify-start')}>
@@ -203,9 +248,16 @@ function Bubble({
         <div className="whitespace-pre-wrap break-words">{m.content}</div>
         <div className={cn('mt-1 flex items-center justify-end gap-1 text-[10px]', isMine ? 'text-white/70' : 'text-slate-400')}>
           <span dir="ltr" className="tabular-nums">{formatTime(m.created_at)}</span>
-          {/* "sent" tick — the data model has no delivered/read status, so this is a
-              single send-confirmation mark on own messages (not a read receipt). */}
-          {isMine && <Check className="h-3 w-3 shrink-0" aria-label="נשלח" />}
+          {/* Receipt ticks (1:1): נקרא = brighter ✓✓, נמסר = ✓✓, נשלח = ✓. Group
+              messages get the plain sent ✓ (status undefined). */}
+          {isMine &&
+            (status === 'read' ? (
+              <CheckCheck className="h-3.5 w-3.5 shrink-0 text-white" aria-label="נקרא" />
+            ) : status === 'delivered' ? (
+              <CheckCheck className="h-3.5 w-3.5 shrink-0" aria-label="נמסר" />
+            ) : (
+              <Check className="h-3 w-3 shrink-0" aria-label="נשלח" />
+            ))}
         </div>
       </div>
     </div>

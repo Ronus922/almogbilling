@@ -76,9 +76,16 @@ export interface ThreadPayload {
     other_user_id: string | null;
     /** Other participant currently online (direct only; derived last_seen < 60s). */
     online: boolean;
+    /** Other participant's read cursor (direct only) — drives "read" receipts. */
+    other_last_read_at: string | null;
+    /** Other participant's last heartbeat (direct only) — drives "delivered". */
+    other_last_seen_at: string | null;
   };
   messages: InternalMessage[];
 }
+
+/** Delivery state of one of MY messages in a 1:1 (derived client-side). */
+export type ReceiptStatus = 'sent' | 'delivered' | 'read';
 
 /** Realtime events on the shared in-process bus (reuses the WhatsApp SSE infra),
  *  delivered to the internal-chat SSE stream (/api/chat/stream).

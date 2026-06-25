@@ -75,6 +75,20 @@ export function avatarTone(name: string): string {
   return AVATAR_TONES[h % AVATAR_TONES.length];
 }
 
+/** Delivery state of one of MY 1:1 messages, derived from the other party's read
+ *  cursor + last heartbeat (both carried on the thread header, refreshed each
+ *  poll). read > delivered > sent — first satisfied wins. */
+export function receiptStatus(
+  createdAt: string,
+  otherLastReadAt: string | null,
+  otherLastSeenAt: string | null,
+): import('@/lib/types/internalChat').ReceiptStatus {
+  const t = Date.parse(createdAt);
+  if (otherLastReadAt && Date.parse(otherLastReadAt) >= t) return 'read';
+  if (otherLastSeenAt && Date.parse(otherLastSeenAt) >= t) return 'delivered';
+  return 'sent';
+}
+
 /** Two-letter initials from a display name. */
 export function initials(name: string): string {
   return (
