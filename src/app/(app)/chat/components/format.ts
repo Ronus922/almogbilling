@@ -23,7 +23,8 @@ export function formatRelativeDay(iso: string): string {
   const today = todayInJerusalem();
   if (day === today) return 'היום';
   if (day === addDaysToIsoDate(today, -1)) return 'אתמול';
-  return new Intl.DateTimeFormat('he-IL', { timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
+  // Long month to match the ref's date chip ("16 ביוני 2026").
+  return new Intl.DateTimeFormat('he-IL', { timeZone: TZ, day: 'numeric', month: 'long', year: 'numeric' }).format(d);
 }
 
 /** Relative "now/minutes/hours" for recent, else a short date — the list stamp.
@@ -51,6 +52,27 @@ export function formatStableStamp(iso: string | null): string {
   const d = new Date(iso);
   if (jslDay(d) === todayInJerusalem()) return formatTime(iso);
   return new Intl.DateTimeFormat('he-IL', { timeZone: TZ, day: '2-digit', month: '2-digit' }).format(d);
+}
+
+// Per-user avatar tints — the ref shows each person on a different soft colour.
+// Deterministic by name (no DB field needed). Green/emerald deliberately omitted:
+// DESIGN.md reserves green for WhatsApp + the "online" status indicator.
+const AVATAR_TONES = [
+  'bg-violet-100 text-violet-700',
+  'bg-orange-100 text-orange-700',
+  'bg-rose-100 text-rose-700',
+  'bg-sky-100 text-sky-700',
+  'bg-amber-100 text-amber-700',
+  'bg-indigo-100 text-indigo-700',
+  'bg-fuchsia-100 text-fuchsia-700',
+  'bg-cyan-100 text-cyan-700',
+] as const;
+
+/** Stable soft avatar tone (bg+text classes) derived from a display name. */
+export function avatarTone(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return AVATAR_TONES[h % AVATAR_TONES.length];
 }
 
 /** Two-letter initials from a display name. */

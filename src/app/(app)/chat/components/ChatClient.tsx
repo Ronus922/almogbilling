@@ -132,6 +132,11 @@ export function ChatClient({
       if (initialConversationId && items) {
         const match = items.find((c) => c.id === initialConversationId);
         if (match) selectConversation(match);
+      } else if (items?.length && window.matchMedia('(min-width: 768px)').matches) {
+        // Open the most-recent conversation on load (list is sorted last_message
+        // desc). Desktop only — on mobile the list-first view is the better
+        // landing (selecting would hide the list behind the thread). ponytail.
+        selectConversation(items[0]);
       }
     })();
   }, [fetchConversations, initialConversationId, selectConversation]);

@@ -2,11 +2,11 @@
 
 import { Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { initials } from './format';
+import { initials, avatarTone } from './format';
 
-// Internal-chat avatar — initials on the brand palette (the system's own
-// colour), distinct from the WhatsApp module's emerald variant. Group
-// conversations get a people icon on indigo.
+// Internal-chat avatar — initials on a per-user soft tint (deterministic by
+// name, matching the ref's multi-colour avatars). Group conversations get a
+// people icon on indigo.
 export function ChatAvatar({
   title,
   isGroup,
@@ -27,7 +27,7 @@ export function ChatAvatar({
   }
 
   return (
-    <span className={cn(box, 'bg-brand-soft text-xs font-bold text-brand-text')}>
+    <span className={cn(box, 'text-xs font-bold', avatarTone(title))}>
       {initials(title)}
     </span>
   );
