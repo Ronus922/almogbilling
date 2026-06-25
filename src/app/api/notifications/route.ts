@@ -7,6 +7,8 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
   WHATSAPP_MODULE,
+  INTERNAL_CHAT_MODULE,
+  DEDICATED_MODULES,
 } from '@/lib/db/notifications';
 
 export const runtime = 'nodejs';
@@ -37,22 +39,20 @@ export async function GET(req: NextRequest) {
 
   const onlyUnread = tab === 'unread' || sp.get('unread') === '1';
   const module = MODULE_TABS.has(tab) ? tab : undefined;
-  const isWhatsapp = module === WHATSAPP_MODULE;
+  // A dedicated surface (WhatsApp / internal chat) owns its own dropdown + badge;
+  // the bell shows everything EXCEPT those. The three never overlap.
+  const isDedicated = module === WHATSAPP_MODULE || module === INTERNAL_CHAT_MODULE;
 
-  // The bell surface is everything EXCEPT WhatsApp; the WhatsApp dropdown
-  // (tab=whatsapp) is WhatsApp only. The two never overlap, so the returned
-  // unreadCount matches the surface the caller is rendering (no double-count).
-  const scope = isWhatsapp
-    ? { module: WHATSAPP_MODULE }
-    : module
-      ? { module } // a non-WhatsApp module tab (tasks/issues/calendar/internal_chat)
-      : { excludeModule: WHATSAPP_MODULE }; // all / unread → bell surface
+  // List: a module tab filters to that module; all/unread → the bell surface.
+  const listScope = module ? { module } : { excludeModules: DEDICATED_MODULES };
+  // Badge: a dedicated tab counts ONLY its own module; every other tab (bell
+  // tabs: all/unread/tasks/issues/calendar) shows the bell count. So the
+  // returned unreadCount matches the surface the caller renders (no double-count).
+  const countScope = isDedicated ? { module } : { excludeModules: DEDICATED_MODULES };
 
   const [items, unreadCount] = await Promise.all([
-    listNotifications(actor.id, { onlyUnread, limit, ...scope }),
-    // Badge count tracks the surface: WhatsApp-only for tab=whatsapp, else the
-    // bell count (every active unread except WhatsApp).
-    countUnread(actor.id, isWhatsapp ? { module: WHATSAPP_MODULE } : { excludeModule: WHATSAPP_MODULE }),
+    listNotifications(actor.id, { onlyUnread, limit, ...listScope }),
+    countUnread(actor.id, countScope),
   ]);
   return NextResponse.json({ items, unreadCount });
 }

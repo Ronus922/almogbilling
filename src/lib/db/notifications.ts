@@ -11,19 +11,21 @@ const COLUMNS = `
 
 type Queryable = Pick<PoolClient, 'query'>;
 
-/** The source_module that partitions the header's two notification surfaces:
- *  the bell (everything EXCEPT this) and the dedicated WhatsApp chat dropdown
- *  (only this). Keeping it a single constant guarantees the two stay disjoint —
- *  no notification is ever counted in both. */
+/** source_modules that each own a dedicated header dropdown (WhatsApp chat,
+ *  internal chat). The bell shows everything EXCEPT these; each one is its own
+ *  surface. Keeping them as constants guarantees the three stay disjoint — no
+ *  notification is ever counted in more than one. */
 export const WHATSAPP_MODULE = 'whatsapp';
+export const INTERNAL_CHAT_MODULE = 'internal_chat';
+export const DEDICATED_MODULES = [WHATSAPP_MODULE, INTERNAL_CHAT_MODULE];
 
-/** Narrows a query to one source_module, or to everything EXCEPT one. Used to
- *  keep the bell (excludeModule) and the WhatsApp dropdown (module) disjoint.
- *  `is distinct from` keeps NULL-module legacy rows in the bell (NULL <> 'x'
- *  would drop them). */
+/** Narrows a query to one source_module, or to everything EXCEPT a set of them.
+ *  Used to keep the bell (excludeModules) and each dedicated dropdown (module)
+ *  disjoint. The `is null or <> all(...)` form keeps NULL-module legacy rows in
+ *  the bell (a bare `<> all` on NULL is unknown → would drop them). */
 export interface ModuleScope {
   module?: string;
-  excludeModule?: string;
+  excludeModules?: string[];
 }
 
 function applyModuleScope(scope: ModuleScope, conds: string[], params: unknown[]): void {
@@ -31,9 +33,9 @@ function applyModuleScope(scope: ModuleScope, conds: string[], params: unknown[]
     params.push(scope.module);
     conds.push(`source_module = $${params.length}`);
   }
-  if (scope.excludeModule) {
-    params.push(scope.excludeModule);
-    conds.push(`source_module is distinct from $${params.length}`);
+  if (scope.excludeModules?.length) {
+    params.push(scope.excludeModules);
+    conds.push(`(source_module is null or source_module <> all($${params.length}::text[]))`);
   }
 }
 
@@ -102,7 +104,7 @@ export async function listNotifications(
 
 /** Active unread count (is_read=false AND cleared_at IS NULL) — drives the bell
  *  badge and the "לא נקראו" tab badge. An optional ModuleScope partitions it for
- *  the bell (excludeModule) vs the WhatsApp dropdown (module). */
+ *  the bell (excludeModules) vs a dedicated dropdown (module). */
 export async function countUnread(userId: string, scope: ModuleScope = {}): Promise<number> {
   const conds = ['user_id = $1', 'is_read = false', 'cleared_at is null'];
   const params: unknown[] = [userId];
@@ -116,22 +118,28 @@ export async function countUnread(userId: string, scope: ModuleScope = {}): Prom
   return Number(row?.count ?? 0);
 }
 
-/** Both header badge counts in ONE snapshot: `bell` (every active unread EXCEPT
- *  WhatsApp) and `whatsapp` (active unread WhatsApp). A single FILTER query so the
- *  two surfaces partition the same rows atomically — a notification lands in
+/** All three header badge counts in ONE snapshot: `bell` (every active unread
+ *  EXCEPT the dedicated modules), `whatsapp` (active unread WhatsApp) and
+ *  `internalChat` (active unread internal chat). A single FILTER query so the
+ *  three surfaces partition the same rows atomically — a notification lands in
  *  exactly one bucket, never double-counted. */
 export async function countUnreadSplit(
   userId: string,
-): Promise<{ bell: number; whatsapp: number }> {
-  const row = await queryOne<{ bell: string; whatsapp: string }>(
+): Promise<{ bell: number; whatsapp: number; internalChat: number }> {
+  const row = await queryOne<{ bell: string; whatsapp: string; internal_chat: string }>(
     `select
-        count(*) filter (where source_module is distinct from $2)::int as bell,
-        count(*) filter (where source_module = $2)::int as whatsapp
+        count(*) filter (where source_module is null or source_module <> all($2::text[]))::int as bell,
+        count(*) filter (where source_module = $3)::int as whatsapp,
+        count(*) filter (where source_module = $4)::int as internal_chat
        from public.notifications
       where user_id = $1 and is_read = false and cleared_at is null`,
-    [userId, WHATSAPP_MODULE],
+    [userId, DEDICATED_MODULES, WHATSAPP_MODULE, INTERNAL_CHAT_MODULE],
   );
-  return { bell: Number(row?.bell ?? 0), whatsapp: Number(row?.whatsapp ?? 0) };
+  return {
+    bell: Number(row?.bell ?? 0),
+    whatsapp: Number(row?.whatsapp ?? 0),
+    internalChat: Number(row?.internal_chat ?? 0),
+  };
 }
 
 /** Mark a single notification read — scoped to the owner (returns false if not theirs). */
@@ -165,8 +173,8 @@ export async function markNotificationReadOwned(id: string, userId: string): Pro
 
 /** Mark every ACTIVE unread notification read (the cleared ones are already out
  *  of every tab, so they're left untouched). An optional ModuleScope limits it to
- *  the bell surface (excludeModule) or the WhatsApp dropdown (module) so each
- *  surface's "mark all read" never clears the other's badge. */
+ *  the bell surface (excludeModules) or a dedicated dropdown (module) so each
+ *  surface's "mark all read" never clears another's badge. */
 export async function markAllNotificationsRead(
   userId: string,
   scope: ModuleScope = {},

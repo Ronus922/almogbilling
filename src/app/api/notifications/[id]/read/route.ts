@@ -26,8 +26,14 @@ export async function PATCH(_req: Request, ctx: { params: Promise<{ id: string }
   const ok = await markNotificationReadOwned(id, actor.id);
   if (!ok) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  // Both surface counts so either caller (bell or WhatsApp dropdown) reconciles
-  // its own badge from the same snapshot — disjoint, never double-counted.
-  const { bell, whatsapp } = await countUnreadSplit(actor.id);
-  return NextResponse.json({ ok: true, unreadCount: bell, whatsappUnreadCount: whatsapp });
+  // All three surface counts so any caller (bell / WhatsApp / internal-chat
+  // dropdown) reconciles its own badge from the same snapshot — disjoint, never
+  // double-counted.
+  const { bell, whatsapp, internalChat } = await countUnreadSplit(actor.id);
+  return NextResponse.json({
+    ok: true,
+    unreadCount: bell,
+    whatsappUnreadCount: whatsapp,
+    internalChatUnreadCount: internalChat,
+  });
 }

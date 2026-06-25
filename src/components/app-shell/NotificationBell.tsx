@@ -11,11 +11,11 @@ import type { Notification } from '@/lib/types/tasks';
 
 const POLL_MS = 60_000;
 
-// WhatsApp is intentionally absent: inbound WhatsApp notifications now live on the
-// dedicated WhatsApp chat dropdown in the header (WhatsappBell). The bell shows
-// everything EXCEPT WhatsApp — the API excludes source_module='whatsapp' from
-// these tabs and from the bell's unread count, so the two never double-count.
-type TabValue = 'all' | 'unread' | 'tasks' | 'issues' | 'calendar' | 'internal_chat';
+// WhatsApp and internal chat are intentionally absent: each now lives on its own
+// dedicated header dropdown (WhatsappBell / InternalChatBell). The bell shows
+// everything EXCEPT those — the API excludes both source_modules from these tabs
+// and from the bell's unread count, so the surfaces never double-count.
+type TabValue = 'all' | 'unread' | 'tasks' | 'issues' | 'calendar';
 
 const TABS: { value: TabValue; label: string }[] = [
   { value: 'all', label: 'הכל' },
@@ -23,7 +23,6 @@ const TABS: { value: TabValue; label: string }[] = [
   { value: 'tasks', label: SOURCE_MODULE_LABEL.tasks },
   { value: 'issues', label: SOURCE_MODULE_LABEL.issues },
   { value: 'calendar', label: SOURCE_MODULE_LABEL.calendar },
-  { value: 'internal_chat', label: SOURCE_MODULE_LABEL.internal_chat },
 ];
 
 export function NotificationBell() {
@@ -177,7 +176,7 @@ export function NotificationBell() {
           </div>
         </div>
 
-        {/* Tabs strip — wraps to 2 rows so all 7 tabs stay visible (no clipping) */}
+        {/* Tabs strip — wraps if needed so every tab stays visible (no clipping) */}
         <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 px-2 py-2">
           {TABS.map((t) => {
             const active = tab === t.value;

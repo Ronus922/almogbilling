@@ -1,14 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
-import { MessagesSquare, ChevronDown, LogOut, type LucideIcon } from 'lucide-react';
+import { ChevronDown, LogOut } from 'lucide-react';
 import { NotificationBell } from './NotificationBell';
 import { WhatsappBell } from './WhatsappBell';
+import { InternalChatBell } from './InternalChatBell';
 import { GlobalSearch } from './GlobalSearch';
 import { MobileNav } from './MobileNav';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuth, usePermissions } from '@/lib/auth/context';
 import { ROLE_STYLES, roleLabel } from '@/lib/permissions/constants';
 import { cn } from '@/lib/utils';
@@ -20,10 +19,10 @@ export function Header() {
   // Notifications (bell) are hidden from the read-only `viewer`, who is scoped to
   // the debtors screen only — same boundary enforced on /notifications and the
   // /api/notifications/* routes. Gating here (not inside NotificationBell) keeps
-  // the bell from ever mounting/polling for a viewer. The internal-chat quick link
-  // and the WhatsApp dropdown (WhatsappBell — its own badge + popover, fed by the
-  // WhatsApp slice of /api/notifications) reuse the same per-module RBAC as their
-  // sidebar entries (no new gate).
+  // the bell from ever mounting/polling for a viewer. The InternalChatBell and the
+  // WhatsappBell (each its own badge + popover, fed by its own slice of
+  // /api/notifications) reuse the same per-module RBAC as their sidebar entries
+  // (no new gate).
   const showNotifications = user.role !== 'viewer';
   const showChat = can('internal_chat', 'view');
   const showWhatsapp = can('whatsapp_chat', 'view');
@@ -41,37 +40,17 @@ export function Header() {
 
       <div className="flex-1" />
 
-      {/* Left (RTL end): notification/chat/whatsapp icons + user pill */}
+      {/* Left (RTL end): whatsapp / internal-chat / bell icons + user pill. DOM
+          order = visual right→left under dir=rtl, i.e. WhatsApp, internal chat,
+          bell — matching the header spec. */}
       <div className="flex items-center gap-2.5">
-        {showNotifications && <NotificationBell />}
-        {showChat && <HeaderIconLink href="/chat" label="צ׳אט פנימי" icon={MessagesSquare} />}
         {showWhatsapp && <WhatsappBell />}
+        {showChat && <InternalChatBell />}
+        {showNotifications && <NotificationBell />}
         {hasIcons && <span className="h-[30px] w-px bg-line" aria-hidden />}
         <UserPill />
       </div>
     </header>
-  );
-}
-
-/** Quick-link icon button styled to match NotificationBell's trigger. No badge —
- *  the internal-chat link has no in-header unread source, so per the badge rule it
- *  stays count-less (a real source can attach one later). */
-function HeaderIconLink({ href, label, icon: Icon }: { href: string; label: string; icon: LucideIcon }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Link
-            href={href}
-            aria-label={label}
-            className="grid h-[38px] w-[38px] place-items-center rounded-[10px] border border-line bg-surface-2 text-ink-2 transition-colors hover:bg-row-hover hover:text-ink"
-          />
-        }
-      >
-        <Icon className="h-[18px] w-[18px]" />
-      </TooltipTrigger>
-      <TooltipContent side="bottom">{label}</TooltipContent>
-    </Tooltip>
   );
 }
 
