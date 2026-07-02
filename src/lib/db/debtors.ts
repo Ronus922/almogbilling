@@ -725,22 +725,64 @@ export interface DebtorSearchResult {
   phone_owner: string | null;
   phone_tenant: string | null;
   is_archived: boolean;
+  // Added (additive) so callers get the status + debt breakdown per row without a
+  // second query. `legal_status_name` is null when the debtor has no status set.
+  legal_status_name: string | null;
+  total_debt: number;
+  management_fees: number;
+  hot_water_debt: number;
+  monthly_debt: string | null;
 }
 
-export async function searchDebtors(q: string, limit = 20): Promise<DebtorSearchResult[]> {
+/**
+ * Cross-status debtor lookup by free-text term and/or status name.
+ *
+ * The term is matched (OR) against apartment number, owner name AND tenant name.
+ * There is NO tab/status bucket — every matching row is returned regardless of
+ * legal status, INCLUDING archived rows (ordered last), so a person's apartments
+ * that sit in different statuses all come back, each with its own status.
+ *
+ * `opts.status` (optional) narrows to a status by name (ILIKE) — applied only
+ * when provided. At least one of `q` / `status` must be non-empty, else [].
+ *
+ * Backward compatible: `searchDebtors(q)` behaves as before (now also returning
+ * legal_status_name / total_debt / monthly_debt — additive fields).
+ */
+export async function searchDebtors(
+  q: string,
+  opts: { limit?: number; status?: string } = {},
+): Promise<DebtorSearchResult[]> {
   const term = q.trim();
-  if (!term) return [];
-  const like = `%${term}%`;
+  const status = (opts.status ?? '').trim();
+  if (!term && !status) return [];
+  const limit = Math.max(1, Math.min(50, opts.limit ?? 20));
+
+  const args: unknown[] = [];
+  const where: string[] = [];
+  if (term) {
+    args.push(`%${term}%`);
+    const p = `$${args.length}`;
+    where.push(`(d.apartment_number ilike ${p} or d.owner_name ilike ${p} or d.tenant_name ilike ${p})`);
+  }
+  if (status) {
+    args.push(`%${status}%`);
+    where.push(`s.name ilike $${args.length}`);
+  }
+  args.push(limit);
+
   const r = await query<DebtorSearchResult>(
-    `select id, apartment_number, owner_name, tenant_name,
-            phone_owner, phone_tenant, is_archived
-       from public.debtors
-      where apartment_number ilike $1
-         or owner_name        ilike $1
-         or tenant_name       ilike $1
-      order by is_archived asc, apartment_number asc
-      limit $2`,
-    [like, Math.max(1, Math.min(50, limit))],
+    `select d.id, d.apartment_number, d.owner_name, d.tenant_name,
+            d.phone_owner, d.phone_tenant, d.is_archived,
+            s.name as legal_status_name,
+            d.total_debt::float8      as total_debt,
+            d.management_fees::float8 as management_fees,
+            d.hot_water_debt::float8  as hot_water_debt,
+            d.monthly_debt
+       from ${DEBTORS_JOIN}
+      where ${where.join(' and ')}
+      order by d.is_archived asc, d.apartment_number asc
+      limit $${args.length}`,
+    args,
   );
   return r.rows;
 }

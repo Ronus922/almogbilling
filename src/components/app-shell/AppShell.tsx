@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
+import { AgentFab } from '@/components/agent/AgentFab';
 
 // Shell skeleton (see DESIGN.md §32): a full-height RTL flex ROW — the Sidebar is
 // the right-edge column (its brand block reaches the very top), and the content
@@ -17,6 +18,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="mx-auto max-w-[1640px] p-[18px] md:p-6">{children}</div>
         </main>
       </div>
+      {/* Floating read-only collection assistant — self-gates on dashboard/contacts view. */}
+      <AgentFab />
     </div>
   );
 }
