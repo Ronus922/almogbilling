@@ -170,9 +170,11 @@ export async function upsertMonthlyDebtSnapshot(): Promise<void> {
 
 /**
  * Collection-vs-debt series for the last `months` calendar months plus the
- * derived Hero KPIs. "Collection" is approximated as the month-over-month drop
- * in total open debt (no per-payment data exists). We fetch one extra (older)
- * month so the first charted month has a baseline to derive its collection from.
+ * derived Hero KPIs. "Collection" per month is the GROSS per-debtor figure
+ * accrued into monthly_collections by the import hook when a row exists for that
+ * month; older months (before that tracking existed) fall back to the NET
+ * month-over-month drop in total open debt. We fetch one extra (older) month so
+ * the first charted month has a baseline to derive its RATE from.
  */
 export async function getCollectionVsDebt(months = 6): Promise<CollectionVsDebt> {
   // Newest-first, then reversed to chronological. months+1 → baseline row.
@@ -196,14 +198,28 @@ export async function getCollectionVsDebt(months = 6): Promise<CollectionVsDebt>
     }))
     .reverse();
 
+  // Accrued gross collection per month (one row per calendar month, tiny table).
+  const collRes = await query<{ year: number; month: number; collected_amount: string }>(
+    `select year, month, collected_amount::text from public.monthly_collections`,
+  );
+  const collectedByYm = new Map<string, number>();
+  for (const c of collRes.rows) {
+    collectedByYm.set(`${c.year}-${String(c.month).padStart(2, '0')}`, Number(c.collected_amount));
+  }
+
   const points: MonthlyDebtPoint[] = rowsAsc.map((cur, i) => {
     const prev = i > 0 ? rowsAsc[i - 1] : null;
-    const collection = prev ? Math.max(0, prev.totalDebt - cur.totalDebt) : 0;
+    const ym = `${cur.year}-${String(cur.month).padStart(2, '0')}`;
+    // Prefer the accrued gross figure; fall back to the net drop for months with
+    // no accrual row (history predating the hook).
+    const netDrop = prev ? Math.max(0, prev.totalDebt - cur.totalDebt) : 0;
+    const accrued = collectedByYm.get(ym);
+    const collection = accrued !== undefined ? accrued : netDrop;
     const collectionRate = prev && prev.totalDebt > 0 ? collection / prev.totalDebt : 0;
     return {
       year: cur.year,
       month: cur.month,
-      ym: `${cur.year}-${String(cur.month).padStart(2, '0')}`,
+      ym,
       totalDebt: cur.totalDebt,
       collection,
       collectionRate,
