@@ -62,6 +62,7 @@ export function TenantDetailPanel({ open, debtorId, canEdit, canChangeStatus, ca
   const [editField, setEditField] = useState<PhoneField | null>(null);
   const [nextActionDraft, setNextActionDraft] = useState<NextActionDraft>({ description: '', date: '' });
   const [saving, setSaving] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   // Sticky flag: any auto-saved mutation (status / phones / comment) flips this on
   // so "שמור שינויים" becomes a "Done" button the user can click to close.
   const [hasMutated, setHasMutated] = useState(false);
@@ -258,6 +259,36 @@ export function TenantDetailPanel({ open, debtorId, canEdit, canChangeStatus, ca
       toast.error(`שמירה נכשלה: ${msg}`);
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Printer → the standalone print page (auto-fires window.print on load).
+  function handlePrint() {
+    if (!debtorId) return;
+    window.open(`/debtors/${debtorId}/print?autoprint=1`, '_blank', 'noopener');
+  }
+
+  // FileDown → server-rendered PDF of the print page. Fetch as a blob so we can
+  // download it under a Hebrew filename + surface a toast on failure.
+  async function handleExportPdf() {
+    if (!debtorId || !tenant || exportingPdf) return;
+    setExportingPdf(true);
+    try {
+      const res = await fetch(`/api/debtors/${debtorId}/pdf`, { credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `פרטי דירה ${tenant.apartment_number}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error('הפקת ה-PDF נכשלה');
+    } finally {
+      setExportingPdf(false);
     }
   }
 
@@ -476,6 +507,9 @@ export function TenantDetailPanel({ open, debtorId, canEdit, canChangeStatus, ca
               showPrinter
               showExport
               showHistory
+              onPrint={handlePrint}
+              onExportPdf={handleExportPdf}
+              exportingPdf={exportingPdf}
             />
           )}
           </>

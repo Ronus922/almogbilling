@@ -1,6 +1,6 @@
 'use client';
 
-import { Clock, FileDown, Printer, Save, Trash2 } from 'lucide-react';
+import { Clock, FileDown, Loader2, Printer, Save, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -22,6 +22,12 @@ export interface PanelFooterProps {
   showPrinter?: boolean;
   showExport?: boolean;
   showHistory?: boolean;
+  /** Printer button handler. When omitted the button stays a disabled "בקרוב". */
+  onPrint?: () => void;
+  /** PDF-export handler. When omitted the button stays a disabled "בקרוב". */
+  onExportPdf?: () => void;
+  /** Shows a spinner + disables the PDF button while the export is in flight. */
+  exportingPdf?: boolean;
   /** When provided, a destructive "מחק" button is shown on the start side.
    *  Caller is responsible for the confirmation dialog + RBAC gating. */
   onDelete?: () => void;
@@ -38,6 +44,9 @@ export function PanelFooter({
   showPrinter = false,
   showExport = false,
   showHistory = false,
+  onPrint,
+  onExportPdf,
+  exportingPdf = false,
   onDelete,
   deleteLabel = 'מחק',
 }: PanelFooterProps) {
@@ -63,21 +72,27 @@ export function PanelFooter({
           {showPrinter && (
             <Tooltip>
               <TooltipTrigger render={<span className="block" />}>
-                <Button type="button" variant="outline" size="icon" disabled aria-label="הדפסה">
+                <Button
+                  type="button" variant="outline" size="icon"
+                  onClick={onPrint} disabled={!onPrint} aria-label="הדפסה"
+                >
                   <Printer className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>בקרוב</TooltipContent>
+              <TooltipContent>{onPrint ? 'הדפסה' : 'בקרוב'}</TooltipContent>
             </Tooltip>
           )}
           {showExport && (
             <Tooltip>
               <TooltipTrigger render={<span className="block" />}>
-                <Button type="button" variant="outline" size="icon" disabled aria-label="ייצוא PDF">
-                  <FileDown className="h-4 w-4" />
+                <Button
+                  type="button" variant="outline" size="icon"
+                  onClick={onExportPdf} disabled={!onExportPdf || exportingPdf} aria-label="ייצוא PDF"
+                >
+                  {exportingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>בקרוב</TooltipContent>
+              <TooltipContent>{onExportPdf ? 'ייצוא PDF' : 'בקרוב'}</TooltipContent>
             </Tooltip>
           )}
         </div>
