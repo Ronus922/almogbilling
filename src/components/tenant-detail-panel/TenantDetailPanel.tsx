@@ -25,6 +25,7 @@ import { LegalManagementCard } from './LegalManagementCard';
 import { CommentsSection } from './CommentsSection';
 import { CompletedActionsCard } from './CompletedActionsCard';
 import { HistoryTimeline } from './HistoryTimeline';
+import { DocumentsSection } from './DocumentsSection';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { PanelTabs, type PanelTabKey } from './PanelTabs';
@@ -401,6 +402,8 @@ export function TenantDetailPanel({ open, debtorId, canEdit, canChangeStatus, ca
                 </div>
                 <div className="h-56 rounded-xl bg-muted/60 animate-pulse" />
               </div>
+            ) : activeTab === 'documents' ? (
+              <DocumentsSection debtorId={tenant.id} canEdit={canEdit} />
             ) : activeTab === 'history' ? (
               <HistoryTimeline
                 debtorId={tenant.id}
