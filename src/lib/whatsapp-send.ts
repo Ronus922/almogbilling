@@ -4,8 +4,9 @@ import { withTransaction } from '@/lib/db';
 import type { DebtorContact } from '@/lib/db/debtors';
 import { insertChatMessage, insertChatMessageTx } from '@/lib/db/chatMessages';
 import type { InstanceCreds } from '@/lib/db/whatsappInstances';
-import { sendWhatsAppMessage, WhatsAppError } from '@/lib/whatsapp';
+import { sendWhatsAppMessage, sendWhatsAppFileByUrl, WhatsAppError } from '@/lib/whatsapp';
 import { interpolateTemplate } from '@/lib/whatsapp-template';
+import { attachmentMessageType } from '@/lib/whatsapp-attachment';
 import { logDebtorEvent, EVENT_TYPE_META } from '@/lib/debtor-events';
 
 // Single source of truth for "send one WhatsApp message to one debtor and record
@@ -37,25 +38,53 @@ export interface SendAndRecordArgs {
   actor: Actor;
   /** The sending instance (Green id + token + host + our uuid). */
   creds: InstanceCreds;
+  /** Optional single file attachment. When present the message is sent as media
+   *  (Green API sendFileByUrl) with the text as the caption; the file url/name/
+   *  mime/size are recorded on the chat_messages row for the history. */
+  attachment?: {
+    /** Public URL reachable by Green API (whatsapp-media bucket). */
+    url: string;
+    /** Original (Hebrew) file name — shown to the recipient and in history. */
+    name: string;
+    mime: string;
+    sizeBytes: number;
+  } | null;
 }
 
 export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<SendAndRecordResult> {
   const { debtor, phoneIntl, rawMessage, templateId, actor, creds } = args;
+  const attachment = args.attachment ?? null;
 
   // Interpolate on the server with authoritative debtor data — the single source
   // of truth (the UI preview uses the very same interpolateTemplate()).
   const finalMessage = interpolateTemplate(rawMessage, debtor);
   const chatId = `${phoneIntl}@c.us`;
 
+  // With a file, the text becomes the media caption (may be empty). Without one,
+  // it's the message body. The chat_messages content column mirrors this.
+  const caption = finalMessage.trim().length > 0 ? finalMessage : undefined;
+  const messageType = attachment ? attachmentMessageType(attachment.name) : 'text';
+  const storedContent = attachment ? (caption ?? null) : finalMessage;
+
   let idMessage: string;
   try {
-    ({ idMessage } = await sendWhatsAppMessage({
-      instanceId: creds.greenInstanceId,
-      token: creds.token,
-      apiUrl: creds.apiUrl,
-      chatId,
-      message: finalMessage,
-    }));
+    ({ idMessage } = attachment
+      ? await sendWhatsAppFileByUrl({
+          instanceId: creds.greenInstanceId,
+          token: creds.token,
+          apiUrl: creds.apiUrl,
+          chatId,
+          urlFile: attachment.url,
+          fileName: attachment.name,
+          ...(caption ? { caption } : {}),
+        })
+      : await sendWhatsAppMessage({
+          instanceId: creds.greenInstanceId,
+          token: creds.token,
+          apiUrl: creds.apiUrl,
+          chatId,
+          message: finalMessage,
+        }));
   } catch (err) {
     const detail = err instanceof WhatsAppError ? err.message : 'שגיאה לא ידועה';
     // Record the failed attempt (no external id, no last_whatsapp_sent_at, no
@@ -68,7 +97,12 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
         chatId,
         externalMessageId: null,
         direction: 'sent',
-        content: finalMessage,
+        messageType,
+        content: storedContent,
+        mediaUrl: attachment?.url ?? null,
+        attachmentName: attachment?.name ?? null,
+        attachmentMime: attachment?.mime ?? null,
+        attachmentSize: attachment?.sizeBytes ?? null,
         status: 'failed',
         errorDetail: detail,
         sentBy: actor.id,
@@ -92,7 +126,12 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
         chatId,
         externalMessageId: idMessage,
         direction: 'sent',
-        content: finalMessage,
+        messageType,
+        content: storedContent,
+        mediaUrl: attachment?.url ?? null,
+        attachmentName: attachment?.name ?? null,
+        attachmentMime: attachment?.mime ?? null,
+        attachmentSize: attachment?.sizeBytes ?? null,
         status: 'sent',
         errorDetail: null,
         sentBy: actor.id,
@@ -108,12 +147,15 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
         debtorId: debtor.id,
         eventType: 'WHATSAPP',
         title: EVENT_TYPE_META.WHATSAPP.label,
-        description: finalMessage,
+        description: storedContent ?? `קובץ מצורף: ${attachment?.name ?? ''}`.trim(),
         metadata: {
           external_message_id: idMessage,
           chat_id: chatId,
           template_id: templateId,
           channel: 'green_api',
+          ...(attachment
+            ? { attachment_name: attachment.name, attachment_mime: attachment.mime, attachment_size: attachment.sizeBytes }
+            : {}),
         },
         actor: { id: actor.id, name: actorName, email: actor.email },
       });

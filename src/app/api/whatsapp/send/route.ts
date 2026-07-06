@@ -8,20 +8,52 @@ import {
   type InstanceCreds,
 } from '@/lib/db/whatsappInstances';
 import { normalizePhone, parsePhoneCandidates, WhatsAppError } from '@/lib/whatsapp';
-import { sendAndRecordWhatsApp } from '@/lib/whatsapp-send';
+import { sendAndRecordWhatsApp, type SendAndRecordArgs } from '@/lib/whatsapp-send';
+import { uploadWhatsAppMedia } from '@/lib/storage/whatsappMedia';
+import { validateAttachment } from '@/lib/whatsapp-attachment';
 
 export const runtime = 'nodejs';
 
-interface PostBody {
-  debtor_id?: unknown;
-  message?: unknown;
-  template_id?: unknown;
-  phone?: unknown;
+interface ParsedInput {
+  debtorId: string;
+  message: string;
+  templateId: string | null;
+  requestedPhone: string | null;
+  /** Optional single attachment (multipart requests only). */
+  file: File | null;
 }
 
-// POST /api/whatsapp/send — send an outbound WhatsApp message to a debtor.
-// Sending is gated on whatsapp:edit (write). The response NEVER returns 200 on a
-// send failure — the client toast must reflect the true outcome.
+// Read the request as either JSON (text-only send — the historical path) or
+// multipart/form-data (when the composer attached a file). One shape out.
+async function parseInput(req: NextRequest): Promise<ParsedInput | null> {
+  const ct = req.headers.get('content-type') ?? '';
+  if (ct.includes('multipart/form-data')) {
+    const form = await req.formData();
+    const fileRaw = form.get('file');
+    return {
+      debtorId: typeof form.get('debtor_id') === 'string' ? (form.get('debtor_id') as string) : '',
+      message: typeof form.get('message') === 'string' ? (form.get('message') as string).trim() : '',
+      templateId: typeof form.get('template_id') === 'string' && form.get('template_id') ? (form.get('template_id') as string) : null,
+      requestedPhone: typeof form.get('phone') === 'string' ? (form.get('phone') as string) : null,
+      file: fileRaw instanceof File && fileRaw.size > 0 ? fileRaw : null,
+    };
+  }
+  const body = (await req.json()) as {
+    debtor_id?: unknown; message?: unknown; template_id?: unknown; phone?: unknown;
+  };
+  return {
+    debtorId: typeof body.debtor_id === 'string' ? body.debtor_id : '',
+    message: typeof body.message === 'string' ? body.message.trim() : '',
+    templateId: typeof body.template_id === 'string' ? body.template_id : null,
+    requestedPhone: typeof body.phone === 'string' ? body.phone : null,
+    file: null,
+  };
+}
+
+// POST /api/whatsapp/send — send an outbound WhatsApp message to a debtor,
+// optionally with a single file attachment (multipart). Gated on whatsapp:edit.
+// The response NEVER returns 200 on a send failure — the client toast must
+// reflect the true outcome.
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try {
@@ -32,26 +64,35 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  let body: PostBody;
+  let input: ParsedInput | null;
   try {
-    body = (await req.json()) as PostBody;
+    input = await parseInput(req);
   } catch {
-    return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
+    return NextResponse.json({ error: 'invalid_request' }, { status: 400 });
   }
+  if (!input) return NextResponse.json({ error: 'invalid_request' }, { status: 400 });
 
-  const debtorId = typeof body.debtor_id === 'string' ? body.debtor_id : '';
-  const message = typeof body.message === 'string' ? body.message.trim() : '';
-  const templateId = typeof body.template_id === 'string' ? body.template_id : null;
-  const requestedPhone = typeof body.phone === 'string' ? body.phone : null;
+  const { debtorId, message, templateId, requestedPhone, file } = input;
 
   if (!debtorId) {
     return NextResponse.json({ error: 'debtor_id חסר' }, { status: 400 });
   }
-  if (message.length < 1) {
+  // A message OR a file is required. With a file, the text is an optional caption.
+  if (!file && message.length < 1) {
     return NextResponse.json({ error: 'תוכן ההודעה ריק' }, { status: 400 });
   }
-  if (message.length > 4096) {
-    return NextResponse.json({ error: 'ההודעה ארוכה מדי (מקסימום 4096 תווים)' }, { status: 400 });
+  // Text body cap; the caption cap (with a file) is Green API's 1024.
+  const maxLen = file ? 1024 : 4096;
+  if (message.length > maxLen) {
+    return NextResponse.json(
+      { error: file ? 'הכיתוב ארוך מדי (מקסימום 1024 תווים)' : 'ההודעה ארוכה מדי (מקסימום 4096 תווים)' },
+      { status: 400 },
+    );
+  }
+  // Validate the attachment up-front (type + size) before any upload/send.
+  if (file) {
+    const err = validateAttachment({ name: file.name, size: file.size });
+    if (err) return NextResponse.json({ error: err }, { status: 400 });
   }
 
   const debtor = await getDebtorContact(debtorId);
@@ -99,6 +140,23 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
+  // Upload the attachment to the public whatsapp-media bucket (reachable by Green
+  // API). On failure we DON'T send and DON'T record — a clear error only.
+  let attachment: SendAndRecordArgs['attachment'] = null;
+  if (file) {
+    try {
+      const uploaded = await uploadWhatsAppMedia(file);
+      attachment = {
+        url: uploaded.url,
+        name: file.name,
+        mime: uploaded.mimeType,
+        sizeBytes: uploaded.sizeBytes,
+      };
+    } catch {
+      return NextResponse.json({ error: 'העלאת הקובץ נכשלה, ההודעה לא נשלחה' }, { status: 502 });
+    }
+  }
+
   // Send + record (failed-row on the timeline, last_whatsapp_sent_at bump, WHATSAPP
   // event) — shared with the bulk path so the two can never diverge.
   const result = await sendAndRecordWhatsApp({
@@ -108,6 +166,7 @@ export async function POST(req: NextRequest) {
     templateId,
     actor,
     creds,
+    attachment,
   });
 
   if (!result.ok) {

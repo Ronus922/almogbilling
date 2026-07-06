@@ -60,6 +60,13 @@ export interface ChatMessage {
   message_type: ChatMessageType;
   content: string | null;
   media_url: string | null;
+  /** Original (Hebrew) file name of an outbound attachment. Optional: absent on
+   *  synthetic/optimistic rows built in code; always present on DB rows. */
+  attachment_name?: string | null;
+  /** Attachment MIME type (drives the history icon). */
+  attachment_mime?: string | null;
+  /** Attachment size in bytes. */
+  attachment_size?: number | null;
   status: ChatStatus;
   error_detail: string | null;
   sent_by: string | null;
