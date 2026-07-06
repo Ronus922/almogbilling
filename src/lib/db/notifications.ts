@@ -230,6 +230,28 @@ export async function clearNotification(id: string, userId: string): Promise<boo
   return (r.rowCount ?? 0) > 0;
 }
 
+/**
+ * Hard-delete every notification pointing at a given entity — the mirror of
+ * deleteRemindersForEntity, called from the DELETE routes so a removed task /
+ * issue leaves no ghost notification in the bell. Matched case-insensitively
+ * because producers write source_entity_type inconsistently ('Issue'/'issue',
+ * 'Task'/'task'). The entity is gone, so a hard delete is correct — no audit
+ * target, no dedup key to preserve. Accepts an optional pg client for txns.
+ */
+export async function deleteNotificationsForEntity(
+  entityType: string,
+  entityId: string,
+  client?: Queryable,
+): Promise<void> {
+  const sql = `delete from public.notifications
+     where lower(source_entity_type) = lower($1) and source_entity_id = $2`;
+  if (client) {
+    await client.query(sql, [entityType, entityId]);
+    return;
+  }
+  await query(sql, [entityType, entityId]);
+}
+
 export interface NotificationPageFilters {
   module?: string;
   priority?: string;

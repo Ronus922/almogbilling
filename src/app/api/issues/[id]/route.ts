@@ -13,6 +13,7 @@ import { listEntityAssigneeKeys } from '@/lib/db/entityAssignees';
 import {
   listRemindersForEntity, createReminder, deleteRemindersForEntity,
 } from '@/lib/db/reminders';
+import { deleteNotificationsForEntity } from '@/lib/db/notifications';
 import { signedUrlForIssueImage, removeIssueImages } from '@/lib/storage/issueStorage';
 import { coerceIssueInput, isUuid } from '@/lib/validation/issues';
 import { coerceAssignees } from '@/lib/validation/assignee';
@@ -252,9 +253,11 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
 
   // Best-effort image cleanup (storage), then delete the row.
   // issue_comments cascade via FK; tasks.issue_id is ON DELETE SET NULL.
-  // Reminders use a generic entity_id (no FK), so clean them up explicitly.
+  // Reminders + notifications use a generic entity_id (no FK), so clean them
+  // up explicitly — otherwise the bell keeps showing ghosts of a deleted issue.
   await removeIssueImages(issue.images);
   await deleteRemindersForEntity('issue', id);
+  await deleteNotificationsForEntity('issue', id);
   const ok = await deleteIssue(id);
   if (!ok) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   return new NextResponse(null, { status: 204 });

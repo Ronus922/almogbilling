@@ -13,6 +13,7 @@ import {
   createReminder,
   deleteRemindersForEntity,
 } from '@/lib/db/reminders';
+import { deleteNotificationsForEntity } from '@/lib/db/notifications';
 import { listTaskComments } from '@/lib/db/tasks';
 import { supplierExists } from '@/lib/db/suppliers';
 import { coerceTaskInput, coerceReminders, coerceRecurrence } from '@/lib/validation/tasks';
@@ -234,9 +235,12 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   }
 
   const { id } = await ctx.params;
-  // task_comments cascade via FK; reminders use a generic entity_id (no FK), so
-  // clean them up explicitly to avoid orphaned rows.
+  // task_comments cascade via FK; reminders + notifications use a generic
+  // entity_id (no FK), so clean them up explicitly to avoid orphaned rows that
+  // keep haunting the bell (deleteTask soft-archives, so this also covers the
+  // archived-task variant).
   await deleteRemindersForEntity('task', id);
+  await deleteNotificationsForEntity('task', id);
   const ok = await deleteTask(id);
   if (!ok) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   return new NextResponse(null, { status: 204 });
