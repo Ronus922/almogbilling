@@ -77,6 +77,9 @@ export default async function OverviewPage({ searchParams }: { searchParams: Sea
       collection: p.collection,
       debt: p.totalDebt,
       isCurrent: p.ym === cy,
+      // Collection rate per month = collection / opening (prev-month) debt. The
+      // baseline month has no opening balance to divide by → "—", not 0%.
+      rateLabel: p.isBaseline ? '—' : `${Math.round(p.collectionRate * 100)}%`,
     })) ?? [];
 
   const k = collection?.kpis;

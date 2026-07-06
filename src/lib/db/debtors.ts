@@ -54,6 +54,11 @@ export interface MonthlyDebtPoint {
   collection: number;
   /** collection / prev.totalDebt (0 when there is no prior month or prior debt). */
   collectionRate: number;
+  /** True for the earliest charted month when it had no prior snapshot to derive
+   *  collection from — the UI shows "—" for its rate instead of a misleading 0%.
+   *  (Once ≥ months+1 snapshots accrue the baseline is dropped from the window,
+   *  so no charted point carries this.) */
+  isBaseline: boolean;
 }
 
 /** Hero KPI trio derived from the snapshot series + live debtor totals. */
@@ -202,6 +207,7 @@ export async function getCollectionVsDebt(months = 6): Promise<CollectionVsDebt>
       totalDebt: cur.totalDebt,
       collection,
       collectionRate,
+      isBaseline: prev === null,
     };
   });
 
@@ -211,8 +217,13 @@ export async function getCollectionVsDebt(months = 6): Promise<CollectionVsDebt>
   const openDebtBalance = await getOpenDebtBalance();
   const latest = series[series.length - 1];
   const prevMonth = series.length >= 2 ? series[series.length - 2] : null;
+  // Average only over months with a derivable rate — the baseline month (shown
+  // as "—" in the UI) has no opening balance, so folding its 0 into the mean
+  // would dilute it. In the normal regime the baseline is already off the window
+  // (no isBaseline survives), so this is a no-op there.
+  const rated = series.filter((p) => !p.isBaseline);
   const avgCollectionRate =
-    series.length > 0 ? series.reduce((s, p) => s + p.collectionRate, 0) / series.length : 0;
+    rated.length > 0 ? rated.reduce((s, p) => s + p.collectionRate, 0) / rated.length : 0;
 
   return {
     series,

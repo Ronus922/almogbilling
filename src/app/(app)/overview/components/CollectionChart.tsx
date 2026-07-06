@@ -5,6 +5,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -18,6 +19,9 @@ export interface ChartPoint {
   collection: number;
   debt: number;
   isCurrent: boolean;
+  /** Pre-formatted collection-rate for the label + tooltip: "37%", or "—" for
+   *  the baseline month (no opening balance to divide by). */
+  rateLabel: string;
 }
 
 const COLLECTION = '#3d5afe'; // brand blue — נגבה בפועל
@@ -26,11 +30,12 @@ const DEBT = '#f59e0b'; // amber — יתרת חוב
 interface TipProps {
   active?: boolean;
   label?: string | number;
-  payload?: { name?: string; value?: number; color?: string }[];
+  payload?: { name?: string; value?: number; color?: string; payload?: ChartPoint }[];
 }
 
 function ChartTooltip({ active, payload, label }: TipProps) {
   if (!active || !payload?.length) return null;
+  const rateLabel = payload[0]?.payload?.rateLabel;
   return (
     <div dir="rtl" className="rounded-lg border border-line bg-white px-3 py-2 text-xs shadow-soft-md">
       <div className="mb-1 font-bold text-ink">{label}</div>
@@ -43,6 +48,12 @@ function ChartTooltip({ active, payload, label }: TipProps) {
           <span className="font-num font-semibold text-ink">{ils(Number(p.value ?? 0))}</span>
         </div>
       ))}
+      {rateLabel !== undefined && (
+        <div className="mt-1 flex items-center justify-between gap-3 border-t border-line pt-1">
+          <span className="text-ink-2">שיעור גבייה</span>
+          <span className="font-num font-semibold text-ink">{rateLabel}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -93,6 +104,8 @@ export function CollectionChart({ data }: { data: ChartPoint[] }) {
                 strokeDasharray={d.isCurrent ? '4 2' : undefined}
               />
             ))}
+            {/* Collection-rate label above each collection bar ("37%" / "—"). */}
+            <LabelList dataKey="rateLabel" position="top" offset={6} fill={COLLECTION} fontSize={11} fontWeight={700} />
           </Bar>
           <Bar dataKey="debt" name="יתרת חוב" fill={DEBT} radius={[6, 6, 0, 0]} maxBarSize={28} />
         </BarChart>
