@@ -283,3 +283,16 @@ export async function softDeleteDocument(id: string): Promise<boolean> {
   );
   return row !== null;
 }
+
+/**
+ * Hard-delete: permanently remove the row. Used by entity-scoped attachments
+ * (e.g. debtor documents) where the caller also removes the storage object, so
+ * nothing should linger. Returns true if a row was deleted.
+ */
+export async function hardDeleteDocument(id: string): Promise<boolean> {
+  const row = await queryOne<{ id: string }>(
+    `delete from public.documents where id = $1 returning id`,
+    [id],
+  );
+  return row !== null;
+}
