@@ -30,6 +30,7 @@ import {
 } from '@/lib/debtor-events';
 import type { DebtorHistoryEntry, HistorySource } from '@/lib/db/debtorHistory';
 import type { ChatMessage, ChatStatus } from '@/types/whatsapp';
+import { fileMeta, formatBytes } from '@/components/documents/helpers';
 
 interface Props {
   debtorId: string;
@@ -352,6 +353,15 @@ function WhatsAppTimelineRow({ msg, tenantName }: { msg: ChatMessage; tenantName
   const inbound = msg.direction === 'received';
   const isFile = msg.message_type === 'image' || msg.message_type === 'document';
   const fileUrl = msg.media_url || msg.content || '';
+  // Outbound attachments carry the original (Hebrew) name + mime → labelled row
+  // with an icon-by-type; inbound files keep the generic label.
+  const attMeta = msg.attachment_mime ? fileMeta(msg.attachment_mime) : null;
+  const FileGlyph = attMeta ? attMeta.Icon : (msg.message_type === 'image' ? ImageIcon : Paperclip);
+  const fileLabel = msg.attachment_name || (msg.message_type === 'image' ? 'תמונה' : 'קובץ מצורף');
+  // A typed caption sent alongside an outbound file (content = caption, not the URL).
+  const fileCaption = !inbound && msg.attachment_name && msg.content && msg.content !== fileUrl
+    ? msg.content
+    : '';
   const body = msg.content ?? '';
   const longText = !isFile && body.length > WA_EXPAND_THRESHOLD;
 
@@ -381,23 +391,31 @@ function WhatsAppTimelineRow({ msg, tenantName }: { msg: ChatMessage; tenantName
 
         <div className="mt-1 text-sm text-slate-700">
           {isFile ? (
-            fileUrl ? (
-              <a
-                href={fileUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 font-medium text-emerald-700 hover:underline"
-              >
-                {msg.message_type === 'image' ? <ImageIcon className="h-4 w-4" /> : <Paperclip className="h-4 w-4" />}
-                {msg.message_type === 'image' ? 'תמונה' : 'קובץ מצורף'}
-                <ExternalLink className="h-3 w-3 opacity-70" />
-              </a>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 text-slate-500">
-                <Paperclip className="h-4 w-4" />
-                {msg.message_type === 'image' ? 'תמונה' : 'קובץ מצורף'}
-              </span>
-            )
+            <>
+              {fileUrl ? (
+                <a
+                  href={fileUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex max-w-full items-center gap-1.5 font-medium text-emerald-700 hover:underline"
+                >
+                  <FileGlyph className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{fileLabel}</span>
+                  {msg.attachment_size ? (
+                    <span className="shrink-0 text-xs tabular-nums text-slate-400">· {formatBytes(msg.attachment_size)}</span>
+                  ) : null}
+                  <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />
+                </a>
+              ) : (
+                <span className="inline-flex max-w-full items-center gap-1.5 text-slate-500">
+                  <FileGlyph className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{fileLabel}</span>
+                </span>
+              )}
+              {fileCaption && (
+                <p className="mt-1 whitespace-pre-wrap break-words text-slate-700">{fileCaption}</p>
+              )}
+            </>
           ) : body ? (
             <p className={cn('whitespace-pre-wrap break-words', !expanded && longText && 'line-clamp-3')}>
               {body}

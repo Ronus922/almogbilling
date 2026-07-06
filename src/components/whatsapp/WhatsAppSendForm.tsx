@@ -6,6 +6,7 @@ import {
 import { toast } from 'sonner';
 import {
   Send, Loader2, Home, Phone, Wallet, User as UserIcon, AlertTriangle,
+  Paperclip, X,
 } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -23,6 +24,8 @@ import { parsePhoneCandidates, cleanPhoneField, type PhoneCandidate } from '@/li
 import {
   interpolateTemplate, formatDebt, TEMPLATE_PLACEHOLDERS,
 } from '@/lib/whatsapp-template';
+import { validateAttachment } from '@/lib/whatsapp-attachment';
+import { formatBytes } from '@/components/documents/helpers';
 import type { WhatsAppTemplate } from '@/types/whatsapp';
 
 export interface WhatsAppRecipient {
@@ -73,7 +76,9 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
     const [content, setContent] = useState('');
     const [sending, setSending] = useState(false);
     const [confirmClose, setConfirmClose] = useState(false);
+    const [file, setFile] = useState<File | null>(null);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
 
     // Clean fields hold one local number each; the label comes from the field's
     // semantics (owner / tenant), not the string. Fall back to candidate parsing
@@ -109,8 +114,9 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
       [content, recipient],
     );
 
-    const isDirty = content.trim().length > 0;
-    const canSend = isDirty && !sending && selectedPhone !== null;
+    // A file OR text makes the form sendable (a file may go out with no caption).
+    const isDirty = content.trim().length > 0 || file !== null;
+    const canSend = (content.trim().length > 0 || file !== null) && !sending && selectedPhone !== null;
 
     function requestClose() {
       if (sending) return;
@@ -152,21 +158,52 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
       });
     }
 
+    // Client-side gate mirroring the server (@/lib/whatsapp-attachment) — a fast
+    // Hebrew error before any upload. The server re-validates authoritatively.
+    function pickFile(f: File | null) {
+      if (!f) return;
+      const err = validateAttachment({ name: f.name, size: f.size });
+      if (err) {
+        toast.error(err);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      }
+      setFile(f);
+    }
+
+    function removeFile() {
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+
     async function handleSend() {
       if (!canSend || !selectedPhone) return;
       setSending(true);
       try {
-        const res = await fetch('/api/whatsapp/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({
-            debtor_id: recipient.id,
-            message: content.trim(),
-            template_id: templateId === FREE_TEXT ? null : templateId,
-            phone: selectedPhone,
-          }),
-        });
+        const tplId = templateId === FREE_TEXT ? null : templateId;
+        let res: Response;
+        if (file) {
+          // Multipart when a file is attached; the text rides along as the caption.
+          const fd = new FormData();
+          fd.append('file', file);
+          fd.append('debtor_id', recipient.id);
+          fd.append('message', content.trim());
+          if (tplId) fd.append('template_id', tplId);
+          fd.append('phone', selectedPhone);
+          res = await fetch('/api/whatsapp/send', { method: 'POST', credentials: 'include', body: fd });
+        } else {
+          res = await fetch('/api/whatsapp/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              debtor_id: recipient.id,
+              message: content.trim(),
+              template_id: tplId,
+              phone: selectedPhone,
+            }),
+          });
+        }
         const data = (await res.json().catch(() => ({}))) as { error?: string; warning?: string };
         if (!res.ok) {
           // Real failure — keep the form open so the user can retry / edit.
@@ -308,15 +345,59 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
               disabled={sending}
               dir="rtl"
             />
+
+            {/* Attachment — one file (jpg/png/webp/pdf/docx/xlsx, ≤10MB). */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              hidden
+              accept=".jpg,.jpeg,.png,.webp,.pdf,.docx,.xlsx"
+              disabled={sending}
+              onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+            />
+            {file ? (
+              <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-2">
+                <Paperclip className="h-4 w-4 shrink-0 text-emerald-600" />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">{file.name}</span>
+                <span className="shrink-0 text-xs tabular-nums text-slate-500">{formatBytes(file.size)}</span>
+                <button
+                  type="button"
+                  onClick={removeFile}
+                  disabled={sending}
+                  aria-label="הסר קובץ"
+                  className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-slate-400 transition-colors hover:bg-white hover:text-slate-700 disabled:opacity-50"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={sending}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
+              >
+                <Paperclip className="h-4 w-4" />
+                צרף קובץ
+              </button>
+            )}
           </div>
 
           {/* Live preview */}
           <div className="space-y-2">
             <Label className="text-base font-medium text-muted-foreground">תצוגה מקדימה</Label>
             <div className="min-h-[88px] whitespace-pre-wrap rounded-xl border border-emerald-100 bg-emerald-50/40 p-4 text-sm leading-relaxed text-slate-800">
-              {preview.trim().length > 0
-                ? preview
-                : <span className="text-slate-400">ההודעה תוצג כאן לאחר עריכה...</span>}
+              {preview.trim().length > 0 ? (
+                preview
+              ) : !file ? (
+                <span className="text-slate-400">ההודעה תוצג כאן לאחר עריכה...</span>
+              ) : null}
+              {file && (
+                <div className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                  <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{file.name}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
