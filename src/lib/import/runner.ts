@@ -9,6 +9,7 @@ import {
   type ImportMode,
 } from '@/lib/db/importRuns';
 import { upsertMonthlyDebtSnapshot } from '@/lib/db/debtors';
+import { accrueDebtorCollection, pruneDebtorSnapshotsNotIn } from '@/lib/db/collectionTracking';
 
 const BATCH_SIZE = 50;
 const BATCH_THROTTLE_MS = 50;
@@ -70,6 +71,17 @@ export async function importParsedRows(
           await updateDebtorMerge(r);
           updated++;
         }
+        // Accrue this debtor's collection (drop vs its last snapshot) + advance
+        // the snapshot — atomic + idempotent (see accrueDebtorCollection).
+        // Best-effort: a hiccup must never fail the import; the snapshot only
+        // advances when the accrual succeeds, so a skipped row is simply measured
+        // on the next import — no double count, no loss.
+        try {
+          await accrueDebtorCollection(r.apartment_number, r.total_debt);
+        } catch (accErr) {
+          console.error('[import:accrue]', runId, r.apartment_number,
+            accErr instanceof Error ? accErr.message : String(accErr));
+        }
       }
       await bumpRunProgress(runId, { processed: batch.length, updated, created });
       if (i + BATCH_SIZE < rows.length) {
@@ -77,8 +89,19 @@ export async function importParsedRows(
       }
     }
 
+    const importedApts = rows.map((r) => r.apartment_number);
     if (mode === 'merge') {
-      await zeroOutAptsNotInImport(rows.map((r) => r.apartment_number));
+      await zeroOutAptsNotInImport(importedApts);
+    }
+
+    // Drop snapshots for debtors absent from this import (cleared in merge,
+    // removed in replace) so a clearing/removal is never counted as collection
+    // and no orphan snapshot lingers. Best-effort — never fails the import.
+    try {
+      await pruneDebtorSnapshotsNotIn(importedApts);
+    } catch (pruneErr) {
+      console.error('[import:prune-snapshots]', runId,
+        pruneErr instanceof Error ? pruneErr.message : String(pruneErr));
     }
 
     await finishRunSuccess(runId);
