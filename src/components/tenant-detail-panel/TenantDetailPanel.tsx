@@ -25,7 +25,6 @@ import { LegalManagementCard } from './LegalManagementCard';
 import { CommentsSection } from './CommentsSection';
 import { CompletedActionsCard } from './CompletedActionsCard';
 import { HistoryTimeline } from './HistoryTimeline';
-import { WhatsAppHistorySection } from './WhatsAppHistorySection';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { PanelTabs, type PanelTabKey } from './PanelTabs';
@@ -406,6 +405,8 @@ export function TenantDetailPanel({ open, debtorId, canEdit, canChangeStatus, ca
               <HistoryTimeline
                 debtorId={tenant.id}
                 canEdit={canEdit}
+                tenantName={tenant.owner_name ?? tenant.tenant_name ?? null}
+                reloadKey={waHistoryKey}
                 onLogged={() => { setHasMutated(true); router.refresh(); }}
               />
             ) : (
@@ -457,8 +458,6 @@ export function TenantDetailPanel({ open, debtorId, canEdit, canChangeStatus, ca
                   canEdit={canEdit}
                   onAddComment={handleAddComment}
                 />
-
-                <WhatsAppHistorySection debtorId={tenant.id} reloadKey={waHistoryKey} />
               </div>
             )}
           </div>
