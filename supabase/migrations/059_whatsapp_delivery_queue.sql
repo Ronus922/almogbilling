@@ -1,0 +1,167 @@
+-- 059 — WhatsApp durable delivery queue (campaigns + per-recipient items)
+--
+-- Replaces the fire-and-forget in-process broadcast runner
+-- (src/lib/whatsapp-broadcast.ts) with a DB-backed queue drained by an external
+-- worker, so: a deploy/restart can never leave a campaign permanently 'running';
+-- a re-run/retry/deploy never duplicates a send; counters reflect DB truth; and
+-- every send shares one durable rate limit.
+--
+-- NOT YET WIRED TO PRODUCTION — created on the ops branch for review. Existing
+-- whatsapp_broadcasts / chat_messages are untouched. Apply + cut over only after
+-- approval (see DECISIONS.md → "WhatsApp durable delivery engine (Phase 2)").
+--
+-- Loosely coupled ON PURPOSE: no hard FKs to users/debtors (identity kept as a
+-- uuid + a message snapshot), so the queue is testable in isolation and a
+-- deleted debtor never orphans an in-flight send. The only FK is within the
+-- queue (recipient → campaign).
+
+-- ── Campaigns ───────────────────────────────────────────────────────────────
+create table if not exists public.wa_campaigns (
+  id                uuid primary key default gen_random_uuid(),
+  type              text not null default 'broadcast' check (type in ('broadcast')),
+  status            text not null default 'draft'
+                      check (status in ('draft','queued','running','paused',
+                                        'completed','completed_with_errors',
+                                        'cancelled','failed')),
+  name              text not null,
+  body              text not null,                       -- template/message snapshot
+  template_name     text,                                -- chosen template's name snapshot (null = free text); survives template edit/delete
+  audience          jsonb not null default '{}'::jsonb,
+  instance_id       uuid,                                -- sending Green API instance
+  created_by        uuid,
+  -- Counters are DERIVED from recipient rows (see reconcile_wa_campaign) and kept
+  -- for cheap reads; `status` — not the counters — is the state source of truth.
+  total_count       integer not null default 0,
+  pending_count     integer not null default 0,
+  processing_count  integer not null default 0,
+  sent_count        integer not null default 0,
+  failed_count      integer not null default 0,
+  skipped_count     integer not null default 0,
+  cancelled_count   integer not null default 0,
+  rate_per_min      integer not null default 12 check (rate_per_min between 1 and 120),
+  dry_run           boolean not null default false,      -- mock provider (no real send)
+  -- Idempotent create: a double-POST with the same client_token returns the same
+  -- campaign instead of creating a duplicate.
+  client_token      text unique,
+  scheduled_at      timestamptz,
+  started_at        timestamptz,
+  completed_at      timestamptz,
+  paused_at         timestamptz,
+  cancelled_at      timestamptz,
+  last_error        text,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+create index if not exists wa_campaigns_status_idx on public.wa_campaigns (status, created_at desc);
+
+-- ── Recipients (delivery items) ─────────────────────────────────────────────
+create table if not exists public.wa_campaign_recipients (
+  id                    uuid primary key default gen_random_uuid(),
+  campaign_id           uuid not null references public.wa_campaigns(id) on delete cascade,
+  debtor_id             uuid,
+  phone_intl            text not null,                   -- '9725XXXXXXXX'
+  chat_id               text not null,                   -- '9725XXXXXXXX@c.us'
+  payload               text not null,                   -- interpolated message snapshot
+  status                text not null default 'pending'
+                          check (status in ('pending','processing','sent',
+                                            'failed','skipped','cancelled')),
+  attempt_count         integer not null default 0,
+  max_attempts          integer not null default 5,
+  next_attempt_at       timestamptz not null default now(),
+  -- lease / claim
+  worker_id             text,
+  processing_started_at timestamptz,
+  lease_expires_at      timestamptz,
+  send_attempted_at     timestamptz,                     -- set right before the provider call
+  -- outcome
+  sent_at               timestamptz,
+  failed_at             timestamptz,
+  -- Delivery lifecycle of an already-sent message (Green API outgoingMessageStatus
+  -- webhook, matched by provider_message_id). NOT a separate recipient state — the
+  -- row stays 'sent'; these only enrich the log, so counters never double-count.
+  delivered_at          timestamptz,
+  read_at               timestamptz,
+  provider_message_id   text,
+  last_error            text,
+  error_class           text,   -- retryable|rate_limited|invalid_phone|invalid_payload|auth|permanent|indeterminate
+  -- Hard duplicate-send protection: one logical outbound message per
+  -- (campaign, recipient). Deterministic, so any replay resolves to the SAME row.
+  idempotency_key       text not null,
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now()
+);
+create unique index if not exists wa_recipients_idem_uidx
+  on public.wa_campaign_recipients (idempotency_key);
+create index if not exists wa_recipients_claimable_idx
+  on public.wa_campaign_recipients (campaign_id, status, next_attempt_at);
+create index if not exists wa_recipients_lease_idx
+  on public.wa_campaign_recipients (status, lease_expires_at);
+-- Webhook delivered/read lookups by provider message id.
+create index if not exists wa_recipients_provider_msg_idx
+  on public.wa_campaign_recipients (provider_message_id);
+
+-- ── Durable shared rate limiter ─────────────────────────────────────────────
+-- One row per send. The limiter counts rows in the trailing window per bucket
+-- (the sending instance), so pacing survives worker restarts and is correct even
+-- if more than one worker runs (all coordinate through these rows).
+create table if not exists public.wa_send_log (
+  id       bigserial primary key,
+  bucket   text not null,
+  sent_at  timestamptz not null default now()
+);
+create index if not exists wa_send_log_bucket_idx on public.wa_send_log (bucket, sent_at desc);
+
+-- ── Worker heartbeat ────────────────────────────────────────────────────────
+-- The worker upserts here every loop; the health check reads last_beat_at to know
+-- the worker is alive. One row per worker id (host:pid).
+create table if not exists public.wa_worker_heartbeat (
+  worker_id     text primary key,
+  last_beat_at  timestamptz not null default now()
+);
+
+-- ── updated_at touch ────────────────────────────────────────────────────────
+create or replace function public.wa_touch_updated_at() returns trigger as $$
+begin new.updated_at = now(); return new; end $$ language plpgsql;
+
+drop trigger if exists wa_campaigns_touch on public.wa_campaigns;
+create trigger wa_campaigns_touch before update on public.wa_campaigns
+  for each row execute function public.wa_touch_updated_at();
+drop trigger if exists wa_recipients_touch on public.wa_campaign_recipients;
+create trigger wa_recipients_touch before update on public.wa_campaign_recipients
+  for each row execute function public.wa_touch_updated_at();
+
+-- ── Counter + status reconciliation ─────────────────────────────────────────
+-- Recompute a campaign's counters and terminal status FROM the recipient rows
+-- (DB truth). Idempotent; safe to run any time (end-of-drain, health cron, after
+-- a crash). Never resurrects a cancelled/draft/paused campaign, so a dead process
+-- can't strand a campaign in 'running' forever — the reconciler rolls it up.
+create or replace function public.reconcile_wa_campaign(p_campaign uuid)
+returns void as $$
+declare c record;
+begin
+  select
+    count(*)                                    as total,
+    count(*) filter (where status='pending')    as pending,
+    count(*) filter (where status='processing') as processing,
+    count(*) filter (where status='sent')       as sent,
+    count(*) filter (where status='failed')     as failed,
+    count(*) filter (where status='skipped')    as skipped,
+    count(*) filter (where status='cancelled')  as cancelled
+  into c
+  from public.wa_campaign_recipients where campaign_id = p_campaign;
+
+  update public.wa_campaigns w set
+    total_count=c.total, pending_count=c.pending, processing_count=c.processing,
+    sent_count=c.sent, failed_count=c.failed, skipped_count=c.skipped,
+    cancelled_count=c.cancelled,
+    status = case
+      when w.status in ('cancelled','draft','paused') then w.status
+      when (c.pending + c.processing) = 0 and c.total > 0
+        then case when c.failed > 0 then 'completed_with_errors' else 'completed' end
+      else w.status end,
+    completed_at = case
+      when w.status not in ('cancelled','draft','paused')
+       and (c.pending + c.processing) = 0 and c.total > 0 and w.completed_at is null
+        then now() else w.completed_at end
+  where w.id = p_campaign;
+end $$ language plpgsql;

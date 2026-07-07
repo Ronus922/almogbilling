@@ -9,6 +9,8 @@ import {
 } from '@/lib/whatsapp';
 import { processIncomingMessage, processOutgoingMessage } from '@/lib/whatsapp-inbound';
 import { updateMessageStatusByExternalId } from '@/lib/db/chatMessages';
+import { getDbPool } from '@/lib/db';
+import { markRecipientDelivery } from '@/lib/wa-queue/campaigns';
 import { emitWa } from '@/lib/whatsapp-events';
 import {
   getInstanceByGreenId,
@@ -93,6 +95,11 @@ export async function POST(req: NextRequest) {
     const status = parseOutgoingStatus(payload);
     if (status) {
       const { matched, advanced } = await updateMessageStatusByExternalId(status.externalMessageId, status.status);
+      // Durable broadcasts don't write chat_messages rows — mirror delivered/read
+      // onto the campaign recipient instead (matched by provider_message_id).
+      if (status.status === 'delivered' || status.status === 'read') {
+        await markRecipientDelivery(getDbPool(), status.externalMessageId, status.status);
+      }
       if (advanced) {
         // Push the ✓ update to open inboxes (the bubble matches by external id).
         emitWa({

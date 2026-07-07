@@ -1,0 +1,29 @@
+# WhatsApp delivery worker — systemd unit TEMPLATE (matches billing's process
+# model; billing runs under systemd, NOT PM2). NOT INSTALLED. Install only after
+# the Phase 2 cutover is approved:
+#   sudo cp deploy/wa-queue-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now wa-queue-worker
+#
+# Graceful shutdown: the worker traps SIGTERM, stops claiming, finishes the
+# in-flight item, then exits — so `systemctl restart` (and deploys) never strand
+# or duplicate work.
+[Unit]
+Description=ALMOG CRM — WhatsApp durable delivery worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/var/www/billing
+EnvironmentFile=/etc/billing/billing.env
+# Absolute node + local tsx — no PATH/npx dependence under systemd's minimal env.
+ExecStart=/usr/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/wa-queue-worker.ts
+Restart=always
+RestartSec=5
+# Give the graceful-shutdown window room before SIGKILL.
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

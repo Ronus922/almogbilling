@@ -17,6 +17,12 @@ function getPool(): Pool {
   return g._pgPool;
 }
 
+/** The shared pg Pool — for callers that need a client/transaction directly
+ *  (e.g. the WhatsApp delivery engine's atomic claim). Prefer query/queryOne. */
+export function getDbPool(): Pool {
+  return getPool();
+}
+
 export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params?: unknown[],

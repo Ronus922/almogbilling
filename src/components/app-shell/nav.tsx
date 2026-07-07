@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import {
   Building2, LayoutDashboard, LayoutGrid, Users, Truck, CheckSquare, AlertTriangle,
-  Calendar, FileText, MessageCircle, MessagesSquare, Bell, Sliders,
+  Calendar, FileText, MessageCircle, MessagesSquare, Bell, Sliders, Megaphone,
   MapPin, UserCog, Settings as SettingsIcon, type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -48,6 +48,7 @@ export const SECTIONS: MenuSection[] = [
       { label: 'ניהול חיובים',       icon: LayoutGrid, href: '/dashboard', module: 'dashboard' },
       { label: 'רשימת דיירים',       icon: Users, href: '/contacts', module: 'contacts' },
       { label: 'צ׳אט וואטסאפ',       icon: MessageCircle, href: '/messages', module: 'whatsapp_chat' },
+      { label: 'תפוצות וואטסאפ',     icon: Megaphone, href: '/whatsapp/broadcasts', module: 'whatsapp_chat' },
       { label: 'צ׳אט פנימי',         icon: MessagesSquare, href: '/chat', module: 'internal_chat' },
       { label: 'ספקים',              icon: Truck, href: '/suppliers', module: 'suppliers' },
       { label: 'מסמכים',             icon: FileText, href: '/documents', module: 'documents' },
