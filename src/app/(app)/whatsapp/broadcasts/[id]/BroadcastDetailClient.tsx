@@ -32,7 +32,10 @@ const LOG_TABS: { value: LogFilter; label: string }[] = [
   { value: 'cancelled', label: 'בוטלו' },
 ];
 
-export function BroadcastDetailClient({ id, canEdit }: { id: string; canEdit: boolean }) {
+// Rendered both as the /whatsapp/broadcasts/[id] route AND embedded inside the
+// broadcast window (delivery-log view). `onBack`, when provided, returns to the
+// window's history tab / active card instead of routing to the history page.
+export function BroadcastDetailClient({ id, canEdit, onBack }: { id: string; canEdit: boolean; onBack?: () => void }) {
   const fetcher = useCallback(async (): Promise<CampaignDetail> => {
     const r = await fetch(`/api/whatsapp/campaigns/${id}`, { credentials: 'include' });
     if (r.status === 404) throw new Error('התפוצה לא נמצאה');
@@ -52,7 +55,13 @@ export function BroadcastDetailClient({ id, canEdit }: { id: string; canEdit: bo
     return (
       <div className="rounded-lg border border-red-200 bg-red-50 p-8 text-center text-sm text-red-700">
         {error}
-        <div className="mt-3"><Button variant="outline" size="sm" render={<Link href="/whatsapp/broadcasts" />}>חזרה להיסטוריה</Button></div>
+        <div className="mt-3">
+          {onBack ? (
+            <Button variant="outline" size="sm" onClick={onBack}>חזרה להיסטוריה</Button>
+          ) : (
+            <Button variant="outline" size="sm" render={<Link href="/whatsapp/broadcasts" />}>חזרה להיסטוריה</Button>
+          )}
+        </div>
       </div>
     );
   }
@@ -63,9 +72,15 @@ export function BroadcastDetailClient({ id, canEdit }: { id: string; canEdit: bo
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="flex items-center gap-3">
-          <Button type="button" variant="ghost" size="icon" render={<Link href="/whatsapp/broadcasts" />} aria-label="חזרה">
-            <ArrowRight className="h-5 w-5" />
-          </Button>
+          {onBack ? (
+            <Button type="button" variant="ghost" size="icon" onClick={onBack} aria-label="חזרה">
+              <ArrowRight className="h-5 w-5" />
+            </Button>
+          ) : (
+            <Button type="button" variant="ghost" size="icon" render={<Link href="/whatsapp/broadcasts" />} aria-label="חזרה">
+              <ArrowRight className="h-5 w-5" />
+            </Button>
+          )}
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-600"><Megaphone className="h-5 w-5" /></span>
           <div>
             <div className="flex items-center gap-2">
@@ -178,7 +193,7 @@ function RecipientLog({ campaignId, pollKey }: { campaignId: string; pollKey: st
       ) : rows.length === 0 ? (
         <div className="rounded-lg border bg-card p-10 text-center text-sm text-muted-foreground">אין נמענים בקטגוריה זו.</div>
       ) : (
-        <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+        <div className="rounded-lg border border-slate-200 bg-white overflow-x-auto">
           <Table>
             <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
               <TableRow className="bg-slate-50 hover:bg-slate-50">

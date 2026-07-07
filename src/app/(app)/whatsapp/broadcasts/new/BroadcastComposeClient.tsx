@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  Megaphone, Send, Loader2, Users, Home, UserCheck, ArrowRight, Eye, CheckCircle2,
+  Megaphone, Send, Loader2, Users, Home, UserCheck, ArrowRight, Eye, CheckCircle2, OctagonX,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -22,7 +22,7 @@ import { CampaignStatusBadge } from '../_components/StatusBadge';
 import { StopBroadcastDialog } from '../_components/StopBroadcastDialog';
 import { useStopBroadcast } from '../_lib/useStopBroadcast';
 import { usePoll } from '../_lib/usePoll';
-import { isTerminal, progressPct, processed } from '../_lib/status';
+import { isTerminal, isCancellable, progressPct, processed } from '../_lib/status';
 
 const FREE_TEXT = '__free__';
 const AUDIENCES: { value: 'all' | 'owners' | 'tenants'; label: string; icon: typeof Users }[] = [
@@ -37,7 +37,19 @@ function newToken(): string {
   return (globalThis.crypto?.randomUUID?.() ?? `t-${Date.now()}-${Math.round(Math.random() * 1e9)}`);
 }
 
-export function BroadcastComposeClient() {
+// Rendered both as the /new route page AND embedded inside the broadcast window
+// (Sheet) opened from the Messages screen. `embedded` drops the page header (the
+// window supplies its own); `onOpenDetail`/`onCancel` replace the route <Link>s
+// with in-window navigation so the user never leaves the broadcast window.
+export function BroadcastComposeClient({
+  embedded = false,
+  onOpenDetail,
+  onCancel,
+}: {
+  embedded?: boolean;
+  onOpenDetail?: (id: string) => void;
+  onCancel?: () => void;
+} = {}) {
   const [name, setName] = useState('');
   const [audience, setAudience] = useState<'all' | 'owners' | 'tenants'>('all');
   const [templates, setTemplates] = useState<Tpl[]>([]);
@@ -127,23 +139,25 @@ export function BroadcastComposeClient() {
   }
 
   // After launch, show ONLY the active-send status for that broadcast.
-  if (launched) return <LaunchedStatus initial={launched} onReset={reset} />;
+  if (launched) return <LaunchedStatus initial={launched} onReset={reset} onOpenDetail={onOpenDetail} />;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <Button type="button" variant="ghost" size="icon" render={<Link href="/whatsapp/broadcasts" />} aria-label="חזרה להיסטוריה">
-          <ArrowRight className="h-5 w-5" />
-        </Button>
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-600">
-          <Megaphone className="h-5 w-5" />
-        </span>
-        <div>
-          <h1 className="text-2xl font-extrabold text-slate-900">תפוצה חדשה</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">שליחת הודעה לקבוצת נמענים דרך WhatsApp.</p>
+    <div className={cn('space-y-6', !embedded && 'mx-auto max-w-3xl')}>
+      {/* Header — the window supplies its own, so hide it when embedded. */}
+      {!embedded && (
+        <div className="flex items-center gap-3">
+          <Button type="button" variant="ghost" size="icon" render={<Link href="/whatsapp/broadcasts" />} aria-label="חזרה להיסטוריה">
+            <ArrowRight className="h-5 w-5" />
+          </Button>
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-600">
+            <Megaphone className="h-5 w-5" />
+          </span>
+          <div>
+            <h1 className="text-2xl font-extrabold text-slate-900">תפוצה חדשה</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">שליחת הודעה לקבוצת נמענים דרך WhatsApp.</p>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="space-y-5 rounded-xl border border-slate-200 bg-white p-5">
         {/* Name */}
@@ -209,7 +223,11 @@ export function BroadcastComposeClient() {
 
       {/* Footer actions */}
       <div className="flex items-center justify-end gap-2">
-        <Button type="button" variant="outline" render={<Link href="/whatsapp/broadcasts" />}>ביטול</Button>
+        {onCancel ? (
+          <Button type="button" variant="outline" onClick={onCancel}>ביטול</Button>
+        ) : (
+          <Button type="button" variant="outline" render={<Link href="/whatsapp/broadcasts" />}>ביטול</Button>
+        )}
         <Button type="button" onClick={handleSend} disabled={!canSend} variant="approve" className="gap-2">
           {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           {sending ? 'שולח…' : `שלח לתפוצה${count ? ` (${count})` : ''}`}
@@ -222,7 +240,7 @@ export function BroadcastComposeClient() {
 // The just-launched broadcast's live status — polls until terminal, offers stop +
 // a link to the full details. This is the ONLY place the compose screen shows send
 // status (never a historical list).
-function LaunchedStatus({ initial, onReset }: { initial: Campaign; onReset: () => void }) {
+function LaunchedStatus({ initial, onReset, onOpenDetail }: { initial: Campaign; onReset: () => void; onOpenDetail?: (id: string) => void }) {
   const fetcher = useCallback(async (): Promise<Campaign> => {
     const r = await fetch(`/api/whatsapp/campaigns/${initial.id}`, { credentials: 'include' });
     if (!r.ok) throw new Error(`טעינת הסטטוס נכשלה (HTTP ${r.status})`);
@@ -237,6 +255,7 @@ function LaunchedStatus({ initial, onReset }: { initial: Campaign; onReset: () =
   const c = data ?? initial;
   const stop = useStopBroadcast(() => void refetch());
   const done = isTerminal(c.status);
+  const cancellable = isCancellable(c.status);
 
   return (
     <div className="mx-auto max-w-2xl space-y-5">
@@ -262,17 +281,28 @@ function LaunchedStatus({ initial, onReset }: { initial: Campaign; onReset: () =
           <Stat label="בוטלו" value={c.cancelled_count} tone="text-slate-600" />
           <Stat label="סך הכול" value={c.total_count} tone="text-slate-700" />
         </div>
+        {c.status === 'cancelled' && (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+            התפוצה נעצרה — {c.sent_count} נשלחו, {c.failed_count} נכשלו, {c.cancelled_count} בוטלו לפני שליחה.
+          </p>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {!done && (
+        {cancellable && (
           <Button type="button" onClick={() => stop.request(c)} className="gap-2 bg-destructive text-white hover:bg-destructive/90">
-            עצירת התפוצה
+            <OctagonX className="h-4 w-4" /> עצירת התפוצה
           </Button>
         )}
-        <Button type="button" variant="outline" render={<Link href={`/whatsapp/broadcasts/${c.id}`} />} className="gap-2">
-          <Eye className="h-4 w-4" /> צפייה בפרטים
-        </Button>
+        {onOpenDetail ? (
+          <Button type="button" variant="outline" onClick={() => onOpenDetail(c.id)} className="gap-2">
+            <Eye className="h-4 w-4" /> צפייה בלוג
+          </Button>
+        ) : (
+          <Button type="button" variant="outline" render={<Link href={`/whatsapp/broadcasts/${c.id}`} />} className="gap-2">
+            <Eye className="h-4 w-4" /> צפייה בפרטים
+          </Button>
+        )}
         <Button type="button" variant="approve" onClick={onReset} className="gap-2">
           <Megaphone className="h-4 w-4" /> תפוצה חדשה
         </Button>

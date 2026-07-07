@@ -32,8 +32,22 @@ const STATUS_OPTIONS: CampaignStatus[] = [
   'queued', 'running', 'paused', 'completed', 'completed_with_errors', 'cancelled', 'failed',
 ];
 
-export function BroadcastsHistoryClient({ canEdit }: { canEdit: boolean }) {
+// Rendered both as the /whatsapp/broadcasts route AND embedded inside the
+// broadcast window's "היסטוריית תפוצות" tab. `embedded` drops the page header;
+// `onOpenDetail`/`onCreate` keep navigation inside the window instead of routing.
+export function BroadcastsHistoryClient({
+  canEdit,
+  embedded = false,
+  onOpenDetail,
+  onCreate,
+}: {
+  canEdit: boolean;
+  embedded?: boolean;
+  onOpenDetail?: (id: string) => void;
+  onCreate?: () => void;
+}) {
   const router = useRouter();
+  const openCreate = onCreate ?? (() => router.push('/whatsapp/broadcasts/new'));
   const [qInput, setQInput] = useState('');
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<string>(ALL);
@@ -76,23 +90,25 @@ export function BroadcastsHistoryClient({ canEdit }: { canEdit: boolean }) {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div className="flex items-center gap-3">
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-600">
-            <Megaphone className="h-5 w-5" />
-          </span>
-          <div>
-            <h1 className="text-2xl font-extrabold text-slate-900">היסטוריית תפוצות</h1>
-            <p className="mt-1 text-sm text-muted-foreground">כל תפוצות ה-WhatsApp — סטטוס, התקדמות ופרטי מסירה.</p>
+      {/* Header — hidden when embedded; the window provides header + tabs. */}
+      {!embedded && (
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-600">
+              <Megaphone className="h-5 w-5" />
+            </span>
+            <div>
+              <h1 className="text-2xl font-extrabold text-slate-900">היסטוריית תפוצות</h1>
+              <p className="mt-1 text-sm text-muted-foreground">כל תפוצות ה-WhatsApp — סטטוס, התקדמות ופרטי מסירה.</p>
+            </div>
           </div>
+          {canEdit && (
+            <Button type="button" variant="approve" onClick={openCreate} className="gap-2">
+              <Plus className="h-4 w-4" /> תפוצה חדשה
+            </Button>
+          )}
         </div>
-        {canEdit && (
-          <Button type="button" variant="approve" onClick={() => router.push('/whatsapp/broadcasts/new')} className="gap-2">
-            <Plus className="h-4 w-4" /> תפוצה חדשה
-          </Button>
-        )}
-      </div>
+      )}
 
       {/* Toolbar: search + status + date range */}
       <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 lg:flex-row lg:items-center">
@@ -130,9 +146,9 @@ export function BroadcastsHistoryClient({ canEdit }: { canEdit: boolean }) {
           {error} <button onClick={() => void refetch()} className="mx-1 font-semibold underline">נסה שוב</button>
         </div>
       ) : rows.length === 0 ? (
-        <EmptyState hasFilters={hasFilters} canEdit={canEdit} onCreate={() => router.push('/whatsapp/broadcasts/new')} />
+        <EmptyState hasFilters={hasFilters} canEdit={canEdit} onCreate={openCreate} />
       ) : (
-        <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+        <div className="rounded-lg border border-slate-200 bg-white overflow-x-auto">
           <Table>
             <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
               <TableRow className="bg-slate-50 hover:bg-slate-50">
@@ -142,7 +158,15 @@ export function BroadcastsHistoryClient({ canEdit }: { canEdit: boolean }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((c) => <Row key={c.id} c={c} canEdit={canEdit} onStop={() => stop.request(c)} />)}
+              {rows.map((c) => (
+                <Row
+                  key={c.id}
+                  c={c}
+                  canEdit={canEdit}
+                  onStop={() => stop.request(c)}
+                  onOpen={onOpenDetail ? () => onOpenDetail(c.id) : undefined}
+                />
+              ))}
             </TableBody>
           </Table>
         </div>
@@ -174,7 +198,7 @@ export function BroadcastsHistoryClient({ canEdit }: { canEdit: boolean }) {
   );
 }
 
-function Row({ c, canEdit, onStop }: { c: CampaignListItem; canEdit: boolean; onStop: () => void }) {
+function Row({ c, canEdit, onStop, onOpen }: { c: CampaignListItem; canEdit: boolean; onStop: () => void; onOpen?: () => void }) {
   const active = !isTerminal(c.status);
   const pct = progressPct(c);
   return (
@@ -206,9 +230,15 @@ function Row({ c, canEdit, onStop }: { c: CampaignListItem; canEdit: boolean; on
         <div dir="ltr" className="flex items-center justify-start gap-1">
           <Tooltip>
             <TooltipTrigger render={<span className="inline-flex" />}>
-              <Button type="button" variant="ghost" size="icon" render={<Link href={`/whatsapp/broadcasts/${c.id}`} />} aria-label="צפייה בפרטים">
-                <Eye className="h-4 w-4" />
-              </Button>
+              {onOpen ? (
+                <Button type="button" variant="ghost" size="icon" onClick={onOpen} aria-label="צפייה בפרטים">
+                  <Eye className="h-4 w-4" />
+                </Button>
+              ) : (
+                <Button type="button" variant="ghost" size="icon" render={<Link href={`/whatsapp/broadcasts/${c.id}`} />} aria-label="צפייה בפרטים">
+                  <Eye className="h-4 w-4" />
+                </Button>
+              )}
             </TooltipTrigger>
             <TooltipContent>צפייה בפרטים</TooltipContent>
           </Tooltip>
