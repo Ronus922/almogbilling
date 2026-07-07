@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { MessageCircle, Plus, Megaphone } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -16,6 +15,7 @@ import { NewConversationDialog } from './NewConversationDialog';
 import { TemplatesTab } from './TemplatesTab';
 import { LinkDebtorDialog } from './LinkDebtorDialog';
 import { LinkSupplierDialog } from './LinkSupplierDialog';
+import { BroadcastPanel } from './BroadcastPanel';
 
 // Real-time: SSE pushes updates instantly. Polling is now only a gap-filler —
 // infrequent while the stream is healthy, dense while it's down.
@@ -134,9 +134,9 @@ export function MessagesClient({
   const [thread, setThread] = useState<ThreadMessage[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [supplierLinkOpen, setSupplierLinkOpen] = useState(false);
-  const router = useRouter();
 
   const [instances, setInstances] = useState<InstanceOption[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
@@ -509,7 +509,7 @@ export function MessagesClient({
             <Button
               type="button"
               variant="approve"
-              onClick={() => router.push('/whatsapp/broadcasts')}
+              onClick={() => setBroadcastOpen(true)}
               className="gap-2 shadow-[0_8px_18px_-7px_rgba(22,163,74,0.6)] hover:bg-green-700"
             >
               <Megaphone className="h-4 w-4" /> תפוצות
@@ -574,6 +574,7 @@ export function MessagesClient({
               selectConversation(c);
             }}
           />
+          <BroadcastPanel open={broadcastOpen} onOpenChange={setBroadcastOpen} canEdit={canEdit} />
         </>
       )}
 
