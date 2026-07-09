@@ -14,7 +14,7 @@ import {
   listRemindersForEntity, createReminder, deleteRemindersForEntity,
 } from '@/lib/db/reminders';
 import { deleteNotificationsForEntity } from '@/lib/db/notifications';
-import { signedUrlForIssueImage, removeIssueImages } from '@/lib/storage/issueStorage';
+import { imageUrlForPath, removeIssueImages } from '@/lib/storage/issueStorage';
 import { coerceIssueInput, isUuid } from '@/lib/validation/issues';
 import { coerceAssignees } from '@/lib/validation/assignee';
 // Generic reminders coercion lives in the tasks validation module (it is
@@ -54,7 +54,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
     listIssueComments(id),
     Promise.all(
       issue.images.map(
-        async (path): Promise<IssueImage> => ({ path, signed_url: await signedUrlForIssueImage(path) }),
+        async (path): Promise<IssueImage> => ({ path, signed_url: imageUrlForPath(path) }),
       ),
     ),
     listRemindersForEntity('issue', id),

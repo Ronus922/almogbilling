@@ -4,7 +4,7 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getIssueImages, setIssueImages, appendIssueImage } from '@/lib/db/issues';
 import {
   uploadIssueImage,
-  signedUrlForIssueImage,
+  imageUrlForPath,
   removeIssueImages,
   isPathUnderIssue,
 } from '@/lib/storage/issueStorage';
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
       return NextResponse.json({ error: 'not_found' }, { status: 404 });
     }
 
-    const image: IssueImage = { path, signed_url: await signedUrlForIssueImage(path) };
+    const image: IssueImage = { path, signed_url: imageUrlForPath(path) };
     return NextResponse.json({ image, images: result.images }, { status: 201 });
   } catch (err) {
     // If the row update failed after a successful upload, clean up the object.

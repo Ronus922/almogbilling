@@ -1,15 +1,15 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
-import { StorageClient } from '@supabase/storage-js';
+import type { StorageClient } from '@supabase/storage-js';
+import { buildProxyUrl, getStorage, getObjectStream, uploadObject, deleteObjects } from './server';
 
 /**
- * Generic document storage on the self-hosted Supabase Storage (db.bios.co.il).
- * Mirrors supplierStorage.ts: uses StorageClient directly (not the full
- * supabase-js client) so it runs on Node without the realtime WebSocket dep.
+ * Generic document storage. All Storage access goes through ./server.ts — this
+ * module never touches the storage host or a signed URL.
  *
- * Bucket is PRIVATE: storage_path stores the object PATH (not a public URL); the
- * documents API issues short-lived signed URLs for viewing, so files stay behind
- * the documents:view permission.
+ * Bucket is PRIVATE: storage_path stores the object PATH (not a URL). Files are
+ * served only through /api/files/documents/<path>, which enforces the documents /
+ * debtor-documents permissions on every request.
  *
  * NOTE: requires a valid SUPABASE_SERVICE_ROLE_KEY (a complete JWT) for the
  * self-hosted instance. If the key is missing/malformed, uploads fail with a
@@ -18,17 +18,6 @@ import { StorageClient } from '@supabase/storage-js';
  */
 
 const BUCKET = 'documents';
-const SIGNED_URL_TTL_SEC = 60 * 60; // 1 hour
-
-function getStorage(): StorageClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error('supabase_storage_not_configured');
-  return new StorageClient(`${url.replace(/\/$/, '')}/storage/v1`, {
-    apikey: key,
-    Authorization: `Bearer ${key}`,
-  });
-}
 
 /**
  * Storage object keys must be ASCII — Supabase Storage rejects non-ASCII keys
@@ -96,62 +85,34 @@ export async function uploadDocumentFile(
   file: File,
   opts: { entityType?: string | null; entityId?: string | null; folderId?: string | null },
 ): Promise<{ path: string; sizeBytes: number; mimeType: string }> {
-  const storage = getStorage();
-  await ensureBucket(storage);
+  await ensureBucket(getStorage());
   const path = `${buildPrefix(opts)}/${randomUUID()}${extOf(file.name)}`;
   const buffer = Buffer.from(await file.arrayBuffer());
-  const { error } = await storage.from(BUCKET).upload(path, buffer, {
-    contentType: file.type || 'application/octet-stream',
-    upsert: false,
-  });
-  if (error) throw new Error(`storage_upload_failed: ${error.message}`);
+  await uploadObject(BUCKET, path, buffer, file.type || 'application/octet-stream');
   return { path, sizeBytes: buffer.byteLength, mimeType: file.type || '' };
 }
 
 /**
- * Short-lived signed URL for a stored object path (null if it cannot be signed).
- * When `downloadName` is given, the URL forces a download whose filename is that
- * name (Supabase sets Content-Disposition) — pass the readable documents.file_name
- * so the (Hebrew) display name is used on download, NOT the ASCII storage key.
+ * In-app, permission-checked URL for a stored object (relative by construction).
+ * The proxy resolves the readable (Hebrew) documents.file_name itself, so callers
+ * no longer pass a download name.
  */
-export async function signedUrlForPath(
-  path: string,
-  downloadName?: string | null,
-): Promise<string | null> {
-  try {
-    const { data, error } = await getStorage()
-      .from(BUCKET)
-      .createSignedUrl(
-        path,
-        SIGNED_URL_TTL_SEC,
-        downloadName ? { download: downloadName } : undefined,
-      );
-    if (error || !data) return null;
-    return data.signedUrl;
-  } catch {
-    return null;
-  }
+export function fileUrlForPath(path: string): string {
+  return buildProxyUrl(BUCKET, path);
 }
 
 /**
  * Downloads the raw object bytes for a stored path. Returns null if the object
  * is missing / cannot be read. Throws 'supabase_storage_not_configured' if the
  * service key is missing (so the caller can return a clear 503). Used by the
- * download proxy route, which sets Content-Type / Content-Disposition itself —
- * giving full control over the (Hebrew) filename, unlike a raw signed URL.
+ * download route, which sets Content-Type / Content-Disposition itself — giving
+ * full control over the (Hebrew) filename.
  */
 export async function downloadDocumentFile(path: string): Promise<Blob | null> {
-  const storage = getStorage(); // throws if SUPABASE_SERVICE_ROLE_KEY is missing
-  const { data, error } = await storage.from(BUCKET).download(path);
-  if (error || !data) return null;
-  return data;
+  return getObjectStream(BUCKET, path);
 }
 
 /** Removes the object from storage (best-effort; row state is authoritative). */
 export async function removeDocumentFile(path: string): Promise<void> {
-  try {
-    await getStorage().from(BUCKET).remove([path]);
-  } catch {
-    // swallow — the DB row is the source of truth; orphaned objects are harmless
-  }
+  await deleteObjects(BUCKET, [path]);
 }

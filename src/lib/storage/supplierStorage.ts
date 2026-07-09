@@ -1,15 +1,14 @@
 import 'server-only';
-import { StorageClient } from '@supabase/storage-js';
 import { buildObjectKey } from './objectKey';
+import { buildProxyUrl, uploadObject, deleteObjects } from './server';
 
 /**
- * Supplier-document storage on the self-hosted Supabase Storage (db.bios.co.il).
- * Uses StorageClient directly (not the full supabase-js client) so it runs on
- * Node 20 without the realtime WebSocket dependency.
+ * Supplier-document storage. All Storage access goes through ./server.ts — this
+ * module never touches the storage host or a signed URL.
  *
- * Bucket is PRIVATE: file_url stores the object PATH (not a public URL); the
- * documents API issues short-lived signed URLs for viewing, so documents stay
- * behind the suppliers:view permission.
+ * Bucket is PRIVATE: file_url stores the object PATH (not a URL). Files are served
+ * only through /api/files/supplier-documents/<path>, which enforces suppliers:view
+ * on every request.
  *
  * NOTE: requires a valid SUPABASE_SERVICE_ROLE_KEY (a complete JWT) for the
  * self-hosted instance. If the key is missing/malformed, uploads fail with a
@@ -17,52 +16,26 @@ import { buildObjectKey } from './objectKey';
  */
 
 const BUCKET = 'supplier-documents';
-const SIGNED_URL_TTL_SEC = 60 * 60; // 1 hour
-
-function getStorage(): StorageClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error('supabase_storage_not_configured');
-  return new StorageClient(`${url.replace(/\/$/, '')}/storage/v1`, {
-    apikey: key,
-    Authorization: `Bearer ${key}`,
-  });
-}
 
 /** Uploads a file under <supplierId>/<uuid><.ext>. Returns the storage path. */
 export async function uploadSupplierFile(
   supplierId: string,
   file: File,
 ): Promise<{ path: string; sizeBytes: number; mimeType: string }> {
-  const storage = getStorage();
   // ASCII-safe key (uuid + extension only); the Hebrew name is kept as file_name
   // in the DB for display/download. See buildObjectKey for the why.
   const path = buildObjectKey(file.name, supplierId);
   const buffer = Buffer.from(await file.arrayBuffer());
-  const { error } = await storage.from(BUCKET).upload(path, buffer, {
-    contentType: file.type || 'application/octet-stream',
-    upsert: false,
-  });
-  if (error) throw new Error(`storage_upload_failed: ${error.message}`);
+  await uploadObject(BUCKET, path, buffer, file.type || 'application/octet-stream');
   return { path, sizeBytes: buffer.byteLength, mimeType: file.type || '' };
 }
 
-/** Short-lived signed URL for a stored object path (null if it cannot be signed). */
-export async function signedUrlForPath(path: string): Promise<string | null> {
-  try {
-    const { data, error } = await getStorage().from(BUCKET).createSignedUrl(path, SIGNED_URL_TTL_SEC);
-    if (error || !data) return null;
-    return data.signedUrl;
-  } catch {
-    return null;
-  }
+/** In-app, permission-checked URL for a stored document (relative by construction). */
+export function fileUrlForPath(path: string): string {
+  return buildProxyUrl(BUCKET, path);
 }
 
 /** Removes the object from storage (best-effort; row deletion is authoritative). */
 export async function removeSupplierFile(path: string): Promise<void> {
-  try {
-    await getStorage().from(BUCKET).remove([path]);
-  } catch {
-    // swallow — the DB row delete is the source of truth; orphaned objects are harmless
-  }
+  await deleteObjects(BUCKET, [path]);
 }

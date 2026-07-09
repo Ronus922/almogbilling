@@ -3,7 +3,7 @@ import { requirePermission, requireAnyPermission, type Actor } from '@/lib/auth/
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorApartmentNumber } from '@/lib/db/debtors';
 import { listDocuments, insertDocument } from '@/lib/db/documents';
-import { uploadDocumentFile, signedUrlForPath } from '@/lib/storage/documentStorage';
+import { uploadDocumentFile, fileUrlForPath } from '@/lib/storage/documentStorage';
 import { MAX_FILE_NAME_LEN } from '@/lib/constants/documents';
 import { writeAudit } from '@/lib/db/audit';
 import type { DocumentWithSignedUrl } from '@/lib/types/documents';
@@ -46,7 +46,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   const withUrls: DocumentWithSignedUrl[] = await Promise.all(
     documents.map(async (d) => ({
       ...d,
-      signed_url: await signedUrlForPath(d.storage_path, d.file_name),
+      signed_url: fileUrlForPath(d.storage_path),
     })),
   );
   return NextResponse.json({ documents: withUrls });
@@ -125,7 +125,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
       metadata: { debtor_id: id, storage_path: upload.path, size_bytes: upload.sizeBytes },
     });
 
-    const signed_url = await signedUrlForPath(document.storage_path, document.file_name);
+    const signed_url = fileUrlForPath(document.storage_path);
     return NextResponse.json({ document: { ...document, signed_url } }, { status: 201 });
   } catch (err) {
     console.error('[POST /api/debtors/:id/documents]', err);

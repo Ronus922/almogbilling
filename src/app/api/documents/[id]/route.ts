@@ -7,7 +7,7 @@ import {
   softDeleteDocument,
   folderExistsActive,
 } from '@/lib/db/documents';
-import { signedUrlForPath } from '@/lib/storage/documentStorage';
+import { fileUrlForPath } from '@/lib/storage/documentStorage';
 import { coerceDocumentInput, UUID_RE } from '@/lib/validation/documents';
 import { writeAudit } from '@/lib/db/audit';
 
@@ -33,7 +33,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   const document = await getDocumentById(id);
   if (!document) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  const signed_url = await signedUrlForPath(document.storage_path, document.file_name);
+  const signed_url = fileUrlForPath(document.storage_path);
   return NextResponse.json({ document: { ...document, signed_url } });
 }
 

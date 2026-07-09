@@ -6,7 +6,7 @@ import {
   deleteSupplierDocumentRow,
   renameSupplierDocument,
 } from '@/lib/db/suppliers';
-import { removeSupplierFile, signedUrlForPath } from '@/lib/storage/supplierStorage';
+import { removeSupplierFile, fileUrlForPath } from '@/lib/storage/supplierStorage';
 import { writeAudit } from '@/lib/db/audit';
 
 export const runtime = 'nodejs';
@@ -31,7 +31,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 });
   }
 
-  const signed_url = await signedUrlForPath(doc.file_url);
+  const signed_url = fileUrlForPath(doc.file_url);
   if (!signed_url) {
     return NextResponse.json({ error: 'signed_url_unavailable' }, { status: 502 });
   }
@@ -83,7 +83,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
         metadata: { document_id: docId, from: doc.file_name, to: updated.file_name },
       });
     }
-    const signed_url = await signedUrlForPath(updated.file_url);
+    const signed_url = fileUrlForPath(updated.file_url);
     return NextResponse.json({ document: { ...updated, signed_url } });
   } catch (err) {
     console.error('[PATCH /api/suppliers/:id/documents/:docId]', err);

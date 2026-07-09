@@ -1,69 +1,40 @@
 import 'server-only';
-import { StorageClient } from '@supabase/storage-js';
 import { buildObjectKey } from './objectKey';
+import { buildProxyUrl, uploadObject, deleteObjects } from './server';
 
 /**
- * Issue-image storage on the self-hosted Supabase Storage (db.bios.co.il).
- * Uses StorageClient directly (not the full supabase-js client) so it runs on
- * Node without the realtime WebSocket dependency — same pattern as
- * supplierStorage.ts.
+ * Issue-image storage. All Storage access goes through ./server.ts — this module
+ * never touches the storage host or a signed URL.
  *
- * Bucket is PRIVATE: issues.images stores the object PATH (not a public URL);
- * the API issues short-lived signed URLs for viewing, so images stay behind the
- * issues:view permission. No secrets are exposed in any returned path.
+ * Bucket is PRIVATE: issues.images stores the object PATH (not a URL). Images are
+ * served only through /api/files/issue-attachments/<path>, which enforces
+ * issues:view on every request.
  */
 
 const BUCKET = 'issue-attachments';
-const SIGNED_URL_TTL_SEC = 60 * 60; // 1 hour
-
-function getStorage(): StorageClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error('supabase_storage_not_configured');
-  return new StorageClient(`${url.replace(/\/$/, '')}/storage/v1`, {
-    apikey: key,
-    Authorization: `Bearer ${key}`,
-  });
-}
 
 /** Uploads a file under <issueId>/<uuid><.ext>. Returns the storage path. */
 export async function uploadIssueImage(
   issueId: string,
   file: File,
 ): Promise<{ path: string; sizeBytes: number; mimeType: string }> {
-  const storage = getStorage();
   // ASCII-safe key under the issue's prefix (the original name — Hebrew included —
   // is never placed in the key). The `${issueId}/` prefix keeps isPathUnderIssue
   // valid and the upload can never traverse outside this issue. See buildObjectKey.
   const path = buildObjectKey(file.name, issueId);
   const buffer = Buffer.from(await file.arrayBuffer());
-  const { error } = await storage.from(BUCKET).upload(path, buffer, {
-    contentType: file.type || 'application/octet-stream',
-    upsert: false,
-  });
-  if (error) throw new Error(`storage_upload_failed: ${error.message}`);
+  await uploadObject(BUCKET, path, buffer, file.type || 'application/octet-stream');
   return { path, sizeBytes: buffer.byteLength, mimeType: file.type || '' };
 }
 
-/** Short-lived signed URL for a stored object path (null if it cannot be signed). */
-export async function signedUrlForIssueImage(path: string): Promise<string | null> {
-  try {
-    const { data, error } = await getStorage().from(BUCKET).createSignedUrl(path, SIGNED_URL_TTL_SEC);
-    if (error || !data) return null;
-    return data.signedUrl;
-  } catch {
-    return null;
-  }
+/** In-app, permission-checked URL for a stored image (relative by construction). */
+export function imageUrlForPath(path: string): string {
+  return buildProxyUrl(BUCKET, path);
 }
 
 /** Removes objects from storage (best-effort; the DB row is authoritative). */
 export async function removeIssueImages(paths: string[]): Promise<void> {
-  if (paths.length === 0) return;
-  try {
-    await getStorage().from(BUCKET).remove(paths);
-  } catch {
-    // swallow — orphaned objects are harmless; the issue row is the source of truth
-  }
+  await deleteObjects(BUCKET, paths);
 }
 
 /**

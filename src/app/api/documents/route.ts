@@ -4,7 +4,7 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listDocuments, insertDocument, folderExistsActive } from '@/lib/db/documents';
 import {
   uploadDocumentFile,
-  signedUrlForPath,
+  fileUrlForPath,
 } from '@/lib/storage/documentStorage';
 import { ALLOWED_DOC_TYPES, MAX_DOC_SIZE_BYTES, MAX_FILE_NAME_LEN } from '@/lib/constants/documents';
 import { UUID_RE } from '@/lib/validation/documents';
@@ -39,11 +39,11 @@ export async function GET(req: NextRequest) {
   });
 
   // Attach a fresh signed URL per row (private bucket) — mirrors the suppliers
-  // documents endpoint. signedUrlForPath never throws (returns null on failure).
+  // documents endpoint. fileUrlForPath is a pure relative-URL builder.
   const withUrls: DocumentWithSignedUrl[] = await Promise.all(
     documents.map(async (d) => ({
       ...d,
-      signed_url: await signedUrlForPath(d.storage_path, d.file_name),
+      signed_url: fileUrlForPath(d.storage_path),
     })),
   );
 
@@ -137,7 +137,7 @@ export async function POST(req: NextRequest) {
       metadata: { storage_path: upload.path, size_bytes: upload.sizeBytes },
     });
 
-    const signed_url = await signedUrlForPath(document.storage_path, document.file_name);
+    const signed_url = fileUrlForPath(document.storage_path);
     return NextResponse.json({ document: { ...document, signed_url } }, { status: 201 });
   } catch (err) {
     const e = err as { code?: string };

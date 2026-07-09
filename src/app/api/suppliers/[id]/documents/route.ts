@@ -8,7 +8,7 @@ import {
 } from '@/lib/db/suppliers';
 import {
   uploadSupplierFile,
-  signedUrlForPath,
+  fileUrlForPath,
 } from '@/lib/storage/supplierStorage';
 import { ALLOWED_DOC_TYPES, MAX_DOC_SIZE_BYTES } from '@/lib/constants/suppliers';
 import { writeAudit } from '@/lib/db/audit';
@@ -35,7 +35,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   const documents: (SupplierDocument & { signed_url: string | null })[] = await Promise.all(
     rows.map(async (doc) => ({
       ...doc,
-      signed_url: await signedUrlForPath(doc.file_url),
+      signed_url: fileUrlForPath(doc.file_url),
     })),
   );
   return NextResponse.json({ documents });
@@ -103,7 +103,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
       entityId: id,
       metadata: { document_id: document.id, file_name: fileName },
     });
-    const signed_url = await signedUrlForPath(document.file_url);
+    const signed_url = fileUrlForPath(document.file_url);
     return NextResponse.json({ document: { ...document, signed_url } }, { status: 201 });
   } catch (err) {
     console.error('[POST /api/suppliers/:id/documents]', err);

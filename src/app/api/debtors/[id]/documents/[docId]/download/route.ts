@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requireAnyPermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDocumentById } from '@/lib/db/documents';
-import { signedUrlForPath } from '@/lib/storage/documentStorage';
+import { downloadDocumentFile, extOf } from '@/lib/storage/documentStorage';
 import { UUID_RE } from '@/lib/validation/documents';
 
 export const runtime = 'nodejs';
@@ -11,9 +11,16 @@ interface RouteCtx {
   params: Promise<{ id: string; docId: string }>;
 }
 
+/** RFC 5987: ASCII fallback + UTF-8 form so a Hebrew filename survives. */
+function contentDisposition(name: string): string {
+  const ascii = name.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_') || 'document';
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
 // GET /api/debtors/[id]/documents/[docId]/download — permission-checks, then
-// redirects to a short-lived signed URL whose Content-Disposition carries the
-// readable (Hebrew) file name, so the browser downloads it under that name.
+// STREAMS the file under its readable (Hebrew) name. It used to redirect to a
+// signed URL, which handed the caller a permission-free bearer link to the
+// storage host; the bytes now never leave the app origin.
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
   try {
     await requireAnyPermission([
@@ -34,8 +41,32 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 });
   }
 
-  const url = await signedUrlForPath(doc.storage_path, doc.file_name);
-  if (!url) return NextResponse.json({ error: 'file_unavailable' }, { status: 502 });
+  let blob: Blob | null;
+  try {
+    blob = await downloadDocumentFile(doc.storage_path);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('supabase_storage_not_configured')) {
+      console.error('[GET /api/debtors/:id/documents/:docId/download] storage not configured');
+      return NextResponse.json({ error: 'storage_not_configured' }, { status: 503 });
+    }
+    console.error('[GET /api/debtors/:id/documents/:docId/download] download failed', err);
+    return NextResponse.json({ error: 'download_failed' }, { status: 502 });
+  }
+  if (!blob) return NextResponse.json({ error: 'file_unavailable' }, { status: 502 });
 
-  return NextResponse.redirect(url);
+  // Keep the real extension even if the user renamed the document ("דוח" → "דוח.pdf").
+  const base = (doc.file_name || '').trim() || 'document';
+  const ext = extOf(doc.storage_path);
+  const filename = !ext || base.toLowerCase().endsWith(ext.toLowerCase()) ? base : `${base}${ext}`;
+
+  return new NextResponse(blob, {
+    status: 200,
+    headers: {
+      'Content-Type': doc.mime_type || 'application/octet-stream',
+      'Content-Disposition': contentDisposition(filename),
+      'Content-Length': String(blob.size),
+      'Cache-Control': 'private, no-store',
+    },
+  });
 }
