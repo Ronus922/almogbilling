@@ -42,7 +42,7 @@ export interface SendAndRecordArgs {
    *  (Green API sendFileByUrl) with the text as the caption; the file url/name/
    *  mime/size are recorded on the chat_messages row for the history. */
   attachment?: {
-    /** Public URL reachable by Green API (whatsapp-media bucket). */
+    /** App-origin public URL (/api/public/wa-media/...) reachable by Green API. */
     url: string;
     /** Original (Hebrew) file name — shown to the recipient and in history. */
     name: string;

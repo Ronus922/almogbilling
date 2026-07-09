@@ -1,5 +1,6 @@
 import 'server-only';
 import { StorageClient } from '@supabase/storage-js';
+import { appUrl } from '@/lib/config';
 
 /**
  * THE single chokepoint for Supabase Storage access.
@@ -14,13 +15,15 @@ import { StorageClient } from '@supabase/storage-js';
  * `storage/v1`, `createSignedUrl` or `getPublicUrl`. scripts/guard-no-storage-leak.sh
  * fails the build if any of those appear anywhere else under src/.
  *
- * The one sanctioned exception is publicUrlForWhatsAppMedia — see its doc comment.
+ * Two URL builders, both pointing at the app origin and never at the storage host:
+ *   buildProxyUrl        → /api/files/...          (session + permission required)
+ *   buildPublicWaMediaUrl→ /api/public/wa-media/...(unauthenticated: Green API fetches it)
  */
 
 export const PRIVATE_BUCKETS = ['supplier-documents', 'documents', 'issue-attachments'] as const;
 export type PrivateBucket = (typeof PRIVATE_BUCKETS)[number];
 
-/** The public bucket. NOT reachable through the proxy — see publicUrlForWhatsAppMedia. */
+/** The public bucket — served by /api/public/wa-media, not by /api/files. */
 export const WHATSAPP_MEDIA_BUCKET = 'whatsapp-media';
 
 export function getStorage(): StorageClient {
@@ -87,16 +90,23 @@ export async function getObjectStream(bucket: string, path: string): Promise<Blo
 }
 
 /**
- * SANCTIONED EXCEPTION — the whatsapp-media bucket is public on purpose: Green
- * API's servers fetch the file over plain HTTP with no session of ours, so an
- * authenticated proxy URL would be unreachable to them and outbound media would
- * break. This URL is handed to Green API, never rendered into our own pages.
+ * Absolute URL for an outbound WhatsApp attachment, on OUR origin.
  *
- * Consequence, accepted knowingly: the storage host is visible to Green API and
- * to the WhatsApp recipient. Closing that would need a separate unauthenticated
- * public route on the app origin.
+ * It must be absolute and unauthenticated because Green API's servers fetch it
+ * with no session of ours — that is why /api/public/wa-media exists and why this
+ * is the only builder that emits an absolute URL. It points at the app, never at
+ * the storage host. The same URL is stored in chat_messages.media_url and
+ * rendered by the inbox, which resolves it same-origin.
+ *
+ * The assertion is a safety net: if the base ever resolves to the storage host,
+ * the request dies here rather than leaking it to a WhatsApp recipient.
  */
-export function publicUrlForWhatsAppMedia(path: string): string {
-  const { data } = getStorage().from(WHATSAPP_MEDIA_BUCKET).getPublicUrl(path);
-  return data.publicUrl;
+export function buildPublicWaMediaUrl(path: string): string {
+  const base = appUrl().replace(/\/$/, '');
+  const url = `${base}/api/public/wa-media/${path.split('/').map(encodeURIComponent).join('/')}`;
+  if (url.includes('db.bios.co.il') || url.includes('/storage/v1')) {
+    console.error(`STORAGE LEAK BLOCKED: buildPublicWaMediaUrl produced ${url}`);
+    throw new Error('STORAGE LEAK BLOCKED');
+  }
+  return url;
 }

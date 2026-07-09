@@ -140,8 +140,9 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  // Upload the attachment to the public whatsapp-media bucket (reachable by Green
-  // API). On failure we DON'T send and DON'T record — a clear error only.
+  // Upload the attachment, then address it through /api/public/wa-media on our own
+  // origin (reachable by Green API; the storage host stays hidden). On failure we
+  // DON'T send and DON'T record — a clear error only.
   let attachment: SendAndRecordArgs['attachment'] = null;
   if (file) {
     try {

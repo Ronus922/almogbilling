@@ -111,7 +111,8 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  // Upload the file to the public WhatsApp media bucket.
+  // Upload the file; the returned URL is our own /api/public/wa-media address,
+  // never the storage host.
   let url: string;
   let mimeType: string;
   try {
