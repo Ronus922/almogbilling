@@ -19,7 +19,10 @@ BEGIN;
 
 -- ─────────────────────────────────────────────────────────────────────
 -- whatsapp_instances — per-employee Green API connection.
---   user_id           UNIQUE → exactly one instance per employee.
+--   user_id           UNIQUE → exactly one instance per employee. NOMINAL owner
+--                      (webhook routing / legacy association) — NOT an
+--                      authorization boundary. Access = whatsapp_chat permission;
+--                      the instance is shared. See migration 062.
 --   green_instance_id  Green API idInstance (e.g. "7107545950"); UNIQUE so the
 --                      inbound webhook can resolve instanceData.idInstance → row.
 --   green_token_enc    AES-256-GCM { iv, ct, tag } (base64) — same cipher as SMTP.

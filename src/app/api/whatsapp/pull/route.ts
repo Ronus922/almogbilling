@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { pullGreenApiMessages } from '@/lib/whatsapp-inbound';
-import { getInstanceCredsForUser, InstanceNotConfiguredError } from '@/lib/db/whatsappInstances';
+import { resolveSendCreds, InstanceNotConfiguredError } from '@/lib/db/whatsappInstances';
 import { WhatsAppError } from '@/lib/whatsapp';
 import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { WHATSAPP_PULL_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const creds = await getInstanceCredsForUser(actor.id);
+    const creds = await resolveSendCreds(actor, null);
     const result = await pullGreenApiMessages(creds, minutes);
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {

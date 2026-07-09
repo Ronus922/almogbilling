@@ -3,7 +3,7 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorContact } from '@/lib/db/debtors';
 import {
-  getInstanceCredsForUser,
+  resolveSendCreds,
   InstanceNotConfiguredError,
   type InstanceCreds,
 } from '@/lib/db/whatsappInstances';
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
 
   let creds: InstanceCreds;
   try {
-    creds = await getInstanceCredsForUser(actor.id);
+    creds = await resolveSendCreds(actor, null);
   } catch (err) {
     if (err instanceof InstanceNotConfiguredError) {
       return NextResponse.json({ error: err.message }, { status: 503 });

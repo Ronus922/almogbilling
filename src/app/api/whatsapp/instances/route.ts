@@ -79,6 +79,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
   }
 
+  // The admin picks the nominal webhook owner. It labels the row and routes
+  // inbound webhooks — it grants that employee nothing and denies nobody else.
+  // See the header of src/lib/db/whatsappInstances.ts.
   const userId = typeof body.user_id === 'string' ? body.user_id.trim() : '';
   const displayName = typeof body.display_name === 'string' ? body.display_name : '';
   const greenInstanceId = typeof body.green_instance_id === 'string' ? body.green_instance_id : '';

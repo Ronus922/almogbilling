@@ -3,7 +3,7 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDbPool } from '@/lib/db';
 import { getTemplateById } from '@/lib/db/whatsappTemplates';
-import { getInstanceCredsForUser, InstanceNotConfiguredError } from '@/lib/db/whatsappInstances';
+import { resolveSendCreds, InstanceNotConfiguredError } from '@/lib/db/whatsappInstances';
 import { resolveBroadcastRecipients } from '@/lib/whatsapp-broadcast';
 import { interpolateTemplate } from '@/lib/whatsapp-template';
 import { createCampaign, listCampaigns, startCampaign } from '@/lib/wa-queue/campaigns';
@@ -81,8 +81,9 @@ export async function POST(req: NextRequest) {
   const dryRun = body.dry_run === true;
   let instanceId: string | null = null;
   try {
-    // dry-run needs no real instance; real sends resolve the creator's instance.
-    if (!dryRun) instanceId = (await getInstanceCredsForUser(actor.id)).id;
+    // dry-run needs no real instance; real sends resolve like chat-send does
+    // (own instance, admin falls back to the first connected one).
+    if (!dryRun) instanceId = (await resolveSendCreds(actor, null)).id;
   } catch (err) {
     if (err instanceof InstanceNotConfiguredError) return NextResponse.json({ error: err.message }, { status: 503 });
     throw err;

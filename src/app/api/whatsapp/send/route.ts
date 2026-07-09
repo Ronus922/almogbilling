@@ -3,7 +3,7 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorContact } from '@/lib/db/debtors';
 import {
-  getInstanceCredsForUser,
+  resolveSendCreds,
   InstanceNotConfiguredError,
   type InstanceCreds,
 } from '@/lib/db/whatsappInstances';
@@ -129,10 +129,10 @@ export async function POST(req: NextRequest) {
     phone = candidates[0].phone;
   }
 
-  // Resolve the sender's own instance. Missing config is a real error (not a send).
+  // Resolve the shared instance. Missing config is a real error (not a send).
   let creds: InstanceCreds;
   try {
-    creds = await getInstanceCredsForUser(actor.id);
+    creds = await resolveSendCreds(actor, null);
   } catch (err) {
     if (err instanceof InstanceNotConfiguredError) {
       return NextResponse.json({ error: err.message }, { status: 503 });

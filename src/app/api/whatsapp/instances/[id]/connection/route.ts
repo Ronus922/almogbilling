@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requireActor, type Actor } from '@/lib/auth/actor';
+import { requireAdmin } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   getInstancePublicById,
@@ -27,18 +27,17 @@ const KNOWN_STATES: readonly InstanceState[] = [
   'notAuthorized', 'authorized', 'blocked', 'starting', 'yellowCard', 'sleepMode',
 ];
 
-/** The owner of the instance, or any admin, may view/operate its connection. */
-function mayManage(actor: Actor, ownerId: string): boolean {
-  return actor.role === 'admin' || actor.role === 'super_admin' || actor.id === ownerId;
-}
+// Pairing/logout is instance ADMINISTRATION, gated exactly like the rest of the
+// instances CRUD (requireAdmin). It is deliberately NOT gated on
+// whatsapp_instances.user_id — see the note on that column in
+// src/lib/db/whatsappInstances.ts; ownership is not an authorization boundary.
 
 // GET /api/whatsapp/instances/[id]/connection — poll the live state, plus a QR
 // (base64 PNG) while the instance is not yet authorized. The UI polls this every
 // ~15s (Green API's QR rotates fast) until state === 'authorized'.
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
-  let actor: Actor;
   try {
-    actor = await requireActor();
+    await requireAdmin();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -48,9 +47,6 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   const { id } = await ctx.params;
   const instance = await getInstancePublicById(id);
   if (!instance) return NextResponse.json({ error: 'החיבור לא נמצא' }, { status: 404 });
-  if (!mayManage(actor, instance.user_id)) {
-    return NextResponse.json({ error: 'אין הרשאה' }, { status: 403 });
-  }
 
   const creds = await getInstanceCredsById(id);
   if (!creds) return NextResponse.json({ error: 'החיבור לא נמצא' }, { status: 404 });
@@ -92,9 +88,8 @@ interface PostBody {
 //   logout   → disconnect the WhatsApp account (re-scan needed to reconnect).
 //   register → (re-)push the inbound webhook settings to this instance.
 export async function POST(req: NextRequest, ctx: RouteCtx) {
-  let actor: Actor;
   try {
-    actor = await requireActor();
+    await requireAdmin();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -104,9 +99,6 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
   const { id } = await ctx.params;
   const instance = await getInstancePublicById(id);
   if (!instance) return NextResponse.json({ error: 'החיבור לא נמצא' }, { status: 404 });
-  if (!mayManage(actor, instance.user_id)) {
-    return NextResponse.json({ error: 'אין הרשאה' }, { status: 403 });
-  }
 
   let body: PostBody = {};
   try {

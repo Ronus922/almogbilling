@@ -281,6 +281,8 @@ function UpsertPanel({ mode, instance, users, open, onOpenChange, onDone }: Upse
     setInlineError(null);
     if (mode === 'edit' && instance) {
       setForm({
+        // Nominal webhook owner shown in the form — not an authorization input.
+        // See the header of src/lib/db/whatsappInstances.ts.
         user_id: instance.user_id,
         display_name: instance.display_name,
         green_instance_id: instance.green_instance_id,
