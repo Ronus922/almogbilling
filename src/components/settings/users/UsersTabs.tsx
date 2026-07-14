@@ -1,12 +1,14 @@
 'use client';
 
 import {
-  Users, Crown, Shield, Briefcase, Eye, Clock, type LucideIcon,
+  Users, Crown, Shield, Briefcase, Eye, Sparkles, Wrench, Clock, type LucideIcon,
 } from 'lucide-react';
 import { roleLabel } from '@/lib/permissions/constants';
 import { cn } from '@/lib/utils';
 
-export type UsersTabKey = 'all' | 'super_admin' | 'admin' | 'manager' | 'viewer' | 'invites';
+export type UsersTabKey =
+  | 'all' | 'super_admin' | 'admin' | 'manager' | 'viewer'
+  | 'cleaner' | 'maintenance' | 'invites';
 
 export interface UsersTabCounts {
   all: number;
@@ -14,6 +16,8 @@ export interface UsersTabCounts {
   admin: number;
   manager: number;
   viewer: number;
+  cleaner: number;
+  maintenance: number;
   invites: number;
 }
 
@@ -33,6 +37,8 @@ const TABS: TabDef[] = [
   { key: 'admin',       label: roleLabel('admin'),       icon: Shield,    activeBg: 'bg-blue-600',    badgeIdle: 'bg-blue-100 text-blue-700' },
   { key: 'manager',     label: roleLabel('manager'),     icon: Briefcase, activeBg: 'bg-emerald-600', badgeIdle: 'bg-emerald-100 text-emerald-700' },
   { key: 'viewer',      label: roleLabel('viewer'),      icon: Eye,       activeBg: 'bg-slate-600',   badgeIdle: 'bg-slate-100 text-slate-600' },
+  { key: 'cleaner',     label: roleLabel('cleaner'),     icon: Sparkles,  activeBg: 'bg-sky-600',     badgeIdle: 'bg-sky-100 text-sky-700' },
+  { key: 'maintenance', label: roleLabel('maintenance'), icon: Wrench,    activeBg: 'bg-amber-600',   badgeIdle: 'bg-amber-100 text-amber-700' },
   { key: 'invites',     label: 'ממתינים',                icon: Clock,     activeBg: 'bg-amber-600',   badgeIdle: 'bg-amber-100 text-amber-700' },
 ];
 

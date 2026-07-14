@@ -17,9 +17,9 @@ import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { RoleSelector } from './RoleSelector';
 import { PermissionMatrix } from './PermissionMatrix';
 import { PasswordField, PasswordRequirements } from '@/components/auth/PasswordField';
-import { getDefaultPermissions } from '@/lib/permissions/check';
+import { getDefaultPermissions, canManageRole } from '@/lib/permissions/check';
 import { isValidPassword } from '@/lib/auth/passwordPolicy';
-import { roleLabel, isMatrixRole, type ModulePermission, type Role } from '@/lib/permissions/constants';
+import { roleLabel, isMatrixRole, ROLE_VALUES, type ModulePermission, type Role } from '@/lib/permissions/constants';
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEFAULT_ROLE: Role = 'manager';
@@ -50,11 +50,11 @@ function permsDifferFromDefaults(current: ModulePermission[], role: Role): boole
 
 export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) {
   const router = useRouter();
-  // super_admin may invite any role (incl. super_admin); admin may invite
-  // manager/viewer only. Enforced again server-side in POST /api/users.
-  const creatableRoles: Role[] = currentUserRole === 'super_admin'
-    ? ['super_admin', 'admin', 'manager', 'viewer']
-    : ['manager', 'viewer'];
+  // Mirror the server rule instead of re-listing it: super_admin may invite any
+  // role, admin may invite any non-elevated one. Derived from canManageRole() —
+  // the same predicate POST /api/users enforces — so the two can't disagree and
+  // a newly-added role shows up here automatically.
+  const creatableRoles: Role[] = ROLE_VALUES.filter((r) => canManageRole(currentUserRole, r));
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

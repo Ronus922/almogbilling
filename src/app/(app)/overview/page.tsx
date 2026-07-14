@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { LayoutDashboard, Banknote, Coins, Percent } from 'lucide-react';
 import { getCurrentActor } from '@/lib/auth/actor';
+import { homePathFor } from '@/lib/auth/home';
 import { hasPermission } from '@/lib/permissions/check';
 import { getCollectionVsDebt } from '@/lib/db/debtors';
 import { getChatUnreadSummary } from '@/lib/db/internalChat';
@@ -35,9 +36,13 @@ type SearchParams = Promise<{ period?: string; cal?: string }>;
 export default async function OverviewPage({ searchParams }: { searchParams: SearchParams }) {
   const actor = await getCurrentActor();
   if (!actor) redirect('/login');
-  // The overview is for non-viewers. A viewer holds only dashboard:view → send
-  // them to the debtors screen. (Route-level only — no per-widget gating here.)
-  if (actor.role === 'viewer') redirect('/dashboard');
+  // The overview is only for roles that actually land on it. A viewer holds just
+  // dashboard:view, a field worker just tasks+issues — both would get an overview
+  // with every widget permission-gated away, i.e. an empty page. Send them to
+  // whatever homePathFor() says is their home instead of hardcoding the list
+  // again. (Route-level only — no per-widget gating here.)
+  const home = homePathFor(actor.role);
+  if (home !== '/overview') redirect(home);
 
   const sp = await searchParams;
   const period: Period = (PERIODS as readonly string[]).includes(sp.period ?? '')

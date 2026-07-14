@@ -1,4 +1,4 @@
-export type Role = 'super_admin' | 'admin' | 'manager' | 'viewer';
+export type Role = 'super_admin' | 'admin' | 'manager' | 'viewer' | 'cleaner' | 'maintenance';
 export type Action = 'view' | 'edit';
 
 export interface ModulePermission {
@@ -14,12 +14,21 @@ export interface RoleMeta {
   level: number;
 }
 
+// `level` is presentational (ordering/hierarchy hint) — no code branches on it.
+// The field-worker roles share the lowest tier with viewer: they are narrow, not
+// senior. They differ from viewer in shape, not rank — a viewer reads the
+// debtors screen, a worker edits their own tasks/issues and nothing else.
 export const ROLES: RoleMeta[] = [
-  { value: 'super_admin', label: 'סופר אדמין', description: 'גישה מלאה לכל המערכת',                     level: 4 },
-  { value: 'admin',       label: 'אדמין',      description: 'גישה לכל המודולים פרט לניהול משתמשים',     level: 3 },
-  { value: 'manager',     label: 'מנהל',       description: 'הרשאות לפי מטריצה — ערוך מודולים תפעוליים', level: 2 },
-  { value: 'viewer',      label: 'צופה',       description: 'הרשאות לפי מטריצה — צפייה בלבד',           level: 1 },
+  { value: 'super_admin', label: 'סופר אדמין',  description: 'גישה מלאה לכל המערכת',                     level: 4 },
+  { value: 'admin',       label: 'אדמין',       description: 'גישה לכל המודולים פרט לניהול משתמשים',     level: 3 },
+  { value: 'manager',     label: 'מנהל',        description: 'הרשאות לפי מטריצה — ערוך מודולים תפעוליים', level: 2 },
+  { value: 'viewer',      label: 'צופה',        description: 'הרשאות לפי מטריצה — צפייה בלבד',           level: 1 },
+  { value: 'cleaner',     label: 'עובד ניקיון', description: 'עובד שטח — משימות ותקלות בלבד',            level: 1 },
+  { value: 'maintenance', label: 'עובד אחזקה',  description: 'עובד שטח — משימות ותקלות בלבד',            level: 1 },
 ];
+
+/** Every role value, in ROLES order. Derive from here — never re-list the union. */
+export const ROLE_VALUES: readonly Role[] = ROLES.map((r) => r.value);
 
 /**
  * Single source of truth for a role's Hebrew display label. Use everywhere a
@@ -34,6 +43,8 @@ export const ROLE_STYLES: Record<Role, { bg: string; fg: string; ring: string }>
   admin:       { bg: 'bg-blue-50',    fg: 'text-blue-700',    ring: 'ring-blue-200'    },
   manager:     { bg: 'bg-emerald-50', fg: 'text-emerald-700', ring: 'ring-emerald-200' },
   viewer:      { bg: 'bg-slate-100',  fg: 'text-slate-600',   ring: 'ring-slate-200'   },
+  cleaner:     { bg: 'bg-sky-50',     fg: 'text-sky-700',     ring: 'ring-sky-200'     },
+  maintenance: { bg: 'bg-amber-50',   fg: 'text-amber-700',   ring: 'ring-amber-200'   },
 };
 
 export interface ModuleMeta {
@@ -136,6 +147,38 @@ export const DEFAULT_VIEWER: ModulePermission[] = [
   noPerm('settings'),
 ];
 
+// Field-worker defaults (cleaner + maintenance) — tasks + issues only, view+edit.
+// `edit` is what lets a worker actually work: POST /api/tasks and every status
+// PATCH are guarded on it. (POST /api/issues needs only `view` — reporting a
+// fault is deliberately open — but starting/completing one is an edit.)
+// Everything else is off: no debtors, no contacts, no suppliers, no settings.
+//
+// ponytail: one array, two roles. The roles differ in *what gets assigned to
+// them*, not in what they may do. Split into DEFAULT_CLEANER / DEFAULT_MAINTENANCE
+// the day their permissions actually diverge — not before.
+export const DEFAULT_WORKER: ModulePermission[] = [
+  noPerm('analytics'),
+  noPerm('dashboard'),
+  noPerm('contacts'),
+  noPerm('suppliers'),
+  noPerm('whatsapp'),
+  perm('tasks',  true, true),
+  perm('issues', true, true),
+  noPerm('calendar'),
+  noPerm('documents'),
+  noPerm('whatsapp_chat'),
+  noPerm('internal_chat'),
+  noPerm('user_reminders'),
+  noPerm('import'),
+  noPerm('export'),
+  noPerm('status_management'),
+  noPerm('whatsapp_templates'),
+  noPerm('rooms_areas'),
+  noPerm('roles_management'),
+  noPerm('users_management'),
+  noPerm('settings'),
+];
+
 // ── Role classification ──────────────────────────────────────────────────────
 // Single source of truth for "where do this role's permissions come from".
 //
@@ -150,7 +193,14 @@ export const DEFAULT_VIEWER: ModulePermission[] = [
 export const ROLE_DEFAULTS: Partial<Record<Role, ModulePermission[]>> = {
   manager: DEFAULT_MANAGER,
   viewer: DEFAULT_VIEWER,
+  cleaner: DEFAULT_WORKER,
+  maintenance: DEFAULT_WORKER,
 };
+
+/** True for a field-worker role — drives the worker-first mobile view on /issues. */
+export function isWorkerRole(role: Role): boolean {
+  return role === 'cleaner' || role === 'maintenance';
+}
 
 /** True when this role's permissions are read from the user_permissions matrix. */
 export function isMatrixRole(role: Role): boolean {

@@ -1,6 +1,6 @@
 'use client';
 
-import { Crown, Shield, Briefcase, Eye, type LucideIcon } from 'lucide-react';
+import { Crown, Shield, Briefcase, Eye, Sparkles, Wrench, type LucideIcon } from 'lucide-react';
 import { ROLES, ROLE_STYLES, type Role } from '@/lib/permissions/constants';
 import { cn } from '@/lib/utils';
 
@@ -13,7 +13,7 @@ interface Props {
    * Used to scope what the current actor may assign — e.g. an admin only sees
    * manager / viewer. When omitted, all roles are shown.
    */
-  allowedRoles?: Role[];
+  allowedRoles?: readonly Role[];
 }
 
 const ROLE_ICONS: Record<Role, LucideIcon> = {
@@ -21,6 +21,8 @@ const ROLE_ICONS: Record<Role, LucideIcon> = {
   admin: Shield,
   manager: Briefcase,
   viewer: Eye,
+  cleaner: Sparkles,
+  maintenance: Wrench,
 };
 
 export function RoleSelector({ value, onChange, disabled, allowedRoles }: Props) {

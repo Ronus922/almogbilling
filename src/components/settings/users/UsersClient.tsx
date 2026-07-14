@@ -43,6 +43,8 @@ export function UsersClient({ initialUsers, initialInvites, currentUserId, curre
     admin:       initialUsers.filter((u) => u.role === 'admin').length,
     manager:     initialUsers.filter((u) => u.role === 'manager').length,
     viewer:      initialUsers.filter((u) => u.role === 'viewer').length,
+    cleaner:     initialUsers.filter((u) => u.role === 'cleaner').length,
+    maintenance: initialUsers.filter((u) => u.role === 'maintenance').length,
     invites:     initialInvites.length,
   }), [initialUsers, initialInvites]);
 

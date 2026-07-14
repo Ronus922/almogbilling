@@ -22,7 +22,7 @@ import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { RoleSelector } from './RoleSelector';
 import { PermissionMatrix } from './PermissionMatrix';
 import {
-  ROLE_STYLES, roleLabel, isMatrixRole, type ModulePermission, type Role,
+  ROLE_STYLES, roleLabel, isMatrixRole, ROLE_VALUES, type ModulePermission, type Role,
 } from '@/lib/permissions/constants';
 import { canManageRole } from '@/lib/permissions/check';
 import { validatePhone } from '@/lib/validation';
@@ -104,11 +104,9 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
   // Roles the actor may assign. admin managing manager/viewer → those two only;
   // otherwise the full list (selector is disabled anyway, but the current role
   // still highlights).
-  const editableRoles: Role[] = currentUserRole === 'super_admin'
-    ? ['super_admin', 'admin', 'manager', 'viewer']
-    : canManageTarget
-      ? ['manager', 'viewer']
-      : ['super_admin', 'admin', 'manager', 'viewer'];
+  const editableRoles: readonly Role[] = canManageTarget
+    ? ROLE_VALUES.filter((r) => canManageRole(currentUserRole, r))
+    : ROLE_VALUES;
 
   // Live phone validation — empty is allowed (the phone is optional); a non-empty
   // bad format shows an inline error and blocks save (same policy as suppliers).
