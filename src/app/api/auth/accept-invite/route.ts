@@ -7,7 +7,7 @@ import { isValidPassword } from '@/lib/auth/passwordPolicy';
 import { hashInviteToken } from '@/lib/auth/inviteTokens';
 import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { ACCEPT_INVITE_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
-import { MODULES, type ModulePermission, type Role } from '@/lib/permissions/constants';
+import { MODULES, isMatrixRole, type ModulePermission, type Role } from '@/lib/permissions/constants';
 
 export const runtime = 'nodejs';
 
@@ -129,7 +129,7 @@ export async function POST(req: Request) {
       // saved at invite time (custom_permissions) if present; otherwise fall
       // back to the role defaults — preserving Slice 6 behavior for legacy
       // invites and any invite created without matrix customization.
-      if (invite.role === 'manager' || invite.role === 'viewer') {
+      if (isMatrixRole(invite.role)) {
         const custom = parseCustomPermissions(invite.custom_permissions);
         const permsToSeed = custom ?? getDefaultPermissions(invite.role) ?? [];
         for (const p of permsToSeed) {

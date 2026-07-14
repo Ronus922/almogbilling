@@ -11,6 +11,7 @@ import { cleanPhoneField } from '@/lib/whatsapp';
 import { hashPassword } from '@/lib/auth/password';
 import { isValidPassword } from '@/lib/auth/passwordPolicy';
 import { writeAudit } from '@/lib/db/audit';
+import { isMatrixRole } from '@/lib/permissions/constants';
 import type { ModulePermission, Role } from '@/lib/permissions/constants';
 
 export const runtime = 'nodejs';
@@ -51,7 +52,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   if (!user) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
   let permissions: ModulePermission[] = [];
-  if (user.role === 'manager' || user.role === 'viewer') {
+  if (isMatrixRole(user.role)) {
     const r = await query<PermissionRow>(
       `select module, can_view, can_edit
          from public.user_permissions
@@ -222,8 +223,8 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     );
 
     if (roleChanged) {
-      const prevHadMatrix = target.role === 'manager' || target.role === 'viewer';
-      const nextHasMatrix = nextRole === 'manager' || nextRole === 'viewer';
+      const prevHadMatrix = isMatrixRole(target.role);
+      const nextHasMatrix = isMatrixRole(nextRole);
 
       if (prevHadMatrix && !nextHasMatrix) {
         await client.query(

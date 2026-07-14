@@ -19,7 +19,7 @@ import { PermissionMatrix } from './PermissionMatrix';
 import { PasswordField, PasswordRequirements } from '@/components/auth/PasswordField';
 import { getDefaultPermissions } from '@/lib/permissions/check';
 import { isValidPassword } from '@/lib/auth/passwordPolicy';
-import { roleLabel, type ModulePermission, type Role } from '@/lib/permissions/constants';
+import { roleLabel, isMatrixRole, type ModulePermission, type Role } from '@/lib/permissions/constants';
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEFAULT_ROLE: Role = 'manager';
@@ -125,7 +125,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
       if (withPassword) body.password = password;
       // Only send the matrix when the admin actually tweaked it. Unchanged →
       // omit → server stores custom_permissions = NULL → role defaults at accept.
-      if ((role === 'manager' || role === 'viewer') && permsDifferFromDefaults(permissions, role)) {
+      if (isMatrixRole(role) && permsDifferFromDefaults(permissions, role)) {
         body.permissions = permissions.map((p) => ({
           module: p.module,
           can_view: p.canView,
@@ -152,7 +152,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
     }
   }
 
-  const matrixVisible = role === 'manager' || role === 'viewer';
+  const matrixVisible = isMatrixRole(role);
 
   return (
     <>

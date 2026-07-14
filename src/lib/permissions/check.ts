@@ -2,8 +2,8 @@ import {
   type Action,
   type ModulePermission,
   type Role,
-  DEFAULT_MANAGER,
-  DEFAULT_VIEWER,
+  ROLE_DEFAULTS,
+  isElevatedRole,
   SUPER_ADMIN_ONLY,
   MODULES,
 } from './constants';
@@ -36,7 +36,7 @@ export function hasPermission(
  */
 export function canManageRole(actorRole: Role, targetRole: Role): boolean {
   if (actorRole === 'super_admin') return true;
-  if (actorRole === 'admin') return targetRole === 'manager' || targetRole === 'viewer';
+  if (actorRole === 'admin') return !isElevatedRole(targetRole);
   return false;
 }
 
@@ -45,14 +45,14 @@ export function canManageRole(actorRole: Role, targetRole: Role): boolean {
  */
 export function canEditUserProfile(actorRole: Role, targetRole: Role): boolean {
   if (actorRole === 'super_admin') return true;
-  if (actorRole === 'admin') return targetRole === 'manager' || targetRole === 'viewer';
+  if (actorRole === 'admin') return !isElevatedRole(targetRole);
   return false;
 }
 
+/** Seed matrix for a matrix-managed role; null for roles that bypass the matrix. */
 export function getDefaultPermissions(role: Role): ModulePermission[] | null {
-  if (role === 'manager') return DEFAULT_MANAGER.map((p) => ({ ...p }));
-  if (role === 'viewer')  return DEFAULT_VIEWER.map((p) => ({ ...p }));
-  return null;
+  const defaults = ROLE_DEFAULTS[role];
+  return defaults ? defaults.map((p) => ({ ...p })) : null;
 }
 
 /** Modules the actor cannot view — used by sidebar to filter nav items. */

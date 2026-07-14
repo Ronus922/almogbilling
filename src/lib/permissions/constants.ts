@@ -135,3 +135,34 @@ export const DEFAULT_VIEWER: ModulePermission[] = [
   noPerm('users_management'),
   noPerm('settings'),
 ];
+
+// ── Role classification ──────────────────────────────────────────────────────
+// Single source of truth for "where do this role's permissions come from".
+//
+// ROLE_DEFAULTS holds the seed matrix of every role whose permissions live as
+// per-user rows in public.user_permissions. A role is matrix-managed IFF it has
+// an entry here — isMatrixRole() reads these keys rather than repeating the role
+// list, so the seed table and the "does this role have a matrix" test cannot
+// drift apart. Adding a matrix-managed role = one entry here.
+//
+// super_admin / admin are absent by design: they bypass the matrix entirely
+// (see hasPermission) and never own user_permissions rows.
+export const ROLE_DEFAULTS: Partial<Record<Role, ModulePermission[]>> = {
+  manager: DEFAULT_MANAGER,
+  viewer: DEFAULT_VIEWER,
+};
+
+/** True when this role's permissions are read from the user_permissions matrix. */
+export function isMatrixRole(role: Role): boolean {
+  return ROLE_DEFAULTS[role] !== undefined;
+}
+
+/**
+ * Roles that bypass the permission matrix. Kept separate from isMatrixRole()
+ * on purpose: "has a permission matrix" and "may an admin manage this user" are
+ * two different questions, and fusing them would turn a future role addition
+ * into a silent privilege escalation.
+ */
+export function isElevatedRole(role: Role): boolean {
+  return role === 'super_admin' || role === 'admin';
+}

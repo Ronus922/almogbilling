@@ -22,7 +22,7 @@ import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { RoleSelector } from './RoleSelector';
 import { PermissionMatrix } from './PermissionMatrix';
 import {
-  ROLE_STYLES, roleLabel, type ModulePermission, type Role,
+  ROLE_STYLES, roleLabel, isMatrixRole, type ModulePermission, type Role,
 } from '@/lib/permissions/constants';
 import { canManageRole } from '@/lib/permissions/check';
 import { validatePhone } from '@/lib/validation';
@@ -255,7 +255,7 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
     router.refresh();
   }
 
-  const matrixVisible = role === 'manager' || role === 'viewer';
+  const matrixVisible = isMatrixRole(role);
   const styles = user ? ROLE_STYLES[user.role] : null;
   const roleLabelText = user ? roleLabel(user.role) : '';
 

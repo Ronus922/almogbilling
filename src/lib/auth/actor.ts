@@ -3,6 +3,7 @@ import { query } from '@/lib/db';
 import { getSession, type SessionUser } from './session';
 import { AuthorizationError } from './errors';
 import { hasPermission, canManageRole } from '@/lib/permissions/check';
+import { isMatrixRole } from '@/lib/permissions/constants';
 import type { Action, ModulePermission, Role } from '@/lib/permissions/constants';
 
 export interface Actor extends SessionUser {
@@ -23,7 +24,7 @@ export async function getCurrentActor(): Promise<Actor | null> {
   const u = session.user;
   let permissions: ModulePermission[] = [];
 
-  if (u.role === 'manager' || u.role === 'viewer') {
+  if (isMatrixRole(u.role)) {
     const r = await query<PermissionRow>(
       `select module, can_view, can_edit
          from public.user_permissions

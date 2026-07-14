@@ -20,15 +20,16 @@ import {
   inviteExpiryFromNow,
 } from '@/lib/auth/inviteTokens';
 import { sendUserInviteEmail } from '@/services/email';
-import { MODULES, ROLES, type Role } from '@/lib/permissions/constants';
+import { MODULES, ROLES, isMatrixRole, type Role } from '@/lib/permissions/constants';
 import { appUrl } from '@/lib/config';
 
 export const runtime = 'nodejs';
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Any real role is a syntactically valid invite target; WHO may actually grant
-// each role is enforced per-actor below via canManageRole().
-const VALID_ROLES: readonly Role[] = ['super_admin', 'admin', 'manager', 'viewer'];
+// each role is enforced per-actor below via canManageRole(). Derived from ROLES
+// so a newly-added role can never be silently rejected here.
+const VALID_ROLES: readonly Role[] = ROLES.map((r) => r.value);
 const VALID_MODULES = new Set(MODULES.map((m) => m.key));
 
 interface CustomPermissionEntry {
@@ -134,7 +135,7 @@ export async function POST(req: NextRequest) {
 
   // Custom permissions only apply to matrix-managed roles. For admin we ignore
   // any permissions sent — admin uses the hardcoded SUPER_ADMIN_ONLY rules.
-  const customPermissions = (role === 'manager' || role === 'viewer')
+  const customPermissions = isMatrixRole(role)
     ? sanitizeCustomPermissions(body.permissions)
     : null;
 
@@ -153,7 +154,7 @@ export async function POST(req: NextRequest) {
     // → {module,canView,canEdit}. Admin/super_admin seed nothing (no matrix).
     const permsToSeed: { module: string; can_view: boolean; can_edit: boolean }[] =
       customPermissions ??
-      ((role === 'manager' || role === 'viewer')
+      (isMatrixRole(role)
         ? (getDefaultPermissions(role) ?? []).map((p) => ({
             module: p.module, can_view: p.canView, can_edit: p.canEdit,
           }))
