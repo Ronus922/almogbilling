@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { actorMayAccessIssue } from '@/lib/auth/issueAccess';
 import { getIssueById, createTaskFromIssue } from '@/lib/db/issues';
 import { isUuid } from '@/lib/validation/issues';
 import { notifyTask } from '@/services/notifications';
@@ -35,6 +36,11 @@ export async function POST(_req: NextRequest, ctx: RouteCtx) {
 
   const issue = await getIssueById(id);
   if (!issue) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  // Field-worker isolation (write): spinning a task off an issue reads and copies
+  // its data — allowed only on an issue the worker is assigned to.
+  if (!actorMayAccessIssue(actor, issue.assignees)) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  }
 
   try {
     const task = await createTaskFromIssue(issue, actor.id, actor.full_name ?? actor.username);

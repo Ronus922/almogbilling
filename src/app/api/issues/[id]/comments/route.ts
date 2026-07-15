@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { actorMayAccessIssue, actorMayAccessIssueId } from '@/lib/auth/issueAccess';
 import { getIssueById, listIssueComments, createIssueComment } from '@/lib/db/issues';
 import { isUuid } from '@/lib/validation/issues';
 
@@ -12,8 +13,9 @@ interface RouteCtx {
 
 // GET /api/issues/[id]/comments  (issues:view)
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('issues', 'view');
+    actor = await requirePermission('issues', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -22,6 +24,10 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 
   const { id } = await ctx.params;
   if (!isUuid(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  // Field-worker isolation (read): comments of an unassigned issue → 404.
+  if (!(await actorMayAccessIssueId(actor, id))) {
+    return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  }
   const comments = await listIssueComments(id);
   return NextResponse.json({ comments });
 }
@@ -53,6 +59,11 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
 
   const issue = await getIssueById(id);
   if (!issue) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  // Field-worker isolation (write): commenting is a write to an issue a worker
+  // must be assigned to.
+  if (!actorMayAccessIssue(actor, issue.assignees)) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  }
 
   const comment = await createIssueComment(
     id,

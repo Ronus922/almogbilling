@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { issueScopeUserId } from '@/lib/auth/issueAccess';
 import { listIssues, createIssue, getIssueKpis } from '@/lib/db/issues';
 import { supplierExists } from '@/lib/db/suppliers';
 import { createReminder } from '@/lib/db/reminders';
@@ -59,8 +60,9 @@ const SORTS: readonly IssueSort[] = ['created_desc', 'priority_desc', 'updated_d
 
 // GET /api/issues?status&priority&assignedTo&search&sort&kpis  (issues:view)
 export async function GET(req: NextRequest) {
+  let actor: Actor;
   try {
-    await requirePermission('issues', 'view');
+    actor = await requirePermission('issues', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -81,8 +83,12 @@ export async function GET(req: NextRequest) {
       ? (priorityRaw as IssuePriority)
       : undefined;
 
-  const assignedToRaw = sp.get('assignedTo')?.trim();
-  const assignedTo = assignedToRaw && assignedToRaw !== 'all' ? assignedToRaw : undefined;
+  // Field-worker isolation: a scoped worker is FORCED to their own issues — the
+  // client-supplied `assignedTo` is ignored for them (it is a UI filter, never a
+  // trust boundary). Managers keep the client filter. Same rule scopes the KPIs.
+  const scope = issueScopeUserId(actor);
+  const clientAssignedTo = sp.get('assignedTo')?.trim();
+  const assignedTo = scope ?? (clientAssignedTo && clientAssignedTo !== 'all' ? clientAssignedTo : undefined);
 
   const search = sp.get('search')?.trim() || undefined;
 
@@ -92,7 +98,7 @@ export async function GET(req: NextRequest) {
   const items = await listIssues({ status, priority, assignedTo, search, sort });
 
   if (sp.get('kpis') === '1') {
-    const kpis = await getIssueKpis();
+    const kpis = await getIssueKpis(scope);
     return NextResponse.json({ items, kpis });
   }
   return NextResponse.json({ items });

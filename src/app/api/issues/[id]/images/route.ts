@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { actorMayAccessIssueId } from '@/lib/auth/issueAccess';
 import { getIssueImages, setIssueImages, appendIssueImage } from '@/lib/db/issues';
 import {
   uploadIssueImage,
@@ -24,8 +25,9 @@ interface RouteCtx {
 
 // POST /api/issues/[id]/images  (issues:edit) — multipart single-image upload.
 export async function POST(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('issues', 'edit');
+    actor = await requirePermission('issues', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -37,6 +39,10 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
 
   const existing = await getIssueImages(id);
   if (existing === null) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  // Field-worker isolation (write): attach images only to an assigned issue.
+  if (!(await actorMayAccessIssueId(actor, id))) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  }
   if (existing.length >= ISSUE_MAX_IMAGES) {
     return NextResponse.json({ error: 'too_many_images' }, { status: 400 });
   }
@@ -93,8 +99,9 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
 // DELETE /api/issues/[id]/images  (issues:edit) — remove one image by path.
 // Body: { path: string }. The path MUST live under this issue's prefix.
 export async function DELETE(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('issues', 'edit');
+    actor = await requirePermission('issues', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -103,6 +110,10 @@ export async function DELETE(req: NextRequest, ctx: RouteCtx) {
 
   const { id } = await ctx.params;
   if (!isUuid(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  // Field-worker isolation (write): remove images only from an assigned issue.
+  if (!(await actorMayAccessIssueId(actor, id))) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  }
 
   let body: unknown;
   try {

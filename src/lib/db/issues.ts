@@ -390,7 +390,14 @@ export async function createIssueComment(
 }
 
 // ── KPIs ──────────────────────────────────────────────────────────────────
-export async function getIssueKpis(): Promise<IssueKpis> {
+// `scopeUserId` scopes the counts to issues that user is assigned to (field-
+// worker isolation — see lib/auth/issueAccess). null/undefined → all issues.
+export async function getIssueKpis(scopeUserId?: string | null): Promise<IssueKpis> {
+  const scopeClause = scopeUserId
+    ? `where exists (select 1 from public.entity_assignees ea
+          where ea.entity_type = 'issue' and ea.entity_id = i.id and ea.user_id = $1)`
+    : '';
+  const vals = scopeUserId ? [scopeUserId] : [];
   const row = await queryOne<{ open: number; urgent: number; resolved_this_month: number }>(
     `select
         count(*) filter (where status in ('open','in_progress') and is_archived = false)::int as open,
@@ -403,7 +410,9 @@ export async function getIssueKpis(): Promise<IssueKpis> {
           where status = 'resolved'
             and resolved_at >= date_trunc('month', now())
         )::int as resolved_this_month
-       from public.issues`,
+       from public.issues i
+       ${scopeClause}`,
+    vals,
   );
   return {
     open: row?.open ?? 0,

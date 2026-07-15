@@ -140,6 +140,22 @@ export async function listEntityAssigneeKeys(
   return r.rows.map((x) => `${x.assignee_type}:${x.user_id ?? x.supplier_id ?? ''}`);
 }
 
+/** Of the given issue ids, the subset the user is a USER-assignee of. Used by the
+ *  reorder route to reject a field worker's batch that references any issue not
+ *  theirs (a plain per-item check would be N queries; this is one). */
+export async function filterIssueIdsAssignedToUser(
+  issueIds: string[],
+  userId: string,
+): Promise<string[]> {
+  if (issueIds.length === 0) return [];
+  const r = await query<{ entity_id: string }>(
+    `select distinct entity_id from public.entity_assignees
+      where entity_type = 'issue' and user_id = $1 and entity_id = any($2::uuid[])`,
+    [userId, issueIds],
+  );
+  return r.rows.map((x) => x.entity_id);
+}
+
 /** Delete all junction rows for an entity (issue hard-delete cleanup — entity_id
  *  is polymorphic and has no FK, so it does not cascade on its own). */
 export async function deleteEntityAssignees(

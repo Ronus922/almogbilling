@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { actorMayAccessIssue, actorMayAccessIssueByUserIds } from '@/lib/auth/issueAccess';
 import {
   getIssueById,
   getIssueAssigneeStatus,
@@ -37,8 +38,9 @@ interface RouteCtx {
 
 // GET /api/issues/[id] — issue + comments + signed image URLs  (issues:view)
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('issues', 'view');
+    actor = await requirePermission('issues', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -49,6 +51,11 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   if (!isUuid(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   const issue = await getIssueById(id);
   if (!issue) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  // Field-worker isolation (read): an unassigned worker gets the SAME 404 as a
+  // missing issue — never a body, and no existence oracle.
+  if (!actorMayAccessIssue(actor, issue.assignees)) {
+    return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  }
 
   const [comments, images, reminders] = await Promise.all([
     listIssueComments(id),
@@ -119,6 +126,11 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   try {
     const prev = await getIssueAssigneeStatus(id);
     if (!prev) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    // Field-worker isolation (write): a worker may only mutate an issue they are
+    // assigned to. Checked BEFORE any write, against the persisted assignee set.
+    if (!actorMayAccessIssueByUserIds(actor, prev.assignedUserIds)) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+    }
     // Full previous key set (users + suppliers) → drives the "added set" the
     // edit-form notification matrix governs.
     const prevKeys = new Set(await listEntityAssigneeKeys('issue', id));
@@ -237,8 +249,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
 // DELETE /api/issues/[id]  (issues:edit) — physical delete + image cleanup.
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('issues', 'edit');
+    actor = await requirePermission('issues', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -250,6 +263,11 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
 
   const issue = await getIssueById(id);
   if (!issue) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  // Field-worker isolation (write): a worker may only delete an issue assigned
+  // to them.
+  if (!actorMayAccessIssue(actor, issue.assignees)) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  }
 
   // Best-effort image cleanup (storage), then delete the row.
   // issue_comments cascade via FK; tasks.issue_id is ON DELETE SET NULL.

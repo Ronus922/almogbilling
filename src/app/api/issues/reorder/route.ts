@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { issueScopeUserId } from '@/lib/auth/issueAccess';
 import { reorderIssues, type IssueReorderItem } from '@/lib/db/issues';
+import { filterIssueIdsAssignedToUser } from '@/lib/db/entityAssignees';
 import type { IssuePriority } from '@/lib/types/issues';
 
 export const runtime = 'nodejs';
@@ -13,8 +15,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // The board groups by priority; this writes the dragged lane's priority + order.
 // Body: { items: [{ id, priority, sort_order }] }
 export async function PATCH(req: NextRequest) {
+  let actor: Actor;
   try {
-    await requirePermission('issues', 'edit');
+    actor = await requirePermission('issues', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -53,6 +56,17 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'invalid_sort_order' }, { status: 400 });
     }
     items.push({ id, priority, sort_order: sortOrder });
+  }
+
+  // Field-worker isolation (write): a worker may reorder only issues they are
+  // assigned to. Reject the whole batch if it references any issue that isn't
+  // theirs (their flat-list UI never calls this — purely a server-side backstop).
+  const scope = issueScopeUserId(actor);
+  if (scope !== null && items.length > 0) {
+    const owned = new Set(await filterIssueIdsAssignedToUser(items.map((it) => it.id), scope));
+    if (items.some((it) => !owned.has(it.id))) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+    }
   }
 
   try {

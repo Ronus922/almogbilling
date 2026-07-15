@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
+import { issueScopeUserId } from '@/lib/auth/issueAccess';
 import { query } from '@/lib/db';
 
 export const runtime = 'nodejs';
@@ -105,15 +106,23 @@ interface IssueRow {
   title: string | null;
   location_text: string | null;
 }
-async function searchIssues(pattern: string): Promise<SearchResult[]> {
+async function searchIssues(pattern: string, scopeUserId: string | null): Promise<SearchResult[]> {
+  // Field-worker isolation: a scoped worker only matches issues assigned to them,
+  // so the command palette can never surface someone else's fault. null → all.
+  const scopeClause = scopeUserId
+    ? `and exists (select 1 from public.entity_assignees ea
+          where ea.entity_type = 'issue' and ea.entity_id = i.id and ea.user_id = $2)`
+    : '';
+  const vals: unknown[] = scopeUserId ? [pattern, scopeUserId] : [pattern];
   const r = await query<IssueRow>(
     `select id, title, location_text
-       from public.issues
+       from public.issues i
       where is_archived = false
         and (title ilike $1 or description ilike $1 or location_text ilike $1 or resolution_notes ilike $1)
+        ${scopeClause}
       order by created_at desc
       limit ${PER_SOURCE_LIMIT}`,
-    [pattern],
+    vals,
   );
   return r.rows.map((i) => ({
     type: 'issue' as const,
@@ -169,7 +178,7 @@ export async function GET(req: NextRequest) {
   const tasks: Array<Promise<SearchResult[]>> = [];
   if (can('dashboard') || can('contacts')) tasks.push(searchDebtors(pattern));
   if (can('suppliers')) tasks.push(searchSuppliers(pattern));
-  if (can('issues')) tasks.push(searchIssues(pattern));
+  if (can('issues')) tasks.push(searchIssues(pattern, issueScopeUserId(actor)));
   if (can('documents')) tasks.push(searchDocuments(pattern));
 
   // Each source is best-effort — one failing query never blanks the whole palette.
