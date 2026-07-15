@@ -12,6 +12,10 @@ interface Props {
   headerSlot?: React.ReactNode;
   /** Optional small text rendered below the title (12px slate-500). */
   subtitle?: React.ReactNode;
+  /** Opt-in (default false). Renders WITHOUT the Card chrome and with a light
+   *  sub-heading (no big icon/title) — for nesting a Section inside another
+   *  Section as a labelled sub-block. Keeps headerSlot + subtitle + children. */
+  bare?: boolean;
 }
 
 const ICON_TONES: Record<NonNullable<Props['iconTone']>, string> = {
@@ -25,8 +29,22 @@ const ICON_TONES: Record<NonNullable<Props['iconTone']>, string> = {
 
 export function Section({
   title, icon: Icon, iconTone = 'slate',
-  children, className, headerSlot, subtitle,
+  children, className, headerSlot, subtitle, bare = false,
 }: Props) {
+  // Nested sub-block: no Card chrome, light sub-heading (no big icon/title).
+  if (bare) {
+    return (
+      <div className={cn('space-y-2', className)}>
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-sm font-semibold text-slate-700">{title}</h4>
+          {headerSlot ? <div className="flex items-center gap-2">{headerSlot}</div> : null}
+        </div>
+        {subtitle ? <p className="text-[12px] text-slate-500 text-start">{subtitle}</p> : null}
+        {children}
+      </div>
+    );
+  }
+
   return (
     <Card className={cn('ring-1 ring-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)]', className)}>
       <div className="flex items-center justify-between gap-2 px-4">

@@ -51,11 +51,14 @@ export function NotifyMatrix({
   value,
   onChange,
   disabled,
+  bare = false,
 }: {
   recipients: NotifyRecipient[];
   value: NotifySelection;
   onChange: (next: NotifySelection) => void;
   disabled?: boolean;
+  /** Render as a bare sub-block (no Card) when nested under another Section. */
+  bare?: boolean;
 }) {
   function toggle(key: string, channel: ChannelKey) {
     if (disabled) return;
@@ -73,6 +76,7 @@ export function NotifyMatrix({
       title="שליחת התראה"
       icon={Bell}
       iconTone="blue"
+      bare={bare}
       headerSlot={<SectionHint>אופציונלי</SectionHint>}
     >
       <div className="space-y-3 py-2">

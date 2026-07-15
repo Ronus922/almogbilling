@@ -73,9 +73,11 @@ interface Props {
   reminders: ReminderRow[];
   onChange: (next: ReminderRow[]) => void;
   disabled?: boolean;
+  /** Render as a bare sub-block (no Card) when nested under another Section. */
+  bare?: boolean;
 }
 
-export function RemindersSection({ reminders, onChange, disabled = false }: Props) {
+export function RemindersSection({ reminders, onChange, disabled = false, bare = false }: Props) {
   function add() {
     onChange([...reminders, { date: '', time: '09:00', channels: ['in_app'] }]);
   }
@@ -99,6 +101,7 @@ export function RemindersSection({ reminders, onChange, disabled = false }: Prop
       title="תזכורות"
       icon={Bell}
       iconTone="amber"
+      bare={bare}
       headerSlot={
         !disabled ? (
           <button

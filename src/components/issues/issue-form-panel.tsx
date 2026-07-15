@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   X, AlertTriangle, MapPin, User, Images, MessageSquare, Trash2, Send,
-  Upload, Loader2, Camera, Video,
+  UploadCloud, Loader2, Camera, Video, Bell,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
@@ -125,10 +125,10 @@ function mapError(code: string | undefined, fallback: string): string {
   return (code && ERROR_MESSAGES[code]) || fallback;
 }
 
-// ── Media (images + videos) — one config drives two identical Sections ────────
+// ── Media (images + videos) — one config drives both kinds ───────────────────
 // Images and videos differ only in column/endpoint/caps/allowed-types and the
-// tile element (<img> vs <video>). One config + one <MediaSection> keeps the two
-// from drifting (iron rule #8/#10 — no duplicated structure).
+// tile element (<img> vs <video>). One config feeds the unified dropzone and the
+// per-kind stage/upload handlers, keeping the two from drifting (iron rule #8/#10).
 type MediaKind = 'image' | 'video';
 
 interface MediaConfig {
@@ -168,108 +168,134 @@ const MEDIA: Record<MediaKind, MediaConfig> = {
 interface MediaTile {
   key: string;
   src: string | null;
+  isVideo: boolean;
   onRemove: () => void;
 }
 
-interface MediaSectionProps {
-  cfg: MediaConfig;
-  count: number;
+interface MediaDropSectionProps {
   canAdd: boolean;
   canEdit: boolean;
   busy: boolean;
+  imageCount: number;
+  videoCount: number;
+  /** Images + videos combined into one grid (each tile knows its own kind). */
   tiles: MediaTile[];
-  /** Handles files from the picker, the camera, AND drag&drop — one entry point. */
+  /** One entry point for picker, camera AND drag&drop — the parent routes files
+   *  to images[]/videos[] by MIME and enforces the per-kind caps. */
   onFiles: (files: FileList | null) => void;
   onOpenLightbox?: (src: string) => void;
 }
 
 /**
- * One Section for a media kind. Owns its own file/camera inputs and drag-over
- * state, so the parent only supplies data + one onFiles callback. `multiple` +
- * the drop target give D1/D2; the <video> branch gives D3.
+ * One unified dropzone for images + videos (ref: NewProblem.png). Files dropped
+ * or picked here are split by MIME into images[]/videos[] upstream (onFiles);
+ * this component is presentation + the pick/camera/drop entry points only. The
+ * two caps (6 images / 3 videos) are still enforced in the parent handlers.
  */
-function MediaSection({ cfg, count, canAdd, canEdit, busy, tiles, onFiles, onOpenLightbox }: MediaSectionProps) {
+function MediaDropSection({ canAdd, canEdit, busy, imageCount, videoCount, tiles, onFiles, onOpenLightbox }: MediaDropSectionProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
-  const isVideo = cfg.kind === 'video';
+  const accept = [...MEDIA.image.types, ...MEDIA.video.types].join(',');
 
   function pick(files: FileList | null, el: HTMLInputElement | null) {
     onFiles(files);
     if (el) el.value = ''; // let the same file be re-picked
   }
 
+  // Two caps rows below the dropzone (ref) — driven by MEDIA so they never drift.
+  const limits = [
+    { icon: Images, cfg: MEDIA.image, count: imageCount },
+    { icon: Video, cfg: MEDIA.video, count: videoCount },
+  ];
+
   return (
     <Section
-      title={cfg.title}
-      icon={isVideo ? Video : Images}
+      title="תמונות וסרטונים"
+      icon={Images}
       iconTone="blue"
-      subtitle={`${count}/${cfg.max} · ${cfg.subtitleSuffix}`}
       headerSlot={
         canAdd ? (
-          <div className="flex items-center gap-2">
-            {/* Mobile only: shoot straight to the rear camera (photo or video). */}
-            <button
-              type="button"
-              onClick={() => cameraRef.current?.click()}
-              disabled={busy}
-              className="inline-flex h-8 items-center gap-1 rounded-lg bg-blue-100 px-3 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-200 disabled:opacity-60 sm:hidden"
-            >
-              <Camera className="h-3.5 w-3.5" />
-              {isVideo ? 'הקלט' : 'צלם'}
-            </button>
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              disabled={busy}
-              className="inline-flex h-8 items-center gap-1 rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 disabled:opacity-60"
-            >
-              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-              {busy ? 'מעלה…' : 'העלאה'}
-            </button>
-          </div>
+          // Mobile only: shoot straight to the rear camera (photo or video).
+          <button
+            type="button"
+            onClick={() => cameraRef.current?.click()}
+            disabled={busy}
+            className="inline-flex h-8 items-center gap-1 rounded-lg bg-blue-100 px-3 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-200 disabled:opacity-60 sm:hidden"
+          >
+            <Camera className="h-3.5 w-3.5" />
+            צלם / הקלט
+          </button>
         ) : undefined
       }
     >
-      <input
-        ref={fileRef}
-        type="file"
-        accept={cfg.types.join(',')}
-        multiple
-        className="hidden"
-        onChange={(e) => pick(e.target.files, e.currentTarget)}
-      />
-      {/* Camera path — same handler + accept list, plus capture to open the camera. */}
-      <input
-        ref={cameraRef}
-        type="file"
-        accept={cfg.types.join(',')}
-        capture="environment"
-        className="hidden"
-        onChange={(e) => pick(e.target.files, e.currentTarget)}
-      />
-      {/* Drop target (D2) — the whole tile area accepts a drag&drop of files. */}
-      <div
-        onDragOver={canAdd ? (e) => { e.preventDefault(); setDragOver(true); } : undefined}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={canAdd ? (e) => { e.preventDefault(); setDragOver(false); onFiles(e.dataTransfer.files); } : undefined}
-        className={cn(
-          'rounded-lg py-2 transition-colors',
-          dragOver && 'bg-blue-50 outline-2 outline-dashed outline-blue-300',
-        )}
-      >
-        {tiles.length === 0 ? (
-          <p className="py-2 text-center text-xs text-slate-400">
-            {canAdd
-              ? `גררו לכאן או העלו ${isVideo ? 'סרטון לתיעוד התקלה' : 'תמונה כדי לתעד את התקלה'}.`
-              : `אין ${isVideo ? 'סרטונים' : 'תמונות'}.`}
-          </p>
-        ) : (
+      <div className="space-y-3 py-2">
+        <input
+          ref={fileRef}
+          type="file"
+          accept={accept}
+          multiple
+          className="hidden"
+          onChange={(e) => pick(e.target.files, e.currentTarget)}
+        />
+        {/* Camera path — same handler + accept list, plus capture to open the camera. */}
+        <input
+          ref={cameraRef}
+          type="file"
+          accept={accept}
+          capture="environment"
+          className="hidden"
+          onChange={(e) => pick(e.target.files, e.currentTarget)}
+        />
+
+        {/* Unified dropzone (DESIGN §28.5) — click to pick or drag&drop; MIME routes
+            each file to images[]/videos[] upstream. */}
+        <button
+          type="button"
+          disabled={!canAdd || busy}
+          onClick={() => fileRef.current?.click()}
+          onDragOver={canAdd ? (e) => { e.preventDefault(); setDragOver(true); } : undefined}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={canAdd ? (e) => { e.preventDefault(); setDragOver(false); onFiles(e.dataTransfer.files); } : undefined}
+          className={cn(
+            'flex w-full flex-col items-center gap-2 rounded-[14px] border-2 border-dashed bg-[#fafbfd] p-[26px] text-center transition-colors',
+            canAdd ? 'cursor-pointer border-[#d8e0ec] hover:border-[#93b4f0] hover:bg-[#f5f9ff]' : 'cursor-not-allowed border-slate-200 opacity-60',
+            dragOver && 'border-[#93b4f0] bg-[#f5f9ff]',
+          )}
+        >
+          <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[#e8f0ff] text-[#2563eb]">
+            {busy ? <Loader2 className="h-[22px] w-[22px] animate-spin" /> : <UploadCloud className="h-[22px] w-[22px]" />}
+          </span>
+          {/* ref shows a blue title; DESIGN §28.5 fixes it at #334155 → DESIGN wins. */}
+          <span className="text-[14px] font-semibold text-[#334155]">גררו לכאן קבצים או לחצו להעלאה</span>
+          <span className="text-[12.5px] text-[#94a3b8]">תמונות וסרטונים יחד — שחררו בכל מקום באזור המקווקו</span>
+        </button>
+
+        {/* Two caps rows: one per kind (images 0/6 · videos 0/3). */}
+        <div className="flex flex-col gap-1.5">
+          {limits.map(({ icon: Icon, cfg, count }) => (
+            <div
+              key={cfg.kind}
+              className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5"
+            >
+              <span className="flex items-center gap-1.5 text-xs text-slate-600">
+                <Icon className="h-3.5 w-3.5 text-slate-400" />
+                {cfg.title} · {cfg.subtitleSuffix}
+              </span>
+              <span dir="ltr" className="tabular-nums text-xs font-semibold text-slate-500">
+                {count}/{cfg.max}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Combined tiles — images (lightbox) + videos (inline player). */}
+        {tiles.length > 0 && (
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
             {tiles.map((t) => (
               <div key={t.key} className="group relative aspect-square overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
                 {t.src ? (
-                  isVideo ? (
+                  t.isVideo ? (
                     <video
                       src={t.src}
                       controls
@@ -287,14 +313,14 @@ function MediaSection({ cfg, count, canAdd, canEdit, busy, tiles, onFiles, onOpe
                   )
                 ) : (
                   <div className="grid h-full w-full place-items-center text-slate-400">
-                    {isVideo ? <Video className="h-5 w-5" /> : <Images className="h-5 w-5" />}
+                    {t.isVideo ? <Video className="h-5 w-5" /> : <Images className="h-5 w-5" />}
                   </div>
                 )}
                 {canEdit && (
                   <button
                     type="button"
                     onClick={t.onRemove}
-                    aria-label={isVideo ? 'מחק סרטון' : 'מחק תמונה'}
+                    aria-label={t.isVideo ? 'מחק סרטון' : 'מחק תמונה'}
                     className="absolute top-1 end-1 z-10 grid h-7 w-7 place-items-center rounded-md bg-slate-900/60 text-white opacity-0 transition-opacity hover:bg-rose-600 group-hover:opacity-100"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -546,7 +572,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
 
   // Edit mode: upload each file to the issue immediately (one request per file →
   // D1 multiple). Skips over-cap / bad-type / oversize files with a toast each.
-  async function uploadMedia(kind: MediaKind, files: FileList | null) {
+  async function uploadMedia(kind: MediaKind, files: FileList | File[] | null) {
     if (!issue) return;
     const cfg = MEDIA[kind];
     const st = mediaState[kind];
@@ -580,7 +606,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
   }
 
   // Create mode: validate + stage files locally (no issue id to upload to yet).
-  function stageMedia(kind: MediaKind, files: FileList | null) {
+  function stageMedia(kind: MediaKind, files: FileList | File[] | null) {
     const cfg = MEDIA[kind];
     const st = mediaState[kind];
     const list = Array.from(files ?? []);
@@ -623,9 +649,25 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
 
   function tilesFor(kind: MediaKind): MediaTile[] {
     const st = mediaState[kind];
+    const isVideo = kind === 'video';
     return isEdit
-      ? st.uploaded.map((m) => ({ key: m.path, src: m.signed_url, onRemove: () => void removeUploaded(kind, m.path) }))
-      : st.staged.map((s) => ({ key: s.url, src: s.url, onRemove: () => removeStagedMedia(kind, s.url) }));
+      ? st.uploaded.map((m) => ({ key: m.path, src: m.signed_url, isVideo, onRemove: () => void removeUploaded(kind, m.path) }))
+      : st.staged.map((s) => ({ key: s.url, src: s.url, isVideo, onRemove: () => removeStagedMedia(kind, s.url) }));
+  }
+
+  // Unified dropzone: split one drop/pick into image vs video subsets by MIME,
+  // then route each to the existing per-kind handler (caps enforced there). Files
+  // matching neither allowed list are rejected with one toast — no endpoint change.
+  function onMediaFiles(files: FileList | null) {
+    const list = Array.from(files ?? []);
+    if (list.length === 0) return;
+    const imgs = list.filter((f) => (MEDIA.image.types as readonly string[]).includes(f.type));
+    const vids = list.filter((f) => (MEDIA.video.types as readonly string[]).includes(f.type));
+    if (list.length > imgs.length + vids.length) {
+      toast.error('סוג קובץ לא נתמך (תמונה או סרטון בלבד)');
+    }
+    if (imgs.length) { if (isEdit) void uploadMedia('image', imgs); else stageMedia('image', imgs); }
+    if (vids.length) { if (isEdit) void uploadMedia('video', vids); else stageMedia('video', vids); }
   }
 
   async function addComment() {
@@ -657,7 +699,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
   // Single definition — rendered once, directly under the handler section
   // (HTML order: handler → notify → reminders), in both create and edit.
   const notifyMatrix = (
-    <NotifyMatrix recipients={notifyRecipients} value={notify} onChange={setNotify} disabled={disabled} />
+    <NotifyMatrix recipients={notifyRecipients} value={notify} onChange={setNotify} disabled={disabled} bare />
   );
 
   return (
@@ -818,7 +860,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
                 title="מיקום"
                 icon={MapPin}
                 iconTone="amber"
-                headerSlot={<SectionHint>יעד (אופציונלי)</SectionHint>}
+                headerSlot={<SectionHint>אופציונלי</SectionHint>}
               >
                 <div className="py-2">
                   <TargetField
@@ -855,33 +897,30 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
                 />
               </Section>
 
-              {/* Notification — directly under the handler (HTML order). */}
-              {notifyMatrix}
+              {/* Alert + reminders — one visual card grouping the two existing
+                  Sections (notify matrix + reminders). Wrapper only: the inner
+                  components keep their own fields, logic and structure. */}
+              <Section title="התראה ותזכורות" icon={Bell} iconTone="amber">
+                <div className="space-y-4 py-2">
+                  {/* Notification — directly under the handler (HTML order). */}
+                  {notifyMatrix}
+                  {/* Reminders (shared component — also used by the task form). Optional. */}
+                  <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} bare />
+                </div>
+              </Section>
 
-              {/* Reminders (shared component — also used by the task form). Optional. */}
-              <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} />
-
-              {/* Media — edit attaches to the issue immediately; create stages
-                  files locally and uploads them right after the issue is made.
-                  D1 multiple + D2 drag&drop + D3 video all live in MediaSection. */}
-              <MediaSection
-                cfg={MEDIA.image}
-                count={imageCount}
-                canAdd={canEdit && imageCount < MEDIA.image.max}
+              {/* Media — one unified dropzone; files route to images[]/videos[] by
+                  MIME (onMediaFiles). Edit attaches immediately; create stages
+                  locally and uploads right after the issue is made. */}
+              <MediaDropSection
+                canAdd={canEdit && (imageCount < MEDIA.image.max || videoCount < MEDIA.video.max)}
                 canEdit={canEdit}
                 busy={mediaBusy}
-                tiles={tilesFor('image')}
-                onFiles={(f) => (isEdit ? void uploadMedia('image', f) : stageMedia('image', f))}
+                imageCount={imageCount}
+                videoCount={videoCount}
+                tiles={[...tilesFor('image'), ...tilesFor('video')]}
+                onFiles={onMediaFiles}
                 onOpenLightbox={setLightbox}
-              />
-              <MediaSection
-                cfg={MEDIA.video}
-                count={videoCount}
-                canAdd={canEdit && videoCount < MEDIA.video.max}
-                canEdit={canEdit}
-                busy={mediaBusy}
-                tiles={tilesFor('video')}
-                onFiles={(f) => (isEdit ? void uploadMedia('video', f) : stageMedia('video', f))}
               />
 
               {/* Comments — edit mode only */}
