@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Wrench, MapPin, Play, Check, AlertTriangle, CircleCheckBig } from 'lucide-react';
 import { IssueFormPanel } from './issue-form-panel';
+import { WorkerIssueDetail } from './worker-issue-detail';
 import { cn } from '@/lib/utils';
 import {
   ISSUE_STATUS_BADGE, ISSUE_PRIORITY_BADGE,
@@ -52,9 +53,27 @@ export function WorkerIssuesView({ issues, userName, roleName, todayLabel, curre
   const [rows, setRows] = useState<IssueWithMeta[]>(issues);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   const active = useMemo(() => rows.filter((i) => !isCompletedIssueStatus(i.status)), [rows]);
   const doneCount = rows.length - active.length;
+
+  const detailIssue = detailId ? rows.find((i) => i.id === detailId) ?? null : null;
+
+  /** Keep the list card in sync when the detail screen changes a status. */
+  function applyStatus(id: string, status: IssueStatus) {
+    setRows((curr) => curr.map((i) => (i.id === id ? { ...i, status } : i)));
+  }
+
+  if (detailIssue) {
+    return (
+      <WorkerIssueDetail
+        issue={detailIssue}
+        onBack={() => setDetailId(null)}
+        onStatusChange={applyStatus}
+      />
+    );
+  }
 
   /**
    * The only mutation on this screen. Both moves are a plain status PATCH on the
@@ -139,8 +158,12 @@ export function WorkerIssuesView({ issues, userName, roleName, todayLabel, curre
             return (
               <article
                 key={issue.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => setDetailId(issue.id)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailId(issue.id); } }}
                 className={cn(
-                  'rounded-[22px] border-s-[5px] bg-white p-4 shadow-[0_2px_10px_rgba(15,23,42,0.06)]',
+                  'cursor-pointer rounded-[22px] border-s-[5px] bg-white p-4 shadow-[0_2px_10px_rgba(15,23,42,0.06)] transition-shadow hover:shadow-[0_4px_16px_rgba(15,23,42,0.1)]',
                   inProgress ? 'border-s-blue-600' : 'border-s-amber-500',
                 )}
               >
@@ -185,7 +208,7 @@ export function WorkerIssuesView({ issues, userName, roleName, todayLabel, curre
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => void setStatus(issue, 'closed', 'התקלה הושלמה')}
+                    onClick={(e) => { e.stopPropagation(); void setStatus(issue, 'closed', 'התקלה הושלמה'); }}
                     className="mt-4 flex h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-emerald-600 px-4 text-base font-extrabold text-white transition-colors hover:bg-emerald-700 disabled:opacity-60"
                   >
                     <Check className="h-5 w-5" />
@@ -195,7 +218,7 @@ export function WorkerIssuesView({ issues, userName, roleName, todayLabel, curre
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => void setStatus(issue, 'in_progress', 'התקלה בטיפול')}
+                    onClick={(e) => { e.stopPropagation(); void setStatus(issue, 'in_progress', 'התקלה בטיפול'); }}
                     className="mt-4 flex h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-blue-600 px-4 text-base font-extrabold text-white transition-colors hover:bg-blue-700 disabled:opacity-60"
                   >
                     <Play className="h-5 w-5" />
