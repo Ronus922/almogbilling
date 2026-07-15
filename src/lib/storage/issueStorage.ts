@@ -27,6 +27,18 @@ export async function uploadIssueImage(
   return { path, sizeBytes: buffer.byteLength, mimeType: file.type || '' };
 }
 
+/**
+ * Uploads a video under <issueId>/<uuid><.ext>. Same bucket, prefix and guard as
+ * images — `issue-attachments` is media-agnostic (migration 064 added the DB
+ * column; storage was never image-only). Returns the storage path.
+ */
+export function uploadIssueVideo(
+  issueId: string,
+  file: File,
+): Promise<{ path: string; sizeBytes: number; mimeType: string }> {
+  return uploadIssueImage(issueId, file);
+}
+
 /** In-app, permission-checked URL for a stored image (relative by construction). */
 export function imageUrlForPath(path: string): string {
   return buildProxyUrl(BUCKET, path);

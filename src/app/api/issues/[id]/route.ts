@@ -57,17 +57,22 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 });
   }
 
-  const [comments, images, reminders] = await Promise.all([
+  const [comments, images, videos, reminders] = await Promise.all([
     listIssueComments(id),
     Promise.all(
       issue.images.map(
         async (path): Promise<IssueImage> => ({ path, signed_url: imageUrlForPath(path) }),
       ),
     ),
+    Promise.all(
+      issue.videos.map(
+        async (path): Promise<IssueImage> => ({ path, signed_url: imageUrlForPath(path) }),
+      ),
+    ),
     listRemindersForEntity('issue', id),
   ]);
 
-  return NextResponse.json({ issue, comments, images, reminders });
+  return NextResponse.json({ issue, comments, images, videos, reminders });
 }
 
 // PATCH /api/issues/[id]  (issues:edit)
@@ -273,7 +278,7 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   // issue_comments cascade via FK; tasks.issue_id is ON DELETE SET NULL.
   // Reminders + notifications use a generic entity_id (no FK), so clean them
   // up explicitly — otherwise the bell keeps showing ghosts of a deleted issue.
-  await removeIssueImages(issue.images);
+  await removeIssueImages([...issue.images, ...issue.videos]);
   await deleteRemindersForEntity('issue', id);
   await deleteNotificationsForEntity('issue', id);
   const ok = await deleteIssue(id);

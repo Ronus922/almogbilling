@@ -25,7 +25,7 @@ import { targetLabelSql } from '@/lib/db/targets';
 const ISSUE_COLUMNS = `
   id, title, description, location_type, location_text, target_type, target_id, priority, status,
   due_date::text as due_date, due_time::text as due_time,
-  images, resolution_notes, resolved_at::text as resolved_at, is_archived, sort_order,
+  images, videos, resolution_notes, resolved_at::text as resolved_at, is_archived, sort_order,
   created_by, created_by_name, created_at::text as created_at, updated_at::text as updated_at
 `;
 
@@ -354,6 +354,56 @@ export async function appendIssueImage(
   if (row) return { status: 'appended', images: row.images };
 
   // No row updated: either the issue doesn't exist or it's at capacity.
+  const exists = await queryOne<{ id: string }>(
+    `select id from public.issues where id = $1`,
+    [id],
+  );
+  return exists ? { status: 'full' } : { status: 'not_found' };
+}
+
+// ── Videos ───────────────────────────────────────────────────────────────────
+// Twin of the image helpers, on the `videos` column (migration 064). Same bucket,
+// same path guard, same proxy — only the column and the cap differ.
+/** Read just the videos array of an issue. */
+export async function getIssueVideos(id: string): Promise<string[] | null> {
+  const row = await queryOne<{ videos: string[] }>(
+    `select videos from public.issues where id = $1`,
+    [id],
+  );
+  return row ? row.videos : null;
+}
+
+/** Overwrite the videos array (used after remove). Returns the saved value. */
+export async function setIssueVideos(id: string, videos: string[]): Promise<string[] | null> {
+  const row = await queryOne<{ videos: string[] }>(
+    `update public.issues set videos = $2 where id = $1 returning videos`,
+    [id, videos],
+  );
+  return row ? row.videos : null;
+}
+
+export type AppendVideoResult =
+  | { status: 'appended'; videos: string[] }
+  | { status: 'full' }
+  | { status: 'not_found' };
+
+/** Atomically append a path to issues.videos with the cap enforced inside the
+ *  UPDATE (no read-modify-write race) — identical shape to appendIssueImage. */
+export async function appendIssueVideo(
+  id: string,
+  path: string,
+  maxVideos: number,
+): Promise<AppendVideoResult> {
+  const row = await queryOne<{ videos: string[] }>(
+    `update public.issues
+        set videos = array_append(videos, $2)
+      where id = $1
+        and coalesce(array_length(videos, 1), 0) < $3
+      returning videos`,
+    [id, path, maxVideos],
+  );
+  if (row) return { status: 'appended', videos: row.videos };
+
   const exists = await queryOne<{ id: string }>(
     `select id from public.issues where id = $1`,
     [id],

@@ -114,3 +114,14 @@ export const ISSUE_ALLOWED_IMAGE_TYPES: readonly string[] = [
 ];
 export const ISSUE_MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 export const ISSUE_MAX_IMAGES = 6;
+
+// ── Video upload validation (server-enforced; mirrored in the client) ────────
+// Same private bucket / proxy / path guard as images — a separate column and
+// separate caps (migration 064). quicktime = the .mov an iPhone records.
+export const ISSUE_ALLOWED_VIDEO_TYPES: readonly string[] = [
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+];
+export const ISSUE_MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+export const ISSUE_MAX_VIDEOS = 3;

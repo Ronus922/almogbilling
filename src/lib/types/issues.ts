@@ -29,6 +29,7 @@ export interface Issue {
   // (migration 047), exposed as `assignees` on IssueWithMeta — NOT scalar
   // columns here. Legacy assigned_to_user_id / supplier_id stay frozen in the DB.
   images: string[]; // storage object paths (not URLs)
+  videos: string[]; // storage object paths (not URLs) — migration 064, same bucket as images
   resolution_notes: string | null;
   resolved_at: string | null;
   is_archived: boolean;
