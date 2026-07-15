@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   X, AlertTriangle, MapPin, User, Images, MessageSquare, Trash2, Send,
-  Upload, Loader2, Camera,
+  Upload, Loader2, Camera, Video,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
@@ -26,6 +26,7 @@ import {
   ISSUE_STATUSES, ISSUE_PRIORITIES,
   issueStatusLabel, issuePriorityLabel,
   ISSUE_ALLOWED_IMAGE_TYPES, ISSUE_MAX_IMAGE_SIZE_BYTES, ISSUE_MAX_IMAGES,
+  ISSUE_ALLOWED_VIDEO_TYPES, ISSUE_MAX_VIDEO_SIZE_BYTES, ISSUE_MAX_VIDEOS,
 } from '@/lib/constants/issues';
 import type {
   Issue, IssueComment, IssueImage, IssuePriority, IssueStatus, IssueWithMeta,
@@ -116,13 +117,196 @@ function fromIssue(i: IssueWithMeta): FormState {
 const ERROR_MESSAGES: Record<string, string> = {
   title_required: 'כותרת היא שדה חובה',
   resolution_notes_required: 'יש להזין הערות טיפול לפני סימון התקלה כ"טופלה"',
-  invalid_file_type: 'סוג קובץ לא נתמך (JPG / PNG / WebP בלבד)',
-  file_too_large: 'הקובץ גדול מדי (עד 5MB)',
   too_many_images: `ניתן לצרף עד ${ISSUE_MAX_IMAGES} תמונות`,
+  too_many_videos: `ניתן לצרף עד ${ISSUE_MAX_VIDEOS} סרטונים`,
 };
 
 function mapError(code: string | undefined, fallback: string): string {
   return (code && ERROR_MESSAGES[code]) || fallback;
+}
+
+// ── Media (images + videos) — one config drives two identical Sections ────────
+// Images and videos differ only in column/endpoint/caps/allowed-types and the
+// tile element (<img> vs <video>). One config + one <MediaSection> keeps the two
+// from drifting (iron rule #8/#10 — no duplicated structure).
+type MediaKind = 'image' | 'video';
+
+interface MediaConfig {
+  kind: MediaKind;
+  endpoint: 'images' | 'videos';
+  /** Key of the created item in the POST response ({ image } vs { video }). */
+  respKey: 'image' | 'video';
+  types: readonly string[];
+  maxSize: number;
+  max: number;
+  title: string;
+  subtitleSuffix: string;
+  typeErr: string;
+  sizeErr: string;
+  maxErr: string;
+}
+
+const MEDIA: Record<MediaKind, MediaConfig> = {
+  image: {
+    kind: 'image', endpoint: 'images', respKey: 'image',
+    types: ISSUE_ALLOWED_IMAGE_TYPES, maxSize: ISSUE_MAX_IMAGE_SIZE_BYTES, max: ISSUE_MAX_IMAGES,
+    title: 'תמונות', subtitleSuffix: 'JPG / PNG / WebP · עד 5MB',
+    typeErr: 'סוג קובץ לא נתמך (JPG / PNG / WebP בלבד)',
+    sizeErr: 'הקובץ גדול מדי (עד 5MB)',
+    maxErr: `ניתן לצרף עד ${ISSUE_MAX_IMAGES} תמונות`,
+  },
+  video: {
+    kind: 'video', endpoint: 'videos', respKey: 'video',
+    types: ISSUE_ALLOWED_VIDEO_TYPES, maxSize: ISSUE_MAX_VIDEO_SIZE_BYTES, max: ISSUE_MAX_VIDEOS,
+    title: 'סרטונים', subtitleSuffix: 'MP4 / WebM / MOV · עד 50MB',
+    typeErr: 'סוג קובץ לא נתמך (MP4 / WebM / MOV בלבד)',
+    sizeErr: 'הסרטון גדול מדי (עד 50MB)',
+    maxErr: `ניתן לצרף עד ${ISSUE_MAX_VIDEOS} סרטונים`,
+  },
+};
+
+interface MediaTile {
+  key: string;
+  src: string | null;
+  onRemove: () => void;
+}
+
+interface MediaSectionProps {
+  cfg: MediaConfig;
+  count: number;
+  canAdd: boolean;
+  canEdit: boolean;
+  busy: boolean;
+  tiles: MediaTile[];
+  /** Handles files from the picker, the camera, AND drag&drop — one entry point. */
+  onFiles: (files: FileList | null) => void;
+  onOpenLightbox?: (src: string) => void;
+}
+
+/**
+ * One Section for a media kind. Owns its own file/camera inputs and drag-over
+ * state, so the parent only supplies data + one onFiles callback. `multiple` +
+ * the drop target give D1/D2; the <video> branch gives D3.
+ */
+function MediaSection({ cfg, count, canAdd, canEdit, busy, tiles, onFiles, onOpenLightbox }: MediaSectionProps) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const isVideo = cfg.kind === 'video';
+
+  function pick(files: FileList | null, el: HTMLInputElement | null) {
+    onFiles(files);
+    if (el) el.value = ''; // let the same file be re-picked
+  }
+
+  return (
+    <Section
+      title={cfg.title}
+      icon={isVideo ? Video : Images}
+      iconTone="blue"
+      subtitle={`${count}/${cfg.max} · ${cfg.subtitleSuffix}`}
+      headerSlot={
+        canAdd ? (
+          <div className="flex items-center gap-2">
+            {/* Mobile only: shoot straight to the rear camera (photo or video). */}
+            <button
+              type="button"
+              onClick={() => cameraRef.current?.click()}
+              disabled={busy}
+              className="inline-flex h-8 items-center gap-1 rounded-lg bg-blue-100 px-3 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-200 disabled:opacity-60 sm:hidden"
+            >
+              <Camera className="h-3.5 w-3.5" />
+              {isVideo ? 'הקלט' : 'צלם'}
+            </button>
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={busy}
+              className="inline-flex h-8 items-center gap-1 rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              {busy ? 'מעלה…' : 'העלאה'}
+            </button>
+          </div>
+        ) : undefined
+      }
+    >
+      <input
+        ref={fileRef}
+        type="file"
+        accept={cfg.types.join(',')}
+        multiple
+        className="hidden"
+        onChange={(e) => pick(e.target.files, e.currentTarget)}
+      />
+      {/* Camera path — same handler + accept list, plus capture to open the camera. */}
+      <input
+        ref={cameraRef}
+        type="file"
+        accept={cfg.types.join(',')}
+        capture="environment"
+        className="hidden"
+        onChange={(e) => pick(e.target.files, e.currentTarget)}
+      />
+      {/* Drop target (D2) — the whole tile area accepts a drag&drop of files. */}
+      <div
+        onDragOver={canAdd ? (e) => { e.preventDefault(); setDragOver(true); } : undefined}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={canAdd ? (e) => { e.preventDefault(); setDragOver(false); onFiles(e.dataTransfer.files); } : undefined}
+        className={cn(
+          'rounded-lg py-2 transition-colors',
+          dragOver && 'bg-blue-50 outline-2 outline-dashed outline-blue-300',
+        )}
+      >
+        {tiles.length === 0 ? (
+          <p className="py-2 text-center text-xs text-slate-400">
+            {canAdd
+              ? `גררו לכאן או העלו ${isVideo ? 'סרטון לתיעוד התקלה' : 'תמונה כדי לתעד את התקלה'}.`
+              : `אין ${isVideo ? 'סרטונים' : 'תמונות'}.`}
+          </p>
+        ) : (
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            {tiles.map((t) => (
+              <div key={t.key} className="group relative aspect-square overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
+                {t.src ? (
+                  isVideo ? (
+                    <video
+                      src={t.src}
+                      controls
+                      preload="metadata"
+                      className="h-full w-full bg-black object-cover"
+                    />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={t.src}
+                      alt="תמונת תקלה"
+                      onClick={() => t.src && onOpenLightbox?.(t.src)}
+                      className="h-full w-full cursor-zoom-in object-cover transition-transform group-hover:scale-105"
+                    />
+                  )
+                ) : (
+                  <div className="grid h-full w-full place-items-center text-slate-400">
+                    {isVideo ? <Video className="h-5 w-5" /> : <Images className="h-5 w-5" />}
+                  </div>
+                )}
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={t.onRemove}
+                    aria-label={isVideo ? 'מחק סרטון' : 'מחק תמונה'}
+                    className="absolute top-1 end-1 z-10 grid h-7 w-7 place-items-center rounded-md bg-slate-900/60 text-white opacity-0 transition-opacity hover:bg-rose-600 group-hover:opacity-100"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Section>
+  );
 }
 
 export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete }: Props) {
@@ -133,9 +317,11 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
   const [notify, setNotify] = useState<NotifySelection>(EMPTY_NOTIFY_SELECTION);
   const [comments, setComments] = useState<IssueComment[]>([]);
   const [images, setImages] = useState<IssueImage[]>([]);
-  // Create mode has no issue id yet, so images are staged client-side and
-  // uploaded right after the issue is created. `url` is an object URL for preview.
-  const [staged, setStaged] = useState<{ file: File; url: string }[]>([]);
+  const [videos, setVideos] = useState<IssueImage[]>([]);
+  // Create mode has no issue id yet, so media is staged client-side and uploaded
+  // right after the issue is created. `url` is an object URL for preview.
+  const [stagedImages, setStagedImages] = useState<{ file: File; url: string }[]>([]);
+  const [stagedVideos, setStagedVideos] = useState<{ file: File; url: string }[]>([]);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
   const [initialReminders, setInitialReminders] = useState<ReminderRow[]>([]);
   const [commentInput, setCommentInput] = useState('');
@@ -144,10 +330,6 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [titleTouched, setTitleTouched] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  // Separate input for the mobile camera: capture="environment" must live on its
-  // own element so the desktop "העלאה" picker stays a plain file chooser.
-  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const loadDetail = useCallback(async (id: string) => {
     try {
@@ -157,10 +339,12 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
         issue?: Issue;
         comments?: IssueComment[];
         images?: IssueImage[];
+        videos?: IssueImage[];
         reminders?: { id: string; remind_at: string; channel: string; channels: ReminderRow['channels'] | null }[];
       };
       setComments(Array.isArray(data.comments) ? data.comments : []);
       setImages(Array.isArray(data.images) ? data.images : []);
+      setVideos(Array.isArray(data.videos) ? data.videos : []);
       const rem = (data.reminders ?? []).map((x) => {
         const { date, time } = splitRemindAt(x.remind_at);
         return { date, time, channels: rowChannels(x.channels, x.channel) };
@@ -179,7 +363,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
       setInitial(init);
       setComments([]);
       setImages([]);
-      setStaged((prev) => { prev.forEach((s) => URL.revokeObjectURL(s.url)); return []; });
+      setVideos([]);
+      setStagedImages((prev) => { prev.forEach((s) => URL.revokeObjectURL(s.url)); return []; });
+      setStagedVideos((prev) => { prev.forEach((s) => URL.revokeObjectURL(s.url)); return []; });
       setReminders([]);
       setInitialReminders([]);
       setCommentInput('');
@@ -249,8 +435,8 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
     () =>
       JSON.stringify(form) !== JSON.stringify(initial) ||
       JSON.stringify(reminders) !== JSON.stringify(initialReminders) ||
-      (!isEdit && staged.length > 0),
-    [form, initial, reminders, initialReminders, isEdit, staged.length],
+      (!isEdit && (stagedImages.length > 0 || stagedVideos.length > 0)),
+    [form, initial, reminders, initialReminders, isEdit, stagedImages.length, stagedVideos.length],
   );
   const canSubmit = canEdit && !!form.title.trim() && !resolutionMissing && !submitting;
 
@@ -317,23 +503,27 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
         throw new Error(mapError(data.error, isEdit ? 'עדכון התקלה נכשל' : 'יצירת התקלה נכשלה'));
       }
 
-      // Create mode: attach any staged images to the freshly-created issue,
-      // reusing the same endpoint the edit flow uses (one request per file).
-      if (!isEdit && data.issue?.id && staged.length > 0) {
+      // Create mode: attach any staged media to the freshly-created issue,
+      // reusing the same endpoints the edit flow uses (one request per file).
+      if (!isEdit && data.issue?.id) {
         const newId = data.issue.id;
-        let uploaded = 0;
-        for (const s of staged) {
+        const pending: { file: File; endpoint: 'images' | 'videos'; noun: string }[] = [
+          ...stagedImages.map((s) => ({ file: s.file, endpoint: 'images' as const, noun: 'תמונות' })),
+          ...stagedVideos.map((s) => ({ file: s.file, endpoint: 'videos' as const, noun: 'סרטונים' })),
+        ];
+        const failed: Record<string, number> = {};
+        for (const p of pending) {
           const fd = new FormData();
-          fd.append('file', s.file);
-          const ur = await fetch(`/api/issues/${newId}/images`, {
+          fd.append('file', p.file);
+          const ur = await fetch(`/api/issues/${newId}/${p.endpoint}`, {
             method: 'POST',
             credentials: 'include',
             body: fd,
           });
-          if (ur.ok) uploaded += 1;
+          if (!ur.ok) failed[p.noun] = (failed[p.noun] ?? 0) + 1;
         }
-        if (uploaded < staged.length) {
-          toast.warning(`התקלה נוצרה, אך ${staged.length - uploaded} תמונות לא הועלו`);
+        for (const [noun, n] of Object.entries(failed)) {
+          toast.warning(`התקלה נוצרה, אך ${n} ${noun} לא הועלו`);
         }
       }
 
@@ -347,83 +537,95 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
     }
   }
 
-  async function handleUpload(files: FileList | null) {
-    if (!files || files.length === 0 || !issue) return;
-    if (images.length >= ISSUE_MAX_IMAGES) {
-      toast.error(`ניתן לצרף עד ${ISSUE_MAX_IMAGES} תמונות`);
-      return;
-    }
-    const file = files[0];
-    // Client-side guard (server re-validates).
-    if (!ISSUE_ALLOWED_IMAGE_TYPES.includes(file.type)) {
-      toast.error('סוג קובץ לא נתמך (JPG / PNG / WebP בלבד)');
-      return;
-    }
-    if (file.size > ISSUE_MAX_IMAGE_SIZE_BYTES) {
-      toast.error('הקובץ גדול מדי (עד 5MB)');
-      return;
-    }
+  // Per-kind state, so the generic media handlers below stay DRY across
+  // images/videos (endpoints, caps and allowed-types come from MEDIA[kind]).
+  const mediaState = {
+    image: { uploaded: images, setUploaded: setImages, staged: stagedImages, setStaged: setStagedImages },
+    video: { uploaded: videos, setUploaded: setVideos, staged: stagedVideos, setStaged: setStagedVideos },
+  } as const;
+
+  // Edit mode: upload each file to the issue immediately (one request per file →
+  // D1 multiple). Skips over-cap / bad-type / oversize files with a toast each.
+  async function uploadMedia(kind: MediaKind, files: FileList | null) {
+    if (!issue) return;
+    const cfg = MEDIA[kind];
+    const st = mediaState[kind];
+    const list = Array.from(files ?? []);
+    if (list.length === 0) return;
+    let room = cfg.max - st.uploaded.length;
+    if (room <= 0) { toast.error(cfg.maxErr); return; }
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const r = await fetch(`/api/issues/${issue.id}/images`, {
-        method: 'POST',
-        credentials: 'include',
-        body: fd,
-      });
-      const data = (await r.json().catch(() => ({}))) as { image?: IssueImage; error?: string };
-      if (!r.ok || !data.image) throw new Error(mapError(data.error, 'העלאת התמונה נכשלה'));
-      setImages((prev) => [...prev, data.image!]);
-      toast.success('התמונה הועלתה');
-    } catch (e) {
-      toast.error((e as Error).message);
+      for (const file of list) {
+        if (room <= 0) { toast.error(cfg.maxErr); break; }
+        if (!cfg.types.includes(file.type)) { toast.error(cfg.typeErr); continue; }
+        if (file.size > cfg.maxSize) { toast.error(cfg.sizeErr); continue; }
+        const fd = new FormData();
+        fd.append('file', file);
+        const r = await fetch(`/api/issues/${issue.id}/${cfg.endpoint}`, {
+          method: 'POST', credentials: 'include', body: fd,
+        });
+        const data = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+        const item = data[cfg.respKey] as IssueImage | undefined;
+        if (!r.ok || !item) {
+          toast.error(mapError(typeof data.error === 'string' ? data.error : undefined, 'ההעלאה נכשלה'));
+          continue;
+        }
+        st.setUploaded((prev) => [...prev, item]);
+        room -= 1;
+      }
     } finally {
       setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }
 
-  async function removeImage(path: string) {
+  // Create mode: validate + stage files locally (no issue id to upload to yet).
+  function stageMedia(kind: MediaKind, files: FileList | null) {
+    const cfg = MEDIA[kind];
+    const st = mediaState[kind];
+    const list = Array.from(files ?? []);
+    if (list.length === 0) return;
+    let room = cfg.max - st.staged.length;
+    if (room <= 0) { toast.error(cfg.maxErr); return; }
+    for (const file of list) {
+      if (room <= 0) { toast.error(cfg.maxErr); break; }
+      if (!cfg.types.includes(file.type)) { toast.error(cfg.typeErr); continue; }
+      if (file.size > cfg.maxSize) { toast.error(cfg.sizeErr); continue; }
+      st.setStaged((prev) => [...prev, { file, url: URL.createObjectURL(file) }]);
+      room -= 1;
+    }
+  }
+
+  async function removeUploaded(kind: MediaKind, path: string) {
     if (!issue) return;
-    const prev = images;
-    setImages((curr) => curr.filter((img) => img.path !== path)); // optimistic
+    const cfg = MEDIA[kind];
+    const st = mediaState[kind];
+    const prev = st.uploaded;
+    st.setUploaded((curr) => curr.filter((m) => m.path !== path)); // optimistic
     try {
-      const r = await fetch(`/api/issues/${issue.id}/images`, {
+      const r = await fetch(`/api/issues/${issue.id}/${cfg.endpoint}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ path }),
       });
-      if (!r.ok) throw new Error('מחיקת התמונה נכשלה');
-      toast.success('התמונה הוסרה');
+      if (!r.ok) throw new Error('המחיקה נכשלה');
     } catch (e) {
-      setImages(prev);
+      st.setUploaded(prev);
       toast.error((e as Error).message);
     }
   }
 
-  // Create mode: validate + stage a file locally (no issue id to upload to yet).
-  function handleStage(files: FileList | null) {
-    if (!files || files.length === 0) return;
-    if (staged.length >= ISSUE_MAX_IMAGES) {
-      toast.error(`ניתן לצרף עד ${ISSUE_MAX_IMAGES} תמונות`);
-      return;
-    }
-    const file = files[0];
-    if (!ISSUE_ALLOWED_IMAGE_TYPES.includes(file.type)) {
-      toast.error('סוג קובץ לא נתמך (JPG / PNG / WebP בלבד)');
-    } else if (file.size > ISSUE_MAX_IMAGE_SIZE_BYTES) {
-      toast.error('הקובץ גדול מדי (עד 5MB)');
-    } else {
-      setStaged((prev) => [...prev, { file, url: URL.createObjectURL(file) }]);
-    }
-    if (fileInputRef.current) fileInputRef.current.value = '';
+  function removeStagedMedia(kind: MediaKind, url: string) {
+    mediaState[kind].setStaged((prev) => prev.filter((s) => s.url !== url));
+    URL.revokeObjectURL(url);
   }
 
-  function removeStaged(url: string) {
-    setStaged((prev) => prev.filter((s) => s.url !== url));
-    URL.revokeObjectURL(url);
+  function tilesFor(kind: MediaKind): MediaTile[] {
+    const st = mediaState[kind];
+    return isEdit
+      ? st.uploaded.map((m) => ({ key: m.path, src: m.signed_url, onRemove: () => void removeUploaded(kind, m.path) }))
+      : st.staged.map((s) => ({ key: s.url, src: s.url, onRemove: () => removeStagedMedia(kind, s.url) }));
   }
 
   async function addComment() {
@@ -446,14 +648,11 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
   }
 
   const disabled = submitting || !canEdit;
+  const mediaBusy = uploading || submitting;
 
-  // Unified image tiles: server images (edit) or staged previews (create) — one
-  // grid renders both, so the markup stays DRY across modes.
-  const imageCount = isEdit ? images.length : staged.length;
-  const canAddImage = canEdit && imageCount < ISSUE_MAX_IMAGES;
-  const imageTiles = isEdit
-    ? images.map((img) => ({ key: img.path, src: img.signed_url, onRemove: () => void removeImage(img.path) }))
-    : staged.map((s) => ({ key: s.url, src: s.url, onRemove: () => removeStaged(s.url) }));
+  // Server media (edit) or staged previews (create) — one grid renders both.
+  const imageCount = isEdit ? images.length : stagedImages.length;
+  const videoCount = isEdit ? videos.length : stagedVideos.length;
 
   // Single definition — rendered once, directly under the handler section
   // (HTML order: handler → notify → reminders), in both create and edit.
@@ -662,98 +861,28 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
               {/* Reminders (shared component — also used by the task form). Optional. */}
               <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} />
 
-              {/* Images — edit attaches to the issue immediately; create stages
-                  files locally and uploads them right after the issue is made. */}
-              <Section
-                title="תמונות"
-                icon={Images}
-                iconTone="blue"
-                subtitle={`${imageCount}/${ISSUE_MAX_IMAGES} · JPG / PNG / WebP · עד 5MB`}
-                headerSlot={
-                  canAddImage ? (
-                    <div className="flex items-center gap-2">
-                      {/* Mobile only: shoot straight to the rear camera. The field
-                          worker documents a fault on their phone — this is the one
-                          idea taken from the ref's form. Desktop keeps just the
-                          file picker (a webcam capture button there is noise). */}
-                      <button
-                        type="button"
-                        onClick={() => cameraInputRef.current?.click()}
-                        disabled={uploading || submitting}
-                        className="inline-flex h-8 items-center gap-1 rounded-lg bg-blue-100 px-3 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-200 disabled:opacity-60 sm:hidden"
-                      >
-                        <Camera className="h-3.5 w-3.5" />
-                        צלם
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploading || submitting}
-                        className="inline-flex h-8 items-center gap-1 rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 disabled:opacity-60"
-                      >
-                        {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                        {uploading ? 'מעלה…' : 'העלאה'}
-                      </button>
-                    </div>
-                  ) : undefined
-                }
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={ISSUE_ALLOWED_IMAGE_TYPES.join(',')}
-                  className="hidden"
-                  onChange={(e) => (isEdit ? void handleUpload(e.target.files) : handleStage(e.target.files))}
-                />
-                {/* Camera path — same handlers, same accept list (so the same
-                    validation + error toasts apply), plus capture to open the
-                    camera. ponytail: if an iPhone ever hands back HEIC the shared
-                    validation rejects it exactly as a HEIC file-pick would today;
-                    widening the allowed types is a storage decision, out of scope. */}
-                <input
-                  ref={cameraInputRef}
-                  type="file"
-                  accept={ISSUE_ALLOWED_IMAGE_TYPES.join(',')}
-                  capture="environment"
-                  className="hidden"
-                  onChange={(e) => (isEdit ? void handleUpload(e.target.files) : handleStage(e.target.files))}
-                />
-                <div className="py-2">
-                  {imageTiles.length === 0 ? (
-                    <p className="py-2 text-center text-xs text-slate-400">אין תמונות. העלה תמונה כדי לתעד את התקלה.</p>
-                  ) : (
-                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                      {imageTiles.map((t) => (
-                        <div key={t.key} className="group relative aspect-square overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
-                          {t.src ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={t.src}
-                              alt="תמונת תקלה"
-                              onClick={() => t.src && setLightbox(t.src)}
-                              className="h-full w-full cursor-zoom-in object-cover transition-transform group-hover:scale-105"
-                            />
-                          ) : (
-                            <div className="grid h-full w-full place-items-center text-slate-400">
-                              <Images className="h-5 w-5" />
-                            </div>
-                          )}
-                          {canEdit && (
-                            <button
-                              type="button"
-                              onClick={t.onRemove}
-                              aria-label="מחק תמונה"
-                              className="absolute top-1 end-1 grid h-7 w-7 place-items-center rounded-md bg-slate-900/60 text-white opacity-0 transition-opacity hover:bg-rose-600 group-hover:opacity-100"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </Section>
+              {/* Media — edit attaches to the issue immediately; create stages
+                  files locally and uploads them right after the issue is made.
+                  D1 multiple + D2 drag&drop + D3 video all live in MediaSection. */}
+              <MediaSection
+                cfg={MEDIA.image}
+                count={imageCount}
+                canAdd={canEdit && imageCount < MEDIA.image.max}
+                canEdit={canEdit}
+                busy={mediaBusy}
+                tiles={tilesFor('image')}
+                onFiles={(f) => (isEdit ? void uploadMedia('image', f) : stageMedia('image', f))}
+                onOpenLightbox={setLightbox}
+              />
+              <MediaSection
+                cfg={MEDIA.video}
+                count={videoCount}
+                canAdd={canEdit && videoCount < MEDIA.video.max}
+                canEdit={canEdit}
+                busy={mediaBusy}
+                tiles={tilesFor('video')}
+                onFiles={(f) => (isEdit ? void uploadMedia('video', f) : stageMedia('video', f))}
+              />
 
               {/* Comments — edit mode only */}
               {isEdit && (
