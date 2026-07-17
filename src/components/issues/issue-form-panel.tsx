@@ -904,12 +904,13 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
                 />
               </Section>
 
-              {/* Alert + reminders — one card. Reminders first; the channel cards
-                  appear only once a reminder is added (they set its delivery). */}
+              {/* Alert + reminders — one card. Channel cards first, always visible:
+                  an immediate send to the handler is its own path. Reminders below,
+                  inheriting the chosen channel. */}
               <Section title="התראה ותזכורות" icon={Bell} iconTone="amber">
                 <div className="space-y-4 py-2">
+                  {channelCards}
                   <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} bare />
-                  {reminders.length > 0 && channelCards}
                 </div>
               </Section>
 

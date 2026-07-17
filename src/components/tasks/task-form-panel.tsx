@@ -604,10 +604,11 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
                 />
               </Section>
 
-              {/* Reminders first; the channel cards appear only once a reminder is
-                  added (they set its delivery). Shared with the issue form. */}
+              {/* Channel cards first, always visible: an immediate send to the
+                  handler is its own path. Reminders below, inheriting the channel.
+                  Shared with the issue form. */}
+              {channelCards}
               <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} />
-              {reminders.length > 0 && channelCards}
 
               {/* Comments — edit mode only */}
               {isEdit && (
