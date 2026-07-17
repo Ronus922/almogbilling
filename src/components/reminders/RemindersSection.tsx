@@ -6,28 +6,25 @@
 // public.reminders table (entity_type/entity_id) and fire via the cron engine
 // (@/lib/reminders/engine), which already handles entity_type 'task' and 'issue'.
 //
-// Channels are MULTI-select (migration 049): each reminder fires on any
-// combination of in-system / email / WhatsApp (at least one).
+// Channel choice is now GLOBAL (the form's channel cards), not per-reminder:
+// every scheduled reminder inherits the channels selected there (falling back to
+// in_app when none). So this component edits only WHEN (date+time); the caller
+// passes the derived channels into buildRemindersPayload at submit.
 
 import { Bell, Plus, Trash2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Section } from '@/components/side-panel/Section';
 import { cn } from '@/lib/utils';
-import { REMINDER_CHANNELS, effectiveChannels } from '@/lib/notify/channels';
+import { effectiveChannels } from '@/lib/notify/channels';
 import type { ReminderChannel } from '@/lib/types/tasks';
+import type { ChannelValue } from '@/lib/notify/selection';
 
 export interface ReminderRow {
   date: string; // YYYY-MM-DD
   time: string; // HH:MM
-  channels: ReminderChannel[]; // at least one
+  channels: ReminderChannel[]; // legacy field — ignored at submit (global channels win)
 }
-
-const CHANNEL_LABEL: Record<ReminderChannel, string> = {
-  in_app: 'בתוך המערכת',
-  email: 'אימייל',
-  whatsapp: 'וואטסאפ',
-};
 
 /** Map a server reminder's ISO remind_at into the {date,time} a row needs. */
 export function splitRemindAt(iso: string): { date: string; time: string } {
@@ -49,24 +46,63 @@ export function rowChannels(
   return effectiveChannels(channels, legacyChannel);
 }
 
+/** Derive the reminder channels from the global channel cards: the selected
+ *  channels (email/whatsapp), or in_app alone when nothing is selected. */
+export function channelsFromGlobals(c: ChannelValue): ReminderChannel[] {
+  const out: ReminderChannel[] = [];
+  if (c.email) out.push('email');
+  if (c.whatsapp) out.push('whatsapp');
+  return out.length > 0 ? out : ['in_app'];
+}
+
 /**
  * Build the POST/PATCH `reminders` payload from rows. Incomplete rows (no date)
- * are skipped silently. Returns null if any dated row is unparseable OR has no
- * channel selected (caller surfaces an error and aborts the save).
+ * are skipped silently. Every reminder fires on `channels` (the global choice)
+ * and carries `notify_owner` (the "אליי" self opt-in — same for all rows).
+ * Returns null if any dated row is unparseable (caller surfaces an error).
  */
 export function buildRemindersPayload(
   rows: ReminderRow[],
-): { remind_at: string; channels: ReminderChannel[] }[] | null {
-  const out: { remind_at: string; channels: ReminderChannel[] }[] = [];
+  channels: ReminderChannel[],
+  notifyOwner: boolean,
+): { remind_at: string; channels: ReminderChannel[]; notify_owner: boolean }[] | null {
+  const out: { remind_at: string; channels: ReminderChannel[]; notify_owner: boolean }[] = [];
   for (const r of rows) {
     if (!r.date) continue;
-    if (r.channels.length === 0) return null;
     const time = r.time || '09:00';
     const local = new Date(`${r.date}T${time}:00`);
     if (Number.isNaN(local.getTime())) return null;
-    out.push({ remind_at: local.toISOString(), channels: r.channels });
+    out.push({ remind_at: local.toISOString(), channels, notify_owner: notifyOwner });
   }
   return out;
+}
+
+/** True when a NEW dated reminder is in the past (browser-local). Rows that were
+ *  loaded unchanged (present in `initial`) are exempt — editing an old record that
+ *  is already past must not be blocked, only creating a fresh past reminder. */
+export function hasNewPastReminder(rows: ReminderRow[], initial: ReminderRow[]): boolean {
+  const loaded = new Set(initial.map((r) => `${r.date}T${r.time}`));
+  const cutoff = Date.now() - 60_000; // 1-min grace for submit latency / clock skew
+  for (const r of rows) {
+    if (!r.date || loaded.has(`${r.date}T${r.time}`)) continue;
+    const t = new Date(`${r.date}T${r.time || '09:00'}:00`).getTime();
+    if (!Number.isNaN(t) && t < cutoff) return true;
+  }
+  return false;
+}
+
+// Client-side date helpers (browser-local tz = the user's tz, e.g. Asia/Jerusalem).
+function pad(n: number): string { return String(n).padStart(2, '0'); }
+function localDateISO(d: Date): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+/** "now" rounded UP to the next 5-minute mark — the default for a new reminder. */
+function nowRoundedUp5(): { date: string; time: string } {
+  const d = new Date();
+  d.setSeconds(0, 0);
+  const add = (5 - (d.getMinutes() % 5)) % 5;
+  if (add) d.setMinutes(d.getMinutes() + add);
+  return { date: localDateISO(d), time: `${pad(d.getHours())}:${pad(d.getMinutes())}` };
 }
 
 interface Props {
@@ -78,8 +114,12 @@ interface Props {
 }
 
 export function RemindersSection({ reminders, onChange, disabled = false, bare = false }: Props) {
-  function add() {
-    onChange([...reminders, { date: '', time: '09:00', channels: ['in_app'] }]);
+  // Past dates can't be picked for a new/edited reminder (loaded old rows keep theirs).
+  const todayISO = localDateISO(new Date());
+
+  // New rows carry an empty channels[] — the global choice is applied at submit.
+  function addRow(date: string, time: string) {
+    onChange([...reminders, { date, time, channels: [] }]);
   }
   function update(idx: number, patch: Partial<ReminderRow>) {
     onChange(reminders.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
@@ -87,18 +127,10 @@ export function RemindersSection({ reminders, onChange, disabled = false, bare =
   function remove(idx: number) {
     onChange(reminders.filter((_, i) => i !== idx));
   }
-  function toggleChannel(idx: number, ch: ReminderChannel) {
-    const row = reminders[idx];
-    if (!row) return;
-    const has = row.channels.includes(ch);
-    let next = has ? row.channels.filter((c) => c !== ch) : [...row.channels, ch];
-    if (next.length === 0) next = [ch]; // keep at least one — cannot clear the last
-    update(idx, { channels: next });
-  }
 
   return (
     <Section
-      title="תזכורות"
+      title="תזמון תזכורות"
       icon={Bell}
       iconTone="amber"
       bare={bare}
@@ -106,10 +138,10 @@ export function RemindersSection({ reminders, onChange, disabled = false, bare =
         !disabled ? (
           <button
             type="button"
-            onClick={add}
-            className="inline-flex h-8 items-center gap-1 rounded-lg bg-slate-100 px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200"
+            onClick={() => { const n = nowRoundedUp5(); addRow(n.date, n.time); }}
+            className="inline-flex h-8 items-center gap-1 rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white transition-colors hover:bg-blue-700"
           >
-            <Plus className="h-3.5 w-3.5" /> הוסף
+            <Plus className="h-3.5 w-3.5" /> הוסף תזכורת
           </button>
         ) : undefined
       }
@@ -119,70 +151,43 @@ export function RemindersSection({ reminders, onChange, disabled = false, bare =
           <p className="py-2 text-center text-xs text-slate-400">אין תזכורות. הוסף תזכורת כדי לקבל התראה.</p>
         )}
         {reminders.map((r, idx) => (
-          <div key={idx} className="rounded-lg border border-slate-200 bg-white p-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-              <div className="flex-1 space-y-1">
-                <Label className="text-xs text-muted-foreground">תאריך</Label>
-                <Input
-                  type="date"
-                  value={r.date}
-                  onChange={(e) => update(idx, { date: e.target.value })}
-                  disabled={disabled}
-                  onClick={(e) => {
-                    const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-                    try { el.showPicker?.(); } catch { /* native fallback */ }
-                  }}
-                  className="h-10 cursor-pointer"
-                />
-              </div>
-              <div className="w-full space-y-1 sm:w-28">
-                <Label className="text-xs text-muted-foreground">שעה</Label>
-                <Input
-                  type="time"
-                  value={r.time}
-                  onChange={(e) => update(idx, { time: e.target.value })}
-                  disabled={disabled}
-                  dir="ltr"
-                  className="h-10 cursor-pointer tabular-nums"
-                />
-              </div>
-              {!disabled && (
-                <button
-                  type="button"
-                  onClick={() => remove(idx)}
-                  aria-label="הסר תזכורת"
-                  className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              )}
+          <div key={idx} className="flex items-end gap-2 rounded-lg border border-slate-200 bg-white p-3">
+            <div className="flex-1 space-y-1">
+              <Label className="text-xs text-muted-foreground">תאריך</Label>
+              <Input
+                type="date"
+                value={r.date}
+                min={todayISO}
+                onChange={(e) => update(idx, { date: e.target.value })}
+                disabled={disabled}
+                onClick={(e) => {
+                  const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+                  try { el.showPicker?.(); } catch { /* native fallback */ }
+                }}
+                className="h-10 cursor-pointer"
+              />
             </div>
-            <div className="mt-2 space-y-1">
-              <Label className="text-xs text-muted-foreground">ערוצים</Label>
-              <div className="flex flex-wrap gap-1.5">
-                {REMINDER_CHANNELS.map((ch) => {
-                  const active = r.channels.includes(ch);
-                  return (
-                    <button
-                      key={ch}
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => toggleChannel(idx, ch)}
-                      aria-pressed={active}
-                      className={cn(
-                        'h-9 rounded-lg border px-3 text-xs font-semibold transition-colors',
-                        active
-                          ? 'border-blue-600 bg-blue-600 text-white'
-                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
-                        disabled && 'cursor-not-allowed opacity-50',
-                      )}
-                    >
-                      {CHANNEL_LABEL[ch]}
-                    </button>
-                  );
-                })}
-              </div>
+            <div className="w-28 space-y-1">
+              <Label className="text-xs text-muted-foreground">שעה</Label>
+              <Input
+                type="time"
+                value={r.time}
+                onChange={(e) => update(idx, { time: e.target.value })}
+                disabled={disabled}
+                dir="ltr"
+                className="h-10 cursor-pointer tabular-nums"
+              />
             </div>
+            {!disabled && (
+              <button
+                type="button"
+                onClick={() => remove(idx)}
+                aria-label="הסר תזכורת"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
           </div>
         ))}
       </div>

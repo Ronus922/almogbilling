@@ -20,7 +20,7 @@ import { coerceIssueInput, isUuid } from '@/lib/validation/issues';
 import { coerceAssignees } from '@/lib/validation/assignee';
 // Generic reminders coercion lives in the tasks validation module (it is
 // entity-agnostic — {remind_at, channel}); reused here for issue reminders.
-import { coerceReminders } from '@/lib/validation/tasks';
+import { coerceReminders, reminderInPast } from '@/lib/validation/tasks';
 import { notifyIssue } from '@/services/notifications';
 import {
   dispatchCreateNotifications,
@@ -118,6 +118,16 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   if (reminders && !reminders.ok) {
     return NextResponse.json({ error: reminders.error }, { status: 400 });
   }
+  // Edit: block NEW past reminders, but exempt already-persisted ones (re-sent
+  // verbatim) so editing an entity with an old past reminder isn't blocked.
+  if (reminders && reminders.ok) {
+    const existingMs = new Set(
+      (await listRemindersForEntity('issue', id)).map((r) => Date.parse(r.remind_at)),
+    );
+    if (reminderInPast(reminders.reminders, existingMs)) {
+      return NextResponse.json({ error: 'reminder_in_past' }, { status: 400 });
+    }
+  }
 
   // is_archived passthrough (boolean).
   const patch: Record<string, unknown> = { ...result.fields };
@@ -172,6 +182,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
           userId: actor.id,
           remindAt: r.remind_at,
           channels: r.channels,
+          notifyOwner: r.notify_owner,
         });
       }
     }

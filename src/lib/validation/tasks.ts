@@ -137,6 +137,7 @@ export function coerceTaskInput(
 export interface ReminderInput {
   remind_at: string; // ISO timestamptz
   channels: ReminderChannel[]; // non-empty subset of in_app/email/whatsapp
+  notify_owner: boolean; // "אליי"/self opt-in (migration 065)
 }
 
 export type RemindersValidation =
@@ -165,9 +166,22 @@ export function coerceReminders(body: Record<string, unknown>): RemindersValidat
     }
     const chRes = coerceChannels(rec.channels);
     if (!chRes.ok) return { ok: false, error: chRes.error };
-    out.push({ remind_at: remindAt, channels: chRes.channels });
+    out.push({ remind_at: remindAt, channels: chRes.channels, notify_owner: rec.notify_owner === true });
   }
   return { ok: true, reminders: out };
+}
+
+/** Server-side past-block: true if any reminder's remind_at is in the past and is
+ *  NOT already persisted (existingMs). Loaded/unchanged reminders (re-sent verbatim
+ *  on edit) are exempt, so editing an entity with an old past reminder isn't blocked;
+ *  only creating a fresh past reminder is rejected. Mirrors the client check. */
+export function reminderInPast(reminders: ReminderInput[], existingMs: Set<number>): boolean {
+  const cutoff = Date.now() - 60_000; // 1-min grace (matches the client)
+  for (const r of reminders) {
+    const t = Date.parse(r.remind_at);
+    if (!Number.isNaN(t) && t < cutoff && !existingMs.has(t)) return true;
+  }
+  return false;
 }
 
 // ── Recurrence rule embedded in the task body ────────────────────────────────

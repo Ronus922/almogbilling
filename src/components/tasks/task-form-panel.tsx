@@ -31,13 +31,14 @@ import type { AssigneeInput, SupplierOption } from '@/lib/types/assignee';
 import { TargetField } from '@/components/targets/TargetField';
 import { AssigneeSplitFields } from '@/components/assignee/AssigneeSplitFields';
 import {
-  RemindersSection, splitRemindAt, buildRemindersPayload, rowChannels, type ReminderRow,
+  RemindersSection, splitRemindAt, buildRemindersPayload, rowChannels, channelsFromGlobals,
+  hasNewPastReminder, type ReminderRow,
 } from '@/components/reminders/RemindersSection';
-import { NotifyMatrix, type NotifyRecipient } from '@/components/notify/NotifyMatrix';
+import { ChannelCards } from '@/components/notify/ChannelCards';
 import {
-  EMPTY_NOTIFY_SELECTION,
-  recipientKey,
-  type NotifySelection,
+  EMPTY_CHANNELS,
+  channelsToSelection,
+  type ChannelValue,
   type NotifyUserContact,
 } from '@/lib/notify/selection';
 import { RecurrenceSection } from '@/components/recurrence/RecurrenceSection';
@@ -122,8 +123,10 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
   const isEdit = !!task;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
-  // Create-form notification matrix (recipient × channel). Default = nothing.
-  const [notify, setNotify] = useState<NotifySelection>(EMPTY_NOTIFY_SELECTION);
+  // Global send channels (WhatsApp / email) — applied to the selected handlers.
+  const [channels, setChannels] = useState<ChannelValue>(EMPTY_CHANNELS);
+  // "אליי" self opt-in — the current user also receives the alert + reminders.
+  const [self, setSelf] = useState(false);
   const [reminders, setReminders] = useState<ReminderRow[]>([]);
   const [initialReminders, setInitialReminders] = useState<ReminderRow[]>([]);
   const [recurrence, setRecurrence] = useState<RecurrenceFormState>(EMPTY_RECURRENCE);
@@ -178,7 +181,8 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       setTitleTouched(false);
       setRecurDateTouched(false);
       setSubmitting(false);
-      setNotify(EMPTY_NOTIFY_SELECTION);
+      setChannels(EMPTY_CHANNELS);
+      setSelf(false);
       if (task) void loadDetail(task.id);
     }
   }, [open, task, loadDetail]);
@@ -198,41 +202,13 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
     return m;
   }, [task]);
 
-  // Keys of assignees present when the panel opened. In edit mode the matrix
-  // shows ONLY newly-added assignees (added set); pre-existing ones already got
-  // their notification and must not be re-notified. Empty in create mode.
-  const initialAssigneeKeys = useMemo<Set<string>>(() => {
-    const s = new Set<string>();
-    for (const a of task?.assignees ?? []) {
-      const id = a.user_id ?? a.supplier_id;
-      if (id) s.add(`${a.assignee_type}:${id}`);
-    }
-    return s;
-  }, [task]);
-
-  // Notification matrix recipients: "אליי" always, then one row per selected
-  // assignee (user OR supplier) — in edit, restricted to the added set. A user
-  // assignee that is the creator is covered by "אליי" (skipped). Cell
-  // availability comes from the option lists.
-  const notifyRecipients = useMemo<NotifyRecipient[]>(() => {
-    const list: NotifyRecipient[] = [
-      { key: 'me', label: 'אליי', name: currentUser.name, hasEmail: currentUser.hasEmail, hasPhone: currentUser.hasPhone },
-    ];
-    for (const a of form.assignees) {
-      if (isEdit && initialAssigneeKeys.has(`${a.assignee_type}:${a.id}`)) continue;
-      if (a.assignee_type === 'user') {
-        if (a.id === currentUser.id) continue;
-        const u = assignees.find((x) => x.id === a.id);
-        const name = u?.name ?? knownNames[`user:${a.id}`] ?? 'עובד';
-        list.push({ key: recipientKey('user', a.id), label: name, name, hasEmail: !!u?.hasEmail, hasPhone: !!u?.hasPhone });
-      } else {
-        const s = suppliers.find((x) => x.id === a.id);
-        const name = s?.display_name ?? knownNames[`supplier:${a.id}`] ?? 'ספק';
-        list.push({ key: recipientKey('supplier', a.id), label: name, name, hasEmail: !!s?.email, hasPhone: !!(s?.mobile || s?.phone) });
-      }
-    }
-    return list;
-  }, [form.assignees, assignees, suppliers, currentUser, knownNames, isEdit, initialAssigneeKeys]);
+  // Handler keys the global channels expand over. The server governs edit-mode
+  // fan-out (filterAddedAssignees), so sending ALL current keys is safe — only
+  // newly-added handlers are notified on PATCH.
+  const assigneeKeys = useMemo(
+    () => form.assignees.map((a) => `${a.assignee_type}:${a.id}`),
+    [form.assignees],
+  );
 
   const titleError = titleTouched && !form.title.trim() ? 'כותרת היא שדה חובה' : null;
 
@@ -240,8 +216,9 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
     () =>
       JSON.stringify(form) !== JSON.stringify(initial) ||
       JSON.stringify(reminders) !== JSON.stringify(initialReminders) ||
-      JSON.stringify(recurrence) !== JSON.stringify(initialRecurrence),
-    [form, initial, reminders, initialReminders, recurrence, initialRecurrence],
+      JSON.stringify(recurrence) !== JSON.stringify(initialRecurrence) ||
+      channels.email || channels.whatsapp || self,
+    [form, initial, reminders, initialReminders, recurrence, initialRecurrence, channels, self],
   );
 
   // Recurrence editing rules: a materialized INSTANCE shows the rule read-only
@@ -283,7 +260,11 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       toast.error('משימה מחזורית מחייבת תאריך יעד — הוא משמש כתאריך הפתיחה של הסדרה');
       return;
     }
-    const remindersPayload = buildRemindersPayload(reminders);
+    if (hasNewPastReminder(reminders, initialReminders)) {
+      toast.error('לא ניתן לקבוע תזכורת בעבר');
+      return;
+    }
+    const remindersPayload = buildRemindersPayload(reminders, channelsFromGlobals(channels), self);
     if (remindersPayload === null) {
       toast.error('תאריך תזכורת לא תקין');
       return;
@@ -308,9 +289,11 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
         JSON.stringify(reminders) !== JSON.stringify(initialReminders);
       if (remindersChanged) body.reminders = remindersPayload;
 
-      // Notification matrix selections — create AND edit. In edit the matrix
-      // only ever holds keys for "me" + newly-added assignees (added set).
-      body.notify = notify;
+      // Global channels expanded over the selected handlers → the recipient-keyed
+      // selection the route consumes (IMMEDIATE send, handlers only). Edit fan-out
+      // is filtered server-side. "אליי" is a reminder-only option (notify_owner),
+      // so it does NOT add an immediate 'me' send here.
+      body.notify = channelsToSelection(channels, assigneeKeys);
 
       // Recurrence — only when editable (never re-root a series from an instance).
       // Sent when enabled OR when it changed (so turning it OFF ends the series).
@@ -335,6 +318,7 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
         throw new Error(
           data.error === 'title_required' ? 'כותרת היא שדה חובה' :
           data.error === 'recurrence_requires_due_date' ? 'משימה מחזורית מחייבת תאריך יעד' :
+          data.error === 'reminder_in_past' ? 'לא ניתן לקבוע תזכורת בעבר' :
           isEdit ? 'עדכון המשימה נכשל' : 'יצירת המשימה נכשלה',
         );
       }
@@ -393,10 +377,40 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
 
   const disabled = submitting || !canEdit;
 
-  // Single definition — rendered once, directly under the handler section
-  // (HTML order: handler → notify → reminders), in both create and edit.
-  const notifyMatrix = (
-    <NotifyMatrix recipients={notifyRecipients} value={notify} onChange={setNotify} disabled={disabled} />
+  // A channel is offerable only if some selected recipient (handler / self) has
+  // that contact detail — mirrors the server's silent-skip. Suppliers carry a
+  // phone via mobile-or-phone (matches getSupplierNotifyContact).
+  const emailAvailable =
+    (self && currentUser.hasEmail) ||
+    form.assignees.some((a) =>
+      a.assignee_type === 'user'
+        ? !!assignees.find((u) => u.id === a.id)?.hasEmail
+        : !!suppliers.find((s) => s.id === a.id)?.email,
+    );
+  const phoneAvailable =
+    (self && currentUser.hasPhone) ||
+    form.assignees.some((a) =>
+      a.assignee_type === 'user'
+        ? !!assignees.find((u) => u.id === a.id)?.hasPhone
+        : !!(suppliers.find((s) => s.id === a.id)?.mobile || suppliers.find((s) => s.id === a.id)?.phone),
+    );
+
+  // "אליי" is a reminder option — enabled only once a dated reminder exists.
+  const hasDatedReminder = reminders.some((r) => !!r.date);
+
+  // Global channel cards — rendered under the handler section (create + edit).
+  const channelCards = (
+    <ChannelCards
+      value={channels}
+      onChange={setChannels}
+      disabled={disabled}
+      hasHandler={assigneeKeys.length > 0}
+      self={self}
+      onSelfChange={setSelf}
+      emailAvailable={emailAvailable}
+      phoneAvailable={phoneAvailable}
+      selfEnabled={hasDatedReminder}
+    />
   );
 
   return (
@@ -584,26 +598,16 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
                   users={assignees}
                   suppliers={suppliers}
                   value={form.assignees}
-                  onChange={(next) => {
-                    set('assignees', next);
-                    // Drop matrix selections for assignees no longer present.
-                    setNotify((prev) => {
-                      const allowed = new Set(['me', ...next.map((a) => `${a.assignee_type}:${a.id}`)]);
-                      const pruned: NotifySelection = {};
-                      for (const [k, v] of Object.entries(prev)) if (allowed.has(k)) pruned[k] = v;
-                      return pruned;
-                    });
-                  }}
+                  onChange={(next) => set('assignees', next)}
                   knownNames={knownNames}
                   disabled={disabled}
                 />
               </Section>
 
-              {/* Notification — directly under the handler (HTML order). */}
-              {notifyMatrix}
-
-              {/* Reminders (shared component — also used by the issue form) */}
+              {/* Reminders first; the channel cards appear only once a reminder is
+                  added (they set its delivery). Shared with the issue form. */}
               <RemindersSection reminders={reminders} onChange={setReminders} disabled={disabled} />
+              {reminders.length > 0 && channelCards}
 
               {/* Comments — edit mode only */}
               {isEdit && (

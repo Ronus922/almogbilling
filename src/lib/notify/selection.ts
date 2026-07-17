@@ -71,6 +71,25 @@ export function channelFor(sel: NotifySelection, key: string): NotifyChannelSele
   return sel[key] ?? { email: false, whatsapp: false };
 }
 
+/** Global channel choice (no per-recipient matrix) — the create-form's two
+ *  channel cards. Applied uniformly to every selected handler at submit. */
+export type ChannelValue = NotifyChannelSelection;
+export const EMPTY_CHANNELS: ChannelValue = { email: false, whatsapp: false };
+
+/**
+ * Expand a global channel choice over the given recipient keys into the
+ * recipient-keyed NotifySelection the routes already consume. No channel
+ * selected → {} (nothing sent). No recipient keys → {} (no handler → nothing).
+ * The server still governs edit-mode fan-out (filterAddedAssignees), so callers
+ * may safely pass ALL current assignee keys.
+ */
+export function channelsToSelection(channels: ChannelValue, recipientKeys: string[]): NotifySelection {
+  if (!channels.email && !channels.whatsapp) return {};
+  const out: NotifySelection = {};
+  for (const k of recipientKeys) out[k] = { email: channels.email, whatsapp: channels.whatsapp };
+  return out;
+}
+
 export function hasAnyNotify(sel: NotifySelection): boolean {
   return Object.keys(sel).length > 0;
 }

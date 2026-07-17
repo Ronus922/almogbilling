@@ -183,7 +183,10 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
       if (reminder.entity_type === 'task' || reminder.entity_type === 'issue') {
         recipientIds = await listEntityUserIds(reminder.entity_type, reminder.entity_id);
       }
+      // Owner-fallback when there are no assignees; when notify_owner ("אליי") is
+      // set, ALSO union the owner in alongside the assignees (deduped below).
       if (recipientIds.length === 0) recipientIds = [reminder.user_id];
+      else if (reminder.notify_owner) recipientIds.push(reminder.user_id);
       recipientIds = Array.from(new Set(recipientIds));
 
       // Reminder messages open with "תזכורת: <title>" (the email template renders

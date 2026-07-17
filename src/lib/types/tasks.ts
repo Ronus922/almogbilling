@@ -155,6 +155,8 @@ export interface Reminder {
   channel: string;
   /** Multi-select channels (migration 049). Empty/absent → fall back to `channel`. */
   channels: ReminderChannel[] | null;
+  /** "אליי"/self opt-in (migration 065) — also notify the owner (user_id). */
+  notify_owner: boolean;
   sent_at: string | null;
   created_at: string;
   updated_at: string;
@@ -167,4 +169,6 @@ export interface CreateReminderInput {
   remindAt: string; // ISO timestamptz
   /** Non-empty set of channels to fire on. */
   channels: ReminderChannel[];
+  /** "אליי"/self opt-in (migration 065). Defaults to false when omitted. */
+  notifyOwner?: boolean;
 }

@@ -7,7 +7,7 @@ import { supplierExists } from '@/lib/db/suppliers';
 import { createReminder } from '@/lib/db/reminders';
 import { coerceIssueInput } from '@/lib/validation/issues';
 // Generic, entity-agnostic reminders coercion (reused from the tasks module).
-import { coerceReminders } from '@/lib/validation/tasks';
+import { coerceReminders, reminderInPast } from '@/lib/validation/tasks';
 import { coerceAssignees } from '@/lib/validation/assignee';
 import { notifyIssue, createNotification } from '@/services/notifications';
 import { dispatchCreateNotifications, buildMatrixRecipients } from '@/services/createNotify';
@@ -145,6 +145,10 @@ export async function POST(req: NextRequest) {
   if (reminders && !reminders.ok) {
     return NextResponse.json({ error: reminders.error }, { status: 400 });
   }
+  // Create: every reminder is new → reject any in the past.
+  if (reminders && reminders.ok && reminderInPast(reminders.reminders, new Set())) {
+    return NextResponse.json({ error: 'reminder_in_past' }, { status: 400 });
+  }
 
   try {
     const issue = await createIssue(
@@ -168,6 +172,7 @@ export async function POST(req: NextRequest) {
           userId: actor.id,
           remindAt: r.remind_at,
           channels: r.channels,
+          notifyOwner: r.notify_owner,
         });
       }
     }

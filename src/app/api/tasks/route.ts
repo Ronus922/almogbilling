@@ -4,7 +4,7 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listTasks, createTask, getTaskById, getTaskKpis } from '@/lib/db/tasks';
 import { supplierExists } from '@/lib/db/suppliers';
 import { createReminder } from '@/lib/db/reminders';
-import { coerceTaskInput, coerceReminders, coerceRecurrence } from '@/lib/validation/tasks';
+import { coerceTaskInput, coerceReminders, coerceRecurrence, reminderInPast } from '@/lib/validation/tasks';
 import { coerceAssignees } from '@/lib/validation/assignee';
 import { applyRecurrenceOnSave } from '@/lib/recurrence/materialize';
 import { notifyTask } from '@/services/notifications';
@@ -132,6 +132,10 @@ export async function POST(req: NextRequest) {
   if (reminders && !reminders.ok) {
     return NextResponse.json({ error: reminders.error }, { status: 400 });
   }
+  // Create: every reminder is new → reject any in the past.
+  if (reminders && reminders.ok && reminderInPast(reminders.reminders, new Set())) {
+    return NextResponse.json({ error: 'reminder_in_past' }, { status: 400 });
+  }
 
   const recurrence = coerceRecurrence(bodyRec);
   if (recurrence && !recurrence.ok) {
@@ -178,6 +182,7 @@ export async function POST(req: NextRequest) {
           userId: actor.id,
           remindAt: r.remind_at,
           channels: r.channels,
+          notifyOwner: r.notify_owner,
         });
       }
     }

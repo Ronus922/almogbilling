@@ -16,7 +16,7 @@ import {
 import { deleteNotificationsForEntity } from '@/lib/db/notifications';
 import { listTaskComments } from '@/lib/db/tasks';
 import { supplierExists } from '@/lib/db/suppliers';
-import { coerceTaskInput, coerceReminders, coerceRecurrence } from '@/lib/validation/tasks';
+import { coerceTaskInput, coerceReminders, coerceRecurrence, reminderInPast } from '@/lib/validation/tasks';
 import { coerceAssignees } from '@/lib/validation/assignee';
 import { applyRecurrenceOnSave, getRecurrenceById } from '@/lib/recurrence/materialize';
 import { notifyTask } from '@/services/notifications';
@@ -108,6 +108,16 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   if (reminders && !reminders.ok) {
     return NextResponse.json({ error: reminders.error }, { status: 400 });
   }
+  // Edit: block NEW past reminders, but exempt already-persisted ones (re-sent
+  // verbatim) so editing a task with an old past reminder isn't blocked.
+  if (reminders && reminders.ok) {
+    const existingMs = new Set(
+      (await listRemindersForEntity('task', id)).map((r) => Date.parse(r.remind_at)),
+    );
+    if (reminderInPast(reminders.reminders, existingMs)) {
+      return NextResponse.json({ error: 'reminder_in_past' }, { status: 400 });
+    }
+  }
 
   const recurrence = coerceRecurrence(bodyRec);
   if (recurrence && !recurrence.ok) {
@@ -166,6 +176,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
           userId: actor.id,
           remindAt: r.remind_at,
           channels: r.channels,
+          notifyOwner: r.notify_owner,
         });
       }
     }

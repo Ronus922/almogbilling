@@ -4,7 +4,7 @@ import type { PoolClient } from 'pg';
 import type { CreateReminderInput, Reminder } from '@/lib/types/tasks';
 
 const COLUMNS = `
-  id, entity_type, entity_id, user_id, remind_at, channel, channels, sent_at, created_at, updated_at
+  id, entity_type, entity_id, user_id, remind_at, channel, channels, notify_owner, sent_at, created_at, updated_at
 `;
 
 type Queryable = Pick<PoolClient, 'query'>;
@@ -24,10 +24,11 @@ export async function createReminder(
     input.remindAt,
     channels[0],
     channels,
+    input.notifyOwner ?? false,
   ];
   const sql = `
-    insert into public.reminders (entity_type, entity_id, user_id, remind_at, channel, channels)
-    values ($1, $2, $3, $4, $5, $6)
+    insert into public.reminders (entity_type, entity_id, user_id, remind_at, channel, channels, notify_owner)
+    values ($1, $2, $3, $4, $5, $6, $7)
     returning ${COLUMNS}
   `;
   if (client) {
