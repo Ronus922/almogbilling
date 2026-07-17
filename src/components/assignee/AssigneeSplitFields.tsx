@@ -235,7 +235,8 @@ export function AssigneeSplitFields({
   );
 
   return (
-    <div className="space-y-4 py-2">
+    // Two 50/50 columns on sm+, stacked on mobile (RTL: user right, supplier left).
+    <div className="grid grid-cols-1 gap-4 py-2 sm:grid-cols-2">
       <AssigneeKindSelect
         kind="user"
         options={userOptions}
@@ -244,8 +245,6 @@ export function AssigneeSplitFields({
         knownNames={knownNames}
         disabled={disabled}
       />
-      {/* Separator between the internal-user picker and the supplier picker. */}
-      <div className="h-px bg-slate-100" />
       <AssigneeKindSelect
         kind="supplier"
         options={supplierOptions}
