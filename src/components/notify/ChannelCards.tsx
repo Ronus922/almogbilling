@@ -1,9 +1,10 @@
 'use client';
 
 // Global channel picker (ref: NewProblem "ערוץ שליחה") — replaces the
-// recipient×channel matrix. Two cards (WhatsApp / email); the chosen channel(s)
-// are sent to the SELECTED handlers only (expanded via channelsToSelection at
-// submit). No recipient list, no "אליי". Shared by the issue & task forms.
+// recipient×channel matrix. Two cards (WhatsApp / email) + a "שלח גם אליי"
+// toggle; the chosen channel(s) go to the selected handlers and, when self is
+// on, to the current user too (expanded via channelsToSelection at submit).
+// Shared by the issue & task forms.
 
 import { useEffect } from 'react';
 import { Mail, MessageCircle, Bell, Check, User } from 'lucide-react';
@@ -28,7 +29,6 @@ export function ChannelCards({
   onSelfChange,
   emailAvailable,
   phoneAvailable,
-  selfEnabled,
 }: {
   value: ChannelValue;
   onChange: (v: ChannelValue) => void;
@@ -41,8 +41,6 @@ export function ChannelCards({
   emailAvailable: boolean;
   /** True when at least one selected recipient (handler / self) has a phone. */
   phoneAvailable: boolean;
-  /** "אליי" is a reminder option — allowed only once a dated reminder exists. */
-  selfEnabled: boolean;
 }) {
   const avail: Record<keyof ChannelValue, boolean> = { email: emailAvailable, whatsapp: phoneAvailable };
 
@@ -55,16 +53,12 @@ export function ChannelCards({
     }
   }, [emailAvailable, phoneAvailable, value.email, value.whatsapp, onChange]);
 
-  // "אליי" only applies to reminders — drop it if the last reminder is removed.
-  useEffect(() => {
-    if (self && !selfEnabled) onSelfChange(false);
-  }, [self, selfEnabled, onSelfChange]);
-
   const anyChannel = value.whatsapp || value.email;
   const chosen = [value.email && 'מייל', value.whatsapp && 'וואטסאפ'].filter(Boolean).join(', ');
-  // The channel cards drive the IMMEDIATE send — to the handler only. ("אליי" is
-  // a reminder recipient, handled via the reminders + notify_owner path.)
-  const willSend = anyChannel && hasHandler;
+  // The channel cards drive the IMMEDIATE send — to the handler and, when "אליי"
+  // is on, to the current user too (both expanded via channelsToSelection).
+  const willSend = anyChannel && (hasHandler || self);
+  const targetLabel = [hasHandler && 'גורם מטפל', self && 'אליי'].filter(Boolean).join(' + ');
 
   return (
     <Section
@@ -122,41 +116,40 @@ export function ChannelCards({
             );
           })}
 
-          {/* Third cell — "אליי": a REMINDER option, enabled only once a dated
-              reminder exists. When on, the reminder(s) also go to the current user. */}
+          {/* Third cell — "אליי": include the current user as a recipient,
+              independent of any reminder. When on: an immediate send to self in
+              the chosen channels, and (if a reminder is set) the reminder too
+              via notify_owner. */}
           <button
             type="button"
             role="checkbox"
-            aria-checked={self && selfEnabled}
+            aria-checked={self}
             aria-label="שלח גם אליי"
-            disabled={disabled || !selfEnabled}
-            title={!selfEnabled ? 'הוסף תזכורת עם מועד כדי לאפשר' : undefined}
+            disabled={disabled}
             onClick={() => onSelfChange(!self)}
             className={cn(
               'flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-start transition-colors',
-              self && selfEnabled ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50',
-              (disabled || !selfEnabled) && 'cursor-not-allowed opacity-60 hover:bg-white',
+              self ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50',
+              disabled && 'cursor-not-allowed opacity-60 hover:bg-white',
             )}
           >
             <span className="flex min-w-0 items-center gap-3">
               <span className={cn(
                 'grid h-9 w-9 shrink-0 place-items-center rounded-lg',
-                self && selfEnabled ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400',
+                self ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400',
               )}>
                 <User className="h-4 w-4" />
               </span>
               <span className="flex min-w-0 flex-col">
                 <span className="truncate text-sm font-semibold text-slate-800">שלח גם אליי</span>
-                <span className={cn('truncate text-xs', selfEnabled ? 'text-slate-500' : 'text-amber-600')}>
-                  {selfEnabled ? 'התזכורות גם אליך' : 'דורש תזכורת עם מועד'}
-                </span>
+                <span className="truncate text-xs text-slate-500">גם למשתמש הנוכחי</span>
               </span>
             </span>
             <span className={cn(
               'grid h-5 w-5 shrink-0 place-items-center rounded border',
-              self && selfEnabled ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white',
+              self ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white',
             )}>
-              {self && selfEnabled && <Check className="h-3.5 w-3.5" />}
+              {self && <Check className="h-3.5 w-3.5" />}
             </span>
           </button>
         </div>
@@ -168,9 +161,9 @@ export function ChannelCards({
             : 'border-slate-200 bg-slate-50 text-slate-500',
         )}>
           {willSend
-            ? `יישלח לגורם המטפל: ${chosen}.`
+            ? `יישלח (${chosen}) ל${targetLabel}.`
             : anyChannel
-              ? 'בחרו גורם מטפל כדי לשלוח בערוצים אלה.'
+              ? 'בחרו גורם מטפל או "שלח גם אליי" כדי לשלוח בערוצים אלה.'
               : 'לא נבחר כלום — לא תישלח התראה מיידית.'}
         </div>
       </div>

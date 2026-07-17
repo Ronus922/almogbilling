@@ -495,11 +495,11 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
         JSON.stringify(reminders) !== JSON.stringify(initialReminders);
       if (remindersChanged) body.reminders = remindersPayload;
 
-      // Global channels expanded over the selected handlers → the recipient-keyed
-      // selection the route consumes (IMMEDIATE send, handlers only). Edit fan-out
-      // is filtered server-side. "אליי" is a reminder-only option (notify_owner),
-      // so it does NOT add an immediate 'me' send here.
-      body.notify = channelsToSelection(channels, assigneeKeys);
+      // Global channels expanded over the selected handlers (+ "me" when "אליי"
+      // is on) → the recipient-keyed selection the route consumes (IMMEDIATE
+      // send). Edit fan-out is filtered server-side. Self also gets the reminder
+      // via notify_owner when one is set (independent of this immediate send).
+      body.notify = channelsToSelection(channels, self ? [...assigneeKeys, 'me'] : assigneeKeys);
 
       const url = isEdit ? `/api/issues/${issue!.id}` : '/api/issues';
       const method = isEdit ? 'PATCH' : 'POST';
@@ -699,9 +699,6 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
         : !!(suppliers.find((s) => s.id === a.id)?.mobile || suppliers.find((s) => s.id === a.id)?.phone),
     );
 
-  // "אליי" is a reminder option — enabled only once a dated reminder exists.
-  const hasDatedReminder = reminders.some((r) => !!r.date);
-
   // Global channel cards, rendered inside the "התראה ותזכורות" card (bare).
   const channelCards = (
     <ChannelCards
@@ -713,7 +710,6 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
       onSelfChange={setSelf}
       emailAvailable={emailAvailable}
       phoneAvailable={phoneAvailable}
-      selfEnabled={hasDatedReminder}
       bare
     />
   );

@@ -289,11 +289,11 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
         JSON.stringify(reminders) !== JSON.stringify(initialReminders);
       if (remindersChanged) body.reminders = remindersPayload;
 
-      // Global channels expanded over the selected handlers → the recipient-keyed
-      // selection the route consumes (IMMEDIATE send, handlers only). Edit fan-out
-      // is filtered server-side. "אליי" is a reminder-only option (notify_owner),
-      // so it does NOT add an immediate 'me' send here.
-      body.notify = channelsToSelection(channels, assigneeKeys);
+      // Global channels expanded over the selected handlers (+ "me" when "אליי"
+      // is on) → the recipient-keyed selection the route consumes (IMMEDIATE
+      // send). Edit fan-out is filtered server-side. Self also gets the reminder
+      // via notify_owner when one is set (independent of this immediate send).
+      body.notify = channelsToSelection(channels, self ? [...assigneeKeys, 'me'] : assigneeKeys);
 
       // Recurrence — only when editable (never re-root a series from an instance).
       // Sent when enabled OR when it changed (so turning it OFF ends the series).
@@ -395,9 +395,6 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
         : !!(suppliers.find((s) => s.id === a.id)?.mobile || suppliers.find((s) => s.id === a.id)?.phone),
     );
 
-  // "אליי" is a reminder option — enabled only once a dated reminder exists.
-  const hasDatedReminder = reminders.some((r) => !!r.date);
-
   // Global channel cards — rendered under the handler section (create + edit).
   const channelCards = (
     <ChannelCards
@@ -409,7 +406,6 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       onSelfChange={setSelf}
       emailAvailable={emailAvailable}
       phoneAvailable={phoneAvailable}
-      selfEnabled={hasDatedReminder}
     />
   );
 
