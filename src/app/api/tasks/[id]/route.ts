@@ -188,6 +188,22 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       await deleteRemindersForEntity('task', id);
     }
 
+    // "שלח גם אליי" → immediate in-app bell to the editor (skip when the task just
+    // went terminal, which purges the reminders above). self ⟺ notify_owner.
+    if (
+      reminders && reminders.ok && reminders.reminders.some((rem) => rem.notify_owner) &&
+      !(task.is_archived || task.status === 'done' || task.status === 'cancelled')
+    ) {
+      void notifyTask({
+        userId: actor.id,
+        type: 'reminder',
+        heading: 'נקבעה תזכורת שתגיע גם אליך',
+        task: { id: task.id, title: task.title, priority: task.priority, due_date: task.due_date },
+        channel: 'in_app',
+        dedupeKey: `reminder_self:${task.id}:${actor.id}`,
+      });
+    }
+
     // In-app assignment bell → each NEWLY-ADDED user assignee (set diff), except
     // the editor. channel:'in_app' suppresses the auto-email — external delivery
     // (email / WhatsApp) is now matrix-driven (opt-in), same as the create form.

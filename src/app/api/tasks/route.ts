@@ -187,6 +187,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // "שלח גם אליי" → immediate in-app bell to the creator (alongside the
+    // scheduled reminder). self ⟺ any reminder carries notify_owner.
+    if (reminders && reminders.ok && reminders.reminders.some((rem) => rem.notify_owner)) {
+      void notifyTask({
+        userId: actor.id,
+        type: 'reminder',
+        heading: 'נקבעה תזכורת שתגיע גם אליך',
+        task: { id: task.id, title: task.title, priority: task.priority, due_date: task.due_date },
+        channel: 'in_app',
+        dedupeKey: `reminder_self:${task.id}:${actor.id}`,
+      });
+    }
+
     // In-app assignment bell → each user assignee other than the creator
     // (channel:'in_app' suppresses the auto-email; external is matrix-driven).
     for (const uid of userIds) {

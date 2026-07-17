@@ -177,6 +177,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // "שלח גם אליי" → an immediate in-app bell to the reporter (alongside the
+    // scheduled reminder). self ⟺ any reminder carries notify_owner.
+    if (reminders && reminders.ok && reminders.reminders.some((rem) => rem.notify_owner)) {
+      void notifyIssue({
+        userId: actor.id,
+        type: 'reminder',
+        heading: 'נקבעה תזכורת שתגיע גם אליך',
+        issue: { id: issue.id, title: issue.title, priority: issue.priority },
+        channel: 'in_app',
+        dedupeKey: `reminder_self:${issue.id}:${actor.id}`,
+      });
+    }
+
     // "תקלה חדשה נפתחה" → every active admin except the reporter (fire-and-forget).
     void notifyAdminsOfIssueReported(issue, actor.id);
 
