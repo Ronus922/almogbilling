@@ -3,6 +3,8 @@ import {
   assigneeRefKey,
   filterAddedAssignees,
   buildMatrixRecipients,
+  detailRows,
+  detailRowsWhatsApp,
 } from '@/services/createNotify';
 import { recipientKey, type NotifySelection } from '@/lib/notify/selection';
 import type { AssigneeRef } from '@/lib/types/assignee';
@@ -42,6 +44,40 @@ describe('filterAddedAssignees — the edit-form "added set"', () => {
   it('no new assignees → empty (matrix shows only "me")', () => {
     const prev = new Set([`user:${ME}`, `supplier:${S1}`]);
     expect(filterAddedAssignees(prev, [user(ME), supplier(S1)])).toEqual([]);
+  });
+});
+
+describe('detailRows — enriched message details', () => {
+  it('renders all rows, formatting the due date as DD/MM/YYYY HH:MM', () => {
+    expect(
+      detailRows({
+        description: 'נזילה בתקרה',
+        targetLabel: 'דירה 12',
+        dueDate: '2026-07-20',
+        dueTime: '14:30:00',
+        assignedByName: 'רונן',
+      }),
+    ).toEqual([
+      { label: 'תיאור', value: 'נזילה בתקרה' },
+      { label: 'מיקום', value: 'דירה 12' },
+      { label: 'תאריך יעד', value: '20/07/2026 14:30' },
+      { label: 'הוקצה ע"י', value: 'רונן' },
+    ]);
+  });
+
+  it('drops absent rows entirely — a null location renders NO line', () => {
+    expect(
+      detailRows({ description: null, targetLabel: null, dueDate: '2026-07-20', assignedByName: 'רונן' }),
+    ).toEqual([
+      { label: 'תאריך יעד', value: '20/07/2026' },
+      { label: 'הוקצה ע"י', value: 'רונן' },
+    ]);
+    expect(detailRows(undefined)).toEqual([]);
+  });
+
+  it('detailRowsWhatsApp: joined lines with leading blank line; empty → ""', () => {
+    expect(detailRowsWhatsApp([{ label: 'מיקום', value: 'דירה 12' }])).toBe('\n\nמיקום: דירה 12');
+    expect(detailRowsWhatsApp([])).toBe('');
   });
 });
 

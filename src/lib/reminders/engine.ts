@@ -11,6 +11,7 @@ import { getDefaultSendCreds } from '@/lib/db/whatsappInstances';
 import { sendWhatsAppMessage, normalizePhone } from '@/lib/whatsapp';
 import { sendTaskNotificationEmail } from '@/services/email';
 import { priorityLabel, createNotification as emitNotification } from '@/services/notifications';
+import { detailRows, detailRowsWhatsApp } from '@/services/createNotify';
 import { effectiveChannels } from '@/lib/notify/channels';
 import { getSignature, signatureWhatsApp } from '@/lib/notify/signature';
 import { appUrl } from '@/lib/config';
@@ -118,8 +119,18 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
           message = 'תזכורת למשימה';
           actionUrl = `/tasks?task=${task.id}`;
           priority = task.priority === 'urgent' ? 'urgent' : 'normal';
-          emailDetails = [{ label: 'עדיפות', value: priorityLabel(task.priority) }];
-          if (task.due_date) emailDetails.push({ label: 'תאריך יעד', value: task.due_date });
+          // Same uniform rows as the create/assign notifications (createNotify):
+          // description / location / due date / assigned-by — absent → dropped.
+          emailDetails = [
+            ...detailRows({
+              description: task.description,
+              targetLabel: task.target_label,
+              dueDate: task.due_date,
+              dueTime: task.due_time,
+              assignedByName: task.created_by_name,
+            }),
+            { label: 'עדיפות', value: priorityLabel(task.priority) },
+          ];
         }
       } else if (reminder.entity_type === 'issue') {
         const issue = await getIssueById(reminder.entity_id);
@@ -131,7 +142,16 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
           message = 'תזכורת לתקלה';
           actionUrl = `/issues?issue=${issue.id}`;
           priority = issue.priority === 'urgent' ? 'urgent' : 'normal';
-          emailDetails = [{ label: 'עדיפות', value: priorityLabel(issue.priority) }];
+          emailDetails = [
+            ...detailRows({
+              description: issue.description,
+              targetLabel: issue.target_label,
+              dueDate: issue.due_date,
+              dueTime: issue.due_time,
+              assignedByName: issue.created_by_name,
+            }),
+            { label: 'עדיפות', value: priorityLabel(issue.priority) },
+          ];
         }
       } else if (reminder.entity_type === 'calendar_event') {
         const event = await getEventById(reminder.entity_id);
@@ -257,8 +277,11 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
       if (wantWhatsApp) {
         const creds = await getDefaultSendCreds();
         const sig = await getSignature();
-        // Prefix "תזכורת: <title>" + the fixed signature at the end.
-        const waBody = `תזכורת: ${title}${signatureWhatsApp(sig)}`;
+        // Prefix "תזכורת: <title>", the same detail rows the email carries, an
+        // authenticated view link (engine recipients are always registered
+        // users), and the fixed signature at the end.
+        const waLink = actionUrl ? `\n\nלצפייה במערכת:\n${appUrl()}${actionUrl}` : '';
+        const waBody = `תזכורת: ${title}${detailRowsWhatsApp(emailDetails)}${waLink}${signatureWhatsApp(sig)}`;
         for (const uid of recipientIds) {
           try {
             const user = await findUserById(uid);

@@ -229,6 +229,13 @@ export async function POST(req: NextRequest) {
       void dispatchCreateNotifications({
         title: `משימה: ${task.title}`,
         actionUrl: `/tasks?task=${task.id}`,
+        details: {
+          description: task.description,
+          targetLabel: task.target_label,
+          dueDate: task.due_date,
+          dueTime: task.due_time,
+          assignedByName: task.created_by_name,
+        },
         recipients,
       });
     }

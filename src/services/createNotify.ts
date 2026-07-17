@@ -29,11 +29,50 @@ export type CreateNotifyRecipient =
   | { kind: 'user'; userId: string; selection: NotifyChannelSelection; message: string }
   | { kind: 'supplier'; supplierId: string; selection: NotifyChannelSelection; message: string };
 
+/** Structured entity details rendered on BOTH channels. Empty/null values drop
+ *  their row entirely — a missing location must never render as a blank line. */
+export interface CreateNotifyDetails {
+  description?: string | null;
+  /** Resolved location label (apartment number / area name) — target_label. */
+  targetLabel?: string | null;
+  dueDate?: string | null; // 'YYYY-MM-DD'
+  dueTime?: string | null; // 'HH:MM[:SS]'
+  /** Creator on create; the editing actor on edit-time assignment. */
+  assignedByName?: string | null;
+}
+
+/** 'YYYY-MM-DD' (+ optional 'HH:MM[:SS]') → 'DD/MM/YYYY[ HH:MM]'. */
+function formatDueDate(date: string, time?: string | null): string {
+  const [y, m, d] = date.split('-');
+  const base = y && m && d ? `${d}/${m}/${y}` : date;
+  return time ? `${base} ${time.slice(0, 5)}` : base;
+}
+
+/** Detail rows shared by the email template and the WhatsApp body (also used by
+ *  the reminders engine for the same uniform layout). */
+export function detailRows(d: CreateNotifyDetails | undefined): { label: string; value: string }[] {
+  if (!d) return [];
+  const rows: { label: string; value: string }[] = [];
+  if (d.description) rows.push({ label: 'תיאור', value: d.description });
+  if (d.targetLabel) rows.push({ label: 'מיקום', value: d.targetLabel });
+  if (d.dueDate) rows.push({ label: 'תאריך יעד', value: formatDueDate(d.dueDate, d.dueTime) });
+  if (d.assignedByName) rows.push({ label: 'הוקצה ע"י', value: d.assignedByName });
+  return rows;
+}
+
+/** Plain-text block of detail rows for the WhatsApp body ('' when empty). */
+export function detailRowsWhatsApp(rows: { label: string; value: string }[]): string {
+  return rows.length ? `\n\n${rows.map((r) => `${r.label}: ${r.value}`).join('\n')}` : '';
+}
+
 export interface DispatchCreateNotificationsInput {
   /** Email subject / WhatsApp heading. */
   title: string;
-  /** Relative deep-link, e.g. `/tasks?task=<id>`. */
+  /** Relative deep-link, e.g. `/tasks?task=<id>`. Sent ONLY to registered
+   *  users (kind 'user') — it sits behind login, so a supplier gets the full
+   *  details in text with no link (public link = separate follow-up slice). */
   actionUrl: string;
+  details?: CreateNotifyDetails;
   recipients: CreateNotifyRecipient[];
 }
 
@@ -56,13 +95,17 @@ async function resolveContact(r: CreateNotifyRecipient): Promise<ResolvedContact
 
 async function sendToRecipient(
   r: CreateNotifyRecipient,
-  title: string,
-  actionUrl: string,
+  input: DispatchCreateNotificationsInput,
 ): Promise<void> {
   if (!r.selection.email && !r.selection.whatsapp) return;
+  const { title } = input;
   const id = r.kind === 'user' ? r.userId : r.supplierId;
   const contact = await resolveContact(r);
   if (!contact) return;
+
+  const rows = detailRows(input.details);
+  // The view link sits behind login → registered users only.
+  const viewUrl = r.kind === 'user' ? `${appUrl()}${input.actionUrl}` : null;
 
   if (r.selection.email) {
     if (!contact.email) {
@@ -73,7 +116,8 @@ async function sendToRecipient(
           recipientName: contact.name,
           title,
           message: r.message,
-          actionUrl: `${appUrl()}${actionUrl}`,
+          details: rows,
+          actionUrl: viewUrl,
         });
       } catch (err) {
         console.error('[createNotify] email failed for', r.kind, id, err);
@@ -94,12 +138,13 @@ async function sendToRecipient(
           const sig = await getSignature();
           // Create messages carry NO "תזכורת:" prefix — only the fixed signature.
           const base = title && title !== r.message ? `${title}\n${r.message}` : r.message;
+          const link = viewUrl ? `\n\nלצפייה במערכת:\n${viewUrl}` : '';
           await sendWhatsAppMessage({
             instanceId: creds.greenInstanceId,
             token: creds.token,
             apiUrl: creds.apiUrl,
             chatId,
-            message: `${base}${signatureWhatsApp(sig)}`,
+            message: `${base}${detailRowsWhatsApp(rows)}${link}${signatureWhatsApp(sig)}`,
           });
         }
       } catch (err) {
@@ -114,7 +159,7 @@ export async function dispatchCreateNotifications(
 ): Promise<void> {
   try {
     await Promise.allSettled(
-      input.recipients.map((r) => sendToRecipient(r, input.title, input.actionUrl)),
+      input.recipients.map((r) => sendToRecipient(r, input)),
     );
   } catch (err) {
     console.error('[createNotify] dispatch failed', err);

@@ -221,6 +221,13 @@ export async function POST(req: NextRequest) {
       void dispatchCreateNotifications({
         title: `תקלה: ${issue.title}`,
         actionUrl: `/issues?issue=${issue.id}`,
+        details: {
+          description: issue.description,
+          targetLabel: issue.target_label,
+          dueDate: issue.due_date,
+          dueTime: issue.due_time,
+          assignedByName: issue.created_by_name,
+        },
         recipients,
       });
     }

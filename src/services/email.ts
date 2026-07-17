@@ -60,6 +60,9 @@ export async function sendNotificationEmail(
     recipientName: string;
     title: string;
     message: string;
+    /** Label/value rows (description, location, due date, assigned-by…) —
+     *  rendered under the message; absent rows are simply not passed. */
+    details?: { label: string; value: string }[];
     actionUrl?: string | null;
     priorityLabel?: string | null;
   },
@@ -68,10 +71,12 @@ export async function sendNotificationEmail(
   const safe = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const subject = args.title;
+  const details = args.details ?? [];
   const lines = [
     `שלום ${safe(args.recipientName)},`,
     '',
     safe(args.message),
+    details.length ? `\n${details.map((d) => `${d.label}: ${d.value}`).join('\n')}` : '',
     args.priorityLabel ? `\nעדיפות: ${safe(args.priorityLabel)}` : '',
   ].filter(Boolean);
   const text = `${lines.join('\n')}${args.actionUrl ? `\n\nצפייה: ${args.actionUrl}` : ''}\n\n${signaturePlainLines(sig)}\n\n— ALMOG CRM`;
@@ -82,11 +87,20 @@ export async function sendNotificationEmail(
   const priority = args.priorityLabel
     ? `<p style="margin:4px 0 0;color:#8a92a6;font-size:13px">עדיפות: ${safe(args.priorityLabel)}</p>`
     : '';
+  const detailsHtml = details.length
+    ? `<div style="margin-top:12px;padding:12px 16px;background:#f6f7fb;border-radius:8px">${details
+        .map(
+          (d) =>
+            `<p style="margin:4px 0;color:#1a2233;font-size:14px;line-height:1.6"><span style="color:#8a92a6">${safe(d.label)}:</span> ${safe(d.value)}</p>`,
+        )
+        .join('')}</div>`
+    : '';
   const html = `
     <div dir="rtl" style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;padding:24px;background:#ffffff;color:#1a2233;text-align:right">
       <h2 style="margin:0 0 12px;font-size:18px;color:#1a2233">${safe(args.title)}</h2>
       <p style="margin:0;color:#5b6479;font-size:14px">שלום ${safe(args.recipientName)},</p>
       <p style="margin:8px 0 0;color:#1a2233;font-size:15px;line-height:1.6">${safe(args.message)}</p>
+      ${detailsHtml}
       ${priority}
       ${button}
       ${signatureHtml(sig)}

@@ -236,6 +236,15 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       void dispatchCreateNotifications({
         title: `משימה: ${task.title}`,
         actionUrl: `/tasks?task=${task.id}`,
+        details: {
+          description: task.description,
+          targetLabel: task.target_label,
+          dueDate: task.due_date,
+          dueTime: task.due_time,
+          // Edit-time assignment → the assigner is the editing actor, not the
+          // original creator.
+          assignedByName: actor.full_name ?? actor.username,
+        },
         recipients,
       });
     }
