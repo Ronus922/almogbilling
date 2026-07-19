@@ -9,7 +9,17 @@
     "postbuild": "rm -rf .next/standalone/.next/static .next/standalone/public && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public",
     "start": "next start",
     "deploy": "bash scripts/deploy.sh",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check:secrets": "node scripts/check-no-secrets.mjs",
+    "check:auth": "node scripts/check-api-auth.mjs",
+    "check:rbac": "tsx scripts/check-rbac.mjs",
+    "check:money": "node scripts/check-money-balanced.mjs",
+    "check:phone": "node scripts/check-phone-policy.mjs",
+    "check:session": "node scripts/check-session-hash.mjs",
+    "check:dupes": "node scripts/check-no-duplicate-debtors.mjs",
+    "check:wa": "node scripts/check-wa-idempotency.mjs",
+    "check:all": "npm run typecheck && npm run test && npm run check:secrets && npm run check:auth && npm run check:rbac && npm run check:money && npm run check:phone && npm run check:session && npm run check:dupes && npm run check:wa"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.0",

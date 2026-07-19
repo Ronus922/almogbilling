@@ -1,0 +1,65 @@
+# בדיקות — BILLING (ALMOG CRM)
+
+מערך בדיקות קבוע לאינווריאנטות הקריטיות של המערכת. הפעלה: `npm run check:all`.
+כל בדיקה עצמאית (`node scripts/check-<שם>.mjs`), מחזירה `exit 0` בהצלחה והודעת
+כישלון ברורה בעברית כשנשברת. בדיקות DB הן **קריאה בלבד** מול הנתונים האמיתיים;
+הבדיקות שכותבות (הוכחת unique/idempotency) רצות מול **מסד חד־פעמי** שנוצר ונמחק
+בכל ריצה — לעולם לא מול 288 הדיירים האמיתיים.
+
+> **על lint:** לפרויקט הזה אין ESLint מוגדר (Next 16 הסיר את `next lint`, ואין
+> קונפיג). לכן `check:all` מריץ **typecheck** + **`npm test`** (חבילת vitest,
+> 235 בדיקות יחידה) + כל בדיקות האינווריאנטות — שכבת ה-lint מוחלפת ב-typecheck
+> המחמיר + בדיקות היחידה.
+
+## הבדיקות — מה כל אחת מגינה
+
+| בדיקה | סקריפט | מגינה מפני |
+|---|---|---|
+| `check:secrets` | `check-no-secrets.mjs` | דליפת מפתחות ל-git — אף ערך מ-`/etc/billing/billing.env` (דרך `sudo -n`) ו-`.env.local` (service-role, SMTP, Green, Google, Anthropic, DB, `SETTINGS_ENC_KEY`) לא מופיע בקובץ במעקב; אין `.env` במעקב (מלבד `*.example`); ואין תבנית מפתח (`service_role`/`sk-ant-`/`BEGIN`). |
+| `check:auth` | `check-api-auth.mjs` | route חשוף — כל handler תחת `src/app/api/**` (125) חייב guard: `require*`/`getCurrentActor`/`getSession` או סוד-מכונה (cron/webhook). קריטי כי ה-routes ניגשים ל-`pg` ישיר (רמת service-role) — **אין RLS כרשת ביטחון**. 9 routes ציבוריים מתועדים (login/logout/reset/invite/google/health/wa-media). |
+| `check:rbac` | `check-rbac.mjs` | הרחבת-גישה בטעות במטריצה — מייבא את `hasPermission`/`canManageRole` **האמיתיים** ונועל: `super_admin` הכל · `admin` נחסם מ-`users/roles_management` ולא מנהל תפקיד בכיר · matrix-role מקבל **רק** מה ששורות `user_permissions` מתירות. (רץ תחת `tsx`, לוגיקה טהורה.) |
+| `check:money` | `check-money-balanced.mjs` | **חוב שגוי** — לכל דייר פעיל `total_debt = round2(management_fees + hot_water_debt)` ואין ערך שלילי. ה-Bllink sync מחשב זאת מחדש בכל ריצה; סטייה = באג/שחיתות שמציגה חוב שגוי בדשבורד ובדיוני WhatsApp. |
+| `check:phone` | `check-phone-policy.mjs` | טלפון מלוכלך במנוחה — `phone_owner`/`phone_tenant` הם מספר מקומי נקי יחיד (`^0\d{8,9}$`) או NULL. ערך מרובה/מתויג/זבל שובר `tel:`, כתובת WhatsApp ופיצול בעלים/שוכר — ומעיד שנתיב קליטה דילג על `cleanPhoneField`. |
+| `check:session` | `check-session-hash.mjs` | טוקן session ניתן-לשחזור ב-DB — כל `sessions.id` הוא SHA-256 hex(64) (migration 057). שורה שאינה 64-hex = טוקן גולמי שדליפת DB/גיבוי/replica תהפוך ל-session חי. |
+| `check:dupes` | `check-no-duplicate-debtors.mjs` | דייר כפול מ-sync חוזר — אין שני דיירים פעילים עם אותו `apartment_number` (מפתח עסקי `unique`, migration 002). כולל הוכחה במסד חד־פעמי ש-unique key דוחה הכנסה חוזרת ומאפשר דירה שונה. |
+| `check:wa` | `check-wa-idempotency.mjs` | שליחת WhatsApp כפולה — הוכחה במסד חד־פעמי ש-unique index על `wa_campaign_recipients.idempotency_key` (migration 059) דוחה נמען כפול → retry/deploy/מרוץ לא ישלחו את אותה הודעה פעמיים ללקוח. |
+
+### הרצה בודדת
+```bash
+npm run check:money   # או check:secrets / check:auth / check:rbac / check:phone / check:session / check:dupes / check:wa
+npm run check:all     # typecheck + vitest + כל בדיקות האינווריאנטות, עוצר על הכישלון הראשון
+```
+
+> `check:secrets` קורא את `/etc/billing/billing.env` דרך `sudo -n cat` (מותר ל-
+> deploy). בלי sudo הבדיקה יורדת אוטומטית ל-`.env.local` בלבד ומדווחת על כך —
+> לא נכשלת.
+
+## תוכנית בדיקה ידנית (לפני deploy)
+
+בצע בדפדפן על הפרודקשן אחרי ש-`npm run check:all` ירוק:
+
+1. **התחברות** — פתח את האתר בגלישה פרטית. ודא הפניה ל-`/login`. התחבר. צפוי:
+   הגעה לדשבורד ניהול החיובים.
+2. **חסימת לא-מורשה** — התנתק, נסה לגשת ישירות ל-`/` או לקרוא `/api/debtors`
+   בטאב אנונימי. צפוי: הפניה ל-login / `401`, **לא** נתוני דיירים.
+3. **RBAC בסייד-בר** — התחבר כמשתמש `viewer`/`manager` מוגבל. צפוי: מודולים ללא
+   הרשאה **מוסתרים** בתפריט, וגישה ישירה ל-API של מודול חסום מחזירה `403`.
+4. **גבול admin** — כ-`admin` (לא super_admin) נסה להיכנס ל"ניהול משתמשים" /
+   "הרשאות". צפוי: חסום (super_admin בלבד).
+5. **סנכרון Bllink** — לחץ "סנכרן עכשיו". צפוי: החוב מתעדכן; פתח דייר וודא
+   `total_debt = דמי ניהול + מים חמים`. הרץ שוב מיד → **אין** דיירים כפולים.
+6. **טלפון נקי** — פתח דייר עם טלפון; ודא הצגה תקינה ו-`tel:` פועל. ערוך/ייבא
+   ערך מורכב (`054... / 050...`). צפוי: נשמר כמספר מקומי נקי יחיד.
+7. **שליחת WhatsApp** — צור שידור, שלח. נסה לשלוח שוב / רענן באמצע. צפוי: אין
+   נמען/שליחה כפולה, המונים תואמים למצב האמיתי.
+8. **התנתקות רב-טאבית** — התנתק בטאב אחד; בטאב שני בצע פעולה. צפוי: איבוד גישה
+   (ה-session בוטל).
+
+## הכלל
+
+לפני **כל** deploy:
+1. `npm run check:all` — חייב לחזור ירוק.
+2. הרץ את תוכנית הבדיקה הידנית למעלה.
+3. **אדום = לא פורסים.** מתקנים את השורש (אסור להחליש בדיקה כדי שתעבור), ומריצים שוב.
+4. פריסה לפרודקשן היא תמיד `npm run deploy` (build → restart → אימות) — לעולם לא
+   `next build` לבד (דורס את `.next/standalone` בלי restart → ChunkLoadError).
