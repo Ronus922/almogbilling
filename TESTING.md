@@ -8,21 +8,34 @@
 
 > **על lint:** לפרויקט הזה אין ESLint מוגדר (Next 16 הסיר את `next lint`, ואין
 > קונפיג). לכן `check:all` מריץ **typecheck** + **`npm test`** (חבילת vitest,
-> 235 בדיקות יחידה) + כל בדיקות האינווריאנטות — שכבת ה-lint מוחלפת ב-typecheck
+> 284 בדיקות יחידה עוברות + 22 מדולגות) + כל בדיקות האינווריאנטות — שכבת ה-lint מוחלפת ב-typecheck
 > המחמיר + בדיקות היחידה.
 
 ## הבדיקות — מה כל אחת מגינה
 
 | בדיקה | סקריפט | מגינה מפני |
 |---|---|---|
-| `check:secrets` | `check-no-secrets.mjs` | דליפת מפתחות ל-git — אף ערך מ-`/etc/billing/billing.env` (דרך `sudo -n`) ו-`.env.local` (service-role, SMTP, Green, Google, Anthropic, DB, `SETTINGS_ENC_KEY`) לא מופיע בקובץ במעקב; אין `.env` במעקב (מלבד `*.example`); ואין תבנית מפתח (`service_role`/`sk-ant-`/`BEGIN`). |
+| `check:secrets` | `check-no-secrets.mjs` | דליפת מפתחות ל-git — אף ערך מ-`/etc/billing/billing.env` (דרך `sudo -n`) ו-`.env.local` (service-role, SMTP, Green, Google, Anthropic, DB, `SETTINGS_ENC_KEY`) לא מופיע בקובץ במעקב; אין `.env` במעקב (מלבד `*.example`); ואין **צורת** מפתח שלמה (JWT `role:service_role`, מפתח Anthropic באורך מלא, `-----BEGIN … PRIVATE KEY-----`). התאמה על **צורה** ולא על תחילית — כדי שאזכור התבנית בתיעוד (למשל השורה הזו) לא יפיל את הבדיקה. |
 | `check:auth` | `check-api-auth.mjs` | route חשוף — כל handler תחת `src/app/api/**` (125) חייב guard: `require*`/`getCurrentActor`/`getSession` או סוד-מכונה (cron/webhook). קריטי כי ה-routes ניגשים ל-`pg` ישיר (רמת service-role) — **אין RLS כרשת ביטחון**. 9 routes ציבוריים מתועדים (login/logout/reset/invite/google/health/wa-media). |
 | `check:rbac` | `check-rbac.mjs` | הרחבת-גישה בטעות במטריצה — מייבא את `hasPermission`/`canManageRole` **האמיתיים** ונועל: `super_admin` הכל · `admin` נחסם מ-`users/roles_management` ולא מנהל תפקיד בכיר · matrix-role מקבל **רק** מה ששורות `user_permissions` מתירות. (רץ תחת `tsx`, לוגיקה טהורה.) |
 | `check:money` | `check-money-balanced.mjs` | **חוב שגוי** — לכל דייר פעיל `total_debt = round2(management_fees + hot_water_debt)` ואין ערך שלילי. ה-Bllink sync מחשב זאת מחדש בכל ריצה; סטייה = באג/שחיתות שמציגה חוב שגוי בדשבורד ובדיוני WhatsApp. |
 | `check:phone` | `check-phone-policy.mjs` | טלפון מלוכלך במנוחה — `phone_owner`/`phone_tenant` הם מספר מקומי נקי יחיד (`^0\d{8,9}$`) או NULL. ערך מרובה/מתויג/זבל שובר `tel:`, כתובת WhatsApp ופיצול בעלים/שוכר — ומעיד שנתיב קליטה דילג על `cleanPhoneField`. |
 | `check:session` | `check-session-hash.mjs` | טוקן session ניתן-לשחזור ב-DB — כל `sessions.id` הוא SHA-256 hex(64) (migration 057). שורה שאינה 64-hex = טוקן גולמי שדליפת DB/גיבוי/replica תהפוך ל-session חי. |
-| `check:dupes` | `check-no-duplicate-debtors.mjs` | דייר כפול מ-sync חוזר — אין שני דיירים פעילים עם אותו `apartment_number` (מפתח עסקי `unique`, migration 002). כולל הוכחה במסד חד־פעמי ש-unique key דוחה הכנסה חוזרת ומאפשר דירה שונה. |
-| `check:wa` | `check-wa-idempotency.mjs` | שליחת WhatsApp כפולה — הוכחה במסד חד־פעמי ש-unique index על `wa_campaign_recipients.idempotency_key` (migration 059) דוחה נמען כפול → retry/deploy/מרוץ לא ישלחו את אותה הודעה פעמיים ללקוח. |
+| `check:dupes` | `check-no-duplicate-debtors.mjs` | דייר כפול מ-sync חוזר — אין שני דיירים פעילים עם אותו `apartment_number` (מפתח עסקי `unique`, migration 002). כולל הוכחה בארגז חול ש-unique key דוחה הכנסה חוזרת ומאפשר דירה שונה. |
+| `check:wa` | `check-wa-idempotency.mjs` | שליחת WhatsApp כפולה — הוכחה בארגז חול ש-unique index על `wa_campaign_recipients.idempotency_key` (migration 059) דוחה נמען כפול → retry/deploy/מרוץ לא ישלחו את אותה הודעה פעמיים ללקוח. |
+
+> **ארגז החול של הוכחות-הכתיבה** (`uniqueViolationProof` ב-`scripts/_check-lib.mjs`):
+> טבלאות `TEMP` בתוך טרנזקציה אחת שנגמרת תמיד ב-`ROLLBACK`, על המסד האמיתי אך
+> בלי לגעת בנתונים אמיתיים. מחליף מסד חד־פעמי (`create database`) — ל-role של
+> האפליקציה אין `CREATEDB`, ולכן הגרסה ההיא נכשלה תמיד עם `permission denied`.
+>
+> **בקרת-שלילה (מי שומר על השומר)**: הוכחה שהפסיקה לזהות משהו — סימן שהשתנה,
+> נוסח שגיאה של psql שכבר לא תואם, stderr שנבלע — הייתה מדווחת ירוק לנצח. לכן
+> `selfTestUniqueViolationProof` מריץ את אותה הוכחה על טבלה **ללא** unique key
+> ודורש `rejected=false`; הוא רץ **אוטומטית פעם אחת בכל תהליך** לפני ההוכחה
+> האמיתית הראשונה, כך ש-`check:dupes`/`check:wa` לא יכולים להיות ירוקים מגלאי
+> שבור. להרצה ידנית: `node scripts/_check-lib.mjs --self-test`. אומת מול גלאי
+> שבור מכוון (`rejected` קבוע): הבקרה מפילה אותו — לבד וגם דרך `check:dupes`.
 
 ### הרצה בודדת
 ```bash

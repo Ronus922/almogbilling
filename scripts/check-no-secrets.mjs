@@ -32,6 +32,16 @@ function grepFixed(root, needle) {
   }
 }
 
+// Same, for an extended-regex pattern (POSIX ERE, as git grep -E takes it).
+function grepRegex(root, pattern) {
+  try {
+    return execFileSync('git', ['-C', root, 'grep', '-l', '-E', '-e', pattern], { encoding: 'utf8' })
+      .trim().split('\n').filter(Boolean);
+  } catch {
+    return []; // exit 1 = no match
+  }
+}
+
 run('check-no-secrets', async () => {
   const root = repoRoot();
   loadEnv();
@@ -57,16 +67,18 @@ run('check-no-secrets', async () => {
     if (!runtime) info('להרצה מלאה כולל /etc/billing/billing.env דרוש sudo -n cat על הקובץ');
   }
 
-  // (3) generic key shapes
+  // (3) generic key SHAPES — deliberately matched as a whole key, not as a bare
+  // prefix: the docs (TESTING.md) and this script name the prefixes, and a
+  // prefix-only match turns every mention of them into a false failure.
   const patterns = [
-    ['"role":"service_role"', 'JWT service_role'],
-    ['sk-ant-', 'מפתח Anthropic'],
-    ['-----BEGIN', 'מפתח פרטי'],
+    ['"role"[[:space:]]*:[[:space:]]*"service_role"', 'JWT service_role'],
+    ['sk-ant-[A-Za-z0-9_-]{20,}', 'מפתח Anthropic'],
+    ['-----BEGIN [A-Z ]*PRIVATE KEY-----', 'מפתח פרטי'],
   ];
   let patternHit = 0;
-  for (const [needle, label] of patterns) {
-    const hits = grepFixed(root, needle).filter((f) => !f.endsWith('.example') && !f.startsWith('scripts/check-'));
-    if (hits.length) { fail(`${label} (${needle}) בקבצים: ${hits.join(', ')}`); patternHit++; }
+  for (const [pattern, label] of patterns) {
+    const hits = grepRegex(root, pattern).filter((f) => !f.endsWith('.example') && !f.startsWith('scripts/check-'));
+    if (hits.length) { fail(`${label} (${pattern}) בקבצים: ${hits.join(', ')}`); patternHit++; }
   }
   if (patternHit === 0) ok('אין תבניות מפתח חשודות בקוד המנוהל');
 });
