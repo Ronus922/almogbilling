@@ -85,7 +85,7 @@ async function notifyAdminsOfInbound(parsed: ParsedIncoming, debtorId: string | 
         title: 'הודעת WhatsApp חדשה',
         message: `הודעה מ-${contactLabel}`,
         sourceModule: 'whatsapp',
-        sourceEntityType: 'ChatMessage',
+        sourceEntityType: 'chat_message',
         sourceEntityId: messageId,
         actionUrl: '/messages',
         dedupeKey: `whatsapp_message_received:${dedupeContact}:${admin.id}:${today}`,

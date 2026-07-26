@@ -163,6 +163,12 @@ export interface CreateNotificationInput {
   title: string;
   message?: string | null;
   sourceModule?: string | null;
+  /** CONVENTION: lower_snake_case, matching the entity's table in the singular —
+   *  'task', 'issue', 'chat_message', 'conversation', 'calendar_event'. Producers
+   *  once wrote 'Task'/'Issue'/'ChatMessage', and a case-sensitive `= 'task'` in
+   *  migration 067 then failed to match them, stranding 140 notifications
+   *  (cleaned up by 068). Consumers must still compare case-insensitively while
+   *  legacy rows in both casings exist. */
   sourceEntityType?: string | null;
   sourceEntityId?: string | null;
   actionUrl?: string | null;

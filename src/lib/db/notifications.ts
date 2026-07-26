@@ -233,10 +233,12 @@ export async function clearNotification(id: string, userId: string): Promise<boo
 /**
  * Hard-delete every notification pointing at a given entity — the mirror of
  * deleteRemindersForEntity, called from the DELETE routes so a removed task /
- * issue leaves no ghost notification in the bell. Matched case-insensitively
- * because producers write source_entity_type inconsistently ('Issue'/'issue',
- * 'Task'/'task'). The entity is gone, so a hard delete is correct — no audit
- * target, no dedup key to preserve. Accepts an optional pg client for txns.
+ * issue leaves no ghost notification in the bell. Matched case-insensitively:
+ * every producer now writes lower_snake_case (see CreateNotificationInput), but
+ * rows written before that still carry 'Task'/'Issue'/'ChatMessage', so the
+ * lower() on both sides must stay until those are normalized. The entity is
+ * gone, so a hard delete is correct — no audit target, no dedup key to
+ * preserve. Accepts an optional pg client for txns.
  */
 export async function deleteNotificationsForEntity(
   entityType: string,

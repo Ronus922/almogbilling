@@ -61,7 +61,7 @@ async function scanTasksDueSoon(): Promise<number> {
         title: 'משימה מתקרבת למועד',
         message,
         sourceModule: 'tasks',
-        sourceEntityType: 'Task',
+        sourceEntityType: 'task',
         sourceEntityId: task.id,
         actionUrl: `/tasks?task=${task.id}`,
         priority: 'high',

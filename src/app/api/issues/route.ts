@@ -42,7 +42,7 @@ async function notifyAdminsOfIssueReported(issue: Issue, actorId: string): Promi
         title: 'תקלה חדשה נפתחה',
         message,
         sourceModule: 'issues',
-        sourceEntityType: 'Issue',
+        sourceEntityType: 'issue',
         sourceEntityId: issue.id,
         actionUrl: `/issues?issue=${issue.id}`,
         priority: 'high',
