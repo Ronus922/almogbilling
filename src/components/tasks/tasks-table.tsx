@@ -8,6 +8,7 @@ import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { TargetCell } from '@/components/targets/TargetCell';
 import { RowActions } from '@/components/shared/RowActions';
 import { RecurringBadge } from '@/components/recurrence/RecurringBadge';
+import { CadenceStrip, CadenceProgress } from '@/components/recurrence/CadenceStrip';
 import { cn } from '@/lib/utils';
 import {
   STATUS_BADGE, PRIORITY_BADGE, taskStatusLabel, taskPriorityLabel,
@@ -50,6 +51,7 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
             <TableHead className="h-12 px-6 text-center text-[12.5px] font-bold text-slate-400">סטטוס</TableHead>
             <SortHead label="עדיפות" col="priority_desc" sort={sort} onSortChange={onSortChange} align="center" />
             <SortHead label="תאריך יעד" col="due_asc" sort={sort} onSortChange={onSortChange} align="center" />
+            <TableHead className="hidden h-12 px-6 text-center text-[12.5px] font-bold text-slate-400 lg:table-cell">מחזוריות</TableHead>
             <TableHead className="h-12 px-6 text-center text-[12.5px] font-bold text-slate-400">מטפל</TableHead>
             <TableHead className="h-12 px-6 text-center text-[12.5px] font-bold text-slate-400">יעד</TableHead>
             <TableHead className="h-12 px-6 text-center text-[12.5px] font-bold text-slate-400">פעולות</TableHead>
@@ -65,7 +67,14 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
               <TableCell className="px-6 py-3.5 text-right text-sm">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-slate-900">{t.title}</span>
-                  {(t.is_recurring_template || t.is_recurring_instance) && <RecurringBadge />}
+                  {t.recurrence && <RecurringBadge />}
+                  {t.recurrence && (
+                    <CadenceProgress
+                      doneCount={t.recurrence.done_count}
+                      expectedCount={t.recurrence.expected_count}
+                      periodLabel={t.recurrence.period_label}
+                    />
+                  )}
                   {t.comment_count > 0 && (
                     <span className="inline-flex items-center gap-0.5 text-xs text-slate-400">
                       <MessageSquare className="h-3.5 w-3.5" />
@@ -86,6 +95,13 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
               </TableCell>
               <TableCell dir="ltr" className={cn('px-6 py-3.5 text-center text-sm tabular-nums', isOverdue(t) ? 'font-bold text-rose-600' : 'text-slate-600')}>
                 {t.due_date ?? '—'}
+              </TableCell>
+              <TableCell className="hidden px-6 py-3.5 text-right text-sm lg:table-cell">
+                {t.recurrence && t.recurrence.chips.type !== 'none' ? (
+                  <CadenceStrip label={t.recurrence.label} chips={t.recurrence.chips} />
+                ) : (
+                  <span className="block text-center text-slate-300">—</span>
+                )}
               </TableCell>
               <TableCell className="px-6 py-3.5 text-center text-sm">
                 <HandlerCell task={t} />

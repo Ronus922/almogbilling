@@ -1318,15 +1318,57 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 ### 29.5 טופס אירוע (Side Panel)
 `Sheet side="left" sm:w-[55vw]`. header gradient כהה `bg-[linear-gradient(120deg,#0e1f4d,#16308a_55%,#1d4ed8)]`. 4 sections (`Section` משותף, iconTone: פרטי=blue, חזרתיות=violet, משתתפים=emerald, תזכורות=amber). בורר צבע: 7 עיגולים `h-[34px] w-[34px]`, נבחר `ring-2 ring-[#2563eb] ring-offset-2`. שדות בגובה **44px** (`h-11`) — ראה חריגים מוצהרים.
 
-## 30. אינדיקטור מחזוריות (משימות חוזרות)
+## 30. מחזוריות (משימות חוזרות) — מודל „מופע אחד”
 
-משימה חוזרת (template של סדרה **או** מופע ממומש) מסומנת בכל מקום שבו היא מוצגת, באייקון `Repeat` (lucide) בגוון `slate` ניטרלי — מקור-אמת יחיד: `src/components/recurrence/RecurringBadge.tsx` (Iron Rule #10 — DRY, אין שכפול).
+**עיקרון־יסוד (migration 067):** משימה מחזורית היא **שורה אחת בלבד**. `due_date` שלה הוא **המופע הנוכחי**, ובסימון „בוצע” היא לא נסגרת אלא מתקדמת למופע הבא (ההשלמה נרשמת ב-`task_occurrence_completions`). אין מופעים ממומשים, אין `is_recurring_instance`, אין „מופע בסדרה”.
 
-- **שורת טבלה / כרטיס קנבן**: `RecurringBadge` (= `Repeat h-3.5 w-3.5 text-slate-400`, עטוף ב-`<span title="משימה חוזרת">` ל-tooltip+a11y), מיד אחרי הכותרת. מוצג כאשר `is_recurring_template || is_recurring_instance`.
-- **chip ביומן** (§29.2): אותו glyph בגודל chip `Repeat h-2.5 w-2.5 opacity-70`, אחרי אייקון הסוג. נדלק מ-`item.recurring` (overlay מסוג task; ה-API מחזיר `recurring = recurrence_id is not null`).
-- **כותרת פאנל המשימה** (header כהה): chip translucent `border-white/25 bg-white/10 px-2.5 py-0.5 rounded-full text-xs` עם `Repeat h-3.5` + טקסט „משימה מחזורית”/„מופע בסדרה”.
+### 30.1 אינדיקטור
+אייקון `Repeat` (lucide) בגוון **`blue-500`** — מקור־אמת יחיד: `src/components/recurrence/RecurringBadge.tsx` (Iron Rule #8 — DRY).
 
-**טאב „מחזוריות”** (מסך משימות, שלישי אחרי „פעילות”/„הושלמו”): טבלה (`RecurringSeriesList`) — שורה לכל סדרה פעילה, **ממוינת לפי המופע הבא (עולה)**. עמודות: כותרת (עם glyph) · מחזוריות (`summarizeCadence` → „כל שבוע · ב׳, ה׳”, pill `bg-slate-100 text-slate-600`) · המופע הבא (תאריך+שעה, `CalendarClock`). לחיצה על שורה → פתיחת משימת ה-template. ה-toolbar (מתג תצוגה+פילטרים) מוסתר בטאב זה. המופע הבא מחושב ב-`listRecurringSeries` דרך מנוע ה-`computeOccurrences` המשותף (אופק 400 ימים, מכבד exceptions).
+- **שורת טבלה / כרטיס קנבן**: `RecurringBadge` (= `Repeat h-3.5 w-3.5 text-blue-500`, עטוף ב-`<span title="משימה חוזרת">` ל-tooltip+a11y), מיד אחרי הכותרת. מוצג כאשר `task.recurrence !== null`.
+- **chip ביומן** (§29.2): אותו glyph בגודל chip `Repeat h-2.5 w-2.5 opacity-70`, אחרי אייקון הסוג. נדלק מ-`item.recurring` (`recurrence_id is not null`).
+- **כותרת פאנל המשימה** (header כהה): chip translucent `border-white/25 bg-white/10 px-2.5 py-0.5 rounded-full text-xs` עם `Repeat h-3.5` + „משימה מחזורית”.
+
+### 30.2 שורת המחזוריות (`CadenceStrip`) — מקור־אמת יחיד
+`src/components/recurrence/CadenceStrip.tsx`. תצוגה בלבד; בשימוש בכרטיס הקנבן, שורת הטבלה, טאב „מחזוריות” ותצוגה־מקדימה בטופס — כדי ששני משטחים לא יציגו מחזוריות אחת בשתי צורות.
+
+**התווית + הצ'יפים נגזרים מהעוגן + `interval`** (`src/lib/recurrence/cadence.ts`) — **אין עמודות `bymonth` / `bymonthday`**:
+
+| תווית | מאוחסן | צ'יפים | דוגמה |
+|---|---|---|---|
+| כל יום | `daily/1` | 7 ימים דלוקים | — |
+| כל שבוע | `weekly/1` | `byweekday` (ריק → יום העוגן) | ג׳, ה׳ |
+| כל חודש | `monthly/1` | „ב-N לחודש” מיום העוגן | עוגן 15 → `ב-15 לחודש` |
+| כל רבעון | `monthly/3` | 12 צ'יפי חודשים, דלוקים מחודש העוגן | עוגן 10 → 1, 4, 7, 10 |
+| כל חצי שנה | `monthly/6` | כנ״ל | עוגן 09 → 3, 9 |
+| כל שנה | `yearly/1` | חודש בודד | — |
+| כל N ימים/שבועות | interval אחר | ללא צ'יפים (תווית בלבד) | — |
+
+**3 מצבי צ'יפ (חובה, ללא חריגה):**
+- `on` (מתוכנן) — `border-blue-600 bg-blue-50 text-blue-600`
+- `done` (בוצע בתקופה הנוכחית) — `border-emerald-600 bg-emerald-50 text-emerald-700`
+- `off` (לא מתוכנן) — `border-slate-200 bg-white text-slate-300`
+
+**גדלים:** `sm` = `h-5 min-w-5 rounded text-[10px]` (כרטיס/טבלה) · `md` = `h-7 min-w-7 rounded-md text-xs` (תצוגה־מקדימה בטופס). הצ'יפים האינטרקטיביים בטופס (`RecurrenceSection`) נשארים `h-11 w-11` — Touch Target (כלל ברזל #6).
+
+**פריסה:** ימי־שבוע / יום־בחודש → שורה אחת, `Repeat`+תווית מימין והצ'יפים משמאל. 12 חודשים → התווית בשורה נפרדת מעל, והצ'יפים ב-`flex-wrap` בתוך `rounded-lg border border-slate-100 bg-slate-50/60 p-2`, כדי לא לשבור את רוחב הכרטיס במובייל.
+
+**בכרטיס קנבן:** בתחתית הכרטיס, מעל/אחרי ה-`AssigneePills`, בתוך `border-t border-dashed border-slate-200 pt-2.5`. מוסתר כש-`chips.type === 'none'`.
+
+### 30.3 תג התקדמות (`CadenceProgress`)
+`1/3 השבוע` + `Check` — `bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md text-[11px] font-bold`, בשורת הכותרת ליד badge העדיפות.
+
+**כלל הצגה (מחייב):** מוצג **רק** כאשר `expected_count > 1 && done_count > 0`. `expected` = 7 ליומי, מספר הימים הנבחרים לשבועי, 4 לרבעוני, 2 לחצי־שנתי — ו-1 לחודשי/שנתי, ולכן `1/1 החודש` לא מוצג לעולם.
+
+**התקופה** (`cadenceWindow`): שבוע ראשון–שבת ליומי/שבועי · חודש קלנדרי לחודשי · שנה קלנדרית לרבעון/חצי־שנה/שנה.
+
+**חישוב server-side בלבד** — `expected`/`done`/`chips` נפתרים ב-`lib/db/tasks.attachRecurrenceViews`, כי הם תלויים ב„היום” לפי Asia/Jerusalem; חישוב בצד הלקוח יגרום לאי־התאמה בין SSR ל-hydration (אותו נימוק כמו סימון האיחור).
+
+### 30.4 טאב „מחזוריות”
+מסך משימות, שלישי אחרי „פעילות”/„הושלמו”. טבלה (`RecurringSeriesList`) — שורה לכל סדרה פעילה, **ממוינת לפי המופע הבא (עולה)**. עמודות: כותרת (glyph + `CadenceProgress`) · מחזוריות (`CadenceStrip`, `min-w-[220px]`) · המופע הבא (תאריך+שעה, `CalendarClock`). לחיצה → פתיחת משימת הסדרה. ה-toolbar מוסתר בטאב זה. המופע הבא מחושב ב-`listRecurringSeries` דרך `computeOccurrences` (אופק `SERIES_LOOKAHEAD_DAYS`=400, מכבד exceptions).
+
+### 30.5 טופס המחזוריות (`RecurrenceSection`)
+בורר התדירות מציג **presets** (יומי / שבועי / חודשי / רבעוני / חצי־שנתי / שנתי) ולא את ה-`frequency` המאוחסן, כי „רבעוני”/„חצי־שנתי” הם `monthly` עם interval 3/6. „כל כמה” מוצג רק ל-יומי/שבועי (`PRESETS_WITH_INTERVAL`). מתחת לשדות — תצוגה־מקדימה `CadenceStrip size="md"` של מה שיופיע על הכרטיס. פעולות הסדרה: „דלג על מופע זה” · „ערוך רק את המופע הזה” (יוצר משימה עצמאית ומקדם את הסדרה) · „סיים סדרה”.
 
 ---
 

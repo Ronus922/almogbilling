@@ -18,7 +18,12 @@ import { listTaskComments } from '@/lib/db/tasks';
 import { supplierExists } from '@/lib/db/suppliers';
 import { coerceTaskInput, coerceReminders, coerceRecurrence, reminderInPast } from '@/lib/validation/tasks';
 import { coerceAssignees } from '@/lib/validation/assignee';
-import { applyRecurrenceOnSave, getRecurrenceById } from '@/lib/recurrence/materialize';
+import {
+  applyRecurrenceOnSave,
+  completeRecurringOccurrence,
+  getRecurrenceById,
+  skipTaskOccurrence,
+} from '@/lib/recurrence/series';
 import { notifyTask } from '@/services/notifications';
 import {
   dispatchCreateNotifications,
@@ -124,23 +129,34 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: recurrence.error }, { status: 400 });
   }
 
+  // The pre-save row: the source of truth for "is this an active series" (a
+  // resolved `recurrence` view only exists for active series rows) and for
+  // deciding whether the due date genuinely moved.
+  const before = await getTaskById(id);
+  if (!before) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
   // A recurrence rule needs an anchor (the task's due date = series start). If a
   // rule is being set/kept, the EFFECTIVE due date after this save must exist —
   // either from this PATCH's due_date or, if the key wasn't sent, the stored one.
   if (recurrence && recurrence.ok && recurrence.rule) {
     const f = result.fields as { due_date?: string | null };
-    let effectiveDue: string | null;
-    if (Object.prototype.hasOwnProperty.call(f, 'due_date')) {
-      effectiveDue = f.due_date ?? null;
-    } else {
-      const existing = await getTaskById(id);
-      if (!existing) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-      effectiveDue = existing.due_date ?? null;
-    }
+    const effectiveDue = Object.prototype.hasOwnProperty.call(f, 'due_date')
+      ? f.due_date ?? null
+      : before.due_date ?? null;
     if (!effectiveDue) {
       return NextResponse.json({ error: 'recurrence_requires_due_date' }, { status: 400 });
     }
   }
+
+  // Completing a recurring task does NOT close it — the single series row
+  // advances to its next occurrence (migration 067). The status is therefore
+  // stripped from the patch and applied by the series engine instead, so the row
+  // never flickers through 'done' (which would purge its reminders below) and the
+  // completion lands in task_occurrence_completions.
+  const requestedStatus = (patch as { status?: string }).status;
+  const advanceSeries =
+    (requestedStatus === 'done' || requestedStatus === 'cancelled') && before.recurrence !== null;
+  if (advanceSeries) delete (patch as { status?: string }).status;
 
   try {
     const prevUsers = await getTaskUserAssignees(id);
@@ -151,14 +167,37 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     // edit-form notification matrix governs.
     const prevKeys = new Set(await listEntityAssigneeKeys('task', id));
 
-    const task = await updateTask(id, patch, assignees, actor.id);
+    let task = await updateTask(id, patch, assignees, actor.id);
     if (!task) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
     // Recurrence side-channel (only when the client sent the key): a rule upserts
-    // + re-materializes future instances; null ends + detaches the series. Editing
-    // the rule never touches instances that already exist.
+    // and marks the row as a series; null ends + detaches it. Runs BEFORE the
+    // advance below so the advance uses the rule as just saved, and so the anchor
+    // is taken from the CURRENT occurrence rather than the advanced one. The
+    // anchor moves only when the due date really changed — the edit form re-sends
+    // due_date on every save, so key presence alone is not enough.
     if (recurrence && recurrence.ok) {
-      await applyRecurrenceOnSave(id, recurrence.rule, task.due_date, actor.id);
+      await applyRecurrenceOnSave(
+        id, recurrence.rule, task.due_date, task.due_date !== before.due_date,
+      );
+    }
+
+    // 'done' → log the occurrence and move on. 'cancelled' → skip it (no
+    // completion logged) and exclude the date so it can't come back.
+    if (advanceSeries) {
+      const advanced = requestedStatus === 'done'
+        ? await completeRecurringOccurrence(id, {
+          id: actor.id,
+          name: actor.full_name ?? actor.username,
+        })
+        : await skipTaskOccurrence(id);
+      // Null only if the series went dormant mid-request (e.g. the same save also
+      // switched recurrence off) — fall back to the plain status change so the
+      // request is never a silent no-op.
+      const after = advanced
+        ? await getTaskById(id)
+        : await updateTask(id, { status: requestedStatus as typeof task.status }, undefined, actor.id);
+      if (after) task = after;
     }
 
     const userIds = task.assignees.map((a) => a.user_id).filter((v): v is string => v !== null);

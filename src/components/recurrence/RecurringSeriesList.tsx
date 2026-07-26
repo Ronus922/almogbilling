@@ -4,7 +4,7 @@ import { Repeat, CalendarClock } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { summarizeCadence } from '@/lib/constants/recurrence';
+import { CadenceStrip, CadenceProgress } from '@/components/recurrence/CadenceStrip';
 import type { RecurringSeries } from '@/lib/db/tasks';
 
 interface Props {
@@ -22,8 +22,8 @@ function fmtDate(d: string): string {
 /**
  * The "מחזוריות" tab body — one row per active recurring series, sorted by the
  * next occurrence (ascending; done server-side in listRecurringSeries). Each row
- * shows the title, the cadence (כל יום/שבוע/חודש…) and the next occurrence
- * date + time. Click → opens the series' template task.
+ * shows the title, the cadence strip (label + day/month chips) and the next
+ * occurrence date + time. Click → opens the series task.
  */
 export function RecurringSeriesList({ series, onSelect }: Props) {
   if (series.length === 0) {
@@ -58,14 +58,17 @@ export function RecurringSeriesList({ series, onSelect }: Props) {
             >
               <TableCell className="px-4 py-3 text-right text-sm">
                 <span className="flex items-center gap-1.5 font-medium text-slate-900">
-                  <Repeat className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                  <Repeat className="h-3.5 w-3.5 shrink-0 text-blue-500" />
                   {s.title}
+                  <CadenceProgress
+                    doneCount={s.done_count}
+                    expectedCount={s.expected_count}
+                    periodLabel={s.period_label}
+                  />
                 </span>
               </TableCell>
-              <TableCell className="px-4 py-3 text-right text-sm">
-                <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-                  {summarizeCadence(s.frequency, s.interval, s.byweekday)}
-                </span>
+              <TableCell className="min-w-[220px] px-4 py-3 text-right text-sm">
+                <CadenceStrip label={s.label} chips={s.chips} />
               </TableCell>
               <TableCell className="px-4 py-3 text-right text-sm">
                 {s.next_occurrence ? (

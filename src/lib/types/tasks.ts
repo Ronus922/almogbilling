@@ -2,6 +2,7 @@
 
 import type { TargetType } from './targets';
 import type { AssigneeRef } from './assignee';
+import type { CadenceKind, ChipStrip } from '@/lib/recurrence/cadence';
 
 // ── Tasks ────────────────────────────────────────────────────────────────
 export type TaskStatus = 'open' | 'in_progress' | 'done' | 'cancelled';
@@ -33,18 +34,37 @@ export interface Task {
   sort_order: number;
   is_archived: boolean;
   completed_at: string | null; // stamped on status→done, cleared when it leaves done
-  // Recurrence (migration 053). A recurring task is either a TEMPLATE (holds the
-  // rule, is the series anchor/first occurrence) or a materialized INSTANCE.
-  // Non-recurring tasks have all of these null/false.
+  // Recurrence (migration 067 — SINGLE-ROW model). A recurring task is ONE row:
+  // recurrence_id points at its rule and due_date is the CURRENT occurrence.
+  // There are no materialized instances, so is_recurring_instance /
+  // parent_task_id / occurrence_date are frozen in the DB and not projected here.
   recurrence_id: string | null;
   is_recurring_template: boolean;
-  is_recurring_instance: boolean;
-  parent_task_id: string | null;
-  occurrence_date: string | null; // 'YYYY-MM-DD' — the occurrence this row represents
   created_by: string | null;
   created_by_name: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Everything a list/card needs to render the recurrence of a task, fully
+ * resolved server-side. The chips and the label are DERIVED from the rule + its
+ * anchor (see lib/recurrence/cadence.ts) — there are no bymonth/bymonthday
+ * columns. The per-period counts must be computed on the server because they
+ * depend on "today" in Asia/Jerusalem, which has to match between SSR and
+ * hydration.
+ */
+export interface TaskRecurrenceView {
+  kind: CadenceKind;
+  /** "כל שבוע" / "כל רבעון" / "כל 5 ימים". */
+  label: string;
+  chips: ChipStrip;
+  /** Completed occurrences inside the current period. */
+  done_count: number;
+  /** Occurrences the rule expects per period; 0 when not meaningful. */
+  expected_count: number;
+  /** Hebrew period suffix for the progress badge — "השבוע" / "השנה". */
+  period_label: string | null;
 }
 
 /** Task enriched with its assignee set (json-agg over the junction) + comment count. */
@@ -54,6 +74,18 @@ export interface TaskWithAssignee extends Task {
   /** Resolved display label for the optional target (apartment number / area
    *  name), derived in the list/detail query. null when there is no target. */
   target_label: string | null;
+  /** Resolved cadence for the recurrence strip; null for one-off tasks. */
+  recurrence: TaskRecurrenceView | null;
+}
+
+/** One completed occurrence of a recurring task (migration 067). */
+export interface TaskOccurrenceCompletion {
+  id: string;
+  task_id: string;
+  occurrence_date: string; // 'YYYY-MM-DD'
+  completed_at: string;
+  completed_by: string | null;
+  completed_by_name: string | null;
 }
 
 /** Fields a client may write on create/update. All optional on update.

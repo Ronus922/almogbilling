@@ -6,7 +6,7 @@ import { supplierExists } from '@/lib/db/suppliers';
 import { createReminder } from '@/lib/db/reminders';
 import { coerceTaskInput, coerceReminders, coerceRecurrence, reminderInPast } from '@/lib/validation/tasks';
 import { coerceAssignees } from '@/lib/validation/assignee';
-import { applyRecurrenceOnSave } from '@/lib/recurrence/materialize';
+import { applyRecurrenceOnSave } from '@/lib/recurrence/series';
 import { notifyTask } from '@/services/notifications';
 import { dispatchCreateNotifications, buildMatrixRecipients } from '@/services/createNotify';
 import { coerceNotifySelection } from '@/lib/notify/selection';
@@ -143,8 +143,8 @@ export async function POST(req: NextRequest) {
   }
 
   // A recurrence rule needs an anchor: the task's due date is the series start /
-  // first occurrence. A rule with no due date materializes nothing (dead series),
-  // so reject it before the task is created.
+  // first occurrence. A rule with no due date has nothing to advance from (dead
+  // series), so reject it before the task is created.
   if (recurrence && recurrence.ok && recurrence.rule) {
     const due = (result.fields as { due_date?: string | null }).due_date ?? null;
     if (!due) {
@@ -160,10 +160,11 @@ export async function POST(req: NextRequest) {
       actor.full_name ?? actor.username,
     );
 
-    // Recurrence (optional): make this task the series template, persist the
-    // rule, and materialize upcoming instances. task.due_date is the anchor.
+    // Recurrence (optional): persist the rule and make this the series row.
+    // task.due_date is both the anchor and the first occurrence, so on create the
+    // anchor is always (re)set.
     if (recurrence && recurrence.ok && recurrence.rule) {
-      await applyRecurrenceOnSave(task.id, recurrence.rule, task.due_date, actor.id);
+      await applyRecurrenceOnSave(task.id, recurrence.rule, task.due_date, true);
     }
 
     const userIds = task.assignees

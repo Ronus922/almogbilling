@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  X, ClipboardList, User, MapPin, MessageSquare, Send, Repeat,
+  X, ClipboardList, User, MapPin, MessageSquare, Send, Repeat, CheckCircle2,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
@@ -24,7 +24,8 @@ import {
   TASK_STATUSES, TASK_PRIORITIES, taskStatusLabel, taskPriorityLabel,
 } from '@/lib/constants/tasks';
 import type {
-  ReminderChannel, TaskComment, TaskPriority, TaskStatus, TaskWithAssignee,
+  ReminderChannel, TaskComment, TaskOccurrenceCompletion, TaskPriority, TaskStatus,
+  TaskWithAssignee,
 } from '@/lib/types/tasks';
 import type { TargetType } from '@/lib/types/targets';
 import type { AssigneeInput, SupplierOption } from '@/lib/types/assignee';
@@ -131,6 +132,7 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
   const [initialReminders, setInitialReminders] = useState<ReminderRow[]>([]);
   const [recurrence, setRecurrence] = useState<RecurrenceFormState>(EMPTY_RECURRENCE);
   const [initialRecurrence, setInitialRecurrence] = useState<RecurrenceFormState>(EMPTY_RECURRENCE);
+  const [completions, setCompletions] = useState<TaskOccurrenceCompletion[]>([]);
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [commentInput, setCommentInput] = useState('');
@@ -155,12 +157,25 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       });
       setReminders(rem);
       setInitialReminders(rem);
-      // Recurrence rule (active series only) → editable/read-only form state.
+      // Recurrence rule (active series only) → editable form state.
       const rf = data.recurrence && data.recurrence.isActive
         ? recurrenceRuleToForm(data.recurrence)
         : EMPTY_RECURRENCE;
       setRecurrence(rf);
       setInitialRecurrence(rf);
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
+
+  // Occurrence history — under the single-row model the task row only knows its
+  // CURRENT occurrence, so "what was already done" comes from the completions log.
+  const loadCompletions = useCallback(async (id: string) => {
+    try {
+      const r = await fetch(`/api/tasks/${id}/completions`, { credentials: 'include' });
+      if (!r.ok) return;
+      const data = (await r.json()) as { completions?: TaskOccurrenceCompletion[] };
+      setCompletions(Array.isArray(data.completions) ? data.completions : []);
     } catch {
       /* non-fatal */
     }
@@ -177,15 +192,19 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       setInitialReminders([]);
       setRecurrence(EMPTY_RECURRENCE);
       setInitialRecurrence(EMPTY_RECURRENCE);
+      setCompletions([]);
       setConfirmEndOpen(false);
       setTitleTouched(false);
       setRecurDateTouched(false);
       setSubmitting(false);
       setChannels(EMPTY_CHANNELS);
       setSelf(false);
-      if (task) void loadDetail(task.id);
+      if (task) {
+        void loadDetail(task.id);
+        if (task.recurrence) void loadCompletions(task.id);
+      }
     }
-  }, [open, task, loadDetail]);
+  }, [open, task, loadDetail, loadCompletions]);
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -221,18 +240,16 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
     [form, initial, reminders, initialReminders, recurrence, initialRecurrence, channels, self],
   );
 
-  // Recurrence editing rules: a materialized INSTANCE shows the rule read-only
-  // (editing it must never re-root the series); create / template / non-recurring
-  // tasks edit it freely. Series actions appear for any task already in a series.
-  const isRecurringInstance = !!task?.is_recurring_instance;
-  const recurrenceEditable = !isRecurringInstance;
+  // A recurring task is ONE row (migration 067), so there is no read-only
+  // "instance" variant any more — the rule is always editable. Series actions
+  // appear for any task already carrying a rule.
   const isSeriesMember = isEdit && !!task?.recurrence_id;
   const canSubmit = canEdit && !!form.title.trim() && !submitting;
 
   // Recurrence needs an anchor — the due date is the series start / first
-  // occurrence. A rule with no due date materializes nothing, so block the save
-  // (mirrors the API guard 'recurrence_requires_due_date').
-  const recurrenceNeedsDate = recurrenceEditable && recurrence.enabled && !form.due_date;
+  // occurrence. A rule with no due date has nothing to advance from, so block the
+  // save (mirrors the API guard 'recurrence_requires_due_date').
+  const recurrenceNeedsDate = recurrence.enabled && !form.due_date;
   const dueDateError = recurDateTouched && recurrenceNeedsDate
     ? 'משימה מחזורית מחייבת תאריך יעד'
     : null;
@@ -295,14 +312,12 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       // via notify_owner when one is set (independent of this immediate send).
       body.notify = channelsToSelection(channels, self ? [...assigneeKeys, 'me'] : assigneeKeys);
 
-      // Recurrence — only when editable (never re-root a series from an instance).
-      // Sent when enabled OR when it changed (so turning it OFF ends the series).
-      if (recurrenceEditable) {
-        const recurrenceChanged =
-          JSON.stringify(recurrence) !== JSON.stringify(initialRecurrence);
-        if (recurrence.enabled || recurrenceChanged) {
-          body.recurrence = recurrenceFormToRule(recurrence);
-        }
+      // Recurrence — sent when enabled OR when it changed (so turning it OFF ends
+      // the series). The server keeps the series anchor unless due_date moved.
+      const recurrenceChanged =
+        JSON.stringify(recurrence) !== JSON.stringify(initialRecurrence);
+      if (recurrence.enabled || recurrenceChanged) {
+        body.recurrence = recurrenceFormToRule(recurrence);
       }
 
       const url = isEdit ? `/api/tasks/${task!.id}` : '/api/tasks';
@@ -346,8 +361,8 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       if (!r.ok) throw new Error('הפעולה נכשלה');
       toast.success(
         action === 'end' ? 'הסדרה הסתיימה'
-          : action === 'skip' ? 'המופע דולג'
-          : 'המופע נותק מהסדרה',
+          : action === 'skip' ? 'המופע דולג — התאריך התקדם למופע הבא'
+          : 'נוצרה משימה עצמאית מהמופע הזה, והסדרה התקדמה',
       );
       onSaved();
       onOpenChange(false);
@@ -428,7 +443,7 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
                   {isSeriesMember && (
                     <span className="inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-2.5 py-0.5 text-xs font-semibold text-white">
                       <Repeat className="h-3.5 w-3.5" />
-                      {isRecurringInstance ? 'מופע בסדרה' : 'משימה מחזורית'}
+                      משימה מחזורית
                     </span>
                   )}
                 </div>
@@ -518,7 +533,7 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="task-due-date" className="text-base font-medium text-muted-foreground">
-                        תאריך יעד{recurrence.enabled && recurrenceEditable && <span className="text-red-500"> *</span>}
+                        תאריך יעד{recurrence.enabled && <span className="text-red-500"> *</span>}
                       </Label>
                       <Input
                         id="task-due-date"
@@ -558,14 +573,32 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
                 onChange={setRecurrence}
                 disabled={disabled}
                 hasDueDate={!!form.due_date}
-                editable={recurrenceEditable}
+                dueDate={form.due_date || null}
                 series={isSeriesMember ? {
-                  isInstance: isRecurringInstance,
                   onSkip: () => void runSeriesAction('skip'),
                   onDetach: () => void runSeriesAction('detach'),
                   onEnd: () => setConfirmEndOpen(true),
                 } : null}
               />
+
+              {/* Occurrence history — the completions log, since the row itself
+                  only carries its current occurrence. */}
+              {isSeriesMember && completions.length > 0 && (
+                <Section title="מופעים שבוצעו" icon={CheckCircle2} iconTone="emerald">
+                  <ul className="divide-y divide-slate-100 py-1">
+                    {completions.map((c) => (
+                      <li key={c.id} className="flex items-center justify-between gap-3 p-3 text-sm">
+                        <span dir="ltr" className="font-semibold tabular-nums text-slate-800">
+                          {c.occurrence_date}
+                        </span>
+                        <span className="truncate text-[12px] text-slate-500">
+                          {c.completed_by_name ?? '—'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </Section>
+              )}
 
               {/* Location / target — order matches the issue form (מיקום then שיוך) */}
               <Section
@@ -687,7 +720,8 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
           <AlertDialogHeader>
             <AlertDialogTitle>לסיים את הסדרה?</AlertDialogTitle>
             <AlertDialogDescription>
-              המופעים העתידיים שטרם בוצעו יימחקו. מופעי העבר יישמרו.
+              המשימה תישאר עם תאריך היעד הנוכחי אך תפסיק להתקדם למופע הבא.
+              היסטוריית ההשלמות נשמרת.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

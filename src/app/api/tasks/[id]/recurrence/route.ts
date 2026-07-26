@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   endTaskSeries,
   skipTaskOccurrence,
   detachTaskOccurrence,
-} from '@/lib/recurrence/materialize';
+} from '@/lib/recurrence/series';
 
 export const runtime = 'nodejs';
 
@@ -20,8 +20,9 @@ const ACTIONS: readonly RecurrenceAction[] = ['skip', 'end', 'detach'];
 // Per-occurrence / series operations from the edit drawer. No new permission —
 // reuses the existing tasks:edit layer.
 export async function POST(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('tasks', 'edit');
+    actor = await requirePermission('tasks', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -42,25 +43,28 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
   }
 
   try {
-    let ok: boolean;
+    // Under the single-row model these all operate on the series row itself:
+    // 'skip' and 'detach' advance it past the current occurrence, 'end' just puts
+    // the rule to sleep (there are no future rows to clean up).
     switch (action as RecurrenceAction) {
-      case 'end':
-        ok = await endTaskSeries(id);
-        break;
-      case 'skip':
-        ok = await skipTaskOccurrence(id);
-        break;
-      case 'detach':
-        ok = await detachTaskOccurrence(id);
-        break;
-      default:
-        ok = false;
+      case 'end': {
+        if (!(await endTaskSeries(id))) {
+          return NextResponse.json({ error: 'not_applicable' }, { status: 400 });
+        }
+        return NextResponse.json({ ok: true });
+      }
+      case 'skip': {
+        const advance = await skipTaskOccurrence(id);
+        if (!advance) return NextResponse.json({ error: 'not_applicable' }, { status: 400 });
+        return NextResponse.json({ ok: true, ...advance });
+      }
+      case 'detach': {
+        const result = await detachTaskOccurrence(id, actor.id);
+        if (!result) return NextResponse.json({ error: 'not_applicable' }, { status: 400 });
+        // detached_task_id lets the drawer reopen on the standalone copy.
+        return NextResponse.json({ ok: true, ...result });
+      }
     }
-    if (!ok) {
-      // Not part of a series, or skip/detach attempted on a non-instance.
-      return NextResponse.json({ error: 'not_applicable' }, { status: 400 });
-    }
-    return NextResponse.json({ ok: true });
   } catch (err) {
     console.error('[POST /api/tasks/[id]/recurrence]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });

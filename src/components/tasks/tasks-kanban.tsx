@@ -14,6 +14,7 @@ import { todayInJerusalem } from '@/lib/dates';
 import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { TargetCell } from '@/components/targets/TargetCell';
 import { RecurringBadge } from '@/components/recurrence/RecurringBadge';
+import { CadenceStrip, CadenceProgress } from '@/components/recurrence/CadenceStrip';
 import {
   TASK_KANBAN_COLUMNS, PRIORITY_BADGE, taskPriorityLabel,
 } from '@/lib/constants/tasks';
@@ -156,9 +157,16 @@ export function TasksKanban({ tasks, canEdit, onSelect, onReorder, onComplete, o
                     <div className="flex items-start justify-between gap-2.5">
                       <h3 className="flex min-w-0 items-center gap-1.5 text-[15px] font-bold leading-snug text-slate-900">
                         <span className="line-clamp-2">{t.title}</span>
-                        {(t.is_recurring_template || t.is_recurring_instance) && <RecurringBadge />}
+                        {t.recurrence && <RecurringBadge />}
                       </h3>
                       <div className="flex shrink-0 items-center gap-1">
+                        {t.recurrence && (
+                          <CadenceProgress
+                            doneCount={t.recurrence.done_count}
+                            expectedCount={t.recurrence.expected_count}
+                            periodLabel={t.recurrence.period_label}
+                          />
+                        )}
                         {canEdit && (
                           <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                             <button
@@ -206,6 +214,14 @@ export function TasksKanban({ tasks, canEdit, onSelect, onReorder, onComplete, o
                       {t.assignees.length > 0 && (
                         <div className="flex flex-wrap items-center gap-1.5">
                           <AssigneePills assignees={t.assignees} size="sm" />
+                        </div>
+                      )}
+                      {/* The whole cadence on the card itself — a recurring task
+                          is ONE row (migration 067), so the days/months it repeats
+                          on have to be legible without opening anything. */}
+                      {t.recurrence && t.recurrence.chips.type !== 'none' && (
+                        <div className="w-full border-t border-dashed border-slate-200 pt-2.5">
+                          <CadenceStrip label={t.recurrence.label} chips={t.recurrence.chips} />
                         </div>
                       )}
                     </div>

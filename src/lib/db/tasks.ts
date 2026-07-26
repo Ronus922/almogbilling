@@ -6,6 +6,7 @@ import type {
   TaskComment,
   TaskKpis,
   TaskListFilters,
+  TaskRecurrenceView,
   TaskWithAssignee,
   TaskWritableFields,
 } from '@/lib/types/tasks';
@@ -16,11 +17,17 @@ import {
   replaceEntityAssignees,
   listEntityUserIds,
 } from '@/lib/db/entityAssignees';
+import { listCompletionDatesInRange } from '@/lib/db/taskCompletions';
 import { targetLabelSql } from '@/lib/db/targets';
+import { todayInJerusalem } from '@/lib/dates';
 import {
-  computeOccurrences, parseDateOnly, formatDateOnly,
+  computeOccurrences, parseDateOnly, formatDateOnly, SERIES_LOOKAHEAD_DAYS,
   type RecurrenceRule, type RecurrenceFrequency,
 } from '@/lib/recurrence/engine';
+import {
+  cadenceChips, cadenceKind, cadenceLabel, cadenceWindow, expectedPerPeriod,
+  type CadenceWindow, type ChipStrip,
+} from '@/lib/recurrence/cadence';
 
 // Date/timestamp columns are cast to text so they cross the RSC boundary as
 // strings (matching the declared `string` types) — pg otherwise returns `date`
@@ -33,8 +40,7 @@ const TASK_COLUMNS = `
   debtor_id, apartment_number,
   related_entity_type, related_entity_id, target_type, target_id, sort_order, is_archived,
   completed_at::text as completed_at,
-  recurrence_id, is_recurring_template, is_recurring_instance, parent_task_id,
-  occurrence_date::text as occurrence_date,
+  recurrence_id, is_recurring_template,
   created_by, created_by_name,
   created_at::text as created_at, updated_at::text as updated_at
 `;
@@ -55,6 +61,90 @@ const WRITABLE_COLUMNS: (keyof TaskWritableFields)[] = [
   'target_type',
   'target_id',
 ];
+
+// ── Recurrence enrichment ───────────────────────────────────────────────────
+// The cadence label, the chip strip and the per-period progress are all DERIVED
+// (lib/recurrence/cadence.ts) rather than stored. They are resolved here, on the
+// server, because they depend on "today" in Asia/Jerusalem — computing them in
+// the client would make SSR and hydration disagree (same reason the overdue
+// styling is anchored server-side).
+
+interface CadenceRuleRow {
+  task_id: string;
+  frequency: RecurrenceFrequency;
+  interval: number;
+  byweekday: number[] | null;
+  anchor_date: string;
+}
+
+/**
+ * Resolve a set of rules into display-ready cadence views, keyed by task id.
+ * ONE completions query for the whole set: the per-cadence windows (week /
+ * month / year) are spanned together and narrowed per task in memory.
+ */
+async function buildRecurrenceViews(
+  rules: readonly CadenceRuleRow[],
+): Promise<Map<string, TaskRecurrenceView>> {
+  const out = new Map<string, TaskRecurrenceView>();
+  if (rules.length === 0) return out;
+
+  const today = todayInJerusalem();
+  const windows = new Map<string, CadenceWindow | null>();
+  let minFrom: string | null = null;
+  let maxTo: string | null = null;
+  for (const rule of rules) {
+    const w = cadenceWindow(rule.frequency, rule.interval, today);
+    windows.set(rule.task_id, w);
+    if (!w) continue;
+    if (minFrom === null || w.from < minFrom) minFrom = w.from;
+    if (maxTo === null || w.to > maxTo) maxTo = w.to;
+  }
+  const doneByTask =
+    minFrom && maxTo
+      ? await listCompletionDatesInRange(rules.map((r) => r.task_id), minFrom, maxTo)
+      : new Map<string, string[]>();
+
+  for (const rule of rules) {
+    const w = windows.get(rule.task_id) ?? null;
+    const doneInPeriod = w
+      ? (doneByTask.get(rule.task_id) ?? []).filter((d) => d >= w.from && d <= w.to)
+      : [];
+    out.set(rule.task_id, {
+      kind: cadenceKind(rule.frequency, rule.interval),
+      label: cadenceLabel(rule.frequency, rule.interval),
+      chips: cadenceChips(rule, rule.anchor_date, doneInPeriod),
+      done_count: doneInPeriod.length,
+      expected_count: expectedPerPeriod(rule),
+      period_label: w?.label ?? null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Fill in `recurrence` on each task: null for one-off tasks, a fully resolved
+ * `TaskRecurrenceView` for active series rows. Two batched queries total (rules,
+ * then completions), regardless of page size. Mutates and returns the same array.
+ */
+async function attachRecurrenceViews<T extends TaskWithAssignee>(tasks: T[]): Promise<T[]> {
+  const seriesIds = tasks.filter((t) => t.recurrence_id).map((t) => t.id);
+  if (seriesIds.length === 0) {
+    for (const t of tasks) t.recurrence = null;
+    return tasks;
+  }
+
+  const rules = await query<CadenceRuleRow>(
+    `select task_id, frequency, interval, byweekday, anchor_date::text as anchor_date
+       from public.task_recurrences
+      where task_id = any($1::uuid[]) and is_active = true`,
+    [seriesIds],
+  );
+  const views = await buildRecurrenceViews(rules.rows);
+  for (const t of tasks) {
+    t.recurrence = views.get(t.id) ?? null;
+  }
+  return tasks;
+}
 
 // ── List ──────────────────────────────────────────────────────────────────
 export async function listTasks(filters: TaskListFilters): Promise<TaskWithAssignee[]> {
@@ -125,7 +215,7 @@ export async function listTasks(filters: TaskListFilters): Promise<TaskWithAssig
        order by ${orderBy}`,
     vals,
   );
-  return r.rows;
+  return attachRecurrenceViews(r.rows);
 }
 
 /**
@@ -160,38 +250,38 @@ export async function listTasksWithDueDateInRange(
   return r.rows;
 }
 
-/** A recurring series (its TEMPLATE task) + the next future occurrence — for the
- *  "מחזוריות" tab. Active, non-archived templates only. */
+/** A recurring series (its single task row) + the next occurrence — for the
+ *  "מחזוריות" tab. Active, non-archived series only. */
 export interface RecurringSeries {
-  id: string; // the template task id (click → open the task)
+  id: string; // the series task id (click → open the task)
   title: string;
-  frequency: RecurrenceFrequency;
-  interval: number;
-  byweekday: number[] | null;
+  /** Resolved cadence label — "כל שבוע" / "כל רבעון". */
+  label: string;
+  /** Day-of-week / day-of-month / month chips, derived from the anchor. */
+  chips: ChipStrip;
   due_time: string | null; // 'HH:MM'
   next_occurrence: string | null; // 'YYYY-MM-DD' — first occurrence >= today, null if none left
+  /** Completed occurrences in the current period, and how many are expected. */
+  done_count: number;
+  expected_count: number;
+  period_label: string | null;
 }
-
-/** How far ahead to look for a series' next occurrence (covers monthly/yearly
- *  gaps beyond the 45-day materialization horizon). */
-const SERIES_LOOKAHEAD_DAYS = 400;
 
 export async function listRecurringSeries(): Promise<RecurringSeries[]> {
   const r = await query<{
-    id: string; title: string; due_time: string | null; anchor: string | null;
+    id: string; title: string; due_time: string | null; anchor: string;
     recurrence_id: string;
     frequency: RecurrenceFrequency; interval: number; byweekday: number[] | null;
     end_type: RecurrenceRule['endType']; end_date: string | null; end_count: number | null;
   }>(
     `select t.id, t.title, t.due_time::text as due_time,
-            coalesce(t.occurrence_date, t.due_date)::text as anchor,
+            r.anchor_date::text as anchor,
             t.recurrence_id,
             r.frequency, r.interval, r.byweekday,
             r.end_type, r.end_date::text as end_date, r.end_count
        from public.tasks t
        join public.task_recurrences r on r.id = t.recurrence_id
-      where t.is_recurring_template = true
-        and t.is_archived = false
+      where t.is_archived = false
         and r.is_active = true`,
   );
   if (r.rows.length === 0) return [];
@@ -212,33 +302,47 @@ export async function listRecurringSeries(): Promise<RecurringSeries[]> {
   }
 
   // "Today" in Asia/Jerusalem (the app's date convention) + the lookahead window.
-  const todayStr = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
+  const todayStr = todayInJerusalem();
   const today = parseDateOnly(todayStr);
   const horizon = today ? new Date(today.getTime()) : null;
   if (horizon) horizon.setUTCDate(horizon.getUTCDate() + SERIES_LOOKAHEAD_DAYS);
 
+  const views = await buildRecurrenceViews(
+    r.rows.map((row) => ({
+      task_id: row.id,
+      frequency: row.frequency,
+      interval: row.interval,
+      byweekday: row.byweekday,
+      anchor_date: row.anchor,
+    })),
+  );
+
   const out: RecurringSeries[] = r.rows.map((row) => {
     let next: string | null = null;
-    const anchor = row.anchor ? parseDateOnly(row.anchor) : null;
+    const anchor = parseDateOnly(row.anchor);
     if (anchor && horizon && today) {
       const rule: RecurrenceRule = {
         frequency: row.frequency, interval: row.interval, byweekday: row.byweekday,
         endType: row.end_type, endDate: row.end_date, endCount: row.end_count,
       };
-      const occ = computeOccurrences(rule, anchor, horizon, excByRec.get(row.recurrence_id) ?? new Set())
-        .map(formatDateOnly);
+      // `fromDate = today` keeps a long-lived series (a daily task anchored years
+      // ago) from burning MAX_OCCURRENCES before it ever reaches today.
+      const occ = computeOccurrences(
+        rule, anchor, horizon, excByRec.get(row.recurrence_id) ?? new Set(), today,
+      ).map(formatDateOnly);
       next = occ.find((d) => d >= todayStr) ?? null;
     }
+    const view = views.get(row.id);
     return {
       id: row.id,
       title: row.title,
-      frequency: row.frequency,
-      interval: row.interval,
-      byweekday: row.byweekday,
+      label: view?.label ?? cadenceLabel(row.frequency, row.interval),
+      chips: view?.chips ?? { type: 'none' },
       due_time: row.due_time ? row.due_time.slice(0, 5) : null,
       next_occurrence: next,
+      done_count: view?.done_count ?? 0,
+      expected_count: view?.expected_count ?? 0,
+      period_label: view?.period_label ?? null,
     };
   });
 
@@ -296,7 +400,7 @@ export async function listTasksDueSoon(
 }
 
 export async function getTaskById(id: string): Promise<TaskWithAssignee | null> {
-  return queryOne<TaskWithAssignee>(
+  const task = await queryOne<TaskWithAssignee>(
     `select ${TASK_COLUMNS.split(',').map((c) => 't.' + c.trim()).join(', ')},
             ${assigneesJsonExpr('task', 't')},
             ${targetLabelSql('t')},
@@ -311,6 +415,9 @@ export async function getTaskById(id: string): Promise<TaskWithAssignee | null> 
       limit 1`,
     [id],
   );
+  if (!task) return null;
+  const [enriched] = await attachRecurrenceViews([task]);
+  return enriched;
 }
 
 // ── Create ──────────────────────────────────────────────────────────────────

@@ -4,7 +4,6 @@ import { hasPermission } from '@/lib/permissions/check';
 import { listTasks, getTaskKpis, listRecurringSeries } from '@/lib/db/tasks';
 import { listAssignableUsers } from '@/lib/db/users';
 import { listSuppliers } from '@/lib/db/suppliers';
-import { materializeAllActive } from '@/lib/recurrence/materialize';
 import { TasksPageClient } from './tasks-page-client';
 
 export const runtime = 'nodejs';
@@ -19,14 +18,8 @@ export default async function TasksPage() {
 
   const canEdit = hasPermission(actor.role, actor.permissions, 'tasks', 'edit');
 
-  // Horizon-fill recurring series before listing (no cron). Best-effort — a
-  // materialization error must never block the tasks page from rendering.
-  try {
-    await materializeAllActive();
-  } catch (err) {
-    console.error('[TasksPage] materializeAllActive', err);
-  }
-
+  // No pre-generation step: a recurring task is a single row whose due_date is
+  // its current occurrence (migration 067), so listing is a pure read.
   const [initialTasks, kpis, assigneeRows, supplierRows, initialSeries] = await Promise.all([
     listTasks({ sort: 'created_desc' }),
     getTaskKpis(),
