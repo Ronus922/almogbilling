@@ -304,8 +304,8 @@ export function WhatsAppBulkSendPanel({
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
                   placeholder="כתוב הודעה אחת שתישלח לכל הנמענים, עם משתנים אישיים..."
-                  rows={6}
-                  className="resize-none"
+                  rows={18}
+                  className="min-h-48 resize-none"
                   dir="rtl"
                 />
               </div>

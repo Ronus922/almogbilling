@@ -2,8 +2,11 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
-import { listContacts, createContact, ConflictError } from '@/lib/db/contacts';
-import { coerceContactInput } from '@/lib/validation/contacts';
+import { listContacts, createContact, getContactById, ConflictError } from '@/lib/db/contacts';
+import { replaceContactPeople } from '@/lib/db/contactPeople';
+import { coerceContactInput, coerceContactPeople } from '@/lib/validation/contacts';
+import { getBillingSettings } from '@/lib/db/appSettings';
+import { computeManagementFee } from '@/lib/billing/managementFee';
 import type { ContactSort, ContactWritableFields } from '@/lib/types/contacts';
 
 export const runtime = 'nodejs';
@@ -52,16 +55,35 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
   }
 
-  const result = coerceContactInput((body ?? {}) as Record<string, unknown>, 'create');
+  const rec = (body ?? {}) as Record<string, unknown>;
+  const result = coerceContactInput(rec, 'create');
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
 
+  // Extra owners/tenants — optional; validated before the insert so a bad row
+  // never leaves a half-created contact behind.
+  const peopleResult = rec.people === undefined ? null : coerceContactPeople(rec.people);
+  if (peopleResult && !peopleResult.ok) {
+    return NextResponse.json({ error: peopleResult.error }, { status: 400 });
+  }
+
+  // management_fee is DERIVED (size × 150% × the per-m² rate in settings) — the
+  // server owns the number, so a client value can never drift from the formula.
+  // With no size or no configured rate, whatever the client sent stands.
+  const { managementFeePerSqm } = await getBillingSettings();
+  const derivedFee = computeManagementFee(result.fields.apartment_size_sqm, managementFeePerSqm);
+  if (derivedFee !== null) result.fields.management_fee = derivedFee;
+
   try {
-    const contact = await createContact(
+    const created = await createContact(
       result.fields as Partial<ContactWritableFields> & { apartment_number: string },
       actor.id,
     );
+    if (peopleResult && peopleResult.people.length > 0) {
+      await replaceContactPeople(created.id, peopleResult.people);
+    }
+    const contact = (await getContactById(created.id)) ?? created;
     return NextResponse.json({ contact }, { status: 201 });
   } catch (err) {
     if (err instanceof ConflictError) {

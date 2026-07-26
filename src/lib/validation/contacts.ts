@@ -11,6 +11,8 @@
 
 import { cleanPhoneField } from '@/lib/whatsapp';
 import type {
+  ContactPersonInput,
+  ContactPersonRole,
   ContactResidentType,
   ContactWritableFields,
   WhatsappProfileSyncStatus,
@@ -56,6 +58,17 @@ function toStringTags(v: unknown): string[] | null {
     if (t && !out.includes(t)) out.push(t);
   }
   return out;
+}
+
+/**
+ * Coerce a non-negative money/measure value. '' / null / undefined → null.
+ * Rejects anything unparseable or negative (returns `{ ok: false }`).
+ */
+function toNonNegativeNumber(v: unknown): { ok: true; value: number | null } | { ok: false } {
+  if (v === null || v === undefined || v === '') return { ok: true, value: null };
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v.trim()) : NaN;
+  if (!Number.isFinite(n) || n < 0) return { ok: false };
+  return { ok: true, value: n };
 }
 
 /** Validate an optional ISO timestamp string (sync-managed fields). */
@@ -121,6 +134,14 @@ export function coerceContactInput(
     fields[key] = raw;
   }
 
+  // Apartment measures — non-negative numbers or null.
+  for (const key of ['apartment_size_sqm', 'management_fee'] as const) {
+    if (!has(body, key)) continue;
+    const n = toNonNegativeNumber(body[key]);
+    if (!n.ok) return { ok: false, error: `invalid_${key}` };
+    fields[key] = n.value;
+  }
+
   // resident_type — enum.
   if (has(body, 'resident_type')) {
     const rt = strOrNull(body.resident_type);
@@ -178,4 +199,60 @@ export function coerceContactInput(
   }
 
   return { ok: true, fields };
+}
+
+export type ContactPeopleValidation =
+  | { ok: true; people: ContactPersonInput[] }
+  | { ok: false; error: string };
+
+const PERSON_ROLES: readonly ContactPersonRole[] = ['owner', 'tenant'];
+
+/**
+ * Coerce the apartment card's extra owners/tenants (`body.people`) into a
+ * validated list. The client always sends the COMPLETE list, so the caller
+ * replaces the stored rows with it wholesale.
+ *
+ * - Phones go through cleanPhoneField (project phone-field policy), emails
+ *   through the same format check as the built-in owner/tenant fields.
+ * - A fully blank row (no name, no phone, no email) is dropped silently — it is
+ *   an "add" the user never filled in, not an error.
+ */
+export function coerceContactPeople(value: unknown): ContactPeopleValidation {
+  if (!Array.isArray(value)) return { ok: false, error: 'invalid_people' };
+  if (value.length > 50) return { ok: false, error: 'too_many_people' };
+
+  const people: ContactPersonInput[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') return { ok: false, error: 'invalid_people' };
+    const rec = raw as Record<string, unknown>;
+
+    const role = strOrNull(rec.role);
+    if (!role || !PERSON_ROLES.includes(role as ContactPersonRole)) {
+      return { ok: false, error: 'invalid_person_role' };
+    }
+
+    const name = strOrNull(rec.name);
+    const rawPhone = strOrNull(rec.phone);
+    const email = strOrNull(rec.email);
+    if (name === null && rawPhone === null && email === null) continue; // untouched row
+
+    let phone: string | null = null;
+    if (rawPhone !== null) {
+      phone = cleanPhoneField(rawPhone);
+      if (!phone) return { ok: false, error: 'invalid_phone' };
+    }
+    if (email !== null && !EMAIL_RE.test(email)) return { ok: false, error: 'invalid_email' };
+
+    const isPrimary = has(rec, 'is_primary_contact') ? toBool(rec.is_primary_contact) : true;
+    if (isPrimary === null) return { ok: false, error: 'invalid_boolean' };
+
+    people.push({
+      role: role as ContactPersonRole,
+      name,
+      phone,
+      email,
+      is_primary_contact: isPrimary,
+    });
+  }
+  return { ok: true, people };
 }

@@ -15,17 +15,34 @@ export class ConflictError extends Error {
   }
 }
 
+// The extra owners/tenants of a contact, aggregated inline so every read path
+// returns them in ONE query (no N+1). Correlates on the alias `contacts`, which
+// is the table's own name in every statement below — including RETURNING.
+const PEOPLE_JSON = `
+  coalesce((
+    select json_agg(json_build_object(
+      'id', p.id, 'role', p.role, 'name', p.name, 'phone', p.phone,
+      'email', p.email, 'is_primary_contact', p.is_primary_contact,
+      'sort_order', p.sort_order
+    ) order by p.role, p.sort_order, p.created_at)
+    from public.contact_people p where p.contact_id = contacts.id
+  ), '[]'::json) as people`;
+
 const CONTACT_COLUMNS = `
   id, apartment_number, owner_name, owner_phone, owner_email,
   tenant_name, tenant_phone, tenant_email, resident_type, operator_id,
   owner_is_primary_contact, tenant_is_primary_contact, operator_is_primary_contact,
   address, notes, tags, whatsapp_profile_image_url, whatsapp_profile_sync_status,
   whatsapp_profile_last_synced_at, whatsapp_profile_sync_error,
-  last_whatsapp_sent_at, last_synced_at, created_at, updated_at, created_by`;
+  last_whatsapp_sent_at, last_synced_at, created_at, updated_at, created_by,
+  apartment_size_sqm::float8 as apartment_size_sqm,
+  management_fee::float8     as management_fee,
+  ${PEOPLE_JSON}`;
 
 // Writable columns (excludes apartment_number, which is keyed/immutable, plus
 // the server-managed id/timestamps/created_by). Order is irrelevant.
 const WRITABLE_COLUMNS = [
+  'apartment_size_sqm', 'management_fee',
   'owner_name', 'owner_phone', 'owner_email',
   'tenant_name', 'tenant_phone', 'tenant_email',
   'resident_type', 'operator_id',
@@ -217,6 +234,7 @@ const ALWAYS_UPDATE_FIELDS = ['owner_name', 'owner_phone', 'tenant_name', 'tenan
 // Manual fields — preserved when protectManualFields=true and already set in DB.
 const PROTECTED_FIELDS = [
   'notes', 'address', 'tags', 'resident_type', 'operator_id',
+  'apartment_size_sqm', 'management_fee',
   'owner_is_primary_contact', 'tenant_is_primary_contact', 'operator_is_primary_contact',
   'owner_email', 'tenant_email',
 ] as const;

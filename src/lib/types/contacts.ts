@@ -10,9 +10,46 @@ export type WhatsappProfileSyncStatus =
   | 'unavailable'
   | 'failed';
 
+/** Role of an EXTRA person on an apartment card (2nd owner, 2nd tenant, …). */
+export type ContactPersonRole = 'owner' | 'tenant';
+
+/**
+ * An additional owner/tenant of an apartment (public.contact_people). The FIRST
+ * owner and the FIRST tenant stay in the contacts.owner_* / tenant_* columns —
+ * these rows are everyone after them, in `sort_order`.
+ */
+export interface ContactPerson {
+  id: string;
+  role: ContactPersonRole;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  /** Receives WhatsApp messages / broadcasts ("מקבל הודעות"). */
+  is_primary_contact: boolean;
+  sort_order: number;
+}
+
+/** What a client may write for one extra person (id/sort_order are server-side). */
+export interface ContactPersonInput {
+  role: ContactPersonRole;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  is_primary_contact: boolean;
+}
+
 export interface Contact {
   id: string;
   apartment_number: string;
+  /** Floor area in m² — manual field, never written by an import. */
+  apartment_size_sqm: number | null;
+  /**
+   * Agreed monthly management fee (manual). NOT the synced management-fee DEBT
+   * in debtors.management_fees.
+   */
+  management_fee: number | null;
+  /** Extra owners/tenants beyond the first of each role. */
+  people: ContactPerson[];
   owner_name: string | null;
   owner_phone: string | null;
   owner_email: string | null;
@@ -45,6 +82,8 @@ export interface Contact {
  */
 export interface ContactWritableFields {
   apartment_number: string;
+  apartment_size_sqm: number | null;
+  management_fee: number | null;
   owner_name: string | null;
   owner_phone: string | null;
   owner_email: string | null;

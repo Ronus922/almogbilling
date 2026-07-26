@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorContact } from '@/lib/db/debtors';
+import { listExtraRecipientsForDebtors } from '@/lib/db/contactPeople';
 import {
   resolveSendCreds,
   InstanceNotConfiguredError,
@@ -69,7 +70,24 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  const total = ids.length;
+  // One job per message. Each selected debtor contributes its primary job (the
+  // owner-or-tenant phone, as before) plus one job per ADDITIONAL owner/tenant
+  // on the apartment card flagged "מקבל הודעות" — so a second owner gets the
+  // message too. `total` counts jobs, which is what the progress bar tracks.
+  const extras = await listExtraRecipientsForDebtors(ids, ['owner', 'tenant']);
+  const extrasByDebtor = new Map<string, string[]>();
+  for (const e of extras) {
+    const list = extrasByDebtor.get(e.debtor_id);
+    if (list) list.push(e.phone);
+    else extrasByDebtor.set(e.debtor_id, [e.phone]);
+  }
+  const jobs: { id: string; phone: string | null }[] = [];
+  for (const id of ids) {
+    jobs.push({ id, phone: null }); // primary — resolved from the debtor row
+    for (const phone of extrasByDebtor.get(id) ?? []) jobs.push({ id, phone });
+  }
+
+  const total = jobs.length;
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -86,23 +104,31 @@ export async function POST(req: NextRequest) {
 
       const summary: BulkSendSummary = { type: 'summary', sent: 0, failed: 0, skipped: 0, failures: [] };
 
+      // Debtor rows are reused across a debtor's jobs (primary + extras), and the
+      // per-debtor phone set keeps a duplicated number from being messaged twice.
+      const debtorCache = new Map<string, Awaited<ReturnType<typeof getDebtorContact>>>();
+      const sentPerDebtor = new Map<string, Set<string>>();
+
       try {
-        for (let i = 0; i < ids.length; i++) {
+        for (let i = 0; i < jobs.length; i++) {
           if (req.signal.aborted) break;
 
-          const id = ids[i];
+          const { id, phone: extraPhone } = jobs[i];
           let apartment = '—';
           let status: BulkSendProgress['status'] = 'skipped';
           let reason: string | undefined;
 
           try {
-            const debtor = await getDebtorContact(id);
+            if (!debtorCache.has(id)) debtorCache.set(id, await getDebtorContact(id));
+            const debtor = debtorCache.get(id) ?? null;
             if (!debtor) {
               summary.skipped++;
               reason = 'החייב לא נמצא';
             } else {
               apartment = debtor.apartment_number;
-              const local = cleanPhoneField(debtor.phone_owner) ?? cleanPhoneField(debtor.phone_tenant);
+              const local = extraPhone
+                ? cleanPhoneField(extraPhone)
+                : cleanPhoneField(debtor.phone_owner) ?? cleanPhoneField(debtor.phone_tenant);
               if (!local) {
                 summary.skipped++;
                 reason = 'אין מספר טלפון תקין';
@@ -114,7 +140,16 @@ export async function POST(req: NextRequest) {
                   summary.skipped++;
                   reason = 'מספר טלפון לא תקין';
                 }
-                if (intl) {
+                let alreadySent = sentPerDebtor.get(id);
+                if (!alreadySent) {
+                  alreadySent = new Set<string>();
+                  sentPerDebtor.set(id, alreadySent);
+                }
+                if (intl && alreadySent.has(intl)) {
+                  summary.skipped++;
+                  reason = 'המספר כבר קיבל את ההודעה';
+                } else if (intl) {
+                  alreadySent.add(intl);
                   const result = await sendAndRecordWhatsApp({
                     debtor,
                     phoneIntl: intl,
@@ -144,7 +179,7 @@ export async function POST(req: NextRequest) {
 
           emit({ type: 'progress', index: i + 1, total, apartment, status, ...(reason ? { reason } : {}) });
 
-          if (i < ids.length - 1 && !req.signal.aborted) await sleep(DELAY_MS);
+          if (i < jobs.length - 1 && !req.signal.aborted) await sleep(DELAY_MS);
         }
 
         emit(summary);

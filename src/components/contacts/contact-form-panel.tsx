@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { X, User, Home, Info } from 'lucide-react';
+import { X, User, Home, Info, Plus, Trash2 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -20,8 +20,11 @@ import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
 import { validatePhone } from '@/lib/validation';
+import { computeManagementFee, MANAGEMENT_FEE_MULTIPLIER } from '@/lib/billing/managementFee';
 import { RESIDENT_TYPES, residentTypeLabel } from '@/lib/constants/contacts';
-import type { Contact, ContactResidentType } from '@/lib/types/contacts';
+import type {
+  Contact, ContactPersonRole, ContactResidentType,
+} from '@/lib/types/contacts';
 
 interface Props {
   open: boolean;
@@ -32,8 +35,26 @@ interface Props {
   onSaved: () => void;
 }
 
+/**
+ * One EXTRA owner/tenant row in the form. The first owner and the first tenant
+ * live in the flat owner_* / tenant_* fields below (unchanged, still the ones
+ * every existing screen reads); rows here are person #2 onward of each role and
+ * persist in public.contact_people. `key` is client-only (stable React key).
+ */
+interface PersonRow {
+  key: string;
+  role: ContactPersonRole;
+  name: string;
+  phone: string;
+  email: string;
+  is_primary_contact: boolean;
+}
+
 interface FormState {
   apartment_number: string;
+  apartment_size_sqm: string;
+  management_fee: string;
+  people: PersonRow[];
   resident_type: ContactResidentType;
   owner_name: string;
   owner_phone: string;
@@ -50,6 +71,9 @@ interface FormState {
 
 const EMPTY_FORM: FormState = {
   apartment_number: '',
+  apartment_size_sqm: '',
+  management_fee: '',
+  people: [],
   resident_type: 'owner',
   owner_name: '',
   owner_phone: '',
@@ -66,9 +90,24 @@ const EMPTY_FORM: FormState = {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/** Number → input string ('' for "not set", so a blank field stays blank). */
+function numToStr(v: number | null): string {
+  return v === null || v === undefined ? '' : String(v);
+}
+
 function fromContact(c: Contact): FormState {
   return {
     apartment_number: c.apartment_number,
+    apartment_size_sqm: numToStr(c.apartment_size_sqm),
+    management_fee: numToStr(c.management_fee),
+    people: (c.people ?? []).map((p, i) => ({
+      key: `saved-${p.id ?? i}`,
+      role: p.role,
+      name: p.name ?? '',
+      phone: p.phone ?? '',
+      email: p.email ?? '',
+      is_primary_contact: p.is_primary_contact,
+    })),
     resident_type: c.resident_type,
     owner_name: c.owner_name ?? '',
     owner_phone: c.owner_phone ?? '',
@@ -92,6 +131,11 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [tagInput, setTagInput] = useState('');
+  // Monotonic source of stable keys for newly added person rows.
+  const rowSeq = useRef(0);
+  // Management-fee rate per m² (settings). null = not configured → the fee field
+  // stays a plain manual input, exactly as before the rate existed.
+  const [feePerSqm, setFeePerSqm] = useState<number | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -104,12 +148,66 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
     }
   }, [open, contact]);
 
+  // Load the per-m² rate whenever the panel opens (it may have changed in
+  // Settings since the last open). Silent on failure → manual fee field.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/settings/billing', { credentials: 'include' });
+        if (!r.ok) return;
+        const d = (await r.json()) as { managementFeePerSqm: number | null };
+        if (!cancelled) setFeePerSqm(d.managementFeePerSqm);
+      } catch {
+        /* keep the fee field manual */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open]);
+
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
-  function markTouched(key: keyof FormState) {
+  function markTouched(key: string) {
     setTouched((prev) => ({ ...prev, [key]: true }));
   }
+
+  // ── Extra owners/tenants (unlimited, per role) ──────────────────────────
+  function addPerson(role: ContactPersonRole) {
+    rowSeq.current += 1;
+    setForm((prev) => ({
+      ...prev,
+      people: [
+        ...prev.people,
+        { key: `new-${rowSeq.current}`, role, name: '', phone: '', email: '', is_primary_contact: true },
+      ],
+    }));
+  }
+  function updatePerson(key: string, patch: Partial<Omit<PersonRow, 'key' | 'role'>>) {
+    setForm((prev) => ({
+      ...prev,
+      people: prev.people.map((p) => (p.key === key ? { ...p, ...patch } : p)),
+    }));
+  }
+  function removePerson(key: string) {
+    setForm((prev) => ({ ...prev, people: prev.people.filter((p) => p.key !== key) }));
+  }
+  const peopleOf = (role: ContactPersonRole) => form.people.filter((p) => p.role === role);
+
+  /** Per-row phone/email errors, keyed by the row's client key. */
+  const peopleErrors = useMemo(() => {
+    const map = new Map<string, { phone?: string; email?: string }>();
+    for (const p of form.people) {
+      const e: { phone?: string; email?: string } = {};
+      if (p.phone.trim() && !validatePhone(p.phone).valid) {
+        e.phone = validatePhone(p.phone).error ?? 'מספר טלפון לא תקין';
+      }
+      if (p.email.trim() && !EMAIL_RE.test(p.email.trim())) e.email = 'אימייל לא תקין';
+      if (e.phone || e.email) map.set(p.key, e);
+    }
+    return map;
+  }, [form.people]);
 
   const errors = useMemo(() => {
     const e: Partial<Record<keyof FormState, string>> = {};
@@ -126,6 +224,12 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
     if (form.tenant_email.trim() && !EMAIL_RE.test(form.tenant_email.trim())) {
       e.tenant_email = 'אימייל לא תקין';
     }
+    for (const key of ['apartment_size_sqm', 'management_fee'] as const) {
+      const raw = form[key].trim();
+      if (!raw) continue;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) e[key] = 'יש להזין מספר חיובי';
+    }
     return e;
   }, [form]);
 
@@ -133,8 +237,17 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
     return touched[key] ? errors[key] ?? null : null;
   }
 
+  // Derived management fee: size × 150% × rate. null when either input is
+  // missing — then the stored/typed value stands untouched.
+  const sizeNum = form.apartment_size_sqm.trim() === '' ? null : Number(form.apartment_size_sqm);
+  const derivedFee = computeManagementFee(
+    sizeNum !== null && Number.isFinite(sizeNum) ? sizeNum : null,
+    feePerSqm,
+  );
+  const feeIsDerived = feePerSqm !== null;
+
   const dirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initial), [form, initial]);
-  const hasErrors = Object.keys(errors).length > 0;
+  const hasErrors = Object.keys(errors).length > 0 || peopleErrors.size > 0;
   const canSubmit = canEdit && !hasErrors && !submitting;
 
   useEscapeKey(open && !confirmCloseOpen, () => requestClose());
@@ -170,7 +283,21 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
     setSubmitting(true);
     try {
       const phone = (v: string) => (v.trim() ? validatePhone(v).normalized : '');
+      const num = (v: string) => (v.trim() ? Number(v.trim()) : null);
       const body: Record<string, unknown> = {
+        apartment_size_sqm: num(form.apartment_size_sqm),
+        // Derived when a rate is configured and a size exists (the server
+        // recomputes it anyway); otherwise the field's own value.
+        management_fee: derivedFee !== null ? derivedFee : num(form.management_fee),
+        // Complete list — the server replaces the stored extra people with it.
+        // Rows left entirely blank are dropped server-side.
+        people: form.people.map((p) => ({
+          role: p.role,
+          name: p.name.trim(),
+          phone: phone(p.phone),
+          email: p.email.trim(),
+          is_primary_contact: p.is_primary_contact,
+        })),
         resident_type: form.resident_type,
         owner_name: form.owner_name.trim(),
         owner_phone: phone(form.owner_phone),
@@ -220,8 +347,14 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
   // shows "מפעיל". It is hidden when the resident is the owner.
   const secondary =
     form.resident_type === 'operator'
-      ? { title: 'פרטי המפעיל', name: 'שם מפעיל', phone: 'טלפון מפעיל', email: 'אימייל מפעיל', tone: 'amber' as const }
-      : { title: 'פרטי השוכר', name: 'שם שוכר', phone: 'טלפון שוכר', email: 'אימייל שוכר', tone: 'violet' as const };
+      ? {
+          title: 'פרטי המפעיל', name: 'שם מפעיל', phone: 'טלפון מפעיל', email: 'אימייל מפעיל',
+          add: 'הוסף מפעיל', extraTitle: 'מפעיל נוסף', tone: 'amber' as const,
+        }
+      : {
+          title: 'פרטי השוכר', name: 'שם שוכר', phone: 'טלפון שוכר', email: 'אימייל שוכר',
+          add: 'הוסף שוכר', extraTitle: 'שוכר נוסף', tone: 'violet' as const,
+        };
 
   return (
     <>
@@ -261,19 +394,67 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
               {/* Top: apartment + resident type */}
               <Section title="פרטי הדירה" icon={Home} iconTone="blue">
                 <div className="space-y-4 py-2">
-                  <Field
-                    id="contact-apartment"
-                    label="מספר דירה"
-                    required
-                    value={form.apartment_number}
-                    onChange={(v) => set('apartment_number', v)}
-                    onBlur={() => markTouched('apartment_number')}
-                    error={errFor('apartment_number')}
-                    disabled={disabled || isEdit}
-                    dir="ltr"
-                    tabularNums
-                    autoFocus={!isEdit}
-                  />
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <Field
+                      id="contact-apartment"
+                      label="מספר דירה"
+                      required
+                      value={form.apartment_number}
+                      onChange={(v) => set('apartment_number', v)}
+                      onBlur={() => markTouched('apartment_number')}
+                      error={errFor('apartment_number')}
+                      disabled={disabled || isEdit}
+                      dir="ltr"
+                      tabularNums
+                      autoFocus={!isEdit}
+                    />
+                    <Field
+                      id="contact-size"
+                      label='גודל דירה (מ"ר)'
+                      value={form.apartment_size_sqm}
+                      onChange={(v) => set('apartment_size_sqm', v)}
+                      onBlur={() => markTouched('apartment_size_sqm')}
+                      error={errFor('apartment_size_sqm')}
+                      disabled={disabled}
+                      dir="ltr"
+                      tabularNums
+                      inputMode="decimal"
+                      placeholder="85"
+                    />
+                    <Field
+                      id="contact-management-fee"
+                      label="דמי ניהול (₪)"
+                      value={feeIsDerived ? (derivedFee !== null ? String(derivedFee) : '') : form.management_fee}
+                      onChange={(v) => set('management_fee', v)}
+                      onBlur={() => markTouched('management_fee')}
+                      error={feeIsDerived ? null : errFor('management_fee')}
+                      disabled={disabled || feeIsDerived}
+                      dir="ltr"
+                      tabularNums
+                      inputMode="decimal"
+                      placeholder={feeIsDerived ? 'יש להזין גודל דירה' : '450'}
+                    />
+                  </div>
+
+                  {feeIsDerived && (
+                    <p className="text-[12px] text-slate-500">
+                      {derivedFee !== null ? (
+                        <>
+                          מחושב אוטומטית:{' '}
+                          <span className="font-semibold tabular-nums">{form.apartment_size_sqm}</span> מ&quot;ר ×{' '}
+                          {MANAGEMENT_FEE_MULTIPLIER * 100}% ×{' '}
+                          <span className="font-semibold tabular-nums">{feePerSqm}</span> ₪ למ&quot;ר ={' '}
+                          <span className="font-semibold tabular-nums">{derivedFee.toLocaleString('he-IL')}</span> ₪
+                        </>
+                      ) : (
+                        <>
+                          דמי הניהול מחושבים אוטומטית: גודל הדירה × {MANAGEMENT_FEE_MULTIPLIER * 100}% ×{' '}
+                          <span className="font-semibold tabular-nums">{feePerSqm}</span> ₪ למ&quot;ר (מתוך ההגדרות).
+                          הזן גודל דירה כדי לחשב.
+                        </>
+                      )}
+                    </p>
+                  )}
                   <div className="space-y-2">
                     <Label className="text-base font-medium text-muted-foreground">סוג דייר</Label>
                     <Select
@@ -297,7 +478,7 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
                 </div>
               </Section>
 
-              {/* Owner */}
+              {/* Owner — the first owner + any number of additional owners */}
               <Section title="פרטי בעל הדירה" icon={User} iconTone="blue">
                 <div className="space-y-4 py-2">
                   <Field id="owner-name" label="שם בעלים" value={form.owner_name}
@@ -317,6 +498,28 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
                     onChange={(v) => set('owner_is_primary_contact', v)}
                     disabled={disabled}
                   />
+
+                  {peopleOf('owner').map((p, i) => (
+                    <PersonCard
+                      key={p.key}
+                      row={p}
+                      index={i}
+                      title={`בעל דירה נוסף ${i + 2}`}
+                      nameLabel="שם בעלים"
+                      phoneLabel="טלפון בעלים"
+                      emailLabel="אימייל בעלים"
+                      errors={peopleErrors.get(p.key)}
+                      disabled={disabled}
+                      onChange={(patch) => updatePerson(p.key, patch)}
+                      onRemove={() => removePerson(p.key)}
+                    />
+                  ))}
+
+                  {!disabled && (
+                    <div className="flex justify-end">
+                      <AddPersonButton label="הוסף בעל דירה" onClick={() => addPerson('owner')} />
+                    </div>
+                  )}
                 </div>
               </Section>
 
@@ -341,6 +544,28 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
                       onChange={(v) => set('tenant_is_primary_contact', v)}
                       disabled={disabled}
                     />
+
+                    {peopleOf('tenant').map((p, i) => (
+                      <PersonCard
+                        key={p.key}
+                        row={p}
+                        index={i}
+                        title={`${secondary.extraTitle} ${i + 2}`}
+                        nameLabel={secondary.name}
+                        phoneLabel={secondary.phone}
+                        emailLabel={secondary.email}
+                        errors={peopleErrors.get(p.key)}
+                        disabled={disabled}
+                        onChange={(patch) => updatePerson(p.key, patch)}
+                        onRemove={() => removePerson(p.key)}
+                      />
+                    ))}
+
+                    {!disabled && (
+                      <div className="flex justify-end">
+                        <AddPersonButton label={secondary.add} onClick={() => addPerson('tenant')} />
+                      </div>
+                    )}
                   </div>
                 </Section>
               )}
@@ -414,6 +639,75 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+/** Section-header "+ הוסף…" affordance (same treatment as the reminders editor). */
+function AddPersonButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-8 items-center gap-1 rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white transition-colors hover:bg-blue-700"
+    >
+      <Plus className="h-3.5 w-3.5" /> {label}
+    </button>
+  );
+}
+
+interface PersonCardProps {
+  row: PersonRow;
+  index: number;
+  title: string;
+  nameLabel: string;
+  phoneLabel: string;
+  emailLabel: string;
+  errors?: { phone?: string; email?: string };
+  disabled?: boolean;
+  onChange: (patch: Partial<Omit<PersonRow, 'key' | 'role'>>) => void;
+  onRemove: () => void;
+}
+
+/**
+ * One additional owner/tenant — same three fields + "מקבל הודעות" as the first
+ * person of the role, in a bordered sub-card with its own remove button. Shared
+ * by both sections (owners and tenants/operators) so there is one implementation.
+ */
+function PersonCard({
+  row, index, title, nameLabel, phoneLabel, emailLabel, errors, disabled, onChange, onRemove,
+}: PersonCardProps) {
+  const idBase = `${row.role}-extra-${index}`;
+  return (
+    <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold text-slate-700">{title}</h4>
+        {!disabled && (
+          <button
+            type="button"
+            onClick={onRemove}
+            aria-label={`הסר ${title}`}
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+      <Field id={`${idBase}-name`} label={nameLabel} value={row.name}
+        onChange={(v) => onChange({ name: v })} disabled={disabled} />
+      <Field id={`${idBase}-phone`} label={phoneLabel} value={row.phone}
+        onChange={(v) => onChange({ phone: v })} error={errors?.phone ?? null} disabled={disabled}
+        dir="ltr" tabularNums inputMode="tel" placeholder="052-1234567" />
+      <Field id={`${idBase}-email`} label={emailLabel} type="email" value={row.email}
+        onChange={(v) => onChange({ email: v })} error={errors?.email ?? null} disabled={disabled}
+        dir="ltr" placeholder="name@example.com" />
+      <CheckboxRow
+        id={`${idBase}-primary`}
+        label="מקבל הודעות"
+        checked={row.is_primary_contact}
+        onChange={(v) => onChange({ is_primary_contact: v })}
+        disabled={disabled}
+      />
+    </div>
   );
 }
 

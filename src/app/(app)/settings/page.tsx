@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
 import { SmtpSettingsCard } from '@/components/settings/SmtpSettingsCard';
+import { BillingSettingsCard } from '@/components/settings/BillingSettingsCard';
 import { WhatsAppConnections } from './components/WhatsAppConnections';
 
 export const runtime = 'nodejs';
@@ -22,6 +23,7 @@ export default async function SettingsPage() {
         <p className="mt-1 text-sm text-muted-foreground">ניהול הגדרות מערכת — אדמין בלבד.</p>
       </div>
 
+      <BillingSettingsCard />
       <SmtpSettingsCard />
       <WhatsAppConnections isAdmin={isAdmin} currentUserId={actor.id} />
     </div>

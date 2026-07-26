@@ -3,7 +3,10 @@ import { getSession } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getContactById, updateContact, deleteContact } from '@/lib/db/contacts';
-import { coerceContactInput } from '@/lib/validation/contacts';
+import { replaceContactPeople } from '@/lib/db/contactPeople';
+import { coerceContactInput, coerceContactPeople } from '@/lib/validation/contacts';
+import { getBillingSettings } from '@/lib/db/appSettings';
+import { computeManagementFee } from '@/lib/billing/managementFee';
 
 export const runtime = 'nodejs';
 
@@ -41,14 +44,35 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
   }
 
-  const result = coerceContactInput((body ?? {}) as Record<string, unknown>, 'update');
+  const rec = (body ?? {}) as Record<string, unknown>;
+  const result = coerceContactInput(rec, 'update');
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
 
+  // Extra owners/tenants — the client sends the COMPLETE list, so it replaces
+  // what is stored. Omitting the key leaves the existing rows untouched.
+  const peopleResult = rec.people === undefined ? null : coerceContactPeople(rec.people);
+  if (peopleResult && !peopleResult.ok) {
+    return NextResponse.json({ error: peopleResult.error }, { status: 400 });
+  }
+
+  // management_fee is DERIVED — see POST /api/contacts. On a partial update the
+  // size may not be in the payload, so fall back to the stored one.
+  const { managementFeePerSqm } = await getBillingSettings();
+  if (managementFeePerSqm !== null) {
+    const size = result.fields.apartment_size_sqm !== undefined
+      ? result.fields.apartment_size_sqm
+      : (await getContactById(id))?.apartment_size_sqm ?? null;
+    const derivedFee = computeManagementFee(size, managementFeePerSqm);
+    if (derivedFee !== null) result.fields.management_fee = derivedFee;
+  }
+
   try {
-    const contact = await updateContact(id, result.fields);
-    if (!contact) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    const updated = await updateContact(id, result.fields);
+    if (!updated) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    if (peopleResult) await replaceContactPeople(id, peopleResult.people);
+    const contact = peopleResult ? (await getContactById(id)) ?? updated : updated;
     return NextResponse.json({ contact });
   } catch (err) {
     const e = err as { code?: string };

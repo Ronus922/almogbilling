@@ -216,7 +216,7 @@ export function BroadcastComposeClient({
             </div>
           </div>
           <Textarea id="bc-content" ref={textareaRef} value={content} onChange={(e) => setContent(e.target.value)}
-            placeholder="שלום {{name}}, נותר חוב של {{debt}} בדירה {{apartment}}..." rows={6} className="resize-none" disabled={sending} dir="rtl" />
+            placeholder="שלום {{name}}, נותר חוב של {{debt}} בדירה {{apartment}}..." rows={18} className="min-h-48 resize-none" disabled={sending} dir="rtl" />
           <p className="text-xs text-muted-foreground">המשתנים יוחלפו אוטומטית לכל נמען. תוכן ההודעה נשמר כפי שהוא ברגע השליחה.</p>
         </div>
       </div>

@@ -7,7 +7,16 @@ import {
 import { cn } from '@/lib/utils';
 import { formatPhoneDisplay, phoneTelHref } from '@/lib/phone';
 import { RESIDENT_TYPE_META } from '@/lib/constants/contacts';
-import type { Contact } from '@/lib/types/contacts';
+import type { Contact, ContactPersonRole } from '@/lib/types/contacts';
+
+/**
+ * How many ADDITIONAL phone numbers the apartment holds for a role (2nd owner,
+ * 2nd tenant, …). Only the count is shown — the numbers themselves stay in the
+ * apartment card, so the table keeps one line per apartment.
+ */
+function extraPhoneCount(c: Contact, role: ContactPersonRole): number {
+  return (c.people ?? []).filter((p) => p.role === role && p.phone && p.phone.trim() !== '').length;
+}
 
 export function ContactsTable({
   rows,
@@ -68,13 +77,19 @@ export function ContactsTable({
                   {c.owner_name || <span className="text-slate-400">—</span>}
                 </TableCell>
                 <TableCell dir="ltr" className="px-4 py-3 text-center text-sm tabular-nums">
-                  <PhoneLink raw={c.owner_phone} />
+                  <span className="inline-flex items-center gap-1.5">
+                    <PhoneLink raw={c.owner_phone} />
+                    <ExtraPhonesBadge count={extraPhoneCount(c, 'owner')} />
+                  </span>
                 </TableCell>
                 <TableCell className="px-4 py-3 text-right text-sm text-slate-700 max-lg:hidden">
                   {c.tenant_name || <span className="text-slate-400">—</span>}
                 </TableCell>
                 <TableCell dir="ltr" className="px-4 py-3 text-center text-sm tabular-nums max-lg:hidden">
-                  <PhoneLink raw={c.tenant_phone} />
+                  <span className="inline-flex items-center gap-1.5">
+                    <PhoneLink raw={c.tenant_phone} />
+                    <ExtraPhonesBadge count={extraPhoneCount(c, 'tenant')} />
+                  </span>
                 </TableCell>
                 <TableCell className="px-4 py-3 text-center">
                   <ResidentTypeBadge type={c.resident_type} />
@@ -111,9 +126,12 @@ export function ContactsTable({
               <div className="truncate text-base font-semibold text-slate-900">
                 {c.owner_name || 'ללא שם בעלים'}
               </div>
-              <div dir="ltr" className="truncate text-start text-sm text-muted-foreground tabular-nums">
-                {formatPhoneDisplay(c.owner_phone) ?? '—'}
-                {c.tenant_name ? ` · ${c.tenant_name}` : ''}
+              <div dir="ltr" className="flex items-center gap-1.5 truncate text-start text-sm text-muted-foreground tabular-nums">
+                <span className="truncate">
+                  {formatPhoneDisplay(c.owner_phone) ?? '—'}
+                  {c.tenant_name ? ` · ${c.tenant_name}` : ''}
+                </span>
+                <ExtraPhonesBadge count={extraPhoneCount(c, 'owner') + extraPhoneCount(c, 'tenant')} />
               </div>
             </div>
             <ResidentTypeBadge type={c.resident_type} />
@@ -121,6 +139,24 @@ export function ContactsTable({
         ))}
       </div>
     </>
+  );
+}
+
+/**
+ * "+N" chip: this apartment holds N more phone numbers than the one shown. The
+ * numbers are deliberately NOT rendered here — open the apartment card to see
+ * them. Nothing renders when there are no extras.
+ */
+function ExtraPhonesBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      dir="rtl"
+      title={`יש עוד ${count} מספרי טלפון לדירה זו — לצפייה פתח את כרטיס הדירה`}
+      className="inline-flex shrink-0 items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 ring-1 ring-blue-100"
+    >
+      +{count}
+    </span>
   );
 }
 

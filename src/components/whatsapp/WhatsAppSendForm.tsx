@@ -83,7 +83,13 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
     // Clean fields hold one local number each; the label comes from the field's
     // semantics (owner / tenant), not the string. Fall back to candidate parsing
     // only for legacy/abnormal values still lurking in the column.
-    const candidates = useMemo(() => buildRecipientCandidates(recipient), [recipient]);
+    // Additional owners/tenants from the apartment card ("מקבל הודעות"), loaded
+    // once per recipient and appended to the picker below the primary numbers.
+    const [extraCandidates, setExtraCandidates] = useState<PhoneCandidate[]>([]);
+    const candidates = useMemo(
+      () => mergeCandidates(buildRecipientCandidates(recipient), extraCandidates),
+      [recipient, extraCandidates],
+    );
     const [selectedPhone, setSelectedPhone] = useState<string | null>(
       () => candidates[0]?.phone ?? null,
     );
@@ -108,6 +114,31 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
       })();
       return () => { cancelled = true; };
     }, []);
+
+    // Extra apartment-card recipients. Failure is silent: the primary numbers
+    // are already in the picker, so a hiccup here must not block a send.
+    useEffect(() => {
+      let cancelled = false;
+      (async () => {
+        try {
+          const r = await fetch(
+            `/api/whatsapp/recipient-phones?debtor_id=${encodeURIComponent(recipient.id)}`,
+            { credentials: 'include' },
+          );
+          if (!r.ok) return;
+          const data = (await r.json()) as { phones?: { phone: string; label: string }[] };
+          const parsed: PhoneCandidate[] = [];
+          for (const p of data.phones ?? []) {
+            const clean = cleanPhoneField(p.phone);
+            if (clean) parsed.push({ phone: clean, label: p.label });
+          }
+          if (!cancelled) setExtraCandidates(parsed);
+        } catch {
+          /* keep the primary numbers only */
+        }
+      })();
+      return () => { cancelled = true; };
+    }, [recipient.id]);
 
     const preview = useMemo(
       () => interpolateTemplate(content, recipient),
@@ -340,8 +371,8 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
               value={content}
               onChange={(e) => setContent(e.target.value)}
               placeholder="כתוב הודעה, או בחר תבנית ולחץ על תגית להוספה בנקודת הסמן..."
-              rows={6}
-              className="resize-none"
+              rows={18}
+              className="min-h-48 resize-none"
               disabled={sending}
               dir="rtl"
             />
@@ -449,6 +480,18 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
 // phone_tenant → "שוכר/ת". Labels derive from the field, not the string. If both
 // fields are empty/invalid (legacy compound value still lurking), fall back to
 // parsePhoneCandidates over the combined raw fields.
+/** Append the apartment-card extras, dropping numbers already in the picker. */
+function mergeCandidates(primary: PhoneCandidate[], extra: PhoneCandidate[]): PhoneCandidate[] {
+  const seen = new Set(primary.map((c) => c.phone));
+  const out = [...primary];
+  for (const c of extra) {
+    if (seen.has(c.phone)) continue;
+    seen.add(c.phone);
+    out.push(c);
+  }
+  return out;
+}
+
 function buildRecipientCandidates(r: WhatsAppRecipient): PhoneCandidate[] {
   const owner = cleanPhoneField(r.phone_owner);
   const tenant = cleanPhoneField(r.phone_tenant);
