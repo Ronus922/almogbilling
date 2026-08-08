@@ -37,7 +37,9 @@ export interface WhatsAppRecipient {
   phone_tenant: string | null;
   total_debt: number;
   management_fees: number;
-  special_debt: number;
+  /** {{special}} source — the special/hot-water debt (debtors.hot_water_debt).
+   *  The special_debt column is legacy and always 0; never pass it here. */
+  hot_water_debt: number;
 }
 
 /** Imperative handle so an outer close affordance (Sheet X / overlay, or the

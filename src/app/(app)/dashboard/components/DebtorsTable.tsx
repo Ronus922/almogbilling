@@ -560,7 +560,7 @@ function toRecipient(d: Debtor): WhatsAppRecipient {
     phone_tenant: d.phone_tenant,
     total_debt: d.total_debt,
     management_fees: d.management_fees,
-    special_debt: d.special_debt,
+    hot_water_debt: d.hot_water_debt,
   };
 }
 

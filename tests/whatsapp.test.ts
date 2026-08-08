@@ -251,7 +251,7 @@ describe('interpolateTemplate — placeholder substitution', () => {
     tenant_name: 'דייר אחר',
     total_debt: 12500,
     management_fees: 8400,
-    special_debt: 1200,
+    hot_water_debt: 1200,
   };
 
   it('replaces the full supported set: name / debt / monthly / special', () => {
@@ -263,7 +263,23 @@ describe('interpolateTemplate — placeholder substitution', () => {
     expect(out).toContain('₪');
     expect(out).toContain('12,500'); // debt
     expect(out).toContain('8,400');  // monthly = management_fees
-    expect(out).toContain('1,200');  // special = special_debt
+    expect(out).toContain('1,200');  // special = hot_water_debt
+  });
+
+  // Regression (apt 1628): Bllink writes the special debt to hot_water_debt
+  // while the legacy special_debt column is zeroed by every import. {{special}}
+  // must read hot_water_debt — reading special_debt rendered "₪ 0" for a debtor
+  // who owed 727.
+  it('{{special}} reads hot_water_debt even when legacy special_debt is 0', () => {
+    const out = interpolateTemplate('{{special}}', {
+      owner_name: 'א', total_debt: 4959, management_fees: 4232,
+      hot_water_debt: 727, special_debt: 0,
+    });
+    expect(out).toBe('₪ 727');
+  });
+
+  it('{{special}} falls back to legacy special_debt when hot_water_debt is absent', () => {
+    expect(interpolateTemplate('{{special}}', { owner_name: 'א', special_debt: 300 })).toBe('₪ 300');
   });
 
   it('{{name}} falls back to tenant_name when owner is empty', () => {
@@ -284,7 +300,7 @@ describe('interpolateTemplate — placeholder substitution', () => {
 
   it('null money fields render as ₪ 0', () => {
     const out = interpolateTemplate('{{debt}}|{{monthly}}|{{special}}', {
-      owner_name: 'א', total_debt: null, management_fees: null, special_debt: null,
+      owner_name: 'א', total_debt: null, management_fees: null, hot_water_debt: null,
     });
     expect(out).toBe('₪ 0|₪ 0|₪ 0');
   });

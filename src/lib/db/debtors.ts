@@ -695,6 +695,8 @@ export async function getDebtorApartmentNumber(id: string): Promise<string | nul
 // The subset of fields the WhatsApp send route needs: phone resolution and
 // placeholder interpolation ({{name}}/{{debt}}/{{monthly}}/{{special}}).
 // {{monthly}} = management_fees (numeric); monthly_debt is a text month-range.
+// {{special}} = hot_water_debt — Bllink's "special debt" is written there;
+// the debtors.special_debt column is legacy and zeroed by every import.
 export interface DebtorContact {
   id: string;
   apartment_number: string;
@@ -704,7 +706,7 @@ export interface DebtorContact {
   phone_tenant: string | null;
   total_debt: number;
   management_fees: number;
-  special_debt: number;
+  hot_water_debt: number;
 }
 
 export async function getDebtorContact(id: string): Promise<DebtorContact | null> {
@@ -713,7 +715,7 @@ export async function getDebtorContact(id: string): Promise<DebtorContact | null
             phone_owner, phone_tenant,
             total_debt::float8      as total_debt,
             management_fees::float8 as management_fees,
-            special_debt::float8    as special_debt
+            hot_water_debt::float8  as hot_water_debt
        from public.debtors
       where id = $1`,
     [id],
@@ -732,7 +734,7 @@ export async function getDebtorContactByPhone(localPhone: string): Promise<Debto
             phone_owner, phone_tenant,
             total_debt::float8      as total_debt,
             management_fees::float8 as management_fees,
-            special_debt::float8    as special_debt
+            hot_water_debt::float8  as hot_water_debt
        from public.debtors
       where right(regexp_replace(coalesce(phone_owner,''),  '[^0-9]', '', 'g'), 9) = $1
          or right(regexp_replace(coalesce(phone_tenant,''), '[^0-9]', '', 'g'), 9) = $1

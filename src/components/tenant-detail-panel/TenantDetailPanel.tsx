@@ -315,7 +315,7 @@ export function TenantDetailPanel({ open, debtorId, canEdit, canChangeStatus, ca
       phone_tenant: tenant.phone_tenant,
       total_debt: tenant.total_debt,
       management_fees: tenant.management_fees,
-      special_debt: tenant.special_debt,
+      hot_water_debt: tenant.hot_water_debt,
     } : null),
     [tenant],
   );

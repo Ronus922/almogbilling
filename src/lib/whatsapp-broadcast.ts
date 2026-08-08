@@ -33,7 +33,9 @@ interface DebtorRow {
   apartment_number: string;
   total_debt: number;
   management_fees: number;
-  special_debt: number;
+  /** {{special}} source — Bllink's "special debt" lives in hot_water_debt;
+   *  the special_debt column is legacy and always 0. */
+  hot_water_debt: number;
   phone_owner: string | null;
   phone_tenant: string | null;
 }
@@ -42,7 +44,7 @@ const DEBTOR_COLS = `
   id, owner_name, tenant_name, apartment_number,
   total_debt::float8      as total_debt,
   management_fees::float8 as management_fees,
-  special_debt::float8    as special_debt,
+  hot_water_debt::float8  as hot_water_debt,
   phone_owner, phone_tenant
 `;
 
@@ -115,7 +117,7 @@ export async function resolveBroadcastRecipients(
         apartment_number: row.apartment_number,
         total_debt: row.total_debt,
         management_fees: row.management_fees,
-        special_debt: row.special_debt,
+        hot_water_debt: row.hot_water_debt,
       },
       phoneIntl,
     });

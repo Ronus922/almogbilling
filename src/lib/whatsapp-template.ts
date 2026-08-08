@@ -22,7 +22,13 @@ export interface TemplateDebtor {
    *  `management_fees` numeric column; `monthly_debt` is a TEXT month-range
    *  ("7/25 - 6/26") from the Bllink sync, NOT a money value. */
   management_fees?: number | null;
-  /** {{special}} — special debt (`special_debt`). */
+  /** {{special}} — the special/hot-water debt. Bllink's "special_debt" column
+   *  is written to billing's `hot_water_debt`; this is the ONLY live source. */
+  hot_water_debt?: number | null;
+  /** LEGACY fallback for {{special}} — billing's `special_debt` column is
+   *  all-zero (the import zeroes it and nothing feeds it). Only consulted when
+   *  `hot_water_debt` is absent, so an unmigrated payload behaves as before. */
+  // TODO: הסר את ה-fallback ל-special_debt עם ה-DROP ב-Phase B
   special_debt?: number | null;
 }
 
@@ -48,7 +54,7 @@ function resolveName(debtor: TemplateDebtor): string {
  *   {{name}}    → owner_name || tenant_name (cleaned) | "דייר יקר"
  *   {{debt}}    → formatted total_debt (₪ + thousands)
  *   {{monthly}} → formatted management_fees
- *   {{special}} → formatted special_debt
+ *   {{special}} → formatted hot_water_debt (falls back to legacy special_debt)
  * Money is formatted with Intl.NumberFormat('he-IL') + ₪; null → ₪ 0.
  * An UNKNOWN placeholder is left verbatim (e.g. "{{foo}}" stays "{{foo}}").
  */
@@ -58,7 +64,7 @@ export function interpolateTemplate(content: string, debtor: TemplateDebtor): st
     apartment: (debtor.apartment_number ?? '').trim(),
     debt: formatDebt(debtor.total_debt ?? 0),
     monthly: formatDebt(debtor.management_fees ?? 0),
-    special: formatDebt(debtor.special_debt ?? 0),
+    special: formatDebt(debtor.hot_water_debt ?? debtor.special_debt ?? 0),
   };
 
   return content.replace(/\{\{(\w+)\}\}/g, (full, key: string) =>
