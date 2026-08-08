@@ -37,10 +37,12 @@ async function findDebtorIdByPhone(localPhone: string): Promise<string | null> {
   const key = phoneDigitsKey(localPhone);
   if (!key) return null;
   const row = await queryOne<{ id: string }>(
-    `select id from public.debtors
-      where right(regexp_replace(coalesce(phone_owner,''),  '[^0-9]', '', 'g'), 9) = $1
-         or right(regexp_replace(coalesce(phone_tenant,''), '[^0-9]', '', 'g'), 9) = $1
-      order by is_archived asc, created_at asc
+    `select d.id from public.debtors d
+      -- resident identity from contacts (registry); debtors columns are frozen legacy fallback (no linked contact only)
+      left join public.contacts rc on rc.id = d.contact_id
+      where right(regexp_replace(coalesce(case when rc.id is null then d.phone_owner  else rc.owner_phone  end, ''), '[^0-9]', '', 'g'), 9) = $1
+         or right(regexp_replace(coalesce(case when rc.id is null then d.phone_tenant else rc.tenant_phone end, ''), '[^0-9]', '', 'g'), 9) = $1
+      order by d.is_archived asc, d.created_at asc
       limit 1`,
     [key],
   );
@@ -51,7 +53,15 @@ async function findDebtorIdByPhone(localPhone: string): Promise<string | null> {
  *  then apartment, else null (caller falls back to the phone). */
 async function getDebtorDisplayName(debtorId: string): Promise<string | null> {
   const row = await queryOne<{ owner_name: string | null; tenant_name: string | null; apartment_number: string | null }>(
-    `select owner_name, tenant_name, apartment_number from public.debtors where id = $1 limit 1`,
+    `select
+        case when rc.id is null then d.owner_name  else rc.owner_name  end as owner_name,
+        case when rc.id is null then d.tenant_name else rc.tenant_name end as tenant_name,
+        d.apartment_number
+       from public.debtors d
+       -- resident identity from contacts (registry); debtors columns are frozen legacy fallback (no linked contact only)
+       left join public.contacts rc on rc.id = d.contact_id
+      where d.id = $1
+      limit 1`,
     [debtorId],
   );
   if (!row) return null;

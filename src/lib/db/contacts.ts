@@ -336,6 +336,67 @@ export async function linkDebtorToContact(
 }
 
 /**
+ * Set contact phone fields for the apartment a debtor belongs to — the write
+ * path for the tenant-panel phone edit. Direct SET of only the provided keys:
+ * null CLEARS the field, so this must NOT go through the coalesce-based upsert
+ * (which treats null as "preserve existing"). Creates + links the apartment's
+ * contact row when the debtor has none. Returns 'no_contact' only when the
+ * debtor id itself does not exist.
+ */
+export async function updateContactPhonesByDebtor(
+  debtorId: string,
+  phones: { owner_phone?: string | null; tenant_phone?: string | null },
+): Promise<'updated' | 'no_contact'> {
+  return withTransaction(async (client) => {
+    const d = await client.query<{ apartment_number: string; contact_id: string | null }>(
+      `select apartment_number, contact_id from public.debtors where id = $1`,
+      [debtorId],
+    );
+    const debtor = d.rows[0];
+    if (!debtor) return 'no_contact';
+
+    let contactId = debtor.contact_id;
+    if (!contactId) {
+      // Debtor not linked yet — resolve-or-create the apartment's contact row, then link.
+      const apt = normalizeApartmentNumber(debtor.apartment_number ?? '');
+      await client.query(
+        `insert into public.contacts (apartment_number, source)
+         values ($1, 'manual')
+         on conflict (apartment_number) do nothing`,
+        [apt],
+      );
+      const c = await client.query<{ id: string }>(
+        `select id from public.contacts where apartment_number = $1`,
+        [apt],
+      );
+      contactId = c.rows[0].id;
+      await client.query(
+        `update public.debtors set contact_id = $1 where id = $2`,
+        [contactId, debtorId],
+      );
+    }
+
+    const set: string[] = [];
+    const vals: unknown[] = [contactId];
+    if (phones.owner_phone !== undefined) {
+      vals.push(phones.owner_phone);
+      set.push(`owner_phone = $${vals.length}`);
+    }
+    if (phones.tenant_phone !== undefined) {
+      vals.push(phones.tenant_phone);
+      set.push(`tenant_phone = $${vals.length}`);
+    }
+    if (set.length > 0) {
+      await client.query(
+        `update public.contacts set ${set.join(', ')} where id = $1`,
+        vals,
+      );
+    }
+    return 'updated';
+  });
+}
+
+/**
  * Upsert a contact AND link the matching debtor to it in a single transaction —
  * the primary entry point for Track B sync (one call mutates both tables).
  */

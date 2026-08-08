@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, requireAnyPermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorById, updateDebtorFields } from '@/lib/db/debtors';
+import { updateContactPhonesByDebtor } from '@/lib/db/contacts';
 import { listCommentsByDebtor } from '@/lib/db/comments';
 import { validatePhone, isFutureDate } from '@/lib/validation';
 import type { TenantFieldsUpdate } from '@/types/tenant';
@@ -54,31 +55,34 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 
   const patch: Record<string, unknown> = {};
+  // Phones are written to the contacts registry (source of truth) — the debtors
+  // phone columns are frozen legacy. Only the informational override flag stays.
+  const contactPhones: { owner_phone?: string | null; tenant_phone?: string | null } = {};
   const warnings: string[] = [];
 
   if ('phone_owner' in body) {
     const raw = body.phone_owner;
     if (raw == null || raw === '') {
-      patch.phone_owner = null;
+      contactPhones.owner_phone = null;
     } else {
       const v = validatePhone(raw);
       if (!v.valid) {
         return NextResponse.json({ error: v.error || 'invalid_phone_owner' }, { status: 400 });
       }
-      patch.phone_owner = v.normalized;
+      contactPhones.owner_phone = v.normalized;
     }
     patch.phones_manual_override = true;
   }
   if ('phone_tenant' in body) {
     const raw = body.phone_tenant;
     if (raw == null || raw === '') {
-      patch.phone_tenant = null;
+      contactPhones.tenant_phone = null;
     } else {
       const v = validatePhone(raw);
       if (!v.valid) {
         return NextResponse.json({ error: v.error || 'invalid_phone_tenant' }, { status: 400 });
       }
-      patch.phone_tenant = v.normalized;
+      contactPhones.tenant_phone = v.normalized;
     }
     patch.phones_manual_override = true;
   }
@@ -103,6 +107,10 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     patch.last_contact_date = d;
   }
 
+  if (Object.keys(contactPhones).length > 0) {
+    const r = await updateContactPhonesByDebtor(id, contactPhones);
+    if (r === 'no_contact') return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  }
   await updateDebtorFields(id, patch);
   const tenant = await getDebtorById(id);
   return NextResponse.json({ tenant, warnings });

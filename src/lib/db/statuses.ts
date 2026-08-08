@@ -199,10 +199,14 @@ export async function countLinkedDebtors(statusId: string): Promise<number> {
 
 export async function listDebtorsByStatus(statusId: string): Promise<LinkedDebtorRow[]> {
   const r = await query<LinkedDebtorRow>(
-    `select id, apartment_number, owner_name, total_debt
-       from public.debtors
-      where legal_status_id = $1 and is_archived = false
-      order by apartment_number asc
+    `select d.id, d.apartment_number,
+            case when rc.id is null then d.owner_name else rc.owner_name end as owner_name,
+            d.total_debt
+       from public.debtors d
+       -- resident identity from contacts (registry); debtors columns are frozen legacy fallback (no linked contact only)
+       left join public.contacts rc on rc.id = d.contact_id
+      where d.legal_status_id = $1 and d.is_archived = false
+      order by d.apartment_number asc
       limit 500`,
     [statusId],
   );

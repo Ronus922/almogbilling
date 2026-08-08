@@ -171,7 +171,10 @@ export async function listRecipients(
     `select
        r.id, r.status, r.attempt_count, r.sent_at, r.delivered_at, r.read_at,
        r.failed_at, r.last_error, r.error_class, r.created_at,
-       coalesce(d.owner_name, d.tenant_name)               as debtor_name,
+       coalesce(
+         case when rc.id is null then d.owner_name  else rc.owner_name  end,
+         case when rc.id is null then d.tenant_name else rc.tenant_name end
+       )                                                   as debtor_name,
        d.apartment_number,
        case
          when length(local.n) >= 5
@@ -180,6 +183,8 @@ export async function listRecipients(
        end                                                 as phone_masked
      from public.wa_campaign_recipients r
      left join public.debtors d on d.id = r.debtor_id
+     -- resident identity from contacts (registry); debtors columns are frozen legacy fallback (no linked contact only)
+     left join public.contacts rc on rc.id = d.contact_id
      cross join lateral (
        select '0' || right(regexp_replace(r.phone_intl, '\\D', '', 'g'), 9) as n
      ) local

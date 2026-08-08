@@ -8,12 +8,15 @@ import type { RoomTarget, AreaTarget } from '@/lib/types/targets';
  */
 export async function listRoomTargets(): Promise<RoomTarget[]> {
   const r = await query<RoomTarget>(
-    `select id, apartment_number, owner_name
-       from public.debtors
-      where is_archived = false
+    `select d.id, d.apartment_number,
+            case when rc.id is null then d.owner_name else rc.owner_name end as owner_name
+       from public.debtors d
+       -- resident identity from contacts (registry); debtors columns are frozen legacy fallback (no linked contact only)
+       left join public.contacts rc on rc.id = d.contact_id
+      where d.is_archived = false
       order by
-        nullif(regexp_replace(apartment_number, '\\D', '', 'g'), '')::int asc nulls last,
-        apartment_number asc`,
+        nullif(regexp_replace(d.apartment_number, '\\D', '', 'g'), '')::int asc nulls last,
+        d.apartment_number asc`,
   );
   return r.rows;
 }

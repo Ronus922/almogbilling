@@ -5,9 +5,10 @@ import type { Conversation, ThreadMessage } from '@/types/whatsapp';
 
 // Conversation/thread queries for the /messages inbox. A conversation groups
 // chat_messages by chat_id (the stable "<digits>@c.us" / "<id>@g.us" key shared
-// by inbound + outbound rows). There is no contacts table in this project, so a
-// conversation links to a debtor (matched at insert time by phone) rather than a
-// generic contact; the display name resolves from that debtor.
+// by inbound + outbound rows). A conversation links to a debtor (matched at
+// insert time by phone); the display identity resolves from that debtor's
+// linked contacts row (registry), falling back to the frozen legacy debtors
+// columns only when no contact is linked.
 
 interface ConvRow {
   chat_id: string;
@@ -33,7 +34,7 @@ interface ConvRow {
  *
  * The linked debtor is resolved by a LATERAL join that prefers the stored
  * debtor_id but falls back to a NORMALIZED phone match (last 9 digits of the
- * chat_id, compared against both debtor phone fields). This makes the name /
+ * chat_id, compared against both resident phone fields). This makes the name /
  * apartment display — and the name/apartment search — work even for
  * conversations whose rows predate the linking fix. A second join attaches the
  * cached profile picture (migration 019).
@@ -98,16 +99,22 @@ export async function listConversations(
             av.avatar_url
        from keyed k
        left join lateral (
-          select d.id, d.owner_name, d.tenant_name, d.apartment_number,
-                 d.phone_owner, d.phone_tenant
+          -- resident identity from contacts (registry); debtors columns are frozen legacy fallback (no linked contact only)
+          select d.id,
+                 case when rc.id is null then d.owner_name   else rc.owner_name   end as owner_name,
+                 case when rc.id is null then d.tenant_name  else rc.tenant_name  end as tenant_name,
+                 d.apartment_number,
+                 case when rc.id is null then d.phone_owner  else rc.owner_phone  end as phone_owner,
+                 case when rc.id is null then d.phone_tenant else rc.tenant_phone end as phone_tenant
             from public.debtors d
+            left join public.contacts rc on rc.id = d.contact_id
            where (k.stored_debtor_id is not null and d.id = k.stored_debtor_id)
               -- Phone fallback ONLY when not supplier-linked: a supplier-linked
               -- conversation has debtor_id cleared (XOR), so it must not pick up a
               -- phantom debtor that happens to share the number.
               or (k.stored_debtor_id is null and k.supplier_id is null and k.convkey is not null
-                  and (right(regexp_replace(coalesce(d.phone_owner,''),  '[^0-9]', '', 'g'), 9) = k.convkey
-                    or right(regexp_replace(coalesce(d.phone_tenant,''), '[^0-9]', '', 'g'), 9) = k.convkey))
+                  and (right(regexp_replace(coalesce(case when rc.id is null then d.phone_owner  else rc.owner_phone  end, ''), '[^0-9]', '', 'g'), 9) = k.convkey
+                    or right(regexp_replace(coalesce(case when rc.id is null then d.phone_tenant else rc.tenant_phone end, ''), '[^0-9]', '', 'g'), 9) = k.convkey))
            order by d.is_archived asc, d.created_at asc
            limit 1
        ) d on true

@@ -16,9 +16,9 @@ import type { ContactPersonRole } from '@/lib/types/contacts';
 // Audience → recipient resolution for WhatsApp broadcasts. The actual sending is
 // now the durable delivery queue's job (src/lib/wa-queue/*, drained by the
 // standalone worker) — the old fire-and-forget in-process runner was retired in
-// the Phase 2 cutover. This module resolves recipients from debtors (there is no
-// contacts table); the campaigns route (POST /api/whatsapp/campaigns) and the
-// live estimate (GET /api/whatsapp/audience-count) both call it.
+// the Phase 2 cutover. This module resolves recipients from debtors joined to
+// the contacts registry; the campaigns route (POST /api/whatsapp/campaigns) and
+// the live estimate (GET /api/whatsapp/audience-count) both call it.
 
 export interface BroadcastRecipient {
   debtor: TemplateDebtor & { id: string };
@@ -41,11 +41,21 @@ interface DebtorRow {
 }
 
 const DEBTOR_COLS = `
-  id, owner_name, tenant_name, apartment_number,
-  total_debt::float8      as total_debt,
-  management_fees::float8 as management_fees,
-  hot_water_debt::float8  as hot_water_debt,
-  phone_owner, phone_tenant
+  d.id,
+  case when rc.id is null then d.owner_name   else rc.owner_name   end as owner_name,
+  case when rc.id is null then d.tenant_name  else rc.tenant_name  end as tenant_name,
+  d.apartment_number,
+  d.total_debt::float8      as total_debt,
+  d.management_fees::float8 as management_fees,
+  d.hot_water_debt::float8  as hot_water_debt,
+  case when rc.id is null then d.phone_owner  else rc.owner_phone  end as phone_owner,
+  case when rc.id is null then d.phone_tenant else rc.tenant_phone end as phone_tenant
+`;
+
+// resident identity from contacts (registry); debtors columns are frozen legacy fallback (no linked contact only)
+const DEBTOR_FROM = `
+  from public.debtors d
+  left join public.contacts rc on rc.id = d.contact_id
 `;
 
 /** Normalise a debtor phone field to international form, or null. */
@@ -89,14 +99,14 @@ export async function resolveBroadcastRecipients(
     const ids = (audience.debtor_ids ?? []).filter((x) => typeof x === 'string');
     if (ids.length === 0) return [];
     const r = await query<DebtorRow>(
-      `select ${DEBTOR_COLS} from public.debtors where id = any($1::uuid[])`,
+      `select ${DEBTOR_COLS} ${DEBTOR_FROM} where d.id = any($1::uuid[])`,
       [ids],
     );
     rows = r.rows;
     extras = await listExtraRecipientsForDebtors(ids, roles);
   } else {
     const r = await query<DebtorRow>(
-      `select ${DEBTOR_COLS} from public.debtors where is_archived = false`,
+      `select ${DEBTOR_COLS} ${DEBTOR_FROM} where d.is_archived = false`,
     );
     rows = r.rows;
     extras = await listExtraRecipientsForAllDebtors(roles);

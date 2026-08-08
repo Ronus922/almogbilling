@@ -93,6 +93,17 @@ export type TabKey = 'active' | 'warning' | 'legal-care' | 'legal-proceeding' | 
 // LEFT JOIN so legacy null legal_status_id still returns the row.
 const DEBTORS_JOIN = `public.debtors d left join public.statuses s on s.id = d.legal_status_id`;
 
+// resident identity from contacts (registry); debtors columns are frozen legacy fallback (no linked contact only)
+const CONTACTS_JOIN = `left join public.contacts rc on rc.id = d.contact_id`;
+const DEBTORS_CONTACTS_JOIN = `${DEBTORS_JOIN} ${CONTACTS_JOIN}`;
+
+// Deliberately NOT coalesce(rc.x, d.x): when a contact row exists its value wins
+// even if NULL (clearing a field in contacts must not resurrect a stale debtors value).
+const OWNER_NAME_SQL   = `case when rc.id is null then d.owner_name   else rc.owner_name   end`;
+const TENANT_NAME_SQL  = `case when rc.id is null then d.tenant_name  else rc.tenant_name  end`;
+const PHONE_OWNER_SQL  = `case when rc.id is null then d.phone_owner  else rc.owner_phone  end`;
+const PHONE_TENANT_SQL = `case when rc.id is null then d.phone_tenant else rc.tenant_phone end`;
+
 // Status names that drive KPIs / tabs. Seeded by 003_debtor_panel.sql.
 // If a seed name changes, update here in lockstep.
 const STATUS_WARNING = 'מכתב התראה';
@@ -321,8 +332,8 @@ function sortToSql(k: SortKey): string {
   switch (k) {
     case 'apt_asc':                return 'd.apartment_number asc';
     case 'apt_desc':               return 'd.apartment_number desc';
-    case 'owner_asc':              return 'd.owner_name asc nulls last';
-    case 'owner_desc':             return 'd.owner_name desc nulls last';
+    case 'owner_asc':              return `${OWNER_NAME_SQL} asc nulls last`;
+    case 'owner_desc':             return `${OWNER_NAME_SQL} desc nulls last`;
     case 'total_debt_asc':         return 'd.total_debt asc';
     case 'total_debt_desc':        return 'd.total_debt desc';
     case 'management_fees_asc':    return 'd.management_fees asc';
@@ -379,8 +390,13 @@ function tabFilter(tab: TabKey): TabFilter {
 }
 
 const SELECT_COLUMNS = `
-  d.id, d.apartment_number, d.owner_name, d.tenant_name, d.address,
-  d.phone_owner, d.phone_tenant, d.email_owner, d.email_tenant,
+  d.id, d.apartment_number,
+  ${OWNER_NAME_SQL} as owner_name,
+  ${TENANT_NAME_SQL} as tenant_name,
+  d.address,
+  ${PHONE_OWNER_SQL} as phone_owner,
+  ${PHONE_TENANT_SQL} as phone_tenant,
+  d.email_owner, d.email_tenant,
   d.total_debt::float8 as total_debt,
   d.management_fees::float8 as management_fees,
   d.monthly_debt,
@@ -425,7 +441,7 @@ export async function listDebtors(params: ListDebtorsParams): Promise<ListDebtor
 
   if (params.q) {
     args.push(`%${params.q}%`);
-    where.push(`d.owner_name ilike $${args.length}`);
+    where.push(`${OWNER_NAME_SQL} ilike $${args.length}`);
   }
   if (params.apt) {
     args.push(`%${params.apt}%`);
@@ -445,7 +461,7 @@ export async function listDebtors(params: ListDebtorsParams): Promise<ListDebtor
 
   const rowsRes = await query<Debtor>(
     `select ${SELECT_COLUMNS}
-       from ${DEBTORS_JOIN}
+       from ${DEBTORS_CONTACTS_JOIN}
        where ${whereSql}
        order by ${orderBy}
        limit $${args.length - 1} offset $${args.length}`,
@@ -453,7 +469,7 @@ export async function listDebtors(params: ListDebtorsParams): Promise<ListDebtor
   );
 
   const totalRes = await queryOne<{ c: string }>(
-    `select count(*)::text as c from ${DEBTORS_JOIN} where ${whereSql}`,
+    `select count(*)::text as c from ${DEBTORS_CONTACTS_JOIN} where ${whereSql}`,
     filterArgs,
   );
   const total = Number(totalRes?.c ?? 0);
@@ -487,7 +503,7 @@ export async function listAllDebtorsForExport(
 
   if (params.q) {
     args.push(`%${params.q}%`);
-    where.push(`d.owner_name ilike $${args.length}`);
+    where.push(`${OWNER_NAME_SQL} ilike $${args.length}`);
   }
   if (params.apt) {
     args.push(`%${params.apt}%`);
@@ -500,7 +516,7 @@ export async function listAllDebtorsForExport(
 
   const res = await query<Debtor>(
     `select ${SELECT_COLUMNS}
-       from ${DEBTORS_JOIN}
+       from ${DEBTORS_CONTACTS_JOIN}
        where ${where.join(' and ')}
        order by ${orderBy}
        limit 100000`,
@@ -521,8 +537,11 @@ export async function getAllApartmentNumbers(): Promise<Set<string>> {
 export async function getDebtorById(id: string): Promise<Tenant | null> {
   const row = await queryOne<Tenant>(
     `select
-       d.id, d.apartment_number, d.owner_name, d.tenant_name,
-       d.phone_owner, d.phone_tenant,
+       d.id, d.apartment_number,
+       ${OWNER_NAME_SQL} as owner_name,
+       ${TENANT_NAME_SQL} as tenant_name,
+       ${PHONE_OWNER_SQL} as phone_owner,
+       ${PHONE_TENANT_SQL} as phone_tenant,
        d.email_owner, d.email_tenant,
        coalesce(d.phones_manual_override, false) as phones_manual_override,
        d.total_debt::float8       as total_debt,
@@ -543,7 +562,7 @@ export async function getDebtorById(id: string): Promise<Tenant | null> {
        d.next_action_date,
        d.last_contact_date,
        d.is_archived
-     from ${DEBTORS_JOIN}
+     from ${DEBTORS_CONTACTS_JOIN}
      where d.id = $1`,
     [id],
   );
@@ -553,8 +572,6 @@ export async function getDebtorById(id: string): Promise<Tenant | null> {
 // Fields allowed via PATCH /api/debtors/:id. Keep in sync with
 // src/types/tenant.ts (TenantFieldsUpdate).
 const UPDATABLE_FIELDS = new Set([
-  'phone_owner',
-  'phone_tenant',
   'notes',
   'next_action_date',
   'next_action_description',
@@ -711,13 +728,16 @@ export interface DebtorContact {
 
 export async function getDebtorContact(id: string): Promise<DebtorContact | null> {
   return queryOne<DebtorContact>(
-    `select id, apartment_number, owner_name, tenant_name,
-            phone_owner, phone_tenant,
-            total_debt::float8      as total_debt,
-            management_fees::float8 as management_fees,
-            hot_water_debt::float8  as hot_water_debt
-       from public.debtors
-      where id = $1`,
+    `select d.id, d.apartment_number,
+            ${OWNER_NAME_SQL} as owner_name,
+            ${TENANT_NAME_SQL} as tenant_name,
+            ${PHONE_OWNER_SQL} as phone_owner,
+            ${PHONE_TENANT_SQL} as phone_tenant,
+            d.total_debt::float8      as total_debt,
+            d.management_fees::float8 as management_fees,
+            d.hot_water_debt::float8  as hot_water_debt
+       from public.debtors d ${CONTACTS_JOIN}
+      where d.id = $1`,
     [id],
   );
 }
@@ -730,15 +750,18 @@ export async function getDebtorContactByPhone(localPhone: string): Promise<Debto
   const key = phoneDigitsKey(localPhone);
   if (!key) return null;
   return queryOne<DebtorContact>(
-    `select id, apartment_number, owner_name, tenant_name,
-            phone_owner, phone_tenant,
-            total_debt::float8      as total_debt,
-            management_fees::float8 as management_fees,
-            hot_water_debt::float8  as hot_water_debt
-       from public.debtors
-      where right(regexp_replace(coalesce(phone_owner,''),  '[^0-9]', '', 'g'), 9) = $1
-         or right(regexp_replace(coalesce(phone_tenant,''), '[^0-9]', '', 'g'), 9) = $1
-      order by is_archived asc, created_at asc
+    `select d.id, d.apartment_number,
+            ${OWNER_NAME_SQL} as owner_name,
+            ${TENANT_NAME_SQL} as tenant_name,
+            ${PHONE_OWNER_SQL} as phone_owner,
+            ${PHONE_TENANT_SQL} as phone_tenant,
+            d.total_debt::float8      as total_debt,
+            d.management_fees::float8 as management_fees,
+            d.hot_water_debt::float8  as hot_water_debt
+       from public.debtors d ${CONTACTS_JOIN}
+      where right(regexp_replace(coalesce(${PHONE_OWNER_SQL},''),  '[^0-9]', '', 'g'), 9) = $1
+         or right(regexp_replace(coalesce(${PHONE_TENANT_SQL},''), '[^0-9]', '', 'g'), 9) = $1
+      order by d.is_archived asc, d.created_at asc
       limit 1`,
     [key],
   );
@@ -791,7 +814,7 @@ export async function searchDebtors(
   if (term) {
     args.push(`%${term}%`);
     const p = `$${args.length}`;
-    where.push(`(d.apartment_number ilike ${p} or d.owner_name ilike ${p} or d.tenant_name ilike ${p})`);
+    where.push(`(d.apartment_number ilike ${p} or ${OWNER_NAME_SQL} ilike ${p} or ${TENANT_NAME_SQL} ilike ${p})`);
   }
   if (status) {
     args.push(`%${status}%`);
@@ -800,14 +823,18 @@ export async function searchDebtors(
   args.push(limit);
 
   const r = await query<DebtorSearchResult>(
-    `select d.id, d.apartment_number, d.owner_name, d.tenant_name,
-            d.phone_owner, d.phone_tenant, d.is_archived,
+    `select d.id, d.apartment_number,
+            ${OWNER_NAME_SQL} as owner_name,
+            ${TENANT_NAME_SQL} as tenant_name,
+            ${PHONE_OWNER_SQL} as phone_owner,
+            ${PHONE_TENANT_SQL} as phone_tenant,
+            d.is_archived,
             s.name as legal_status_name,
             d.total_debt::float8      as total_debt,
             d.management_fees::float8 as management_fees,
             d.hot_water_debt::float8  as hot_water_debt,
             d.monthly_debt
-       from ${DEBTORS_JOIN}
+       from ${DEBTORS_CONTACTS_JOIN}
       where ${where.join(' and ')}
       order by d.is_archived asc, d.apartment_number asc
       limit $${args.length}`,

@@ -48,13 +48,21 @@ interface DebtorRow {
 }
 async function searchDebtors(pattern: string): Promise<SearchResult[]> {
   const r = await query<DebtorRow>(
-    `select id, owner_name, tenant_name, address, apartment_number
-       from public.debtors
-      where is_archived = false
-        and (owner_name ilike $1 or tenant_name ilike $1 or address ilike $1
-             or apartment_number ilike $1 or phone_owner ilike $1 or phone_tenant ilike $1
-             or email_owner ilike $1 or email_tenant ilike $1)
-      order by owner_name nulls last
+    `select d.id,
+            case when rc.id is null then d.owner_name  else rc.owner_name  end as owner_name,
+            case when rc.id is null then d.tenant_name else rc.tenant_name end as tenant_name,
+            d.address, d.apartment_number
+       from public.debtors d
+       -- resident identity from contacts (registry); debtors columns are frozen legacy fallback (no linked contact only)
+       left join public.contacts rc on rc.id = d.contact_id
+      where d.is_archived = false
+        and ((case when rc.id is null then d.owner_name  else rc.owner_name  end) ilike $1
+             or (case when rc.id is null then d.tenant_name else rc.tenant_name end) ilike $1
+             or d.address ilike $1 or d.apartment_number ilike $1
+             or (case when rc.id is null then d.phone_owner  else rc.owner_phone  end) ilike $1
+             or (case when rc.id is null then d.phone_tenant else rc.tenant_phone end) ilike $1
+             or d.email_owner ilike $1 or d.email_tenant ilike $1)
+      order by case when rc.id is null then d.owner_name else rc.owner_name end nulls last
       limit ${PER_SOURCE_LIMIT}`,
     [pattern],
   );
