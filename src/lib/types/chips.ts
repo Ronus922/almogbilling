@@ -83,6 +83,8 @@ export interface ChipsKpis {
   app_active: number;
   lost_30d: number;
   apartments_without_active: number;
+  /** Total apartments in the registry (unit_type='apartment') — the KPI's denominator. */
+  apartments_total: number;
   pending_controller: number;
 }
 

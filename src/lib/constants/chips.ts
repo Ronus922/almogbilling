@@ -74,6 +74,12 @@ export const DEACTIVATION_REASON_LABEL: Record<ChipDeactivationReason, string> =
   unknown: 'לא ידוע',
 };
 
+export const APP_PLATFORM_LABEL: Record<AppPlatform, string> = {
+  ios: 'iOS',
+  android: 'Android',
+  unknown: 'לא ידוע',
+};
+
 export const CHIP_EVENT_LABEL: Record<ChipEventType, string> = {
   issued: 'הונפק',
   deactivated: 'הושבת',

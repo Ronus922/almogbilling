@@ -131,8 +131,15 @@ export async function createContact(
   createdBy: string | null,
 ): Promise<Contact> {
   const rec = data as Record<string, unknown>;
-  const cols: string[] = ['apartment_number', 'created_by'];
-  const vals: unknown[] = [normalizeApartmentNumber(data.apartment_number ?? ''), createdBy];
+  // source is a SERVER-side stamp — not client-writable (coerceContactInput
+  // never emits it). Direct creates default to 'manual'; internal callers may
+  // pass their own (e.g. a sync), which wins.
+  const source =
+    typeof rec.source === 'string' && rec.source.trim() !== '' ? rec.source : 'manual';
+  const cols: string[] = ['apartment_number', 'created_by', 'source'];
+  const vals: unknown[] = [
+    normalizeApartmentNumber(data.apartment_number ?? ''), createdBy, source,
+  ];
 
   for (const c of WRITABLE_COLUMNS) {
     if (c in rec && rec[c] !== undefined) {
