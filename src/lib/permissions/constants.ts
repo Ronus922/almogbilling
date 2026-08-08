@@ -54,11 +54,12 @@ export interface ModuleMeta {
 }
 
 export const MODULES: ModuleMeta[] = [
-  // Main (12)
+  // Main (13)
   { key: 'analytics',          label: 'אנליטיקה',           group: 'main' },
   { key: 'dashboard',          label: 'ניהול חיובים',       group: 'main' },
   { key: 'contacts',           label: 'רשימת דיירים',       group: 'main' },
   { key: 'suppliers',          label: 'ספקים',              group: 'main' },
+  { key: 'chips',              label: 'צ׳יפים',             group: 'main' },
   { key: 'whatsapp',           label: 'שליחת ווטסאפ',       group: 'main' },
   { key: 'tasks',              label: 'משימות',             group: 'main' },
   { key: 'issues',             label: 'תקלות',              group: 'main' },
@@ -96,6 +97,7 @@ export const DEFAULT_MANAGER: ModulePermission[] = [
   perm('dashboard',     true,  true),
   perm('contacts',      true,  true),
   perm('suppliers',     true,  true),
+  perm('chips',         true,  true),
   perm('whatsapp',      true,  true),
   perm('tasks',         true,  true),
   perm('issues',        true,  true),
@@ -129,6 +131,7 @@ export const DEFAULT_VIEWER: ModulePermission[] = [
   perm('dashboard', true, false),
   noPerm('contacts'),
   noPerm('suppliers'),
+  noPerm('chips'),
   noPerm('whatsapp'),
   noPerm('tasks'),
   noPerm('issues'),
@@ -161,6 +164,7 @@ export const DEFAULT_WORKER: ModulePermission[] = [
   noPerm('dashboard'),
   noPerm('contacts'),
   noPerm('suppliers'),
+  noPerm('chips'),
   noPerm('whatsapp'),
   perm('tasks',  true, true),
   perm('issues', true, true),

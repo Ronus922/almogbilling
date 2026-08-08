@@ -6,6 +6,7 @@ import type {
   ContactListFilters,
   ContactWritableFields,
 } from '@/lib/types/contacts';
+import type { ContactResidentCard, ContactResidents } from '@/lib/types/chips';
 
 /** Thrown when an insert/upsert collides with an existing apartment_number. */
 export class ConflictError extends Error {
@@ -456,6 +457,109 @@ export async function updateContactPhonesByDebtor(
     }
     return 'updated';
   });
+}
+
+// ── Registry helpers (chips module consumes these) ───────────────────────
+
+function residentCard(
+  role: 'owner' | 'tenant' | 'operator',
+  name: string | null,
+  phone: string | null,
+): ContactResidentCard {
+  const n = name && name.trim() !== '' ? name.trim() : null;
+  const p = phone && phone.trim() !== '' ? phone.trim() : null;
+  return { role, name: n, phone: p, exists: n !== null && p !== null };
+}
+
+/**
+ * The three inline resident slots of a contacts row, as cards for the issue
+ * panel. exists = both name AND phone non-empty after trim. Null when the
+ * contact does not exist.
+ */
+export async function getContactResidents(contactId: string): Promise<ContactResidents | null> {
+  const row = await queryOne<{
+    id: string;
+    apartment_number: string;
+    unit_type: string;
+    resident_type: string;
+    owner_name: string | null;
+    owner_phone: string | null;
+    tenant_name: string | null;
+    tenant_phone: string | null;
+    operator_name: string | null;
+    operator_phone: string | null;
+  }>(
+    `select id, apartment_number, unit_type, resident_type,
+            owner_name, owner_phone, tenant_name, tenant_phone,
+            operator_name, operator_phone
+       from public.contacts
+      where id = $1`,
+    [contactId],
+  );
+  if (!row) return null;
+  return {
+    contact_id: row.id,
+    apartment_number: row.apartment_number,
+    unit_type: row.unit_type,
+    resident_type: row.resident_type,
+    residents: [
+      residentCard('owner', row.owner_name, row.owner_phone),
+      residentCard('tenant', row.tenant_name, row.tenant_phone),
+      residentCard('operator', row.operator_name, row.operator_phone),
+    ],
+  };
+}
+
+/** Set who currently lives in the unit. False when the contact is missing. */
+export async function setContactResidentType(
+  contactId: string,
+  residentType: 'owner' | 'tenant' | 'operator',
+): Promise<boolean> {
+  const r = await query(
+    `update public.contacts set resident_type = $2 where id = $1`,
+    [contactId, residentType],
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * Lightweight registry lookup for the chip-issue contact picker — matches
+ * apartment / owner / tenant. An exact apartment_number hit floats first, then
+ * numeric-aware apartment order (length before lexicographic). Empty query → [].
+ */
+export async function searchContactsRegistry(
+  q: string,
+  limit = 20,
+): Promise<
+  Array<{
+    id: string;
+    apartment_number: string;
+    unit_type: string;
+    owner_name: string | null;
+    tenant_name: string | null;
+    resident_type: string;
+    needs_review: boolean;
+  }>
+> {
+  const term = q.trim();
+  if (!term) return [];
+  const r = await query<{
+    id: string;
+    apartment_number: string;
+    unit_type: string;
+    owner_name: string | null;
+    tenant_name: string | null;
+    resident_type: string;
+    needs_review: boolean;
+  }>(
+    `select id, apartment_number, unit_type, owner_name, tenant_name, resident_type, needs_review
+       from public.contacts
+      where apartment_number ilike $1 or owner_name ilike $1 or tenant_name ilike $1
+      order by (apartment_number = $2) desc, length(apartment_number), apartment_number
+      limit $3`,
+    [`%${term}%`, term, Math.max(1, Math.min(50, limit))],
+  );
+  return r.rows;
 }
 
 /**

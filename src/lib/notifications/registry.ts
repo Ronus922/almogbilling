@@ -7,7 +7,7 @@
 // runtime — do NOT add 'server-only'.
 
 import {
-  MessageCircle, Scale, Calendar, CheckCircle2, Clock, AlertTriangle, Bell,
+  MessageCircle, Scale, Calendar, CheckCircle2, Clock, AlertTriangle, Bell, KeyRound,
   type LucideIcon,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
@@ -23,10 +23,12 @@ export type NotificationType =
   | 'issue_assigned'
   | 'chat_message'
   | 'internal_chat_message'
-  | 'system_announcement';
+  | 'system_announcement'
+  | 'chip_issued'
+  | 'chip_deactivated_lost';
 
 export type SourceModule =
-  'tasks' | 'calendar' | 'whatsapp' | 'issues' | 'internal_chat' | 'legal' | 'system';
+  'tasks' | 'calendar' | 'whatsapp' | 'issues' | 'internal_chat' | 'legal' | 'chips' | 'system';
 export type Channel = 'inapp' | 'email' | 'whatsapp';
 export type Priority = 'low' | 'normal' | 'high' | 'urgent';
 
@@ -61,6 +63,9 @@ export const NOTIFICATION_REGISTRY: Record<NotificationType, NotificationRegistr
   chat_message:              { icon: MessageCircle, tone: 'default', sourceModule: 'internal_chat', defaultPriority: 'low',    channels: ['inapp'] },
   internal_chat_message:     { icon: MessageCircle, tone: 'default', sourceModule: 'internal_chat', defaultPriority: 'low',    channels: ['inapp'] },
   system_announcement:       { icon: Bell,          tone: 'info',    sourceModule: 'system',        defaultPriority: 'normal', channels: ['inapp', 'email'] },
+  // In-app ONLY: chip lifecycle events surface in the bell; no email/WhatsApp.
+  chip_issued:               { icon: KeyRound,      tone: 'info',    sourceModule: 'chips',         defaultPriority: 'normal', channels: ['inapp'] },
+  chip_deactivated_lost:     { icon: KeyRound,      tone: 'warning', sourceModule: 'chips',         defaultPriority: 'high',   channels: ['inapp'] },
 };
 
 // ── Hebrew labels ───────────────────────────────────────────────────────────
@@ -79,11 +84,13 @@ export const NOTIFICATION_TYPE_LABEL: Record<NotificationType, string> = {
   chat_message: 'הודעה בצ׳אט',
   internal_chat_message: 'הודעה בצ׳אט',
   system_announcement: 'הודעת מערכת',
+  chip_issued: 'צ׳יפ הונפק',
+  chip_deactivated_lost: 'צ׳יפ אבד או נגנב',
 };
 
 export const SOURCE_MODULE_LABEL: Record<SourceModule, string> = {
   tasks: 'משימות', calendar: 'יומן', whatsapp: 'וואטסאפ', issues: 'תקלות',
-  internal_chat: 'צ׳אט פנימי', legal: 'משפטי', system: 'מערכת',
+  internal_chat: 'צ׳אט פנימי', legal: 'משפטי', chips: 'צ׳יפים', system: 'מערכת',
 };
 
 /** Default in-app title used when an emitter doesn't supply one (title is NOT
@@ -99,6 +106,8 @@ export const DEFAULT_TITLE: Record<NotificationType, string> = {
   chat_message: 'הודעה חדשה בצ׳אט',
   internal_chat_message: 'הודעה חדשה בצ׳אט',
   system_announcement: 'הודעת מערכת',
+  chip_issued: 'צ׳יפ חדש הונפק',
+  chip_deactivated_lost: 'צ׳יפ הושבת — אבד או נגנב',
 };
 
 // ── UI token maps (DESIGN.md §2 tones / §10 pills) ───────────────────────────
