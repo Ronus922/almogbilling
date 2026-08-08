@@ -56,6 +56,8 @@ export interface Contact {
   tenant_name: string | null;
   tenant_phone: string | null;
   tenant_email: string | null;
+  operator_name: string | null;
+  operator_phone: string | null;
   resident_type: ContactResidentType;
   operator_id: string | null;
   owner_is_primary_contact: boolean;
@@ -90,6 +92,8 @@ export interface ContactWritableFields {
   tenant_name: string | null;
   tenant_phone: string | null;
   tenant_email: string | null;
+  operator_name: string | null;
+  operator_phone: string | null;
   resident_type: ContactResidentType;
   operator_id: string | null;
   owner_is_primary_contact: boolean;
