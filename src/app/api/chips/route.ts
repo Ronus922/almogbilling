@@ -16,6 +16,7 @@ import {
   APP_INVITE_STATUSES,
 } from '@/lib/constants/chips';
 import { validatePhone } from '@/lib/validation';
+import { isSnapshotRole } from '@/lib/chips/holder';
 import { createNotification } from '@/services/notifications';
 import { listActiveAdmins } from '@/lib/db/users';
 import type {
@@ -159,9 +160,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: CHIP_NUMBERS_ERROR }, { status: 400 });
   }
 
+  // resident_role is REQUIRED (product rule 2 + CHECK 074) — a chip is never
+  // issued without knowing on whose name it is.
   const residentRole = coerceEnum(bodyRec.resident_role, CHIP_RESIDENT_ROLES);
-  if (!residentRole.ok) {
-    return NextResponse.json({ error: 'invalid_resident_role' }, { status: 400 });
+  if (!residentRole.ok || residentRole.value === null) {
+    return NextResponse.json(
+      { error: 'נדרש לבחור בעל צ׳יפ (בעל דירה / שוכר / מפעיל / אחר)' },
+      { status: 400 },
+    );
+  }
+  const holderName = coerceText(bodyRec.holder_name);
+  if (isSnapshotRole(residentRole.value) && !holderName) {
+    return NextResponse.json(
+      { error: 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא' },
+      { status: 400 },
+    );
   }
   const appPlatform = coerceEnum(bodyRec.app_platform, APP_PLATFORMS);
   if (!appPlatform.ok) {
@@ -198,7 +211,7 @@ export async function POST(req: NextRequest) {
         chip_type: chipType,
         chip_numbers: chipNumbers,
         resident_role: residentRole.value,
-        holder_name: coerceText(bodyRec.holder_name),
+        holder_name: holderName,
         holder_phone: holderPhone,
         app_platform: appPlatform.value,
         app_invite_status: appInviteStatus.value,
@@ -235,6 +248,15 @@ export async function POST(req: NextRequest) {
     }
     if (err instanceof Error && err.message === 'invalid_chip_numbers') {
       return NextResponse.json({ error: CHIP_NUMBERS_ERROR }, { status: 400 });
+    }
+    if (err instanceof Error && err.message === 'holder_name_required') {
+      return NextResponse.json({ error: 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא' }, { status: 400 });
+    }
+    if (err instanceof Error && err.message === 'holder_not_in_registry') {
+      return NextResponse.json(
+        { error: 'לתפקיד זה אין פרטים במרשם הדירה — השלם פרטים בדירה או בחר "אחר"' },
+        { status: 422 },
+      );
     }
     console.error('[POST /api/chips]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });

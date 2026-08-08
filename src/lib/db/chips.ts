@@ -8,8 +8,11 @@ import type {
   ChipsKpis,
   ChipListFilters,
   ChipDeactivationReason,
+  ChipResidentRole,
+  ChipWithHolder,
   IssueChipInput,
 } from '@/lib/types/chips';
+import { isSnapshotRole } from '@/lib/chips/holder';
 
 // Closed product rules enforced here (not in routes): no DELETE ever;
 // chip_number is never editable; the only way back is inactive -> active
@@ -59,6 +62,61 @@ const CHIP_COLUMNS = `
   issuance_fee::float8 as issuance_fee, fee_charged, limit_override_reason, notes,
   created_at, updated_at`;
 
+// ── Read-time holder resolution (074) ────────────────────────────────────
+// Every read joins contacts and resolves the LIVE name for registry roles
+// (product rule 3: contacts is the source of truth for names; holder_name is
+// an issuance snapshot). holder_chip_count powers the "N צ׳יפים" indicator —
+// person identity is (contact_id, resident_role), plus holder_name for
+// snapshot roles where the name itself is the identity.
+
+const CHIP_COLUMNS_QUALIFIED = `
+  ch.id, ch.chip_number, ch.chip_type, ch.contact_id, ch.apartment_number,
+  ch.status, ch.resident_role, ch.holder_name, ch.holder_phone,
+  ch.issued_at, ch.issued_by, ch.issued_by_name,
+  ch.deactivated_at, ch.deactivated_by, ch.deactivated_by_name, ch.deactivation_reason,
+  ch.controller_synced, ch.controller_synced_at,
+  ch.app_platform, ch.app_invite_status, ch.app_expires_at,
+  ch.issuance_fee::float8 as issuance_fee, ch.fee_charged, ch.limit_override_reason, ch.notes,
+  ch.created_at, ch.updated_at`;
+
+const CHIP_HOLDER_SELECT = `
+  case ch.resident_role
+    when 'owner' then c.owner_name
+    when 'tenant' then c.tenant_name
+    when 'operator' then c.operator_name
+    else null
+  end as live_holder_name,
+  case ch.resident_role
+    when 'owner' then c.owner_phone
+    when 'tenant' then c.tenant_phone
+    when 'operator' then c.operator_phone
+    else null
+  end as live_holder_phone,
+  (select count(*)::int from public.chips h
+    where h.contact_id = ch.contact_id
+      and h.resident_role = ch.resident_role
+      and (ch.resident_role not in ('other','staff') or h.holder_name = ch.holder_name)
+  ) as holder_chip_count`;
+
+const CHIP_FROM_JOINED = `
+  from public.chips ch
+  left join public.contacts c on c.id = ch.contact_id`;
+
+/** Re-read one chip WITH holder resolution inside a mutation's transaction, so
+ *  every mutation responds with the same enriched shape the list/get reads use. */
+async function selectChipWithHolder(
+  client: PoolClient,
+  id: string,
+): Promise<ChipWithHolder> {
+  const r = await client.query<ChipWithHolder>(
+    `select ${CHIP_COLUMNS_QUALIFIED}, ${CHIP_HOLDER_SELECT}, null::text as match_type
+       ${CHIP_FROM_JOINED}
+      where ch.id = $1`,
+    [id],
+  );
+  return r.rows[0];
+}
+
 // Fields a PATCH may touch. chip_number and status are NEVER writable — the
 // number is immutable for the chip's lifetime, and status only moves through
 // deactivateChip / reactivateChip.
@@ -98,75 +156,145 @@ async function insertChipEvent(
 
 // ── Reads ────────────────────────────────────────────────────────────────
 
-export async function listChips(filters: ChipListFilters): Promise<Chip[]> {
+export async function listChips(filters: ChipListFilters): Promise<ChipWithHolder[]> {
   const where: string[] = [];
   const params: unknown[] = [];
+  const term = filters.q?.trim();
 
-  // Tab → predicate: all → none; active/inactive → status; pending_sync →
-  // inactive chips the controller does not know about yet; app → app chips.
-  switch (filters.tab) {
-    case 'active':
-      where.push(`status = 'active'`);
-      break;
-    case 'inactive':
-      where.push(`status = 'inactive'`);
-      break;
-    case 'pending_sync':
-      where.push(`status = 'inactive'`, `controller_synced = false`);
-      break;
-    case 'app':
-      where.push(`chip_type = 'app'`);
-      break;
-    case 'all':
-    default:
-      break;
+  // Tab → predicate — SKIPPED while searching: search is cross-tab (all
+  // statuses) and each result carries its own status pill (product rule 4).
+  if (!term) {
+    switch (filters.tab) {
+      case 'active':
+        where.push(`ch.status = 'active'`);
+        break;
+      case 'inactive':
+        where.push(`ch.status = 'inactive'`);
+        break;
+      case 'pending_sync':
+        where.push(`ch.status = 'inactive'`, `ch.controller_synced = false`);
+        break;
+      case 'app':
+        where.push(`ch.chip_type = 'app'`);
+        break;
+      case 'all':
+      default:
+        break;
+    }
   }
 
   if (filters.status) {
     params.push(filters.status);
-    where.push(`status = $${params.length}`);
+    where.push(`ch.status = $${params.length}`);
   }
   if (filters.chip_type) {
     params.push(filters.chip_type);
-    where.push(`chip_type = $${params.length}`);
+    where.push(`ch.chip_type = $${params.length}`);
   }
   if (filters.contact_id) {
     params.push(filters.contact_id);
-    where.push(`contact_id = $${params.length}`);
+    where.push(`ch.contact_id = $${params.length}`);
   }
 
-  let orderBy = 'issued_at desc';
-  const term = filters.q?.trim();
+  // Order fragments are assembled from internal constants only (whitelist
+  // discipline) — no user input reaches ORDER BY.
+  let orderBy = 'ch.issued_at desc';
+  let matchTypeSelect = 'null::text as match_type';
+
   if (term) {
-    params.push(`%${term}%`);
-    const p = `$${params.length}`;
-    where.push(`(chip_number ilike ${p} or apartment_number ilike ${p} or holder_name ilike ${p})`);
-    // Exact chip-number hits float to the top of the search result.
+    // Tokenized search: AND between tokens, OR between fields per token.
+    // A registry-name hit is ROLE-SCOPED — a tenant_name match only surfaces
+    // the tenant's chips of that apartment, never the owner's (rule 4).
+    const chipHits: string[] = [];
+    const aptHits: string[] = [];
+    for (const token of term.split(/\s+/).filter(Boolean)) {
+      params.push(`%${token}%`);
+      const p = `$${params.length}`;
+      chipHits.push(`ch.chip_number ilike ${p}`);
+      aptHits.push(`ch.apartment_number ilike ${p}`);
+      where.push(`(
+        ch.chip_number ilike ${p}
+        or ch.apartment_number ilike ${p}
+        or ch.holder_name ilike ${p}
+        or (ch.resident_role = 'owner' and c.owner_name ilike ${p})
+        or (ch.resident_role = 'tenant' and c.tenant_name ilike ${p})
+        or (ch.resident_role = 'operator' and c.operator_name ilike ${p})
+      )`);
+    }
+
+    // Priority: exact chip number → prefix → substring → apartment → name.
+    // "נמצא צ׳יפ בלובי" must answer on the first row.
     params.push(term);
-    orderBy = `(chip_number = $${params.length}) desc, issued_at desc`;
+    const full = `$${params.length}`;
+    const anyChipHit = chipHits.join(' or ');
+    const anyAptHit = aptHits.join(' or ');
+    orderBy = `case
+        when ch.chip_number = ${full} then 0
+        when ch.chip_number ilike ${full} || '%' then 1
+        when ${anyChipHit} then 2
+        when ${anyAptHit} then 3
+        else 4
+      end, ch.issued_at desc`;
+    matchTypeSelect = `case
+        when ${anyChipHit} then 'chip_number'
+        when ${anyAptHit} then 'apartment'
+        else 'holder_name'
+      end as match_type`;
   }
 
   const whereSql = where.length ? `where ${where.join(' and ')}` : '';
-  const r = await query<Chip>(
-    `select ${CHIP_COLUMNS} from public.chips ${whereSql} order by ${orderBy}`,
+  const r = await query<ChipWithHolder>(
+    `select ${CHIP_COLUMNS_QUALIFIED}, ${CHIP_HOLDER_SELECT}, ${matchTypeSelect}
+       ${CHIP_FROM_JOINED} ${whereSql} order by ${orderBy}`,
     params,
   );
   return r.rows;
 }
 
-export async function getChipById(id: string): Promise<Chip | null> {
-  return queryOne<Chip>(
-    `select ${CHIP_COLUMNS} from public.chips where id = $1`,
+export async function getChipById(id: string): Promise<ChipWithHolder | null> {
+  return queryOne<ChipWithHolder>(
+    `select ${CHIP_COLUMNS_QUALIFIED}, ${CHIP_HOLDER_SELECT}, null::text as match_type
+       ${CHIP_FROM_JOINED}
+      where ch.id = $1`,
     [id],
   );
 }
 
-export async function getChipsByContact(contactId: string): Promise<Chip[]> {
-  const r = await query<Chip>(
-    `select ${CHIP_COLUMNS} from public.chips
-      where contact_id = $1
-      order by case status when 'active' then 0 else 1 end, issued_at desc`,
+export async function getChipsByContact(contactId: string): Promise<ChipWithHolder[]> {
+  const r = await query<ChipWithHolder>(
+    `select ${CHIP_COLUMNS_QUALIFIED}, ${CHIP_HOLDER_SELECT}, null::text as match_type
+       ${CHIP_FROM_JOINED}
+      where ch.contact_id = $1
+      order by case ch.status when 'active' then 0 else 1 end, ch.issued_at desc`,
     [contactId],
+  );
+  return r.rows;
+}
+
+/**
+ * All chips of ONE person — the "name → numbers" direction (product rule 4).
+ * Person identity is (contact_id, resident_role); for snapshot roles
+ * (other/staff) the holder_name narrows to the specific person, because
+ * several 'other' holders may share one apartment.
+ * Sorted by status (active first) then issuance date.
+ */
+export async function getChipsByHolder(
+  contactId: string,
+  role: ChipResidentRole,
+  holderName?: string | null,
+): Promise<ChipWithHolder[]> {
+  const params: unknown[] = [contactId, role];
+  let holderPredicate = '';
+  if (isSnapshotRole(role) && holderName?.trim()) {
+    params.push(holderName.trim());
+    holderPredicate = `and ch.holder_name = $${params.length}`;
+  }
+  const r = await query<ChipWithHolder>(
+    `select ${CHIP_COLUMNS_QUALIFIED}, ${CHIP_HOLDER_SELECT}, null::text as match_type
+       ${CHIP_FROM_JOINED}
+      where ch.contact_id = $1 and ch.resident_role = $2 ${holderPredicate}
+      order by case ch.status when 'active' then 0 else 1 end, ch.issued_at desc`,
+    params,
   );
   return r.rows;
 }
@@ -241,7 +369,7 @@ export async function getChipsKpis(): Promise<ChipsKpis> {
 export async function issueChip(
   input: IssueChipInput,
   actor: { id: string; name: string },
-): Promise<Chip[]> {
+): Promise<ChipWithHolder[]> {
   // Trim + reject blanks; a repeated number within one request is a conflict.
   const numbers: string[] = [];
   const seen = new Set<string>();
@@ -258,14 +386,52 @@ export async function issueChip(
 
   return withTransaction(async (client) => {
     const contact = (
-      await client.query<{ id: string; apartment_number: string; unit_type: string }>(
-        `select id, apartment_number, unit_type from public.contacts
+      await client.query<{
+        id: string;
+        apartment_number: string;
+        unit_type: string;
+        owner_name: string | null;
+        owner_phone: string | null;
+        tenant_name: string | null;
+        tenant_phone: string | null;
+        operator_name: string | null;
+        operator_phone: string | null;
+      }>(
+        `select id, apartment_number, unit_type,
+                owner_name, owner_phone, tenant_name, tenant_phone,
+                operator_name, operator_phone
+           from public.contacts
           where id = $1
           for update`,
         [input.contact_id],
       )
     ).rows[0];
     if (!contact) throw new Error('contact_not_found');
+
+    // Holder identity enforcement (product rule 2, CHECK 074): every chip is
+    // issued on a specific person's name. Registry roles snapshot the LIVE
+    // registry values (an explicit per-chip override is allowed and applies to
+    // this chip only); snapshot roles must bring their own name.
+    const role = input.resident_role;
+    let holderName = input.holder_name?.trim() || null;
+    let holderPhone = input.holder_phone?.trim() || null;
+    if (isSnapshotRole(role)) {
+      if (!holderName) throw new Error('holder_name_required');
+    } else {
+      const liveName = {
+        owner: contact.owner_name,
+        tenant: contact.tenant_name,
+        operator: contact.operator_name,
+      }[role]?.trim() || null;
+      const livePhone = {
+        owner: contact.owner_phone,
+        tenant: contact.tenant_phone,
+        operator: contact.operator_phone,
+      }[role]?.trim() || null;
+      holderName = holderName ?? liveName;
+      holderPhone = holderPhone ?? livePhone;
+      if (!holderName) throw new Error('holder_not_in_registry');
+    }
 
     const activeCount = (
       await client.query<{ count: number }>(
@@ -280,7 +446,7 @@ export async function issueChip(
       throw new ChipLimitError();
     }
 
-    const created: Chip[] = [];
+    const created: ChipWithHolder[] = [];
     for (const num of numbers) {
       let chip: Chip;
       try {
@@ -294,7 +460,7 @@ export async function issueChip(
            returning ${CHIP_COLUMNS}`,
           [
             num, input.chip_type, input.contact_id, contact.apartment_number,
-            input.resident_role ?? null, input.holder_name ?? null, input.holder_phone ?? null,
+            role, holderName, holderPhone,
             actor.id, actor.name,
             input.app_platform ?? null, input.app_invite_status ?? null, input.app_expires_at ?? null,
             input.issuance_fee ?? null, input.fee_charged ?? false,
@@ -320,7 +486,7 @@ export async function issueChip(
           holder_phone: chip.holder_phone,
         },
       });
-      created.push(chip);
+      created.push(await selectChipWithHolder(client, chip.id));
     }
     return created;
   });
@@ -336,7 +502,7 @@ export async function deactivateChip(
   id: string,
   opts: { reason: ChipDeactivationReason; note?: string | null; controllerSynced?: boolean },
   actor: { id: string; name: string },
-): Promise<Chip | null> {
+): Promise<ChipWithHolder | null> {
   return withTransaction(async (client) => {
     const cur = (
       await client.query<Chip>(
@@ -348,28 +514,25 @@ export async function deactivateChip(
     if (cur.status !== 'active') throw new ChipStateError();
 
     const synced = opts.controllerSynced === true;
-    const updated = (
-      await client.query<Chip>(
-        `update public.chips
-            set status = 'inactive',
-                deactivated_at = now(),
-                deactivated_by = $2,
-                deactivated_by_name = $3,
-                deactivation_reason = $4,
-                controller_synced = $5::boolean,
-                controller_synced_at = case when $5::boolean then now() else null end
-          where id = $1
-          returning ${CHIP_COLUMNS}`,
-        [id, actor.id, actor.name, opts.reason, synced],
-      )
-    ).rows[0];
+    await client.query(
+      `update public.chips
+          set status = 'inactive',
+              deactivated_at = now(),
+              deactivated_by = $2,
+              deactivated_by_name = $3,
+              deactivation_reason = $4,
+              controller_synced = $5::boolean,
+              controller_synced_at = case when $5::boolean then now() else null end
+        where id = $1`,
+      [id, actor.id, actor.name, opts.reason, synced],
+    );
 
     await insertChipEvent(client, id, 'deactivated', actor, {
       oldValue: { status: 'active' },
       newValue: { status: 'inactive', deactivation_reason: opts.reason, note: opts.note ?? null },
       reason: opts.reason,
     });
-    return updated;
+    return selectChipWithHolder(client, id);
   });
 }
 
@@ -384,7 +547,7 @@ export async function reactivateChip(
   id: string,
   opts: { reason: string },
   actor: { id: string; name: string },
-): Promise<Chip | null> {
+): Promise<ChipWithHolder | null> {
   return withTransaction(async (client) => {
     const cur = (
       await client.query<Chip>(
@@ -395,9 +558,8 @@ export async function reactivateChip(
     if (!cur) return null;
     if (cur.status !== 'inactive') throw new ChipStateError();
 
-    let updated: Chip;
     try {
-      const r = await client.query<Chip>(
+      await client.query(
         `update public.chips
             set status = 'active',
                 deactivated_at = null,
@@ -406,11 +568,9 @@ export async function reactivateChip(
                 deactivation_reason = null,
                 controller_synced = false,
                 controller_synced_at = null
-          where id = $1
-          returning ${CHIP_COLUMNS}`,
+          where id = $1`,
         [id],
       );
-      updated = r.rows[0];
     } catch (err) {
       if ((err as { code?: string }).code === '23505') {
         throw new ChipNumberTakenError(cur.chip_number);
@@ -423,7 +583,7 @@ export async function reactivateChip(
       newValue: { status: 'active' },
       reason: opts.reason,
     });
-    return updated;
+    return selectChipWithHolder(client, id);
   });
 }
 
@@ -439,7 +599,7 @@ export async function updateChip(
   id: string,
   patch: Record<string, unknown>,
   actor: { id: string; name: string },
-): Promise<Chip | null> {
+): Promise<ChipWithHolder | null> {
   return withTransaction(async (client) => {
     const cur = (
       await client.query<Chip>(
@@ -453,7 +613,7 @@ export async function updateChip(
     for (const [k, v] of Object.entries(patch)) {
       if (CHIP_WRITABLE.has(k) && v !== undefined) effective[k] = v;
     }
-    if (Object.keys(effective).length === 0) return cur;
+    if (Object.keys(effective).length === 0) return selectChipWithHolder(client, id);
 
     const reassigned =
       typeof effective.contact_id === 'string' && effective.contact_id !== cur.contact_id;
@@ -475,7 +635,7 @@ export async function updateChip(
     for (const [k, v] of Object.entries(effective)) {
       if (v !== curRec[k]) diff[k] = v;
     }
-    if (!reassigned && Object.keys(diff).length === 0) return cur;
+    if (!reassigned && Object.keys(diff).length === 0) return selectChipWithHolder(client, id);
 
     const set: string[] = [];
     const vals: unknown[] = [id];
@@ -503,7 +663,7 @@ export async function updateChip(
     } else {
       await insertChipEvent(client, id, 'note', actor, { newValue: diff });
     }
-    return updated;
+    return selectChipWithHolder(client, id);
   });
 }
 
@@ -514,7 +674,7 @@ export async function updateChip(
 export async function markControllerSynced(
   id: string,
   actor: { id: string; name: string },
-): Promise<Chip | null> {
+): Promise<ChipWithHolder | null> {
   return withTransaction(async (client) => {
     const cur = (
       await client.query<Chip>(
@@ -523,22 +683,19 @@ export async function markControllerSynced(
       )
     ).rows[0];
     if (!cur) return null;
-    if (cur.controller_synced) return cur;
+    if (cur.controller_synced) return selectChipWithHolder(client, id);
 
-    const updated = (
-      await client.query<Chip>(
-        `update public.chips
-            set controller_synced = true, controller_synced_at = now()
-          where id = $1
-          returning ${CHIP_COLUMNS}`,
-        [id],
-      )
-    ).rows[0];
+    await client.query(
+      `update public.chips
+          set controller_synced = true, controller_synced_at = now()
+        where id = $1`,
+      [id],
+    );
 
     await insertChipEvent(client, id, 'controller_synced', actor, {
       oldValue: { controller_synced: false },
       newValue: { controller_synced: true },
     });
-    return updated;
+    return selectChipWithHolder(client, id);
   });
 }

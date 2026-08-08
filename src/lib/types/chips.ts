@@ -42,7 +42,10 @@ export interface Chip {
   /** Display snapshot taken at issuance/reassignment — never joined at runtime. */
   apartment_number: string;
   status: ChipStatus;
-  resident_role: ChipResidentRole | null;
+  /** NOT NULL since 074 — a chip is always issued on a specific person's name. */
+  resident_role: ChipResidentRole;
+  /** Issuance snapshot ("on whose name it was issued") — the DISPLAY name is
+   *  resolved via resolveChipHolder(), never read directly by the UI. */
   holder_name: string | null;
   holder_phone: string | null;
   issued_at: string;
@@ -96,12 +99,31 @@ export interface ChipListFilters {
   q?: string;
 }
 
+/** Which field a search result matched on (priority order). */
+export type ChipMatchType = 'chip_number' | 'apartment' | 'holder_name';
+
+/** Read-time holder resolution (074) — every chip read LEFT JOINs contacts and
+ *  carries the LIVE registry name/phone for its resident_role. The UI never
+ *  reads holder_name directly; it goes through resolveChipHolder() over these. */
+export interface ChipWithHolder extends Chip {
+  /** contacts.{role}_name at read time; null for snapshot roles (other/staff). */
+  live_holder_name: string | null;
+  live_holder_phone: string | null;
+  /** How many chips this same person holds — (contact_id, resident_role), and
+   *  for snapshot roles also the same holder_name. */
+  holder_chip_count: number;
+  /** Set only when the list query ran with a search term. */
+  match_type?: ChipMatchType | null;
+}
+
 /** Payload for issuing chips — up to 5 chip numbers in one request, all-or-nothing. */
 export interface IssueChipInput {
   contact_id: string;
   chip_type: ChipType;
   chip_numbers: string[];
-  resident_role?: ChipResidentRole | null;
+  /** Required (074): owner/tenant/operator snapshot from the registry;
+   *  other/staff require holder_name in the payload. */
+  resident_role: ChipResidentRole;
   holder_name?: string | null;
   holder_phone?: string | null;
   app_platform?: AppPlatform | null;
