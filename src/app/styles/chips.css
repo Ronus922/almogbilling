@@ -35,6 +35,7 @@
   --chip-violet: #7c4dff;
   --chip-violet-soft: #f3eeff;
   --chip-violet-ink: #5b32c4;
+  --chip-violet-border: #decdff; /* Chip2: holder-block border */
 
   /* Amber (chip type / notes) */
   --chip-amber: #f5a524;

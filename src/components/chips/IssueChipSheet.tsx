@@ -1,21 +1,29 @@
 'use client';
 
-// Issue-chip side panel — chips-skin (declared exception): the visual layer is
-// derived 1:1 from ref/proof/whatsapp-broadcast/Chip.{html,md} (the ref covers
-// exactly this window); the Sheet shell + dirty-guard + error states keep the
-// DESIGN.md structure. Flow (unchanged): pick an apartment from the contacts
-// registry (async combobox) → pick the chip holder (role cards 2×2, snapshots
-// editable per-chip) → chip type (segmented) → 1-5 chip numbers (add-row →
-// tags) → fee / notes. Soft-limit (4 active chips per contact) surfaces an
-// amber warning + required override reason; server 409/422 render inline.
+// Multi-person issue window — chips-skin (declared exception). The five
+// multi-holder elements (stacked holder block, separator, "+ הוסף בעל צ׳יפ",
+// taken role, pending tag) derive from ref/proof/Chip2.html; the visual
+// language (palette/typography/sizes) stays Chip.md. Instruction overrides
+// (approved): role picker stays the rich 2×2 cards (not Chip2's compact row),
+// footer keeps primary-at-start, block-remove is hidden once a block holds
+// SAVED chips, and the type mini-selector says "פיזי" (system vocabulary).
+//
+// Flow: pick an apartment (async registry combobox, inline create) → one or
+// more HOLDER BLOCKS, each = one person (2×2 role cards + snapshot name/phone
+// + per-number type capture + tags) → global fee/notes → one save issues ALL
+// pending tags from all blocks in ONE transaction, all-or-nothing. Existing
+// chips load grouped into blocks as read-only tags; their toggle goes through
+// the Deactivate/Reactivate dialogs IMMEDIATELY (never silently, never on
+// save). A pending tag's X removes a NOT-YET-ISSUED number — saved chips have
+// no removal path anywhere (product law).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import type { LucideIcon } from 'lucide-react';
 import {
-  AlertTriangle, Building2, Check, ChevronsUpDown, CreditCard, Hash, Info,
-  Loader2, Plus, Search, Smartphone, Users, Wallet, X,
+  AlertTriangle, Building2, Check, ChevronsUpDown, CreditCard, Info,
+  Loader2, Plus, Power, RotateCcw, Search, Smartphone, Users, Wallet, X,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
@@ -25,21 +33,22 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { DeactivateChipDialog } from './DeactivateChipDialog';
+import { ReactivateChipDialog } from './ReactivateChipDialog';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { validatePhone } from '@/lib/validation';
 import { cn } from '@/lib/utils';
 import {
-  APP_PLATFORMS, APP_PLATFORM_LABEL, CHIP_RESIDENT_ROLES, CHIP_TYPE_LABEL,
-  RESIDENT_ROLE_LABEL, UNIT_TYPE_LABEL,
+  CHIP_RESIDENT_ROLES, CHIP_TYPE_LABEL, RESIDENT_ROLE_LABEL, UNIT_TYPE_LABEL,
 } from '@/lib/constants/chips';
+import { isSnapshotRole, resolveChipHolder } from '@/lib/chips/holder';
+import { MAX_CHIPS_PER_GROUP, exceedsSoftLimit } from '@/lib/chips/issueGroups';
 import type {
-  AppPlatform, ChipResidentRole, ChipType, ContactResidentCard, ContactResidents,
+  ChipResidentRole, ChipType, ChipWithHolder, ContactResidentCard,
+  ContactResidents, IssueChipGroup,
 } from '@/lib/types/chips';
 
 // ── Ref field tokens (Chip.md: input 44px, radius 11, border 1.5, focus ring) ─
@@ -50,9 +59,6 @@ const INPUT_CLS =
   'focus-visible:border-[var(--chip-brand)] focus-visible:ring-4 focus-visible:ring-[rgba(61,90,254,0.12)]';
 
 const LABEL_CLS = 'flex items-center gap-1 text-[13px] font-bold text-[var(--chip-ink-muted)]';
-
-const SOFT_LIMIT = 4;
-const MAX_NUMBERS = 5;
 
 // ── Section card (ref: white card, radius 16, head + divider, icon tile) ────
 
@@ -94,12 +100,12 @@ function ChipSection({
           )}
         </div>
       </div>
-      <div className="px-5 py-[18px]">{children}</div>
+      <div className="p-4">{children}</div>
     </section>
   );
 }
 
-/** Ref `.note` — amber inline note (snapshot scope, "לא נמחק" caption). */
+/** Ref `.note` — amber inline note (snapshot scope). */
 function AmberNote({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-2 rounded-[11px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] px-[13px] py-[11px] text-[12.5px] font-semibold leading-relaxed text-[var(--chip-amber-ink)]">
@@ -120,6 +126,61 @@ interface ContactSearchItem {
   resident_type: string;
   needs_review: boolean;
 }
+
+// ── Holder blocks (Chip2 `.oblock`) ────────────────────────────────────────
+
+interface PendingNumber {
+  number: string;
+  /** Captured from the mini type selector AT ADD TIME (per-number type). */
+  chip_type: ChipType;
+}
+
+interface HolderBlock {
+  key: number;
+  role: ChipResidentRole | null;
+  holderName: string;
+  holderPhone: string;
+  phoneTouched: boolean;
+  numInput: string;
+  /** Current mini-selector value — captured into each number on add. */
+  numType: ChipType;
+  pending: PendingNumber[];
+  /** Existing chips of this holder — read-only tags, toggled via the dialogs. */
+  saved: ChipWithHolder[];
+  /** Client-side duplicate hint under the add row. */
+  dupHint: string | null;
+}
+
+function emptyBlock(key: number): HolderBlock {
+  return {
+    key, role: null, holderName: '', holderPhone: '', phoneTouched: false,
+    numInput: '', numType: 'physical', pending: [], saved: [], dupHint: null,
+  };
+}
+
+/** Person identity of a saved chip → grouping key (contact is fixed here). */
+function holderKeyOf(chip: ChipWithHolder): string {
+  return isSnapshotRole(chip.resident_role)
+    ? `${chip.resident_role}:${chip.holder_name ?? ''}`
+    : chip.resident_role;
+}
+
+function blockIdentityKey(b: HolderBlock): string | null {
+  if (!b.role) return null;
+  return isSnapshotRole(b.role) ? `${b.role}:${b.holderName.trim()}` : b.role;
+}
+
+/** Effective pending of a block — the add-row remnant counts too (typing one
+ *  number and saving without clicking "הוסף" still issues it). */
+function effectivePending(b: HolderBlock): PendingNumber[] {
+  const remnant = b.numInput.trim();
+  if (remnant && !b.pending.some((p) => p.number === remnant)) {
+    return [...b.pending, { number: remnant, chip_type: b.numType }];
+  }
+  return b.pending;
+}
+
+const REGISTRY_ROLES: readonly ChipResidentRole[] = ['owner', 'tenant', 'operator'];
 
 interface IssueChipSheetProps {
   open: boolean;
@@ -142,23 +203,23 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
   const [residentsLoading, setResidentsLoading] = useState(false);
   const [activeCount, setActiveCount] = useState<number | null>(null);
 
-  // Holder
-  const [role, setRole] = useState<ChipResidentRole | null>(null);
-  const [holderName, setHolderName] = useState('');
-  const [holderPhone, setHolderPhone] = useState('');
-  const [phoneTouched, setPhoneTouched] = useState(false);
+  // Holder blocks
+  const blockSeq = useRef(1);
+  const [blocks, setBlocks] = useState<HolderBlock[]>([emptyBlock(0)]);
+  const [chipsVersion, setChipsVersion] = useState(0); // bump → refetch saved chips
 
-  // Chip type + numbers (ref pattern: add-row input → pending tags, up to 5)
-  const [chipType, setChipType] = useState<ChipType>('physical');
-  const [appPlatform, setAppPlatform] = useState<AppPlatform>('unknown');
-  const [numInput, setNumInput] = useState('');
-  const [pendingNumbers, setPendingNumbers] = useState<string[]>([]);
+  // Saved-chip toggle dialogs (immediate, never silent)
+  const [deactivateTarget, setDeactivateTarget] = useState<ChipWithHolder | null>(null);
+  const [reactivateTarget, setReactivateTarget] = useState<ChipWithHolder | null>(null);
 
-  // Fee / notes / override
+  // Global fee / notes / override
   const [fee, setFee] = useState('');
   const [feeCharged, setFeeCharged] = useState(false);
   const [notes, setNotes] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
+
+  // 409 marking: the offending pending tag turns red
+  const [conflict, setConflict] = useState<{ blockKey: number; number: string } | null>(null);
 
   // Panel plumbing
   const [serverError, setServerError] = useState<string | null>(null);
@@ -190,22 +251,16 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     setContactLabel(init?.apartmentNumber ?? '');
     setResidents(null);
     setActiveCount(null);
-    const initRole =
-      init?.residentRole && (CHIP_RESIDENT_ROLES as readonly string[]).includes(init.residentRole)
-        ? (init.residentRole as ChipResidentRole)
-        : null;
-    setRole(initRole);
-    setHolderName(init?.holderName ?? '');
-    setHolderPhone(init?.holderPhone ?? '');
-    setPhoneTouched(false);
-    setChipType('physical');
-    setAppPlatform('unknown');
-    setNumInput('');
-    setPendingNumbers([]);
+    blockSeq.current = 1;
+    setBlocks([emptyBlock(0)]);
+    setChipsVersion(0);
+    setDeactivateTarget(null);
+    setReactivateTarget(null);
     setFee('');
     setFeeCharged(false);
     setNotes('');
     setOverrideReason('');
+    setConflict(null);
     setServerError(null);
     setSubmitting(false);
     setDirty(false);
@@ -218,7 +273,8 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     setCreateError(null);
   }, [open]);
 
-  // Residents + active-chip count for the selected contact.
+  // Residents + the apartment's chips — chips regroup into holder blocks,
+  // PRESERVING local pending/inputs by holder identity across refetches.
   useEffect(() => {
     if (!open || !contactId) {
       setResidents(null);
@@ -238,10 +294,67 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
           if (!cancelled) setResidents(data);
         }
         if (cRes.ok) {
-          const data = (await cRes.json()) as { active_count?: number };
-          if (!cancelled) {
-            setActiveCount(typeof data.active_count === 'number' ? data.active_count : 0);
+          const data = (await cRes.json()) as { items?: ChipWithHolder[]; active_count?: number };
+          if (cancelled) return;
+          setActiveCount(typeof data.active_count === 'number' ? data.active_count : 0);
+          const items = Array.isArray(data.items) ? data.items : [];
+
+          // Group saved chips by holder identity, then merge into current blocks.
+          const grouped = new Map<string, ChipWithHolder[]>();
+          for (const chip of items) {
+            const k = holderKeyOf(chip);
+            grouped.set(k, [...(grouped.get(k) ?? []), chip]);
           }
+
+          setBlocks((prev) => {
+            const next: HolderBlock[] = [];
+            const used = new Set<string>();
+            // 1. Existing blocks keep their position + local edits; saved refreshes.
+            for (const b of prev) {
+              const idKey = blockIdentityKey(b);
+              const saved = idKey ? grouped.get(idKey) ?? [] : [];
+              if (idKey) used.add(idKey);
+              next.push({ ...b, saved });
+            }
+            // 2. Holders with chips but no block yet → new read-only blocks.
+            for (const [k, saved] of grouped) {
+              if (used.has(k)) continue;
+              const first = saved[0];
+              const holder = resolveChipHolder(first);
+              next.push({
+                ...emptyBlock(blockSeq.current++),
+                role: first.resident_role,
+                holderName: holder.name === '—' ? '' : holder.name,
+                holderPhone: holder.phone ?? '',
+                saved,
+              });
+            }
+            // 3. Drop empty placeholder blocks if real ones arrived; always ≥1.
+            const cleaned = next.filter(
+              (b) => b.role !== null || b.pending.length > 0 || b.saved.length > 0 || b.numInput.trim() !== '',
+            );
+            const result = cleaned.length > 0 ? cleaned : [emptyBlock(blockSeq.current++)];
+
+            // 4. Reissue prefill: ensure a block exists for the initial holder.
+            const init = initialRef.current;
+            if (init?.residentRole) {
+              const role = init.residentRole as ChipResidentRole;
+              if ((CHIP_RESIDENT_ROLES as readonly string[]).includes(role)) {
+                const wantKey = isSnapshotRole(role)
+                  ? `${role}:${(init.holderName ?? '').trim()}`
+                  : role;
+                if (!result.some((b) => blockIdentityKey(b) === wantKey)) {
+                  result.push({
+                    ...emptyBlock(blockSeq.current++),
+                    role,
+                    holderName: init.holderName ?? '',
+                    holderPhone: init.holderPhone ?? '',
+                  });
+                }
+              }
+            }
+            return result;
+          });
         }
       } catch {
         // Panel stays usable without the resident cards / limit meter.
@@ -252,7 +365,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     return () => {
       cancelled = true;
     };
-  }, [open, contactId]);
+  }, [open, contactId, chipsVersion]);
 
   // Debounced registry search (250ms, min 1 char).
   useEffect(() => {
@@ -287,21 +400,25 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
 
   // ── Derived validation ───────────────────────────────────────────────────
 
-  // The add-row remnant counts too — typing one number and submitting without
-  // clicking "הוסף מספר" still issues it (pre-redesign single-row behavior).
-  const filledNumbers = useMemo(() => {
-    const remnant = numInput.trim();
-    if (remnant && !pendingNumbers.includes(remnant)) {
-      return [...pendingNumbers, remnant];
-    }
-    return pendingNumbers;
-  }, [pendingNumbers, numInput]);
+  const totalPending = useMemo(
+    () => blocks.reduce((s, b) => s + effectivePending(b).length, 0),
+    [blocks],
+  );
 
-  const phoneError = useMemo(() => {
-    if (!holderPhone.trim()) return null;
-    const v = validatePhone(holderPhone);
+  /** Registry roles already used by OTHER blocks → "נבחר בבלוק אחר". */
+  const takenRoles = useMemo(() => {
+    const map = new Map<ChipResidentRole, number>(); // role -> blockKey
+    for (const b of blocks) {
+      if (b.role && REGISTRY_ROLES.includes(b.role)) map.set(b.role, b.key);
+    }
+    return map;
+  }, [blocks]);
+
+  const phoneErrorOf = (b: HolderBlock): string | null => {
+    if (!b.holderPhone.trim()) return null;
+    const v = validatePhone(b.holderPhone);
     return v.valid ? null : v.error ?? 'מספר טלפון לא תקין';
-  }, [holderPhone]);
+  };
 
   const feeError = useMemo(() => {
     if (!fee.trim()) return null;
@@ -309,24 +426,35 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     return Number.isFinite(n) && n >= 0 ? null : 'סכום לא תקין';
   }, [fee]);
 
-  // Soft limit: issuing `filledNumbers` (at least 1) on top of active_count
-  // must not exceed 4 — unless an override reason is supplied.
+  // Soft limit: existing actives + ALL pending numbers across ALL blocks
+  // (clarification 1 — the per-type group split never bypasses this count).
   const overLimit =
-    activeCount != null && activeCount + Math.max(filledNumbers.length, 1) > SOFT_LIMIT;
+    activeCount != null && exceedsSoftLimit(activeCount, Math.max(totalPending, 1));
+
+  /** Per-block validity — only blocks that actually issue something matter. */
+  const blockInvalid = (b: HolderBlock): string | null => {
+    const pending = effectivePending(b);
+    if (pending.length === 0) return null; // nothing to issue from this block
+    if (!b.role) return 'בחר תפקיד לבעל הצ׳יפ';
+    if (isSnapshotRole(b.role) && !b.holderName.trim()) return 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא';
+    if (phoneErrorOf(b)) return phoneErrorOf(b);
+    if (b.pending.length > MAX_CHIPS_PER_GROUP) return `עד ${MAX_CHIPS_PER_GROUP} מספרים חדשים לבלוק`;
+    return null;
+  };
 
   const canSubmit =
     !!contactId &&
-    filledNumbers.length >= 1 &&
-    filledNumbers.length <= MAX_NUMBERS &&
-    !phoneError &&
+    totalPending >= 1 &&
+    blocks.every((b) => blockInvalid(b) === null) &&
     !feeError &&
     (!overLimit || overrideReason.trim() !== '') &&
     !submitting;
 
-  // ── ESC layering (LIFO: confirm > picker > panel) ────────────────────────
+  // ── ESC layering (LIFO: dialogs > confirm > picker > panel) ──────────────
 
-  useEscapeKey(open && !confirmCloseOpen && !pickerOpen, () => requestClose());
-  useEscapeKey(open && pickerOpen && !confirmCloseOpen, () => setPickerOpen(false));
+  const dialogOpen = !!deactivateTarget || !!reactivateTarget;
+  useEscapeKey(open && !confirmCloseOpen && !pickerOpen && !dialogOpen, () => requestClose());
+  useEscapeKey(open && pickerOpen && !confirmCloseOpen && !dialogOpen, () => setPickerOpen(false));
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
 
   function requestClose() {
@@ -340,25 +468,83 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     onOpenChange(false);
   }
 
-  // ── Mutators (every user edit marks the panel dirty) ─────────────────────
+  // ── Block mutators (every user edit marks the panel dirty) ───────────────
 
-  function selectContact(id: string, apartmentNumber: string) {
+  function patchBlock(key: number, patch: Partial<HolderBlock>) {
     setDirty(true);
-    setContactId(id);
-    setContactLabel(apartmentNumber);
-    setRole(null);
-    setHolderName('');
-    setHolderPhone('');
-    setPhoneTouched(false);
     setServerError(null);
-    setPickerOpen(false);
-    setQuery('');
-    setResults([]);
-    setCreateError(null);
+    setBlocks((prev) => prev.map((b) => (b.key === key ? { ...b, ...patch } : b)));
   }
 
-  function pickContact(item: ContactSearchItem) {
-    selectContact(item.id, item.apartment_number);
+  function addBlock() {
+    setDirty(true);
+    setBlocks((prev) => [...prev, emptyBlock(blockSeq.current++)]);
+  }
+
+  /** Remove a block — only offered while it has NO saved chips. If it was the
+   *  last one, a fresh empty block takes its place (the window keeps ≥1). */
+  function removeBlock(key: number) {
+    setDirty(true);
+    setConflict((c) => (c?.blockKey === key ? null : c));
+    setBlocks((prev) => {
+      const next = prev.filter((b) => b.key !== key);
+      return next.length > 0 ? next : [emptyBlock(blockSeq.current++)];
+    });
+  }
+
+  function selectRoleCard(block: HolderBlock, card: ContactResidentCard) {
+    patchBlock(block.key, {
+      role: card.role,
+      holderName: card.name ?? '',
+      holderPhone: card.phone ?? '',
+      phoneTouched: false,
+    });
+  }
+
+  function selectOther(block: HolderBlock) {
+    patchBlock(block.key, { role: 'other', holderName: '', holderPhone: '', phoneTouched: false });
+  }
+
+  /** All numbers already present in the window (pending + saved, all blocks). */
+  function numberExistsInWindow(num: string): boolean {
+    return blocks.some(
+      (b) =>
+        b.pending.some((p) => p.number === num) ||
+        b.saved.some((c) => c.chip_number === num),
+    );
+  }
+
+  /** Add the typed number as a pending tag, capturing the current type. */
+  function addNumber(block: HolderBlock) {
+    const v = block.numInput.trim();
+    if (!v) return;
+    if (block.pending.length >= MAX_CHIPS_PER_GROUP) return;
+    if (numberExistsInWindow(v)) {
+      patchBlock(block.key, { dupHint: `המספר ${v} כבר נמצא בחלון הזה` });
+      return;
+    }
+    patchBlock(block.key, {
+      pending: [...block.pending, { number: v, chip_type: block.numType }],
+      numInput: '',
+      dupHint: null,
+    });
+  }
+
+  /** Remove a PENDING (not-yet-issued) number — a typo fix, not a deletion. */
+  function removePending(block: HolderBlock, num: string) {
+    setConflict((c) => (c?.blockKey === block.key && c.number === num ? null : c));
+    patchBlock(block.key, { pending: block.pending.filter((p) => p.number !== num) });
+  }
+
+  /** Saved-chip toggle → the dialogs, immediately (never silent). */
+  function requestToggle(chip: ChipWithHolder) {
+    if (chip.status === 'active') setDeactivateTarget(chip);
+    else setReactivateTarget(chip);
+  }
+
+  function afterToggle() {
+    setChipsVersion((v) => v + 1); // refetch + regroup (pending preserved)
+    onIssued(); // parent list/KPIs refresh
   }
 
   /**
@@ -384,8 +570,6 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
         error?: string;
       };
       if (res.status === 409) {
-        // Search with the server's canonical key (digits, no leading zeros) —
-        // the conflicting row is stored under it; exact hits float first.
         const norm = term.replace(/\D/g, '').replace(/^0+/, '') || '0';
         const sRes = await fetch(
           `/api/contacts/search?q=${encodeURIComponent(norm)}`,
@@ -416,81 +600,95 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     }
   }
 
-  function selectResidentCard(card: ContactResidentCard) {
+  function selectContact(id: string, apartmentNumber: string) {
     setDirty(true);
-    setRole(card.role);
-    setHolderName(card.name ?? '');
-    setHolderPhone(card.phone ?? '');
-    setPhoneTouched(false);
+    setContactId(id);
+    setContactLabel(apartmentNumber);
+    blockSeq.current = 1;
+    setBlocks([emptyBlock(0)]);
+    setConflict(null);
     setServerError(null);
+    setPickerOpen(false);
+    setQuery('');
+    setResults([]);
+    setCreateError(null);
   }
 
-  function selectOther() {
-    setDirty(true);
-    setRole('other');
-    setHolderName('');
-    setHolderPhone('');
-    setPhoneTouched(false);
-    setServerError(null);
+  function pickContact(item: ContactSearchItem) {
+    selectContact(item.id, item.apartment_number);
   }
 
-  /** Add the typed number as a pending tag (Enter or the button, ref UX). */
-  function addNumber() {
-    const v = numInput.trim();
-    if (!v) return;
-    if (pendingNumbers.length >= MAX_NUMBERS) return;
-    setDirty(true);
-    setServerError(null);
-    if (!pendingNumbers.includes(v)) {
-      setPendingNumbers((prev) => [...prev, v]);
-    }
-    setNumInput('');
-  }
-
-  /** Remove a PENDING (not-yet-issued) number — nothing was persisted yet, so
-   *  this is a typo fix, not a chip deletion (issued chips are never deleted). */
-  function removePending(value: string) {
-    setDirty(true);
-    setPendingNumbers((prev) => prev.filter((n) => n !== value));
-  }
-
-  // ── Submit ───────────────────────────────────────────────────────────────
+  // ── Submit — ALL pending tags from ALL blocks, one transaction ───────────
 
   async function handleSubmit() {
     if (!canSubmit || !contactId) return;
     setSubmitting(true);
     setServerError(null);
+    setConflict(null);
     try {
-      const payload = {
-        contact_id: contactId,
-        chip_type: chipType,
-        chip_numbers: filledNumbers,
-        resident_role: role,
-        holder_name: holderName.trim() || null,
-        holder_phone: holderPhone.trim() ? validatePhone(holderPhone).normalized : null,
-        app_platform: chipType === 'app' ? appPlatform : null,
-        issuance_fee: fee.trim() ? Number(fee) : null,
-        fee_charged: feeCharged,
-        limit_override_reason: overLimit ? overrideReason.trim() : null,
-        notes: notes.trim() || null,
-      };
+      // Split each block's pending by captured type → per-type groups (API is
+      // chip_type-per-group); keep the mapping so a 409's group_index lands
+      // back on the right block + tag.
+      const groups: IssueChipGroup[] = [];
+      const groupToBlock: number[] = [];
+      for (const b of blocks) {
+        const pending = effectivePending(b);
+        if (pending.length === 0 || !b.role) continue;
+        const byType = new Map<ChipType, string[]>();
+        for (const p of pending) {
+          byType.set(p.chip_type, [...(byType.get(p.chip_type) ?? []), p.number]);
+        }
+        for (const [type, numbers] of byType) {
+          groups.push({
+            resident_role: b.role,
+            holder_name: b.holderName.trim() || null,
+            holder_phone: b.holderPhone.trim()
+              ? validatePhone(b.holderPhone).normalized
+              : null,
+            chip_type: type,
+            numbers,
+          });
+          groupToBlock.push(b.key);
+        }
+      }
+
       const res = await fetch('/api/chips', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          contact_id: contactId,
+          groups,
+          issuance_fee: fee.trim() ? Number(fee) : null,
+          fee_charged: feeCharged,
+          notes: notes.trim() || null,
+          limit_override_reason: overLimit ? overrideReason.trim() : null,
+        }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         items?: unknown[];
         error?: string;
+        chip_number?: string;
+        group_index?: number | null;
       };
       if (!res.ok) {
         const msg = data.error ?? 'הנפקת הצ׳יפ נכשלה';
-        if (res.status === 400 || res.status === 409 || res.status === 422) setServerError(msg);
-        else toast.error(msg);
+        if (res.status === 409 && data.chip_number != null) {
+          // Nothing was saved (all-or-nothing) — mark the offending tag red.
+          const blockKey =
+            typeof data.group_index === 'number'
+              ? groupToBlock[data.group_index] ?? null
+              : null;
+          if (blockKey != null) setConflict({ blockKey, number: data.chip_number });
+          setServerError(msg);
+        } else if (res.status === 400 || res.status === 422) {
+          setServerError(msg);
+        } else {
+          toast.error(msg);
+        }
         return;
       }
-      const count = Array.isArray(data.items) ? data.items.length : filledNumbers.length;
+      const count = Array.isArray(data.items) ? data.items.length : totalPending;
       toast.success(count > 1 ? `${count} צ׳יפים הונפקו` : 'הצ׳יפ הונפק');
       onIssued();
       onOpenChange(false);
@@ -504,6 +702,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
   // ── Render ───────────────────────────────────────────────────────────────
 
   const residentCards = residents?.residents ?? [];
+  const disabledAll = !contactId || submitting;
 
   return (
     <>
@@ -514,7 +713,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
           showCloseButton={false}
           className="chips-skin w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-[var(--chip-panel)]"
         >
-          {/* Header — ref gradient (115deg, #2B3FB8 → #3D5AFE 62% → #5872FF) */}
+          {/* Header — ref gradient; Chip2 subtitle */}
           <SheetHeader className="flex-none gap-2 bg-[image:var(--chip-header-gradient)] px-[28px] py-[22px] text-white">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
@@ -522,7 +721,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                   הנפקת צ׳יפ
                 </SheetTitle>
                 <p className="mt-[4px] text-[13.5px] font-medium text-white/[0.82]">
-                  בחר דירה, בעל צ׳יפ ומספרי צ׳יפ — עד 5 צ׳יפים בהנפקה אחת.
+                  דירה אחת · כמה בעלי צ׳יפ · לכל אחד הצ׳יפים שלו
                 </p>
               </div>
               <button
@@ -537,12 +736,12 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
             </div>
           </SheetHeader>
 
-          {/* Body — ref `.mbody`: screen-bg behind white section cards */}
+          {/* Body — screen-bg behind white section cards */}
           <div className="flex-1 overflow-y-auto bg-[var(--chip-bg)] p-[22px]">
             <div className="mx-auto flex max-w-[820px] flex-col gap-[18px]">
-              {/* Section 1 — apartment / unit (tone blue) */}
+              {/* Section 1 — apartment / unit (unchanged) */}
               <ChipSection title="דירה / יחידה" icon={Building2} iconTone="blue">
-                <div className="space-y-2">
+                <div className="space-y-2 px-1 pb-1">
                   <Label htmlFor="chip-contact" className={LABEL_CLS}>
                     בחירת דירה
                     <span className="text-[var(--chip-red)]">*</span>
@@ -621,7 +820,6 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                                   <p className="px-3 pb-1 pt-4 text-center text-sm text-[var(--chip-ink-soft)]">
                                     לא נמצאו תוצאות
                                   </p>
-                                  {/* Inline registry create — action row (min 44px touch target) */}
                                   <button
                                     type="button"
                                     onClick={() => void createApartmentFromQuery()}
@@ -695,357 +893,101 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                 </div>
               </ChipSection>
 
-              {/* Section 2 — chip holder (tone violet, role cards 2×2 per ref) */}
-              {contactId && (
-                <ChipSection
-                  title="בעל הצ׳יפ"
-                  sub="בחר את מקבל הצ׳יפ מתוך מרשם הדיירים"
-                  icon={Users}
-                  iconTone="violet"
-                >
-                  <div className="space-y-4">
-                    {residentsLoading ? (
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div className="h-[92px] animate-pulse rounded-[13px] bg-[var(--chip-hover)]" />
-                        <div className="h-[92px] animate-pulse rounded-[13px] bg-[var(--chip-hover)]" />
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        {residentCards.map((card) => {
-                          const livesHere = residents?.resident_type === card.role;
-                          const selected = role === card.role;
-                          if (!card.exists) {
-                            // Empty registry slot — dashed card + "השלם פרטים ›" (ref)
-                            return (
-                              <div
-                                key={card.role}
-                                className="relative flex min-h-[92px] flex-col rounded-[13px] border-[1.5px] border-dashed border-[var(--chip-border)] bg-[var(--chip-panel)] p-[13px]"
-                              >
-                                <div className="mb-[7px] flex items-center gap-2">
-                                  <span className="text-[14px] font-extrabold text-[var(--chip-ink-soft)]">
-                                    {RESIDENT_ROLE_LABEL[card.role]}
-                                  </span>
-                                  {livesHere && (
-                                    <span className="inline-flex h-5 items-center rounded-[6px] bg-[var(--chip-brand-soft)] px-2 text-[11px] font-bold text-[var(--chip-brand-ink)]">
-                                      גר בדירה
-                                    </span>
-                                  )}
-                                </div>
-                                <span className="text-[12.5px] font-medium text-[var(--chip-ink-soft)]">
-                                  לא הוזנו פרטים
-                                </span>
-                                <Link
-                                  href="/contacts"
-                                  className="mt-auto inline-flex items-center gap-1 pt-2 text-[12.5px] font-bold text-[var(--chip-brand)] hover:text-[var(--chip-brand-hover)]"
-                                >
-                                  השלם פרטים ›
-                                </Link>
-                              </div>
-                            );
-                          }
-                          return (
-                            <button
-                              key={card.role}
-                              type="button"
-                              disabled={submitting}
-                              onClick={() => selectResidentCard(card)}
-                              className={cn(
-                                'relative flex min-h-[92px] flex-col rounded-[13px] border-[1.5px] p-[13px] text-start transition-all',
-                                selected
-                                  ? 'border-[var(--chip-brand)] bg-[var(--chip-brand-soft)] shadow-[0_0_0_3px_rgba(61,90,254,0.1)]'
-                                  : 'border-[var(--chip-border)] bg-[var(--chip-panel)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)]',
-                              )}
-                            >
-                              {/* ✓ circle — ref `.rcheck` (inline-start corner) */}
-                              <span
-                                className={cn(
-                                  'absolute start-3 top-3 grid h-5 w-5 place-items-center rounded-full border-2 text-white transition-colors',
-                                  selected
-                                    ? 'border-[var(--chip-brand)] bg-[var(--chip-brand)]'
-                                    : 'border-[var(--chip-border-strong)]',
-                                )}
-                              >
-                                <Check
-                                  className={cn('h-3 w-3 transition-opacity', selected ? 'opacity-100' : 'opacity-0')}
-                                  strokeWidth={3.2}
-                                />
-                              </span>
-                              <div className="mb-[7px] flex items-center gap-2 pe-7">
-                                <span className="text-[14px] font-extrabold text-[var(--chip-ink)]">
-                                  {RESIDENT_ROLE_LABEL[card.role]}
-                                </span>
-                                {livesHere && (
-                                  <span
-                                    className={cn(
-                                      'inline-flex h-5 items-center rounded-[6px] px-2 text-[11px] font-bold text-[var(--chip-brand-ink)]',
-                                      selected ? 'bg-white' : 'bg-[var(--chip-brand-soft)]',
-                                    )}
-                                  >
-                                    גר בדירה
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[13.5px] font-semibold text-[var(--chip-ink)]">
-                                {card.name}
-                              </span>
-                              {card.phone && (
-                                <span className="chip-num mt-[2px] text-start text-[12.5px] text-[var(--chip-ink-muted)]">
-                                  {card.phone}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                        {/* 4th card — free entry (ref: "אחר") */}
-                        <button
-                          type="button"
-                          disabled={submitting}
-                          onClick={selectOther}
-                          className={cn(
-                            'relative flex min-h-[92px] flex-col rounded-[13px] border-[1.5px] p-[13px] text-start transition-all',
-                            role === 'other'
-                              ? 'border-[var(--chip-brand)] bg-[var(--chip-brand-soft)] shadow-[0_0_0_3px_rgba(61,90,254,0.1)]'
-                              : 'border-dashed border-[var(--chip-border)] bg-[var(--chip-panel)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)]',
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              'absolute start-3 top-3 grid h-5 w-5 place-items-center rounded-full border-2 text-white transition-colors',
-                              role === 'other'
-                                ? 'border-[var(--chip-brand)] bg-[var(--chip-brand)]'
-                                : 'border-[var(--chip-border-strong)]',
-                            )}
-                          >
-                            <Check
-                              className={cn('h-3 w-3 transition-opacity', role === 'other' ? 'opacity-100' : 'opacity-0')}
-                              strokeWidth={3.2}
-                            />
-                          </span>
-                          <span className="mb-[7px] pe-7 text-[14px] font-extrabold text-[var(--chip-ink)]">אחר</span>
-                          <span className="text-[12.5px] font-medium text-[var(--chip-ink-soft)]">
-                            הזנה חופשית של שם וטלפון
-                          </span>
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Holder snapshot — editable, applies to this chip only */}
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label htmlFor="chip-holder-name" className={LABEL_CLS}>שם בעל הצ׳יפ</Label>
-                        <Input
-                          id="chip-holder-name"
-                          value={holderName}
-                          onChange={(e) => { setDirty(true); setHolderName(e.target.value); }}
-                          disabled={submitting}
-                          placeholder="שם מלא"
-                          className={INPUT_CLS}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="chip-holder-phone" className={LABEL_CLS}>טלפון בעל הצ׳יפ</Label>
-                        <Input
-                          id="chip-holder-phone"
-                          value={holderPhone}
-                          onChange={(e) => { setDirty(true); setHolderPhone(e.target.value); }}
-                          onBlur={() => setPhoneTouched(true)}
-                          disabled={submitting}
-                          dir="ltr"
-                          inputMode="tel"
-                          autoComplete="tel"
-                          placeholder="052-1234567"
-                          className={cn(
-                            INPUT_CLS,
-                            'chip-num',
-                            phoneTouched && phoneError &&
-                              'border-red-400 bg-red-50 focus-visible:border-red-400 focus-visible:ring-red-200',
-                          )}
-                        />
-                        {phoneTouched && phoneError && (
-                          <p className="text-right text-[12px] font-semibold text-red-500">⚠️ {phoneError}</p>
-                        )}
-                      </div>
-                    </div>
-                    <AmberNote>
-                      שינוי השם או הטלפון כאן חל על הצ׳יפ הזה בלבד — מרשם הדיירים לא מתעדכן.
-                    </AmberNote>
+              {/* Section 2 — holder blocks (Chip2 `.owners-card`) */}
+              <ChipSection
+                title="בעלי הצ׳יפ"
+                sub="כל בלוק = אדם אחד והצ׳יפים שלו · ניתן להוסיף עוד"
+                icon={Users}
+                iconTone="violet"
+              >
+                {!contactId ? (
+                  <div className="rounded-[13px] border-[1.5px] border-dashed border-[var(--chip-border-strong)] bg-[var(--chip-panel-alt)] p-6 text-center text-[13px] font-semibold text-[var(--chip-ink-soft)]">
+                    בחר דירה כדי להוסיף בעלי צ׳יפ
                   </div>
-                </ChipSection>
+                ) : residentsLoading && blocks.every((b) => b.saved.length === 0 && b.role === null) ? (
+                  <div className="space-y-3">
+                    <div className="h-[180px] animate-pulse rounded-[14px] bg-[var(--chip-hover)]" />
+                  </div>
+                ) : (
+                  <div className="flex flex-col">
+                    {blocks.map((block, bi) => (
+                      <HolderBlockCard
+                        key={block.key}
+                        block={block}
+                        index={bi}
+                        residentCards={residentCards}
+                        residentType={residents?.resident_type ?? null}
+                        takenRoles={takenRoles}
+                        conflict={conflict}
+                        submitting={submitting}
+                        invalid={blockInvalid(block)}
+                        phoneError={block.phoneTouched ? phoneErrorOf(block) : null}
+                        onPatch={(patch) => patchBlock(block.key, patch)}
+                        onSelectRole={(card) => selectRoleCard(block, card)}
+                        onSelectOther={() => selectOther(block)}
+                        onAddNumber={() => addNumber(block)}
+                        onRemovePending={(num) => removePending(block, num)}
+                        onToggleSaved={requestToggle}
+                        onRemoveBlock={() => removeBlock(block.key)}
+                      />
+                    ))}
+
+                    {/* Chip2 `.addowner` — full-width dashed violet */}
+                    <button
+                      type="button"
+                      onClick={addBlock}
+                      disabled={disabledAll}
+                      className="mt-[14px] flex h-12 w-full cursor-pointer items-center justify-center gap-[9px] rounded-[13px] border-[1.5px] border-dashed border-[var(--chip-violet-border)] bg-[var(--chip-violet-soft)] text-[14px] font-extrabold text-[var(--chip-violet-ink)] transition-colors hover:border-[var(--chip-violet)] hover:bg-[#ECE2FF] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Plus className="h-[18px] w-[18px]" strokeWidth={2.4} />
+                      הוסף בעל צ׳יפ
+                    </button>
+                  </div>
+                )}
+              </ChipSection>
+
+              {/* Window-global soft-limit warning + required override reason */}
+              {overLimit && (
+                <div className="space-y-2.5 rounded-[11px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] p-4">
+                  <div className="flex items-start gap-2 text-sm font-semibold text-[var(--chip-amber-ink)]">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      סך הצ׳יפים הפעילים בדירה ({activeCount} קיימים + {Math.max(totalPending, 1)} חדשים
+                      בכל הבלוקים) חורג מהמגבלה של 4 צ׳יפים לדירה.
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="chip-override" className={LABEL_CLS}>
+                      סיבת חריגה
+                      <span className="text-[var(--chip-red)]">*</span>
+                    </Label>
+                    <Textarea
+                      id="chip-override"
+                      value={overrideReason}
+                      onChange={(e) => { setDirty(true); setOverrideReason(e.target.value); }}
+                      disabled={submitting}
+                      placeholder="לדוגמה: משפחה מורחבת, עובד סיעודי…"
+                      className="min-h-[74px] rounded-[11px] border-[1.5px] border-[var(--chip-border)] bg-white px-[14px] py-[11px] text-[14px]"
+                    />
+                  </div>
+                </div>
               )}
 
-              {/* Section 3 — chip type (tone amber, ref segmented) */}
-              <ChipSection title="סוג צ׳יפ" icon={CreditCard} iconTone="amber">
-                <div className="space-y-4">
-                  <div className="inline-flex gap-[6px] rounded-[13px] border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel-alt)] p-[5px]">
-                    {(['physical', 'app'] as const).map((t) => {
-                      const TypeIcon = t === 'physical' ? CreditCard : Smartphone;
-                      const on = chipType === t;
-                      return (
-                        <button
-                          key={t}
-                          type="button"
-                          disabled={submitting}
-                          onClick={() => { setDirty(true); setChipType(t); }}
-                          className={cn(
-                            'inline-flex h-10 cursor-pointer items-center gap-2 rounded-[9px] px-[22px] text-[14px] font-bold transition-all',
-                            on
-                              ? 'bg-[var(--chip-brand)] text-white shadow-[0_3px_10px_-3px_rgba(61,90,254,0.5)]'
-                              : 'bg-transparent text-[var(--chip-ink-muted)]',
-                          )}
-                        >
-                          <TypeIcon className={cn('h-4 w-4', on ? 'opacity-100' : 'opacity-70')} />
-                          {CHIP_TYPE_LABEL[t]}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {chipType === 'app' && (
-                    <div className="space-y-2 sm:max-w-xs">
-                      <Label className={LABEL_CLS}>פלטפורמה</Label>
-                      <Select
-                        value={appPlatform}
-                        onValueChange={(v) => {
-                          if (typeof v === 'string' && v) {
-                            setDirty(true);
-                            setAppPlatform(v as AppPlatform);
-                          }
-                        }}
-                        disabled={submitting}
-                      >
-                        <SelectTrigger className="w-full rounded-[11px] border-[1.5px] border-[var(--chip-border)] font-semibold data-[size=default]:h-11">
-                          <SelectValue placeholder="בחר פלטפורמה…">
-                            {(value: string | null) =>
-                              value ? APP_PLATFORM_LABEL[value as AppPlatform] : null}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {APP_PLATFORMS.map((p) => (
-                            <SelectItem key={p} value={p}>{APP_PLATFORM_LABEL[p]}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                </div>
-              </ChipSection>
-
-              {/* Section 4 — chip numbers (tone blue; ref core: add-row → tags) */}
+              {/* Section 3 — fee + notes (GLOBAL: applies to every new chip) */}
               <ChipSection
-                title="מספרי צ׳יפ"
-                sub="עד 5 צ׳יפים בהנפקה אחת"
-                icon={Hash}
-                iconTone="blue"
+                title="עמלה והערות"
+                sub="חל על כל הצ׳יפים החדשים בשמירה הזו"
+                icon={Wallet}
+                iconTone="green"
               >
-                <div className="space-y-[14px]">
-                  {/* Add row — mono input + brand button, Enter adds (ref) */}
-                  <div className="flex gap-[10px]">
-                    <Input
-                      value={numInput}
-                      onChange={(e) => { setDirty(true); setServerError(null); setNumInput(e.target.value); }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          addNumber();
-                        }
-                      }}
-                      disabled={submitting || pendingNumbers.length >= MAX_NUMBERS}
-                      dir="ltr"
-                      placeholder="מספר צ׳יפ"
-                      aria-label="מספר צ׳יפ"
-                      className={cn(INPUT_CLS, 'chip-num flex-1')}
-                    />
-                    <Button
-                      type="button"
-                      onClick={addNumber}
-                      disabled={submitting || !numInput.trim() || pendingNumbers.length >= MAX_NUMBERS}
-                      className="h-11 gap-2 rounded-[11px] bg-[var(--chip-brand)] px-[18px] text-[14px] font-bold text-white hover:bg-[var(--chip-brand-hover)]"
-                    >
-                      <Plus className="h-[17px] w-[17px]" strokeWidth={2.6} />
-                      הוסף מספר
-                    </Button>
-                  </div>
-
-                  {/* Pending tags (ref `.pchip` anatomy — green active tag).
-                      Removal here is a typo fix on a NOT-YET-ISSUED number. */}
-                  {pendingNumbers.length > 0 ? (
-                    <div className="flex flex-wrap gap-[9px]">
-                      {pendingNumbers.map((num) => (
-                        <span
-                          key={num}
-                          className="inline-flex h-[38px] items-center gap-[9px] rounded-[11px] border-[1.5px] border-[var(--chip-green-border)] bg-[var(--chip-green-soft)] ps-[13px] pe-[6px]"
-                        >
-                          <span className="chip-num text-[14px] font-semibold tracking-[0.02em] text-[var(--chip-green-ink)]">
-                            {num}
-                          </span>
-                          <span className="inline-flex h-[22px] items-center gap-1 rounded-[6px] bg-white px-2 text-[11px] font-bold text-[var(--chip-green-ink)]">
-                            <span className="h-[6px] w-[6px] rounded-full bg-[var(--chip-green)]" />
-                            להנפקה
-                          </span>
-                          <button
-                            type="button"
-                            aria-label={`הסר את המספר ${num} מהרשימה`}
-                            disabled={submitting}
-                            onClick={() => removePending(num)}
-                            className="grid h-[30px] w-[30px] cursor-pointer place-items-center rounded-[8px] border border-[var(--chip-green-border)] bg-white text-[var(--chip-green-ink)] transition-colors hover:border-[var(--chip-red)] hover:bg-[var(--chip-red-soft)] hover:text-[var(--chip-red)]"
-                          >
-                            <X className="h-[15px] w-[15px]" strokeWidth={2.2} />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    !numInput.trim() && (
-                      <div className="rounded-[12px] border-[1.5px] border-dashed border-[var(--chip-border-strong)] p-4 text-center text-[13px] font-semibold text-[var(--chip-ink-soft)]">
-                        עדיין לא נוספו מספרי צ׳יפ
-                      </div>
-                    )
-                  )}
-
-                  {/* Ref caption — the no-delete product rule, stated in the UI */}
-                  <div className="flex items-center gap-[6px] text-[12px] font-semibold text-[var(--chip-ink-soft)]">
-                    <Info className="h-[14px] w-[14px] shrink-0" />
-                    <span>צ׳יפ שהונפק לא נמחק — אפשר להשבית ולהחזיר לפעיל בכל עת.</span>
-                  </div>
-
-                  {/* Soft-limit warning + required override reason */}
-                  {overLimit && (
-                    <div className="space-y-2.5 rounded-[11px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] p-4">
-                      <div className="flex items-start gap-2 text-sm font-semibold text-[var(--chip-amber-ink)]">
-                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>
-                          לדירה זו כבר {activeCount} צ׳יפים פעילים — הנפקה זו חורגת מהמגבלה
-                          של {SOFT_LIMIT} צ׳יפים לדירה.
-                        </span>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="chip-override" className={LABEL_CLS}>
-                          סיבת חריגה
-                          <span className="text-[var(--chip-red)]">*</span>
-                        </Label>
-                        <Textarea
-                          id="chip-override"
-                          value={overrideReason}
-                          onChange={(e) => { setDirty(true); setOverrideReason(e.target.value); }}
-                          disabled={submitting}
-                          placeholder="לדוגמה: משפחה מורחבת, עובד סיעודי…"
-                          className="min-h-[74px] rounded-[11px] border-[1.5px] border-[var(--chip-border)] bg-white px-[14px] py-[11px] text-[14px]"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </ChipSection>
-
-              {/* Section 5 — fee + notes (tone green per ref) */}
-              <ChipSection title="עמלה והערות" icon={Wallet} iconTone="green">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 px-1 pb-1 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="chip-fee" className={LABEL_CLS}>עמלת הנפקה (₪)</Label>
                     <Input
                       id="chip-fee"
                       value={fee}
                       onChange={(e) => { setDirty(true); setFee(e.target.value); }}
-                      disabled={submitting}
+                      disabled={disabledAll}
                       dir="ltr"
                       inputMode="decimal"
                       placeholder="0"
@@ -1061,12 +1003,11 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                     )}
                   </div>
                   <div className="flex items-center gap-[9px] sm:pt-8">
-                    {/* Ref checkbox — 22px, radius 7, GREEN when checked */}
                     <Checkbox
                       id="chip-fee-charged"
                       checked={feeCharged}
                       onCheckedChange={(v) => { setDirty(true); setFeeCharged(v === true); }}
-                      disabled={submitting}
+                      disabled={disabledAll}
                       className="h-[22px] w-[22px] rounded-[7px] border-[1.5px] border-[var(--chip-border-strong)] data-[state=checked]:border-[var(--chip-green)] data-[state=checked]:bg-[var(--chip-green)] data-[state=checked]:text-white"
                     />
                     <Label
@@ -1082,7 +1023,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                       id="chip-notes"
                       value={notes}
                       onChange={(e) => { setDirty(true); setNotes(e.target.value); }}
-                      disabled={submitting}
+                      disabled={disabledAll}
                       placeholder="הערות פנימיות על ההנפקה…"
                       className="min-h-[74px] rounded-[11px] border-[1.5px] border-[var(--chip-border)] px-[14px] py-[11px] text-[14px]"
                     />
@@ -1090,7 +1031,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                 </div>
               </ChipSection>
 
-              {/* Server-side 400/409/422 — inline error box (DESIGN.md error state) */}
+              {/* Server-side 400/409/422 — inline error box */}
               {serverError && (
                 <div className="rounded-[11px] border border-red-400 bg-red-50 p-4 text-sm font-semibold text-red-700">
                   {serverError}
@@ -1099,7 +1040,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
             </div>
           </div>
 
-          {/* Footer — ref `.mfoot`: primary at start, spacer, "סגור" at end */}
+          {/* Footer — primary at start (approved override of Chip2's order) */}
           <div className="flex flex-none items-center gap-3 border-t border-[var(--chip-border)] bg-[var(--chip-panel)] px-6 py-[15px]">
             <Button
               type="button"
@@ -1124,13 +1065,33 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
         </SheetContent>
       </Sheet>
 
-      {/* Dirty-guard — confirm exit without saving (Dialog is for confirmations) */}
+      {/* Saved-chip toggles — the SAME dialogs as the chips page (immediate) */}
+      <DeactivateChipDialog
+        chip={deactivateTarget}
+        open={!!deactivateTarget}
+        onOpenChange={(o: boolean) => { if (!o) setDeactivateTarget(null); }}
+        onDone={() => {
+          setDeactivateTarget(null);
+          afterToggle();
+        }}
+      />
+      <ReactivateChipDialog
+        chip={reactivateTarget}
+        open={!!reactivateTarget}
+        onOpenChange={(o: boolean) => { if (!o) setReactivateTarget(null); }}
+        onDone={() => {
+          setReactivateTarget(null);
+          afterToggle();
+        }}
+      />
+
+      {/* Dirty-guard — confirm exit without saving */}
       <AlertDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}>
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
             <AlertDialogTitle>האם לצאת ללא שמירה?</AlertDialogTitle>
             <AlertDialogDescription>
-              הפרטים שהוזנו יימחקו והצ׳יפ לא יונפק.
+              המספרים הממתינים יימחקו ולא יונפקו. צ׳יפים קיימים לא מושפעים.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1145,5 +1106,505 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   One holder block (Chip2 `.oblock`): numbered badge + name/role header +
+   optional remove (only while NO saved chips) → 2×2 role cards (with the
+   taken state) → snapshot name/phone → separator → add-row with per-number
+   type capture → tags (saved active / saved inactive / pending amber).
+   ──────────────────────────────────────────────────────────────────────────── */
+
+function HolderBlockCard({
+  block, index, residentCards, residentType, takenRoles, conflict, submitting,
+  invalid, phoneError,
+  onPatch, onSelectRole, onSelectOther, onAddNumber, onRemovePending,
+  onToggleSaved, onRemoveBlock,
+}: {
+  block: HolderBlock;
+  index: number;
+  residentCards: ContactResidentCard[];
+  residentType: string | null;
+  takenRoles: Map<ChipResidentRole, number>;
+  conflict: { blockKey: number; number: string } | null;
+  submitting: boolean;
+  invalid: string | null;
+  phoneError: string | null;
+  onPatch: (patch: Partial<HolderBlock>) => void;
+  onSelectRole: (card: ContactResidentCard) => void;
+  onSelectOther: () => void;
+  onAddNumber: () => void;
+  onRemovePending: (num: string) => void;
+  onToggleSaved: (chip: ChipWithHolder) => void;
+  onRemoveBlock: () => void;
+}) {
+  const hasSaved = block.saved.length > 0;
+  const roleLocked = hasSaved; // block identity is fixed by its saved chips
+  const firstName = block.holderName.trim().split(/\s+/)[0] || null;
+  const isEmpty =
+    block.role === null && block.pending.length === 0 && !hasSaved && block.numInput.trim() === '';
+
+  return (
+    <div
+      className={cn(
+        'relative rounded-[14px] border-[1.5px] p-4 shadow-[0_1px_0_rgba(124,77,255,0.04)]',
+        index > 0 && 'mt-[14px]',
+        isEmpty
+          ? 'border-dashed border-[var(--chip-border-strong)] bg-[var(--chip-panel-alt)]'
+          : 'border-[var(--chip-violet-border)] bg-[var(--chip-panel)]',
+      )}
+    >
+      {/* Block header (Chip2 `.ohead`) */}
+      <div className="mb-[14px] flex items-center gap-[10px]">
+        <span
+          className={cn(
+            'chip-num grid h-7 w-7 shrink-0 place-items-center rounded-[9px] text-[14px] font-semibold',
+            isEmpty
+              ? 'bg-[var(--chip-hover)] text-[var(--chip-ink-soft)]'
+              : 'bg-[var(--chip-violet-soft)] text-[var(--chip-violet-ink)]',
+          )}
+        >
+          {index + 1}
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col text-start">
+          <b className="truncate text-[14.5px] font-extrabold tracking-[-0.01em] text-[var(--chip-ink)]">
+            {block.holderName.trim() || 'בעל צ׳יפ חדש'}
+          </b>
+          <span className="text-[12px] font-semibold text-[var(--chip-ink-soft)]">
+            {block.role ? RESIDENT_ROLE_LABEL[block.role] : 'בחר תפקיד'}
+            {hasSaved && ` · ${block.saved.length} צ׳יפים קיימים`}
+          </span>
+        </div>
+        {/* Remove block — ONLY while it holds no saved chips (approved rule) */}
+        {!hasSaved && (
+          <button
+            type="button"
+            title="הסר בלוק"
+            aria-label="הסר בלוק"
+            disabled={submitting}
+            onClick={onRemoveBlock}
+            className="grid h-[30px] w-[30px] shrink-0 cursor-pointer place-items-center rounded-[8px] border border-[var(--chip-border-strong)] bg-[var(--chip-panel)] text-[var(--chip-ink-muted)] transition-colors hover:border-[var(--chip-red)] hover:bg-[var(--chip-red-soft)] hover:text-[var(--chip-red)]"
+          >
+            <X className="h-[15px] w-[15px]" strokeWidth={2} />
+          </button>
+        )}
+      </div>
+
+      {/* Role cards 2×2 (kept per approved override; taken-state per Chip2) */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {residentCards.map((card) => {
+          const livesHere = residentType === card.role;
+          const selected = block.role === card.role;
+          const takenBy = takenRoles.get(card.role);
+          const taken = takenBy !== undefined && takenBy !== block.key;
+          const lockedOut = roleLocked && !selected;
+
+          if (!card.exists && !taken && !lockedOut) {
+            return (
+              <div
+                key={card.role}
+                className="relative flex min-h-[92px] flex-col rounded-[13px] border-[1.5px] border-dashed border-[var(--chip-border)] bg-[var(--chip-panel)] p-[13px]"
+              >
+                <div className="mb-[7px] flex items-center gap-2">
+                  <span className="text-[14px] font-extrabold text-[var(--chip-ink-soft)]">
+                    {RESIDENT_ROLE_LABEL[card.role]}
+                  </span>
+                  {livesHere && (
+                    <span className="inline-flex h-5 items-center rounded-[6px] bg-[var(--chip-brand-soft)] px-2 text-[11px] font-bold text-[var(--chip-brand-ink)]">
+                      גר בדירה
+                    </span>
+                  )}
+                </div>
+                <span className="text-[12.5px] font-medium text-[var(--chip-ink-soft)]">
+                  לא הוזנו פרטים
+                </span>
+                <Link
+                  href="/contacts"
+                  className="mt-auto inline-flex items-center gap-1 pt-2 text-[12.5px] font-bold text-[var(--chip-brand)] hover:text-[var(--chip-brand-hover)]"
+                >
+                  השלם פרטים ›
+                </Link>
+              </div>
+            );
+          }
+
+          return (
+            <button
+              key={card.role}
+              type="button"
+              disabled={submitting || taken || lockedOut}
+              onClick={() => { if (card.exists) onSelectRole(card); }}
+              className={cn(
+                'relative flex min-h-[92px] flex-col rounded-[13px] border-[1.5px] p-[13px] text-start transition-all',
+                selected
+                  ? 'border-[var(--chip-brand)] bg-[var(--chip-brand-soft)] shadow-[0_0_0_3px_rgba(61,90,254,0.1)]'
+                  : taken || lockedOut
+                    ? 'cursor-not-allowed border-[var(--chip-border)] bg-[var(--chip-panel-alt)]'
+                    : 'border-[var(--chip-border)] bg-[var(--chip-panel)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)]',
+              )}
+            >
+              <span
+                className={cn(
+                  'absolute start-3 top-3 grid h-5 w-5 place-items-center rounded-full border-2 text-white transition-colors',
+                  selected
+                    ? 'border-[var(--chip-brand)] bg-[var(--chip-brand)]'
+                    : taken
+                      ? 'border-[var(--chip-border-strong)] bg-[var(--chip-border-strong)]'
+                      : 'border-[var(--chip-border-strong)]',
+                )}
+              >
+                <Check
+                  className={cn('h-3 w-3 transition-opacity', selected || taken ? 'opacity-100' : 'opacity-0')}
+                  strokeWidth={3.2}
+                />
+              </span>
+              <div className="mb-[7px] flex items-center gap-2 ps-7">
+                <span
+                  className={cn(
+                    'text-[14px] font-extrabold',
+                    taken || lockedOut ? 'text-[var(--chip-ink-soft)]' : 'text-[var(--chip-ink)]',
+                  )}
+                >
+                  {RESIDENT_ROLE_LABEL[card.role]}
+                </span>
+                {livesHere && !taken && (
+                  <span
+                    className={cn(
+                      'inline-flex h-5 items-center rounded-[6px] px-2 text-[11px] font-bold text-[var(--chip-brand-ink)]',
+                      selected ? 'bg-white' : 'bg-[var(--chip-brand-soft)]',
+                    )}
+                  >
+                    גר בדירה
+                  </span>
+                )}
+              </div>
+              {taken ? (
+                <span className="text-[12.5px] font-semibold text-[var(--chip-ink-soft)]">
+                  נבחר בבלוק אחר
+                </span>
+              ) : (
+                <>
+                  <span
+                    className={cn(
+                      'text-[13.5px] font-semibold',
+                      lockedOut ? 'text-[var(--chip-ink-soft)]' : 'text-[var(--chip-ink)]',
+                    )}
+                  >
+                    {card.name}
+                  </span>
+                  {card.phone && (
+                    <span className="chip-num mt-[2px] text-start text-[12.5px] text-[var(--chip-ink-muted)]">
+                      {card.phone}
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
+          );
+        })}
+
+        {/* "אחר" — selectable in ANY number of blocks (two cleaners = two blocks) */}
+        <button
+          type="button"
+          disabled={submitting || (roleLocked && block.role !== 'other')}
+          onClick={onSelectOther}
+          className={cn(
+            'relative flex min-h-[92px] flex-col rounded-[13px] border-[1.5px] p-[13px] text-start transition-all',
+            block.role === 'other'
+              ? 'border-[var(--chip-brand)] bg-[var(--chip-brand-soft)] shadow-[0_0_0_3px_rgba(61,90,254,0.1)]'
+              : roleLocked
+                ? 'cursor-not-allowed border-[var(--chip-border)] bg-[var(--chip-panel-alt)]'
+                : 'border-dashed border-[var(--chip-border)] bg-[var(--chip-panel)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)]',
+          )}
+        >
+          <span
+            className={cn(
+              'absolute start-3 top-3 grid h-5 w-5 place-items-center rounded-full border-2 text-white transition-colors',
+              block.role === 'other'
+                ? 'border-[var(--chip-brand)] bg-[var(--chip-brand)]'
+                : 'border-[var(--chip-border-strong)]',
+            )}
+          >
+            <Check
+              className={cn('h-3 w-3 transition-opacity', block.role === 'other' ? 'opacity-100' : 'opacity-0')}
+              strokeWidth={3.2}
+            />
+          </span>
+          <span className="mb-[7px] ps-7 text-[14px] font-extrabold text-[var(--chip-ink)]">אחר</span>
+          <span className="text-[12.5px] font-medium text-[var(--chip-ink-soft)]">
+            הזנה חופשית של שם וטלפון
+          </span>
+        </button>
+      </div>
+
+      {/* Snapshot name + phone (override applies to this block's chips only) */}
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor={`holder-name-${block.key}`} className={LABEL_CLS}>שם בעל הצ׳יפ</Label>
+          <Input
+            id={`holder-name-${block.key}`}
+            value={block.holderName}
+            onChange={(e) => onPatch({ holderName: e.target.value })}
+            disabled={submitting}
+            placeholder="שם מלא"
+            className={INPUT_CLS}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`holder-phone-${block.key}`} className={LABEL_CLS}>טלפון בעל הצ׳יפ</Label>
+          <Input
+            id={`holder-phone-${block.key}`}
+            value={block.holderPhone}
+            onChange={(e) => onPatch({ holderPhone: e.target.value })}
+            onBlur={() => onPatch({ phoneTouched: true })}
+            disabled={submitting}
+            dir="ltr"
+            inputMode="tel"
+            autoComplete="tel"
+            placeholder="052-1234567"
+            className={cn(
+              INPUT_CLS,
+              'chip-num',
+              phoneError &&
+                'border-red-400 bg-red-50 focus-visible:border-red-400 focus-visible:ring-red-200',
+            )}
+          />
+          {phoneError && (
+            <p className="text-right text-[12px] font-semibold text-red-500">⚠️ {phoneError}</p>
+          )}
+        </div>
+      </div>
+      {block.role && !isSnapshotRole(block.role) && (
+        <div className="mt-3">
+          <AmberNote>
+            שינוי השם או הטלפון כאן חל על הצ׳יפים של הבלוק הזה בלבד — מרשם הדיירים לא מתעדכן.
+          </AmberNote>
+        </div>
+      )}
+
+      {/* Separator (Chip2 `.sepline`) */}
+      <div className="my-[14px] h-px bg-[var(--chip-border)]" />
+
+      {/* Chip numbers of this person */}
+      <div className="mb-[9px] flex items-center gap-[6px] text-[13px] font-bold text-[var(--chip-ink-muted)]">
+        <span className="text-[var(--chip-brand)]">#</span>
+        {firstName ? `מספרי הצ׳יפ של ${firstName}` : 'מספרי צ׳יפ'}
+        <span className="font-medium text-[var(--chip-ink-soft)]">· עד {MAX_CHIPS_PER_GROUP} חדשים בשמירה</span>
+      </div>
+
+      {/* Add row: mono input + per-number type mini-selector + add (Chip2) */}
+      <div className="flex flex-wrap gap-[9px]">
+        <Input
+          value={block.numInput}
+          onChange={(e) => onPatch({ numInput: e.target.value, dupHint: null })}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onAddNumber();
+            }
+          }}
+          disabled={submitting || block.pending.length >= MAX_CHIPS_PER_GROUP}
+          dir="ltr"
+          placeholder="מספר צ׳יפ"
+          aria-label={`מספר צ׳יפ (בלוק ${index + 1})`}
+          className={cn(INPUT_CLS, 'chip-num h-[42px] min-w-[140px] flex-1')}
+        />
+        <div className="inline-flex shrink-0 gap-1 rounded-[10px] border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel-alt)] p-1">
+          {(['physical', 'app'] as const).map((t) => {
+            const TypeIcon = t === 'physical' ? CreditCard : Smartphone;
+            const on = block.numType === t;
+            return (
+              <button
+                key={t}
+                type="button"
+                disabled={submitting}
+                onClick={() => onPatch({ numType: t })}
+                className={cn(
+                  'inline-flex h-8 cursor-pointer items-center gap-[5px] rounded-[7px] px-[11px] text-[12.5px] font-bold transition-colors',
+                  on ? 'bg-[var(--chip-brand)] text-white' : 'bg-transparent text-[var(--chip-ink-muted)]',
+                )}
+              >
+                <TypeIcon className={cn('h-[13px] w-[13px]', on ? 'opacity-100' : 'opacity-60')} />
+                {CHIP_TYPE_LABEL[t]}
+              </button>
+            );
+          })}
+        </div>
+        <Button
+          type="button"
+          onClick={onAddNumber}
+          disabled={submitting || !block.numInput.trim() || block.pending.length >= MAX_CHIPS_PER_GROUP}
+          className="h-[42px] gap-[7px] rounded-[11px] bg-[var(--chip-brand)] px-4 text-[13.5px] font-bold text-white hover:bg-[var(--chip-brand-hover)]"
+        >
+          <Plus className="h-4 w-4" strokeWidth={2.6} />
+          הוסף
+        </Button>
+      </div>
+      {block.dupHint && (
+        <p className="mt-2 text-[12px] font-semibold text-red-500">⚠️ {block.dupHint}</p>
+      )}
+
+      {/* Tags: saved (toggle via dialogs) + pending (amber, X removes) */}
+      {block.saved.length > 0 || block.pending.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {block.saved.map((chip) => {
+            const active = chip.status === 'active';
+            const TypeIcon = chip.chip_type === 'physical' ? CreditCard : Smartphone;
+            return (
+              <span
+                key={chip.id}
+                className={cn(
+                  'inline-flex h-9 items-center gap-2 rounded-[11px] border-[1.5px] ps-3 pe-[5px]',
+                  active
+                    ? 'border-[var(--chip-green-border)] bg-[var(--chip-green-soft)]'
+                    : 'border-dashed border-[var(--chip-border-strong)] bg-[var(--chip-panel-alt)]',
+                )}
+              >
+                <span
+                  className={cn(
+                    'chip-num text-[13.5px] font-semibold tracking-[0.02em]',
+                    active
+                      ? 'text-[var(--chip-green-ink)]'
+                      : 'text-[var(--chip-ink-soft)] line-through decoration-[var(--chip-ink-ghost)]',
+                  )}
+                >
+                  {chip.chip_number}
+                </span>
+                <span
+                  className={cn(
+                    'inline-flex h-[21px] items-center gap-1 rounded-[6px] px-2 text-[10.5px] font-bold',
+                    active ? 'bg-white text-[var(--chip-green-ink)]' : 'bg-[var(--chip-hover)] text-[var(--chip-ink-soft)]',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'h-[6px] w-[6px] rounded-full',
+                      active ? 'bg-[var(--chip-green)]' : 'bg-[var(--chip-ink-ghost)]',
+                    )}
+                  />
+                  {active ? 'פעיל' : 'לא פעיל'}
+                </span>
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 border-s ps-2 text-[11px] font-bold',
+                    active
+                      ? 'border-[var(--chip-green-border)] text-[var(--chip-green-ink)]'
+                      : 'border-[var(--chip-border-strong)] text-[var(--chip-ink-soft)]',
+                  )}
+                >
+                  <TypeIcon className="h-[13px] w-[13px] opacity-75" />
+                  {CHIP_TYPE_LABEL[chip.chip_type]}
+                </span>
+                {/* Toggle — 30px visual, 44px hit area via padding-less grid +
+                    touch margin; opens the dialogs, NEVER silent */}
+                <button
+                  type="button"
+                  title={active ? 'השבת' : 'החזר לפעיל'}
+                  aria-label={active ? `השבת את ${chip.chip_number}` : `החזר לפעיל את ${chip.chip_number}`}
+                  disabled={submitting}
+                  onClick={() => onToggleSaved(chip)}
+                  className={cn(
+                    'grid h-[30px] w-[30px] cursor-pointer place-items-center rounded-[8px] border transition-colors',
+                    active
+                      ? 'border-[var(--chip-green-border)] bg-white text-[var(--chip-green-ink)] hover:border-[var(--chip-green)] hover:bg-[var(--chip-green)] hover:text-white'
+                      : 'border-[var(--chip-border-strong)] bg-white text-[var(--chip-ink-muted)] hover:border-[var(--chip-brand)] hover:bg-[var(--chip-brand)] hover:text-white',
+                  )}
+                >
+                  {active ? (
+                    <Power className="h-[14px] w-[14px]" strokeWidth={2.2} />
+                  ) : (
+                    <RotateCcw className="h-[14px] w-[14px]" strokeWidth={2.2} />
+                  )}
+                </button>
+              </span>
+            );
+          })}
+
+          {block.pending.map((p) => {
+            const isConflict =
+              conflict?.blockKey === block.key && conflict.number === p.number;
+            const TypeIcon = p.chip_type === 'physical' ? CreditCard : Smartphone;
+            return (
+              <span
+                key={p.number}
+                className={cn(
+                  'inline-flex h-9 items-center gap-2 rounded-[11px] border-[1.5px] border-dashed ps-3 pe-[5px]',
+                  isConflict
+                    ? 'border-[var(--chip-red)] bg-[var(--chip-red-soft)]'
+                    : 'border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)]',
+                )}
+              >
+                <span
+                  className={cn(
+                    'chip-num text-[13.5px] font-semibold tracking-[0.02em]',
+                    isConflict ? 'text-[var(--chip-red)]' : 'text-[var(--chip-amber-ink)]',
+                  )}
+                >
+                  {p.number}
+                </span>
+                <span
+                  className={cn(
+                    'inline-flex h-[21px] items-center gap-1 rounded-[6px] bg-white px-2 text-[10.5px] font-bold',
+                    isConflict ? 'text-[var(--chip-red)]' : 'text-[var(--chip-amber-ink)]',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'h-[6px] w-[6px] rounded-full',
+                      isConflict ? 'bg-[var(--chip-red)]' : 'bg-[var(--chip-amber)]',
+                    )}
+                  />
+                  {isConflict ? 'מספר תפוס' : 'ממתין להנפקה'}
+                </span>
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 border-s ps-2 text-[11px] font-bold',
+                    isConflict
+                      ? 'border-[var(--chip-red)]/40 text-[var(--chip-red)]'
+                      : 'border-[var(--chip-amber-border)] text-[var(--chip-amber-ink)]',
+                  )}
+                >
+                  <TypeIcon className="h-[13px] w-[13px] opacity-75" />
+                  {CHIP_TYPE_LABEL[p.chip_type]}
+                </span>
+                <button
+                  type="button"
+                  title="הסר (טרם נשמר)"
+                  aria-label={`הסר את המספר ${p.number} מהרשימה`}
+                  disabled={submitting}
+                  onClick={() => onRemovePending(p.number)}
+                  className={cn(
+                    'grid h-7 w-7 cursor-pointer place-items-center rounded-[8px] border bg-white transition-colors hover:border-[var(--chip-red)] hover:bg-[var(--chip-red)] hover:text-white',
+                    isConflict
+                      ? 'border-[var(--chip-red)] text-[var(--chip-red)]'
+                      : 'border-[var(--chip-amber-border)] text-[var(--chip-amber-ink)]',
+                  )}
+                >
+                  <X className="h-[14px] w-[14px]" strokeWidth={2.4} />
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      ) : (
+        !block.numInput.trim() && (
+          <div className="mt-3 rounded-[11px] border-[1.5px] border-dashed border-[var(--chip-border-strong)] p-[14px] text-center text-[12.5px] font-semibold text-[var(--chip-ink-soft)]">
+            עדיין לא נוספו מספרי צ׳יפ
+          </div>
+        )
+      )}
+
+      {/* Ref caption — the no-delete product rule, stated per block (Chip2) */}
+      <div className="mt-[10px] flex items-center gap-[6px] text-[11.5px] font-semibold text-[var(--chip-ink-soft)]">
+        <Info className="h-[13px] w-[13px] shrink-0" />
+        <span>צ׳יפ שהונפק לא נמחק — אפשר להשבית ולהחזיר לפעיל בכל עת.</span>
+      </div>
+
+      {/* Per-block validation hint (only when the block actually issues) */}
+      {invalid && (
+        <p className="mt-2 text-[12px] font-semibold text-red-500">⚠️ {invalid}</p>
+      )}
+    </div>
   );
 }
