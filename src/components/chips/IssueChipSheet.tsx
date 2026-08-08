@@ -1,19 +1,21 @@
 'use client';
 
-// Issue-chip side panel — DESIGN.md §12 Sheet shell + §28.2 CREATE header +
-// §28.7/§28.8 create-variant sections & fields. Flow: pick an apartment from
-// the contacts registry (async combobox) → pick the chip holder (resident
-// cards, snapshots editable per-chip) → chip type → 1-5 chip numbers → fee /
-// notes. Soft-limit (4 active chips per contact) surfaces an amber warning +
-// required override reason; server 409/422 render as an inline red box.
+// Issue-chip side panel — chips-skin (declared exception): the visual layer is
+// derived 1:1 from ref/proof/whatsapp-broadcast/Chip.{html,md} (the ref covers
+// exactly this window); the Sheet shell + dirty-guard + error states keep the
+// DESIGN.md structure. Flow (unchanged): pick an apartment from the contacts
+// registry (async combobox) → pick the chip holder (role cards 2×2, snapshots
+// editable per-chip) → chip type (segmented) → 1-5 chip numbers (add-row →
+// tags) → fee / notes. Soft-limit (4 active chips per contact) surfaces an
+// amber warning + required override reason; server 409/422 render inline.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import type { LucideIcon } from 'lucide-react';
 import {
-  AlertTriangle, Building2, Check, ChevronsUpDown, Hash, KeyRound,
-  Loader2, Plus, Search, Trash2, Users, Wallet, X,
+  AlertTriangle, Building2, Check, ChevronsUpDown, CreditCard, Hash, Info,
+  Loader2, Plus, Search, Smartphone, Users, Wallet, X,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
@@ -29,11 +31,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { validatePhone } from '@/lib/validation';
 import { cn } from '@/lib/utils';
-import { FIELD_LABEL } from '@/components/suppliers/SupplierField';
 import {
   APP_PLATFORMS, APP_PLATFORM_LABEL, CHIP_RESIDENT_ROLES, CHIP_TYPE_LABEL,
   RESIDENT_ROLE_LABEL, UNIT_TYPE_LABEL,
@@ -42,54 +42,71 @@ import type {
   AppPlatform, ChipResidentRole, ChipType, ContactResidentCard, ContactResidents,
 } from '@/lib/types/chips';
 
-// ── Shared field tokens (DESIGN.md §28.8) ──────────────────────────────────
+// ── Ref field tokens (Chip.md: input 44px, radius 11, border 1.5, focus ring) ─
 
 const INPUT_CLS =
-  'h-[42px] rounded-[10px] border-[#e2e8f0] px-[13px] text-[14px] text-[#0f172a] ' +
-  'focus-visible:border-[#2563eb] focus-visible:ring-[3px] focus-visible:ring-[#2563eb]/[0.12]';
+  'h-11 rounded-[11px] border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] px-[14px] text-[14.5px] text-[var(--chip-ink)] ' +
+  'placeholder:text-[var(--chip-ink-soft)] ' +
+  'focus-visible:border-[var(--chip-brand)] focus-visible:ring-4 focus-visible:ring-[rgba(61,90,254,0.12)]';
+
+const LABEL_CLS = 'flex items-center gap-1 text-[13px] font-bold text-[var(--chip-ink-muted)]';
 
 const SOFT_LIMIT = 4;
+const MAX_NUMBERS = 5;
 
-// ── Local section card (DESIGN.md §28.7 create-variant) ────────────────────
+// ── Section card (ref: white card, radius 16, head + divider, icon tile) ────
 
-type SectionTone = 'blue' | 'amber' | 'emerald' | 'slate' | 'violet';
+type SectionTone = 'blue' | 'violet' | 'amber' | 'green';
 
 const SECTION_TONE: Record<SectionTone, string> = {
-  blue: 'bg-[#e8f0ff] text-[#2563eb]',
-  amber: 'bg-[#fff3e6] text-[#ea8a18]',
-  emerald: 'bg-[#e7f7ee] text-[#16a34a]',
-  slate: 'bg-[#eef2f7] text-[#475569]',
-  violet: 'bg-[#eef2ff] text-[#4f46e5]',
+  blue: 'bg-[var(--chip-brand-soft)] text-[var(--chip-brand)]',
+  violet: 'bg-[var(--chip-violet-soft)] text-[var(--chip-violet)]',
+  amber: 'bg-[var(--chip-amber-soft)] text-[var(--chip-amber)]',
+  green: 'bg-[var(--chip-green-soft)] text-[var(--chip-green)]',
 };
 
 function ChipSection({
-  title, icon: Icon, iconTone = 'blue', children,
+  title, sub, icon: Icon, iconTone = 'blue', children,
 }: {
   title: string;
+  sub?: string;
   icon: LucideIcon;
   iconTone?: SectionTone;
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-[14px] border border-[#e7ebf1] bg-white px-5 py-[18px]">
-      <div className="mb-4 flex items-center gap-2.5">
+    <section className="overflow-hidden rounded-[16px] border border-[var(--chip-border)] bg-[var(--chip-panel)]">
+      <div className="flex items-center gap-[11px] border-b border-[var(--chip-border)] px-5 pb-[13px] pt-[15px]">
         <span
           className={cn(
-            'inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px]',
+            'grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[10px]',
             SECTION_TONE[iconTone],
           )}
         >
-          <Icon className="h-4 w-4" />
+          <Icon className="h-[19px] w-[19px]" strokeWidth={1.9} />
         </span>
-        <h2 className="text-base font-bold text-slate-900">{title}</h2>
+        <div className="flex-1 text-start">
+          <h2 className="text-[15.5px] font-extrabold tracking-[-0.01em] text-[var(--chip-ink)]">
+            {title}
+          </h2>
+          {sub && (
+            <div className="mt-0.5 text-[12.5px] font-medium text-[var(--chip-ink-soft)]">{sub}</div>
+          )}
+        </div>
       </div>
-      {children}
+      <div className="px-5 py-[18px]">{children}</div>
     </section>
   );
 }
 
-function SectionHint({ children }: { children: React.ReactNode }) {
-  return <p className="text-[12px] leading-5 text-slate-400">{children}</p>;
+/** Ref `.note` — amber inline note (snapshot scope, "לא נמחק" caption). */
+function AmberNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 rounded-[11px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] px-[13px] py-[11px] text-[12.5px] font-semibold leading-relaxed text-[var(--chip-amber-ink)]">
+      <Info className="mt-[1px] h-[15px] w-[15px] shrink-0" />
+      <span>{children}</span>
+    </div>
+  );
 }
 
 // ── Contact search item (GET /api/contacts/search) ─────────────────────────
@@ -102,13 +119,6 @@ interface ContactSearchItem {
   tenant_name: string | null;
   resident_type: string;
   needs_review: boolean;
-}
-
-// ── Chip-number rows keep a stable id so removal doesn't remap inputs ──────
-
-interface NumberRow {
-  id: number;
-  value: string;
 }
 
 interface IssueChipSheetProps {
@@ -138,11 +148,11 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
   const [holderPhone, setHolderPhone] = useState('');
   const [phoneTouched, setPhoneTouched] = useState(false);
 
-  // Chip type + numbers
+  // Chip type + numbers (ref pattern: add-row input → pending tags, up to 5)
   const [chipType, setChipType] = useState<ChipType>('physical');
   const [appPlatform, setAppPlatform] = useState<AppPlatform>('unknown');
-  const rowSeq = useRef(1);
-  const [rows, setRows] = useState<NumberRow[]>([{ id: 0, value: '' }]);
+  const [numInput, setNumInput] = useState('');
+  const [pendingNumbers, setPendingNumbers] = useState<string[]>([]);
 
   // Fee / notes / override
   const [fee, setFee] = useState('');
@@ -190,8 +200,8 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     setPhoneTouched(false);
     setChipType('physical');
     setAppPlatform('unknown');
-    rowSeq.current = 1;
-    setRows([{ id: 0, value: '' }]);
+    setNumInput('');
+    setPendingNumbers([]);
     setFee('');
     setFeeCharged(false);
     setNotes('');
@@ -277,10 +287,15 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
 
   // ── Derived validation ───────────────────────────────────────────────────
 
-  const filledNumbers = useMemo(
-    () => rows.map((r) => r.value.trim()).filter((v) => v !== ''),
-    [rows],
-  );
+  // The add-row remnant counts too — typing one number and submitting without
+  // clicking "הוסף מספר" still issues it (pre-redesign single-row behavior).
+  const filledNumbers = useMemo(() => {
+    const remnant = numInput.trim();
+    if (remnant && !pendingNumbers.includes(remnant)) {
+      return [...pendingNumbers, remnant];
+    }
+    return pendingNumbers;
+  }, [pendingNumbers, numInput]);
 
   const phoneError = useMemo(() => {
     if (!holderPhone.trim()) return null;
@@ -302,7 +317,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
   const canSubmit =
     !!contactId &&
     filledNumbers.length >= 1 &&
-    filledNumbers.length <= 5 &&
+    filledNumbers.length <= MAX_NUMBERS &&
     !phoneError &&
     !feeError &&
     (!overLimit || overrideReason.trim() !== '') &&
@@ -419,22 +434,24 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     setServerError(null);
   }
 
-  function setRowValue(id: number, value: string) {
+  /** Add the typed number as a pending tag (Enter or the button, ref UX). */
+  function addNumber() {
+    const v = numInput.trim();
+    if (!v) return;
+    if (pendingNumbers.length >= MAX_NUMBERS) return;
     setDirty(true);
     setServerError(null);
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, value } : r)));
+    if (!pendingNumbers.includes(v)) {
+      setPendingNumbers((prev) => [...prev, v]);
+    }
+    setNumInput('');
   }
 
-  function addRow() {
+  /** Remove a PENDING (not-yet-issued) number — nothing was persisted yet, so
+   *  this is a typo fix, not a chip deletion (issued chips are never deleted). */
+  function removePending(value: string) {
     setDirty(true);
-    setRows((prev) =>
-      prev.length >= 5 ? prev : [...prev, { id: rowSeq.current++, value: '' }],
-    );
-  }
-
-  function removeRow(id: number) {
-    setDirty(true);
-    setRows((prev) => (prev.length <= 1 ? prev : prev.filter((r) => r.id !== id)));
+    setPendingNumbers((prev) => prev.filter((n) => n !== value));
   }
 
   // ── Submit ───────────────────────────────────────────────────────────────
@@ -469,7 +486,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
       };
       if (!res.ok) {
         const msg = data.error ?? 'הנפקת הצ׳יפ נכשלה';
-        if (res.status === 409 || res.status === 422) setServerError(msg);
+        if (res.status === 400 || res.status === 409 || res.status === 422) setServerError(msg);
         else toast.error(msg);
         return;
       }
@@ -495,14 +512,16 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
           side="left"
           dir="rtl"
           showCloseButton={false}
-          className="w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
+          className="chips-skin w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-[var(--chip-panel)]"
         >
-          {/* Header — CREATE family (bright-blue horizontal gradient, §28.2) */}
-          <SheetHeader className="flex-none gap-2 bg-[linear-gradient(to_left,#142a63_0%,#1d4ed8_70%,#2563eb_100%)] px-[26px] py-[18px] text-white">
+          {/* Header — ref gradient (115deg, #2B3FB8 → #3D5AFE 62% → #5872FF) */}
+          <SheetHeader className="flex-none gap-2 bg-[image:var(--chip-header-gradient)] px-[28px] py-[22px] text-white">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
-                <SheetTitle className="text-[21px] font-extrabold text-white">הנפקת צ׳יפ</SheetTitle>
-                <p className="mt-[3px] text-[12.5px] font-medium text-[#c7dbff]/[0.78]">
+                <SheetTitle className="text-[21px] font-extrabold tracking-[-0.02em] text-white">
+                  הנפקת צ׳יפ
+                </SheetTitle>
+                <p className="mt-[4px] text-[13.5px] font-medium text-white/[0.82]">
                   בחר דירה, בעל צ׳יפ ומספרי צ׳יפ — עד 5 צ׳יפים בהנפקה אחת.
                 </p>
               </div>
@@ -511,29 +530,29 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                 onClick={requestClose}
                 aria-label="סגור"
                 disabled={submitting}
-                className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[11px] bg-white/[0.14] text-white transition-colors hover:bg-white/[0.26] disabled:opacity-60"
+                className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center rounded-[11px] border border-white/25 bg-white/12 text-white transition-colors hover:bg-white/22 disabled:opacity-60"
               >
-                <X className="h-[19px] w-[19px]" strokeWidth={2.2} />
+                <X className="h-[18px] w-[18px]" strokeWidth={2.4} />
               </button>
             </div>
           </SheetHeader>
 
-          {/* Body */}
-          <div className="flex-1 overflow-y-auto bg-[#eef1f6] p-[18px]">
-            <div className="space-y-[14px]">
-              {/* Section 1 — apartment / unit */}
+          {/* Body — ref `.mbody`: screen-bg behind white section cards */}
+          <div className="flex-1 overflow-y-auto bg-[var(--chip-bg)] p-[22px]">
+            <div className="mx-auto flex max-w-[820px] flex-col gap-[18px]">
+              {/* Section 1 — apartment / unit (tone blue) */}
               <ChipSection title="דירה / יחידה" icon={Building2} iconTone="blue">
-                <div className="space-y-1.5">
-                  <Label htmlFor="chip-contact" className={FIELD_LABEL}>
+                <div className="space-y-2">
+                  <Label htmlFor="chip-contact" className={LABEL_CLS}>
                     בחירת דירה
-                    <span className="text-red-500"> *</span>
+                    <span className="text-[var(--chip-red)]">*</span>
                   </Label>
                   {locked ? (
-                    <div className="flex min-h-[44px] items-center gap-2 rounded-[10px] border border-[#e7ebf1] bg-[#f8fafc] px-[13px] py-[10px] text-[14px] font-medium text-[#0f172a]">
-                      <Building2 className="h-4 w-4 shrink-0 text-slate-400" />
+                    <div className="flex min-h-11 items-center gap-2 rounded-[11px] border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel-alt)] px-[14px] py-[10px] text-[14.5px] font-semibold text-[var(--chip-ink)]">
+                      <Building2 className="h-4 w-4 shrink-0 text-[var(--chip-ink-soft)]" />
                       <span>
                         דירה{' '}
-                        <span dir="ltr" className="font-num tabular-nums">{contactLabel}</span>
+                        <span className="chip-num">{contactLabel}</span>
                       </span>
                     </div>
                   ) : (
@@ -552,26 +571,26 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                         id="chip-contact"
                         disabled={submitting}
                         className={cn(
-                          'flex w-full items-center justify-between gap-2 border bg-white text-start transition-colors',
+                          'flex w-full items-center justify-between gap-2 text-start font-semibold transition-colors',
                           INPUT_CLS,
                           'disabled:cursor-not-allowed disabled:opacity-50',
                         )}
                       >
-                        <span className={cn('truncate', contactId ? 'text-[#0f172a]' : 'text-ink-ghost')}>
+                        <span className={cn('truncate', contactId ? 'text-[var(--chip-ink)]' : 'text-[var(--chip-ink-ghost)]')}>
                           {contactId ? contactLabel : 'בחר דירה או יחידה…'}
                         </span>
-                        <ChevronsUpDown className="h-4 w-4 shrink-0 text-slate-400" />
+                        <ChevronsUpDown className="h-4 w-4 shrink-0 text-[var(--chip-ink-soft)]" />
                       </PopoverTrigger>
                       <PopoverContent
                         align="start"
                         sideOffset={6}
                         className="w-(--anchor-width) min-w-72 p-0"
                       >
-                        <div dir="rtl" className="flex flex-col">
-                          <div className="flex items-center gap-2 border-b border-slate-200 px-3">
+                        <div dir="rtl" className="chips-skin flex flex-col">
+                          <div className="flex items-center gap-2 border-b border-[var(--chip-border)] px-3">
                             {searching
-                              ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-400" />
-                              : <Search className="h-4 w-4 shrink-0 text-slate-400" />}
+                              ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--chip-ink-soft)]" />
+                              : <Search className="h-4 w-4 shrink-0 text-[var(--chip-ink-soft)]" />}
                             <input
                               autoFocus
                               value={query}
@@ -586,20 +605,20 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                                 }
                               }}
                               placeholder="מספר דירה או שם דייר…"
-                              className="h-10 w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-ink-ghost"
+                              className="h-10 w-full bg-transparent text-sm text-[var(--chip-ink)] outline-none placeholder:text-[var(--chip-ink-ghost)]"
                             />
                           </div>
                           <div className="max-h-64 overflow-y-auto p-1">
                             {query.trim().length < 1 ? (
-                              <p className="px-3 py-6 text-center text-sm text-slate-400">
+                              <p className="px-3 py-6 text-center text-sm text-[var(--chip-ink-soft)]">
                                 הקלד מספר דירה או שם דייר לחיפוש
                               </p>
                             ) : results.length === 0 ? (
                               searching ? (
-                                <p className="px-3 py-6 text-center text-sm text-slate-400">מחפש…</p>
+                                <p className="px-3 py-6 text-center text-sm text-[var(--chip-ink-soft)]">מחפש…</p>
                               ) : (
                                 <div className="space-y-1">
-                                  <p className="px-3 pb-1 pt-4 text-center text-sm text-slate-400">
+                                  <p className="px-3 pb-1 pt-4 text-center text-sm text-[var(--chip-ink-soft)]">
                                     לא נמצאו תוצאות
                                   </p>
                                   {/* Inline registry create — action row (min 44px touch target) */}
@@ -607,7 +626,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                                     type="button"
                                     onClick={() => void createApartmentFromQuery()}
                                     disabled={creating}
-                                    className="flex min-h-[44px] w-full items-center gap-2 rounded-md px-3 py-2 text-start text-sm font-semibold text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    className="flex min-h-11 w-full items-center gap-2 rounded-[9px] px-3 py-2 text-start text-sm font-bold text-[var(--chip-brand)] transition-colors hover:bg-[var(--chip-brand-soft)] disabled:cursor-not-allowed disabled:opacity-60"
                                   >
                                     {creating ? (
                                       <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
@@ -616,9 +635,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                                     )}
                                     <span className="min-w-0 flex-1">
                                       דירה{' '}
-                                      <span dir="ltr" className="font-num tabular-nums">
-                                        {query.trim()}
-                                      </span>{' '}
+                                      <span className="chip-num">{query.trim()}</span>{' '}
                                       לא קיימת במרשם — הוסף אותה
                                     </span>
                                   </button>
@@ -638,29 +655,31 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                                     type="button"
                                     onClick={() => pickContact(item)}
                                     className={cn(
-                                      'flex w-full items-center gap-2 rounded-md px-2 py-2 text-start text-sm transition-colors',
-                                      isSel ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-slate-50',
+                                      'flex w-full items-center gap-2 rounded-[9px] px-2 py-2 text-start text-sm transition-colors',
+                                      isSel
+                                        ? 'bg-[var(--chip-brand-soft)] text-[var(--chip-brand-ink)]'
+                                        : 'text-[var(--chip-ink-muted)] hover:bg-[var(--chip-hover)]',
                                     )}
                                   >
                                     <Check
                                       className={cn(
                                         'h-4 w-4 shrink-0',
-                                        isSel ? 'text-blue-600 opacity-100' : 'opacity-0',
+                                        isSel ? 'text-[var(--chip-brand)] opacity-100' : 'opacity-0',
                                       )}
                                     />
-                                    <span dir="ltr" className="font-num font-bold tabular-nums text-slate-900">
+                                    <span className="chip-num font-bold text-[var(--chip-ink)]">
                                       {item.apartment_number}
                                     </span>
-                                    <span className="min-w-0 flex-1 truncate text-slate-600">
+                                    <span className="min-w-0 flex-1 truncate">
                                       {item.owner_name || item.tenant_name || '—'}
                                     </span>
                                     {item.unit_type !== 'apartment' && (
-                                      <span className="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                                      <span className="inline-flex shrink-0 items-center rounded-[6px] bg-[var(--chip-hover)] px-2 py-0.5 text-[11px] font-bold text-[var(--chip-ink-muted)]">
                                         {UNIT_TYPE_LABEL[item.unit_type] ?? item.unit_type}
                                       </span>
                                     )}
                                     {item.needs_review && (
-                                      <span className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                                      <span className="inline-flex shrink-0 items-center rounded-[6px] bg-[var(--chip-amber-soft)] px-2 py-0.5 text-[11px] font-bold text-[var(--chip-amber-ink)]">
                                         לבדיקה
                                       </span>
                                     )}
@@ -676,14 +695,19 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                 </div>
               </ChipSection>
 
-              {/* Section 2 — chip holder */}
+              {/* Section 2 — chip holder (tone violet, role cards 2×2 per ref) */}
               {contactId && (
-                <ChipSection title="בעל הצ׳יפ" icon={Users} iconTone="violet">
+                <ChipSection
+                  title="בעל הצ׳יפ"
+                  sub="בחר את מקבל הצ׳יפ מתוך מרשם הדיירים"
+                  icon={Users}
+                  iconTone="violet"
+                >
                   <div className="space-y-4">
                     {residentsLoading ? (
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div className="h-20 animate-pulse rounded-[12px] bg-muted/60" />
-                        <div className="h-20 animate-pulse rounded-[12px] bg-muted/60" />
+                        <div className="h-[92px] animate-pulse rounded-[13px] bg-[var(--chip-hover)]" />
+                        <div className="h-[92px] animate-pulse rounded-[13px] bg-[var(--chip-hover)]" />
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -691,27 +715,30 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                           const livesHere = residents?.resident_type === card.role;
                           const selected = role === card.role;
                           if (!card.exists) {
+                            // Empty registry slot — dashed card + "השלם פרטים ›" (ref)
                             return (
                               <div
                                 key={card.role}
-                                className="flex flex-col gap-1 rounded-[12px] border border-dashed border-slate-200 bg-slate-50/60 p-4"
+                                className="relative flex min-h-[92px] flex-col rounded-[13px] border-[1.5px] border-dashed border-[var(--chip-border)] bg-[var(--chip-panel)] p-[13px]"
                               >
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-sm font-bold text-slate-400">
+                                <div className="mb-[7px] flex items-center gap-2">
+                                  <span className="text-[14px] font-extrabold text-[var(--chip-ink-soft)]">
                                     {RESIDENT_ROLE_LABEL[card.role]}
                                   </span>
                                   {livesHere && (
-                                    <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                                    <span className="inline-flex h-5 items-center rounded-[6px] bg-[var(--chip-brand-soft)] px-2 text-[11px] font-bold text-[var(--chip-brand-ink)]">
                                       גר בדירה
                                     </span>
                                   )}
                                 </div>
-                                <span className="text-sm text-slate-400">לא הוזנו פרטים</span>
+                                <span className="text-[12.5px] font-medium text-[var(--chip-ink-soft)]">
+                                  לא הוזנו פרטים
+                                </span>
                                 <Link
                                   href="/contacts"
-                                  className="text-sm font-semibold text-blue-600 hover:text-blue-700"
+                                  className="mt-auto inline-flex items-center gap-1 pt-2 text-[12.5px] font-bold text-[var(--chip-brand)] hover:text-[var(--chip-brand-hover)]"
                                 >
-                                  השלם פרטים
+                                  השלם פרטים ›
                                 </Link>
                               </div>
                             );
@@ -723,53 +750,89 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                               disabled={submitting}
                               onClick={() => selectResidentCard(card)}
                               className={cn(
-                                'flex flex-col gap-1 rounded-[12px] border p-4 text-start transition-colors',
+                                'relative flex min-h-[92px] flex-col rounded-[13px] border-[1.5px] p-[13px] text-start transition-all',
                                 selected
-                                  ? 'border-blue-500 bg-blue-50'
-                                  : 'border-slate-200 bg-white hover:bg-slate-50',
+                                  ? 'border-[var(--chip-brand)] bg-[var(--chip-brand-soft)] shadow-[0_0_0_3px_rgba(61,90,254,0.1)]'
+                                  : 'border-[var(--chip-border)] bg-[var(--chip-panel)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)]',
                               )}
                             >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-sm font-bold text-slate-900">
+                              {/* ✓ circle — ref `.rcheck` (inline-start corner) */}
+                              <span
+                                className={cn(
+                                  'absolute start-3 top-3 grid h-5 w-5 place-items-center rounded-full border-2 text-white transition-colors',
+                                  selected
+                                    ? 'border-[var(--chip-brand)] bg-[var(--chip-brand)]'
+                                    : 'border-[var(--chip-border-strong)]',
+                                )}
+                              >
+                                <Check
+                                  className={cn('h-3 w-3 transition-opacity', selected ? 'opacity-100' : 'opacity-0')}
+                                  strokeWidth={3.2}
+                                />
+                              </span>
+                              <div className="mb-[7px] flex items-center gap-2 pe-7">
+                                <span className="text-[14px] font-extrabold text-[var(--chip-ink)]">
                                   {RESIDENT_ROLE_LABEL[card.role]}
                                 </span>
                                 {livesHere && (
-                                  <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                                  <span
+                                    className={cn(
+                                      'inline-flex h-5 items-center rounded-[6px] px-2 text-[11px] font-bold text-[var(--chip-brand-ink)]',
+                                      selected ? 'bg-white' : 'bg-[var(--chip-brand-soft)]',
+                                    )}
+                                  >
                                     גר בדירה
                                   </span>
                                 )}
                               </div>
-                              <span className="text-sm font-medium text-slate-700">{card.name}</span>
+                              <span className="text-[13.5px] font-semibold text-[var(--chip-ink)]">
+                                {card.name}
+                              </span>
                               {card.phone && (
-                                <span dir="ltr" className="font-num text-end text-sm tabular-nums text-slate-500">
+                                <span className="chip-num mt-[2px] text-start text-[12.5px] text-[var(--chip-ink-muted)]">
                                   {card.phone}
                                 </span>
                               )}
                             </button>
                           );
                         })}
-                        {/* 4th card — free entry */}
+                        {/* 4th card — free entry (ref: "אחר") */}
                         <button
                           type="button"
                           disabled={submitting}
                           onClick={selectOther}
                           className={cn(
-                            'flex flex-col gap-1 rounded-[12px] border p-4 text-start transition-colors',
+                            'relative flex min-h-[92px] flex-col rounded-[13px] border-[1.5px] p-[13px] text-start transition-all',
                             role === 'other'
-                              ? 'border-blue-500 bg-blue-50'
-                              : 'border-slate-200 bg-white hover:bg-slate-50',
+                              ? 'border-[var(--chip-brand)] bg-[var(--chip-brand-soft)] shadow-[0_0_0_3px_rgba(61,90,254,0.1)]'
+                              : 'border-dashed border-[var(--chip-border)] bg-[var(--chip-panel)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)]',
                           )}
                         >
-                          <span className="text-sm font-bold text-slate-900">אחר</span>
-                          <span className="text-sm text-slate-500">הזנה חופשית של שם וטלפון</span>
+                          <span
+                            className={cn(
+                              'absolute start-3 top-3 grid h-5 w-5 place-items-center rounded-full border-2 text-white transition-colors',
+                              role === 'other'
+                                ? 'border-[var(--chip-brand)] bg-[var(--chip-brand)]'
+                                : 'border-[var(--chip-border-strong)]',
+                            )}
+                          >
+                            <Check
+                              className={cn('h-3 w-3 transition-opacity', role === 'other' ? 'opacity-100' : 'opacity-0')}
+                              strokeWidth={3.2}
+                            />
+                          </span>
+                          <span className="mb-[7px] pe-7 text-[14px] font-extrabold text-[var(--chip-ink)]">אחר</span>
+                          <span className="text-[12.5px] font-medium text-[var(--chip-ink-soft)]">
+                            הזנה חופשית של שם וטלפון
+                          </span>
                         </button>
                       </div>
                     )}
 
                     {/* Holder snapshot — editable, applies to this chip only */}
-                    <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="chip-holder-name" className={FIELD_LABEL}>שם בעל הצ׳יפ</Label>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="chip-holder-name" className={LABEL_CLS}>שם בעל הצ׳יפ</Label>
                         <Input
                           id="chip-holder-name"
                           value={holderName}
@@ -779,8 +842,8 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                           className={INPUT_CLS}
                         />
                       </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="chip-holder-phone" className={FIELD_LABEL}>טלפון בעל הצ׳יפ</Label>
+                      <div className="space-y-2">
+                        <Label htmlFor="chip-holder-phone" className={LABEL_CLS}>טלפון בעל הצ׳יפ</Label>
                         <Input
                           id="chip-holder-phone"
                           value={holderPhone}
@@ -793,7 +856,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                           placeholder="052-1234567"
                           className={cn(
                             INPUT_CLS,
-                            'font-num tabular-nums',
+                            'chip-num',
                             phoneTouched && phoneError &&
                               'border-red-400 bg-red-50 focus-visible:border-red-400 focus-visible:ring-red-200',
                           )}
@@ -803,37 +866,42 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                         )}
                       </div>
                     </div>
-                    <SectionHint>
+                    <AmberNote>
                       שינוי השם או הטלפון כאן חל על הצ׳יפ הזה בלבד — מרשם הדיירים לא מתעדכן.
-                    </SectionHint>
+                    </AmberNote>
                   </div>
                 </ChipSection>
               )}
 
-              {/* Section 3 — chip type */}
-              <ChipSection title="סוג צ׳יפ" icon={KeyRound} iconTone="amber">
+              {/* Section 3 — chip type (tone amber, ref segmented) */}
+              <ChipSection title="סוג צ׳יפ" icon={CreditCard} iconTone="amber">
                 <div className="space-y-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {(['physical', 'app'] as const).map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        disabled={submitting}
-                        onClick={() => { setDirty(true); setChipType(t); }}
-                        className={cn(
-                          'inline-flex h-10 items-center rounded-full px-5 text-[13.5px] transition-colors',
-                          chipType === t
-                            ? 'bg-[#2563eb] font-bold text-white'
-                            : 'border border-[#e2e8f0] bg-white font-semibold text-[#475569] hover:bg-slate-50',
-                        )}
-                      >
-                        {CHIP_TYPE_LABEL[t]}
-                      </button>
-                    ))}
+                  <div className="inline-flex gap-[6px] rounded-[13px] border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel-alt)] p-[5px]">
+                    {(['physical', 'app'] as const).map((t) => {
+                      const TypeIcon = t === 'physical' ? CreditCard : Smartphone;
+                      const on = chipType === t;
+                      return (
+                        <button
+                          key={t}
+                          type="button"
+                          disabled={submitting}
+                          onClick={() => { setDirty(true); setChipType(t); }}
+                          className={cn(
+                            'inline-flex h-10 cursor-pointer items-center gap-2 rounded-[9px] px-[22px] text-[14px] font-bold transition-all',
+                            on
+                              ? 'bg-[var(--chip-brand)] text-white shadow-[0_3px_10px_-3px_rgba(61,90,254,0.5)]'
+                              : 'bg-transparent text-[var(--chip-ink-muted)]',
+                          )}
+                        >
+                          <TypeIcon className={cn('h-4 w-4', on ? 'opacity-100' : 'opacity-70')} />
+                          {CHIP_TYPE_LABEL[t]}
+                        </button>
+                      );
+                    })}
                   </div>
                   {chipType === 'app' && (
-                    <div className="space-y-1.5 sm:max-w-xs">
-                      <Label className={FIELD_LABEL}>פלטפורמה</Label>
+                    <div className="space-y-2 sm:max-w-xs">
+                      <Label className={LABEL_CLS}>פלטפורמה</Label>
                       <Select
                         value={appPlatform}
                         onValueChange={(v) => {
@@ -844,7 +912,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                         }}
                         disabled={submitting}
                       >
-                        <SelectTrigger className="w-full rounded-[10px] border-[#e2e8f0] data-[size=default]:h-[42px]">
+                        <SelectTrigger className="w-full rounded-[11px] border-[1.5px] border-[var(--chip-border)] font-semibold data-[size=default]:h-11">
                           <SelectValue placeholder="בחר פלטפורמה…">
                             {(value: string | null) =>
                               value ? APP_PLATFORM_LABEL[value as AppPlatform] : null}
@@ -861,58 +929,98 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                 </div>
               </ChipSection>
 
-              {/* Section 4 — chip numbers */}
-              <ChipSection title="מספרי צ׳יפ" icon={Hash} iconTone="slate">
-                <div className="space-y-2.5">
-                  {rows.map((row, i) => (
-                    <div key={row.id} className="flex items-center gap-2">
-                      <Input
-                        value={row.value}
-                        onChange={(e) => setRowValue(row.id, e.target.value)}
-                        disabled={submitting}
-                        dir="ltr"
-                        placeholder="מספר צ׳יפ"
-                        aria-label={`מספר צ׳יפ ${i + 1}`}
-                        className={cn(INPUT_CLS, 'flex-1 font-num tabular-nums')}
-                      />
-                      {rows.length > 1 && (
-                        <button
-                          type="button"
-                          aria-label="הסר שורה"
-                          disabled={submitting}
-                          onClick={() => removeRow(row.id)}
-                          className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-[10px] border border-[#e2e8f0] text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+              {/* Section 4 — chip numbers (tone blue; ref core: add-row → tags) */}
+              <ChipSection
+                title="מספרי צ׳יפ"
+                sub="עד 5 צ׳יפים בהנפקה אחת"
+                icon={Hash}
+                iconTone="blue"
+              >
+                <div className="space-y-[14px]">
+                  {/* Add row — mono input + brand button, Enter adds (ref) */}
+                  <div className="flex gap-[10px]">
+                    <Input
+                      value={numInput}
+                      onChange={(e) => { setDirty(true); setServerError(null); setNumInput(e.target.value); }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addNumber();
+                        }
+                      }}
+                      disabled={submitting || pendingNumbers.length >= MAX_NUMBERS}
+                      dir="ltr"
+                      placeholder="מספר צ׳יפ"
+                      aria-label="מספר צ׳יפ"
+                      className={cn(INPUT_CLS, 'chip-num flex-1')}
+                    />
+                    <Button
+                      type="button"
+                      onClick={addNumber}
+                      disabled={submitting || !numInput.trim() || pendingNumbers.length >= MAX_NUMBERS}
+                      className="h-11 gap-2 rounded-[11px] bg-[var(--chip-brand)] px-[18px] text-[14px] font-bold text-white hover:bg-[var(--chip-brand-hover)]"
+                    >
+                      <Plus className="h-[17px] w-[17px]" strokeWidth={2.6} />
+                      הוסף מספר
+                    </Button>
+                  </div>
+
+                  {/* Pending tags (ref `.pchip` anatomy — green active tag).
+                      Removal here is a typo fix on a NOT-YET-ISSUED number. */}
+                  {pendingNumbers.length > 0 ? (
+                    <div className="flex flex-wrap gap-[9px]">
+                      {pendingNumbers.map((num) => (
+                        <span
+                          key={num}
+                          className="inline-flex h-[38px] items-center gap-[9px] rounded-[11px] border-[1.5px] border-[var(--chip-green-border)] bg-[var(--chip-green-soft)] ps-[13px] pe-[6px]"
                         >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
+                          <span className="chip-num text-[14px] font-semibold tracking-[0.02em] text-[var(--chip-green-ink)]">
+                            {num}
+                          </span>
+                          <span className="inline-flex h-[22px] items-center gap-1 rounded-[6px] bg-white px-2 text-[11px] font-bold text-[var(--chip-green-ink)]">
+                            <span className="h-[6px] w-[6px] rounded-full bg-[var(--chip-green)]" />
+                            להנפקה
+                          </span>
+                          <button
+                            type="button"
+                            aria-label={`הסר את המספר ${num} מהרשימה`}
+                            disabled={submitting}
+                            onClick={() => removePending(num)}
+                            className="grid h-[30px] w-[30px] cursor-pointer place-items-center rounded-[8px] border border-[var(--chip-green-border)] bg-white text-[var(--chip-green-ink)] transition-colors hover:border-[var(--chip-red)] hover:bg-[var(--chip-red-soft)] hover:text-[var(--chip-red)]"
+                          >
+                            <X className="h-[15px] w-[15px]" strokeWidth={2.2} />
+                          </button>
+                        </span>
+                      ))}
                     </div>
-                  ))}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={addRow}
-                    disabled={rows.length >= 5 || submitting}
-                    className="gap-2"
-                  >
-                    <Plus className="h-4 w-4" />
-                    הוסף מספר
-                  </Button>
+                  ) : (
+                    !numInput.trim() && (
+                      <div className="rounded-[12px] border-[1.5px] border-dashed border-[var(--chip-border-strong)] p-4 text-center text-[13px] font-semibold text-[var(--chip-ink-soft)]">
+                        עדיין לא נוספו מספרי צ׳יפ
+                      </div>
+                    )
+                  )}
+
+                  {/* Ref caption — the no-delete product rule, stated in the UI */}
+                  <div className="flex items-center gap-[6px] text-[12px] font-semibold text-[var(--chip-ink-soft)]">
+                    <Info className="h-[14px] w-[14px] shrink-0" />
+                    <span>צ׳יפ שהונפק לא נמחק — אפשר להשבית ולהחזיר לפעיל בכל עת.</span>
+                  </div>
 
                   {/* Soft-limit warning + required override reason */}
                   {overLimit && (
-                    <div className="space-y-2.5 rounded-[10px] border border-amber-200 bg-amber-50 p-4">
-                      <div className="flex items-start gap-2 text-sm font-semibold text-amber-900">
-                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                    <div className="space-y-2.5 rounded-[11px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] p-4">
+                      <div className="flex items-start gap-2 text-sm font-semibold text-[var(--chip-amber-ink)]">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                         <span>
                           לדירה זו כבר {activeCount} צ׳יפים פעילים — הנפקה זו חורגת מהמגבלה
                           של {SOFT_LIMIT} צ׳יפים לדירה.
                         </span>
                       </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="chip-override" className={FIELD_LABEL}>
+                      <div className="space-y-2">
+                        <Label htmlFor="chip-override" className={LABEL_CLS}>
                           סיבת חריגה
-                          <span className="text-red-500"> *</span>
+                          <span className="text-[var(--chip-red)]">*</span>
                         </Label>
                         <Textarea
                           id="chip-override"
@@ -920,7 +1028,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                           onChange={(e) => { setDirty(true); setOverrideReason(e.target.value); }}
                           disabled={submitting}
                           placeholder="לדוגמה: משפחה מורחבת, עובד סיעודי…"
-                          className="min-h-[74px] rounded-[10px] border-[#e2e8f0] bg-white px-[13px] py-[11px] text-[14px]"
+                          className="min-h-[74px] rounded-[11px] border-[1.5px] border-[var(--chip-border)] bg-white px-[14px] py-[11px] text-[14px]"
                         />
                       </div>
                     </div>
@@ -928,11 +1036,11 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                 </div>
               </ChipSection>
 
-              {/* Section 5 — fee + notes */}
-              <ChipSection title="עמלה והערות" icon={Wallet} iconTone="emerald">
-                <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="chip-fee" className={FIELD_LABEL}>עמלת הנפקה (₪)</Label>
+              {/* Section 5 — fee + notes (tone green per ref) */}
+              <ChipSection title="עמלה והערות" icon={Wallet} iconTone="green">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="chip-fee" className={LABEL_CLS}>עמלת הנפקה (₪)</Label>
                     <Input
                       id="chip-fee"
                       value={fee}
@@ -943,7 +1051,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                       placeholder="0"
                       className={cn(
                         INPUT_CLS,
-                        'font-num tabular-nums',
+                        'chip-num',
                         feeError &&
                           'border-red-400 bg-red-50 focus-visible:border-red-400 focus-visible:ring-red-200',
                       )}
@@ -952,55 +1060,71 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                       <p className="text-right text-[12px] font-semibold text-red-500">⚠️ {feeError}</p>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 sm:pt-7">
+                  <div className="flex items-center gap-[9px] sm:pt-8">
+                    {/* Ref checkbox — 22px, radius 7, GREEN when checked */}
                     <Checkbox
                       id="chip-fee-charged"
                       checked={feeCharged}
                       onCheckedChange={(v) => { setDirty(true); setFeeCharged(v === true); }}
                       disabled={submitting}
+                      className="h-[22px] w-[22px] rounded-[7px] border-[1.5px] border-[var(--chip-border-strong)] data-[state=checked]:border-[var(--chip-green)] data-[state=checked]:bg-[var(--chip-green)] data-[state=checked]:text-white"
                     />
                     <Label
                       htmlFor="chip-fee-charged"
-                      className="cursor-pointer text-sm font-medium text-slate-700"
+                      className="cursor-pointer select-none text-[14px] font-semibold text-[var(--chip-ink)]"
                     >
                       החיוב בוצע
                     </Label>
                   </div>
-                  <div className="space-y-1.5 sm:col-span-2">
-                    <Label htmlFor="chip-notes" className={FIELD_LABEL}>הערה</Label>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label htmlFor="chip-notes" className={LABEL_CLS}>הערה</Label>
                     <Textarea
                       id="chip-notes"
                       value={notes}
                       onChange={(e) => { setDirty(true); setNotes(e.target.value); }}
                       disabled={submitting}
                       placeholder="הערות פנימיות על ההנפקה…"
-                      className="min-h-[74px] rounded-[10px] border-[#e2e8f0] px-[13px] py-[11px] text-[14px]"
+                      className="min-h-[74px] rounded-[11px] border-[1.5px] border-[var(--chip-border)] px-[14px] py-[11px] text-[14px]"
                     />
                   </div>
                 </div>
               </ChipSection>
 
-              {/* Server-side 409/422 — inline error box */}
+              {/* Server-side 400/409/422 — inline error box (DESIGN.md error state) */}
               {serverError && (
-                <div className="rounded-[10px] border border-red-400 bg-red-50 p-4 text-sm font-semibold text-red-700">
+                <div className="rounded-[11px] border border-red-400 bg-red-50 p-4 text-sm font-semibold text-red-700">
                   {serverError}
                 </div>
               )}
             </div>
           </div>
 
-          {/* Footer */}
-          <PanelFooter
-            onClose={requestClose}
-            onSave={handleSubmit}
-            saveDisabled={!canSubmit}
-            saveLabel={submitting ? 'מנפיק…' : 'הנפק צ׳יפ'}
-            saveClassName="bg-[#2563eb] text-white hover:bg-[#1d4ed8] shadow-[0_6px_16px_rgba(37,99,235,0.28)]"
-          />
+          {/* Footer — ref `.mfoot`: primary at start, spacer, "סגור" at end */}
+          <div className="flex flex-none items-center gap-3 border-t border-[var(--chip-border)] bg-[var(--chip-panel)] px-6 py-[15px]">
+            <Button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!canSubmit}
+              className="h-[46px] gap-2 rounded-[11px] bg-[var(--chip-brand)] px-[26px] text-[15px] font-bold text-white hover:bg-[var(--chip-brand-hover)] disabled:opacity-50"
+            >
+              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              {submitting ? 'מנפיק…' : 'הנפק צ׳יפ'}
+            </Button>
+            <span className="flex-1" />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={requestClose}
+              disabled={submitting}
+              className="h-[46px] rounded-[11px] border-[1.5px] border-[var(--chip-border-strong)] bg-[var(--chip-panel)] px-[22px] text-[14px] font-bold text-[var(--chip-ink)] hover:bg-[var(--chip-hover)]"
+            >
+              סגור
+            </Button>
+          </div>
         </SheetContent>
       </Sheet>
 
-      {/* Dirty-guard — confirm exit without saving */}
+      {/* Dirty-guard — confirm exit without saving (Dialog is for confirmations) */}
       <AlertDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}>
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>

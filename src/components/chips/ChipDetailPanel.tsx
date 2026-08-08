@@ -31,12 +31,13 @@ import {
   CHIP_TYPE_LABEL, RESIDENT_ROLE_LABEL, DEACTIVATION_REASON_LABEL,
   CHIP_EVENT_LABEL, CHIP_RESIDENT_ROLES, APP_PLATFORMS, APP_PLATFORM_LABEL,
 } from '@/lib/constants/chips';
+import { resolveChipHolder } from '@/lib/chips/holder';
 import type {
   Chip, ChipEvent, ChipEventType, ChipStatus, ChipResidentRole,
-  ChipDeactivationReason, AppPlatform,
+  ChipDeactivationReason, ChipWithHolder, AppPlatform,
 } from '@/lib/types/chips';
 
-// Sentinel for "no role" — base-ui Select needs a non-empty value.
+// Sentinel for "no platform" — base-ui Select needs a non-empty value.
 const NONE = '__none__';
 
 // DESIGN.md §28.9 status pill — active green, inactive rose.
@@ -54,13 +55,16 @@ interface Props {
   onRequestDeactivate: (chip: Chip) => void;
   onRequestReactivate: (chip: Chip) => void;
   onRequestReissue: (chip: Chip) => void;
+  /** Open the holder view (all chips of this chip's holder). */
+  onOpenHolder: (chip: ChipWithHolder) => void;
 }
 
 // Editable subset ONLY — chip_number/status/contact_id are never editable here.
+// resident_role is NOT NULL since 074 — the form can change it but never clear it.
 interface FormState {
   holder_name: string;
   holder_phone: string;
-  resident_role: ChipResidentRole | null;
+  resident_role: ChipResidentRole;
   app_platform: AppPlatform | null;
   issuance_fee: string;
   fee_charged: boolean;
@@ -106,10 +110,10 @@ function formatFee(value: number | null): string | null {
 
 export function ChipDetailPanel({
   chipId, open, onOpenChange, canEdit, onChanged,
-  onRequestDeactivate, onRequestReactivate, onRequestReissue,
+  onRequestDeactivate, onRequestReactivate, onRequestReissue, onOpenHolder,
 }: Props) {
   const router = useRouter();
-  const [chip, setChip] = useState<Chip | null>(null);
+  const [chip, setChip] = useState<ChipWithHolder | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,7 +145,7 @@ export function ChipDetailPanel({
     setLoading(true); setError(null); setEditing(false); setForm(null); setTouched({});
     fetch(`/api/chips/${chipId}`, { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((data: { chip: Chip }) => { if (!cancelled) setChip(data.chip); })
+      .then((data: { chip: ChipWithHolder }) => { if (!cancelled) setChip(data.chip); })
       .catch((err: Error) => { if (!cancelled) setError(err.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -233,7 +237,7 @@ export function ChipDetailPanel({
         credentials: 'include',
         body: JSON.stringify(payload),
       });
-      const data = (await r.json().catch(() => ({}))) as { chip?: Chip; error?: string };
+      const data = (await r.json().catch(() => ({}))) as { chip?: ChipWithHolder; error?: string };
       if (!r.ok || !data.chip) throw new Error(data.error ?? 'שמירה נכשלה');
       setChip(data.chip);
       setForm(null);
@@ -259,7 +263,7 @@ export function ChipDetailPanel({
         method: 'POST',
         credentials: 'include',
       });
-      const data = (await r.json().catch(() => ({}))) as { chip?: Chip; error?: string };
+      const data = (await r.json().catch(() => ({}))) as { chip?: ChipWithHolder; error?: string };
       if (!r.ok || !data.chip) throw new Error(data.error ?? 'העדכון נכשל');
       setChip(data.chip);
       toast.success('עודכן');
@@ -282,10 +286,10 @@ export function ChipDetailPanel({
           side="left"
           dir="rtl"
           showCloseButton={false}
-          className="w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
+          className="chips-skin w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-[var(--chip-panel)]"
         >
-          {/* Header — DETAIL family (navy diagonal gradient, DESIGN.md §28.2) */}
-          <SheetHeader className="flex-none gap-2 bg-[linear-gradient(120deg,#0e1f4d_0%,#16308a_55%,#1d4ed8_100%)] px-8 py-5 text-white">
+          {/* Header — ref gradient (chips-skin declared exception) */}
+          <SheetHeader className="flex-none gap-2 bg-[image:var(--chip-header-gradient)] px-[28px] py-[20px] text-white">
             {loading ? (
               <div className="space-y-2">
                 <div className="h-8 w-56 rounded bg-white/10 animate-pulse" />
@@ -295,7 +299,7 @@ export function ChipDetailPanel({
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-3">
-                    <SheetTitle dir="ltr" className="text-[26px] font-extrabold tabular-nums text-white">
+                    <SheetTitle dir="ltr" className="chip-num text-[26px] font-extrabold text-white">
                       {chip.chip_number}
                     </SheetTitle>
                     <span className={cn(
@@ -306,27 +310,27 @@ export function ChipDetailPanel({
                       {pill.label}
                     </span>
                   </div>
-                  <p className="mt-[6px] inline-flex flex-wrap items-center gap-[7px] text-[13.5px] font-medium text-[#c7dbff]/80">
+                  <p className="mt-[6px] inline-flex flex-wrap items-center gap-[7px] text-[13.5px] font-medium text-white/[0.82]">
                     <KeyRound className="h-[15px] w-[15px]" />
                     דירה {chip.apartment_number}
-                    {chip.resident_role && <> · {RESIDENT_ROLE_LABEL[chip.resident_role]}</>}
-                    {chip.holder_name && <> · {chip.holder_name}</>}
+                    <> · {RESIDENT_ROLE_LABEL[chip.resident_role]}</>
+                    <> · {resolveChipHolder(chip).name}</>
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={requestClose}
                   aria-label="סגור"
-                  className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[13px] bg-white/[0.14] text-white transition-colors hover:bg-white/[0.26]"
+                  className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center rounded-[11px] border border-white/25 bg-white/12 text-white transition-colors hover:bg-white/22"
                 >
-                  <X className="h-5 w-5" strokeWidth={2.2} />
+                  <X className="h-[18px] w-[18px]" strokeWidth={2.4} />
                 </button>
               </div>
             ) : null}
           </SheetHeader>
 
           {/* Body */}
-          <div className="flex-1 overflow-y-auto bg-[#f4f6fb] p-6">
+          <div className="flex-1 overflow-y-auto bg-[var(--chip-bg)] p-6">
             {error ? (
               <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
                 שגיאה בטעינת הפרטים: {error}
@@ -339,7 +343,7 @@ export function ChipDetailPanel({
             ) : (
               <Tabs defaultValue="details" className="w-full">
                 {/* DESIGN.md §28.3 in-sheet tab-bar — white card + blue active pill. */}
-                <TabsList className="grid w-full grid-cols-2 gap-[8px] rounded-[14px] border border-[#e9edf4] bg-white p-[6px] group-data-horizontal/tabs:h-auto">
+                <TabsList className="grid w-full grid-cols-2 gap-[8px] rounded-[13px] border border-[var(--chip-border)] bg-[var(--chip-panel)] p-[6px] group-data-horizontal/tabs:h-auto">
                   {[
                     { value: 'details', icon: Info, label: 'פרטים' },
                     { value: 'history', icon: History, label: 'היסטוריה' },
@@ -347,7 +351,7 @@ export function ChipDetailPanel({
                     <TabsTrigger
                       key={value}
                       value={value}
-                      className="h-[42px] gap-2 rounded-[10px] text-[14.5px] font-semibold text-[#64748b] data-active:bg-[#2563eb] data-active:font-bold data-active:text-white group-data-[variant=default]/tabs-list:data-active:shadow-none"
+                      className="h-[42px] gap-2 rounded-[9px] text-[14.5px] font-semibold text-[var(--chip-ink-muted)] data-active:bg-[var(--chip-brand)] data-active:font-bold data-active:text-white group-data-[variant=default]/tabs-list:data-active:shadow-none"
                     >
                       <TabIcon className="h-4 w-4" /> {label}
                     </TabsTrigger>
@@ -371,6 +375,7 @@ export function ChipDetailPanel({
                       canEdit={canEdit}
                       syncing={syncing}
                       onControllerSync={handleControllerSync}
+                      onOpenHolder={() => onOpenHolder(chip)}
                     />
                   )}
                 </TabsContent>
@@ -422,12 +427,12 @@ export function ChipDetailPanel({
                   </>
                 )}
               </div>
-              {/* left (RTL end): edit (gradient primary) */}
+              {/* left (RTL end): edit — flat brand (ref btn-brand) */}
               <button
                 type="button"
                 onClick={startEdit}
                 disabled={saving}
-                className="inline-flex h-11 items-center gap-2 rounded-[11px] bg-gradient-to-l from-[#1d4ed8] to-[#2563eb] px-[24px] text-[14px] font-bold text-white shadow-[0_8px_18px_-6px_rgba(37,99,235,0.5)] transition-colors hover:from-[#1e40af] hover:to-[#1d4ed8] disabled:opacity-50"
+                className="inline-flex h-[46px] items-center gap-2 rounded-[11px] bg-[var(--chip-brand)] px-[24px] text-[14px] font-bold text-white transition-colors hover:bg-[var(--chip-brand-hover)] disabled:opacity-50"
               >
                 <Pencil className="h-4 w-4" />
                 ערוך
@@ -446,7 +451,7 @@ export function ChipDetailPanel({
                   type="button"
                   onClick={handleSaveEdit}
                   disabled={!canSaveEdit}
-                  className="gap-2 bg-gradient-to-l from-blue-700 to-blue-600 text-white hover:from-blue-800 hover:to-blue-700 shadow-[0_8px_18px_-6px_rgba(37,99,235,0.5)]"
+                  className="h-[46px] gap-2 rounded-[11px] bg-[var(--chip-brand)] px-[24px] font-bold text-white hover:bg-[var(--chip-brand-hover)]"
                 >
                   {saving ? 'שומר…' : 'שמור שינויים'}
                 </Button>
@@ -483,16 +488,64 @@ export function ChipDetailPanel({
 /* ---------- View mode ---------- */
 
 function ViewDetails({
-  chip, canEdit, syncing, onControllerSync,
+  chip, canEdit, syncing, onControllerSync, onOpenHolder,
 }: {
-  chip: Chip;
+  chip: ChipWithHolder;
   canEdit: boolean;
   syncing: boolean;
   onControllerSync: () => void;
+  onOpenHolder: () => void;
 }) {
   const pendingController = chip.status === 'inactive' && !chip.controller_synced;
+  const holder = resolveChipHolder(chip);
   return (
     <>
+      {/* מחזיק — FIRST (product rule): live name, role, apartment, phone,
+          link to the holder view. holder_name is never read directly here. */}
+      <section className="overflow-hidden rounded-[16px] border border-[var(--chip-border)] bg-[var(--chip-panel)]">
+        <div className="flex items-center gap-[11px] border-b border-[var(--chip-border)] px-5 pb-[13px] pt-[15px]">
+          <span className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[10px] bg-[var(--chip-violet-soft)] text-[var(--chip-violet)]">
+            <User className="h-[19px] w-[19px]" strokeWidth={1.9} />
+          </span>
+          <h2 className="flex-1 text-start text-[15.5px] font-extrabold tracking-[-0.01em] text-[var(--chip-ink)]">
+            מחזיק
+          </h2>
+        </div>
+        <div className="flex flex-col gap-3 px-5 py-[18px]">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[17px] font-extrabold text-[var(--chip-ink)]">{holder.name}</span>
+            <span className="inline-flex h-[20px] items-center rounded-[6px] bg-[var(--chip-violet-soft)] px-2 text-[11px] font-bold text-[var(--chip-violet-ink)]">
+              {RESIDENT_ROLE_LABEL[holder.role]}
+            </span>
+            {!holder.is_registry_linked && (
+              <span className="inline-flex h-[20px] items-center rounded-[6px] border border-dashed border-[var(--chip-border-strong)] bg-[var(--chip-panel-alt)] px-2 text-[11px] font-bold text-[var(--chip-ink-soft)]">
+                לא במרשם
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13.5px] font-medium text-[var(--chip-ink-muted)]">
+            <span>דירה {chip.apartment_number}</span>
+            {holder.phone && (
+              <span className="chip-num">{formatPhoneDisplay(holder.phone)}</span>
+            )}
+          </div>
+          {holder.name_changed_since_issue && holder.issued_as_name && (
+            <div className="flex items-center gap-2 rounded-[9px] bg-[var(--chip-amber-soft)] px-3 py-[7px] text-[12.5px] font-semibold text-[var(--chip-amber-ink)]">
+              <History className="h-3.5 w-3.5 shrink-0" />
+              הונפק בשם: {holder.issued_as_name}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={onOpenHolder}
+            className="inline-flex h-9 w-fit cursor-pointer items-center gap-1.5 rounded-[9px] border border-[var(--chip-brand-border)] bg-[var(--chip-brand-soft)] px-3 text-[12.5px] font-bold text-[var(--chip-brand-ink)] transition-colors hover:bg-[var(--chip-brand)] hover:text-white"
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+            כל הצ׳יפים של המחזיק
+          </button>
+        </div>
+      </section>
+
       {/* פרטי צ׳יפ */}
       <SupplierSection title="פרטי צ׳יפ" icon={KeyRound} iconTone="blue">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -505,18 +558,6 @@ function ViewDetails({
               value={chip.app_platform ? APP_PLATFORM_LABEL[chip.app_platform] : null}
             />
           )}
-        </div>
-      </SupplierSection>
-
-      {/* מחזיק */}
-      <SupplierSection title="מחזיק" icon={User} iconTone="violet">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <ReadonlyField label="שם המחזיק" value={chip.holder_name} />
-          <ReadonlyField
-            label="תפקיד"
-            value={chip.resident_role ? RESIDENT_ROLE_LABEL[chip.resident_role] : null}
-          />
-          <ReadonlyField label="טלפון" value={formatPhoneDisplay(chip.holder_phone)} ltr />
         </div>
       </SupplierSection>
 
@@ -622,20 +663,18 @@ function EditForm({ chip, form, set, markTouched, errFor, disabled }: EditFormPr
           <div className="space-y-1.5">
             <Label className={FIELD_LABEL}>תפקיד</Label>
             <Select
-              value={form.resident_role ?? NONE}
-              onValueChange={(v) => set('resident_role', !v || v === NONE ? null : (v as ChipResidentRole))}
+              value={form.resident_role}
+              onValueChange={(v) => { if (v) set('resident_role', v as ChipResidentRole); }}
               disabled={disabled}
             >
               <SelectTrigger className="w-full rounded-[10px] border-[#e2e8f0] data-[size=default]:h-[42px]">
                 <SelectValue placeholder="בחר תפקיד...">
-                  {(value: string | null) => {
-                    if (!value || value === NONE) return 'ללא תפקיד';
-                    return RESIDENT_ROLE_LABEL[value as ChipResidentRole] ?? value;
-                  }}
+                  {(value: string | null) =>
+                    value ? RESIDENT_ROLE_LABEL[value as ChipResidentRole] ?? value : 'בחר תפקיד...'
+                  }
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={NONE}>ללא תפקיד</SelectItem>
                 {CHIP_RESIDENT_ROLES.map((r) => (
                   <SelectItem key={r} value={r}>{RESIDENT_ROLE_LABEL[r]}</SelectItem>
                 ))}

@@ -4,6 +4,7 @@
 @import "./styles/buttons.css";
 @import "./styles/print.css";
 @import "./styles/chat.css";
+@import "./styles/chips.css";
 
 @custom-variant dark (&:is(.dark *));
 

@@ -1,0 +1,69 @@
+/* ─────────────────────────────────────────────────────────────────────
+   Chips module skin — DECLARED EXCEPTION (DESIGN.md "מודול צ'יפים").
+   Derived 1:1 from ref/proof/whatsapp-broadcast/Chip.html + Chip.md.
+
+   SCOPE RULE (binding): every token here lives under `.chips-skin` and
+   NEVER overrides the global @theme tokens or `font-num` (which stays
+   Inter). Nothing from this palette may leak to other screens.
+   ───────────────────────────────────────────────────────────────────── */
+
+.chips-skin {
+  /* Surfaces */
+  --chip-bg: #eef1f8;
+  --chip-panel: #ffffff;
+  --chip-panel-alt: #fafbfe;
+  --chip-hover: #f3f5fc;
+
+  /* Ink */
+  --chip-ink: #141b34;
+  --chip-ink-muted: #5a6386;
+  --chip-ink-soft: #98a0bc;
+  --chip-ink-ghost: #c9cee0;
+
+  /* Lines */
+  --chip-border: #e7eaf4;
+  --chip-border-strong: #d6daea;
+
+  /* Brand (blue) */
+  --chip-brand: #3d5afe;
+  --chip-brand-hover: #2e49e8;
+  --chip-brand-soft: #eef1ff;
+  --chip-brand-ink: #2b3fb8;
+  --chip-brand-border: #c9d3ff;
+
+  /* Violet (chip holder) */
+  --chip-violet: #7c4dff;
+  --chip-violet-soft: #f3eeff;
+  --chip-violet-ink: #5b32c4;
+
+  /* Amber (chip type / notes) */
+  --chip-amber: #f5a524;
+  --chip-amber-soft: #fff6e3;
+  --chip-amber-ink: #96591a;
+  --chip-amber-border: #f7dfae;
+
+  /* Green (active / fee) */
+  --chip-green: #22a06b;
+  --chip-green-soft: #eaf7f1;
+  --chip-green-ink: #177552;
+  --chip-green-border: #bee7d5;
+
+  /* Red (required) */
+  --chip-red: #e5484d;
+  --chip-red-soft: #fef0f0;
+
+  /* Header gradient (ref: 115deg, #2B3FB8 → #3D5AFE 62% → #5872FF) */
+  --chip-header-gradient: linear-gradient(115deg, #2b3fb8, #3d5afe 62%, #5872ff);
+
+  /* Focus ring — identical to the global brand ring (no conflict) */
+  --chip-focus-ring: 0 0 0 4px rgba(61, 90, 254, 0.12);
+}
+
+/* Numbers inside the chips module — IBM Plex Mono (ref), LTR, tabular.
+   Scoped: outside .chips-skin the global `font-num` (Inter) applies. */
+.chips-skin .chip-num {
+  font-family: var(--font-chip-mono), monospace;
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+  unicode-bidi: isolate;
+}

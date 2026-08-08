@@ -16,7 +16,8 @@ import {
 import { Section } from './Section';
 import { IssueChipSheet } from '@/components/chips/IssueChipSheet';
 import { CHIP_TYPE_LABEL, RESIDENT_ROLE_LABEL } from '@/lib/constants/chips';
-import type { Chip, ChipResidentRole, ContactResidents } from '@/lib/types/chips';
+import { resolveChipHolder } from '@/lib/chips/holder';
+import type { ChipResidentRole, ChipWithHolder, ContactResidents } from '@/lib/types/chips';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -26,7 +27,7 @@ interface Props {
 }
 
 interface ChipsPayload {
-  items: Chip[];
+  items: ChipWithHolder[];
   active_count: number;
 }
 
@@ -40,13 +41,13 @@ const RESIDENT_TYPE_LABEL: Record<string, string> = {
   operator: 'מפעיל',
 };
 
-// Role pill tones (DESIGN.md §10) — same map as ChipsTable.
+// Role pill tones — chips-skin ref families (same map as ChipsTable).
 const ROLE_PILL: Record<ChipResidentRole, string> = {
-  owner: 'bg-blue-100 text-blue-700',
-  tenant: 'bg-violet-100 text-violet-700',
-  operator: 'bg-amber-100 text-amber-700',
-  staff: 'bg-sky-100 text-sky-700',
-  other: 'bg-slate-100 text-slate-600',
+  owner: 'bg-[var(--chip-brand-soft)] text-[var(--chip-brand-ink)]',
+  tenant: 'bg-[var(--chip-violet-soft)] text-[var(--chip-violet-ink)]',
+  operator: 'bg-[var(--chip-amber-soft)] text-[var(--chip-amber-ink)]',
+  staff: 'bg-[var(--chip-hover)] text-[var(--chip-ink-muted)]',
+  other: 'bg-[var(--chip-hover)] text-[var(--chip-ink-muted)]',
 };
 
 export function ChipsTab({ contactId, apartmentNumber, canEditChips }: Props) {
@@ -135,7 +136,7 @@ export function ChipsTab({ contactId, apartmentNumber, canEditChips }: Props) {
   const hasOperator = Boolean(operator && (operator.name || operator.phone));
 
   return (
-    <div className="space-y-4">
+    <div className="chips-skin space-y-4">
       <Section title="מי גר בדירה" icon={Users} iconTone="violet">
         <div className="space-y-3 pb-1">
           <div className="space-y-1.5">
@@ -207,42 +208,53 @@ export function ChipsTab({ contactId, apartmentNumber, canEditChips }: Props) {
   );
 }
 
-// Read-only row — deactivate/reactivate live in /chips, not here.
-function ChipRow({ chip }: { chip: Chip }) {
+// Read-only row — deactivate/reactivate live in /chips, not here. The holder
+// name resolves LIVE via resolveChipHolder (never holder_name directly) —
+// an apartment can hold chips of several people in parallel (product rule 2).
+function ChipRow({ chip }: { chip: ChipWithHolder }) {
   const active = chip.status === 'active';
+  const holder = resolveChipHolder(chip);
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 p-3">
-      <span dir="ltr" className="font-num text-sm font-semibold tabular-nums text-slate-900">
+      <span
+        className={cn(
+          'chip-num text-sm font-semibold tracking-[0.02em]',
+          active
+            ? 'text-[var(--chip-green-ink)]'
+            : 'text-[var(--chip-ink-soft)] line-through decoration-[var(--chip-ink-ghost)]',
+        )}
+      >
         {chip.chip_number}
       </span>
+      <span className="text-[13px] font-bold text-[var(--chip-ink)]">{holder.name}</span>
       <span
         className={cn(
-          'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold',
-          chip.chip_type === 'app' ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-600',
+          'inline-flex h-[20px] items-center rounded-[6px] px-2 text-[11px] font-bold',
+          ROLE_PILL[chip.resident_role],
         )}
       >
-        {CHIP_TYPE_LABEL[chip.chip_type]}
+        {RESIDENT_ROLE_LABEL[chip.resident_role]}
       </span>
-      {chip.resident_role && (
-        <span
-          className={cn(
-            'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold',
-            ROLE_PILL[chip.resident_role],
-          )}
-        >
-          {RESIDENT_ROLE_LABEL[chip.resident_role]}
+      {!holder.is_registry_linked && (
+        <span className="inline-flex h-[20px] items-center rounded-[6px] border border-dashed border-[var(--chip-border-strong)] bg-[var(--chip-panel-alt)] px-2 text-[11px] font-bold text-[var(--chip-ink-soft)]">
+          לא במרשם
         </span>
       )}
+      <span className="inline-flex h-[20px] items-center rounded-[6px] bg-[var(--chip-hover)] px-2 text-[11px] font-bold text-[var(--chip-ink-muted)]">
+        {CHIP_TYPE_LABEL[chip.chip_type]}
+      </span>
       <span
         className={cn(
-          'inline-flex items-center gap-[5px] rounded-full px-2 py-0.5 text-xs font-semibold',
-          active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600',
+          'inline-flex h-[20px] items-center gap-[5px] rounded-[6px] px-2 text-[11px] font-bold',
+          active
+            ? 'bg-[var(--chip-green-soft)] text-[var(--chip-green-ink)]'
+            : 'bg-[var(--chip-hover)] text-[var(--chip-ink-soft)]',
         )}
       >
-        <span className={cn('h-1.5 w-1.5 rounded-full', active ? 'bg-emerald-500' : 'bg-slate-400')} />
+        <span className={cn('h-[6px] w-[6px] rounded-full', active ? 'bg-[var(--chip-green)]' : 'bg-[var(--chip-ink-ghost)]')} />
         {active ? 'פעיל' : 'מושבת'}
       </span>
-      <span dir="ltr" className="ms-auto font-num text-xs tabular-nums text-slate-500">
+      <span className="chip-num ms-auto text-xs text-[var(--chip-ink-soft)]">
         {formatDate(chip.issued_at)}
       </span>
     </li>

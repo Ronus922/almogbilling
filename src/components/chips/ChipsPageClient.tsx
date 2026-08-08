@@ -1,19 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Info, KeyRound, Plus, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import type { Chip, ChipsKpis, ChipTab } from '@/lib/types/chips';
+import type { Chip, ChipWithHolder, ChipsKpis, ChipTab } from '@/lib/types/chips';
+import { isSnapshotRole, resolveChipHolder } from '@/lib/chips/holder';
 import { ChipsKpiRow } from './ChipsKpiRow';
 import { ChipsTable } from './ChipsTable';
 import { IssueChipSheet } from './IssueChipSheet';
 import { DeactivateChipDialog } from './DeactivateChipDialog';
 import { ReactivateChipDialog } from './ReactivateChipDialog';
 import { ChipDetailPanel } from './ChipDetailPanel';
+import { ChipHolderPanel, type HolderRef } from './ChipHolderPanel';
 
 // List filter tabs — labels per the chips product spec (ChipTab values).
 const TABS: { value: ChipTab; label: string }[] = [
@@ -43,12 +45,30 @@ function issueInitialFromChip(chip: Chip): IssueInitial {
   };
 }
 
+/** Holder identity of one chip — (contact_id, role) [+ holder_name for other/staff]. */
+function holderRefFromChip(chip: ChipWithHolder): HolderRef {
+  const holder = resolveChipHolder(chip);
+  return {
+    contactId: chip.contact_id,
+    role: chip.resident_role,
+    holderName: isSnapshotRole(chip.resident_role) ? chip.holder_name : null,
+    displayName: holder.name,
+    apartmentNumber: chip.apartment_number,
+    phone: holder.phone,
+  };
+}
+
+function sameHolder(chip: ChipWithHolder, ref: HolderRef): boolean {
+  if (chip.contact_id !== ref.contactId || chip.resident_role !== ref.role) return false;
+  return ref.holderName === null || chip.holder_name === ref.holderName;
+}
+
 export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const [items, setItems] = useState<Chip[]>([]);
+  const [items, setItems] = useState<ChipWithHolder[]>([]);
   const [kpis, setKpis] = useState<ChipsKpis | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -56,8 +76,12 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
   const [search, setSearch] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
 
+  // "N צ׳יפים" filter — client-side narrowing of the list to one holder.
+  const [holderFilter, setHolderFilter] = useState<HolderRef | null>(null);
+
   // Panels / dialogs state machine
   const [selectedChipId, setSelectedChipId] = useState<string | null>(null);
+  const [holderPanel, setHolderPanel] = useState<HolderRef | null>(null);
   const [issueOpen, setIssueOpen] = useState(false);
   const [issueInitial, setIssueInitial] = useState<IssueInitial>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<Chip | null>(null);
@@ -102,7 +126,7 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
         credentials: 'include',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { items?: Chip[] };
+      const data = (await res.json()) as { items?: ChipWithHolder[] };
       setItems(Array.isArray(data.items) ? data.items : []);
     } catch (err) {
       toast.error(`טעינת הצ׳יפים נכשלה: ${(err as Error).message}`);
@@ -159,19 +183,24 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
     setIssueOpen(true);
   }
 
+  const visibleItems = useMemo(
+    () => (holderFilter ? items.filter((c) => sameHolder(c, holderFilter)) : items),
+    [items, holderFilter],
+  );
+
   return (
-    <div className="space-y-6">
-      {/* Top bar — DESIGN.md §28.9 */}
+    <div className="chips-skin space-y-6">
+      {/* Top bar — structure §28.9, chips-skin tones (ref) */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-[13px]">
-          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[14px] bg-[#e8f0ff] text-[#2563eb]">
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[14px] bg-[var(--chip-brand-soft)] text-[var(--chip-brand)]">
             <KeyRound className="h-6 w-6" />
           </span>
           <div>
-            <h1 className="text-[27px] font-black tracking-[-0.02em] text-[#0f172a]">
+            <h1 className="text-[27px] font-black tracking-[-0.02em] text-[var(--chip-ink)]">
               צ׳יפי כניסה
             </h1>
-            <p className="text-[13.5px] font-medium text-[#94a3b8]">
+            <p className="text-[13.5px] font-medium text-[var(--chip-ink-soft)]">
               ניהול צ׳יפי הכניסה לבניין
               {kpis ? ` · ${kpis.active} פעילים` : ''}
             </p>
@@ -182,7 +211,7 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
           <Button
             type="button"
             onClick={() => openIssueSheet(null)}
-            className="h-[46px] gap-2 rounded-[13px] bg-gradient-to-l from-[#1d4ed8] to-[#2563eb] px-5 text-[14.5px] font-bold text-white shadow-[0_10px_22px_-8px_rgba(37,99,235,0.6)] hover:from-[#1e40af] hover:to-[#1d4ed8]"
+            className="h-[46px] gap-2 rounded-[11px] bg-[var(--chip-brand)] px-[26px] text-[15px] font-bold text-white hover:bg-[var(--chip-brand-hover)]"
           >
             <Plus className="h-[17px] w-[17px]" strokeWidth={2.3} />
             הנפק צ׳יפ
@@ -192,8 +221,8 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
 
       {/* Partial-registry info banner — dismissible, remembered in localStorage */}
       {bannerVisible && (
-        <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <Info className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+        <div className="flex items-center gap-3 rounded-[11px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] px-4 py-3 text-[12.5px] font-semibold text-[var(--chip-amber-ink)]">
+          <Info className="h-4 w-4 shrink-0" aria-hidden />
           <p className="min-w-0 flex-1">
             המרשם עשוי להיות חלקי — ייבא דיירים או הוסף דירות ידנית
           </p>
@@ -201,7 +230,7 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
             type="button"
             onClick={dismissBanner}
             aria-label="סגור הודעה"
-            className="-my-2 -me-2 grid h-11 w-11 shrink-0 place-items-center rounded-lg text-amber-600 transition-colors hover:bg-amber-100 hover:text-amber-900"
+            className="-my-2 -me-2 grid h-11 w-11 shrink-0 place-items-center rounded-[9px] transition-colors hover:bg-[var(--chip-amber-border)]"
           >
             <X className="h-4 w-4" />
           </button>
@@ -211,9 +240,9 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
       {/* KPI row */}
       <ChipsKpiRow kpis={kpis} />
 
-      {/* Single card: toolbar (border-bottom) → table — §28.9 */}
-      <div className="overflow-hidden rounded-[18px] border border-[#e9edf4] bg-white">
-        <div className="flex flex-col gap-3 border-b border-[#eef1f6] px-[22px] py-4 md:flex-row md:items-center md:justify-between">
+      {/* Single card: toolbar (border-bottom) → table */}
+      <div className="overflow-hidden rounded-[16px] border border-[var(--chip-border)] bg-[var(--chip-panel)]">
+        <div className="flex flex-col gap-3 border-b border-[var(--chip-border)] px-[22px] py-4 md:flex-row md:items-center md:justify-between">
           {/* Tab pills (RTL start = right) */}
           <div className="flex flex-wrap items-center gap-2">
             {TABS.map((t) => (
@@ -224,31 +253,56 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
                 className={cn(
                   'inline-flex h-9 cursor-pointer items-center rounded-full px-4 text-[13.5px] transition-colors',
                   tab === t.value
-                    ? 'bg-[#2563eb] font-bold text-white'
-                    : 'border border-[#e2e8f0] bg-white font-semibold text-[#475569] hover:bg-slate-50',
+                    ? 'bg-[var(--chip-brand)] font-bold text-white'
+                    : 'border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] font-semibold text-[var(--chip-ink-muted)] hover:bg-[var(--chip-hover)]',
                 )}
               >
                 {t.label}
               </button>
             ))}
+            {debouncedQ && (
+              <span className="inline-flex h-9 items-center rounded-full bg-[var(--chip-brand-soft)] px-3 text-[12px] font-bold text-[var(--chip-brand-ink)]">
+                מציג תוצאות מכל הסטטוסים
+              </span>
+            )}
           </div>
 
-          {/* Search (RTL end = left) */}
-          <div className="relative w-full md:w-[300px]">
-            <Search className="pointer-events-none absolute start-[13px] top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-[#94a3b8]" />
+          {/* Search — one box, both directions (number → name, name → numbers) */}
+          <div className="relative w-full md:w-[340px]">
+            <Search className="pointer-events-none absolute start-[13px] top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-[var(--chip-ink-soft)]" />
             <Input
-              placeholder="חיפוש לפי מספר צ׳יפ, דירה או מחזיק"
+              placeholder="חפש לפי מספר צ׳יפ, מספר דירה או שם דייר"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-10 rounded-[11px] border-[#e7ebf1] bg-[#fafbfd] ps-[42px] pe-[14px] text-[14px]"
+              className="h-11 rounded-[11px] border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] ps-[42px] pe-[14px] text-[14px] placeholder:text-[var(--chip-ink-soft)] focus-visible:border-[var(--chip-brand)] focus-visible:ring-4 focus-visible:ring-[rgba(61,90,254,0.12)]"
             />
           </div>
         </div>
 
+        {/* Holder-filter bar — active after clicking "N צ׳יפים" */}
+        {holderFilter && (
+          <div className="flex items-center gap-3 border-b border-[var(--chip-border)] bg-[var(--chip-brand-soft)] px-[22px] py-[10px]">
+            <p className="min-w-0 flex-1 truncate text-[13px] font-bold text-[var(--chip-brand-ink)]">
+              מציג את הצ׳יפים של {holderFilter.displayName} · דירה {holderFilter.apartmentNumber}
+            </p>
+            <button
+              type="button"
+              onClick={() => setHolderFilter(null)}
+              className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1 rounded-[8px] border border-[var(--chip-brand-border)] bg-white px-3 text-[12.5px] font-bold text-[var(--chip-brand-ink)] transition-colors hover:bg-[var(--chip-hover)]"
+            >
+              <X className="h-3.5 w-3.5" />
+              ניקוי סינון
+            </button>
+          </div>
+        )}
+
         <ChipsTable
-          items={items}
+          items={visibleItems}
           loading={loading}
+          searchTerm={debouncedQ}
           onRowClick={(chip) => setSelectedChipId(chip.id)}
+          onHolderClick={(chip) => setHolderPanel(holderRefFromChip(chip))}
+          onHolderFilter={(chip) => setHolderFilter(holderRefFromChip(chip))}
         />
       </div>
 
@@ -303,6 +357,23 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
         onRequestReissue={(chip: Chip) => {
           closeDetail();
           openIssueSheet(issueInitialFromChip(chip));
+        }}
+        onOpenHolder={(chip: ChipWithHolder) => {
+          closeDetail();
+          setHolderPanel(holderRefFromChip(chip));
+        }}
+      />
+
+      {/* Holder view — all chips of one person (name → numbers) */}
+      <ChipHolderPanel
+        holder={holderPanel}
+        open={!!holderPanel}
+        onOpenChange={(o: boolean) => {
+          if (!o) setHolderPanel(null);
+        }}
+        onChipClick={(chipId: string) => {
+          setHolderPanel(null);
+          setSelectedChipId(chipId);
         }}
       />
     </div>
