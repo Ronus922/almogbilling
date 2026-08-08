@@ -1,0 +1,61 @@
+-- 074_chips_holder_identity_search.sql
+-- Chips redesign slice: bidirectional holder identity + trigram search.
+--
+-- Model decisions (closed, approved 08/08/2026):
+--   * Holder identity = (contact_id, resident_role). contact_id STAYS NOT NULL
+--     (every chip is bound to an apartment/unit row in contacts, including
+--     'other'/'staff' chips — a cleaner's chip still belongs to a unit); what
+--     distinguishes the roles is how the displayed name resolves:
+--     owner/tenant/operator -> live from contacts.{role}_name at read time;
+--     other/staff -> the holder_name snapshot IS the identity (no registry row).
+--   * resident_role becomes NOT NULL — a chip can never be issued without
+--     knowing on whose name it is (product rule 2).
+--   * chips_holder_identity_check: snapshot roles must carry holder_name;
+--     registry roles must carry contact_id (trivially true today — kept so the
+--     invariant survives any future relaxation of the NOT NULL).
+--   * chips_holder_idx (contact_id, resident_role, status) serves the
+--     "all chips of person X" query (the name -> numbers direction).
+--   * pg_trgm GIN indexes serve substring/ILIKE search on chips.chip_number /
+--     apartment_number / holder_name and contacts.{owner,tenant,operator}_name
+--     (the number/apartment/name -> chip direction). pg_trgm is a trusted
+--     extension — billing_app may install it (verified on this server).
+--
+-- DOWN: 074_chips_holder_identity_search.down.sql (separate file).
+-- Run: psql "$DIRECT_URL" -f supabase/migrations/074_chips_holder_identity_search.sql
+
+begin;
+
+-- Safety backfill (chips is empty in prod at migration time — the runner
+-- reports the actual counts): a legacy row without a role becomes 'other',
+-- and snapshot-role rows without a name get a placeholder so the CHECK holds.
+update public.chips set resident_role = 'other' where resident_role is null;
+update public.chips set holder_name = 'לא ידוע'
+ where resident_role in ('other','staff') and holder_name is null;
+
+alter table public.chips alter column resident_role set not null;
+
+alter table public.chips add constraint chips_holder_identity_check
+  check (
+    (resident_role in ('other','staff') and holder_name is not null)
+    or (resident_role in ('owner','tenant','operator') and contact_id is not null)
+  );
+
+create index if not exists chips_holder_idx
+  on public.chips (contact_id, resident_role, status);
+
+create extension if not exists pg_trgm;
+
+create index if not exists chips_number_trgm_idx
+  on public.chips using gin (chip_number gin_trgm_ops);
+create index if not exists chips_apartment_trgm_idx
+  on public.chips using gin (apartment_number gin_trgm_ops);
+create index if not exists chips_holder_name_trgm_idx
+  on public.chips using gin (holder_name gin_trgm_ops);
+create index if not exists contacts_owner_name_trgm_idx
+  on public.contacts using gin (owner_name gin_trgm_ops);
+create index if not exists contacts_tenant_name_trgm_idx
+  on public.contacts using gin (tenant_name gin_trgm_ops);
+create index if not exists contacts_operator_name_trgm_idx
+  on public.contacts using gin (operator_name gin_trgm_ops);
+
+commit;
