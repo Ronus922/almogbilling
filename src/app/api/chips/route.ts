@@ -3,10 +3,11 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   listChips,
-  issueChip,
+  issueChipGroups,
   ChipLimitError,
   ChipNumberTakenError,
 } from '@/lib/db/chips';
+import { legacyChipBodyToInput, MAX_CHIPS_PER_GROUP } from '@/lib/chips/issueGroups';
 import {
   CHIP_TABS,
   CHIP_TYPES,
@@ -24,6 +25,8 @@ import type {
   ChipTab,
   ChipType,
   ChipStatus,
+  IssueChipGroup,
+  IssueChipsInput,
 } from '@/lib/types/chips';
 
 export const runtime = 'nodejs';
@@ -119,7 +122,78 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ items });
 }
 
-// POST /api/chips (chips:edit) — issue up to 5 chips to one contact, all-or-nothing.
+/** Validate one raw group entry (new-shape body). Returns the coerced group or
+ *  a Hebrew error string. Phone is normalized via validatePhone. */
+function coerceGroup(
+  rec: Record<string, unknown>,
+  index: number,
+): { ok: true; group: IssueChipGroup } | { ok: false; error: string } {
+  const chipTypeRaw = typeof rec.chip_type === 'string' ? rec.chip_type.trim() : '';
+  if (!CHIP_TYPES.includes(chipTypeRaw as ChipType)) {
+    return { ok: false, error: `סוג צ׳יפ לא תקין (בלוק ${index + 1})` };
+  }
+  const residentRole = coerceEnum(rec.resident_role, CHIP_RESIDENT_ROLES);
+  if (!residentRole.ok || residentRole.value === null) {
+    return { ok: false, error: `נדרש לבחור בעל צ׳יפ (בלוק ${index + 1})` };
+  }
+  const holderName = coerceText(rec.holder_name);
+  if (isSnapshotRole(residentRole.value) && !holderName) {
+    return { ok: false, error: `לבעל צ׳יפ מסוג "אחר" נדרש שם מלא (בלוק ${index + 1})` };
+  }
+  const numbers = Array.isArray(rec.numbers)
+    ? rec.numbers
+        .filter((v): v is string => typeof v === 'string')
+        .map((v) => v.trim())
+        .filter((v) => v !== '')
+    : [];
+  if (numbers.length === 0 || numbers.length > MAX_CHIPS_PER_GROUP) {
+    return { ok: false, error: `${CHIP_NUMBERS_ERROR} (בלוק ${index + 1})` };
+  }
+  const appPlatform = coerceEnum(rec.app_platform, APP_PLATFORMS);
+  if (!appPlatform.ok) return { ok: false, error: 'invalid_app_platform' };
+  const appInviteStatus = coerceEnum(rec.app_invite_status, APP_INVITE_STATUSES);
+  if (!appInviteStatus.ok) return { ok: false, error: 'invalid_app_invite_status' };
+
+  let holderPhone: string | null = null;
+  const phoneRaw = coerceText(rec.holder_phone);
+  if (phoneRaw !== null) {
+    const v = validatePhone(phoneRaw);
+    if (!v.valid) {
+      return { ok: false, error: v.error ?? `מספר טלפון לא תקין (בלוק ${index + 1})` };
+    }
+    holderPhone = v.normalized;
+  }
+
+  let fee: number | null = null;
+  if (rec.issuance_fee !== undefined && rec.issuance_fee !== null && rec.issuance_fee !== '') {
+    const n = typeof rec.issuance_fee === 'number' ? rec.issuance_fee : Number.NaN;
+    if (!Number.isFinite(n) || n < 0) return { ok: false, error: 'invalid_issuance_fee' };
+    fee = n;
+  }
+
+  return {
+    ok: true,
+    group: {
+      resident_role: residentRole.value,
+      holder_name: holderName,
+      holder_phone: holderPhone,
+      chip_type: chipTypeRaw as ChipType,
+      numbers,
+      app_platform: appPlatform.value,
+      app_invite_status: appInviteStatus.value,
+      app_expires_at: coerceText(rec.app_expires_at),
+      issuance_fee: fee,
+      fee_charged: typeof rec.fee_charged === 'boolean' ? rec.fee_charged : null,
+    },
+  };
+}
+
+// POST /api/chips (chips:edit) — issue chips to one contact for one or more
+// holder groups, ONE transaction, all-or-nothing. Accepts the groups shape
+// ({contact_id, groups:[...], issuance_fee?, fee_charged?, notes?,
+// limit_override_reason?}) AND the legacy flat single-holder body, which is
+// adapted to a single group with every field mapped (incl. the override
+// reason, so a legacy over-limit request with a reason still passes).
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try {
@@ -143,58 +217,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid_contact_id' }, { status: 400 });
   }
 
-  const chipTypeRaw = typeof bodyRec.chip_type === 'string' ? bodyRec.chip_type.trim() : '';
-  if (!CHIP_TYPES.includes(chipTypeRaw as ChipType)) {
-    return NextResponse.json({ error: 'invalid_chip_type' }, { status: 400 });
-  }
-  const chipType = chipTypeRaw as ChipType;
-
-  const numbersRaw = bodyRec.chip_numbers;
-  const chipNumbers = Array.isArray(numbersRaw)
-    ? numbersRaw
-        .filter((v): v is string => typeof v === 'string')
-        .map((v) => v.trim())
-        .filter((v) => v !== '')
-    : [];
-  if (chipNumbers.length === 0 || chipNumbers.length > 5) {
-    return NextResponse.json({ error: CHIP_NUMBERS_ERROR }, { status: 400 });
-  }
-
-  // resident_role is REQUIRED (product rule 2 + CHECK 074) — a chip is never
-  // issued without knowing on whose name it is.
-  const residentRole = coerceEnum(bodyRec.resident_role, CHIP_RESIDENT_ROLES);
-  if (!residentRole.ok || residentRole.value === null) {
-    return NextResponse.json(
-      { error: 'נדרש לבחור בעל צ׳יפ (בעל דירה / שוכר / מפעיל / אחר)' },
-      { status: 400 },
-    );
-  }
-  const holderName = coerceText(bodyRec.holder_name);
-  if (isSnapshotRole(residentRole.value) && !holderName) {
-    return NextResponse.json(
-      { error: 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא' },
-      { status: 400 },
-    );
-  }
-  const appPlatform = coerceEnum(bodyRec.app_platform, APP_PLATFORMS);
-  if (!appPlatform.ok) {
-    return NextResponse.json({ error: 'invalid_app_platform' }, { status: 400 });
-  }
-  const appInviteStatus = coerceEnum(bodyRec.app_invite_status, APP_INVITE_STATUSES);
-  if (!appInviteStatus.ok) {
-    return NextResponse.json({ error: 'invalid_app_invite_status' }, { status: 400 });
-  }
-
-  let holderPhone: string | null = null;
-  const holderPhoneRaw = coerceText(bodyRec.holder_phone);
-  if (holderPhoneRaw !== null) {
-    const v = validatePhone(holderPhoneRaw);
-    if (!v.valid) {
-      return NextResponse.json({ error: v.error ?? 'מספר טלפון לא תקין' }, { status: 400 });
-    }
-    holderPhone = v.normalized;
-  }
-
   let issuanceFee: number | null = null;
   if (bodyRec.issuance_fee !== undefined && bodyRec.issuance_fee !== null && bodyRec.issuance_fee !== '') {
     const fee = typeof bodyRec.issuance_fee === 'number' ? bodyRec.issuance_fee : Number.NaN;
@@ -204,25 +226,93 @@ export async function POST(req: NextRequest) {
     issuanceFee = fee;
   }
 
+  let input: IssueChipsInput;
+
+  if (Array.isArray(bodyRec.groups)) {
+    // New shape — one or more holder groups.
+    if (bodyRec.groups.length === 0) {
+      return NextResponse.json({ error: CHIP_NUMBERS_ERROR }, { status: 400 });
+    }
+    const groups: IssueChipGroup[] = [];
+    for (let i = 0; i < bodyRec.groups.length; i++) {
+      const parsed = coerceGroup((bodyRec.groups[i] ?? {}) as Record<string, unknown>, i);
+      if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+      groups.push(parsed.group);
+    }
+    input = {
+      contact_id: contactId,
+      groups,
+      issuance_fee: issuanceFee,
+      fee_charged: bodyRec.fee_charged === true,
+      notes: coerceText(bodyRec.notes),
+      limit_override_reason: coerceText(bodyRec.limit_override_reason),
+    };
+  } else {
+    // Legacy flat body — validate exactly as before, then adapt to one group.
+    const chipTypeRaw = typeof bodyRec.chip_type === 'string' ? bodyRec.chip_type.trim() : '';
+    if (!CHIP_TYPES.includes(chipTypeRaw as ChipType)) {
+      return NextResponse.json({ error: 'invalid_chip_type' }, { status: 400 });
+    }
+    const chipNumbers = Array.isArray(bodyRec.chip_numbers)
+      ? bodyRec.chip_numbers
+          .filter((v): v is string => typeof v === 'string')
+          .map((v) => v.trim())
+          .filter((v) => v !== '')
+      : [];
+    if (chipNumbers.length === 0 || chipNumbers.length > MAX_CHIPS_PER_GROUP) {
+      return NextResponse.json({ error: CHIP_NUMBERS_ERROR }, { status: 400 });
+    }
+    // resident_role is REQUIRED (product rule 2 + CHECK 074).
+    const residentRole = coerceEnum(bodyRec.resident_role, CHIP_RESIDENT_ROLES);
+    if (!residentRole.ok || residentRole.value === null) {
+      return NextResponse.json(
+        { error: 'נדרש לבחור בעל צ׳יפ (בעל דירה / שוכר / מפעיל / אחר)' },
+        { status: 400 },
+      );
+    }
+    const holderName = coerceText(bodyRec.holder_name);
+    if (isSnapshotRole(residentRole.value) && !holderName) {
+      return NextResponse.json({ error: 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא' }, { status: 400 });
+    }
+    const appPlatform = coerceEnum(bodyRec.app_platform, APP_PLATFORMS);
+    if (!appPlatform.ok) {
+      return NextResponse.json({ error: 'invalid_app_platform' }, { status: 400 });
+    }
+    const appInviteStatus = coerceEnum(bodyRec.app_invite_status, APP_INVITE_STATUSES);
+    if (!appInviteStatus.ok) {
+      return NextResponse.json({ error: 'invalid_app_invite_status' }, { status: 400 });
+    }
+    let holderPhone: string | null = null;
+    const holderPhoneRaw = coerceText(bodyRec.holder_phone);
+    if (holderPhoneRaw !== null) {
+      const v = validatePhone(holderPhoneRaw);
+      if (!v.valid) {
+        return NextResponse.json({ error: v.error ?? 'מספר טלפון לא תקין' }, { status: 400 });
+      }
+      holderPhone = v.normalized;
+    }
+    input = legacyChipBodyToInput({
+      contact_id: contactId,
+      chip_type: chipTypeRaw as ChipType,
+      chip_numbers: chipNumbers,
+      resident_role: residentRole.value,
+      holder_name: holderName,
+      holder_phone: holderPhone,
+      app_platform: appPlatform.value,
+      app_invite_status: appInviteStatus.value,
+      app_expires_at: coerceText(bodyRec.app_expires_at),
+      issuance_fee: issuanceFee,
+      fee_charged: bodyRec.fee_charged === true,
+      limit_override_reason: coerceText(bodyRec.limit_override_reason),
+      notes: coerceText(bodyRec.notes),
+    });
+  }
+
   try {
-    const items = await issueChip(
-      {
-        contact_id: contactId,
-        chip_type: chipType,
-        chip_numbers: chipNumbers,
-        resident_role: residentRole.value,
-        holder_name: holderName,
-        holder_phone: holderPhone,
-        app_platform: appPlatform.value,
-        app_invite_status: appInviteStatus.value,
-        app_expires_at: coerceText(bodyRec.app_expires_at),
-        issuance_fee: issuanceFee,
-        fee_charged: bodyRec.fee_charged === true,
-        limit_override_reason: coerceText(bodyRec.limit_override_reason),
-        notes: coerceText(bodyRec.notes),
-      },
-      { id: actor.id, name: actor.full_name ?? actor.username },
-    );
+    const items = await issueChipGroups(input, {
+      id: actor.id,
+      name: actor.full_name ?? actor.username,
+    });
 
     // "צ׳יפ חדש הונפק" → every active admin except the issuer (fire-and-forget).
     for (const chip of items) {
@@ -238,8 +328,13 @@ export async function POST(req: NextRequest) {
       );
     }
     if (err instanceof ChipNumberTakenError) {
+      // group_index lets the UI mark the exact offending tag red.
       return NextResponse.json(
-        { error: `מספר צ׳יפ ${err.chipNumber} כבר פעיל במערכת` },
+        {
+          error: `מספר צ׳יפ ${err.chipNumber} כבר פעיל במערכת`,
+          chip_number: err.chipNumber,
+          group_index: err.groupIndex,
+        },
         { status: 409 },
       );
     }

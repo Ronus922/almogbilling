@@ -10,19 +10,19 @@ import type {
   ChipDeactivationReason,
   ChipResidentRole,
   ChipWithHolder,
-  IssueChipInput,
+  IssueChipsInput,
 } from '@/lib/types/chips';
 import { isSnapshotRole } from '@/lib/chips/holder';
+import {
+  ACTIVE_CHIPS_SOFT_LIMIT,
+  MAX_CHIPS_PER_GROUP,
+  exceedsSoftLimit,
+} from '@/lib/chips/issueGroups';
 
 // Closed product rules enforced here (not in routes): no DELETE ever;
 // chip_number is never editable; the only way back is inactive -> active
 // (reactivate); every mutation writes its chip_events row in the SAME
 // transaction (legal_status_history pattern).
-
-/** Soft cap of active chips per contact — exceeded only with a non-empty
- *  limit_override_reason (routes map this to 422 with a Hebrew message). */
-const ACTIVE_CHIPS_SOFT_LIMIT = 4;
-const MAX_CHIPS_PER_ISSUE = 5;
 
 /** Thrown when an issue request would push a contact past the soft limit
  *  without a limit_override_reason. */
@@ -34,13 +34,16 @@ export class ChipLimitError extends Error {
 }
 
 /** Thrown when a chip_number collides with another ACTIVE chip (partial unique
- *  index chips_number_active_uniq) or repeats within one issue request. */
+ *  index chips_number_active_uniq) or repeats within one issue request.
+ *  groupIndex points at the offending group so the UI can mark the right tag. */
 export class ChipNumberTakenError extends Error {
   readonly chipNumber: string;
-  constructor(chipNumber: string) {
+  readonly groupIndex: number | null;
+  constructor(chipNumber: string, groupIndex: number | null = null) {
     super('chip_number_taken');
     this.name = 'ChipNumberTakenError';
     this.chipNumber = chipNumber;
+    this.groupIndex = groupIndex;
   }
 }
 
@@ -359,30 +362,38 @@ export async function getChipsKpis(): Promise<ChipsKpis> {
 // ── Mutations (each = ONE transaction: chips write + chip_events insert) ──
 
 /**
- * Issue up to 5 chips to one contact, all-or-nothing. The contact row is
- * locked FOR UPDATE so the active-count check and the apartment_number
- * snapshot are race-free. Exceeding the soft limit of 4 active chips per
- * contact requires a non-empty limit_override_reason (else ChipLimitError).
- * A number colliding with another ACTIVE chip → ChipNumberTakenError.
- * Returns the created chips in input order.
+ * Issue chips to one contact for ONE OR MORE holder groups (multi-person
+ * window), all in ONE transaction, all-or-nothing. The contact row is locked
+ * FOR UPDATE so the active-count check and the apartment_number snapshot are
+ * race-free. The soft limit of 4 active chips per contact is counted over
+ * existing actives + the SUM of all groups' numbers TOGETHER (a non-empty
+ * limit_override_reason is required past it, else ChipLimitError). A number
+ * colliding with another ACTIVE chip — or repeated within/across groups —
+ * throws ChipNumberTakenError carrying the offending group index.
+ * Returns the created chips in input order (groups then numbers).
  */
-export async function issueChip(
-  input: IssueChipInput,
+export async function issueChipGroups(
+  input: IssueChipsInput,
   actor: { id: string; name: string },
 ): Promise<ChipWithHolder[]> {
-  // Trim + reject blanks; a repeated number within one request is a conflict.
-  const numbers: string[] = [];
+  // Trim + reject blanks; a repeated number within or ACROSS groups is a
+  // conflict (client blocks it too — the server is the authority).
   const seen = new Set<string>();
-  for (const raw of input.chip_numbers) {
-    const num = raw.trim();
-    if (!num) continue;
-    if (seen.has(num)) throw new ChipNumberTakenError(num);
-    seen.add(num);
-    numbers.push(num);
+  const groups: { index: number; numbers: string[] }[] = [];
+  for (let i = 0; i < input.groups.length; i++) {
+    const numbers: string[] = [];
+    for (const raw of input.groups[i].numbers) {
+      const num = raw.trim();
+      if (!num) continue;
+      if (seen.has(num)) throw new ChipNumberTakenError(num, i);
+      seen.add(num);
+      numbers.push(num);
+    }
+    if (numbers.length > MAX_CHIPS_PER_GROUP) throw new Error('invalid_chip_numbers');
+    if (numbers.length > 0) groups.push({ index: i, numbers });
   }
-  if (numbers.length === 0 || numbers.length > MAX_CHIPS_PER_ISSUE) {
-    throw new Error('invalid_chip_numbers');
-  }
+  if (groups.length === 0) throw new Error('invalid_chip_numbers');
+  const totalNew = groups.reduce((s, g) => s + g.numbers.length, 0);
 
   return withTransaction(async (client) => {
     const contact = (
@@ -408,31 +419,6 @@ export async function issueChip(
     ).rows[0];
     if (!contact) throw new Error('contact_not_found');
 
-    // Holder identity enforcement (product rule 2, CHECK 074): every chip is
-    // issued on a specific person's name. Registry roles snapshot the LIVE
-    // registry values (an explicit per-chip override is allowed and applies to
-    // this chip only); snapshot roles must bring their own name.
-    const role = input.resident_role;
-    let holderName = input.holder_name?.trim() || null;
-    let holderPhone = input.holder_phone?.trim() || null;
-    if (isSnapshotRole(role)) {
-      if (!holderName) throw new Error('holder_name_required');
-    } else {
-      const liveName = {
-        owner: contact.owner_name,
-        tenant: contact.tenant_name,
-        operator: contact.operator_name,
-      }[role]?.trim() || null;
-      const livePhone = {
-        owner: contact.owner_phone,
-        tenant: contact.tenant_phone,
-        operator: contact.operator_phone,
-      }[role]?.trim() || null;
-      holderName = holderName ?? liveName;
-      holderPhone = holderPhone ?? livePhone;
-      if (!holderName) throw new Error('holder_not_in_registry');
-    }
-
     const activeCount = (
       await client.query<{ count: number }>(
         `select count(*)::int as count from public.chips
@@ -441,52 +427,86 @@ export async function issueChip(
       )
     ).rows[0].count;
 
+    // Soft limit over the SUM of all groups — the per-type client split never
+    // bypasses the count (clarification 1).
     const overrideReason = input.limit_override_reason?.trim() ?? '';
-    if (activeCount + numbers.length > ACTIVE_CHIPS_SOFT_LIMIT && !overrideReason) {
+    if (exceedsSoftLimit(activeCount, totalNew) && !overrideReason) {
       throw new ChipLimitError();
     }
 
     const created: ChipWithHolder[] = [];
-    for (const num of numbers) {
-      let chip: Chip;
-      try {
-        const r = await client.query<Chip>(
-          `insert into public.chips
-             (chip_number, chip_type, contact_id, apartment_number, resident_role,
-              holder_name, holder_phone, issued_by, issued_by_name,
-              app_platform, app_invite_status, app_expires_at,
-              issuance_fee, fee_charged, limit_override_reason, notes)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-           returning ${CHIP_COLUMNS}`,
-          [
-            num, input.chip_type, input.contact_id, contact.apartment_number,
-            role, holderName, holderPhone,
-            actor.id, actor.name,
-            input.app_platform ?? null, input.app_invite_status ?? null, input.app_expires_at ?? null,
-            input.issuance_fee ?? null, input.fee_charged ?? false,
-            input.limit_override_reason ?? null, input.notes ?? null,
-          ],
-        );
-        chip = r.rows[0];
-      } catch (err) {
-        // Partial unique index chips_number_active_uniq — number held by
-        // another ACTIVE chip. The transaction rolls back (all-or-nothing).
-        if ((err as { code?: string }).code === '23505') {
-          throw new ChipNumberTakenError(num);
-        }
-        throw err;
+    for (const { index, numbers } of groups) {
+      const group = input.groups[index];
+
+      // Holder identity enforcement (product rule 2, CHECK 074): every chip is
+      // issued on a specific person's name. Registry roles snapshot the LIVE
+      // registry values (an explicit override is allowed and applies to this
+      // group's chips only); snapshot roles must bring their own name.
+      const role = group.resident_role;
+      let holderName = group.holder_name?.trim() || null;
+      let holderPhone = group.holder_phone?.trim() || null;
+      if (isSnapshotRole(role)) {
+        if (!holderName) throw new Error('holder_name_required');
+      } else {
+        const liveName = {
+          owner: contact.owner_name,
+          tenant: contact.tenant_name,
+          operator: contact.operator_name,
+        }[role]?.trim() || null;
+        const livePhone = {
+          owner: contact.owner_phone,
+          tenant: contact.tenant_phone,
+          operator: contact.operator_phone,
+        }[role]?.trim() || null;
+        holderName = holderName ?? liveName;
+        holderPhone = holderPhone ?? livePhone;
+        if (!holderName) throw new Error('holder_not_in_registry');
       }
 
-      await insertChipEvent(client, chip.id, 'issued', actor, {
-        newValue: {
-          chip_number: chip.chip_number,
-          chip_type: chip.chip_type,
-          resident_role: chip.resident_role,
-          holder_name: chip.holder_name,
-          holder_phone: chip.holder_phone,
-        },
-      });
-      created.push(await selectChipWithHolder(client, chip.id));
+      const fee = group.issuance_fee ?? input.issuance_fee ?? null;
+      const feeCharged = group.fee_charged ?? input.fee_charged ?? false;
+
+      for (const num of numbers) {
+        let chip: Chip;
+        try {
+          const r = await client.query<Chip>(
+            `insert into public.chips
+               (chip_number, chip_type, contact_id, apartment_number, resident_role,
+                holder_name, holder_phone, issued_by, issued_by_name,
+                app_platform, app_invite_status, app_expires_at,
+                issuance_fee, fee_charged, limit_override_reason, notes)
+             values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+             returning ${CHIP_COLUMNS}`,
+            [
+              num, group.chip_type, input.contact_id, contact.apartment_number,
+              role, holderName, holderPhone,
+              actor.id, actor.name,
+              group.app_platform ?? null, group.app_invite_status ?? null, group.app_expires_at ?? null,
+              fee, feeCharged,
+              input.limit_override_reason ?? null, input.notes ?? null,
+            ],
+          );
+          chip = r.rows[0];
+        } catch (err) {
+          // Partial unique index chips_number_active_uniq — number held by
+          // another ACTIVE chip. The transaction rolls back (all-or-nothing).
+          if ((err as { code?: string }).code === '23505') {
+            throw new ChipNumberTakenError(num, index);
+          }
+          throw err;
+        }
+
+        await insertChipEvent(client, chip.id, 'issued', actor, {
+          newValue: {
+            chip_number: chip.chip_number,
+            chip_type: chip.chip_type,
+            resident_role: chip.resident_role,
+            holder_name: chip.holder_name,
+            holder_phone: chip.holder_phone,
+          },
+        });
+        created.push(await selectChipWithHolder(client, chip.id));
+      }
     }
     return created;
   });

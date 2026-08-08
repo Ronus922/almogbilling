@@ -116,24 +116,39 @@ export interface ChipWithHolder extends Chip {
   match_type?: ChipMatchType | null;
 }
 
-/** Payload for issuing chips — up to 5 chip numbers in one request, all-or-nothing. */
-export interface IssueChipInput {
-  contact_id: string;
-  chip_type: ChipType;
-  chip_numbers: string[];
+/** One holder group inside a multi-person issue request: one person (role +
+ *  snapshot name/phone) receiving 1-5 NEW chip numbers of one chip_type.
+ *  The UI splits a mixed-type holder block into one group per type — the
+ *  soft-limit is still counted over the SUM of all groups together. */
+export interface IssueChipGroup {
   /** Required (074): owner/tenant/operator snapshot from the registry;
    *  other/staff require holder_name in the payload. */
   resident_role: ChipResidentRole;
   holder_name?: string | null;
   holder_phone?: string | null;
+  chip_type: ChipType;
+  /** 1-5 NEW chip numbers for this person. */
+  numbers: string[];
   app_platform?: AppPlatform | null;
   app_invite_status?: AppInviteStatus | null;
   app_expires_at?: string | null;
+  /** Optional per-group overrides of the window-global fee fields. */
+  issuance_fee?: number | null;
+  fee_charged?: boolean | null;
+}
+
+/** Payload for issuing chips — one apartment, one or more holder groups, ONE
+ *  transaction, all-or-nothing. Fee/notes/override are window-global (a group
+ *  may override its fee fields). */
+export interface IssueChipsInput {
+  contact_id: string;
+  groups: IssueChipGroup[];
   issuance_fee?: number | null;
   fee_charged?: boolean;
-  /** Required (non-empty) to exceed the soft limit of 4 active chips per contact. */
-  limit_override_reason?: string | null;
   notes?: string | null;
+  /** Required (non-empty) when existing actives + ALL new numbers exceed the
+   *  soft limit of 4 active chips per contact. */
+  limit_override_reason?: string | null;
 }
 
 /** One of the three inline resident slots of a contacts row (owner/tenant/operator).
