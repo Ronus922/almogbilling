@@ -537,7 +537,7 @@ export async function getAllApartmentNumbers(): Promise<Set<string>> {
 export async function getDebtorById(id: string): Promise<Tenant | null> {
   const row = await queryOne<Tenant>(
     `select
-       d.id, d.apartment_number,
+       d.id, d.apartment_number, d.contact_id,
        ${OWNER_NAME_SQL} as owner_name,
        ${TENANT_NAME_SQL} as tenant_name,
        ${PHONE_OWNER_SQL} as phone_owner,

@@ -1,11 +1,11 @@
 'use client';
 
-import { Home, FileText, Clock } from 'lucide-react';
+import { Home, FileText, Clock, KeyRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-export type PanelTabKey = 'details' | 'documents' | 'history';
+export type PanelTabKey = 'details' | 'documents' | 'history' | 'chips';
 
 interface TabDef {
   key: PanelTabKey;
@@ -18,18 +18,21 @@ const TABS: TabDef[] = [
   { key: 'details',   label: 'פרטי דייר', icon: Home },
   { key: 'documents', label: 'מסמכים',     icon: FileText },
   { key: 'history',   label: 'היסטוריה',   icon: Clock },
+  { key: 'chips',     label: 'צ׳יפים',     icon: KeyRound },
 ];
 
 interface Props {
   active: PanelTabKey;
   onChange: (key: PanelTabKey) => void;
+  /** Tabs to drop entirely (e.g. 'chips' without chips:view). Default: none. */
+  hiddenTabs?: PanelTabKey[];
 }
 
-export function PanelTabs({ active, onChange }: Props) {
+export function PanelTabs({ active, onChange, hiddenTabs = [] }: Props) {
   return (
     <div className="flex-none border-b border-slate-200 bg-white">
       <div className="flex items-center gap-6 px-6">
-        {TABS.map((t) => {
+        {TABS.filter((t) => !hiddenTabs.includes(t.key)).map((t) => {
           const isActive = t.key === active;
           const Icon = t.icon;
           const button = (

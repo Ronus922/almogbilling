@@ -14,11 +14,15 @@ import type {
   ContactPersonInput,
   ContactPersonRole,
   ContactResidentType,
+  ContactUnitType,
   ContactWritableFields,
   WhatsappProfileSyncStatus,
 } from '@/lib/types/contacts';
 
 const RESIDENT_TYPES: readonly ContactResidentType[] = ['owner', 'tenant', 'operator'];
+const UNIT_TYPES: readonly ContactUnitType[] = [
+  'apartment', 'storage', 'parking', 'common', 'staff', 'other',
+];
 const SYNC_STATUSES: readonly WhatsappProfileSyncStatus[] = [
   'pending', 'synced', 'no_avatar', 'unavailable', 'failed',
 ];
@@ -100,6 +104,7 @@ export function coerceContactInput(
   // Plain nullable text fields.
   if (has(body, 'owner_name')) fields.owner_name = strOrNull(body.owner_name);
   if (has(body, 'tenant_name')) fields.tenant_name = strOrNull(body.tenant_name);
+  if (has(body, 'operator_name')) fields.operator_name = strOrNull(body.operator_name);
   if (has(body, 'address')) fields.address = strOrNull(body.address);
   if (has(body, 'notes')) fields.notes = strOrNull(body.notes);
   if (has(body, 'whatsapp_profile_image_url')) {
@@ -110,7 +115,7 @@ export function coerceContactInput(
   }
 
   // Phone fields — cleaned to one canonical local number; reject unparseable.
-  for (const key of ['owner_phone', 'tenant_phone'] as const) {
+  for (const key of ['owner_phone', 'tenant_phone', 'operator_phone'] as const) {
     if (!has(body, key)) continue;
     const raw = strOrNull(body[key]);
     if (raw === null) {
@@ -149,6 +154,15 @@ export function coerceContactInput(
       return { ok: false, error: 'invalid_resident_type' };
     }
     fields.resident_type = rt as ContactResidentType;
+  }
+
+  // unit_type — enum (071 registry taxonomy).
+  if (has(body, 'unit_type')) {
+    const ut = strOrNull(body.unit_type);
+    if (!ut || !UNIT_TYPES.includes(ut as ContactUnitType)) {
+      return { ok: false, error: 'invalid_unit_type' };
+    }
+    fields.unit_type = ut as ContactUnitType;
   }
 
   // operator_id — uuid or null.

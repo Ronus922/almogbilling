@@ -38,14 +38,24 @@ function isExcel(name: string): boolean {
   return name.toLowerCase().endsWith('.xlsx');
 }
 
+const DEFAULT_ENDPOINT = '/api/contacts/import';
+const DEFAULT_TITLE = 'ייבוא רשימת דיירים';
+const DEFAULT_DESCRIPTION = 'קובץ Excel עם עמודות: דירה, שם בעלים, טלפון, אימייל, שוכר… (מיזוג — שדות ידניים נשמרים)';
+
 export function ContactImportPanel({
   open,
   onOpenChange,
   onImported,
+  endpoint = DEFAULT_ENDPOINT,
+  title = DEFAULT_TITLE,
+  description = DEFAULT_DESCRIPTION,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onImported: () => void;
+  endpoint?: string;
+  title?: string;
+  description?: React.ReactNode;
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -88,7 +98,7 @@ export function ContactImportPanel({
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch('/api/contacts/import', { method: 'POST', body: fd, credentials: 'include' });
+      const res = await fetch(endpoint, { method: 'POST', body: fd, credentials: 'include' });
       const data = (await res.json().catch(() => ({}))) as { runId?: string; error?: string };
       if (!res.ok || !data.runId) { setError(importErrorFromCode(data.error)); return; }
       setRunId(data.runId);
@@ -107,7 +117,7 @@ export function ContactImportPanel({
     const tick = async () => {
       if (!active) return;
       try {
-        const res = await fetch(`/api/contacts/import/status/${runId}`, { credentials: 'include' });
+        const res = await fetch(`${endpoint}/status/${runId}`, { credentials: 'include' });
         if (res.ok) {
           const next = (await res.json()) as RunStatus;
           if (!active) return;
@@ -155,10 +165,8 @@ export function ContactImportPanel({
         <SheetHeader className="flex-none gap-2 bg-gradient-to-bl from-slate-900 via-blue-950 to-blue-900 px-6 py-6 text-white">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1">
-              <SheetTitle className="text-2xl font-bold text-white">ייבוא רשימת דיירים</SheetTitle>
-              <p className="mt-1 text-sm text-white/70">
-                קובץ Excel עם עמודות: דירה, שם בעלים, טלפון, אימייל, שוכר… (מיזוג — שדות ידניים נשמרים)
-              </p>
+              <SheetTitle className="text-2xl font-bold text-white">{title}</SheetTitle>
+              <p className="mt-1 text-sm text-white/70">{description}</p>
             </div>
             <button
               type="button"

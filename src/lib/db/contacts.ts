@@ -32,7 +32,7 @@ const PEOPLE_JSON = `
 const CONTACT_COLUMNS = `
   id, apartment_number, owner_name, owner_phone, owner_email,
   tenant_name, tenant_phone, tenant_email, operator_name, operator_phone,
-  resident_type, operator_id,
+  resident_type, unit_type, needs_review, operator_id,
   owner_is_primary_contact, tenant_is_primary_contact, operator_is_primary_contact,
   address, notes, tags, whatsapp_profile_image_url, whatsapp_profile_sync_status,
   whatsapp_profile_last_synced_at, whatsapp_profile_sync_error,
@@ -48,7 +48,7 @@ const WRITABLE_COLUMNS = [
   'owner_name', 'owner_phone', 'owner_email',
   'tenant_name', 'tenant_phone', 'tenant_email',
   'operator_name', 'operator_phone',
-  'resident_type', 'operator_id',
+  'resident_type', 'unit_type', 'operator_id',
   'owner_is_primary_contact', 'tenant_is_primary_contact', 'operator_is_primary_contact',
   'address', 'notes', 'tags',
   'whatsapp_profile_image_url', 'whatsapp_profile_sync_status',

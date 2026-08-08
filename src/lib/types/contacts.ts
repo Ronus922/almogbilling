@@ -3,6 +3,15 @@
 
 export type ContactResidentType = 'owner' | 'tenant' | 'operator';
 
+/** contacts.unit_type (071) — what kind of unit the registry row represents. */
+export type ContactUnitType =
+  | 'apartment'
+  | 'storage'
+  | 'parking'
+  | 'common'
+  | 'staff'
+  | 'other';
+
 export type WhatsappProfileSyncStatus =
   | 'pending'
   | 'synced'
@@ -59,6 +68,9 @@ export interface Contact {
   operator_name: string | null;
   operator_phone: string | null;
   resident_type: ContactResidentType;
+  unit_type: ContactUnitType;
+  /** True for rows auto-created from an import, not yet vetted by a user. */
+  needs_review: boolean;
   operator_id: string | null;
   owner_is_primary_contact: boolean;
   tenant_is_primary_contact: boolean;
@@ -95,6 +107,7 @@ export interface ContactWritableFields {
   operator_name: string | null;
   operator_phone: string | null;
   resident_type: ContactResidentType;
+  unit_type: ContactUnitType;
   operator_id: string | null;
   owner_is_primary_contact: boolean;
   tenant_is_primary_contact: boolean;

@@ -26,6 +26,7 @@ import { CommentsSection } from './CommentsSection';
 import { CompletedActionsCard } from './CompletedActionsCard';
 import { HistoryTimeline } from './HistoryTimeline';
 import { DocumentsSection } from './DocumentsSection';
+import { ChipsTab } from './ChipsTab';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { PanelTabs, type PanelTabKey } from './PanelTabs';
@@ -41,6 +42,10 @@ interface Props {
   canEdit: boolean;
   canChangeStatus: boolean;
   canSendWhatsapp: boolean;
+  /** chips:view — without it the chips tab is hidden entirely. Default false. */
+  canViewChips?: boolean;
+  /** chips:edit — issue chip + resident-type editing. Default false. */
+  canEditChips?: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -51,7 +56,10 @@ function dateToIsoStr(raw: string | null): string {
   return String(raw).slice(0, 10);
 }
 
-export function TenantDetailPanel({ open, debtorId, canEdit, canChangeStatus, canSendWhatsapp, onOpenChange }: Props) {
+export function TenantDetailPanel({
+  open, debtorId, canEdit, canChangeStatus, canSendWhatsapp,
+  canViewChips = false, canEditChips = false, onOpenChange,
+}: Props) {
   const router = useRouter();
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [statuses, setStatuses] = useState<LegalStatus[]>([]);
@@ -383,7 +391,11 @@ export function TenantDetailPanel({ open, debtorId, canEdit, canChangeStatus, ca
 
           {/* Tabs row — details view only */}
           {!isLoading && tenant && view === 'details' && (
-            <PanelTabs active={activeTab} onChange={setActiveTab} />
+            <PanelTabs
+              active={activeTab}
+              onChange={setActiveTab}
+              hiddenTabs={canViewChips ? [] : ['chips']}
+            />
           )}
 
           {view === 'whatsapp' && tenant && waRecipient ? (
@@ -442,6 +454,12 @@ export function TenantDetailPanel({ open, debtorId, canEdit, canChangeStatus, ca
                 tenantName={tenant.owner_name ?? tenant.tenant_name ?? null}
                 reloadKey={waHistoryKey}
                 onLogged={() => { setHasMutated(true); router.refresh(); }}
+              />
+            ) : activeTab === 'chips' ? (
+              <ChipsTab
+                contactId={tenant.contact_id}
+                apartmentNumber={tenant.apartment_number}
+                canEditChips={canEditChips}
               />
             ) : (
               <div className="space-y-4">

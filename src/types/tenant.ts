@@ -24,6 +24,8 @@ export interface LegalStatus {
 export interface Tenant {
   id: string;
   apartment_number: string;
+  /** contacts.id of the linked registry row (null = unlinked apartment). */
+  contact_id: string | null;
   owner_name: string | null;
   tenant_name: string | null;
   phone_owner: string | null;

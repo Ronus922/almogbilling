@@ -22,9 +22,15 @@ import { cn } from '@/lib/utils';
 import { validatePhone } from '@/lib/validation';
 import { computeManagementFee, MANAGEMENT_FEE_MULTIPLIER } from '@/lib/billing/managementFee';
 import { RESIDENT_TYPES, residentTypeLabel } from '@/lib/constants/contacts';
+import { UNIT_TYPE_LABEL } from '@/lib/constants/chips';
 import type {
-  Contact, ContactPersonRole, ContactResidentType,
+  Contact, ContactPersonRole, ContactResidentType, ContactUnitType,
 } from '@/lib/types/contacts';
+
+/** contacts.unit_type options, in display order (labels from the chips vocabulary). */
+const UNIT_TYPES: readonly ContactUnitType[] = [
+  'apartment', 'storage', 'parking', 'common', 'staff', 'other',
+];
 
 interface Props {
   open: boolean;
@@ -56,6 +62,7 @@ interface FormState {
   management_fee: string;
   people: PersonRow[];
   resident_type: ContactResidentType;
+  unit_type: ContactUnitType;
   owner_name: string;
   owner_phone: string;
   owner_email: string;
@@ -64,6 +71,8 @@ interface FormState {
   tenant_phone: string;
   tenant_email: string;
   tenant_is_primary_contact: boolean;
+  operator_name: string;
+  operator_phone: string;
   address: string;
   notes: string;
   tags: string[];
@@ -75,6 +84,7 @@ const EMPTY_FORM: FormState = {
   management_fee: '',
   people: [],
   resident_type: 'owner',
+  unit_type: 'apartment',
   owner_name: '',
   owner_phone: '',
   owner_email: '',
@@ -83,6 +93,8 @@ const EMPTY_FORM: FormState = {
   tenant_phone: '',
   tenant_email: '',
   tenant_is_primary_contact: false,
+  operator_name: '',
+  operator_phone: '',
   address: '',
   notes: '',
   tags: [],
@@ -109,6 +121,7 @@ function fromContact(c: Contact): FormState {
       is_primary_contact: p.is_primary_contact,
     })),
     resident_type: c.resident_type,
+    unit_type: c.unit_type ?? 'apartment',
     owner_name: c.owner_name ?? '',
     owner_phone: c.owner_phone ?? '',
     owner_email: c.owner_email ?? '',
@@ -117,6 +130,8 @@ function fromContact(c: Contact): FormState {
     tenant_phone: c.tenant_phone ?? '',
     tenant_email: c.tenant_email ?? '',
     tenant_is_primary_contact: c.tenant_is_primary_contact,
+    operator_name: c.operator_name ?? '',
+    operator_phone: c.operator_phone ?? '',
     address: c.address ?? '',
     notes: c.notes ?? '',
     tags: [...c.tags],
@@ -218,6 +233,9 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
     if (form.tenant_phone.trim() && !validatePhone(form.tenant_phone).valid) {
       e.tenant_phone = validatePhone(form.tenant_phone).error ?? 'מספר טלפון לא תקין';
     }
+    if (form.operator_phone.trim() && !validatePhone(form.operator_phone).valid) {
+      e.operator_phone = validatePhone(form.operator_phone).error ?? 'מספר טלפון לא תקין';
+    }
     if (form.owner_email.trim() && !EMAIL_RE.test(form.owner_email.trim())) {
       e.owner_email = 'אימייל לא תקין';
     }
@@ -276,7 +294,7 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
     if (!canSubmit) {
       setTouched({
         apartment_number: true, owner_phone: true, tenant_phone: true,
-        owner_email: true, tenant_email: true,
+        operator_phone: true, owner_email: true, tenant_email: true,
       });
       return;
     }
@@ -299,6 +317,7 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
           is_primary_contact: p.is_primary_contact,
         })),
         resident_type: form.resident_type,
+        unit_type: form.unit_type,
         owner_name: form.owner_name.trim(),
         owner_phone: phone(form.owner_phone),
         owner_email: form.owner_email.trim(),
@@ -307,6 +326,8 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
         tenant_phone: phone(form.tenant_phone),
         tenant_email: form.tenant_email.trim(),
         tenant_is_primary_contact: form.tenant_is_primary_contact,
+        operator_name: form.operator_name.trim(),
+        operator_phone: phone(form.operator_phone),
         address: form.address.trim(),
         notes: form.notes.trim(),
         tags: form.tags,
@@ -455,25 +476,47 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
                       )}
                     </p>
                   )}
-                  <div className="space-y-2">
-                    <Label className="text-base font-medium text-muted-foreground">סוג דייר</Label>
-                    <Select
-                      value={form.resident_type}
-                      onValueChange={(v) => { if (v) set('resident_type', v as ContactResidentType); }}
-                      disabled={disabled}
-                    >
-                      <SelectTrigger className="w-full data-[size=default]:h-10">
-                        <SelectValue placeholder="בחר סוג...">
-                          {(value: string | null) =>
-                            value ? residentTypeLabel(value as ContactResidentType) : null}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {RESIDENT_TYPES.map((t) => (
-                          <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label className="text-base font-medium text-muted-foreground">סוג יחידה</Label>
+                      <Select
+                        value={form.unit_type}
+                        onValueChange={(v) => { if (v) set('unit_type', v as ContactUnitType); }}
+                        disabled={disabled}
+                      >
+                        <SelectTrigger className="w-full data-[size=default]:h-10">
+                          <SelectValue placeholder="בחר סוג...">
+                            {(value: string | null) =>
+                              value ? UNIT_TYPE_LABEL[value] ?? value : null}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {UNIT_TYPES.map((t) => (
+                            <SelectItem key={t} value={t}>{UNIT_TYPE_LABEL[t]}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-base font-medium text-muted-foreground">סוג דייר</Label>
+                      <Select
+                        value={form.resident_type}
+                        onValueChange={(v) => { if (v) set('resident_type', v as ContactResidentType); }}
+                        disabled={disabled}
+                      >
+                        <SelectTrigger className="w-full data-[size=default]:h-10">
+                          <SelectValue placeholder="בחר סוג...">
+                            {(value: string | null) =>
+                              value ? residentTypeLabel(value as ContactResidentType) : null}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {RESIDENT_TYPES.map((t) => (
+                            <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </div>
               </Section>
@@ -569,6 +612,18 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
                   </div>
                 </Section>
               )}
+
+              {/* Operator — the registry's dedicated operator_name/operator_phone columns. */}
+              <Section title="מפעיל" icon={User} iconTone="amber">
+                <div className="grid grid-cols-1 gap-4 py-2 sm:grid-cols-2">
+                  <Field id="operator-name" label="מפעיל — שם" value={form.operator_name}
+                    onChange={(v) => set('operator_name', v)} disabled={disabled} />
+                  <Field id="operator-phone" label="מפעיל — טלפון" value={form.operator_phone}
+                    onChange={(v) => set('operator_phone', v)} onBlur={() => markTouched('operator_phone')}
+                    error={errFor('operator_phone')} disabled={disabled}
+                    dir="ltr" tabularNums inputMode="tel" placeholder="052-1234567" />
+                </div>
+              </Section>
 
               {/* Extra */}
               <Section title="פרטים נוספים" icon={Info} iconTone="slate">

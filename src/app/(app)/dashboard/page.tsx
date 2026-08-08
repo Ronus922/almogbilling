@@ -59,6 +59,8 @@ export default async function DashboardPage({
   const canSendWhatsapp = hasPermission(actor.role, actor.permissions, 'whatsapp', 'edit');
   const canSync = hasPermission(actor.role, actor.permissions, 'import', 'edit');
   const canChangeStatus = hasPermission(actor.role, actor.permissions, 'status_management', 'edit');
+  const canViewChips = hasPermission(actor.role, actor.permissions, 'chips', 'view');
+  const canEditChips = hasPermission(actor.role, actor.permissions, 'chips', 'edit');
   // Bulk export / print (`export`) — manager+ only; a read-only viewer cannot
   // bulk-download the debtors list, only read the on-screen table.
   const canExport = hasPermission(actor.role, actor.permissions, 'export', 'view');
@@ -94,6 +96,8 @@ export default async function DashboardPage({
           canChangeStatus={canChangeStatus}
           canArchive={canArchive}
           canSendWhatsapp={canSendWhatsapp}
+          canViewChips={canViewChips}
+          canEditChips={canEditChips}
         />
       </div>
     </div>

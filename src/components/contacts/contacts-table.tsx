@@ -7,6 +7,7 @@ import {
 import { cn } from '@/lib/utils';
 import { formatPhoneDisplay, phoneTelHref } from '@/lib/phone';
 import { RESIDENT_TYPE_META } from '@/lib/constants/contacts';
+import { UNIT_TYPE_LABEL } from '@/lib/constants/chips';
 import type { Contact, ContactPersonRole } from '@/lib/types/contacts';
 
 /**
@@ -71,7 +72,11 @@ export function ContactsTable({
                 className="cursor-pointer border-b border-slate-100 hover:bg-slate-50 h-12"
               >
                 <TableCell className="px-4 py-3 text-right text-sm font-bold text-slate-900">
-                  {c.apartment_number}
+                  <span className="inline-flex items-center gap-1.5">
+                    {c.apartment_number}
+                    <UnitTypePill type={c.unit_type} />
+                    <NeedsReviewPill show={c.needs_review} />
+                  </span>
                 </TableCell>
                 <TableCell className="px-4 py-3 text-right text-sm font-medium text-slate-800">
                   {c.owner_name || <span className="text-slate-400">—</span>}
@@ -156,6 +161,29 @@ function ExtraPhonesBadge({ count }: { count: number }) {
       className="inline-flex shrink-0 items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 ring-1 ring-blue-100"
     >
       +{count}
+    </span>
+  );
+}
+
+/** Slate pill naming the unit kind — hidden for a plain apartment (the default). */
+function UnitTypePill({ type }: { type: Contact['unit_type'] }) {
+  if (!type || type === 'apartment') return null;
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
+      {UNIT_TYPE_LABEL[type] ?? type}
+    </span>
+  );
+}
+
+/** Amber pill — the row was auto-created by an import and awaits vetting. */
+function NeedsReviewPill({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <span
+      title="נוצר אוטומטית מייבוא — טרם נבדק"
+      className="inline-flex shrink-0 items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-amber-200"
+    >
+      לבדיקה
     </span>
   );
 }
