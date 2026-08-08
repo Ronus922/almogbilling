@@ -336,6 +336,68 @@ export async function linkDebtorToContact(
 }
 
 /**
+ * Import hook: ensure every imported apartment has a contacts row, WITHOUT ever
+ * touching an existing one — INSERT … ON CONFLICT (apartment_number) DO NOTHING
+ * only. New rows are stamped source='bllink_sync' + needs_review=true so the
+ * user can vet them in the registry. Then relinks ANY debtor with a NULL
+ * contact_id to its apartment's contact (replace-mode recreates debtors
+ * unlinked — this restores the links). One transaction, two bulk statements.
+ * Returns how many contacts were created and how many debtors were relinked.
+ */
+export async function ensureContactsForApartments(
+  rows: Array<{
+    apartment_number: string;
+    owner_name: string | null;
+    phone_owner: string | null;
+    phone_tenant: string | null;
+  }>,
+): Promise<{ created: number; relinked: number }> {
+  return withTransaction(async (client) => {
+    // Dedupe by normalized apartment (first occurrence wins) so the unnest
+    // arrays never carry the same key twice — ON CONFLICT DO NOTHING cannot
+    // dedupe duplicates within a single INSERT's own row set.
+    const byApt = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) {
+      const apt = normalizeApartmentNumber(r.apartment_number ?? '');
+      if (!byApt.has(apt)) byApt.set(apt, r);
+    }
+
+    let created = 0;
+    if (byApt.size > 0) {
+      const apts: string[] = [];
+      const ownerNames: Array<string | null> = [];
+      const ownerPhones: Array<string | null> = [];
+      const tenantPhones: Array<string | null> = [];
+      for (const [apt, r] of byApt) {
+        apts.push(apt);
+        ownerNames.push(r.owner_name);
+        ownerPhones.push(r.phone_owner);
+        tenantPhones.push(r.phone_tenant);
+      }
+      const ins = await client.query(
+        `insert into public.contacts
+           (apartment_number, owner_name, owner_phone, tenant_phone, source, needs_review)
+         select t.apt, t.owner_name, t.owner_phone, t.tenant_phone, 'bllink_sync', true
+         from unnest($1::text[], $2::text[], $3::text[], $4::text[])
+           as t(apt, owner_name, owner_phone, tenant_phone)
+         on conflict (apartment_number) do nothing`,
+        [apts, ownerNames, ownerPhones, tenantPhones],
+      );
+      created = ins.rowCount ?? 0;
+    }
+
+    const upd = await client.query(
+      `update public.debtors d
+          set contact_id = c.id
+         from public.contacts c
+        where d.contact_id is null
+          and ${APT_KEY_SQL('d.apartment_number')} = ${APT_KEY_SQL('c.apartment_number')}`,
+    );
+    return { created, relinked: upd.rowCount ?? 0 };
+  });
+}
+
+/**
  * Set contact phone fields for the apartment a debtor belongs to — the write
  * path for the tenant-panel phone edit. Direct SET of only the provided keys:
  * null CLEARS the field, so this must NOT go through the coalesce-based upsert

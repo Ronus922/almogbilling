@@ -38,16 +38,21 @@ import type { ParsedDebtorRow } from '@/lib/excel/parse';
  * internally inconsistent (Σtotal ≠ Σcomponents). A clear error is recorded and
  * the sync returns 502.
  *
- * Manual/text fields (legal_status* and derivatives, notes, phone_tenant,
- * emails, tenant_name, operator_id, phones_manual_override, …) are never touched
- * — see updateDebtorMerge in runner.ts. billing.special_debt is a legacy,
+ * Names/phones are NO LONGER written to debtors — those columns are frozen
+ * legacy; public.contacts is the resident registry (single source of truth).
+ * The mapped owner_name / phone_owner / phone_tenant values feed ONLY the
+ * contacts insert-missing hook in importParsedRows (INSERT … ON CONFLICT DO
+ * NOTHING — an existing apartment's contact is never updated). Other
+ * manual/text fields (legal_status* and derivatives, notes, emails,
+ * tenant_name, operator_id, phones_manual_override, …) are never touched —
+ * see updateDebtorMerge in runner.ts. billing.special_debt is a legacy,
  * all-zero column not fed by Bllink; the sync leaves it 0 (the zero-out keeps
  * absent apartments at 0).
  *
  * Column mapping (CRM debtor_records → billing debtors / ParsedDebtorRow):
  *   apartment_number  →  apartment_number
- *   owner_name        →  owner_name
- *   phone_primary     →  phone_owner / phone_tenant (split; merge keeps existing)
+ *   owner_name        →  owner_name (feeds the contacts hook only)
+ *   phone_primary     →  phone_owner / phone_tenant (split; contacts hook only)
  *   monthly_debt (E)  →  management_fees
  *   special_debt (G)  →  hot_water_debt
  *   management_months_raw (F) → monthly_debt (text month-range)

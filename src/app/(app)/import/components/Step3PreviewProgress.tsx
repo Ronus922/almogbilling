@@ -12,12 +12,14 @@ import { ReplaceConfirmDialog } from './ReplaceConfirmDialog';
 import type { ImportMode } from './Step2MappingMode';
 import { importErrorFromCode, importErrorFromThrown } from '@/lib/excel/import-errors';
 
+// owner_name/phone_owner/phone_tenant are no longer imported into debtors —
+// names/phones are managed in the resident registry (contacts).
 const UPDATED_FIELDS = [
-  'apartment_number', 'owner_name', 'address', 'monthly_debt',
+  'apartment_number', 'address', 'monthly_debt',
   'management_fees', 'total_debt', 'hot_water_debt', 'special_debt',
 ];
 const PROTECTED_FIELDS = [
-  'phone_owner', 'phone_tenant', 'email_owner', 'email_tenant',
+  'owner_name', 'phone_owner', 'phone_tenant', 'email_owner', 'email_tenant',
   'phones_raw', 'operator_id', 'tenant_name', 'legal_status_id',
 ];
 
@@ -30,6 +32,7 @@ interface RunStatus {
   created_rows: number;
   skipped_rows: number;
   error_message: string | null;
+  error_summary: string | null;
 }
 
 export function Step3PreviewProgress({
@@ -82,6 +85,7 @@ export function Step3PreviewProgress({
         created_rows: 0,
         skipped_rows: skippedRows,
         error_message: null,
+        error_summary: null,
       });
     } catch (e) {
       setError(importErrorFromThrown(e));
@@ -138,6 +142,12 @@ export function Step3PreviewProgress({
             <p className="mt-2 text-xs text-center text-blue-800">ייבוא חכם עם Throttle ו-Retry</p>
           </div>
         )}
+
+        {running.error_summary && (
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+            {running.error_summary}
+          </div>
+        )}
       </Card>
     );
   }
@@ -170,6 +180,9 @@ export function Step3PreviewProgress({
           title="שדות מוגנים — לא יתעדכנו:"
           fields={PROTECTED_FIELDS}
         />
+        <p className="text-xs text-muted-foreground">
+          שם וטלפונים מנוהלים במרשם הדיירים — הייבוא רק מוסיף דירות חסרות למרשם (לבדיקה), ואינו מעדכן קיימות
+        </p>
 
         {mode === 'merge' && (
           <div className="rounded-md border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-900">

@@ -16,6 +16,7 @@ export interface ImportRun {
   created_rows: number;
   skipped_rows: number;
   error_message: string | null;
+  error_summary: string | null;
   initiated_by: string | null;
 }
 
@@ -65,11 +66,19 @@ export async function finishRunError(runId: string, message: string): Promise<vo
   );
 }
 
+/** Hebrew per-run summary line for the UI (e.g. new registry apartments). */
+export async function setRunErrorSummary(runId: string, summary: string | null): Promise<void> {
+  await query(
+    `update public.import_runs set error_summary = $2 where id = $1`,
+    [runId, summary],
+  );
+}
+
 export async function getImportRun(runId: string): Promise<ImportRun | null> {
   return queryOne<ImportRun>(
     `select id, started_at, finished_at, mode, status,
             total_rows, processed_rows, updated_rows, created_rows, skipped_rows,
-            error_message, initiated_by
+            error_message, error_summary, initiated_by
      from public.import_runs
      where id = $1`,
     [runId],
