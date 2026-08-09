@@ -88,6 +88,8 @@ export interface ChipsKpis {
   apartments_without_active: number;
   /** Total apartments in the registry (unit_type='apartment') — the KPI's denominator. */
   apartments_total: number;
+  /** Registry apartments linked to a debtor row (active billing record). */
+  apartments_with_debtor: number;
   pending_controller: number;
 }
 

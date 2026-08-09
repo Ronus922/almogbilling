@@ -12,6 +12,18 @@ import { ContactsTable } from '@/components/contacts/contacts-table';
 import { ContactFormPanel } from '@/components/contacts/contact-form-panel';
 import { ContactImportPanel } from '@/components/contacts/contact-import-panel';
 
+/** Registry coverage quick-filter: whole list / no person at all / needs review. */
+type QuickFilter = 'all' | 'no_contact' | 'needs_review';
+
+/** True when name AND phone are empty across ALL THREE roles (owner/tenant/operator). */
+function hasNoContactPerson(c: Contact): boolean {
+  return (
+    !c.owner_name?.trim() && !c.owner_phone?.trim() &&
+    !c.tenant_name?.trim() && !c.tenant_phone?.trim() &&
+    !c.operator_name?.trim() && !c.operator_phone?.trim()
+  );
+}
+
 export function ContactsPageClient({
   initialContacts,
   canEdit,
@@ -22,6 +34,7 @@ export function ContactsPageClient({
   const [contacts, setContacts] = useState<Contact[]>(initialContacts);
   const [search, setSearch] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
   const [loading, setLoading] = useState(false);
 
   const [showImport, setShowImport] = useState(false);
@@ -59,6 +72,23 @@ export function ContactsPageClient({
     () => Array.from(new Set([...contacts.flatMap((c) => c.tags), ...selectedTags])).sort((a, b) => a.localeCompare(b, 'he')),
     [contacts, selectedTags],
   );
+
+  // Coverage summary over the loaded (server-filtered) set; the quick filter
+  // itself narrows client-side so the numbers stay visible while filtering.
+  const summary = useMemo(
+    () => ({
+      total: contacts.length,
+      noContact: contacts.filter(hasNoContactPerson).length,
+      needsReview: contacts.filter((c) => c.needs_review).length,
+    }),
+    [contacts],
+  );
+
+  const visibleContacts = useMemo(() => {
+    if (quickFilter === 'no_contact') return contacts.filter(hasNoContactPerson);
+    if (quickFilter === 'needs_review') return contacts.filter((c) => c.needs_review);
+    return contacts;
+  }, [contacts, quickFilter]);
 
   function toggleTag(tag: string) {
     setSelectedTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
@@ -122,6 +152,29 @@ export function ContactsPageClient({
       </div>
 
       <div className="space-y-3 rounded-lg border bg-card p-4">
+        {/* Registry coverage summary — each count filters the table (client-side) */}
+        <div className="flex flex-wrap items-center gap-2">
+          <SummaryChip
+            active={quickFilter === 'all'}
+            onClick={() => setQuickFilter('all')}
+            label={`${summary.total} דירות במרשם`}
+          />
+          <span className="text-slate-300">·</span>
+          <SummaryChip
+            active={quickFilter === 'no_contact'}
+            onClick={() => setQuickFilter((f) => (f === 'no_contact' ? 'all' : 'no_contact'))}
+            label={`${summary.noContact} ללא איש קשר`}
+            title="שם וטלפון ריקים בכל שלושת התפקידים (בעלים / שוכר / מפעיל)"
+          />
+          <span className="text-slate-300">·</span>
+          <SummaryChip
+            active={quickFilter === 'needs_review'}
+            onClick={() => setQuickFilter((f) => (f === 'needs_review' ? 'all' : 'needs_review'))}
+            label={`${summary.needsReview} דורשות בדיקה`}
+            title="דירות שנוצרו אוטומטית מייבוא/סנכרון וטרם נבדקו"
+          />
+        </div>
+
         {/* Search */}
         <div className="relative">
           <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 start-3" />
@@ -157,7 +210,7 @@ export function ContactsPageClient({
           </div>
         )}
 
-        <ContactsTable rows={contacts} loading={loading} canEdit={canEdit} onRowClick={openEdit} />
+        <ContactsTable rows={visibleContacts} loading={loading} canEdit={canEdit} onRowClick={openEdit} />
       </div>
 
       <ContactImportPanel
@@ -174,5 +227,33 @@ export function ContactsPageClient({
         onSaved={fetchContacts}
       />
     </div>
+  );
+}
+
+function SummaryChip({
+  active,
+  onClick,
+  label,
+  title,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={cn(
+        'inline-flex h-9 items-center rounded-full px-4 text-[13px] font-semibold tabular-nums transition-colors',
+        active
+          ? 'bg-blue-600 text-white'
+          : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+      )}
+    >
+      {label}
+    </button>
   );
 }

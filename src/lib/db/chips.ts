@@ -338,13 +338,20 @@ export async function getChipsKpis(): Promise<ChipsKpis> {
          count(*) filter (where status = 'inactive' and controller_synced = false)::int as pending_controller
        from public.chips`,
     ),
-    queryOne<{ apartments_without_active: number; apartments_total: number }>(
+    queryOne<{
+      apartments_without_active: number;
+      apartments_total: number;
+      apartments_with_debtor: number;
+    }>(
       `select
          count(*)::int as apartments_total,
          count(*) filter (where not exists (
                 select 1 from public.chips ch
                  where ch.contact_id = c.id and ch.status = 'active'
-              ))::int as apartments_without_active
+              ))::int as apartments_without_active,
+         count(*) filter (where exists (
+                select 1 from public.debtors d where d.contact_id = c.id
+              ))::int as apartments_with_debtor
          from public.contacts c
         where c.unit_type = 'apartment'`,
     ),
@@ -355,6 +362,7 @@ export async function getChipsKpis(): Promise<ChipsKpis> {
     lost_30d: chips?.lost_30d ?? 0,
     apartments_without_active: contacts?.apartments_without_active ?? 0,
     apartments_total: contacts?.apartments_total ?? 0,
+    apartments_with_debtor: contacts?.apartments_with_debtor ?? 0,
     pending_controller: chips?.pending_controller ?? 0,
   };
 }

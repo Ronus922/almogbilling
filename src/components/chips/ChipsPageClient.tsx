@@ -225,6 +225,9 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
           <Info className="h-4 w-4 shrink-0" aria-hidden />
           <p className="min-w-0 flex-1">
             המרשם עשוי להיות חלקי — ייבא דיירים או הוסף דירות ידנית
+            {kpis
+              ? ` · במרשם ${kpis.apartments_total} דירות (מתוכן ${kpis.apartments_with_debtor} עם חוב פעיל)`
+              : ''}
           </p>
           <button
             type="button"
