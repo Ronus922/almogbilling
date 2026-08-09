@@ -1191,115 +1191,49 @@ function HolderBlockCard({
         )}
       </div>
 
-      {/* Role cards 2×2 (kept per approved override; taken-state per Chip2) */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {/* Role selector — compact SINGLE ROW (Chip2 `.roles`/`.role`, user
+          decision 09/08 replacing the earlier 2×2 override). Registry details
+          moved off the buttons: selection auto-fills the name/phone fields
+          below; states — sel (brand), taken (ghost ✓ + hint), no-details
+          (disabled + hint with the registry link). */}
+      <div className="flex gap-1.5 sm:gap-2">
         {residentCards.map((card) => {
-          const livesHere = residentType === card.role;
           const selected = block.role === card.role;
           const takenBy = takenRoles.get(card.role);
           const taken = takenBy !== undefined && takenBy !== block.key;
           const lockedOut = roleLocked && !selected;
-
-          if (!card.exists && !taken && !lockedOut) {
-            return (
-              <div
-                key={card.role}
-                className="relative flex min-h-[92px] flex-col rounded-[13px] border-[1.5px] border-dashed border-[var(--chip-border)] bg-[var(--chip-panel)] p-[13px]"
-              >
-                <div className="mb-[7px] flex items-center gap-2">
-                  <span className="text-[14px] font-extrabold text-[var(--chip-ink-soft)]">
-                    {RESIDENT_ROLE_LABEL[card.role]}
-                  </span>
-                  {livesHere && (
-                    <span className="inline-flex h-5 items-center rounded-[6px] bg-[var(--chip-brand-soft)] px-2 text-[11px] font-bold text-[var(--chip-brand-ink)]">
-                      גר בדירה
-                    </span>
-                  )}
-                </div>
-                <span className="text-[12.5px] font-medium text-[var(--chip-ink-soft)]">
-                  לא הוזנו פרטים
-                </span>
-                <Link
-                  href="/contacts"
-                  className="mt-auto inline-flex items-center gap-1 pt-2 text-[12.5px] font-bold text-[var(--chip-brand)] hover:text-[var(--chip-brand-hover)]"
-                >
-                  השלם פרטים ›
-                </Link>
-              </div>
-            );
-          }
-
+          const noDetails = !card.exists;
           return (
             <button
               key={card.role}
               type="button"
-              disabled={submitting || taken || lockedOut}
-              onClick={() => { if (card.exists) onSelectRole(card); }}
+              disabled={submitting || taken || lockedOut || noDetails}
+              title={
+                taken ? 'נבחר בבלוק אחר'
+                : noDetails ? 'לא הוזנו פרטים במרשם'
+                : undefined
+              }
+              onClick={() => onSelectRole(card)}
               className={cn(
-                'relative flex min-h-[92px] flex-col rounded-[13px] border-[1.5px] p-[13px] text-start transition-all',
+                'flex h-10 min-w-0 flex-auto items-center justify-center gap-[5px] rounded-[10px] border-[1.5px] px-1.5 text-[12px] font-bold transition-colors sm:flex-1 sm:px-2 sm:text-[13px]',
                 selected
-                  ? 'border-[var(--chip-brand)] bg-[var(--chip-brand-soft)] shadow-[0_0_0_3px_rgba(61,90,254,0.1)]'
-                  : taken || lockedOut
-                    ? 'cursor-not-allowed border-[var(--chip-border)] bg-[var(--chip-panel-alt)]'
-                    : 'border-[var(--chip-border)] bg-[var(--chip-panel)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)]',
+                  ? 'border-[var(--chip-brand)] bg-[var(--chip-brand-soft)] text-[var(--chip-brand-ink)] shadow-[0_0_0_3px_rgba(61,90,254,0.1)]'
+                  : taken || lockedOut || noDetails
+                    ? 'cursor-not-allowed border-[var(--chip-border)] bg-[var(--chip-panel-alt)] text-[var(--chip-ink-soft)]'
+                    : 'cursor-pointer border-[var(--chip-border-strong)] bg-[var(--chip-panel)] text-[var(--chip-ink-muted)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)] hover:text-[var(--chip-ink)]',
               )}
             >
-              <span
-                className={cn(
-                  'absolute start-3 top-3 grid h-5 w-5 place-items-center rounded-full border-2 text-white transition-colors',
-                  selected
-                    ? 'border-[var(--chip-brand)] bg-[var(--chip-brand)]'
-                    : taken
-                      ? 'border-[var(--chip-border-strong)] bg-[var(--chip-border-strong)]'
-                      : 'border-[var(--chip-border-strong)]',
-                )}
-              >
+              {/* ✓ renders only when visible so narrow screens keep the label */}
+              {(selected || taken) && (
                 <Check
-                  className={cn('h-3 w-3 transition-opacity', selected || taken ? 'opacity-100' : 'opacity-0')}
-                  strokeWidth={3.2}
-                />
-              </span>
-              <div className="mb-[7px] flex items-center gap-2 ps-7">
-                <span
                   className={cn(
-                    'text-[14px] font-extrabold',
-                    taken || lockedOut ? 'text-[var(--chip-ink-soft)]' : 'text-[var(--chip-ink)]',
+                    'hidden h-4 w-4 shrink-0 sm:block',
+                    selected ? 'text-[var(--chip-brand)]' : 'text-[var(--chip-ink-ghost)]',
                   )}
-                >
-                  {RESIDENT_ROLE_LABEL[card.role]}
-                </span>
-                {livesHere && !taken && (
-                  <span
-                    className={cn(
-                      'inline-flex h-5 items-center rounded-[6px] px-2 text-[11px] font-bold text-[var(--chip-brand-ink)]',
-                      selected ? 'bg-white' : 'bg-[var(--chip-brand-soft)]',
-                    )}
-                  >
-                    גר בדירה
-                  </span>
-                )}
-              </div>
-              {taken ? (
-                <span className="text-[12.5px] font-semibold text-[var(--chip-ink-soft)]">
-                  נבחר בבלוק אחר
-                </span>
-              ) : (
-                <>
-                  <span
-                    className={cn(
-                      'text-[13.5px] font-semibold',
-                      lockedOut ? 'text-[var(--chip-ink-soft)]' : 'text-[var(--chip-ink)]',
-                    )}
-                  >
-                    {card.name}
-                  </span>
-                  {card.phone && (
-                    <span className="chip-num mt-[2px] text-start text-[12.5px] text-[var(--chip-ink-muted)]">
-                      {card.phone}
-                    </span>
-                  )}
-                </>
+                  strokeWidth={3.4}
+                />
               )}
+              <span className="truncate">{RESIDENT_ROLE_LABEL[card.role]}</span>
             </button>
           );
         })}
@@ -1308,35 +1242,58 @@ function HolderBlockCard({
         <button
           type="button"
           disabled={submitting || (roleLocked && block.role !== 'other')}
+          title="הזנה חופשית של שם וטלפון"
           onClick={onSelectOther}
           className={cn(
-            'relative flex min-h-[92px] flex-col rounded-[13px] border-[1.5px] p-[13px] text-start transition-all',
+            'flex h-10 min-w-0 flex-auto items-center justify-center gap-[5px] rounded-[10px] border-[1.5px] px-1.5 text-[12px] font-bold transition-colors sm:flex-1 sm:px-2 sm:text-[13px]',
             block.role === 'other'
-              ? 'border-[var(--chip-brand)] bg-[var(--chip-brand-soft)] shadow-[0_0_0_3px_rgba(61,90,254,0.1)]'
+              ? 'border-[var(--chip-brand)] bg-[var(--chip-brand-soft)] text-[var(--chip-brand-ink)] shadow-[0_0_0_3px_rgba(61,90,254,0.1)]'
               : roleLocked
-                ? 'cursor-not-allowed border-[var(--chip-border)] bg-[var(--chip-panel-alt)]'
-                : 'border-dashed border-[var(--chip-border)] bg-[var(--chip-panel)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)]',
+                ? 'cursor-not-allowed border-[var(--chip-border)] bg-[var(--chip-panel-alt)] text-[var(--chip-ink-soft)]'
+                : 'cursor-pointer border-[var(--chip-border-strong)] bg-[var(--chip-panel)] text-[var(--chip-ink-muted)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)] hover:text-[var(--chip-ink)]',
           )}
         >
-          <span
-            className={cn(
-              'absolute start-3 top-3 grid h-5 w-5 place-items-center rounded-full border-2 text-white transition-colors',
-              block.role === 'other'
-                ? 'border-[var(--chip-brand)] bg-[var(--chip-brand)]'
-                : 'border-[var(--chip-border-strong)]',
-            )}
-          >
-            <Check
-              className={cn('h-3 w-3 transition-opacity', block.role === 'other' ? 'opacity-100' : 'opacity-0')}
-              strokeWidth={3.2}
-            />
-          </span>
-          <span className="mb-[7px] ps-7 text-[14px] font-extrabold text-[var(--chip-ink)]">אחר</span>
-          <span className="text-[12.5px] font-medium text-[var(--chip-ink-soft)]">
-            הזנה חופשית של שם וטלפון
-          </span>
+          {block.role === 'other' && (
+            <Check className="hidden h-4 w-4 shrink-0 text-[var(--chip-brand)] sm:block" strokeWidth={3.4} />
+          )}
+          <span className="truncate">אחר</span>
         </button>
       </div>
+
+      {/* Hint row (Chip2 `.rhint`) — replaces the info the 2×2 cards carried */}
+      {(() => {
+        const livesHereSelected = block.role && residentType === block.role;
+        const missing = residentCards.filter((c) => !c.exists);
+        const takenHints = residentCards.filter((c) => {
+          const by = takenRoles.get(c.role);
+          return by !== undefined && by !== block.key;
+        });
+        if (!livesHereSelected && missing.length === 0 && takenHints.length === 0) return null;
+        return (
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] font-semibold text-[var(--chip-ink-soft)]">
+            {livesHereSelected && (
+              <span className="inline-flex items-center gap-[5px]">
+                <Building2 className="h-[13px] w-[13px] text-[var(--chip-ink-ghost)]" />
+                גר בדירה
+              </span>
+            )}
+            {takenHints.map((c) => (
+              <span key={c.role}>{RESIDENT_ROLE_LABEL[c.role]} — נבחר בבלוק אחר</span>
+            ))}
+            {missing.length > 0 && (
+              <span className="inline-flex items-center gap-1">
+                {missing.map((c) => RESIDENT_ROLE_LABEL[c.role]).join(' / ')} — לא הוזנו פרטים ·
+                <Link
+                  href="/contacts"
+                  className="font-bold text-[var(--chip-brand)] hover:text-[var(--chip-brand-hover)]"
+                >
+                  השלם פרטים ›
+                </Link>
+              </span>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Snapshot name + phone (override applies to this block's chips only) */}
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
