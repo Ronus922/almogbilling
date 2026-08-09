@@ -59,3 +59,13 @@ export function getDefaultPermissions(role: Role): ModulePermission[] | null {
 export function getHiddenModules(role: Role, permissions: ModulePermission[]): string[] {
   return MODULES.filter((m) => !hasPermission(role, permissions, m.key, 'view')).map((m) => m.key);
 }
+
+/**
+ * Does the actor have access to ANYTHING? Admin tiers always do; every other
+ * role only if some permission row grants view or edit. Used solely to route
+ * the zero-permissions case to /no-access — never for per-module gating.
+ */
+export function hasAnyAccess(role: Role, permissions: ModulePermission[]): boolean {
+  if (role === 'super_admin' || role === 'admin') return true;
+  return permissions.some((p) => p.canView || p.canEdit);
+}

@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
-import { hasPermission } from '@/lib/permissions/check';
+import { hasAnyAccess, hasPermission } from '@/lib/permissions/check';
 import {
   getDashboardKpis,
   getLastImportedAt,
@@ -50,7 +50,9 @@ export default async function DashboardPage({
   // role has it (manager default + admin/super bypass + viewer); a principal
   // without it has no business server-rendering debtor data here.
   if (!hasPermission(actor.role, actor.permissions, 'dashboard', 'view')) {
-    redirect('/login');
+    // Zero-permissions principals go to /no-access — /login would loop them
+    // (middleware bounces authed users back here via `/`).
+    redirect(hasAnyAccess(actor.role, actor.permissions) ? '/login' : '/no-access');
   }
 
   // Per-module capability flags drive every operational gate in the dashboard —

@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
+import { hasAnyAccess } from '@/lib/permissions/check';
 import { deleteSession, getActiveSessionId } from '@/lib/auth/session';
 import { AuthProvider } from '@/lib/auth/context';
 import { AppShell } from '@/components/app-shell/AppShell';
@@ -22,6 +23,13 @@ export default async function ProtectedLayout({
       redirect('/login?reason=disabled');
     }
     redirect('/login');
+  }
+
+  // Authenticated but zero permissions (matrix role with no rows): sending them
+  // to /login loops (middleware bounces authed users back via `/`). /no-access
+  // sits outside this layout, so it breaks the cycle.
+  if (!hasAnyAccess(actor.role, actor.permissions)) {
+    redirect('/no-access');
   }
 
   const initialActor = {
