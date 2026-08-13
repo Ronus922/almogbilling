@@ -218,8 +218,8 @@ export function ChipsTable({
         <div className="min-w-[880px]">
           {/* head */}
           <div className={cn('grid items-center gap-3 border-b border-[var(--chip-border)] bg-[var(--chip-panel-alt)] px-6 py-[13px]', COLS)}>
-            <span className={cn(HEAD_CELL, 'text-right')}>מחזיק</span>
-            <span className={cn(HEAD_CELL, 'text-right')}>מספר צ׳יפ</span>
+            <span className={cn(HEAD_CELL, 'text-start')}>מחזיק</span>
+            <span className={cn(HEAD_CELL, 'text-start')}>מספר צ׳יפ</span>
             <span className={cn(HEAD_CELL, 'text-center')}>סוג</span>
             <span className={cn(HEAD_CELL, 'text-center')}>סטטוס</span>
             <span className={cn(HEAD_CELL, 'text-center')}>הונפק</span>
@@ -244,7 +244,7 @@ export function ChipsTable({
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); onHolderClick(c); }}
-                      className="truncate text-right text-[14.5px] font-bold text-[var(--chip-ink)] underline-offset-2 hover:text-[var(--chip-brand)] hover:underline"
+                      className="truncate text-start text-[14.5px] font-bold text-[var(--chip-ink)] underline-offset-2 hover:text-[var(--chip-brand)] hover:underline"
                     >
                       {holder.name}
                     </button>

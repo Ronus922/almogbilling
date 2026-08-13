@@ -546,7 +546,7 @@ export function EventFormPanel({
           side="left"
           dir="rtl"
           showCloseButton={false}
-          className="w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
+          className="w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
         >
           <SheetHeader className="flex-none gap-2 bg-[linear-gradient(120deg,#0e1f4d_0%,#16308a_55%,#1d4ed8_100%)] px-7 py-[18px] text-white">
             <div className="flex items-start justify-between gap-4">
@@ -583,7 +583,7 @@ export function EventFormPanel({
                       disabled={disabled} autoFocus={!isEdit} placeholder="כותרת האירוע"
                       className={cn('h-11', titleError && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
                     />
-                    {titleError && <p className="text-[12px] font-semibold text-red-500 text-right">⚠️ {titleError}</p>}
+                    {titleError && <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {titleError}</p>}
                   </div>
 
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -824,7 +824,7 @@ export function EventFormPanel({
                             placeholder="שם משתתף חיצוני…"
                             className={cn('h-11', externalError && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
                           />
-                          {externalError && <p className="mt-1 text-[12px] font-semibold text-red-500 text-right">⚠️ {externalError}</p>}
+                          {externalError && <p className="mt-1 text-[12px] font-semibold text-red-500 text-start">⚠️ {externalError}</p>}
                         </div>
                         <Button
                           type="button" variant="outline" onClick={addExternal}

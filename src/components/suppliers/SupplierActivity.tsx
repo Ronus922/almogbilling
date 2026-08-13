@@ -178,7 +178,7 @@ export function SupplierActivity({
                 </span>
               </div>
               <div className="flex flex-1 items-start justify-between gap-4 rounded-[14px] border border-[#e9edf4] bg-white px-[18px] py-[15px] shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-                <div className="min-w-0 text-right">
+                <div className="min-w-0 text-start">
                   <h3 className="text-[15.5px] font-bold text-[#0f172a]">{meta.label}</h3>
                   {detail && (
                     <p className="mt-[5px] truncate text-[13.5px] font-medium text-[#475569]" title={detail}>

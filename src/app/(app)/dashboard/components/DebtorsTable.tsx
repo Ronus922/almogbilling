@@ -36,7 +36,10 @@ const numFmt = new Intl.NumberFormat('he-IL', { maximumFractionDigits: 0 });
 function Amount({ value, className }: { value: number; className?: string }) {
   return (
     <span className={cn('inline-flex items-baseline justify-center gap-1 font-num font-bold tabular-nums', className)}>
-      <span className="text-[0.72em] font-semibold opacity-70">₪</span>
+      {/* Floor the sigil at 10px: at the desktop 14px cell 0.72em is already
+          10.08px so nothing changes there, but the mobile card renders Amount
+          at 12.5px, where a bare 0.72em would shrink ₪ to an illegible 9px. */}
+      <span className="text-[12px] font-semibold opacity-70 roomy:text-[max(10px,0.72em)]">₪</span>
       <span dir="ltr">{numFmt.format(value)}</span>
     </span>
   );
@@ -285,7 +288,135 @@ export function DebtorsTable({
           </div>
         </div>
       )}
-      <div className="overflow-hidden rounded-xl border border-line">
+      {/* Mobile (<md) — one card per debtor. The desktop table is ten columns
+          and ~1300px wide; inside a 320px phone that was a 5× horizontal
+          scrub where nothing but the apartment number was ever on screen.
+          Same data, same actions, same click target (opens the tenant panel);
+          only the arrangement changes. Desktop is untouched. */}
+      <ul className="space-y-2 roomy:hidden">
+        {rows.map((d) => {
+          const phone = formatPhoneDisplay(getPrimaryPhone(d));
+          const waHasValidPhone = Boolean(
+            cleanPhoneField(d.phone_owner) || cleanPhoneField(d.phone_tenant),
+          );
+          return (
+            <li
+              key={d.id}
+              className={cn(
+                'relative rounded-xl border border-line bg-white p-3 shadow-soft-xs',
+                selectedIds.has(d.id) && 'border-emerald-300 bg-emerald-50/40',
+              )}
+            >
+              {/* Stretched trigger: a real <button> covering the card, so the
+                  whole card is tappable without nesting it inside another
+                  button (invalid HTML — the card also holds a checkbox and a
+                  RowActions menu, which sit above it on the z-axis). */}
+              <button
+                type="button"
+                onClick={() => openPanel(d.id)}
+                aria-label={`פתיחת דירה ${d.apartment_number}${d.owner_name ? ` — ${d.owner_name}` : ''}`}
+                className="absolute inset-0 z-0 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+              />
+
+              <div className="relative z-10 flex items-start gap-3">
+                {canSendWhatsapp && (
+                  <span className="hit-44 relative mt-0.5 shrink-0">
+                    <Checkbox
+                      checked={selectedIds.has(d.id)}
+                      onCheckedChange={(v) => toggleOne(d.id, v === true)}
+                      aria-label={`בחר דירה ${d.apartment_number}`}
+                    />
+                  </span>
+                )}
+
+                <div className="pointer-events-none min-w-0 flex-1">
+                  {/* Identity: apartment + owner */}
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <span className="font-num shrink-0 text-[15px] font-bold tabular-nums text-ink">
+                      דירה {d.apartment_number}
+                    </span>
+                    <span className="truncate text-[14px] font-medium text-ink-2">
+                      {d.owner_name ?? '—'}
+                    </span>
+                  </div>
+
+                  {/* The number that matters, then its breakdown */}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <Amount value={d.total_debt} className="text-[15px] text-[#e5484d]" />
+                    <span className="text-[12.5px] text-ink-3 roomy:text-[11.5px]">
+                      ניהול <Amount value={d.management_fees} className="text-[12.5px] text-brand" />
+                    </span>
+                    <span className="text-[12.5px] text-ink-3 roomy:text-[11.5px]">
+                      מים <Amount value={d.hot_water_debt} className="text-[12.5px] text-[#7c5cfc]" />
+                    </span>
+                  </div>
+
+                  <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
+                    <LegalStatusPill name={d.legal_status_name} color={d.legal_status_color} />
+                    <DocIndicator count={d.doc_count} lastAt={d.last_doc_at} />
+                    {isArchivedTab && (
+                      <span className="text-[12.5px] text-ink-3 roomy:text-[11.5px]" dir="ltr">
+                        {formatDueDate(d.archived_at)}
+                      </span>
+                    )}
+                  </div>
+
+                  {isActionsTab && (d.next_action_description || d.next_action_date) && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-line-soft pt-2">
+                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-2">
+                        {truncate(d.next_action_description, 40)}
+                      </span>
+                      <DueDateCell iso={d.next_action_date} />
+                    </div>
+                  )}
+                </div>
+
+                {/* Phone + row actions — above the stretched button so they stay
+                    independently tappable. */}
+                <div className="relative z-10 flex shrink-0 flex-col items-end gap-1.5">
+                  <RowActions
+                    debtorId={d.id}
+                    apartment={d.apartment_number}
+                    owner={d.owner_name}
+                    canEdit={canArchive}
+                    whatsappReason={!canSendWhatsapp ? 'אין הרשאה' : !waHasValidPhone ? 'אין מספר טלפון תקין' : null}
+                    onWhatsApp={() => openWhatsapp(d)}
+                    showCheck={isActionsTab && canArchive}
+                    onCheck={() => setMarkDone({
+                      debtorId: d.id,
+                      apartment: d.apartment_number,
+                      description: d.next_action_description,
+                      due_date: d.next_action_date,
+                    })}
+                    onArchive={canArchive && !isArchivedTab ? () => setArchiveTarget({
+                      debtorId: d.id,
+                      apartment: d.apartment_number,
+                      owner: d.owner_name,
+                    }) : undefined}
+                    onUnarchive={canArchive && isArchivedTab ? () => setUnarchiveTarget({
+                      debtorId: d.id,
+                      apartment: d.apartment_number,
+                      owner: d.owner_name,
+                    }) : undefined}
+                  />
+                  {phone && (
+                    <a
+                      href={`tel:${phone.replace(/\D/g, '')}`}
+                      dir="ltr"
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-num inline-flex h-11 items-center rounded-lg px-2 text-[12.5px] tabular-nums text-ink-2 hover:bg-row-hover"
+                    >
+                      {phone}
+                    </a>
+                  )}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="hidden overflow-hidden rounded-xl border border-line roomy:block">
         <Table>
           <TableHeader className="[&_tr]:border-b [&_tr]:border-line">
             <TableRow className="bg-surface-2 hover:bg-surface-2">
@@ -308,14 +439,14 @@ export function DebtorsTable({
               <SortHead field="legal_status" label="מצב משפטי" align="center" currentSort={currentSort} onSort={handleSortClick} />
               {isActionsTab && (
                 <>
-                  <TableHead className="h-11 px-4 text-right text-[18px] font-semibold text-ink-2">פעולה לביצוע</TableHead>
+                  <TableHead className="h-11 px-4 text-start text-[18px] font-semibold text-ink-2">פעולה לביצוע</TableHead>
                   <TableHead className="h-11 px-4 text-center text-[18px] font-semibold text-ink-2">תאריך יעד</TableHead>
                 </>
               )}
               {isArchivedTab && (
                 <TableHead className="h-11 px-4 text-center text-[18px] font-semibold text-ink-2">הועבר לארכיון</TableHead>
               )}
-              <TableHead className="h-11 px-4 text-left text-[18px] font-semibold text-ink-2">פעולות</TableHead>
+              <TableHead className="h-11 px-4 text-end text-[18px] font-semibold text-ink-2">פעולות</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -344,10 +475,10 @@ export function DebtorsTable({
                       />
                     </TableCell>
                   )}
-                  <TableCell className="px-4 py-3 text-right text-sm font-num font-bold tabular-nums text-ink">
+                  <TableCell className="px-4 py-3 text-start text-sm font-num font-bold tabular-nums text-ink">
                     {d.apartment_number}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-right text-sm font-medium text-ink">
+                  <TableCell className="px-4 py-3 text-start text-sm font-medium text-ink">
                     <span className="inline-flex items-center gap-1.5">
                       <span>{d.owner_name ?? <span className="text-ink-ghost">—</span>}</span>
                       <DocIndicator count={d.doc_count} lastAt={d.last_doc_at} />
@@ -373,7 +504,7 @@ export function DebtorsTable({
                   </TableCell>
                   {isActionsTab && (
                     <>
-                      <TableCell className="px-4 py-3 text-right text-sm text-slate-700">
+                      <TableCell className="px-4 py-3 text-start text-sm text-slate-700">
                         {truncate(d.next_action_description, 30)}
                       </TableCell>
                       <TableCell className="px-4 py-3 text-center text-sm" dir="ltr">
@@ -386,7 +517,7 @@ export function DebtorsTable({
                       {formatDueDate(d.archived_at)}
                     </TableCell>
                   )}
-                  <TableCell className="px-4 py-3 text-left" onClick={(e) => e.stopPropagation()}>
+                  <TableCell className="px-4 py-3 text-end" onClick={(e) => e.stopPropagation()}>
                     <RowActions
                       debtorId={d.id}
                       apartment={d.apartment_number}
@@ -429,7 +560,7 @@ export function DebtorsTable({
             <Link
               href={page > 1 ? `${pathname}?${withPage(searchParams, page - 1)}` : '#'}
               aria-disabled={page <= 1}
-              className={cn('inline-flex h-8 items-center gap-1 rounded-md border px-2', page <= 1 && 'pointer-events-none opacity-50')}
+              className={cn('inline-flex h-11 items-center gap-1 rounded-md border px-3 roomy:h-8 roomy:px-2', page <= 1 && 'pointer-events-none opacity-50')}
             >
               <ChevronRight className="h-4 w-4" />
               הקודם
@@ -437,7 +568,7 @@ export function DebtorsTable({
             <Link
               href={page < totalPages ? `${pathname}?${withPage(searchParams, page + 1)}` : '#'}
               aria-disabled={page >= totalPages}
-              className={cn('inline-flex h-8 items-center gap-1 rounded-md border px-2', page >= totalPages && 'pointer-events-none opacity-50')}
+              className={cn('inline-flex h-11 items-center gap-1 rounded-md border px-3 roomy:h-8 roomy:px-2', page >= totalPages && 'pointer-events-none opacity-50')}
             >
               הבא
               <ChevronLeft className="h-4 w-4" />
@@ -484,7 +615,7 @@ export function DebtorsTable({
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
             <AlertDialogTitle>סמן את המשימה כבוצעה?</AlertDialogTitle>
-            <AlertDialogDescription className="whitespace-pre-line text-right">
+            <AlertDialogDescription className="whitespace-pre-line text-start">
               {markDone && `פעולה: ${markDone.description ?? '(ללא תיאור)'}\nתאריך יעד: ${formatDueDate(markDone.due_date)}`}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -509,7 +640,7 @@ export function DebtorsTable({
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
             <AlertDialogTitle>להעביר לארכיון?</AlertDialogTitle>
-            <AlertDialogDescription className="text-right">
+            <AlertDialogDescription className="text-start">
               {archiveTarget && `דירה ${archiveTarget.apartment}${archiveTarget.owner ? ` · ${archiveTarget.owner}` : ''} תוסר מרשימת החייבים ותעבור לטאב הארכיון.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -534,7 +665,7 @@ export function DebtorsTable({
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
             <AlertDialogTitle>להחזיר מהארכיון?</AlertDialogTitle>
-            <AlertDialogDescription className="text-right">
+            <AlertDialogDescription className="text-start">
               {unarchiveTarget && `דירה ${unarchiveTarget.apartment}${unarchiveTarget.owner ? ` · ${unarchiveTarget.owner}` : ''} תוחזר לרשימת החייבים.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -648,7 +779,7 @@ function SortHead({
   const isActive = curField === field;
   const ArrowIcon = isActive && dir === 'asc' ? ArrowUp : ArrowDown;
 
-  const textAlign = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
+  const textAlign = align === 'right' ? 'text-start' : align === 'center' ? 'text-center' : 'text-end';
   // RTL justify: start = right, end = left — so the header label sits exactly
   // over the body cell content (which uses the matching text-align).
   const justify = align === 'right' ? 'justify-start' : align === 'center' ? 'justify-center' : 'justify-end';
@@ -752,7 +883,7 @@ function RowActions({
               type="button"
               onClick={onCheck}
               aria-label="סמן כבוצעה"
-              className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-lg text-[#16a34a] transition-colors hover:bg-[#e9fbf0]"
+              className="inline-flex h-11 w-11 roomy:h-[30px] roomy:w-[30px] items-center justify-center rounded-lg text-[#16a34a] transition-colors hover:bg-[#e9fbf0]"
             >
               <CheckCircle2 className="h-[18px] w-[18px]" />
             </button>
@@ -767,7 +898,7 @@ function RowActions({
               type="button"
               onClick={onArchive}
               aria-label="העבר לארכיון"
-              className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-lg text-[#f2620f] transition-colors hover:bg-[#fff0e6]"
+              className="inline-flex h-11 w-11 roomy:h-[30px] roomy:w-[30px] items-center justify-center rounded-lg text-[#f2620f] transition-colors hover:bg-[#fff0e6]"
             >
               <Archive className="h-4 w-4" />
             </button>
@@ -782,7 +913,7 @@ function RowActions({
               type="button"
               onClick={onUnarchive}
               aria-label="החזר מהארכיון"
-              className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-lg text-brand transition-colors hover:bg-brand-soft"
+              className="inline-flex h-11 w-11 roomy:h-[30px] roomy:w-[30px] items-center justify-center rounded-lg text-brand transition-colors hover:bg-brand-soft"
             >
               <ArchiveRestore className="h-4 w-4" />
             </button>
@@ -798,7 +929,7 @@ function RowActions({
             onClick={whatsappReason ? undefined : onWhatsApp}
             disabled={whatsappReason !== null}
             aria-label="שליחת WhatsApp"
-            className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-lg text-[#16a34a] transition-colors hover:bg-[#e9fbf0] disabled:cursor-default disabled:text-ink-ghost disabled:hover:bg-transparent"
+            className="inline-flex h-11 w-11 roomy:h-[30px] roomy:w-[30px] items-center justify-center rounded-lg text-[#16a34a] transition-colors hover:bg-[#e9fbf0] disabled:cursor-default disabled:text-ink-ghost disabled:hover:bg-transparent"
           >
             <MessageCircle className="h-4 w-4" />
           </button>

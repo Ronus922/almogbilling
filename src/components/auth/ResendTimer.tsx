@@ -45,7 +45,7 @@ export function ResendTimer({ email }: { email: string }) {
       >
         {remaining > 0 ? `שלחי שוב (אחרי ${remaining} שניות)` : 'שלחי שוב'}
       </Button>
-      <Link href="/forgot-password" className="text-xs text-muted-foreground hover:text-primary hover:underline">
+      <Link href="/forgot-password" className="inline-flex h-11 items-center text-xs text-muted-foreground hover:text-primary roomy:h-auto hover:underline">
         שגיאה במייל? שני כתובת
       </Link>
     </div>

@@ -51,14 +51,14 @@ export function ContactsTable({
   return (
     <>
       {/* Desktop table (md+) */}
-      <div className="hidden rounded-lg border border-slate-200 bg-white overflow-hidden md:block">
+      <div className="hidden rounded-lg border border-slate-200 bg-white overflow-hidden roomy:block">
         <Table>
           <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
             <TableRow className="bg-slate-50 hover:bg-slate-50">
-              <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">דירה</TableHead>
-              <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">בעלים</TableHead>
+              <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">דירה</TableHead>
+              <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">בעלים</TableHead>
               <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">טלפון בעל</TableHead>
-              <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500 max-lg:hidden">שוכר</TableHead>
+              <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500 max-lg:hidden">שוכר</TableHead>
               <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500 max-lg:hidden">טלפון שוכר</TableHead>
               <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">סוג</TableHead>
               <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500 w-16">פעולות</TableHead>
@@ -71,14 +71,14 @@ export function ContactsTable({
                 onClick={() => onRowClick(c.id)}
                 className="cursor-pointer border-b border-slate-100 hover:bg-slate-50 h-12"
               >
-                <TableCell className="px-4 py-3 text-right text-sm font-bold text-slate-900">
+                <TableCell className="px-4 py-3 text-start text-sm font-bold text-slate-900">
                   <span className="inline-flex items-center gap-1.5">
                     {c.apartment_number}
                     <UnitTypePill type={c.unit_type} />
                     <NeedsReviewPill show={c.needs_review} />
                   </span>
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right text-sm font-medium text-slate-800">
+                <TableCell className="px-4 py-3 text-start text-sm font-medium text-slate-800">
                   {c.owner_name || <span className="text-slate-400">—</span>}
                 </TableCell>
                 <TableCell dir="ltr" className="px-4 py-3 text-center text-sm tabular-nums">
@@ -87,7 +87,7 @@ export function ContactsTable({
                     <ExtraPhonesBadge count={extraPhoneCount(c, 'owner')} />
                   </span>
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right text-sm text-slate-700 max-lg:hidden">
+                <TableCell className="px-4 py-3 text-start text-sm text-slate-700 max-lg:hidden">
                   {c.tenant_name || <span className="text-slate-400">—</span>}
                 </TableCell>
                 <TableCell dir="ltr" className="px-4 py-3 text-center text-sm tabular-nums max-lg:hidden">
@@ -116,7 +116,7 @@ export function ContactsTable({
       </div>
 
       {/* Mobile cards (below md) */}
-      <div className="space-y-2 md:hidden">
+      <div className="space-y-2 roomy:hidden">
         {rows.map((c) => (
           <button
             key={c.id}

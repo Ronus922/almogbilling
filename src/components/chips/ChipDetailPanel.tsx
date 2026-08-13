@@ -286,7 +286,7 @@ export function ChipDetailPanel({
           side="left"
           dir="rtl"
           showCloseButton={false}
-          className="chips-skin w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-[var(--chip-panel)]"
+          className="chips-skin w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-[var(--chip-panel)]"
         >
           {/* Header — ref gradient (chips-skin declared exception) */}
           <SheetHeader className="flex-none gap-2 bg-[image:var(--chip-header-gradient)] px-[28px] py-[20px] text-white">
@@ -855,7 +855,7 @@ function ChipHistory({ chipId, refreshSignal }: { chipId: string; refreshSignal:
                 </span>
               </div>
               <div className="flex flex-1 items-start justify-between gap-4 rounded-[14px] border border-[#e9edf4] bg-white px-[18px] py-[15px] shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-                <div className="min-w-0 text-right">
+                <div className="min-w-0 text-start">
                   <h3 className="text-[15.5px] font-bold text-[#0f172a]">
                     {CHIP_EVENT_LABEL[event.event_type] ?? event.event_type}
                   </h3>

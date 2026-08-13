@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Heebo, IBM_Plex_Mono, Inter } from 'next/font/google';
 import { Toaster } from '@/components/ui/sonner';
 import './globals.css';
@@ -29,6 +29,17 @@ const chipMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: 'ALMOG CRM',
   description: 'מערכת ניהול דיירים וגבייה לחברות ניהול בניינים',
+};
+
+// `viewportFit: 'cover'` is what makes `env(safe-area-inset-*)` return non-zero
+// on notched devices — without it the whole safe-area layer is dead CSS. Next's
+// default viewport tag omits it. No `maximum-scale`/`user-scalable`: pinch-zoom
+// stays available (a11y), and iOS focus-zoom is already prevented by the 17px
+// root size + `text-base` inputs, not by locking the viewport.
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({

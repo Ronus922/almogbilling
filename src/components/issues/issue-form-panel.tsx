@@ -721,7 +721,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
           side="left"
           dir="rtl"
           showCloseButton={false}
-          className="w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
+          className="w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
         >
           <SheetHeader className="flex-none gap-2 bg-gradient-to-bl from-slate-900 via-blue-950 to-blue-900 px-6 py-6 text-white">
             <div className="flex items-start justify-between gap-4">
@@ -767,7 +767,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
                       className={cn('h-10', titleError && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
                     />
                     {titleError && (
-                      <p className="text-[12px] font-semibold text-red-500 text-right">⚠️ {titleError}</p>
+                      <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {titleError}</p>
                     )}
                   </div>
 
@@ -858,7 +858,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
                         placeholder="כיצד טופלה התקלה?"
                       />
                       {resolutionMissing && (
-                        <p className="text-[12px] font-semibold text-red-500 text-right">
+                        <p className="text-[12px] font-semibold text-red-500 text-start">
                           ⚠️ יש להזין הערות טיפול לסטטוס &quot;טופלה&quot;
                         </p>
                       )}

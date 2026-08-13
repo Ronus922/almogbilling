@@ -87,7 +87,7 @@ export function ChipHolderPanel({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="left"
-        className="chips-skin w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-[var(--chip-bg)]"
+        className="chips-skin w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-[var(--chip-bg)]"
       >
         {/* Header — ref gradient (115deg, #2B3FB8 → #3D5AFE 62% → #5872FF) */}
         <SheetHeader className="flex-none gap-2 bg-[image:var(--chip-header-gradient)] px-[26px] py-[20px] text-white">

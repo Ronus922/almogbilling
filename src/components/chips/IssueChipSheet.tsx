@@ -711,7 +711,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
           side="left"
           dir="rtl"
           showCloseButton={false}
-          className="chips-skin w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-[var(--chip-panel)]"
+          className="chips-skin w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-[var(--chip-panel)]"
         >
           {/* Header — ref gradient; Chip2 subtitle */}
           <SheetHeader className="flex-none gap-2 bg-[image:var(--chip-header-gradient)] px-[28px] py-[22px] text-white">
@@ -999,7 +999,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                       )}
                     />
                     {feeError && (
-                      <p className="text-right text-[12px] font-semibold text-red-500">⚠️ {feeError}</p>
+                      <p className="text-start text-[12px] font-semibold text-red-500">⚠️ {feeError}</p>
                     )}
                   </div>
                   <div className="flex items-center gap-[9px] sm:pt-8">
@@ -1328,7 +1328,7 @@ function HolderBlockCard({
             )}
           />
           {phoneError && (
-            <p className="text-right text-[12px] font-semibold text-red-500">⚠️ {phoneError}</p>
+            <p className="text-start text-[12px] font-semibold text-red-500">⚠️ {phoneError}</p>
           )}
         </div>
       </div>

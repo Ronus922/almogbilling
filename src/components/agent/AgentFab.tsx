@@ -225,7 +225,8 @@ export function AgentFab() {
         aria-label="עוזר אישי"
         title="עוזר אישי"
         aria-expanded={open}
-        className="fixed bottom-6 left-6 z-50 grid h-14 w-14 place-items-center rounded-full bg-brand text-white shadow-lg shadow-brand/30 transition-colors hover:bg-brand-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+        // The safe-area bottom margin lifts the fixed button clear of the iOS home indicator.
+        className="fixed bottom-6 left-6 z-50 mb-[env(safe-area-inset-bottom)] grid h-14 w-14 place-items-center rounded-full bg-brand text-white shadow-lg shadow-brand/30 transition-colors hover:bg-brand-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
       >
         {open ? <X className="h-6 w-6" /> : <Bot className="h-6 w-6" />}
       </button>
@@ -235,7 +236,9 @@ export function AgentFab() {
           role="dialog"
           aria-label="עוזר אישי"
           dir="rtl"
-          className="fixed bottom-24 left-6 z-40 flex h-[640px] max-h-[calc(100dvh-7rem)] w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-[0_30px_70px_-25px_rgba(15,23,42,0.4),0_8px_24px_-12px_rgba(15,23,42,0.2)] sm:w-[400px]"
+          // Sized in dvw, not vw, so the card never counts a classic scrollbar into
+          // its width; the safe-area bottom margin keeps it above the home indicator.
+          className="fixed bottom-24 left-6 z-40 mb-[env(safe-area-inset-bottom)] flex h-[640px] max-h-[calc(100dvh-9rem)] w-[calc(100dvw-3rem)] flex-col overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-[0_30px_70px_-25px_rgba(15,23,42,0.4),0_8px_24px_-12px_rgba(15,23,42,0.2)] sm:w-[400px]"
         >
           {/* Header */}
           <div className="flex flex-none items-center gap-3 border-b border-[#eef1f6] bg-gradient-to-b from-[#fbfcfe] to-white px-[18px] py-4">
@@ -243,7 +246,7 @@ export function AgentFab() {
               <Bot className="h-[23px] w-[23px]" />
               <span className="absolute bottom-0 left-0 h-3 w-3 rounded-full border-[2.5px] border-white bg-[#22c55e]" />
             </span>
-            <div className="min-w-0 flex-1 text-right">
+            <div className="min-w-0 flex-1 text-start">
               <h2 className="truncate text-[17px] font-extrabold leading-tight tracking-tight text-[#0f172a]">
                 עוזר אישי
               </h2>
@@ -521,7 +524,7 @@ function DebtorCard({ d }: { d: Debtor }) {
           <span className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[11px] bg-[#eaf0ff] text-brand">
             <Building2 className="h-[19px] w-[19px]" />
           </span>
-          <div className="min-w-0 text-right">
+          <div className="min-w-0 text-start">
             <p className="text-[11px] font-semibold text-[#94a3b8]">מספר דירה</p>
             <p className="mt-px flex items-center gap-1.5 text-base font-extrabold tracking-tight text-[#0f172a]">
               {txt(d?.apartment)}

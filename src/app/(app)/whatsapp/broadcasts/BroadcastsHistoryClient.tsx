@@ -149,11 +149,26 @@ export function BroadcastsHistoryClient({
         <EmptyState hasFilters={hasFilters} canEdit={canEdit} onCreate={openCreate} />
       ) : (
         <div className="rounded-lg border border-slate-200 bg-white overflow-x-auto">
-          <Table>
+          {/* מובייל (<md) — כרטיס לכל תפוצה. הטבלה היא 12 עמודות, הרחבה
+              במערכת. הכרטיס נשען על אותם props/handlers כמו <Row>
+              (onOpen / onStop / canEdit) — אין state או לוגיקה נפרדת. */}
+          <ul className="space-y-2 p-3 roomy:hidden">
+            {rows.map((c) => (
+              <MobileCard
+                key={c.id}
+                c={c}
+                canEdit={canEdit}
+                onStop={() => stop.request(c)}
+                onOpen={onOpenDetail ? () => onOpenDetail(c.id) : undefined}
+              />
+            ))}
+          </ul>
+
+          <Table className="hidden roomy:table">
             <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
               <TableRow className="bg-slate-50 hover:bg-slate-50">
                 {['שם התפוצה', 'תאריך יצירה', 'נוצר על ידי', 'קהל יעד', 'תבנית', 'סטטוס', 'התקדמות', 'נשלחו', 'נכשלו', 'בוטלו', 'סך הכול', 'פעולות'].map((h, i) => (
-                  <TableHead key={h} className={cn('h-11 px-3 text-sm font-semibold text-slate-500', i >= 7 && i <= 10 ? 'text-center' : 'text-right', i === 11 && 'text-left')}>{h}</TableHead>
+                  <TableHead key={h} className={cn('h-11 px-3 text-sm font-semibold text-slate-500', i >= 7 && i <= 10 ? 'text-center' : 'text-start', i === 11 && 'text-end')}>{h}</TableHead>
                 ))}
               </TableRow>
             </TableHeader>
@@ -198,17 +213,74 @@ export function BroadcastsHistoryClient({
   );
 }
 
+/** Mobile counterpart of <Row> — identical data and identical actions, arranged
+ *  as a card. Same prop shape on purpose, so the two variants cannot drift. */
+function MobileCard({ c, canEdit, onStop, onOpen }: { c: CampaignListItem; canEdit: boolean; onStop: () => void; onOpen?: () => void }) {
+  const active = !isTerminal(c.status);
+  const pct = progressPct(c);
+  return (
+    <li className="rounded-xl border border-slate-200 bg-white p-3 shadow-soft-xs">
+      <div className="flex items-start justify-between gap-2">
+        <span className="min-w-0 flex-1 truncate text-[14.5px] font-bold text-slate-900">{c.name}</span>
+        <CampaignStatusBadge status={c.status} />
+      </div>
+
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-slate-500">
+        <span className="tabular-nums">{formatDate(c.created_at)}</span>
+        <span>{c.created_by_name ?? '—'}</span>
+        <span>{audienceLabel(c.audience)}</span>
+        <span className="truncate">{c.template_name ?? 'כתיבה חופשית'}</span>
+      </div>
+
+      {active && (
+        <div className="mt-2 space-y-1">
+          <Progress value={pct} className="h-1.5" />
+          <div className="flex items-center justify-between text-[12px] tabular-nums text-slate-500">
+            <span>{processed(c)} מתוך {c.total_count}</span>
+            <span>{pct}%</span>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
+        <div className="flex flex-wrap items-center gap-x-3 text-[12.5px] tabular-nums">
+          <span className="font-semibold text-emerald-700">נשלחו {c.sent_count}</span>
+          <span className="font-semibold text-red-600">נכשלו {c.failed_count}</span>
+          <span className="text-slate-600">בוטלו {c.cancelled_count + c.skipped_count}</span>
+          <span className="font-semibold text-slate-700">סה״כ {c.total_count}</span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {onOpen ? (
+            <Button type="button" variant="ghost" size="icon" onClick={onOpen} aria-label="צפייה בפרטים">
+              <Eye className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button type="button" variant="ghost" size="icon" render={<Link href={`/whatsapp/broadcasts/${c.id}`} />} aria-label="צפייה בפרטים">
+              <Eye className="h-4 w-4" />
+            </Button>
+          )}
+          {canEdit && isCancellable(c.status) && (
+            <Button type="button" variant="ghost" size="icon" onClick={onStop} aria-label="עצירת התפוצה" className="text-red-500 hover:bg-red-50 hover:text-red-600">
+              <OctagonX className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
+
 function Row({ c, canEdit, onStop, onOpen }: { c: CampaignListItem; canEdit: boolean; onStop: () => void; onOpen?: () => void }) {
   const active = !isTerminal(c.status);
   const pct = progressPct(c);
   return (
     <TableRow className="border-b border-slate-100 hover:bg-slate-50">
-      <TableCell className="px-3 py-3 text-right text-sm font-bold text-slate-900 max-w-[220px] truncate">{c.name}</TableCell>
-      <TableCell className="px-3 py-3 text-right text-sm text-slate-600 whitespace-nowrap tabular-nums">{formatDate(c.created_at)}</TableCell>
-      <TableCell className="px-3 py-3 text-right text-sm text-slate-600">{c.created_by_name ?? '—'}</TableCell>
-      <TableCell className="px-3 py-3 text-right text-sm text-slate-600">{audienceLabel(c.audience)}</TableCell>
-      <TableCell className="px-3 py-3 text-right text-sm text-slate-600 max-w-[140px] truncate">{c.template_name ?? 'כתיבה חופשית'}</TableCell>
-      <TableCell className="px-3 py-3 text-right"><CampaignStatusBadge status={c.status} /></TableCell>
+      <TableCell className="px-3 py-3 text-start text-sm font-bold text-slate-900 max-w-[220px] truncate">{c.name}</TableCell>
+      <TableCell className="px-3 py-3 text-start text-sm text-slate-600 whitespace-nowrap tabular-nums">{formatDate(c.created_at)}</TableCell>
+      <TableCell className="px-3 py-3 text-start text-sm text-slate-600">{c.created_by_name ?? '—'}</TableCell>
+      <TableCell className="px-3 py-3 text-start text-sm text-slate-600">{audienceLabel(c.audience)}</TableCell>
+      <TableCell className="px-3 py-3 text-start text-sm text-slate-600 max-w-[140px] truncate">{c.template_name ?? 'כתיבה חופשית'}</TableCell>
+      <TableCell className="px-3 py-3 text-start"><CampaignStatusBadge status={c.status} /></TableCell>
       <TableCell className="px-3 py-3 min-w-[150px]">
         {active ? (
           <div className="space-y-1">
@@ -226,7 +298,7 @@ function Row({ c, canEdit, onStop, onOpen }: { c: CampaignListItem; canEdit: boo
       <TableCell className="px-3 py-3 text-center text-sm font-semibold text-red-600 tabular-nums">{c.failed_count}</TableCell>
       <TableCell className="px-3 py-3 text-center text-sm text-slate-600 tabular-nums">{c.cancelled_count + c.skipped_count}</TableCell>
       <TableCell className="px-3 py-3 text-center text-sm font-semibold text-slate-700 tabular-nums">{c.total_count}</TableCell>
-      <TableCell className="px-3 py-3 text-left">
+      <TableCell className="px-3 py-3 text-end">
         <div dir="ltr" className="flex items-center justify-start gap-1">
           <Tooltip>
             <TooltipTrigger render={<span className="inline-flex" />}>

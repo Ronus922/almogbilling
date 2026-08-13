@@ -122,21 +122,25 @@ export function DebtorsToolbar({ totalRows, canExport }: { totalRows: number; ca
         </span>
       </div>
 
-      <div className="flex items-center gap-2 flex-wrap">
+      {/* On a phone the two search fields each take a full row and the rest of
+          the controls wrap beneath them, instead of being squeezed into one
+          horizontal strip. `[&>div]:w-full` targets SearchField's relative
+          wrapper so the input inside it can actually reach full width. */}
+      <div className="flex flex-wrap items-center gap-2 [&>div]:w-full sm:[&>div]:w-auto">
         <SearchField
           placeholder="מספר דירה..."
           value={apt}
           onChange={setApt}
-          widthClass="w-40"
+          widthClass="w-full sm:w-40"
         />
         <SearchField
           placeholder="שם בעלים..."
           value={q}
           onChange={setQ}
-          widthClass="w-48"
+          widthClass="w-full sm:w-48"
         />
         <Select disabled defaultValue="all">
-          <SelectTrigger className="h-[34px] w-40 rounded-lg border-line bg-surface-2">
+          <SelectTrigger className="h-11 w-full rounded-lg border-line bg-surface-2 sm:w-40 md:h-[34px]">
             <SelectValue placeholder="כל המצבים" />
           </SelectTrigger>
           <SelectContent>
@@ -199,14 +203,14 @@ function SearchField({
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={cn('h-[34px] rounded-lg border-line bg-surface-2 ps-9', widthClass, value && 'pe-9')}
+        className={cn('h-11 rounded-lg border-line bg-surface-2 ps-9 md:h-[34px]', widthClass, value && 'pe-9')}
       />
       {value && (
         <button
           type="button"
           aria-label="נקה חיפוש"
           onClick={() => onChange('')}
-          className="absolute end-2 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600"
+          className="hit-44 absolute end-2 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-600"
         >
           <X className="h-4 w-4" />
         </button>

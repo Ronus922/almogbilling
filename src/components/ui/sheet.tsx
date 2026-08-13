@@ -53,7 +53,15 @@ function SheetContent({
         data-slot="sheet-content"
         data-side={side}
         className={cn(
-          "fixed z-50 flex flex-col gap-4 bg-popover bg-clip-padding text-sm text-popover-foreground shadow-2xl shadow-slate-900/30 transition duration-[1200ms] ease-[cubic-bezier(0.16,0.84,0.26,1)] data-ending-style:opacity-40 data-starting-style:opacity-40 data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:h-auto data-[side=bottom]:border-t data-[side=bottom]:data-ending-style:translate-y-[2.5rem] data-[side=bottom]:data-starting-style:translate-y-[2.5rem] data-[side=left]:inset-y-0 data-[side=left]:left-0 data-[side=left]:h-full data-[side=left]:border-r data-[side=left]:data-ending-style:-translate-x-full data-[side=left]:data-starting-style:-translate-x-full data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:h-full data-[side=right]:border-l data-[side=right]:data-ending-style:translate-x-full data-[side=right]:data-starting-style:translate-x-full data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:border-b data-[side=top]:data-ending-style:translate-y-[-2.5rem] data-[side=top]:data-starting-style:translate-y-[-2.5rem]",
+          "fixed z-50 flex flex-col gap-4 bg-popover bg-clip-padding text-sm text-popover-foreground shadow-2xl shadow-slate-900/30 transition duration-[1200ms] ease-[cubic-bezier(0.16,0.84,0.26,1)] data-ending-style:opacity-40 data-starting-style:opacity-40 data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:h-auto data-[side=bottom]:border-t data-[side=bottom]:data-ending-style:translate-y-[2.5rem] data-[side=bottom]:data-starting-style:translate-y-[2.5rem] data-[side=left]:inset-y-0 data-[side=left]:left-0 data-[side=left]:border-r data-[side=left]:data-ending-style:-translate-x-full data-[side=left]:data-starting-style:-translate-x-full data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:border-l data-[side=right]:data-ending-style:translate-x-full data-[side=right]:data-starting-style:translate-x-full data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:border-b data-[side=top]:data-ending-style:translate-y-[-2.5rem] data-[side=top]:data-starting-style:translate-y-[-2.5rem]",
+          // Side panels are sized in `dvh`, not `h-full`. A fixed element's
+          // `height:100%` resolves against the initial containing block, which
+          // on iOS Safari is the LARGE viewport (chrome collapsed) — so the
+          // panel ran taller than the screen and its sticky footer, with the
+          // save button, sat behind the browser toolbar. `dvh` tracks the
+          // actually-visible area. Top/bottom sheets stay auto-height but get
+          // the same ceiling so a tall one scrolls instead of overflowing.
+          "data-[side=left]:h-dvh data-[side=right]:h-dvh data-[side=bottom]:max-h-dvh data-[side=top]:max-h-dvh",
           className
         )}
         {...props}

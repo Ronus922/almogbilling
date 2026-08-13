@@ -102,7 +102,7 @@ export default async function DebtorPrintPage({
             </h1>
             <p className="mt-1 text-sm text-slate-600">{tenant.owner_name ?? '—'}</p>
           </div>
-          <div className="text-left">
+          <div className="text-end">
             {tenant.legal_status_name && (
               <span
                 className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-slate-900/10"

@@ -48,7 +48,15 @@ export function CalendarPageClient({ canEdit, owners, currentUserName }: Props) 
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Month is the desktop default. On a phone a 7-column month grid gives each
+  // day ~45px — too narrow to read an event chip, let alone tap one — so the
+  // calendar opens on the day view instead. Resolved once, after mount, so the
+  // server-rendered markup (always 'month') matches the first client render and
+  // hydration does not mismatch; the view switcher stays fully available.
   const [view, setView] = useState<CalendarView>('month');
+  useEffect(() => {
+    if (window.matchMedia('(max-width: 639.98px)').matches) setView('day');
+  }, []);
   // Anchor the initial cursor to Jerusalem's "today" at local noon so the month/
   // day labels (getMonth/getDate/getFullYear) read identically on the UTC server
   // and the Jerusalem browser — noon is far from any day boundary (no #418).

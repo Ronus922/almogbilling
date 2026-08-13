@@ -229,15 +229,56 @@ function StatusesTable({
 }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-      <Table>
+      {/* מובייל (<md) — כרטיס לכל סטטוס. כל הפעולות נשמרות ומשתמשות
+          באותם handlers: LinkedCount (פתיחת הדיירים המקושרים),
+          ActiveSwitch (הפעלה/כיבוי) ו-RowActions (עריכה/מחיקה עם
+          אישור דו-שלבי). אין state נפרד ואין לוגיקה מקבילה. */}
+      <ul className="space-y-2 p-3 roomy:hidden">
+        {rows.map((s) => (
+          <li
+            key={s.id}
+            className={cn(
+              'rounded-xl border border-slate-200 bg-white p-3 shadow-soft-xs',
+              !s.is_active && 'opacity-60',
+            )}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <span className="truncate text-[14.5px] font-bold text-slate-900">{s.name}</span>
+                {s.is_system && <Lock className="h-3 w-3 shrink-0 text-slate-400" aria-label="סטטוס מערכת — לא ניתן למחיקה" />}
+              </div>
+              <span
+                className="inline-flex shrink-0 items-center rounded-full px-3 py-0.5 text-[12px] font-semibold text-slate-900"
+                style={{ backgroundColor: s.color }}
+              >
+                {s.name}
+              </span>
+            </div>
+
+            {s.description && (
+              <p className="mt-1 line-clamp-2 text-[12.5px] text-slate-600">{s.description}</p>
+            )}
+
+            <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
+              <div className="flex items-center gap-3">
+                <LinkedCount status={s} onOpen={onOpenLinked} />
+                <ActiveSwitch status={s} onToggle={onToggleActive} />
+              </div>
+              <RowActions status={s} onEdit={() => onEdit(s)} onDelete={() => onDelete(s)} />
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <Table className="hidden roomy:table">
         <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
           <TableRow className="bg-slate-50 hover:bg-slate-50">
-            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">שם סטטוס</TableHead>
-            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">תיאור</TableHead>
-            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">תצוגה</TableHead>
+            <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">שם סטטוס</TableHead>
+            <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">תיאור</TableHead>
+            <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">תצוגה</TableHead>
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">מקושרים</TableHead>
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">פעיל</TableHead>
-            <TableHead className="h-11 px-4 text-left text-sm font-semibold text-slate-500">פעולות</TableHead>
+            <TableHead className="h-11 px-4 text-end text-sm font-semibold text-slate-500">פעולות</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -249,7 +290,7 @@ function StatusesTable({
                 !s.is_active && 'opacity-60',
               )}
             >
-              <TableCell className="px-4 py-3 text-right">
+              <TableCell className="px-4 py-3 text-start">
                 <div className="inline-flex items-center gap-2">
                   <span className="font-bold text-slate-900">{s.name}</span>
                   {s.is_system && (
@@ -262,10 +303,10 @@ function StatusesTable({
                   )}
                 </div>
               </TableCell>
-              <TableCell className="px-4 py-3 text-right text-sm text-slate-600 max-w-xs truncate">
+              <TableCell className="px-4 py-3 text-start text-sm text-slate-600 max-w-xs truncate">
                 {s.description ?? <span className="text-slate-400">—</span>}
               </TableCell>
-              <TableCell className="px-4 py-3 text-right">
+              <TableCell className="px-4 py-3 text-start">
                 <span
                   className="inline-flex items-center rounded-full px-3 py-0.5 text-xs font-semibold text-slate-900"
                   style={{ backgroundColor: s.color }}
@@ -279,7 +320,7 @@ function StatusesTable({
               <TableCell className="px-4 py-3 text-center">
                 <ActiveSwitch status={s} onToggle={onToggleActive} />
               </TableCell>
-              <TableCell className="px-4 py-3 text-left">
+              <TableCell className="px-4 py-3 text-end">
                 <RowActions
                   status={s}
                   onEdit={() => onEdit(s)}

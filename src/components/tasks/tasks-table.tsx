@@ -43,7 +43,58 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+    <>
+      {/* Mobile (<md) — one card per task. The desktop table is eight columns;
+          below md it becomes a stack with the same data, the same row-click
+          (opens the task panel) and the same RowActions menu. */}
+      <ul className="space-y-2 roomy:hidden">
+        {tasks.map((t) => (
+          <li key={t.id} className="relative rounded-xl border border-slate-200 bg-white p-3 shadow-soft-xs">
+            <button
+              type="button"
+              onClick={() => onSelect(t)}
+              aria-label={`פתיחת משימה ${t.title}`}
+              className="absolute inset-0 z-0 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+            />
+            <div className="relative z-10 flex items-start gap-2">
+              <div className="pointer-events-none min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="min-w-0 flex-1 text-[14.5px] font-medium text-slate-900">{t.title}</span>
+                  {t.recurrence && <RecurringBadge />}
+                  {t.comment_count > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-[12px] text-slate-400">
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      {t.comment_count}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium', STATUS_BADGE[t.status])}>
+                    {taskStatusLabel(t.status)}
+                  </span>
+                  <span className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium', PRIORITY_BADGE[t.priority])}>
+                    {taskPriorityLabel(t.priority)}
+                  </span>
+                  {t.due_date && (
+                    <span dir="ltr" className={cn('text-[12.5px] tabular-nums', isOverdue(t) ? 'font-bold text-rose-600' : 'text-slate-600')}>
+                      {t.due_date}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <HandlerCell task={t} />
+                  <TargetCell type={t.target_type} label={t.target_label} />
+                </div>
+              </div>
+              <div className="relative z-10 shrink-0">
+                <RowActions onEdit={() => onSelect(t)} onDelete={onDelete ? () => onDelete(t) : undefined} />
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <div className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white roomy:block">
       <Table>
         <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
           <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
@@ -64,7 +115,7 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
               onClick={() => onSelect(t)}
               className="h-12 cursor-pointer border-b border-slate-100 hover:bg-slate-50"
             >
-              <TableCell className="px-6 py-3.5 text-right text-sm">
+              <TableCell className="px-6 py-3.5 text-start text-sm">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-slate-900">{t.title}</span>
                   {t.recurrence && <RecurringBadge />}
@@ -96,7 +147,7 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
               <TableCell dir="ltr" className={cn('px-6 py-3.5 text-center text-sm tabular-nums', isOverdue(t) ? 'font-bold text-rose-600' : 'text-slate-600')}>
                 {t.due_date ?? '—'}
               </TableCell>
-              <TableCell className="hidden px-6 py-3.5 text-right text-sm lg:table-cell">
+              <TableCell className="hidden px-6 py-3.5 text-start text-sm lg:table-cell">
                 {t.recurrence && t.recurrence.chips.type !== 'none' ? (
                   <CadenceStrip label={t.recurrence.label} chips={t.recurrence.chips} />
                 ) : (
@@ -116,7 +167,8 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
           ))}
         </TableBody>
       </Table>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -136,7 +188,7 @@ function SortHead({
 }) {
   const active = sort === col;
   return (
-    <TableHead className={cn('h-12 px-6 text-[12.5px] font-bold text-slate-400', align === 'right' ? 'text-right' : 'text-center')}>
+    <TableHead className={cn('h-12 px-6 text-[12.5px] font-bold text-slate-400', align === 'right' ? 'text-start' : 'text-center')}>
       <button
         type="button"
         onClick={() => onSortChange(col)}

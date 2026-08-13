@@ -10,12 +10,20 @@ import { AgentFab } from '@/components/agent/AgentFab';
 // and the Header share the same height (h-16), so their bottom borders line up.
 export function AppShell({ children }: { children: ReactNode }) {
   return (
-    <div className="flex h-screen bg-app">
+    // `h-shell` = 100dvh with a 100vh fallback (app/styles/responsive.css). Plain
+    // `h-screen` measures the viewport with mobile browser chrome COLLAPSED, so on
+    // iOS Safari the shell ran ~60-100px taller than the visible area and the last
+    // rows of every scrolling list sat behind the toolbar. `min-w-0` lets the
+    // content column shrink below its content width beside the fixed sidebar —
+    // without it a wide table forces the whole shell to overflow horizontally.
+    <div className="h-shell flex bg-app">
       <Sidebar />
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header />
-        <main className="flex-1 overflow-auto bg-app">
-          <div className="mx-auto max-w-[1640px] p-[18px] md:p-6">{children}</div>
+        <main className="flex-1 overflow-auto overscroll-contain bg-app">
+          <div className="safe-px mx-auto max-w-[1640px] p-[18px] pb-[max(18px,env(safe-area-inset-bottom))] md:p-6">
+            {children}
+          </div>
         </main>
       </div>
       {/* Floating read-only collection assistant — self-gates on dashboard/contacts view. */}

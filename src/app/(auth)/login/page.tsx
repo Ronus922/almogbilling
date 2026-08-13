@@ -8,7 +8,7 @@ export default function LoginPage() {
   return (
     <div
       dir="rtl"
-      className="flex min-h-screen w-full items-center justify-center bg-[radial-gradient(130%_130%_at_100%_0%,#eef2f9_0%,#e8edf6_45%,#f6f8fb_100%)] p-5 sm:p-10"
+      className="flex min-h-dvh w-full items-center justify-center bg-[radial-gradient(130%_130%_at_100%_0%,#eef2f9_0%,#e8edf6_45%,#f6f8fb_100%)] p-5 sm:p-10"
     >
       <div className="flex w-full max-w-5xl overflow-hidden rounded-[26px] bg-white shadow-[0_30px_80px_-20px_rgba(15,42,99,0.35),0_8px_24px_rgba(15,23,42,0.06)] lg:min-h-[600px]">
         <LoginBrandPanel />

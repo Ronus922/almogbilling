@@ -82,7 +82,7 @@ export function ForgotPasswordForm() {
 
       <Link
         href="/login"
-        className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline self-start"
+        className="inline-flex h-11 items-center gap-1.5 text-sm roomy:h-auto text-primary hover:underline self-start"
       >
         <ArrowLeft className="h-4 w-4" />
         חזרה להתחברות

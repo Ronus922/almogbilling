@@ -27,7 +27,7 @@ export function MobileNav() {
         type="button"
         onClick={() => setOpen(true)}
         aria-label="פתח תפריט"
-        className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[10px] border border-line bg-surface-2 text-ink-2 transition-colors hover:bg-row-hover hover:text-ink md:hidden"
+        className="hit-44 relative grid h-[38px] w-[38px] shrink-0 place-items-center rounded-[10px] border border-line bg-surface-2 text-ink-2 transition-colors hover:bg-row-hover hover:text-ink md:hidden"
       >
         <Menu className="h-[18px] w-[18px]" />
       </button>

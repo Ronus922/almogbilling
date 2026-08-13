@@ -194,24 +194,52 @@ function RecipientLog({ campaignId, pollKey }: { campaignId: string; pollKey: st
         <div className="rounded-lg border bg-card p-10 text-center text-sm text-muted-foreground">אין נמענים בקטגוריה זו.</div>
       ) : (
         <div className="rounded-lg border border-slate-200 bg-white overflow-x-auto">
-          <Table>
+          {/* מובייל (<md) — כרטיס לכל נמען במקום טבלה בת 7 עמודות. */}
+          <ul className="space-y-2 p-3 roomy:hidden">
+            {rows.map((r) => (
+              <li key={r.id} className="rounded-xl border border-slate-200 bg-white p-3 shadow-soft-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="min-w-0 flex-1 truncate text-[14.5px] font-semibold text-slate-800">
+                    {r.debtor_name ?? '—'}
+                  </span>
+                  <DeliveryStatus status={r.status} deliveredAt={r.delivered_at} readAt={r.read_at} />
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12.5px] text-slate-600">
+                  <span dir="ltr" className="tabular-nums">{r.phone_masked}</span>
+                  {r.apartment_number && <span>דירה {r.apartment_number}</span>}
+                  {r.sent_at && <span className="tabular-nums">{formatDT(r.sent_at)}</span>}
+                  <span className="tabular-nums">ניסיונות {r.attempt_count}</span>
+                </div>
+                {detailText(r.status, r.last_error) && (
+                  <p className="mt-1.5 line-clamp-2 text-[12px] text-slate-500">
+                    {detailText(r.status, r.last_error)}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+
+          <Table className="hidden roomy:table">
             <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
               <TableRow className="bg-slate-50 hover:bg-slate-50">
                 {['נמען', 'טלפון', 'דירה', 'סטטוס', 'נשלח בשעה', 'ניסיונות', 'פרטים'].map((h, i) => (
-                  <TableHead key={h} className={cn('h-11 px-3 text-sm font-semibold text-slate-500', i === 5 ? 'text-center' : 'text-right')}>{h}</TableHead>
+                  <TableHead key={h} className={cn('h-11 px-3 text-sm font-semibold text-slate-500', i === 5 ? 'text-center' : 'text-start')}>{h}</TableHead>
                 ))}
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((r) => (
                 <TableRow key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
-                  <TableCell className="px-3 py-3 text-right text-sm font-semibold text-slate-800 max-w-[180px] truncate">{r.debtor_name ?? '—'}</TableCell>
-                  <TableCell className="px-3 py-3 text-right text-sm text-slate-600 tabular-nums" dir="ltr">{r.phone_masked}</TableCell>
-                  <TableCell className="px-3 py-3 text-right text-sm text-slate-600">{r.apartment_number ?? '—'}</TableCell>
-                  <TableCell className="px-3 py-3 text-right"><DeliveryStatus status={r.status} deliveredAt={r.delivered_at} readAt={r.read_at} /></TableCell>
-                  <TableCell className="px-3 py-3 text-right text-sm text-slate-600 whitespace-nowrap tabular-nums">{r.sent_at ? formatDT(r.sent_at) : '—'}</TableCell>
+                  <TableCell className="px-3 py-3 text-start text-sm font-semibold text-slate-800 max-w-[180px] truncate">{r.debtor_name ?? '—'}</TableCell>
+                  {/* `dir="ltr"` isolates the digits only. Leaving it on the
+                      cell would make `text-start` resolve to LEFT and break the
+                      column's alignment with its RTL neighbours. */}
+                  <TableCell className="px-3 py-3 text-start text-sm text-slate-600 tabular-nums"><span dir="ltr">{r.phone_masked}</span></TableCell>
+                  <TableCell className="px-3 py-3 text-start text-sm text-slate-600">{r.apartment_number ?? '—'}</TableCell>
+                  <TableCell className="px-3 py-3 text-start"><DeliveryStatus status={r.status} deliveredAt={r.delivered_at} readAt={r.read_at} /></TableCell>
+                  <TableCell className="px-3 py-3 text-start text-sm text-slate-600 whitespace-nowrap tabular-nums">{r.sent_at ? formatDT(r.sent_at) : '—'}</TableCell>
                   <TableCell className="px-3 py-3 text-center text-sm text-slate-600 tabular-nums">{r.attempt_count}</TableCell>
-                  <TableCell className="px-3 py-3 text-right text-sm text-slate-500 max-w-[260px] truncate">{detailText(r.status, r.last_error)}</TableCell>
+                  <TableCell className="px-3 py-3 text-start text-sm text-slate-500 max-w-[260px] truncate">{detailText(r.status, r.last_error)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

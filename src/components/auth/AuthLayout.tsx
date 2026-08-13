@@ -19,7 +19,7 @@ export function AuthLayout({
   // RTL grid: first child → right column, second → left column.
   // We want features on the right, form on the left, so FeaturesCard comes first.
   return (
-    <div className="auth-gradient flex min-h-screen w-full items-center justify-center px-4 py-10 md:px-12">
+    <div className="auth-gradient flex min-h-dvh w-full items-center justify-center px-4 py-10 md:px-12">
       <div className="grid w-full max-w-6xl items-center gap-12 lg:grid-cols-2">
         <FeaturesCard variant={variant} />
         <Card className="w-full max-w-md justify-self-center p-8 md:p-10 shadow-xl">

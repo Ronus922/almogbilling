@@ -37,7 +37,7 @@ export function QuickDocPopover({ debtorId, apartment, owner, canEdit }: Props) 
             type="button"
             disabled
             aria-label="תיעוד מהיר"
-            className="inline-flex items-center justify-center text-blue-300 transition-colors disabled:cursor-default"
+            className="inline-flex h-11 w-11 items-center justify-center text-blue-300 transition-colors disabled:cursor-default roomy:h-auto roomy:w-auto"
           >
             <MessageSquare className="h-4 w-4" />
           </button>
@@ -98,7 +98,7 @@ export function QuickDocPopover({ debtorId, apartment, owner, canEdit }: Props) 
             <PopoverTrigger
               aria-label="תיעוד מהיר"
               onClick={(e) => e.stopPropagation()}
-              className="inline-flex items-center justify-center text-blue-600 transition-colors hover:text-blue-700"
+              className="inline-flex h-11 w-11 items-center justify-center text-blue-600 transition-colors hover:text-blue-700 roomy:h-auto roomy:w-auto"
             />
           }
         >

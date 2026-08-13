@@ -137,7 +137,7 @@ function ModeOption({
       type="button"
       onClick={onClick}
       className={cn(
-        'rounded-md border-2 p-4 text-right transition-colors',
+        'rounded-md border-2 p-4 text-start transition-colors',
         toneClasses,
       )}
     >

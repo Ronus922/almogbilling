@@ -18,7 +18,7 @@ export default async function NoAccessPage() {
   if (hasAnyAccess(actor.role, actor.permissions)) redirect(homePathFor(actor.role));
 
   return (
-    <div className="auth-gradient flex min-h-screen w-full items-center justify-center px-4 py-10 md:px-12">
+    <div className="auth-gradient flex min-h-dvh w-full items-center justify-center px-4 py-10 md:px-12">
       <Card className="w-full max-w-md p-8 md:p-10 shadow-xl">
         <NoAccessCard fullName={actor.full_name} />
       </Card>

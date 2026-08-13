@@ -185,7 +185,11 @@ export function MonthView({ cursor, items, onSelectDay, onSelectItem }: ViewProp
               key={key + idx}
               onClick={() => onSelectDay(key)}
               className={cn(
-                'flex min-h-[116px] cursor-pointer flex-col gap-1 border-b border-l border-[#eef1f6] p-2 text-start transition-colors hover:bg-slate-50',
+                // 116px cells × 6 rows do not fit a phone screen, and at ~45px
+                // wide a cell cannot show a chip anyway — so mobile cells are
+                // short and show dots (see the chip list below), growing to the
+                // full desktop cell from `sm` up.
+                'flex min-h-[58px] cursor-pointer flex-col gap-1 border-b border-l border-[#eef1f6] p-1 text-start transition-colors hover:bg-slate-50 sm:min-h-[116px] sm:p-2',
                 '[&:nth-child(7n)]:border-l-0 [&:nth-child(n+36)]:border-b-0',
                 !inMonth && 'bg-[#fafbfd]',
                 isToday && 'bg-[#f5f9ff]',
@@ -201,7 +205,17 @@ export function MonthView({ cursor, items, onSelectDay, onSelectItem }: ViewProp
               >
                 {day.getDate()}
               </span>
-              <div className="flex flex-col gap-1">
+              {/* Phones get a density dot per event — a chip's text is
+                  unreadable in a ~45px column. Tapping the cell still opens
+                  that day. Chips return in full from `sm` up. */}
+              {dayItems.length > 0 && (
+                <div className="flex flex-wrap gap-0.5 self-center sm:hidden" aria-hidden>
+                  {dayItems.slice(0, 4).map((it) => (
+                    <span key={it.kind + it.id} className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                  ))}
+                </div>
+              )}
+              <div className="hidden flex-col gap-1 sm:flex">
                 {dayItems.slice(0, MAX_VISIBLE).map((it) => (
                   <ItemChip key={it.kind + it.id} item={it} onSelect={() => onSelectItem(it)} variant="dot" />
                 ))}
@@ -209,6 +223,7 @@ export function MonthView({ cursor, items, onSelectDay, onSelectItem }: ViewProp
                   <span className="px-1 text-[10px] font-medium text-slate-400">עוד {extra}…</span>
                 )}
               </div>
+              <span className="sr-only">{dayItems.length > 0 ? `${dayItems.length} אירועים` : 'אין אירועים'}</span>
             </div>
           );
         })}

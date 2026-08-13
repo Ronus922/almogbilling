@@ -132,7 +132,7 @@ export function WhatsAppTemplateSheet({
           side="left"
           dir="rtl"
           showCloseButton={false}
-          className="w-full p-0 sm:w-[55vw] md:min-w-[640px] flex flex-col gap-0 overflow-hidden bg-white"
+          className="w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[640px] flex flex-col gap-0 overflow-hidden bg-white"
         >
           {/* Header — gradient (DESIGN canonical, matches the tenant detail panel) */}
           <div className="flex-none bg-gradient-to-bl from-slate-900 via-blue-950 to-blue-900 px-6 py-6 text-white">

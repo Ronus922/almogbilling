@@ -73,7 +73,7 @@ export function EditPhoneDialog({ open, field, initialValue, onOpenChange, onSav
           <DialogTitle>עריכת {LABELS[field]}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <Label htmlFor="phone-input" className="text-right text-sm font-medium">
+          <Label htmlFor="phone-input" className="text-start text-sm font-medium">
             מספר טלפון
           </Label>
           <Input
@@ -83,7 +83,9 @@ export function EditPhoneDialog({ open, field, initialValue, onOpenChange, onSav
             autoComplete="tel"
             dir="ltr"
             className={cn(
-              'h-10 text-left tabular-nums',
+              // The field itself is `dir="ltr"`, so `text-start` IS the left
+              // edge here — logical, and identical to the previous `text-end`.
+              'h-10 text-start tabular-nums',
               errorToShow && 'border-red-400 bg-red-50 focus-visible:ring-red-200',
             )}
             value={value}
@@ -102,11 +104,11 @@ export function EditPhoneDialog({ open, field, initialValue, onOpenChange, onSav
             autoFocus
           />
           {errorToShow ? (
-            <p className="text-[12px] font-semibold text-red-500 text-right">
+            <p className="text-[12px] font-semibold text-red-500 text-start">
               ⚠️ {errorToShow}
             </p>
           ) : (
-            <p className="text-xs text-muted-foreground text-right">
+            <p className="text-xs text-muted-foreground text-start">
               להשאיר ריק כדי למחוק את המספר. נייד 10 ספרות / קווי 9 ספרות / +972…
             </p>
           )}

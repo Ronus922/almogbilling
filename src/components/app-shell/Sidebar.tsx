@@ -47,7 +47,7 @@ export function Sidebar() {
         onClick={toggle}
         aria-label={collapsed ? 'פתח תפריט' : 'כווץ תפריט'}
         aria-expanded={!collapsed}
-        className="absolute top-1/2 left-0 z-30 grid h-7 w-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-line bg-white text-ink-2 shadow-soft-md transition-colors hover:text-brand"
+        className="hit-44 absolute top-1/2 left-0 z-30 grid h-7 w-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-line bg-white text-ink-2 shadow-soft-md transition-colors hover:text-brand"
       >
         <ChevronRight className={cn('h-4 w-4 transition-transform duration-200', collapsed && 'rotate-180')} />
       </button>

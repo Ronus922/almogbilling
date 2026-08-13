@@ -396,7 +396,7 @@ export function SupplierDetailPanel({
           side="left"
           dir="rtl"
           showCloseButton={false}
-          className="w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
+          className="w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
         >
           {/* Header — DETAIL family (navy diagonal gradient) */}
           <SheetHeader className="flex-none gap-2 bg-[linear-gradient(120deg,#0e1f4d_0%,#16308a_55%,#1d4ed8_100%)] px-8 py-5 text-white">
@@ -822,7 +822,7 @@ function RenameDocumentDialog({
             className={cn('h-10', error && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
           />
           {error && (
-            <p className="text-[12px] font-semibold text-red-500 text-right">⚠️ {error}</p>
+            <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {error}</p>
           )}
         </div>
         <DialogFooter className="gap-2">

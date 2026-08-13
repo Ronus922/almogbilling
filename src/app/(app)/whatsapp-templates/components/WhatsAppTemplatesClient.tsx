@@ -132,13 +132,55 @@ export function WhatsAppTemplatesClient() {
         </div>
       ) : (
         <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-          <Table>
+          {/* מובייל (<md) — כרטיס לכל תבנית. שם ותוכן זקוקים לרוחב מלא;
+              בטבלה הם נדחסים לצד תגית סטטוס ושני כפתורי פעולה. אותם
+              handlers בדיוק (openEdit / setDeleteTarget) — אין לוגיקה כפולה. */}
+          <ul className="space-y-2 p-3 roomy:hidden">
+            {filtered.map((t) => (
+              <li
+                key={t.id}
+                className={cn(
+                  'rounded-xl border border-slate-200 bg-white p-3 shadow-soft-xs',
+                  !t.is_active && 'opacity-60',
+                )}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="min-w-0 flex-1 truncate text-[14.5px] font-bold text-slate-900">{t.name}</span>
+                  <span className={cn(
+                    'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[12px] font-semibold',
+                    t.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500',
+                  )}>
+                    <span className={cn('h-1.5 w-1.5 rounded-full', t.is_active ? 'bg-emerald-500' : 'bg-slate-400')} />
+                    {t.is_active ? 'פעיל' : 'מושבת'}
+                  </span>
+                </div>
+                <p className="mt-1.5 line-clamp-3 text-[12.5px] text-slate-600">{t.content}</p>
+                <div className="mt-2 flex items-center justify-end gap-1 border-t border-slate-100 pt-2">
+                  <Button type="button" variant="ghost" size="icon" onClick={() => openEdit(t)} aria-label="עריכה">
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setDeleteTarget(t)}
+                    aria-label="מחיקה"
+                    className="text-red-500 hover:text-red-600"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          <Table className="hidden roomy:table">
             <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
               <TableRow className="bg-slate-50 hover:bg-slate-50">
-                <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">שם התבנית</TableHead>
-                <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">תוכן</TableHead>
+                <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">שם התבנית</TableHead>
+                <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">תוכן</TableHead>
                 <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">סטטוס</TableHead>
-                <TableHead className="h-11 px-4 text-left text-sm font-semibold text-slate-500">פעולות</TableHead>
+                <TableHead className="h-11 px-4 text-end text-sm font-semibold text-slate-500">פעולות</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -147,8 +189,8 @@ export function WhatsAppTemplatesClient() {
                   key={t.id}
                   className={cn('border-b border-slate-100 hover:bg-slate-50 h-12', !t.is_active && 'opacity-60')}
                 >
-                  <TableCell className="px-4 py-3 text-right text-sm font-bold text-slate-900">{t.name}</TableCell>
-                  <TableCell className="px-4 py-3 text-right text-sm text-slate-600 max-w-md truncate">
+                  <TableCell className="px-4 py-3 text-start text-sm font-bold text-slate-900">{t.name}</TableCell>
+                  <TableCell className="px-4 py-3 text-start text-sm text-slate-600 max-w-md truncate">
                     {t.content}
                   </TableCell>
                   <TableCell className="px-4 py-3 text-center">
@@ -160,7 +202,7 @@ export function WhatsAppTemplatesClient() {
                       {t.is_active ? 'פעיל' : 'מושבת'}
                     </span>
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-left">
+                  <TableCell className="px-4 py-3 text-end">
                     <div dir="ltr" className="flex items-center justify-start gap-1">
                       <Tooltip>
                         <TooltipTrigger render={<span className="inline-flex" />}>

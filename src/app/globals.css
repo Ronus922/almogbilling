@@ -5,8 +5,25 @@
 @import "./styles/print.css";
 @import "./styles/chat.css";
 @import "./styles/chips.css";
+@import "./styles/responsive.css";
 
 @custom-variant dark (&:is(.dark *));
+
+/* `roomy` = "there is genuinely room for the desktop table".
+   A width-only `md:` breakpoint treats a phone in LANDSCAPE (iPhone 14 Pro Max
+   is 932×430) as a desktop, so the debtors table came back at 1299px wide with
+   30px touch targets on a touch device — measured, not theorised. `roomy` adds
+   the missing condition: wide enough AND not a short coarse-pointer viewport.
+   Used by the table↔card toggles AND by the per-call-site density overrides
+   that shrink a control back to desktop size (`h-11 roomy:h-[30px]`) — those
+   are the same "desktop table" decision expressed one control at a time.
+   Shell navigation stays on plain `md`, where a 932px-wide landscape phone can
+   legitimately host the sidebar. */
+@custom-variant roomy {
+  @media (min-width: 768px) and (not ((max-height: 480px) and (pointer: coarse))) {
+    @slot;
+  }
+}
 
 /* ─────────────────────────────────────────────────────────────────────
    Dashboard design language ("ניהול אלמוג") — visual skin tokens.

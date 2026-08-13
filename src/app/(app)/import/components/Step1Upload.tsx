@@ -82,7 +82,7 @@ export function Step1Upload({
         <p className="text-xs text-muted-foreground">קבצים נתמכים: .xlsx</p>
 
         {error && (
-          <Alert variant="destructive" className="mt-2 text-right">
+          <Alert variant="destructive" className="mt-2 text-start">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}

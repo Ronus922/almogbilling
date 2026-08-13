@@ -1,0 +1,119 @@
+/* ─────────────────────────────────────────────────────────────────────
+   Responsive / touch layer — shared helpers for the mobile pass.
+   Documented in DESIGN.md ("mobile ו-touch targets", §1498).
+
+   Everything here is MOBILE-ONLY (below the `md` breakpoint, 768px) unless
+   stated otherwise: the desktop CRM is deliberately dense and must not change.
+   ───────────────────────────────────────────────────────────────────── */
+
+/* ── Safe areas ───────────────────────────────────────────────────────
+   Only return non-zero once `viewportFit: 'cover'` is set on the viewport
+   meta (see src/app/layout.tsx). Applied to the shell, sheet footers and
+   the floating agent button — anything pinned to a physical screen edge. */
+.safe-pb   { padding-bottom: env(safe-area-inset-bottom); }
+.safe-pt   { padding-top: env(safe-area-inset-top); }
+.safe-px   { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+.safe-mb   { margin-bottom: env(safe-area-inset-bottom); }
+/* Bottom inset that never collapses below its own padding. */
+.safe-pb-3 { padding-bottom: max(0.75rem, env(safe-area-inset-bottom)); }
+.safe-pb-4 { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+
+/* ── 44px touch targets ───────────────────────────────────────────────
+   DESIGN.md's rule: a control may LOOK 30px but must be 44px to the finger.
+   `.hit-44` grows the hit box with a transparent pseudo-element so the
+   visual design is untouched — no layout shift, no re-spacing.
+
+   Use on ISOLATED small controls. For tight clusters of icon buttons,
+   enlarge the buttons themselves on mobile instead: two 44px hit boxes
+   4px apart would overlap, which is a worse bug than a small target. */
+/* `.hit-44` deliberately does NOT set `position` on the host.
+
+   This file is unlayered, and in the cascade layer order is decided BEFORE
+   specificity — so any unlayered rule here outranks every Tailwind utility in
+   `@layer utilities`, and `:where()` cannot get around it. An earlier version
+   set `position: relative`, which silently overrode `absolute` on the login
+   password-reveal button and dropped it 19px below its input.
+
+   So the host must supply its own positioning context: most call sites are
+   already `absolute`/`relative`; a statically positioned one adds `relative`
+   next to `hit-44`. */
+@media (max-width: 767.98px), (max-height: 480px) and (pointer: coarse) {
+  .hit-44::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    translate: -50% -50%;
+    width: 100%;
+    height: 100%;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* ── Form-control touch floor ─────────────────────────────────────────
+   Every input / textarea / select trigger reaches 44px on a phone.
+
+   Deliberately `min-height` and NOT a taller `h-*` utility in the
+   primitives: call sites legitimately set their own heights (`h-10` in
+   panels, `h-11` in the calendar event form, `h-[34px]` in the dashboard
+   toolbar), and a responsive height baked into the primitive would win the
+   cascade on DESKTOP too and silently shrink those. A min-height only ever
+   raises a floor, so desktop density is mathematically untouched. */
+@media (max-width: 767.98px), (max-height: 480px) and (pointer: coarse) {
+  [data-slot='input'],
+  [data-slot='textarea'],
+  [data-slot='select-trigger'] {
+    min-height: 44px;
+  }
+}
+
+/* ── Legibility floor ─────────────────────────────────────────────────
+   Sub-12px type is unreadable on a phone. There is deliberately NO helper
+   class for this: a `font-size: max(12px, 1em)` rule resolves `1em` against
+   the PARENT's size, not the element's own, so it silently inflates a small
+   label to the parent's size instead of clamping it to 12px. Raise the floor
+   explicitly at the call site instead — `text-[12px] md:text-[11px]` — which
+   keeps the desktop size visible in the markup and cannot mis-resolve. */
+
+/* ── Horizontal scroll affordance ─────────────────────────────────────
+   For the few tables that legitimately keep horizontal scrolling on mobile
+   (admin-only matrices). Momentum scrolling + a visible edge fade so the
+   scrollability is discoverable rather than hidden. */
+.scroll-x-affordance {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+/* ── Dynamic viewport height ──────────────────────────────────────────
+   `100vh` on iOS Safari measures the viewport with the browser chrome
+   COLLAPSED, so a `h-screen` shell hides its last ~60-100px behind the
+   toolbar. `dvh` tracks the actually-visible area. The `vh` line is the
+   fallback for engines without `dvh`; the `dvh` line wins where supported. */
+.h-shell {
+  height: 100vh;
+  height: 100dvh;
+}
+.max-h-shell {
+  max-height: 100vh;
+  max-height: 100dvh;
+}
+
+/* Height of one full-bleed page inside the shell — used by the two chat views
+   (messages / internal chat), which are the only screens that must fill the
+   viewport exactly instead of growing with their content. Derived from the
+   shell's own measurements so it can't drift: Header is `h-16`, and <main>'s
+   inner wrapper is `p-[18px]` on mobile, `md:p-6` from 768px up. */
+:root {
+  --shell-header-h: 4rem;    /* Header h-16 */
+  --shell-main-pad-y: 2.25rem; /* p-[18px] top + bottom */
+}
+@media (min-width: 768px) {
+  :root { --shell-main-pad-y: 3rem; } /* md:p-6 top + bottom */
+}
+.h-shell-content {
+  height: calc(100vh - var(--shell-header-h) - var(--shell-main-pad-y));
+  height: calc(100dvh - var(--shell-header-h) - var(--shell-main-pad-y));
+}

@@ -316,7 +316,7 @@ export function ChatClient({
   const selectedOnline = otherId ? onlineIds.has(otherId) : false;
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] flex-col gap-3">
+    <div className="h-shell-content flex flex-col gap-3">
       {/* Page header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">

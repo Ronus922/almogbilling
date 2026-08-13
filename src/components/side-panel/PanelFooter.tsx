@@ -51,10 +51,14 @@ export function PanelFooter({
   deleteLabel = 'מחק',
 }: PanelFooterProps) {
   return (
-    <footer className="flex-none border-t border-slate-200 bg-white px-5 py-3">
-      <div className="flex items-center justify-between gap-3">
+    // Mobile: the two action groups stack (`flex-col-reverse` puts the primary
+    // save group on TOP, where the thumb is, and secondary actions below);
+    // from `sm` up it is the original single justified row. The bottom padding
+    // clears the iOS home indicator so the save button is never half-hidden.
+    <footer className="flex-none border-t border-slate-200 bg-white px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
         {/* Right side (start in RTL): סגור + optional delete/printer/export */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" onClick={onClose}>
             סגור
           </Button>
@@ -98,7 +102,7 @@ export function PanelFooter({
         </div>
 
         {/* Left side (end in RTL): optional history + save */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 [&>*]:flex-1 sm:[&>*]:flex-none">
           {showHistory && (
             <Tooltip>
               <TooltipTrigger render={<span className="block" />}>

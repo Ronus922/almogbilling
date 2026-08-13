@@ -122,7 +122,7 @@ export function ReactivateChipDialog({
               )}
             />
             {reasonMissing && (
-              <p className="text-right text-[12px] font-semibold text-red-500">
+              <p className="text-start text-[12px] font-semibold text-red-500">
                 ⚠️ נדרשת סיבת הפעלה מחדש
               </p>
             )}

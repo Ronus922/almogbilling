@@ -149,7 +149,7 @@ export function StatusFormSheet({
           side="left"
           dir="rtl"
           showCloseButton={false}
-          className="w-full p-0 sm:w-[55vw] md:min-w-[640px] flex flex-col gap-0 overflow-hidden bg-white"
+          className="w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[640px] flex flex-col gap-0 overflow-hidden bg-white"
         >
           {/* Header */}
           <div className="flex-none border-b border-slate-200 bg-white px-6 py-4">

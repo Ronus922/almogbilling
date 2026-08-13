@@ -62,7 +62,7 @@ export function SupplierField({
         )}
       />
       {error && (
-        <p className="text-[12px] font-semibold text-red-500 text-right">⚠️ {error}</p>
+        <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {error}</p>
       )}
     </div>
   );

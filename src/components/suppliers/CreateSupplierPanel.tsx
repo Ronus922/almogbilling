@@ -198,7 +198,7 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
           side="left"
           dir="rtl"
           showCloseButton={false}
-          className="w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
+          className="w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
         >
           {/* Header — CREATE family (bright-blue horizontal gradient) */}
           <SheetHeader className="flex-none gap-2 bg-[linear-gradient(to_left,#142a63_0%,#1d4ed8_70%,#2563eb_100%)] px-[26px] py-[18px] text-white">

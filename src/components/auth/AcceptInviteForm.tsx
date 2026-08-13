@@ -164,7 +164,7 @@ function PasswordInput({
         <button
           type="button"
           onClick={toggleShow}
-          className="absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          className="hit-44 absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           aria-label={show ? 'הסתר סיסמה' : 'הצג סיסמה'}
           tabIndex={-1}
         >
@@ -172,7 +172,7 @@ function PasswordInput({
         </button>
       </div>
       {error && (
-        <p className="text-[12px] font-semibold text-red-500 text-right">
+        <p className="text-[12px] font-semibold text-red-500 text-start">
           ⚠️ {error}
         </p>
       )}

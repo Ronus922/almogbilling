@@ -39,13 +39,71 @@ export function NotificationsTable({
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+    <>
+      {/* מובייל (<md) — כרטיס לכל התראה במקום טבלה בת 7 עמודות. */}
+      <ul className="space-y-2 roomy:hidden">
+        {items.map((n) => {
+          const v = getNotificationVisual(n.type);
+          const Icon = v.icon;
+          return (
+            <li
+              key={n.id}
+              className={cn(
+                'relative rounded-xl border border-slate-200 bg-white p-3 shadow-soft-xs',
+                !n.is_read && 'border-blue-200 bg-blue-50/40',
+              )}
+            >
+              <button
+                type="button"
+                onClick={() => onSelect(n)}
+                aria-label={`פתיחת התראה: ${n.title}`}
+                className="absolute inset-0 z-0 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+              />
+              <div className="relative z-10 flex items-start gap-2.5">
+                <span className={cn('pointer-events-none grid h-9 w-9 shrink-0 place-items-center rounded-lg', v.toneClass)}>
+                  <Icon className="h-4 w-4" />
+                </span>
+                <div className="pointer-events-none min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    {!n.is_read && <span className="h-2 w-2 shrink-0 rounded-full bg-blue-500" aria-label="לא נקראה" />}
+                    <span className="min-w-0 flex-1 truncate text-[14.5px] font-medium text-slate-900">{n.title}</span>
+                  </div>
+                  {n.message && (
+                    <p className="mt-0.5 line-clamp-2 text-[12.5px] text-slate-500">{n.message}</p>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-[12px] font-medium text-slate-600">
+                      {moduleLabel(n.source_module)}
+                    </span>
+                    <span className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium', PRIORITY_PILL[n.priority as Priority] ?? PRIORITY_PILL.normal)}>
+                      {PRIORITY_LABEL[n.priority as Priority] ?? n.priority}
+                    </span>
+                    <span className="text-[12px] text-slate-500">
+                      {mounted ? formatRelativeTime(n.created_at) : formatAbsoluteTime(n.created_at)}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  aria-label="מחק התראה"
+                  onClick={(e) => { e.stopPropagation(); onClear(n); }}
+                  className="relative z-10 inline-grid h-11 w-11 shrink-0 place-items-center rounded-md text-slate-300 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="hidden overflow-hidden rounded-lg border border-slate-200 bg-white roomy:block">
       <Table>
         <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
           <TableRow className="bg-slate-50 hover:bg-slate-50">
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500 w-16">סטטוס</TableHead>
-            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">סוג</TableHead>
-            <TableHead className="h-11 px-4 text-right text-sm font-semibold text-slate-500">הודעה</TableHead>
+            <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">סוג</TableHead>
+            <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">הודעה</TableHead>
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">מקור</TableHead>
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">עדיפות</TableHead>
             <TableHead className="h-11 px-4 text-center text-sm font-semibold text-slate-500">זמן</TableHead>
@@ -70,7 +128,7 @@ export function NotificationsTable({
                     <span className={cn('h-2 w-2 rounded-full', n.is_read ? 'bg-transparent' : 'bg-blue-500')} />
                   </span>
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right text-sm">
+                <TableCell className="px-4 py-3 text-start text-sm">
                   <span className="inline-flex items-center gap-2">
                     <span className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-lg', v.toneClass)}>
                       <Icon className="h-3.5 w-3.5" />
@@ -78,7 +136,7 @@ export function NotificationsTable({
                     <span className="text-slate-700">{v.label}</span>
                   </span>
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right text-sm">
+                <TableCell className="px-4 py-3 text-start text-sm">
                   <span className="block max-w-md truncate font-medium text-slate-900">{n.title}</span>
                   {n.message && <span className="block max-w-md truncate text-xs text-slate-500">{n.message}</span>}
                 </TableCell>
@@ -111,6 +169,7 @@ export function NotificationsTable({
           })}
         </TableBody>
       </Table>
-    </div>
+      </div>
+    </>
   );
 }

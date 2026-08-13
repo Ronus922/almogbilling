@@ -29,7 +29,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
         <Alert variant="destructive">
           <AlertDescription>הקישור פג תוקף או לא תקין.</AlertDescription>
         </Alert>
-        <Link href="/forgot-password" className="text-sm text-primary hover:underline">
+        <Link href="/forgot-password" className="inline-flex h-11 items-center text-sm text-primary hover:underline roomy:h-auto">
           שלחי קישור חדש
         </Link>
       </div>
@@ -158,7 +158,7 @@ function PasswordInput({
         <button
           type="button"
           onClick={toggleShow}
-          className="absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          className="hit-44 absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           aria-label={show ? 'הסתר סיסמה' : 'הצג סיסמה'}
           tabIndex={-1}
         >
@@ -166,7 +166,7 @@ function PasswordInput({
         </button>
       </div>
       {error && (
-        <p className="text-[12px] font-semibold text-red-500 text-right">
+        <p className="text-[12px] font-semibold text-red-500 text-start">
           ⚠️ {error}
         </p>
       )}

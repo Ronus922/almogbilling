@@ -111,9 +111,9 @@ export function PermissionMatrix({
             <Table>
               <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
                 <TableRow className="bg-slate-50 hover:bg-slate-50">
-                  <TableHead className="h-10 px-4 text-start text-sm font-semibold text-slate-500">מודול</TableHead>
-                  <TableHead className="h-10 px-4 text-center text-sm font-semibold text-slate-500">צפייה</TableHead>
-                  <TableHead className="h-10 px-4 text-center text-sm font-semibold text-slate-500">עריכה</TableHead>
+                  <TableHead className="h-10 px-2 text-start text-sm font-semibold text-slate-500 md:px-4">מודול</TableHead>
+                  <TableHead className="h-10 px-2 text-center text-sm font-semibold text-slate-500 md:px-4">צפייה</TableHead>
+                  <TableHead className="h-10 px-2 text-center text-sm font-semibold text-slate-500 md:px-4">עריכה</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -123,8 +123,8 @@ export function PermissionMatrix({
                   const editBusy = busyKey === `${m.key}:can_edit`;
                   return (
                     <TableRow key={m.key} className="border-b border-slate-100 h-11">
-                      <TableCell className="px-4 py-2 text-sm font-medium text-slate-800">{m.label}</TableCell>
-                      <TableCell className="px-4 py-2 text-center">
+                      <TableCell className="px-2 py-2 text-sm font-medium text-slate-800 md:px-4">{m.label}</TableCell>
+                      <TableCell className="px-2 py-2 text-center md:px-4">
                         <div className="inline-flex">
                           <Checkbox
                             checked={p.canView}
@@ -134,7 +134,7 @@ export function PermissionMatrix({
                           />
                         </div>
                       </TableCell>
-                      <TableCell className="px-4 py-2 text-center">
+                      <TableCell className="px-2 py-2 text-center md:px-4">
                         <div className="inline-flex">
                           <Checkbox
                             checked={p.canEdit}

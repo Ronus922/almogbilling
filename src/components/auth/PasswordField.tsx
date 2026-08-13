@@ -50,13 +50,13 @@ export function PasswordField({
           onClick={() => setShow((v) => !v)}
           tabIndex={-1}
           aria-label={show ? 'הסתר סיסמה' : 'הצג סיסמה'}
-          className="absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          className="hit-44 absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
         >
           {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       </div>
       {error && (
-        <p className="text-[12px] font-semibold text-red-500 text-right">⚠️ {error}</p>
+        <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {error}</p>
       )}
     </div>
   );

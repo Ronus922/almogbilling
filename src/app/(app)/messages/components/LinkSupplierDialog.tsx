@@ -258,7 +258,7 @@ export function LinkSupplierDialog({
                 className={cn('h-10', touched && !name.trim() && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
               />
               {touched && !name.trim() && (
-                <p className="text-[12px] font-semibold text-red-500 text-right">⚠️ שם הספק הוא שדה חובה</p>
+                <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ שם הספק הוא שדה חובה</p>
               )}
             </div>
 

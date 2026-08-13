@@ -128,7 +128,7 @@ export function LoginForm() {
           <button
             type="button"
             onClick={() => setShowPassword((v) => !v)}
-            className="absolute end-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg text-slate-400 hover:text-slate-600"
+            className="hit-44 absolute end-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg text-slate-400 hover:text-slate-600"
             aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'}
             tabIndex={-1}
           >
@@ -146,7 +146,7 @@ export function LoginForm() {
           />
           <span className="text-slate-600">זכור אותי במכשיר זה</span>
         </label>
-        <Link href="/forgot-password" className="font-semibold text-blue-600 hover:underline">
+        <Link href="/forgot-password" className="inline-flex h-11 items-center font-semibold text-blue-600 hover:underline roomy:h-auto">
           שכחת סיסמה?
         </Link>
       </div>
