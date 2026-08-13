@@ -52,6 +52,12 @@ RBAC_MANAGER_AUDIT.md
 # templates are the source of truth) — kept out of git so it stops churning.
 AGENTS.md
 
+# Claude Code session artifacts + the vendored-skill lockfile that pins them.
+# Nothing in the build, deploy or check:* pipeline reads either one, and the
+# kit templates (not this repo) are the source of truth for agent tooling.
+.claude/
+skills-lock.json
+
 # vercel
 .vercel
 
