@@ -687,11 +687,24 @@ reaching for `<Dialog>` to build a Create/Edit form, stop and use
 
 ### Sheet (full-side panel)
 דפוס מלא ב-skill `~/.claude/skills/side-panel/SKILL.md`. עיקרי:
-- `<SheetContent side="left" dir="rtl" showCloseButton={false} className="w-full p-0 sm:w-[55vw] md:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white">`
+- `<SheetContent side="left" dir="rtl" showCloseButton={false} className="w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white">`
+- **סולם הרוחב (responsive)** — ‏`55vw` נשאר התנהגות **הדסקטופ**, אבל רק מ-`lg` ומעלה:
+
+  | רוחב מסך | רוחב הפאנל | למה |
+  |---|---|---|
+  | `<640` | `w-full` | בטלפון הפאנל **הוא** המסך |
+  | `640–767` | `92vw` | רמז של backdrop — עדיין נקרא כפאנל, לא כעמוד |
+  | `768–1023` | `80vw` | ‏614px ב-768. ‏`min-w-[720px]` כאן היה נותן 94% מהמסך |
+  | `≥1024` | `55vw`, רצפה `720px` | התנהגות הדסקטופ המקורית, ללא שינוי |
+
+  הרצפה בפיקסלים (`min-w`) יושבת מאחורי `lg:` בכוונה — ב-`md:` היא הייתה גדולה
+  מהמסך עצמו. `max-w-full` מבטיח שהפאנל לעולם לא חורג מה-viewport.
 - Header gradient: `bg-gradient-to-bl from-slate-900 via-blue-950 to-blue-900 px-6 py-6 text-white`
 - Custom X: `h-11 w-11 rounded-lg border border-white/25 bg-white/5 hover:bg-white/15`
 - Body scroll: `flex-1 overflow-y-auto bg-slate-50/60 p-5`
-- Footer sticky: `flex-none border-t border-slate-200 bg-white px-5 py-3`
+- Footer sticky: `flex-none border-t border-slate-200 bg-white px-5 py-3` + ריווח תחתון
+  `pb-[max(0.75rem,env(safe-area-inset-bottom))]`, ובמובייל שתי קבוצות הפעולות
+  נערמות (`flex-col-reverse` → שמירה למעלה, ליד האגודל) וחוזרות לשורה אחת מ-`sm`.
 
 ### Sheet animation params (in `src/components/ui/sheet.tsx`):
 - Overlay: `bg-slate-950/40 transition-opacity duration-[400ms] ease-out`
