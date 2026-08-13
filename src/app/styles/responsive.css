@@ -68,6 +68,30 @@
   }
 }
 
+/* ── iOS focus-zoom floor ─────────────────────────────────────────────
+   iOS Safari zooms the page when a focused field's font-size is under 16px.
+
+   The primitives ship `text-base md:text-sm`, and `md:` is WIDTH-ONLY — so a
+   phone in LANDSCAPE (844x390) is over 768px, takes the `md` branch, and lands
+   on 0.875rem = 14.875px. Focus an input there and the page zooms; on exit the
+   viewport stays scaled. Same failure mode as the table `roomy` fixes, one
+   layer down. Measured on the deployed build, not theorised.
+
+   Scoped to input/textarea only: a select trigger is a BUTTON, which iOS never
+   zooms into, and touching it would change its size on every phone.
+
+   `1rem` and NOT `1em` — deliberately. `1em` on an input resolves against its
+   PARENT (the field wrapper), so it would inherit whatever the surrounding
+   layout uses instead of clamping the field itself; see the legibility-floor
+   note below. `1rem` is the 17px root, so a portrait phone (already 1rem via
+   `text-base`) is bit-for-bit unchanged and only the landscape branch moves. */
+@media (max-width: 767.98px), (max-height: 480px) and (pointer: coarse) {
+  [data-slot='input'],
+  [data-slot='textarea'] {
+    font-size: 1rem;
+  }
+}
+
 /* ── Legibility floor ─────────────────────────────────────────────────
    Sub-12px type is unreadable on a phone. There is deliberately NO helper
    class for this: a `font-size: max(12px, 1em)` rule resolves `1em` against

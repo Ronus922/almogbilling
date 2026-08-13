@@ -34,8 +34,8 @@ export const metadata: Metadata = {
 // `viewportFit: 'cover'` is what makes `env(safe-area-inset-*)` return non-zero
 // on notched devices — without it the whole safe-area layer is dead CSS. Next's
 // default viewport tag omits it. No `maximum-scale`/`user-scalable`: pinch-zoom
-// stays available (a11y), and iOS focus-zoom is already prevented by the 17px
-// root size + `text-base` inputs, not by locking the viewport.
+// stays available (a11y), and iOS focus-zoom is prevented by the field font
+// floor in styles/responsive.css, not by locking the viewport.
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
