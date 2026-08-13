@@ -43,8 +43,10 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect, onDelete }: 
               aria-label={`פתיחת תקלה ${i.title}`}
               className="absolute inset-0 z-0 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
             />
-            <div className="relative z-10 flex items-start gap-2">
-              <div className="pointer-events-none min-w-0 flex-1">
+            {/* Transparent to pointer events so a tap on the card body reaches
+                the stretched button beneath; RowActions opts back in below. */}
+            <div className="pointer-events-none relative z-10 flex items-start gap-2">
+              <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   <span className="min-w-0 flex-1 text-[14.5px] font-medium text-slate-900">{i.title}</span>
                   {i.images.length > 0 && (
@@ -76,7 +78,7 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect, onDelete }: 
                   <TargetCell type={i.target_type} label={i.target_label} />
                 </div>
               </div>
-              <div className="relative z-10 shrink-0">
+              <div className="pointer-events-auto relative z-10 shrink-0">
                 <RowActions onEdit={() => onSelect(i)} onDelete={onDelete ? () => onDelete(i) : undefined} />
               </div>
             </div>

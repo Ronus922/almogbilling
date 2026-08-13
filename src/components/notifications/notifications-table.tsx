@@ -59,11 +59,13 @@ export function NotificationsTable({
                 aria-label={`פתיחת התראה: ${n.title}`}
                 className="absolute inset-0 z-0 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
               />
-              <div className="relative z-10 flex items-start gap-2.5">
-                <span className={cn('pointer-events-none grid h-9 w-9 shrink-0 place-items-center rounded-lg', v.toneClass)}>
+              {/* Transparent to pointer events so a tap on the card body reaches
+                  the stretched button beneath; delete opts back in below. */}
+              <div className="pointer-events-none relative z-10 flex items-start gap-2.5">
+                <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-lg', v.toneClass)}>
                   <Icon className="h-4 w-4" />
                 </span>
-                <div className="pointer-events-none min-w-0 flex-1">
+                <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2">
                     {!n.is_read && <span className="h-2 w-2 shrink-0 rounded-full bg-blue-500" aria-label="לא נקראה" />}
                     <span className="min-w-0 flex-1 truncate text-[14.5px] font-medium text-slate-900">{n.title}</span>
@@ -87,7 +89,7 @@ export function NotificationsTable({
                   type="button"
                   aria-label="מחק התראה"
                   onClick={(e) => { e.stopPropagation(); onClear(n); }}
-                  className="relative z-10 inline-grid h-11 w-11 shrink-0 place-items-center rounded-md text-slate-300 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                  className="pointer-events-auto relative z-10 inline-grid h-11 w-11 shrink-0 place-items-center rounded-md text-slate-300 transition-colors hover:bg-rose-50 hover:text-rose-600"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>

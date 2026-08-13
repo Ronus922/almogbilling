@@ -318,9 +318,19 @@ export function DebtorsTable({
                 className="absolute inset-0 z-0 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
               />
 
-              <div className="relative z-10 flex items-start gap-3">
+              {/* The wrapper is transparent to pointer events so a tap anywhere
+                  on the card falls through to the stretched button beneath it;
+                  the interactive islands opt back in with `pointer-events-auto`.
+                  Marking only the inner text block would NOT work — a tap on a
+                  `pointer-events: none` child re-targets its nearest painted
+                  ancestor, which is this wrapper (z-10), not the button (z-0). */}
+              <div className="pointer-events-none relative z-10 flex items-start gap-3">
                 {canSendWhatsapp && (
-                  <span className="hit-44 relative mt-0.5 shrink-0">
+                  /* No `hit-44` here: the Checkbox primitive already grows its
+                     own 44px hit box (`after:-inset-3.5`) targeting itself. A
+                     wrapper-level ::after would paint above it and swallow the
+                     tap — the span would become the click target, not the box. */
+                  <span className="pointer-events-auto mt-0.5 shrink-0">
                     <Checkbox
                       checked={selectedIds.has(d.id)}
                       onCheckedChange={(v) => toggleOne(d.id, v === true)}
@@ -329,7 +339,7 @@ export function DebtorsTable({
                   </span>
                 )}
 
-                <div className="pointer-events-none min-w-0 flex-1">
+                <div className="min-w-0 flex-1">
                   {/* Identity: apartment + owner */}
                   <div className="flex min-w-0 items-baseline gap-2">
                     <span className="font-num shrink-0 text-[15px] font-bold tabular-nums text-ink">
@@ -373,7 +383,7 @@ export function DebtorsTable({
 
                 {/* Phone + row actions — above the stretched button so they stay
                     independently tappable. */}
-                <div className="relative z-10 flex shrink-0 flex-col items-end gap-1.5">
+                <div className="pointer-events-auto relative z-10 flex shrink-0 flex-col items-end gap-1.5">
                   <RowActions
                     debtorId={d.id}
                     apartment={d.apartment_number}

@@ -56,8 +56,10 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
               aria-label={`פתיחת משימה ${t.title}`}
               className="absolute inset-0 z-0 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
             />
-            <div className="relative z-10 flex items-start gap-2">
-              <div className="pointer-events-none min-w-0 flex-1">
+            {/* Transparent to pointer events so a tap on the card body reaches
+                the stretched button beneath; RowActions opts back in below. */}
+            <div className="pointer-events-none relative z-10 flex items-start gap-2">
+              <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   <span className="min-w-0 flex-1 text-[14.5px] font-medium text-slate-900">{t.title}</span>
                   {t.recurrence && <RecurringBadge />}
@@ -86,7 +88,7 @@ export function TasksTable({ tasks, sort, onSortChange, onSelect, onDelete }: Pr
                   <TargetCell type={t.target_type} label={t.target_label} />
                 </div>
               </div>
-              <div className="relative z-10 shrink-0">
+              <div className="pointer-events-auto relative z-10 shrink-0">
                 <RowActions onEdit={() => onSelect(t)} onDelete={onDelete ? () => onDelete(t) : undefined} />
               </div>
             </div>
