@@ -29,6 +29,17 @@ const chipMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: 'ALMOG CRM',
   description: 'מערכת ניהול דיירים וגבייה לחברות ניהול בניינים',
+  manifest: '/manifest.webmanifest',
+  // Two icon geometries (see public/icons/README.md): the ICO carries the
+  // simplified ≤48px mark, the SVG serves modern browsers at any density.
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+    ],
+    apple: '/icon-180.png',
+    other: [{ rel: 'mask-icon', url: '/icons/mark-mono.svg', color: '#3D5AFE' }],
+  },
 };
 
 // `viewportFit: 'cover'` is what makes `env(safe-area-inset-*)` return non-zero
@@ -40,6 +51,7 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
+  themeColor: '#3D5AFE',
 };
 
 export default function RootLayout({
