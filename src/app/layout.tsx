@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Heebo, IBM_Plex_Mono, Inter } from 'next/font/google';
 import { Toaster } from '@/components/ui/sonner';
+import { InstallPrompt } from '@/components/app-shell/InstallPrompt';
 import './globals.css';
 
 const heebo = Heebo({
@@ -40,6 +41,12 @@ export const metadata: Metadata = {
     apple: '/icon-180.png',
     other: [{ rel: 'mask-icon', url: '/icons/mark-mono.svg', color: '#3D5AFE' }],
   },
+  // iOS reads these metas (not only the manifest) for Home-Screen installs.
+  appleWebApp: {
+    capable: true,
+    title: 'אלמוג',
+    statusBarStyle: 'default',
+  },
 };
 
 // `viewportFit: 'cover'` is what makes `env(safe-area-inset-*)` return non-zero
@@ -62,6 +69,7 @@ export default function RootLayout({
       <body className="min-h-full">
         {children}
         <Toaster richColors position="top-center" />
+        <InstallPrompt />
       </body>
     </html>
   );

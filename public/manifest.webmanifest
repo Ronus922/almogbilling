@@ -1,9 +1,12 @@
 {
+  "id": "/",
   "name": "ניהול אלמוג",
   "short_name": "אלמוג",
+  "description": "מערכת ניהול דיירים וגבייה לחברות ניהול בניינים",
   "dir": "rtl",
   "lang": "he",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "theme_color": "#3D5AFE",
   "background_color": "#EEF1F8",

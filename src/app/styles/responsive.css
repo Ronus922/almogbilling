@@ -141,3 +141,12 @@
   height: calc(100vh - var(--shell-header-h) - var(--shell-main-pad-y));
   height: calc(100dvh - var(--shell-header-h) - var(--shell-main-pad-y));
 }
+
+/* -- PWA install banner ---------------------------------------------------
+   InstallPrompt.tsx pins a dismissible banner to the bottom edge (z-40, mobile
+   only). The agent FAB pins to the same bottom-left corner at z-50 and would
+   sit on top of the banner's actions, so while the banner is on screen the FAB
+   is parked; it returns the moment the banner is dismissed or installed. */
+body:has([data-install-banner]) [data-agent-fab] {
+  display: none;
+}

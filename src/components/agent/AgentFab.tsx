@@ -221,6 +221,7 @@ export function AgentFab() {
       {/* FAB — bottom-left (RTL). Toggles to X while open (reference behaviour). */}
       <button
         type="button"
+        data-agent-fab=""
         onClick={() => (open ? closePanel() : openPanel())}
         aria-label="עוזר אישי"
         title="עוזר אישי"
