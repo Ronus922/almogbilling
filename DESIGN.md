@@ -24,6 +24,7 @@
 ## 2. Color Palette
 
 ### Semantic
+
 | תפקיד | Token |
 |---|---|
 | Primary action | `blue-600` (hover `blue-700`) |
@@ -37,6 +38,7 @@
 | Page background | `bg-background` / `bg-slate-50/60` (פנים-פאנל) |
 
 ### Skin tokens ("ניהול אלמוג" — מוגדרים ב-`globals.css @theme`)
+
 מערכת הסקין הויזואלית. ערכים ליטרליים → Tailwind מייצר utilities (`bg-brand`, `text-ink-2`, `border-line`, `shadow-soft-md` וכו'). **זהו הברנד הקנוני** לצד ה-`blue-600` הסמנטי; השתמש בו בפאנלים מודרניים.
 
 | קבוצה | Utility | Hex |
@@ -62,6 +64,7 @@
 **אדום חובה/שגיאה** (כוכבית שדה): `#e5484d` (זהה ל-severity האדום ב-§5b).
 
 ### Tone Variants (עבור Status / KPI / Sections)
+
 מבסיס Tailwind, באותו patterning של `{tone}-50/100/200/600/700`:
 
 | Tone | bg-soft | text-strong |
@@ -76,9 +79,11 @@
 | **slate** | `bg-slate-50` / `bg-slate-100` | `text-slate-500` / `text-slate-600` |
 
 ### Status colors מ-DB (statuses table)
+
 לסטטוסים משפטיים — צבע hex נשמר ב-`statuses.color` ונרנדר עם inline `style={{ backgroundColor: hex }}`. טקסט תמיד `text-slate-900`. **לא** מחליפים ל-Tailwind tokens.
 
 ### Category colors מ-DB (reminder_categories table)
+
 אותו עיקרון: צבע קטגוריית תזכורת נשמר ב-`reminder_categories.color` (hex שהמשתמש בוחר) — **דאטה, לא טוקן עיצוב**. נרנדר עם inline `style={{ backgroundColor: hex }}` כנקודת-צבע ברשימת הקטגוריות וכפס-צד (side-stripe) על כרטיס התזכורת. בורר הצבע מציע פלטה מותגית (`REMINDER_CATEGORY_COLORS` ב-`@/lib/constants/userReminders`) **וגם** קלט hex חופשי. תזכורת ללא קטגוריה → פס ניטרלי `UNCATEGORIZED_COLOR` (`#e8eaf2`, תואם `border-line`). אין להמיר את צבעי הקטגוריות ל-Tailwind tokens.
 
 ---
@@ -86,6 +91,7 @@
 ## 3. Typography
 
 ### Page-level
+
 | שימוש | className |
 |---|---|
 | Page title | `text-2xl font-extrabold` |
@@ -95,6 +101,7 @@
 | Toolbar title | `text-xl font-bold text-slate-800` + `text-sm text-slate-400` count |
 
 ### Body / Inline
+
 | שימוש | className |
 |---|---|
 | Body | `text-sm` |
@@ -124,26 +131,32 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
 > button + tooltip, floating-round send, disabled placeholder) **עדיין תקפים**.
 
 ### Primary (default Button variant)
+
 ```tsx
 <Button type="submit" className="gap-2 bg-blue-600 text-white hover:bg-blue-700">
   <Save className="h-4 w-4" /> שמור שינויים
 </Button>
 ```
+
 - גובה default = `h-9` (sm) / Button של shadcn.
 - Full-width בטפסים: `className="w-full"`.
 
 ### Secondary / Outline
+
 ```tsx
 <Button variant="outline">סגור</Button>
 ```
 
 ### Destructive
+
 ```tsx
 <Button className="bg-destructive text-white hover:bg-destructive/90">צא ללא שמירה</Button>
 ```
+
 או דרך `<AlertDialogAction>`.
 
 ### Icon buttons (square, w/ tooltip)
+
 ```tsx
 <Tooltip>
   <TooltipTrigger render={<span className="block" />}>
@@ -156,12 +169,15 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
 ```
 
 ### Plain icon (no border, e.g. row actions)
+
 - צבעים סמנטיים: Archive=`text-orange-500`, WhatsApp=`text-green-500`, Comment=`text-slate-400`
 - Hover: גוון כהה יותר (`hover:text-orange-600`).
 - Disabled: שמור צבע + `disabled:cursor-default`. תוצמד `<Tooltip>` "בקרוב".
 
 ### Special — disabled placeholder action (עתידי)
+
 **אסור** להשתמש ב-`bg-blue-500 disabled:opacity-80` שגורם לכפתור להיראות clickable בזמן disabled. במקום:
+
 ```tsx
 <button
   disabled aria-disabled
@@ -171,9 +187,11 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
   <Lock className="h-3 w-3 ms-auto opacity-70" />
 </button>
 ```
+
 עם Tooltip "בקרוב — Slice X".
 
 ### Floating round (Send בתוך Textarea)
+
 ```tsx
 <button
   className={cn(
@@ -195,6 +213,7 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
 (מ-`sync_runs` — מידע משני). סנכרון וייבוא הן פעולות נפרדות במכוון.
 
 ### Container — כרטיס לבן, צל רך, צבע לפי severity
+
 ```tsx
 <div className={cn('flex flex-col gap-3 rounded-2xl border px-5 py-3.5 shadow-soft-xs md:flex-row md:items-center md:justify-between', styles.wrap)}>
 ```
@@ -206,26 +225,31 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
 | `red`    | > 48h / null    | `bg-[#feefef]`    | `border-[#e5484d]/30` |
 
 ### צד ימין (start ב-RTL) — chip + שני טיימסטמפים
+
 - chip לוח-שנה: `grid h-10 w-10 place-items-center rounded-xl {iconBg} {iconFg}` (`CalendarSync`).
 - שורה ראשית (`font-semibold`): `ייבוא אחרון: <תאריך ב-font-num>` או `טרם בוצע ייבוא`.
 - שורה משנית (`text-sm text-ink-2`): אייקון `RefreshCw` זעיר + `סנכרון אחרון: <תאריך ב-font-num>` / `טרם בוצע סנכרון` (`text-ink-3`).
 - הערת severity (`text-xs opacity-80`) רק כש-severity != `ok`.
 
 ### Button — "סנכרן עכשיו" (ירוק gradient, צל ירוק רך)
+
 ```tsx
 <Button className="h-9 gap-2 rounded-lg bg-gradient-to-l from-[#16a34a] to-[#0c7a37] px-4 text-sm font-bold text-white shadow-[0_4px_14px_rgba(22,163,74,0.3)] hover:brightness-105">
   <RefreshCw className={cn('h-4 w-4', syncing && 'animate-spin')} />
   <span>{syncing ? 'מסנכרן…' : 'סנכרן עכשיו'}</span>
 </Button>
 ```
+
 קורא ל-`POST /api/sync/bllink` (same-origin, admin-only); נרשם ב-`sync_runs`; אחרי הצלחה — מרענן את שני הטיימסטמפים מ-`GET /api/sync/status` + `router.refresh()`, `toast` הצלחה; בכישלון — `toast.error` (דפוס שגיאות §7).
 
 ### Button — "ייבוא נתונים" (כחול brand)
+
 ```tsx
 <Button className="h-9 gap-2 rounded-lg bg-brand px-4 text-sm font-bold text-white hover:bg-brand-dark">
   <Upload className="h-4 w-4" /> <span>ייבוא נתונים</span>
 </Button>
 ```
+
 - מוצג **רק** כש-`isAdmin && severity != 'ok'`. במצב OK אין צורך לדחוף את המשתמש לייבוא.
 
 ---
@@ -255,6 +279,7 @@ size="icon"` עם override של גודל ו-tone, עטופים ב-`Tooltip`, ו�
   <TooltipContent>{label}</TooltipContent>
 </Tooltip>
 ```
+
 - **Excel** = SheetJS (`xlsx`, dependency קיים); כספים כ-numbers אמיתיים (לסיכום באקסל), טלפון כ-string; שם גיליון "חייבים"; קובץ `debtors_YYYY-MM-DD.xlsx`.
 - **PDF** = `jspdf` + `jspdf-autotable` + **Heebo מוטמע** (`src/lib/pdf-heebo.ts`, base64 subset). jsPDF ללא bidi → היפוך תווי-עברית ידני (מחרוזת שמכילה עברית בלבד) + היפוך סדר העמודות ל-RTL; מספרים/תאריך כ-LTR (התאריך ב-`text()` נפרד כדי לא להתהפך). קובץ `debtors_YYYY-MM-DD.pdf`.
 - **הדפסה** = `@media print` (`app/styles/print.css`) שמסתיר `body > *:not(#debtors-print-root)` ומציג רק קומפוננטת print (portal ל-`document.body`); כותרת "טבלת חייבים" + "סה״כ N רשומות" + תאריך + טבלה נקייה (עמודות §6 ללא "פעולות"), `₪` + `tabular-nums`, A4 landscape.
@@ -263,6 +288,7 @@ size="icon"` עם override של גודל ו-tone, עטופים ב-`Tooltip`, ו�
 ## 6. Form Fields
 
 ### Input (default size)
+
 - Default: `h-8` (shadcn). **בפאנלים מודרניים השתמש ב-`h-10`** (40px) לאחידות עם Select.
 - Number/phone: `dir="ltr"` + `tabular-nums`.
 - Padding for icons: `pe-9` (icon end) או `ps-9` (icon start). **חובה לרפד את הצד של האייקון** — אחרת הטקסט/placeholder יושב מתחת לאייקון. אייקון ב-`start-3` ⇒ `ps-9`; אייקון ב-`end-3` ⇒ `pe-9`.
@@ -270,8 +296,10 @@ size="icon"` עם override של גודל ו-tone, עטופים ב-`Tooltip`, ו�
 - Error state: `border-red-400 bg-red-50 focus:ring-red-200`.
 
 ### Clearable search input (חיפוש עם X)
+
 שדה חיפוש עם אייקון `Search` ב-start וכפתור ניקוי `X` ב-end שמופיע **רק כשיש ערך**.
 ריפוד משני הצדדים כשה-X נוכח כדי שהטקסט לא יחפוף לאף אלמנט.
+
 ```tsx
 <div className="relative">
   <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-3" />
@@ -285,10 +313,12 @@ size="icon"` עם override של גודל ו-tone, עטופים ב-`Tooltip`, ו�
   )}
 </div>
 ```
+
 - `ps-9` תמיד (אייקון החיפוש); `pe-9` רק כשיש ערך (כפתור ה-X).
 - ניקוי מאפס את הסינון של אותו שדה (מחזיר לתצוגה לא-מסוננת לפיו).
 
 ### Select (shadcn)
+
 ```tsx
 <SelectTrigger className="w-full data-[size=default]:h-10">
   <SelectValue placeholder="...">
@@ -296,15 +326,19 @@ size="icon"` עם override של גודל ו-tone, עטופים ב-`Tooltip`, ו�
   </SelectValue>
 </SelectTrigger>
 ```
+
 **חובה**: `SelectValue` עם children-function כשה-`SelectItem` מכיל JSX (לא רק string), אחרת ה-trigger יציג את ה-value הגולמי (UUID).
 
 ### Textarea
+
 - shadcn default `min-h-16`.
 - אם יש כפתור absolute בפינה (Send) — תוסיף padding בכיוון מתאים: `pb-14` (כפתור תחתון).
 
 ### Date Input
+
 - `<Input type="date">`.
 - **חובה**: `onClick` שקורא ל-`showPicker()` כדי שלחיצה על כל השדה תפתח את ה-picker (לא רק על האייקון הזעיר):
+
 ```tsx
 onClick={(e) => {
   const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
@@ -314,6 +348,7 @@ className="h-10 cursor-pointer"
 ```
 
 ### Label
+
 ```tsx
 <Label htmlFor="..." className="text-base font-medium text-muted-foreground">
   תיאור פעולה
@@ -325,21 +360,26 @@ className="h-10 cursor-pointer"
 ## 7. Validation — מספרי טלפון
 
 ### Source of truth
+
 - `src/lib/validation.ts` → `validatePhone(input)` (תוצאה עשירה)
 - `src/lib/phone.ts` → `formatPhoneDisplay`, `getPrimaryPhone`, `phoneTelHref` (lenient — מעבד גם נתוני import legacy)
 
 ### Rules
+
 | Type | Pattern | דוגמה |
 |---|---|---|
 | Mobile | 10 ספרות, `/^05[0-9]{8}$/` | `0541234567` |
 | Landline | 9–10 ספרות, `/^0[2-9][0-9]{7,8}$/` | `031234567` / `0721234567` |
 | International | `/^\+972[0-9]{9}$/` | `+972541234567` |
 
-### `validatePhone(input)` returns:
+### `validatePhone(input)` returns
+
 ```ts
 { valid: boolean; normalized: string; type: 'mobile'|'landline'|'international'|null; error?: string }
 ```
+
 Error messages (עברית):
+
 - `'שדה טלפון ריק'`
 - `'מספר בינלאומי לא תקין'`
 - `'מספר הטלפון קצר מדי'`
@@ -348,6 +388,7 @@ Error messages (עברית):
 - `'מספר טלפון לא תקין'`
 
 ### UI Pattern (in EditPhoneDialog וכל טופס דומה)
+
 ```tsx
 <Input
   value={phoneInput}
@@ -365,11 +406,13 @@ Error messages (עברית):
 ```
 
 ### Storage
+
 - ב-DB תמיד **normalized** (digits בלבד, או `+972...` אם בינלאומי).
 - ב-UI תמיד דרך `formatPhoneDisplay`.
 - בתאי טבלה: `<TableCell dir="ltr" className="tabular-nums">`.
 
 ### Validation scope mismatch — נמנע
+
 **אין** ליצור פער בין `isValidPhone` (אישור שמירה) לבין `formatPhoneDisplay` (אישור הצגה). פער כזה גורם לטלפונים שנשמרים ב-DB אך מוצגים כ-"אין", ויוצר רושם של באג שמירה.
 
 ---
@@ -377,17 +420,21 @@ Error messages (עברית):
 ## 8. Cards & Sections
 
 ### Generic Card (shadcn)
+
 ```tsx
 <Card className="ring-1 ring-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
   ...
 </Card>
 ```
+
 - Border עדין: `ring-1 ring-slate-200/70` (לא `border` מובהק).
 - Shadow מינימלי: `shadow-[0_1px_2px_rgba(15,23,42,0.04)]` — לא `shadow-lg`/`shadow-2xl`.
 - Radius: `rounded-xl` (Card default).
 
 ### Section עם אייקון בפינה (פאנלים)
+
 ראה `src/components/tenant-detail-panel/Section.tsx` — אייקון-chip בפינה, headerSlot אופציונלי.
+
 ```tsx
 <div className="flex items-center justify-between gap-2 px-4">
   <h3 className="text-[26px] font-semibold text-slate-900">{title}</h3>
@@ -401,14 +448,17 @@ Error messages (עברית):
 ```
 
 ### Auth-style center card
+
 ```tsx
 <Card className="w-full max-w-md justify-self-center p-8 md:p-10 shadow-xl">
 ```
 
 ### Info / hint banner (in import wizard)
+
 ```tsx
 <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">...</div>
 ```
+
 פלטה: `border-{tone}-200 bg-{tone}-50 text-{tone}-900` עם tone מתאים (blue=info, emerald=success, amber=warning, red=danger).
 
 ---
@@ -418,6 +468,7 @@ Error messages (עברית):
 מבנה אמיתי מ-`DebtorsTable.tsx`:
 
 ### Wrapper
+
 ```tsx
 <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
   <Table>...</Table>
@@ -425,6 +476,7 @@ Error messages (עברית):
 ```
 
 ### Header row
+
 - `<TableHeader>` עם `[&_tr]:border-b [&_tr]:border-slate-200`
 - `<TableRow className="bg-slate-50 hover:bg-slate-50">`
 - `<TableHead className="h-11 px-4 text-{align} text-sm font-semibold text-slate-500">`
@@ -432,16 +484,20 @@ Error messages (עברית):
   - Special tone (נושא הראשי): `text-orange-500 hover:text-orange-600`
 
 ### Sortable header
+
 כפתור `inline-flex items-center gap-1` בתוך `<TableHead>`. אייקון `ArrowUp` / `ArrowDown` עם `opacity-0 group-hover:opacity-40` כשלא פעיל, `opacity-100` כשפעיל.
 
 ### Body rows
+
 ```tsx
 <TableRow className="cursor-pointer border-b border-slate-100 hover:bg-slate-50 h-12">
 ```
+
 - Border בין שורות: `border-slate-100` (דק יותר מהheader).
 - Hover: `bg-slate-50`.
 
 ### Cells
+
 - `px-4 py-3 text-{align} text-sm`
 - Numeric: `tabular-nums dir="ltr"` + `text-{tone}-{600/700} font-bold`
 - Text bold: `font-bold text-slate-900` (apartment number) / `font-medium text-slate-800` (name)
@@ -449,13 +505,16 @@ Error messages (עברית):
 - Action cell: `onClick={(e) => e.stopPropagation()}` כדי שמלחיץ אייקון לא יפתח את ה-row click
 
 ### Numeric format (₪)
+
 ```tsx
 const numFmt = new Intl.NumberFormat('he-IL', { maximumFractionDigits: 0 });
 const ils = (v: number) => `₪ ${numFmt.format(v)}`;
 ```
+
 תא: `dir="ltr" className="text-center text-sm font-bold text-{tone}-{600/700} tabular-nums"`.
 
 ### Pagination row
+
 - מתחת לטבלה: `flex items-center justify-between text-sm`.
 - כפתורי "הקודם / הבא" עם `<ChevronRight />` ו-`<ChevronLeft />` (לוגי-RTL).
 
@@ -468,6 +527,7 @@ const ils = (v: number) => `₪ ${numFmt.format(v)}`;
 מתאים לעמודות של טבלה.
 
 ### Container
+
 ```tsx
 <div className="space-y-2">
   {items.map((item) => <Card key={item.id} {...} />)}
@@ -475,6 +535,7 @@ const ils = (v: number) => `₪ ${numFmt.format(v)}`;
 ```
 
 ### Single card (clickable row)
+
 ```tsx
 <button
   type="button"
@@ -515,14 +576,17 @@ const ils = (v: number) => `₪ ${numFmt.format(v)}`;
 ```
 
 ### Non-clickable variant
+
 אם הקלף אינו לחיץ (למשל הזמנה ממתינה — רק כפתורי inline פעולה
 פעילים), השתמש ב-`<div>` במקום `<button>`, וסיר את `cursor-pointer` /
 `hover:bg-slate-50`. הצמד את האייקונים ב-cell ייחודי עם
 `onClick={(e) => e.stopPropagation()}`.
 
 ### Action variant (with inline icon buttons)
+
 בקלף שדורש פעולות inline (resend / cancel וכו'), הוסף את האייקונים
 בקצה השמאלי (end ב-RTL) ב-cell עם `stopPropagation`:
+
 ```tsx
 <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
   <Tooltip>
@@ -538,6 +602,7 @@ const ils = (v: number) => `₪ ${numFmt.format(v)}`;
 ```
 
 ### Loading state
+
 ‏5×–10× שורות `h-20 rounded-lg bg-muted/60 animate-pulse` כתחליף לקלפים
 הריאליים (גובה תואם בערך לקלף 1-line של avatar 9×9 + padding 4).
 
@@ -546,6 +611,7 @@ const ils = (v: number) => `₪ ${numFmt.format(v)}`;
 ## 10. Badges & Pills
 
 ### Status pill (config-driven, hex from DB)
+
 ```tsx
 <span
   className="inline-flex items-center rounded-full px-3 py-0.5 text-xs font-semibold text-slate-900"
@@ -554,12 +620,15 @@ const ils = (v: number) => `₪ ${numFmt.format(v)}`;
   {status.name}
 </span>
 ```
+
 - Default ("רגיל") → `bg-slate-100 text-slate-500` + טקסט "—" אם לא רוצים להבליט.
 
 ### Status badge עם אייקון (Header pill)
+
 ראה `StatusBadge.tsx`: `gap-1.5` + `<Scale className="h-3.5 w-3.5" />` אם `showIcon`.
 
 ### Counter badge (next to a tab/icon)
+
 ```tsx
 <span className="inline-flex items-center justify-center text-xs font-bold px-1.5 py-0.5 rounded-full {tone}">
   {count}
@@ -567,14 +636,17 @@ const ils = (v: number) => `₪ ${numFmt.format(v)}`;
 ```
 
 ### Notification dot (sidebar bell)
+
 ```tsx
 <span className="absolute -top-0.5 -right-0.5 grid h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
   +9
 </span>
 ```
+
 ספירת unread: מציגים את המספר; כש-`unread > 9` מציגים `+9`.
 
 ### Notification row (פעמון + דף /notifications)
+
 שורת התראה אחידה — אייקון-chip לפי **`type`** (לא לפי priority), כותרת bold + הודעה
 muted + זמן יחסי, ונקודת unread. ה-`type → icon/tone` מגיע **אך ורק** מה-registry
 המרכזי `@/lib/notifications/registry` (`getNotificationVisual`) — אין למפות אייקונים/צבעים
@@ -584,6 +656,7 @@ muted + זמן יחסי, ונקודת unread. ה-`type → icon/tone` מגיע *
 השורה היא `<li>` flex עם **שני אחים** (אסור button בתוך button): כפתור-תוכן ראשי
 (`flex-1`, לחיצה → מסמן נקרא + ניווט) וכפתור **מחיקה** (`Trash2`) בקצה הלוגי. ה-hover
 וה-`bg-blue-50/40` עוברים ל-`<li>` עצמו (`group`) כדי שכל השורה תידלק יחד.
+
 ```tsx
 const v = getNotificationVisual(n.type); const Icon = v.icon;
 <li className={cn('group flex items-stretch transition-colors hover:bg-slate-50', !n.is_read && 'bg-blue-50/40')}>
@@ -605,6 +678,7 @@ const v = getNotificationVisual(n.type); const Icon = v.icon;
   </button>
 </li>
 ```
+
 - שורה **נקראה** מוצגת מעומעמת וללא הנקודה הכחולה: כותרת `text-slate-500`, הודעה
   `text-slate-400`, ה-icon-chip `opacity-60`. רקע `bg-blue-50/40` רק ללא-נקראה.
 - **לחיצה על שורה = מסמנת נקרא** (`is_read=true`, השורה נדלקת מעומעמת **במקום**); ניווט
@@ -619,8 +693,10 @@ const v = getNotificationVisual(n.type); const Icon = v.icon;
   להפעיל את בחירת השורה) → אותו `/[id]/clear` + toast "ההתראה נמחקה".
 
 ### Notification panel (פאנל הפעמון — Popover עם טאבים + 2 פעולות)
+
 ה-Popover של הפעמון הוא ה**חריג המאושר** למוסכמת ה-Side Panel (§12) — נשאר Popover,
 רק עשיר יותר. רוחב `w-[380px]`, `dir="rtl"`, `align="end"`, `p-0`. מבנה אנכי:
+
 1. **כותרת + 2 פעולות** (`flex justify-between border-b px-4 py-3`): "התראות" (start);
    ב-end שתי פעולות טקסטואליות — **"סמן הכל כנקרא"** (`text-blue-600`, אייקון `CheckCheck`,
    מוצג כש-`unread>0` → `/read-all`) ו-**"נקה הכל"** (`text-slate-500`, אייקון `Eraser`,
@@ -634,6 +710,7 @@ const v = getNotificationVisual(n.type); const Icon = v.icon;
 3. **רשימה** (`max-h-96 overflow-y-auto`) — שורות לפי הדפוס למעלה; ריק → "אין התראות חדשות"
    (טאב לא-נקראו) / "אין התראות" (אחר).
 4. **Footer** (`border-t px-4 py-2.5`): קישור מרוכז "צפה בכל ההתראות" → `/notifications`.
+
 - **סמנטיקת אופציה א'** (ראה Decisions Log): לחיצה/סימון-נקרא → `is_read=true` (השורה נשארת
   בפעיל, יוצאת מטאב "לא נקראו"); "נקה הכל" → `cleared_at=now()` (soft-clear, נעלם מכל
   הטאבים, השורה נשמרת ב-DB); **מחיקת שורה בודדת** (פח בכל שורה) → אותו `cleared_at=now()`
@@ -644,6 +721,7 @@ const v = getNotificationVisual(n.type); const Icon = v.icon;
 ## 11. KPI Cards
 
 מבנה (`KpiCard.tsx` בDashboard):
+
 ```tsx
 <Card className="p-5">
   <div className="flex items-start justify-between gap-3">
@@ -658,9 +736,11 @@ const v = getNotificationVisual(n.type); const Icon = v.icon;
   </div>
 </Card>
 ```
+
 **Tone variants**: `bg-{tone}-50 text-{tone}-600`. ראה רשימה ב-Section 2.
 
 ### KPI Mini-cards בתוך פאנל (פירוט חובות)
+
 שונה — gradient + ring inset + `tabular-nums text-2xl font-bold`. ראה `tenant-detail-panel/KpiCard.tsx`.
 
 ---
@@ -686,7 +766,9 @@ reaching for `<Dialog>` to build a Create/Edit form, stop and use
 `<Sheet>` instead — even for trivial 2-field forms.
 
 ### Sheet (full-side panel)
+
 דפוס מלא ב-skill `~/.claude/skills/side-panel/SKILL.md`. עיקרי:
+
 - `<SheetContent side="left" dir="rtl" showCloseButton={false} className="w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white">`
 - **סולם הרוחב (responsive)** — ‏`55vw` נשאר התנהגות **הדסקטופ**, אבל רק מ-`lg` ומעלה:
 
@@ -706,14 +788,17 @@ reaching for `<Dialog>` to build a Create/Edit form, stop and use
   `pb-[max(0.75rem,env(safe-area-inset-bottom))]`, ובמובייל שתי קבוצות הפעולות
   נערמות (`flex-col-reverse` → שמירה למעלה, ליד האגודל) וחוזרות לשורה אחת מ-`sm`.
 
-### Sheet animation params (in `src/components/ui/sheet.tsx`):
+### Sheet animation params (in `src/components/ui/sheet.tsx`)
+
 - Overlay: `bg-slate-950/40 transition-opacity duration-[400ms] ease-out`
 - Content: `shadow-2xl shadow-slate-900/30 transition duration-[1200ms] ease-[cubic-bezier(0.16,0.84,0.26,1)]`
 - Translate: `-translate-x-full` (full off-screen entrance)
 - Opacity: `0.4 → 1`
 
 ### Dialog (modal centered)
+
 shadcn defaults — `sm:max-w-md` for forms.
+
 ```tsx
 <Dialog open={...} onOpenChange={...}>
   <DialogContent dir="rtl" className="sm:max-w-md">
@@ -728,6 +813,7 @@ shadcn defaults — `sm:max-w-md` for forms.
 ```
 
 ### AlertDialog (confirm דרך destructive)
+
 ```tsx
 <AlertDialog open={...} onOpenChange={...}>
   <AlertDialogContent dir="rtl">
@@ -757,6 +843,7 @@ toast.success('הסטטוס עודכן');
 toast.error(`שמירה נכשלה: ${msg}`);
 toast.info('...');
 ```
+
 - **תמיד** עברית קצרה (2-4 מילים).
 - **תמיד** ב-success/error אחרי async mutations (PATCH/PUT/POST).
 - **אסור** לשלוח `toast.success` בתוך פונקציה שגם יכולה לזרוק — תמיד `try/catch` + ערכים ידועים.
@@ -804,6 +891,7 @@ toast.info('...');
 ## 16. Tabs (DebtorsTabs pattern)
 
 תאי-נווט בצורת כפתור-עם-counter. גריד רספונסיבי `grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2`.
+
 - Active: `bg-{tone}-600 text-white` + counter `bg-white/25 text-white`
 - Idle: `bg-white text-slate-700 border border-slate-200 hover:bg-slate-50` + counter `bg-{tone}-100 text-{tone}-700`
 - Disabled: `cursor-not-allowed opacity-60`
@@ -814,6 +902,7 @@ toast.info('...');
 ## 17. Empty / Loading states
 
 ### Empty
+
 ```tsx
 <div className="rounded-lg border bg-card p-12 text-center text-sm text-muted-foreground">
   אין נתונים להצגה. ייבוא ראשון יבצע אכלוס של הטבלה.
@@ -821,16 +910,19 @@ toast.info('...');
 ```
 
 ### Inline-empty (בתוך section)
+
 ```tsx
 <p className="text-xs text-slate-400 py-2 text-center">אין הערות עדיין.</p>
 ```
 
 ### Skeleton card variants
+
 - **KPI / section card**: `h-40 rounded-xl bg-muted/60 animate-pulse`
 - **Entity list row** (sect 9b): `h-20 rounded-lg bg-muted/60 animate-pulse`
 - **Inline thin line**: `h-4 w-{width} rounded bg-muted animate-pulse`
 
 ### Spinning icon (sync button)
+
 ```tsx
 <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
 ```
@@ -840,10 +932,12 @@ toast.info('...');
 ## 18. Auth screens
 
 ### AuthLayout
+
 - Outer: `auth-gradient` (CSS class) + `flex min-h-screen w-full items-center justify-center px-4 py-10`
 - Two-column desktop: `grid w-full max-w-6xl items-center gap-12 lg:grid-cols-2` (FeaturesCard ראשון = visual right ב-RTL)
 
 ### Forms
+
 - Card: `w-full max-w-md justify-self-center p-8 md:p-10 shadow-xl`
 - Form: `flex flex-col gap-5`
 - Heading: `text-2xl font-extrabold` + subtitle `mt-1 text-sm text-muted-foreground`
@@ -852,10 +946,12 @@ toast.info('...');
 - Separator with text: `relative` wrapper + `absolute inset-x-0 -top-2.5 mx-auto w-fit bg-card px-2 text-xs text-muted-foreground`
 
 ### FeaturesCard
+
 - Headline: `text-3xl font-extrabold leading-snug`
 - Feature item: `space-y-4` עם icon-circle `grid h-10 w-10 shrink-0 place-items-center rounded-full bg-blue-50 text-blue-600`
 
 ### Password requirements list
+
 - Container: `space-y-1`
 - Valid: `text-emerald-600` + `<Check className="h-3.5 w-3.5" />`
 - Invalid: `text-muted-foreground` + `<Circle className="h-3 w-3" />`
@@ -865,19 +961,23 @@ toast.info('...');
 ## 19. Wizards (Import / multi-step flows)
 
 ### Container
+
 - `mx-auto max-w-3xl space-y-6`
 - Page heading: `text-2xl font-extrabold` + subtitle
 
 ### Step cards
+
 - Card: `Card className="p-8"` (או `p-10` לפעולה מרכזית)
 - Header גרידא: `flex items-center gap-2 text-primary` + Icon + label
 
 ### File upload step
+
 - Center column: `flex flex-col items-center gap-3 text-center`
 - Icon circle big: `grid h-16 w-16 place-items-center rounded-full bg-muted text-muted-foreground`
 - CTA: `Button className="mt-2 gap-2"`
 
 ### Mode selector (2 options)
+
 - Grid: `grid grid-cols-1 gap-3 md:grid-cols-2`
 - ModeOption כפתור:
   - Selected: `border-{tone}-500 bg-{tone}-50`
@@ -885,9 +985,11 @@ toast.info('...');
   - Radio circle: `grid h-5 w-5 place-items-center rounded-full border-2 border-{tone}-500`
 
 ### Stat boxes (preview)
+
 - `rounded-md border p-4 text-center {tone}` עם value `text-2xl font-extrabold`.
 
 ### Progress bar (running)
+
 ```tsx
 <div className="rounded-md border bg-blue-50 p-4">
   <div className="flex items-center justify-between text-sm">
@@ -900,11 +1002,13 @@ toast.info('...');
 ```
 
 ### Step navigation
+
 - `flex items-center justify-between`
 - Back: `variant="outline"` + `<ArrowRight />` (RTL → ימין = "חזור")
 - Next: Primary + `<ArrowLeft />` (RTL → שמאל = "הבא")
 
 ### Replace confirmation (destructive flow)
+
 - 2-stage Dialog (confirm prompt → admin password input)
 - Icon circle: `grid h-12 w-12 place-items-center rounded-full bg-red-100 text-red-600` + AlertTriangle
 - Confirm button: `bg-red-600 hover:bg-red-700 text-white`
@@ -989,7 +1093,7 @@ toast.info('...');
   ממורכז. **לא** `<div>` — Outlook (במיוחד desktop) לא מבין flex/grid.
   ה-Tables משתמשות ב-`role="presentation"` כדי לא לבלבל screen readers.
 - **CTA button**: `<a>` עם `display:inline-block` + `background:#2563eb`
-  + `color:#ffffff` + `padding:12px 32px` + `border-radius:8px` +
+  - `color:#ffffff` + `padding:12px 32px` + `border-radius:8px` +
   `font-weight:700` + `text-decoration:none`. אין `<button>` — לא נתמך
   בקליינטים רבים.
 - **לוגו = טקסט בלבד** ("אלמוג", `font-size:28px; font-weight:800;
@@ -1008,6 +1112,7 @@ deliverability — קליינטי spam-filters מורידים את ה-score לר
 ### Sending mechanics
 
 `sendWithRetry({ to, subject, html, text })` מ-`src/lib/email/send.ts`:
+
 - Pool דרך `getTransporter()` ב-`src/lib/email/transporter.ts` (singleton
   על `globalThis` עם hash-cache של user+pass+fromName).
 - 3 ניסיונות סך הכל (initial + 2 retries) עם backoff `1s, 2s` רק על
@@ -1038,24 +1143,29 @@ overengineered — כל מודול מטופל יחידה, וההבחנה בין 
 "מוחק שורה" לא מצדיקה שדה DB נפרד.
 
 ### UI implications
+
 - ב-`PermissionMatrix` יש 2 עמודות בלבד: "צפייה" / "עריכה".
 - כפתורי delete/destructive בתוך מודול נפתחים תחת אותו gate של edit.
 - ה-Sidebar מסונן רק לפי view (מודולים ללא view מוסתרים).
 
 ### Checkbox vs Switch in the matrix
+
 המטריצה משתמשת ב-**תיבות סימון (Checkbox)** ולא ב-Switch. Checkbox
 מתאים לבחירה של הרשאה (selection — האם להעניק את ההרשאה הזו), Switch
 מתאים להגדרה דחופה (state toggle — האם תכונה פעילה כעת). הרשאות הן
 configuration שנקבעת לפני submit / שמירה — ולכן Checkbox.
 
 ### Code shape
+
 - `Action = 'view' | 'edit'`
 - `ModulePermission = { module, canView, canEdit }`
 - `hasPermission(role, perms, module, action)` — super_admin: true תמיד;
   admin: true פרט ל-`SUPER_ADMIN_ONLY`; manager/viewer: לפי המטריצה.
 
 ### Matrix component modes
+
 ה-`PermissionMatrix` תומכת בשני מצבים:
+
 - **Auto-save** (UserSidePanel): רק `userId` + `permissions` + `onMutated`.
   כל toggle שולח `PUT /api/users/{userId}/permissions` ומציג toast.
 - **Controlled** (InviteUserPanel): `value` + `onChange`. הקומפוננטה לא
@@ -1074,34 +1184,42 @@ configuration שנקבעת לפני submit / שמירה — ולכן Checkbox.
 רקע הגוף: `bg-surface-2`. מרווח בין שדות: `space-y-6`.
 
 ### Field label (variant פאנל מותגי)
+
 תווית מודגשת לפאנלי composer: `text-[13.5px] font-bold text-ink-2`, כוכבית
 חובה `<span className="text-[#e5484d]">*</span>`. (וריאציה ל-§6; ה-label
 הסטנדרטי נשאר `text-base font-medium text-muted-foreground`.)
 
 ### שדות מותגיים (Input / Textarea)
+
 `border-[1.5px] border-line bg-white text-sm placeholder:text-ink-ghost`
-+ focus ring מותגי (§2). Textarea: `min-h-[184px] resize-none leading-[1.85]`.
+- focus ring מותגי (§2). Textarea: `min-h-[184px] resize-none leading-[1.85]`.
 
 ### Variable insert chips (pills מעל ה-textarea)
+
 כפתורי הזרקת `{{var}}` למיקום הסמן (הלוגיקה ב-`insertPlaceholder`). pill
 מלא רדיוס:
+
 ```tsx
 <button className="inline-flex items-center gap-1 rounded-full border border-brand-border bg-brand-soft px-3 py-1.5 text-xs font-semibold text-brand-text transition-colors hover:border-brand hover:bg-brand hover:text-white hover:shadow-soft-sm disabled:opacity-50">
   <span>{label}</span> <Plus className="h-3 w-3 opacity-70" />
 </button>
 ```
+
 Hover = מילוי מותג מלא + טקסט לבן + צל רך. **ללא transform/lift** (כלל §21).
 
 ### שורת "משתנים נתמכים"
+
 `flex flex-wrap items-center gap-1.5 rounded-[7px] border border-line-soft bg-surface-2 px-3 py-2`,
 טקסט `text-xs text-ink-3`, וכל token כתג: `rounded-[5px] border border-line bg-white px-1.5 py-0.5 font-num text-[11px] text-ink-2` עם `dir="ltr"`.
 
 ### Active toggle card + Switch גדול
+
 כרטיס מתג סטטוס: `rounded-xl border p-4`. פעיל = `border-[#beedcf] bg-gradient-to-bl from-[#e9fbf0] to-white`; כבוי = `border-line bg-white`. כותרת `text-sm font-bold text-ink` + הסבר `text-xs text-ink-2`.
 ה-`Switch` תומך ב-`size="lg"` (52×30, ידית 24px) — תוספת additive ל-
 primitive (`ui/switch.tsx`); ברירת המחדל ללא שינוי. כאן עם `className="data-checked:bg-[#16a34a]"` (ירוק = פעיל).
 
 ### WhatsApp message preview (תצוגה מקדימה חיה)
+
 render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מודגשים. כותרת `<Eye/> תצוגה מקדימה`. כרטיס טלפון: `overflow-hidden rounded-xl border border-line shadow-soft-md`.
 פלטת WhatsApp (tokens חדשים, ייחודיים לפריוויו זה):
 
@@ -1124,11 +1242,13 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 > ההטמעות מיישמות **אותה** מערכת — יש לשמור אותן מסונכרנות.
 
 ### עקרונות
+
 כפתורים **שטוחים לחלוטין** — בלי gradients, בלי צללים, בלי הרמה ב-hover. צבעים
 מלאים אחידים, מעבר צבע חלק ב-hover בלבד. פונט Heebo, RTL. `:active` = `brightness(.96)`
 (בלי translate). Focus = `outline` 2px מותג, offset 2px. Disabled = `opacity .5`.
 
 ### מידות בסיס (אחיד לכל הכפתורים)
+
 | מאפיין | רגיל | קטן (sm) | גדול (lg) |
 |---|---|---|---|
 | גובה | 44px | 36px | 52px |
@@ -1142,6 +1262,7 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 - Block: `className="w-full"` (או `.btn.block`).
 
 ### וריאנטים
+
 | # | שם (React `variant`) | רקע | גבול | טקסט | hover |
 |---|---|---|---|---|---|
 | 1 | **`default`** (Primary) | `#3D5AFE` | — | לבן | `#2C44E0` |
@@ -1157,10 +1278,12 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 > `bg-brand-dark`, `border-line-strong`, `text-ink`, `bg-row-hover` וכו'.
 
 ### היררכיה בשורת פעולות (RTL)
+
 ראשי (`default`) הכי ימינה, אחריו משני/ביטול (`secondary`); `delete`/`newfolder`
 בצד הנגדי (שמאל). תואם §12 (PanelFooter: "סגור" ב-start, "שמור" primary ב-end).
 
 ### React (`<Button>`)
+
 ```tsx
 <Button>שמור</Button>                       {/* primary, 44px */}
 <Button variant="secondary">ביטול</Button>
@@ -1170,6 +1293,7 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 <Button variant="destructive">מחק</Button>   {/* solid */}
 <Button variant="ghost" size="icon"><X /></Button>
 ```
+
 **אין** להוסיף `bg-blue-600 text-white hover:bg-blue-700` ל-`<Button>` — ה-`default`
 כבר primary שטוח. ל-CTA ירוק/אדום השתמש ב-`variant` ("approve"/"destructive"),
 לא ב-class צבע ידני. כפתורי **אישור ב-`AlertDialog`** (מחיקה/יציאה) ממשיכים
@@ -1177,6 +1301,7 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 — אדום מלא שטוח, עקבי עם variant 5s.
 
 ### CSS נייד (`.btn`) — `src/app/styles/buttons.css`
+
 לשימוש ב-markup שאינו React (`<a class="btn btn-primary">`). מקור-אמת זהה
 ל-`<Button>`. מחלקות: `.btn` + `.sm`/`.lg`/`.icon`/`.block` + `.btn-primary` /
 `.btn-secondary` / `.btn-approve` / `.btn-newfolder` / `.btn-delete`(`.solid`) /
@@ -1228,12 +1353,14 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 > המשותפים — הם עדיין משרתים מודולים שלא הוסבו).
 
 ### 28.1 gradient-CTA (פעולה ראשית מודגשת)
+
 `bg-gradient-to-l from-[#1d4ed8] to-[#2563eb] text-white font-bold` + hover
 `from-[#1e40af] to-[#1d4ed8]`. צל לפי הקשר: top-bar `shadow-[0_10px_22px_-8px_rgba(37,99,235,0.6)]`
 (`h-[46px] rounded-[13px]`); footer DETAIL `shadow-[0_8px_18px_-6px_rgba(37,99,235,0.5)]`.
 **יוצא דופן — CREATE:** "צור ספק" **שטוח** `bg-[#2563eb] hover:bg-[#1d4ed8] shadow-[0_6px_16px_rgba(37,99,235,0.28)]`.
 
 ### 28.2 entity dark-header — שתי משפחות
+
 **CREATE** (`new.html`, כחול-בהיר אופקי): `bg-[linear-gradient(to_left,#142a63_0%,#1d4ed8_70%,#2563eb_100%)]
 px-[26px] py-[18px]`; כותרת `text-[21px] font-extrabold`; תת `text-[12.5px] text-[#c7dbff]/[0.78]`;
 סגירה `h-[38px] w-[38px] rounded-[11px] bg-white/[0.14] hover:bg-white/[0.26]` (בלי border), X 19px stroke 2.2.
@@ -1242,10 +1369,12 @@ px-8 py-5`; כותרת `text-[26px] font-extrabold`; תת `text-[13.5px] text-[#
 סגירה `h-[46px] w-[46px] rounded-[13px] bg-white/[0.14] hover:bg-white/[0.26]` (בלי border).
 
 ### 28.3 in-sheet tab-bar
+
 container `rounded-[14px] border border-[#e9edf4] bg-white p-[6px] gap-[8px]`; טאב `h-[42px] rounded-[10px] text-[14.5px]`;
 פעיל `bg-[#2563eb] text-white font-bold`, לא-פעיל `text-[#64748b] font-semibold`.
 
 ### 28.4 activity timeline
+
 כותרת-מקטע: אייקון 34×34 `rounded-[10px] bg-[#eef2ff] text-[#4f46e5]` + h2 18px/800 + תת 13px/#94a3b8.
 פס אנכי בקצה-התחלה: `right-[21px] w-0.5 top-[10px] bottom-[30px] bg-[linear-gradient(#dbe2ec,#eef1f6)]`.
 צומת 44×44 `rounded-[13px] border-[3px] border-[#f4f6fb]` (svg 19), גוון לפי פעולה (edit `bg-[#e8f0ff] text-[#2563eb]`,
@@ -1254,11 +1383,13 @@ upload `bg-[#fff3e6] text-[#ea8a18]`, create `bg-[#e7f7ee] text-[#16a34a]`, dele
 כותרת 15.5px/700/#0f172a; פירוט 13.5px/#475569 (`mt-[5px]`); שחקן 12.5px/#94a3b8 + user-icon 13px/#cbd5e1; תאריך 12.5px/#94a3b8 `dir=ltr`.
 
 ### 28.5 upload dropzone
+
 `border-2 border-dashed border-[#d8e0ec] rounded-[14px] bg-[#fafbfd] p-[26px]` hover `border-[#93b4f0] bg-[#f5f9ff]`;
 אייקון 48×48 `rounded-[13px] bg-[#e8f0ff] text-[#2563eb]` (svg 22); כותרת 14px/600/#334155; רמז 12.5px/#94a3b8.
 שדות העלאה (select/קובץ) `h-[46px] rounded-[11px]`; כפתור "העלה מסמך" = gradient-CTA `h-[46px] rounded-[12px]`.
 
 ### 28.6 document row
+
 `rounded-[13px] border border-[#eef1f6] bg-[#fafbfd] px-4 py-[14px]` hover `border-[#dbe2ec] bg-white`;
 אייקון-קובץ 44×44 `rounded-[11px]` tone-לפי-MIME (PDF `bg-[#fef2f2] text-[#dc2626]`, תמונה blue, גיליון emerald, אחר slate);
 שם 15px/700/#0f172a; מטא 12.5px/#94a3b8 בסדר **תאריך • גודל [badge]** (dot 3px #cbd5e1);
@@ -1266,12 +1397,14 @@ badge `rounded-full bg-[#e8f0ff] text-[#2563eb] px-[9px] py-[3px] 11.5px/600`; �
 `h-9 rounded-[9px]` בגווני `#2563eb`/`#64748b`/`#dc2626` (hover `#eff5ff`/`#eef2f7`/`#fef2f2`).
 
 ### 28.7 entity section-card — שתי משפחות (קומפוננטה `SupplierSection`)
+
 **CREATE:** `rounded-[14px] border border-[#e7ebf1] px-5 py-[18px]`; אייקון 30×30 `rounded-[9px]` (svg 16); h2 16px/700.
 **DETAIL:** `rounded-[18px] border border-[#e9edf4] px-[26px] py-[22px]`; אייקון 34×34 `rounded-[10px]` (svg 17); h2 18px/800.
 גווני אייקון: blue `bg-[#e8f0ff] text-[#2563eb]`, amber `bg-[#fff3e6] text-[#ea8a18]`, emerald `bg-[#e7f7ee] text-[#16a34a]`,
 slate `bg-[#eef2f7] text-[#475569]`, violet `bg-[#eef2ff] text-[#4f46e5]`. מיושם ב-`SupplierSection.tsx` (variant `create`/`detail`).
 
 ### 28.8 entity form-field
+
 label 12.5px/600/#64748b (`text-xs`), `mb-1.5`; כוכבית חובה `text-red-500`.
 input editable: `h-[42px] rounded-[10px] border-[#e2e8f0] px-[13px] text-[14px] text-[#0f172a]`,
 focus `focus-visible:border-[#2563eb] focus-visible:ring-[3px] focus-visible:ring-[#2563eb]/[0.12]`, error `border-red-400 bg-red-50`.
@@ -1280,6 +1413,7 @@ focus `focus-visible:border-[#2563eb] focus-visible:ring-[3px] focus-visible:rin
 text-[14px] font-medium text-[#0f172a]`; ריק → `text-[#94a3b8]` "—"; אימייל/אתר → `text-[#2563eb]`.
 
 ### 28.9 suppliers table + toolbar
+
 top-bar: icon-chip 48×48 `rounded-[14px] bg-[#e8f0ff] text-[#2563eb]` (Truck 24) + כותרת `text-[27px] font-black` +
 תת `text-[13.5px] text-[#94a3b8]` עם ספירה inline; כפתורים "ספק חדש" (gradient, ימין) + "ניהול קטגוריות" (outline `h-[46px] rounded-[13px]`, שמאל).
 קארד יחיד `rounded-[18px] border border-[#e9edf4] bg-white overflow-hidden`: toolbar (`border-b border-[#eef1f6] px-[22px] py-4`) → טבלה.
@@ -1291,6 +1425,7 @@ status pill `rounded-full px-[11px] py-[4px] gap-[5px] text-xs font-semibold` (a
 category badge **צבע-לפי-קטגוריה** (hash→פלטה; `rounded-full px-[11px] py-[4px] text-xs font-semibold`). מודל-הנתונים חסר `color` — מומלצת מיגרציה additive `supplier_categories.color`.
 
 ### 28.10 category-management sheet
+
 Side panel (`side="left"`) — header DETAIL (`§28.2`) אך כותרת `text-[23px]`, תת `text-[13px]`, סגירה `h-11 w-11 rounded-[13px]`.
 body `bg-[#f4f6fb] p-6` → `SupplierSection` (detail) "קטגוריות" אייקון `Folder` blue.
 add-row: input `h-[46px] flex-1 rounded-[11px] border-[#e2e8f0] px-[14px]` + "הוסף" gradient-CTA `h-[46px] rounded-[11px] px-[22px]` (mb-2).
@@ -1306,11 +1441,14 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 עיצוב 4 מסכי היומן (חודש/שבוע/יום/טופס אירוע) — 1:1 עם `ref/עמוד יומן`, `ref/יומן שבועי`, `ref/יומן יומי`, `ref/אירוע חדש`. רקע עמוד `#f4f6fb`, כרטיס תוכן לבן `border-[#e9edf4] rounded-[18px] overflow-hidden`.
 
 ### 29.1 כותרת + toolbar
+
 - כותרת: אריח אייקון `h-11 w-11 rounded-[13px] bg-[#e8f0ff] text-[#2563eb]` (CalendarDays) + "יומן" `text-[27px] font-black text-[#0f172a]`; כפתור "אירוע חדש" = gradient-CTA `h-[46px] rounded-[13px] bg-gradient-to-l from-[#1d4ed8] to-[#2563eb] shadow-[0_10px_22px_-8px_rgba(37,99,235,.6)]` (§28.1 precedent).
 - toolbar: מתג segmented `rounded-[12px] border-[#e9edf4] bg-white p-1`, כפתורים `h-9 px-[18px] rounded-lg` (פעיל `bg-[#2563eb] text-white font-bold`, לא-פעיל `text-[#475569] font-semibold`); כותרת תקופה `text-[19px] font-extrabold`; "היום" `h-[38px] rounded-[10px] border-[#e2e8f0]`; חצי ניווט `38×38 rounded-[10px] border-[#e2e8f0]` (RTL: הקודם=ChevronRight, הבא=ChevronLeft).
 
 ### 29.2 ארבעה סוגי פריטים — הבחנה בצבע בלבד (`chipTone` ב-`constants/calendar.ts`)
+
 כל הפריטים חולקים מבנה chip זהה; נבדלים רק בצבע + אייקון. נקודה מובילה (חודש) / accent `border-s-[3px]` בקצה ההתחלה (שבוע/יום):
+
 | סוג | רקע | accent/נקודה | טקסט | אייקון |
 |-----|-----|------|------|--------|
 | אירוע | `bg-{color_key}-100` | `-600` | `-700` | נקודה (Repeat אם חוזר) |
@@ -1320,15 +1458,18 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 אירוע משתמש בצבע שנבחר בטופס (פלטת 7 הגוונים §2). legend בתחתית עם 4 הסוגים.
 
 ### 29.3 סימון "היום"
+
 - חודש: מספר בעיגול `h-6 w-6 rounded-full bg-blue-600 text-white` + תא `bg-[#f5f9ff]`.
 - שבוע: עמודה `bg-[#eef5ff]` + שם יום `text-blue-600` + מספר בעיגול `h-[26px] w-[26px] rounded-full bg-blue-600 text-white`.
 - יום: אין סימון בגריד (נמסר ב-toolbar + טאב פעיל).
 
 ### 29.4 גריד התצוגות
+
 - חודש: גריד `grid-cols-7`, header ימים `bg-[#fafbfd] text-[13px] font-bold text-slate-500`; תא `min-h-[116px] border-[#eef1f6] p-2`; חוץ-לחודש `bg-[#fafbfd]` מספר `text-slate-300`; עד 3 chips + "עוד N…".
 - שבוע + יום: **גריד שעתי 08:00–20:00** (שעות עבודה — חריג מוצהר מ-ref 07:00). שורת שעה `min-h-[58px]`(שבוע)/`min-h-[60px]`(יום) `border-[#f1f4f8]`; עמודת זמן `dir=ltr text-slate-400` (`w-[72px]` שבוע / `w-[84px]` יום). שורת "כל היום" לפריטים ללא שעה (יום=תמיד, שבוע=band עליון כשיש). פריט מחוץ לחלון → **clamp** לשורת הקצה (לפני 08:00→08:00, אחרי 20:00→20:00), לעולם לא מוסתר.
 
 ### 29.5 טופס אירוע (Side Panel)
+
 `Sheet side="left" sm:w-[55vw]`. header gradient כהה `bg-[linear-gradient(120deg,#0e1f4d,#16308a_55%,#1d4ed8)]`. 4 sections (`Section` משותף, iconTone: פרטי=blue, חזרתיות=violet, משתתפים=emerald, תזכורות=amber). בורר צבע: 7 עיגולים `h-[34px] w-[34px]`, נבחר `ring-2 ring-[#2563eb] ring-offset-2`. שדות בגובה **44px** (`h-11`) — ראה חריגים מוצהרים.
 
 ## 30. מחזוריות (משימות חוזרות) — מודל „מופע אחד”
@@ -1336,6 +1477,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 **עיקרון־יסוד (migration 067):** משימה מחזורית היא **שורה אחת בלבד**. `due_date` שלה הוא **המופע הנוכחי**, ובסימון „בוצע” היא לא נסגרת אלא מתקדמת למופע הבא (ההשלמה נרשמת ב-`task_occurrence_completions`). אין מופעים ממומשים, אין `is_recurring_instance`, אין „מופע בסדרה”.
 
 ### 30.1 אינדיקטור
+
 אייקון `Repeat` (lucide) בגוון **`blue-500`** — מקור־אמת יחיד: `src/components/recurrence/RecurringBadge.tsx` (Iron Rule #8 — DRY).
 
 - **שורת טבלה / כרטיס קנבן**: `RecurringBadge` (= `Repeat h-3.5 w-3.5 text-blue-500`, עטוף ב-`<span title="משימה חוזרת">` ל-tooltip+a11y), מיד אחרי הכותרת. מוצג כאשר `task.recurrence !== null`.
@@ -1343,6 +1485,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 - **כותרת פאנל המשימה** (header כהה): chip translucent `border-white/25 bg-white/10 px-2.5 py-0.5 rounded-full text-xs` עם `Repeat h-3.5` + „משימה מחזורית”.
 
 ### 30.2 שורת המחזוריות (`CadenceStrip`) — מקור־אמת יחיד
+
 `src/components/recurrence/CadenceStrip.tsx`. תצוגה בלבד; בשימוש בכרטיס הקנבן, שורת הטבלה, טאב „מחזוריות” ותצוגה־מקדימה בטופס — כדי ששני משטחים לא יציגו מחזוריות אחת בשתי צורות.
 
 **התווית + הצ'יפים נגזרים מהעוגן + `interval`** (`src/lib/recurrence/cadence.ts`) — **אין עמודות `bymonth` / `bymonthday`**:
@@ -1358,6 +1501,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 | כל N ימים/שבועות | interval אחר | ללא צ'יפים (תווית בלבד) | — |
 
 **3 מצבי צ'יפ (חובה, ללא חריגה):**
+
 - `on` (מתוכנן) — `border-blue-600 bg-blue-50 text-blue-600`
 - `done` (בוצע בתקופה הנוכחית) — `border-emerald-600 bg-emerald-50 text-emerald-700`
 - `off` (לא מתוכנן) — `border-slate-200 bg-white text-slate-300`
@@ -1369,6 +1513,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 **בכרטיס קנבן:** בתחתית הכרטיס, מעל/אחרי ה-`AssigneePills`, בתוך `border-t border-dashed border-slate-200 pt-2.5`. מוסתר כש-`chips.type === 'none'`.
 
 ### 30.3 תג התקדמות (`CadenceProgress`)
+
 `1/3 השבוע` + `Check` — `bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md text-[11px] font-bold`, בשורת הכותרת ליד badge העדיפות.
 
 **כלל הצגה (מחייב):** מוצג **רק** כאשר `expected_count > 1 && done_count > 0`. `expected` = 7 ליומי, מספר הימים הנבחרים לשבועי, 4 לרבעוני, 2 לחצי־שנתי — ו-1 לחודשי/שנתי, ולכן `1/1 החודש` לא מוצג לעולם.
@@ -1378,9 +1523,11 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 **חישוב server-side בלבד** — `expected`/`done`/`chips` נפתרים ב-`lib/db/tasks.attachRecurrenceViews`, כי הם תלויים ב„היום” לפי Asia/Jerusalem; חישוב בצד הלקוח יגרום לאי־התאמה בין SSR ל-hydration (אותו נימוק כמו סימון האיחור).
 
 ### 30.4 טאב „מחזוריות”
+
 מסך משימות, שלישי אחרי „פעילות”/„הושלמו”. טבלה (`RecurringSeriesList`) — שורה לכל סדרה פעילה, **ממוינת לפי המופע הבא (עולה)**. עמודות: כותרת (glyph + `CadenceProgress`) · מחזוריות (`CadenceStrip`, `min-w-[220px]`) · המופע הבא (תאריך+שעה, `CalendarClock`). לחיצה → פתיחת משימת הסדרה. ה-toolbar מוסתר בטאב זה. המופע הבא מחושב ב-`listRecurringSeries` דרך `computeOccurrences` (אופק `SERIES_LOOKAHEAD_DAYS`=400, מכבד exceptions).
 
 ### 30.5 טופס המחזוריות (`RecurrenceSection`)
+
 בורר התדירות מציג **presets** (יומי / שבועי / חודשי / רבעוני / חצי־שנתי / שנתי) ולא את ה-`frequency` המאוחסן, כי „רבעוני”/„חצי־שנתי” הם `monthly` עם interval 3/6. „כל כמה” מוצג רק ל-יומי/שבועי (`PRESETS_WITH_INTERVAL`). מתחת לשדות — תצוגה־מקדימה `CadenceStrip size="md"` של מה שיופיע על הכרטיס. פעולות הסדרה: „דלג על מופע זה” · „ערוך רק את המופע הזה” (יוצר משימה עצמאית ומקדם את הסדרה) · „סיים סדרה”.
 
 ---
@@ -1394,6 +1541,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 **פלטה (Dialog)**: `CommandDialog` עוטף את `DialogContent` הקיים (§12) עם override: `top-[12vh] -translate-y-0 max-w-[600px] p-0 gap-0` (ממורכז אופקית RTL, מעוגן לראש). `showCloseButton={false}`; `DialogTitle` ב-`sr-only` ל-a11y. ESC / קליק-רקע סוגרים (התנהגות base-ui).
 
 **מבנה הפלטה**:
+
 - `CommandInput`: שורה עם אייקון `Search` + `input` `h-[52px]`, `border-b border-line`, `autofocus` בפתיחה, `debounce ~250ms` + `AbortController` (מבטל בקשות ישנות).
 - `CommandList`: `max-h-[60vh] overflow-y-auto p-2`.
 - תוצאות **מקובצות לפי סוג** (`CommandGroup` עם `heading`), בסדר קבוע: **דיירים → ספקים → תקלות → מסמכים**. קבוצה מוצגת רק אם יש לה תוצאות.
@@ -1439,6 +1587,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 ```
 
 **עקרונות (מה שמנע את הסטייה):**
+
 - **הסיידבר הוא עמודה מלאת-גובה בקצה ימין** — נמתח מ-`top` ל-`bottom` של המסך (הילד הראשון ב-row, `align-items: stretch`). ה-brand block בראשו עולה עד הקצה העליון ממש.
 - **ה-Header יושב רק מעל אזור התוכן** — הוא ילד של עמודת התוכן (`flex-1 flex-col`), ולכן **נעצר בגבול הסיידבר ולא חוצה מעליו**. זו הנקודה הקריטית: header אסור שיהיה אח (sibling) של הסיידבר ברמת ה-row.
 - **יישור הקווים התחתונים**: ה-brand block (§14) וה-Header (§15) חולקים `h-16` + `border-b border-line` → שני הקווים התחתונים מתלכדים לקו רציף אחד לרוחב ראש המסך.
@@ -1474,6 +1623,18 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 
 ---
 
+## 34. באנר התקנת PWA (מובייל בלבד)
+
+`src/components/app-shell/InstallPrompt.tsx`, ממוקם פעם אחת ב-root layout ליד ה-`Toaster`. לא Sheet-צד ולא Dialog — באנר תחתון לא-מודאלי, בהתאם לכלל ש-Sheet/Dialog שמורים ל-CREATE/EDIT ולאישורים.
+
+- **מעטפת:** `fixed inset-x-0 bottom-0 z-40` (מעל השלד, מתחת לכל overlay ב-z-50) · `border-t border-line bg-white p-4` · תחתית safe-area ‏`pb-[max(1rem,env(safe-area-inset-bottom))]` · צל עדין כלפי מעלה בלבד · כניסה `slide-in-from-bottom` עם easing הבית (`cubic-bezier(0.16,0.84,0.26,1)`) + ‏`motion-reduce:animate-none` · ‏`roomy:hidden` (נסתר בדסקטופ אמיתי, נשאר בטלפון-לרוחב).
+- **תוכן:** אייקון האפליקציה `/icons/icon-rounded.svg` ‏44px · כותרת `text-sm font-bold text-ink` · תת-שורה `text-xs text-ink-2` · CTA ‏`Button` ברירת-מחדל (44px) · ‏X ‏`ghost icon-sm` עם `hit-44 relative`.
+- **מדריך iOS/דפדפנים בלי `beforeinstallprompt`:** ‏`Sheet side="bottom"` ‏(`rounded-t-2xl`) עם שלושה צעדים — צ'יפ-אייקון `h-10 w-10 rounded-xl bg-brand-soft text-brand-text` + טקסט `text-sm text-ink`.
+- **תיאום FAB:** הבאנר וה-FAB חולקים את אותה פינה; כל עוד הבאנר מוצג ה-FAB מוסתר דרך `body:has([data-install-banner]) [data-agent-fab]` ‏(responsive.css).
+- **תדירות:** פעם ב-session ‏(`sessionStorage`), השתקה 7 ימים אחרי סגירה, לעולם לא ב-standalone/אחרי התקנה. מפתחות: `almog:pwa-install:*`.
+
+---
+
 ## אם משהו חסר כאן
 
 לפני שאתה מנחש — בדוק שתי קומפוננטות קיימות באותה משפחה (טבלאות, קלפים, וכו'). אם אין דפוס קיים — שאל את המשתמש לפני שאתה ממציא וריאציה חדשה. עדכון ל-DESIGN.md הוא חלק מ-MR — לא משאיר decision לא-מתועד.
@@ -1495,6 +1656,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 **מקור-האמת העיצובי: `ref/proof/Chip2.html` (חלון ההנפקה הרב-אישי) + `ref/proof/Chip2.md` (השפה הוויזואלית — פלטה/טיפוגרפיה/מידות; זהה בתוכנו ל-`Chip.md` המקורי). הרפרנס גובר על מסמך זה בכל התנגשות, בהיקף מודול הצ׳יפים בלבד** (החלטת מוצר). הרפרנס המקורי `ref/proof/whatsapp-broadcast/Chip.html` **הוסר מהדיסק** — העיצוב שנגזר ממנו מיושם בקוד וסעיף (א) להלן נשאר התיעוד שלו. ה-scope נאכף טכנית: כל הטוקנים מוגדרים כ-CSS vars תחת המחלקה **`.chips-skin`** (`src/app/styles/chips.css`) — שום ערך לא דורס את ה-`@theme` הגלובלי, ו-`font-num` הגלובלי נשאר Inter. אסור לייבא את פלטת הצ׳יפים למסכים אחרים.
 
 **(א) נגזר ישירות מהרפרנס (מחייב 1:1) — חלון ההנפקה (`IssueChipSheet`):**
+
 - פלטה: brand `#3D5AFE` (hover `#2E49E8`, soft `#EEF1FF`, ink `#2B3FB8`, border `#C9D3FF`) · ink `#141B34`/`#5A6386`/`#98A0BC`/`#C9CEE0` · גבולות `#E7EAF4`/`#D6DAEA` · רקע `#EEF1F8`, משטח משני `#FAFBFE`, hover `#F3F5FC` · ירוק `#22A06B` (soft/border/ink) · ענבר `#F5A524` · סגול `#7C4DFF` · אדום `#E5484D`.
 - header גרדיאנט `linear-gradient(115deg,#2B3FB8,#3D5AFE 62%,#5872FF)`; 5 כרטיסי סעיף (ראש עם אייקון-tone + קו מפריד): דירה=כחול, בעל הצ׳יפ=סגול, סוג=ענבר, מספרים=כחול, עמלה=ירוק.
 - כרטיסי תפקיד 2×2: ריק=גבול מקווקו + „השלם פרטים ›”; נבחר=גבול brand + רקע soft + טבעת + עיגול ✓; תגית „גר בדירה” (soft-blue, לבנה בנבחר).
@@ -1506,6 +1668,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 - Footer: ראשי בהתחלה (RTL), spacer, „סגור” בסוף.
 
 **(ב) הורחב לפי הפלטה (החלטות עיצוב שלי — הרפרנס לא מכסה):**
+
 - טבלת `/chips`: **שם המחזיק = העמודה הראשית** (מתחתיו דירה + badge תפקיד); מספר צ׳יפ כתגית-ref (פעיל=ירוק, מושבת=מקווקו+קו-חוצה); badges „לא במרשם”, „N צ׳יפים”, match-type; empty-state ייחודי לחיפוש.
 - KPI cards, פאנל מחזיק (`ChipHolderPanel`), בלוק „מחזיק” ב-`ChipDetailPanel`, ChipsTab בפאנל הדירה, mobile cards — אנטומיית DESIGN.md עם פלטת הרפרנס.
 - מה שהרפרנס לא מגדיר נופל ל-DESIGN.md: error state (`border-red-400 bg-red-50`), loading/skeletons, dialogs לאישורים, mobile, ו-touch targets (חיצי הפעולה מקבלים hit-area ‏44px גם כשהוויזואל 30px).
