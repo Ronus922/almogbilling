@@ -48,9 +48,11 @@ SECURITY_AUDIT.md
 RBAC_BUG_REPORT.md
 RBAC_MANAGER_AUDIT.md
 
-# auto-generated kit catalog (regenerated locally by gen-catalog.sh; kit
-# templates are the source of truth) — kept out of git so it stops churning.
-AGENTS.md
+# AGENTS.md is TRACKED on purpose (was ignored until 22/08/2026). Its lower
+# half is the gen-catalog.sh catalogue and does churn, but its upper half is the
+# iron rules — byte-identical to CLAUDE.md's. An untracked rules file means
+# different rules on every machine, which is exactly what happened when iron
+# rule 12 was added and could not be pushed. Churn is the cheaper problem.
 
 # Claude Code session artifacts + the vendored-skill lockfile that pins them.
 # Nothing in the build, deploy or check:* pipeline reads either one, and the
