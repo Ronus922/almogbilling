@@ -27,9 +27,13 @@ function hasNoContactPerson(c: Contact): boolean {
 export function ContactsPageClient({
   initialContacts,
   canEdit,
+  canViewParking,
+  canEditParking,
 }: {
   initialContacts: Contact[];
   canEdit: boolean;
+  canViewParking: boolean;
+  canEditParking: boolean;
 }) {
   const [contacts, setContacts] = useState<Contact[]>(initialContacts);
   const [search, setSearch] = useState('');
@@ -223,6 +227,8 @@ export function ContactsPageClient({
         open={formOpen}
         contact={editingContact}
         canEdit={canEdit}
+        canViewParking={canViewParking}
+        canEditParking={canEditParking}
         onOpenChange={(o) => { setFormOpen(o); if (!o) setEditingContact(null); }}
         onSaved={fetchContacts}
       />

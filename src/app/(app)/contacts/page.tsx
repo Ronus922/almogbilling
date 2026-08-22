@@ -16,7 +16,19 @@ export default async function ContactsPage() {
 
   // Edit (create / update / import) is admin-only — matches the contacts API guards.
   const canEdit = actor.role === 'super_admin' || actor.role === 'admin';
+  // The חניות ומחסנים section of the tenant panel writes through the parking
+  // API, so it is gated on the PARKING module, not on contacts: a viewer holds
+  // no parking row and never sees the section at all.
+  const canViewParking = hasPermission(actor.role, actor.permissions, 'parking', 'view');
+  const canEditParking = hasPermission(actor.role, actor.permissions, 'parking', 'edit');
   const initialContacts = await listContacts({});
 
-  return <ContactsPageClient initialContacts={initialContacts} canEdit={canEdit} />;
+  return (
+    <ContactsPageClient
+      initialContacts={initialContacts}
+      canEdit={canEdit}
+      canViewParking={canViewParking}
+      canEditParking={canEditParking}
+    />
+  );
 }

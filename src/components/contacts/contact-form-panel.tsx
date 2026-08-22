@@ -16,7 +16,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Section } from '@/components/side-panel/Section';
+import { Field } from '@/components/side-panel/Field';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
+import { ContactAssetsSection, useContactAssets } from './contact-assets-section';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
 import { validatePhone } from '@/lib/validation';
@@ -37,6 +39,10 @@ interface Props {
   /** null → create mode; a contact → edit mode. */
   contact: Contact | null;
   canEdit: boolean;
+  /** parking:view — false hides the חניות ומחסנים section entirely (viewers). */
+  canViewParking: boolean;
+  /** parking:edit — false renders that section read-only. */
+  canEditParking: boolean;
   onOpenChange: (o: boolean) => void;
   onSaved: () => void;
 }
@@ -138,7 +144,9 @@ function fromContact(c: Contact): FormState {
   };
 }
 
-export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved }: Props) {
+export function ContactFormPanel({
+  open, contact, canEdit, canViewParking, canEditParking, onOpenChange, onSaved,
+}: Props) {
   const isEdit = !!contact;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
@@ -151,6 +159,17 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
   // Management-fee rate per m² (settings). null = not configured → the fee field
   // stays a plain manual input, exactly as before the rate existed.
   const [feePerSqm, setFeePerSqm] = useState<number | null>(null);
+
+  // Parking & storage live in their own tables, reached through their own API.
+  // The apartment number is the only link, so in create mode the section binds
+  // to whatever is being typed and the rows are written once the tenant exists.
+  const assetApartment = (contact?.apartment_number ?? form.apartment_number).trim();
+  const assets = useContactAssets({
+    open,
+    enabled: canViewParking,
+    apartmentNumber: assetApartment,
+    isEdit,
+  });
 
   useEffect(() => {
     if (open) {
@@ -264,9 +283,15 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
   );
   const feeIsDerived = feePerSqm !== null;
 
-  const dirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initial), [form, initial]);
+  const formDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initial), [form, initial]);
+  const dirty = formDirty || assets.dirty;
   const hasErrors = Object.keys(errors).length > 0 || peopleErrors.size > 0;
-  const canSubmit = canEdit && !hasErrors && !submitting;
+  // A manager may hold parking:edit without contacts:edit — then the tenant
+  // fields stay read-only but the assets section is still theirs to save.
+  const assetsEditable = canViewParking && canEditParking;
+  // Asset errors only block the save of someone who can actually fix them.
+  const canSubmit = (canEdit || assetsEditable) && !hasErrors
+    && !(assetsEditable && assets.blocking) && !submitting;
 
   useEscapeKey(open && !confirmCloseOpen, () => requestClose());
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
@@ -299,6 +324,7 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
       return;
     }
     setSubmitting(true);
+    let contactSaved = false;
     try {
       const phone = (v: string) => (v.trim() ? validatePhone(v).normalized : '');
       const num = (v: string) => (v.trim() ? Number(v.trim()) : null);
@@ -334,28 +360,50 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
       };
       if (!isEdit) body.apartment_number = form.apartment_number.trim();
 
-      const url = isEdit ? `/api/contacts/${contact!.id}` : '/api/contacts';
-      const method = isEdit ? 'PATCH' : 'POST';
-      const r = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body),
-      });
-      const data = (await r.json().catch(() => ({}))) as { error?: string };
-      if (!r.ok) {
-        const msg =
-          data.error === 'apartment_number_exists' ? 'מספר דירה כבר קיים' :
-          data.error === 'invalid_phone' ? 'מספר טלפון לא תקין' :
-          data.error === 'invalid_email' ? 'אימייל לא תקין' :
-          isEdit ? 'עדכון הדייר נכשל' : 'יצירת הדייר נכשלה';
-        throw new Error(msg);
+      // The tenant must exist before anything can point at its apartment
+      // number, so the contact is saved FIRST and the assets follow. If the
+      // assets fail the tenant is already saved — the panel stays open and says
+      // so, rather than pretending the whole save was rolled back.
+      if (canEdit) {
+        const url = isEdit ? `/api/contacts/${contact!.id}` : '/api/contacts';
+        const method = isEdit ? 'PATCH' : 'POST';
+        const r = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(body),
+        });
+        const data = (await r.json().catch(() => ({}))) as { error?: string };
+        if (!r.ok) {
+          const msg =
+            data.error === 'apartment_number_exists' ? 'מספר דירה כבר קיים' :
+            data.error === 'invalid_phone' ? 'מספר טלפון לא תקין' :
+            data.error === 'invalid_email' ? 'אימייל לא תקין' :
+            isEdit ? 'עדכון הדייר נכשל' : 'יצירת הדייר נכשלה';
+          throw new Error(msg);
+        }
+        contactSaved = true;
       }
+
+      if (assetsEditable && assets.dirty) {
+        const apartment = isEdit ? contact!.apartment_number : form.apartment_number.trim();
+        try {
+          await assets.flush(apartment);
+        } catch {
+          // The specific reason ("חניה 63 כבר מוצמדת לדירה 1234") is already on
+          // the row that caused it — a toast repeating it would be the only
+          // place the user sees it, and it would then disappear.
+          throw new Error('שיוך החניות והמחסנים לא הושלם — הפרטים מסומנים בשורה הרלוונטית.');
+        }
+      }
+
       toast.success(isEdit ? 'הדייר עודכן' : 'הדייר נוצר');
       onSaved();
       onOpenChange(false);
     } catch (e) {
       toast.error((e as Error).message);
+      // The list still has to catch up with a tenant that did save.
+      if (contactSaved) onSaved();
     } finally {
       setSubmitting(false);
     }
@@ -625,6 +673,18 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
                 </div>
               </Section>
 
+              {/* Parking & storage — rows of the parking module's own tables,
+                  linked by apartment_number. Hidden outright without
+                  parking:view, which is exactly the viewer role. */}
+              {canViewParking && (
+                <ContactAssetsSection
+                  assets={assets}
+                  apartmentNumber={assetApartment}
+                  canEdit={canEditParking}
+                  disabled={submitting}
+                />
+              )}
+
               {/* Extra */}
               <Section title="פרטים נוספים" icon={Info} iconTone="slate">
                 <div className="space-y-4 py-2">
@@ -673,7 +733,11 @@ export function ContactFormPanel({ open, contact, canEdit, onOpenChange, onSaved
             onClose={requestClose}
             onSave={handleSubmit}
             saveDisabled={!canSubmit}
-            saveDisabledReason={!canEdit ? 'אין הרשאה — כניסה כצופה' : undefined}
+            saveDisabledReason={
+              !canEdit && !assetsEditable ? 'אין הרשאה — כניסה כצופה'
+                : assetsEditable && assets.blocking ? 'יש לתקן את שיוך החניות והמחסנים'
+                : undefined
+            }
             saveLabel={submitting ? 'שומר…' : isEdit ? 'שמור שינויים' : 'צור דייר'}
           />
         </SheetContent>
@@ -773,51 +837,6 @@ function CheckboxRow({
     <div className="flex items-center gap-2">
       <Checkbox id={id} checked={checked} onCheckedChange={(v) => onChange(v === true)} disabled={disabled} />
       <Label htmlFor={id} className="cursor-pointer text-sm font-medium text-slate-700">{label}</Label>
-    </div>
-  );
-}
-
-interface FieldProps {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  onBlur?: () => void;
-  error?: string | null;
-  required?: boolean;
-  disabled?: boolean;
-  type?: string;
-  dir?: 'ltr' | 'rtl';
-  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
-  tabularNums?: boolean;
-  placeholder?: string;
-  autoFocus?: boolean;
-}
-
-function Field({
-  id, label, value, onChange, onBlur, error, required, disabled,
-  type, dir, inputMode, tabularNums, placeholder, autoFocus,
-}: FieldProps) {
-  return (
-    <div className="space-y-2">
-      <Label htmlFor={id} className="text-base font-medium text-muted-foreground">
-        {label}
-        {required && <span className="text-red-500"> *</span>}
-      </Label>
-      <Input
-        id={id}
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={onBlur}
-        disabled={disabled}
-        dir={dir}
-        inputMode={inputMode}
-        placeholder={placeholder}
-        autoFocus={autoFocus}
-        className={cn('h-10', tabularNums && 'tabular-nums', error && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
-      />
-      {error && <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {error}</p>}
     </div>
   );
 }

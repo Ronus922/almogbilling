@@ -25,20 +25,26 @@ interface Props {
   /** Where it is currently assigned, for the warning line. */
   assignedTo: string | null;
   submitting: boolean;
+  /**
+   * Pre-filled reason for callers that already know why (the contacts panel
+   * removes a row and can say so). The user may overwrite it; it is a default,
+   * not a lock. Omitted → the field opens empty, as the /parking screen wants.
+   */
+  defaultReason?: string;
   onCancel: () => void;
   onConfirm: (reason: string) => void;
 }
 
 export function DeactivateDialog({
-  open, subject, assignedTo, submitting, onCancel, onConfirm,
+  open, subject, assignedTo, submitting, defaultReason = '', onCancel, onConfirm,
 }: Props) {
-  const [reason, setReason] = useState('');
+  const [reason, setReason] = useState(defaultReason);
 
-  // Clear between openings — a reason typed for one spot must never be carried
+  // Reset between openings — a reason typed for one spot must never be carried
   // into the next one's confirmation.
   useEffect(() => {
-    if (open) setReason('');
-  }, [open]);
+    if (open) setReason(defaultReason);
+  }, [open, defaultReason]);
 
   const trimmed = reason.trim();
   const tooLong = trimmed.length > DEACTIVATION_REASON_MAX;
