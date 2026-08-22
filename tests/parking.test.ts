@@ -14,6 +14,7 @@ import {
   UNSOLD_DEVELOPER_APARTMENTS,
   SPOT_NUMBER_MAX,
 } from '@/lib/constants/parking';
+import { mapImportRow } from '@/lib/parking/importMapping';
 import { hasPermission } from '@/lib/permissions/check';
 import { DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER, MODULES } from '@/lib/permissions/constants';
 
@@ -193,5 +194,78 @@ describe('parking RBAC wiring', () => {
 
   it('a matrix role with no parking row is denied (fail-closed)', () => {
     expect(hasPermission('manager', [], 'parking', 'view')).toBe(false);
+  });
+});
+
+// ── Excel import mapping ─────────────────────────────────────────────────────
+// The source worksheet overloads BOTH data columns: the notes column holds
+// either a digit that encodes a property or free text, and the apartment column
+// holds either a number or an owner keyword. These tests pin that decoding,
+// because getting it wrong silently produces plausible-but-wrong ownership.
+
+describe('Excel import mapping', () => {
+  const row = (spot: unknown, apt: unknown, note: unknown) => mapImportRow(spot, apt, note, 7);
+
+  it('decodes the notes digits as structure, not as notes', () => {
+    const two = row(63, '1234', '2');
+    expect(two.ok && two.row.size_type).toBe('double_width');
+    expect(two.ok && two.row.notes).toBeNull();      // consumed, not kept
+
+    const three = row(63, '1234', '3');
+    expect(three.ok && three.row.size_type).toBe('double_length');
+
+    const one = row(63, '1234', '1');
+    expect(one.ok && one.row.sale_status).toBe('in_process');
+    expect(one.ok && one.row.size_type).toBe('single');
+  });
+
+  it('keeps any other note as free text', () => {
+    const r = row(63, '1234', 'ליד העמוד');
+    expect(r.ok && r.row.notes).toBe('ליד העמוד');
+    expect(r.ok && r.row.size_type).toBe('single');
+    expect(r.ok && r.row.sale_status).toBe('none');
+  });
+
+  // The three quote characters are the difference between 36 developer spots
+  // and 36 errors, depending on who typed the file.
+  it('recognises חו״כ with any quote character', () => {
+    for (const token of ['חו"כ', 'חו״כ', 'חו”כ', ' חו"כ ']) {
+      const r = row(11, token, '');
+      expect(r.ok && r.row.owner_type).toBe('developer');
+      expect(r.ok && r.row.apartment_number).toBeNull();
+    }
+  });
+
+  it('maps נציגות to committee AND for_sale', () => {
+    const r = row(61, 'נציגות', '');
+    expect(r.ok && r.row.owner_type).toBe('committee');
+    expect(r.ok && r.row.sale_status).toBe('for_sale');
+    expect(r.ok && r.row.apartment_number).toBeNull();
+  });
+
+  it('treats anything else in the apartment column as an apartment number', () => {
+    const r = row(1, '534', '');
+    expect(r.ok && r.row.owner_type).toBe('apartment');
+    expect(r.ok && r.row.apartment_number).toBe('534');
+  });
+
+  it('a committee spot that is also double keeps BOTH facts', () => {
+    const r = row(61, 'נציגות', '2');
+    expect(r.ok && r.row.owner_type).toBe('committee');
+    expect(r.ok && r.row.sale_status).toBe('for_sale');
+    expect(r.ok && r.row.size_type).toBe('double_width');
+  });
+
+  it('rejects a row with no spot number or no owner', () => {
+    expect(row('', '534', '').ok).toBe(false);
+    expect(row('abc', '534', '').ok).toBe(false);
+    expect(row(63, '', '').ok).toBe(false);
+  });
+
+  it('reports the worksheet row number so the user can find the line', () => {
+    const r = mapImportRow('', '534', '', 42);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.error.rowNumber).toBe(42);
+    expect(r.ok === false && r.error.raw.apartment).toBe('534');
   });
 });
