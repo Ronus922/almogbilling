@@ -1,0 +1,167 @@
+-- 076_parking_storage.sql
+-- Parking & Storage module ("חניות ומחסנים") — building Almog, lot 1P.
+--
+-- Source of truth: "הצמדת חניות לדירות" (14.5.2015) — 187 spot numbers, of
+-- which 14 are double, giving 201 physical places. Ownership is split three
+-- ways: attached to an apartment, held by the developer (חוף הכרמל / "חו״כ"),
+-- or held by the residents' committee (נציגות).
+--
+-- Design decisions locked in here:
+--
+--  1. A DOUBLE SPOT IS ONE ROW. size_type carries the shape ('double_width' /
+--     'double_length') and the generated `capacity` column derives 1-or-2 from
+--     it. Never two rows for one physical double spot — that would double-count
+--     the spot in every "how many spots" figure while the places figure stayed
+--     right.
+--
+--  2. NO DELETE — `is_active` only. A physical spot/unit never stops existing;
+--     it only stops being assigned. Deleting would destroy the assignment
+--     history and (for storage) block re-issuing the number. Every "remove"
+--     path in the API is a toggle carrying a mandatory reason, enforced by the
+--     *_deactivation_reason_required CHECKs below, mirroring the chips module.
+--
+--  3. UNIQUENESS DIFFERS ON PURPOSE between the two tables:
+--       parking_spots  → hard UNIQUE (lot_code, spot_number). A parking number
+--                        is a painted number on a physical floor; it stays
+--                        unique whether or not the spot is currently assigned.
+--       storage_units  → PARTIAL unique on unit_number WHERE is_active. A
+--                        storage number CAN be released and re-issued to a new
+--                        unit row, keeping the old row as history. Same pattern
+--                        as chips_number_active_uniq (072).
+--
+--  4. NO FK from apartment_number → contacts.apartment_number, deliberately.
+--     contacts.apartment_number IS unique so the FK is technically possible,
+--     but: (a) the Excel import must REPORT an unknown apartment as a per-row
+--     Hebrew error in its preview, not abort the whole transaction on 23503;
+--     (b) a hard FK would let the parking module block contact deletion.
+--     Instead every mutation validates the apartment in application code, and
+--     the summary screen keeps a permanent "spots pointing at a non-existent
+--     apartment" check (audit 2026-08-22: 0 rows — it must stay 0).
+--
+--  5. A double spot's second place is NOT a second apartment slot. An apartment
+--     may hold N spots and N storage units; a spot/unit belongs to at most one
+--     apartment. That direction is enforced by apartment_number being a plain
+--     column (one value per row), not by a constraint.
+--
+-- RBAC: one module key, 'parking', covering BOTH tables (label "חניות ומחסנים",
+-- group 'main'). The matrix is module + can_view/can_edit — there are no
+-- 'module:action' string keys in this system. Seed follows the chips precedent
+-- (072): managers get view+edit; super_admin/admin bypass the matrix entirely
+-- and never hold rows; viewer/cleaner/maintenance get nothing (a missing row
+-- denies — hasPermission is fail-closed).
+--
+-- DOWN: 076_parking_storage.down.sql
+-- Run: psql "$DIRECT_URL" -f supabase/migrations/076_parking_storage.sql
+
+begin;
+
+-- 1. parking_spots ------------------------------------------------------------
+
+create table if not exists public.parking_spots (
+  id                  uuid primary key default gen_random_uuid(),
+  lot_code            text not null default '1P',
+  spot_number         integer not null,
+  size_type           text not null default 'single',
+  -- Derived, never written by the app: a single spot holds one car, either
+  -- kind of double holds two. Keeps "מקומות" arithmetic impossible to get wrong.
+  capacity            integer generated always as
+                        (case when size_type = 'single' then 1 else 2 end) stored,
+  owner_type          text not null,
+  apartment_number    text,
+  sale_status         text not null default 'none',
+  notes               text,
+  is_active           boolean not null default true,
+  deactivated_at      timestamptz,
+  deactivated_by      uuid references public.users(id),
+  deactivation_reason text,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now(),
+  created_by          uuid references public.users(id),
+  updated_by          uuid references public.users(id),
+
+  constraint parking_spots_size_type_check
+    check (size_type in ('single', 'double_width', 'double_length')),
+  constraint parking_spots_owner_type_check
+    check (owner_type in ('apartment', 'developer', 'committee')),
+  constraint parking_spots_sale_status_check
+    check (sale_status in ('none', 'for_sale', 'in_process', 'sold')),
+  -- Attached-to-an-apartment and having an apartment number are the SAME fact.
+  -- Written as an equality so both halves are covered by one constraint: a
+  -- developer/committee spot may not carry an apartment number either.
+  constraint parking_spots_apartment_link_check
+    check ((owner_type = 'apartment') = (apartment_number is not null)),
+  constraint parking_spots_deactivation_reason_required
+    check (is_active or deactivation_reason is not null),
+  constraint parking_spots_lot_spot_uniq
+    unique (lot_code, spot_number)
+);
+
+create index if not exists parking_spots_apartment_idx
+  on public.parking_spots (apartment_number)
+  where apartment_number is not null;
+
+create index if not exists parking_spots_owner_type_idx
+  on public.parking_spots (owner_type);
+
+drop trigger if exists parking_spots_touch_updated_at on public.parking_spots;
+create trigger parking_spots_touch_updated_at
+  before update on public.parking_spots
+  for each row execute function public.touch_updated_at();
+
+-- 2. storage_units ------------------------------------------------------------
+-- Deliberately NARROWER than parking_spots: no size_type/capacity (a storage
+-- unit is never "double") and no sale_status (the 2015 document tracks a sale
+-- process for parking only). Add either the day the business actually needs it.
+
+create table if not exists public.storage_units (
+  id                  uuid primary key default gen_random_uuid(),
+  unit_number         text not null,
+  owner_type          text not null,
+  apartment_number    text,
+  notes               text,
+  is_active           boolean not null default true,
+  deactivated_at      timestamptz,
+  deactivated_by      uuid references public.users(id),
+  deactivation_reason text,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now(),
+  created_by          uuid references public.users(id),
+  updated_by          uuid references public.users(id),
+
+  constraint storage_units_owner_type_check
+    check (owner_type in ('apartment', 'developer', 'committee')),
+  constraint storage_units_apartment_link_check
+    check ((owner_type = 'apartment') = (apartment_number is not null)),
+  constraint storage_units_deactivation_reason_required
+    check (is_active or deactivation_reason is not null)
+);
+
+-- Partial unique: a released (is_active=false) number can be re-issued, and the
+-- released row survives as history. See decision 3 in the header.
+create unique index if not exists storage_units_number_active_uniq
+  on public.storage_units (unit_number)
+  where is_active;
+
+create index if not exists storage_units_apartment_idx
+  on public.storage_units (apartment_number)
+  where apartment_number is not null;
+
+create index if not exists storage_units_owner_type_idx
+  on public.storage_units (owner_type);
+
+drop trigger if exists storage_units_touch_updated_at on public.storage_units;
+create trigger storage_units_touch_updated_at
+  before update on public.storage_units
+  for each row execute function public.touch_updated_at();
+
+-- 3. RBAC re-seed for the new 'parking' module --------------------------------
+-- Managers only, exactly as 072 did for 'chips'. on conflict do nothing so a
+-- re-run never clobbers a hand-tuned grant.
+
+insert into public.user_permissions (user_id, module, can_view, can_edit)
+select u.id, 'parking', true, true
+  from public.users u
+ where u.role = 'manager'
+on conflict (user_id, module) do nothing;
+
+commit;
