@@ -55,6 +55,9 @@ export interface ParkingSpotWritableFields {
 }
 
 export interface ParkingSpotFilters {
+  /** Restrict to one lot. Absent = every lot (the API stays general); the
+   *  /parking screen passes '1P' explicitly, because its heading says so. */
+  lot_code?: string;
   owner_type?: ParkingOwnerType;
   apartment_number?: string;
   size_type?: ParkingSizeType;

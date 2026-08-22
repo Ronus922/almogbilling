@@ -13,7 +13,7 @@ import type {
 
 export const runtime = 'nodejs';
 
-// GET /api/parking?owner_type&apartment_number&size_type&q&include_inactive
+// GET /api/parking?lot_code&owner_type&apartment_number&size_type&q&include_inactive
 // (parking:view — there is no open read here; the allocation of the lot is not
 // public inside the app either.)
 export async function GET(req: NextRequest) {
@@ -33,6 +33,7 @@ export async function GET(req: NextRequest) {
   const sizeRaw = sp.get('size_type')?.trim();
 
   const filters: ParkingSpotFilters = {
+    lot_code: sp.get('lot_code')?.trim() || undefined,
     owner_type: ownerRaw && PARKING_OWNER_TYPES.includes(ownerRaw as ParkingOwnerType)
       ? (ownerRaw as ParkingOwnerType) : undefined,
     size_type: sizeRaw && PARKING_SIZE_TYPES.includes(sizeRaw as ParkingSizeType)

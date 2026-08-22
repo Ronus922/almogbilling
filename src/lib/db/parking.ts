@@ -187,6 +187,10 @@ export async function listParkingSpots(f: ParkingSpotFilters = {}): Promise<Park
 
   if (!f.includeInactive) where.push('is_active');
 
+  if (f.lot_code) {
+    params.push(f.lot_code);
+    where.push(`lot_code = $${params.length}`);
+  }
   if (f.owner_type) {
     params.push(f.owner_type);
     where.push(`owner_type = $${params.length}`);
