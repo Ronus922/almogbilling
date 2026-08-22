@@ -134,8 +134,15 @@ export interface ParkingFigures {
   places: number;
 }
 
-export interface ParkingSummaryRow {
-  key: ParkingSummaryCategory;
+/**
+ * Row identity in the summary table. The total row is NOT one of the document
+ * categories, so it carries its own key — a `switch` on `key` must be able to
+ * tell them apart.
+ */
+export type ParkingSummaryRowKey = ParkingSummaryCategory | 'total';
+
+export interface ParkingSummaryRow<K extends ParkingSummaryRowKey = ParkingSummaryRowKey> {
+  key: K;
   label: string;
   actual: ParkingFigures;
   /** Hard-coded from the 2015 document — never derived from the DB. */
@@ -167,8 +174,8 @@ export interface ParkingSummaryKpis {
 }
 
 export interface ParkingSummary {
-  rows: ParkingSummaryRow[];
-  total: ParkingSummaryRow;
+  rows: ParkingSummaryRow<ParkingSummaryCategory>[];
+  total: ParkingSummaryRow<'total'>;
   integrity: ParkingIntegrityCheck;
   kpis: ParkingSummaryKpis;
   /** True only when every row, the total AND the integrity check pass. */

@@ -532,7 +532,7 @@ export async function getParkingSummary(
 
   // Every documented category gets a row even at zero — a bucket that silently
   // vanished because nothing landed in it would read as "nothing to check".
-  const rows: ParkingSummaryRow[] = PARKING_CATEGORY_ORDER.map((key) => {
+  const rows: ParkingSummaryRow<ParkingSummaryCategory>[] = PARKING_CATEGORY_ORDER.map((key) => {
     const actual = actualByCategory.get(key) ?? { spots: 0, doubles: 0, places: 0 };
     const expected = PARKING_EXPECTED[key];
     return {
@@ -551,8 +551,8 @@ export async function getParkingSummary(
     doubles: kpiRow?.parking_doubles ?? 0,
     places: kpiRow?.parking_places ?? 0,
   };
-  const total: ParkingSummaryRow = {
-    key: 'developer_retained', // unused for the total row; kept for type shape
+  const total: ParkingSummaryRow<'total'> = {
+    key: 'total',
     label: PARKING_TOTAL_LABEL,
     actual: totalActual,
     expected: PARKING_EXPECTED_TOTAL,
