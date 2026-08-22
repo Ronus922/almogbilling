@@ -15,9 +15,9 @@ import type {
   StorageUnitFilters,
   StorageUnitWritableFields,
 } from '@/lib/types/parking';
+import { parkingConflictMessage } from '@/lib/parking/conflictMessage';
 import {
   DEFAULT_LOT_CODE,
-  OWNER_TYPE_LABEL,
   PARKING_CATEGORY_LABEL,
   PARKING_CATEGORY_ORDER,
   PARKING_EXPECTED,
@@ -34,13 +34,6 @@ import {
 //     than a bare 409.
 
 // ── errors ───────────────────────────────────────────────────────────────────
-
-/** Grammatical forms per record kind — חניה (f.) vs מחסן (m.). Kept as whole
- *  words so no code has to append letters to a Hebrew stem. */
-const CONFLICT_WORDS = {
-  parking: { noun: 'חניה', attached: 'מוצמדת', registered: 'רשומה' },
-  storage: { noun: 'מחסן', attached: 'מוצמד',  registered: 'רשום'  },
-} as const;
 
 /**
  * A spot/unit number is already taken. Carries the current holder so the route
@@ -61,16 +54,13 @@ export class ParkingConflictError extends Error {
     holderOwnerType: string;
     holderId: string;
   }) {
-    // Full words per kind, never a suffix glued onto a stem: חניה is feminine
-    // and מחסן masculine, and Hebrew final forms change when a letter stops
-    // being last (רשום + ה is רשומה, not רשוםה). Concatenation gets this wrong.
-    const w = CONFLICT_WORDS[args.kind];
-    const owner = OWNER_TYPE_LABEL[args.holderOwnerType as keyof typeof OWNER_TYPE_LABEL]
-      ?? args.holderOwnerType;
-    const where = args.holderApartment
-      ? `${w.attached} לדירה ${args.holderApartment}`
-      : `${w.registered} בבעלות ${owner}`;
-    super(`${w.noun} ${args.number} כבר ${where}`);
+    // Phrased by the shared helper so the client's pre-save occupancy check
+    // renders the identical sentence (lib/parking/conflictMessage.ts).
+    super(parkingConflictMessage(args.kind, {
+      number: args.number,
+      apartment_number: args.holderApartment,
+      owner_type: args.holderOwnerType,
+    }));
     this.name = 'ParkingConflictError';
     this.kind = args.kind;
     this.number = args.number;
