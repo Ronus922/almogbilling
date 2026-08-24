@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, Package, Plus, SquareParking, Trash2 } from 'lucide-react';
+import { Package, Plus, SquareParking, Trash2 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import {
@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/select';
 import { Field } from '@/components/side-panel/Field';
 import { Section, SectionHint } from '@/components/side-panel/Section';
-import { DeactivateDialog } from '@/components/parking/DeactivateDialog';
+import { DeactivateDialog } from '@/components/side-panel/DeactivateDialog';
 import { parkingConflictMessage } from '@/lib/parking/conflictMessage';
 import { parkingErrorMessage } from '@/lib/validation/parking';
 import {
@@ -24,11 +24,12 @@ import type {
 //
 // The contacts table gains NO columns for this. Rows here are rows of
 // public.parking_spots / public.storage_units, linked by apartment_number and
-// written through the parking module's own API — the same endpoints, guards and
-// validation the /parking screen uses. This section is a second door onto that
-// data, never a second copy of it.
+// written through /api/parking and /api/storage — the same endpoints, guards
+// and validation any other caller gets. This section is a second door onto that
+// data, never a second copy of it. Since the /parking screen was removed it is
+// currently the ONLY door in the UI.
 //
-// Three rules the parking module imposes and this section inherits:
+// Three rules those tables impose and this section inherits:
 //   • Removing a row is toggle-active with a reason, never DELETE. A physical
 //     spot does not stop existing because a tenant form stopped listing it.
 //   • PATCH is a WHOLE-OBJECT save, so fields this form does not show
@@ -539,21 +540,8 @@ export function ContactAssetsSection({
         iconTone="violet"
         subtitle={
           apartmentNumber
-            ? 'השיוך נשמר במודול החניות, לא בכרטיס הדייר. הסרת שורה מבטלת את ההצמדה — הרשומה עצמה נשמרת בהיסטוריה.'
+            ? 'השיוך נשמר בטבלאות החניות והמחסנים, לא בכרטיס הדייר. הסרת שורה מבטלת את ההצמדה — הרשומה עצמה נשמרת בהיסטוריה.'
             : 'הזן מספר דירה כדי לשייך חניות ומחסנים.'
-        }
-        headerSlot={
-          apartmentNumber ? (
-            <a
-              href={`/parking?apartment=${encodeURIComponent(apartmentNumber)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              צפה במודול החניות
-            </a>
-          ) : undefined
         }
       >
         <div className="space-y-5 py-2">

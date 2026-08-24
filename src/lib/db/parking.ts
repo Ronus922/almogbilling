@@ -2,29 +2,14 @@ import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import type {
   ApartmentAssets,
-  ParkingFigures,
-  ParkingIntegrityCheck,
   ParkingSpot,
   ParkingSpotFilters,
   ParkingSpotWritableFields,
-  ParkingSummary,
-  ParkingSummaryCategory,
-  ParkingSummaryKpis,
-  ParkingSummaryRow,
   StorageUnit,
   StorageUnitFilters,
   StorageUnitWritableFields,
 } from '@/lib/types/parking';
 import { parkingConflictMessage } from '@/lib/parking/conflictMessage';
-import {
-  DEFAULT_LOT_CODE,
-  PARKING_CATEGORY_LABEL,
-  PARKING_CATEGORY_ORDER,
-  PARKING_EXPECTED,
-  PARKING_EXPECTED_TOTAL,
-  PARKING_TOTAL_LABEL,
-  UNSOLD_DEVELOPER_APARTMENTS,
-} from '@/lib/constants/parking';
 
 // Closed product rules enforced here rather than in the routes:
 //   • NO DELETE, ever — the only removal path is toggleActive() with a reason.
@@ -428,145 +413,5 @@ export async function getApartmentAssets(apartmentNumber: string): Promise<Apart
     parking,
     storage,
     total_places: parking.reduce((sum, p) => sum + p.capacity, 0),
-  };
-}
-
-// ── summary ──────────────────────────────────────────────────────────────────
-
-/**
- * Bucket every ACTIVE spot into one of the document's six rows.
- *
- * Order matters and is not arbitrary: a spot the committee sold is now attached
- * to an apartment, so `owner_type='apartment'` alone cannot tell the two apart —
- * sale_status has to be consulted FIRST. Only once the committee's three rows
- * are taken out do the remaining apartment spots split into "the developer sold
- * that apartment" and "the developer has not sold it yet".
- *
- * Deactivated rows are excluded throughout: the document describes the live
- * allocation of the lot, and a released spot is not part of it.
- */
-const CATEGORY_SQL = `
-  case
-    when owner_type = 'apartment' and sale_status = 'sold'       then 'committee_sold'
-    when owner_type = 'apartment' and sale_status = 'in_process' then 'committee_in_process'
-    when owner_type = 'committee'                                then 'committee_for_sale'
-    when owner_type = 'apartment'
-     and apartment_number = any($1::text[])                      then 'developer_unsold_apartments'
-    when owner_type = 'apartment'                                then 'developer_sold_apartments'
-    else                                                              'developer_retained'
-  end`;
-
-function figuresEqual(a: ParkingFigures, b: ParkingFigures): boolean {
-  return a.spots === b.spots && a.doubles === b.doubles && a.places === b.places;
-}
-
-/**
- * Compare the live allocation against the 2015 document.
- *
- * SCOPED TO ONE LOT. The expectations in lib/constants/parking.ts describe lot
- * 1P and nothing else, so the query must not count spots from another lot —
- * `lot_code` exists precisely so a second lot can be added as data, and an
- * unscoped summary would turn that addition into six spurious ⚠️ rows.
- * Storage units carry no lot, so their KPI counts are global.
- */
-export async function getParkingSummary(
-  lotCode: string = DEFAULT_LOT_CODE,
-): Promise<ParkingSummary> {
-  const unsold = [...UNSOLD_DEVELOPER_APARTMENTS];
-
-  const [byCategory, integrityRow, kpiRow] = await Promise.all([
-    query<{ category: ParkingSummaryCategory; spots: number; doubles: number; places: number }>(
-      `select ${CATEGORY_SQL} as category,
-              count(*)::int                                      as spots,
-              count(*) filter (where size_type <> 'single')::int  as doubles,
-              coalesce(sum(capacity), 0)::int                     as places
-         from public.parking_spots
-        where is_active and lot_code = $2
-        group by 1`,
-      [unsold, lotCode],
-    ),
-    queryOne<{ orphan_parking_spots: number; orphan_storage_units: number }>(
-      `select
-         (select count(*)::int from public.parking_spots p
-           where p.is_active and p.lot_code = $1 and p.apartment_number is not null
-             and not exists (select 1 from public.contacts c
-                              where c.apartment_number = p.apartment_number)
-         ) as orphan_parking_spots,
-         (select count(*)::int from public.storage_units s
-           where s.is_active and s.apartment_number is not null
-             and not exists (select 1 from public.contacts c
-                              where c.apartment_number = s.apartment_number)
-         ) as orphan_storage_units`,
-      [lotCode],
-    ),
-    queryOne<ParkingSummaryKpis>(
-      `select
-         (select count(*)::int from public.parking_spots
-           where is_active and lot_code = $1) as parking_spots,
-         (select coalesce(sum(capacity), 0)::int from public.parking_spots
-           where is_active and lot_code = $1) as parking_places,
-         (select count(*)::int from public.parking_spots
-           where is_active and lot_code = $1 and size_type <> 'single') as parking_doubles,
-         (select count(*)::int from public.storage_units where is_active) as storage_units,
-         (select count(distinct apartment_number)::int from public.parking_spots
-           where is_active and lot_code = $1 and apartment_number is not null) as apartments_with_parking,
-         (select count(distinct apartment_number)::int from public.storage_units
-           where is_active and apartment_number is not null) as apartments_with_storage`,
-      [lotCode],
-    ),
-  ]);
-
-  const actualByCategory = new Map<ParkingSummaryCategory, ParkingFigures>(
-    byCategory.rows.map((r) => [r.category, { spots: r.spots, doubles: r.doubles, places: r.places }]),
-  );
-
-  // Every documented category gets a row even at zero — a bucket that silently
-  // vanished because nothing landed in it would read as "nothing to check".
-  const rows: ParkingSummaryRow<ParkingSummaryCategory>[] = PARKING_CATEGORY_ORDER.map((key) => {
-    const actual = actualByCategory.get(key) ?? { spots: 0, doubles: 0, places: 0 };
-    const expected = PARKING_EXPECTED[key];
-    return {
-      key,
-      label: PARKING_CATEGORY_LABEL[key],
-      actual,
-      expected,
-      ok: figuresEqual(actual, expected),
-    };
-  });
-
-  // The total is measured over ALL active spots, not summed from the six rows:
-  // summing would hide a spot that fell outside every documented bucket.
-  const totalActual: ParkingFigures = {
-    spots: kpiRow?.parking_spots ?? 0,
-    doubles: kpiRow?.parking_doubles ?? 0,
-    places: kpiRow?.parking_places ?? 0,
-  };
-  const total: ParkingSummaryRow<'total'> = {
-    key: 'total',
-    label: PARKING_TOTAL_LABEL,
-    actual: totalActual,
-    expected: PARKING_EXPECTED_TOTAL,
-    ok: figuresEqual(totalActual, PARKING_EXPECTED_TOTAL),
-  };
-
-  const integrity: ParkingIntegrityCheck = {
-    orphan_parking_spots: integrityRow?.orphan_parking_spots ?? 0,
-    orphan_storage_units: integrityRow?.orphan_storage_units ?? 0,
-    expected: 0,
-    ok: (integrityRow?.orphan_parking_spots ?? 0) === 0
-      && (integrityRow?.orphan_storage_units ?? 0) === 0,
-  };
-
-  const kpis: ParkingSummaryKpis = kpiRow ?? {
-    parking_spots: 0, parking_places: 0, parking_doubles: 0,
-    storage_units: 0, apartments_with_parking: 0, apartments_with_storage: 0,
-  };
-
-  return {
-    rows,
-    total,
-    integrity,
-    kpis,
-    ok: rows.every((r) => r.ok) && total.ok && integrity.ok,
   };
 }

@@ -18,9 +18,8 @@
     "check:phone": "node scripts/check-phone-policy.mjs",
     "check:session": "node scripts/check-session-hash.mjs",
     "check:dupes": "node scripts/check-no-duplicate-debtors.mjs",
-    "check:parking": "node scripts/check-parking.mjs",
     "check:wa": "node scripts/check-wa-idempotency.mjs",
-    "check:all": "npm run typecheck && npm run test && npm run check:secrets && npm run check:auth && npm run check:rbac && npm run check:money && npm run check:phone && npm run check:session && npm run check:dupes && npm run check:parking && npm run check:wa"
+    "check:all": "npm run typecheck && npm run test && npm run check:secrets && npm run check:auth && npm run check:rbac && npm run check:money && npm run check:phone && npm run check:session && npm run check:dupes && npm run check:wa"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.0",

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import {
   Building2, LayoutDashboard, LayoutGrid, Users, Truck, CheckSquare, AlertTriangle,
   Calendar, FileText, MessageCircle, MessagesSquare, Bell, Sliders,
-  MapPin, UserCog, KeyRound, SquareParking, Settings as SettingsIcon, type LucideIcon,
+  MapPin, UserCog, KeyRound, Settings as SettingsIcon, type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -51,7 +51,6 @@ export const SECTIONS: MenuSection[] = [
       { label: 'צ׳אט פנימי',         icon: MessagesSquare, href: '/chat', module: 'internal_chat' },
       { label: 'ספקים',              icon: Truck, href: '/suppliers', module: 'suppliers' },
       { label: 'צ׳יפים',             icon: KeyRound, href: '/chips', module: 'chips' },
-      { label: 'חניות ומחסנים',      icon: SquareParking, href: '/parking', module: 'parking' },
       { label: 'מסמכים',             icon: FileText, href: '/documents', module: 'documents' },
       { label: 'תקלות',              icon: AlertTriangle, href: '/issues', module: 'issues' },
       { label: 'משימות',             icon: CheckSquare, href: '/tasks', module: 'tasks' },
