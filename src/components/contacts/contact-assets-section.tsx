@@ -4,17 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Package, Plus, SquareParking, Trash2 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
 import { Field } from '@/components/side-panel/Field';
-import { Section, SectionHint } from '@/components/side-panel/Section';
-import { DeactivateDialog } from '@/components/side-panel/DeactivateDialog';
+import { Section } from '@/components/side-panel/Section';
 import { parkingConflictMessage } from '@/lib/parking/conflictMessage';
 import { parkingErrorMessage } from '@/lib/validation/parking';
 import {
-  DEFAULT_LOT_CODE, PARKING_SIZE_TYPES, SIZE_TYPE_LABEL,
-  SPOT_NUMBER_MAX, SPOT_NUMBER_MIN, STORAGE_UNIT_NUMBER_MAX,
+  DEFAULT_LOT_CODE, SPOT_NUMBER_MAX, SPOT_NUMBER_MIN, STORAGE_UNIT_NUMBER_MAX,
 } from '@/lib/constants/parking';
 import type {
   ParkingSaleStatus, ParkingSizeType, ParkingSpot, StorageUnit,
@@ -32,6 +27,8 @@ import type {
 // Three rules those tables impose and this section inherits:
 //   • Removing a row is toggle-active with a reason, never DELETE. A physical
 //     spot does not stop existing because a tenant form stopped listing it.
+//     The reason is written for the user ("הוסר מטופס הדייר <מס׳>") — this form
+//     does not ask for one, because "I removed it here" IS the reason.
 //   • PATCH is a WHOLE-OBJECT save, so fields this form does not show
 //     (sale_status, notes) are carried on the row and written back untouched.
 //   • A taken number is reported inline, on the row, naming who holds it —
@@ -63,8 +60,6 @@ interface StorageRow {
 interface PendingRemoval {
   kind: 'parking' | 'storage';
   id: string;
-  /** Already phrased: 'חניה 63' / 'מחסן M-4'. */
-  subject: string;
   reason: string;
 }
 
@@ -167,7 +162,6 @@ export interface ContactAssetsState {
   loadError: string | null;
   parking: ParkingRow[];
   storage: StorageRow[];
-  removals: PendingRemoval[];
   errorForParking: (key: string) => string | null;
   errorForStorage: (key: string) => string | null;
   /** True when anything here differs from what was loaded. */
@@ -179,8 +173,8 @@ export interface ContactAssetsState {
   addStorage: () => void;
   updateStorage: (key: string, patch: Partial<Omit<StorageRow, 'key' | 'id'>>) => void;
   /** Drops an unsaved row outright; stages a saved one for toggle-active. */
-  dropParking: (key: string, reason: string) => void;
-  dropStorage: (key: string, reason: string) => void;
+  dropParking: (key: string) => void;
+  dropStorage: (key: string) => void;
   /**
    * Apply everything to the parking API, in order: removals, then parking, then
    * storage. Rows are updated in place as each request succeeds, so a failure
@@ -323,31 +317,31 @@ export function useContactAssets({
     setStorage((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   }
 
+  // The deactivation reason the DB demands. It is written here rather than
+  // asked for: removing a row from this form IS the reason, and a dialog that
+  // makes the user retype it adds a step without adding a fact.
+  const removalReason = `הוסר מטופס הדייר ${apartmentNumber}`;
+
   // Both drops read the row from current state rather than from inside the
   // setState updater: an updater must be pure, and queueing setRemovals inside
   // one would stage the removal twice under StrictMode's double invocation.
-  function dropParking(key: string, reason: string) {
+  // A row with no id was never saved — there is nothing to switch off.
+  function dropParking(key: string) {
     clearServerError(key);
     const row = parking.find((r) => r.key === key);
     if (!row) return;
     if (row.id) {
-      setRemovals((rs) => [...rs, {
-        kind: 'parking', id: row.id as string,
-        subject: `חניה ${row.spot_number.trim()}`, reason,
-      }]);
+      setRemovals((rs) => [...rs, { kind: 'parking', id: row.id as string, reason: removalReason }]);
     }
     setParking((prev) => prev.filter((r) => r.key !== key));
   }
 
-  function dropStorage(key: string, reason: string) {
+  function dropStorage(key: string) {
     clearServerError(key);
     const row = storage.find((r) => r.key === key);
     if (!row) return;
     if (row.id) {
-      setRemovals((rs) => [...rs, {
-        kind: 'storage', id: row.id as string,
-        subject: `מחסן ${row.unit_number.trim()}`, reason,
-      }]);
+      setRemovals((rs) => [...rs, { kind: 'storage', id: row.id as string, reason: removalReason }]);
     }
     setStorage((prev) => prev.filter((r) => r.key !== key));
   }
@@ -479,7 +473,7 @@ export function useContactAssets({
   }, []);
 
   return {
-    loading, loadError, parking, storage, removals,
+    loading, loadError, parking, storage,
     errorForParking, errorForStorage, dirty, blocking,
     addParking, updateParking, addStorage, updateStorage,
     dropParking, dropStorage, flush,
@@ -487,11 +481,6 @@ export function useContactAssets({
 }
 
 // ── the section ──────────────────────────────────────────────────────────────
-
-/** Which row the removal dialog is pointed at. */
-type RemovalTarget =
-  | { kind: 'parking'; key: string; subject: string }
-  | { kind: 'storage'; key: string; subject: string };
 
 export function ContactAssetsSection({
   assets, apartmentNumber, canEdit, disabled,
@@ -504,151 +493,92 @@ export function ContactAssetsSection({
   /** The panel is saving, or the actor cannot edit at all. */
   disabled: boolean;
 }) {
-  const [removalTarget, setRemovalTarget] = useState<RemovalTarget | null>(null);
   const ro = disabled || !canEdit;
 
-  // The default reason, used whenever the user does not type one of their own.
-  const defaultReason = `הוסר מטופס הדייר ${apartmentNumber || '—'}`;
-
-  function confirmRemoval(reason: string) {
-    if (!removalTarget) return;
-    const text = reason.trim() || defaultReason;
-    if (removalTarget.kind === 'parking') assets.dropParking(removalTarget.key, text);
-    else assets.dropStorage(removalTarget.key, text);
-    setRemovalTarget(null);
-  }
-
-  /** An unsaved row is dropped silently — there is nothing to switch off. */
-  function requestRemoval(kind: 'parking' | 'storage', key: string, id: string | null, subject: string) {
-    if (id === null) {
-      if (kind === 'parking') assets.dropParking(key, '');
-      else assets.dropStorage(key, '');
-      return;
-    }
-    setRemovalTarget({ kind, key, subject });
-  }
-
-  const totalPlaces = assets.parking.reduce(
-    (sum, r) => sum + (r.size_type === 'single' ? 1 : 2), 0,
-  );
-
   return (
-    <>
-      <Section
-        title="חניות ומחסנים"
-        icon={SquareParking}
-        iconTone="violet"
-        subtitle={
-          apartmentNumber
-            ? 'השיוך נשמר בטבלאות החניות והמחסנים, לא בכרטיס הדייר. הסרת שורה מבטלת את ההצמדה — הרשומה עצמה נשמרת בהיסטוריה.'
-            : 'הזן מספר דירה כדי לשייך חניות ומחסנים.'
-        }
-      >
-        <div className="space-y-5 py-2">
-          {assets.loadError && (
-            <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900">
-              {assets.loadError}
+    <Section
+      title="חניות ומחסנים"
+      icon={SquareParking}
+      iconTone="violet"
+      subtitle={
+        apartmentNumber
+          ? 'השיוך נשמר בטבלאות החניות והמחסנים, לא בכרטיס הדייר. הסרת שורה מבטלת את ההצמדה — הרשומה עצמה נשמרת בהיסטוריה.'
+          : 'הזן מספר דירה כדי לשייך חניות ומחסנים.'
+      }
+    >
+      <div className="space-y-5 py-2">
+        {assets.loadError && (
+          <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+            {assets.loadError}
+          </div>
+        )}
+
+        {/* Parking */}
+        <Section
+          bare
+          title="חניות"
+          icon={SquareParking}
+          headerSlot={
+            !ro && apartmentNumber
+              ? <AddRowButton label="הוסף חניה" onClick={assets.addParking} />
+              : undefined
+          }
+        >
+          {assets.loading ? (
+            <RowsPlaceholder text="טוען…" />
+          ) : assets.parking.length === 0 ? (
+            <RowsPlaceholder text="אין חניות משויכות לדירה זו." />
+          ) : (
+            <div className="space-y-3">
+              {assets.parking.map((row, i) => (
+                <ParkingRowCard
+                  key={row.key}
+                  row={row}
+                  index={i}
+                  error={assets.errorForParking(row.key)}
+                  disabled={ro}
+                  onChange={(patch) => assets.updateParking(row.key, patch)}
+                  onRemove={() => assets.dropParking(row.key)}
+                />
+              ))}
             </div>
           )}
+        </Section>
 
-          {/* Parking */}
-          <Section
-            bare
-            title="חניות"
-            icon={SquareParking}
-            headerSlot={
-              <>
-                {assets.parking.length > 0 && (
-                  <SectionHint>
-                    {assets.parking.length} חניות · {totalPlaces} מקומות
-                  </SectionHint>
-                )}
-                {!ro && apartmentNumber && (
-                  <AddRowButton label="הוסף חניה" onClick={assets.addParking} />
-                )}
-              </>
-            }
-          >
-            {assets.loading ? (
-              <RowsPlaceholder text="טוען…" />
-            ) : assets.parking.length === 0 ? (
-              <RowsPlaceholder text="אין חניות משויכות לדירה זו." />
-            ) : (
-              <div className="space-y-3">
-                {assets.parking.map((row, i) => (
-                  <ParkingRowCard
-                    key={row.key}
-                    row={row}
-                    index={i}
-                    error={assets.errorForParking(row.key)}
-                    disabled={ro}
-                    onChange={(patch) => assets.updateParking(row.key, patch)}
-                    onRemove={() => requestRemoval(
-                      'parking', row.key, row.id,
-                      `חניה ${row.spot_number.trim() || ''}`.trim(),
-                    )}
-                  />
-                ))}
-              </div>
-            )}
-          </Section>
-
-          {/* Storage */}
-          <Section
-            bare
-            title="מחסנים"
-            icon={Package}
-            headerSlot={
-              !ro && apartmentNumber
-                ? <AddRowButton label="הוסף מחסן" onClick={assets.addStorage} />
-                : undefined
-            }
-          >
-            {assets.loading ? (
-              <RowsPlaceholder text="טוען…" />
-            ) : assets.storage.length === 0 ? (
-              <RowsPlaceholder text="אין מחסנים משויכים לדירה זו." />
-            ) : (
-              <div className="space-y-3">
-                {assets.storage.map((row, i) => (
-                  <StorageRowCard
-                    key={row.key}
-                    row={row}
-                    index={i}
-                    error={assets.errorForStorage(row.key)}
-                    disabled={ro}
-                    onChange={(patch) => assets.updateStorage(row.key, patch)}
-                    onRemove={() => requestRemoval(
-                      'storage', row.key, row.id,
-                      `מחסן ${row.unit_number.trim() || ''}`.trim(),
-                    )}
-                  />
-                ))}
-              </div>
-            )}
-          </Section>
-
-          {assets.removals.length > 0 && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              {assets.removals.length === 1
-                ? 'שורה אחת תוסר מהשיוך בשמירה.'
-                : `${assets.removals.length} שורות יוסרו מהשיוך בשמירה.`}{' '}
-              הרשומות לא נמחקות — הן מסומנות כלא-פעילות עם הסיבה שנרשמה.
+        {/* Storage */}
+        <Section
+          bare
+          title="מחסנים"
+          icon={Package}
+          headerSlot={
+            !ro && apartmentNumber
+              ? <AddRowButton label="הוסף מחסן" onClick={assets.addStorage} />
+              : undefined
+          }
+        >
+          {assets.loading ? (
+            <RowsPlaceholder text="טוען…" />
+          ) : assets.storage.length === 0 ? (
+            <RowsPlaceholder text="אין מחסנים משויכים לדירה זו." />
+          ) : (
+            <div className="space-y-3">
+              {assets.storage.map((row, i) => (
+                <StorageRowCard
+                  key={row.key}
+                  row={row}
+                  index={i}
+                  error={assets.errorForStorage(row.key)}
+                  disabled={ro}
+                  onChange={(patch) => assets.updateStorage(row.key, patch)}
+                  onRemove={() => assets.dropStorage(row.key)}
+                />
+              ))}
             </div>
           )}
-        </div>
-      </Section>
+        </Section>
 
-      <DeactivateDialog
-        open={removalTarget !== null}
-        subject={removalTarget?.subject ?? ''}
-        assignedTo={apartmentNumber ? `דירה ${apartmentNumber}` : null}
-        submitting={false}
-        defaultReason={defaultReason}
-        onCancel={() => setRemovalTarget(null)}
-        onConfirm={confirmRemoval}
-      />
-    </>
+      </div>
+    </Section>
   );
 }
 
@@ -696,12 +626,12 @@ function ParkingRowCard({
   onRemove: () => void;
 }) {
   const idBase = `contact-parking-${index}`;
-  // A double spot is ONE row whose size_type says how it doubles. The checkbox
-  // is the plain-language version of that ("is this a double?"); the select
-  // behind it only appears once the answer is yes, because 'רגילה' is not a
-  // kind of doubling and would read as a third option.
+  // A double spot is ONE row; size_type says HOW it doubles and the DB derives
+  // capacity from it. This form asks only whether it is double at all and
+  // writes 'double_width'. 'double_length' stays a valid value everywhere else
+  // — the DB, the validation layer and the API all still accept it — it simply
+  // has no control here, because nobody has needed to record it.
   const isDouble = row.size_type !== 'single';
-  const doubleTypes = PARKING_SIZE_TYPES.filter((t) => t !== 'single');
 
   return (
     <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
@@ -733,32 +663,9 @@ function ParkingRowCard({
           disabled={disabled}
         />
         <Label htmlFor={`${idBase}-double`} className="cursor-pointer text-sm font-medium text-slate-700">
-          חניה כפולה (נספרת כ-2 מקומות)
+          חניה כפולה
         </Label>
       </div>
-
-      {isDouble && (
-        <div className="space-y-2">
-          <Label className="text-base font-medium text-muted-foreground">סוג הכפילות</Label>
-          <Select
-            value={row.size_type}
-            onValueChange={(v) => { if (v) onChange({ size_type: v as ParkingSizeType }); }}
-            disabled={disabled}
-          >
-            <SelectTrigger className="w-full data-[size=default]:h-10">
-              <SelectValue placeholder="בחר סוג...">
-                {(value: string | null) =>
-                  value ? SIZE_TYPE_LABEL[value as ParkingSizeType] ?? value : null}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {doubleTypes.map((t) => (
-                <SelectItem key={t} value={t}>{SIZE_TYPE_LABEL[t]}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
     </div>
   );
 }
