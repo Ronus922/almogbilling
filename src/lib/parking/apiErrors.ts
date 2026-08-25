@@ -13,6 +13,15 @@ export function parkingBadRequest(code: ParkingErrorCode): NextResponse {
   return NextResponse.json({ error: parkingErrorMessage(code), code }, { status: 400 });
 }
 
+/** A route id is handed straight to a `where id = $1` on a uuid column, so a
+ *  malformed one makes Postgres raise a syntax error — a 500 for what is really
+ *  "no such row". Checked here, once, for every /[id] route. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
 export function parkingNotFound(): NextResponse {
   return NextResponse.json(
     { error: parkingErrorMessage('not_found'), code: 'not_found' },

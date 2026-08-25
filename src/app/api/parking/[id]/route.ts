@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { updateParkingSpot } from '@/lib/db/parking';
-import { parkingBadRequest, parkingErrorResponse, parkingNotFound } from '@/lib/parking/apiErrors';
+import { isUuid, parkingBadRequest, parkingErrorResponse, parkingNotFound } from '@/lib/parking/apiErrors';
 import { coerceAndValidateParkingSpot } from '@/lib/validation/parking';
 
 export const runtime = 'nodejs';
@@ -27,6 +27,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 
   const { id } = await ctx.params;
+  if (!isUuid(id)) return parkingNotFound();
 
   let body: unknown;
   try {
