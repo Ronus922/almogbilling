@@ -6,14 +6,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Field } from '@/components/side-panel/Field';
 import { Section } from '@/components/side-panel/Section';
-import { parkingTransferMessage } from '@/lib/parking/conflictMessage';
-import { parkingErrorMessage } from '@/lib/validation/parking';
 import {
-  DEFAULT_LOT_CODE, SPOT_NUMBER_MAX, SPOT_NUMBER_MIN, STORAGE_UNIT_NUMBER_MAX,
-} from '@/lib/constants/parking';
-import type {
-  ParkingSaleStatus, ParkingSizeType, ParkingSpot, StorageUnit,
-} from '@/lib/types/parking';
+  apartmentOwner, blankParkingRow, blankStorageRow, fetchAssetIndex,
+  parkingRowError, parkingRowOf, RELEASED_OWNER, rowChanged, rowsSnapshot,
+  saveParkingRow, saveStorageRow, storageRowError, storageRowOf,
+  type Occupant, type ParkingRow, type StorageRow,
+} from '@/lib/parking/assetRows';
 
 // "חניות ומחסנים" inside the tenant form.
 //
@@ -21,146 +19,23 @@ import type {
 // public.parking_spots / public.storage_units, linked by apartment_number and
 // written through /api/parking and /api/storage — the same endpoints, guards
 // and validation any other caller gets. This section is a second door onto that
-// data, never a second copy of it. Since the /parking screen was removed it is
-// currently the ONLY door in the UI.
+// data, never a second copy of it.
 //
-// Three rules those tables impose and this section inherits:
-//   • A spot or unit is ONE row for the life of the building. It is never
-//     created or destroyed here — only its owner changes. Removing one from an
-//     apartment RELEASES it back to חוף הכרמל (owner_type='developer',
-//     apartment_number=null): it keeps its number, stays active, and shows up
-//     under חו״כ on the parking page. is_active is never touched. Nothing in
-//     this module deactivates any more — toggle-active still exists in the API
-//     as a mechanism, it simply has no caller in these flows.
-//   • PATCH is a WHOLE-OBJECT save, so fields this form does not show
-//     (sale_status, notes) are carried on the row and written back untouched.
-//   • A taken number is reported inline, on the row, naming who holds it —
-//     a toast would vanish and leave the user staring at a valid-looking field.
+// The row model, the validation, the occupancy check and the writes all live in
+// lib/parking/assetRows.ts, shared with the /parking table — the two surfaces
+// must agree on every rule that decides whether a number is legal. What stays
+// here is the part that is genuinely this surface's own: a panel that loads one
+// apartment, accumulates edits, and commits them when the tenant is saved.
 
-// ── row model ────────────────────────────────────────────────────────────────
-
-interface ParkingRow {
-  /** Client-only stable React key. */
-  key: string;
-  /** null → not saved yet (POST); otherwise PATCH. */
-  id: string | null;
-  lot_code: string;
-  spot_number: string;
-  size_type: ParkingSizeType;
-  /** Not edited here — preserved so the whole-object PATCH cannot erase them. */
-  sale_status: ParkingSaleStatus;
-  notes: string | null;
-}
-
-interface StorageRow {
-  key: string;
-  id: string | null;
-  unit_number: string;
-  notes: string | null;
-}
-
-/** A saved row the user removed from the form, waiting for Save to switch it off. */
 /**
  * A saved row the user removed from the form, waiting for Save. Both kinds are
- * the same operation — a whole-object PATCH back to developer ownership — so
- * the row travels with it: that PATCH must not drop size_type, sale_status or
+ * the same operation — a save pointed at RELEASED_OWNER — so the row travels
+ * with it: that whole-object PATCH must not drop size_type, sale_status or
  * notes on the way through.
  */
 type PendingRelease =
   | { kind: 'parking'; id: string; row: ParkingRow }
   | { kind: 'storage'; id: string; row: StorageRow };
-
-/** Who currently holds a number, for the pre-save occupancy check. */
-interface Occupant {
-  id: string;
-  number: string;
-  apartment_number: string | null;
-  owner_type: string;
-}
-
-function parkingRowOf(spot: ParkingSpot): ParkingRow {
-  return {
-    key: `saved-p-${spot.id}`,
-    id: spot.id,
-    lot_code: spot.lot_code,
-    spot_number: String(spot.spot_number),
-    size_type: spot.size_type,
-    sale_status: spot.sale_status,
-    notes: spot.notes,
-  };
-}
-
-function storageRowOf(unit: StorageUnit): StorageRow {
-  return {
-    key: `saved-s-${unit.id}`,
-    id: unit.id,
-    unit_number: unit.unit_number,
-    notes: unit.notes,
-  };
-}
-
-/** Stable serialisation for the dirty check — the client-only `key` is excluded. */
-function snapshot(parking: ParkingRow[], storage: StorageRow[]): string {
-  return JSON.stringify({
-    p: parking.map((r) => [r.id, r.lot_code, r.spot_number.trim(), r.size_type]),
-    s: storage.map((r) => [r.id, r.unit_number.trim()]),
-  });
-}
-
-// ── validation (mirrors lib/validation/parking.ts, plus occupancy) ───────────
-
-function parkingRowError(
-  row: ParkingRow, rows: ParkingRow[], occupancy: Map<string, Occupant>,
-): string | null {
-  const raw = row.spot_number.trim();
-  if (!raw) return parkingErrorMessage('spot_number_required');
-  const n = Number(raw);
-  if (!Number.isInteger(n)) return parkingErrorMessage('spot_number_invalid');
-  if (n < SPOT_NUMBER_MIN || n > SPOT_NUMBER_MAX) {
-    return parkingErrorMessage('spot_number_out_of_range');
-  }
-  if (rows.some((o) => o.key !== row.key && Number(o.spot_number.trim()) === n)) {
-    return 'מספר החניה מופיע פעמיים בטופס';
-  }
-  const holder = occupancy.get(String(n));
-  if (holder && holder.id !== row.id) return parkingTransferMessage('parking', holder);
-  return null;
-}
-
-function storageRowError(
-  row: StorageRow, rows: StorageRow[], occupancy: Map<string, Occupant>,
-): string | null {
-  const raw = row.unit_number.trim();
-  if (!raw) return parkingErrorMessage('unit_number_required');
-  if (raw.length > STORAGE_UNIT_NUMBER_MAX) return parkingErrorMessage('unit_number_too_long');
-  if (rows.some((o) => o.key !== row.key && o.unit_number.trim() === raw)) {
-    return 'מספר המחסן מופיע פעמיים בטופס';
-  }
-  const holder = occupancy.get(raw);
-  if (holder && holder.id !== row.id) return parkingTransferMessage('storage', holder);
-  return null;
-}
-
-// ── network ──────────────────────────────────────────────────────────────────
-
-interface ApiFailure {
-  error?: string;
-  code?: string;
-}
-
-/** POST/PATCH one asset. Throws with the server's Hebrew sentence, which for a
- *  409 already names the holder — so the row can show it verbatim. */
-async function write<T>(url: string, method: 'POST' | 'PATCH', body: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json().catch(() => ({}))) as T & ApiFailure;
-  if (!res.ok) throw new Error(data.error ?? 'שמירת השיוך נכשלה');
-  return data;
-}
 
 // ── the hook ─────────────────────────────────────────────────────────────────
 
@@ -205,7 +80,7 @@ export function useContactAssets({
   const [parking, setParking] = useState<ParkingRow[]>([]);
   const [storage, setStorage] = useState<StorageRow[]>([]);
   const [releases, setReleases] = useState<PendingRelease[]>([]);
-  const [initial, setInitial] = useState<string>(snapshot([], []));
+  const [initial, setInitial] = useState<string>(rowsSnapshot([], []));
   const [parkingOccupancy, setParkingOccupancy] = useState<Map<string, Occupant>>(new Map());
   const [storageOccupancy, setStorageOccupancy] = useState<Map<string, Occupant>>(new Map());
   /** Errors the SERVER produced, keyed by row key. Cleared when the row changes. */
@@ -233,36 +108,12 @@ export function useContactAssets({
     setLoadError(null);
     (async () => {
       try {
-        // Active rows only, both tables: "who holds this number" is a question
-        // about the live allocation. Nothing here ever deactivates a parking
-        // spot any more (removal releases it to חו״כ instead), so an inactive
-        // parking row can only come from outside this UI. Should one exist, the
-        // server's own check — which mirrors the unconditional unique index —
-        // still refuses and names the holder; the client is simply not the
-        // layer that guards the index.
-        const [pRes, sRes] = await Promise.all([
-          fetch(`/api/parking?lot_code=${encodeURIComponent(DEFAULT_LOT_CODE)}`,
-            { credentials: 'include' }),
-          fetch('/api/storage', { credentials: 'include' }),
-        ]);
-        if (!pRes.ok || !sRes.ok) throw new Error('טעינת החניות והמחסנים נכשלה');
-        const [pData, sData] = await Promise.all([
-          pRes.json() as Promise<{ spots?: ParkingSpot[] }>,
-          sRes.json() as Promise<{ units?: StorageUnit[] }>,
-        ]);
+        const index = await fetchAssetIndex();
         if (cancelled) return;
+        const { spots, units } = index;
 
-        const spots = Array.isArray(pData.spots) ? pData.spots : [];
-        const units = Array.isArray(sData.units) ? sData.units : [];
-
-        setParkingOccupancy(new Map(spots.map((s) => [String(s.spot_number), {
-          id: s.id, number: String(s.spot_number),
-          apartment_number: s.apartment_number, owner_type: s.owner_type,
-        }])));
-        setStorageOccupancy(new Map(units.map((u) => [u.unit_number, {
-          id: u.id, number: u.unit_number,
-          apartment_number: u.apartment_number, owner_type: u.owner_type,
-        }])));
+        setParkingOccupancy(index.parkingOccupancy);
+        setStorageOccupancy(index.storageOccupancy);
 
         const mine = loadedApartment
           ? spots.filter((s) => s.apartment_number === loadedApartment).map(parkingRowOf)
@@ -274,7 +125,7 @@ export function useContactAssets({
         setStorage(myUnits);
         setReleases([]);
         setServerErrors(new Map());
-        setInitial(snapshot(mine, myUnits));
+        setInitial(rowsSnapshot(mine, myUnits));
         baselineRef.current = { parking: mine, storage: myUnits };
       } catch (e) {
         if (!cancelled) setLoadError((e as Error).message);
@@ -296,22 +147,12 @@ export function useContactAssets({
 
   const addParking = useCallback(() => {
     rowSeq.current += 1;
-    setParking((prev) => [...prev, {
-      key: `new-p-${rowSeq.current}`,
-      id: null,
-      lot_code: DEFAULT_LOT_CODE,
-      spot_number: '',
-      size_type: 'single',
-      sale_status: 'none',
-      notes: null,
-    }]);
+    setParking((prev) => [...prev, blankParkingRow(`new-p-${rowSeq.current}`)]);
   }, []);
 
   const addStorage = useCallback(() => {
     rowSeq.current += 1;
-    setStorage((prev) => [...prev, {
-      key: `new-s-${rowSeq.current}`, id: null, unit_number: '', notes: null,
-    }]);
+    setStorage((prev) => [...prev, blankStorageRow(`new-s-${rowSeq.current}`)]);
   }, []);
 
   function updateParking(key: string, patch: Partial<Omit<ParkingRow, 'key' | 'id'>>) {
@@ -371,7 +212,7 @@ export function useContactAssets({
     [serverErrors, storageErrors],
   );
 
-  const dirty = releases.length > 0 || snapshot(parking, storage) !== initial;
+  const dirty = releases.length > 0 || rowsSnapshot(parking, storage) !== initial;
   const blocking = parkingErrors.size > 0 || storageErrors.size > 0;
 
   // flush() reads through a ref so it does not need to be re-created on every
@@ -392,54 +233,24 @@ export function useContactAssets({
     try {
       // Releases first: a number handed back to חו״כ must be off this
       // apartment before anything further down this same save can claim it.
-      // Both are whole-object PATCHes, so every field the form does not show
-      // rides along untouched.
       while (pendingReleases.length > 0) {
         const r = pendingReleases[0];
-        if (r.kind === 'parking') {
-          await write(`/api/parking/${r.id}`, 'PATCH', {
-            lot_code: r.row.lot_code,
-            spot_number: Number(r.row.spot_number.trim()),
-            size_type: r.row.size_type,
-            owner_type: 'developer',
-            apartment_number: null,
-            sale_status: r.row.sale_status,
-            notes: r.row.notes,
-          });
-        } else {
-          await write(`/api/storage/${r.id}`, 'PATCH', {
-            unit_number: r.row.unit_number.trim(),
-            owner_type: 'developer',
-            apartment_number: null,
-            notes: r.row.notes,
-          });
-        }
+        if (r.kind === 'parking') await saveParkingRow(r.row, RELEASED_OWNER);
+        else await saveStorageRow(r.row, RELEASED_OWNER);
         pendingReleases.shift();
       }
+
+      const owner = apartmentOwner(apartment);
 
       const savedParking = new Map(
         baselineRef.current.parking.filter((r) => r.id).map((r) => [r.id as string, r]),
       );
-
       for (let i = 0; i < parkingRows.length; i += 1) {
         const row = parkingRows[i];
-        const body = {
-          lot_code: row.lot_code,
-          spot_number: Number(row.spot_number.trim()),
-          size_type: row.size_type,
-          owner_type: 'apartment',
-          apartment_number: apartment,
-          sale_status: row.sale_status,
-          notes: row.notes,
-        };
+        if (row.id !== null && !rowChanged(savedParking.get(row.id), row)) continue;
         try {
-          if (row.id === null) {
-            const { spot } = await write<{ spot: ParkingSpot }>('/api/parking', 'POST', body);
-            parkingRows[i] = { ...parkingRowOf(spot), key: row.key };
-          } else if (JSON.stringify(savedParking.get(row.id)) !== JSON.stringify(row)) {
-            const { spot } = await write<{ spot: ParkingSpot }>(`/api/parking/${row.id}`, 'PATCH', body);
-            parkingRows[i] = { ...parkingRowOf(spot), key: row.key };
-          }
+          const spot = await saveParkingRow(row, owner);
+          parkingRows[i] = { ...parkingRowOf(spot), key: row.key };
         } catch (e) {
           failures.set(row.key, (e as Error).message);
           throw e;
@@ -449,23 +260,12 @@ export function useContactAssets({
       const savedStorage = new Map(
         baselineRef.current.storage.filter((r) => r.id).map((r) => [r.id as string, r]),
       );
-
       for (let i = 0; i < storageRows.length; i += 1) {
         const row = storageRows[i];
-        const body = {
-          unit_number: row.unit_number.trim(),
-          owner_type: 'apartment',
-          apartment_number: apartment,
-          notes: row.notes,
-        };
+        if (row.id !== null && !rowChanged(savedStorage.get(row.id), row)) continue;
         try {
-          if (row.id === null) {
-            const { unit } = await write<{ unit: StorageUnit }>('/api/storage', 'POST', body);
-            storageRows[i] = { ...storageRowOf(unit), key: row.key };
-          } else if (JSON.stringify(savedStorage.get(row.id)) !== JSON.stringify(row)) {
-            const { unit } = await write<{ unit: StorageUnit }>(`/api/storage/${row.id}`, 'PATCH', body);
-            storageRows[i] = { ...storageRowOf(unit), key: row.key };
-          }
+          const unit = await saveStorageRow(row, owner);
+          storageRows[i] = { ...storageRowOf(unit), key: row.key };
         } catch (e) {
           failures.set(row.key, (e as Error).message);
           throw e;
@@ -478,7 +278,7 @@ export function useContactAssets({
       setReleases(pendingReleases);
       setParking(parkingRows);
       setStorage(storageRows);
-      setInitial(snapshot(parkingRows, storageRows));
+      setInitial(rowsSnapshot(parkingRows, storageRows));
       baselineRef.current = { parking: parkingRows, storage: storageRows };
       if (failures.size > 0) {
         setServerErrors((prev) => new Map([...prev, ...failures]));
