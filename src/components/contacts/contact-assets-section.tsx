@@ -25,14 +25,13 @@ import type {
 // currently the ONLY door in the UI.
 //
 // Three rules those tables impose and this section inherits:
-//   • A parking spot is ONE row for the life of the building. It is never
+//   • A spot or unit is ONE row for the life of the building. It is never
 //     created or destroyed here — only its owner changes. Removing one from an
 //     apartment RELEASES it back to חוף הכרמל (owner_type='developer',
-//     apartment_number=null); it keeps its number, stays active, and shows up
-//     under חו״כ on the parking page. is_active is not touched.
-//     Storage units are different and stay on toggle-active: their number is
-//     unique only among ACTIVE rows, so releasing one by deactivating it does
-//     genuinely free the number for re-issue.
+//     apartment_number=null): it keeps its number, stays active, and shows up
+//     under חו״כ on the parking page. is_active is never touched. Nothing in
+//     this module deactivates any more — toggle-active still exists in the API
+//     as a mechanism, it simply has no caller in these flows.
 //   • PATCH is a WHOLE-OBJECT save, so fields this form does not show
 //     (sale_status, notes) are carried on the row and written back untouched.
 //   • A taken number is reported inline, on the row, naming who holds it —
@@ -62,16 +61,14 @@ interface StorageRow {
 
 /** A saved row the user removed from the form, waiting for Save to switch it off. */
 /**
- * A saved row the user removed from the form, waiting for Save.
- *
- * The two kinds are genuinely different operations, not one with a flag:
- * a parking spot is PATCHed back to developer ownership, a storage unit is
- * switched off. `row` is carried for the parking PATCH because that PATCH is a
- * whole-object save and must not drop size_type, sale_status or notes.
+ * A saved row the user removed from the form, waiting for Save. Both kinds are
+ * the same operation — a whole-object PATCH back to developer ownership — so
+ * the row travels with it: that PATCH must not drop size_type, sale_status or
+ * notes on the way through.
  */
-type PendingRemoval =
+type PendingRelease =
   | { kind: 'parking'; id: string; row: ParkingRow }
-  | { kind: 'storage'; id: string; reason: string };
+  | { kind: 'storage'; id: string; row: StorageRow };
 
 /** Who currently holds a number, for the pre-save occupancy check. */
 interface Occupant {
@@ -182,11 +179,11 @@ export interface ContactAssetsState {
   updateParking: (key: string, patch: Partial<Omit<ParkingRow, 'key' | 'id'>>) => void;
   addStorage: () => void;
   updateStorage: (key: string, patch: Partial<Omit<StorageRow, 'key' | 'id'>>) => void;
-  /** Drops an unsaved row outright; stages a saved one for toggle-active. */
+  /** Drops an unsaved row outright; stages a saved one for release to חו״כ. */
   dropParking: (key: string) => void;
   dropStorage: (key: string) => void;
   /**
-   * Apply everything to the parking API, in order: removals, then parking, then
+   * Apply everything to the parking API, in order: releases, then parking, then
    * storage. Rows are updated in place as each request succeeds, so a failure
    * leaves exactly the outstanding work behind and a retry is safe. Throws the
    * first failure after committing that partial progress.
@@ -207,7 +204,7 @@ export function useContactAssets({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [parking, setParking] = useState<ParkingRow[]>([]);
   const [storage, setStorage] = useState<StorageRow[]>([]);
-  const [removals, setRemovals] = useState<PendingRemoval[]>([]);
+  const [releases, setReleases] = useState<PendingRelease[]>([]);
   const [initial, setInitial] = useState<string>(snapshot([], []));
   const [parkingOccupancy, setParkingOccupancy] = useState<Map<string, Occupant>>(new Map());
   const [storageOccupancy, setStorageOccupancy] = useState<Map<string, Occupant>>(new Map());
@@ -275,7 +272,7 @@ export function useContactAssets({
           : [];
         setParking(mine);
         setStorage(myUnits);
-        setRemovals([]);
+        setReleases([]);
         setServerErrors(new Map());
         setInitial(snapshot(mine, myUnits));
         baselineRef.current = { parking: mine, storage: myUnits };
@@ -327,21 +324,15 @@ export function useContactAssets({
     setStorage((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   }
 
-  // The deactivation reason the DB demands of a storage unit. It is written
-  // here rather than asked for: removing a row from this form IS the reason,
-  // and a dialog that makes the user retype it adds a step, not a fact.
-  const removalReason = `הוסר מטופס הדייר ${apartmentNumber}`;
-
   // Both drops read the row from current state rather than from inside the
-  // setState updater: an updater must be pure, and queueing setRemovals inside
-  // one would stage the removal twice under StrictMode's double invocation.
+  // setState updater: an updater must be pure, and queueing setReleases inside
+  // one would stage the release twice under StrictMode's double invocation.
   // A row with no id was never saved — there is nothing to release.
   function dropParking(key: string) {
     clearServerError(key);
     const row = parking.find((r) => r.key === key);
     if (!row) return;
-    // Released, not deactivated: the spot goes back to חו״כ keeping its number.
-    if (row.id) setRemovals((rs) => [...rs, { kind: 'parking', id: row.id as string, row }]);
+    if (row.id) setReleases((rs) => [...rs, { kind: 'parking', id: row.id as string, row }]);
     setParking((prev) => prev.filter((r) => r.key !== key));
   }
 
@@ -349,9 +340,7 @@ export function useContactAssets({
     clearServerError(key);
     const row = storage.find((r) => r.key === key);
     if (!row) return;
-    if (row.id) {
-      setRemovals((rs) => [...rs, { kind: 'storage', id: row.id as string, reason: removalReason }]);
-    }
+    if (row.id) setReleases((rs) => [...rs, { kind: 'storage', id: row.id as string, row }]);
     setStorage((prev) => prev.filter((r) => r.key !== key));
   }
 
@@ -382,33 +371,32 @@ export function useContactAssets({
     [serverErrors, storageErrors],
   );
 
-  const dirty = removals.length > 0 || snapshot(parking, storage) !== initial;
+  const dirty = releases.length > 0 || snapshot(parking, storage) !== initial;
   const blocking = parkingErrors.size > 0 || storageErrors.size > 0;
 
   // flush() reads through a ref so it does not need to be re-created on every
   // keystroke — the panel holds it across a whole editing session.
-  const stateRef = useRef({ parking, storage, removals, initial });
+  const stateRef = useRef({ parking, storage, releases, initial });
   useEffect(() => {
-    stateRef.current = { parking, storage, removals, initial };
-  }, [parking, storage, removals, initial]);
+    stateRef.current = { parking, storage, releases, initial };
+  }, [parking, storage, releases, initial]);
 
   const flush = useCallback(async (apartment: string) => {
     const start = stateRef.current;
-    const pendingRemovals = [...start.removals];
+    const pendingReleases = [...start.releases];
     const parkingRows = [...start.parking];
     const storageRows = [...start.storage];
     const failures = new Map<string, string>();
     let failure: Error | null = null;
 
     try {
-      // Removals first: freeing a storage number is what makes it re-issuable
-      // to a row further down this same save, and releasing a spot to חו״כ
-      // before re-adding it would otherwise collide with itself.
-      while (pendingRemovals.length > 0) {
-        const r = pendingRemovals[0];
+      // Releases first: a number handed back to חו״כ must be off this
+      // apartment before anything further down this same save can claim it.
+      // Both are whole-object PATCHes, so every field the form does not show
+      // rides along untouched.
+      while (pendingReleases.length > 0) {
+        const r = pendingReleases[0];
         if (r.kind === 'parking') {
-          // Release, not deactivate. Whole-object PATCH, so every field the
-          // form does not show rides along untouched.
           await write(`/api/parking/${r.id}`, 'PATCH', {
             lot_code: r.row.lot_code,
             spot_number: Number(r.row.spot_number.trim()),
@@ -419,11 +407,14 @@ export function useContactAssets({
             notes: r.row.notes,
           });
         } else {
-          await write(`/api/storage/${r.id}/toggle-active`, 'POST', {
-            is_active: false, reason: r.reason,
+          await write(`/api/storage/${r.id}`, 'PATCH', {
+            unit_number: r.row.unit_number.trim(),
+            owner_type: 'developer',
+            apartment_number: null,
+            notes: r.row.notes,
           });
         }
-        pendingRemovals.shift();
+        pendingReleases.shift();
       }
 
       const savedParking = new Map(
@@ -484,7 +475,7 @@ export function useContactAssets({
       failure = e as Error;
     } finally {
       // Commit whatever went through, so a retry re-sends only what did not.
-      setRemovals(pendingRemovals);
+      setReleases(pendingReleases);
       setParking(parkingRows);
       setStorage(storageRows);
       setInitial(snapshot(parkingRows, storageRows));
