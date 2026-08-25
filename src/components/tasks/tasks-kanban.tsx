@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import { MessageSquare, Calendar } from 'lucide-react';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { todayInJerusalem } from '@/lib/dates';
 import { AssigneePills } from '@/components/assignee/AssigneePills';
@@ -167,27 +167,15 @@ export function TasksKanban({ tasks, canEdit, onSelect, onReorder, onComplete, o
                             periodLabel={t.recurrence.period_label}
                           />
                         )}
-                        {canEdit && (
-                          <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                            <button
-                              type="button"
-                              aria-label="ערוך"
-                              onClick={(e) => { e.stopPropagation(); onSelect(t); }}
-                              className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            {onDelete && (
-                              <button
-                                type="button"
-                                aria-label="מחק"
-                                onClick={(e) => { e.stopPropagation(); onDelete(t); }}
-                                className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-600"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                          </div>
+                        {canEdit && onDelete && (
+                          <button
+                            type="button"
+                            aria-label="מחק"
+                            onClick={(e) => { e.stopPropagation(); onDelete(t); }}
+                            className="grid h-7 w-7 place-items-center rounded-md text-slate-400 opacity-0 transition-opacity hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         )}
                         <span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold', PRIORITY_BADGE[t.priority])}>
                           {taskPriorityLabel(t.priority)}
