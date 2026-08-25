@@ -6,7 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Field } from '@/components/side-panel/Field';
 import { Section } from '@/components/side-panel/Section';
-import { parkingConflictMessage } from '@/lib/parking/conflictMessage';
+import { parkingTransferMessage } from '@/lib/parking/conflictMessage';
 import { parkingErrorMessage } from '@/lib/validation/parking';
 import {
   DEFAULT_LOT_CODE, SPOT_NUMBER_MAX, SPOT_NUMBER_MIN, STORAGE_UNIT_NUMBER_MAX,
@@ -25,10 +25,14 @@ import type {
 // currently the ONLY door in the UI.
 //
 // Three rules those tables impose and this section inherits:
-//   • Removing a row is toggle-active with a reason, never DELETE. A physical
-//     spot does not stop existing because a tenant form stopped listing it.
-//     The reason is written for the user ("הוסר מטופס הדייר <מס׳>") — this form
-//     does not ask for one, because "I removed it here" IS the reason.
+//   • A parking spot is ONE row for the life of the building. It is never
+//     created or destroyed here — only its owner changes. Removing one from an
+//     apartment RELEASES it back to חוף הכרמל (owner_type='developer',
+//     apartment_number=null); it keeps its number, stays active, and shows up
+//     under חו״כ on the parking page. is_active is not touched.
+//     Storage units are different and stay on toggle-active: their number is
+//     unique only among ACTIVE rows, so releasing one by deactivating it does
+//     genuinely free the number for re-issue.
 //   • PATCH is a WHOLE-OBJECT save, so fields this form does not show
 //     (sale_status, notes) are carried on the row and written back untouched.
 //   • A taken number is reported inline, on the row, naming who holds it —
@@ -57,11 +61,17 @@ interface StorageRow {
 }
 
 /** A saved row the user removed from the form, waiting for Save to switch it off. */
-interface PendingRemoval {
-  kind: 'parking' | 'storage';
-  id: string;
-  reason: string;
-}
+/**
+ * A saved row the user removed from the form, waiting for Save.
+ *
+ * The two kinds are genuinely different operations, not one with a flag:
+ * a parking spot is PATCHed back to developer ownership, a storage unit is
+ * switched off. `row` is carried for the parking PATCH because that PATCH is a
+ * whole-object save and must not drop size_type, sale_status or notes.
+ */
+type PendingRemoval =
+  | { kind: 'parking'; id: string; row: ParkingRow }
+  | { kind: 'storage'; id: string; reason: string };
 
 /** Who currently holds a number, for the pre-save occupancy check. */
 interface Occupant {
@@ -116,7 +126,7 @@ function parkingRowError(
     return 'מספר החניה מופיע פעמיים בטופס';
   }
   const holder = occupancy.get(String(n));
-  if (holder && holder.id !== row.id) return parkingConflictMessage('parking', holder);
+  if (holder && holder.id !== row.id) return parkingTransferMessage('parking', holder);
   return null;
 }
 
@@ -130,7 +140,7 @@ function storageRowError(
     return 'מספר המחסן מופיע פעמיים בטופס';
   }
   const holder = occupancy.get(raw);
-  if (holder && holder.id !== row.id) return parkingConflictMessage('storage', holder);
+  if (holder && holder.id !== row.id) return parkingTransferMessage('storage', holder);
   return null;
 }
 
@@ -226,12 +236,15 @@ export function useContactAssets({
     setLoadError(null);
     (async () => {
       try {
-        // The whole lot, INCLUDING deactivated spots: a parking number is unique
-        // per lot regardless of is_active (a painted number on a floor does not
-        // free up when the spot is unassigned). Storage is the opposite — a
-        // released unit number is genuinely re-issuable — so actives only.
+        // Active rows only, both tables: "who holds this number" is a question
+        // about the live allocation. Nothing here ever deactivates a parking
+        // spot any more (removal releases it to חו״כ instead), so an inactive
+        // parking row can only come from outside this UI. Should one exist, the
+        // server's own check — which mirrors the unconditional unique index —
+        // still refuses and names the holder; the client is simply not the
+        // layer that guards the index.
         const [pRes, sRes] = await Promise.all([
-          fetch(`/api/parking?lot_code=${encodeURIComponent(DEFAULT_LOT_CODE)}&include_inactive=1`,
+          fetch(`/api/parking?lot_code=${encodeURIComponent(DEFAULT_LOT_CODE)}`,
             { credentials: 'include' }),
           fetch('/api/storage', { credentials: 'include' }),
         ]);
@@ -254,11 +267,8 @@ export function useContactAssets({
           apartment_number: u.apartment_number, owner_type: u.owner_type,
         }])));
 
-        // Only ACTIVE rows are listed: a deactivated spot is not part of the
-        // apartment's live allocation, and showing it would invite a "removal"
-        // of something already removed.
         const mine = loadedApartment
-          ? spots.filter((s) => s.is_active && s.apartment_number === loadedApartment).map(parkingRowOf)
+          ? spots.filter((s) => s.apartment_number === loadedApartment).map(parkingRowOf)
           : [];
         const myUnits = loadedApartment
           ? units.filter((u) => u.apartment_number === loadedApartment).map(storageRowOf)
@@ -317,22 +327,21 @@ export function useContactAssets({
     setStorage((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   }
 
-  // The deactivation reason the DB demands. It is written here rather than
-  // asked for: removing a row from this form IS the reason, and a dialog that
-  // makes the user retype it adds a step without adding a fact.
+  // The deactivation reason the DB demands of a storage unit. It is written
+  // here rather than asked for: removing a row from this form IS the reason,
+  // and a dialog that makes the user retype it adds a step, not a fact.
   const removalReason = `הוסר מטופס הדייר ${apartmentNumber}`;
 
   // Both drops read the row from current state rather than from inside the
   // setState updater: an updater must be pure, and queueing setRemovals inside
   // one would stage the removal twice under StrictMode's double invocation.
-  // A row with no id was never saved — there is nothing to switch off.
+  // A row with no id was never saved — there is nothing to release.
   function dropParking(key: string) {
     clearServerError(key);
     const row = parking.find((r) => r.key === key);
     if (!row) return;
-    if (row.id) {
-      setRemovals((rs) => [...rs, { kind: 'parking', id: row.id as string, reason: removalReason }]);
-    }
+    // Released, not deactivated: the spot goes back to חו״כ keeping its number.
+    if (row.id) setRemovals((rs) => [...rs, { kind: 'parking', id: row.id as string, row }]);
     setParking((prev) => prev.filter((r) => r.key !== key));
   }
 
@@ -393,11 +402,27 @@ export function useContactAssets({
 
     try {
       // Removals first: freeing a storage number is what makes it re-issuable
-      // to a row further down this same save.
+      // to a row further down this same save, and releasing a spot to חו״כ
+      // before re-adding it would otherwise collide with itself.
       while (pendingRemovals.length > 0) {
         const r = pendingRemovals[0];
-        const base = r.kind === 'parking' ? '/api/parking' : '/api/storage';
-        await write(`${base}/${r.id}/toggle-active`, 'POST', { is_active: false, reason: r.reason });
+        if (r.kind === 'parking') {
+          // Release, not deactivate. Whole-object PATCH, so every field the
+          // form does not show rides along untouched.
+          await write(`/api/parking/${r.id}`, 'PATCH', {
+            lot_code: r.row.lot_code,
+            spot_number: Number(r.row.spot_number.trim()),
+            size_type: r.row.size_type,
+            owner_type: 'developer',
+            apartment_number: null,
+            sale_status: r.row.sale_status,
+            notes: r.row.notes,
+          });
+        } else {
+          await write(`/api/storage/${r.id}/toggle-active`, 'POST', {
+            is_active: false, reason: r.reason,
+          });
+        }
         pendingRemovals.shift();
       }
 

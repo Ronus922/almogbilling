@@ -30,15 +30,39 @@ export interface ParkingConflictHolder {
   owner_type: string;
 }
 
-/** e.g. "חניה 63 כבר מוצמדת לדירה 1234" / "מחסן M-4 כבר רשום בבעלות נציגות". */
+/** "מוצמדת לדירה 1234" / "רשום בבעלות נציגות" — where the number currently
+ *  sits. Both messages below prepend the noun and the number to this. */
+function holderClause(kind: ParkingRecordKind, holder: ParkingConflictHolder): string {
+  const w = CONFLICT_WORDS[kind];
+  const owner = OWNER_TYPE_LABEL[holder.owner_type as ParkingOwnerType] ?? holder.owner_type;
+  return holder.apartment_number
+    ? `${w.attached} לדירה ${holder.apartment_number}`
+    : `${w.registered} בבעלות ${owner}`;
+}
+
+/** e.g. "חניה 63 כבר מוצמדת לדירה 1234" / "מחסן M-4 כבר רשום בבעלות נציגות".
+ *  The API's 409 — a refusal, stated as one. */
 export function parkingConflictMessage(
   kind: ParkingRecordKind,
   holder: ParkingConflictHolder,
 ): string {
   const w = CONFLICT_WORDS[kind];
-  const owner = OWNER_TYPE_LABEL[holder.owner_type as ParkingOwnerType] ?? holder.owner_type;
-  const where = holder.apartment_number
-    ? `${w.attached} לדירה ${holder.apartment_number}`
-    : `${w.registered} בבעלות ${owner}`;
-  return `${w.noun} ${holder.number} כבר ${where}`;
+  return `${w.noun} ${holder.number} כבר ${holderClause(kind, holder)}`;
+}
+
+/**
+ * The same fact phrased for the tenant form: "חניה 63 מוצמדת לדירה 1234.
+ * להעברה — ערוך בדף החניות."
+ *
+ * A spot is ONE row for the life of the building; moving it between apartments
+ * is an update of that row, which the tenant form cannot do — it only ever sees
+ * one apartment. So the form refuses and names the place that can, instead of
+ * leaving the user staring at a number they are not allowed to type.
+ */
+export function parkingTransferMessage(
+  kind: ParkingRecordKind,
+  holder: ParkingConflictHolder,
+): string {
+  const w = CONFLICT_WORDS[kind];
+  return `${w.noun} ${holder.number} ${holderClause(kind, holder)}. להעברה — ערוך בדף החניות.`;
 }
