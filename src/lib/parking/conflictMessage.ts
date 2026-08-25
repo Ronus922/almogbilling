@@ -66,3 +66,19 @@ export function parkingTransferMessage(
   const w = CONFLICT_WORDS[kind];
   return `${w.noun} ${holder.number} ${holderClause(kind, holder)}. להעברה — ערוך בדף החניות.`;
 }
+
+/**
+ * The same fact phrased as a question the /parking table can answer in place:
+ * "חניה 63 מוצמדת לדירה 1234 — להעביר?"
+ *
+ * That table sees every apartment at once, so an occupied number is not a
+ * refusal there — it is a transfer waiting for a yes. Same row, new owner; one
+ * PATCH once the question is answered.
+ */
+export function parkingClaimQuestion(
+  kind: ParkingRecordKind,
+  holder: ParkingConflictHolder,
+): string {
+  const w = CONFLICT_WORDS[kind];
+  return `${w.noun} ${holder.number} ${holderClause(kind, holder)} — להעביר?`;
+}

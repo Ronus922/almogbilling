@@ -146,24 +146,41 @@ export async function fetchAssetIndex(): Promise<AssetIndex> {
   return {
     spots,
     units,
-    parkingOccupancy: new Map(spots.map((s) => [String(s.spot_number), {
-      id: s.id, number: String(s.spot_number),
-      apartment_number: s.apartment_number, owner_type: s.owner_type,
-    }])),
-    storageOccupancy: new Map(units.map((u) => [u.unit_number, {
-      id: u.id, number: u.unit_number,
-      apartment_number: u.apartment_number, owner_type: u.owner_type,
-    }])),
+    parkingOccupancy: parkingOccupancyOf(spots),
+    storageOccupancy: storageOccupancyOf(units),
   };
+}
+
+/** Index spots by their number. The /parking table holds the same rows in its
+ *  own state and rebuilds the index from there, so both surfaces answer "who
+ *  holds this number" from one implementation. */
+export function parkingOccupancyOf(spots: ParkingSpot[]): Map<string, Occupant> {
+  return new Map(spots.map((s) => [String(s.spot_number), {
+    id: s.id, number: String(s.spot_number),
+    apartment_number: s.apartment_number, owner_type: s.owner_type,
+  }]));
+}
+
+export function storageOccupancyOf(units: StorageUnit[]): Map<string, Occupant> {
+  return new Map(units.map((u) => [u.unit_number, {
+    id: u.id, number: u.unit_number,
+    apartment_number: u.apartment_number, owner_type: u.owner_type,
+  }]));
 }
 
 // ── validation (mirrors lib/validation/parking.ts, plus occupancy) ───────────
 
-/** `siblings` are the other rows being edited together — a number repeated
- *  inside one edit is a clash the server would never see. */
-export function parkingRowError(
-  row: ParkingRow, siblings: ParkingRow[], occupancy: Map<string, Occupant>,
-): string | null {
+/**
+ * Is the number itself usable — shape, range, and not typed twice in the same
+ * edit. `siblings` are the other rows being edited together; a number repeated
+ * inside one edit is a clash the server would never see, because only one of
+ * the two ever reaches it.
+ *
+ * Deliberately says nothing about who holds the number: the two surfaces answer
+ * that differently. The tenant form refuses (it sees one apartment and cannot
+ * transfer); the /parking table asks (it sees both sides of the move).
+ */
+export function parkingNumberError(row: ParkingRow, siblings: ParkingRow[]): string | null {
   const raw = row.spot_number.trim();
   if (!raw) return parkingErrorMessage('spot_number_required');
   const n = Number(raw);
@@ -172,9 +189,29 @@ export function parkingRowError(
     return parkingErrorMessage('spot_number_out_of_range');
   }
   if (siblings.some((o) => o.key !== row.key && Number(o.spot_number.trim()) === n)) {
-    return 'מספר החניה מופיע פעמיים בטופס';
+    return 'מספר החניה מופיע פעמיים';
   }
-  const holder = occupancy.get(String(n));
+  return null;
+}
+
+export function storageNumberError(row: StorageRow, siblings: StorageRow[]): string | null {
+  const raw = row.unit_number.trim();
+  if (!raw) return parkingErrorMessage('unit_number_required');
+  if (raw.length > STORAGE_UNIT_NUMBER_MAX) return parkingErrorMessage('unit_number_too_long');
+  if (siblings.some((o) => o.key !== row.key && o.unit_number.trim() === raw)) {
+    return 'מספר המחסן מופיע פעמיים';
+  }
+  return null;
+}
+
+/** The tenant form's rule: an occupied number is a refusal that names the
+ *  holder and points at the page which can move it. */
+export function parkingRowError(
+  row: ParkingRow, siblings: ParkingRow[], occupancy: Map<string, Occupant>,
+): string | null {
+  const err = parkingNumberError(row, siblings);
+  if (err) return err;
+  const holder = occupancy.get(String(Number(row.spot_number.trim())));
   if (holder && holder.id !== row.id) return parkingTransferMessage('parking', holder);
   return null;
 }
@@ -182,13 +219,9 @@ export function parkingRowError(
 export function storageRowError(
   row: StorageRow, siblings: StorageRow[], occupancy: Map<string, Occupant>,
 ): string | null {
-  const raw = row.unit_number.trim();
-  if (!raw) return parkingErrorMessage('unit_number_required');
-  if (raw.length > STORAGE_UNIT_NUMBER_MAX) return parkingErrorMessage('unit_number_too_long');
-  if (siblings.some((o) => o.key !== row.key && o.unit_number.trim() === raw)) {
-    return 'מספר המחסן מופיע פעמיים בטופס';
-  }
-  const holder = occupancy.get(raw);
+  const err = storageNumberError(row, siblings);
+  if (err) return err;
+  const holder = occupancy.get(row.unit_number.trim());
   if (holder && holder.id !== row.id) return parkingTransferMessage('storage', holder);
   return null;
 }

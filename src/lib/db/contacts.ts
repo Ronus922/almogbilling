@@ -117,6 +117,21 @@ export async function listContacts(filters: ContactListFilters = {}): Promise<Co
   return r.rows;
 }
 
+/**
+ * Just the apartment numbers, in the table's natural order (numeric ascending,
+ * anything non-numeric last). The /parking table needs one row per apartment
+ * and nothing else about it — loading full contact rows there would drag along
+ * every phone number and person for a screen that shows none of them.
+ */
+export async function listApartmentNumbers(): Promise<string[]> {
+  const r = await query<{ apartment_number: string }>(
+    `select apartment_number from public.contacts
+      order by nullif(regexp_replace(apartment_number, '\\D', '', 'g'), '')::int asc nulls last,
+               apartment_number asc`,
+  );
+  return r.rows.map((row) => row.apartment_number);
+}
+
 export async function getContactById(id: string): Promise<Contact | null> {
   return queryOne<Contact>(
     `select ${CONTACT_COLUMNS} from public.contacts where id = $1`,
