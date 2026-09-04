@@ -5,6 +5,7 @@ import { getDebtorById, updateDebtorLegalStatus } from '@/lib/db/debtors';
 import { sendStatusChangeNotification } from '@/services/email';
 import { getLegalContact } from '@/lib/db/appSettings';
 import { isLegalStatusName } from '@/lib/constants/statuses';
+import { buildLegalStatusRecipients } from '@/lib/notify/legalStatusRecipients';
 
 export const runtime = 'nodejs';
 
@@ -59,21 +60,20 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
   const tenant = await getDebtorById(id);
   if (tenant) {
     try {
-      const recipients = new Set(
-        (result.new.notification_emails ?? []).map((e) => e.trim().toLowerCase()).filter(Boolean),
-      );
-      if (isLegalStatusName(result.new.name)) {
-        const legal = await getLegalContact();
-        if (legal.email) recipients.add(legal.email);
-      }
-      if (recipients.size > 0) {
+      const legal = isLegalStatusName(result.new.name) ? await getLegalContact() : null;
+      const recipients = buildLegalStatusRecipients({
+        statusEmails: result.new.notification_emails,
+        newStatusName: result.new.name,
+        legalEmail: legal?.email,
+      });
+      if (recipients.length > 0) {
         await sendStatusChangeNotification({
           apartment_number: tenant.apartment_number,
           owner_name: tenant.owner_name,
           old_status_name: result.old.name,
           new_status_name: result.new.name,
           changed_by_name: changerName,
-          recipients: [...recipients],
+          recipients,
         });
       }
     } catch (err) {

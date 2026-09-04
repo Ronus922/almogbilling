@@ -111,26 +111,6 @@ export async function sendNotificationEmail(
   await sendWithRetry({ to, subject, html, text });
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// LEGACY — Slice 3 stub kept untouched. Will migrate in a separate slice.
-// ──────────────────────────────────────────────────────────────────────
-
-interface EmailMessage {
-  to: string;
-  subject: string;
-  body: string;
-}
-
-async function sendEmailStub(msg: EmailMessage): Promise<{ ok: true; mocked: true }> {
-  console.log('\n[email:stub] ────────────────────────');
-  console.log(`  To:      ${msg.to}`);
-  console.log(`  Subject: ${msg.subject}`);
-  console.log(`  Body:`);
-  msg.body.split('\n').forEach((l) => console.log('    ' + l));
-  console.log('─────────────────────────────────────\n');
-  return { ok: true, mocked: true };
-}
-
 export interface StatusChangeEmailArgs {
   apartment_number: string;
   owner_name: string | null;
@@ -140,34 +120,46 @@ export interface StatusChangeEmailArgs {
   recipients: string[];
 }
 
-export async function sendStatusChangeNotification(args: StatusChangeEmailArgs): Promise<void> {
-  if (args.recipients.length === 0) return;
+/**
+ * Legal-status change email. The route builds the recipient list (the new
+ * status's notification_emails + the lawyer from Settings when the debtor
+ * moved INTO a legal status — see buildLegalStatusRecipients); this renders
+ * the template once and sends it to each address through sendWithRetry.
+ * A failing address is logged and the loop moves on; nothing is thrown — the
+ * status change already happened and an email must never undo or block it.
+ */
+export async function sendStatusChangeNotification(
+  args: StatusChangeEmailArgs,
+): Promise<{ sent: number; failed: number }> {
+  if (args.recipients.length === 0) return { sent: 0, failed: 0 };
 
-  const when = new Date().toLocaleString('he-IL', {
+  const sig = await getSignature();
+  const changedAt = new Date().toLocaleString('he-IL', {
     timeZone: 'Asia/Jerusalem',
     dateStyle: 'medium',
     timeStyle: 'short',
   });
-  const owner = args.owner_name ?? '—';
-  const oldName = args.old_status_name ?? '(ללא סטטוס)';
-  const newName = args.new_status_name ?? '(ללא סטטוס)';
+  const { subject, html, text } = renderTemplate('legal-status-change', {
+    apartmentNumber: args.apartment_number,
+    ownerName: args.owner_name,
+    oldStatusName: args.old_status_name,
+    newStatusName: args.new_status_name,
+    changedByName: args.changed_by_name,
+    changedAt,
+    signatureHtml: signatureHtml(sig),
+    signatureText: signaturePlainLines(sig),
+  });
 
-  const subject = `עדכון סטטוס משפטי — דירה ${args.apartment_number}`;
-  const body =
-    `שלום,\n\n` +
-    `הדירה ${args.apartment_number} של ${owner} שונתה:\n` +
-    `מ: ${oldName}\n` +
-    `ל: ${newName}\n\n` +
-    `בוצע על ידי: ${args.changed_by_name}\n` +
-    `בתאריך: ${when}\n\n` +
-    `---\n` +
-    `ALMOG CRM — https://billing.bios.co.il`;
-
+  let sent = 0;
+  let failed = 0;
   for (const to of args.recipients) {
     try {
-      await sendEmailStub({ to, subject, body });
+      await sendWithRetry({ to, subject, html, text });
+      sent++;
     } catch (err) {
+      failed++;
       console.error('[sendStatusChangeNotification] failed for', to, err);
     }
   }
+  return { sent, failed };
 }
