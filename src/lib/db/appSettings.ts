@@ -23,12 +23,14 @@ async function upsertAppSetting(key: string, value: unknown, updatedBy: string):
 interface SmtpRow {
   user: string;
   fromName: string;
-  passEnc: EncryptedBlob;
+  /** Absent when sending through the IP-authorised Workspace relay (no auth). */
+  passEnc?: EncryptedBlob;
 }
 
 export interface SmtpSettings {
   user: string;
-  pass: string;
+  /** null = no auth — the transport connects without a password (relay). */
+  pass: string | null;
   fromName: string;
 }
 
@@ -47,7 +49,8 @@ export class AppSettingsValidationError extends Error {
 }
 
 /**
- * Resolve SMTP settings: DB row wins, env vars are fallback.
+ * Resolve SMTP settings: DB row wins, env vars are fallback. A missing password
+ * is valid — it means "no auth" (Workspace relay authorised by server IP).
  * Throws if neither yields user+pass — caller treats as fatal.
  */
 export async function getSmtpSettings(): Promise<SmtpSettings> {
@@ -58,16 +61,16 @@ export async function getSmtpSettings(): Promise<SmtpSettings> {
   if (row) {
     return {
       user: row.value.user,
-      pass: decrypt(row.value.passEnc),
+      pass: row.value.passEnc ? decrypt(row.value.passEnc) : null,
       fromName: row.value.fromName,
     };
   }
 
   const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+  const pass = process.env.SMTP_PASS || null;
   const fromName = process.env.SMTP_FROM_NAME ?? 'ALMOG CRM';
-  if (!user || !pass) {
-    throw new Error('SMTP not configured: no DB row and SMTP_USER/SMTP_PASS env not set');
+  if (!user) {
+    throw new Error('SMTP not configured: no DB row and SMTP_USER env not set');
   }
   return { user, pass, fromName };
 }
@@ -82,7 +85,7 @@ export async function getSmtpSettingsPublic(): Promise<SmtpSettingsPublic> {
     return {
       fromEmail: row.value.user,
       fromName: row.value.fromName,
-      hasPassword: true,
+      hasPassword: Boolean(row.value.passEnc),
     };
   }
   return {
@@ -95,12 +98,16 @@ export async function getSmtpSettingsPublic(): Promise<SmtpSettingsPublic> {
 interface UpdateArgs {
   user: string;
   fromName: string;
-  /** Plain App Password (16 chars). If omitted, keep existing pass from DB; throws on first save. */
+  /**
+   * Plain App Password (16 chars). If omitted, keep the existing pass from the
+   * DB row when there is one; otherwise the row is saved without a password
+   * (relay mode — the transport then connects without auth).
+   */
   pass?: string;
 }
 
 export async function updateSmtpSettings(args: UpdateArgs, updatedBy: string): Promise<void> {
-  let passEnc: EncryptedBlob;
+  let passEnc: EncryptedBlob | undefined;
 
   if (args.pass) {
     passEnc = encrypt(args.pass);
@@ -109,13 +116,10 @@ export async function updateSmtpSettings(args: UpdateArgs, updatedBy: string): P
       `select value from public.app_settings where key = $1 limit 1`,
       [SMTP_KEY],
     );
-    if (!existing) {
-      throw new AppSettingsValidationError('App Password is required on first save');
-    }
-    passEnc = existing.value.passEnc;
+    passEnc = existing?.value.passEnc;
   }
 
-  const value: SmtpRow = { user: args.user, fromName: args.fromName, passEnc };
+  const value: SmtpRow = { user: args.user, fromName: args.fromName, ...(passEnc ? { passEnc } : {}) };
   await upsertAppSetting(SMTP_KEY, value, updatedBy);
 }
 

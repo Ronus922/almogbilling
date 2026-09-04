@@ -3,8 +3,22 @@ import { createHash } from 'node:crypto';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { getSmtpSettings } from '@/lib/db/appSettings';
 
-const SMTP_HOST = 'smtp.gmail.com';
-const SMTP_PORT = 587;
+/*
+ * SMTP host / port / security come from env. Production: the Google Workspace
+ * SMTP relay (smtp-relay.gmail.com, 587, STARTTLS), which authorises the
+ * server's registered IP addresses — no password. Auth is sent only when the
+ * settings carry a password (e.g. smtp.gmail.com / 465 / true + App Password).
+ *
+ * Why the relay: Google rejected App-Password logins from this server's IPv6
+ * address (535 BadCredentials) while accepting IPv4, and Node picks an address
+ * family per connection — so sends failed intermittently. The relay accepts
+ * both registered addresses.
+ *
+ * Defaults keep the pre-relay behaviour when the env vars are absent.
+ */
+const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
+const SMTP_PORT = Number(process.env.SMTP_PORT || '587');
+const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
 
 interface CachedTransporter {
   transporter: Transporter;
@@ -18,9 +32,12 @@ const g = globalThis as unknown as {
 };
 
 export async function getTransporter(): Promise<{ transporter: Transporter; from: string }> {
+  if (!Number.isInteger(SMTP_PORT) || SMTP_PORT < 1 || SMTP_PORT > 65535) {
+    throw new Error('SMTP not configured: SMTP_PORT is not a valid port');
+  }
   const settings = await getSmtpSettings();
   const hash = createHash('sha256')
-    .update(`${settings.user}|${settings.pass}|${settings.fromName}`)
+    .update(`${SMTP_HOST}|${SMTP_PORT}|${SMTP_SECURE}|${settings.user}|${settings.pass ?? ''}|${settings.fromName}`)
     .digest('hex');
 
   if (g._smtpCache?.hash === hash) {
@@ -38,9 +55,11 @@ export async function getTransporter(): Promise<{ transporter: Transporter; from
     const transporter = nodemailer.createTransport({
       host: SMTP_HOST,
       port: SMTP_PORT,
-      secure: false,
-      requireTLS: true,
-      auth: { user: settings.user, pass: settings.pass },
+      secure: SMTP_SECURE,
+      // Without full TLS, STARTTLS is mandatory — never plaintext.
+      ...(SMTP_SECURE ? {} : { requireTLS: true }),
+      // Auth only when a password exists; the relay authorises by IP.
+      ...(settings.pass ? { auth: { user: settings.user, pass: settings.pass } } : {}),
       pool: true,
       maxConnections: 3,
       maxMessages: 100,
