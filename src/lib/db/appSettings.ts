@@ -1,9 +1,24 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import { encrypt, decrypt, type EncryptedBlob } from '@/lib/crypto/settings-cipher';
+import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legalContact';
 
 const SMTP_KEY = 'smtp';
 const BILLING_KEY = 'billing';
+const LEGAL_CONTACT_KEY = 'legal_contact';
+
+/** One upsert for every key — the value shape is per-key (see 006 / 078). */
+async function upsertAppSetting(key: string, value: unknown, updatedBy: string): Promise<void> {
+  await query(
+    `insert into public.app_settings (key, value, updated_by, updated_at)
+     values ($1, $2::jsonb, $3, now())
+     on conflict (key) do update
+       set value = excluded.value,
+           updated_by = excluded.updated_by,
+           updated_at = now()`,
+    [key, JSON.stringify(value), updatedBy],
+  );
+}
 
 interface SmtpRow {
   user: string;
@@ -101,16 +116,7 @@ export async function updateSmtpSettings(args: UpdateArgs, updatedBy: string): P
   }
 
   const value: SmtpRow = { user: args.user, fromName: args.fromName, passEnc };
-
-  await query(
-    `insert into public.app_settings (key, value, updated_by, updated_at)
-     values ($1, $2::jsonb, $3, now())
-     on conflict (key) do update
-       set value = excluded.value,
-           updated_by = excluded.updated_by,
-           updated_at = now()`,
-    [SMTP_KEY, JSON.stringify(value), updatedBy],
-  );
+  await upsertAppSetting(SMTP_KEY, value, updatedBy);
 }
 
 // ── Billing settings (app_settings key 'billing') ────────────────────────
@@ -145,15 +151,7 @@ export async function updateBillingSettings(
   if (fee !== null && (!Number.isFinite(fee) || fee < 0)) {
     throw new AppSettingsValidationError('management fee per sqm must be a non-negative number');
   }
-  await query(
-    `insert into public.app_settings (key, value, updated_by, updated_at)
-     values ($1, $2::jsonb, $3, now())
-     on conflict (key) do update
-       set value = excluded.value,
-           updated_by = excluded.updated_by,
-           updated_at = now()`,
-    [BILLING_KEY, JSON.stringify({ managementFeePerSqm: fee }), updatedBy],
-  );
+  await upsertAppSetting(BILLING_KEY, { managementFeePerSqm: fee }, updatedBy);
 }
 
 /**
@@ -173,4 +171,40 @@ export async function recomputeAllManagementFees(ratePerSqm: number | null): Pro
     [ratePerSqm],
   );
   return r.rowCount ?? 0;
+}
+
+// ── Legal contact (app_settings key 'legal_contact') ─────────────────────
+
+/**
+ * The lawyer the building works with — Settings → "עורך דין". Read at send
+ * time by the legal-status change notification, which adds this address to
+ * the status's own notification_emails when a debtor moves INTO a legal
+ * status. Empty strings = not configured, nothing is sent. The address is
+ * never hard-coded anywhere; a missing row reads as empty.
+ */
+export async function getLegalContact(): Promise<LegalContact> {
+  const row = await queryOne<{ value: Partial<LegalContact> | null }>(
+    `select value from public.app_settings where key = $1 limit 1`,
+    [LEGAL_CONTACT_KEY],
+  );
+  const v = row?.value;
+  return {
+    email: typeof v?.email === 'string' ? v.email : '',
+    name: typeof v?.name === 'string' ? v.name : '',
+  };
+}
+
+/** Persist the legal contact. '' in both fields clears it. Returns the stored value. */
+export async function updateLegalContact(
+  input: { email?: unknown; name?: unknown },
+  updatedBy: string,
+): Promise<LegalContact> {
+  const normalized = normalizeLegalContact(input);
+  if (!normalized.ok) {
+    throw new AppSettingsValidationError(
+      normalized.errors.email ?? normalized.errors.name ?? 'legal contact is invalid',
+    );
+  }
+  await upsertAppSetting(LEGAL_CONTACT_KEY, normalized.value, updatedBy);
+  return normalized.value;
 }

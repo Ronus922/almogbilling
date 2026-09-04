@@ -3,6 +3,8 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorById, updateDebtorLegalStatus } from '@/lib/db/debtors';
 import { sendStatusChangeNotification } from '@/services/email';
+import { getLegalContact } from '@/lib/db/appSettings';
+import { isLegalStatusName } from '@/lib/constants/statuses';
 
 export const runtime = 'nodejs';
 
@@ -51,18 +53,29 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
     throw err;
   }
 
-  // Notify recipients configured on the new status (non-blocking).
+  // Notify (non-blocking): the recipients configured on the new status, plus
+  // the legal contact from Settings when the debtor moved INTO a legal status.
+  // The lawyer's address is a setting, never a constant here.
   const tenant = await getDebtorById(id);
-  if (tenant && result.new.notification_emails && result.new.notification_emails.length > 0) {
+  if (tenant) {
     try {
-      await sendStatusChangeNotification({
-        apartment_number: tenant.apartment_number,
-        owner_name: tenant.owner_name,
-        old_status_name: result.old.name,
-        new_status_name: result.new.name,
-        changed_by_name: changerName,
-        recipients: result.new.notification_emails,
-      });
+      const recipients = new Set(
+        (result.new.notification_emails ?? []).map((e) => e.trim().toLowerCase()).filter(Boolean),
+      );
+      if (isLegalStatusName(result.new.name)) {
+        const legal = await getLegalContact();
+        if (legal.email) recipients.add(legal.email);
+      }
+      if (recipients.size > 0) {
+        await sendStatusChangeNotification({
+          apartment_number: tenant.apartment_number,
+          owner_name: tenant.owner_name,
+          old_status_name: result.old.name,
+          new_status_name: result.new.name,
+          changed_by_name: changerName,
+          recipients: [...recipients],
+        });
+      }
     } catch (err) {
       console.error('[legal-status] email notification failed', err);
     }

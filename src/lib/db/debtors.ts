@@ -2,6 +2,7 @@ import 'server-only';
 import { query, queryOne, withTransaction } from '@/lib/db';
 import { phoneDigitsKey } from '@/lib/whatsapp';
 import type { Tenant } from '@/types/tenant';
+import { STATUS_WARNING, STATUS_LEGAL_CARE, STATUS_LEGAL_PROCEEDING } from '@/lib/constants/statuses';
 
 export interface Debtor {
   id: string;
@@ -103,12 +104,6 @@ const OWNER_NAME_SQL   = `case when rc.id is null then d.owner_name   else rc.ow
 const TENANT_NAME_SQL  = `case when rc.id is null then d.tenant_name  else rc.tenant_name  end`;
 const PHONE_OWNER_SQL  = `case when rc.id is null then d.phone_owner  else rc.owner_phone  end`;
 const PHONE_TENANT_SQL = `case when rc.id is null then d.phone_tenant else rc.tenant_phone end`;
-
-// Status names that drive KPIs / tabs. Seeded by 003_debtor_panel.sql.
-// If a seed name changes, update here in lockstep.
-const STATUS_WARNING = 'מכתב התראה';
-const STATUS_LEGAL_CARE = 'לטיפול משפטי';
-const STATUS_LEGAL_PROCEEDING = 'בהליך משפטי';
 
 export async function getDashboardKpis(): Promise<DashboardKpis> {
   const row = await queryOne<{

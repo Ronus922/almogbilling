@@ -3,6 +3,7 @@ import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
 import { SmtpSettingsCard } from '@/components/settings/SmtpSettingsCard';
 import { BillingSettingsCard } from '@/components/settings/BillingSettingsCard';
+import { LegalContactCard } from '@/components/settings/LegalContactCard';
 import { WhatsAppConnections } from './components/WhatsAppConnections';
 
 export const runtime = 'nodejs';
@@ -15,6 +16,7 @@ export default async function SettingsPage() {
   }
 
   const isAdmin = actor.role === 'admin' || actor.role === 'super_admin';
+  const canEdit = hasPermission(actor.role, actor.permissions, 'settings', 'edit');
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
@@ -24,6 +26,7 @@ export default async function SettingsPage() {
       </div>
 
       <BillingSettingsCard />
+      <LegalContactCard canEdit={canEdit} />
       <SmtpSettingsCard />
       <WhatsAppConnections isAdmin={isAdmin} currentUserId={actor.id} />
     </div>
