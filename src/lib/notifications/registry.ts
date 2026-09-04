@@ -7,7 +7,7 @@
 // runtime — do NOT add 'server-only'.
 
 import {
-  MessageCircle, Scale, Calendar, CheckCircle2, Clock, AlertTriangle, Bell, KeyRound,
+  MessageCircle, Scale, Calendar, CheckCircle2, Clock, AlertTriangle, Bell, KeyRound, MailWarning,
   type LucideIcon,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
@@ -25,7 +25,8 @@ export type NotificationType =
   | 'internal_chat_message'
   | 'system_announcement'
   | 'chip_issued'
-  | 'chip_deactivated_lost';
+  | 'chip_deactivated_lost'
+  | 'smtp_auth_failed';
 
 export type SourceModule =
   'tasks' | 'calendar' | 'whatsapp' | 'issues' | 'internal_chat' | 'legal' | 'chips' | 'system';
@@ -66,6 +67,11 @@ export const NOTIFICATION_REGISTRY: Record<NotificationType, NotificationRegistr
   // In-app ONLY: chip lifecycle events surface in the bell; no email/WhatsApp.
   chip_issued:               { icon: KeyRound,      tone: 'info',    sourceModule: 'chips',         defaultPriority: 'normal', channels: ['inapp'] },
   chip_deactivated_lost:     { icon: KeyRound,      tone: 'warning', sourceModule: 'chips',         defaultPriority: 'high',   channels: ['inapp'] },
+  // In-app ONLY — by design AND by construction. This is the "email is broken"
+  // alert (SMTP rejected the App Password), so it must never try to email. Its
+  // sole producer, notifyAdminsOfSmtpAuthFailure (src/lib/email/authAlert.ts),
+  // inserts the bell row directly and never enters the fan-out.
+  smtp_auth_failed:          { icon: MailWarning,   tone: 'danger',  sourceModule: 'system',        defaultPriority: 'urgent', channels: ['inapp'] },
 };
 
 // ── Hebrew labels ───────────────────────────────────────────────────────────
@@ -86,6 +92,7 @@ export const NOTIFICATION_TYPE_LABEL: Record<NotificationType, string> = {
   system_announcement: 'הודעת מערכת',
   chip_issued: 'צ׳יפ הונפק',
   chip_deactivated_lost: 'צ׳יפ אבד או נגנב',
+  smtp_auth_failed: 'כישלון אימות SMTP',
 };
 
 export const SOURCE_MODULE_LABEL: Record<SourceModule, string> = {
@@ -108,6 +115,7 @@ export const DEFAULT_TITLE: Record<NotificationType, string> = {
   system_announcement: 'הודעת מערכת',
   chip_issued: 'צ׳יפ חדש הונפק',
   chip_deactivated_lost: 'צ׳יפ הושבת — אבד או נגנב',
+  smtp_auth_failed: 'שליחת מייל נכשלה',
 };
 
 // ── UI token maps (DESIGN.md §2 tones / §10 pills) ───────────────────────────

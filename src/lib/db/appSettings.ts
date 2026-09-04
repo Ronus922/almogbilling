@@ -208,3 +208,34 @@ export async function updateLegalContact(
   await upsertAppSetting(LEGAL_CONTACT_KEY, normalized.value, updatedBy);
   return normalized.value;
 }
+
+// ── SMTP auth-failure alert throttle (app_settings key 'smtp_last_auth_alert') ─
+
+const SMTP_LAST_AUTH_ALERT_KEY = 'smtp_last_auth_alert';
+
+/** Minimum gap between two "SMTP authentication rejected" admin alerts. */
+export const SMTP_AUTH_ALERT_THROTTLE_HOURS = 6;
+
+/**
+ * Claim the right to raise the "SMTP authentication rejected" admin alert.
+ * The row's value is { at: <timestamptz> } — when the last alert went out. The
+ * upsert rewrites it only when that stamp is older than the throttle window
+ * (or the row does not exist yet), and RETURNING says whether it did: one
+ * statement, so two sends failing at the same moment cannot both win.
+ * Returns the claimed stamp, or null when throttled. updated_by stays NULL —
+ * no user did this, the system did.
+ */
+export async function claimSmtpAuthAlertSlot(): Promise<{ at: string } | null> {
+  const row = await queryOne<{ at: string }>(
+    `insert into public.app_settings (key, value, updated_by, updated_at)
+     values ($1, jsonb_build_object('at', now()), null, now())
+     on conflict (key) do update
+       set value = excluded.value,
+           updated_at = now()
+       where coalesce((public.app_settings.value->>'at')::timestamptz, 'epoch'::timestamptz)
+             <= now() - make_interval(hours => $2::int)
+     returning (value->>'at') as at`,
+    [SMTP_LAST_AUTH_ALERT_KEY, SMTP_AUTH_ALERT_THROTTLE_HOURS],
+  );
+  return row ? { at: row.at } : null;
+}
