@@ -1,33 +1,37 @@
 # npm audit — 05/09/2026 (ענף `infra/hardening`)
 
-ריצה: `npm audit --json` ו-`npm audit --omit=dev --json` על `package-lock.json` של `9c592f0`
-(node 20.20.1, npm 10.8.2). **שום דבר לא שודרג** — מסמך ממצאים בלבד. ההחלטות (מה לשדרג ובאיזה
+ריצה ראשונה: `npm audit --json` ו-`npm audit --omit=dev --json` על `package-lock.json` של `9c592f0`
+(node 20.20.1, npm 10.8.2) — 27 / 22. **עודכן אחרי `f15ad65`** (`next@16.3.4` + `eslint-config-next@16.3.4`,
+ריצה חוזרת על ה-lockfile החדש) — 23 / 18. מלבד next **שום דבר אחר לא שודרג**. ההחלטות (מה לשדרג ובאיזה
 סדר) הן ב-HANDOFF 8; ההפעלה — דרך PR-ים של Renovate או ידנית, אחד-אחד, עם `check:all` + e2e.
 
 ## סיכום
 
-| קבוצה | סה"כ | low | moderate | high | critical |
-|---|---|---|---|---|---|
-| הכל (`npm audit`) | **27** | 3 | 9 | 14 | 1 |
-| production בלבד (`--omit=dev`) | **22** | 3 | 6 | 13 | 0 |
-| dev בלבד (ההפרש — שרשרת `vitest`) | **5** | 0 | 3 | 1 | 1 |
+| קבוצה | לפני `next@16.3.4` (lockfile `9c592f0`) | **עכשיו** (lockfile `f15ad65`) |
+|---|---|---|
+| הכל (`npm audit`) | 27 — 3 low, 9 moderate, 14 high, 1 critical | **23** — 3 low, 9 moderate, 10 high, 1 critical (dev: `vitest`) |
+| production בלבד (`--omit=dev`) | 22 — 3 low, 6 moderate, 13 high, 0 critical (+ critical נסתר של `next`) | **18** — 3 low, 6 moderate, 9 high, **0 critical** |
+| dev בלבד (ההפרש — שרשרת `vitest`) | 5 — 0 low, 3 moderate, 1 high, 1 critical | **5** — ללא שינוי |
 
-- `REPORT.md` דיווח על 28 — מאגר ה-advisories השתנה בין הריצות (אותו lockfile). היום 27.
-- **npm audit מפספס critical אחד ב-production**: ה-RCE ב-Image Optimization API של Next
+- `REPORT.md` דיווח על 28 — מאגר ה-advisories השתנה בין הריצות (אותו lockfile). בריצה הראשונה 27.
+- **ה-critical של production סגור.** ה-RCE ב-Image Optimization API של Next
   ([GHSA-2xp9-vwfh-vxw4](https://github.com/vercel/next.js/security/advisories/GHSA-2xp9-vwfh-vxw4),
-  25/08/2026) עדיין לא נמצא במאגר של npm, אבל לפי ה-advisory של vercel הטווח הפגיע הוא **`<16.3.3`** —
-  כלומר `next@16.2.9` שלנו כלול. התמונה האמיתית של production היא **1 critical + 13 high**.
-- 4 תלויות production **ישירות** פגיעות: `next`, `nodemailer`, `exceljs`, `puppeteer-core` (פירוט למטה).
-  18 טרנזיטיביות. ב-dev — רק שרשרת `vitest`.
+  25/08/2026, טווח `<16.3.3`) לא מופיע במאגר של npm גם היום, אבל `next@16.3.4` מותקן מ-`f15ad65` — כך
+  שה-"0 critical" ב-production נכון גם לפי GitHub, לא רק לפי npm. **שימו לב:** הפרודקשן (`/var/www/billing`)
+  נשאר על 16.2.9 עד merge של הענף ו-`npm run deploy`.
+- מה שנשאר ב-production: **3 תלויות ישירות** — `nodemailer` (high, שדרוג **major**), `puppeteer-core` (high,
+  major, דורש Node 22), `exceljs` (moderate, אין גרסה מתוקנת) — ו-**15 טרנזיטיביות**, 12 מהן נסגרות ב-`npm audit fix`
+  (פירוט למטה). ב-dev — רק שרשרת `vitest`.
 
 ## תלויות production ישירות
 
-### 1. `next` 16.2.9 → **16.3.4** — שדרוג **minor**
+### 1. ~~`next` 16.2.9 → **16.3.4**~~ — **בוצע** (`f15ad65`, 05/09/2026, בענף הזה)
 
 | | |
 |---|---|
-| מותקן | 16.2.9 (09/2026: `latest` = 16.3.4) |
-| advisories שמופיעים ב-audit | 9 ישירים, כולם בטווח `>=16.0.0 <16.2.11`: 4 high (Middleware/Proxy bypass ב-Turbopack, DoS ב-Server Actions, SSRF ב-Server Actions על custom server, SSRF ב-rewrites) + 5 moderate (cache confusion ×2, payload לא חסום ב-Edge, DoS ב-Image Optimization דרך SVG, חשיפת endpoints של Server Functions). בנוסף דרך תלויות ש-Next נועל: `postcss` (4 advisories, קריאת קבצים דרך `sourceMappingURL`) ו-`sharp <0.35.0` (high, CVE-ים של libvips). |
+| מותקן | **16.3.4** (+ `eslint-config-next@16.3.4`; דרכו `sharp@0.35.4`). ריצת audit על ה-lockfile החדש: `next`, `postcss`, `sharp`, `nanoid` — לא מדווחים יותר. |
+| אימות (05/09/2026) | `npm run build` ✓ · `check:all` ✓ (0 שגיאות lint; 4 אזהרות חדשות מהכלל החדש `@next/next/no-location-assign-relative-destination`, לא טופלו) · e2e 4/4 מקומית ✓ · CI ירוק (`check:all` + `e2e`) ✓. **עדיין לא:** smoke בפרודקשן — רק אחרי merge + `npm run deploy` (`/api/health`, login, PDF של דייר). |
+| advisories שהופיעו ב-audit (לפני) | 9 ישירים, כולם בטווח `>=16.0.0 <16.2.11`: 4 high (Middleware/Proxy bypass ב-Turbopack, DoS ב-Server Actions, SSRF ב-Server Actions על custom server, SSRF ב-rewrites) + 5 moderate (cache confusion ×2, payload לא חסום ב-Edge, DoS ב-Image Optimization דרך SVG, חשיפת endpoints של Server Functions). בנוסף דרך תלויות ש-Next נועל: `postcss` (4 advisories, קריאת קבצים דרך `sourceMappingURL`) ו-`sharp <0.35.0` (high, CVE-ים של libvips). |
 | **לא** ב-audit (מ-GitHub) | **critical** — RCE לא מאומת ב-Image Optimization API עם קבצי AVIF, טווח `<16.3.3`. וגם critical שני (RCE בשרתי Windows, `>=16.0 <16.3.3`) — **לא רלוונטי** (Linux). |
 | גרסה מתוקנת | **16.3.4**. 16.2.11 סוגר רק את 9 הישירים; אין 16.2.13 — ה-RCE של AVIF ותיקוני `sharp`/`postcss` קיימים רק ב-16.3.3+. 16.3.4 = 16.3.3 + החזרת AVIF ל-Image Optimization + 3 backports. |
 | סוג | **minor** (16.2 → 16.3), אותו major. `fixAvailable` של npm: `isSemVerMajor=false`. |
@@ -44,8 +48,8 @@
 - Turbopack עבר לקידוד hash אחר (base38) → שמות chunks משתנים → כרגיל, פריסה **רק** דרך `npm run deploy`.
 - תאימות: `engines.node >=20.9.0` ✓ (20.20.1) · peer `react ^19` ✓ (19.2.4 נעוץ) · `@sentry/nextjs@10.73.0`
   peer `^16.0.0-0` ✓ · `@playwright/test ^1.51.1` ✓ (1.63.0).
-- לשדרג **יחד**: `eslint-config-next` 16.2.9 → 16.3.4 (dev).
-- אימות: `check:all` + `test:e2e` + smoke בפרודקשן (`/api/health`, login, PDF של דייר).
+- שודרג **יחד**: `eslint-config-next` 16.2.9 → 16.3.4 (dev). בפועל אף אחד מהסעיפים למעלה לא דרש שינוי קוד.
+- אימות: `check:all` + `test:e2e` — בוצע (ראה טבלה). smoke בפרודקשן (`/api/health`, login, PDF של דייר) — אחרי deploy.
 
 ### 2. `nodemailer` 8.0.11 → **9.0.1 מינימום / 9.1.1 מומלץ / 10.0.0 latest** — שדרוג **major**
 
@@ -115,9 +119,10 @@
 - אחרי השדרוג לאמת רינדור PDF מול Chrome 146 של המערכת (CDP סובלני לפערי גרסה, אבל זה הנתיב היחיד
   שמשתמש בחבילה).
 
-## תלויות production טרנזיטיביות (18)
+## תלויות production טרנזיטיביות (15; היו 18)
 
-`npm audit fix` (**בלי** `--force`) פותר את 13 הראשונות בתוך טווחי ה-semver הקיימים; 5 האחרונות נעולות
+נסגרו ב-`next@16.3.4`: `postcss` (העותק שנעל next), `sharp` (→ 0.35.4), `nanoid` (העותק הפגיע נמשך על-ידי next).
+`npm audit fix` (**בלי** `--force`) פותר את 12 הראשונות בתוך טווחי ה-semver הקיימים; 3 האחרונות נעולות
 לתלות ישירה ונפתרות רק איתה.
 
 | חבילה | חומרה | מי מושך אותה | נטען ב-runtime? | תיקון |
@@ -132,16 +137,13 @@
 | `fast-uri` | high | `shadcn` | לא | `audit fix` |
 | `hono` | high (21 advisories) | `shadcn` | לא | `audit fix` |
 | `ip-address` | high | `puppeteer-core` (proxy — לא בשימוש), `shadcn` | לא בפועל | `audit fix` |
-| `nanoid` | high | `next`, `@tailwindcss/postcss` | כן (Next פנימי, גדלים קבועים — לא בשליטת תוקף) | `audit fix` |
 | `postcss-selector-parser` | low | `shadcn` | לא | `audit fix` |
 | `qs` | moderate | `shadcn` | לא | `audit fix` |
-| `postcss` | high | `next` (עותק נעול), `@tailwindcss/postcss`, `shadcn`, `vitest` | build בלבד; ה-CSS שלנו | **`next@16.3.4`** (+ `audit fix` לעותק העליון) |
-| `sharp` | high | `next` | כן (`/_next/image`) | **`next@16.3.4`** |
 | `uuid` | moderate | `exceljs` | כן (v4 בלבד) | אין — ראה exceljs |
 | `extract-zip` | high | `puppeteer-core`→`@puppeteer/browsers` | לא (הורדת דפדפן בלבד) | **`puppeteer-core@25`** |
 | `@puppeteer/browsers` | high | `puppeteer-core` | לא | **`puppeteer-core@25`** |
 
-**תצפית:** `shadcn@4.4.0` (ה-CLI של `npx shadcn add`) יושב ב-`dependencies` ומושך 8 מ-18 הממצאים
+**תצפית:** `shadcn@4.4.0` (ה-CLI של `npx shadcn add`) יושב ב-`dependencies` ומושך 8 מ-15 הממצאים
 הטרנזיטיביים (`hono`, `@hono/node-server`, `express-rate-limit`, `ip-address`, `body-parser`, `qs`,
 `fast-uri`, `postcss-selector-parser`). הוא לא מיובא בשום מקום בזמן ריצה. העברה ל-`devDependencies` (או
 הסרה) מנקה אותם ממשטח ה-production של audit. לא בוצע.
@@ -161,11 +163,11 @@
 - `vitest.config.ts` שלנו מינימלי (alias `@`/`server-only`, `environment: node`, `include`) → ההסבה
   צפויה טריוויאלית; אימות = 29 קבצים / 360 בדיקות עוברות.
 
-## מה לא נעשה, ובאיזה סדר הייתי מתקדם
+## מה נעשה, מה לא, ובאיזה סדר להתקדם
 
-לא שודרג כלום (כך הוגדרה המשימה). סדר מוצע, כל צעד = PR נפרד + `check:all` + e2e:
+צעד 1 בוצע בענף הזה; השאר לא (כך הוגדרה המשימה). סדר, כל צעד = PR נפרד + `check:all` + e2e:
 
-1. **`next@16.3.4` + `eslint-config-next@16.3.4`** — סוגר את ה-critical היחיד ב-production (+ `sharp`, `postcss`). minor.
+1. ~~**`next@16.3.4` + `eslint-config-next@16.3.4`**~~ — **בוצע** (`f15ad65`). סגר את ה-critical היחיד ב-production (+ `sharp`, `postcss`, `nanoid`).
 2. **`nodemailer@9.1.1`** — סוגר high; major אבל בלי נגיעה בקוד שלנו.
 3. **`npm audit fix`** (בלי `--force`) — 13 הטרנזיטיביות. לבדוק ש-`package-lock.json` בלבד השתנה.
 4. **`vitest@4.x`** (dev) — סוגר את ה-critical של dev.
@@ -176,7 +178,7 @@
 ## איך לשחזר
 
 ```bash
-npm audit                 # הכל (27)
-npm audit --omit=dev      # production בלבד (22)
+npm audit                 # הכל (23; היו 27 לפני next@16.3.4)
+npm audit --omit=dev      # production בלבד (18; היו 22)
 npm audit --json | node -e 'const a=JSON.parse(require("fs").readFileSync(0));for(const [k,v] of Object.entries(a.vulnerabilities))console.log(k,v.severity,v.isDirect?"direct":"transitive",JSON.stringify(v.fixAvailable))'
 ```

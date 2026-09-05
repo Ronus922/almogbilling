@@ -178,20 +178,28 @@ github.com/apps/renovate → Install → Only select repositories → `Ronus922/
 
 ---
 
-## 8. פגיעויות npm (27 נכון ל-05/09/2026) — לא תוקן בכוונה
+## 8. פגיעויות npm (23 נכון ל-05/09/2026, אחרי `next@16.3.4`) — השאר לא תוקן בכוונה
 
-**למה:** מחוץ לגבולות הריצה (אין שדרוגי major). ה-critical של npm audit הוא בשרשרת `vitest@2` (dev בלבד);
-ב-production יש critical נוסף ש-npm audit **עוד לא מציג** — RCE ב-Image Optimization של `next <16.3.3`.
+**מה כבר נסגר (בענף הזה, `f15ad65`):** `next@16.3.4` + `eslint-config-next@16.3.4` — ה-critical של production
+(RCE ב-Image Optimization, [GHSA-2xp9-vwfh-vxw4](https://github.com/vercel/next.js/security/advisories/GHSA-2xp9-vwfh-vxw4),
+`<16.3.3`, ש-npm audit עדיין לא מציג) + 9 advisories ישירים של next + `sharp`/`postcss`/`nanoid`. build,
+`check:all`, e2e 4/4 ו-CI ירוקים. **הפרודקשן נשאר על 16.2.9 עד merge + `npm run deploy`** — ואז smoke:
+`/api/health`, login, PDF של דייר.
+
+**מה נשאר ב-production (18, 0 critical):** `nodemailer` (high, שדרוג **major** 8→9.1.1 מומלץ, בלי נגיעה בקוד),
+`puppeteer-core` (high, major, **רק אחרי** Node 22 בשרת וב-CI), `exceljs` (moderate, אין גרסה מתוקנת — `overrides`
+ל-uuid), ו-15 טרנזיטיביות שרובן (12) נסגרות ב-`npm audit fix`. ה-critical היחיד שנותר ב-audit הוא `vitest@2`
+(dev בלבד, לא ב-runtime).
 
 **ממצאים מפורטים** — production מול dev, גרסה מתוקנת, patch/minor/major ו-breaking changes לכל תלות ישירה:
-`docs/AUDIT.md`. סדר שדרוג מוצע שם: `next@16.3.4` → `nodemailer@9.1.1` → `npm audit fix` → `vitest@4` →
-`uuid` override תחת exceljs → `puppeteer-core@25` **רק אחרי** Node 22 בשרת וב-CI.
+`docs/AUDIT.md`. סדר ההמשך שם: `nodemailer@9.1.1` → `npm audit fix` → `vitest@4` → `uuid` override תחת exceljs →
+`puppeteer-core@25` **רק אחרי** Node 22 בשרת וב-CI.
 
 ```bash
 cd /var/www/billing && npm audit
 npm audit fix            # בלי --force; ואז npm run check:all
 ```
-שדרוגי major (vitest 2→4, puppeteer-core, nodemailer 8→…, next) — דרך PR-ים של Renovate
+שדרוגי major (nodemailer 8→9, vitest 2→4, puppeteer-core 24→25) — דרך PR-ים של Renovate
 או ידנית אחד-אחד עם `check:all` + e2e.
 
 ---
