@@ -5,6 +5,7 @@ import { sendResetPasswordEmail } from '@/services/email';
 import { appUrl } from '@/lib/config';
 import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { FORGOT_PASSWORD_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -43,7 +44,7 @@ export async function POST(req: Request) {
       await sendResetPasswordEmail(user.email, { userName, resetUrl });
     } catch (err) {
       // Anti-enumeration: do not leak send failures to caller.
-      console.error('[forgot-password] email send failed', err);
+      logger.error('[forgot-password] email send failed', err);
     }
   }
 

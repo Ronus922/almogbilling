@@ -17,6 +17,7 @@ import type {
   TaskStatus,
   TaskWritableFields,
 } from '@/lib/types/tasks';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -247,7 +248,7 @@ export async function POST(req: NextRequest) {
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
     }
-    console.error('[POST /api/tasks]', err);
+    logger.error('[POST /api/tasks]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

@@ -31,6 +31,7 @@ import {
   filterAddedAssignees,
 } from '@/services/createNotify';
 import { coerceNotifySelection } from '@/lib/notify/selection';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -294,7 +295,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
     }
-    console.error('[PATCH /api/tasks/[id]]', err);
+    logger.error('[PATCH /api/tasks/[id]]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

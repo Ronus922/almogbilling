@@ -42,7 +42,6 @@ export function usePoll<T>(
 
   const refetch = useCallback(async () => { await tick(); }, [tick]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     let cancelled = false;
     const loop = async () => {

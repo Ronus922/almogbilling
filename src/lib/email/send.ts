@@ -1,6 +1,7 @@
 import 'server-only';
 import { getTransporter } from './transporter';
 import { notifyAdminsOfSmtpAuthFailure } from './authAlert';
+import { logger } from '@/lib/logger';
 
 interface SendArgs {
   to: string;
@@ -67,7 +68,7 @@ export async function sendWithRetry(args: SendArgs): Promise<SendResult> {
       const { transporter, from } = await getTransporter();
       const info = await transporter.sendMail({ from, ...args });
       const result: SendResult = { messageId: String(info.messageId ?? ''), attempts: attempt };
-      console.info('[email] sent', JSON.stringify({ to: args.to, subject: args.subject, ...result }));
+      logger.info('[email] sent', JSON.stringify({ to: args.to, subject: args.subject, ...result }));
       return result;
     } catch (err) {
       if (isAuthFailure(err)) {

@@ -16,6 +16,7 @@ import { effectiveChannels } from '@/lib/notify/channels';
 import { getSignature, signatureWhatsApp } from '@/lib/notify/signature';
 import { appUrl } from '@/lib/config';
 import { todayInJerusalem, addDaysToIsoDate } from '@/lib/dates';
+import { logger } from '@/lib/logger';
 
 export interface ReminderRunResult {
   due: number;
@@ -264,7 +265,7 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
               result.emailed++;
             }
           } catch (err) {
-            console.error('[runReminders] email failed for reminder', reminder.id, err);
+            logger.error('[runReminders] email failed for reminder', reminder.id, err);
           }
         }
       }
@@ -297,7 +298,7 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
               result.whatsapped++;
             }
           } catch (err) {
-            console.error('[runReminders] whatsapp failed for reminder', reminder.id, err);
+            logger.error('[runReminders] whatsapp failed for reminder', reminder.id, err);
           }
         }
       }
@@ -305,7 +306,7 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
       result.processed++;
     } catch (err) {
       result.failed++;
-      console.error('[runReminders] failed for reminder', reminder.id, err);
+      logger.error('[runReminders] failed for reminder', reminder.id, err);
     }
   }
 
@@ -314,7 +315,7 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
   try {
     result.dueSoon = await scanTasksDueSoon();
   } catch (err) {
-    console.error('[runReminders] task_due_soon scan failed', err);
+    logger.error('[runReminders] task_due_soon scan failed', err);
   }
 
   return result;

@@ -8,6 +8,7 @@ import {
 import { coerceReminderCategoryInput } from '@/lib/validation/reminderCategories';
 import { writeAudit } from '@/lib/db/audit';
 import type { ReminderCategoryWritableFields } from '@/lib/types/reminderCategories';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -73,7 +74,7 @@ export async function POST(req: NextRequest) {
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
     }
-    console.error('[POST /api/reminder-categories]', err);
+    logger.error('[POST /api/reminder-categories]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

@@ -2,6 +2,7 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { getSmtpSettings } from '@/lib/db/appSettings';
+import { logger } from '@/lib/logger';
 
 const SMTP_HOST = 'smtp.gmail.com';
 const SMTP_PORT = 587;
@@ -48,7 +49,7 @@ export async function getTransporter(): Promise<{ transporter: Transporter; from
       greetingTimeout: 10_000,
       socketTimeout: 20_000,
     });
-    transporter.on('error', (e) => console.error('[smtp pool error]', e));
+    transporter.on('error', (e) => logger.error('[smtp pool error]', e));
     const from = `"${settings.fromName}" <${settings.user}>`;
     const cached: CachedTransporter = { transporter, from, hash };
     g._smtpCache = cached;

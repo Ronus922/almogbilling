@@ -20,6 +20,7 @@ import type {
   IssueStatus,
   IssueWritableFields,
 } from '@/lib/types/issues';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -50,7 +51,7 @@ async function notifyAdminsOfIssueReported(issue: Issue, actorId: string): Promi
       });
     }
   } catch (err) {
-    console.error('[issues] issue_reported notification failed', err);
+    logger.error('[issues] issue_reported notification failed', err);
   }
 }
 
@@ -241,7 +242,7 @@ export async function POST(req: NextRequest) {
     if (e.code === '23514') {
       return NextResponse.json({ error: 'invalid_value' }, { status: 400 });
     }
-    console.error('[POST /api/issues]', err);
+    logger.error('[POST /api/issues]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

@@ -16,6 +16,7 @@ import {
 } from '@/lib/constants/issues';
 import { isUuid } from '@/lib/validation/issues';
 import type { IssueImage } from '@/lib/types/issues';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ video, videos: result.videos }, { status: 201 });
   } catch (err) {
     if (uploadedPath) await removeIssueMedia([uploadedPath]);
-    console.error('[POST /api/issues/:id/videos]', err);
+    logger.error('[POST /api/issues/:id/videos]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

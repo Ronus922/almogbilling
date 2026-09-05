@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   }
 
   const sp = req.nextUrl.searchParams;
-  const module = sp.get('module') || undefined;
+  const moduleName = sp.get('module') || undefined;
   const priority = sp.get('priority') || undefined;
   const unreadRaw = sp.get('unread');
   const unread = unreadRaw === '1' ? true : unreadRaw === '0' ? false : undefined;
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   const pageSize = 20;
 
   const { items, total } = await listNotificationsPage(actor.id, {
-    module, priority, unread, page, pageSize,
+    module: moduleName, priority, unread, page, pageSize,
   });
   return NextResponse.json({ items, total, page, pageSize });
 }

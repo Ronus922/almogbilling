@@ -1,5 +1,6 @@
 import 'server-only';
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
+import { logger } from '@/lib/logger';
 
 const g = globalThis as unknown as { _pgPool?: Pool };
 
@@ -11,7 +12,7 @@ function getPool(): Pool {
       idleTimeoutMillis: 30_000,
     });
     g._pgPool.on('error', (err) => {
-      console.error('[pg pool error]', err);
+      logger.error('[pg pool error]', err);
     });
   }
   return g._pgPool;

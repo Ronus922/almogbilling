@@ -5,6 +5,7 @@ import { toArrayBuffer, worksheetToMatrix } from '@/lib/excel/workbook';
 import { query, queryOne } from '@/lib/db';
 import { upsertContactAndLinkDebtor } from '@/lib/db/contacts';
 import type { ContactWritableFields } from '@/lib/types/contacts';
+import { logger } from '@/lib/logger';
 
 const BATCH_SIZE = 50;
 const BATCH_THROTTLE_MS = 50;
@@ -200,7 +201,7 @@ export async function runContactsImport(runId: string, filePath: string): Promis
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error('[contacts-import:error]', runId, msg);
+    logger.error('[contacts-import:error]', runId, msg);
     await query(
       `update public.import_runs set status = 'failed', finished_at = now(), error_message = $2 where id = $1`,
       [runId, msg.slice(0, 1000)],

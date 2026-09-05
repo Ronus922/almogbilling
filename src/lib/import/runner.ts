@@ -12,6 +12,7 @@ import {
 import { upsertMonthlyDebtSnapshot } from '@/lib/db/debtors';
 import { ensureContactsForApartments } from '@/lib/db/contacts';
 import { accrueDebtorCollection, pruneDebtorSnapshotsNotIn } from '@/lib/db/collectionTracking';
+import { logger } from '@/lib/logger';
 
 const BATCH_SIZE = 50;
 const BATCH_THROTTLE_MS = 50;
@@ -81,7 +82,7 @@ export async function importParsedRows(
         try {
           await accrueDebtorCollection(r.apartment_number, r.total_debt);
         } catch (accErr) {
-          console.error('[import:accrue]', runId, r.apartment_number,
+          logger.error('[import:accrue]', runId, r.apartment_number,
             accErr instanceof Error ? accErr.message : String(accErr));
         }
       }
@@ -102,7 +103,7 @@ export async function importParsedRows(
     try {
       await pruneDebtorSnapshotsNotIn(importedApts);
     } catch (pruneErr) {
-      console.error('[import:prune-snapshots]', runId,
+      logger.error('[import:prune-snapshots]', runId,
         pruneErr instanceof Error ? pruneErr.message : String(pruneErr));
     }
 
@@ -121,7 +122,7 @@ export async function importParsedRows(
         await setRunErrorSummary(runId, summary);
       }
     } catch (regErr) {
-      console.error('[import:contacts-registry]', runId,
+      logger.error('[import:contacts-registry]', runId,
         regErr instanceof Error ? regErr.message : String(regErr));
     }
 
@@ -133,11 +134,11 @@ export async function importParsedRows(
       await upsertMonthlyDebtSnapshot();
     } catch (snapErr) {
       const m = snapErr instanceof Error ? snapErr.message : String(snapErr);
-      console.error('[import:snapshot]', runId, m);
+      logger.error('[import:snapshot]', runId, m);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('[import:error]', runId, msg);
+    logger.error('[import:error]', runId, msg);
     await finishRunError(runId, msg);
   }
 }

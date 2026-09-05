@@ -3,6 +3,7 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getThreadForParticipant, postMessage } from '@/lib/db/internalChat';
 import { MAX_MESSAGE_LENGTH } from '@/lib/types/internalChat';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -81,7 +82,7 @@ export async function POST(
     if (err instanceof Error && err.message === 'invalid_content') {
       return NextResponse.json({ error: 'invalid_content' }, { status: 400 });
     }
-    console.error('[POST /api/chat/conversations/[id]/messages]', err);
+    logger.error('[POST /api/chat/conversations/[id]/messages]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

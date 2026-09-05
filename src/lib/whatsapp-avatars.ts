@@ -2,6 +2,7 @@ import 'server-only';
 import type { InstanceCreds } from '@/lib/db/whatsappInstances';
 import { getAvatar } from '@/lib/whatsapp';
 import { listStaleAvatarChats, upsertAvatar } from '@/lib/db/whatsappAvatars';
+import { logger } from '@/lib/logger';
 
 // Lazy, best-effort avatar refresh. Called fire-and-forget AFTER the
 // conversations list is already returned, so it never delays the response.
@@ -46,7 +47,7 @@ export async function refreshStaleAvatars(
       await sleep(DELAY_MS);
     }
   } catch (err) {
-    console.error('[whatsapp/avatars] refresh failed', err);
+    logger.error('[whatsapp/avatars] refresh failed', err);
   } finally {
     refreshing = false;
   }

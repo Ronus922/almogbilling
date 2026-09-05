@@ -5,6 +5,7 @@ import { issueScopeUserId } from '@/lib/auth/issueAccess';
 import { reorderIssues, type IssueReorderItem } from '@/lib/db/issues';
 import { filterIssueIdsAssignedToUser } from '@/lib/db/entityAssignees';
 import type { IssuePriority } from '@/lib/types/issues';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -73,7 +74,7 @@ export async function PATCH(req: NextRequest) {
     await reorderIssues(items);
     return NextResponse.json({ ok: true, updated: items.length });
   } catch (err) {
-    console.error('[PATCH /api/issues/reorder]', err);
+    logger.error('[PATCH /api/issues/reorder]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { timingSafeEqual } from 'node:crypto';
 import { runReminders } from '@/lib/reminders/engine';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -31,7 +32,7 @@ export async function POST(req: NextRequest) {
     const result = await runReminders();
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
-    console.error('[POST /api/cron/reminders]', err);
+    logger.error('[POST /api/cron/reminders]', err);
     return NextResponse.json({ error: 'reminders_failed' }, { status: 500 });
   }
 }

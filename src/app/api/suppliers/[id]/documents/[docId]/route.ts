@@ -8,6 +8,7 @@ import {
 } from '@/lib/db/suppliers';
 import { removeSupplierFile, fileUrlForPath } from '@/lib/storage/supplierStorage';
 import { writeAudit } from '@/lib/db/audit';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -86,7 +87,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     const signed_url = fileUrlForPath(updated.file_url);
     return NextResponse.json({ document: { ...updated, signed_url } });
   } catch (err) {
-    console.error('[PATCH /api/suppliers/:id/documents/:docId]', err);
+    logger.error('[PATCH /api/suppliers/:id/documents/:docId]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }
@@ -121,7 +122,7 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
     });
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[DELETE /api/suppliers/:id/documents/:docId]', err);
+    logger.error('[DELETE /api/suppliers/:id/documents/:docId]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

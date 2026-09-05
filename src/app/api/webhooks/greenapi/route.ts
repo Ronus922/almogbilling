@@ -17,6 +17,7 @@ import {
   updateInstanceState,
   type InstanceState,
 } from '@/lib/db/whatsappInstances';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -74,14 +75,14 @@ export async function POST(req: NextRequest) {
 
   const instance = greenId ? await getInstanceByGreenId(greenId) : null;
   // One-line audit of every notification (typeWebhook + idInstance + resolved row).
-  console.info(
+  logger.info(
     `[webhooks/greenapi] type=${typeWebhook} idInstance=${greenId ?? '—'} instance=${instance?.id ?? 'UNKNOWN'}`,
   );
 
   if (!instance) {
     // A notification for an instance we don't manage (a freshly-created instance
     // whose row hasn't been saved, or a stale registration). Warn + ack.
-    console.warn(`[webhooks/greenapi] notification for unknown instance idInstance=${greenId ?? '—'} (type=${typeWebhook})`);
+    logger.warn(`[webhooks/greenapi] notification for unknown instance idInstance=${greenId ?? '—'} (type=${typeWebhook})`);
     return NextResponse.json({ ok: true });
   }
 
@@ -115,7 +116,7 @@ export async function POST(req: NextRequest) {
         // "statuses never reach us" problem is visible — but NOT on the duplicate
         // / out-of-order status webhooks Green API routinely re-delivers for a
         // known message (those are matched-but-not-advanced, and are normal).
-        console.warn(
+        logger.warn(
           `[webhooks/greenapi] outgoing status '${status.status}' for unknown message ${status.externalMessageId}`,
         );
       }
@@ -135,7 +136,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
   } catch (err) {
-    console.error('[webhooks/greenapi] processing failed', err);
+    logger.error('[webhooks/greenapi] processing failed', err);
   }
 
   // Unknown / unsupported notification — acknowledge and ignore.

@@ -8,6 +8,7 @@ import {
   ChatValidationError,
   MAX_GROUP_MEMBERS,
 } from '@/lib/db/internalChat';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
     }
-    console.error('[POST /api/chat/conversations]', err);
+    logger.error('[POST /api/chat/conversations]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

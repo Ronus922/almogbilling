@@ -5,6 +5,7 @@ import { getMessageContactPhone, setConversationLink } from '@/lib/db/chatMessag
 import { createSupplier } from '@/lib/db/suppliers';
 import { coerceAndValidateSupplier } from '@/lib/validation/suppliers';
 import { writeAudit } from '@/lib/db/audit';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_category' }, { status: 400 });
     }
-    console.error('[POST /api/whatsapp/messages/[id]/create-supplier]', err);
+    logger.error('[POST /api/whatsapp/messages/[id]/create-supplier]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

@@ -6,6 +6,7 @@ import {
   claimBatch, processRecipient, recoverLeases, reconcile, reconcileStale,
   type SendCreds,
 } from './engine';
+import { logger } from '@/lib/logger';
 
 // Standalone WhatsApp delivery worker. Runs as its OWN process (systemd on the
 // billing box — NOT inside the Next server, NOT tied to any HTTP request), owns
@@ -119,8 +120,9 @@ export class DeliveryWorker {
 }
 
 function defaultLog(event: string, data?: Record<string, unknown>) {
-  // structured, secret-free (never logs tokens or full message bodies)
-  console.log(JSON.stringify({ t: new Date().toISOString(), src: 'wa-worker', event, ...data }));
+  // structured, secret-free (never logs tokens or full message bodies);
+  // pino adds the timestamp — the fields land on the record, the event is the msg.
+  logger.info({ src: 'wa-worker', event, ...data }, event);
 }
 
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }

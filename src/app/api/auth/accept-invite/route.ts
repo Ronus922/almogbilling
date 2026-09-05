@@ -8,6 +8,7 @@ import { hashInviteToken } from '@/lib/auth/inviteTokens';
 import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { ACCEPT_INVITE_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
 import { MODULES, isMatrixRole, type ModulePermission, type Role } from '@/lib/permissions/constants';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -156,7 +157,7 @@ export async function POST(req: Request) {
     if (msg === 'user_already_exists') {
       return NextResponse.json({ error: 'user_already_exists' }, { status: 409 });
     }
-    console.error('[accept-invite] failed', err);
+    logger.error('[accept-invite] failed', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 

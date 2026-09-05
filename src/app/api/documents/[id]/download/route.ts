@@ -4,6 +4,7 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDocumentById } from '@/lib/db/documents';
 import { downloadDocumentFile, extOf } from '@/lib/storage/documentStorage';
 import { UUID_RE } from '@/lib/validation/documents';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -57,10 +58,10 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('supabase_storage_not_configured')) {
-      console.error('[GET /api/documents/:id/download] storage not configured');
+      logger.error('[GET /api/documents/:id/download] storage not configured');
       return NextResponse.json({ error: 'storage_not_configured' }, { status: 503 });
     }
-    console.error('[GET /api/documents/:id/download] download failed', err);
+    logger.error('[GET /api/documents/:id/download] download failed', err);
     return NextResponse.json({ error: 'download_failed' }, { status: 502 });
   }
   if (!blob) return NextResponse.json({ error: 'file_unavailable' }, { status: 502 });

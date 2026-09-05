@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/auth/actor';
 import type { Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { sendWithRetry } from '@/lib/email/send';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -83,7 +84,7 @@ export async function POST(req: Request) {
   try {
     await sendWithRetry({ to, subject, html, text });
   } catch (err) {
-    console.error('[settings/smtp/test] send failed', err);
+    logger.error('[settings/smtp/test] send failed', err);
     return NextResponse.json({ error: `שליחה נכשלה: ${(err as Error).message}` }, { status: 500 });
   }
 

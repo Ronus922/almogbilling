@@ -10,6 +10,7 @@ import { ALLOWED_DOC_TYPES, MAX_DOC_SIZE_BYTES, MAX_FILE_NAME_LEN } from '@/lib/
 import { UUID_RE } from '@/lib/validation/documents';
 import { writeAudit } from '@/lib/db/audit';
 import type { DocumentWithSignedUrl } from '@/lib/types/documents';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -109,10 +110,10 @@ export async function POST(req: NextRequest) {
     const msg = err instanceof Error ? err.message : String(err);
     // SERVICE_ROLE_KEY / storage URL missing — surface a clear, non-silent error.
     if (msg.includes('supabase_storage_not_configured')) {
-      console.error('[POST /api/documents] storage not configured (SUPABASE_SERVICE_ROLE_KEY missing)');
+      logger.error('[POST /api/documents] storage not configured (SUPABASE_SERVICE_ROLE_KEY missing)');
       return NextResponse.json({ error: 'storage_not_configured' }, { status: 503 });
     }
-    console.error('[POST /api/documents] upload failed', err);
+    logger.error('[POST /api/documents] upload failed', err);
     return NextResponse.json({ error: 'upload_failed' }, { status: 502 });
   }
 
@@ -142,7 +143,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const e = err as { code?: string };
     if (e.code === '23503') return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
-    console.error('[POST /api/documents]', err);
+    logger.error('[POST /api/documents]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

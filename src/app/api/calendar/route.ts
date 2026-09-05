@@ -7,6 +7,7 @@ import { listTasksWithDueDateInRange } from '@/lib/db/tasks';
 import { listIssuesWithDueDateInRange } from '@/lib/db/issues';
 import { listUserRemindersInRange } from '@/lib/db/userReminders';
 import type { CalendarItem } from '@/lib/types/calendar';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -95,7 +96,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ items });
   } catch (err) {
-    console.error('[GET /api/calendar]', err);
+    logger.error('[GET /api/calendar]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

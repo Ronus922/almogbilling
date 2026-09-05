@@ -568,7 +568,7 @@ function DebtorCard({ d }: { d: Debtor }) {
         )}
       >
         <span className={cn('text-[13px] font-bold', noDebt ? 'text-[#166534]' : 'text-[#991b1b]')}>
-          סה"כ חוב
+          סה&quot;כ חוב
         </span>
         <span
           className={cn(

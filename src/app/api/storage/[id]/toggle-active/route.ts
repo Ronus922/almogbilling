@@ -4,6 +4,7 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { toggleStorageUnitActive } from '@/lib/db/parking';
 import { isUuid, parkingBadRequest, parkingErrorResponse, parkingNotFound } from '@/lib/parking/apiErrors';
 import { coerceAndValidateToggleActive } from '@/lib/validation/parking';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -47,7 +48,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
   } catch (err) {
     const mapped = parkingErrorResponse(err);
     if (mapped) return mapped;
-    console.error('[POST /api/storage/:id/toggle-active]', err);
+    logger.error('[POST /api/storage/:id/toggle-active]', err);
     return NextResponse.json({ error: 'שגיאת שרת', code: 'server_error' }, { status: 500 });
   }
 }

@@ -5,6 +5,7 @@ import { requireAnyPermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorApartmentNumber } from '@/lib/db/debtors';
 import { SESSION_COOKIE } from '@/lib/constants';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -76,7 +77,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
       },
     });
   } catch (err) {
-    console.error('[GET /api/debtors/:id/pdf] render failed', err);
+    logger.error('[GET /api/debtors/:id/pdf] render failed', err);
     return NextResponse.json({ error: 'pdf_render_failed' }, { status: 502 });
   } finally {
     if (browser) await browser.close();

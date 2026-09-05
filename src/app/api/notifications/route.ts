@@ -38,17 +38,17 @@ export async function GET(req: NextRequest) {
   const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? limitRaw : 30;
 
   const onlyUnread = tab === 'unread' || sp.get('unread') === '1';
-  const module = MODULE_TABS.has(tab) ? tab : undefined;
+  const moduleName = MODULE_TABS.has(tab) ? tab : undefined;
   // A dedicated surface (WhatsApp / internal chat) owns its own dropdown + badge;
   // the bell shows everything EXCEPT those. The three never overlap.
-  const isDedicated = module === WHATSAPP_MODULE || module === INTERNAL_CHAT_MODULE;
+  const isDedicated = moduleName === WHATSAPP_MODULE || moduleName === INTERNAL_CHAT_MODULE;
 
   // List: a module tab filters to that module; all/unread → the bell surface.
-  const listScope = module ? { module } : { excludeModules: DEDICATED_MODULES };
+  const listScope = moduleName ? { module: moduleName } : { excludeModules: DEDICATED_MODULES };
   // Badge: a dedicated tab counts ONLY its own module; every other tab (bell
   // tabs: all/unread/tasks/issues/calendar) shows the bell count. So the
   // returned unreadCount matches the surface the caller renders (no double-count).
-  const countScope = isDedicated ? { module } : { excludeModules: DEDICATED_MODULES };
+  const countScope = isDedicated ? { module: moduleName } : { excludeModules: DEDICATED_MODULES };
 
   const [items, unreadCount] = await Promise.all([
     listNotifications(actor.id, { onlyUnread, limit, ...listScope }),

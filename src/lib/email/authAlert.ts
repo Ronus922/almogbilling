@@ -3,6 +3,7 @@ import { createNotification } from '@/lib/db/notifications';
 import { listActiveAdmins } from '@/lib/db/users';
 import { claimSmtpAuthAlertSlot } from '@/lib/db/appSettings';
 import { DEFAULT_TITLE } from '@/lib/notifications/registry';
+import { logger } from '@/lib/logger';
 
 export const SMTP_AUTH_ALERT_MESSAGE =
   'שליחת מייל נכשלה — אימות SMTP נדחה. יש לעדכן App Password בהגדרות מייל';
@@ -40,10 +41,10 @@ export async function notifyAdminsOfSmtpAuthFailure(): Promise<void> {
           dedupeKey: `smtp_auth_failed:${admin.id}:${slot.at}`,
         });
       } catch (err) {
-        console.error('[smtp auth alert] notification insert failed for', admin.id, err);
+        logger.error('[smtp auth alert] notification insert failed for', admin.id, err);
       }
     }
   } catch (err) {
-    console.error('[smtp auth alert] failed', err);
+    logger.error('[smtp auth alert] failed', err);
   }
 }

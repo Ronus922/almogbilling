@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { markControllerSynced } from '@/lib/db/chips';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -33,7 +34,7 @@ export async function POST(_req: NextRequest, ctx: RouteCtx) {
     }
     return NextResponse.json({ chip });
   } catch (err) {
-    console.error('[POST /api/chips/:id/controller-sync]', err);
+    logger.error('[POST /api/chips/:id/controller-sync]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

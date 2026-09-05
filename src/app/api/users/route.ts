@@ -22,6 +22,7 @@ import {
 import { sendUserInviteEmail } from '@/services/email';
 import { MODULES, ROLES, isMatrixRole, type Role } from '@/lib/permissions/constants';
 import { appUrl } from '@/lib/config';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -184,7 +185,7 @@ export async function POST(req: NextRequest) {
       if (e.code === '23505') {
         return NextResponse.json({ error: 'כתובת המייל כבר רשומה במערכת' }, { status: 409 });
       }
-      console.error('[users POST direct-create]', err);
+      logger.error('[users POST direct-create]', err);
       return NextResponse.json({ error: 'server_error' }, { status: 500 });
     }
 
@@ -234,7 +235,7 @@ export async function POST(req: NextRequest) {
       acceptUrl,
     });
   } catch (err) {
-    console.error('[users POST] invite email failed', err);
+    logger.error('[users POST] invite email failed', err);
     // Keep the invite — admin can use "resend" later.
   }
 

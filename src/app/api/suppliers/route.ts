@@ -5,6 +5,7 @@ import { listSuppliers, createSupplier } from '@/lib/db/suppliers';
 import { coerceAndValidateSupplier } from '@/lib/validation/suppliers';
 import { writeAudit } from '@/lib/db/audit';
 import type { SupplierStatusFilter } from '@/lib/types/suppliers';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -77,7 +78,7 @@ export async function POST(req: NextRequest) {
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_category' }, { status: 400 });
     }
-    console.error('[POST /api/suppliers]', err);
+    logger.error('[POST /api/suppliers]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

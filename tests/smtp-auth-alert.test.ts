@@ -6,6 +6,11 @@ vi.mock('@/lib/db/users', () => ({ listActiveAdmins: vi.fn() }));
 vi.mock('@/lib/db/notifications', () => ({ createNotification: vi.fn() }));
 // ── Part B: send.ts wiring (transporter + alert are mocked, nothing hits SMTP)
 vi.mock('@/lib/email/transporter', () => ({ getTransporter: vi.fn() }));
+// The send path logs through the app logger (no console since infra(2)); mock it
+// so the "exactly one line, no body" assertion reads logger.info's calls.
+vi.mock('@/lib/logger', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 vi.mock('@/lib/email/authAlert', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/lib/email/authAlert')>();
   return { ...real, notifyAdminsOfSmtpAuthFailure: vi.fn(async () => undefined) };
@@ -17,6 +22,7 @@ import { createNotification } from '@/lib/db/notifications';
 import { getTransporter } from '@/lib/email/transporter';
 import { notifyAdminsOfSmtpAuthFailure, SMTP_AUTH_ALERT_MESSAGE } from '@/lib/email/authAlert';
 import { sendWithRetry, isAuthFailure } from '@/lib/email/send';
+import { logger } from '@/lib/logger';
 import { NOTIFICATION_REGISTRY } from '@/lib/notifications/registry';
 
 const claim = vi.mocked(claimSmtpAuthAlertSlot);
@@ -34,8 +40,6 @@ const realAlert = async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  vi.spyOn(console, 'info').mockImplementation(() => undefined);
 });
 
 describe('smtp_auth_failed — registry contract', () => {
@@ -146,7 +150,7 @@ describe('sendWithRetry — auth failure path + success log', () => {
   it('success → returns messageId + attempts and logs exactly one line without the body', async () => {
     const sendMail = vi.fn().mockResolvedValue({ messageId: '<id-1@example.com>' });
     fakeTransport(sendMail);
-    const info = vi.mocked(console.info);
+    const info = vi.mocked(logger.info);
     const r = await sendWithRetry(args);
     expect(r).toEqual({ messageId: '<id-1@example.com>', attempts: 1 });
     expect(alert).not.toHaveBeenCalled();

@@ -7,6 +7,7 @@ import { replaceContactPeople } from '@/lib/db/contactPeople';
 import { coerceContactInput, coerceContactPeople } from '@/lib/validation/contacts';
 import { getBillingSettings } from '@/lib/db/appSettings';
 import { computeManagementFee } from '@/lib/billing/managementFee';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -79,7 +80,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
     }
-    console.error('[PATCH /api/contacts/:id]', err);
+    logger.error('[PATCH /api/contacts/:id]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

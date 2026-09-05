@@ -6,6 +6,7 @@ import { sendStatusChangeNotification } from '@/services/email';
 import { getLegalContact } from '@/lib/db/appSettings';
 import { isLegalStatusName } from '@/lib/constants/statuses';
 import { buildLegalStatusRecipients } from '@/lib/notify/legalStatusRecipients';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -77,7 +78,7 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
         });
       }
     } catch (err) {
-      console.error('[legal-status] email notification failed', err);
+      logger.error('[legal-status] email notification failed', err);
     }
   }
 

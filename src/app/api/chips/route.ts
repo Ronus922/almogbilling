@@ -28,6 +28,7 @@ import type {
   IssueChipGroup,
   IssueChipsInput,
 } from '@/lib/types/chips';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -63,7 +64,7 @@ async function notifyAdminsOfChipIssued(
       });
     }
   } catch (err) {
-    console.error('[chips] chip_issued notification failed', err);
+    logger.error('[chips] chip_issued notification failed', err);
   }
 }
 
@@ -353,7 +354,7 @@ export async function POST(req: NextRequest) {
         { status: 422 },
       );
     }
-    console.error('[POST /api/chips]', err);
+    logger.error('[POST /api/chips]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

@@ -13,6 +13,7 @@ import {
 import { ALLOWED_DOC_TYPES, MAX_DOC_SIZE_BYTES } from '@/lib/constants/suppliers';
 import { writeAudit } from '@/lib/db/audit';
 import type { SupplierDocument } from '@/lib/types/suppliers';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -106,7 +107,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     const signed_url = fileUrlForPath(document.file_url);
     return NextResponse.json({ document: { ...document, signed_url } }, { status: 201 });
   } catch (err) {
-    console.error('[POST /api/suppliers/:id/documents]', err);
+    logger.error('[POST /api/suppliers/:id/documents]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

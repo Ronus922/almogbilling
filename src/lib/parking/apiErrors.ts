@@ -2,6 +2,7 @@ import 'server-only';
 import { NextResponse } from 'next/server';
 import { ApartmentNotFoundError, ParkingConflictError } from '@/lib/db/parking';
 import { parkingErrorMessage, type ParkingErrorCode } from '@/lib/validation/parking';
+import { logger } from '@/lib/logger';
 
 // One place where a thrown domain/DB error becomes an HTTP response, so all
 // eight parking/storage routes answer the same way. Every body carries BOTH a
@@ -87,7 +88,7 @@ export function parkingErrorResponse(err: unknown): NextResponse | null {
   // first. Answer in Hebrew rather than 500, but log it: reaching here means
   // validation and the schema have drifted apart.
   if (e.code === '23514') {
-    console.error('[parking] CHECK violation reached the DB — validation gap', e.constraint);
+    logger.error('[parking] CHECK violation reached the DB — validation gap', e.constraint);
     return NextResponse.json(
       { error: 'הנתונים אינם תקינים', code: 'invalid_data' },
       { status: 400 },

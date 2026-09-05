@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { reactivateChip, ChipNumberTakenError, ChipStateError } from '@/lib/db/chips';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     if (err instanceof ChipStateError) {
       return NextResponse.json({ error: 'הצ׳יפ כבר פעיל' }, { status: 409 });
     }
-    console.error('[POST /api/chips/:id/reactivate]', err);
+    logger.error('[POST /api/chips/:id/reactivate]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

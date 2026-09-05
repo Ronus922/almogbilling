@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getAreaById, updateArea, deleteArea } from '@/lib/db/areas';
 import { coerceAndValidateArea } from '@/lib/validation/areas';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -59,7 +60,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     }
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[PATCH /api/areas/:id]', err);
+    logger.error('[PATCH /api/areas/:id]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

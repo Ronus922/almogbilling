@@ -5,6 +5,7 @@ import { sendAndRecordWhatsApp } from '@/lib/whatsapp-send';
 import type { Actor } from '@/lib/auth/actor';
 import type { DebtorContact } from '@/lib/db/debtors';
 import type { InstanceCreds } from '@/lib/db/whatsappInstances';
+import { logger } from '@/lib/logger';
 
 // Send one free-text message from the /messages inbox composer.
 //   • Linked conversation (debtor known) → reuse sendAndRecordWhatsApp so the
@@ -82,7 +83,7 @@ export async function sendChatMessageToPhone(args: {
         instanceId: creds.id,
       });
     } catch (logErr) {
-      console.error('[whatsapp/chat-send] failed to record failed row', logErr);
+      logger.error('[whatsapp/chat-send] failed to record failed row', logErr);
     }
     return { ok: false, error: detail, messageId: failedId ?? undefined };
   }

@@ -4,6 +4,7 @@ import { importParsedRows } from '@/lib/import/runner';
 import { finishRunError } from '@/lib/db/importRuns';
 import { splitOwnerTenantPhones } from '@/lib/whatsapp';
 import type { ParsedDebtorRow } from '@/lib/excel/parse';
+import { logger } from '@/lib/logger';
 
 /**
  * Pulls the current Bllink debt report from the CRM's `debtor_records`
@@ -236,7 +237,7 @@ export async function syncDebtorsFromCrm(runId: string): Promise<number> {
       `bllink_sync_aborted: current Bllink run has ${report.count} apartments, below the safety ` +
       `floor ${floor} (min ${MIN_ROWS}, ${Math.round(MIN_FRACTION * 100)}% of ${billingDebtors} current debtors). ` +
       `Suspected partial/failed download — refusing to overwrite. NOTHING was written or zeroed.`;
-    console.error(summary, '\n', msg);
+    logger.error(summary, '\n', msg);
     await finishRunError(runId, msg);
     throw new Error(msg);
   }
@@ -246,12 +247,12 @@ export async function syncDebtorsFromCrm(runId: string): Promise<number> {
       `bllink_sync_aborted: source totals inconsistent (Σtotal=${report.rawTotal.toFixed(2)} ≠ ` +
       `Σcomponents=${report.componentTotal.toFixed(2)}, Δ=${reconDelta.toFixed(2)}). ` +
       `Refusing to overwrite. NOTHING was written or zeroed.`;
-    console.error(summary, '\n', msg);
+    logger.error(summary, '\n', msg);
     await finishRunError(runId, msg);
     throw new Error(msg);
   }
 
-  console.info(
+  logger.info(
     `${summary}\n[bllink:sync] guards passed — absolute overwrite of ${report.count} apartments + ` +
       `zero-out of every other non-archived apartment (paid off / absent from Bllink).`,
   );

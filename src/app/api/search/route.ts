@@ -3,6 +3,7 @@ import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
 import { issueScopeUserId } from '@/lib/auth/issueAccess';
 import { query } from '@/lib/db';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -194,7 +195,7 @@ export async function GET(req: NextRequest) {
   const results: SearchResult[] = [];
   for (const s of settled) {
     if (s.status === 'fulfilled') results.push(...s.value);
-    else console.error('[GET /api/search] source failed', s.reason);
+    else logger.error('[GET /api/search] source failed', s.reason);
   }
 
   return NextResponse.json(results);

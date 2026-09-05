@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { reorderTasks, type ReorderItem } from '@/lib/db/tasks';
 import type { TaskPriority } from '@/lib/types/tasks';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -59,7 +60,7 @@ export async function PATCH(req: NextRequest) {
     await reorderTasks(items);
     return NextResponse.json({ ok: true, updated: items.length });
   } catch (err) {
-    console.error('[PATCH /api/tasks/reorder]', err);
+    logger.error('[PATCH /api/tasks/reorder]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

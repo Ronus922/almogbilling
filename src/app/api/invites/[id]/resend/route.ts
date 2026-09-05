@@ -10,6 +10,7 @@ import {
 import { sendUserInviteEmail } from '@/services/email';
 import { ROLES, type Role } from '@/lib/permissions/constants';
 import { appUrl } from '@/lib/config';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
       acceptUrl,
     });
   } catch (err) {
-    console.error('[invites/resend] email failed', err);
+    logger.error('[invites/resend] email failed', err);
     return NextResponse.json({ error: 'שליחת המייל נכשלה' }, { status: 502 });
   }
 

@@ -29,6 +29,7 @@ import {
 } from '@/services/createNotify';
 import { coerceNotifySelection } from '@/lib/notify/selection';
 import type { IssueImage } from '@/lib/types/issues';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -283,7 +284,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     if (e.code === '23514') {
       return NextResponse.json({ error: 'invalid_value' }, { status: 400 });
     }
-    console.error('[PATCH /api/issues/[id]]', err);
+    logger.error('[PATCH /api/issues/[id]]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

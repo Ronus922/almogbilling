@@ -7,6 +7,7 @@ import {
   getSmtpSettingsPublic,
   updateSmtpSettings,
 } from '@/lib/db/appSettings';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -70,7 +71,7 @@ export async function PUT(req: Request) {
     if (err instanceof AppSettingsValidationError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
-    console.error('[settings/smtp PUT] failed', err);
+    logger.error('[settings/smtp PUT] failed', err);
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
   }
 

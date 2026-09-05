@@ -2,6 +2,7 @@ import 'server-only';
 import { sendWithRetry } from '@/lib/email/send';
 import { renderTemplate } from '@/lib/email-templates';
 import { getSignature, signatureHtml, signaturePlainLines } from '@/lib/notify/signature';
+import { logger } from '@/lib/logger';
 
 /**
  * Real Gmail-SMTP send (Slice 5).
@@ -158,7 +159,7 @@ export async function sendStatusChangeNotification(
       sent++;
     } catch (err) {
       failed++;
-      console.error('[sendStatusChangeNotification] failed for', to, err);
+      logger.error('[sendStatusChangeNotification] failed for', to, err);
     }
   }
   return { sent, failed };
