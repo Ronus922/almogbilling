@@ -6,10 +6,12 @@
 הבדיקות שכותבות (הוכחת unique/idempotency) רצות מול **מסד חד־פעמי** שנוצר ונמחק
 בכל ריצה — לעולם לא מול 288 הדיירים האמיתיים.
 
-> **על lint:** לפרויקט הזה אין ESLint מוגדר (Next 16 הסיר את `next lint`, ואין
-> קונפיג). לכן `check:all` מריץ **typecheck** + **`npm test`** (חבילת vitest,
-> 284 בדיקות יחידה עוברות + 22 מדולגות) + כל בדיקות האינווריאנטות — שכבת ה-lint מוחלפת ב-typecheck
-> המחמיר + בדיקות היחידה.
+> **על lint (מ-05/09/2026):** ESLint 9 flat config (`eslint.config.mjs`) — presets של
+> `eslint-config-next` + שני כללי הברזל כ-`error`: `@typescript-eslint/no-explicit-any`
+> ו-`no-console` (לוגים דרך `src/lib/logger.ts`). בנוסף **SafeQL** מאמת כל SQL סטטי
+> שמועבר ל-`query`/`queryOne`/`client.query`/`pool.query` מול הסכימה החיה של
+> `DATABASE_URL` (טבלה/עמודה לא קיימת, שגיאת תחביר) — ראה `scripts/lint/`. לכן
+> `check:all` = **typecheck → lint → `npm test` → בדיקות האינווריאנטות**.
 
 ## הבדיקות — מה כל אחת מגינה
 
@@ -40,7 +42,7 @@
 ### הרצה בודדת
 ```bash
 npm run check:money   # או check:secrets / check:auth / check:rbac / check:phone / check:session / check:dupes / check:wa
-npm run check:all     # typecheck + vitest + כל בדיקות האינווריאנטות, עוצר על הכישלון הראשון
+npm run check:all     # typecheck + lint + vitest + כל בדיקות האינווריאנטות, עוצר על הכישלון הראשון
 ```
 
 > `check:secrets` קורא את `/etc/billing/billing.env` דרך `sudo -n cat` (מותר ל-
