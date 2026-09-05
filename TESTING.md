@@ -49,6 +49,12 @@ npm run check:all     # typecheck + lint + vitest + כל בדיקות האינו
 > deploy). בלי sudo הבדיקה יורדת אוטומטית ל-`.env.local` בלבד ומדווחת על כך —
 > לא נכשלת.
 
+## בדיקות קצה-לקצה (Playwright)
+
+`npm run test:e2e` — ארבע בדיקות מול ה-build האמיתי, DB בדיקה ו-Mailpit: התחברות,
+שינוי סטטוס משפטי, שמירת הגדרות SMTP, שליחת מייל בדיקה. פרטים והרצה: `docs/e2e.md`.
+רצות ב-CI כ-job נפרד.
+
 ## תוכנית בדיקה ידנית (לפני deploy)
 
 בצע בדפדפן על הפרודקשן אחרי ש-`npm run check:all` ירוק:

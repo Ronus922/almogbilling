@@ -4,8 +4,11 @@ import nodemailer, { type Transporter } from 'nodemailer';
 import { getSmtpSettings } from '@/lib/db/appSettings';
 import { logger } from '@/lib/logger';
 
-const SMTP_HOST = 'smtp.gmail.com';
-const SMTP_PORT = 587;
+// Gmail by default. The three env overrides exist for the e2e environment,
+// which points them at Mailpit (docker-compose.e2e.yml); production sets none.
+const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
+const SMTP_PORT = Number(process.env.SMTP_PORT) || 587;
+const SMTP_REQUIRE_TLS = process.env.SMTP_REQUIRE_TLS !== 'false';
 
 interface CachedTransporter {
   transporter: Transporter;
@@ -40,7 +43,7 @@ export async function getTransporter(): Promise<{ transporter: Transporter; from
       host: SMTP_HOST,
       port: SMTP_PORT,
       secure: false,
-      requireTLS: true,
+      requireTLS: SMTP_REQUIRE_TLS,
       auth: { user: settings.user, pass: settings.pass },
       pool: true,
       maxConnections: 3,

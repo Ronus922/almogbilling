@@ -1,0 +1,18 @@
+# Mailpit — SMTP sink + HTTP API for the e2e suite (local and CI).
+#   docker compose -f docker-compose.e2e.yml up -d
+#   UI/API: http://127.0.0.1:${MAILPIT_HTTP_PORT:-55580}   SMTP: 127.0.0.1:${MAILPIT_SMTP_PORT:-55525}
+# Ports default to the 555xx range because 1025/8025/5432-5434/8000/8443 are
+# taken on the shared server. Auth is accepted from any client so the app's
+# Gmail-style user/password login just works without TLS.
+name: billing-e2e
+services:
+  mailpit:
+    image: axllent/mailpit:v1.31.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-55525}:1025"
+      - "127.0.0.1:${MAILPIT_HTTP_PORT:-55580}:8025"
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+      MP_MAX_MESSAGES: "500"
