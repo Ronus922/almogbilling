@@ -106,7 +106,7 @@ function wrap(p: PinoLogger): Logger {
 }
 
 const options: LoggerOptions = {
-  level: process.env.LOG_LEVEL ?? (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
   // No pid/hostname per line — systemd/journald already attributes the stream.
   base: undefined,
   timestamp: pino.stdTimeFunctions.isoTime,

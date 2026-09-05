@@ -3,12 +3,13 @@ import { createHash } from 'node:crypto';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { getSmtpSettings } from '@/lib/db/appSettings';
 import { logger } from '@/lib/logger';
+import { env } from '@/env';
 
 // Gmail by default. The three env overrides exist for the e2e environment,
 // which points them at Mailpit (docker-compose.e2e.yml); production sets none.
-const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
-const SMTP_PORT = Number(process.env.SMTP_PORT) || 587;
-const SMTP_REQUIRE_TLS = process.env.SMTP_REQUIRE_TLS !== 'false';
+const SMTP_HOST = env.SMTP_HOST || 'smtp.gmail.com';
+const SMTP_PORT = Number(env.SMTP_PORT) || 587;
+const SMTP_REQUIRE_TLS = env.SMTP_REQUIRE_TLS !== 'false';
 
 interface CachedTransporter {
   transporter: Transporter;

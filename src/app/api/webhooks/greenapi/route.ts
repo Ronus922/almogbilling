@@ -18,6 +18,7 @@ import {
   type InstanceState,
 } from '@/lib/db/whatsappInstances';
 import { logger } from '@/lib/logger';
+import { env } from '@/env';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -51,7 +52,7 @@ function secretMatches(provided: string, expected: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
-  const expected = process.env.GREEN_API_WEBHOOK_SECRET ?? '';
+  const expected = env.GREEN_API_WEBHOOK_SECRET ?? '';
   const provided = req.nextUrl.searchParams.get('secret') ?? '';
   if (!secretMatches(provided, expected)) {
     return new NextResponse(null, { status: 401 });

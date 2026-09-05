@@ -7,6 +7,7 @@ import {
   type SendCreds,
 } from './engine';
 import { logger } from '@/lib/logger';
+import { env } from '@/env';
 
 // Standalone WhatsApp delivery worker. Runs as its OWN process (systemd on the
 // billing box — NOT inside the Next server, NOT tied to any HTTP request), owns
@@ -142,7 +143,7 @@ async function resolveInstanceCreds(pool: Pool, instanceId: string | null): Prom
 }
 
 function decryptToken(blob: { iv: string; ct: string; tag: string }): string {
-  const key = Buffer.from(process.env.SETTINGS_ENC_KEY ?? '', 'base64');
+  const key = Buffer.from(env.SETTINGS_ENC_KEY ?? '', 'base64');
   if (key.length !== 32) throw new Error('SETTINGS_ENC_KEY missing/invalid (fail-closed)');
   const d = createDecipheriv('aes-256-gcm', key, Buffer.from(blob.iv, 'base64'));
   d.setAuthTag(Buffer.from(blob.tag, 'base64'));

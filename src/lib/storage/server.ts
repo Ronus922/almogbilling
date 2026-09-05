@@ -2,6 +2,7 @@ import 'server-only';
 import { StorageClient } from '@supabase/storage-js';
 import { appUrl } from '@/lib/config';
 import { logger } from '@/lib/logger';
+import { env } from '@/env';
 
 /**
  * THE single chokepoint for Supabase Storage access.
@@ -28,8 +29,8 @@ export type PrivateBucket = (typeof PRIVATE_BUCKETS)[number];
 export const WHATSAPP_MEDIA_BUCKET = 'whatsapp-media';
 
 export function getStorage(): StorageClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error('supabase_storage_not_configured');
   return new StorageClient(`${url.replace(/\/$/, '')}/storage/v1`, {
     apikey: key,

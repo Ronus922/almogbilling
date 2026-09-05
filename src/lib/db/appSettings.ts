@@ -2,6 +2,7 @@ import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import { encrypt, decrypt, type EncryptedBlob } from '@/lib/crypto/settings-cipher';
 import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legalContact';
+import { env } from '@/env';
 
 const SMTP_KEY = 'smtp';
 const BILLING_KEY = 'billing';
@@ -63,9 +64,9 @@ export async function getSmtpSettings(): Promise<SmtpSettings> {
     };
   }
 
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const fromName = process.env.SMTP_FROM_NAME ?? 'ALMOG CRM';
+  const user = env.SMTP_USER;
+  const pass = env.SMTP_PASS;
+  const fromName = env.SMTP_FROM_NAME ?? 'ALMOG CRM';
   if (!user || !pass) {
     throw new Error('SMTP not configured: no DB row and SMTP_USER/SMTP_PASS env not set');
   }
@@ -86,9 +87,9 @@ export async function getSmtpSettingsPublic(): Promise<SmtpSettingsPublic> {
     };
   }
   return {
-    fromEmail: process.env.SMTP_USER ?? '',
-    fromName: process.env.SMTP_FROM_NAME ?? 'ALMOG CRM',
-    hasPassword: Boolean(process.env.SMTP_PASS),
+    fromEmail: env.SMTP_USER ?? '',
+    fromName: env.SMTP_FROM_NAME ?? 'ALMOG CRM',
+    hasPassword: Boolean(env.SMTP_PASS),
   };
 }
 

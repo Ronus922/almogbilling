@@ -6,6 +6,7 @@ import { createSyncRun, finishSyncRunSuccess, finishSyncRunError } from '@/lib/d
 import { syncDebtorsFromCrm } from '@/lib/sync/bllinkPull';
 import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { SYNC_BLLINK_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
+import { env } from '@/env';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -47,8 +48,8 @@ export async function POST(req: Request) {
 
   // Step 1 — ask the CRM to re-scrape Bllink (best-effort; awaited so the pull
   // below sees the fresh snapshot when the scrape succeeds).
-  const cronUrl = process.env.CRM_SYNC_URL;
-  const cronSecret = process.env.CRM_CRON_SECRET;
+  const cronUrl = env.CRM_SYNC_URL;
+  const cronSecret = env.CRM_CRON_SECRET;
   let scrapeTriggered = false;
   if (cronUrl && cronSecret) {
     try {

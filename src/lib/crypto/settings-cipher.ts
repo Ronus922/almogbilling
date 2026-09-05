@@ -1,5 +1,6 @@
 import 'server-only';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { env } from '@/env';
 
 const ALGO = 'aes-256-gcm';
 const IV_BYTES = 12;
@@ -12,7 +13,7 @@ export interface EncryptedBlob {
 }
 
 function getKey(): Buffer {
-  const k = process.env.SETTINGS_ENC_KEY;
+  const k = env.SETTINGS_ENC_KEY;
   if (!k) throw new Error('SETTINGS_ENC_KEY is not set (fail-closed)');
   const buf = Buffer.from(k, 'base64');
   if (buf.length !== KEY_BYTES) {

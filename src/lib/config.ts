@@ -1,4 +1,5 @@
 import 'server-only';
+import { env } from '@/env';
 
 /**
  * Single source of truth for the public app URL.
@@ -7,8 +8,8 @@ import 'server-only';
  * if missing, falls back to localhost in dev.
  */
 export function appUrl(): string {
-  const env = process.env.APP_URL?.trim();
-  if (env) return env.replace(/\/+$/, ''); // strip trailing slash
+  const configured = env.APP_URL?.trim();
+  if (configured) return configured.replace(/\/+$/, ''); // strip trailing slash
   if (process.env.NODE_ENV === 'production') {
     throw new Error('APP_URL is required in production');
   }

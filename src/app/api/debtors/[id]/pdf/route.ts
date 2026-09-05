@@ -6,13 +6,14 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorApartmentNumber } from '@/lib/db/debtors';
 import { SESSION_COOKIE } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { env } from '@/env';
 
 export const runtime = 'nodejs';
 
-const CHROME_PATH = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
+const CHROME_PATH = env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 // billing serves on loopback :3003; the renderer hits the print page there with
 // the caller's session cookie forwarded so the auth-gated page renders as them.
-const INTERNAL_BASE = process.env.INTERNAL_BASE_URL || 'http://127.0.0.1:3003';
+const INTERNAL_BASE = env.INTERNAL_BASE_URL || 'http://127.0.0.1:3003';
 const RENDER_TIMEOUT_MS = 30_000;
 
 interface RouteCtx {

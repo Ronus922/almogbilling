@@ -4,10 +4,10 @@ import type { Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { sendWithRetry } from '@/lib/email/send';
 import { logger } from '@/lib/logger';
+import { parseJsonBody } from '@/lib/http/body';
+import { smtpTestBodySchema } from '@/lib/validation/requests';
 
 export const runtime = 'nodejs';
-
-const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => {
@@ -28,17 +28,9 @@ export async function POST(req: Request) {
     throw err;
   }
 
-  let body: { to?: unknown };
-  try {
-    body = (await req.json()) as { to?: unknown };
-  } catch {
-    return NextResponse.json({ error: 'invalid json' }, { status: 400 });
-  }
-
-  const to = typeof body.to === 'string' ? body.to.trim() : '';
-  if (!EMAIL_RX.test(to)) {
-    return NextResponse.json({ error: 'כתובת אימייל לא תקינה' }, { status: 400 });
-  }
+  const body = await parseJsonBody(req, smtpTestBodySchema);
+  if (!body.ok) return body.response;
+  const { to } = body.data;
 
   const senderLabel = actor.full_name?.trim() || actor.email;
   const sentAt = new Date().toLocaleString('he-IL', {
