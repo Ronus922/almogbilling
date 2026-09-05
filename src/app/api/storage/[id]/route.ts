@@ -4,6 +4,7 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { updateStorageUnit } from '@/lib/db/parking';
 import { isUuid, parkingBadRequest, parkingErrorResponse, parkingNotFound } from '@/lib/parking/apiErrors';
 import { coerceAndValidateStorageUnit } from '@/lib/validation/parking';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -44,7 +45,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   } catch (err) {
     const mapped = parkingErrorResponse(err);
     if (mapped) return mapped;
-    console.error('[PATCH /api/storage/:id]', err);
+    logger.error('[PATCH /api/storage/:id]', err);
     return NextResponse.json({ error: 'שגיאת שרת', code: 'server_error' }, { status: 500 });
   }
 }

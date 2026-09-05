@@ -8,6 +8,7 @@ import {
   createStatus,
 } from '@/lib/db/statuses';
 import { validateStatusForm } from '@/lib/validation/status';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -82,7 +83,7 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-    console.error('[POST /api/statuses]', err);
+    logger.error('[POST /api/statuses]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

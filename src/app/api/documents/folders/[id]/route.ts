@@ -10,6 +10,7 @@ import {
 } from '@/lib/db/documents';
 import { coerceFolderInput, UUID_RE } from '@/lib/validation/documents';
 import { writeAudit } from '@/lib/db/audit';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -103,7 +104,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   } catch (err) {
     const e = err as { code?: string };
     if (e.code === '23503') return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
-    console.error('[PATCH /api/documents/folders/[id]]', err);
+    logger.error('[PATCH /api/documents/folders/[id]]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

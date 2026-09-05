@@ -7,30 +7,44 @@ import { dirname, join, resolve } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-// Load a KEY=VALUE env file into process.env WITHOUT overriding already-set vars
-// (so CI can inject instead). Quotes stripped. Missing file = no-op.
-export function loadEnvFile(path) {
-  if (!existsSync(path)) return false;
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
+// Parse KEY=VALUE lines (optional `export`, surrounding quotes stripped) into
+// a plain map. Shared by the .env.local loader and the runtime-secrets reader so
+// both agree on what a value is.
+function parseEnvText(text) {
+  const out = {};
+  for (const line of text.split('\n')) {
     const m = line.match(/^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
     if (!m) continue;
     let v = m[2].trim();
     if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
       v = v.slice(1, -1);
     }
-    if (process.env[m[1]] === undefined) process.env[m[1]] = v;
+    out[m[1]] = v;
   }
-  return true;
+  return out;
 }
 
-// Local dev env (contains DATABASE_URL / DIRECT_URL for the checks).
+// Load a KEY=VALUE env file into process.env WITHOUT overriding already-set vars
+// (so CI can inject instead). Returns the map read from the FILE itself — what
+// the file says, not what process.env ended up holding. Missing file = {}.
+export function loadEnvFile(path) {
+  if (!existsSync(path)) return {};
+  const vars = parseEnvText(readFileSync(path, 'utf8'));
+  for (const [k, v] of Object.entries(vars)) {
+    if (process.env[k] === undefined) process.env[k] = v;
+  }
+  return vars;
+}
+
+// Local dev env (contains DATABASE_URL / DIRECT_URL for the checks). Returns the
+// .env.local map — {} when the file is absent (CI).
 export function loadEnv() {
-  loadEnvFile(join(ROOT, '.env.local'));
+  return loadEnvFile(join(ROOT, '.env.local'));
 }
 
 // The runtime secret file lives outside the repo, root-owned 0600. Read it via
-// passwordless sudo if available; returns {} when unreadable (check degrades to
-// .env.local only and says so). Never printed — only KEY names are ever logged.
+// passwordless sudo if available; returns null when unreadable (check degrades
+// to .env.local only and says so). Never printed — only KEY names are ever logged.
 export function readRuntimeSecrets(path = '/etc/billing/billing.env') {
   let text;
   try {
@@ -38,15 +52,7 @@ export function readRuntimeSecrets(path = '/etc/billing/billing.env') {
   } catch {
     return null; // no passwordless sudo / file absent
   }
-  const out = {};
-  for (const line of text.split('\n')) {
-    const m = line.match(/^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (!m) continue;
-    let v = m[2].trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-    out[m[1]] = v;
-  }
-  return out;
+  return parseEnvText(text);
 }
 
 export function repoRoot() {

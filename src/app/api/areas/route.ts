@@ -3,6 +3,7 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listAreas, createArea } from '@/lib/db/areas';
 import { coerceAndValidateArea } from '@/lib/validation/areas';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     const id = await createArea(result.fields, actor.id);
     return NextResponse.json({ id }, { status: 201 });
   } catch (err) {
-    console.error('[POST /api/areas]', err);
+    logger.error('[POST /api/areas]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

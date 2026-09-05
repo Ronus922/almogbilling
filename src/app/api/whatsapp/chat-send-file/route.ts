@@ -17,6 +17,7 @@ import {
 } from '@/lib/whatsapp';
 import { uploadWhatsAppMedia } from '@/lib/storage/whatsappMedia';
 import type { ChatMessageType } from '@/types/whatsapp';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -179,7 +180,7 @@ export async function POST(req: NextRequest) {
         instanceId: creds.id,
       });
     } catch (insertErr) {
-      console.error('chat-send-file: failed to insert failure row:', insertErr);
+      logger.error('chat-send-file: failed to insert failure row:', insertErr);
     }
 
     return NextResponse.json({ error: `שליחה נכשלה: ${detail}` }, { status: 502 });

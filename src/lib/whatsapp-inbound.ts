@@ -15,6 +15,7 @@ import {
   type ParsedIncoming,
   type ParsedOutgoing,
 } from '@/lib/whatsapp';
+import { logger } from '@/lib/logger';
 
 /** ISO timestamp from a Green API unix-seconds value, or now. */
 function isoFromUnix(ts: number | null): string {
@@ -102,7 +103,7 @@ async function notifyAdminsOfInbound(parsed: ParsedIncoming, debtorId: string | 
       });
     }
   } catch (err) {
-    console.error('[whatsapp-inbound] admin notification failed', err);
+    logger.error('[whatsapp-inbound] admin notification failed', err);
   }
 }
 
@@ -276,7 +277,7 @@ export async function pullGreenApiMessages(creds: InstanceCreds, minutes = 1440)
       if (r === 'inserted') received++;
       else skipped++;
     } catch (err) {
-      console.error('[whatsapp/pull] failed to process a message', err);
+      logger.error('[whatsapp/pull] failed to process a message', err);
       skipped++;
     }
   }

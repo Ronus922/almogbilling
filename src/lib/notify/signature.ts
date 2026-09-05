@@ -1,5 +1,6 @@
 import 'server-only';
 import { query } from '@/lib/db';
+import { logger } from '@/lib/logger';
 
 // Fixed signature appended to the END of every outbound notification — create
 // AND reminder, email AND WhatsApp. Source of truth is app_settings
@@ -43,7 +44,7 @@ export async function getSignature(): Promise<NotificationSignature> {
       value = { inviter: pick(obj, 'inviter'), manager: pick(obj, 'manager'), phone: pick(obj, 'phone') };
     }
   } catch (err) {
-    console.error('[signature] read failed — using fallback', err);
+    logger.error('[signature] read failed — using fallback', err);
     value = FALLBACK;
   }
   cache = { value, at: Date.now() };

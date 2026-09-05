@@ -13,6 +13,7 @@ import {
   normalizeCategoryColor,
   canDeleteSupplierCategory,
 } from '@/lib/validation/suppliers';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -84,7 +85,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
         { status: 409 },
       );
     }
-    console.error('[PATCH /api/suppliers/categories/:id]', err);
+    logger.error('[PATCH /api/suppliers/categories/:id]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }
@@ -118,7 +119,7 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
     await deleteSupplierCategory(id);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[DELETE /api/suppliers/categories/:id]', err);
+    logger.error('[DELETE /api/suppliers/categories/:id]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

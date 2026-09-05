@@ -8,6 +8,7 @@ import {
 import { coerceUserReminderInput } from '@/lib/validation/userReminders';
 import { writeAudit } from '@/lib/db/audit';
 import type { UserReminderStatus, UserReminderWritableFields } from '@/lib/types/userReminders';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -102,7 +103,7 @@ export async function POST(req: NextRequest) {
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
     }
-    console.error('[POST /api/user-reminders]', err);
+    logger.error('[POST /api/user-reminders]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

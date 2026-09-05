@@ -1,5 +1,6 @@
 import 'server-only';
 import { appUrl } from '@/lib/config';
+import { env } from '@/env';
 
 // The canonical Green API inbound webhook URL — shared by every instance.
 // Green API calls POST {webhookUrl} for each notification; the route
@@ -7,7 +8,7 @@ import { appUrl } from '@/lib/config';
 // GREEN_API_WEBHOOK_SECRET) and identifies the instance via instanceData.idInstance.
 
 export function webhookSecret(): string {
-  return (process.env.GREEN_API_WEBHOOK_SECRET ?? '').trim();
+  return (env.GREEN_API_WEBHOOK_SECRET ?? '').trim();
 }
 
 /** Full webhook URL with the shared secret baked in as a query param. */

@@ -10,6 +10,7 @@ import {
 import type {
   ParkingOwnerType, ParkingSizeType, ParkingSpotFilters,
 } from '@/lib/types/parking';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -74,7 +75,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const mapped = parkingErrorResponse(err);
     if (mapped) return mapped;
-    console.error('[POST /api/parking]', err);
+    logger.error('[POST /api/parking]', err);
     return NextResponse.json({ error: 'שגיאת שרת', code: 'server_error' }, { status: 500 });
   }
 }

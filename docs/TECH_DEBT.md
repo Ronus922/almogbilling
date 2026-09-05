@@ -46,3 +46,20 @@ not atomic across a deploy).
 4. **Rollback.** Steps 1–2 are reversible by reverting the deploy (the trigger
    keeps `user_id` current). After step 3, rollback requires restoring the column
    from the pre-migration snapshot — take one before contracting.
+
+## React hooks rules demoted to `warn` (infra(2), 05/09/2026)
+
+`eslint-config-next@16` ships `eslint-plugin-react-hooks@7`, whose React-Compiler
+rules are `error` by default. The first lint run of the existing UI found:
+
+| Rule | Findings | Files |
+|---|---|---|
+| `react-hooks/set-state-in-effect` | 89 | 63 |
+| `react-hooks/refs` | 14 | 6 |
+| `react-hooks/purity` | 2 | 2 |
+
+Fixing them means refactoring component state flow (derive during render,
+`useSyncExternalStore`, event handlers instead of effects) — product code, not
+infrastructure. `eslint.config.mjs` keeps them visible as **warnings** so `npm run
+lint` stays green while the count is worked down. Rule of thumb: a PR must not
+increase the count; when it reaches 0 flip the three rules back to `error`.

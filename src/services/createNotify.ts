@@ -13,6 +13,7 @@ import {
   type NotifySelection,
 } from '@/lib/notify/selection';
 import type { AssigneeRef } from '@/lib/types/assignee';
+import { logger } from '@/lib/logger';
 
 /**
  * Best-effort fan-out for the create-form notification matrix. Sends ONLY the
@@ -109,7 +110,7 @@ async function sendToRecipient(
 
   if (r.selection.email) {
     if (!contact.email) {
-      console.warn('[createNotify] skipped email — no address', r.kind, id);
+      logger.warn('[createNotify] skipped email — no address', r.kind, id);
     } else {
       try {
         await sendNotificationEmail(contact.email, {
@@ -120,19 +121,19 @@ async function sendToRecipient(
           actionUrl: viewUrl,
         });
       } catch (err) {
-        console.error('[createNotify] email failed for', r.kind, id, err);
+        logger.error('[createNotify] email failed for', r.kind, id, err);
       }
     }
   }
 
   if (r.selection.whatsapp) {
     if (!contact.phone) {
-      console.warn('[createNotify] skipped whatsapp — no phone', r.kind, id);
+      logger.warn('[createNotify] skipped whatsapp — no phone', r.kind, id);
     } else {
       try {
         const creds = await getDefaultSendCreds();
         if (!creds) {
-          console.warn('[createNotify] skipped whatsapp — no send credentials configured');
+          logger.warn('[createNotify] skipped whatsapp — no send credentials configured');
         } else {
           const { chatId } = normalizePhone(contact.phone);
           const sig = await getSignature();
@@ -148,7 +149,7 @@ async function sendToRecipient(
           });
         }
       } catch (err) {
-        console.error('[createNotify] whatsapp failed for', r.kind, id, err);
+        logger.error('[createNotify] whatsapp failed for', r.kind, id, err);
       }
     }
   }
@@ -162,7 +163,7 @@ export async function dispatchCreateNotifications(
       input.recipients.map((r) => sendToRecipient(r, input)),
     );
   } catch (err) {
-    console.error('[createNotify] dispatch failed', err);
+    logger.error('[createNotify] dispatch failed', err);
   }
 }
 

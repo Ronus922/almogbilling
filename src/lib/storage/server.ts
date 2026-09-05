@@ -1,6 +1,8 @@
 import 'server-only';
 import { StorageClient } from '@supabase/storage-js';
 import { appUrl } from '@/lib/config';
+import { logger } from '@/lib/logger';
+import { env } from '@/env';
 
 /**
  * THE single chokepoint for Supabase Storage access.
@@ -27,8 +29,8 @@ export type PrivateBucket = (typeof PRIVATE_BUCKETS)[number];
 export const WHATSAPP_MEDIA_BUCKET = 'whatsapp-media';
 
 export function getStorage(): StorageClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error('supabase_storage_not_configured');
   return new StorageClient(`${url.replace(/\/$/, '')}/storage/v1`, {
     apikey: key,
@@ -52,7 +54,7 @@ export function getStorage(): StorageClient {
 export function buildProxyUrl(bucket: PrivateBucket, path: string): string {
   const url = `/api/files/${bucket}/${path.split('/').map(encodeURIComponent).join('/')}`;
   if (/^https?:/i.test(url) || url.includes('bios.co.il')) {
-    console.error(`STORAGE LEAK BLOCKED: buildProxyUrl produced ${url}`);
+    logger.error(`STORAGE LEAK BLOCKED: buildProxyUrl produced ${url}`);
     throw new Error('STORAGE LEAK BLOCKED');
   }
   return url;
@@ -105,7 +107,7 @@ export function buildPublicWaMediaUrl(path: string): string {
   const base = appUrl().replace(/\/$/, '');
   const url = `${base}/api/public/wa-media/${path.split('/').map(encodeURIComponent).join('/')}`;
   if (url.includes('db.bios.co.il') || url.includes('/storage/v1')) {
-    console.error(`STORAGE LEAK BLOCKED: buildPublicWaMediaUrl produced ${url}`);
+    logger.error(`STORAGE LEAK BLOCKED: buildPublicWaMediaUrl produced ${url}`);
     throw new Error('STORAGE LEAK BLOCKED');
   }
   return url;

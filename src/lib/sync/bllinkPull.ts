@@ -4,6 +4,8 @@ import { importParsedRows } from '@/lib/import/runner';
 import { finishRunError } from '@/lib/db/importRuns';
 import { splitOwnerTenantPhones } from '@/lib/whatsapp';
 import type { ParsedDebtorRow } from '@/lib/excel/parse';
+import { logger } from '@/lib/logger';
+import { env } from '@/env';
 
 /**
  * Pulls the current Bllink debt report from the CRM's `debtor_records`
@@ -82,8 +84,8 @@ const SELECT =
 //   MIN_FRACTION  — the run must cover at least this fraction of the apartments
 //                   that currently owe in billing (catches a half-download).
 //   RECON_TOL     — allowed |Σtotal − Σcomponents| as a fraction of Σtotal.
-const MIN_ROWS = Number(process.env.BLLINK_SYNC_MIN_ROWS ?? 50);
-const MIN_FRACTION = Number(process.env.BLLINK_SYNC_MIN_FRACTION ?? 0.4);
+const MIN_ROWS = Number(env.BLLINK_SYNC_MIN_ROWS ?? 50);
+const MIN_FRACTION = Number(env.BLLINK_SYNC_MIN_FRACTION ?? 0.4);
 const RECON_TOL = 0.01;
 
 function toNum(v: number | null): number {
@@ -137,8 +139,8 @@ export interface BllinkPullReport {
  * report used by the safety guards in syncDebtorsFromCrm.
  */
 export async function fetchCrmDebtorRows(): Promise<{ rows: ParsedDebtorRow[]; report: BllinkPullReport }> {
-  const base = process.env.CRM_DEBTORS_REST_URL;
-  const key = process.env.CRM_DEBTORS_REST_KEY;
+  const base = env.CRM_DEBTORS_REST_URL;
+  const key = env.CRM_DEBTORS_REST_KEY;
   if (!base || !key) {
     throw new Error('CRM_DEBTORS_REST_URL or CRM_DEBTORS_REST_KEY not configured');
   }
@@ -236,7 +238,7 @@ export async function syncDebtorsFromCrm(runId: string): Promise<number> {
       `bllink_sync_aborted: current Bllink run has ${report.count} apartments, below the safety ` +
       `floor ${floor} (min ${MIN_ROWS}, ${Math.round(MIN_FRACTION * 100)}% of ${billingDebtors} current debtors). ` +
       `Suspected partial/failed download — refusing to overwrite. NOTHING was written or zeroed.`;
-    console.error(summary, '\n', msg);
+    logger.error(summary, '\n', msg);
     await finishRunError(runId, msg);
     throw new Error(msg);
   }
@@ -246,12 +248,12 @@ export async function syncDebtorsFromCrm(runId: string): Promise<number> {
       `bllink_sync_aborted: source totals inconsistent (Σtotal=${report.rawTotal.toFixed(2)} ≠ ` +
       `Σcomponents=${report.componentTotal.toFixed(2)}, Δ=${reconDelta.toFixed(2)}). ` +
       `Refusing to overwrite. NOTHING was written or zeroed.`;
-    console.error(summary, '\n', msg);
+    logger.error(summary, '\n', msg);
     await finishRunError(runId, msg);
     throw new Error(msg);
   }
 
-  console.info(
+  logger.info(
     `${summary}\n[bllink:sync] guards passed — absolute overwrite of ${report.count} apartments + ` +
       `zero-out of every other non-archived apartment (paid off / absent from Bllink).`,
   );

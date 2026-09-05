@@ -6,15 +6,14 @@ import { sendStatusChangeNotification } from '@/services/email';
 import { getLegalContact } from '@/lib/db/appSettings';
 import { isLegalStatusName } from '@/lib/constants/statuses';
 import { buildLegalStatusRecipients } from '@/lib/notify/legalStatusRecipients';
+import { logger } from '@/lib/logger';
+import { parseJsonBody } from '@/lib/http/body';
+import { legalStatusBodySchema } from '@/lib/validation/requests';
 
 export const runtime = 'nodejs';
 
 interface RouteCtx {
   params: Promise<{ id: string }>;
-}
-
-interface PutBody {
-  status_id?: string | null;
 }
 
 export async function PUT(req: NextRequest, ctx: RouteCtx) {
@@ -29,22 +28,15 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
 
   const { id } = await ctx.params;
 
-  let body: PutBody;
-  try {
-    body = (await req.json()) as PutBody;
-  } catch {
-    return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
-  }
-  if (!('status_id' in body)) {
-    return NextResponse.json({ error: 'missing_status_id' }, { status: 400 });
-  }
+  const body = await parseJsonBody(req, legalStatusBodySchema);
+  if (!body.ok) return body.response;
 
   const changerName = actor.full_name || actor.username;
   let result;
   try {
     result = await updateDebtorLegalStatus(
       id,
-      body.status_id ?? null,
+      body.data.status_id,
       { id: actor.id, name: changerName },
     );
   } catch (err) {
@@ -77,7 +69,7 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
         });
       }
     } catch (err) {
-      console.error('[legal-status] email notification failed', err);
+      logger.error('[legal-status] email notification failed', err);
     }
   }
 

@@ -10,6 +10,7 @@ import {
   countLinkedDebtors,
 } from '@/lib/db/statuses';
 import { validateStatusForm } from '@/lib/validation/status';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -79,7 +80,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
         { status: 409 },
       );
     }
-    console.error('[PATCH /api/statuses/:id]', err);
+    logger.error('[PATCH /api/statuses/:id]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }
@@ -126,7 +127,7 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
         { status: 409 },
       );
     }
-    console.error('[DELETE /api/statuses/:id]', err);
+    logger.error('[DELETE /api/statuses/:id]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

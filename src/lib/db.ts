@@ -1,17 +1,19 @@
 import 'server-only';
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
+import { logger } from '@/lib/logger';
+import { env } from '@/env';
 
 const g = globalThis as unknown as { _pgPool?: Pool };
 
 function getPool(): Pool {
   if (!g._pgPool) {
     g._pgPool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString: env.DATABASE_URL,
       max: 10,
       idleTimeoutMillis: 30_000,
     });
     g._pgPool.on('error', (err) => {
-      console.error('[pg pool error]', err);
+      logger.error('[pg pool error]', err);
     });
   }
   return g._pgPool;

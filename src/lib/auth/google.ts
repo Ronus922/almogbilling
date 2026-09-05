@@ -1,5 +1,6 @@
 import 'server-only';
 import { OAuth2Client } from 'google-auth-library';
+import { env } from '@/env';
 
 /**
  * Google OAuth configuration, read from env. Returns null when any required
@@ -15,9 +16,9 @@ export interface GoogleConfig {
 }
 
 export function getGoogleConfig(): GoogleConfig | null {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const appUrl = process.env.APP_URL;
+  const clientId = env.GOOGLE_CLIENT_ID;
+  const clientSecret = env.GOOGLE_CLIENT_SECRET;
+  const appUrl = env.APP_URL;
   if (!clientId || !clientSecret || !appUrl) return null;
 
   return {
@@ -38,5 +39,5 @@ export function createGoogleClient(cfg: GoogleConfig): OAuth2Client {
 
 /** Absolute URL on the public origin — for redirects out of route handlers. */
 export function appUrl(path: string): string {
-  return new URL(path, process.env.APP_URL ?? 'http://localhost:3003').toString();
+  return new URL(path, env.APP_URL ?? 'http://localhost:3003').toString();
 }

@@ -8,6 +8,8 @@ import {
   updateBillingSettings,
 } from '@/lib/db/appSettings';
 import { getSession } from '@/lib/auth/session';
+import { parseJsonBody } from '@/lib/http/body';
+import { billingSettingsBodySchema } from '@/lib/validation/requests';
 
 export const runtime = 'nodejs';
 
@@ -32,24 +34,9 @@ export async function PUT(req: Request) {
     throw err;
   }
 
-  let body: { managementFeePerSqm?: unknown };
-  try {
-    body = (await req.json()) as typeof body;
-  } catch {
-    return NextResponse.json({ error: 'invalid json' }, { status: 400 });
-  }
-
-  const raw = body.managementFeePerSqm;
-  let fee: number | null;
-  if (raw === null || raw === undefined || raw === '') {
-    fee = null;
-  } else {
-    const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw.trim()) : NaN;
-    if (!Number.isFinite(n) || n < 0) {
-      return NextResponse.json({ error: 'יש להזין מחיר חיובי או להשאיר ריק' }, { status: 400 });
-    }
-    fee = n;
-  }
+  const body = await parseJsonBody(req, billingSettingsBodySchema);
+  if (!body.ok) return body.response;
+  const fee = body.data.managementFeePerSqm;
 
   let recomputed = 0;
   try {

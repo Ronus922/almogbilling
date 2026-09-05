@@ -8,6 +8,7 @@ import { sendWhatsAppMessage, sendWhatsAppFileByUrl, WhatsAppError } from '@/lib
 import { interpolateTemplate } from '@/lib/whatsapp-template';
 import { attachmentMessageType } from '@/lib/whatsapp-attachment';
 import { logDebtorEvent, EVENT_TYPE_META } from '@/lib/debtor-events';
+import { logger } from '@/lib/logger';
 
 // Single source of truth for "send one WhatsApp message to one debtor and record
 // it". Used by BOTH the single-send route (/api/whatsapp/send) and the bulk-send
@@ -109,7 +110,7 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
         instanceId: creds.id,
       });
     } catch (logErr) {
-      console.error('[whatsapp/send] failed to record failed message', logErr);
+      logger.error('[whatsapp/send] failed to record failed message', logErr);
     }
     return { ok: false, error: detail, messageId: failedId ?? undefined };
   }
@@ -162,7 +163,7 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
     });
   } catch (err) {
     // The message WAS delivered; only our bookkeeping failed. Report honestly.
-    console.error('[whatsapp/send] post-send persistence failed', err);
+    logger.error('[whatsapp/send] post-send persistence failed', err);
     return { ok: true, idMessage, warning: 'ההודעה נשלחה אך תיעוד ההיסטוריה נכשל' };
   }
 

@@ -6,10 +6,13 @@
 הבדיקות שכותבות (הוכחת unique/idempotency) רצות מול **מסד חד־פעמי** שנוצר ונמחק
 בכל ריצה — לעולם לא מול 288 הדיירים האמיתיים.
 
-> **על lint:** לפרויקט הזה אין ESLint מוגדר (Next 16 הסיר את `next lint`, ואין
-> קונפיג). לכן `check:all` מריץ **typecheck** + **`npm test`** (חבילת vitest,
-> 284 בדיקות יחידה עוברות + 22 מדולגות) + כל בדיקות האינווריאנטות — שכבת ה-lint מוחלפת ב-typecheck
-> המחמיר + בדיקות היחידה.
+> **על lint (מ-05/09/2026):** ESLint 9 flat config (`eslint.config.mjs`) — presets של
+> `eslint-config-next` + שני כללי הברזל כ-`error`: `@typescript-eslint/no-explicit-any`
+> ו-`no-console` (לוגים דרך `src/lib/logger.ts`). בנוסף **SafeQL** מאמת כל SQL סטטי
+> שמועבר ל-`query`/`queryOne`/`client.query`/`pool.query` מול הסכימה החיה של
+> `DATABASE_URL` (טבלה/עמודה לא קיימת, שגיאת תחביר) — ראה `scripts/lint/`. לכן
+> `check:all` = **typecheck → lint → `npm test` → בדיקות האינווריאנטות**. ה-pre-push של husky
+> מריץ רק את שלושת הראשונים (ו-lint **בלי** SafeQL) — ראה "מה רץ איפה" למטה.
 
 ## הבדיקות — מה כל אחת מגינה
 
@@ -37,15 +40,37 @@
 > שבור. להרצה ידנית: `node scripts/_check-lib.mjs --self-test`. אומת מול גלאי
 > שבור מכוון (`rejected` קבוע): הבקרה מפילה אותו — לבד וגם דרך `check:dupes`.
 
+## מה רץ איפה — pre-push מול CI (מ-05/09/2026)
+
+| שער | פקודה | מה רץ | זמן |
+|---|---|---|---|
+| **pre-push** (husky, `.husky/pre-push`) | `npm run typecheck && SAFEQL=0 npm run lint && npm test` | typecheck · lint (**בלי** SafeQL) · vitest | ~1 דק' (נמדד: 51 שנ' — typecheck 6, lint 41, vitest 4) |
+| **CI** (`.github/workflows/ci.yml`, job `check:all`) | `npm run check:all` | הכל: typecheck · lint **עם** SafeQL מול סכימת dbmate · vitest · `check:secrets`/`check:auth`/`check:rbac` · בדיקות ה-DB `check:money`/`check:phone`/`check:session`/`check:dupes`/`check:wa` | ~4–5 דק' |
+
+- **בדיקות שצריכות DB רצות ב-CI בלבד**: `check:money`, `check:phone`, `check:session`, `check:dupes`,
+  `check:wa` ואימות ה-SQL של SafeQL. ה-workflow מקים postgres ריק, מריץ `dbmate up` ואז `check:all`.
+  מקומית הן זמינות דרך `npm run check:all` כשיש `DATABASE_URL` ב-`.env.local` — זה עדיין השער לפני deploy (ראה "הכלל").
+- `SAFEQL=0` מכבה **רק** את בלוק SafeQL ב-`eslint.config.mjs` (ומדפיס `SAFEQL=0 — SafeQL SQL validation
+  skipped`); שאר כללי ה-lint רצים כרגיל. בלי הדגל, `npm run lint` מריץ SafeQL בכל פעם ש-`DATABASE_URL` זמין.
+- `check:secrets`/`check:auth`/`check:rbac` הן סטטיות ומהירות, אבל נשארו מחוץ ל-pre-push בכוונה
+  (pre-push = typecheck + lint + vitest בלבד). הן רצות ב-CI בכל push ובכל `check:all`.
+- לדלג על ה-hook פעם אחת: `HUSKY=0 git push`. **CI לא מדלג** — הוא רץ על כל push ועל כל PR.
+
 ### הרצה בודדת
 ```bash
 npm run check:money   # או check:secrets / check:auth / check:rbac / check:phone / check:session / check:dupes / check:wa
-npm run check:all     # typecheck + vitest + כל בדיקות האינווריאנטות, עוצר על הכישלון הראשון
+npm run check:all     # typecheck + lint + vitest + כל בדיקות האינווריאנטות, עוצר על הכישלון הראשון
 ```
 
 > `check:secrets` קורא את `/etc/billing/billing.env` דרך `sudo -n cat` (מותר ל-
 > deploy). בלי sudo הבדיקה יורדת אוטומטית ל-`.env.local` בלבד ומדווחת על כך —
 > לא נכשלת.
+
+## בדיקות קצה-לקצה (Playwright)
+
+`npm run test:e2e` — ארבע בדיקות מול ה-build האמיתי, DB בדיקה ו-Mailpit: התחברות,
+שינוי סטטוס משפטי, שמירת הגדרות SMTP, שליחת מייל בדיקה. פרטים והרצה: `docs/e2e.md`.
+רצות ב-CI כ-job נפרד.
 
 ## תוכנית בדיקה ידנית (לפני deploy)
 

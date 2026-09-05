@@ -1,0 +1,23 @@
+# Nightly Postgres backup for the shared Supabase cluster + off-site restic push.
+# Install (see docs/backup.md):
+#   sudo cp deploy/systemd/billing-backup.{service,timer} /etc/systemd/system/
+#   sudo install -m 600 deploy/systemd/backup.env.example /etc/billing/backup.env   # then fill it
+#   sudo systemctl daemon-reload && sudo systemctl enable --now billing-backup.timer
+[Unit]
+Description=ALMOG CRM — Postgres backup (supabase-db cluster + proj_billing) and restic push
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/var/www/billing
+# Optional file: the backup runs (local dumps only) even before it exists.
+EnvironmentFile=-/etc/billing/backup.env
+ExecStart=/var/www/billing/scripts/backup/pg-backup.sh
+ExecStart=/var/www/billing/scripts/backup/restic-push.sh
+Nice=10
+IOSchedulingClass=idle
+# A dump of the whole cluster can take a while; never let systemd kill a half-written file.
+TimeoutStartSec=2h

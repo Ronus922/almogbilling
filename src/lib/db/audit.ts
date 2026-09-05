@@ -1,5 +1,6 @@
 import 'server-only';
 import { query } from '@/lib/db';
+import { logger } from '@/lib/logger';
 
 /**
  * Central audit-log writer — cross-cutting infrastructure (migration 029).
@@ -49,7 +50,7 @@ export async function writeAudit(input: WriteAuditInput): Promise<void> {
     );
   } catch (err) {
     // Best-effort: an audit failure must not surface to the caller.
-    console.error('[writeAudit] failed to record audit entry', {
+    logger.error('[writeAudit] failed to record audit entry', {
       action: input.action,
       entityType: input.entityType,
       entityId: input.entityId ?? null,

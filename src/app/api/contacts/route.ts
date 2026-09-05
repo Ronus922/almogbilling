@@ -8,6 +8,7 @@ import { coerceContactInput, coerceContactPeople } from '@/lib/validation/contac
 import { getBillingSettings } from '@/lib/db/appSettings';
 import { computeManagementFee } from '@/lib/billing/managementFee';
 import type { ContactSort, ContactWritableFields } from '@/lib/types/contacts';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
     }
-    console.error('[POST /api/contacts]', err);
+    logger.error('[POST /api/contacts]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

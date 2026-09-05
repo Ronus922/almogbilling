@@ -8,6 +8,7 @@ import {
 } from '@/lib/db/reminderCategories';
 import { coerceReminderCategoryInput } from '@/lib/validation/reminderCategories';
 import { writeAudit } from '@/lib/db/audit';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -90,7 +91,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
     }
-    console.error('[PATCH /api/reminder-categories/[id]]', err);
+    logger.error('[PATCH /api/reminder-categories/[id]]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

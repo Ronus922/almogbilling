@@ -6,6 +6,7 @@ import { CHIP_DEACTIVATION_REASONS, DEACTIVATION_REASON_LABEL } from '@/lib/cons
 import { createNotification } from '@/services/notifications';
 import { listActiveAdmins } from '@/lib/db/users';
 import type { Chip, ChipDeactivationReason } from '@/lib/types/chips';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -41,7 +42,7 @@ async function notifyAdminsOfChipLost(chip: Chip, actorId: string): Promise<void
       });
     }
   } catch (err) {
-    console.error('[chips] chip_deactivated_lost notification failed', err);
+    logger.error('[chips] chip_deactivated_lost notification failed', err);
   }
 }
 
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     if (err instanceof ChipStateError) {
       return NextResponse.json({ error: 'הצ׳יפ כבר מושבת' }, { status: 409 });
     }
-    console.error('[POST /api/chips/:id/deactivate]', err);
+    logger.error('[POST /api/chips/:id/deactivate]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listAssignableUsers } from '@/lib/db/users';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ users: userOptions });
   } catch (err) {
-    console.error('[GET /api/calendar/participants]', err);
+    logger.error('[GET /api/calendar/participants]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

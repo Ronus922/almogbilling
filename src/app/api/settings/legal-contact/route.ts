@@ -6,7 +6,8 @@ import {
   getLegalContact,
   updateLegalContact,
 } from '@/lib/db/appSettings';
-import { normalizeLegalContact } from '@/lib/validation/legalContact';
+import type { LegalContactErrors } from '@/lib/validation/legalContact';
+import { legalContactBodySchema } from '@/lib/validation/requests';
 
 export const runtime = 'nodejs';
 
@@ -35,23 +36,28 @@ export async function PUT(req: Request) {
     throw err;
   }
 
-  let body: { email?: unknown; name?: unknown };
+  let raw: unknown;
   try {
-    body = (await req.json()) as typeof body;
+    raw = await req.json();
   } catch {
-    return NextResponse.json({ error: 'invalid json' }, { status: 400 });
+    return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
   }
-
-  const normalized = normalizeLegalContact(body);
-  if (!normalized.ok) {
+  const parsed = legalContactBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    // Same 400 shape as before (error + per-field errors) with zod's issues added.
+    const errors: LegalContactErrors = {};
+    for (const issue of parsed.error.issues) {
+      const field = issue.path[0];
+      if (field === 'email' || field === 'name') errors[field] = issue.message;
+    }
     return NextResponse.json(
-      { error: normalized.errors.email ?? normalized.errors.name ?? 'קלט לא תקין', errors: normalized.errors },
+      { error: errors.email ?? errors.name ?? 'קלט לא תקין', errors, issues: parsed.error.issues },
       { status: 400 },
     );
   }
 
   try {
-    const saved = await updateLegalContact(normalized.value, actor.id);
+    const saved = await updateLegalContact(parsed.data, actor.id);
     return NextResponse.json(saved);
   } catch (err) {
     if (err instanceof AppSettingsValidationError) {

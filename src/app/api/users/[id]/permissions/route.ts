@@ -88,8 +88,8 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
   }
 
-  const module = typeof body.module === 'string' ? body.module : '';
-  if (!VALID_MODULES.has(module)) {
+  const moduleName = typeof body.module === 'string' ? body.module : '';
+  if (!VALID_MODULES.has(moduleName)) {
     return NextResponse.json({ error: 'מודול לא תקין' }, { status: 400 });
   }
   const canView = body.can_view === true;
@@ -108,7 +108,7 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
        set can_view = excluded.can_view,
            can_edit = excluded.can_edit,
            updated_at = now()`,
-    [target.id, module, canView, canEdit],
+    [target.id, moduleName, canView, canEdit],
   );
 
   await writeAudit({
@@ -116,7 +116,7 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
     action: 'updated',
     entityType: 'user_permission',
     entityId: target.id,
-    changes: { after: { module, can_view: canView, can_edit: canEdit } },
+    changes: { after: { module: moduleName, can_view: canView, can_edit: canEdit } },
     metadata: { actor_role: actor.role },
   });
 

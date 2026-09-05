@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HUSKY: 0
+
+jobs:
+  check:
+    name: check:all
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      db:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: billing
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/billing?sslmode=disable
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/billing?sslmode=disable
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: dbmate up (empty database → full schema)
+        run: npx dbmate --url "$DATABASE_URL" --migrations-dir db/migrations --no-dump-schema up
+
+      - name: dbmate status (must be 0 pending)
+        run: npx dbmate --url "$DATABASE_URL" --migrations-dir db/migrations --no-dump-schema status
+
+      - name: Legacy wrappers are in sync with supabase/migrations
+        run: npm run db:wrappers
+
+      # The 79 legacy migrations ran in production through psql. Prove that the
+      # dbmate wrappers produce the identical schema: apply the originals to a
+      # second database with psql and diff the two dumps (same pg_dump, so no
+      # version noise).
+      - name: Schema parity — dbmate wrappers vs original psql files
+        run: |
+          psql "$DATABASE_URL" -qc 'create database billing_legacy'
+          LEGACY="${DATABASE_URL/\/billing/\/billing_legacy}"
+          for f in $(ls supabase/migrations/*.sql | grep -v '\.down\.sql$' | LC_ALL=C sort); do
+            psql "$LEGACY" -q -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql "$LEGACY" -q -v ON_ERROR_STOP=1 -f scripts/db/mark-applied.sql
+          DATABASE_URL="$DATABASE_URL" bash scripts/db/dump-schema.sh /tmp/schema-dbmate.sql
+          DATABASE_URL="$LEGACY"       bash scripts/db/dump-schema.sh /tmp/schema-legacy.sql
+          diff /tmp/schema-dbmate.sql /tmp/schema-legacy.sql && echo "schema parity OK"
+
+      - run: npm run check:all
+
+  e2e:
+    name: e2e (Playwright + Mailpit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      db:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: billing
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/billing?sslmode=disable
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/billing?sslmode=disable
+      # test-only values; the real ones live in /etc/billing on the server
+      BILLING_CRON_SECRET: ci-only-cron-secret
+      CRM_CRON_SECRET: ci-only-crm-secret
+      GREEN_API_WEBHOOK_SECRET: ci-only-webhook-secret
+      NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
+      SUPABASE_SERVICE_ROLE_KEY: ci-only
+      MAILPIT_SMTP_PORT: '55525'
+      MAILPIT_HTTP_PORT: '55580'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Schema + e2e fixtures
+        run: |
+          npx dbmate --url "$DATABASE_URL" --migrations-dir db/migrations --no-dump-schema up
+          npm run db:seed:e2e
+
+      - name: Mailpit
+        run: npm run e2e:mailpit
+
+      - name: Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Settings encryption key (fresh per run)
+        run: echo "SETTINGS_ENC_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
+      - name: Build (standalone)
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Playwright
+        run: npm run test:e2e
+        env:
+          CI: 'true'
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7

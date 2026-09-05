@@ -6,6 +6,7 @@ import { parkingBadRequest, parkingErrorResponse } from '@/lib/parking/apiErrors
 import { coerceAndValidateStorageUnit } from '@/lib/validation/parking';
 import { PARKING_OWNER_TYPES } from '@/lib/constants/parking';
 import type { ParkingOwnerType, StorageUnitFilters } from '@/lib/types/parking';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const mapped = parkingErrorResponse(err);
     if (mapped) return mapped;
-    console.error('[POST /api/storage]', err);
+    logger.error('[POST /api/storage]', err);
     return NextResponse.json({ error: 'שגיאת שרת', code: 'server_error' }, { status: 500 });
   }
 }

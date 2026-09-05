@@ -1,0 +1,6 @@
+# Fast local gate before anything leaves this machine: typecheck, lint, unit
+# tests. SAFEQL=0 turns off SafeQL's live-schema SQL validation — that, and the
+# DB invariant checks (check:money/phone/session/dupes/wa), need a database and
+# run in CI only (.github/workflows/ci.yml → npm run check:all). Full gate
+# locally: npm run check:all.  Skip once: HUSKY=0 git push
+npm run typecheck && SAFEQL=0 npm run lint && npm test

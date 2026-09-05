@@ -37,7 +37,7 @@ function computeClean(
   phoneTenant: string | null,
 ): { owner: string | null; tenant: string | null } {
   const split = splitOwnerTenantPhones(phoneOwner);
-  let owner = split.owner;
+  const owner = split.owner;
   let tenant = split.tenant;
   if (!tenant) {
     const t = cleanPhoneField(phoneTenant);

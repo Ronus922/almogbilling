@@ -6,6 +6,7 @@ import {
   skipTaskOccurrence,
   detachTaskOccurrence,
 } from '@/lib/recurrence/series';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -66,7 +67,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
       }
     }
   } catch (err) {
-    console.error('[POST /api/tasks/[id]/recurrence]', err);
+    logger.error('[POST /api/tasks/[id]/recurrence]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

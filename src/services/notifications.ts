@@ -10,6 +10,7 @@ import {
   type CreateNotificationServiceInput,
 } from '@/lib/notifications/registry';
 import type { CreateNotificationInput, ReminderChannel, TaskPriority } from '@/lib/types/tasks';
+import { logger } from '@/lib/logger';
 
 const PRIORITY_LABELS: Record<TaskPriority, string> = {
   normal: 'רגילה',
@@ -76,7 +77,7 @@ export async function notifyTask(opts: {
         emailed = true;
       }
     } catch (err) {
-      console.error('[notifyTask] email failed', err);
+      logger.error('[notifyTask] email failed', err);
     }
   }
 
@@ -135,7 +136,7 @@ export async function notifyIssue(opts: {
         emailed = true;
       }
     } catch (err) {
-      console.error('[notifyIssue] email failed', err);
+      logger.error('[notifyIssue] email failed', err);
     }
   }
 
@@ -162,7 +163,7 @@ export async function createNotification(input: CreateNotificationServiceInput):
   try {
     const reg = NOTIFICATION_REGISTRY[input.type];
     if (!reg) {
-      console.error('[createNotification] unknown notification type', input.type);
+      logger.error('[createNotification] unknown notification type', input.type);
       return;
     }
 
@@ -212,7 +213,7 @@ export async function createNotification(input: CreateNotificationServiceInput):
             priorityLabel: PRIORITY_LABEL[priority],
           });
         } catch (err) {
-          console.error('[createNotification] email failed for', to, err);
+          logger.error('[createNotification] email failed for', to, err);
         }
       }
     }
@@ -241,10 +242,10 @@ export async function createNotification(input: CreateNotificationServiceInput):
           });
         }
       } catch (err) {
-        console.error('[createNotification] whatsapp failed', err);
+        logger.error('[createNotification] whatsapp failed', err);
       }
     }
   } catch (err) {
-    console.error('[createNotification] failed', err);
+    logger.error('[createNotification] failed', err);
   }
 }

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getChipById, updateChip } from '@/lib/db/chips';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -69,7 +70,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     if (e.code === '23514') {
       return NextResponse.json({ error: 'invalid_value' }, { status: 400 });
     }
-    console.error('[PATCH /api/chips/:id]', err);
+    logger.error('[PATCH /api/chips/:id]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

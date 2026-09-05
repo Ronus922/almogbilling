@@ -20,6 +20,7 @@ import {
   coerceCalendarReminders,
 } from '@/lib/validation/calendar';
 import type { SeriesEditScope } from '@/lib/types/calendar';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -132,7 +133,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
     }
-    console.error('[PATCH /api/calendar/events/[id]]', err);
+    logger.error('[PATCH /api/calendar/events/[id]]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }
@@ -177,7 +178,7 @@ export async function DELETE(req: NextRequest, ctx: RouteCtx) {
     }
     return new NextResponse(null, { status: 204 });
   } catch (err) {
-    console.error('[DELETE /api/calendar/events/[id]]', err);
+    logger.error('[DELETE /api/calendar/events/[id]]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

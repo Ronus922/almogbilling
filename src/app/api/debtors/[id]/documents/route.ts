@@ -7,6 +7,7 @@ import { uploadDocumentFile, fileUrlForPath } from '@/lib/storage/documentStorag
 import { MAX_FILE_NAME_LEN } from '@/lib/constants/documents';
 import { writeAudit } from '@/lib/db/audit';
 import type { DocumentWithSignedUrl } from '@/lib/types/documents';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -97,10 +98,10 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('supabase_storage_not_configured')) {
-      console.error('[POST /api/debtors/:id/documents] storage not configured');
+      logger.error('[POST /api/debtors/:id/documents] storage not configured');
       return NextResponse.json({ error: 'storage_not_configured' }, { status: 503 });
     }
-    console.error('[POST /api/debtors/:id/documents] upload failed', err);
+    logger.error('[POST /api/debtors/:id/documents] upload failed', err);
     return NextResponse.json({ error: 'upload_failed' }, { status: 502 });
   }
 
@@ -128,7 +129,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     const signed_url = fileUrlForPath(document.storage_path);
     return NextResponse.json({ document: { ...document, signed_url } }, { status: 201 });
   } catch (err) {
-    console.error('[POST /api/debtors/:id/documents]', err);
+    logger.error('[POST /api/debtors/:id/documents]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

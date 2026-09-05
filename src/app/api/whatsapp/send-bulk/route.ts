@@ -11,6 +11,7 @@ import {
 import { cleanPhoneField, normalizePhone } from '@/lib/whatsapp';
 import { sendAndRecordWhatsApp } from '@/lib/whatsapp-send';
 import type { BulkSendProgress, BulkSendSummary } from '@/types/whatsapp';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -184,7 +185,7 @@ export async function POST(req: NextRequest) {
 
         emit(summary);
       } catch (err) {
-        console.error('[whatsapp/send-bulk] stream failed', err);
+        logger.error('[whatsapp/send-bulk] stream failed', err);
       } finally {
         if (!closed) {
           try {

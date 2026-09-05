@@ -16,6 +16,7 @@ import {
 } from '@/lib/constants/issues';
 import { isUuid } from '@/lib/validation/issues';
 import type { IssueImage } from '@/lib/types/issues';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
   } catch (err) {
     // If the row update failed after a successful upload, clean up the object.
     if (uploadedPath) await removeIssueImages([uploadedPath]);
-    console.error('[POST /api/issues/:id/images]', err);
+    logger.error('[POST /api/issues/:id/images]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

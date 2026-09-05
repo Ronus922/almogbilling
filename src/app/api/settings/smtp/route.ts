@@ -7,10 +7,11 @@ import {
   getSmtpSettingsPublic,
   updateSmtpSettings,
 } from '@/lib/db/appSettings';
+import { logger } from '@/lib/logger';
+import { parseJsonBody } from '@/lib/http/body';
+import { smtpSettingsBodySchema } from '@/lib/validation/requests';
 
 export const runtime = 'nodejs';
-
-const GMAIL_RX = /^[^\s@]+@gmail\.com$/i;
 
 export async function GET() {
   try {
@@ -24,12 +25,6 @@ export async function GET() {
   return NextResponse.json(data);
 }
 
-interface PutBody {
-  fromEmail?: unknown;
-  fromName?: unknown;
-  password?: unknown;
-}
-
 export async function PUT(req: Request) {
   let actor: Actor;
   try {
@@ -40,26 +35,9 @@ export async function PUT(req: Request) {
     throw err;
   }
 
-  let body: PutBody;
-  try {
-    body = (await req.json()) as PutBody;
-  } catch {
-    return NextResponse.json({ error: 'invalid json' }, { status: 400 });
-  }
-
-  const fromEmail = typeof body.fromEmail === 'string' ? body.fromEmail.trim() : '';
-  const fromName = typeof body.fromName === 'string' ? body.fromName.trim() : '';
-  const passwordRaw = typeof body.password === 'string' ? body.password.replace(/\s+/g, '') : '';
-
-  if (!GMAIL_RX.test(fromEmail)) {
-    return NextResponse.json({ error: 'חייב להיות חשבון Gmail' }, { status: 400 });
-  }
-  if (fromName.length < 1 || fromName.length > 50) {
-    return NextResponse.json({ error: 'שם השולח חייב להיות באורך 1-50 תווים' }, { status: 400 });
-  }
-  if (passwordRaw && passwordRaw.length !== 16) {
-    return NextResponse.json({ error: 'App Password חייב להכיל 16 תווים' }, { status: 400 });
-  }
+  const body = await parseJsonBody(req, smtpSettingsBodySchema);
+  if (!body.ok) return body.response;
+  const { fromEmail, fromName, password: passwordRaw } = body.data;
 
   try {
     await updateSmtpSettings(
@@ -70,7 +48,7 @@ export async function PUT(req: Request) {
     if (err instanceof AppSettingsValidationError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
-    console.error('[settings/smtp PUT] failed', err);
+    logger.error('[settings/smtp PUT] failed', err);
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
   }
 

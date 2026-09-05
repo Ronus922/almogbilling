@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "Asia/Jerusalem",
+  "schedule": ["every weekend"],
+  "osvVulnerabilityAlerts": true,
+  "packageRules": [
+    {
+      "description": "One PR per weekend for every minor + patch update",
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "non-major dependencies",
+      "groupSlug": "non-major"
+    },
+    {
+      "description": "Only patch releases of devDependencies merge on their own (after CI is green)",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "devDependencies (patch)",
+      "groupSlug": "dev-patch",
+      "automerge": true,
+      "automergeType": "pr"
+    }
+  ]
+}

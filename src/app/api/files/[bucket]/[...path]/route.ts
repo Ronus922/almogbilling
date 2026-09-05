@@ -3,6 +3,7 @@ import { requirePermission, requireAnyPermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { queryOne } from '@/lib/db';
 import { getObjectStream, PRIVATE_BUCKETS, type PrivateBucket } from '@/lib/storage/server';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -109,10 +110,10 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('supabase_storage_not_configured')) {
-      console.error('[GET /api/files] storage not configured');
+      logger.error('[GET /api/files] storage not configured');
       return NextResponse.json({ error: 'storage_not_configured' }, { status: 503 });
     }
-    console.error(`[GET /api/files/${bucket}] download failed`, err);
+    logger.error(`[GET /api/files/${bucket}] download failed`, err);
     return NextResponse.json({ error: 'download_failed' }, { status: 502 });
   }
   if (!blob) return NextResponse.json({ error: 'not_found' }, { status: 404 });

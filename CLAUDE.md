@@ -21,6 +21,14 @@
 
 ---
 
+## מיגרציות DB — dbmate בלבד (מ-05/09/2026)
+- **מיגרציה חדשה = `npm run db:new <name>`** → קובץ ב-`db/migrations/` עם `-- migrate:up` / `-- migrate:down`. **`npm run db:up`** מריץ, **`npm run db:status`** מראה pending, **`npm run db:dump`** מעדכן את `db/schema.sql` (לקומיט יחד עם המיגרציה).
+- **אסור** להוסיף/לשנות קבצים ב-`supabase/migrations/` — היסטוריה קפואה (79 up + 8 down), עטופה אוטומטית ב-`db/migrations/20000101…` דרך `scripts/db/gen-legacy-dbmate-migrations.mjs`.
+- **אסור** להריץ SQL של סכימה ידנית בפרודקשן (`psql -f`). הדרך היחידה: `dbmate up` מול `DIRECT_URL`. פרטים ונוהל ההפעלה הראשון: `docs/migrations.md`.
+
+
+---
+
 ## 🎨 חוק עיצוב מחייב (DESIGN LAW — אסור לחרוג!)
 
 **לפני בנייה או שינוי של כל קומפוננטת UI — חובה (ללא יוצא מן הכלל):**
@@ -111,21 +119,17 @@
 
 Every CRM/Dashboard/Web project should include these libraries. Install with `--full` flag in `new-project`.
 
-### Tier 1 — חובה (כל פרויקט)
+### Tier 1 — מצב בפרויקט הזה (עודכן 05/09/2026)
 
-```bash
-pnpm add @tanstack/react-table @tanstack/react-query recharts \
-  react-hook-form @hookform/resolvers zod nuqs
-```
-
-| Library | Purpose | RTL |
-|---------|---------|-----|
-| `@tanstack/react-table` | Headless tables — sorting, filtering, pagination. Shadcn DataTable built on it. | Headless = full RTL control |
-| `@tanstack/react-query` | Server state — cache, background refresh, loading/error. Every Supabase fetch. | N/A |
-| `recharts` | Charts for dashboards. Shadcn Chart component built on it. | `direction="rtl"` |
-| `react-hook-form` + `@hookform/resolvers` | Form state. Shadcn Form built on it. Minimal re-renders. | N/A |
-| `zod` | Schema validation — forms, Server Actions, API. | N/A |
-| `nuqs` | URL state — filters, search, pagination as URL params. | N/A |
+| Library | סטטוס | איך משתמשים |
+|---|---|---|
+| `zod` | **מאומץ — חובה בכל route חדש** | סכימת body ב-`src/lib/validation/requests.ts`, קריאה דרך `parseJsonBody` (`src/lib/http/body.ts`): `safeParse` → 400 עם `issues`. |
+| `@t3-oss/env-nextjs` | **מאומץ — חובה** | כל משתנה סביבה מוגדר ב-`src/env.ts` ונקרא כ-`env.X` (לא `process.env.X`) בקוד שרת. משתנה חדש = שורה ב-`src/env.ts` + ב-`.env.example`. |
+| `recharts` | מאומץ | דשבורד. |
+| `@tanstack/react-table` | לא מאומץ | טבלאות נכתבות ידנית לפי `DESIGN.md`. |
+| `@tanstack/react-query` | לא מאומץ | fetch ידני + state מקומי. |
+| `react-hook-form` + `@hookform/resolvers` | לא מאומץ | טפסים ב-state מקומי; ולידציה בצד שרת ב-zod. |
+| `nuqs` | לא מאומץ | — |
 
 ### Tier 2 — מומלץ
 

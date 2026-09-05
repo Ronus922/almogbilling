@@ -2,9 +2,14 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { getSmtpSettings } from '@/lib/db/appSettings';
+import { logger } from '@/lib/logger';
+import { env } from '@/env';
 
-const SMTP_HOST = 'smtp.gmail.com';
-const SMTP_PORT = 587;
+// Gmail by default. The three env overrides exist for the e2e environment,
+// which points them at Mailpit (docker-compose.e2e.yml); production sets none.
+const SMTP_HOST = env.SMTP_HOST || 'smtp.gmail.com';
+const SMTP_PORT = Number(env.SMTP_PORT) || 587;
+const SMTP_REQUIRE_TLS = env.SMTP_REQUIRE_TLS !== 'false';
 
 interface CachedTransporter {
   transporter: Transporter;
@@ -39,7 +44,7 @@ export async function getTransporter(): Promise<{ transporter: Transporter; from
       host: SMTP_HOST,
       port: SMTP_PORT,
       secure: false,
-      requireTLS: true,
+      requireTLS: SMTP_REQUIRE_TLS,
       auth: { user: settings.user, pass: settings.pass },
       pool: true,
       maxConnections: 3,
@@ -48,7 +53,7 @@ export async function getTransporter(): Promise<{ transporter: Transporter; from
       greetingTimeout: 10_000,
       socketTimeout: 20_000,
     });
-    transporter.on('error', (e) => console.error('[smtp pool error]', e));
+    transporter.on('error', (e) => logger.error('[smtp pool error]', e));
     const from = `"${settings.fromName}" <${settings.user}>`;
     const cached: CachedTransporter = { transporter, from, hash };
     g._smtpCache = cached;

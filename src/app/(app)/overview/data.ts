@@ -7,6 +7,7 @@ import { listConversations, countUnreadConversations } from '@/lib/db/whatsappCo
 import { todayInJerusalem } from '@/lib/dates';
 import type { TaskPriority } from '@/lib/types/tasks';
 import type { IssuePriority } from '@/lib/types/issues';
+import { logger } from '@/lib/logger';
 
 // How many rows each list widget shows before the "הצג הכל" link.
 const WIDGET_LIMIT = 5;
@@ -35,7 +36,7 @@ export async function safe<T>(fn: () => Promise<T>): Promise<T | null> {
   try {
     return await fn();
   } catch (err) {
-    console.error('[overview:widget]', err instanceof Error ? err.message : String(err));
+    logger.error('[overview:widget]', err instanceof Error ? err.message : String(err));
     return null;
   }
 }

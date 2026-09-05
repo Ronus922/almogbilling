@@ -3,6 +3,9 @@
 //   (1) No .env file other than *.example is tracked.
 //   (2) No actual secret VALUE (from /etc/billing/billing.env AND .env.local)
 //       appears in any tracked file — catches a real leak regardless of shape.
+//       Only those two FILES are sources; process.env is deliberately not one:
+//       CI injects a throwaway DATABASE_URL that is written verbatim in ci.yml,
+//       and any exported shell variable would likewise read as a false leak.
 //   (3) No obvious key patterns (service_role JWT, sk-ant-…, private key) in
 //       tracked code.
 // Never prints a secret value — only the offending KEY name + file.
@@ -44,26 +47,32 @@ function grepRegex(root, pattern) {
 
 run('check-no-secrets', async () => {
   const root = repoRoot();
-  loadEnv();
-  const runtime = readRuntimeSecrets(); // {} of KEY→value, or null if unreadable
+  const local = loadEnv();              // .env.local → {} when absent (CI)
+  const runtime = readRuntimeSecrets(); // billing.env → null when unreadable
 
   // (1) tracked env files
   const envFiles = tracked(root).filter((f) => /(^|\/)\.env/.test(f) && !f.endsWith('.example'));
   if (envFiles.length === 0) ok('אין קבצי .env במעקב git (מלבד *.example)');
   else fail('קבצי env במעקב git: ' + envFiles.join(', '));
 
-  // (2) literal secret values leaked into tracked files
+  // (2) literal secret values leaked into tracked files — every distinct value
+  // the two files hold for a key (they differ, e.g. prod vs local DATABASE_URL).
   let leaked = 0;
+  let compared = 0;
   for (const key of SENSITIVE_KEYS) {
-    const val = (runtime && runtime[key]) || process.env[key];
-    if (!val || val.length < 12) continue;
-    const hits = grepFixed(root, val).filter((f) => !f.endsWith('.example'));
-    if (hits.length) { fail(`הערך של ${key} מופיע בקבצים במעקב: ${hits.join(', ')}`); leaked++; }
+    const values = new Set([runtime?.[key], local[key]].filter((v) => v && v.length >= 12));
+    for (const val of values) {
+      compared++;
+      const hits = grepFixed(root, val).filter((f) => !f.endsWith('.example'));
+      if (hits.length) { fail(`הערך של ${key} מופיע בקבצים במעקב: ${hits.join(', ')}`); leaked++; break; }
+    }
   }
   if (leaked === 0) {
-    ok(runtime
-      ? 'אף ערך סוד (billing.env + .env.local) לא מופיע בקבצים במעקב'
-      : 'אף ערך סוד מ-.env.local לא מופיע בקבצים במעקב (billing.env לא נקרא — אין sudo)');
+    if (compared === 0) {
+      info('אין ערכי סוד להשוואה (אין .env.local ו-billing.env לא נקרא) — נבדקו רק תבניות');
+    } else {
+      ok(`אף אחד מ-${compared} ערכי הסוד (billing.env + .env.local) לא מופיע בקבצים במעקב`);
+    }
     if (!runtime) info('להרצה מלאה כולל /etc/billing/billing.env דרוש sudo -n cat על הקובץ');
   }
 

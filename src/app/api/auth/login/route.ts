@@ -4,6 +4,8 @@ import { verifyPassword } from '@/lib/auth/password';
 import { createSession } from '@/lib/auth/session';
 import { checkRateLimit, clearRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { AUTH_RATE_WINDOW_SEC, LOGIN_MAX_PER_USER, LOGIN_MAX_PER_IP } from '@/lib/constants';
+import { parseJsonBody } from '@/lib/http/body';
+import { loginBodySchema } from '@/lib/validation/requests';
 
 export const runtime = 'nodejs';
 
@@ -14,20 +16,9 @@ interface UserRow {
 }
 
 export async function POST(req: Request) {
-  let body: { username?: unknown; password?: unknown; remember?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: 'invalid_credentials' }, { status: 401 });
-  }
-
-  const username = typeof body.username === 'string' ? body.username.trim() : '';
-  const password = typeof body.password === 'string' ? body.password : '';
-  const remember = body.remember === true;
-
-  if (!username || !password) {
-    return NextResponse.json({ error: 'invalid_credentials' }, { status: 401 });
-  }
+  const body = await parseJsonBody(req, loginBodySchema);
+  if (!body.ok) return body.response;
+  const { username, password, remember } = body.data;
 
   // Brute-force protection: throttle by IP and by username before any
   // password verification. Either bucket being exhausted blocks the attempt.

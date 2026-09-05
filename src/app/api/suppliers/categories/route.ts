@@ -8,6 +8,7 @@ import {
   createSupplierCategory,
 } from '@/lib/db/supplierCategories';
 import { validateSupplierCategoryForm, normalizeCategoryColor } from '@/lib/validation/suppliers';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -79,7 +80,7 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-    console.error('[POST /api/suppliers/categories]', err);
+    logger.error('[POST /api/suppliers/categories]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

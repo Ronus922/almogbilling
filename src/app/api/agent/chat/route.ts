@@ -10,6 +10,8 @@ import {
   mapSearchArgs,
   validateMessages,
 } from '@/lib/agent/tool';
+import { logger } from '@/lib/logger';
+import { env } from '@/env';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -80,7 +82,7 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = env.ANTHROPIC_API_KEY;
   if (!apiKey) return json({ error: 'agent_not_configured' }, 503);
 
   if (rateLimited(actorId)) return json({ error: 'rate_limited' }, 429);
@@ -173,7 +175,7 @@ export async function POST(req: NextRequest) {
                   ? await runSearchDebtors(tu.input)
                   : { error: 'unknown_tool' };
             } catch (e) {
-              console.error('[agent/chat] tool failed', e);
+              logger.error('[agent/chat] tool failed', e);
               out = { error: 'tool_failed' };
             }
             results.push({
@@ -191,7 +193,7 @@ export async function POST(req: NextRequest) {
         sse('done', {});
       } catch (err) {
         if (!aborted) {
-          console.error('[agent/chat] stream error', err);
+          logger.error('[agent/chat] stream error', err);
           sse('error', { message: 'שגיאה בעיבוד הבקשה' });
         }
       } finally {

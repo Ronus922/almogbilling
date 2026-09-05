@@ -6,6 +6,7 @@ import { getIssueById, createTaskFromIssue } from '@/lib/db/issues';
 import { isUuid } from '@/lib/validation/issues';
 import { notifyTask } from '@/services/notifications';
 import type { TaskPriority } from '@/lib/types/tasks';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -73,7 +74,7 @@ export async function POST(_req: NextRequest, ctx: RouteCtx) {
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
     }
-    console.error('[POST /api/issues/:id/create-task]', err);
+    logger.error('[POST /api/issues/:id/create-task]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

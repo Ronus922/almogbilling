@@ -17,7 +17,22 @@ if [[ -z "${BILLING_CRON_SECRET:-}" ]]; then
   exit 1
 fi
 
+# healthchecks.io dead-man switch (optional): HEALTHCHECK_REMINDERS_URL comes
+# from the same EnvironmentFile. Success pings the URL, failure pings …/fail so
+# the check turns red immediately instead of waiting out the grace period.
+ping_hc() {
+  [[ -n "${HEALTHCHECK_REMINDERS_URL:-}" ]] || return 0
+  curl -fsS -m 10 --retry 3 -o /dev/null "${HEALTHCHECK_REMINDERS_URL}$1" || true
+}
+
 # --fail → non-zero exit on HTTP >= 400 so systemd records a failed run.
-printf 'x-cron-secret: %s' "$BILLING_CRON_SECRET" \
-  | curl -fsS --max-time 110 -X POST -H @- "$URL"
-echo
+if printf 'x-cron-secret: %s' "$BILLING_CRON_SECRET" \
+  | curl -fsS --max-time 110 -X POST -H @- "$URL"; then
+  echo
+  ping_hc ""
+else
+  rc=$?
+  echo
+  ping_hc /fail
+  exit "$rc"
+fi
