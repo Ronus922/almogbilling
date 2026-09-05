@@ -11,7 +11,8 @@
 > ו-`no-console` (לוגים דרך `src/lib/logger.ts`). בנוסף **SafeQL** מאמת כל SQL סטטי
 > שמועבר ל-`query`/`queryOne`/`client.query`/`pool.query` מול הסכימה החיה של
 > `DATABASE_URL` (טבלה/עמודה לא קיימת, שגיאת תחביר) — ראה `scripts/lint/`. לכן
-> `check:all` = **typecheck → lint → `npm test` → בדיקות האינווריאנטות**.
+> `check:all` = **typecheck → lint → `npm test` → בדיקות האינווריאנטות**. ה-pre-push של husky
+> מריץ רק את שלושת הראשונים (ו-lint **בלי** SafeQL) — ראה "מה רץ איפה" למטה.
 
 ## הבדיקות — מה כל אחת מגינה
 
@@ -38,6 +39,22 @@
 > האמיתית הראשונה, כך ש-`check:dupes`/`check:wa` לא יכולים להיות ירוקים מגלאי
 > שבור. להרצה ידנית: `node scripts/_check-lib.mjs --self-test`. אומת מול גלאי
 > שבור מכוון (`rejected` קבוע): הבקרה מפילה אותו — לבד וגם דרך `check:dupes`.
+
+## מה רץ איפה — pre-push מול CI (מ-05/09/2026)
+
+| שער | פקודה | מה רץ | זמן |
+|---|---|---|---|
+| **pre-push** (husky, `.husky/pre-push`) | `npm run typecheck && SAFEQL=0 npm run lint && npm test` | typecheck · lint (**בלי** SafeQL) · vitest | ~1 דק' (נמדד: 51 שנ' — typecheck 6, lint 41, vitest 4) |
+| **CI** (`.github/workflows/ci.yml`, job `check:all`) | `npm run check:all` | הכל: typecheck · lint **עם** SafeQL מול סכימת dbmate · vitest · `check:secrets`/`check:auth`/`check:rbac` · בדיקות ה-DB `check:money`/`check:phone`/`check:session`/`check:dupes`/`check:wa` | ~4–5 דק' |
+
+- **בדיקות שצריכות DB רצות ב-CI בלבד**: `check:money`, `check:phone`, `check:session`, `check:dupes`,
+  `check:wa` ואימות ה-SQL של SafeQL. ה-workflow מקים postgres ריק, מריץ `dbmate up` ואז `check:all`.
+  מקומית הן זמינות דרך `npm run check:all` כשיש `DATABASE_URL` ב-`.env.local` — זה עדיין השער לפני deploy (ראה "הכלל").
+- `SAFEQL=0` מכבה **רק** את בלוק SafeQL ב-`eslint.config.mjs` (ומדפיס `SAFEQL=0 — SafeQL SQL validation
+  skipped`); שאר כללי ה-lint רצים כרגיל. בלי הדגל, `npm run lint` מריץ SafeQL בכל פעם ש-`DATABASE_URL` זמין.
+- `check:secrets`/`check:auth`/`check:rbac` הן סטטיות ומהירות, אבל נשארו מחוץ ל-pre-push בכוונה
+  (pre-push = typecheck + lint + vitest בלבד). הן רצות ב-CI בכל push ובכל `check:all`.
+- לדלג על ה-hook פעם אחת: `HUSKY=0 git push`. **CI לא מדלג** — הוא רץ על כל push ועל כל PR.
 
 ### הרצה בודדת
 ```bash

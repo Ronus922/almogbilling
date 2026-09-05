@@ -191,8 +191,8 @@ npm audit fix            # בלי --force; ואז npm run check:all
 
 ---
 
-## 9. אופציונלי — לקצר את pre-push
+## 9. ~~אופציונלי — לקצר את pre-push~~ — בוצע (05/09/2026, בענף הזה)
 
-`.husky/pre-push` מריץ `check:all` מלא (~4–5 דק'). אם זה מפריע: לערוך ל-
-`npm run typecheck && npm run lint && npm test` ולהשאיר את בדיקות ה-DB ל-CI. (`HUSKY=0 git push`
-מדלג פעם אחת.)
+`.husky/pre-push` מריץ עכשיו `npm run typecheck && SAFEQL=0 npm run lint && npm test` בלבד (~1 דק');
+בדיקות ה-DB (`check:money/phone/session/dupes/wa`) ו-SafeQL נשארו ב-CI. פירוט: `TESTING.md` → "מה רץ איפה".
+(`HUSKY=0 git push` עדיין מדלג פעם אחת.)

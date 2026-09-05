@@ -16,8 +16,14 @@ import dotenv from 'dotenv';
 // .env.local (never committed). Without a URL the SafeQL block is skipped and
 // the rest of the lint still runs — CI always provides one.
 dotenv.config({ path: '.env.local', quiet: true });
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
+// SAFEQL=0 turns the SafeQL block off even when DATABASE_URL is available. The
+// husky pre-push hook uses it: live-schema SQL validation is CI's job (see
+// TESTING.md → "מה רץ איפה"). Every other rule in this config is unaffected.
+const safeqlOff = process.env.SAFEQL === '0';
+const databaseUrl = safeqlOff ? undefined : process.env.DATABASE_URL;
+if (safeqlOff) {
+  process.stderr.write('[eslint] SAFEQL=0 — SafeQL SQL validation skipped (runs in CI)\n');
+} else if (!databaseUrl) {
   process.stderr.write('[eslint] DATABASE_URL not set — SafeQL SQL validation skipped\n');
 }
 // 'warn' while the existing queries are being cleaned up; 'error' once the
