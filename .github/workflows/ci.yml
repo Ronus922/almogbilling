@@ -31,8 +31,8 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/billing
-      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/billing
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/billing?sslmode=disable
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/billing?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 
@@ -43,10 +43,29 @@ jobs:
 
       - run: npm ci
 
-      - name: Apply migrations (up files, lexicographic — same order as production)
+      - name: dbmate up (empty database → full schema)
+        run: npx dbmate --url "$DATABASE_URL" --migrations-dir db/migrations --no-dump-schema up
+
+      - name: dbmate status (must be 0 pending)
+        run: npx dbmate --url "$DATABASE_URL" --migrations-dir db/migrations --no-dump-schema status
+
+      - name: Legacy wrappers are in sync with supabase/migrations
+        run: npm run db:wrappers
+
+      # The 79 legacy migrations ran in production through psql. Prove that the
+      # dbmate wrappers produce the identical schema: apply the originals to a
+      # second database with psql and diff the two dumps (same pg_dump, so no
+      # version noise).
+      - name: Schema parity — dbmate wrappers vs original psql files
         run: |
+          psql "$DATABASE_URL" -qc 'create database billing_legacy'
+          LEGACY="${DATABASE_URL/\/billing/\/billing_legacy}"
           for f in $(ls supabase/migrations/*.sql | grep -v '\.down\.sql$' | LC_ALL=C sort); do
-            psql "$DATABASE_URL" -q -v ON_ERROR_STOP=1 -f "$f"
+            psql "$LEGACY" -q -v ON_ERROR_STOP=1 -f "$f"
           done
+          psql "$LEGACY" -q -v ON_ERROR_STOP=1 -f scripts/db/mark-applied.sql
+          DATABASE_URL="$DATABASE_URL" bash scripts/db/dump-schema.sh /tmp/schema-dbmate.sql
+          DATABASE_URL="$LEGACY"       bash scripts/db/dump-schema.sh /tmp/schema-legacy.sql
+          diff /tmp/schema-dbmate.sql /tmp/schema-legacy.sql && echo "schema parity OK"
 
       - run: npm run check:all

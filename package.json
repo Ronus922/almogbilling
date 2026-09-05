@@ -21,7 +21,13 @@
     "check:session": "node scripts/check-session-hash.mjs",
     "check:dupes": "node scripts/check-no-duplicate-debtors.mjs",
     "check:wa": "node scripts/check-wa-idempotency.mjs",
-    "check:all": "npm run typecheck && npm run lint && npm run test && npm run check:secrets && npm run check:auth && npm run check:rbac && npm run check:money && npm run check:phone && npm run check:session && npm run check:dupes && npm run check:wa"
+    "check:all": "npm run typecheck && npm run lint && npm run test && npm run check:secrets && npm run check:auth && npm run check:rbac && npm run check:money && npm run check:phone && npm run check:session && npm run check:dupes && npm run check:wa",
+    "db:new": "dbmate --env-file .env.local --migrations-dir db/migrations --schema-file db/schema.sql --no-dump-schema new",
+    "db:up": "dbmate --env-file .env.local --migrations-dir db/migrations --schema-file db/schema.sql --no-dump-schema up",
+    "db:status": "dbmate --env-file .env.local --migrations-dir db/migrations --schema-file db/schema.sql --no-dump-schema status",
+    "db:rollback": "dbmate --env-file .env.local --migrations-dir db/migrations --schema-file db/schema.sql --no-dump-schema rollback",
+    "db:dump": "bash scripts/db/dump-schema.sh",
+    "db:wrappers": "node scripts/db/gen-legacy-dbmate-migrations.mjs --check"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.0",
@@ -60,6 +66,7 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dbmate": "^2.35.1",
     "dotenv": "^17.4.2",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.2.9",

@@ -21,6 +21,14 @@
 
 ---
 
+## מיגרציות DB — dbmate בלבד (מ-05/09/2026)
+- **מיגרציה חדשה = `npm run db:new <name>`** → קובץ ב-`db/migrations/` עם `-- migrate:up` / `-- migrate:down`. **`npm run db:up`** מריץ, **`npm run db:status`** מראה pending, **`npm run db:dump`** מעדכן את `db/schema.sql` (לקומיט יחד עם המיגרציה).
+- **אסור** להוסיף/לשנות קבצים ב-`supabase/migrations/` — היסטוריה קפואה (79 up + 8 down), עטופה אוטומטית ב-`db/migrations/20000101…` דרך `scripts/db/gen-legacy-dbmate-migrations.mjs`.
+- **אסור** להריץ SQL של סכימה ידנית בפרודקשן (`psql -f`). הדרך היחידה: `dbmate up` מול `DIRECT_URL`. פרטים ונוהל ההפעלה הראשון: `docs/migrations.md`.
+
+
+---
+
 ## 🎨 חוק עיצוב מחייב (DESIGN LAW — אסור לחרוג!)
 
 **לפני בנייה או שינוי של כל קומפוננטת UI — חובה (ללא יוצא מן הכלל):**
