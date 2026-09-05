@@ -1,0 +1,12 @@
+[Unit]
+Description=Run billing-backup.service daily at 03:00
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# Catch up a missed run (server was down at 03:00).
+Persistent=true
+RandomizedDelaySec=10min
+Unit=billing-backup.service
+
+[Install]
+WantedBy=timers.target

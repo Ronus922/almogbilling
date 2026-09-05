@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# the template is names-only and is exempt in check:secrets — track it
+!.env.example
 
 # secret/editor backups — never commit (covers names .env* misses, e.g. prod.env.bak)
 *.env.bak
