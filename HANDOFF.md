@@ -178,9 +178,14 @@ github.com/apps/renovate → Install → Only select repositories → `Ronus922/
 
 ---
 
-## 8. פגיעויות npm (28, אחת critical) — לא תוקן בכוונה
+## 8. פגיעויות npm (27 נכון ל-05/09/2026) — לא תוקן בכוונה
 
-**למה:** מחוץ לגבולות הריצה (אין שדרוגי major). ה-critical הוא בשרשרת `vitest@2` (dev בלבד).
+**למה:** מחוץ לגבולות הריצה (אין שדרוגי major). ה-critical של npm audit הוא בשרשרת `vitest@2` (dev בלבד);
+ב-production יש critical נוסף ש-npm audit **עוד לא מציג** — RCE ב-Image Optimization של `next <16.3.3`.
+
+**ממצאים מפורטים** — production מול dev, גרסה מתוקנת, patch/minor/major ו-breaking changes לכל תלות ישירה:
+`docs/AUDIT.md`. סדר שדרוג מוצע שם: `next@16.3.4` → `nodemailer@9.1.1` → `npm audit fix` → `vitest@4` →
+`uuid` override תחת exceljs → `puppeteer-core@25` **רק אחרי** Node 22 בשרת וב-CI.
 
 ```bash
 cd /var/www/billing && npm audit
