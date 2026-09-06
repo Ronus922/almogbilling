@@ -49,9 +49,11 @@
   --chip-green-ink: #177552;
   --chip-green-border: #bee7d5;
 
-  /* Red (required) */
+  /* Red (required / INACTIVE chip — full family, mirrors the green one) */
   --chip-red: #e5484d;
   --chip-red-soft: #fef0f0;
+  --chip-red-ink: #b02a2e;
+  --chip-red-border: #f6c9ca;
 
   /* Header gradient (ref: 115deg, #2B3FB8 → #3D5AFE 62% → #5872FF) */
   --chip-header-gradient: linear-gradient(115deg, #2b3fb8, #3d5afe 62%, #5872ff);

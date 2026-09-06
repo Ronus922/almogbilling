@@ -12,8 +12,6 @@ import { isSnapshotRole, resolveChipHolder } from '@/lib/chips/holder';
 import { ChipsKpiRow } from './ChipsKpiRow';
 import { ChipsTable } from './ChipsTable';
 import { IssueChipSheet } from './IssueChipSheet';
-import { DeactivateChipDialog } from './DeactivateChipDialog';
-import { ReactivateChipDialog } from './ReactivateChipDialog';
 import { ChipDetailPanel } from './ChipDetailPanel';
 import { ChipHolderPanel, type HolderRef } from './ChipHolderPanel';
 
@@ -79,13 +77,11 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
   // "N צ׳יפים" filter — client-side narrowing of the list to one holder.
   const [holderFilter, setHolderFilter] = useState<HolderRef | null>(null);
 
-  // Panels / dialogs state machine
+  // Panels state machine — status changes happen inside the detail panel itself
   const [selectedChipId, setSelectedChipId] = useState<string | null>(null);
   const [holderPanel, setHolderPanel] = useState<HolderRef | null>(null);
   const [issueOpen, setIssueOpen] = useState(false);
   const [issueInitial, setIssueInitial] = useState<IssueInitial>(null);
-  const [deactivateTarget, setDeactivateTarget] = useState<Chip | null>(null);
-  const [reactivateTarget, setReactivateTarget] = useState<Chip | null>(null);
 
   // Partial-registry banner — starts hidden so SSR markup matches, then reveals
   // on mount unless previously dismissed (localStorage flag).
@@ -319,34 +315,6 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
         onIssued={refetchAll}
       />
 
-      <DeactivateChipDialog
-        chip={deactivateTarget}
-        open={!!deactivateTarget}
-        onOpenChange={(o: boolean) => {
-          if (!o) setDeactivateTarget(null);
-        }}
-        onDone={(opts?: { reissue?: boolean }) => {
-          const chip = deactivateTarget;
-          setDeactivateTarget(null);
-          closeDetail();
-          refetchAll();
-          if (opts?.reissue && chip) openIssueSheet(issueInitialFromChip(chip));
-        }}
-      />
-
-      <ReactivateChipDialog
-        chip={reactivateTarget}
-        open={!!reactivateTarget}
-        onOpenChange={(o: boolean) => {
-          if (!o) setReactivateTarget(null);
-        }}
-        onDone={() => {
-          setReactivateTarget(null);
-          closeDetail();
-          refetchAll();
-        }}
-      />
-
       <ChipDetailPanel
         chipId={selectedChipId}
         open={!!selectedChipId}
@@ -355,8 +323,6 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
         }}
         canEdit={canEdit}
         onChanged={refetchAll}
-        onRequestDeactivate={(chip: Chip) => setDeactivateTarget(chip)}
-        onRequestReactivate={(chip: Chip) => setReactivateTarget(chip)}
         onRequestReissue={(chip: Chip) => {
           closeDetail();
           openIssueSheet(issueInitialFromChip(chip));

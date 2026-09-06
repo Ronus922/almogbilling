@@ -76,7 +76,7 @@ function MatchBadge({ type }: { type: ChipMatchType }) {
   );
 }
 
-/** Chip number in the ref's tag anatomy: mono, green when active, dashed +
+/** Chip number in the ref's tag anatomy: mono, green when active, RED dashed +
  *  line-through when inactive ("צ׳יפ שהונפק לא נמחק" — only toggled). */
 function ChipNumberTag({ chip }: { chip: ChipWithHolder }) {
   const active = chip.status === 'active';
@@ -86,7 +86,7 @@ function ChipNumberTag({ chip }: { chip: ChipWithHolder }) {
         'inline-flex h-[30px] items-center rounded-[9px] border px-[10px]',
         active
           ? 'border-[var(--chip-green-border)] bg-[var(--chip-green-soft)]'
-          : 'border-dashed border-[var(--chip-border-strong)] bg-[var(--chip-panel-alt)]',
+          : 'border-dashed border-[var(--chip-red-border)] bg-[var(--chip-red-soft)]',
       )}
     >
       <span
@@ -94,7 +94,7 @@ function ChipNumberTag({ chip }: { chip: ChipWithHolder }) {
           'chip-num text-[13.5px] font-semibold tracking-[0.02em]',
           active
             ? 'text-[var(--chip-green-ink)]'
-            : 'text-[var(--chip-ink-soft)] line-through decoration-[var(--chip-ink-ghost)]',
+            : 'text-[var(--chip-red-ink)] line-through decoration-[var(--chip-red-border)]',
         )}
       >
         {chip.chip_number}
@@ -127,13 +127,13 @@ function StatusPill({ chip }: { chip: ChipWithHolder }) {
         'inline-flex h-[22px] items-center gap-[5px] rounded-[6px] px-2 text-[11px] font-bold',
         active
           ? 'bg-[var(--chip-green-soft)] text-[var(--chip-green-ink)]'
-          : 'bg-[var(--chip-hover)] text-[var(--chip-ink-soft)]',
+          : 'bg-[var(--chip-red-soft)] text-[var(--chip-red-ink)]',
       )}
     >
       <span
         className={cn(
           'h-[6px] w-[6px] rounded-full',
-          active ? 'bg-[var(--chip-green)]' : 'bg-[var(--chip-ink-ghost)]',
+          active ? 'bg-[var(--chip-green)]' : 'bg-[var(--chip-red)]',
         )}
       />
       {active ? 'פעיל' : 'לא פעיל'}
