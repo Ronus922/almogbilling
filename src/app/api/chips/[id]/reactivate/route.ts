@@ -12,6 +12,8 @@ interface RouteCtx {
 
 // POST /api/chips/[id]/reactivate (chips:edit) — inactive -> active, the ONLY
 // way back. Always resets controller_synced=false (handled in the db layer).
+// The reason is OPTIONAL (the one-click toggle sends none) — an empty or absent
+// body is valid and logs a reactivated event with reason=null.
 export async function POST(req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
@@ -24,18 +26,17 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
 
   const { id } = await ctx.params;
 
+  // An empty body is the normal case (one-click toggle) — never an error here.
   let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
+    body = {};
   }
   const bodyRec = (body ?? {}) as Record<string, unknown>;
 
-  const reason = typeof bodyRec.reason === 'string' ? bodyRec.reason.trim() : '';
-  if (!reason) {
-    return NextResponse.json({ error: 'נדרשת סיבת הפעלה מחדש' }, { status: 400 });
-  }
+  const reasonRaw = typeof bodyRec.reason === 'string' ? bodyRec.reason.trim() : '';
+  const reason = reasonRaw !== '' ? reasonRaw : null;
 
   try {
     const chip = await reactivateChip(

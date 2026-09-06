@@ -565,7 +565,8 @@ export async function deactivateChip(
 }
 
 /**
- * inactive -> active — the ONLY way back. Requires a free-text reason. If the
+ * inactive -> active — the ONLY way back. The reason is OPTIONAL: the one-click
+ * toggle reactivates without one, and chip_events.reason stays null. If the
  * number was re-coded onto another active chip meanwhile, the partial unique
  * index fires → ChipNumberTakenError (routes map to 409). Reactivation always
  * resets controller_synced=false (the controller must learn about it again).
@@ -573,7 +574,7 @@ export async function deactivateChip(
  */
 export async function reactivateChip(
   id: string,
-  opts: { reason: string },
+  opts: { reason?: string | null },
   actor: { id: string; name: string },
 ): Promise<ChipWithHolder | null> {
   return withTransaction(async (client) => {
@@ -609,7 +610,7 @@ export async function reactivateChip(
     await insertChipEvent(client, id, 'reactivated', actor, {
       oldValue: { status: 'inactive' },
       newValue: { status: 'active' },
-      reason: opts.reason,
+      reason: opts.reason ?? null,
     });
     return selectChipWithHolder(client, id);
   });
