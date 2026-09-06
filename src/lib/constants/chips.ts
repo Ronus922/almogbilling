@@ -52,8 +52,9 @@ export const APP_INVITE_STATUSES: readonly AppInviteStatus[] = ['pending', 'acti
 
 // ── Hebrew label maps ──────────────────────────────────────────────────────
 
+// The DB value stays 'physical' — only the Hebrew vocabulary changed to "כרטיס".
 export const CHIP_TYPE_LABEL: Record<ChipType, string> = {
-  physical: 'פיזי',
+  physical: 'כרטיס',
   app: 'אפליקציה',
 };
 

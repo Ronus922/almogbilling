@@ -166,7 +166,7 @@ export function ChipHolderPanel({
                             'flex min-h-[52px] w-full cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 rounded-[11px] border-[1.5px] px-[13px] py-2 text-start transition-colors',
                             active
                               ? 'border-[var(--chip-green-border)] bg-[var(--chip-green-soft)] hover:border-[var(--chip-green)]'
-                              : 'border-dashed border-[var(--chip-border-strong)] bg-[var(--chip-panel-alt)] hover:border-[var(--chip-ink-ghost)]',
+                              : 'border-dashed border-[var(--chip-red-border)] bg-[var(--chip-red-soft)] hover:border-[var(--chip-red)]',
                           )}
                         >
                           <span
@@ -174,7 +174,7 @@ export function ChipHolderPanel({
                               'chip-num text-[14px] font-semibold tracking-[0.02em]',
                               active
                                 ? 'text-[var(--chip-green-ink)]'
-                                : 'text-[var(--chip-ink-soft)] line-through decoration-[var(--chip-ink-ghost)]',
+                                : 'text-[var(--chip-red-ink)] line-through decoration-[var(--chip-red-border)]',
                             )}
                           >
                             {c.chip_number}
@@ -183,13 +183,13 @@ export function ChipHolderPanel({
                           <span
                             className={cn(
                               'inline-flex h-[22px] items-center gap-[5px] rounded-[6px] bg-white px-2 text-[11px] font-bold',
-                              active ? 'text-[var(--chip-green-ink)]' : 'bg-[var(--chip-hover)] text-[var(--chip-ink-soft)]',
+                              active ? 'text-[var(--chip-green-ink)]' : 'bg-[var(--chip-red-soft)] text-[var(--chip-red-ink)]',
                             )}
                           >
                             <span
                               className={cn(
                                 'h-[6px] w-[6px] rounded-full',
-                                active ? 'bg-[var(--chip-green)]' : 'bg-[var(--chip-ink-ghost)]',
+                                active ? 'bg-[var(--chip-green)]' : 'bg-[var(--chip-red)]',
                               )}
                             />
                             {active ? 'פעיל' : 'לא פעיל'}

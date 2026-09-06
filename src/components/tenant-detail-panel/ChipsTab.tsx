@@ -221,7 +221,7 @@ function ChipRow({ chip }: { chip: ChipWithHolder }) {
           'chip-num text-sm font-semibold tracking-[0.02em]',
           active
             ? 'text-[var(--chip-green-ink)]'
-            : 'text-[var(--chip-ink-soft)] line-through decoration-[var(--chip-ink-ghost)]',
+            : 'text-[var(--chip-red-ink)] line-through decoration-[var(--chip-red-border)]',
         )}
       >
         {chip.chip_number}
@@ -248,11 +248,11 @@ function ChipRow({ chip }: { chip: ChipWithHolder }) {
           'inline-flex h-[20px] items-center gap-[5px] rounded-[6px] px-2 text-[11px] font-bold',
           active
             ? 'bg-[var(--chip-green-soft)] text-[var(--chip-green-ink)]'
-            : 'bg-[var(--chip-hover)] text-[var(--chip-ink-soft)]',
+            : 'bg-[var(--chip-red-soft)] text-[var(--chip-red-ink)]',
         )}
       >
-        <span className={cn('h-[6px] w-[6px] rounded-full', active ? 'bg-[var(--chip-green)]' : 'bg-[var(--chip-ink-ghost)]')} />
-        {active ? 'פעיל' : 'מושבת'}
+        <span className={cn('h-[6px] w-[6px] rounded-full', active ? 'bg-[var(--chip-green)]' : 'bg-[var(--chip-red)]')} />
+        {active ? 'פעיל' : 'לא פעיל'}
       </span>
       <span className="chip-num ms-auto text-xs text-[var(--chip-ink-soft)]">
         {formatDate(chip.issued_at)}

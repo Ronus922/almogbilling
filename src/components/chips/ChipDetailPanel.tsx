@@ -40,10 +40,19 @@ import type {
 // Sentinel for "no platform" — base-ui Select needs a non-empty value.
 const NONE = '__none__';
 
-// DESIGN.md §28.9 status pill — active green, inactive rose.
+// Status pill — chips-skin tones, identical to every other surface in the
+// module (Tailwind green/rose here used to be the module's last colour outlier).
 const STATUS_PILL: Record<ChipStatus, { label: string; cls: string; dot: string }> = {
-  active: { label: 'פעיל', cls: 'bg-green-100 text-green-700', dot: 'bg-green-500' },
-  inactive: { label: 'מושבת', cls: 'bg-rose-100 text-rose-700', dot: 'bg-rose-500' },
+  active: {
+    label: 'פעיל',
+    cls: 'bg-[var(--chip-green-soft)] text-[var(--chip-green-ink)]',
+    dot: 'bg-[var(--chip-green)]',
+  },
+  inactive: {
+    label: 'לא פעיל',
+    cls: 'bg-[var(--chip-red-soft)] text-[var(--chip-red-ink)]',
+    dot: 'bg-[var(--chip-red)]',
+  },
 };
 
 interface Props {
@@ -52,8 +61,6 @@ interface Props {
   onOpenChange: (o: boolean) => void;
   canEdit: boolean;
   onChanged: () => void;
-  onRequestDeactivate: (chip: Chip) => void;
-  onRequestReactivate: (chip: Chip) => void;
   onRequestReissue: (chip: Chip) => void;
   /** Open the holder view (all chips of this chip's holder). */
   onOpenHolder: (chip: ChipWithHolder) => void;
@@ -110,7 +117,7 @@ function formatFee(value: number | null): string | null {
 
 export function ChipDetailPanel({
   chipId, open, onOpenChange, canEdit, onChanged,
-  onRequestDeactivate, onRequestReactivate, onRequestReissue, onOpenHolder,
+  onRequestReissue, onOpenHolder,
 }: Props) {
   const router = useRouter();
   const [chip, setChip] = useState<ChipWithHolder | null>(null);
@@ -122,6 +129,7 @@ export function ChipDetailPanel({
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [toggling, setToggling] = useState(false);
 
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
 
@@ -252,6 +260,50 @@ export function ChipDetailPanel({
       toast.error((e as Error).message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  /**
+   * One-click status toggle — same contract as the issue window: a native
+   * confirm when switching OFF (sending reason='unknown', which the schema's
+   * chips_inactive_requires_reason CHECK demands), nothing at all when
+   * switching back ON. Optimistic, rolled back on failure. The panel stays
+   * open and simply shows the new status.
+   */
+  async function handleToggleStatus() {
+    if (!chip || !chipId || toggling) return;
+    const wasActive = chip.status === 'active';
+    if (wasActive && !window.confirm(`להשבית את צ׳יפ ${chip.chip_number}?`)) return;
+
+    const prev = chip;
+    setToggling(true);
+    setChip({ ...prev, status: wasActive ? 'inactive' : 'active' });
+    try {
+      const r = await fetch(
+        `/api/chips/${chipId}/${wasActive ? 'deactivate' : 'reactivate'}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(
+            wasActive ? { reason: 'unknown', controller_synced: false } : {},
+          ),
+        },
+      );
+      const data = (await r.json().catch(() => ({}))) as { chip?: ChipWithHolder; error?: string };
+      if (!r.ok || !data.chip) {
+        throw new Error(data.error ?? (wasActive ? 'ההשבתה נכשלה' : 'ההפעלה נכשלה'));
+      }
+      setChip(data.chip);
+      toast.success(wasActive ? 'הצ׳יפ הושבת' : 'הצ׳יפ הופעל');
+      bumpEvents();
+      onChanged();
+      router.refresh();
+    } catch (e) {
+      setChip(prev); // rollback
+      toast.error((e as Error).message);
+    } finally {
+      setToggling(false);
     }
   }
 
@@ -396,8 +448,8 @@ export function ChipDetailPanel({
                 {chip.status === 'active' && (
                   <button
                     type="button"
-                    onClick={() => onRequestDeactivate(chip)}
-                    disabled={saving}
+                    onClick={handleToggleStatus}
+                    disabled={saving || toggling}
                     className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-[#fecaca] bg-white px-[18px] text-[14px] font-semibold text-[#dc2626] transition-colors hover:border-[#fca5a5] hover:bg-[#fef2f2] disabled:opacity-50"
                   >
                     <Ban className="h-4 w-4" />
@@ -408,8 +460,8 @@ export function ChipDetailPanel({
                   <>
                     <button
                       type="button"
-                      onClick={() => onRequestReactivate(chip)}
-                      disabled={saving}
+                      onClick={handleToggleStatus}
+                      disabled={saving || toggling}
                       className="inline-flex h-11 items-center gap-2 rounded-[11px] border border-[#bbf7d0] bg-white px-[18px] text-[14px] font-semibold text-[#15803d] transition-colors hover:border-[#86efac] hover:bg-[#f0fdf4] disabled:opacity-50"
                     >
                       <Power className="h-4 w-4" />

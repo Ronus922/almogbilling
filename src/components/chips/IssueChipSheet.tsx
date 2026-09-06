@@ -6,15 +6,18 @@
 // language (palette/typography/sizes) stays Chip.md. Instruction overrides
 // (approved): role picker stays the rich 2×2 cards (not Chip2's compact row),
 // footer keeps primary-at-start, block-remove is hidden once a block holds
-// SAVED chips, and the type mini-selector says "פיזי" (system vocabulary).
+// SAVED chips, and the type mini-selector says "כרטיס" (system vocabulary).
+//
+// THIS WINDOW IS THE ONLY PLACE CHIPS ARE MANAGED. Nothing opens out of it.
 //
 // Flow: pick an apartment (async registry combobox, inline create) → one or
 // more HOLDER BLOCKS, each = one person (2×2 role cards + snapshot name/phone
 // + per-number type capture + tags) → global fee/notes → one save issues ALL
 // pending tags from all blocks in ONE transaction, all-or-nothing. Existing
-// chips load grouped into blocks as read-only tags; their toggle goes through
-// the Deactivate/Reactivate dialogs IMMEDIATELY (never silently, never on
-// save). A pending tag's X removes a NOT-YET-ISSUED number — saved chips have
+// chips load grouped into blocks as tags whose toggle flips the status
+// IMMEDIATELY — a native confirm() when switching OFF, nothing at all when
+// switching back ON; optimistic, rolled back on failure. No dialogs.
+// A pending tag's X removes a NOT-YET-ISSUED number — saved chips have
 // no removal path anywhere (product law).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -36,8 +39,6 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { DeactivateChipDialog } from './DeactivateChipDialog';
-import { ReactivateChipDialog } from './ReactivateChipDialog';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { validatePhone } from '@/lib/validation';
 import { cn } from '@/lib/utils';
@@ -47,7 +48,7 @@ import {
 import { isSnapshotRole, resolveChipHolder } from '@/lib/chips/holder';
 import { MAX_CHIPS_PER_GROUP, exceedsSoftLimit } from '@/lib/chips/issueGroups';
 import type {
-  ChipResidentRole, ChipType, ChipWithHolder, ContactResidentCard,
+  ChipResidentRole, ChipStatus, ChipType, ChipWithHolder, ContactResidentCard,
   ContactResidents, IssueChipGroup,
 } from '@/lib/types/chips';
 
@@ -208,9 +209,8 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
   const [blocks, setBlocks] = useState<HolderBlock[]>([emptyBlock(0)]);
   const [chipsVersion, setChipsVersion] = useState(0); // bump → refetch saved chips
 
-  // Saved-chip toggle dialogs (immediate, never silent)
-  const [deactivateTarget, setDeactivateTarget] = useState<ChipWithHolder | null>(null);
-  const [reactivateTarget, setReactivateTarget] = useState<ChipWithHolder | null>(null);
+  // Saved-chip toggle — id of the chip whose request is in flight (blocks double-click)
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   // Global fee / notes / override
   const [fee, setFee] = useState('');
@@ -254,8 +254,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     blockSeq.current = 1;
     setBlocks([emptyBlock(0)]);
     setChipsVersion(0);
-    setDeactivateTarget(null);
-    setReactivateTarget(null);
+    setTogglingId(null);
     setFee('');
     setFeeCharged(false);
     setNotes('');
@@ -450,11 +449,10 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     (!overLimit || overrideReason.trim() !== '') &&
     !submitting;
 
-  // ── ESC layering (LIFO: dialogs > confirm > picker > panel) ──────────────
+  // ── ESC layering (LIFO: confirm > picker > panel) ────────────────────────
 
-  const dialogOpen = !!deactivateTarget || !!reactivateTarget;
-  useEscapeKey(open && !confirmCloseOpen && !pickerOpen && !dialogOpen, () => requestClose());
-  useEscapeKey(open && pickerOpen && !confirmCloseOpen && !dialogOpen, () => setPickerOpen(false));
+  useEscapeKey(open && !confirmCloseOpen && !pickerOpen, () => requestClose());
+  useEscapeKey(open && pickerOpen && !confirmCloseOpen, () => setPickerOpen(false));
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
 
   function requestClose() {
@@ -536,10 +534,62 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     patchBlock(block.key, { pending: block.pending.filter((p) => p.number !== num) });
   }
 
-  /** Saved-chip toggle → the dialogs, immediately (never silent). */
-  function requestToggle(chip: ChipWithHolder) {
-    if (chip.status === 'active') setDeactivateTarget(chip);
-    else setReactivateTarget(chip);
+  /** Flip one saved chip's status locally (optimistic + rollback share this). */
+  function setSavedStatus(chipId: string, status: ChipStatus) {
+    setBlocks((prev) =>
+      prev.map((b) => ({
+        ...b,
+        saved: b.saved.map((c) => (c.id === chipId ? { ...c, status } : c)),
+      })),
+    );
+  }
+
+  /**
+   * Saved-chip toggle — immediate, no dialog. Switching OFF asks once through
+   * the native confirm and sends reason='unknown' (the schema's
+   * chips_inactive_requires_reason CHECK demands one) with controller_synced=false;
+   * switching back ON asks nothing and sends no reason. The tag flips first and
+   * rolls back on any failure — 409 "number already taken" included.
+   */
+  async function toggleSaved(chip: ChipWithHolder) {
+    if (togglingId || submitting) return;
+    const wasActive = chip.status === 'active';
+    if (wasActive && !window.confirm(`להשבית את צ׳יפ ${chip.chip_number}?`)) return;
+
+    const next: ChipStatus = wasActive ? 'inactive' : 'active';
+    setTogglingId(chip.id);
+    setSavedStatus(chip.id, next);
+    // Keep the soft-limit warning honest without waiting for the refetch.
+    setActiveCount((n) => (n == null ? n : n + (wasActive ? -1 : 1)));
+
+    try {
+      const res = await fetch(
+        `/api/chips/${chip.id}/${wasActive ? 'deactivate' : 'reactivate'}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(
+            wasActive ? { reason: 'unknown', controller_synced: false } : {},
+          ),
+        },
+      );
+      const data = (await res.json().catch(() => ({}))) as {
+        chip?: ChipWithHolder;
+        error?: string;
+      };
+      if (!res.ok || !data.chip) {
+        throw new Error(data.error ?? (wasActive ? 'ההשבתה נכשלה' : 'ההפעלה נכשלה'));
+      }
+      toast.success(wasActive ? 'הצ׳יפ הושבת' : 'הצ׳יפ הופעל');
+      afterToggle();
+    } catch (e) {
+      setSavedStatus(chip.id, chip.status); // rollback
+      setActiveCount((n) => (n == null ? n : n + (wasActive ? 1 : -1)));
+      toast.error((e as Error).message);
+    } finally {
+      setTogglingId(null);
+    }
   }
 
   function afterToggle() {
@@ -927,7 +977,8 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                         onSelectOther={() => selectOther(block)}
                         onAddNumber={() => addNumber(block)}
                         onRemovePending={(num) => removePending(block, num)}
-                        onToggleSaved={requestToggle}
+                        onToggleSaved={toggleSaved}
+                        togglingId={togglingId}
                         onRemoveBlock={() => removeBlock(block.key)}
                       />
                     ))}
@@ -1065,26 +1116,6 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
         </SheetContent>
       </Sheet>
 
-      {/* Saved-chip toggles — the SAME dialogs as the chips page (immediate) */}
-      <DeactivateChipDialog
-        chip={deactivateTarget}
-        open={!!deactivateTarget}
-        onOpenChange={(o: boolean) => { if (!o) setDeactivateTarget(null); }}
-        onDone={() => {
-          setDeactivateTarget(null);
-          afterToggle();
-        }}
-      />
-      <ReactivateChipDialog
-        chip={reactivateTarget}
-        open={!!reactivateTarget}
-        onOpenChange={(o: boolean) => { if (!o) setReactivateTarget(null); }}
-        onDone={() => {
-          setReactivateTarget(null);
-          afterToggle();
-        }}
-      />
-
       {/* Dirty-guard — confirm exit without saving */}
       <AlertDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}>
         <AlertDialogContent dir="rtl">
@@ -1120,7 +1151,7 @@ function HolderBlockCard({
   block, index, residentCards, residentType, takenRoles, conflict, submitting,
   invalid, phoneError,
   onPatch, onSelectRole, onSelectOther, onAddNumber, onRemovePending,
-  onToggleSaved, onRemoveBlock,
+  onToggleSaved, togglingId, onRemoveBlock,
 }: {
   block: HolderBlock;
   index: number;
@@ -1137,6 +1168,8 @@ function HolderBlockCard({
   onAddNumber: () => void;
   onRemovePending: (num: string) => void;
   onToggleSaved: (chip: ChipWithHolder) => void;
+  /** id of the chip whose toggle request is in flight, if any. */
+  togglingId: string | null;
   onRemoveBlock: () => void;
 }) {
   const hasSaved = block.saved.length > 0;
@@ -1402,78 +1435,86 @@ function HolderBlockCard({
         <p className="mt-2 text-[12px] font-semibold text-red-500">⚠️ {block.dupHint}</p>
       )}
 
-      {/* Tags: saved (toggle via dialogs) + pending (amber, X removes) */}
+      {/* Tags: saved (one-click toggle) + pending (amber, X removes) */}
       {block.saved.length > 0 || block.pending.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {block.saved.map((chip) => {
             const active = chip.status === 'active';
+            const busy = togglingId === chip.id;
             const TypeIcon = chip.chip_type === 'physical' ? CreditCard : Smartphone;
             return (
               <span
                 key={chip.id}
                 className={cn(
-                  'inline-flex h-9 items-center gap-2 rounded-[11px] border-[1.5px] ps-3 pe-[5px]',
+                  'inline-flex h-9 items-center gap-2 rounded-[11px] border-[1.5px] ps-[5px] pe-3',
                   active
                     ? 'border-[var(--chip-green-border)] bg-[var(--chip-green-soft)]'
-                    : 'border-dashed border-[var(--chip-border-strong)] bg-[var(--chip-panel-alt)]',
+                    : 'border-dashed border-[var(--chip-red-border)] bg-[var(--chip-red-soft)]',
                 )}
               >
-                <span
+                {/* Toggle FIRST (ref screenshot order) — 30px visual, one click,
+                    confirm only when switching OFF. Never a dialog. */}
+                <button
+                  type="button"
+                  title={active ? 'השבת' : 'החזר לפעיל'}
+                  aria-label={active ? `השבת את ${chip.chip_number}` : `החזר לפעיל את ${chip.chip_number}`}
+                  aria-busy={busy || undefined}
+                  disabled={submitting || togglingId !== null}
+                  onClick={() => onToggleSaved(chip)}
                   className={cn(
-                    'chip-num text-[13.5px] font-semibold tracking-[0.02em]',
+                    'relative grid h-[30px] w-[30px] shrink-0 cursor-pointer place-items-center',
+                    'rounded-[8px] border transition-colors disabled:cursor-default disabled:opacity-60',
+                    // 44x44 touch target without growing the 30px visual
+                    'after:absolute after:left-1/2 after:top-1/2 after:h-11 after:w-11',
+                    'after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""]',
                     active
-                      ? 'text-[var(--chip-green-ink)]'
-                      : 'text-[var(--chip-ink-soft)] line-through decoration-[var(--chip-ink-ghost)]',
+                      ? 'border-[var(--chip-green-border)] bg-white text-[var(--chip-green-ink)] hover:border-[var(--chip-green)] hover:bg-[var(--chip-green)] hover:text-white'
+                      : 'border-[var(--chip-red-border)] bg-white text-[var(--chip-red-ink)] hover:border-[var(--chip-red)] hover:bg-[var(--chip-red)] hover:text-white',
                   )}
                 >
-                  {chip.chip_number}
-                </span>
+                  {busy ? (
+                    <Loader2 className="h-[14px] w-[14px] animate-spin" strokeWidth={2.2} />
+                  ) : active ? (
+                    <Power className="h-[14px] w-[14px]" strokeWidth={2.2} />
+                  ) : (
+                    <RotateCcw className="h-[14px] w-[14px]" strokeWidth={2.2} />
+                  )}
+                </button>
                 <span
                   className={cn(
-                    'inline-flex h-[21px] items-center gap-1 rounded-[6px] px-2 text-[10.5px] font-bold',
-                    active ? 'bg-white text-[var(--chip-green-ink)]' : 'bg-[var(--chip-hover)] text-[var(--chip-ink-soft)]',
+                    'inline-flex h-[21px] items-center gap-1 rounded-[6px] bg-white px-2 text-[10.5px] font-bold',
+                    active ? 'text-[var(--chip-green-ink)]' : 'text-[var(--chip-red-ink)]',
                   )}
                 >
                   <span
                     className={cn(
                       'h-[6px] w-[6px] rounded-full',
-                      active ? 'bg-[var(--chip-green)]' : 'bg-[var(--chip-ink-ghost)]',
+                      active ? 'bg-[var(--chip-green)]' : 'bg-[var(--chip-red)]',
                     )}
                   />
                   {active ? 'פעיל' : 'לא פעיל'}
                 </span>
                 <span
                   className={cn(
+                    'chip-num text-[13.5px] font-semibold tracking-[0.02em]',
+                    active
+                      ? 'text-[var(--chip-green-ink)]'
+                      : 'text-[var(--chip-red-ink)] line-through decoration-[var(--chip-red-border)]',
+                  )}
+                >
+                  {chip.chip_number}
+                </span>
+                <span
+                  className={cn(
                     'inline-flex items-center gap-1 border-s ps-2 text-[11px] font-bold',
                     active
                       ? 'border-[var(--chip-green-border)] text-[var(--chip-green-ink)]'
-                      : 'border-[var(--chip-border-strong)] text-[var(--chip-ink-soft)]',
+                      : 'border-[var(--chip-red-border)] text-[var(--chip-red-ink)]',
                   )}
                 >
                   <TypeIcon className="h-[13px] w-[13px] opacity-75" />
                   {CHIP_TYPE_LABEL[chip.chip_type]}
                 </span>
-                {/* Toggle — 30px visual, 44px hit area via padding-less grid +
-                    touch margin; opens the dialogs, NEVER silent */}
-                <button
-                  type="button"
-                  title={active ? 'השבת' : 'החזר לפעיל'}
-                  aria-label={active ? `השבת את ${chip.chip_number}` : `החזר לפעיל את ${chip.chip_number}`}
-                  disabled={submitting}
-                  onClick={() => onToggleSaved(chip)}
-                  className={cn(
-                    'grid h-[30px] w-[30px] cursor-pointer place-items-center rounded-[8px] border transition-colors',
-                    active
-                      ? 'border-[var(--chip-green-border)] bg-white text-[var(--chip-green-ink)] hover:border-[var(--chip-green)] hover:bg-[var(--chip-green)] hover:text-white'
-                      : 'border-[var(--chip-border-strong)] bg-white text-[var(--chip-ink-muted)] hover:border-[var(--chip-brand)] hover:bg-[var(--chip-brand)] hover:text-white',
-                  )}
-                >
-                  {active ? (
-                    <Power className="h-[14px] w-[14px]" strokeWidth={2.2} />
-                  ) : (
-                    <RotateCcw className="h-[14px] w-[14px]" strokeWidth={2.2} />
-                  )}
-                </button>
               </span>
             );
           })}
