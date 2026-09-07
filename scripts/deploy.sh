@@ -8,6 +8,7 @@
 # no longer exist → 404 → ChunkLoadError → "This page couldn't load".
 #
 # Order of operations:
+#   0. pre-build guards (scripts/check-no-public-proof.sh) — abort before build
 #   1. npm run build  (compile + postbuild copy into .next/standalone/)
 #   2. only if the build succeeded → restart billing.service
 #   3. short wait, then verify the service is `active`
@@ -44,6 +45,15 @@ on_error() {
   exit 1
 }
 trap 'on_error $LINENO' ERR
+
+# --- 0. pre-build guards ---------------------------------------------------
+# Nothing here touches the running service; a failure aborts before the build.
+step "Running pre-build guards…"
+if ! "$SCRIPT_DIR/check-no-public-proof.sh"; then
+  fail "Deploy aborted by a pre-build guard — no build ran, the service was NOT touched."
+  exit 1
+fi
+ok "No proof/scratch files under public/."
 
 # --- 1. build --------------------------------------------------------------
 step "Building (npm run build)…"
