@@ -2,7 +2,12 @@
 // tested in tests/chips-issue-groups.test.ts and shared by the API route and
 // the DB layer).
 
-import type { IssueChipGroup, IssueChipsInput } from '@/lib/types/chips';
+import type {
+  ChipHolderUpdate,
+  ChipResidentRole,
+  IssueChipGroup,
+  IssueChipsInput,
+} from '@/lib/types/chips';
 
 /** Soft cap of ACTIVE chips per contact — exceeding it requires a non-empty
  *  limit_override_reason (routes map the failure to 422 with a Hebrew message). */
@@ -85,4 +90,34 @@ export function legacyChipBodyToInput(body: {
     notes: body.notes ?? null,
     limit_override_reason: body.limit_override_reason ?? null,
   };
+}
+
+
+/** The holder snapshot a block was seeded with / currently shows. */
+export interface HolderSnapshot {
+  name: string | null;
+  phone: string | null;
+  role: ChipResidentRole | null;
+}
+
+/**
+ * Holder edits for one block's SAVED chips: the current values are diffed
+ * against the values the block was seeded with (not against each chip's own
+ * snapshot — a registry chip whose live name drifted from its issuance
+ * snapshot must not look "edited" just because the window opened). Only the
+ * fields the user actually changed are emitted, one entry per saved chip;
+ * an untouched block yields []. Phone must arrive already normalized.
+ */
+export function holderUpdatesForBlock(
+  savedChipIds: readonly string[],
+  current: HolderSnapshot,
+  orig: HolderSnapshot | null,
+): ChipHolderUpdate[] {
+  if (savedChipIds.length === 0 || !orig || !current.role) return [];
+  const patch: Omit<ChipHolderUpdate, 'id'> = {};
+  if ((current.name ?? null) !== (orig.name ?? null)) patch.holder_name = current.name ?? null;
+  if ((current.phone ?? null) !== (orig.phone ?? null)) patch.holder_phone = current.phone ?? null;
+  if (current.role !== orig.role) patch.resident_role = current.role;
+  if (Object.keys(patch).length === 0) return [];
+  return savedChipIds.map((id) => ({ id, ...patch }));
 }

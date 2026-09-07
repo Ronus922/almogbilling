@@ -19,10 +19,11 @@ import {
   exceedsSoftLimit,
 } from '@/lib/chips/issueGroups';
 
-// Closed product rules enforced here (not in routes): no DELETE ever;
-// chip_number is never editable; the only way back is inactive -> active
-// (reactivate); every mutation writes its chip_events row in the SAME
-// transaction (legal_status_history pattern).
+// Closed product rules enforced here (not in routes): no DELETE ever; the
+// only way back is inactive -> active (reactivate); chip_number may be
+// CORRECTED (a typo fix, logged as a 'note' event with reason 'תיקון מספר')
+// but never set to a number another ACTIVE chip holds; every mutation writes
+// its chip_events row in the SAME transaction (legal_status_history pattern).
 
 /** Thrown when an issue request would push a contact past the soft limit
  *  without a limit_override_reason. */
@@ -120,10 +121,11 @@ async function selectChipWithHolder(
   return r.rows[0];
 }
 
-// Fields a PATCH may touch. chip_number and status are NEVER writable — the
-// number is immutable for the chip's lifetime, and status only moves through
-// deactivateChip / reactivateChip.
+// Fields a PATCH may touch. status is NEVER writable — it only moves through
+// deactivateChip / reactivateChip. chip_number is writable as a CORRECTION
+// only (applyChipPatch guards the active-number collision explicitly).
 const CHIP_WRITABLE = new Set([
+  'chip_number',
   'contact_id', 'resident_role', 'holder_name', 'holder_phone',
   'app_platform', 'app_invite_status', 'app_expires_at',
   'issuance_fee', 'fee_charged', 'limit_override_reason', 'notes',
@@ -173,9 +175,6 @@ export async function listChips(filters: ChipListFilters): Promise<ChipWithHolde
         break;
       case 'inactive':
         where.push(`ch.status = 'inactive'`);
-        break;
-      case 'pending_sync':
-        where.push(`ch.status = 'inactive'`, `ch.controller_synced = false`);
         break;
       case 'app':
         where.push(`ch.chip_type = 'app'`);
@@ -328,14 +327,12 @@ export async function getChipsKpis(): Promise<ChipsKpis> {
       active: number;
       app_active: number;
       lost_30d: number;
-      pending_controller: number;
     }>(
       `select
          count(*) filter (where status = 'active')::int as active,
          count(*) filter (where chip_type = 'app' and status = 'active')::int as app_active,
          count(*) filter (where deactivation_reason in ('lost','stolen')
-                            and deactivated_at >= now() - interval '30 days')::int as lost_30d,
-         count(*) filter (where status = 'inactive' and controller_synced = false)::int as pending_controller
+                            and deactivated_at >= now() - interval '30 days')::int as lost_30d
        from public.chips`,
     ),
     queryOne<{
@@ -363,7 +360,6 @@ export async function getChipsKpis(): Promise<ChipsKpis> {
     apartments_without_active: contacts?.apartments_without_active ?? 0,
     apartments_total: contacts?.apartments_total ?? 0,
     apartments_with_debtor: contacts?.apartments_with_debtor ?? 0,
-    pending_controller: chips?.pending_controller ?? 0,
   };
 }
 
@@ -383,7 +379,7 @@ export async function getChipsKpis(): Promise<ChipsKpis> {
 export async function issueChipGroups(
   input: IssueChipsInput,
   actor: { id: string; name: string },
-): Promise<ChipWithHolder[]> {
+): Promise<{ items: ChipWithHolder[]; updated: ChipWithHolder[] }> {
   // Trim + reject blanks; a repeated number within or ACROSS groups is a
   // conflict (client blocks it too — the server is the authority).
   const seen = new Set<string>();
@@ -400,7 +396,9 @@ export async function issueChipGroups(
     if (numbers.length > MAX_CHIPS_PER_GROUP) throw new Error('invalid_chip_numbers');
     if (numbers.length > 0) groups.push({ index: i, numbers });
   }
-  if (groups.length === 0) throw new Error('invalid_chip_numbers');
+  // A save may carry only holder edits (no new numbers) — but never nothing.
+  const updates = input.updates ?? [];
+  if (groups.length === 0 && updates.length === 0) throw new Error('invalid_chip_numbers');
   const totalNew = groups.reduce((s, g) => s + g.numbers.length, 0);
 
   return withTransaction(async (client) => {
@@ -436,10 +434,27 @@ export async function issueChipGroups(
     ).rows[0].count;
 
     // Soft limit over the SUM of all groups — the per-type client split never
-    // bypasses the count (clarification 1).
+    // bypasses the count (clarification 1). Holder edits alone never trip it.
     const overrideReason = input.limit_override_reason?.trim() ?? '';
-    if (exceedsSoftLimit(activeCount, totalNew) && !overrideReason) {
+    if (totalNew > 0 && exceedsSoftLimit(activeCount, totalNew) && !overrideReason) {
       throw new ChipLimitError();
+    }
+
+    // Holder edits of ALREADY-SAVED chips go first, same transaction, so a
+    // save is still all-or-nothing. Every edited chip must belong to this
+    // contact — the window never edits across apartments.
+    const updated: ChipWithHolder[] = [];
+    for (const { id, ...patch } of updates) {
+      const owner = (
+        await client.query<{ contact_id: string }>(
+          `select contact_id from public.chips where id = $1`,
+          [id],
+        )
+      ).rows[0];
+      if (!owner) throw new Error('chip_not_found');
+      if (owner.contact_id !== input.contact_id) throw new Error('chip_not_in_contact');
+      const row = await applyChipPatch(client, id, patch, actor);
+      if (row) updated.push(row);
     }
 
     const created: ChipWithHolder[] = [];
@@ -516,7 +531,7 @@ export async function issueChipGroups(
         created.push(await selectChipWithHolder(client, chip.id));
       }
     }
-    return created;
+    return { items: created, updated };
   });
 }
 
@@ -617,114 +632,140 @@ export async function reactivateChip(
 }
 
 /**
- * Whitelisted partial update — chip_number and status are silently dropped
- * (NEVER writable here). A contact_id change is a reassignment: the new
- * contact must exist, apartment_number is re-snapshotted from it, and the
- * event is 'reassigned'; any other change logs a 'note' event with the
- * changed-keys diff. An empty effective patch returns the row untouched.
- * Null when the chip does not exist.
+ * Whitelisted partial update inside a caller-owned transaction. status is
+ * silently dropped (NEVER writable here). A contact_id change is a
+ * reassignment: the new apartment snapshot is taken and a 'reassigned' event
+ * is written; otherwise the changed keys land in one 'note' event. A
+ * chip_number change is a CORRECTION: it must not collide with any other
+ * ACTIVE chip (checked explicitly — the partial unique index only guards an
+ * active row, so an inactive chip's new number must be verified here) and is
+ * logged as its own 'note' event with reason 'תיקון מספר'.
  */
-export async function updateChip(
+async function applyChipPatch(
+  client: PoolClient,
   id: string,
   patch: Record<string, unknown>,
   actor: { id: string; name: string },
 ): Promise<ChipWithHolder | null> {
-  return withTransaction(async (client) => {
-    const cur = (
-      await client.query<Chip>(
-        `select ${CHIP_COLUMNS} from public.chips where id = $1 for update`,
-        [id],
-      )
-    ).rows[0];
-    if (!cur) return null;
+  const cur = (
+    await client.query<Chip>(
+      `select ${CHIP_COLUMNS} from public.chips where id = $1 for update`,
+      [id],
+    )
+  ).rows[0];
+  if (!cur) return null;
 
-    const effective: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(patch)) {
-      if (CHIP_WRITABLE.has(k) && v !== undefined) effective[k] = v;
-    }
-    if (Object.keys(effective).length === 0) return selectChipWithHolder(client, id);
+  const effective: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (CHIP_WRITABLE.has(k) && v !== undefined) effective[k] = v;
+  }
+  if (Object.keys(effective).length === 0) return selectChipWithHolder(client, id);
 
-    const reassigned =
-      typeof effective.contact_id === 'string' && effective.contact_id !== cur.contact_id;
-    let newApartment: string | null = null;
-    if (reassigned) {
-      const contact = (
-        await client.query<{ id: string; apartment_number: string }>(
-          `select id, apartment_number from public.contacts where id = $1`,
-          [effective.contact_id],
+  if ('chip_number' in effective) {
+    const num = typeof effective.chip_number === 'string' ? effective.chip_number.trim() : '';
+    if (!num) throw new Error('invalid_chip_number');
+    if (num === cur.chip_number) {
+      delete effective.chip_number;
+    } else {
+      const clash = (
+        await client.query(
+          `select 1 from public.chips
+            where chip_number = $1 and status = 'active' and id <> $2
+            limit 1`,
+          [num, id],
         )
       ).rows[0];
-      if (!contact) throw new Error('contact_not_found');
-      newApartment = contact.apartment_number;
+      if (clash) throw new ChipNumberTakenError(num);
+      effective.chip_number = num;
     }
+  }
 
-    // Changed-keys diff (for the 'note' event) — unchanged values drop out.
-    const curRec = cur as unknown as Record<string, unknown>;
-    const diff: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(effective)) {
-      if (v !== curRec[k]) diff[k] = v;
-    }
-    if (!reassigned && Object.keys(diff).length === 0) return selectChipWithHolder(client, id);
+  // Holder identity (CHECK 074): a snapshot role always needs a name.
+  const nextRole = (
+    typeof effective.resident_role === 'string' ? effective.resident_role : cur.resident_role
+  ) as ChipResidentRole;
+  const nextName =
+    'holder_name' in effective ? (effective.holder_name as string | null) : cur.holder_name;
+  if (isSnapshotRole(nextRole) && !(nextName ?? '').trim()) {
+    throw new Error('holder_name_required');
+  }
 
-    const set: string[] = [];
-    const vals: unknown[] = [id];
-    for (const [k, v] of Object.entries(effective)) {
-      vals.push(v);
-      set.push(`${k} = $${vals.length}`); // keys are whitelist members only
-    }
-    if (reassigned && newApartment !== null) {
-      vals.push(newApartment);
-      set.push(`apartment_number = $${vals.length}`);
-    }
+  const reassigned =
+    typeof effective.contact_id === 'string' && effective.contact_id !== cur.contact_id;
+  let newApartment: string | null = null;
+  if (reassigned) {
+    const contact = (
+      await client.query<{ id: string; apartment_number: string }>(
+        `select id, apartment_number from public.contacts where id = $1`,
+        [effective.contact_id],
+      )
+    ).rows[0];
+    if (!contact) throw new Error('contact_not_found');
+    newApartment = contact.apartment_number;
+  }
 
-    const updated = (
+  // Changed-keys diff (for the 'note' event) — unchanged values drop out.
+  const curRec = cur as unknown as Record<string, unknown>;
+  const diff: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(effective)) {
+    if (v !== curRec[k]) diff[k] = v;
+  }
+  if (!reassigned && Object.keys(diff).length === 0) return selectChipWithHolder(client, id);
+
+  const set: string[] = [];
+  const vals: unknown[] = [id];
+  for (const [k, v] of Object.entries(effective)) {
+    vals.push(v);
+    set.push(`${k} = $${vals.length}`); // keys are whitelist members only
+  }
+  if (reassigned && newApartment !== null) {
+    vals.push(newApartment);
+    set.push(`apartment_number = $${vals.length}`);
+  }
+
+  let updated: Chip;
+  try {
+    updated = (
       await client.query<Chip>(
         `update public.chips set ${set.join(', ')} where id = $1 returning ${CHIP_COLUMNS}`,
         vals,
       )
     ).rows[0];
-
-    if (reassigned) {
-      await insertChipEvent(client, id, 'reassigned', actor, {
-        oldValue: { contact_id: cur.contact_id, apartment_number: cur.apartment_number },
-        newValue: { contact_id: updated.contact_id, apartment_number: updated.apartment_number },
-      });
-    } else {
-      await insertChipEvent(client, id, 'note', actor, { newValue: diff });
+  } catch (err) {
+    // Race on chips_number_active_uniq between our check and the write.
+    if ((err as { code?: string }).code === '23505' && typeof diff.chip_number === 'string') {
+      throw new ChipNumberTakenError(diff.chip_number);
     }
-    return selectChipWithHolder(client, id);
-  });
-}
+    throw err;
+  }
 
-/**
- * Confirm the physical controller learned about a pending change. Idempotent:
- * an already-synced chip returns unchanged with NO event. Null when missing.
- */
-export async function markControllerSynced(
-  id: string,
-  actor: { id: string; name: string },
-): Promise<ChipWithHolder | null> {
-  return withTransaction(async (client) => {
-    const cur = (
-      await client.query<Chip>(
-        `select ${CHIP_COLUMNS} from public.chips where id = $1 for update`,
-        [id],
-      )
-    ).rows[0];
-    if (!cur) return null;
-    if (cur.controller_synced) return selectChipWithHolder(client, id);
-
-    await client.query(
-      `update public.chips
-          set controller_synced = true, controller_synced_at = now()
-        where id = $1`,
-      [id],
-    );
-
-    await insertChipEvent(client, id, 'controller_synced', actor, {
-      oldValue: { controller_synced: false },
-      newValue: { controller_synced: true },
+  if (reassigned) {
+    await insertChipEvent(client, id, 'reassigned', actor, {
+      oldValue: { contact_id: cur.contact_id, apartment_number: cur.apartment_number },
+      newValue: { contact_id: updated.contact_id, apartment_number: updated.apartment_number },
     });
     return selectChipWithHolder(client, id);
-  });
+  }
+
+  if ('chip_number' in diff) {
+    await insertChipEvent(client, id, 'note', actor, {
+      oldValue: { chip_number: cur.chip_number },
+      newValue: { chip_number: { old: cur.chip_number, new: updated.chip_number } },
+      reason: 'תיקון מספר',
+    });
+    delete diff.chip_number;
+  }
+  if (Object.keys(diff).length > 0) {
+    await insertChipEvent(client, id, 'note', actor, { newValue: diff });
+  }
+  return selectChipWithHolder(client, id);
+}
+
+/** PATCH /api/chips/:id — one chip, its own transaction. */
+export async function updateChip(
+  id: string,
+  patch: Record<string, unknown>,
+  actor: { id: string; name: string },
+): Promise<ChipWithHolder | null> {
+  return withTransaction((client) => applyChipPatch(client, id, patch, actor));
 }

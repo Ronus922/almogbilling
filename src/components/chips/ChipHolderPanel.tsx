@@ -2,9 +2,10 @@
 
 // Holder view panel — ALL chips of one person (the "name → numbers" direction,
 // product rule 4). Person identity is (contact_id, resident_role) [+ the
-// holder_name snapshot for other/staff]. Read-only; a chip row click drills
-// into the chip detail panel. Chips-skin (declared exception — extended from
-// the ref palette; shell structure per DESIGN.md §12 Sheet).
+// holder_name snapshot for other/staff]. Read-only; a chip row click opens the
+// ISSUE WINDOW of the chip's apartment — the only place chips are managed.
+// Chips-skin (declared exception — extended from the ref palette; shell
+// structure per DESIGN.md §12 Sheet).
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -47,7 +48,9 @@ export function ChipHolderPanel({
   holder: HolderRef | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onChipClick: (chipId: string) => void;
+  /** Row click → the issue window of that chip's apartment. Absent for
+   *  view-only users: rows are then inert. */
+  onChipClick?: (chip: ChipWithHolder) => void;
 }) {
   const [items, setItems] = useState<ChipWithHolder[]>([]);
   const [loading, setLoading] = useState(false);
@@ -161,9 +164,11 @@ export function ChipHolderPanel({
                         <button
                           key={c.id}
                           type="button"
-                          onClick={() => onChipClick(c.id)}
+                          disabled={!onChipClick}
+                          onClick={onChipClick ? () => onChipClick(c) : undefined}
                           className={cn(
-                            'flex min-h-[52px] w-full cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 rounded-[11px] border-[1.5px] px-[13px] py-2 text-start transition-colors',
+                            'flex min-h-[52px] w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-[11px] border-[1.5px] px-[13px] py-2 text-start transition-colors',
+                            onChipClick && 'cursor-pointer',
                             active
                               ? 'border-[var(--chip-green-border)] bg-[var(--chip-green-soft)] hover:border-[var(--chip-green)]'
                               : 'border-dashed border-[var(--chip-red-border)] bg-[var(--chip-red-soft)] hover:border-[var(--chip-red)]',

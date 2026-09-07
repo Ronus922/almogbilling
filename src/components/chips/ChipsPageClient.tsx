@@ -12,7 +12,6 @@ import { isSnapshotRole, resolveChipHolder } from '@/lib/chips/holder';
 import { ChipsKpiRow } from './ChipsKpiRow';
 import { ChipsTable } from './ChipsTable';
 import { IssueChipSheet } from './IssueChipSheet';
-import { ChipDetailPanel } from './ChipDetailPanel';
 import { ChipHolderPanel, type HolderRef } from './ChipHolderPanel';
 
 // List filter tabs — labels per the chips product spec (ChipTab values).
@@ -20,11 +19,11 @@ const TABS: { value: ChipTab; label: string }[] = [
   { value: 'all', label: 'הכל' },
   { value: 'active', label: 'פעילים' },
   { value: 'inactive', label: 'לא פעילים' },
-  { value: 'pending_sync', label: 'ממתין לחסימה בבקר' },
   { value: 'app', label: 'אפליקציה' },
 ];
 
-/** Prefill for the issue sheet (reissue / issue-another flows). */
+/** Prefill for the issue sheet — every chip click in the app opens the window
+ *  of THAT chip's apartment (the only place chips are managed). */
 type IssueInitial = {
   contactId: string;
   apartmentNumber: string;
@@ -77,8 +76,7 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
   // "N צ׳יפים" filter — client-side narrowing of the list to one holder.
   const [holderFilter, setHolderFilter] = useState<HolderRef | null>(null);
 
-  // Panels state machine — status changes happen inside the detail panel itself
-  const [selectedChipId, setSelectedChipId] = useState<string | null>(null);
+  // Panels: the issue window (all chip management) + the read-only holder view
   const [holderPanel, setHolderPanel] = useState<HolderRef | null>(null);
   const [issueOpen, setIssueOpen] = useState(false);
   const [issueInitial, setIssueInitial] = useState<IssueInitial>(null);
@@ -156,16 +154,36 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
     void fetchKpis();
   }, [fetchChips, fetchKpis]);
 
-  // Deep link: ?chip=<id> opens the detail panel on mount.
+  function openIssueSheet(initial: IssueInitial) {
+    setIssueInitial(initial);
+    setIssueOpen(true);
+  }
+
+  // Deep link: ?chip=<id> (the notifications' actionUrl) resolves the chip and
+  // opens the issue window of ITS apartment on mount. Editors only — the
+  // window has no read-only mode and every action in it needs chips:edit.
   useEffect(() => {
     const id = searchParams.get('chip');
-    if (id) setSelectedChipId(id);
+    if (!id || !canEdit) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/chips/${id}`, { credentials: 'include' });
+        const data = (await res.json().catch(() => ({}))) as { chip?: ChipWithHolder; error?: string };
+        if (!res.ok || !data.chip) throw new Error(data.error ?? 'הצ׳יפ לא נמצא');
+        if (!cancelled) openIssueSheet(issueInitialFromChip(data.chip));
+      } catch (e) {
+        if (!cancelled) toast.error((e as Error).message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Closing the panel clears the ?chip= param (keeps other params intact).
-  const closeDetail = useCallback(() => {
-    setSelectedChipId(null);
+  // Closing the window clears ?chip= (keeps other params) so a refresh doesn't reopen it.
+  const clearChipParam = useCallback(() => {
     if (searchParams.get('chip')) {
       const params = new URLSearchParams(searchParams.toString());
       params.delete('chip');
@@ -173,11 +191,6 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     }
   }, [router, pathname, searchParams]);
-
-  function openIssueSheet(initial: IssueInitial) {
-    setIssueInitial(initial);
-    setIssueOpen(true);
-  }
 
   const visibleItems = useMemo(
     () => (holderFilter ? items.filter((c) => sameHolder(c, holderFilter)) : items),
@@ -299,7 +312,7 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
           items={visibleItems}
           loading={loading}
           searchTerm={debouncedQ}
-          onRowClick={(chip) => setSelectedChipId(chip.id)}
+          onRowClick={canEdit ? (chip) => openIssueSheet(issueInitialFromChip(chip)) : undefined}
           onHolderClick={(chip) => setHolderPanel(holderRefFromChip(chip))}
           onHolderFilter={(chip) => setHolderFilter(holderRefFromChip(chip))}
         />
@@ -309,41 +322,31 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
         open={issueOpen}
         onOpenChange={(o: boolean) => {
           setIssueOpen(o);
-          if (!o) setIssueInitial(null);
+          if (!o) {
+            setIssueInitial(null);
+            clearChipParam();
+          }
         }}
         initial={issueInitial}
         onIssued={refetchAll}
       />
 
-      <ChipDetailPanel
-        chipId={selectedChipId}
-        open={!!selectedChipId}
-        onOpenChange={(o: boolean) => {
-          if (!o) closeDetail();
-        }}
-        canEdit={canEdit}
-        onChanged={refetchAll}
-        onRequestReissue={(chip: Chip) => {
-          closeDetail();
-          openIssueSheet(issueInitialFromChip(chip));
-        }}
-        onOpenHolder={(chip: ChipWithHolder) => {
-          closeDetail();
-          setHolderPanel(holderRefFromChip(chip));
-        }}
-      />
-
-      {/* Holder view — all chips of one person (name → numbers) */}
+      {/* Holder view — all chips of one person (name → numbers); a chip row
+          opens the issue window of its apartment */}
       <ChipHolderPanel
         holder={holderPanel}
         open={!!holderPanel}
         onOpenChange={(o: boolean) => {
           if (!o) setHolderPanel(null);
         }}
-        onChipClick={(chipId: string) => {
-          setHolderPanel(null);
-          setSelectedChipId(chipId);
-        }}
+        onChipClick={
+          canEdit
+            ? (chip: ChipWithHolder) => {
+                setHolderPanel(null);
+                openIssueSheet(issueInitialFromChip(chip));
+              }
+            : undefined
+        }
       />
     </div>
   );

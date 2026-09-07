@@ -8,17 +8,26 @@
 // footer keeps primary-at-start, block-remove is hidden once a block holds
 // SAVED chips, and the type mini-selector says "כרטיס" (system vocabulary).
 //
-// THIS WINDOW IS THE ONLY PLACE CHIPS ARE MANAGED. Nothing opens out of it.
+// THIS WINDOW IS THE ONLY PLACE CHIPS ARE MANAGED. Nothing opens out of it;
+// every chip click anywhere in the app (table row, holder panel, tenant tab,
+// ?chip= deep link) lands here.
 //
 // Flow: pick an apartment (async registry combobox, inline create) → one or
-// more HOLDER BLOCKS, each = one person (2×2 role cards + snapshot name/phone
-// + per-number type capture + tags) → global fee/notes → one save issues ALL
-// pending tags from all blocks in ONE transaction, all-or-nothing. Existing
-// chips load grouped into blocks as tags whose toggle flips the status
-// IMMEDIATELY — a native confirm() when switching OFF, nothing at all when
-// switching back ON; optimistic, rolled back on failure. No dialogs.
-// A pending tag's X removes a NOT-YET-ISSUED number — saved chips have
-// no removal path anywhere (product law).
+// more HOLDER BLOCKS, each = one person (role row + snapshot name/phone +
+// per-number type capture + tags) → global fee/notes → ONE save = ONE server
+// transaction, all-or-nothing: it issues every pending tag of every block AND
+// applies holder edits (name / phone / role) to the block's already-saved
+// chips. Edits are diffed against the values the block was seeded with
+// (`orig`), so an untouched block never sends anything.
+//
+// Two actions are IMMEDIATE, not part of the save — optimistic, rolled back
+// with a toast on any failure, never a dialog:
+//   · the status toggle — a native confirm() when switching OFF (posting
+//     reason='unknown'), nothing at all when switching back ON;
+//   · a chip-number CORRECTION — click the number on a saved tag, edit
+//     inline, Enter/blur commits (409 when another active chip holds it).
+// A pending tag's X removes a NOT-YET-ISSUED number — saved chips have no
+// removal path anywhere (product law).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -46,10 +55,12 @@ import {
   CHIP_RESIDENT_ROLES, CHIP_TYPE_LABEL, RESIDENT_ROLE_LABEL, UNIT_TYPE_LABEL,
 } from '@/lib/constants/chips';
 import { isSnapshotRole, resolveChipHolder } from '@/lib/chips/holder';
-import { MAX_CHIPS_PER_GROUP, exceedsSoftLimit } from '@/lib/chips/issueGroups';
+import {
+  MAX_CHIPS_PER_GROUP, exceedsSoftLimit, holderUpdatesForBlock, type HolderSnapshot,
+} from '@/lib/chips/issueGroups';
 import type {
-  ChipResidentRole, ChipStatus, ChipType, ChipWithHolder, ContactResidentCard,
-  ContactResidents, IssueChipGroup,
+  ChipHolderUpdate, ChipResidentRole, ChipStatus, ChipType, ChipWithHolder,
+  ContactResidentCard, ContactResidents, IssueChipGroup,
 } from '@/lib/types/chips';
 
 // ── Ref field tokens (Chip.md: input 44px, radius 11, border 1.5, focus ring) ─
@@ -146,8 +157,12 @@ interface HolderBlock {
   /** Current mini-selector value — captured into each number on add. */
   numType: ChipType;
   pending: PendingNumber[];
-  /** Existing chips of this holder — read-only tags, toggled via the dialogs. */
+  /** Existing chips of this holder — tags with an immediate toggle + inline
+   *  number correction; name/phone/role edits reach them on save. */
   saved: ChipWithHolder[];
+  /** The name/phone/role the block was SEEDED with from its saved chips —
+   *  the baseline every save diffs against. null for a brand-new block. */
+  orig: HolderSnapshot | null;
   /** Client-side duplicate hint under the add row. */
   dupHint: string | null;
 }
@@ -155,8 +170,19 @@ interface HolderBlock {
 function emptyBlock(key: number): HolderBlock {
   return {
     key, role: null, holderName: '', holderPhone: '', phoneTouched: false,
-    numInput: '', numType: 'physical', pending: [], saved: [], dupHint: null,
+    numInput: '', numType: 'physical', pending: [], saved: [], orig: null, dupHint: null,
   };
+}
+
+/** Holder edits this block would send on save (its saved chips only). */
+function blockUpdates(b: HolderBlock): ChipHolderUpdate[] {
+  const phoneRaw = b.holderPhone.trim();
+  const phone = phoneRaw ? validatePhone(phoneRaw).normalized || phoneRaw : null;
+  return holderUpdatesForBlock(
+    b.saved.map((c) => c.id),
+    { name: b.holderName.trim() || null, phone, role: b.role },
+    b.orig,
+  );
 }
 
 /** Person identity of a saved chip → grouping key (contact is fixed here). */
@@ -209,8 +235,17 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
   const [blocks, setBlocks] = useState<HolderBlock[]>([emptyBlock(0)]);
   const [chipsVersion, setChipsVersion] = useState(0); // bump → refetch saved chips
 
-  // Saved-chip toggle — id of the chip whose request is in flight (blocks double-click)
+  // Saved-chip immediate actions — id of the chip whose request is in flight
+  // (toggle OR number correction; blocks a second click meanwhile)
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  // Inline chip-number editor — mirrored in a ref so commit is idempotent
+  // (Enter + the blur it triggers, or Escape followed by blur).
+  const [numberEdit, setNumberEdit] = useState<{ chipId: string; value: string } | null>(null);
+  const numberEditRef = useRef<{ chipId: string; value: string } | null>(null);
+  function setNumberEditBoth(e: { chipId: string; value: string } | null) {
+    numberEditRef.current = e;
+    setNumberEdit(e);
+  }
 
   // Global fee / notes / override
   const [fee, setFee] = useState('');
@@ -255,6 +290,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     setBlocks([emptyBlock(0)]);
     setChipsVersion(0);
     setTogglingId(null);
+    setNumberEditBoth(null);
     setFee('');
     setFeeCharged(false);
     setNotes('');
@@ -308,24 +344,38 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
           setBlocks((prev) => {
             const next: HolderBlock[] = [];
             const used = new Set<string>();
-            // 1. Existing blocks keep their position + local edits; saved refreshes.
+            // 1. Existing blocks keep their position + local edits (and their
+            //    edit baseline); saved refreshes. A user-made block that just
+            //    gained saved chips adopts its current values as the baseline.
             for (const b of prev) {
               const idKey = blockIdentityKey(b);
               const saved = idKey ? grouped.get(idKey) ?? [] : [];
               if (idKey) used.add(idKey);
-              next.push({ ...b, saved });
+              const orig =
+                b.orig ?? (saved.length > 0
+                  ? { name: b.holderName.trim() || null, phone: b.holderPhone.trim() || null, role: b.role }
+                  : null);
+              next.push({ ...b, saved, orig });
             }
-            // 2. Holders with chips but no block yet → new read-only blocks.
+            // 2. Holders with chips but no block yet → new blocks seeded from
+            //    the chips' OWN snapshot (what an edit actually changes and
+            //    what a save diffs against), falling back to the live registry
+            //    value only when the snapshot is empty. Seeding from the live
+            //    registry instead would hide an existing override and make
+            //    typing the registry value a no-op (verified 07/09).
             for (const [k, saved] of grouped) {
               if (used.has(k)) continue;
               const first = saved[0];
               const holder = resolveChipHolder(first);
+              const name = first.holder_name?.trim() || (holder.name === '—' ? '' : holder.name);
+              const phone = first.holder_phone?.trim() || holder.phone || '';
               next.push({
                 ...emptyBlock(blockSeq.current++),
                 role: first.resident_role,
-                holderName: holder.name === '—' ? '' : holder.name,
-                holderPhone: holder.phone ?? '',
+                holderName: name,
+                holderPhone: phone,
                 saved,
+                orig: { name: name || null, phone: phone || null, role: first.resident_role },
               });
             }
             // 3. Drop empty placeholder blocks if real ones arrived; always ≥1.
@@ -404,6 +454,12 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     [blocks],
   );
 
+  /** Saved chips whose holder snapshot changed in this window (all blocks). */
+  const totalUpdates = useMemo(
+    () => blocks.reduce((s, b) => s + blockUpdates(b).length, 0),
+    [blocks],
+  );
+
   /** Registry roles already used by OTHER blocks → "נבחר בבלוק אחר". */
   const takenRoles = useMemo(() => {
     const map = new Map<ChipResidentRole, number>(); // role -> blockKey
@@ -430,10 +486,10 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
   const overLimit =
     activeCount != null && exceedsSoftLimit(activeCount, Math.max(totalPending, 1));
 
-  /** Per-block validity — only blocks that actually issue something matter. */
+  /** Per-block validity — only blocks that issue or edit something matter. */
   const blockInvalid = (b: HolderBlock): string | null => {
     const pending = effectivePending(b);
-    if (pending.length === 0) return null; // nothing to issue from this block
+    if (pending.length === 0 && blockUpdates(b).length === 0) return null; // nothing to save here
     if (!b.role) return 'בחר תפקיד לבעל הצ׳יפ';
     if (isSnapshotRole(b.role) && !b.holderName.trim()) return 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא';
     if (phoneErrorOf(b)) return phoneErrorOf(b);
@@ -443,7 +499,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
 
   const canSubmit =
     !!contactId &&
-    totalPending >= 1 &&
+    (totalPending >= 1 || totalUpdates >= 1) &&
     blocks.every((b) => blockInvalid(b) === null) &&
     !feeError &&
     (!overLimit || overrideReason.trim() !== '') &&
@@ -534,12 +590,12 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     patchBlock(block.key, { pending: block.pending.filter((p) => p.number !== num) });
   }
 
-  /** Flip one saved chip's status locally (optimistic + rollback share this). */
-  function setSavedStatus(chipId: string, status: ChipStatus) {
+  /** Patch one saved chip locally (optimistic + rollback share this). */
+  function patchSavedChip(chipId: string, patch: Partial<ChipWithHolder>) {
     setBlocks((prev) =>
       prev.map((b) => ({
         ...b,
-        saved: b.saved.map((c) => (c.id === chipId ? { ...c, status } : c)),
+        saved: b.saved.map((c) => (c.id === chipId ? { ...c, ...patch } : c)),
       })),
     );
   }
@@ -547,9 +603,9 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
   /**
    * Saved-chip toggle — immediate, no dialog. Switching OFF asks once through
    * the native confirm and sends reason='unknown' (the schema's
-   * chips_inactive_requires_reason CHECK demands one) with controller_synced=false;
-   * switching back ON asks nothing and sends no reason. The tag flips first and
-   * rolls back on any failure — 409 "number already taken" included.
+   * chips_inactive_requires_reason CHECK demands one); switching back ON asks
+   * nothing and sends no reason. The tag flips first and rolls back on any
+   * failure — 409 "number already taken" included.
    */
   async function toggleSaved(chip: ChipWithHolder) {
     if (togglingId || submitting) return;
@@ -558,7 +614,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
 
     const next: ChipStatus = wasActive ? 'inactive' : 'active';
     setTogglingId(chip.id);
-    setSavedStatus(chip.id, next);
+    patchSavedChip(chip.id, { status: next });
     // Keep the soft-limit warning honest without waiting for the refetch.
     setActiveCount((n) => (n == null ? n : n + (wasActive ? -1 : 1)));
 
@@ -569,9 +625,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify(
-            wasActive ? { reason: 'unknown', controller_synced: false } : {},
-          ),
+          body: JSON.stringify(wasActive ? { reason: 'unknown' } : {}),
         },
       );
       const data = (await res.json().catch(() => ({}))) as {
@@ -584,8 +638,57 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
       toast.success(wasActive ? 'הצ׳יפ הושבת' : 'הצ׳יפ הופעל');
       afterToggle();
     } catch (e) {
-      setSavedStatus(chip.id, chip.status); // rollback
+      patchSavedChip(chip.id, { status: chip.status }); // rollback
       setActiveCount((n) => (n == null ? n : n + (wasActive ? 1 : -1)));
+      toast.error((e as Error).message);
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  /**
+   * Commit an inline chip-number correction — immediate, like the toggle.
+   * Idempotent through the ref (Enter also blurs). Empty or unchanged →
+   * nothing; a number already in the window → hint, no request; otherwise the
+   * tag shows the new number at once and rolls back on failure (409 when
+   * another ACTIVE chip holds it — the server is the authority).
+   */
+  async function commitNumberEdit() {
+    const edit = numberEditRef.current;
+    if (!edit) return;
+    setNumberEditBoth(null);
+    const chip = blocks.flatMap((b) => b.saved).find((c) => c.id === edit.chipId);
+    if (!chip || togglingId || submitting) return;
+    const next = edit.value.trim();
+    if (!next || next === chip.chip_number) return;
+    const inWindow = blocks.some(
+      (b) =>
+        b.pending.some((p) => p.number === next) ||
+        b.saved.some((c) => c.id !== chip.id && c.chip_number === next),
+    );
+    if (inWindow) {
+      toast.error(`המספר ${next} כבר נמצא בחלון הזה`);
+      return;
+    }
+
+    setTogglingId(chip.id);
+    patchSavedChip(chip.id, { chip_number: next });
+    try {
+      const res = await fetch(`/api/chips/${chip.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ chip_number: next }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        chip?: ChipWithHolder;
+        error?: string;
+      };
+      if (!res.ok || !data.chip) throw new Error(data.error ?? 'תיקון המספר נכשל');
+      toast.success('המספר תוקן');
+      afterToggle();
+    } catch (e) {
+      patchSavedChip(chip.id, { chip_number: chip.chip_number }); // rollback
       toast.error((e as Error).message);
     } finally {
       setTogglingId(null);
@@ -702,6 +805,10 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
         }
       }
 
+      // Holder edits of already-saved chips ride in the SAME request → one
+      // server transaction with the issuance, all-or-nothing.
+      const updates = blocks.flatMap(blockUpdates);
+
       const res = await fetch('/api/chips', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -709,6 +816,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
         body: JSON.stringify({
           contact_id: contactId,
           groups,
+          updates,
           issuance_fee: fee.trim() ? Number(fee) : null,
           fee_charged: feeCharged,
           notes: notes.trim() || null,
@@ -717,6 +825,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
       });
       const data = (await res.json().catch(() => ({}))) as {
         items?: unknown[];
+        updated?: unknown[];
         error?: string;
         chip_number?: string;
         group_index?: number | null;
@@ -738,8 +847,10 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
         }
         return;
       }
-      const count = Array.isArray(data.items) ? data.items.length : totalPending;
-      toast.success(count > 1 ? `${count} צ׳יפים הונפקו` : 'הצ׳יפ הונפק');
+      const count = Array.isArray(data.items) ? data.items.length : 0;
+      toast.success(
+        count > 1 ? `${count} צ׳יפים הונפקו` : count === 1 ? 'הצ׳יפ הונפק' : 'השינויים נשמרו',
+      );
       onIssued();
       onOpenChange(false);
     } catch {
@@ -979,6 +1090,9 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                         onRemovePending={(num) => removePending(block, num)}
                         onToggleSaved={toggleSaved}
                         togglingId={togglingId}
+                        numberEdit={numberEdit}
+                        onNumberEdit={setNumberEditBoth}
+                        onCommitNumber={commitNumberEdit}
                         onRemoveBlock={() => removeBlock(block.key)}
                       />
                     ))}
@@ -1100,7 +1214,11 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
               className="h-[46px] gap-2 rounded-[11px] bg-[var(--chip-brand)] px-[26px] text-[15px] font-bold text-white hover:bg-[var(--chip-brand-hover)] disabled:opacity-50"
             >
               {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              {submitting ? 'מנפיק…' : 'הנפק צ׳יפ'}
+              {submitting
+                ? totalPending > 0 ? 'מנפיק…' : 'שומר…'
+                : totalPending > 0 && totalUpdates > 0 ? 'שמור והנפק'
+                : totalPending > 0 ? 'הנפק צ׳יפ'
+                : 'שמור שינויים'}
             </Button>
             <span className="flex-1" />
             <Button
@@ -1151,7 +1269,7 @@ function HolderBlockCard({
   block, index, residentCards, residentType, takenRoles, conflict, submitting,
   invalid, phoneError,
   onPatch, onSelectRole, onSelectOther, onAddNumber, onRemovePending,
-  onToggleSaved, togglingId, onRemoveBlock,
+  onToggleSaved, togglingId, numberEdit, onNumberEdit, onCommitNumber, onRemoveBlock,
 }: {
   block: HolderBlock;
   index: number;
@@ -1168,12 +1286,15 @@ function HolderBlockCard({
   onAddNumber: () => void;
   onRemovePending: (num: string) => void;
   onToggleSaved: (chip: ChipWithHolder) => void;
-  /** id of the chip whose toggle request is in flight, if any. */
+  /** id of the chip whose toggle / number request is in flight, if any. */
   togglingId: string | null;
+  /** Inline number editor state (one at a time, owned by the sheet). */
+  numberEdit: { chipId: string; value: string } | null;
+  onNumberEdit: (e: { chipId: string; value: string } | null) => void;
+  onCommitNumber: () => void;
   onRemoveBlock: () => void;
 }) {
   const hasSaved = block.saved.length > 0;
-  const roleLocked = hasSaved; // block identity is fixed by its saved chips
   const firstName = block.holderName.trim().split(/\s+/)[0] || null;
   const isEmpty =
     block.role === null && block.pending.length === 0 && !hasSaved && block.numInput.trim() === '';
@@ -1228,19 +1349,20 @@ function HolderBlockCard({
           decision 09/08 replacing the earlier 2×2 override). Registry details
           moved off the buttons: selection auto-fills the name/phone fields
           below; states — sel (brand), taken (ghost ✓ + hint), no-details
-          (disabled + hint with the registry link). */}
+          (disabled + hint with the registry link). A block WITH saved chips
+          may switch role too — only to one no other block holds — and the
+          change reaches all its chips on save. */}
       <div className="flex gap-1.5 sm:gap-2">
         {residentCards.map((card) => {
           const selected = block.role === card.role;
           const takenBy = takenRoles.get(card.role);
           const taken = takenBy !== undefined && takenBy !== block.key;
-          const lockedOut = roleLocked && !selected;
           const noDetails = !card.exists;
           return (
             <button
               key={card.role}
               type="button"
-              disabled={submitting || taken || lockedOut || noDetails}
+              disabled={submitting || taken || noDetails}
               title={
                 taken ? 'נבחר בבלוק אחר'
                 : noDetails ? 'לא הוזנו פרטים במרשם'
@@ -1251,7 +1373,7 @@ function HolderBlockCard({
                 'flex h-10 min-w-0 flex-auto items-center justify-center gap-[5px] rounded-[10px] border-[1.5px] px-1.5 text-[12px] font-bold transition-colors sm:flex-1 sm:px-2 sm:text-[13px]',
                 selected
                   ? 'border-[var(--chip-brand)] bg-[var(--chip-brand-soft)] text-[var(--chip-brand-ink)] shadow-[0_0_0_3px_rgba(61,90,254,0.1)]'
-                  : taken || lockedOut || noDetails
+                  : taken || noDetails
                     ? 'cursor-not-allowed border-[var(--chip-border)] bg-[var(--chip-panel-alt)] text-[var(--chip-ink-soft)]'
                     : 'cursor-pointer border-[var(--chip-border-strong)] bg-[var(--chip-panel)] text-[var(--chip-ink-muted)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)] hover:text-[var(--chip-ink)]',
               )}
@@ -1274,16 +1396,14 @@ function HolderBlockCard({
         {/* "אחר" — selectable in ANY number of blocks (two cleaners = two blocks) */}
         <button
           type="button"
-          disabled={submitting || (roleLocked && block.role !== 'other')}
+          disabled={submitting}
           title="הזנה חופשית של שם וטלפון"
           onClick={onSelectOther}
           className={cn(
             'flex h-10 min-w-0 flex-auto items-center justify-center gap-[5px] rounded-[10px] border-[1.5px] px-1.5 text-[12px] font-bold transition-colors sm:flex-1 sm:px-2 sm:text-[13px]',
             block.role === 'other'
               ? 'border-[var(--chip-brand)] bg-[var(--chip-brand-soft)] text-[var(--chip-brand-ink)] shadow-[0_0_0_3px_rgba(61,90,254,0.1)]'
-              : roleLocked
-                ? 'cursor-not-allowed border-[var(--chip-border)] bg-[var(--chip-panel-alt)] text-[var(--chip-ink-soft)]'
-                : 'cursor-pointer border-[var(--chip-border-strong)] bg-[var(--chip-panel)] text-[var(--chip-ink-muted)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)] hover:text-[var(--chip-ink)]',
+              : 'cursor-pointer border-[var(--chip-border-strong)] bg-[var(--chip-panel)] text-[var(--chip-ink-muted)] hover:border-[var(--chip-ink-ghost)] hover:bg-[var(--chip-hover)] hover:text-[var(--chip-ink)]',
           )}
         >
           {block.role === 'other' && (
@@ -1435,7 +1555,8 @@ function HolderBlockCard({
         <p className="mt-2 text-[12px] font-semibold text-red-500">⚠️ {block.dupHint}</p>
       )}
 
-      {/* Tags: saved (one-click toggle) + pending (amber, X removes) */}
+      {/* Tags: saved (one-click toggle + click-to-correct number) + pending
+          (amber, X removes) */}
       {block.saved.length > 0 || block.pending.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {block.saved.map((chip) => {
@@ -1494,16 +1615,37 @@ function HolderBlockCard({
                   />
                   {active ? 'פעיל' : 'לא פעיל'}
                 </span>
-                <span
-                  className={cn(
-                    'chip-num text-[13.5px] font-semibold tracking-[0.02em]',
-                    active
-                      ? 'text-[var(--chip-green-ink)]'
-                      : 'text-[var(--chip-red-ink)] line-through decoration-[var(--chip-red-border)]',
-                  )}
-                >
-                  {chip.chip_number}
-                </span>
+                {numberEdit?.chipId === chip.id ? (
+                  <input
+                    autoFocus
+                    dir="ltr"
+                    value={numberEdit.value}
+                    aria-label={`תיקון מספר צ׳יפ ${chip.chip_number}`}
+                    onChange={(e) => onNumberEdit({ chipId: chip.id, value: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); onCommitNumber(); }
+                      else if (e.key === 'Escape') { e.preventDefault(); onNumberEdit(null); }
+                    }}
+                    onBlur={onCommitNumber}
+                    className="chip-num h-7 w-[96px] rounded-[6px] border-[1.5px] border-[var(--chip-brand)] bg-white px-2 text-[13.5px] font-semibold tracking-[0.02em] text-[var(--chip-ink)] outline-none ring-4 ring-[rgba(61,90,254,0.12)]"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    title="לחיצה לתיקון המספר"
+                    aria-label={`תקן את המספר ${chip.chip_number}`}
+                    disabled={submitting || togglingId !== null}
+                    onClick={() => onNumberEdit({ chipId: chip.id, value: chip.chip_number })}
+                    className={cn(
+                      'chip-num cursor-text rounded-[4px] text-[13.5px] font-semibold tracking-[0.02em] underline-offset-4 hover:underline hover:decoration-dotted disabled:cursor-default',
+                      active
+                        ? 'text-[var(--chip-green-ink)]'
+                        : 'text-[var(--chip-red-ink)] line-through decoration-[var(--chip-red-border)]',
+                    )}
+                  >
+                    {chip.chip_number}
+                  </button>
+                )}
                 <span
                   className={cn(
                     'inline-flex items-center gap-1 border-s ps-2 text-[11px] font-bold',
@@ -1596,7 +1738,7 @@ function HolderBlockCard({
       {/* Ref caption — the no-delete product rule, stated per block (Chip2) */}
       <div className="mt-[10px] flex items-center gap-[6px] text-[11.5px] font-semibold text-[var(--chip-ink-soft)]">
         <Info className="h-[13px] w-[13px] shrink-0" />
-        <span>צ׳יפ שהונפק לא נמחק — אפשר להשבית ולהחזיר לפעיל בכל עת.</span>
+        <span>צ׳יפ שהונפק לא נמחק — משביתים ומחזירים לפעיל בטוגל, ומתקנים מספר בלחיצה עליו.</span>
       </div>
 
       {/* Per-block validation hint (only when the block actually issues) */}

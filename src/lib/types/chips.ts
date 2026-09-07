@@ -1,8 +1,9 @@
 // Access-chip domain types (migration 072). contacts (071) is the apartment
 // registry / single source of truth — chips.contact_id points at it, and
 // apartment_number / holder_* are snapshots taken at issuance, never runtime
-// joins. Closed rules: no DELETE, chip_number never editable, the only way back
-// is inactive -> active (reactivate).
+// joins. Closed rules: no DELETE; the only way back is inactive -> active
+// (reactivate); chip_number may be CORRECTED (typo fix) but never reused
+// while another active chip holds it.
 
 export type ChipType = 'physical' | 'app';
 
@@ -26,9 +27,8 @@ export type ChipEventType =
   | 'note'
   | 'controller_synced';
 
-// List filter tabs: all · active · inactive · pending_sync (inactive +
-// controller_synced=false) · app (chip_type='app').
-export type ChipTab = 'all' | 'active' | 'inactive' | 'pending_sync' | 'app';
+// List filter tabs: all · active · inactive · app (chip_type='app').
+export type ChipTab = 'all' | 'active' | 'inactive' | 'app';
 
 export type AppPlatform = 'ios' | 'android' | 'unknown';
 
@@ -90,7 +90,6 @@ export interface ChipsKpis {
   apartments_total: number;
   /** Registry apartments linked to a debtor row (active billing record). */
   apartments_with_debtor: number;
-  pending_controller: number;
 }
 
 export interface ChipListFilters {
@@ -139,12 +138,25 @@ export interface IssueChipGroup {
   fee_charged?: boolean | null;
 }
 
-/** Payload for issuing chips — one apartment, one or more holder groups, ONE
- *  transaction, all-or-nothing. Fee/notes/override are window-global (a group
- *  may override its fee fields). */
+/** Holder-snapshot edit of ONE existing chip, sent by the issue window when
+ *  the user changed a saved block's name / phone / role. Only the fields that
+ *  actually changed are present. */
+export interface ChipHolderUpdate {
+  id: string;
+  holder_name?: string | null;
+  holder_phone?: string | null;
+  resident_role?: ChipResidentRole;
+}
+
+/** Payload for saving the issue window — one apartment, zero or more holder
+ *  groups to ISSUE plus zero or more existing chips to UPDATE, in ONE
+ *  transaction, all-or-nothing. At least one of the two must be non-empty.
+ *  Fee/notes/override are window-global (a group may override its fee fields). */
 export interface IssueChipsInput {
   contact_id: string;
   groups: IssueChipGroup[];
+  /** Holder edits of chips already saved on this contact. */
+  updates?: ChipHolderUpdate[];
   issuance_fee?: number | null;
   fee_charged?: boolean;
   notes?: string | null;

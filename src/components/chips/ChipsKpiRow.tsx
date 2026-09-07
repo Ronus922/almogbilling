@@ -1,7 +1,7 @@
 'use client';
 
 import type { LucideIcon } from 'lucide-react';
-import { Building2, Cpu, KeyRound, ShieldAlert, Smartphone } from 'lucide-react';
+import { Building2, KeyRound, ShieldAlert, Smartphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ChipsKpis } from '@/lib/types/chips';
 
@@ -53,12 +53,12 @@ function ChipKpiCard({
   );
 }
 
-// KPI strip for the chips page — 5 cards from GET /api/chips/kpis.
+// KPI strip for the chips page — 4 cards from GET /api/chips/kpis.
 export function ChipsKpiRow({ kpis }: { kpis: ChipsKpis | null }) {
   if (!kpis) {
     return (
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, i) => (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} className="h-[88px] animate-pulse rounded-[16px] bg-[var(--chip-hover)]" />
         ))}
       </div>
@@ -66,7 +66,7 @@ export function ChipsKpiRow({ kpis }: { kpis: ChipsKpis | null }) {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <ChipKpiCard title="פעילים" value={String(kpis.active)} tone="green" icon={KeyRound} />
       <ChipKpiCard title="באפליקציה" value={String(kpis.app_active)} tone="blue" icon={Smartphone} />
       <ChipKpiCard title="אבדו ב-30 יום" value={String(kpis.lost_30d)} tone="red" icon={ShieldAlert} />
@@ -76,12 +76,6 @@ export function ChipsKpiRow({ kpis }: { kpis: ChipsKpis | null }) {
         subtitle={`מתוך ${kpis.apartments_total} דירות במרשם`}
         tone="amber"
         icon={Building2}
-      />
-      <ChipKpiCard
-        title="ממתין לחסימה בבקר"
-        value={String(kpis.pending_controller)}
-        tone="violet"
-        icon={Cpu}
       />
     </div>
   );

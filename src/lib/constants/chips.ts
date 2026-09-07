@@ -44,7 +44,7 @@ export const CHIP_EVENT_TYPES: readonly ChipEventType[] = [
   'controller_synced',
 ];
 
-export const CHIP_TABS: readonly ChipTab[] = ['all', 'active', 'inactive', 'pending_sync', 'app'];
+export const CHIP_TABS: readonly ChipTab[] = ['all', 'active', 'inactive', 'app'];
 
 export const APP_PLATFORMS: readonly AppPlatform[] = ['ios', 'android', 'unknown'];
 

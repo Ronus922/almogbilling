@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
-import { getChipById, updateChip } from '@/lib/db/chips';
+import { getChipById, updateChip, ChipNumberTakenError } from '@/lib/db/chips';
 import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -29,7 +29,8 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 }
 
 // PATCH /api/chips/[id] (chips:edit) — partial update. The writable whitelist
-// lives in the db layer: chip_number and status are NEVER writable here.
+// lives in the db layer: status is NEVER writable here; chip_number is a
+// CORRECTION that 409s when another active chip already holds the number.
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
@@ -60,8 +61,20 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     }
     return NextResponse.json({ chip });
   } catch (err) {
+    if (err instanceof ChipNumberTakenError) {
+      return NextResponse.json(
+        { error: `מספר צ׳יפ ${err.chipNumber} כבר פעיל במערכת` },
+        { status: 409 },
+      );
+    }
     if (err instanceof Error && err.message === 'contact_not_found') {
       return NextResponse.json({ error: 'הדירה לא נמצאה במרשם' }, { status: 404 });
+    }
+    if (err instanceof Error && err.message === 'invalid_chip_number') {
+      return NextResponse.json({ error: 'נדרש מספר צ׳יפ' }, { status: 400 });
+    }
+    if (err instanceof Error && err.message === 'holder_name_required') {
+      return NextResponse.json({ error: 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא' }, { status: 400 });
     }
     const e = err as { code?: string };
     if (e.code === '23503') {
