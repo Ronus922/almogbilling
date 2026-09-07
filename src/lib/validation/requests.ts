@@ -6,6 +6,9 @@
  */
 import { z } from 'zod';
 import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legalContact';
+import { validatePhone } from '@/lib/validation';
+import { CHIP_RESIDENT_ROLES } from '@/lib/constants/chips';
+import type { ChipHolderUpdate, ChipResidentRole } from '@/lib/types/chips';
 
 // POST /api/auth/login
 export const loginBodySchema = z.object({
@@ -75,3 +78,40 @@ export const legalContactBodySchema = z
     }
     return normalized.value;
   });
+
+// POST /api/chips — `updates`: holder-snapshot edits of chips ALREADY saved on
+// the contact, applied inside the issue transaction. Only the fields present
+// are written; phone is normalized here so the db layer stores one format.
+const chipHolderUpdateSchema = z
+  .object({
+    id: z.uuid({ error: 'invalid_chip_id' }),
+    holder_name: z.string().trim().nullable().optional(),
+    holder_phone: z.string().trim().nullable().optional(),
+    resident_role: z
+      .string()
+      .refine(
+        (v) => (CHIP_RESIDENT_ROLES as readonly string[]).includes(v),
+        'invalid_resident_role',
+      )
+      .optional(),
+  })
+  .transform((u, ctx): ChipHolderUpdate => {
+    const out: ChipHolderUpdate = { id: u.id };
+    if (u.holder_name !== undefined) out.holder_name = u.holder_name || null;
+    if (u.holder_phone !== undefined) {
+      if (!u.holder_phone) {
+        out.holder_phone = null;
+      } else {
+        const v = validatePhone(u.holder_phone);
+        if (!v.valid) {
+          ctx.addIssue({ code: 'custom', path: ['holder_phone'], message: v.error ?? 'מספר טלפון לא תקין' });
+          return z.NEVER;
+        }
+        out.holder_phone = v.normalized;
+      }
+    }
+    if (u.resident_role !== undefined) out.resident_role = u.resident_role as ChipResidentRole;
+    return out;
+  });
+
+export const chipHolderUpdatesSchema = z.array(chipHolderUpdateSchema).max(50, 'too_many_updates');

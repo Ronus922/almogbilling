@@ -4,6 +4,7 @@ import {
   countGroupNumbers,
   exceedsSoftLimit,
   findDuplicateNumber,
+  holderUpdatesForBlock,
   legacyChipBodyToInput,
 } from '@/lib/chips/issueGroups';
 import type { IssueChipGroup } from '@/lib/types/chips';
@@ -129,5 +130,39 @@ describe('legacyChipBodyToInput — the pre-groups flat body adapter', () => {
     const over = exceedsSoftLimit(4, countGroupNumbers(input.groups));
     const gateBlocks = over && !(input.limit_override_reason?.trim());
     expect(gateBlocks).toBe(true);
+  });
+});
+
+describe('holderUpdatesForBlock — only what the user actually changed', () => {
+  const ids = ['c1', 'c2'];
+  const orig = { name: 'רונן', phone: '0525460546', role: 'tenant' as const };
+
+  it('untouched block → no updates (even if a chip snapshot drifted)', () => {
+    expect(holderUpdatesForBlock(ids, { ...orig }, orig)).toEqual([]);
+  });
+
+  it('emits one entry per saved chip carrying ONLY the changed fields', () => {
+    const out = holderUpdatesForBlock(ids, { ...orig, phone: '0501234567' }, orig);
+    expect(out).toEqual([
+      { id: 'c1', holder_phone: '0501234567' },
+      { id: 'c2', holder_phone: '0501234567' },
+    ]);
+  });
+
+  it('role + name change together', () => {
+    const out = holderUpdatesForBlock(['c1'], { name: 'דנה', phone: orig.phone, role: 'other' }, orig);
+    expect(out).toEqual([{ id: 'c1', holder_name: 'דנה', resident_role: 'other' }]);
+  });
+
+  it('clearing a field sends null', () => {
+    expect(holderUpdatesForBlock(['c1'], { ...orig, phone: null }, orig)).toEqual([
+      { id: 'c1', holder_phone: null },
+    ]);
+  });
+
+  it('a block with no saved chips, no seed, or no role never emits', () => {
+    expect(holderUpdatesForBlock([], { ...orig, name: 'x' }, orig)).toEqual([]);
+    expect(holderUpdatesForBlock(ids, { ...orig, name: 'x' }, null)).toEqual([]);
+    expect(holderUpdatesForBlock(ids, { ...orig, role: null }, orig)).toEqual([]);
   });
 });

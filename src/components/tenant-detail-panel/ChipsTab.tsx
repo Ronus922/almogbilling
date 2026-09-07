@@ -1,9 +1,10 @@
 'use client';
 
-// Chips tab of the tenant detail panel — read-only chip list for the linked
-// contacts row (chip management lives in /chips) plus the "מי גר בדירה"
-// resident-type selector. Issuing reuses IssueChipSheet locked to this
-// apartment; every mutation here refetches from the contact endpoints.
+// Chips tab of the tenant detail panel — chip list for the linked contacts
+// row plus the "מי גר בדירה" resident-type selector. Chips are MANAGED ONLY in
+// the issue window: "הנפק צ׳יפ" and a click on any chip row both open
+// IssueChipSheet locked to this apartment (toggle / edit / issue happen
+// there); every mutation refetches from the contact endpoints.
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -190,7 +191,13 @@ export function ChipsTab({ contactId, apartmentNumber, canEditChips }: Props) {
           </p>
           {chips && chips.items.length > 0 ? (
             <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
-              {chips.items.map((c) => <ChipRow key={c.id} chip={c} />)}
+              {chips.items.map((c) => (
+                <ChipRow
+                  key={c.id}
+                  chip={c}
+                  onOpen={canEditChips ? () => setIssueOpen(true) : undefined}
+                />
+              ))}
             </ul>
           ) : (
             <p className="text-xs text-slate-400 py-2 text-center">אין צ׳יפים לדירה זו עדיין.</p>
@@ -208,14 +215,21 @@ export function ChipsTab({ contactId, apartmentNumber, canEditChips }: Props) {
   );
 }
 
-// Read-only row — deactivate/reactivate live in /chips, not here. The holder
-// name resolves LIVE via resolveChipHolder (never holder_name directly) —
-// an apartment can hold chips of several people in parallel (product rule 2).
-function ChipRow({ chip }: { chip: ChipWithHolder }) {
+// One chip row — a click opens the apartment's issue window (the only place a
+// chip is toggled or edited); inert for view-only users. The holder name
+// resolves LIVE via resolveChipHolder (never holder_name directly) — an
+// apartment can hold chips of several people in parallel (product rule 2).
+function ChipRow({ chip, onOpen }: { chip: ChipWithHolder; onOpen?: () => void }) {
   const active = chip.status === 'active';
   const holder = resolveChipHolder(chip);
   return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 p-3">
+    <li
+      onClick={onOpen}
+      className={cn(
+        'flex flex-wrap items-center gap-x-3 gap-y-1.5 p-3 transition-colors',
+        onOpen && 'cursor-pointer hover:bg-[var(--chip-hover)]',
+      )}
+    >
       <span
         className={cn(
           'chip-num text-sm font-semibold tracking-[0.02em]',

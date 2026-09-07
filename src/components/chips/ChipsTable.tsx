@@ -141,14 +141,6 @@ function StatusPill({ chip }: { chip: ChipWithHolder }) {
   );
 }
 
-function PendingControllerHint() {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-[6px] bg-[var(--chip-amber-soft)] px-2 py-0.5 text-[10.5px] font-bold text-[var(--chip-amber-ink)]">
-      ממתין לחסימה בבקר
-    </span>
-  );
-}
-
 function formatDate(value: string): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '';
@@ -171,7 +163,9 @@ export function ChipsTable({
   loading: boolean;
   /** Non-empty while a search is active — switches the empty state + shows match badges. */
   searchTerm: string;
-  onRowClick: (chip: ChipWithHolder) => void;
+  /** Row click → the issue window of the chip's apartment (the ONLY place chips
+   *  are managed). Absent for view-only users: rows are then inert. */
+  onRowClick?: (chip: ChipWithHolder) => void;
   /** Click on the holder NAME — opens the holder view (name → numbers). */
   onHolderClick: (chip: ChipWithHolder) => void;
   /** Click on the "N צ׳יפים" pill — filters the table to that person. */
@@ -232,9 +226,10 @@ export function ChipsTable({
             return (
               <div
                 key={c.id}
-                onClick={() => onRowClick(c)}
+                onClick={onRowClick ? () => onRowClick(c) : undefined}
                 className={cn(
-                  'grid min-h-[58px] cursor-pointer items-center gap-3 border-b border-[var(--chip-border)] px-6 py-[12px] transition-colors last:border-0 hover:bg-[var(--chip-hover)]',
+                  'grid min-h-[58px] items-center gap-3 border-b border-[var(--chip-border)] px-6 py-[12px] transition-colors last:border-0',
+                  onRowClick && 'cursor-pointer hover:bg-[var(--chip-hover)]',
                   COLS,
                 )}
               >
@@ -280,9 +275,8 @@ export function ChipsTable({
                   <TypePill chip={c} />
                 </span>
 
-                <span className="flex flex-col items-center gap-1">
+                <span className="flex justify-center">
                   <StatusPill chip={c} />
-                  {c.status === 'inactive' && !c.controller_synced && <PendingControllerHint />}
                 </span>
 
                 <span className="chip-num text-center text-[13px] text-[var(--chip-ink-muted)]">
@@ -306,8 +300,12 @@ export function ChipsTable({
             <button
               key={c.id}
               type="button"
-              onClick={() => onRowClick(c)}
-              className="flex w-full cursor-pointer items-center gap-3 rounded-[13px] border border-[var(--chip-border)] bg-[var(--chip-panel)] p-4 text-start transition-colors hover:bg-[var(--chip-hover)]"
+              disabled={!onRowClick}
+              onClick={onRowClick ? () => onRowClick(c) : undefined}
+              className={cn(
+                'flex w-full items-center gap-3 rounded-[13px] border border-[var(--chip-border)] bg-[var(--chip-panel)] p-4 text-start transition-colors',
+                onRowClick && 'cursor-pointer hover:bg-[var(--chip-hover)]',
+              )}
             >
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] bg-[var(--chip-violet-soft)] text-[var(--chip-violet)]">
                 <KeyRound className="h-[18px] w-[18px]" />
@@ -333,11 +331,6 @@ export function ChipsTable({
                   {!holder.is_registry_linked && <NotInRegistryBadge />}
                   {searchTerm && c.match_type && <MatchBadge type={c.match_type} />}
                 </div>
-                {c.status === 'inactive' && !c.controller_synced && (
-                  <div className="mt-1.5">
-                    <PendingControllerHint />
-                  </div>
-                )}
               </div>
 
               <StatusPill chip={c} />

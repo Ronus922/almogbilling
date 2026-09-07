@@ -17,11 +17,13 @@ import {
   APP_INVITE_STATUSES,
 } from '@/lib/constants/chips';
 import { validatePhone } from '@/lib/validation';
+import { chipHolderUpdatesSchema } from '@/lib/validation/requests';
 import { isSnapshotRole } from '@/lib/chips/holder';
 import { createNotification } from '@/services/notifications';
 import { listActiveAdmins } from '@/lib/db/users';
 import type {
   Chip,
+  ChipHolderUpdate,
   ChipTab,
   ChipType,
   ChipStatus,
@@ -189,12 +191,14 @@ function coerceGroup(
   };
 }
 
-// POST /api/chips (chips:edit) — issue chips to one contact for one or more
-// holder groups, ONE transaction, all-or-nothing. Accepts the groups shape
-// ({contact_id, groups:[...], issuance_fee?, fee_charged?, notes?,
-// limit_override_reason?}) AND the legacy flat single-holder body, which is
-// adapted to a single group with every field mapped (incl. the override
-// reason, so a legacy over-limit request with a reason still passes).
+// POST /api/chips (chips:edit) — SAVE the issue window: issue chips to one
+// contact for zero or more holder groups AND/OR apply holder edits to chips
+// already saved there (`updates`), ONE transaction, all-or-nothing. Accepts
+// the groups shape ({contact_id, groups:[...], updates?:[...], issuance_fee?,
+// fee_charged?, notes?, limit_override_reason?}) AND the legacy flat
+// single-holder body, which is adapted to a single group with every field
+// mapped (incl. the override reason, so a legacy over-limit request with a
+// reason still passes). 201 when anything was issued, 200 for edits only.
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try {
@@ -230,8 +234,21 @@ export async function POST(req: NextRequest) {
   let input: IssueChipsInput;
 
   if (Array.isArray(bodyRec.groups)) {
-    // New shape — one or more holder groups.
-    if (bodyRec.groups.length === 0) {
+    // Holder edits of already-saved chips (zod) — may stand alone.
+    let updates: ChipHolderUpdate[] = [];
+    if (bodyRec.updates !== undefined) {
+      const parsed = chipHolderUpdatesSchema.safeParse(bodyRec.updates);
+      if (!parsed.success) {
+        const issues = parsed.error.issues;
+        return NextResponse.json(
+          { error: issues[0]?.message ?? 'invalid_updates', issues },
+          { status: 400 },
+        );
+      }
+      updates = parsed.data;
+    }
+    // New shape — zero or more holder groups (zero only alongside updates).
+    if (bodyRec.groups.length === 0 && updates.length === 0) {
       return NextResponse.json({ error: CHIP_NUMBERS_ERROR }, { status: 400 });
     }
     const groups: IssueChipGroup[] = [];
@@ -243,6 +260,7 @@ export async function POST(req: NextRequest) {
     input = {
       contact_id: contactId,
       groups,
+      updates,
       issuance_fee: issuanceFee,
       fee_charged: bodyRec.fee_charged === true,
       notes: coerceText(bodyRec.notes),
@@ -310,7 +328,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const items = await issueChipGroups(input, {
+    const { items, updated } = await issueChipGroups(input, {
       id: actor.id,
       name: actor.full_name ?? actor.username,
     });
@@ -320,7 +338,7 @@ export async function POST(req: NextRequest) {
       void notifyAdminsOfChipIssued(chip, chip.apartment_number, actor.id);
     }
 
-    return NextResponse.json({ items }, { status: 201 });
+    return NextResponse.json({ items, updated }, { status: items.length > 0 ? 201 : 200 });
   } catch (err) {
     if (err instanceof ChipLimitError) {
       return NextResponse.json(
@@ -341,6 +359,12 @@ export async function POST(req: NextRequest) {
     }
     if (err instanceof Error && err.message === 'contact_not_found') {
       return NextResponse.json({ error: 'הדירה לא נמצאה במרשם' }, { status: 404 });
+    }
+    if (err instanceof Error && err.message === 'chip_not_found') {
+      return NextResponse.json({ error: 'הצ׳יפ לא נמצא' }, { status: 404 });
+    }
+    if (err instanceof Error && err.message === 'chip_not_in_contact') {
+      return NextResponse.json({ error: 'הצ׳יפ אינו שייך לדירה זו' }, { status: 400 });
     }
     if (err instanceof Error && err.message === 'invalid_chip_numbers') {
       return NextResponse.json({ error: CHIP_NUMBERS_ERROR }, { status: 400 });
