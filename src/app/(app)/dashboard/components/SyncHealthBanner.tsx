@@ -2,6 +2,13 @@ import { AlertTriangle } from 'lucide-react';
 import type { SyncHealth } from '@/lib/dashboard/syncHealth';
 import { SYNC_STAGE_LABELS } from '@/lib/sync/decision';
 import { formatStamp } from '@/lib/dashboard/formatStamp';
+import {
+  SYNC_FAILURE_ADVICE,
+  SYNC_FAILURE_TITLE,
+  SYNC_LAST_UPDATE_LABEL,
+  SYNC_LAST_UPDATE_NONE,
+  SYNC_TECH_DETAILS_LABEL,
+} from '@/lib/dashboard/syncCopy';
 
 /**
  * Persistent red banner at the top of the dashboard (every user, no dismiss)
@@ -9,29 +16,32 @@ import { formatStamp } from '@/lib/dashboard/formatStamp';
  * sync's source data is older than the freshness threshold, or no sync ever
  * succeeded. Renders nothing when health is 'ok'. Tone per DESIGN.md §8
  * (danger banner: border-red-200 bg-red-50 text-red-900).
+ *
+ * Wording (11/09/2026): three fixed lines for everyone — title, "עדכון אחרון:
+ * <source_run_at of the last success>", and what to do. The user is not told
+ * the stage, the trigger source or the CRM's error text; a failed run and a
+ * stale snapshot read the same. Admins get a closed-by-default "פרטים טכניים"
+ * disclosure with all of that; for anyone else it is not in the HTML at all.
  */
-export function SyncHealthBanner({ health }: { health: SyncHealth }) {
+export function SyncHealthBanner({ health, isAdmin }: { health: SyncHealth; isAdmin: boolean }) {
   if (health.state === 'ok') return null;
 
-  const correctAsOf = health.state === 'never' ? null : health.sourceRunAt;
+  const lastGood = health.state === 'never' ? null : health.sourceRunAt;
 
-  let title: string;
-  const lines: string[] = [];
+  // Technical lines — rendered only for admins, inside <details>.
+  const techLines: string[] = [];
   // The CRM's error text mixes Hebrew with English selectors/stack lines —
   // rendered as its own block so each line resolves its own direction.
-  let detail: string | null = null;
+  let techMessage: string | null = null;
   if (health.state === 'failed') {
     const r = health.run;
-    title = 'סנכרון בלינק נכשל — הנתונים המוצגים אינם מעודכנים';
-    lines.push(`נכשל ב-${formatStamp(r.finishedAt ?? r.startedAt)} (${r.triggerSource === 'cron' ? 'סנכרון אוטומטי' : 'הפעלה ידנית'})`);
-    lines.push(`שלב: ${r.stage ? SYNC_STAGE_LABELS[r.stage] : 'לא ידוע'}`);
-    if (r.message) detail = r.message;
+    techLines.push(`נכשל ב-${formatStamp(r.finishedAt ?? r.startedAt)} (${r.triggerSource === 'cron' ? 'סנכרון אוטומטי' : 'הפעלה ידנית'})`);
+    techLines.push(`שלב: ${r.stage ? SYNC_STAGE_LABELS[r.stage] : 'לא ידוע'}`);
+    if (r.message) techMessage = r.message;
   } else if (health.state === 'stale') {
-    title = 'נתוני בלינק אינם מעודכנים';
-    lines.push(`הסנכרון המוצלח האחרון קרא נתון בן ${Math.round(health.ageHours)} שעות — מעל הסף של ${health.maxAgeHours} שעות`);
+    techLines.push(`הסנכרון המוצלח האחרון קרא נתון בן ${Math.round(health.ageHours)} שעות — מעל הסף של ${health.maxAgeHours} שעות`);
   } else {
-    title = 'לא בוצע סנכרון מוצלח מול בלינק';
-    lines.push('החובות המוצגים לא אומתו מול בלינק מעולם');
+    techLines.push('לא נרשם סנכרון מוצלח מעולם');
   }
 
   return (
@@ -44,24 +54,31 @@ export function SyncHealthBanner({ health }: { health: SyncHealth }) {
         <AlertTriangle className="h-5 w-5" aria-hidden />
       </span>
       <div className="flex min-w-0 flex-col gap-1">
-        <div className="font-bold">{title}</div>
-        {lines.map((l) => (
-          <div key={l} className="break-words">{l}</div>
-        ))}
-        {detail && (
-          <div
-            dir="auto"
-            className="whitespace-pre-wrap break-words rounded-md bg-white/60 px-3 py-2 text-xs text-red-900 [unicode-bidi:plaintext]"
-          >
-            <span className="font-semibold">הודעה: </span>{detail}
-          </div>
-        )}
-        <div className="font-semibold">
-          הנתונים המוצגים נכונים ל-
-          {correctAsOf
-            ? <span className="font-num tabular-nums">{formatStamp(correctAsOf)}</span>
-            : <span>תאריך לא ידוע</span>}
+        <div className="font-bold">{SYNC_FAILURE_TITLE}</div>
+        <div className="break-words">
+          {SYNC_LAST_UPDATE_LABEL}{' '}
+          {lastGood
+            ? <span className="font-num tabular-nums">{formatStamp(lastGood)}</span>
+            : <span>{SYNC_LAST_UPDATE_NONE}</span>}
         </div>
+        <div className="break-words">{SYNC_FAILURE_ADVICE}</div>
+        {isAdmin && (
+          <details className="group mt-1">
+            <summary className="inline-flex min-h-[44px] cursor-pointer list-none items-center text-xs font-semibold underline underline-offset-2 hover:opacity-80 [&::-webkit-details-marker]:hidden">
+              {SYNC_TECH_DETAILS_LABEL}
+            </summary>
+            <div className="flex flex-col gap-1 rounded-md bg-white/60 px-3 py-2 text-xs">
+              {techLines.map((l) => (
+                <div key={l} className="break-words">{l}</div>
+              ))}
+              {techMessage && (
+                <div dir="auto" className="whitespace-pre-wrap break-words [unicode-bidi:plaintext]">
+                  <span className="font-semibold">הודעה: </span>{techMessage}
+                </div>
+              )}
+            </div>
+          </details>
+        )}
       </div>
     </div>
   );

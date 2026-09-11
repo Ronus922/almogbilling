@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { computeSeverity, type Severity } from '@/lib/dashboard/syncStatus';
 import { formatStamp } from '@/lib/dashboard/formatStamp';
+import { SYNC_FAILURE_TITLE } from '@/lib/dashboard/syncCopy';
 import type { SyncRunSummary } from '@/lib/dashboard/syncHealth';
 import { SYNC_STAGE_LABELS, type SyncStage } from '@/lib/sync/decision';
 import { useHasMounted } from '@/lib/hooks/useHasMounted';
@@ -100,11 +101,9 @@ export function LastImportIndicator({
       const res = await fetch('/api/sync/bllink', { method: 'POST' });
       const body = (await res.json().catch(() => null)) as SyncResponse | null;
       if (!res.ok || !body?.ok) {
-        const stage = body?.stage && body.stage in SYNC_STAGE_LABELS
-          ? SYNC_STAGE_LABELS[body.stage as SyncStage]
-          : (body?.stage ?? `HTTP ${res.status}`);
-        const msg = body?.message ?? body?.error ?? `HTTP ${res.status}`;
-        toast.error(`סנכרון נכשל בשלב ${stage}: ${msg}`, { duration: 12_000 });
+        // Same first line as the banner, nothing technical — the stage and the
+        // CRM's message are in sync_runs and in the admin history panel.
+        toast.error(SYNC_FAILURE_TITLE, { duration: 12_000 });
       } else {
         toast.success(body.message ?? 'הסנכרון הושלם');
       }
@@ -112,8 +111,7 @@ export function LastImportIndicator({
       try { await refreshStatus(); } catch { /* router.refresh() below re-reads the server state */ }
       startTransition(() => router.refresh());
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast.error(`סנכרון נכשל: ${msg}`);
+      toast.error(SYNC_FAILURE_TITLE, { duration: 12_000 });
     } finally {
       setSyncing(false);
     }
