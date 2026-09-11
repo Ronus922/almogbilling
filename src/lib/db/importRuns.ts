@@ -20,7 +20,7 @@ export interface ImportRun {
   initiated_by: string | null;
 }
 
-export async function createImportRun(mode: ImportMode, userId: string): Promise<string> {
+export async function createImportRun(mode: ImportMode, userId: string | null): Promise<string> {
   const row = await queryOne<{ id: string }>(
     `insert into public.import_runs (mode, initiated_by, kind) values ($1, $2, 'debtors') returning id`,
     [mode, userId],

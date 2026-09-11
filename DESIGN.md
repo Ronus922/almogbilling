@@ -208,9 +208,11 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
 
 ## 5b. Sync & Import indicator (LastImportIndicator pattern)
 
-אינדיקטור טריות-נתונים לדשבורד. מציג **שני טיימסטמפים מובחנים**: **ייבוא אחרון**
-(מ-`debtors.last_imported_at` — מניע את חומרת ה-severity) ו**סנכרון אחרון**
-(מ-`sync_runs` — מידע משני). סנכרון וייבוא הן פעולות נפרדות במכוון.
+אינדיקטור טריות-נתונים לדשבורד. מציג **שני טיימסטמפים מובחנים** (עודכן 11/09/2026):
+**נתוני בלינק נכונים ל-** (`sync_runs.source_run_at` של הסנכרון המוצלח האחרון — הרגע
+שבו בלינק נסרק בפועל; **מניע את ה-severity**) ו**סנכרון אחרון** (הריצה האחרונה מ-`sync_runs`,
+עם תוצאתה: הצליח / נכשל + השלב). לעולם לא מציגים את זמן ההעתקה כאילו הוא זמן הנתון —
+מ-25/08 עד 11/09/2026 המחוון הראה "סונכרן לפני דקה" על snapshot בן 17 יום.
 
 ### Container — כרטיס לבן, צל רך, צבע לפי severity
 
@@ -218,17 +220,26 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
 <div className={cn('flex flex-col gap-3 rounded-2xl border px-5 py-3.5 shadow-soft-xs md:flex-row md:items-center md:justify-between', styles.wrap)}>
 ```
 
-| Severity | תנאי (ייבוא) | bg | border |
+| Severity | תנאי (גיל הנתון במקור) | bg | border |
 |---|---|---|---|
-| `ok`     | < 24h           | `bg-white`        | `border-line` |
-| `yellow` | 24–48h          | `bg-[#fff6e6]`    | `border-[#e08700]/30` |
-| `red`    | > 48h / null    | `bg-[#feefef]`    | `border-[#e5484d]/30` |
+| `ok`     | < 24h                          | `bg-white`        | `border-line` |
+| `yellow` | 24h – `BLLINK_MAX_SNAPSHOT_AGE_HOURS` (36) | `bg-[#fff6e6]` | `border-[#e08700]/30` |
+| `red`    | מעל הסף / אין סנכרון מוצלח     | `bg-[#feefef]`    | `border-[#e5484d]/30` |
+
+### באנר אדום קבוע (SyncHealthBanner) — מעל ה-KPI, לכל המשתמשים, ללא סגירה
+
+מוצג כשהריצה האחרונה נכשלה, כשהנתון של הסנכרון המוצלח האחרון ישן מהסף, או כשלא
+הצליח סנכרון מעולם (`computeSyncHealth`). פלטת danger של §8:
+`rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900`, אייקון
+`AlertTriangle` ב-chip `bg-white/70 text-[#e5484d]`, `role="alert"`. תוכן: כותרת,
+מתי נכשל + מקור (ידני/אוטומטי), השלב (`SYNC_STAGE_LABELS`), ההודעה המלאה, ושורת
+"הנתונים המוצגים נכונים ל-<source_run_at>" ב-`font-num`.
 
 ### צד ימין (start ב-RTL) — chip + שני טיימסטמפים
 
 - chip לוח-שנה: `grid h-10 w-10 place-items-center rounded-xl {iconBg} {iconFg}` (`CalendarSync`).
-- שורה ראשית (`font-semibold`): `ייבוא אחרון: <תאריך ב-font-num>` או `טרם בוצע ייבוא`.
-- שורה משנית (`text-sm text-ink-2`): אייקון `RefreshCw` זעיר + `סנכרון אחרון: <תאריך ב-font-num>` / `טרם בוצע סנכרון` (`text-ink-3`).
+- שורה ראשית (`font-semibold`): `נתוני בלינק נכונים ל-<תאריך ב-font-num>` או `טרם בוצע סנכרון מוצלח`.
+- שורה משנית (`text-sm text-ink-2`): אייקון `RefreshCw` זעיר + `סנכרון אחרון: <תאריך ב-font-num> · הצליח` / `· נכשל — <שלב>` (אדום `#b01b20`) / `טרם בוצע סנכרון` (`text-ink-3`).
 - הערת severity (`text-xs opacity-80`) רק כש-severity != `ok`.
 
 ### Button — "סנכרן עכשיו" (ירוק gradient, צל ירוק רך)
@@ -240,7 +251,15 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
 </Button>
 ```
 
-קורא ל-`POST /api/sync/bllink` (same-origin, admin-only); נרשם ב-`sync_runs`; אחרי הצלחה — מרענן את שני הטיימסטמפים מ-`GET /api/sync/status` + `router.refresh()`, `toast` הצלחה; בכישלון — `toast.error` (דפוס שגיאות §7).
+קורא ל-`POST /api/sync/bllink` (same-origin, admin-only); נרשם ב-`sync_runs`; בכל תוצאה — מרענן מ-`GET /api/sync/status` + `router.refresh()` (כדי שהבאנר יופיע/ייעלם). הצלחה: `toast.success('סונכרנו N דירות')`. כישלון: `toast.error('סנכרון נכשל בשלב <שלב>: <הודעה>')` — לעולם לא "הופעל בהצלחה" על כשל.
+
+### Button — "היסטוריה" (admin בלבד)
+
+`<Button variant="secondary" size="sm" className="h-9 gap-2 rounded-lg px-4 text-sm">` עם `History` — פותח את
+`SyncHistorySheet` (Sheet §12, `side="left"`): טבלה §9 של 30 הריצות האחרונות ב-4 עמודות שנכנסות ב-55vw בלי גלילה —
+זמן + מתחתיו מי הפעיל (מייל / "סנכרון אוטומטי", `text-xs text-slate-500`), תוצאה (pill emerald/rose + מתחתיו
+השלב שנכשל או "N דירות" שנכתבו), הודעה (`line-clamp-2` + `title`, `dir="auto"` + `[unicode-bidi:plaintext]` כי טקסט ה-CRM מעורב
+עברית/אנגלית), נתון נכון ל-. פאנל קריאה-בלבד: footer עם "סגור" יחיד.
 
 ### Button — "ייבוא נתונים" (כחול brand)
 

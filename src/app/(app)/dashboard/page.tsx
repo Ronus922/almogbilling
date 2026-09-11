@@ -3,16 +3,16 @@ import { getCurrentActor } from '@/lib/auth/actor';
 import { hasAnyAccess, hasPermission } from '@/lib/permissions/check';
 import {
   getDashboardKpis,
-  getLastImportedAt,
   getTabCounts,
   listDebtors,
   ALL_SORT_KEYS,
   type TabKey,
   type SortKey,
 } from '@/lib/db/debtors';
-import { getLastSuccessfulSyncAt } from '@/lib/db/syncRuns';
+import { loadSyncHealth } from '@/lib/dashboard/loadSyncHealth';
 import { KpiGrid } from './components/KpiGrid';
 import { LastImportIndicator } from './components/LastImportIndicator';
+import { SyncHealthBanner } from './components/SyncHealthBanner';
 import { DebtorsTabs } from './components/DebtorsTabs';
 import { DebtorsToolbar } from './components/DebtorsToolbar';
 import { DebtorsTable } from './components/DebtorsTable';
@@ -67,22 +67,27 @@ export default async function DashboardPage({
   // bulk-download the debtors list, only read the on-screen table.
   const canExport = hasPermission(actor.role, actor.permissions, 'export', 'view');
 
-  const [kpis, lastImportAt, lastSyncAt, tabCounts, listing] = await Promise.all([
+  const isAdmin = actor.role === 'super_admin' || actor.role === 'admin';
+
+  const [kpis, sync, tabCounts, listing] = await Promise.all([
     getDashboardKpis(),
-    getLastImportedAt(),
-    getLastSuccessfulSyncAt(),
+    loadSyncHealth(),
     getTabCounts(),
     listDebtors({ tab, q, apt, sort, page }),
   ]);
 
   return (
     <div className="space-y-6">
+      <SyncHealthBanner health={sync.health} />
+
       <KpiGrid kpis={kpis} />
 
       <LastImportIndicator
-        lastImportAt={lastImportAt}
-        lastSyncAt={lastSyncAt}
+        sourceRunAt={sync.sourceRunAt}
+        lastRun={sync.lastRun}
+        maxAgeHours={sync.maxAgeHours}
         canSync={canSync}
+        isAdmin={isAdmin}
       />
 
       <DebtorsTabs active={tab} counts={tabCounts} />

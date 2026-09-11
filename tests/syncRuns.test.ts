@@ -9,9 +9,10 @@ import {
   createSyncRun,
   finishSyncRunSuccess,
   finishSyncRunError,
-  getLastSuccessfulSyncAt,
+  getLastSuccessfulSyncRun,
+  getLastSyncRun,
+  listRecentSyncRuns,
 } from '@/lib/db/syncRuns';
-import { computeSeverity } from '@/lib/dashboard/syncStatus';
 
 // Loosely-typed mock handles for assertions.
 const mQuery = query as unknown as ReturnType<typeof vi.fn>;
@@ -23,91 +24,82 @@ beforeEach(() => {
 });
 
 describe('sync_runs — open (createSyncRun)', () => {
-  it('inserts a row and returns the id', async () => {
+  it('inserts a row with the actor + trigger source and returns the id', async () => {
     mQueryOne.mockResolvedValue({ id: 'sync-1' });
-    const id = await createSyncRun('user-1');
+    const id = await createSyncRun({ triggeredBy: 'user-1', source: 'ui' });
     expect(id).toBe('sync-1');
     const [sql, params] = mQueryOne.mock.calls[0];
     expect(sql).toMatch(/insert into public\.sync_runs/i);
-    expect(params).toEqual(['user-1']);
+    expect(sql).toMatch(/trigger_source/);
+    expect(params).toEqual(['user-1', 'ui']);
   });
 
-  it('accepts a null triggered_by (e.g. cron)', async () => {
+  it('a cron run has no actor', async () => {
     mQueryOne.mockResolvedValue({ id: 'x' });
-    await createSyncRun(null);
-    expect(mQueryOne.mock.calls[0][1]).toEqual([null]);
+    await createSyncRun({ triggeredBy: null, source: 'cron' });
+    expect(mQueryOne.mock.calls[0][1]).toEqual([null, 'cron']);
   });
 
   it('throws if the insert returns no row', async () => {
     mQueryOne.mockResolvedValue(null);
-    await expect(createSyncRun('u')).rejects.toThrow();
+    await expect(createSyncRun({ triggeredBy: 'u', source: 'ui' })).rejects.toThrow();
   });
 });
 
 describe('sync_runs — finish (success / error)', () => {
-  it('finishSyncRunSuccess marks success + finished_at', async () => {
+  it('finishSyncRunSuccess stores source_run_at, rows_count and the import run', async () => {
     mQuery.mockResolvedValue({ rowCount: 1 });
-    await finishSyncRunSuccess('run-1');
+    await finishSyncRunSuccess('run-1', { sourceRunAt: '2026-09-11T06:35:41Z', rowsCount: 255, importRunId: 'imp-1' });
     const [sql, params] = mQuery.mock.calls[0];
     expect(sql).toMatch(/status = 'success'/);
     expect(sql).toMatch(/finished_at = now\(\)/);
-    expect(params).toEqual(['run-1']);
+    expect(sql).toMatch(/source_run_at = \$2/);
+    expect(params).toEqual(['run-1', '2026-09-11T06:35:41Z', 255, 'imp-1']);
   });
 
-  it('finishSyncRunError marks error + stores the message', async () => {
+  it('finishSyncRunError stores the stage, the full message and the source time', async () => {
     mQuery.mockResolvedValue({ rowCount: 1 });
-    await finishSyncRunError('run-2', 'CRM unreachable');
+    await finishSyncRunError('run-2', { stage: 'scrape', message: 'הסריקה בבלינק נכשלה: …', sourceRunAt: null });
     const [sql, params] = mQuery.mock.calls[0];
     expect(sql).toMatch(/status = 'error'/);
-    expect(params[0]).toBe('run-2');
-    expect(params[1]).toBe('CRM unreachable');
+    expect(sql).toMatch(/error_stage = \$2/);
+    expect(params).toEqual(['run-2', 'scrape', 'הסריקה בבלינק נכשלה: …', null, null]);
   });
 
-  it('finishSyncRunError truncates very long messages to 1000 chars', async () => {
+  it('finishSyncRunError keeps long CRM error texts (up to 4000 chars)', async () => {
     mQuery.mockResolvedValue({ rowCount: 1 });
-    await finishSyncRunError('run-3', 'x'.repeat(5000));
-    expect((mQuery.mock.calls[0][1][1] as string).length).toBe(1000);
+    await finishSyncRunError('run-3', { stage: 'pull', message: 'x'.repeat(5000), sourceRunAt: null });
+    expect((mQuery.mock.calls[0][1][2] as string).length).toBe(4000);
   });
 });
 
-describe('sync_runs — combined read (getLastSuccessfulSyncAt)', () => {
-  it('returns the latest successful finished_at', async () => {
-    const d = new Date('2026-06-12T10:00:00Z');
-    mQueryOne.mockResolvedValue({ last_at: d });
-    const r = await getLastSuccessfulSyncAt();
-    expect(r).toBe(d);
+describe('sync_runs — reads', () => {
+  it('getLastSuccessfulSyncRun filters on success, newest first', async () => {
+    mQueryOne.mockResolvedValue({ id: 'ok-1', status: 'success' });
+    const r = await getLastSuccessfulSyncRun();
+    expect(r?.id).toBe('ok-1');
     expect(mQueryOne.mock.calls[0][0]).toMatch(/status = 'success'/);
-    expect(mQueryOne.mock.calls[0][0]).toMatch(/max\(finished_at\)/);
+    expect(mQueryOne.mock.calls[0][0]).toMatch(/order by started_at desc/);
   });
 
-  it('returns null when there is no successful sync', async () => {
-    mQueryOne.mockResolvedValue({ last_at: null });
-    expect(await getLastSuccessfulSyncAt()).toBeNull();
+  it('getLastSyncRun takes the newest run of any status', async () => {
+    mQueryOne.mockResolvedValue({ id: 'any-1', status: 'error' });
+    const r = await getLastSyncRun();
+    expect(r?.status).toBe('error');
+    expect(mQueryOne.mock.calls[0][0]).not.toMatch(/status =/);
   });
 
-  it('returns null when the query yields no row', async () => {
+  it('listRecentSyncRuns joins the triggering user and honours the limit', async () => {
+    mQuery.mockResolvedValue({ rows: [{ id: 'a' }, { id: 'b' }] });
+    const rows = await listRecentSyncRuns(30);
+    expect(rows).toHaveLength(2);
+    const [sql, params] = mQuery.mock.calls[0];
+    expect(sql).toMatch(/left join public\.users/);
+    expect(params).toEqual([30]);
+  });
+
+  it('reads return null when the query yields no row', async () => {
     mQueryOne.mockResolvedValue(null);
-    expect(await getLastSuccessfulSyncAt()).toBeNull();
-  });
-});
-
-describe('computeSeverity — driven by last import only', () => {
-  const now = new Date('2026-06-12T12:00:00Z').getTime();
-  const hoursAgo = (h: number) => new Date(now - h * 3_600_000);
-
-  it('never imported → red', () => {
-    expect(computeSeverity(null, now)).toBe('red');
-  });
-  it('< 24h → ok', () => {
-    expect(computeSeverity(hoursAgo(2), now)).toBe('ok');
-  });
-  it('exactly 24h → ok (boundary)', () => {
-    expect(computeSeverity(hoursAgo(24), now)).toBe('ok');
-  });
-  it('24–48h → yellow', () => {
-    expect(computeSeverity(hoursAgo(30), now)).toBe('yellow');
-  });
-  it('> 48h → red', () => {
-    expect(computeSeverity(hoursAgo(60), now)).toBe('red');
+    expect(await getLastSuccessfulSyncRun()).toBeNull();
   });
 });
