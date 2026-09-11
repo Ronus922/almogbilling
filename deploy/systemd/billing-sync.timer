@@ -1,0 +1,14 @@
+[Unit]
+Description=Run billing-sync.service daily at 06:00 Asia/Jerusalem
+
+[Timer]
+# The host clock is UTC; the timezone suffix keeps the run at 06:00 local
+# through DST changes.
+OnCalendar=*-*-* 06:00:00 Asia/Jerusalem
+# Catch up a missed run (server was down at 06:00).
+Persistent=true
+AccuracySec=1min
+Unit=billing-sync.service
+
+[Install]
+WantedBy=timers.target

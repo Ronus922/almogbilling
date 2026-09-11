@@ -1,0 +1,19 @@
+# Daily Bllink sync — asks the CRM to re-scrape Bllink and copies the fresh
+# snapshot into public.debtors via POST /api/sync/bllink (x-cron-secret).
+# Install:
+#   sudo cp deploy/systemd/billing-sync.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now billing-sync.timer
+#   systemctl list-timers billing-sync.timer   # next run: tomorrow 06:00 Asia/Jerusalem
+[Unit]
+Description=ALMOG CRM — daily Bllink sync (one-shot)
+After=network.target billing.service
+Wants=billing.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=devops-www
+EnvironmentFile=/etc/billing/billing.env
+ExecStart=/var/www/billing/scripts/run-bllink-sync.sh
+# The CRM scrape (Playwright) takes ~45s; the route waits up to 120s for it.
+TimeoutStartSec=6min

@@ -12,4 +12,6 @@ export const FORGOT_PASSWORD_MAX_PER_IP = 10; // per IP per window
 export const ACCEPT_INVITE_MAX_PER_IP = 15; // per IP per window
 export const RESET_PASSWORD_MAX_PER_IP = 10; // per IP per window — brute-force guard on reset tokens
 export const SYNC_BLLINK_MAX_PER_IP = 10; // per IP per window — anti double-click on "Sync now"
+// Newest CRM snapshot the sync will copy (hours). Env BLLINK_MAX_SNAPSHOT_AGE_HOURS overrides.
+export const BLLINK_MAX_SNAPSHOT_AGE_HOURS_DEFAULT = 36;
 export const WHATSAPP_PULL_MAX_PER_IP = 10; // per IP per window — throttle external Green API pulls

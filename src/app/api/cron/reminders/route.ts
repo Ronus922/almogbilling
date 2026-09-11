@@ -1,19 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { timingSafeEqual } from 'node:crypto';
+import { secretsMatch } from '@/lib/auth/cronSecret';
 import { runReminders } from '@/lib/reminders/engine';
 import { logger } from '@/lib/logger';
 import { env } from '@/env';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
-
-/** Constant-time string compare; safe against length leaks. */
-function secretsMatch(a: string, b: string): boolean {
-  const ab = Buffer.from(a, 'utf8');
-  const bb = Buffer.from(b, 'utf8');
-  if (ab.length !== bb.length) return false;
-  return timingSafeEqual(ab, bb);
-}
 
 // POST /api/cron/reminders — secured by x-cron-secret. Processes due reminders.
 // Same auth pattern as the sync cron: a shared secret in the env, no session.

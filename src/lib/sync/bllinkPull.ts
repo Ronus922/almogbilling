@@ -2,6 +2,7 @@ import 'server-only';
 import { query } from '@/lib/db';
 import { importParsedRows } from '@/lib/import/runner';
 import { finishRunError } from '@/lib/db/importRuns';
+import { SyncStageError } from '@/lib/sync/decision';
 import { splitOwnerTenantPhones } from '@/lib/whatsapp';
 import type { ParsedDebtorRow } from '@/lib/excel/parse';
 import { logger } from '@/lib/logger';
@@ -37,8 +38,16 @@ import { env } from '@/env';
  * nothing, zeroing nothing) if the run is implausibly small — below an absolute
  * floor (BLLINK_SYNC_MIN_ROWS) or below a fraction of the apartments that
  * currently owe in billing (BLLINK_SYNC_MIN_FRACTION) — or if the response is
- * internally inconsistent (Σtotal ≠ Σcomponents). A clear error is recorded and
- * the sync returns 502.
+ * internally inconsistent (Σtotal ≠ Σcomponents). A clear error is recorded on
+ * import_runs + sync_runs (stage 'guard') and the sync returns 409.
+ *
+ * ── Freshness (11/09/2026) ───────────────────────────────────────────────────
+ * The snapshot is dated: every row carries the CRM's last_import_at, the moment
+ * Bllink was actually scraped. The route refuses to copy a snapshot older than
+ * BLLINK_MAX_SNAPSHOT_AGE_HOURS (stage 'stale') — from 25/08 to 11/09/2026 the
+ * CRM scrape was failing silently and every "successful" sync re-copied the
+ * same 25/08 report. That timestamp (runMaxAt) is now persisted on sync_runs as
+ * source_run_at and shown on the dashboard as "the data is correct as of".
  *
  * Names/phones are NO LONGER written to debtors — those columns are frozen
  * legacy; public.contacts is the resident registry (single source of truth).
@@ -136,7 +145,7 @@ export interface BllinkPullReport {
 /**
  * Fetches + maps ONLY the current Bllink run (`imported_this_run = true`).
  * Read-only — does not write. Returns the mapped rows plus a reconciliation
- * report used by the safety guards in syncDebtorsFromCrm.
+ * report used by the freshness check (route) and the safety guards (writeCrmSnapshot).
  */
 export async function fetchCrmDebtorRows(): Promise<{ rows: ParsedDebtorRow[]; report: BllinkPullReport }> {
   const base = env.CRM_DEBTORS_REST_URL;
@@ -213,14 +222,20 @@ async function countBillingDebtorsWithDebt(): Promise<number> {
 }
 
 /**
- * Pulls the current Bllink run and OVERWRITES public.debtors with it (same merge
- * + zero-out pipeline as a manual import). Aborts — writing nothing — if the run
- * fails the completeness/reconciliation guards. Returns the number of rows
- * written.
+ * Runs the safety guards on an already-fetched snapshot and, if they pass,
+ * OVERWRITES public.debtors with it (same merge + zero-out pipeline as a manual
+ * import). A guard failure marks the import_run as error and throws a
+ * SyncStageError('guard') — nothing is written or zeroed. Returns the number of
+ * rows written.
+ *
+ * Fetching is separate (fetchCrmDebtorRows) so the caller can check freshness
+ * BEFORE opening an import_run.
  */
-export async function syncDebtorsFromCrm(runId: string): Promise<number> {
-  const { rows, report } = await fetchCrmDebtorRows();
-
+export async function writeCrmSnapshot(
+  rows: ParsedDebtorRow[],
+  report: BllinkPullReport,
+  runId: string,
+): Promise<number> {
   // ── Safety reconciliation BEFORE any write (this operation zeroes every
   //    apartment absent from the response, so a partial download is dangerous) ──
   const billingDebtors = await countBillingDebtorsWithDebt();
@@ -240,7 +255,7 @@ export async function syncDebtorsFromCrm(runId: string): Promise<number> {
       `Suspected partial/failed download — refusing to overwrite. NOTHING was written or zeroed.`;
     logger.error(summary, '\n', msg);
     await finishRunError(runId, msg);
-    throw new Error(msg);
+    throw new SyncStageError('guard', msg, report.runMaxAt);
   }
 
   if (reconOff) {
@@ -250,7 +265,7 @@ export async function syncDebtorsFromCrm(runId: string): Promise<number> {
       `Refusing to overwrite. NOTHING was written or zeroed.`;
     logger.error(summary, '\n', msg);
     await finishRunError(runId, msg);
-    throw new Error(msg);
+    throw new SyncStageError('guard', msg, report.runMaxAt);
   }
 
   logger.info(

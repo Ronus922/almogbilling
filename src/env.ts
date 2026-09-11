@@ -62,6 +62,8 @@ export const env = createEnv({
     CRM_DEBTORS_REST_KEY: optionalString,
     BLLINK_SYNC_MIN_ROWS: numeric,
     BLLINK_SYNC_MIN_FRACTION: numeric,
+    // Newest CRM snapshot the sync will copy, in hours (default 36). Older → stage 'stale', nothing written.
+    BLLINK_MAX_SNAPSHOT_AGE_HOURS: numeric,
     CHROME_PATH: optionalString,
 
     // ── monitoring (all optional; unset = off) ────────────────────────────
