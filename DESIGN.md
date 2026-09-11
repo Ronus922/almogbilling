@@ -231,9 +231,22 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
 מוצג כשהריצה האחרונה נכשלה, כשהנתון של הסנכרון המוצלח האחרון ישן מהסף, או כשלא
 הצליח סנכרון מעולם (`computeSyncHealth`). פלטת danger של §8:
 `rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900`, אייקון
-`AlertTriangle` ב-chip `bg-white/70 text-[#e5484d]`, `role="alert"`. תוכן: כותרת,
-מתי נכשל + מקור (ידני/אוטומטי), השלב (`SYNC_STAGE_LABELS`), ההודעה המלאה, ושורת
-"הנתונים המוצגים נכונים ל-<source_run_at>" ב-`font-num`.
+`AlertTriangle` ב-chip `bg-white/70 text-[#e5484d]`, `role="alert"`.
+
+**נוסח (11/09/2026) — שלוש שורות קבועות, זהות בכל המצבים (כשל / ישן / מעולם), הטקסטים
+ב-`@/lib/dashboard/syncCopy`:**
+
+1. כותרת (`font-bold`): `הסנכרון מול בלינק נכשל — הנתונים אינם מעודכנים`
+2. `עדכון אחרון: <source_run_at של הסנכרון המוצלח האחרון, dd.mm.yyyy HH:mm ב-font-num>` — ואם לא היה
+   סנכרון מוצלח מעולם: `עדכון אחרון: אין`
+3. `אנא נסה שנית בעוד כמה דקות. אם התקלה ממשיכה להופיע, אנא פנה למנהל המערכת, רונן משולם.`
+
+**לא מציגים למשתמש** את השלב, את מקור ההפעלה (ידני/אוטומטי) או את ההודעה הטכנית של ה-CRM —
+הם נשמרים ב-`sync_runs` ומוצגים בפאנל ההיסטוריה. **admin בלבד** (`isAdmin`): מתחת לשורה 3 קישור קטן
+`פרטים טכניים` — `<details>` נייטיב סגור כברירת מחדל, `<summary>` בסגנון קישור
+(`text-xs font-semibold underline underline-offset-2`, `min-h-[44px]` ל-touch target, בלי marker) — שפותח
+בלוק `bg-white/60 px-3 py-2 text-xs`: מתי נכשל + מקור, השלב (`SYNC_STAGE_LABELS`), וההודעה המלאה
+ב-`dir="auto"` + `[unicode-bidi:plaintext]`. למשתמש שאינו admin הבלוק לא נמצא ב-HTML בכלל.
 
 ### צד ימין (start ב-RTL) — chip + שני טיימסטמפים
 
@@ -251,7 +264,7 @@ Padding nominals: `p-3` / `p-4` / `p-5` / `p-6` / `p-8` / `p-10`.
 </Button>
 ```
 
-קורא ל-`POST /api/sync/bllink` (same-origin, admin-only); נרשם ב-`sync_runs`; בכל תוצאה — מרענן מ-`GET /api/sync/status` + `router.refresh()` (כדי שהבאנר יופיע/ייעלם). הצלחה: `toast.success('סונכרנו N דירות')`. כישלון: `toast.error('סנכרון נכשל בשלב <שלב>: <הודעה>')` — לעולם לא "הופעל בהצלחה" על כשל.
+קורא ל-`POST /api/sync/bllink` (same-origin, admin-only); נרשם ב-`sync_runs`; בכל תוצאה — מרענן מ-`GET /api/sync/status` + `router.refresh()` (כדי שהבאנר יופיע/ייעלם). הצלחה: `toast.success('סונכרנו N דירות')`. כישלון: `toast.error(SYNC_FAILURE_TITLE)` — אותה כותרת כמו הבאנר, בלי טקסט טכני; לעולם לא "הופעל בהצלחה" על כשל.
 
 ### Button — "היסטוריה" (admin בלבד)
 

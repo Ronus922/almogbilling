@@ -78,7 +78,7 @@ export default async function DashboardPage({
 
   return (
     <div className="space-y-6">
-      <SyncHealthBanner health={sync.health} />
+      <SyncHealthBanner health={sync.health} isAdmin={isAdmin} />
 
       <KpiGrid kpis={kpis} />
 

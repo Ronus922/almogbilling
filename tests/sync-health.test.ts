@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { computeSyncHealth, effectiveSourceRunAt, type SyncRunSummary } from '@/lib/dashboard/syncHealth';
 import { computeSeverity } from '@/lib/dashboard/syncStatus';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { SyncHealthBanner } from '@/app/(app)/dashboard/components/SyncHealthBanner';
+import { SYNC_FAILURE_ADVICE, SYNC_FAILURE_TITLE } from '@/lib/dashboard/syncCopy';
 
 const NOW = Date.parse('2026-09-11T12:00:00Z');
 const run = (over: Partial<SyncRunSummary>): SyncRunSummary => ({
@@ -56,5 +60,65 @@ describe('computeSeverity — indicator colour follows the SOURCE time', () => {
     expect(computeSeverity(new Date(NOW - 30 * 36e5), NOW, 36)).toBe('yellow');
     expect(computeSeverity(new Date(NOW - 40 * 36e5), NOW, 36)).toBe('red');
     expect(computeSeverity(null, NOW, 36)).toBe('red');
+  });
+});
+
+describe('SyncHealthBanner — the wording every user sees (11/09/2026)', () => {
+  const CRM_MESSAGE = "הסריקה בבלינק נכשלה: Download failed: TimeoutError: locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: 'התחברות לחשבון' })";
+  const failedRun = run({ id: 'f', status: 'error', stage: 'scrape', message: CRM_MESSAGE, sourceRunAt: null, triggerSource: 'cron', finishedAt: '2026-09-11T16:06:14Z' });
+  const failed = computeSyncHealth({ lastRun: failedRun, lastSuccess: run({ sourceRunAt: '2026-09-11T13:50:49Z' }), now: NOW, maxAgeHours: 36 });
+  const html = (health: ReturnType<typeof computeSyncHealth>, isAdmin: boolean) =>
+    renderToStaticMarkup(createElement(SyncHealthBanner, { health, isAdmin }));
+  // Anything an ordinary user must never read in the banner.
+  const TECHNICAL = ['פרטים טכניים', 'שלב:', 'סריקת בלינק', 'סנכרון אוטומטי', 'הפעלה ידנית', 'נכשל ב-', 'Download failed', 'TimeoutError', 'getByRole', '<details', 'הודעה:'];
+
+  it('renders nothing when the sync is healthy', () => {
+    const ok = computeSyncHealth({ lastRun: run({}), lastSuccess: run({}), now: NOW, maxAgeHours: 36 });
+    expect(html(ok, true)).toBe('');
+  });
+  it('shows exactly the three lines — title, last update (source time), what to do', () => {
+    const out = html(failed, false);
+    expect(out).toContain(SYNC_FAILURE_TITLE);
+    expect(out).toContain('עדכון אחרון:');
+    expect(out).toContain('11.09.2026 16:50'); // 13:50Z in Asia/Jerusalem
+    expect(out).toContain(SYNC_FAILURE_ADVICE);
+    expect(out).toContain('רונן משולם');
+    expect(out).toContain('role="alert"');
+  });
+  it('a non-admin gets no technical text in the HTML at all', () => {
+    const out = html(failed, false);
+    for (const t of TECHNICAL) expect(out, t).not.toContain(t);
+  });
+  it('an admin gets a closed-by-default "פרטים טכניים" disclosure with when/source/stage/message', () => {
+    const out = html(failed, true);
+    expect(out).toContain('<details');
+    expect(out).not.toContain('<details open');
+    expect(out).toContain('פרטים טכניים');
+    expect(out).toContain('סנכרון אוטומטי');
+    expect(out).toContain('שלב: סריקת בלינק ב-CRM');
+    expect(out).toContain('Download failed');
+    expect(out).toContain('dir="auto"');
+  });
+  it('a stale snapshot reads exactly like a failure — the user cannot tell them apart', () => {
+    const old = run({ sourceRunAt: '2026-08-25T06:21:05Z', finishedAt: '2026-09-10T06:00:00Z' });
+    const stale = computeSyncHealth({ lastRun: old, lastSuccess: old, now: NOW, maxAgeHours: 36 });
+    expect(stale.state).toBe('stale');
+    const out = html(stale, false);
+    expect(out).toContain(SYNC_FAILURE_TITLE);
+    expect(out).toContain('25.08.2026 09:21');
+    expect(out).toContain(SYNC_FAILURE_ADVICE);
+    expect(out).not.toContain('שעות');
+    expect(out).not.toContain('ישן');
+    // the age lives only in the admin disclosure
+    expect(html(stale, true)).toContain('מעל הסף של 36 שעות');
+  });
+  it('with no successful sync ever: "עדכון אחרון: אין"', () => {
+    const never = computeSyncHealth({ lastRun: null, lastSuccess: null, now: NOW, maxAgeHours: 36 });
+    const out = html(never, false);
+    expect(out).toContain(SYNC_FAILURE_TITLE);
+    expect(out).toContain('עדכון אחרון: <span>אין</span>');
+    // a failed last run with no success ever → also "אין"
+    const failedNever = computeSyncHealth({ lastRun: failedRun, lastSuccess: null, now: NOW, maxAgeHours: 36 });
+    expect(html(failedNever, false)).toContain('עדכון אחרון: <span>אין</span>');
   });
 });
