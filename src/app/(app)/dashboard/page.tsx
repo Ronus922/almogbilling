@@ -13,6 +13,7 @@ import { loadSyncHealth } from '@/lib/dashboard/loadSyncHealth';
 import { KpiGrid } from './components/KpiGrid';
 import { LastImportIndicator } from './components/LastImportIndicator';
 import { SyncHealthBanner } from './components/SyncHealthBanner';
+import { redactSyncRunForViewer } from '@/lib/dashboard/syncHealth';
 import { DebtorsTabs } from './components/DebtorsTabs';
 import { DebtorsToolbar } from './components/DebtorsToolbar';
 import { DebtorsTable } from './components/DebtorsTable';
@@ -84,7 +85,7 @@ export default async function DashboardPage({
 
       <LastImportIndicator
         sourceRunAt={sync.sourceRunAt}
-        lastRun={sync.lastRun}
+        lastRun={isAdmin ? sync.lastRun : redactSyncRunForViewer(sync.lastRun)}
         maxAgeHours={sync.maxAgeHours}
         canSync={canSync}
         isAdmin={isAdmin}

@@ -52,6 +52,17 @@ export function toSyncRunSummary(run: DbSyncRunLike | null): SyncRunSummary | nu
 }
 
 /**
+ * What a non-admin's browser may receive about the last run. The dashboard
+ * passes the run to a client component, so anything in it lands in the page
+ * HTML (RSC payload) even if never rendered. Ordinary users get the outcome and
+ * its time only — never the stage or the CRM's error text (11/09/2026 wording).
+ */
+export function redactSyncRunForViewer(run: SyncRunSummary | null): SyncRunSummary | null {
+  if (!run) return null;
+  return { ...run, stage: null, message: null };
+}
+
+/**
  * "The data is correct as of": the run's source_run_at, or — for successes
  * recorded before that column existed (pre-11/09/2026) — its finish time,
  * which is an honest upper bound (Bllink was scraped no later than that).
