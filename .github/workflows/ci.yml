@@ -54,18 +54,25 @@ jobs:
 
       # The 79 legacy migrations ran in production through psql. Prove that the
       # dbmate wrappers produce the identical schema: apply the originals to a
-      # second database with psql and diff the two dumps (same pg_dump, so no
-      # version noise).
+      # second database with psql, apply ONLY the legacy wrappers (20000101…)
+      # to a third database with dbmate, and diff the two dumps (same pg_dump,
+      # so no version noise). Newer dbmate migrations are excluded on purpose —
+      # they have no counterpart in the frozen supabase/migrations history.
       - name: Schema parity — dbmate wrappers vs original psql files
         run: |
           psql "$DATABASE_URL" -qc 'create database billing_legacy'
+          psql "$DATABASE_URL" -qc 'create database billing_wrappers'
           LEGACY="${DATABASE_URL/\/billing/\/billing_legacy}"
+          WRAPPERS="${DATABASE_URL/\/billing/\/billing_wrappers}"
           for f in $(ls supabase/migrations/*.sql | grep -v '\.down\.sql$' | LC_ALL=C sort); do
             psql "$LEGACY" -q -v ON_ERROR_STOP=1 -f "$f"
           done
           psql "$LEGACY" -q -v ON_ERROR_STOP=1 -f scripts/db/mark-applied.sql
-          DATABASE_URL="$DATABASE_URL" bash scripts/db/dump-schema.sh /tmp/schema-dbmate.sql
-          DATABASE_URL="$LEGACY"       bash scripts/db/dump-schema.sh /tmp/schema-legacy.sql
+          mkdir -p /tmp/legacy-wrappers
+          cp db/migrations/20000101*.sql /tmp/legacy-wrappers/
+          npx dbmate --url "$WRAPPERS" --migrations-dir /tmp/legacy-wrappers --no-dump-schema up
+          DATABASE_URL="$WRAPPERS" bash scripts/db/dump-schema.sh /tmp/schema-dbmate.sql
+          DATABASE_URL="$LEGACY"   bash scripts/db/dump-schema.sh /tmp/schema-legacy.sql
           diff /tmp/schema-dbmate.sql /tmp/schema-legacy.sql && echo "schema parity OK"
 
       - run: npm run check:all
