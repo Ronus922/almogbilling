@@ -1027,8 +1027,43 @@ CREATE TABLE public.sync_runs (
     status text DEFAULT 'running'::text NOT NULL,
     error_message text,
     triggered_by uuid,
-    CONSTRAINT sync_runs_status_check CHECK ((status = ANY (ARRAY['running'::text, 'success'::text, 'error'::text])))
+    error_stage text,
+    source_run_at timestamp with time zone,
+    rows_count integer,
+    import_run_id uuid,
+    trigger_source text DEFAULT 'ui'::text NOT NULL,
+    CONSTRAINT sync_runs_error_stage_check CHECK (((error_stage IS NULL) OR (error_stage = ANY (ARRAY['scrape'::text, 'stale'::text, 'guard'::text, 'pull'::text])))),
+    CONSTRAINT sync_runs_status_check CHECK ((status = ANY (ARRAY['running'::text, 'success'::text, 'error'::text]))),
+    CONSTRAINT sync_runs_trigger_source_check CHECK ((trigger_source = ANY (ARRAY['ui'::text, 'cron'::text])))
 );
+
+
+--
+-- Name: COLUMN sync_runs.error_stage; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sync_runs.error_stage IS 'Stage that failed: scrape (CRM/Bllink download), stale (snapshot older than BLLINK_MAX_SNAPSHOT_AGE_HOURS), guard (completeness/reconciliation), pull (fetch or write)';
+
+
+--
+-- Name: COLUMN sync_runs.source_run_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sync_runs.source_run_at IS 'last_import_at of the CRM snapshot this run read — the moment Bllink was actually scraped; the dashboard shows this, not the copy time';
+
+
+--
+-- Name: COLUMN sync_runs.rows_count; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sync_runs.rows_count IS 'Apartments written by a successful run';
+
+
+--
+-- Name: COLUMN sync_runs.trigger_source; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sync_runs.trigger_source IS 'ui = "סנכרן עכשיו" button (triggered_by set) · cron = billing-sync.timer via x-cron-secret (triggered_by null)';
 
 
 --
@@ -3674,6 +3709,14 @@ ALTER TABLE ONLY public.suppliers
 
 
 --
+-- Name: sync_runs sync_runs_import_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sync_runs
+    ADD CONSTRAINT sync_runs_import_run_id_fkey FOREIGN KEY (import_run_id) REFERENCES public.import_runs(id) ON DELETE SET NULL;
+
+
+--
 -- Name: sync_runs sync_runs_triggered_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3961,5 +4004,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20000101000076'),
     ('20000101000077'),
     ('20000101000078'),
-    ('20000101000079')
+    ('20000101000079'),
+    ('20260911134305'),
+    ('20260911154800')
 ;
