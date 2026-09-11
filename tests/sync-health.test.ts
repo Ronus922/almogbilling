@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeSyncHealth, type SyncRunSummary } from '@/lib/dashboard/syncHealth';
+import { computeSyncHealth, effectiveSourceRunAt, type SyncRunSummary } from '@/lib/dashboard/syncHealth';
 import { computeSeverity } from '@/lib/dashboard/syncStatus';
 
 const NOW = Date.parse('2026-09-11T12:00:00Z');
@@ -30,6 +30,18 @@ describe('computeSyncHealth — the red banner rule', () => {
   });
   it('is never when nothing ever succeeded', () => {
     expect(computeSyncHealth({ lastRun: null, lastSuccess: null, now: NOW, maxAgeHours: 36 }).state).toBe('never');
+  });
+  it('a legacy success (no source_run_at) still counts, anchored to its finish time — also under a failed last run', () => {
+    // The 11/09/2026 09:34 run was recorded by the old code: success, source_run_at null.
+    const legacy = run({ id: 'legacy', sourceRunAt: null, finishedAt: '2026-09-11T09:34:07Z' });
+    expect(effectiveSourceRunAt(legacy)).toBe('2026-09-11T09:34:07Z');
+    expect(effectiveSourceRunAt(run({ status: 'error', sourceRunAt: null }))).toBeNull();
+    expect(effectiveSourceRunAt(null)).toBeNull();
+    const ok = computeSyncHealth({ lastRun: legacy, lastSuccess: legacy, now: NOW, maxAgeHours: 36 });
+    expect(ok).toMatchObject({ state: 'ok', sourceRunAt: '2026-09-11T09:34:07Z' });
+    const failed = run({ id: 'f', status: 'error', stage: 'scrape', sourceRunAt: null });
+    const h = computeSyncHealth({ lastRun: failed, lastSuccess: legacy, now: NOW, maxAgeHours: 36 });
+    expect(h).toMatchObject({ state: 'failed', sourceRunAt: '2026-09-11T09:34:07Z' });
   });
   it('a run in progress does not hide a stale source', () => {
     const running = run({ status: 'running', finishedAt: null, sourceRunAt: null });
