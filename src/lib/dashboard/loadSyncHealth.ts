@@ -1,6 +1,6 @@
 import 'server-only';
 import { getLastSyncRun, getLastSuccessfulSyncRun } from '@/lib/db/syncRuns';
-import { computeSyncHealth, toSyncRunSummary, type SyncHealth, type SyncRunSummary } from '@/lib/dashboard/syncHealth';
+import { computeSyncHealth, effectiveSourceRunAt, toSyncRunSummary, type SyncHealth, type SyncRunSummary } from '@/lib/dashboard/syncHealth';
 import { BLLINK_MAX_SNAPSHOT_AGE_HOURS_DEFAULT } from '@/lib/constants';
 import { env } from '@/env';
 
@@ -19,10 +19,11 @@ export async function loadSyncHealth(): Promise<SyncHealthSnapshot> {
   const maxAgeHours = Number(env.BLLINK_MAX_SNAPSHOT_AGE_HOURS ?? BLLINK_MAX_SNAPSHOT_AGE_HOURS_DEFAULT);
   const lastRunSummary = toSyncRunSummary(lastRun);
   const lastSuccessSummary = toSyncRunSummary(lastSuccess);
+  const sourceRunAt = effectiveSourceRunAt(lastSuccessSummary);
   return {
     lastRun: lastRunSummary,
     lastSuccess: lastSuccessSummary,
-    sourceRunAt: lastSuccess?.source_run_at ?? null,
+    sourceRunAt: sourceRunAt ? new Date(sourceRunAt) : null,
     health: computeSyncHealth({ lastRun: lastRunSummary, lastSuccess: lastSuccessSummary, now: Date.now(), maxAgeHours }),
     maxAgeHours,
   };

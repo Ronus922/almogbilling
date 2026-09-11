@@ -52,6 +52,17 @@ export function toSyncRunSummary(run: DbSyncRunLike | null): SyncRunSummary | nu
 }
 
 /**
+ * "The data is correct as of": the run's source_run_at, or — for successes
+ * recorded before that column existed (pre-11/09/2026) — its finish time,
+ * which is an honest upper bound (Bllink was scraped no later than that).
+ * Without this, a legacy success reads as "never synced" on the dashboard.
+ */
+export function effectiveSourceRunAt(run: SyncRunSummary | null): string | null {
+  if (!run || run.status !== 'success') return null;
+  return run.sourceRunAt ?? run.finishedAt ?? run.startedAt;
+}
+
+/**
  * Banner rule (11/09/2026): red when the LAST run failed, or when the last
  * SUCCESSFUL run's source data is older than maxAgeHours, or when no run ever
  * succeeded. A run still in progress does not change the verdict.
@@ -64,11 +75,10 @@ export function computeSyncHealth(input: {
 }): SyncHealth {
   const { lastRun, lastSuccess, now, maxAgeHours } = input;
   if (lastRun && lastRun.status === 'error') {
-    return { state: 'failed', run: lastRun, sourceRunAt: lastSuccess?.sourceRunAt ?? null };
+    return { state: 'failed', run: lastRun, sourceRunAt: effectiveSourceRunAt(lastSuccess) };
   }
   if (!lastSuccess) return { state: 'never' };
-  // Runs recorded before source_run_at existed fall back to their finish time.
-  const anchor = lastSuccess.sourceRunAt ?? lastSuccess.finishedAt ?? lastSuccess.startedAt;
+  const anchor = effectiveSourceRunAt(lastSuccess) ?? lastSuccess.startedAt;
   const ageHours = (now - Date.parse(anchor)) / 36e5;
   if (ageHours > maxAgeHours) {
     return { state: 'stale', sourceRunAt: anchor, ageHours, maxAgeHours };
