@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeSyncHealth, effectiveSourceRunAt, type SyncRunSummary } from '@/lib/dashboard/syncHealth';
+import { computeSyncHealth, effectiveSourceRunAt, redactSyncRunForViewer, type SyncRunSummary } from '@/lib/dashboard/syncHealth';
 import { computeSeverity } from '@/lib/dashboard/syncStatus';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -120,5 +120,16 @@ describe('SyncHealthBanner — the wording every user sees (11/09/2026)', () => 
     // a failed last run with no success ever → also "אין"
     const failedNever = computeSyncHealth({ lastRun: failedRun, lastSuccess: null, now: NOW, maxAgeHours: 36 });
     expect(html(failedNever, false)).toContain('עדכון אחרון: <span>אין</span>');
+  });
+});
+
+describe('redactSyncRunForViewer — what a non-admin browser may receive', () => {
+  it('keeps outcome and times, drops the stage and the CRM message', () => {
+    const failed = run({ id: 'f', status: 'error', stage: 'scrape', message: 'Download failed: TimeoutError …', sourceRunAt: null });
+    const r = redactSyncRunForViewer(failed);
+    expect(r).toMatchObject({ id: 'f', status: 'error', stage: null, message: null, startedAt: failed.startedAt, finishedAt: failed.finishedAt, triggerSource: 'cron' });
+    expect(JSON.stringify(r)).not.toContain('Download failed');
+    expect(JSON.stringify(r)).not.toContain('scrape');
+    expect(redactSyncRunForViewer(null)).toBeNull();
   });
 });
