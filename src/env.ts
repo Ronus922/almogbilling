@@ -65,6 +65,14 @@ export const env = createEnv({
     // Newest CRM snapshot the sync will copy, in hours (default 36). Older → stage 'stale', nothing written.
     BLLINK_MAX_SNAPSHOT_AGE_HOURS: numeric,
     CHROME_PATH: optionalString,
+    // Bllink shadow scraper (scripts/bllink-scrape.ts, billing-bllink-scrape.timer).
+    // All optional: the Next app never reads them; the oneshot unit fails loudly
+    // on its own when they are missing.
+    BLLINK_USER: optionalString,
+    BLLINK_PASSWORD: optionalString,
+    PLAYWRIGHT_BROWSERS_PATH: optionalString,
+    // WhatsApp recipient (local IL format) for a shadow-scrape failure alert.
+    BLLINK_ALERT_PHONE: optionalString,
 
     // ── monitoring (all optional; unset = off) ────────────────────────────
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).optional(),

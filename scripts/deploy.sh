@@ -14,7 +14,9 @@
 #   3. short wait, then verify the service is `active`
 #   4. verify the NEW process actually picked up the build on disk
 #      (process start time must be later than .next/BUILD_ID write time)
-#   5. print a clear summary
+#   5. make sure the Playwright Chromium for scripts/bllink-scrape.ts is
+#      installed under .playwright-browsers/ (non-fatal)
+#   6. print a clear summary
 #
 # Passwordless restart is granted by /etc/sudoers.d/billing-deploy, scoped to
 # exactly `systemctl restart billing.service` (see that file).
@@ -112,7 +114,22 @@ if (( START_EPOCH < BUILD_EPOCH )); then
 fi
 ok "Running process started after the build (no stale chunks)."
 
-# --- 5. summary ------------------------------------------------------------
+# --- 5. Playwright Chromium for the Bllink shadow scraper --------------------
+# scripts/bllink-scrape.ts (billing-bllink-scrape.timer) runs Playwright from
+# the repo's node_modules with PLAYWRIGHT_BROWSERS_PATH pinned to a project
+# directory (gitignored). A version bump of `playwright` needs the matching
+# Chromium build, so every deploy makes sure it is present. Idempotent and fast
+# when nothing changed. Non-fatal: the web app is already live at this point and
+# a CDN hiccup must not turn a good deploy into a failure — the scraper itself
+# reports a missing browser as a 'login' stage error.
+step "Ensuring Playwright Chromium for the Bllink scraper…"
+if PLAYWRIGHT_BROWSERS_PATH="$PROJECT_ROOT/.playwright-browsers" npx playwright install chromium; then
+  ok "Playwright Chromium present in .playwright-browsers/."
+else
+  warn "Playwright Chromium install failed — the web app is fine; re-run: PLAYWRIGHT_BROWSERS_PATH=$PROJECT_ROOT/.playwright-browsers npx playwright install chromium"
+fi
+
+# --- 6. summary ------------------------------------------------------------
 echo
 step "Deploy summary"
 printf '  %-18s %s\n' "Service:"        "${SERVICE} ${GREEN}active${RESET} (PID ${PID})"

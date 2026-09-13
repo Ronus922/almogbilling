@@ -1,0 +1,30 @@
+# Bllink SHADOW scraper — billing scrapes the Bllink udnp report itself, stores
+# the raw snapshot in public.bllink_scrapes(_rows) and compares it with the CRM
+# snapshot of the same morning. Writes nothing to debtors / sync_runs; the CRM
+# sync (billing-sync.timer, 06:00) remains the only writer until Phase 2.
+# Install:
+#   sudo cp deploy/systemd/billing-bllink-scrape.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now billing-bllink-scrape.timer
+#   systemctl list-timers billing-bllink-scrape.timer   # next run: 06:10 Asia/Jerusalem
+# Manual run + log:
+#   sudo systemctl start billing-bllink-scrape.service && journalctl -u billing-bllink-scrape -n 60
+#   npm run bllink:shadow-report
+[Unit]
+Description=ALMOG CRM — Bllink shadow scrape + compare with the CRM snapshot (one-shot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=devops-www
+WorkingDirectory=/var/www/billing
+# Read as root by systemd: BLLINK_USER/BLLINK_PASSWORD, PLAYWRIGHT_BROWSERS_PATH,
+# DATABASE_URL, CRM_DEBTORS_REST_*, SETTINGS_ENC_KEY, BLLINK_ALERT_PHONE.
+EnvironmentFile=/etc/billing/billing.env
+# Absolute node + local tsx — no PATH/npx dependence under systemd's minimal env
+# (same as deploy/wa-queue-worker.service).
+ExecStart=/usr/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/bllink-scrape.ts
+# The script enforces its own 180s budget and records the failure; this is the backstop.
+TimeoutStartSec=5min
+Nice=5
