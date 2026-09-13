@@ -65,6 +65,7 @@ export default defineConfig([
     'db/**',
     'next-env.d.ts',
     '.husky/**',
+    '.playwright-browsers/**',
   ]),
   ...nextVitals,
   ...nextTs,

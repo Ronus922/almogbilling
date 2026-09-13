@@ -81,3 +81,8 @@ ref/
 # /proof/chips-v3/*.png. Enforced before every build by
 # scripts/check-no-public-proof.sh. Reference bundles belong in ref/ above.
 /public/proof/
+
+# Playwright Chromium for the Bllink shadow scraper — installed by
+# scripts/deploy.sh (PLAYWRIGHT_BROWSERS_PATH), ~300 MB of binaries.
+/.playwright-browsers/
+supabase/.temp/

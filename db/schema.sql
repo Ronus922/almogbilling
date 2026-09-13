@@ -178,6 +178,77 @@ ALTER TABLE public.auth_rate_limits ALTER COLUMN id ADD GENERATED ALWAYS AS IDEN
 
 
 --
+-- Name: bllink_scrape_rows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.bllink_scrape_rows (
+    id bigint NOT NULL,
+    scrape_id uuid NOT NULL,
+    apartment_number text NOT NULL,
+    owner_name text,
+    phone_primary text,
+    total_debt numeric(12,2) DEFAULT 0 NOT NULL,
+    monthly_debt numeric(12,2) DEFAULT 0 NOT NULL,
+    special_debt numeric(12,2) DEFAULT 0 NOT NULL,
+    management_months_raw text,
+    notes text,
+    raw jsonb DEFAULT '{}'::jsonb NOT NULL
+);
+
+
+--
+-- Name: TABLE bllink_scrape_rows; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.bllink_scrape_rows IS 'Raw rows of one Bllink shadow scrape, in the CRM debtor_records column naming (D total, E monthly, F months text, G special, H notes). raw = the eight source cells.';
+
+
+--
+-- Name: bllink_scrape_rows_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.bllink_scrape_rows_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: bllink_scrape_rows_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.bllink_scrape_rows_id_seq OWNED BY public.bllink_scrape_rows.id;
+
+
+--
+-- Name: bllink_scrapes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.bllink_scrapes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    finished_at timestamp with time zone,
+    status text DEFAULT 'running'::text NOT NULL,
+    error_stage text,
+    error_message text,
+    rows_count integer,
+    xlsx_sha256 text,
+    compare_summary jsonb,
+    CONSTRAINT bllink_scrapes_error_stage_check CHECK (((error_stage IS NULL) OR (error_stage = ANY (ARRAY['login'::text, 'navigate'::text, 'download'::text, 'parse'::text, 'compare'::text])))),
+    CONSTRAINT bllink_scrapes_status_check CHECK ((status = ANY (ARRAY['running'::text, 'success'::text, 'error'::text])))
+);
+
+
+--
+-- Name: TABLE bllink_scrapes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.bllink_scrapes IS 'One row per shadow scrape of the Bllink udnp report (scripts/bllink-scrape.ts). compare_summary = diff against the CRM snapshot of the same run.';
+
+
+--
 -- Name: calendar_event_participants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1487,6 +1558,13 @@ CREATE TABLE public.whatsapp_templates (
 
 
 --
+-- Name: bllink_scrape_rows id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.bllink_scrape_rows ALTER COLUMN id SET DEFAULT nextval('public.bllink_scrape_rows_id_seq'::regclass);
+
+
+--
 -- Name: wa_send_log id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1523,6 +1601,22 @@ ALTER TABLE ONLY public.audit_log
 
 ALTER TABLE ONLY public.auth_rate_limits
     ADD CONSTRAINT auth_rate_limits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: bllink_scrape_rows bllink_scrape_rows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.bllink_scrape_rows
+    ADD CONSTRAINT bllink_scrape_rows_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: bllink_scrapes bllink_scrapes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.bllink_scrapes
+    ADD CONSTRAINT bllink_scrapes_pkey PRIMARY KEY (id);
 
 
 --
@@ -2111,6 +2205,20 @@ CREATE INDEX audit_log_entity_idx ON public.audit_log USING btree (entity_type, 
 --
 
 CREATE INDEX auth_rate_limits_bucket_time_idx ON public.auth_rate_limits USING btree (bucket, hit_at);
+
+
+--
+-- Name: bllink_scrape_rows_scrape_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX bllink_scrape_rows_scrape_id_idx ON public.bllink_scrape_rows USING btree (scrape_id);
+
+
+--
+-- Name: bllink_scrapes_started_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX bllink_scrapes_started_at_idx ON public.bllink_scrapes USING btree (started_at DESC);
 
 
 --
@@ -3229,6 +3337,14 @@ ALTER TABLE ONLY public.audit_log
 
 
 --
+-- Name: bllink_scrape_rows bllink_scrape_rows_scrape_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.bllink_scrape_rows
+    ADD CONSTRAINT bllink_scrape_rows_scrape_id_fkey FOREIGN KEY (scrape_id) REFERENCES public.bllink_scrapes(id) ON DELETE CASCADE;
+
+
+--
 -- Name: calendar_event_participants calendar_event_participants_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4006,5 +4122,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20000101000078'),
     ('20000101000079'),
     ('20260911134305'),
-    ('20260911154800')
+    ('20260911154800'),
+    ('20260913065535')
 ;
