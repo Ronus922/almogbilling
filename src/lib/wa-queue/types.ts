@@ -82,7 +82,12 @@ export interface Recipient {
    *  recipient state — the row stays 'sent'; these only enrich the log. */
   delivered_at: string | null;
   read_at: string | null;
+  /** Set as soon as the TEXT (or the single captioned file) went out — a retry
+   *  never re-sends it. Also the key the delivery webhook matches on. */
   provider_message_id: string | null;
+  /** Campaign attachments (in sort_order) already delivered to this recipient;
+   *  a retry continues from here. */
+  attachments_sent: number;
   last_error: string | null;
   error_class: ErrorClass | null;
   idempotency_key: string;
@@ -97,11 +102,32 @@ export interface RecipientInput {
   payload: string;     // fully interpolated message
 }
 
+// ── Attachments (view models) ─────────────────────────────────────────────────
+
+/** A campaign attachment as the history / details queries return it. */
+export interface CampaignAttachmentSummary {
+  id: string;
+  original_name: string;
+  mime_type: string;
+  size_bytes: number;
+  sort_order: number;
+  bucket: string;
+  object_key: string;
+}
+
+/** The same row as the API hands it to the UI — plus the authenticated proxy
+ *  URL (/api/files/<bucket>/<key>), added by the route via buildProxyUrl. */
+export interface CampaignAttachmentView extends CampaignAttachmentSummary {
+  url: string;
+}
+
 // ── View models (query joins that enrich the raw rows for the UI) ─────────────
 
-/** A campaign row for the history list — joins the creator's display name. */
+/** A campaign row for the history list — joins the creator's display name and
+ *  the attachment list (empty for a text-only broadcast). */
 export interface CampaignListItem extends Campaign {
   created_by_name: string | null;
+  attachments: CampaignAttachmentSummary[];
 }
 
 /** The details header — the list row plus delivery-lifecycle counts (derived from
@@ -110,6 +136,14 @@ export interface CampaignListItem extends Campaign {
 export interface CampaignDetail extends CampaignListItem {
   delivered_count: number;
   read_count: number;
+}
+
+/** API shapes: the DB rows with the attachment proxy URLs filled in. */
+export interface CampaignListItemView extends CampaignListItem {
+  attachments: CampaignAttachmentView[];
+}
+export interface CampaignDetailView extends CampaignDetail {
+  attachments: CampaignAttachmentView[];
 }
 
 /** A recipient row for the delivery log — joins the debtor's name + apartment and
@@ -140,6 +174,12 @@ export interface RecipientLogPage {
 /** A page of campaign-history rows. */
 export interface CampaignListPage {
   rows: CampaignListItem[];
+  total: number;
+}
+
+/** The history page as the API returns it (attachment URLs filled in). */
+export interface CampaignListPageView {
+  rows: CampaignListItemView[];
   total: number;
 }
 

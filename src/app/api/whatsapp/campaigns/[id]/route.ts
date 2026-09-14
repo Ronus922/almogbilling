@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDbPool } from '@/lib/db';
 import { getCampaignDetail } from '@/lib/wa-queue/campaigns';
+import { withAttachmentUrls } from '../_lib/attachmentUrls';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,5 +16,5 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const campaign = await getCampaignDetail(getDbPool(), id);
   if (!campaign) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  return NextResponse.json(campaign);
+  return NextResponse.json(withAttachmentUrls(campaign));
 }

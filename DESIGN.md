@@ -1266,6 +1266,31 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 
 ---
 
+## 26b. קבצים מצורפים לתפוצת WhatsApp (טאב „תפוצה חדשה”)
+
+מתחת ל„תוכן ההודעה” בטופס התפוצה (`whatsapp/broadcasts/_components/AttachmentPicker.tsx`).
+מבנה זהה לפאנל העלאת המסמכים (`documents/UploadPanel.tsx`) — **לא וריאציה חדשה**:
+
+- **תווית** `text-base font-medium text-muted-foreground` („קבצים מצורפים”).
+- **Dropzone** = כפתור מלא-רוחב `rounded-xl border-2 border-dashed px-6 py-6 text-center`;
+  מנוחה `border-line-strong bg-surface-2`, hover/drag `border-brand bg-brand-soft/…`;
+  עיגול-אייקון `h-11 w-11 rounded-full bg-brand-soft text-brand` (`CloudUpload`), כותרת
+  `text-sm font-semibold text-ink` עם `Paperclip` („צרף קובץ”), רמז `text-xs text-ink-3`.
+  מתחתיו שורת עזר `text-xs text-muted-foreground` עם הסוגים והמגבלות מ-`WHATSAPP_ATTACHMENT_LIMITS`
+  (`src/lib/constants/whatsappAttachments.ts` — מקור-האמת היחיד למגבלות, משותף ללקוח ולשרת).
+- **שורת קובץ** (staged): `flex items-center gap-3 rounded-lg border border-line bg-white p-3`;
+  אייקון-קובץ `h-9 w-9 rounded-lg` בטון לפי MIME (`fileMeta` מ-`documents/helpers`), שם `text-sm font-medium`
+  (truncate), גודל `font-num tabular-nums text-xs text-slate-500`; בזמן העלאה `<Progress>` + אחוז;
+  שגיאה = error state של §6 (`border-red-400 bg-red-50`) + הודעה `text-[12px] font-semibold text-red-500`;
+  הצלחה = „הועלה” ירוק. **X להסרה** — `h-11 w-11` (Touch Target).
+- כפתור השליחה מושבת בזמן העלאה ומציג „מעלה קבצים…” עם spinner (§22).
+- **בהיסטוריה / בפרטים** (`AttachmentLinks.tsx`): chips `rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs`
+  עם אייקון-MIME קטן (`h-5 w-5 rounded`), שם (truncate `max-w-[160px]`) וגודל `font-num text-slate-400`;
+  כל chip הוא `<a target="_blank">` ל-proxy המאומת `/api/files/whatsapp-attachments/<key>`. לפני הרשימה
+  תג ספירה `Paperclip` + „N קבצים”. מוצג מתחת לשם התפוצה (שורת טבלה / כרטיס מובייל) ומתחת לכותרת הפרטים.
+
+---
+
 ## כפתורים / Buttons — מערכת שטוחה (Flat System)
 
 > **מקור-האמת לכל כפתור בפרויקט (מ-15/06/2026).** מחליף את צבעי/גבהי §5.

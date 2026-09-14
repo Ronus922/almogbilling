@@ -6,9 +6,13 @@ import { getTemplateById } from '@/lib/db/whatsappTemplates';
 import { resolveSendCreds, InstanceNotConfiguredError } from '@/lib/db/whatsappInstances';
 import { resolveBroadcastRecipients } from '@/lib/whatsapp-broadcast';
 import { interpolateTemplate } from '@/lib/whatsapp-template';
-import { createCampaign, listCampaigns, startCampaign } from '@/lib/wa-queue/campaigns';
+import { createCampaign, listCampaigns, startCampaign, CampaignConflictError } from '@/lib/wa-queue/campaigns';
+import { listStagedAttachments } from '@/lib/wa-queue/attachments';
+import { campaignAttachmentIdsSchema } from '@/lib/validation/requests';
+import { validateBroadcastAttachmentSet } from '@/lib/constants/whatsappAttachments';
+import { withAttachmentUrls } from './_lib/attachmentUrls';
 import type { BroadcastAudience, BroadcastAudienceType } from '@/types/whatsapp';
-import type { RecipientInput, CampaignStatus, CampaignListFilters } from '@/lib/wa-queue/types';
+import type { RecipientInput, CampaignStatus, CampaignListFilters, CampaignListPageView } from '@/lib/wa-queue/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,7 +38,9 @@ export async function GET(req: NextRequest) {
     limit: sp.get('limit') ? Number(sp.get('limit')) : undefined,
     offset: sp.get('offset') ? Number(sp.get('offset')) : undefined,
   };
-  return NextResponse.json(await listCampaigns(getDbPool(), filters));
+  const page = await listCampaigns(getDbPool(), filters);
+  const view: CampaignListPageView = { total: page.total, rows: page.rows.map(withAttachmentUrls) };
+  return NextResponse.json(view);
 }
 
 const AUDIENCE_TYPES: readonly BroadcastAudienceType[] = ['all', 'owners', 'tenants'];
@@ -59,7 +65,7 @@ export async function POST(req: NextRequest) {
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
 
   let body: { name?: unknown; body?: unknown; template_id?: unknown; audience?: unknown;
-    dry_run?: unknown; rate_per_min?: unknown; client_token?: unknown; start?: unknown };
+    dry_run?: unknown; rate_per_min?: unknown; client_token?: unknown; start?: unknown; attachment_ids?: unknown };
   try { body = await req.json(); } catch { return NextResponse.json({ error: 'invalid_json' }, { status: 400 }); }
 
   const name = typeof body.name === 'string' ? body.name.trim() : '';
@@ -78,6 +84,22 @@ export async function POST(req: NextRequest) {
   const audience = parseAudience(body.audience);
   if (!audience) return NextResponse.json({ error: 'קהל יעד לא תקין' }, { status: 400 });
 
+  // Attachments: staged uploads of THIS actor, in the order given (= send order).
+  // Count is zod's job; ownership + broadcast-level total size are checked here.
+  const idsParsed = campaignAttachmentIdsSchema.safeParse(body.attachment_ids);
+  if (!idsParsed.success) {
+    return NextResponse.json({ error: idsParsed.error.issues[0]?.message ?? 'קבצים מצורפים לא תקינים', issues: idsParsed.error.issues }, { status: 400 });
+  }
+  const attachmentIds = Array.from(new Set(idsParsed.data));
+  if (attachmentIds.length > 0) {
+    const staged = await listStagedAttachments(getDbPool(), attachmentIds, actor.id);
+    if (staged.length !== attachmentIds.length) {
+      return NextResponse.json({ error: 'קובץ מצורף לא נמצא — הסר אותו וצרף מחדש' }, { status: 400 });
+    }
+    const setError = validateBroadcastAttachmentSet(staged.map((a) => ({ size: a.size_bytes })));
+    if (setError) return NextResponse.json({ error: setError }, { status: 400 });
+  }
+
   const dryRun = body.dry_run === true;
   let instanceId: string | null = null;
   try {
@@ -95,12 +117,19 @@ export async function POST(req: NextRequest) {
     debtorId: r.debtor.id, phoneIntl: r.phoneIntl, payload: interpolateTemplate(messageBody, r.debtor),
   }));
 
-  const campaign = await createCampaign(getDbPool(), {
-    name, body: messageBody, templateName, audience, instanceId, createdBy: actor.id, recipients,
-    ratePerMin: typeof body.rate_per_min === 'number' ? body.rate_per_min : undefined,
-    dryRun,
-    clientToken: typeof body.client_token === 'string' ? body.client_token : null,
-  });
+  let campaign;
+  try {
+    campaign = await createCampaign(getDbPool(), {
+      name, body: messageBody, templateName, audience, instanceId, createdBy: actor.id, recipients,
+      ratePerMin: typeof body.rate_per_min === 'number' ? body.rate_per_min : undefined,
+      dryRun,
+      clientToken: typeof body.client_token === 'string' ? body.client_token : null,
+      attachmentIds,
+    });
+  } catch (err) {
+    if (err instanceof CampaignConflictError) return NextResponse.json({ error: err.message }, { status: 409 });
+    throw err;
+  }
 
   // Default: start immediately (durably). Pass start:false to stage as 'queued'.
   const started = body.start === false ? campaign : await startCampaign(getDbPool(), campaign.id);

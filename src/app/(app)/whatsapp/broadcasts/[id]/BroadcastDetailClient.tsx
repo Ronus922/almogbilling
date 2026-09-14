@@ -12,9 +12,10 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import type {
-  CampaignDetail, RecipientLogPage, RecipientStatus,
+  CampaignDetailView, RecipientLogPage, RecipientStatus,
 } from '@/lib/wa-queue/types';
 import { CampaignStatusBadge, RecipientStatusBadge } from '../_components/StatusBadge';
+import { AttachmentLinks } from '../_components/AttachmentLinks';
 import { StopBroadcastDialog } from '../_components/StopBroadcastDialog';
 import { useStopBroadcast } from '../_lib/useStopBroadcast';
 import { usePoll } from '../_lib/usePoll';
@@ -36,14 +37,14 @@ const LOG_TABS: { value: LogFilter; label: string }[] = [
 // broadcast window (delivery-log view). `onBack`, when provided, returns to the
 // window's history tab / active card instead of routing to the history page.
 export function BroadcastDetailClient({ id, canEdit, onBack }: { id: string; canEdit: boolean; onBack?: () => void }) {
-  const fetcher = useCallback(async (): Promise<CampaignDetail> => {
+  const fetcher = useCallback(async (): Promise<CampaignDetailView> => {
     const r = await fetch(`/api/whatsapp/campaigns/${id}`, { credentials: 'include' });
     if (r.status === 404) throw new Error('התפוצה לא נמצאה');
     if (!r.ok) throw new Error(`טעינת התפוצה נכשלה (HTTP ${r.status})`);
-    return (await r.json()) as CampaignDetail;
+    return (await r.json()) as CampaignDetailView;
   }, [id]);
 
-  const { data: c, loading, error, refetch } = usePoll<CampaignDetail>(fetcher, {
+  const { data: c, loading, error, refetch } = usePoll<CampaignDetailView>(fetcher, {
     intervalMs: 3000,
     shouldContinue: (d) => !isTerminal(d.status),
     deps: [id],
@@ -90,6 +91,7 @@ export function BroadcastDetailClient({ id, canEdit, onBack }: { id: string; can
             <p className="mt-0.5 text-sm text-muted-foreground">
               נוצר על ידי {c.created_by_name ?? '—'} · {audienceLabel(c.audience)} · {c.template_name ?? 'כתיבה חופשית'}
             </p>
+            <AttachmentLinks attachments={c.attachments} className="mt-2" />
           </div>
         </div>
         {canEdit && isCancellable(c.status) && (

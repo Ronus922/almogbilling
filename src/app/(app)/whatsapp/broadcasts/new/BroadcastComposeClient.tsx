@@ -20,6 +20,9 @@ import type { Campaign } from '@/lib/wa-queue/types';
 import type { WhatsAppTemplate as Tpl } from '@/types/whatsapp';
 import { CampaignStatusBadge } from '../_components/StatusBadge';
 import { StopBroadcastDialog } from '../_components/StopBroadcastDialog';
+import {
+  AttachmentPicker, readyAttachmentIds, isUploading, type StagedAttachment,
+} from '../_components/AttachmentPicker';
 import { useStopBroadcast } from '../_lib/useStopBroadcast';
 import { usePoll } from '../_lib/usePoll';
 import { isTerminal, isCancellable, progressPct, processed } from '../_lib/status';
@@ -58,8 +61,21 @@ export function BroadcastComposeClient({
   const [sending, setSending] = useState(false);
   const [count, setCount] = useState<number | null>(null);
   const [launched, setLaunched] = useState<Campaign | null>(null);
+  const [attachments, setAttachments] = useState<StagedAttachment[]>([]);
   const tokenRef = useRef(newToken());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // Staged uploads that never became part of a broadcast are removed when the
+  // compose form goes away (window closed) — best-effort, keepalive so it
+  // survives the unmount. Launched ones are already linked (DELETE → 404, harmless).
+  const stagedRef = useRef<StagedAttachment[]>([]);
+  useEffect(() => { stagedRef.current = attachments; }, [attachments]);
+  useEffect(() => () => {
+    for (const a of stagedRef.current) {
+      if (a.attachmentId) {
+        void fetch(`/api/whatsapp/campaigns/attachments/${a.attachmentId}`, { method: 'DELETE', credentials: 'include', keepalive: true }).catch(() => {});
+      }
+    }
+  }, []);
 
   // Load templates once.
   useEffect(() => {
@@ -103,7 +119,8 @@ export function BroadcastComposeClient({
     requestAnimationFrame(() => { el.focus(); const pos = start + token.length; el.setSelectionRange(pos, pos); });
   }
 
-  const canSend = name.trim().length > 0 && content.trim().length > 0 && !sending && (count ?? 0) > 0;
+  const uploading = isUploading(attachments);
+  const canSend = name.trim().length > 0 && content.trim().length > 0 && !sending && !uploading && (count ?? 0) > 0;
 
   async function handleSend() {
     if (!canSend) return;
@@ -119,11 +136,14 @@ export function BroadcastComposeClient({
           template_id: templateId === FREE_TEXT ? undefined : templateId,
           audience: { type: audience },
           client_token: tokenRef.current,
+          attachment_ids: readyAttachmentIds(attachments),
         }),
       });
       const data = (await r.json().catch(() => ({}))) as Campaign & { error?: string };
       if (!r.ok) throw new Error(data.error || `יצירת תפוצה נכשלה (HTTP ${r.status})`);
       toast.success(`התפוצה יצאה לדרך — ${data.total_count} נמענים`);
+      // The files now belong to the broadcast — nothing left to clean up.
+      setAttachments([]);
       setLaunched(data);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'יצירת תפוצה נכשלה');
@@ -134,7 +154,7 @@ export function BroadcastComposeClient({
 
   function reset() {
     setLaunched(null);
-    setName(''); setContent(''); setTemplateId(FREE_TEXT); setAudience('all');
+    setName(''); setContent(''); setTemplateId(FREE_TEXT); setAudience('all'); setAttachments([]);
     tokenRef.current = newToken();
   }
 
@@ -219,6 +239,9 @@ export function BroadcastComposeClient({
             placeholder="שלום {{name}}, נותר חוב של {{debt}} בדירה {{apartment}}..." rows={18} className="min-h-48 resize-none" disabled={sending} dir="rtl" />
           <p className="text-xs text-muted-foreground">המשתנים יוחלפו אוטומטית לכל נמען. תוכן ההודעה נשמר כפי שהוא ברגע השליחה.</p>
         </div>
+
+        {/* Attachments — uploaded on pick, linked to the broadcast at send. */}
+        <AttachmentPicker items={attachments} onChange={setAttachments} disabled={sending} />
       </div>
 
       {/* Footer actions */}
@@ -229,8 +252,8 @@ export function BroadcastComposeClient({
           <Button type="button" variant="outline" render={<Link href="/whatsapp/broadcasts" />}>ביטול</Button>
         )}
         <Button type="button" onClick={handleSend} disabled={!canSend} variant="approve" className="gap-2">
-          {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          {sending ? 'שולח…' : `שלח לתפוצה${count ? ` (${count})` : ''}`}
+          {sending || uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          {sending ? 'שולח…' : uploading ? 'מעלה קבצים…' : `שלח לתפוצה${count ? ` (${count})` : ''}`}
         </Button>
       </div>
     </div>

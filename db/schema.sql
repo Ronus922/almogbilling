@@ -1374,6 +1374,50 @@ COMMENT ON COLUMN public.users.last_seen_at IS 'Last realtime-chat heartbeat (SS
 
 
 --
+-- Name: wa_campaign_attachments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.wa_campaign_attachments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    campaign_id uuid,
+    uploaded_by uuid,
+    bucket text NOT NULL,
+    object_key text NOT NULL,
+    original_name text NOT NULL,
+    mime_type text NOT NULL,
+    size_bytes bigint NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    green_api_url text,
+    green_api_url_expires_at timestamp with time zone,
+    green_api_error text,
+    green_api_upload_attempts integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT wa_campaign_attachments_size_bytes_check CHECK ((size_bytes > 0))
+);
+
+
+--
+-- Name: TABLE wa_campaign_attachments; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.wa_campaign_attachments IS 'Files attached to a WhatsApp broadcast (wa_campaigns). campaign_id NULL = uploaded but not yet submitted. green_api_url = Green API uploadFile link (15 days), reused for every recipient via sendFileByUrl.';
+
+
+--
+-- Name: COLUMN wa_campaign_attachments.object_key; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaign_attachments.object_key IS 'Storage key in `bucket` — <uuid>.<ext>, ASCII only. The readable name is original_name.';
+
+
+--
+-- Name: COLUMN wa_campaign_attachments.green_api_upload_attempts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaign_attachments.green_api_upload_attempts IS 'uploadFile attempts by the worker; after 3 failures the worker falls back to sendFileByUpload per recipient.';
+
+
+--
 -- Name: wa_campaign_recipients; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1402,8 +1446,16 @@ CREATE TABLE public.wa_campaign_recipients (
     idempotency_key text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    attachments_sent integer DEFAULT 0 NOT NULL,
     CONSTRAINT wa_campaign_recipients_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'sent'::text, 'failed'::text, 'skipped'::text, 'cancelled'::text])))
 );
+
+
+--
+-- Name: COLUMN wa_campaign_recipients.attachments_sent; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaign_recipients.attachments_sent IS 'How many campaign attachments (in sort_order) were already sent to this recipient; a retry continues from here.';
 
 
 --
@@ -2097,6 +2149,22 @@ ALTER TABLE ONLY public.users
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_username_key UNIQUE (username);
+
+
+--
+-- Name: wa_campaign_attachments wa_campaign_attachments_object_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wa_campaign_attachments
+    ADD CONSTRAINT wa_campaign_attachments_object_key_key UNIQUE (object_key);
+
+
+--
+-- Name: wa_campaign_attachments wa_campaign_attachments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wa_campaign_attachments
+    ADD CONSTRAINT wa_campaign_attachments_pkey PRIMARY KEY (id);
 
 
 --
@@ -3055,6 +3123,20 @@ CREATE UNIQUE INDEX users_username_lower_idx ON public.users USING btree (lower(
 
 
 --
+-- Name: wa_campaign_attachments_campaign_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX wa_campaign_attachments_campaign_idx ON public.wa_campaign_attachments USING btree (campaign_id, sort_order);
+
+
+--
+-- Name: wa_campaign_attachments_staged_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX wa_campaign_attachments_staged_idx ON public.wa_campaign_attachments USING btree (uploaded_by, created_at) WHERE (campaign_id IS NULL);
+
+
+--
 -- Name: wa_campaigns_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3993,6 +4075,14 @@ ALTER TABLE ONLY public.user_reminders
 
 
 --
+-- Name: wa_campaign_attachments wa_campaign_attachments_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wa_campaign_attachments
+    ADD CONSTRAINT wa_campaign_attachments_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.wa_campaigns(id) ON DELETE CASCADE;
+
+
+--
 -- Name: wa_campaign_recipients wa_campaign_recipients_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4123,5 +4213,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20000101000079'),
     ('20260911134305'),
     ('20260911154800'),
-    ('20260913065535')
+    ('20260913065535'),
+    ('20260914170628')
 ;

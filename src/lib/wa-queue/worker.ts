@@ -6,6 +6,11 @@ import {
   claimBatch, processRecipient, recoverLeases, reconcile, reconcileStale,
   type SendCreds,
 } from './engine';
+import { pruneSendLog } from './rate-limit';
+import {
+  listCampaignAttachments, listAttachmentsNeedingUpload, recordUploadSuccess, recordUploadFailure,
+  asciiLeaf, wireFileName, type AttachmentReader, type CampaignAttachment,
+} from './attachments';
 import { logger } from '@/lib/logger';
 import { env } from '@/env';
 
@@ -26,7 +31,19 @@ export interface WorkerOptions {
   resolveCreds?: (campaign: Campaign) => Promise<SendCreds>;
   /** injected provider (tests). Default: dry_run→mock, else real Green API. */
   makeProviderFor?: (campaign: Campaign) => WaProvider;
+  /** Reads attachment bytes from Storage — needed to upload a campaign's files
+   *  to Green API once (uploadFile) and for the per-recipient fallback. Injected
+   *  by the entrypoint (scripts/wa-queue-worker.ts); tests pass a stub. */
+  readAttachment?: AttachmentReader;
   log?: (event: string, data?: Record<string, unknown>) => void;
+}
+
+interface CampaignCtx {
+  provider: WaProvider;
+  creds: SendCreds;
+  ratePerMin: number;
+  bucket: string;
+  attachments: CampaignAttachment[];
 }
 
 export class DeliveryWorker {
@@ -56,41 +73,121 @@ export class DeliveryWorker {
     this.logEvent('worker_shutdown', { workerId: this.o.workerId });
   }
 
-  /** One drain tick: heartbeat → recover leases → reconcile stale → claim → send.
-   *  Returns true if it did work (so the loop polls faster when busy). */
+  /** One drain tick: heartbeat → recover leases → reconcile stale → prepare
+   *  attachments → claim → send. Returns true if it did work (so the loop polls
+   *  faster when busy). */
   async tick(): Promise<boolean> {
     await this.heartbeat();
     const rec = await recoverLeases(this.o.pool);
     if (rec.requeued || rec.indeterminate) this.logEvent('lease_recovery', { ...rec });
     await reconcileStale(this.o.pool);
+    // Before any lease is held: upload each running campaign's files to Green API
+    // once, so every recipient reuses the same link (sendFileByUrl).
+    await this.prepareAttachments();
 
     const items = await claimBatch(this.o.pool, {
       workerId: this.o.workerId, batchSize: this.o.batchSize, leaseSec: this.o.leaseSec,
     });
     if (items.length === 0) return false;
 
-    // group creds/provider per campaign (cheap cache within the tick)
-    const provByCampaign = new Map<string, { provider: WaProvider; creds: SendCreds; ratePerMin: number; bucket: string }>();
+    // group creds/provider/attachments per campaign (cheap cache within the tick)
+    const ctxByCampaign = new Map<string, CampaignCtx>();
     for (const item of items) {
       if (this.stopping) {
         // release the unclaimed remainder so shutdown never strands work
         await this.release(item.id);
         continue;
       }
-      let ctx = provByCampaign.get(item.campaign_id);
+      let ctx = ctxByCampaign.get(item.campaign_id);
       if (!ctx) {
         const campaign = await this.getCampaign(item.campaign_id);
         if (!campaign) { await this.release(item.id); continue; }
-        const provider = this.o.makeProviderFor?.(campaign) ?? makeProvider({ dryRun: campaign.dry_run });
-        const creds = campaign.dry_run ? { instanceId: 'dry', token: 'dry' } : await this.credsFor(campaign);
-        ctx = { provider, creds, ratePerMin: campaign.rate_per_min, bucket: campaign.instance_id ?? 'default' };
-        provByCampaign.set(item.campaign_id, ctx);
+        const { provider, creds } = await this.providerFor(campaign);
+        const attachments = await listCampaignAttachments(this.o.pool, campaign.id);
+        ctx = { provider, creds, ratePerMin: campaign.rate_per_min, bucket: campaign.instance_id ?? 'default', attachments };
+        ctxByCampaign.set(item.campaign_id, ctx);
       }
-      const res = await processRecipient(this.o.pool, ctx.provider, item, ctx.creds, ctx.bucket, ctx.ratePerMin, { backoffBaseSec: this.o.backoffBaseSec });
+      const res = await processRecipient(this.o.pool, ctx.provider, item, ctx.creds, ctx.bucket, ctx.ratePerMin, {
+        backoffBaseSec: this.o.backoffBaseSec,
+        attachments: ctx.attachments,
+        readAttachment: this.o.readAttachment,
+      });
       this.logEvent(`recipient_${res.outcome}`, { recipientId: item.id, campaignId: item.campaign_id, attempt: item.attempt_count });
     }
-    for (const campaignId of provByCampaign.keys()) await reconcile(this.o.pool, campaignId);
+    for (const [campaignId, ctx] of ctxByCampaign) {
+      await reconcile(this.o.pool, campaignId);
+      // Keep the rate window table small: rows older than the window are useless.
+      await pruneSendLog(this.o.pool, ctx.bucket);
+    }
     return true;
+  }
+
+  /** uploadFile ONCE per campaign per file (Green API keeps the link 15 days):
+   *  every attachment of a running campaign without a usable link is uploaded
+   *  here, outside any recipient lease, and the link is persisted for all
+   *  workers. After MAX_UPLOAD_ATTEMPTS failures the engine falls back to
+   *  sendFileByUpload per recipient. Never throws — a broken file must not stop
+   *  the tick for every other campaign. */
+  private async prepareAttachments(): Promise<void> {
+    let rows: CampaignAttachment[];
+    try {
+      rows = await listAttachmentsNeedingUpload(this.o.pool);
+    } catch (err) {
+      this.logEvent('attachment_prepare_error', { error: String(err) });
+      return;
+    }
+    if (rows.length === 0) return;
+
+    const byCampaign = new Map<string, CampaignAttachment[]>();
+    for (const a of rows) {
+      const id = a.campaign_id ?? '';
+      byCampaign.set(id, [...(byCampaign.get(id) ?? []), a]);
+    }
+    for (const [campaignId, list] of byCampaign) {
+      if (this.stopping) return;
+      const campaign = await this.getCampaign(campaignId);
+      if (!campaign) continue;
+      let provider: WaProvider;
+      let creds: SendCreds;
+      try {
+        ({ provider, creds } = await this.providerFor(campaign));
+      } catch (err) {
+        this.logEvent('attachment_prepare_error', { campaignId, error: String(err) });
+        continue;
+      }
+      for (const a of list) {
+        if (this.stopping) return;
+        try {
+          // The mock never reads bytes (dry-run / tests); the real provider needs them.
+          const bytes = provider.kind === 'mock' ? Buffer.alloc(0) : await this.readBytes(a);
+          const res = await provider.uploadFile({
+            instanceId: creds.instanceId, token: creds.token, apiUrl: creds.apiUrl,
+            bytes, mimeType: a.mime_type, fileName: wireFileName(asciiLeaf(a.object_key)),
+          });
+          if (res.ok) {
+            await recordUploadSuccess(this.o.pool, a.id, res.urlFile);
+            this.logEvent('attachment_uploaded', { campaignId, attachmentId: a.id, bytes: a.size_bytes });
+          } else {
+            await recordUploadFailure(this.o.pool, a.id, `${res.message}${res.body ? ` ${res.body}` : ''}`);
+            this.logEvent('attachment_upload_failed', { campaignId, attachmentId: a.id, status: res.status, error: res.message });
+          }
+        } catch (err) {
+          await recordUploadFailure(this.o.pool, a.id, String(err));
+          this.logEvent('attachment_upload_failed', { campaignId, attachmentId: a.id, error: String(err) });
+        }
+      }
+    }
+  }
+
+  private async readBytes(a: CampaignAttachment): Promise<Buffer> {
+    if (!this.o.readAttachment) throw new Error('attachment reader not configured');
+    return this.o.readAttachment(a);
+  }
+
+  private async providerFor(campaign: Campaign): Promise<{ provider: WaProvider; creds: SendCreds }> {
+    const provider = this.o.makeProviderFor?.(campaign) ?? makeProvider({ dryRun: campaign.dry_run });
+    const creds = campaign.dry_run ? { instanceId: 'dry', token: 'dry' } : await this.credsFor(campaign);
+    return { provider, creds };
   }
 
   private async getCampaign(id: string): Promise<Campaign | null> {

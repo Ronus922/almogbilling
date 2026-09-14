@@ -1,8 +1,13 @@
 import type { Pool } from 'pg';
 import type { Recipient } from './types';
-import type { WaProvider } from './provider';
-import { classifyError, backoffSeconds } from './errors';
+import type { WaProvider, SendResult } from './provider';
+import { classifyError, backoffSeconds, type Classified } from './errors';
 import { underRateLimit, recordSend } from './rate-limit';
+import {
+  planSteps, wireFileName, asciiLeaf, hasUsableUrl,
+  type CampaignAttachment, type AttachmentReader,
+} from './attachments';
+import { GREEN_API_MAX_FILE_BYTES } from '@/lib/constants/whatsappAttachments';
 
 // The worker's core: atomic claim (FOR UPDATE SKIP LOCKED) → send → record, plus
 // lease recovery and per-campaign reconciliation. Pure functions over a pg Pool,
@@ -60,8 +65,22 @@ export interface ProcessResult {
  *  the worker per campaign from its instance_id. */
 export interface SendCreds { instanceId: string; token: string; apiUrl?: string }
 
+export interface ProcessOpts {
+  backoffBaseSec?: number;
+  /** The campaign's attachments in sort_order (none = text-only broadcast). */
+  attachments?: CampaignAttachment[];
+  /** Bytes reader for the per-recipient upload fallback (no shared link). */
+  readAttachment?: AttachmentReader;
+}
+
 /** Send one claimed ('processing') item, respecting the shared rate limit, and
- *  persist the outcome. Never sends twice for one row (the row is leased to us). */
+ *  persist the outcome. Never sends twice for one row (the row is leased to us).
+ *
+ *  A recipient is the TEXT followed by the campaign's files in sort_order (one
+ *  provider call each; with a single file the text is its caption). Progress is
+ *  persisted after every call (provider_message_id for the text,
+ *  attachments_sent for the files), so a retry after a mid-way failure resumes
+ *  with the parts that were NOT delivered — never a duplicate. */
 export async function processRecipient(
   pool: Pool,
   provider: WaProvider,
@@ -69,13 +88,16 @@ export async function processRecipient(
   creds: SendCreds,
   bucket: string,
   perMin: number,
-  opts: { backoffBaseSec?: number } = {},
+  opts: ProcessOpts = {},
 ): Promise<ProcessResult> {
   const base = { recipientId: item.id, campaignId: item.campaign_id };
+  const files = opts.attachments ?? [];
+  const steps = planSteps(item, files);
 
   // Rate gate — if the bucket is saturated, release the lease and re-queue with a
-  // short delay so another tick (or worker) picks it up when capacity frees.
-  if (!(await underRateLimit(pool, bucket, perMin))) {
+  // short delay so another tick (or worker) picks it up when capacity frees. One
+  // recipient = one unit of the window, however many files ride along.
+  if (steps.length > 0 && !(await underRateLimit(pool, bucket, perMin))) {
     await pool.query(
       `update public.wa_campaign_recipients
           set status='pending', worker_id=null, lease_expires_at=null,
@@ -90,50 +112,120 @@ export async function processRecipient(
   // Mark "about to send" and count the attempt toward the rate window BEFORE the
   // network call — so a crash mid-send is detectable (indeterminate) on recovery.
   await pool.query(`update public.wa_campaign_recipients set send_attempted_at=now() where id=$1`, [item.id]);
-  await recordSend(pool, bucket);
+  if (steps.length > 0) await recordSend(pool, bucket);
 
-  const res = await provider.send({
-    instanceId: creds.instanceId,
-    token: creds.token,
-    apiUrl: creds.apiUrl,
-    chatId: item.chat_id,
-    message: item.payload,
-  });
+  let providerMessageId = item.provider_message_id;
+  for (const step of steps) {
+    let res: SendResult;
+    let label: string | null = null;
+    if (step.kind === 'text') {
+      res = await provider.send({
+        instanceId: creds.instanceId, token: creds.token, apiUrl: creds.apiUrl,
+        chatId: item.chat_id, message: item.payload,
+      });
+    } else {
+      const file = files[step.index];
+      label = file.original_name;
+      res = await sendAttachment(provider, creds, item.chat_id, file, step.caption, opts.readAttachment);
+    }
 
-  if (res.ok) {
-    await pool.query(
-      `update public.wa_campaign_recipients
-          set status='sent', provider_message_id=$2, sent_at=now(),
-              lease_expires_at=null, last_error=null, error_class=null
-        where id=$1`,
-      [item.id, res.providerMessageId],
-    );
-    return { ...base, outcome: 'sent' };
+    if (!res.ok) {
+      const cls = classifyError(new Error(res.message), { status: res.status, body: res.body });
+      return persistFailure(pool, item, cls, label, opts.backoffBaseSec ?? 5).then((outcome) => ({ ...base, outcome }));
+    }
+
+    // Persist progress right away: the text's id (also what the delivery webhook
+    // matches on), or the count of files delivered so far.
+    if (step.kind === 'text' || step.caption !== undefined) {
+      providerMessageId = res.providerMessageId;
+      await pool.query(
+        `update public.wa_campaign_recipients
+            set provider_message_id=$2, attachments_sent = greatest(attachments_sent, $3)
+          where id=$1`,
+        [item.id, providerMessageId, step.kind === 'file' ? 1 : 0],
+      );
+    } else {
+      await pool.query(
+        `update public.wa_campaign_recipients set attachments_sent=$2 where id=$1`,
+        [item.id, step.index + 1],
+      );
+    }
   }
 
-  const cls = classifyError(new Error(res.message), { status: res.status, body: res.body });
+  await pool.query(
+    `update public.wa_campaign_recipients
+        set status='sent', provider_message_id=$2, sent_at=now(),
+            lease_expires_at=null, last_error=null, error_class=null
+      where id=$1`,
+    [item.id, providerMessageId],
+  );
+  return { ...base, outcome: 'sent' };
+}
+
+/** One file to one recipient: the shared Green API link when it is usable
+ *  (uploadFile once per campaign → sendFileByUrl), else the per-recipient
+ *  upload fallback (sendFileByUpload) when the bytes can be read. */
+async function sendAttachment(
+  provider: WaProvider,
+  creds: SendCreds,
+  chatId: string,
+  file: CampaignAttachment,
+  caption: string | undefined,
+  reader: AttachmentReader | undefined,
+): Promise<SendResult> {
+  const common = { instanceId: creds.instanceId, token: creds.token, apiUrl: creds.apiUrl, chatId };
+  const captionArg = caption ? { caption } : {};
+  if (file.green_api_url && hasUsableUrl(file)) {
+    return provider.sendFileByUrl({
+      ...common, urlFile: file.green_api_url, fileName: wireFileName(file.original_name), ...captionArg,
+    });
+  }
+  if (!reader) {
+    // Nothing to send from: no shared link and no way to read the bytes. A 4xx
+    // status makes classifyError treat it as permanent (a retry cannot help).
+    return { ok: false, status: 400, message: 'no shared file link and no attachment reader' };
+  }
+  let bytes: Buffer;
+  try {
+    bytes = await reader(file);
+  } catch (err) {
+    return { ok: false, message: `attachment read failed: ${(err as Error).message}` }; // transient → retry
+  }
+  if (bytes.byteLength > GREEN_API_MAX_FILE_BYTES) {
+    return { ok: false, status: 413, message: 'file exceeds the Green API 100MB limit' };
+  }
+  return provider.sendFileByUpload({
+    ...common, bytes, mimeType: file.mime_type,
+    fileName: wireFileName(asciiLeaf(file.object_key)), displayName: wireFileName(file.original_name), ...captionArg,
+  });
+}
+
+/** Retry (backoff) or fail the item, recording WHICH part failed. */
+async function persistFailure(
+  pool: Pool, item: Recipient, cls: Classified, fileLabel: string | null, backoffBaseSec: number,
+): Promise<'retry' | 'failed'> {
+  const message = (fileLabel ? `קובץ «${fileLabel}»: ${cls.message}` : cls.message).slice(0, 500);
   const canRetry = cls.retryable && item.attempt_count < item.max_attempts;
   if (canRetry) {
-    const delay = backoffSeconds(item.attempt_count, opts.backoffBaseSec ?? 5);
+    const delay = backoffSeconds(item.attempt_count, backoffBaseSec);
     await pool.query(
       `update public.wa_campaign_recipients
           set status='pending', worker_id=null, lease_expires_at=null,
               processing_started_at=null, last_error=$2, error_class=$3,
               next_attempt_at = now() + ($4 || ' seconds')::interval
         where id=$1`,
-      [item.id, cls.message.slice(0, 500), cls.errorClass, String(delay)],
+      [item.id, message, cls.errorClass, String(delay)],
     );
-    return { ...base, outcome: 'retry' };
+    return 'retry';
   }
-
   await pool.query(
     `update public.wa_campaign_recipients
         set status='failed', failed_at=now(), lease_expires_at=null,
             last_error=$2, error_class=$3
       where id=$1`,
-    [item.id, cls.message.slice(0, 500), cls.errorClass],
+    [item.id, message, cls.errorClass],
   );
-  return { ...base, outcome: 'failed' };
+  return 'failed';
 }
 
 export interface RecoveryResult { requeued: number; indeterminate: number }

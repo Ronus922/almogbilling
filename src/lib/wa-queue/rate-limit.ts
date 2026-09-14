@@ -8,6 +8,11 @@ type Q = Pool | PoolClient;
 // even if more than one worker runs — every worker reads/writes the same rows.
 // This replaces the scattered in-memory setTimeout sleeps in the old broadcast /
 // bulk-send / reminders paths with one central policy.
+//
+// The unit is a RECIPIENT, not a provider call: a broadcast with attachments
+// sends several Green API messages per recipient (text + one per file) but is
+// counted once, so rate_per_min keeps its meaning — recipients per minute. Green
+// API's own send queue spaces the individual messages on its side.
 
 export async function underRateLimit(q: Q, bucket: string, perMin: number): Promise<boolean> {
   const r = await q.query<{ c: string }>(

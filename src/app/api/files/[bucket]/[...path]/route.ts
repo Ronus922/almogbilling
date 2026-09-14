@@ -35,6 +35,8 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<unknown>> = {
       { module: 'dashboard', action: 'view' },
       { module: 'contacts', action: 'view' },
     ]),
+  // Broadcast attachments — whoever may see the broadcast history may open them.
+  'whatsapp-attachments': () => requirePermission('whatsapp_chat', 'view'),
 };
 
 /**
@@ -72,6 +74,13 @@ async function lookupFileName(bucket: PrivateBucket, path: string): Promise<stri
       [path],
     );
     return row?.file_name ?? null;
+  }
+  if (bucket === 'whatsapp-attachments') {
+    const row = await queryOne<{ original_name: string }>(
+      `select original_name from public.wa_campaign_attachments where object_key = $1 limit 1`,
+      [path],
+    );
+    return row?.original_name ?? null;
   }
   return null; // issue-attachments stores bare paths, no display name
 }
