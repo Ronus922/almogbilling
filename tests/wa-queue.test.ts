@@ -61,10 +61,16 @@ d('wa-queue durable delivery engine', () => {
     pool.on('error', () => {});
     const sql = readFileSync(fileURLToPath(new URL('../supabase/migrations/059_whatsapp_delivery_queue.sql', import.meta.url)), 'utf8');
     await pool.query(sql);
+    // Broadcast attachments (dbmate migration, after the frozen 059): apply its
+    // `-- migrate:up` section — idempotent on a DB that already has it.
+    const att = readFileSync(fileURLToPath(new URL('../db/migrations/20260914170628_wa_campaign_attachments.sql', import.meta.url)), 'utf8');
+    const up = att.split('-- migrate:down')[0].replace('-- migrate:up', '');
+    const has = await pool.query(`select to_regclass('public.wa_campaign_attachments') as t`);
+    if (!has.rows[0]?.t) await pool.query(up);
   });
   afterAll(async () => { await pool.end(); });
   beforeEach(async () => {
-    await pool.query('truncate public.wa_campaign_recipients, public.wa_campaigns, public.wa_send_log, public.wa_worker_heartbeat');
+    await pool.query('truncate public.wa_campaign_attachments, public.wa_campaign_recipients, public.wa_campaigns, public.wa_send_log, public.wa_worker_heartbeat');
   });
 
   it('creates + enqueues with unique idempotency keys and correct counts', async () => {
@@ -324,6 +330,89 @@ d('wa-queue durable delivery engine', () => {
     const pending = await listRecipients(pool, c.id, { status: 'pending' });
     expect(pending.total).toBe(3);
   });
+
+  // ── Attachments ─────────────────────────────────────────────────────────────
+  async function stage(names: string[]): Promise<string[]> {
+    const ids: string[] = [];
+    for (const [i, name] of names.entries()) {
+      const r = await pool.query<{ id: string }>(
+        `insert into public.wa_campaign_attachments (uploaded_by, bucket, object_key, original_name, mime_type, size_bytes)
+         values ($1, 'whatsapp-attachments', $2, $3, 'application/pdf', 1000) returning id`,
+        [OWNER, `${'0000000'.slice(String(i).length)}${i}-0000-4000-8000-000000000000.pdf`, name]);
+      ids.push(r.rows[0].id);
+    }
+    return ids;
+  }
+  const OWNER = '22222222-2222-2222-2222-222222222222';
+  const reader = async () => Buffer.from('%PDF-1.4');
+
+  it('attachments: uploaded to Green ONCE per campaign, then text + files per recipient in order', async () => {
+    const ids = await stage(['א.pdf', 'ב.pdf']);
+    const c = await createCampaign(pool, { ...base, createdBy: OWNER, recipients: recips('97250001', '97250002'), attachmentIds: ids });
+    await startCampaign(pool, c.id);
+    const mock = new MockProvider();
+    const worker = new DeliveryWorker({ pool, workerId: 'w1', makeProviderFor: () => mock, idlePollMs: 5, backoffBaseSec: 0, readAttachment: reader });
+    await drain(worker);
+    expect((await getCampaign(pool, c.id))!.status).toBe('completed');
+    // one upload per file, not per recipient
+    expect(mock.uploads.length).toBe(2);
+    // per recipient: text, then file 0, then file 1 — by the shared link
+    const for1 = mock.sends.filter((s) => s.chatId === '97250001@c.us');
+    expect(for1.map((s) => [s.kind, s.fileName ?? s.message])).toEqual([['text', 'hi 97250001'], ['file_url', 'א.pdf'], ['file_url', 'ב.pdf']]);
+    const rows = await rawRecipients(c.id);
+    for (const r of rows) { expect(r.status).toBe('sent'); expect(r.attachments_sent).toBe(2); expect(r.provider_message_id).toBeTruthy(); }
+  });
+
+  it('attachments: a single file carries the text as its caption', async () => {
+    const ids = await stage(['חשבון.pdf']);
+    const c = await createCampaign(pool, { ...base, createdBy: OWNER, recipients: recips('97250001'), attachmentIds: ids });
+    await startCampaign(pool, c.id);
+    const mock = new MockProvider();
+    await drain(new DeliveryWorker({ pool, workerId: 'w1', makeProviderFor: () => mock, idlePollMs: 5, backoffBaseSec: 0, readAttachment: reader }));
+    expect(mock.sends).toEqual([{ chatId: '97250001@c.us', message: 'hi 97250001', kind: 'file_url', fileName: 'חשבון.pdf' }]);
+  });
+
+  it('attachments: a failing file marks the recipient failed with the file named, and a retry resumes without re-sending the text', async () => {
+    const ids = await stage(['ok.pdf', 'bad.pdf']);
+    const c = await createCampaign(pool, { ...base, createdBy: OWNER, recipients: recips('97250001'), attachmentIds: ids });
+    await startCampaign(pool, c.id);
+    const mock = new MockProvider({ failFile: { 'bad.pdf': { status: 400, message: 'rejected' } } });
+    const worker = new DeliveryWorker({ pool, workerId: 'w1', makeProviderFor: () => mock, idlePollMs: 5, backoffBaseSec: 0, readAttachment: reader });
+    await drain(worker);
+    let [r] = await rawRecipients(c.id);
+    expect(r.status).toBe('failed');
+    expect(r.last_error).toContain('bad.pdf');
+    expect(r.attachments_sent).toBe(1);          // text + ok.pdf delivered
+    expect(mock.countFor('97250001')).toBe(3);   // text, ok.pdf, bad.pdf (failed)
+    // operator retry after the file is fixed: only bad.pdf goes out again
+    const fixed = new MockProvider();
+    await retryFailed(pool, c.id);
+    await drain(new DeliveryWorker({ pool, workerId: 'w2', makeProviderFor: () => fixed, idlePollMs: 5, backoffBaseSec: 0, readAttachment: reader }));
+    [r] = await rawRecipients(c.id);
+    expect(r.status).toBe('sent');
+    expect(fixed.sends.map((s) => s.fileName)).toEqual(['bad.pdf']);
+  });
+
+  it('attachments: when uploadFile keeps failing the file is sent per recipient by upload', async () => {
+    const ids = await stage(['x.pdf']);
+    const c = await createCampaign(pool, { ...base, createdBy: OWNER, recipients: recips('97250001', '97250002'), attachmentIds: ids });
+    await startCampaign(pool, c.id);
+    const mock = new MockProvider({ failUpload: true });
+    await drain(new DeliveryWorker({ pool, workerId: 'w1', makeProviderFor: () => mock, idlePollMs: 5, backoffBaseSec: 0, readAttachment: reader }));
+    expect((await getCampaign(pool, c.id))!.status).toBe('completed');
+    // The shared upload is retried on later ticks (up to MAX_UPLOAD_ATTEMPTS), but
+    // a recipient never waits for it: with no usable link it goes out by upload.
+    expect(mock.uploads.length).toBeGreaterThanOrEqual(1);
+    expect(mock.uploads.length).toBeLessThanOrEqual(3);
+    expect(mock.sends.filter((s) => s.kind === 'file_upload').length).toBe(2);
+    expect(mock.sends.filter((s) => s.kind === 'file_url').length).toBe(0);
+  });
+
+  it('attachments: linking refuses a file that is not the creator\'s staged upload', async () => {
+    const ids = await stage(['x.pdf']);
+    await expect(createCampaign(pool, { ...base, createdBy: '33333333-3333-3333-3333-333333333333', recipients: recips('97250001'), attachmentIds: ids }))
+      .rejects.toBeInstanceOf(CampaignConflictError);
+  });
 });
 
 // RBAC — the exact gate the campaign routes enforce (whatsapp_chat view/edit).
@@ -353,4 +442,5 @@ describe('wa-queue backoff + classification', () => {
     expect(classifyError(new Error('unauthorized'), { status: 401 }).retryable).toBe(false);
     expect(classifyError(new Error('x'), { status: 400 }).retryable).toBe(false);
   });
+
 });

@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legalContact';
 import { validatePhone } from '@/lib/validation';
 import { CHIP_RESIDENT_ROLES } from '@/lib/constants/chips';
+import { WHATSAPP_ATTACHMENT_LIMITS } from '@/lib/constants/whatsappAttachments';
 import type { ChipHolderUpdate, ChipResidentRole } from '@/lib/types/chips';
 
 // POST /api/auth/login
@@ -115,3 +116,12 @@ const chipHolderUpdateSchema = z
   });
 
 export const chipHolderUpdatesSchema = z.array(chipHolderUpdateSchema).max(50, 'too_many_updates');
+
+// POST /api/whatsapp/campaigns — `attachment_ids`: staged uploads (upload order
+// is the send order). Count is capped here; ownership + total size are checked
+// against the rows in the route.
+export const campaignAttachmentIdsSchema = z
+  .array(z.uuid({ error: 'מזהה קובץ מצורף לא תקין' }))
+  .max(WHATSAPP_ATTACHMENT_LIMITS.maxFiles, `ניתן לצרף עד ${WHATSAPP_ATTACHMENT_LIMITS.maxFiles} קבצים לתפוצה`)
+  .optional()
+  .default([]);

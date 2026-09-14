@@ -22,7 +22,11 @@ import { env } from '@/env';
  *   buildPublicWaMediaUrl→ /api/public/wa-media/...(unauthenticated: Green API fetches it)
  */
 
-export const PRIVATE_BUCKETS = ['supplier-documents', 'documents', 'issue-attachments'] as const;
+/** Broadcast attachments (wa_campaign_attachments) — PRIVATE; the worker hands
+ *  Green API a link it obtains from Green's own uploadFile, never ours. */
+export const WHATSAPP_ATTACHMENTS_BUCKET = 'whatsapp-attachments';
+
+export const PRIVATE_BUCKETS = ['supplier-documents', 'documents', 'issue-attachments', WHATSAPP_ATTACHMENTS_BUCKET] as const;
 export type PrivateBucket = (typeof PRIVATE_BUCKETS)[number];
 
 /** The public bucket — served by /api/public/wa-media, not by /api/files. */
@@ -63,6 +67,23 @@ export function buildProxyUrl(bucket: PrivateBucket, path: string): string {
 // ─────────────────────────────────────────────────────────────────────
 // Server-side object operations. None of these return an external URL.
 // ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Best-effort bucket creation. Self-hosted Storage 404s on a missing bucket;
+ * creating it on first upload removes a manual ops step. Idempotent: "already
+ * exists" / 409 is success, anything else surfaces (the upload would fail anyway).
+ */
+export async function ensureBucket(bucket: string, opts: { public: boolean }): Promise<void> {
+  try {
+    const { error } = await getStorage().createBucket(bucket, { public: opts.public });
+    if (error && !/exist/i.test(error.message)) {
+      throw new Error(`storage_bucket_unavailable: ${error.message}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/exist|409|conflict/i.test(msg)) throw err;
+  }
+}
 
 export async function uploadObject(
   bucket: string,

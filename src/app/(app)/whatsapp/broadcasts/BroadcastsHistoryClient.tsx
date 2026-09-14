@@ -17,8 +17,9 @@ import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import type { CampaignListItem, CampaignListPage, CampaignStatus } from '@/lib/wa-queue/types';
+import type { CampaignListItemView, CampaignListPageView, CampaignStatus } from '@/lib/wa-queue/types';
 import { CampaignStatusBadge } from './_components/StatusBadge';
+import { AttachmentLinks } from './_components/AttachmentLinks';
 import { StopBroadcastDialog } from './_components/StopBroadcastDialog';
 import { useStopBroadcast } from './_lib/useStopBroadcast';
 import { usePoll } from './_lib/usePoll';
@@ -61,7 +62,7 @@ export function BroadcastsHistoryClient({
     return () => clearTimeout(t);
   }, [qInput]);
 
-  const fetcher = useCallback(async (): Promise<CampaignListPage> => {
+  const fetcher = useCallback(async (): Promise<CampaignListPageView> => {
     const sp = new URLSearchParams();
     if (status !== ALL) sp.set('status', status);
     if (q) sp.set('q', q);
@@ -71,11 +72,11 @@ export function BroadcastsHistoryClient({
     sp.set('offset', String(page * PAGE_SIZE));
     const r = await fetch(`/api/whatsapp/campaigns?${sp.toString()}`, { credentials: 'include' });
     if (!r.ok) throw new Error(`טעינת ההיסטוריה נכשלה (HTTP ${r.status})`);
-    return (await r.json()) as CampaignListPage;
+    return (await r.json()) as CampaignListPageView;
   }, [status, q, from, to, page]);
 
   // Poll only while a listed broadcast is still active.
-  const { data, loading, error, refetch } = usePoll<CampaignListPage>(fetcher, {
+  const { data, loading, error, refetch } = usePoll<CampaignListPageView>(fetcher, {
     intervalMs: 5000,
     shouldContinue: (d) => d.rows.some((c) => !isTerminal(c.status)),
     deps: [status, q, from, to, page],
@@ -215,7 +216,7 @@ export function BroadcastsHistoryClient({
 
 /** Mobile counterpart of <Row> — identical data and identical actions, arranged
  *  as a card. Same prop shape on purpose, so the two variants cannot drift. */
-function MobileCard({ c, canEdit, onStop, onOpen }: { c: CampaignListItem; canEdit: boolean; onStop: () => void; onOpen?: () => void }) {
+function MobileCard({ c, canEdit, onStop, onOpen }: { c: CampaignListItemView; canEdit: boolean; onStop: () => void; onOpen?: () => void }) {
   const active = !isTerminal(c.status);
   const pct = progressPct(c);
   return (
@@ -231,6 +232,8 @@ function MobileCard({ c, canEdit, onStop, onOpen }: { c: CampaignListItem; canEd
         <span>{audienceLabel(c.audience)}</span>
         <span className="truncate">{c.template_name ?? 'כתיבה חופשית'}</span>
       </div>
+
+      <AttachmentLinks attachments={c.attachments} className="mt-2" />
 
       {active && (
         <div className="mt-2 space-y-1">
@@ -270,12 +273,15 @@ function MobileCard({ c, canEdit, onStop, onOpen }: { c: CampaignListItem; canEd
   );
 }
 
-function Row({ c, canEdit, onStop, onOpen }: { c: CampaignListItem; canEdit: boolean; onStop: () => void; onOpen?: () => void }) {
+function Row({ c, canEdit, onStop, onOpen }: { c: CampaignListItemView; canEdit: boolean; onStop: () => void; onOpen?: () => void }) {
   const active = !isTerminal(c.status);
   const pct = progressPct(c);
   return (
     <TableRow className="border-b border-slate-100 hover:bg-slate-50">
-      <TableCell className="px-3 py-3 text-start text-sm font-bold text-slate-900 max-w-[220px] truncate">{c.name}</TableCell>
+      <TableCell className="px-3 py-3 text-start text-sm font-bold text-slate-900 max-w-[260px]">
+        <div className="truncate">{c.name}</div>
+        <AttachmentLinks attachments={c.attachments} className="mt-1.5 font-normal" />
+      </TableCell>
       <TableCell className="px-3 py-3 text-start text-sm text-slate-600 whitespace-nowrap tabular-nums">{formatDate(c.created_at)}</TableCell>
       <TableCell className="px-3 py-3 text-start text-sm text-slate-600">{c.created_by_name ?? '—'}</TableCell>
       <TableCell className="px-3 py-3 text-start text-sm text-slate-600">{audienceLabel(c.audience)}</TableCell>

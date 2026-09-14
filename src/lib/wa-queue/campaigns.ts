@@ -5,6 +5,7 @@ import type {
   RecipientLogPage, RecipientLogRow,
 } from './types';
 import { reconcile } from './engine';
+import { linkAttachments } from './attachments';
 
 // Campaign lifecycle: durable create/enqueue + the operator controls
 // (start / pause / resume / cancel / retry-failed) as an explicit state machine.
@@ -25,6 +26,20 @@ const COLS = `
 // Same columns, prefixed for the users join in list/detail reads.
 const COLS_W = COLS.split(',').map((c) => `w.${c.trim()}`).join(', ');
 
+// The campaign's attachments (sort_order) as one json array — '[]' when none, so
+// the UI never special-cases a text-only broadcast. bucket + object_key let the
+// route build the authenticated proxy URL; the storage host never appears.
+const ATTACHMENTS_JSON = `
+  coalesce((
+    select json_agg(json_build_object(
+             'id', a.id, 'original_name', a.original_name, 'mime_type', a.mime_type,
+             'size_bytes', a.size_bytes::int, 'sort_order', a.sort_order,
+             'bucket', a.bucket, 'object_key', a.object_key)
+           order by a.sort_order, a.created_at)
+      from public.wa_campaign_attachments a
+     where a.campaign_id = w.id
+  ), '[]'::json) as attachments`;
+
 export interface CreateCampaignInput {
   name: string;
   body: string;
@@ -38,6 +53,9 @@ export interface CreateCampaignInput {
   dryRun?: boolean;
   /** Client-supplied token → a double-submit returns the SAME campaign. */
   clientToken?: string | null;
+  /** Staged attachment ids (upload order = send order). Linked in the same
+   *  transaction; every id must be a staged upload of `createdBy`. */
+  attachmentIds?: string[];
 }
 
 /** Create a campaign and enqueue its recipients atomically. Idempotent on
@@ -69,6 +87,15 @@ export async function createCampaign(pool: Pool, input: CreateCampaignInput): Pr
         [campaign.id, r.debtorId, r.phoneIntl, `${r.phoneIntl}@c.us`, r.payload, `${campaign.id}:${r.phoneIntl}`],
       );
     }
+    const attachmentIds = input.attachmentIds ?? [];
+    if (attachmentIds.length > 0) {
+      // Same transaction as the campaign: a file that is not the creator's staged
+      // upload (or was already linked / removed) aborts the whole create.
+      const linked = input.createdBy ? await linkAttachments(client, campaign.id, attachmentIds, input.createdBy) : 0;
+      if (linked !== attachmentIds.length) {
+        throw new CampaignConflictError('קובץ מצורף לא נמצא או כבר שויך לתפוצה אחרת');
+      }
+    }
     await client.query('COMMIT');
     await reconcile(pool, campaign.id); // set total/pending counts from rows
     return (await getCampaign(pool, campaign.id))!;
@@ -97,7 +124,8 @@ export async function getCampaignDetail(pool: Pool, id: string): Promise<Campaig
             (select count(*)::int from public.wa_campaign_recipients r
               where r.campaign_id = w.id and r.delivered_at is not null) as delivered_count,
             (select count(*)::int from public.wa_campaign_recipients r
-              where r.campaign_id = w.id and r.read_at is not null)      as read_count
+              where r.campaign_id = w.id and r.read_at is not null)      as read_count,
+            ${ATTACHMENTS_JSON}
        from public.wa_campaigns w
        left join public.users u on u.id = w.created_by
       where w.id = $1`,
@@ -125,7 +153,7 @@ export async function listCampaigns(
   const total = await pool.query<{ n: number }>(
     `select count(*)::int as n from public.wa_campaigns w where ${whereSql}`, params);
   const rows = await pool.query<CampaignListItem>(
-    `select ${COLS_W}, u.full_name as created_by_name
+    `select ${COLS_W}, u.full_name as created_by_name, ${ATTACHMENTS_JSON}
        from public.wa_campaigns w
        left join public.users u on u.id = w.created_by
       where ${whereSql}
