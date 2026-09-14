@@ -1268,7 +1268,10 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 
 ## 26b. קבצים מצורפים לתפוצת WhatsApp (טאב „תפוצה חדשה”)
 
-מתחת ל„תוכן ההודעה” בטופס התפוצה (`whatsapp/broadcasts/_components/AttachmentPicker.tsx`).
+מתחת ל„תוכן ההודעה” — **גם בטופס התפוצה וגם במסך „שליחת הודעת WhatsApp” לנמען בודד**
+(`components/whatsapp/AttachmentPicker.tsx`, קומפוננטה אחת משותפת: `maxFiles` ו-`uploadUrl`
+הם props — 10 קבצים ל-`/api/whatsapp/campaigns/attachments` בתפוצה, 5 ל-
+`/api/whatsapp/messages/attachments` בהודעה בודדת).
 מבנה זהה לפאנל העלאת המסמכים (`documents/UploadPanel.tsx`) — **לא וריאציה חדשה**:
 
 - **תווית** `text-base font-medium text-muted-foreground` („קבצים מצורפים”).
@@ -1288,7 +1291,9 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 - **מונה** `N/10` (`font-num tabular-nums text-xs text-muted-foreground`) בשורת התווית מרגע
   שיש קובץ; ב-10 קבצים ה-dropzone מושבת והרמז מתחלף ל„הגעת למקסימום 10 קבצים…”.
 - כפתור השליחה מושבת בזמן העלאה ומציג „מעלה קבצים…” עם spinner (§22).
-- **בהיסטוריה / בפרטים** (`AttachmentLinks.tsx`): chips `rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs`
+- **בתצוגה המקדימה** של ההודעה הבודדת: שורת `Paperclip` + שם לכל קובץ, מתחת לטקסט.
+- **בהיסטוריה / בפרטים** (`components/whatsapp/AttachmentLinks.tsx` — משותף לתפוצה
+  ולהיסטוריית ה-WhatsApp של הדייר): chips `rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs`
   עם אייקון-MIME קטן (`h-5 w-5 rounded`), שם (truncate `max-w-[160px]`) וגודל `font-num text-slate-400`;
   כל chip הוא `<a target="_blank">` ל-proxy המאומת `/api/files/whatsapp-attachments/<key>`. לפני הרשימה
   תג ספירה `Paperclip` + „N קבצים”. מוצג מתחת לשם התפוצה (שורת טבלה / כרטיס מובייל) ומתחת לכותרת הפרטים.

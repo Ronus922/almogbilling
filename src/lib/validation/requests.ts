@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legalContact';
 import { validatePhone } from '@/lib/validation';
 import { CHIP_RESIDENT_ROLES } from '@/lib/constants/chips';
-import { WHATSAPP_ATTACHMENT_LIMITS } from '@/lib/constants/whatsappAttachments';
+import { WHATSAPP_ATTACHMENT_LIMITS, WHATSAPP_MESSAGE_MAX_FILES } from '@/lib/constants/whatsappAttachments';
 import type { ChipHolderUpdate, ChipResidentRole } from '@/lib/types/chips';
 
 // POST /api/auth/login
@@ -120,6 +120,15 @@ export const chipHolderUpdatesSchema = z.array(chipHolderUpdateSchema).max(50, '
 // POST /api/whatsapp/campaigns — `attachment_ids`: staged uploads (upload order
 // is the send order). Count is capped here; ownership + total size are checked
 // against the rows in the route.
+// POST /api/whatsapp/send — `attachment_ids`: files staged through
+// /api/whatsapp/messages/attachments, in send order. A single message is capped
+// lower than a broadcast (the send is synchronous, inside the request).
+export const messageAttachmentIdsSchema = z
+  .array(z.uuid({ error: 'מזהה קובץ מצורף לא תקין' }))
+  .max(WHATSAPP_MESSAGE_MAX_FILES, `ניתן לצרף עד ${WHATSAPP_MESSAGE_MAX_FILES} קבצים להודעה`)
+  .optional()
+  .default([]);
+
 export const campaignAttachmentIdsSchema = z
   .array(z.uuid({ error: 'מזהה קובץ מצורף לא תקין' }))
   .max(WHATSAPP_ATTACHMENT_LIMITS.maxFiles, `ניתן לצרף עד ${WHATSAPP_ATTACHMENT_LIMITS.maxFiles} קבצים לתפוצה`)

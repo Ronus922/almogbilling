@@ -15,7 +15,7 @@ import type {
   CampaignDetailView, RecipientLogPage, RecipientStatus,
 } from '@/lib/wa-queue/types';
 import { CampaignStatusBadge, RecipientStatusBadge } from '../_components/StatusBadge';
-import { AttachmentLinks } from '../_components/AttachmentLinks';
+import { AttachmentLinks } from '@/components/whatsapp/AttachmentLinks';
 import { StopBroadcastDialog } from '../_components/StopBroadcastDialog';
 import { useStopBroadcast } from '../_lib/useStopBroadcast';
 import { usePoll } from '../_lib/usePoll';

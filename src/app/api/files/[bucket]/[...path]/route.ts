@@ -35,8 +35,14 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<unknown>> = {
       { module: 'dashboard', action: 'view' },
       { module: 'contacts', action: 'view' },
     ]),
-  // Broadcast attachments — whoever may see the broadcast history may open them.
-  'whatsapp-attachments': () => requirePermission('whatsapp_chat', 'view'),
+  // WhatsApp attachments — both the broadcast ones and those of a single
+  // message. Whoever may see the broadcast history (whatsapp_chat) or the
+  // debtor's WhatsApp history (whatsapp) may open them.
+  'whatsapp-attachments': () =>
+    requireAnyPermission([
+      { module: 'whatsapp_chat', action: 'view' },
+      { module: 'whatsapp', action: 'view' },
+    ]),
 };
 
 /**
@@ -76,11 +82,17 @@ async function lookupFileName(bucket: PrivateBucket, path: string): Promise<stri
     return row?.file_name ?? null;
   }
   if (bucket === 'whatsapp-attachments') {
+    // One bucket, two owners: a broadcast's files and a single message's.
     const row = await queryOne<{ original_name: string }>(
       `select original_name from public.wa_campaign_attachments where object_key = $1 limit 1`,
       [path],
     );
-    return row?.original_name ?? null;
+    if (row) return row.original_name;
+    const msgRow = await queryOne<{ original_name: string }>(
+      `select original_name from public.wa_message_attachments where object_key = $1 limit 1`,
+      [path],
+    );
+    return msgRow?.original_name ?? null;
   }
   return null; // issue-attachments stores bare paths, no display name
 }

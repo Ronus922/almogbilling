@@ -6,6 +6,8 @@
 --     hashed here with pgcrypto's bcrypt ($2a$, verified by bcryptjs).
 --   * one debtor, apartment E2E-101, with a fixed id the tests address directly.
 --     Money fields are consistent (0 = 0 + 0) so check:money stays green.
+--     phone_owner is a dummy Israeli mobile so the WhatsApp send sheet opens;
+--     nothing is ever sent in the suite (no Green API instance is configured).
 begin;
 
 insert into public.users (username, email, password_hash, full_name, role, is_active)
@@ -19,15 +21,16 @@ values (
 )
 on conflict (username) do nothing;
 
-insert into public.debtors (id, apartment_number, owner_name, tenant_name, total_debt, management_fees, hot_water_debt, special_debt, is_archived)
+insert into public.debtors (id, apartment_number, owner_name, tenant_name, phone_owner, total_debt, management_fees, hot_water_debt, special_debt, is_archived)
 values (
   '00000000-0000-4000-8000-0000000e2e01',
   'E2E-101',
   'דייר בדיקה',
   null,
+  '050-0000000',
   0, 0, 0, 0,
   false
 )
-on conflict (id) do nothing;
+on conflict (id) do update set phone_owner = excluded.phone_owner;
 
 commit;

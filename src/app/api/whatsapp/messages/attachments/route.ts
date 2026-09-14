@@ -1,8 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
-import { getDbPool } from '@/lib/db';
-import { insertStagedAttachment } from '@/lib/wa-queue/attachments';
+import { insertStagedMessageAttachment } from '@/lib/db/whatsappMessageAttachments';
 import {
   uploadWhatsAppAttachment,
   removeWhatsAppAttachment,
@@ -16,16 +15,19 @@ import { logger } from '@/lib/logger';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// POST /api/whatsapp/campaigns/attachments — stage ONE broadcast attachment
-// (whatsapp_chat:edit). multipart/form-data, field `file`. The file goes to the
-// private whatsapp-attachments bucket under a UUID key and gets a
-// wa_campaign_attachments row with campaign_id NULL; POST /api/whatsapp/campaigns
-// links it by id at submit. The server is the source of truth for type / MIME /
-// size (validateBroadcastAttachment) — the client pre-check is a courtesy.
+// POST /api/whatsapp/messages/attachments — stage ONE attachment of a single
+// outbound WhatsApp message (whatsapp:edit — the same permission the send needs).
+// multipart/form-data, field `file`. The file goes to the PRIVATE
+// whatsapp-attachments bucket under a UUID key and gets a wa_message_attachments
+// row with message_id NULL; POST /api/whatsapp/send links it by id when the
+// message is sent. The server is the source of truth for type / MIME / size
+// (validateBroadcastAttachment — the same policy a broadcast uses); the count
+// cap (WHATSAPP_MESSAGE_MAX_FILES) is enforced at send time, where the whole set
+// is known.
 // TODO: staged rows never linked within 24h are not cleaned up yet (no GC job).
 export async function POST(req: NextRequest) {
   let actor: Actor;
-  try { actor = await requirePermission('whatsapp_chat', 'edit'); }
+  try { actor = await requirePermission('whatsapp', 'edit'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
 
   let form: FormData;
@@ -46,15 +48,15 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('supabase_storage_not_configured')) {
-      logger.error('[POST /api/whatsapp/campaigns/attachments] storage not configured');
+      logger.error('[POST /api/whatsapp/messages/attachments] storage not configured');
       return NextResponse.json({ error: 'האחסון אינו מוגדר — פנה למנהל המערכת' }, { status: 503 });
     }
-    logger.error('[POST /api/whatsapp/campaigns/attachments] upload failed', err);
+    logger.error('[POST /api/whatsapp/messages/attachments] upload failed', err);
     return NextResponse.json({ error: 'העלאת הקובץ נכשלה' }, { status: 502 });
   }
 
   try {
-    const row = await insertStagedAttachment(getDbPool(), {
+    const row = await insertStagedMessageAttachment({
       uploadedBy: actor.id,
       bucket: WHATSAPP_ATTACHMENTS_BUCKET,
       objectKey: upload.objectKey,
@@ -69,7 +71,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     // The object is orphaned without its row — remove it so nothing lingers.
     await removeWhatsAppAttachment(upload.objectKey);
-    logger.error('[POST /api/whatsapp/campaigns/attachments] insert failed', err);
+    logger.error('[POST /api/whatsapp/messages/attachments] insert failed', err);
     return NextResponse.json({ error: 'שמירת הקובץ נכשלה' }, { status: 500 });
   }
 }

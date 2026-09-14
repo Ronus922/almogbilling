@@ -31,6 +31,7 @@ import {
 import type { DebtorHistoryEntry, HistorySource } from '@/lib/db/debtorHistory';
 import type { ChatMessage, ChatStatus } from '@/types/whatsapp';
 import { fileMeta, formatBytes } from '@/components/documents/helpers';
+import { AttachmentLinks } from '@/components/whatsapp/AttachmentLinks';
 
 interface Props {
   debtorId: string;
@@ -364,6 +365,9 @@ function WhatsAppTimelineRow({ msg, tenantName }: { msg: ChatMessage; tenantName
     : '';
   const body = msg.content ?? '';
   const longText = !isFile && body.length > WA_EXPAND_THRESHOLD;
+  // Messages sent with the multi-file composer carry every file; older ones fall
+  // back to the single legacy media_url above.
+  const files = msg.attachments ?? [];
 
   const sender = inbound ? (tenantName || msg.contact_phone) : (msg.sent_by_name || 'מערכת');
   const recipient = inbound ? 'המשרד' : (tenantName || msg.contact_phone);
@@ -390,7 +394,14 @@ function WhatsAppTimelineRow({ msg, tenantName }: { msg: ChatMessage; tenantName
         </div>
 
         <div className="mt-1 text-sm text-slate-700">
-          {isFile ? (
+          {files.length > 0 ? (
+            /* Every file of the message (wa_message_attachments), each opened
+               through the authenticated proxy. §26b chips. */
+            <>
+              <AttachmentLinks attachments={files} />
+              {body && <p className="mt-1 whitespace-pre-wrap break-words text-slate-700">{body}</p>}
+            </>
+          ) : isFile ? (
             <>
               {fileUrl ? (
                 <a

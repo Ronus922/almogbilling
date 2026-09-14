@@ -3,7 +3,7 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDbPool } from '@/lib/db';
 import { deleteStagedAttachment } from '@/lib/wa-queue/attachments';
-import { removeBroadcastAttachment } from '@/lib/storage/whatsappAttachmentStorage';
+import { removeWhatsAppAttachment } from '@/lib/storage/whatsappAttachmentStorage';
 import { UUID_RE } from '@/lib/validation/documents';
 
 export const runtime = 'nodejs';
@@ -23,6 +23,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
   const row = await deleteStagedAttachment(getDbPool(), id, actor.id);
   if (!row) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  await removeBroadcastAttachment(row.object_key);
+  await removeWhatsAppAttachment(row.object_key);
   return NextResponse.json({ ok: true });
 }

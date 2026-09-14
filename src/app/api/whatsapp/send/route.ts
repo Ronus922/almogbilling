@@ -8,9 +8,10 @@ import {
   type InstanceCreds,
 } from '@/lib/db/whatsappInstances';
 import { normalizePhone, parsePhoneCandidates, WhatsAppError } from '@/lib/whatsapp';
-import { sendAndRecordWhatsApp, type SendAndRecordArgs } from '@/lib/whatsapp-send';
-import { uploadWhatsAppMedia } from '@/lib/storage/whatsappMedia';
-import { validateAttachment } from '@/lib/whatsapp-attachment';
+import { sendAndRecordWhatsApp } from '@/lib/whatsapp-send';
+import { listStagedMessageAttachments, type MessageAttachment } from '@/lib/db/whatsappMessageAttachments';
+import { messageAttachmentIdsSchema } from '@/lib/validation/requests';
+import { validateBroadcastAttachmentSet, WHATSAPP_MESSAGE_MAX_FILES } from '@/lib/constants/whatsappAttachments';
 
 export const runtime = 'nodejs';
 
@@ -19,41 +20,35 @@ interface ParsedInput {
   message: string;
   templateId: string | null;
   requestedPhone: string | null;
-  /** Optional single attachment (multipart requests only). */
-  file: File | null;
+  /** Ids of files already staged through /api/whatsapp/messages/attachments,
+   *  in the order the composer listed them (= the send order). */
+  attachmentIds: string[];
 }
 
-// Read the request as either JSON (text-only send — the historical path) or
-// multipart/form-data (when the composer attached a file). One shape out.
-async function parseInput(req: NextRequest): Promise<ParsedInput | null> {
-  const ct = req.headers.get('content-type') ?? '';
-  if (ct.includes('multipart/form-data')) {
-    const form = await req.formData();
-    const fileRaw = form.get('file');
-    return {
-      debtorId: typeof form.get('debtor_id') === 'string' ? (form.get('debtor_id') as string) : '',
-      message: typeof form.get('message') === 'string' ? (form.get('message') as string).trim() : '',
-      templateId: typeof form.get('template_id') === 'string' && form.get('template_id') ? (form.get('template_id') as string) : null,
-      requestedPhone: typeof form.get('phone') === 'string' ? (form.get('phone') as string) : null,
-      file: fileRaw instanceof File && fileRaw.size > 0 ? fileRaw : null,
-    };
-  }
+// JSON in, one shape out. Files are NOT posted here any more: the composer
+// uploads each one to /api/whatsapp/messages/attachments as it is picked and
+// sends only the resulting ids, so this request stays small and the bytes live
+// in the private bucket from the start.
+async function parseInput(req: NextRequest): Promise<ParsedInput | { error: string } | null> {
   const body = (await req.json()) as {
-    debtor_id?: unknown; message?: unknown; template_id?: unknown; phone?: unknown;
+    debtor_id?: unknown; message?: unknown; template_id?: unknown; phone?: unknown; attachment_ids?: unknown;
   };
+  const ids = messageAttachmentIdsSchema.safeParse(body.attachment_ids);
+  if (!ids.success) return { error: ids.error.issues[0]?.message ?? 'קבצים מצורפים לא תקינים' };
   return {
     debtorId: typeof body.debtor_id === 'string' ? body.debtor_id : '',
     message: typeof body.message === 'string' ? body.message.trim() : '',
     templateId: typeof body.template_id === 'string' ? body.template_id : null,
     requestedPhone: typeof body.phone === 'string' ? body.phone : null,
-    file: null,
+    attachmentIds: Array.from(new Set(ids.data)),
   };
 }
 
-// POST /api/whatsapp/send — send an outbound WhatsApp message to a debtor,
-// optionally with a single file attachment (multipart). Gated on whatsapp:edit.
-// The response NEVER returns 200 on a send failure — the client toast must
-// reflect the true outcome.
+// POST /api/whatsapp/send — send an outbound WhatsApp message to a debtor, with
+// up to WHATSAPP_MESSAGE_MAX_FILES attachments staged beforehand. Gated on
+// whatsapp:edit. The response NEVER returns 200 on a send failure — the client
+// toast must reflect the true outcome — and answers 207 when the message went
+// out but some files did not.
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try {
@@ -64,35 +59,44 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  let input: ParsedInput | null;
+  let input: ParsedInput | { error: string } | null;
   try {
     input = await parseInput(req);
   } catch {
     return NextResponse.json({ error: 'invalid_request' }, { status: 400 });
   }
   if (!input) return NextResponse.json({ error: 'invalid_request' }, { status: 400 });
+  if ('error' in input) return NextResponse.json({ error: input.error }, { status: 400 });
 
-  const { debtorId, message, templateId, requestedPhone, file } = input;
+  const { debtorId, message, templateId, requestedPhone, attachmentIds } = input;
+  const hasFiles = attachmentIds.length > 0;
 
   if (!debtorId) {
     return NextResponse.json({ error: 'debtor_id חסר' }, { status: 400 });
   }
-  // A message OR a file is required. With a file, the text is an optional caption.
-  if (!file && message.length < 1) {
+  // A message OR a file is required. With files, the text is an optional caption.
+  if (!hasFiles && message.length < 1) {
     return NextResponse.json({ error: 'תוכן ההודעה ריק' }, { status: 400 });
   }
-  // Text body cap; the caption cap (with a file) is Green API's 1024.
-  const maxLen = file ? 1024 : 4096;
-  if (message.length > maxLen) {
-    return NextResponse.json(
-      { error: file ? 'הכיתוב ארוך מדי (מקסימום 1024 תווים)' : 'ההודעה ארוכה מדי (מקסימום 4096 תווים)' },
-      { status: 400 },
-    );
+  // One body cap for every case. A single file normally carries the text as its
+  // caption (Green API caps that at 1024), but planMessageSends sends a longer
+  // text as its own message first instead of refusing it.
+  if (message.length > 4096) {
+    return NextResponse.json({ error: 'ההודעה ארוכה מדי (מקסימום 4096 תווים)' }, { status: 400 });
   }
-  // Validate the attachment up-front (type + size) before any upload/send.
-  if (file) {
-    const err = validateAttachment({ name: file.name, size: file.size });
-    if (err) return NextResponse.json({ error: err }, { status: 400 });
+
+  // The staged files must be THIS actor's and still unsent; the per-message cap
+  // and the total size are enforced here — the server is the authority.
+  let attachments: MessageAttachment[] = [];
+  if (hasFiles) {
+    attachments = await listStagedMessageAttachments(attachmentIds, actor.id);
+    if (attachments.length !== attachmentIds.length) {
+      return NextResponse.json({ error: 'קובץ מצורף לא נמצא — הסר אותו וצרף מחדש' }, { status: 400 });
+    }
+    const setError = validateBroadcastAttachmentSet(
+      attachments.map((a) => ({ size: a.size_bytes })), [], WHATSAPP_MESSAGE_MAX_FILES,
+    );
+    if (setError) return NextResponse.json({ error: setError }, { status: 400 });
   }
 
   const debtor = await getDebtorContact(debtorId);
@@ -140,24 +144,6 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  // Upload the attachment, then address it through /api/public/wa-media on our own
-  // origin (reachable by Green API; the storage host stays hidden). On failure we
-  // DON'T send and DON'T record — a clear error only.
-  let attachment: SendAndRecordArgs['attachment'] = null;
-  if (file) {
-    try {
-      const uploaded = await uploadWhatsAppMedia(file);
-      attachment = {
-        url: uploaded.url,
-        name: file.name,
-        mime: uploaded.mimeType,
-        sizeBytes: uploaded.sizeBytes,
-      };
-    } catch {
-      return NextResponse.json({ error: 'העלאת הקובץ נכשלה, ההודעה לא נשלחה' }, { status: 502 });
-    }
-  }
-
   // Send + record (failed-row on the timeline, last_whatsapp_sent_at bump, WHATSAPP
   // event) — shared with the bulk path so the two can never diverge.
   const result = await sendAndRecordWhatsApp({
@@ -167,12 +153,29 @@ export async function POST(req: NextRequest) {
     templateId,
     actor,
     creds,
-    attachment,
+    attachments,
   });
 
   if (!result.ok) {
     // Real error to the client — 502 (upstream send failed), never 200.
-    return NextResponse.json({ error: `שליחה נכשלה: ${result.error}` }, { status: 502 });
+    return NextResponse.json(
+      {
+        error: `שליחה נכשלה: ${result.error}`,
+        ...(result.failedAttachments ? { failed_attachments: result.failedAttachments } : {}),
+      },
+      { status: 502 },
+    );
   }
-  return NextResponse.json({ ok: true, idMessage: result.idMessage, ...(result.warning ? { warning: result.warning } : {}) });
+  // The message went out but one or more files did not: 207, with their names,
+  // so the composer can say exactly what the recipient did not get.
+  const partial = result.failedAttachments?.length ? result.failedAttachments : null;
+  return NextResponse.json(
+    {
+      ok: true,
+      idMessage: result.idMessage,
+      ...(result.warning ? { warning: result.warning } : {}),
+      ...(partial ? { failed_attachments: partial } : {}),
+    },
+    partial ? { status: 207 } : undefined,
+  );
 }

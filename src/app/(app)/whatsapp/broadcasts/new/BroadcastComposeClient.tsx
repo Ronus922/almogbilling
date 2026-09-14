@@ -22,7 +22,7 @@ import { CampaignStatusBadge } from '../_components/StatusBadge';
 import { StopBroadcastDialog } from '../_components/StopBroadcastDialog';
 import {
   AttachmentPicker, readyAttachmentIds, isUploading, type StagedAttachment,
-} from '../_components/AttachmentPicker';
+} from '@/components/whatsapp/AttachmentPicker';
 import { useStopBroadcast } from '../_lib/useStopBroadcast';
 import { usePoll } from '../_lib/usePoll';
 import { isTerminal, isCancellable, progressPct, processed } from '../_lib/status';
