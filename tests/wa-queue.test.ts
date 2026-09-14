@@ -363,6 +363,27 @@ d('wa-queue durable delivery engine', () => {
     for (const r of rows) { expect(r.status).toBe('sent'); expect(r.attachments_sent).toBe(2); expect(r.provider_message_id).toBeTruthy(); }
   });
 
+  it('attachments: every file of a multi-file broadcast reaches every recipient, in order', async () => {
+    const ids = await stage(['א.pdf', 'ב.pdf', 'ג.pdf']);
+    const c = await createCampaign(pool, { ...base, createdBy: OWNER, recipients: recips('97250001', '97250002'), attachmentIds: ids });
+    await startCampaign(pool, c.id);
+    const mock = new MockProvider();
+    await drain(new DeliveryWorker({ pool, workerId: 'w1', makeProviderFor: () => mock, idlePollMs: 5, backoffBaseSec: 0, readAttachment: reader }));
+    expect((await getCampaign(pool, c.id))!.status).toBe('completed');
+    // three files → three uploads for the whole campaign, not three per recipient
+    expect(mock.uploads.length).toBe(3);
+    expect(new Set(mock.uploads).size).toBe(3);
+    for (const phone of ['97250001', '97250002']) {
+      const sent = mock.sends.filter((s) => s.chatId === `${phone}@c.us`);
+      expect(sent.map((s) => [s.kind, s.fileName ?? s.message])).toEqual([
+        ['text', `hi ${phone}`], ['file_url', 'א.pdf'], ['file_url', 'ב.pdf'], ['file_url', 'ג.pdf'],
+      ]);
+    }
+    const rows = await rawRecipients(c.id);
+    expect(rows.map((r) => r.attachments_sent)).toEqual([3, 3]);
+    expect(rows.every((r) => r.status === 'sent')).toBe(true);
+  });
+
   it('attachments: a single file carries the text as its caption', async () => {
     const ids = await stage(['חשבון.pdf']);
     const c = await createCampaign(pool, { ...base, createdBy: OWNER, recipients: recips('97250001'), attachmentIds: ids });

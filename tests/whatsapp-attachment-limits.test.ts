@@ -50,6 +50,24 @@ describe('broadcast attachment limits', () => {
     expect(validateBroadcastAttachment({ name: 'fake.png', size: MB, type: 'application/pdf' })).toMatch(/אינו תואם/);
   });
 
+  // Regression: Office files ARE zip containers. On Windows, Chrome reports the
+  // type registered for .zip, so a perfectly good .docx/.xlsx/.pptx arrives as
+  // application/zip — refusing it made a second file impossible to attach.
+  it('accepts Office files the browser reports as a zip container', () => {
+    for (const ext of ['docx', 'xlsx', 'pptx']) {
+      for (const type of ['application/zip', 'application/x-zip-compressed', 'application/x-zip', 'multipart/x-zip']) {
+        expect(validateBroadcastAttachment({ name: `קובץ.${ext}`, size: MB, type })).toBeNull();
+      }
+    }
+    // legacy Office types for their modern extensions, and the reverse
+    expect(validateBroadcastAttachment({ name: 'גיליון.xlsx', size: MB, type: 'application/vnd.ms-excel' })).toBeNull();
+    expect(validateBroadcastAttachment({ name: 'מסמך.docx', size: MB, type: 'application/msword' })).toBeNull();
+    expect(validateBroadcastAttachment({ name: 'מצגת.pptx', size: MB, type: 'application/vnd.ms-powerpoint' })).toBeNull();
+    expect(validateBroadcastAttachment({ name: 'ארכיון.zip', size: MB, type: 'application/x-zip-compressed' })).toBeNull();
+    // a zip MIME still cannot smuggle a non-zip extension through
+    expect(validateBroadcastAttachment({ name: 'fake.pdf', size: MB, type: 'application/zip' })).toMatch(/אינו תואם/);
+  });
+
   it('enforces the per-kind size caps and rejects empty files', () => {
     const { image, video, audio, document } = WHATSAPP_ATTACHMENT_LIMITS.kinds;
     expect(validateBroadcastAttachment({ name: 'a.png', size: image.maxBytes, type: 'image/png' })).toBeNull();
@@ -65,6 +83,41 @@ describe('broadcast attachment limits', () => {
     expect(WHATSAPP_ATTACHMENT_LIMITS.kinds.document.maxBytes).toBeLessThanOrEqual(100 * MB);
     expect(WHATSAPP_ATTACHMENT_LIMITS.kinds.document.maxBytes).toBeLessThanOrEqual(50 * MB);
     expect(WHATSAPP_ATTACHMENT_LIMITS.captionMaxChars).toBe(1024);
+  });
+
+  // How the picker adds a selection: each file is checked against the files
+  // already attached PLUS the ones accepted earlier in the same pick, so a
+  // partly-fitting selection still attaches what fits.
+  it('validates a multi-file pick one file at a time against what is attached', () => {
+    const attach = (existing: { size: number }[], picked: { size: number }[]) => {
+      const accepted = [...existing];
+      const errors: (string | null)[] = [];
+      for (const f of picked) {
+        const err = validateBroadcastAttachmentSet(accepted, [f]);
+        errors.push(err);
+        if (!err) accepted.push(f);
+      }
+      return { accepted: accepted.length - existing.length, errors };
+    };
+
+    // nothing attached yet: three files all fit
+    expect(attach([], [{ size: MB }, { size: MB }, { size: MB }])).toEqual({ accepted: 3, errors: [null, null, null] });
+
+    // two already attached, three more still fit
+    expect(attach([{ size: MB }, { size: MB }], [{ size: MB }, { size: MB }, { size: MB }]).accepted).toBe(3);
+
+    // nine attached: only the first of three picked files fits, the rest say why
+    const nearMax = attach(Array.from({ length: 9 }, () => ({ size: MB })), [{ size: MB }, { size: MB }, { size: MB }]);
+    expect(nearMax.accepted).toBe(1);
+    expect(nearMax.errors[0]).toBeNull();
+    expect(nearMax.errors[1]).toMatch(/עד 10 קבצים/);
+    expect(nearMax.errors[2]).toMatch(/עד 10 קבצים/);
+
+    // the total, not the count, is what stops a pick of big files
+    const heavy = attach([{ size: 60 * MB }], [{ size: 30 * MB }, { size: 30 * MB }, { size: 5 * MB }]);
+    expect(heavy.accepted).toBe(2);                       // 30MB fits, 30MB does not, 5MB fits
+    expect(heavy.errors[1]).toMatch(/חורג מ-100MB/);
+    expect(heavy.errors[2]).toBeNull();
   });
 
   it('caps the set at 10 files and 100MB in total', () => {
