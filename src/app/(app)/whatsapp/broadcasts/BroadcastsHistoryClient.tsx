@@ -19,7 +19,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import type { CampaignListItemView, CampaignListPageView, CampaignStatus } from '@/lib/wa-queue/types';
 import { CampaignStatusBadge } from './_components/StatusBadge';
-import { AttachmentLinks } from './_components/AttachmentLinks';
+import { AttachmentLinks } from '@/components/whatsapp/AttachmentLinks';
 import { StopBroadcastDialog } from './_components/StopBroadcastDialog';
 import { useStopBroadcast } from './_lib/useStopBroadcast';
 import { usePoll } from './_lib/usePoll';

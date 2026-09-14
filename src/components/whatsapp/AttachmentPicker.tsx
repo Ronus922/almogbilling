@@ -18,12 +18,18 @@ import {
   validateBroadcastAttachmentSet,
 } from '@/lib/constants/whatsappAttachments';
 
-// "קבצים מצורפים" under the message of the compose tab. Each picked file is
-// validated (type / MIME / size / count / total — the same rules the server
-// enforces), uploaded AT ONCE to POST /api/whatsapp/campaigns/attachments (a
-// staged row, campaign_id NULL) with a progress bar, and removed with its X
-// (DELETE, also aborts an in-flight upload). The parent only ever needs the
-// ids of the finished uploads — they go in the campaign POST as attachment_ids.
+// "קבצים מצורפים" — the shared multi-file picker. Each picked file is validated
+// (type / MIME / size / count / total — the same rules the server enforces),
+// uploaded AT ONCE to `uploadUrl` as a STAGED row with a progress bar, and
+// removed with its X (DELETE on `${deleteUrl}/<id>`, which also aborts an
+// in-flight upload). The parent only ever needs the ids of the finished uploads
+// and sends them with the submit as attachment_ids.
+//
+// Two screens use it, with different endpoints and caps:
+//   • broadcast   — /api/whatsapp/campaigns/attachments, up to
+//                   WHATSAPP_ATTACHMENT_LIMITS.maxFiles (10)
+//   • one message — /api/whatsapp/messages/attachments, up to
+//                   WHATSAPP_MESSAGE_MAX_FILES (5)
 
 export type StagedStatus = 'uploading' | 'done' | 'error';
 
@@ -36,7 +42,8 @@ export interface StagedAttachment {
   status: StagedStatus;
   /** 0..100 while uploading. */
   progress: number;
-  /** wa_campaign_attachments.id once uploaded. */
+  /** The staged row id once uploaded (wa_campaign_attachments /
+   *  wa_message_attachments, depending on the screen). */
   attachmentId?: string;
   error?: string;
 }
@@ -54,16 +61,27 @@ function newLocalId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `f-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
 }
 
-const HELP_TEXT = `${WHATSAPP_ATTACHMENT_TYPES_LABEL} · מסמכים עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.kinds.document.maxBytes)}, תמונות/וידאו/אודיו עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.kinds.image.maxBytes)} · עד ${WHATSAPP_ATTACHMENT_LIMITS.maxFiles} קבצים, סה״כ עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.maxTotalBytes)}`;
+function helpText(maxFiles: number): string {
+  return `${WHATSAPP_ATTACHMENT_TYPES_LABEL} · מסמכים עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.kinds.document.maxBytes)}, תמונות/וידאו/אודיו עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.kinds.image.maxBytes)} · עד ${maxFiles} קבצים, סה״כ עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.maxTotalBytes)}`;
+}
 
 export function AttachmentPicker({
   items,
   onChange,
   disabled = false,
+  maxFiles = WHATSAPP_ATTACHMENT_LIMITS.maxFiles,
+  uploadUrl = '/api/whatsapp/campaigns/attachments',
+  deleteUrl = uploadUrl,
 }: {
   items: StagedAttachment[];
   onChange: (next: StagedAttachment[] | ((prev: StagedAttachment[]) => StagedAttachment[])) => void;
   disabled?: boolean;
+  /** Cap for THIS screen (default: the broadcast cap). */
+  maxFiles?: number;
+  /** POST endpoint that stages one file. */
+  uploadUrl?: string;
+  /** Base for DELETE `${deleteUrl}/<id>` (defaults to uploadUrl). */
+  deleteUrl?: string;
 }) {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -105,7 +123,7 @@ export function AttachmentPicker({
       toast.error('העלאת הקובץ נכשלה');
     };
     xhr.onabort = () => { xhrs.current.delete(item.localId); };
-    xhr.open('POST', '/api/whatsapp/campaigns/attachments');
+    xhr.open('POST', uploadUrl);
     xhr.withCredentials = true;
     xhr.send(fd);
   }
@@ -123,7 +141,7 @@ export function AttachmentPicker({
     const additions: { item: StagedAttachment; file: File | null }[] = files.map((file) => {
       const err =
         validateBroadcastAttachment({ name: file.name, size: file.size, type: file.type }) ??
-        validateBroadcastAttachmentSet(accepted, [{ size: file.size }]);
+        validateBroadcastAttachmentSet(accepted, [{ size: file.size }], maxFiles);
       if (!err) accepted.push({ size: file.size });
       else if (!firstError) firstError = err;
       const item: StagedAttachment = {
@@ -148,14 +166,14 @@ export function AttachmentPicker({
     onChange((prev) => prev.filter((i) => i.localId !== item.localId));
     if (item.attachmentId) {
       try {
-        await fetch(`/api/whatsapp/campaigns/attachments/${item.attachmentId}`, { method: 'DELETE', credentials: 'include' });
+        await fetch(`${deleteUrl}/${item.attachmentId}`, { method: 'DELETE', credentials: 'include' });
       } catch { /* best-effort — the staged row is harmless */ }
     }
   }
 
   // Files that count toward the broadcast (a rejected row does not).
   const attachedCount = items.filter((i) => i.status !== 'error').length;
-  const full = attachedCount >= WHATSAPP_ATTACHMENT_LIMITS.maxFiles;
+  const full = attachedCount >= maxFiles;
   const blocked = disabled || full;
 
   return (
@@ -164,7 +182,7 @@ export function AttachmentPicker({
         <Label className="text-base font-medium text-muted-foreground">קבצים מצורפים</Label>
         {attachedCount > 0 && (
           <span className="font-num text-xs tabular-nums text-muted-foreground">
-            {attachedCount}/{WHATSAPP_ATTACHMENT_LIMITS.maxFiles}
+            {attachedCount}/{maxFiles}
           </span>
         )}
       </div>
@@ -196,7 +214,7 @@ export function AttachmentPicker({
         </span>
         <span className="text-xs text-ink-3">
           {full
-            ? `הגעת למקסימום ${WHATSAPP_ATTACHMENT_LIMITS.maxFiles} קבצים — הסר קובץ כדי לצרף אחר`
+            ? `הגעת למקסימום ${maxFiles} קבצים — הסר קובץ כדי לצרף אחר`
             : 'גרור קבצים לכאן או לחץ לבחירה (אפשר לבחור כמה קבצים יחד)'}
         </span>
       </button>
@@ -211,7 +229,7 @@ export function AttachmentPicker({
           e.target.value = '';
         }}
       />
-      <p className="text-xs text-muted-foreground">{HELP_TEXT}</p>
+      <p className="text-xs text-muted-foreground">{helpText(maxFiles)}</p>
 
       {items.length > 0 && (
         <ul className="space-y-2">

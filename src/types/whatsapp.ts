@@ -46,6 +46,19 @@ export interface TemplateInput {
   is_active?: boolean;
 }
 
+/** One file of an outbound message, as the history renders it. */
+export interface WhatsAppMessageAttachment {
+  id: string;
+  original_name: string;
+  mime_type: string;
+  size_bytes: number;
+  /** /api/files/whatsapp-attachments/<key> — session + permission required. */
+  url: string;
+  /** true when this file never reached the recipient (Green upload or send
+   *  failed). The file is kept with the message, marked, not hidden. */
+  failed?: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   debtor_id: string | null;
@@ -67,6 +80,10 @@ export interface ChatMessage {
   attachment_mime?: string | null;
   /** Attachment size in bytes. */
   attachment_size?: number | null;
+  /** EVERY file of an outbound message (wa_message_attachments), in send order,
+   *  each with its authenticated proxy URL. The legacy attachment_* fields above
+   *  mirror the first one. Absent on inbound and on pre-2026-09 messages. */
+  attachments?: WhatsAppMessageAttachment[];
   status: ChatStatus;
   error_detail: string | null;
   sent_by: string | null;

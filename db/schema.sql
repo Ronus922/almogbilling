@@ -1497,6 +1497,49 @@ CREATE TABLE public.wa_campaigns (
 
 
 --
+-- Name: wa_message_attachments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.wa_message_attachments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    message_id uuid,
+    uploaded_by uuid,
+    bucket text NOT NULL,
+    object_key text NOT NULL,
+    original_name text NOT NULL,
+    mime_type text NOT NULL,
+    size_bytes bigint NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    green_api_url text,
+    green_api_url_expires_at timestamp with time zone,
+    green_api_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT wa_message_attachments_size_bytes_check CHECK ((size_bytes > 0))
+);
+
+
+--
+-- Name: TABLE wa_message_attachments; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.wa_message_attachments IS 'Files attached to ONE outbound WhatsApp message (chat_messages). message_id NULL = uploaded but not yet sent. The source of truth for a message files; chat_messages keeps the first file in its legacy columns. green_api_url = Green API uploadFile link (15 days) handed to sendFileByUrl.';
+
+
+--
+-- Name: COLUMN wa_message_attachments.object_key; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_message_attachments.object_key IS 'Storage key in `bucket` (whatsapp-attachments, private) — <uuid>.<ext>, ASCII only. The readable name is original_name.';
+
+
+--
+-- Name: COLUMN wa_message_attachments.sort_order; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_message_attachments.sort_order IS 'Send order within the message: the text (or the caption of a single file) goes first, then the files by this column.';
+
+
+--
 -- Name: wa_send_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2189,6 +2232,22 @@ ALTER TABLE ONLY public.wa_campaigns
 
 ALTER TABLE ONLY public.wa_campaigns
     ADD CONSTRAINT wa_campaigns_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: wa_message_attachments wa_message_attachments_object_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wa_message_attachments
+    ADD CONSTRAINT wa_message_attachments_object_key_key UNIQUE (object_key);
+
+
+--
+-- Name: wa_message_attachments wa_message_attachments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wa_message_attachments
+    ADD CONSTRAINT wa_message_attachments_pkey PRIMARY KEY (id);
 
 
 --
@@ -3144,6 +3203,20 @@ CREATE INDEX wa_campaigns_status_idx ON public.wa_campaigns USING btree (status,
 
 
 --
+-- Name: wa_message_attachments_message_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX wa_message_attachments_message_idx ON public.wa_message_attachments USING btree (message_id, sort_order);
+
+
+--
+-- Name: wa_message_attachments_staged_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX wa_message_attachments_staged_idx ON public.wa_message_attachments USING btree (uploaded_by, created_at) WHERE (message_id IS NULL);
+
+
+--
 -- Name: wa_recipients_claimable_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4091,6 +4164,14 @@ ALTER TABLE ONLY public.wa_campaign_recipients
 
 
 --
+-- Name: wa_message_attachments wa_message_attachments_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wa_message_attachments
+    ADD CONSTRAINT wa_message_attachments_message_id_fkey FOREIGN KEY (message_id) REFERENCES public.chat_messages(id) ON DELETE CASCADE;
+
+
+--
 -- Name: whatsapp_broadcasts whatsapp_broadcasts_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4214,5 +4295,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260911134305'),
     ('20260911154800'),
     ('20260913065535'),
-    ('20260914170628')
+    ('20260914170628'),
+    ('20260914201005')
 ;

@@ -29,8 +29,13 @@ export const GREEN_API_MAX_FILE_BYTES = 100 * MB;
 /** Self-hosted Supabase Storage FILE_SIZE_LIMIT (see header). */
 export const STORAGE_MAX_BYTES = 50 * MB;
 
+/** Files per SINGLE outbound message ("שליחת הודעת WhatsApp" — one recipient).
+ *  Lower than a broadcast on purpose: the send is synchronous, in-request. The
+ *  type / size rules are identical (WHATSAPP_ATTACHMENT_LIMITS.kinds). */
+export const WHATSAPP_MESSAGE_MAX_FILES = 5;
+
 export const WHATSAPP_ATTACHMENT_LIMITS = {
-  /** Files per broadcast. */
+  /** Files per broadcast (the default cap; a screen may pass a lower one). */
   maxFiles: 10,
   /** Sum of all files in one broadcast. */
   maxTotalBytes: 100 * MB,
@@ -123,6 +128,13 @@ export function formatMb(bytes: number): string {
   return `${mb >= 10 || Number.isInteger(mb) ? Math.round(mb) : Math.round(mb * 10) / 10}MB`;
 }
 
+/** The chat_messages.message_type for a file. That column's CHECK allows only
+ *  'text' | 'image' | 'document', so video and audio are recorded as documents;
+ *  wa_message_attachments is the source of truth for what was really sent. */
+export function attachmentMessageType(name: string): 'image' | 'document' {
+  return attachmentKind(attachmentExt(name)) === 'image' ? 'image' : 'document';
+}
+
 export interface AttachmentCandidate {
   name: string;
   size: number;
@@ -150,15 +162,19 @@ export function validateBroadcastAttachment(file: AttachmentCandidate): string |
   return null;
 }
 
-/** Validate the broadcast-level rules (count + total size) for adding `next`
- *  on top of `existing`. Returns a Hebrew error, or null. */
+/** Validate the message-level rules (count + total size) for adding `next` on
+ *  top of `existing`. `maxFiles` lets a screen impose a lower cap than the
+ *  broadcast default (the single-recipient sheet passes
+ *  WHATSAPP_MESSAGE_MAX_FILES); the total-size rule is shared. Returns a Hebrew
+ *  error, or null. */
 export function validateBroadcastAttachmentSet(
   existing: ReadonlyArray<{ size: number }>,
   next: ReadonlyArray<{ size: number }> = [],
+  maxFiles: number = WHATSAPP_ATTACHMENT_LIMITS.maxFiles,
 ): string | null {
   const count = existing.length + next.length;
-  if (count > WHATSAPP_ATTACHMENT_LIMITS.maxFiles) {
-    return `ניתן לצרף עד ${WHATSAPP_ATTACHMENT_LIMITS.maxFiles} קבצים לתפוצה`;
+  if (count > maxFiles) {
+    return `ניתן לצרף עד ${maxFiles} קבצים`;
   }
   const total = [...existing, ...next].reduce((s, f) => s + f.size, 0);
   if (total > WHATSAPP_ATTACHMENT_LIMITS.maxTotalBytes) {

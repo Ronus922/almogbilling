@@ -10,11 +10,25 @@ import type { ChatStatus } from '@/types/whatsapp';
 
 const GREEN_API_BASE = 'https://api.green-api.com';
 
+const GREEN_MEDIA_BASE = 'https://media.green-api.com';
+
 /** Per-instance API host (Green assigns regional hosts). Falls back to the
  *  default. Trailing slashes stripped so URL concatenation is safe. */
 function baseFor(args: { apiUrl?: string | null }): string {
   const v = (args.apiUrl ?? '').trim().replace(/\/+$/, '');
   return v || GREEN_API_BASE;
+}
+
+/** The instance's MEDIA host, where uploadFile lives: api.green-api.com →
+ *  media.green-api.com, 7103.api.greenapi.com → 7103.media.greenapi.com.
+ *  Deliberately a local copy of wa-queue/provider.ts's mediaBaseFor: that module
+ *  is kept import-free so the standalone worker can load it, and this one is
+ *  reachable from client components, so neither may import the other. A unit
+ *  test asserts the two stay identical. */
+function mediaFor(args: { apiUrl?: string | null }): string {
+  const base = baseFor(args);
+  const swapped = base.replace(/(\/\/|\.)api\./i, '$1media.');
+  return swapped !== base ? swapped : GREEN_MEDIA_BASE;
 }
 
 /** Thrown for anything WhatsApp-specific. Route layer maps to a real HTTP error
@@ -643,6 +657,65 @@ export async function sendWhatsAppFileByUrl(args: SendFileArgs): Promise<{ idMes
     throw new WhatsAppError('Green API לא החזיר idMessage');
   }
   return { idMessage };
+}
+
+interface UploadFileArgs {
+  instanceId: string;
+  token: string;
+  apiUrl?: string;
+  bytes: Buffer;
+  /** Canonical MIME of the file (Content-Type of the raw body). */
+  mimeType: string;
+  /** ASCII name WITH the extension — Green API reads the type from it. */
+  fileName: string;
+}
+
+/** Green API is slow with big files; a single upload may legitimately take
+ *  minutes. Bounded so a stuck connection cannot pin the request forever. */
+const UPLOAD_TIMEOUT_MS = 120_000;
+
+/**
+ * Uploads bytes to Green API's own storage and returns the link it hands back
+ * (valid 15 days), so a file that lives in our PRIVATE bucket can be delivered
+ * with sendFileByUrl without ever publishing a URL of ours.
+ *   POST {mediaUrl}/waInstance{id}/uploadFile/{token}
+ *   raw body, Content-Type = the file's MIME, GA-Filename = the file name
+ * The media host is derived from the instance's API host (api. → media.).
+ */
+export function greenMediaHost(apiUrl?: string | null): string {
+  return mediaFor({ apiUrl });
+}
+
+export async function uploadWhatsAppFile(args: UploadFileArgs): Promise<{ urlFile: string }> {
+  const url = `${mediaFor(args)}/waInstance${args.instanceId}/uploadFile/${args.token}`;
+
+  let res: Response;
+  let raw: string;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': args.mimeType, 'GA-Filename': args.fileName },
+      body: new Uint8Array(args.bytes),
+      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+    });
+    raw = await res.text();
+  } catch (err) {
+    throw new WhatsAppError(`העלאת הקובץ ל-Green API נכשלה: ${(err as Error).message}`);
+  }
+
+  const parsed = safeJson(raw);
+  if (!res.ok) {
+    const detail =
+      (parsed && (parsed.invokeStatus || parsed.message)) ||
+      raw.slice(0, 200).replace(/\s+/g, ' ').trim() ||
+      `HTTP ${res.status}`;
+    throw new WhatsAppError(`Green API שגיאה (${res.status}): ${detail}`);
+  }
+  const urlFile = parsed && typeof parsed.urlFile === 'string' ? parsed.urlFile : '';
+  if (!urlFile) {
+    throw new WhatsAppError('Green API לא החזיר urlFile');
+  }
+  return { urlFile };
 }
 
 interface ProbeArgs {
