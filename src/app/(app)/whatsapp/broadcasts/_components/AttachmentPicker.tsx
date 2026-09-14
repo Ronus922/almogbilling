@@ -113,13 +113,19 @@ export function AttachmentPicker({
   function addFiles(list: FileList | File[]) {
     const files = Array.from(list);
     if (files.length === 0) return;
-    // Broadcast-level rules first (count / total) against what is already listed.
-    const counted = items.filter((i) => i.status !== 'error');
-    const setError = validateBroadcastAttachmentSet(counted, files.map((f) => ({ size: f.size })));
-    if (setError) { toast.error(setError); return; }
+    // Every file is judged on its own — its type/MIME/size, then the
+    // broadcast-level rules (count, total) against the files ALREADY attached
+    // plus the ones accepted earlier in this same pick. A selection that only
+    // partly fits therefore adds what fits instead of being dropped whole.
+    const accepted: { size: number }[] = items.filter((i) => i.status !== 'error').map((i) => ({ size: i.size }));
+    let firstError: string | null = null;
 
     const additions: { item: StagedAttachment; file: File | null }[] = files.map((file) => {
-      const err = validateBroadcastAttachment({ name: file.name, size: file.size, type: file.type });
+      const err =
+        validateBroadcastAttachment({ name: file.name, size: file.size, type: file.type }) ??
+        validateBroadcastAttachmentSet(accepted, [{ size: file.size }]);
+      if (!err) accepted.push({ size: file.size });
+      else if (!firstError) firstError = err;
       const item: StagedAttachment = {
         localId: newLocalId(),
         name: file.name,
@@ -129,9 +135,9 @@ export function AttachmentPicker({
         progress: 0,
         error: err ?? undefined,
       };
-      if (err) toast.error(err);
       return { item, file: err ? null : file };
     });
+    if (firstError) toast.error(firstError);
     onChange((prev) => [...prev, ...additions.map((a) => a.item)]);
     for (const a of additions) if (a.file) upload(a.item, a.file);
   }
@@ -147,25 +153,37 @@ export function AttachmentPicker({
     }
   }
 
+  // Files that count toward the broadcast (a rejected row does not).
+  const attachedCount = items.filter((i) => i.status !== 'error').length;
+  const full = attachedCount >= WHATSAPP_ATTACHMENT_LIMITS.maxFiles;
+  const blocked = disabled || full;
+
   return (
     <div className="space-y-2">
-      <Label className="text-base font-medium text-muted-foreground">קבצים מצורפים</Label>
+      <div className="flex items-center justify-between gap-2">
+        <Label className="text-base font-medium text-muted-foreground">קבצים מצורפים</Label>
+        {attachedCount > 0 && (
+          <span className="font-num text-xs tabular-nums text-muted-foreground">
+            {attachedCount}/{WHATSAPP_ATTACHMENT_LIMITS.maxFiles}
+          </span>
+        )}
+      </div>
 
       <button
         type="button"
         onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); if (!disabled) setDragging(true); }}
+        onDragOver={(e) => { e.preventDefault(); if (!blocked) setDragging(true); }}
         onDragLeave={() => setDragging(false)}
         onDrop={(e) => {
           e.preventDefault();
           setDragging(false);
-          if (!disabled && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+          if (!blocked && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
         }}
-        disabled={disabled}
+        disabled={blocked}
         className={cn(
           'flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-6 text-center transition-colors',
           dragging ? 'border-brand bg-brand-soft/60' : 'border-line-strong bg-surface-2 hover:border-brand hover:bg-brand-soft/40',
-          disabled && 'cursor-not-allowed opacity-50 hover:border-line-strong hover:bg-surface-2',
+          blocked && 'cursor-not-allowed opacity-50 hover:border-line-strong hover:bg-surface-2',
         )}
       >
         <span className="grid h-11 w-11 place-items-center rounded-full bg-brand-soft text-brand">
@@ -174,7 +192,11 @@ export function AttachmentPicker({
         <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink">
           <Paperclip className="h-4 w-4" /> צרף קובץ
         </span>
-        <span className="text-xs text-ink-3">גרור קבצים לכאן או לחץ לבחירה</span>
+        <span className="text-xs text-ink-3">
+          {full
+            ? `הגעת למקסימום ${WHATSAPP_ATTACHMENT_LIMITS.maxFiles} קבצים — הסר קובץ כדי לצרף אחר`
+            : 'גרור קבצים לכאן או לחץ לבחירה (אפשר לבחור כמה קבצים יחד)'}
+        </span>
       </button>
       <input
         ref={inputRef}

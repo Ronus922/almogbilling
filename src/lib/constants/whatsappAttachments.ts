@@ -51,6 +51,15 @@ export const WHATSAPP_ATTACHMENT_LIMITS = {
   kinds: Record<WhatsAppAttachmentKind, { label: string; maxBytes: number; exts: readonly string[] }>;
 };
 
+/** DOCX / XLSX / PPTX / ZIP are all ZIP containers, and Windows reports the type
+ *  of whatever owns the .zip association — so Chrome hands us `application/zip`
+ *  or `application/x-zip-compressed` for a perfectly good Word/Excel file. These
+ *  must never be refused: the extension, not the browser's guess, decides the
+ *  canonical MIME we store and send. */
+const ZIP_CONTAINER = [
+  'application/zip', 'application/x-zip-compressed', 'application/x-zip', 'multipart/x-zip',
+] as const;
+
 /** Extension → canonical MIME (what we store and tell Green API) + the MIME
  *  values browsers are known to report for it. Browsers are flaky for Office /
  *  CSV / audio, so the extension is the authoritative signal and the reported
@@ -67,16 +76,20 @@ const EXT_MIME: Record<string, { canonical: string; accepted: readonly string[] 
   m4a:  { canonical: 'audio/mp4',  accepted: ['audio/mp4', 'audio/x-m4a', 'audio/m4a'] },
   pdf:  { canonical: 'application/pdf', accepted: ['application/pdf'] },
   xlsx: { canonical: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          accepted: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'] },
-  xls:  { canonical: 'application/vnd.ms-excel', accepted: ['application/vnd.ms-excel'] },
+          accepted: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     ...ZIP_CONTAINER, 'application/vnd.ms-excel', 'application/excel'] },
+  xls:  { canonical: 'application/vnd.ms-excel',
+          accepted: ['application/vnd.ms-excel', 'application/excel', 'application/x-msexcel'] },
   csv:  { canonical: 'text/csv', accepted: ['text/csv', 'application/csv', 'text/plain', 'application/vnd.ms-excel'] },
   docx: { canonical: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          accepted: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'] },
-  doc:  { canonical: 'application/msword', accepted: ['application/msword'] },
+          accepted: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                     ...ZIP_CONTAINER, 'application/msword'] },
+  doc:  { canonical: 'application/msword', accepted: ['application/msword', 'application/x-msword'] },
   pptx: { canonical: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-          accepted: ['application/vnd.openxmlformats-officedocument.presentationml.presentation'] },
+          accepted: ['application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                     ...ZIP_CONTAINER, 'application/vnd.ms-powerpoint'] },
   txt:  { canonical: 'text/plain', accepted: ['text/plain'] },
-  zip:  { canonical: 'application/zip', accepted: ['application/zip', 'application/x-zip-compressed', 'application/x-zip', 'multipart/x-zip'] },
+  zip:  { canonical: 'application/zip', accepted: [...ZIP_CONTAINER] },
 };
 
 /** Lower-case extension without the dot, or '' when none. */
