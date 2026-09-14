@@ -1275,7 +1275,9 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 - **Dropzone** = כפתור מלא-רוחב `rounded-xl border-2 border-dashed px-6 py-6 text-center`;
   מנוחה `border-line-strong bg-surface-2`, hover/drag `border-brand bg-brand-soft/…`;
   עיגול-אייקון `h-11 w-11 rounded-full bg-brand-soft text-brand` (`CloudUpload`), כותרת
-  `text-sm font-semibold text-ink` עם `Paperclip` („צרף קובץ”), רמז `text-xs text-ink-3`.
+  `text-sm font-semibold text-ink` עם `Paperclip` („צרף קבצים” — **לשון רבים**: הכפתור
+  היחיד בצ׳אט (`messages/ChatThread.tsx`) נקרא „צרף קובץ” ומעלה קובץ אחד, ומשתמשים בלבלו
+  ביניהם), רמז `text-xs text-ink-3`.
   מתחתיו שורת עזר `text-xs text-muted-foreground` עם הסוגים והמגבלות מ-`WHATSAPP_ATTACHMENT_LIMITS`
   (`src/lib/constants/whatsappAttachments.ts` — מקור-האמת היחיד למגבלות, משותף ללקוח ולשרת).
 - **שורת קובץ** (staged): `flex items-center gap-3 rounded-lg border border-line bg-white p-3`;
@@ -1283,6 +1285,8 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
   (truncate), גודל `font-num tabular-nums text-xs text-slate-500`; בזמן העלאה `<Progress>` + אחוז;
   שגיאה = error state של §6 (`border-red-400 bg-red-50`) + הודעה `text-[12px] font-semibold text-red-500`;
   הצלחה = „הועלה” ירוק. **X להסרה** — `h-11 w-11` (Touch Target).
+- **מונה** `N/10` (`font-num tabular-nums text-xs text-muted-foreground`) בשורת התווית מרגע
+  שיש קובץ; ב-10 קבצים ה-dropzone מושבת והרמז מתחלף ל„הגעת למקסימום 10 קבצים…”.
 - כפתור השליחה מושבת בזמן העלאה ומציג „מעלה קבצים…” עם spinner (§22).
 - **בהיסטוריה / בפרטים** (`AttachmentLinks.tsx`): chips `rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs`
   עם אייקון-MIME קטן (`h-5 w-5 rounded`), שם (truncate `max-w-[160px]`) וגודל `font-num text-slate-400`;

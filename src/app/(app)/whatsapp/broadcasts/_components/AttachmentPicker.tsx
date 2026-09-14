@@ -189,8 +189,10 @@ export function AttachmentPicker({
         <span className="grid h-11 w-11 place-items-center rounded-full bg-brand-soft text-brand">
           <CloudUpload className="h-5 w-5" />
         </span>
+        {/* Plural on purpose: the chat composer's paperclip (one file) is also
+            labelled "צרף קובץ", and users took this one for it. */}
         <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink">
-          <Paperclip className="h-4 w-4" /> צרף קובץ
+          <Paperclip className="h-4 w-4" /> צרף קבצים
         </span>
         <span className="text-xs text-ink-3">
           {full
