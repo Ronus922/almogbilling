@@ -7,21 +7,25 @@
 #     still writes a row to public.storage_cleanup_runs with the exact plan, so
 #     the job can be observed for as long as it takes to trust it.
 #
-# ⚠️  BEFORE ARMING --apply (all four are prerequisites, none is done yet):
-#     1. Storage object bytes are in NO backup. scripts/backup/* dumps Postgres
-#        and pushes only /var/backups/supabase/daily. A wrong delete here cannot
-#        be restored — back the Storage volume up first, or accept that.
-#     2. There is no failure alerting. A run that dies (pooler blip, storage
-#        restart) leaves a row with status='error' that nobody reads. Add an
-#        OnFailure= alert unit, or a report command, first.
-#     3. `staged_old` deletes the OBJECT but leaves its wa_*_attachments ROW —
-#        a compose sheet left open over a weekend can still be submitted and
-#        would send a broken attachment. Row cleanup is deliberately out of
-#        scope here (no DB-data changes in this phase).
-#     4. Watch the dry-run rows for long enough to see a full month of shapes.
+# ⚠️  BEFORE ARMING --apply — the four prerequisites, and where they stand:
+#     1. DONE 16/09/2026 — Storage object bytes are backed up. restic-push.sh
+#        pushes $STORAGE_DIR as a second snapshot tagged `storage`, and
+#        ExecStartPre below refuses to start this unit without a fresh one.
+#        Verified by a full restore: 1608/1608 objects byte-identical.
+#     2. DONE 16/09/2026 — OnFailure= sends a WhatsApp alert through billing's own
+#        Green API instance (deploy/systemd/billing-alert@.service). It covers
+#        what an in-process handler cannot: the ExecStartPre refusal below, the
+#        TimeoutStartSec kill, an OOM kill.
+#     3. DONE 16/09/2026 — `staged_old` deletes the OBJECT and stamps
+#        wa_*_attachments.object_deleted_at on the row that pointed at it. The row
+#        survives (no DB-data deletion), but the compose sheets no longer offer it,
+#        so a sheet left open over a weekend can no longer send a broken file.
+#     4. OPEN — watch the dry-run rows for a full month of shapes. The clock
+#        starts 16/09/2026; earliest arming 16/10/2026.
 #
 # Install:
 #   sudo cp deploy/systemd/billing-storage-cleanup.{service,timer} /etc/systemd/system/
+#   sudo cp deploy/systemd/billing-alert@.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now billing-storage-cleanup.timer
 #   systemctl list-timers billing-storage-cleanup.timer
 # Manual run + log:
@@ -35,6 +39,7 @@ Description=ALMOG CRM — Storage garbage collection (one-shot, dry run)
 # starting (same reason billing-backup.service waits for it).
 After=network-online.target docker.service
 Wants=network-online.target
+OnFailure=billing-alert@%n.service
 
 [Service]
 Type=oneshot
@@ -45,6 +50,13 @@ WorkingDirectory=/var/www/billing
 # why a 600 root:root file works here (same as billing-bllink-scrape.service).
 # Needs: DATABASE_URL, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 EnvironmentFile=/etc/billing/billing.env
+# THE ORDERING GATE. `+` runs this one command as root so it can read the
+# 600 root:root /etc/billing/backup.env itself — the B2 credentials never enter
+# the GC process. It exits 1 unless the restic repository holds a `storage`
+# snapshot from the last 26h, which fails the unit before a single object is
+# listed and fires the OnFailure alert above. See the script for why this is not
+# After=/Requires= on billing-backup.service.
+ExecStartPre=+/var/www/billing/scripts/backup/assert-storage-snapshot.sh
 # Absolute node + local tsx — no PATH/npx dependence under systemd's minimal env
 # (same as deploy/systemd/billing-bllink-scrape.service).
 ExecStart=/usr/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/storage-cleanup.ts
