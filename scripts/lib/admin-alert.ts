@@ -80,7 +80,10 @@ export async function sendAdminAlert(db: Q, text: string): Promise<AdminAlertRes
     chatId,
     message: text,
   });
+  // The chatId is in the log line on purpose: when two numbers are configured
+  // (ADMIN_ALERT_PHONE superseding BLLINK_ALERT_PHONE) "an alert was sent" is
+  // not the useful fact — WHERE it was sent is.
   return result.ok
-    ? { sent: true, detail: `WhatsApp alert sent (idMessage=${result.providerMessageId})` }
-    : { sent: false, detail: `WhatsApp alert FAILED: ${result.message}` };
+    ? { sent: true, detail: `WhatsApp alert sent to ${chatId} (idMessage=${result.providerMessageId})` }
+    : { sent: false, detail: `WhatsApp alert to ${chatId} FAILED: ${result.message}` };
 }
