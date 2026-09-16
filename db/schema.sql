@@ -3,6 +3,7 @@
 --
 
 
+
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -1436,6 +1437,7 @@ CREATE TABLE public.wa_campaign_attachments (
     green_api_error text,
     green_api_upload_attempts integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    object_deleted_at timestamp with time zone,
     CONSTRAINT wa_campaign_attachments_size_bytes_check CHECK ((size_bytes > 0))
 );
 
@@ -1459,6 +1461,13 @@ COMMENT ON COLUMN public.wa_campaign_attachments.object_key IS 'Storage key in `
 --
 
 COMMENT ON COLUMN public.wa_campaign_attachments.green_api_upload_attempts IS 'uploadFile attempts by the worker; after 3 failures the worker falls back to sendFileByUpload per recipient.';
+
+
+--
+-- Name: COLUMN wa_campaign_attachments.object_deleted_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaign_attachments.object_deleted_at IS 'Set by scripts/storage-cleanup.ts when it removed this row''s object from Storage as `staged_old` (unbound and >24h old). The row survives as the record of the upload; the staged lookups skip it so the file can never be attached to a new broadcast. NULL = the object is still there.';
 
 
 --
@@ -1558,6 +1567,7 @@ CREATE TABLE public.wa_message_attachments (
     green_api_url_expires_at timestamp with time zone,
     green_api_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    object_deleted_at timestamp with time zone,
     CONSTRAINT wa_message_attachments_size_bytes_check CHECK ((size_bytes > 0))
 );
 
@@ -1581,6 +1591,13 @@ COMMENT ON COLUMN public.wa_message_attachments.object_key IS 'Storage key in `b
 --
 
 COMMENT ON COLUMN public.wa_message_attachments.sort_order IS 'Send order within the message: the text (or the caption of a single file) goes first, then the files by this column.';
+
+
+--
+-- Name: COLUMN wa_message_attachments.object_deleted_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_message_attachments.object_deleted_at IS 'Set by scripts/storage-cleanup.ts when it removed this row''s object from Storage as `staged_old` (unbound and >24h old). The row survives as the record of the upload; the staged lookups skip it so the file can never be attached to a new message. NULL = the object is still there.';
 
 
 --
@@ -4267,6 +4284,7 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 
 
+
 --
 -- Dbmate schema migrations
 --
@@ -4356,5 +4374,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260913065535'),
     ('20260914170628'),
     ('20260914201005'),
-    ('20260916061254')
+    ('20260916061254'),
+    ('20260916170623')
 ;

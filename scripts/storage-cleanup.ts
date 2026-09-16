@@ -10,6 +10,13 @@
 // `linked` is live content and `staged` may have an open compose window behind
 // it — neither is ever touched.
 //
+// A `staged_old` delete also STAMPS the row that pointed at the object with
+// wa_*_attachments.object_deleted_at. The row is never deleted — this job does
+// not remove DB data — but the staged lookups skip a stamped row, so a compose
+// sheet left open past the staging window is refused instead of sending a file
+// whose bytes are gone. Stamping happens only AFTER the Storage server confirms
+// the removal: a stamp for an object that still exists would block a live file.
+//
 // Every run writes a row to public.storage_cleanup_runs, dry runs included.
 //
 // SAFETY
@@ -35,8 +42,10 @@ import { StorageClient } from '@supabase/storage-js';
 import {
   BILLING_BUCKETS,
   planBucket,
+  rowsToMarkDeleted,
   type BillingBucket,
   type BucketPlan,
+  type ClassifiedObject,
   type StorageObject,
 } from '../src/lib/storage/cleanup';
 import { auditListed, collectDbRefs, listBucket, storageClient } from './storage-audit';
@@ -92,6 +101,33 @@ async function removeKeys(sc: StorageClient, bucket: string, keys: string[]): Pr
   const { data, error } = await sc.from(bucket).remove(keys);
   if (error) throw new StageError('delete', `remove ${bucket} (${keys.length} keys): ${error.message}`);
   return (data ?? []).map((o) => o.name).filter((n): n is string => typeof n === 'string');
+}
+
+/**
+ * Applies the decision from rowsToMarkDeleted(): stamp the rows that pointed at
+ * the objects just removed. Addressed by the exact row ids resolved during
+ * planning — never by a filter over the table (CLAUDE.md iron rule 12) — and
+ * idempotent (`object_deleted_at is null`).
+ */
+async function markRowsObjectDeleted(db: Client, removedObjects: ClassifiedObject[]): Promise<number> {
+  let marked = 0;
+  for (const [table, ids] of rowsToMarkDeleted(removedObjects)) {
+    // The table comes from a two-value union, never interpolated from data.
+    const r =
+      table === 'wa_campaign_attachments'
+        ? await db.query(
+            `update public.wa_campaign_attachments set object_deleted_at = now()
+              where id = any($1::uuid[]) and object_deleted_at is null`,
+            [ids],
+          )
+        : await db.query(
+            `update public.wa_message_attachments set object_deleted_at = now()
+              where id = any($1::uuid[]) and object_deleted_at is null`,
+            [ids],
+          );
+    marked += r.rowCount ?? 0;
+  }
+  return marked;
 }
 
 function mb(bytes: number): string {
@@ -181,6 +217,7 @@ async function main(): Promise<void> {
     stage = 'delete';
     let deleted = 0;
     let deletedBytes = 0;
+    let rowsMarked = 0;
     if (apply) {
       for (const p of plans) {
         if (p.blocked !== null || p.toDelete.length === 0) continue;
@@ -189,6 +226,9 @@ async function main(): Promise<void> {
         const removed = await removeKeys(sc, p.bucket, [...bySize.keys()]);
         deleted += removed.length;
         for (const key of removed) deletedBytes += bySize.get(key) ?? 0;
+        // Only the confirmed ones get their row stamped.
+        const confirmed = new Set(removed);
+        rowsMarked += await markRowsObjectDeleted(db, p.toDelete.filter((o) => confirmed.has(o.key)));
         await db.query(
           `update public.storage_cleanup_runs
               set objects_deleted = $2, bytes_deleted = $3 where id = $1`,
@@ -201,14 +241,15 @@ async function main(): Promise<void> {
     await db.query(
       `update public.storage_cleanup_runs
           set finished_at = now(), status = 'success',
-              objects_deleted = $2, bytes_deleted = $3
+              objects_deleted = $2, bytes_deleted = $3,
+              summary = summary || jsonb_build_object('rowsMarked', $4::int)
         where id = $1`,
-      [runId, deleted, deletedBytes],
+      [runId, deleted, deletedBytes, rowsMarked],
     );
 
     if (asJson) {
       process.stdout.write(
-        JSON.stringify({ runId, mode, scanned, planned: plannedCount, deleted, buckets: entries }, null, 2) + '\n',
+        JSON.stringify({ runId, mode, scanned, planned: plannedCount, deleted, rowsMarked, buckets: entries }, null, 2) + '\n',
       );
       return;
     }
@@ -223,7 +264,7 @@ async function main(): Promise<void> {
     }
     console.log(
       `\n  scanned ${scanned}, planned ${plannedCount} / ${mb(plannedBytes)}, ` +
-        `deleted ${deleted} / ${mb(deletedBytes)}, blocked buckets ${blocked}`,
+        `deleted ${deleted} / ${mb(deletedBytes)}, rows marked ${rowsMarked}, blocked buckets ${blocked}`,
     );
     if (!apply && plannedCount > 0) console.log('  (dry run — nothing was deleted; re-run with --apply)');
     console.log();

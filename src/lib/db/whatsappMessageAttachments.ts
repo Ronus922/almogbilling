@@ -25,6 +25,10 @@ export interface MessageAttachment {
   green_api_url_expires_at: string | null;
   green_api_error: string | null;
   created_at: string;
+  /** Stamped by the Storage GC when it removed this row's object as
+   *  `staged_old`. Non-null = the bytes are gone; the row is kept as the record
+   *  of the upload and is no longer offered to a compose sheet. */
+  object_deleted_at: string | null;
 }
 
 /** What the history exposes per attachment (+ the authenticated proxy `url`). */
@@ -39,7 +43,7 @@ export interface MessageAttachmentView {
 const COLS = `
   id, message_id, uploaded_by, bucket, object_key, original_name, mime_type,
   size_bytes::int as size_bytes, sort_order, green_api_url,
-  green_api_url_expires_at, green_api_error, created_at`;
+  green_api_url_expires_at, green_api_error, created_at, object_deleted_at`;
 
 export async function insertStagedMessageAttachment(input: {
   uploadedBy: string; bucket: string; objectKey: string;
@@ -56,12 +60,17 @@ export async function insertStagedMessageAttachment(input: {
 }
 
 /** Staged (not yet sent) attachments owned by `uploadedBy`, in the order of
- *  `ids` — which is the order the user arranged them in, i.e. the send order. */
+ *  `ids` — which is the order the user arranged them in, i.e. the send order.
+ *
+ *  `object_deleted_at is null` keeps a row whose bytes the Storage GC has already
+ *  collected out of the result, so /api/whatsapp/send refuses the message rather
+ *  than sending a file that no longer exists. */
 export async function listStagedMessageAttachments(ids: string[], uploadedBy: string): Promise<MessageAttachment[]> {
   if (ids.length === 0) return [];
   const r = await getDbPool().query<MessageAttachment>(
     `select ${COLS} from public.wa_message_attachments
-      where id = any($1::uuid[]) and message_id is null and uploaded_by = $2`,
+      where id = any($1::uuid[]) and message_id is null and uploaded_by = $2
+        and object_deleted_at is null`,
     [ids, uploadedBy],
   );
   const byId = new Map(r.rows.map((a) => [a.id, a]));
@@ -90,7 +99,8 @@ export async function linkMessageAttachments(
     const r = await q.query(
       `update public.wa_message_attachments
           set message_id = $1, sort_order = $2
-        where id = $3 and message_id is null and uploaded_by = $4`,
+        where id = $3 and message_id is null and uploaded_by = $4
+          and object_deleted_at is null`,
       [messageId, i, ids[i], uploadedBy],
     );
     linked += r.rowCount ?? 0;

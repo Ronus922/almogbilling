@@ -26,6 +26,10 @@ export interface CampaignAttachment {
   green_api_error: string | null;
   green_api_upload_attempts: number;
   created_at: string;
+  /** Stamped by the Storage GC when it removed this row's object as
+   *  `staged_old`. Non-null = the bytes are gone; the row is kept as the record
+   *  of the upload and is no longer offered to a compose sheet. */
+  object_deleted_at: string | null;
 }
 
 /** What the history / details API expose per attachment (+ a proxy `url`). */
@@ -45,7 +49,7 @@ export type AttachmentReader = (a: Pick<CampaignAttachment, 'bucket' | 'object_k
 const COLS = `
   id, campaign_id, uploaded_by, bucket, object_key, original_name, mime_type,
   size_bytes::int as size_bytes, sort_order, green_api_url, green_api_url_expires_at,
-  green_api_error, green_api_upload_attempts, created_at`;
+  green_api_error, green_api_upload_attempts, created_at, object_deleted_at`;
 
 /** uploadFile attempts before the worker gives up on the shared link and falls
  *  back to sendFileByUpload per recipient. */
@@ -70,12 +74,19 @@ export async function insertStagedAttachment(q: Q, input: {
   return r.rows[0];
 }
 
-/** Staged (not yet linked) attachments owned by `uploadedBy`, in the order of `ids`. */
+/** Staged (not yet linked) attachments owned by `uploadedBy`, in the order of `ids`.
+ *
+ *  `object_deleted_at is null` keeps a row whose bytes the Storage GC has already
+ *  collected out of the result. The caller compares the count with the ids it
+ *  asked for and refuses the submit ("קובץ מצורף לא נמצא — הסר אותו וצרף מחדש"),
+ *  which is the whole point: a compose sheet left open past the 24h staging
+ *  window must fail loudly instead of broadcasting a file that no longer exists. */
 export async function listStagedAttachments(q: Q, ids: string[], uploadedBy: string): Promise<CampaignAttachment[]> {
   if (ids.length === 0) return [];
   const r = await q.query<CampaignAttachment>(
     `select ${COLS} from public.wa_campaign_attachments
-      where id = any($1::uuid[]) and campaign_id is null and uploaded_by = $2`,
+      where id = any($1::uuid[]) and campaign_id is null and uploaded_by = $2
+        and object_deleted_at is null`,
     [ids, uploadedBy],
   );
   const byId = new Map(r.rows.map((a) => [a.id, a]));
@@ -103,7 +114,8 @@ export async function linkAttachments(q: Q, campaignId: string, ids: string[], u
     const r = await q.query(
       `update public.wa_campaign_attachments
           set campaign_id = $1, sort_order = $2
-        where id = $3 and campaign_id is null and uploaded_by = $4`,
+        where id = $3 and campaign_id is null and uploaded_by = $4
+          and object_deleted_at is null`,
       [campaignId, i, ids[i], uploadedBy],
     );
     linked += r.rowCount ?? 0;
