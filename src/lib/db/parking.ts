@@ -1,7 +1,6 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import type {
-  ApartmentAssets,
   ParkingSpot,
   ParkingSpotFilters,
   ParkingSpotWritableFields,
@@ -396,22 +395,4 @@ export async function toggleStorageUnitActive(
       returning ${STORAGE_COLUMNS}`,
     [id, actorId, reason],
   );
-}
-
-// ── by apartment ─────────────────────────────────────────────────────────────
-
-/** Everything one apartment holds — both tables in one round trip each. */
-export async function getApartmentAssets(apartmentNumber: string): Promise<ApartmentAssets> {
-  const [exists, parking, storage] = await Promise.all([
-    apartmentExists(apartmentNumber),
-    listParkingSpots({ apartment_number: apartmentNumber }),
-    listStorageUnits({ apartment_number: apartmentNumber }),
-  ]);
-  return {
-    apartment_number: apartmentNumber,
-    apartment_exists: exists,
-    parking,
-    storage,
-    total_places: parking.reduce((sum, p) => sum + p.capacity, 0),
-  };
 }

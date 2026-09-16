@@ -10,7 +10,6 @@
 //   POST   /api/whatsapp/send-bulk              body: BulkSendInput → NDJSON stream of
 //                                                 BulkSendProgress… + BulkSendSummary
 //   GET    /api/whatsapp/messages?debtor_id=…   → ChatMessage[]        (chronological)
-//   GET    /api/whatsapp/unlinked               → UnlinkedMessage[]    (inbound, no debtor)
 //   POST   /api/whatsapp/messages/[id]/link     body: { debtor_id } | { supplier_id } | { unlink: true } → { ok, linked }
 //                                                 (XOR: a conversation links to a debtor OR a supplier OR neither)
 //   POST   /api/whatsapp/messages/[id]/create-supplier  body: { display_name, category_id? } → { id, linked }

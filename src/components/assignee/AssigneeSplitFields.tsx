@@ -207,7 +207,7 @@ function AssigneeKindSelect({
 
 /**
  * The "גורם מטפל" body: two separate pickers (users + suppliers) over one shared
- * value array. Drop-in replacement for AssigneeMultiSelect (same props), so the
+ * value array. Replaced the old single AssigneeMultiSelect picker, so the
  * owning form's onChange / validation / notify-pruning are unchanged.
  */
 export function AssigneeSplitFields({
