@@ -5,19 +5,35 @@
 #
 # ⚠️  ExecStart deliberately has NO --apply: the timer runs a DRY RUN. Every run
 #     still writes a row to public.storage_cleanup_runs with the exact plan, so
-#     the job can be observed for as long as it takes to trust it. Arming it is
-#     a one-word edit here + `systemctl daemon-reload`, and is a phase-3 step.
+#     the job can be observed for as long as it takes to trust it.
+#
+# ⚠️  BEFORE ARMING --apply (all four are prerequisites, none is done yet):
+#     1. Storage object bytes are in NO backup. scripts/backup/* dumps Postgres
+#        and pushes only /var/backups/supabase/daily. A wrong delete here cannot
+#        be restored — back the Storage volume up first, or accept that.
+#     2. There is no failure alerting. A run that dies (pooler blip, storage
+#        restart) leaves a row with status='error' that nobody reads. Add an
+#        OnFailure= alert unit, or a report command, first.
+#     3. `staged_old` deletes the OBJECT but leaves its wa_*_attachments ROW —
+#        a compose sheet left open over a weekend can still be submitted and
+#        would send a broken attachment. Row cleanup is deliberately out of
+#        scope here (no DB-data changes in this phase).
+#     4. Watch the dry-run rows for long enough to see a full month of shapes.
+#
 # Install:
 #   sudo cp deploy/systemd/billing-storage-cleanup.{service,timer} /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now billing-storage-cleanup.timer
-#   systemctl list-timers billing-storage-cleanup.timer   # next run: 04:30 Asia/Jerusalem
+#   systemctl list-timers billing-storage-cleanup.timer
 # Manual run + log:
 #   sudo systemctl start billing-storage-cleanup.service && journalctl -u billing-storage-cleanup -n 60
 #   npm run storage:cleanup            # dry run, by hand
 #   npm run storage:audit              # read-only inventory
 [Unit]
 Description=ALMOG CRM — Storage garbage collection (one-shot, dry run)
-After=network-online.target
+# docker.service: Storage lives in the supabase-storage container, and
+# Persistent=true means a missed run fires at boot, when docker may still be
+# starting (same reason billing-backup.service waits for it).
+After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
@@ -25,11 +41,14 @@ Type=oneshot
 User=ubuntu
 Group=devops-www
 WorkingDirectory=/var/www/billing
-# Read as root by systemd: DATABASE_URL, NEXT_PUBLIC_SUPABASE_URL,
-# SUPABASE_SERVICE_ROLE_KEY.
+# systemd reads EnvironmentFile as root before dropping to User=ubuntu, which is
+# why a 600 root:root file works here (same as billing-bllink-scrape.service).
+# Needs: DATABASE_URL, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 EnvironmentFile=/etc/billing/billing.env
 # Absolute node + local tsx — no PATH/npx dependence under systemd's minimal env
 # (same as deploy/systemd/billing-bllink-scrape.service).
 ExecStart=/usr/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/storage-cleanup.ts
-TimeoutStartSec=10min
+# ~1s for today's 117 objects; the ceiling is for a corpus orders of magnitude
+# larger, and a timeout under --apply would kill the run mid-delete.
+TimeoutStartSec=30min
 Nice=10

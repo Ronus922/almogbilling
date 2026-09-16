@@ -37,8 +37,9 @@ import {
   planBucket,
   type BillingBucket,
   type BucketPlan,
+  type StorageObject,
 } from '../src/lib/storage/cleanup';
-import { auditBucket, collectDbRefs, storageClient } from './storage-audit';
+import { auditListed, collectDbRefs, listBucket, storageClient } from './storage-audit';
 
 dotenv.config({ path: '.env.local', quiet: true });
 
@@ -56,8 +57,11 @@ interface PlanEntry {
   refCount: number;
   candidates: number;
   bytes: number;
+  matchedRefs: number;
   blocked: string | null;
-  /** every key the run resolved — the audit trail AND the delete list */
+  /** Every key the classifier selected — recorded even when the bucket is
+   *  blocked, because a blocked bucket is exactly the one someone needs to
+   *  inspect. When `blocked` is null this is also the delete list. */
   keys: { key: string; category: string; sizeBytes: number; createdAt: string | null }[];
 }
 
@@ -66,10 +70,11 @@ function toEntry(p: BucketPlan): PlanEntry {
     bucket: p.bucket,
     objectCount: p.objectCount,
     refCount: p.refCount,
-    candidates: p.toDelete.length,
+    candidates: p.candidates.length,
     bytes: p.bytes,
+    matchedRefs: p.matchedRefs,
     blocked: p.blocked,
-    keys: p.toDelete.map((o) => ({
+    keys: p.candidates.map((o) => ({
       key: o.key,
       category: o.category,
       sizeBytes: o.sizeBytes,
@@ -78,13 +83,15 @@ function toEntry(p: BucketPlan): PlanEntry {
   };
 }
 
-/** Remove one explicit list of keys. Unlike the app's deleteObjects(), this
- *  surfaces the error instead of swallowing it — the run row must not claim a
- *  deletion that did not happen. */
-async function removeKeys(sc: StorageClient, bucket: string, keys: string[]): Promise<void> {
-  if (keys.length === 0) return;
-  const { error } = await sc.from(bucket).remove(keys);
+/** Remove one explicit list of keys and return the keys the SERVER reports it
+ *  removed. Unlike the app's deleteObjects(), this surfaces the error instead of
+ *  swallowing it, and it never counts an object the server did not confirm — the
+ *  run row must not claim a deletion that did not happen. */
+async function removeKeys(sc: StorageClient, bucket: string, keys: string[]): Promise<string[]> {
+  if (keys.length === 0) return [];
+  const { data, error } = await sc.from(bucket).remove(keys);
   if (error) throw new StageError('delete', `remove ${bucket} (${keys.length} keys): ${error.message}`);
+  return (data ?? []).map((o) => o.name).filter((n): n is string => typeof n === 'string');
 }
 
 function mb(bytes: number): string {
@@ -117,15 +124,28 @@ async function main(): Promise<void> {
     const sc = storageClient();
     const now = new Date();
 
-    stage = 'cross_reference';
-    const refsByBucket = await collectDbRefs(db);
-
+    // ORDER MATTERS. Storage is listed FIRST and the DB read SECOND, so a row
+    // committed while the run is in flight is still seen. The reverse order
+    // (refs first) would let an upload that lands between the two reads look
+    // like an object nothing references. Combined with ZOMBIE_MIN_AGE_H that
+    // closes the race in both directions.
     stage = 'list';
-    const plans: BucketPlan[] = [];
-    for (const bucket of BILLING_BUCKETS) {
-      const audit = await auditBucket(sc, bucket, refsByBucket, now);
-      plans.push(planBucket(bucket, audit.objects, (refsByBucket.get(bucket) ?? []).length));
-    }
+    const listed = new Map<BillingBucket, StorageObject[]>();
+    for (const bucket of BILLING_BUCKETS) listed.set(bucket, await listBucket(sc, bucket));
+
+    stage = 'cross_reference';
+    const { byBucket: refsByBucket, unknownBucketValues } = await collectDbRefs(db);
+
+    const plans: BucketPlan[] = BILLING_BUCKETS.map((bucket) => {
+      const objects = listed.get(bucket) ?? [];
+      const audit = auditListed(bucket, objects, refsByBucket, now);
+      return planBucket(bucket, {
+        objects: audit.objects,
+        refCount: (refsByBucket.get(bucket) ?? []).length,
+        matchedRefs: audit.matchedRefs,
+        sawUnknownBucketValues: unknownBucketValues.length > 0,
+      });
+    });
 
     const entries = plans.map(toEntry);
     const scanned = plans.reduce((s, p) => s + p.objectCount, 0);
@@ -133,16 +153,34 @@ async function main(): Promise<void> {
     const plannedBytes = plans.reduce((s, p) => s + p.bytes, 0);
     const plannedCount = plans.reduce((s, p) => s + p.toDelete.length, 0);
 
-    // The delete list is frozen here. Nothing below re-derives it.
+    // The plan is frozen AND PERSISTED here, before a single object is removed.
+    // If the run dies mid-delete, the row still names every key that was in
+    // scope — without this the forensic trail would be exactly the thing the
+    // failure destroyed.
+    stage = 'record';
+    await db.query(
+      `update public.storage_cleanup_runs
+          set objects_scanned = $2, buckets_blocked = $3, summary = $4::jsonb
+        where id = $1`,
+      [runId, scanned, blocked, JSON.stringify({ mode, unknownBucketValues, plannedCount, plannedBytes, buckets: entries })],
+    );
+
     stage = 'delete';
     let deleted = 0;
     let deletedBytes = 0;
     if (apply) {
       for (const p of plans) {
         if (p.blocked !== null || p.toDelete.length === 0) continue;
-        await removeKeys(sc, p.bucket, p.toDelete.map((o) => o.key));
-        deleted += p.toDelete.length;
-        deletedBytes += p.bytes;
+        const bySize = new Map(p.toDelete.map((o) => [o.key, o.sizeBytes]));
+        // Count what the server says it removed, not what we asked for.
+        const removed = await removeKeys(sc, p.bucket, [...bySize.keys()]);
+        deleted += removed.length;
+        for (const key of removed) deletedBytes += bySize.get(key) ?? 0;
+        await db.query(
+          `update public.storage_cleanup_runs
+              set objects_deleted = $2, bytes_deleted = $3 where id = $1`,
+          [runId, deleted, deletedBytes],
+        );
       }
     }
 
@@ -150,10 +188,9 @@ async function main(): Promise<void> {
     await db.query(
       `update public.storage_cleanup_runs
           set finished_at = now(), status = 'success',
-              objects_scanned = $2, objects_deleted = $3, bytes_deleted = $4,
-              buckets_blocked = $5, summary = $6::jsonb
+              objects_deleted = $2, bytes_deleted = $3
         where id = $1`,
-      [runId, scanned, deleted, deletedBytes, blocked, JSON.stringify({ mode, buckets: entries })],
+      [runId, deleted, deletedBytes],
     );
 
     if (asJson) {
@@ -165,7 +202,9 @@ async function main(): Promise<void> {
 
     console.log(`\nStorage cleanup — ${now.toISOString()} — mode=${mode} run=${runId}\n`);
     for (const e of entries) {
-      const note = e.blocked ? `BLOCKED (${e.blocked})` : `${e.candidates} deletable / ${mb(e.bytes)}`;
+      const note = e.blocked
+        ? `BLOCKED (${e.blocked}) — ${e.candidates} would have been selected`
+        : `${e.candidates} deletable / ${mb(e.bytes)}`;
       console.log(`  ${e.bucket.padEnd(24)} ${String(e.objectCount).padStart(5)} objects  ${note}`);
       for (const k of e.keys) console.log(`      [${k.category}] ${k.key}  ${mb(k.sizeBytes)}  ${k.createdAt ?? '?'}`);
     }

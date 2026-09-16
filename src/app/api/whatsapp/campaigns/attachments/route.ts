@@ -22,9 +22,9 @@ export const dynamic = 'force-dynamic';
 // wa_campaign_attachments row with campaign_id NULL; POST /api/whatsapp/campaigns
 // links it by id at submit. The server is the source of truth for type / MIME /
 // size (validateBroadcastAttachment) — the client pre-check is a courtesy.
-// Staged rows never linked within 24h are collected by the Storage GC
-// (scripts/storage-cleanup.ts, billing-storage-cleanup.timer): the row and its
-// object are classified `staged_old` and removed once the run is armed.
+// Staged rows never linked within 24h have their Storage OBJECT collected by
+// the GC (scripts/storage-cleanup.ts, billing-storage-cleanup.timer) once it is
+// armed. The ROW itself is left in place — row cleanup is a separate decision.
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try { actor = await requirePermission('whatsapp_chat', 'edit'); }

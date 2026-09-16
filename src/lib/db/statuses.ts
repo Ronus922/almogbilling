@@ -27,8 +27,6 @@ export interface LinkedDebtorRow {
 }
 
 
-// ─── Reads (panel + dropdowns) ──────────────────────────────────────────
-
 // ─── Reads (admin /statuses screen) ─────────────────────────────────────
 
 // includeInactive=true → all rows (admin screen). false → active only (default,

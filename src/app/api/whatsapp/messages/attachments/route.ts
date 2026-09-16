@@ -24,9 +24,9 @@ export const dynamic = 'force-dynamic';
 // (validateBroadcastAttachment — the same policy a broadcast uses); the count
 // cap (WHATSAPP_MESSAGE_MAX_FILES) is enforced at send time, where the whole set
 // is known.
-// Staged rows never linked within 24h are collected by the Storage GC
-// (scripts/storage-cleanup.ts, billing-storage-cleanup.timer): the row and its
-// object are classified `staged_old` and removed once the run is armed.
+// Staged rows never linked within 24h have their Storage OBJECT collected by
+// the GC (scripts/storage-cleanup.ts, billing-storage-cleanup.timer) once it is
+// armed. The ROW itself is left in place — row cleanup is a separate decision.
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try { actor = await requirePermission('whatsapp', 'edit'); }

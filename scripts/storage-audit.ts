@@ -25,8 +25,9 @@ import { Client } from 'pg';
 import { StorageClient } from '@supabase/storage-js';
 import {
   BILLING_BUCKETS,
-  classify,
-  waMediaKeyFromUrl,
+  classifyBucket,
+  isBillingBucket,
+  storageRefFromUrl,
   type BillingBucket,
   type Category,
   type ClassifiedObject,
@@ -57,7 +58,7 @@ const PAGE = 1000;
 
 /** Depth-first walk of a bucket. `.list()` returns files (id != null) and
  *  pseudo-folders (id == null) one level at a time, so recurse per folder. */
-async function listBucket(sc: StorageClient, bucket: BillingBucket): Promise<StorageObject[]> {
+export async function listBucket(sc: StorageClient, bucket: BillingBucket): Promise<StorageObject[]> {
   const out: StorageObject[] = [];
   const queue: string[] = [''];
   while (queue.length > 0) {
@@ -98,11 +99,27 @@ async function listBucket(sc: StorageClient, bucket: BillingBucket): Promise<Sto
  *   supplier_documents.file_url       → supplier-documents
  *   wa_campaign_attachments.object_key / wa_message_attachments.object_key
  *                                     → whatsapp-attachments (bucket column wins)
- *   chat_messages.media_url           → whatsapp-media (URL → key)
+ *   chat_messages.media_url           → whichever bucket the URL names
+ *
+ * `unknownBucketValues` collects any bucket name a row supplied that is NOT one
+ * of BILLING_BUCKETS. There is no CHECK constraint on those columns, so a typo
+ * or a new bucket would otherwise route a live pointer into a map entry nobody
+ * reads — and its object would look like a zombie. The cleanup job treats a
+ * non-empty set as a reason to sweep nothing at all.
  */
-export async function collectDbRefs(db: Client): Promise<Map<string, DbRef[]>> {
+export interface DbRefCollection {
+  byBucket: Map<string, DbRef[]>;
+  unknownBucketValues: string[];
+}
+
+export async function collectDbRefs(db: Client): Promise<DbRefCollection> {
   const byBucket = new Map<string, DbRef[]>();
+  const unknown = new Set<string>();
   const push = (bucket: string, ref: DbRef) => {
+    if (!isBillingBucket(bucket)) {
+      unknown.add(String(bucket));
+      return;
+    }
     const list = byBucket.get(bucket);
     if (list) list.push(ref);
     else byBucket.set(bucket, [ref]);
@@ -151,11 +168,14 @@ export async function collectDbRefs(db: Client): Promise<Map<string, DbRef[]>> {
     `select id, media_url, created_at from public.chat_messages where media_url is not null`,
   );
   for (const r of media.rows) {
-    const key = waMediaKeyFromUrl(r.media_url);
-    if (key) push('whatsapp-media', { key, table: 'chat_messages', column: 'media_url', rowId: r.id, bound: true, createdAt: r.created_at });
+    // Two live shapes: the public wa-media proxy (outbound media) and the
+    // authenticated /api/files proxy (a message attachment rendered in-thread).
+    // Anything else — notably Green API's own CDN — is not ours and is skipped.
+    const ref = storageRefFromUrl(r.media_url);
+    if (ref) push(ref.bucket, { key: ref.key, table: 'chat_messages', column: 'media_url', rowId: r.id, bound: true, createdAt: r.created_at });
   }
 
-  return byBucket;
+  return { byBucket, unknownBucketValues: [...unknown] };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -166,7 +186,36 @@ export interface BucketAudit {
   bucket: BillingBucket;
   objects: ClassifiedObject[];
   orphanRows: OrphanRow[];
+  matchedRefs: number;
   totals: Record<Category, { count: number; bytes: number }>;
+}
+
+/** Classifies a bucket whose objects have ALREADY been listed. The cleanup job
+ *  lists first and reads the DB second (so a row written mid-run is still seen),
+ *  so it calls this directly rather than auditBucket. */
+export function auditListed(
+  bucket: BillingBucket,
+  objects: StorageObject[],
+  refsByBucket: Map<string, DbRef[]>,
+  now: Date,
+): BucketAudit {
+  const refs = refsByBucket.get(bucket) ?? [];
+  const { objects: classified, orphanRows, matchedRefs } = classifyBucket(bucket, objects, refs, now);
+
+  const totals = {
+    linked: { count: 0, bytes: 0 },
+    staged: { count: 0, bytes: 0 },
+    staged_old: { count: 0, bytes: 0 },
+    zombie: { count: 0, bytes: 0 },
+    zombie_fresh: { count: 0, bytes: 0 },
+    trash: { count: 0, bytes: 0 },
+  } satisfies Record<Category, { count: number; bytes: number }>;
+  for (const o of classified) {
+    totals[o.category].count += 1;
+    totals[o.category].bytes += o.sizeBytes;
+  }
+
+  return { bucket, objects: classified, orphanRows, matchedRefs, totals };
 }
 
 export async function auditBucket(
@@ -175,38 +224,7 @@ export async function auditBucket(
   refsByBucket: Map<string, DbRef[]>,
   now: Date,
 ): Promise<BucketAudit> {
-  const objects = await listBucket(sc, bucket);
-  const refs = refsByBucket.get(bucket) ?? [];
-  const refsByKey = new Map<string, DbRef[]>();
-  for (const r of refs) {
-    const list = refsByKey.get(r.key);
-    if (list) list.push(r);
-    else refsByKey.set(r.key, [r]);
-  }
-  const present = new Set(objects.map((o) => o.key));
-
-  const classified: ClassifiedObject[] = objects.map((o) => {
-    const objRefs = refsByKey.get(o.key) ?? [];
-    return { ...o, refs: objRefs, category: classify(o, objRefs, now) };
-  });
-
-  const orphanRows: OrphanRow[] = refs
-    .filter((r) => !present.has(r.key))
-    .map((r) => ({ ...r, bucket }));
-
-  const totals = {
-    linked: { count: 0, bytes: 0 },
-    staged: { count: 0, bytes: 0 },
-    staged_old: { count: 0, bytes: 0 },
-    zombie: { count: 0, bytes: 0 },
-    trash: { count: 0, bytes: 0 },
-  } satisfies Record<Category, { count: number; bytes: number }>;
-  for (const o of classified) {
-    totals[o.category].count += 1;
-    totals[o.category].bytes += o.sizeBytes;
-  }
-
-  return { bucket, objects: classified, orphanRows, totals };
+  return auditListed(bucket, await listBucket(sc, bucket), refsByBucket, now);
 }
 
 function mb(bytes: number): string {
@@ -232,10 +250,13 @@ async function main(): Promise<void> {
   const now = new Date();
 
   try {
-    const refsByBucket = await collectDbRefs(db);
+    const { byBucket: refsByBucket, unknownBucketValues } = await collectDbRefs(db);
     const audits: BucketAudit[] = [];
     for (const bucket of BILLING_BUCKETS) {
       audits.push(await auditBucket(sc, bucket, refsByBucket, now));
+    }
+    if (unknownBucketValues.length > 0 && !asJson) {
+      console.log(`\n⚠️  DB rows named ${unknownBucketValues.length} bucket(s) outside the billing allowlist: ${unknownBucketValues.join(', ')}`);
     }
 
     if (asJson) {
@@ -243,7 +264,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    const cats: Category[] = ['linked', 'staged', 'staged_old', 'zombie', 'trash'];
+    const cats: Category[] = ['linked', 'staged', 'staged_old', 'zombie', 'zombie_fresh', 'trash'];
     console.log(`\nStorage audit — ${now.toISOString()} (read-only)\n`);
     console.log(
       pad('bucket', 24) + cats.map((c) => pad(c, 20)).join('') + pad('orphan rows', 12) + 'total',
@@ -287,7 +308,9 @@ async function main(): Promise<void> {
   }
 }
 
-// Only run when invoked directly — the module is also imported by the unit tests.
+// Only run when invoked directly. scripts/storage-cleanup.ts imports
+// collectDbRefs / auditListed / listBucket / storageClient from here, and must not
+// trigger a second full audit as a side effect of that import.
 if (process.argv[1] && process.argv[1].endsWith('storage-audit.ts')) {
   main().catch((err) => {
     console.error(err instanceof Error ? err.message : err);

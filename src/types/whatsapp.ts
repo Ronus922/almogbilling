@@ -273,6 +273,13 @@ export interface BroadcastAudience {
   debtor_ids?: string[];
 }
 
+/**
+ * @deprecated Row shape of `public.whatsapp_broadcasts`, which is SUPERSEDED by
+ * `wa_campaigns`. Nothing reads or writes it any more — its data-access module
+ * was deleted in the phase-2 cleanup. The table itself survives because
+ * `chat_messages.broadcast_id` still references it from 494 rows, so these two
+ * types are kept as documentation of that historical shape. Do not build on them.
+ */
 export interface Broadcast {
   id: string;
   name: string;
@@ -287,6 +294,7 @@ export interface Broadcast {
   completed_at: string | null;
 }
 
+/** @deprecated See {@link Broadcast} — write path for a superseded table. */
 export interface BroadcastInput {
   name: string;
   /** Free-text body. Mutually exclusive with template_id (one is required). */
