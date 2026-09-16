@@ -19,9 +19,16 @@
 # Install:
 #   sudo cp deploy/systemd/billing-alert@.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
-# Test (fails on purpose, sends a real WhatsApp message):
-#   sudo systemd-run --unit=billing-alert-selftest \
-#     --property=OnFailure=billing-alert@billing-alert-selftest.service /bin/false
+# DRILL: set ALERT_TEST_MODE=1 and the message is labelled "[בדיקה]" and says it
+# is not a real fault. Use a drop-in EnvironmentFile (NOT Environment= — an
+# EnvironmentFile overrides it, and /etc/billing/billing.env already sets some of
+# these keys):
+#   printf 'ALERT_TEST_MODE=1\n' | sudo tee /etc/billing/alert-drill.env
+#   sudo mkdir -p /etc/systemd/system/billing-alert@.service.d
+#   printf '[Service]\nEnvironmentFile=/etc/billing/alert-drill.env\n' \
+#     | sudo tee /etc/systemd/system/billing-alert@.service.d/zz-drill.conf
+#   sudo systemctl daemon-reload
+# …then make a wired unit fail, and remove both files afterwards.
 [Unit]
 Description=ALMOG CRM — WhatsApp alert: %i failed
 
@@ -31,7 +38,8 @@ User=ubuntu
 Group=devops-www
 WorkingDirectory=/var/www/billing
 # Read as root by systemd, then dropped to ubuntu: DATABASE_URL, SETTINGS_ENC_KEY,
-# ADMIN_ALERT_EMAIL, ADMIN_ALERT_PHONE (falls back to BLLINK_ALERT_PHONE).
+# ADMIN_ALERT_EMAIL, ADMIN_ALERT_PHONE (falls back to BLLINK_ALERT_PHONE),
+# ALERT_TEST_MODE.
 # The SMTP account is the app's own, out of public.app_settings — no new secret.
 EnvironmentFile=/etc/billing/billing.env
 # Absolute node + local tsx — no PATH/npx dependence under systemd's minimal env.

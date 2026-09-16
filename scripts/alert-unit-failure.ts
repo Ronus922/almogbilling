@@ -1,7 +1,9 @@
 // scripts/alert-unit-failure.ts — OnFailure= handler: tell the admin, by email
-// AND on WhatsApp, that a scheduled unit failed.
+// AND on WhatsApp, that a scheduled job failed — in language they can act on.
 //
 //   npx tsx scripts/alert-unit-failure.ts billing-backup.service
+//   npx tsx scripts/alert-unit-failure.ts <unit> --print   # render, send nothing
+//   ALERT_TEST_MODE=1 npx tsx scripts/alert-unit-failure.ts <unit>   # drill
 //
 // Wired as `OnFailure=billing-alert@%n.service` on the units that must never
 // fail silently (deploy/systemd/billing-alert@.service). systemd expands %n to
@@ -11,7 +13,7 @@
 // report a failure it survives. OnFailure also covers the cases it cannot — an
 // ExecStartPre gate that refused to let it start, the TimeoutStartSec kill, an
 // OOM kill, a syntax error that stops the process before its own error handling
-// is wired. Those are exactly the silent failures prerequisite #2 was about.
+// is wired.
 //
 // TWO INDEPENDENT CHANNELS, email first then WhatsApp. Neither is allowed to
 // stop the other: an SMTP outage must not swallow the WhatsApp alert, and a
@@ -19,25 +21,28 @@
 // the process exits 1 only when BOTH failed, so the journal (and systemd) show
 // that nobody was told.
 //
+// This file only GATHERS FACTS. Every word the reader sees is built in
+// scripts/lib/unit-failure.ts, which is pure and tested.
+//
 // Env (from /etc/billing/billing.env): DATABASE_URL, SETTINGS_ENC_KEY,
-// ADMIN_ALERT_EMAIL, ADMIN_ALERT_PHONE (falls back to BLLINK_ALERT_PHONE).
-// Reads the DB only to look up the Green API instance and the SMTP account;
-// writes nothing, anywhere.
+// ADMIN_ALERT_EMAIL, ADMIN_ALERT_PHONE (falls back to BLLINK_ALERT_PHONE),
+// ALERT_TEST_MODE. Reads the DB only to look up the Green API instance and the
+// SMTP account; writes nothing, anywhere.
 import { execFileSync } from 'node:child_process';
 import dotenv from 'dotenv';
 import { Client } from 'pg';
 import { sendAdminAlert } from './lib/admin-alert';
 import { sendAdminEmail } from './lib/admin-email';
-import { buildUnitFailureEmail, describeExit } from './lib/unit-failure';
+import {
+  buildEmail, buildWhatsApp, latestFinishedIso, parseExecStatus, snapshotIsoFromJournal,
+  type FailureFacts,
+} from './lib/unit-failure';
 
 dotenv.config({ path: '.env.local', quiet: true });
 
-/** Email carries the fuller tail; WhatsApp is a phone screen, and Green API
- *  would truncate anything long anyway. */
-const JOURNAL_LINES_EMAIL = 30;
-const JOURNAL_LINES_WHATSAPP = 12;
-/** Longest message we hand Green API. A journal tail is worth having, an
- *  unbounded one is worth nothing — the journal itself is the real record. */
+/** Email carries the fuller tail; WhatsApp is a phone screen. */
+const JOURNAL_LINES = 30;
+/** Longest message we hand Green API. */
 const MAX_WHATSAPP_CHARS = 2500;
 
 function sh(file: string, args: string[]): string {
@@ -45,18 +50,37 @@ function sh(file: string, args: string[]): string {
     return execFileSync(file, args, { encoding: 'utf8', timeout: 15_000 }).trim();
   } catch (e) {
     const out = (e as { stdout?: string }).stdout;
-    return typeof out === 'string' && out.trim() !== '' ? out.trim() : `<${file} failed>`;
+    return typeof out === 'string' && out.trim() !== '' ? out.trim() : '';
   }
 }
 
-function props(unit: string): Record<string, string> {
-  const raw = sh('systemctl', ['show', unit, '--property=Result,ExecMainStatus,ExecMainCode,InvocationID,ActiveEnterTimestamp']);
+/** systemctl show output → key→value. Exec* steps with several commands are
+ *  printed as several lines sharing one key, so repeated keys are JOINED, never
+ *  overwritten — dropping one loses the command that actually failed. */
+function showProps(unit: string, properties: string[]): Record<string, string> {
+  const raw = sh('systemctl', ['show', unit, `--property=${properties.join(',')}`]);
   const out: Record<string, string> = {};
   for (const line of raw.split('\n')) {
     const eq = line.indexOf('=');
-    if (eq > 0) out[line.slice(0, eq)] = line.slice(eq + 1);
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq);
+    out[key] = key in out ? `${out[key]}\n${line}` : line;
   }
   return out;
+}
+
+/** The failing step and its exit status. Falls back to the main process for a
+ *  signal or OOM kill, where no Exec* entry carries a non-zero status. */
+function readExitStatus(unit: string): { step: string | null; status: number | null } {
+  const raw = sh('systemctl', ['show', unit, '--property=ExecStartPre,ExecStart,ExecStartPost']);
+  const fromSteps = parseExecStatus(raw);
+  if (fromSteps.status !== null) return fromSteps;
+
+  const main = sh('systemctl', ['show', unit, '--property=ExecMainCode,ExecMainStatus']);
+  const code = main.match(/ExecMainCode=(\d+)/)?.[1];
+  const status = main.match(/ExecMainStatus=(\d+)/)?.[1];
+  if (code && code !== '0') return { step: null, status: Number(status ?? 0) };
+  return { step: null, status: null };
 }
 
 function journalTail(unit: string, invocationId: string, lines: number): string {
@@ -68,19 +92,54 @@ function journalTail(unit: string, invocationId: string, lines: number): string 
   return sh('journalctl', args);
 }
 
-function lastLines(text: string, n: number): string {
-  return text.split('\n').slice(-n).join('\n');
+/** When this unit last FINISHED successfully. */
+function lastGoodRunIso(unit: string): string | null {
+  return latestFinishedIso(
+    sh('journalctl', ['-u', unit, '--no-pager', '-o', 'short-iso', '-n', '2000', '-g', 'Finished ']),
+  );
+}
+
+/** When the timer will try again. */
+function nextRunIso(unit: string): string | null {
+  const timer = unit.replace(/\.service$/, '.timer');
+  const raw = sh('systemctl', ['show', timer, '--property=NextElapseUSecRealtime']);
+  const value = raw.split('=').slice(1).join('=').trim();
+  if (!value || value === 'n/a') return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 async function main(): Promise<void> {
   const unit = process.argv[2];
-  if (!unit) throw new Error('usage: alert-unit-failure.ts <unit-name>');
+  if (!unit) throw new Error('usage: alert-unit-failure.ts <unit-name> [--print]');
+  // --print renders exactly what would be sent and sends nothing: for reviewing
+  // the wording, and for checking after the fact what an alert actually said.
+  const printOnly = process.argv.includes('--print');
 
-  const p = props(unit);
-  const result = p.Result || 'unknown';
-  const exitStatus = describeExit(p.ExecMainCode, p.ExecMainStatus);
-  const whenIso = new Date().toISOString();
-  const journal = journalTail(unit, p.InvocationID ?? '', JOURNAL_LINES_EMAIL);
+  const base = showProps(unit, ['Result', 'InvocationID']);
+  const valueOf = (k: string): string => (base[k] ?? '').slice(k.length + 1);
+  const journal = journalTail(unit, valueOf('InvocationID'), JOURNAL_LINES);
+  const { step, status } = readExitStatus(unit);
+
+  const facts: FailureFacts = {
+    unit,
+    result: valueOf('Result') || 'unknown',
+    failingStep: step,
+    exitStatus: status,
+    whenIso: new Date().toISOString(),
+    journal,
+    snapshotIso: snapshotIsoFromJournal(journal),
+    lastGoodIso: lastGoodRunIso(unit),
+    nextRunIso: nextRunIso(unit),
+    testMode: process.env.ALERT_TEST_MODE === '1',
+  };
+
+  if (printOnly) {
+    const mail = buildEmail(facts);
+    process.stdout.write(`--- WhatsApp ---\n${buildWhatsApp(facts)}\n\n`);
+    process.stdout.write(`--- email: ${mail.subject} ---\n${mail.text}\n`);
+    return;
+  }
 
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL not set');
@@ -91,8 +150,7 @@ async function main(): Promise<void> {
   try {
     // ── 1. email ───────────────────────────────────────────────────────────
     try {
-      const mail = buildUnitFailureEmail({ unit, result, exitStatus, whenIso, journal });
-      const r = await sendAdminEmail(db, mail);
+      const r = await sendAdminEmail(db, buildEmail(facts));
       anySent ||= r.sent;
       console.error(`[alert-unit-failure] ${unit}: ${r.detail}`);
     } catch (err) {
@@ -101,13 +159,7 @@ async function main(): Promise<void> {
 
     // ── 2. WhatsApp ────────────────────────────────────────────────────────
     try {
-      const text =
-        `⚠️ יחידת systemd נכשלה (billing)\n` +
-        `יחידה: ${unit}\n` +
-        `תוצאה: ${result} — ${exitStatus}\n` +
-        `זמן: ${whenIso}\n` +
-        `\nיומן:\n${lastLines(journal, JOURNAL_LINES_WHATSAPP)}`;
-      const r = await sendAdminAlert(db, text.slice(0, MAX_WHATSAPP_CHARS));
+      const r = await sendAdminAlert(db, buildWhatsApp(facts).slice(0, MAX_WHATSAPP_CHARS));
       anySent ||= r.sent;
       console.error(`[alert-unit-failure] ${unit}: ${r.detail}`);
     } catch (err) {
