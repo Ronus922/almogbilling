@@ -112,6 +112,19 @@ async function main(): Promise<void> {
   const db = new Client({ connectionString: url });
   await db.connect();
 
+  // Close out rows abandoned by a previous run that was killed (SIGKILL, the
+  // systemd TimeoutStartSec, a pooler drop) — otherwise they sit at 'running'
+  // forever and poison exactly the dry-run record the arming decision rests on.
+  // Scoped to this job's own table, to 'running' only, and to rows older than
+  // 6h — far beyond the 30min unit timeout, so a concurrent run is never hit.
+  const abandoned = await db.query(
+    `update public.storage_cleanup_runs
+        set status = 'error', error_stage = 'record', finished_at = now(),
+            error_message = 'abandoned: no completion recorded; closed out by a later run'
+      where status = 'running' and started_at < now() - interval '6 hours'`,
+  );
+  if (abandoned.rowCount) console.error(`[storage-cleanup] closed ${abandoned.rowCount} abandoned run(s)`);
+
   const runId = (
     await db.query<{ id: string }>(
       `insert into public.storage_cleanup_runs (mode) values ($1) returning id`,
