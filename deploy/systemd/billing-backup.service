@@ -1,4 +1,10 @@
 # Nightly Postgres backup for the shared Supabase cluster + off-site restic push.
+#
+# pg-backup.sh writes the dumps; restic-push.sh pushes TWO snapshots to the same
+# repo — the dumps (tag supabase-daily) and the Supabase Storage object bytes
+# (tag storage). The second one is what billing-storage-cleanup.service checks
+# for before it is allowed to run at all.
+#
 # Install (see docs/backup.md):
 #   sudo cp deploy/systemd/billing-backup.{service,timer} /etc/systemd/system/
 #   sudo install -m 600 deploy/systemd/backup.env.example /etc/billing/backup.env   # then fill it
@@ -8,6 +14,11 @@ Description=ALMOG CRM — Postgres backup (supabase-db cluster + proj_billing) a
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
+# A backup that dies silently is a backup nobody has. healthchecks.io covers a
+# run that never happened (period 1 day, grace 26h); this covers one that
+# happened and failed, including the cases the scripts cannot report themselves
+# (the 2h TimeoutStartSec, an OOM kill). See deploy/systemd/billing-alert@.service.
+OnFailure=billing-alert@%n.service
 
 [Service]
 Type=oneshot

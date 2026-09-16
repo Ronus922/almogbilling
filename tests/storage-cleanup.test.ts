@@ -13,6 +13,9 @@ import {
   planBucket,
   refsMatchedNothing,
   storageRefFromUrl,
+  isStagedRefTable,
+  rowsToMarkDeleted,
+  STAGED_REF_TABLES,
   waMediaKeyFromUrl,
   type ClassifiedObject,
   type DbRef,
@@ -273,5 +276,59 @@ describe('storageRefFromUrl — both live proxy shapes, and nothing else', () =>
   it('waMediaKeyFromUrl stays narrow: only the wa-media shape', () => {
     expect(waMediaKeyFromUrl('/api/public/wa-media/a.png')).toBe('a.png');
     expect(waMediaKeyFromUrl('/api/files/whatsapp-attachments/a.pdf')).toBeNull();
+  });
+});
+
+describe('rowsToMarkDeleted — which attachment rows are stamped after a delete', () => {
+  const staged = (key: string, refs: DbRef[]): ClassifiedObject => ({
+    ...obj(key, 'staged_old'),
+    refs,
+  });
+
+  it('collects the row ids of every staged_old object, grouped by table', () => {
+    const got = rowsToMarkDeleted([
+      staged('a.pdf', [ref({ key: 'a.pdf', rowId: 'c1', table: 'wa_campaign_attachments' })]),
+      staged('b.pdf', [ref({ key: 'b.pdf', rowId: 'm1', table: 'wa_message_attachments' })]),
+      staged('c.pdf', [ref({ key: 'c.pdf', rowId: 'c2', table: 'wa_campaign_attachments' })]),
+    ]);
+    expect(got.get('wa_campaign_attachments')).toEqual(['c1', 'c2']);
+    expect(got.get('wa_message_attachments')).toEqual(['m1']);
+  });
+
+  it('NEVER marks a zombie — it has no row, so a match would be someone else\'s', () => {
+    const zombie = { ...obj('z.png', 'zombie'), refs: [ref({ key: 'z.png', rowId: 'ghost' })] };
+    expect(rowsToMarkDeleted([zombie]).size).toBe(0);
+  });
+
+  it('ignores the categories that are never deleted', () => {
+    for (const category of ['linked', 'staged', 'zombie_fresh', 'trash'] as const) {
+      const o = { ...obj('x.pdf', category), refs: [ref({ key: 'x.pdf', rowId: 'r9' })] };
+      expect(rowsToMarkDeleted([o]).size).toBe(0);
+    }
+  });
+
+  it('de-duplicates a row id that two refs of the same object produce', () => {
+    const got = rowsToMarkDeleted([
+      staged('a.pdf', [
+        ref({ key: 'a.pdf', rowId: 'c1' }),
+        ref({ key: 'a.pdf', rowId: 'c1' }),
+      ]),
+    ]);
+    expect(got.get('wa_campaign_attachments')).toEqual(['c1']);
+  });
+
+  it('marks nothing when nothing was removed', () => {
+    expect(rowsToMarkDeleted([]).size).toBe(0);
+  });
+
+  it('THROWS on a ref from any other table rather than guessing which row to touch', () => {
+    const o = staged('d.pdf', [ref({ key: 'd.pdf', rowId: 'x1', table: 'documents' })]);
+    expect(() => rowsToMarkDeleted([o])).toThrow(/unexpected table documents/);
+  });
+
+  it('only the two attachment tables are accepted', () => {
+    expect(STAGED_REF_TABLES).toEqual(['wa_campaign_attachments', 'wa_message_attachments']);
+    expect(isStagedRefTable('wa_message_attachments')).toBe(true);
+    expect(isStagedRefTable('chat_messages')).toBe(false);
   });
 });

@@ -19,13 +19,14 @@
 //
 // Env (all from /etc/billing/billing.env): DATABASE_URL, BLLINK_USER, BLLINK_PASSWORD,
 // PLAYWRIGHT_BROWSERS_PATH, CRM_DEBTORS_REST_URL, CRM_DEBTORS_REST_KEY,
-// SETTINGS_ENC_KEY + BLLINK_ALERT_PHONE (WhatsApp alert on failure, best-effort).
+// SETTINGS_ENC_KEY + ADMIN_ALERT_PHONE/BLLINK_ALERT_PHONE (WhatsApp alert on
+// failure, best-effort — scripts/lib/admin-alert.ts).
 //
 // Failure = status 'error' with the stage (login/navigate/download/parse/compare),
 // a screenshot in /var/log/billing/bllink-scrape-<ts>.png, and a WhatsApp alert to
 // the admin through billing's own Green API instance. The password is never logged.
 import dotenv from 'dotenv';
-import { createDecipheriv, createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,8 +35,7 @@ import { chromium, type Browser, type Page } from 'playwright';
 import ExcelJS from 'exceljs';
 import { parseDebtorsWorkbook, type ParsedDebtorRow } from '../src/lib/excel/parse';
 import { toArrayBuffer, worksheetToMatrix } from '../src/lib/excel/workbook';
-import { normalizePhone } from '../src/lib/whatsapp';
-import { GreenApiProvider } from '../src/lib/wa-queue/provider';
+import { sendAdminAlert } from './lib/admin-alert';
 
 // Local runs read .env.local (never overriding what the shell / systemd already set).
 dotenv.config({ path: '.env.local', quiet: true });
@@ -111,7 +111,6 @@ interface CompareSummary {
   parse_skipped: number;
 }
 
-interface EncBlob { iv: string; ct: string; tag: string }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -324,45 +323,6 @@ async function downloadExcel(page: Page, scrapeId: string): Promise<Buffer> {
   }
 }
 
-// ─── WhatsApp alert (billing's own Green API instance) ────────────────────────
-
-function decryptToken(blob: EncBlob): string {
-  const key = Buffer.from(requireEnv('SETTINGS_ENC_KEY'), 'base64');
-  if (key.length !== 32) throw new Error('SETTINGS_ENC_KEY must decode to 32 bytes');
-  const d = createDecipheriv('aes-256-gcm', key, Buffer.from(blob.iv, 'base64'));
-  d.setAuthTag(Buffer.from(blob.tag, 'base64'));
-  return Buffer.concat([d.update(Buffer.from(blob.ct, 'base64')), d.final()]).toString('utf8');
-}
-
-async function sendAdminAlert(db: Client, text: string): Promise<void> {
-  const phone = (process.env.BLLINK_ALERT_PHONE ?? '').trim();
-  if (!phone) {
-    log('BLLINK_ALERT_PHONE not set — WhatsApp alert skipped');
-    return;
-  }
-  const { rows } = await db.query<{ green_instance_id: string; green_token_enc: EncBlob; api_url: string }>(
-    `select green_instance_id, green_token_enc, api_url
-       from public.whatsapp_instances
-      order by (state = 'authorized') desc, created_at asc
-      limit 1`,
-  );
-  const inst = rows[0];
-  if (!inst) {
-    log('no whatsapp_instances row — WhatsApp alert skipped');
-    return;
-  }
-  const { chatId } = normalizePhone(phone);
-  const result = await new GreenApiProvider().send({
-    instanceId: inst.green_instance_id,
-    token: decryptToken(inst.green_token_enc),
-    apiUrl: inst.api_url,
-    chatId,
-    message: text,
-  });
-  if (result.ok) log(`WhatsApp alert sent (idMessage=${result.providerMessageId})`);
-  else log(`WhatsApp alert FAILED: ${result.message}`);
-}
-
 // ─── Retention ────────────────────────────────────────────────────────────────
 
 async function pruneOldScrapes(db: Client): Promise<void> {
@@ -436,7 +396,7 @@ async function main(): Promise<number> {
       `ריצה: ${scrapeId}\n` +
       `הסנכרון הקיים מה-CRM לא הושפע.`;
     try {
-      await sendAdminAlert(db, alert);
+      log((await sendAdminAlert(db, alert)).detail);
     } catch (e) {
       log(`WhatsApp alert threw: ${redact(errorText(e), secrets)}`);
     }

@@ -226,6 +226,47 @@ export function planBucket(
   return blocked ? { ...base, toDelete: [], blocked } : { ...base, toDelete: candidates, blocked: null };
 }
 
+/** The only tables a `staged_old` ref can come from: `bound: false` is produced
+ *  nowhere else (scripts/storage-audit.ts collectDbRefs is the authority). */
+export const STAGED_REF_TABLES = ['wa_campaign_attachments', 'wa_message_attachments'] as const;
+export type StagedRefTable = (typeof STAGED_REF_TABLES)[number];
+
+export function isStagedRefTable(v: string): v is StagedRefTable {
+  return (STAGED_REF_TABLES as readonly string[]).includes(v);
+}
+
+/**
+ * Which attachment rows must have `object_deleted_at` stamped after their
+ * objects were removed, grouped by table and de-duplicated.
+ *
+ * The row is marked, never deleted: the GC does not remove DB data, and the row
+ * is the last record that the upload ever happened (name, size, who, when).
+ * Marking is what keeps a compose sheet that has been open past the staging
+ * window from submitting a file whose bytes are gone.
+ *
+ * Only `staged_old` contributes — a `zombie` has no row by definition, and the
+ * caller must pass only objects the Storage server CONFIRMED it removed, since
+ * a stamp on an object that still exists would block a live file.
+ *
+ * Throws on a ref from any other table: that means the ref collection changed
+ * under us, which is a reason to stop rather than to guess which row to touch.
+ */
+export function rowsToMarkDeleted(removed: ClassifiedObject[]): Map<StagedRefTable, string[]> {
+  const byTable = new Map<StagedRefTable, Set<string>>();
+  for (const obj of removed) {
+    if (obj.category !== 'staged_old') continue;
+    for (const ref of obj.refs) {
+      if (!isStagedRefTable(ref.table)) {
+        throw new Error(`staged_old ref from unexpected table ${ref.table} (row ${ref.rowId})`);
+      }
+      const set = byTable.get(ref.table);
+      if (set) set.add(ref.rowId);
+      else byTable.set(ref.table, new Set([ref.rowId]));
+    }
+  }
+  return new Map([...byTable].map(([table, ids]) => [table, [...ids]]));
+}
+
 /** `/api/public/wa-media/<a>/<b>` or `/api/files/<bucket>/<a>/<b>` (possibly
  *  absolute, possibly percent-encoded) → `{ bucket, key }`. Null for anything
  *  else, including Green API's own CDN, which we do not own.

@@ -7,7 +7,8 @@
 | קובץ | תפקיד |
 |---|---|
 | `scripts/backup/pg-backup.sh` | שני dumps דרך `docker exec supabase-db`: `cluster-<stamp>.sql.gz` (`pg_dumpall`) + `proj_billing-<stamp>.sql.gz` (`pg_dump`). gzip, כתיבה ל-`.part` ואז rename אטומי, בדיקת `gzip -t` וגודל מינימלי, שמירת 7 ימים, ping ל-`$HEALTHCHECK_BACKUP_URL` (ו-`/fail` בכישלון). |
-| `scripts/backup/restic-push.sh` | `restic backup` של תיקיית הגיבויים ל-`$RESTIC_REPOSITORY` (B2) ואז `forget --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune`. ללא `RESTIC_REPOSITORY` — מדלג (exit 0) ומדפיס הודעה. |
+| `scripts/backup/assert-storage-snapshot.sh` | שומר ההזמנה: מוודא שקיים snapshot עם tag `storage` מ-26 השעות האחרונות, אחרת exit 1. רץ כ-`ExecStartPre=+` של `billing-storage-cleanup.service` (כ-root, כדי שהסודות של B2 לא ייכנסו לתהליך ה-GC). |
+| `scripts/backup/restic-push.sh` | **שני** snapshots לאותו repo: `$BACKUP_DIR` (tag `supabase-daily`) ואז `$STORAGE_DIR` (tag `storage`), ואז `forget --group-by host,paths --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune`. ללא `RESTIC_REPOSITORY` — מדלג (exit 0) ומדפיס הודעה. |
 | `scripts/backup/pg-restore.sh <file>` | מרים Postgres זמני (אותו image), משחזר לתוכו ומדפיס `count(*)` מטבלאות אימות. הקונטיינר נמחק בסיום (`--keep` משאיר אותו). |
 | `deploy/systemd/billing-backup.service` + `.timer` | הרצה יומית ב-03:00 (`Persistent=true`), `EnvironmentFile=-/etc/billing/backup.env`. |
 | `deploy/systemd/backup.env.example` | שמות המשתנים ל-`/etc/billing/backup.env`. |
@@ -47,6 +48,35 @@ ls -la /var/backups/supabase/daily
    מקבל ping בכל סיום מוצלח. אין ping → התראה.
 4. **off-site** — `sudo -E restic snapshots` (עם ה-env של `/etc/billing/backup.env`)
    מראה snapshot חדש בכל יום.
+
+## הבייטים של Storage (מ-16/09/2026)
+
+`pg_dumpall` שומר את `storage.objects` — את **המטא-דאטה**. הבייטים עצמם יושבים על
+הדיסק (`supabase-storage` רץ עם `STORAGE_BACKEND=file`, bind mount מ-
+`/opt/supabase/docker/volumes/storage`). עד 16/09/2026 הם לא היו בשום גיבוי:
+שחזור היה מצליח ומחזיר בסיס נתונים שלם שבו כל קובץ מצורף, חשבונית ומסמך הם
+קישור שבור.
+
+מאז `restic-push.sh` דוחף אותם כ-snapshot שני, עם `--tag storage`, לאותו
+repository. זו **תשתית משותפת** — `invoice-files` (1489 אובייקטים) יושב שם לצד
+הבאקטים של billing, וכולם נכללים.
+
+```bash
+# מה יש
+sudo bash -c 'set -a; . /etc/billing/backup.env; set +a; restic snapshots'
+# שחזור של הבייטים בלבד
+sudo bash -c 'set -a; . /etc/billing/backup.env; set +a; \
+  restic restore latest --tag storage --target /var/tmp/restore-test'
+```
+
+**רטנשן לא השתנה:** `restic forget` מקבץ לפי `host,paths`, כך ששני הנתיבים הם שתי
+קבוצות נפרדות ולכל אחת 7/4/6 משלה. `--group-by host,paths` מועבר מפורשות כדי
+ששינוי ברירת מחדל עתידי של restic לא יאחד אותן בשקט.
+
+**אימות שחזור שבוצע ב-16/09/2026:** שני ה-snapshots שוחזרו ל-`/var/tmp`, 18/18
+dumps זהים byte-for-byte, 1608/1608 אובייקטים זהים ב-`diff -rq`, וספירת הקבצים
+המשוחזרים שווה ל-`storage.objects` בכל אחד משמונת הבאקטים. גודל ה-repo
+(raw-data) עלה מ-189.99MiB ל-462.90MiB (פי 2.44).
 
 ## איך משחזרים
 

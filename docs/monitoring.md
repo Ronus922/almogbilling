@@ -13,6 +13,9 @@
 | Health | `GET /api/health` | `200 {status:'ok'}` רק אם `SELECT 1` מול ה-DB עובר; אחרת `503`. ציבורי (בלי session) — מתועד ב-`check:auth`. |
 | תזכורות | `scripts/run-reminders.sh` | אחרי ריצה מוצלחת `curl $HEALTHCHECK_REMINDERS_URL`; בכישלון `…/fail`. |
 | גיבוי | `scripts/backup/pg-backup.sh` | `curl $HEALTHCHECK_BACKUP_URL` בסיום, `…/fail` בשגיאה. |
+| דחיפה ל-B2 | `scripts/backup/restic-push.sh` | `…/fail` בכישלון — בלי זה ה-ping הירוק של ה-dumps היה משאיר את ה-check ירוק בזמן ששום דבר לא עלה החוצה. |
+| כישלון יחידת systemd | `deploy/systemd/billing-alert@.service` → `scripts/alert-unit-failure.ts` | `OnFailure=billing-alert@%n.service` על `billing-backup.service` ועל `billing-storage-cleanup.service`. שולח WhatsApp ל-`ADMIN_ALERT_PHONE` (נופל חזרה ל-`BLLINK_ALERT_PHONE`) דרך ה-instance של billing עצמו, עם 12 שורות היומן של אותה ריצה. תופס גם מה שהסקריפט לא יכול לדווח בעצמו: `ExecStartPre` שסירב, `TimeoutStartSec`, OOM kill. |
+| התראת סורק בלינק | `scripts/bllink-scrape.ts` | אותו מנגנון, דרך `scripts/lib/admin-alert.ts`. |
 
 משתני סביבה (כולם אופציונליים, ריק = כבוי): `SENTRY_DSN`, `SENTRY_ENVIRONMENT`
 (ברירת מחדל `NODE_ENV`), `SENTRY_TRACES_SAMPLE_RATE` (0.1), `SENTRY_ORG`,

@@ -1,0 +1,36 @@
+# WhatsApp alert for a failed unit. Instantiated by systemd, never started by hand:
+#
+#   [Unit]
+#   OnFailure=billing-alert@%n.service
+#
+# %n expands to the FAILING unit's own name, so `billing-backup.service` becomes
+# the instance `billing-alert@billing-backup.service.service` and %i hands the
+# name back to the script. Attached to billing-backup.service and
+# billing-storage-cleanup.service (prerequisite #2 of arming the Storage GC).
+#
+# This unit has NO OnFailure= of its own — an alert that cannot be delivered must
+# not trigger another alert. It says so in the journal and stops there.
+#
+# Install:
+#   sudo cp deploy/systemd/billing-alert@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+# Test (fails on purpose, sends a real WhatsApp message):
+#   sudo systemd-run --unit=billing-alert-selftest \
+#     --property=OnFailure=billing-alert@billing-alert-selftest.service /bin/false
+[Unit]
+Description=ALMOG CRM — WhatsApp alert: %i failed
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=devops-www
+WorkingDirectory=/var/www/billing
+# Read as root by systemd, then dropped to ubuntu: DATABASE_URL, SETTINGS_ENC_KEY,
+# ADMIN_ALERT_PHONE (or BLLINK_ALERT_PHONE).
+EnvironmentFile=/etc/billing/billing.env
+# Absolute node + local tsx — no PATH/npx dependence under systemd's minimal env.
+ExecStart=/usr/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/alert-unit-failure.ts %i
+# Green API + one DB lookup. Long enough for a retry, short enough that a hung
+# alert cannot sit in the queue until the next nightly run.
+TimeoutStartSec=2min
+Nice=10
