@@ -7,8 +7,8 @@
 import type { AreaType, AreaWritableFields } from '@/lib/types/areas';
 import { COLOR_HEX_RE } from '@/lib/validation/status';
 
-export const AREA_NAME_MAX = 120;
-export const AREA_DESCRIPTION_MAX = 2000;
+const AREA_NAME_MAX = 120;
+const AREA_DESCRIPTION_MAX = 2000;
 
 const AREA_TYPES: readonly AreaType[] = ['closed_room', 'open_space'];
 

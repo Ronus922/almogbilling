@@ -16,8 +16,6 @@ export interface NotifyChannelSelection {
 /** recipientKey → channel selection. Only selected recipients appear. */
 export type NotifySelection = Record<string, NotifyChannelSelection>;
 
-export const EMPTY_NOTIFY_SELECTION: NotifySelection = {};
-
 /** A user the matrix can target ("me"/assignee), with contact-detail availability. */
 export interface NotifyUserContact {
   id: string;
@@ -32,7 +30,7 @@ export function recipientKey(kind: RecipientKind, id?: string): string {
   return kind === 'me' ? 'me' : `${kind}:${id}`;
 }
 
-export function parseRecipientKey(
+function parseRecipientKey(
   key: string,
 ): { kind: 'me' } | { kind: 'user' | 'supplier'; id: string } | null {
   if (key === 'me') return { kind: 'me' };
@@ -88,8 +86,4 @@ export function channelsToSelection(channels: ChannelValue, recipientKeys: strin
   const out: NotifySelection = {};
   for (const k of recipientKeys) out[k] = { email: channels.email, whatsapp: channels.whatsapp };
   return out;
-}
-
-export function hasAnyNotify(sel: NotifySelection): boolean {
-  return Object.keys(sel).length > 0;
 }

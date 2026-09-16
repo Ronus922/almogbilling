@@ -6,7 +6,6 @@ import type {
   ChipStatus,
   ChipResidentRole,
   ChipDeactivationReason,
-  ChipEventType,
   ChipTab,
   AppPlatform,
   AppInviteStatus,
@@ -33,15 +32,6 @@ export const CHIP_DEACTIVATION_REASONS: readonly ChipDeactivationReason[] = [
   'returned',
   'moved_out',
   'unknown',
-];
-
-export const CHIP_EVENT_TYPES: readonly ChipEventType[] = [
-  'issued',
-  'deactivated',
-  'reactivated',
-  'reassigned',
-  'note',
-  'controller_synced',
 ];
 
 export const CHIP_TABS: readonly ChipTab[] = ['all', 'active', 'inactive', 'app'];
@@ -73,21 +63,6 @@ export const DEACTIVATION_REASON_LABEL: Record<ChipDeactivationReason, string> =
   returned: 'הוחזר',
   moved_out: 'עזב את הדירה',
   unknown: 'לא ידוע',
-};
-
-export const APP_PLATFORM_LABEL: Record<AppPlatform, string> = {
-  ios: 'iOS',
-  android: 'Android',
-  unknown: 'לא ידוע',
-};
-
-export const CHIP_EVENT_LABEL: Record<ChipEventType, string> = {
-  issued: 'הונפק',
-  deactivated: 'הושבת',
-  reactivated: 'הופעל מחדש',
-  reassigned: 'הועבר לדירה אחרת',
-  note: 'עדכון פרטים',
-  controller_synced: 'עודכן בבקר',
 };
 
 /** contacts.unit_type (071) display labels — the registry's unit taxonomy. */

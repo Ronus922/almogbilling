@@ -32,7 +32,7 @@ export const MAX_GROUP_MEMBERS = 50;
  * requested id is dropped. Closes the forced-subscription vector: a caller
  * cannot inject arbitrary / guessed user ids into a conversation.
  */
-export async function filterEligibleUserIds(ids: string[]): Promise<Set<string>> {
+async function filterEligibleUserIds(ids: string[]): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
   const r = await query<{ id: string }>(
     `select id from public.users where id = any($1::uuid[]) and is_active = true`,
@@ -49,7 +49,7 @@ export async function filterEligibleUserIds(ids: string[]): Promise<Set<string>>
  * check it (or rely on a query that filters by participant) before returning
  * any conversation data. Prevents IDOR.
  */
-export async function isParticipant(conversationId: string, userId: string): Promise<boolean> {
+async function isParticipant(conversationId: string, userId: string): Promise<boolean> {
   const row = await queryOne<{ ok: boolean }>(
     `select true as ok
        from public.internal_conversation_participants
@@ -70,9 +70,6 @@ export async function listParticipantIds(conversationId: string): Promise<string
 }
 
 // ── Presence ──────────────────────────────────────────────────────────────
-
-/** How long after the last heartbeat a user still counts as "online". */
-export const PRESENCE_WINDOW_SECONDS = 60;
 
 /** Refresh the user's realtime-chat heartbeat (called on SSE connect + tick). */
 export async function touchLastSeen(userId: string): Promise<void> {
@@ -270,7 +267,7 @@ export async function getChatUnreadSummary(
  * `userB`. Returns its id, or null. Used to dedupe — a direct conversation
  * between two users is unique.
  */
-export async function findExistingDirect(userA: string, userB: string): Promise<string | null> {
+async function findExistingDirect(userA: string, userB: string): Promise<string | null> {
   const row = await queryOne<{ id: string }>(
     `
     select c.id
@@ -484,7 +481,7 @@ export async function getThreadForParticipant(
 }
 
 /** Advance the participant's last_read_at to now. No-op if not a participant. */
-export async function markRead(conversationId: string, userId: string): Promise<void> {
+async function markRead(conversationId: string, userId: string): Promise<void> {
   await query(
     `update public.internal_conversation_participants
         set last_read_at = now()

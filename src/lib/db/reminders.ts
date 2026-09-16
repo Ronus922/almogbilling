@@ -56,12 +56,6 @@ export async function listRemindersForEntity(
   return r.rows;
 }
 
-/** Delete a reminder. Used by the task panel to remove a reminder. */
-export async function deleteReminder(id: string): Promise<boolean> {
-  const r = await query(`delete from public.reminders where id = $1`, [id]);
-  return (r.rowCount ?? 0) > 0;
-}
-
 /** Delete all reminders for an entity (used when replacing a task's reminders). */
 export async function deleteRemindersForEntity(
   entityType: string,

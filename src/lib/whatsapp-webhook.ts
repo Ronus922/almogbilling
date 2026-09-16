@@ -7,7 +7,7 @@ import { env } from '@/env';
 // authenticates on the ?secret query param (constant-time compared against
 // GREEN_API_WEBHOOK_SECRET) and identifies the instance via instanceData.idInstance.
 
-export function webhookSecret(): string {
+function webhookSecret(): string {
   return (env.GREEN_API_WEBHOOK_SECRET ?? '').trim();
 }
 

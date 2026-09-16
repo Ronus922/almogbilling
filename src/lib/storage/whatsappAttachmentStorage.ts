@@ -4,7 +4,6 @@ import {
   ensureBucket,
   uploadObject,
   deleteObjects,
-  buildProxyUrl,
   WHATSAPP_ATTACHMENTS_BUCKET as BUCKET,
 } from './server';
 
@@ -41,9 +40,4 @@ export async function uploadWhatsAppAttachment(
 /** Removes the object (best-effort; the DB row is authoritative). */
 export async function removeWhatsAppAttachment(objectKey: string): Promise<void> {
   await deleteObjects(BUCKET, [objectKey]);
-}
-
-/** In-app, permission-checked URL for a stored attachment (relative). */
-export function whatsAppAttachmentUrl(objectKey: string): string {
-  return buildProxyUrl(BUCKET, objectKey);
 }

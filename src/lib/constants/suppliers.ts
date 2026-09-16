@@ -28,7 +28,7 @@ import type {
  */
 export type DesignTone = 'emerald' | 'slate' | 'amber';
 
-export const SUPPLIER_STATUSES: ReadonlyArray<{
+const SUPPLIER_STATUSES: ReadonlyArray<{
   value: SupplierStatus;
   label: string;
   tone: DesignTone;

@@ -99,15 +99,3 @@ export interface StorageUnitFilters {
   includeInactive?: boolean;
 }
 
-// ── by-apartment ─────────────────────────────────────────────────────────────
-
-/** Everything one apartment holds. Used by the contacts panel + /parking tab 2. */
-export interface ApartmentAssets {
-  apartment_number: string;
-  /** False when no contacts row carries this apartment_number. */
-  apartment_exists: boolean;
-  parking: ParkingSpot[];
-  storage: StorageUnit[];
-  /** Sum of parking capacity — a double counts as 2. */
-  total_places: number;
-}

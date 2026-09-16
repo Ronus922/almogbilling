@@ -17,7 +17,7 @@ export interface DebtorHistoryEntry {
 }
 
 export const HISTORY_LIMIT_DEFAULT = 100;
-export const HISTORY_LIMIT_MAX = 300;
+const HISTORY_LIMIT_MAX = 300;
 
 /**
  * Unified, time-ordered timeline for one debtor. Merges four sources into a

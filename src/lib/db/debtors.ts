@@ -259,7 +259,7 @@ export async function getCollectionVsDebt(months = 6): Promise<CollectionVsDebt>
 }
 
 /** Live current open balance = sum(total_debt) over non-archived debtors. */
-export async function getOpenDebtBalance(): Promise<number> {
+async function getOpenDebtBalance(): Promise<number> {
   const row = await queryOne<{ total: string }>(
     `select coalesce(sum(total_debt) filter (where is_archived = false), 0)::text as total
        from public.debtors`,
@@ -297,13 +297,6 @@ export async function getTabCounts(): Promise<TabCounts> {
     actions: Number(row?.actions ?? 0),
     archived: Number(row?.archived ?? 0),
   };
-}
-
-export async function getLastImportedAt(): Promise<Date | null> {
-  const row = await queryOne<{ last_at: Date | null }>(
-    `select max(last_imported_at) as last_at from public.debtors`,
-  );
-  return row?.last_at ?? null;
 }
 
 export type SortKey =
@@ -518,13 +511,6 @@ export async function listAllDebtorsForExport(
     args,
   );
   return res.rows;
-}
-
-export async function getAllApartmentNumbers(): Promise<Set<string>> {
-  const r = await query<{ apartment_number: string }>(
-    `select apartment_number from public.debtors`,
-  );
-  return new Set(r.rows.map((x) => x.apartment_number));
 }
 
 // ─────────────────────── Slice 3: panel ───────────────────────

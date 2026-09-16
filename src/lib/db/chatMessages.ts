@@ -8,7 +8,6 @@ import type {
   ChatStatus,
   ChatMessageType,
   ChatLinkStatus,
-  UnlinkedMessage,
 } from '@/types/whatsapp';
 
 // Minimal executor shape satisfied by both the pool (`query`) and a PoolClient
@@ -183,27 +182,6 @@ export function insertChatMessageTx(
   args: InsertChatMessageArgs,
 ): Promise<string | null> {
   return insertChatMessage(args, client);
-}
-
-/** Inbound messages with no matched debtor — the "הודעות לא משויכות" inbox. */
-export async function listUnlinkedMessages(limit = 200): Promise<UnlinkedMessage[]> {
-  const r = await query<UnlinkedMessage>(
-    `select id, contact_phone, chat_id, message_type, content, created_at
-       from public.chat_messages
-      where link_status = 'unlinked'
-      order by created_at desc
-      limit $1`,
-    [Math.max(1, Math.min(500, limit))],
-  );
-  return r.rows;
-}
-
-/** Count of currently-unlinked inbound messages (for the nav badge / empty check). */
-export async function countUnlinkedMessages(): Promise<number> {
-  const r = await query<{ c: string }>(
-    `select count(*)::text as c from public.chat_messages where link_status = 'unlinked'`,
-  );
-  return Number(r.rows[0]?.c ?? 0);
 }
 
 /**

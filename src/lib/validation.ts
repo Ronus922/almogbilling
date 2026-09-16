@@ -1,7 +1,7 @@
 // Source of truth for input validation. Mirror error messages in DESIGN.md
 // (Section 7) so frontend + backend use the same wording.
 
-export function normalizePhone(raw: string | null | undefined): string {
+function normalizePhone(raw: string | null | undefined): string {
   if (raw == null) return '';
   return String(raw).replace(/\D+/g, '');
 }

@@ -27,7 +27,7 @@ export type WhatsAppAttachmentKind = 'image' | 'video' | 'audio' | 'document';
 /** Green API: per-file ceiling on every file method. */
 export const GREEN_API_MAX_FILE_BYTES = 100 * MB;
 /** Self-hosted Supabase Storage FILE_SIZE_LIMIT (see header). */
-export const STORAGE_MAX_BYTES = 50 * MB;
+const STORAGE_MAX_BYTES = 50 * MB;
 
 /** Files per SINGLE outbound message ("שליחת הודעת WhatsApp" — one recipient).
  *  Lower than a broadcast on purpose: the send is synchronous, in-request. The

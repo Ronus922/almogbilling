@@ -27,7 +27,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export const CATEGORY_NAME_MAX = 60;
+const CATEGORY_NAME_MAX = 60;
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v.trim() : '';

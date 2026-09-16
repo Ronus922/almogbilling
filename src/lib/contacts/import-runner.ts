@@ -67,15 +67,6 @@ export async function getContactsImportRun(runId: string): Promise<ContactsImpor
   );
 }
 
-export async function listContactsImportRuns(limit = 10): Promise<ContactsImportRun[]> {
-  const r = await query<ContactsImportRun>(
-    `select ${RUN_COLUMNS} from public.import_runs
-     where kind = 'contacts' order by started_at desc limit $1`,
-    [limit],
-  );
-  return r.rows;
-}
-
 // ── parse helpers ─────────────────────────────────────────────────────────
 
 function toText(v: unknown): string | null {

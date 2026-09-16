@@ -40,7 +40,7 @@ export interface MenuSection {
 // Unified single list — no section sub-headers. Order: daily work + comms first,
 // then the system-management entries. Every item keeps its route + permission
 // module, so RBAC stays 1:1 (an unpermitted item just hides).
-export const SECTIONS: MenuSection[] = [
+const SECTIONS: MenuSection[] = [
   {
     title: '',
     items: [

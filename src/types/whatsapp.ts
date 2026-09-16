@@ -10,7 +10,6 @@
 //   POST   /api/whatsapp/send-bulk              body: BulkSendInput → NDJSON stream of
 //                                                 BulkSendProgress… + BulkSendSummary
 //   GET    /api/whatsapp/messages?debtor_id=…   → ChatMessage[]        (chronological)
-//   GET    /api/whatsapp/unlinked               → UnlinkedMessage[]    (inbound, no debtor)
 //   POST   /api/whatsapp/messages/[id]/link     body: { debtor_id } | { supplier_id } | { unlink: true } → { ok, linked }
 //                                                 (XOR: a conversation links to a debtor OR a supplier OR neither)
 //   POST   /api/whatsapp/messages/[id]/create-supplier  body: { display_name, category_id? } → { id, linked }
@@ -274,6 +273,13 @@ export interface BroadcastAudience {
   debtor_ids?: string[];
 }
 
+/**
+ * @deprecated Row shape of `public.whatsapp_broadcasts`, which is SUPERSEDED by
+ * `wa_campaigns`. Nothing reads or writes it any more — its data-access module
+ * was deleted in the phase-2 cleanup. The table itself survives because
+ * `chat_messages.broadcast_id` still references it from 494 rows, so these two
+ * types are kept as documentation of that historical shape. Do not build on them.
+ */
 export interface Broadcast {
   id: string;
   name: string;
@@ -288,6 +294,7 @@ export interface Broadcast {
   completed_at: string | null;
 }
 
+/** @deprecated See {@link Broadcast} — write path for a superseded table. */
 export interface BroadcastInput {
   name: string;
   /** Free-text body. Mutually exclusive with template_id (one is required). */

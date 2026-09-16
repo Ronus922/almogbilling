@@ -8,7 +8,7 @@ export const STATUS_LEGAL_PROCEEDING = 'בהליך משפטי';
 
 /** The statuses that mean "the lawyer is involved" — a change INTO one of
  *  them is also announced to the legal contact configured in Settings. */
-export const LEGAL_STATUS_NAMES: readonly string[] = [STATUS_LEGAL_CARE, STATUS_LEGAL_PROCEEDING];
+const LEGAL_STATUS_NAMES: readonly string[] = [STATUS_LEGAL_CARE, STATUS_LEGAL_PROCEEDING];
 
 export function isLegalStatusName(name: string | null | undefined): boolean {
   return !!name && LEGAL_STATUS_NAMES.includes(name.trim());

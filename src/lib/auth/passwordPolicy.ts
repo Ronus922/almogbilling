@@ -6,7 +6,7 @@
  * here so server enforcement and client UI stay in sync.
  */
 
-export const PASSWORD_MIN_LENGTH = 8;
+const PASSWORD_MIN_LENGTH = 8;
 
 // Hebrew block U+0590..U+05FF (matches the regex already shipping in
 // ResetPasswordForm). Covers the basic letters א..ת plus niqqud, geresh,

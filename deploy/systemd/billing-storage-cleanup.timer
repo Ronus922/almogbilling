@@ -1,0 +1,22 @@
+[Unit]
+Description=Run billing-storage-cleanup.service daily at 04:30 Asia/Jerusalem
+
+[Timer]
+# 04:30 local = 01:30 UTC — a quiet window, clear of the 03:00 UTC batch
+# (billing-sync 03:00, billing-backup 03:01, billing-bllink-scrape 03:10).
+#
+# NOTE: the schedule is NOT chosen relative to the backup, because the backup
+# would not help. scripts/backup/* dumps Postgres and pushes only
+# /var/backups/supabase/daily to restic — Storage object BYTES are in no backup
+# at all. A deletion here is irreversible no matter when it runs. That is why
+# the service ships as a dry run.
+#
+# The host clock is UTC; the timezone suffix keeps it at 04:30 local through DST.
+OnCalendar=*-*-* 04:30:00 Asia/Jerusalem
+# Catch up a missed run (server was down at 04:30).
+Persistent=true
+AccuracySec=1min
+Unit=billing-storage-cleanup.service
+
+[Install]
+WantedBy=timers.target

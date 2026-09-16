@@ -155,15 +155,3 @@ export async function filterIssueIdsAssignedToUser(
   );
   return r.rows.map((x) => x.entity_id);
 }
-
-/** Delete all junction rows for an entity (issue hard-delete cleanup — entity_id
- *  is polymorphic and has no FK, so it does not cascade on its own). */
-export async function deleteEntityAssignees(
-  entityType: EntityType,
-  entityId: string,
-): Promise<void> {
-  await query(
-    `delete from public.entity_assignees where entity_type = $1 and entity_id = $2`,
-    [entityType, entityId],
-  );
-}

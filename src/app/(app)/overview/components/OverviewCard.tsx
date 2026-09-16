@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 // Tone presets for a widget's icon-chip + count badge. Colors map to the
 // DESIGN.md §2 palette. chat/whatsapp use a solid badge (per the mockup); the
 // rest use a soft badge.
-export const CARD_TONES = {
+const CARD_TONES = {
   blue:    { chip: 'bg-blue-50 text-blue-600',       badge: 'bg-blue-50 text-blue-600' },
   violet:  { chip: 'bg-violet-50 text-violet-600',   badge: 'bg-violet-50 text-violet-600' },
   red:     { chip: 'bg-red-50 text-red-600',         badge: 'bg-red-50 text-red-600' },

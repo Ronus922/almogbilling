@@ -353,17 +353,6 @@ export async function upsertContactByApartment(
 }
 
 /**
- * Point a debtor at a contact by matching normalized apartment_number. Missing
- * debtor is not an error — returns the number of rows updated (0 or more).
- */
-export async function linkDebtorToContact(
-  apartmentNumber: string,
-  contactId: string,
-): Promise<number> {
-  return withTransaction((client) => _linkDebtorToContact(client, apartmentNumber, contactId));
-}
-
-/**
  * Import hook: ensure every imported apartment has a contacts row, WITHOUT ever
  * touching an existing one — INSERT … ON CONFLICT (apartment_number) DO NOTHING
  * only. New rows are stamped source='bllink_sync' + needs_review=true so the

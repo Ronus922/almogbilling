@@ -21,7 +21,8 @@
     "check:session": "node scripts/check-session-hash.mjs",
     "check:dupes": "node scripts/check-no-duplicate-debtors.mjs",
     "check:wa": "node scripts/check-wa-idempotency.mjs",
-    "check:all": "npm run typecheck && npm run lint && npm run test && npm run check:secrets && npm run check:auth && npm run check:rbac && npm run check:money && npm run check:phone && npm run check:session && npm run check:dupes && npm run check:wa",
+    "check:knip": "knip --include files,dependencies",
+    "check:all": "npm run typecheck && npm run lint && npm run test && npm run check:secrets && npm run check:auth && npm run check:rbac && npm run check:money && npm run check:phone && npm run check:session && npm run check:dupes && npm run check:wa && npm run check:knip",
     "db:new": "dbmate --env-file .env.local --migrations-dir db/migrations --schema-file db/schema.sql --no-dump-schema new",
     "db:up": "dbmate --env-file .env.local --migrations-dir db/migrations --schema-file db/schema.sql --no-dump-schema up",
     "db:status": "dbmate --env-file .env.local --migrations-dir db/migrations --schema-file db/schema.sql --no-dump-schema status",
@@ -32,14 +33,15 @@
     "e2e:mailpit": "docker compose -f docker-compose.e2e.yml up -d",
     "e2e:mailpit:down": "docker compose -f docker-compose.e2e.yml down",
     "db:seed:e2e": "bash scripts/e2e/seed.sh",
-    "bllink:shadow-report": "tsx scripts/bllink-shadow-report.ts"
+    "bllink:shadow-report": "tsx scripts/bllink-shadow-report.ts",
+    "storage:audit": "tsx scripts/storage-audit.ts",
+    "storage:cleanup": "tsx scripts/storage-cleanup.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.0",
     "@base-ui/react": "^1.4.1",
     "@sentry/nextjs": "^10.73.0",
     "@supabase/storage-js": "^2.108.1",
-    "@supabase/supabase-js": "^2.108.1",
     "@t3-oss/env-nextjs": "^0.13.11",
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
@@ -70,7 +72,7 @@
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@ts-safeql/eslint-plugin": "^5.4.1",
-    "@types/bcryptjs": "^2.4.6",
+    "@ts-safeql/plugin-utils": "^5.3.0",
     "@types/node": "^20",
     "@types/nodemailer": "^8.0.0",
     "@types/pg": "^8.20.0",
@@ -81,11 +83,11 @@
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.4",
     "husky": "^9.1.7",
+    "knip": "^5.88.1",
     "libpg-query": "^17.7.4",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5",
-    "typescript-eslint": "^8.69.0",
     "vitest": "^2.1.9"
   }
 }

@@ -69,15 +69,6 @@ export async function getResidentsImportRun(runId: string): Promise<ResidentsImp
   );
 }
 
-export async function listResidentsImportRuns(limit = 10): Promise<ResidentsImportRun[]> {
-  const r = await query<ResidentsImportRun>(
-    `select ${RUN_COLUMNS} from public.import_runs
-     where kind = 'residents' order by started_at desc limit $1`,
-    [limit],
-  );
-  return r.rows;
-}
-
 // ── pure helpers (exported for unit tests — no DB needed) ─────────────────
 
 export type ResidentRole = 'owner' | 'tenant' | 'operator';
@@ -97,7 +88,7 @@ export type ResidentFieldKey =
   | 'operator_name'
   | 'operator_phone';
 
-export function toText(v: unknown): string | null {
+function toText(v: unknown): string | null {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();
   return s === '' ? null : s;

@@ -9,12 +9,6 @@ export function toDateKey(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-/** Parse 'YYYY-MM-DD' to a local Date at midnight. */
-export function fromDateKey(key: string): Date {
-  const [y, m, d] = key.split('-').map(Number);
-  return new Date(y, (m ?? 1) - 1, d ?? 1);
-}
-
 export function todayKey(): string {
   return toDateKey(new Date());
 }
@@ -30,13 +24,9 @@ export function addMonths(d: Date, n: number): Date {
   return x;
 }
 
-export function startOfMonth(d: Date): Date {
+function startOfMonth(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
-export function endOfMonth(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
-}
-
 /** Sunday-start week containing d (week begins on Sunday in this UI). */
 export function startOfWeek(d: Date): Date {
   const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -60,9 +50,6 @@ export function weekDays(d: Date): Date[] {
   return Array.from({ length: 7 }, (_, i) => addDays(start, i));
 }
 
-export function isSameDay(a: Date, b: Date): boolean {
-  return toDateKey(a) === toDateKey(b);
-}
 export function isSameMonth(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
 }

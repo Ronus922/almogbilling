@@ -1,0 +1,42 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.jsonc",
+  "entry": [
+    "src/app/**/{page,layout,route,template,default,error,global-error,loading,not-found,proxy}.{ts,tsx}",
+    "src/middleware.ts",
+    "src/instrumentation.ts",
+    "src/instrumentation-client.ts",
+    "src/lib/wa-queue/**/*.ts",
+    "scripts/**/*.{ts,mts,mjs,js}",
+    "tests/**/*.ts",
+    "e2e/**/*.ts",
+    "next.config.ts",
+    "postcss.config.mjs",
+    "eslint.config.mjs",
+    "sentry.server.config.ts",
+    "sentry.edge.config.ts",
+    "vitest.config.ts",
+    "playwright.config.ts"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "scripts/**/*.{ts,mts,mjs,js}",
+    "tests/**/*.ts",
+    "e2e/**/*.ts",
+    "*.{ts,mjs}"
+  ],
+  "ignore": [
+    "db/**",
+    "supabase/**",
+    ".next/**",
+    "ref/**"
+  ],
+  "ignoreBinaries": ["dbmate", "docker", "bash"],
+  // Not real orphans: knip cannot follow a CSS @import, so these three are
+  // invisible to it even though src/app/globals.css:1-3 pulls them in.
+  // (@tailwindcss/postcss is NOT listed — knip resolves it via postcss.config.mjs.)
+  "ignoreDependencies": [
+    "shadcn",
+    "tw-animate-css",
+    "tailwindcss"
+  ]
+}

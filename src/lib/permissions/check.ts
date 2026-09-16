@@ -5,7 +5,6 @@ import {
   ROLE_DEFAULTS,
   isElevatedRole,
   SUPER_ADMIN_ONLY,
-  MODULES,
 } from './constants';
 
 export function hasPermission(
@@ -40,24 +39,10 @@ export function canManageRole(actorRole: Role, targetRole: Role): boolean {
   return false;
 }
 
-/**
- * Can `actorRole` edit profile fields (full_name, is_active) of a user with `targetRole`?
- */
-export function canEditUserProfile(actorRole: Role, targetRole: Role): boolean {
-  if (actorRole === 'super_admin') return true;
-  if (actorRole === 'admin') return !isElevatedRole(targetRole);
-  return false;
-}
-
 /** Seed matrix for a matrix-managed role; null for roles that bypass the matrix. */
 export function getDefaultPermissions(role: Role): ModulePermission[] | null {
   const defaults = ROLE_DEFAULTS[role];
   return defaults ? defaults.map((p) => ({ ...p })) : null;
-}
-
-/** Modules the actor cannot view — used by sidebar to filter nav items. */
-export function getHiddenModules(role: Role, permissions: ModulePermission[]): string[] {
-  return MODULES.filter((m) => !hasPermission(role, permissions, m.key, 'view')).map((m) => m.key);
 }
 
 /**

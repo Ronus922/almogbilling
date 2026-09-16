@@ -1,7 +1,6 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import type {
-  ApartmentAssets,
   ParkingSpot,
   ParkingSpotFilters,
   ParkingSpotWritableFields,
@@ -81,7 +80,7 @@ const STORAGE_COLUMNS = `
 // ── shared guards ────────────────────────────────────────────────────────────
 
 /** True when a contacts row carries this apartment_number. */
-export async function apartmentExists(apartmentNumber: string): Promise<boolean> {
+async function apartmentExists(apartmentNumber: string): Promise<boolean> {
   const row = await queryOne<{ exists: boolean }>(
     `select exists(select 1 from public.contacts where apartment_number = $1) as exists`,
     [apartmentNumber],
@@ -194,7 +193,7 @@ export async function listParkingSpots(f: ParkingSpotFilters = {}): Promise<Park
   return r.rows;
 }
 
-export async function getParkingSpotById(id: string): Promise<ParkingSpot | null> {
+async function getParkingSpotById(id: string): Promise<ParkingSpot | null> {
   return queryOne<ParkingSpot>(
     `select ${PARKING_COLUMNS} from public.parking_spots where id = $1`,
     [id],
@@ -315,7 +314,7 @@ export async function listStorageUnits(f: StorageUnitFilters = {}): Promise<Stor
   return r.rows;
 }
 
-export async function getStorageUnitById(id: string): Promise<StorageUnit | null> {
+async function getStorageUnitById(id: string): Promise<StorageUnit | null> {
   return queryOne<StorageUnit>(
     `select ${STORAGE_COLUMNS} from public.storage_units where id = $1`,
     [id],
@@ -396,22 +395,4 @@ export async function toggleStorageUnitActive(
       returning ${STORAGE_COLUMNS}`,
     [id, actorId, reason],
   );
-}
-
-// ── by apartment ─────────────────────────────────────────────────────────────
-
-/** Everything one apartment holds — both tables in one round trip each. */
-export async function getApartmentAssets(apartmentNumber: string): Promise<ApartmentAssets> {
-  const [exists, parking, storage] = await Promise.all([
-    apartmentExists(apartmentNumber),
-    listParkingSpots({ apartment_number: apartmentNumber }),
-    listStorageUnits({ apartment_number: apartmentNumber }),
-  ]);
-  return {
-    apartment_number: apartmentNumber,
-    apartment_exists: exists,
-    parking,
-    storage,
-    total_places: parking.reduce((sum, p) => sum + p.capacity, 0),
-  };
 }

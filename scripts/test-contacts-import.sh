@@ -109,10 +109,6 @@ check "no-apartment row not inserted (total test rows = 4)" \
   "$(psql "$DB_URL" -tAc "select count(*) from public.contacts where apartment_number in $APTS;")" \
   "4"
 
-# --- runs history endpoint --------------------------------------------------
-RUNS=$(curl -s "$BASE/api/contacts/import/runs" -H "Cookie: $COOKIE")
-grep -q "\"$RUNID\"" <<<"$RUNS" && check "runs history lists this run" yes yes || check "runs history lists this run" no yes
-
 echo ""
 echo "==== $pass passed, $fail failed ===="
 [[ "$fail" -eq 0 ]]

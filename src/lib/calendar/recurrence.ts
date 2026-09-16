@@ -7,7 +7,7 @@ import type { RecurrenceRule, RecurrenceType } from '@/lib/types/calendar';
 /** Hard ceiling on materialized occurrences per series. */
 export const MAX_OCCURRENCES = 78;
 /** Hard ceiling on how far ahead (months) occurrences are generated. */
-export const MAX_MONTHS_AHEAD = 18;
+const MAX_MONTHS_AHEAD = 18;
 
 /** Parse 'YYYY-MM-DD' into a UTC-midnight Date (timezone-stable date math). */
 export function parseDateOnly(s: string): Date | null {

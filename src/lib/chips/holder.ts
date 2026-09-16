@@ -21,8 +21,6 @@ export interface ChipHolderView {
   issued_as_name: string | null;
 }
 
-export const SNAPSHOT_ROLES: readonly ChipResidentRole[] = ['other', 'staff'];
-
 export function isSnapshotRole(role: ChipResidentRole): role is 'other' | 'staff' {
   return role === 'other' || role === 'staff';
 }
