@@ -8,6 +8,11 @@
 # name back to the script. Attached to billing-backup.service and
 # billing-storage-cleanup.service (prerequisite #2 of arming the Storage GC).
 #
+# TWO channels, email first then WhatsApp, each independent: an SMTP outage must
+# not swallow the WhatsApp alert and a dead Green API instance must not swallow
+# the email. The script exits 1 only when BOTH failed, so systemd records that
+# nobody was told.
+#
 # This unit has NO OnFailure= of its own — an alert that cannot be delivered must
 # not trigger another alert. It says so in the journal and stops there.
 #
@@ -26,7 +31,8 @@ User=ubuntu
 Group=devops-www
 WorkingDirectory=/var/www/billing
 # Read as root by systemd, then dropped to ubuntu: DATABASE_URL, SETTINGS_ENC_KEY,
-# ADMIN_ALERT_PHONE (or BLLINK_ALERT_PHONE).
+# ADMIN_ALERT_EMAIL, ADMIN_ALERT_PHONE (falls back to BLLINK_ALERT_PHONE).
+# The SMTP account is the app's own, out of public.app_settings — no new secret.
 EnvironmentFile=/etc/billing/billing.env
 # Absolute node + local tsx — no PATH/npx dependence under systemd's minimal env.
 ExecStart=/usr/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/alert-unit-failure.ts %i
