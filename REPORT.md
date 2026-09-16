@@ -23,7 +23,7 @@
 - `npm audit`: **28 פגיעויות** — 3 low, 9 moderate, 15 high, **1 critical** (שרשרת `vitest` →
   `vite`/`vite-node`/`esbuild`). תלויות ישירות פגיעות: `exceljs` (moderate), `next` (high),
   `nodemailer` (high), `puppeteer-core` (high), `vitest` (critical). **לא תוקן** — עניין של
-  Renovate/`npm audit fix` ידני (ראה HANDOFF 8).
+  Renovate/`npm audit fix` ידני (ראה `docs/archive/HANDOFF.md` סעיף 8).
 - בסוף הריצה: vitest 360 passed + 22 skipped (נוספו `tests/logger.test.ts` ועדכון
   `smtp-auth-alert.test.ts`), lint 0 שגיאות, e2e 4/4.
 

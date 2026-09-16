@@ -3,7 +3,7 @@
 ריצה ראשונה: `npm audit --json` ו-`npm audit --omit=dev --json` על `package-lock.json` של `9c592f0`
 (node 20.20.1, npm 10.8.2) — 27 / 22. **עודכן אחרי `f15ad65`** (`next@16.3.4` + `eslint-config-next@16.3.4`,
 ריצה חוזרת על ה-lockfile החדש) — 23 / 18. מלבד next **שום דבר אחר לא שודרג**. ההחלטות (מה לשדרג ובאיזה
-סדר) הן ב-HANDOFF 8; ההפעלה — דרך PR-ים של Renovate או ידנית, אחד-אחד, עם `check:all` + e2e.
+סדר) הן ב-`docs/archive/HANDOFF.md` סעיף 8; ההפעלה — דרך PR-ים של Renovate או ידנית, אחד-אחד, עם `check:all` + e2e.
 
 ## סיכום
 
