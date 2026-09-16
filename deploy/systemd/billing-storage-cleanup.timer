@@ -1,0 +1,15 @@
+[Unit]
+Description=Run billing-storage-cleanup.service daily at 04:30 Asia/Jerusalem
+
+[Timer]
+# 04:30: after the 03:00 backup (so a deleted object is already in a restic
+# snapshot) and well before the 06:00 sync / 06:10 bllink-scrape window. The
+# host clock is UTC; the timezone suffix keeps it at 04:30 local through DST.
+OnCalendar=*-*-* 04:30:00 Asia/Jerusalem
+# Catch up a missed run (server was down at 04:30).
+Persistent=true
+AccuracySec=1min
+Unit=billing-storage-cleanup.service
+
+[Install]
+WantedBy=timers.target

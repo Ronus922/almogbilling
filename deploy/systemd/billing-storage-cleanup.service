@@ -1,0 +1,35 @@
+# Storage garbage collector — removes objects no DB row points at (zombies, e.g.
+# an attachment whose campaign was deleted) and attachment uploads that were
+# never bound to a message/campaign and are now older than 24h (staged_old).
+# `linked` content is never touched.
+#
+# ⚠️  ExecStart deliberately has NO --apply: the timer runs a DRY RUN. Every run
+#     still writes a row to public.storage_cleanup_runs with the exact plan, so
+#     the job can be observed for as long as it takes to trust it. Arming it is
+#     a one-word edit here + `systemctl daemon-reload`, and is a phase-3 step.
+# Install:
+#   sudo cp deploy/systemd/billing-storage-cleanup.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now billing-storage-cleanup.timer
+#   systemctl list-timers billing-storage-cleanup.timer   # next run: 04:30 Asia/Jerusalem
+# Manual run + log:
+#   sudo systemctl start billing-storage-cleanup.service && journalctl -u billing-storage-cleanup -n 60
+#   npm run storage:cleanup            # dry run, by hand
+#   npm run storage:audit              # read-only inventory
+[Unit]
+Description=ALMOG CRM — Storage garbage collection (one-shot, dry run)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=devops-www
+WorkingDirectory=/var/www/billing
+# Read as root by systemd: DATABASE_URL, NEXT_PUBLIC_SUPABASE_URL,
+# SUPABASE_SERVICE_ROLE_KEY.
+EnvironmentFile=/etc/billing/billing.env
+# Absolute node + local tsx — no PATH/npx dependence under systemd's minimal env
+# (same as deploy/systemd/billing-bllink-scrape.service).
+ExecStart=/usr/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/storage-cleanup.ts
+TimeoutStartSec=10min
+Nice=10

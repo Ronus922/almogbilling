@@ -996,6 +996,50 @@ CREATE TABLE public.statuses (
 
 
 --
+-- Name: storage_cleanup_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.storage_cleanup_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    finished_at timestamp with time zone,
+    mode text DEFAULT 'dry_run'::text NOT NULL,
+    status text DEFAULT 'running'::text NOT NULL,
+    error_stage text,
+    error_message text,
+    objects_scanned integer DEFAULT 0 NOT NULL,
+    objects_deleted integer DEFAULT 0 NOT NULL,
+    bytes_deleted bigint DEFAULT 0 NOT NULL,
+    buckets_blocked integer DEFAULT 0 NOT NULL,
+    summary jsonb,
+    CONSTRAINT storage_cleanup_runs_error_stage_check CHECK (((error_stage IS NULL) OR (error_stage = ANY (ARRAY['connect'::text, 'list'::text, 'cross_reference'::text, 'delete'::text, 'record'::text])))),
+    CONSTRAINT storage_cleanup_runs_mode_check CHECK ((mode = ANY (ARRAY['dry_run'::text, 'apply'::text]))),
+    CONSTRAINT storage_cleanup_runs_status_check CHECK ((status = ANY (ARRAY['running'::text, 'success'::text, 'error'::text])))
+);
+
+
+--
+-- Name: TABLE storage_cleanup_runs; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.storage_cleanup_runs IS 'One row per Storage GC run (scripts/storage-cleanup.ts). summary = the exact per-bucket plan, including every key the run resolved and any bucket the safety brake blocked.';
+
+
+--
+-- Name: COLUMN storage_cleanup_runs.mode; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.storage_cleanup_runs.mode IS 'dry_run = resolved and recorded but deleted nothing (the default, and what the timer runs until phase 3); apply = actually removed the objects.';
+
+
+--
+-- Name: COLUMN storage_cleanup_runs.buckets_blocked; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.storage_cleanup_runs.buckets_blocked IS 'Buckets the safety brake refused: more than 20% of the bucket selected for deletion, or the DB produced no pointers at all for a non-empty bucket (the signature of a broken cross-reference query).';
+
+
+--
 -- Name: storage_units; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2027,6 +2071,14 @@ ALTER TABLE ONLY public.statuses
 
 
 --
+-- Name: storage_cleanup_runs storage_cleanup_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.storage_cleanup_runs
+    ADD CONSTRAINT storage_cleanup_runs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: storage_units storage_units_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3004,6 +3056,13 @@ CREATE UNIQUE INDEX statuses_one_default_idx ON public.statuses USING btree (is_
 --
 
 CREATE INDEX statuses_sort_idx ON public.statuses USING btree (sort_order);
+
+
+--
+-- Name: storage_cleanup_runs_started_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_cleanup_runs_started_at_idx ON public.storage_cleanup_runs USING btree (started_at DESC);
 
 
 --
@@ -4296,5 +4355,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260911154800'),
     ('20260913065535'),
     ('20260914170628'),
-    ('20260914201005')
+    ('20260914201005'),
+    ('20260916061254')
 ;
