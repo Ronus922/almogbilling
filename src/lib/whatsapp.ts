@@ -848,13 +848,6 @@ export async function getIncomingMessages(
   return Array.isArray(data) ? data : [];
 }
 
-/** GET waInstance{id}/getSettings/{token} — current instance settings (webhook). */
-export async function getWebhookSettings(args: ProbeArgs): Promise<Record<string, unknown>> {
-  const url = `${baseFor(args)}/waInstance${args.instanceId}/getSettings/${args.token}`;
-  const data = await greenApiGet(url);
-  return Array.isArray(data) ? {} : data;
-}
-
 /**
  * POST waInstance{id}/setSettings/{token} — register our webhook.
  * Enables the full notification set the inbox needs: incoming messages, outgoing

@@ -34,12 +34,6 @@ export const OWNER_TYPE_LABEL: Record<ParkingOwnerType, string> = {
   committee: 'נציגות',
 };
 
-export const SIZE_TYPE_LABEL: Record<ParkingSizeType, string> = {
-  single: 'רגילה',
-  double_width: 'כפולה ברוחב',
-  double_length: 'כפולה באורך',
-};
-
 /** The lot this module currently covers. lot_code exists so a second lot needs
  *  data, not a schema change. */
 export const DEFAULT_LOT_CODE = '1P';

@@ -88,7 +88,7 @@ export type ResidentFieldKey =
   | 'operator_name'
   | 'operator_phone';
 
-export function toText(v: unknown): string | null {
+function toText(v: unknown): string | null {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();
   return s === '' ? null : s;

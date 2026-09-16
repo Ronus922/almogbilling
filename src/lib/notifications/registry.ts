@@ -79,7 +79,7 @@ export const PRIORITY_LABEL: Record<Priority, string> = {
   low: 'נמוכה', normal: 'רגילה', high: 'גבוהה', urgent: 'דחוף',
 };
 
-export const NOTIFICATION_TYPE_LABEL: Record<NotificationType, string> = {
+const NOTIFICATION_TYPE_LABEL: Record<NotificationType, string> = {
   whatsapp_message_received: 'הודעת WhatsApp',
   legal_status_changed: 'שינוי סטטוס משפטי',
   calendar_reminder: 'תזכורת יומן',
@@ -120,7 +120,7 @@ export const DEFAULT_TITLE: Record<NotificationType, string> = {
 
 // ── UI token maps (DESIGN.md §2 tones / §10 pills) ───────────────────────────
 /** Icon chip background+foreground per tone (DESIGN.md §2 Tone Variants). */
-export const TONE_ICON: Record<NotificationRegistryEntry['tone'], string> = {
+const TONE_ICON: Record<NotificationRegistryEntry['tone'], string> = {
   info: 'bg-blue-50 text-blue-600',
   warning: 'bg-amber-50 text-amber-600',
   danger: 'bg-rose-50 text-rose-600',

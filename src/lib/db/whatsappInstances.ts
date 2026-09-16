@@ -205,7 +205,7 @@ export async function getInstanceByGreenId(
 
 /** The row nominally owned by this user, if any. A lookup, not a permission
  *  check — callers fall back to the shared instance. See the module header. */
-export async function getInstanceForUser(userId: string): Promise<WhatsAppInstance | null> {
+async function getInstanceForUser(userId: string): Promise<WhatsAppInstance | null> {
   const row = await queryOne<Omit<InstanceRow, 'green_token_enc'>>(
     `select ${PUBLIC_COLS}
        from public.whatsapp_instances i

@@ -1,4 +1,4 @@
-import type { IssueLocationType, IssuePriority, IssueStatus } from '@/lib/types/issues';
+import type { IssuePriority, IssueStatus } from '@/lib/types/issues';
 
 export const ISSUE_STATUSES: { value: IssueStatus; label: string; tone: string }[] = [
   { value: 'open', label: 'פתוחה', tone: 'rose' },
@@ -9,7 +9,7 @@ export const ISSUE_STATUSES: { value: IssueStatus; label: string; tone: string }
 
 // Active vs completed split for the "פעילות" / "הושלמו" tabs (filter only — no
 // new status). Completed = terminal statuses (resolved / closed).
-export const COMPLETED_ISSUE_STATUSES: IssueStatus[] = ['resolved', 'closed'];
+const COMPLETED_ISSUE_STATUSES: IssueStatus[] = ['resolved', 'closed'];
 export const ACTIVE_ISSUE_STATUSES: IssueStatus[] = ['open', 'in_progress'];
 export function isCompletedIssueStatus(s: IssueStatus): boolean {
   return COMPLETED_ISSUE_STATUSES.includes(s);
@@ -23,12 +23,6 @@ export const ISSUE_PRIORITIES: { value: IssuePriority; label: string; tone: stri
   { value: 'urgent', label: 'דחופה', tone: 'rose' },
 ];
 
-export const ISSUE_LOCATION_TYPES: { value: IssueLocationType; label: string }[] = [
-  { value: 'general', label: 'כללי' },
-  { value: 'apartment', label: 'דירה' },
-  { value: 'area', label: 'שטח משותף' },
-];
-
 const STATUS_LABELS: Record<IssueStatus, string> = {
   open: 'פתוחה',
   in_progress: 'בטיפול',
@@ -40,11 +34,6 @@ const PRIORITY_LABELS: Record<IssuePriority, string> = {
   high: 'גבוהה',
   urgent: 'דחופה',
 };
-const LOCATION_LABELS: Record<IssueLocationType, string> = {
-  general: 'כללי',
-  apartment: 'דירה',
-  area: 'שטח משותף',
-};
 
 export function issueStatusLabel(s: IssueStatus): string {
   return STATUS_LABELS[s] ?? s;
@@ -52,17 +41,6 @@ export function issueStatusLabel(s: IssueStatus): string {
 export function issuePriorityLabel(p: IssuePriority): string {
   return PRIORITY_LABELS[p] ?? p;
 }
-export function issueLocationTypeLabel(t: IssueLocationType): string {
-  return LOCATION_LABELS[t] ?? t;
-}
-
-/** "מספר דירה" / "תיאור אזור" depending on location_type (UI label hint). */
-export function locationTextLabel(t: IssueLocationType): string {
-  if (t === 'apartment') return 'מספר דירה';
-  if (t === 'area') return 'תיאור האזור';
-  return 'פירוט מיקום (אופציונלי)';
-}
-
 // Tailwind soft-badge classes (DESIGN.md §10 / §2 tone variants).
 export const ISSUE_STATUS_BADGE: Record<IssueStatus, string> = {
   open: 'bg-rose-100 text-rose-700',
@@ -77,19 +55,11 @@ export const ISSUE_PRIORITY_BADGE: Record<IssuePriority, string> = {
   urgent: 'bg-rose-100 text-rose-700',
 };
 
-// Kanban column accent dot — mirrors tasks STATUS_DOT, keyed to the badge tones.
-export const ISSUE_STATUS_DOT: Record<IssueStatus, string> = {
-  open: 'bg-rose-500',
-  in_progress: 'bg-blue-500',
-  resolved: 'bg-emerald-500',
-  closed: 'bg-slate-400',
-};
-
 // ── Kanban board axis (3 priority lanes + terminal "done" lane) ──────────────
 // The board groups active issues by priority into three lanes, plus a fourth
 // "בוצע" drop-lane that resolves the issue (moving it to the completed tab).
 // RTL order right→left: דחוף · גבוהה · רגילה · בוצע.
-export const ISSUE_PRIORITY_DOT: Record<IssuePriority, string> = {
+const ISSUE_PRIORITY_DOT: Record<IssuePriority, string> = {
   urgent: 'bg-rose-500',
   high: 'bg-amber-500',
   normal: 'bg-blue-500',

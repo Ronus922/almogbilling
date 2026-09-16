@@ -215,7 +215,7 @@ export async function updateLegalContact(
 const SMTP_LAST_AUTH_ALERT_KEY = 'smtp_last_auth_alert';
 
 /** Minimum gap between two "SMTP authentication rejected" admin alerts. */
-export const SMTP_AUTH_ALERT_THROTTLE_HOURS = 6;
+const SMTP_AUTH_ALERT_THROTTLE_HOURS = 6;
 
 /**
  * Claim the right to raise the "SMTP authentication rejected" admin alert.

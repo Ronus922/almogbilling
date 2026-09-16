@@ -30,7 +30,7 @@ export function toArrayBuffer(data: ArrayBuffer | Uint8Array): ArrayBuffer {
  * `xlsx` `sheet_to_json` produced: number | string | boolean | null.
  * Handles rich text, formula results, and hyperlinks; empty/error → null.
  */
-export function cellToRaw(value: CellValue): unknown {
+function cellToRaw(value: CellValue): unknown {
   if (value === null || value === undefined) return null;
   if (typeof value !== 'object') return value; // number | string | boolean
   if (value instanceof Date) return value;

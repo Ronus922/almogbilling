@@ -9,7 +9,7 @@ export const TASK_STATUSES: { value: TaskStatus; label: string; tone: string }[]
 
 // Active vs completed split for the "פעילות" / "הושלמו" tabs (filter only — no
 // new status). Completed = terminal statuses (done / cancelled).
-export const COMPLETED_TASK_STATUSES: TaskStatus[] = ['done', 'cancelled'];
+const COMPLETED_TASK_STATUSES: TaskStatus[] = ['done', 'cancelled'];
 export const ACTIVE_TASK_STATUSES: TaskStatus[] = ['open', 'in_progress'];
 export function isCompletedTaskStatus(s: TaskStatus): boolean {
   return COMPLETED_TASK_STATUSES.includes(s);
@@ -56,19 +56,11 @@ export const PRIORITY_BADGE: Record<TaskPriority, string> = {
   urgent: 'bg-rose-100 text-rose-700',
 };
 
-// Kanban column accent (left rail dot/header).
-export const STATUS_DOT: Record<TaskStatus, string> = {
-  open: 'bg-slate-400',
-  in_progress: 'bg-blue-500',
-  done: 'bg-emerald-500',
-  cancelled: 'bg-rose-500',
-};
-
 // ── Kanban board axis (3 priority lanes + terminal "done" lane) ──────────────
 // The board groups active tasks by priority into three lanes, plus a fourth
 // "בוצע" drop-lane that completes the task (moving it to the completed tab).
 // RTL order right→left: דחוף · גבוהה · רגילה · בוצע.
-export const PRIORITY_DOT: Record<TaskPriority, string> = {
+const PRIORITY_DOT: Record<TaskPriority, string> = {
   urgent: 'bg-rose-500',
   high: 'bg-amber-500',
   normal: 'bg-blue-500',
