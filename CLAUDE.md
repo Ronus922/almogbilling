@@ -37,6 +37,26 @@
 
 ---
 
+## Git — זרימת PR (מחייב)
+
+- **`main` מוגן. אסור `git push origin main`** — בשום מצב, גם לשינוי תיעוד בלבד.
+  ההגנה מיושמת ב-**rulesets** (`main` + `protect-main`, שניהם `active`), לא ב-branch
+  protection הקלאסי — לכן `gh api .../branches/main/protection` מחזיר 404 מטעה.
+  לבדיקה אמיתית: `gh api repos/Ronus922/almogbilling/rules/branches/main`.
+- כל שינוי עובר בענף → push לענף → PR. כלל ה-`pull_request` נאכף בצד GitHub,
+  וכך גם `deletion` ו-`non_fast_forward` (אין מחיקת `main` ואין force-push).
+- ה-CI (`.github/workflows/ci.yml`) מריץ שני jobs: `check:all` ו-e2e (Playwright +
+  Mailpit). רץ על כל push ועל כל PR. **שניהם required status checks ב-ruleset** —
+  אין merge לפני ששניהם ירוקים, ו-`strict` דורש שהענף יהיה מעודכן מול `main`.
+- **אין auto-merge.** ה-merge ידני: `gh pr merge <n> --merge`, ורק באישור מפורש של
+  רונן. GitHub עצמו לא דורש review (`required_approving_review_count: 0`) — האישור
+  של רונן הוא כלל עבודה מחמיר יותר, ולא משהו שהפלטפורמה תאכוף במקומנו.
+- אחרי merge שכולל שינוי קוד שמשפיע על runtime — להזכיר לרונן להריץ `npm run deploy`.
+- נוהל הדחיפה המלא: `GIT_PUSH_SKILL.md`.
+
+
+---
+
 ## מיגרציות DB — dbmate בלבד (מ-05/09/2026)
 - **מיגרציה חדשה = `npm run db:new <name>`** → קובץ ב-`db/migrations/` עם `-- migrate:up` / `-- migrate:down`. **`npm run db:up`** מריץ, **`npm run db:status`** מראה pending, **`npm run db:dump`** מעדכן את `db/schema.sql` (לקומיט יחד עם המיגרציה).
 - **אסור** להוסיף/לשנות קבצים ב-`supabase/migrations/` — היסטוריה קפואה (79 up + 8 down), עטופה אוטומטית ב-`db/migrations/20000101…` דרך `scripts/db/gen-legacy-dbmate-migrations.mjs`.
