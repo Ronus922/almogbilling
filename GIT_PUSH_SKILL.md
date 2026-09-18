@@ -1,6 +1,6 @@
-# Git Push Skill — ALMOG CRM
+# Git Push Skill — ALMOG Billing
 
-> Skill ידני לדחיפה ל-`origin/main`. מופעל **רק** כשהמשתמש מבקש
+> Skill ידני לדחיפת שינויים (ענף + PR). מופעל **רק** כשהמשתמש מבקש
 > במפורש: "תדחוף", "push", "commit ודחוף", "תעלה לגיט", וכו'.
 
 ## עקרונות אל-נגיעה
@@ -11,8 +11,9 @@
    ה-diffs, אחר כך נסח כותרת + body. לא "update X" סתמי.
 3. **`pull --rebase` לפני `push`** — אם rebase יוצא נקי, ממשיך.
    אם יש קונפליקט אמיתי — עוצר ושואל.
-4. **`PROJECT_CONTEXT.md` הוא מקור אמת** — אם המשתמש מציין
-   החלטה חדשה, להוסיף ל-Decisions Log לפני ה-commit.
+4. **היררכיית התיעוד לפי `CLAUDE.md`** — `ALMOG_BILLING_BRIEF.md`
+   למצב נוכחי, `PROJECT_CONTEXT.md` להחלטות ולפירוט טכני. החלטה
+   חדשה נרשמת ב-Decisions Log שב-`PROJECT_CONTEXT.md` לפני ה-commit.
 5. **אסור `--force` / `--no-verify` / `reset --hard` / `clean -fd`**
    ללא אישור מפורש של המשתמש.
 
@@ -116,12 +117,26 @@ EOF
 )"
 ```
 
-### שלב 8 — Sync עם origin
+### שלב 8 — ענף ו-PR
+`main` מוגן. **אסור `git push origin main`.**
+
 ```bash
-git pull --rebase origin main
+git switch -c <branch>
+git push -u origin <branch>
+gh pr create --base main --title "<title>" --body "<body>"
 ```
 
-**אם rebase יוצא נקי** (no conflicts) — המשך לשלב 9.
+- עבודה בענף נפרד, push לענף.
+- פתיחת PR.
+- ה-CI (`.github/workflows/ci.yml`) מריץ שני jobs: `check:all`
+  ו-`e2e (Playwright + Mailpit)`. **אין merge לפני ששניהם ירוקים.**
+  מעקב: `gh pr checks <n>`.
+- **אין auto-merge.** ה-merge ידני: `gh pr merge <n> --merge`,
+  ורק באישור מפורש של רונן.
+
+**סנכרון הענף עם `main` לפני ה-push**: `git pull --rebase origin main`.
+
+**אם rebase יוצא נקי** (no conflicts) — המשך.
 
 **אם יש conflicts**:
 1. הרץ `git status` כדי לראות אילו קבצים בקונפליקט
@@ -137,15 +152,14 @@ git pull --rebase origin main
    ```
 4. חכה להחלטה.
 
-### שלב 9 — Push
-```bash
-git push origin main
-```
-הצג את הפלט. אם הצליח, הרץ:
+### שלב 9 — אחרי ה-merge
 ```bash
 git log --oneline -5
 ```
-כדי להראות שה-commits עלו.
+לאימות שה-commits נכנסו ל-`main`.
+
+אם המיזוג כולל שינוי קוד שמשפיע על runtime — הזכר לרונן להריץ
+`npm run deploy` (ראה "הערות נוספות").
 
 ### שלב 10 — Decisions Log (אם רלוונטי)
 אם הדחיפה כללה החלטה ארכיטקטונית או הסכמה חדשה, שאל
@@ -164,7 +178,7 @@ git log --oneline -5
 - **לעולם לא** `--no-verify` (לעקיפת hooks) ללא אישור.
 - אם `git status` לא נקי (ענפים אחרים שהוקמו בחיפוי) —
   עצור ושאל את המשתמש לפני שמתחילים.
-- אם הענף לא `main` — שאל לפני push.
+- **לעולם לא** `git push origin main` — הענף מוגן, הכול עובר PR.
 
 ---
 
@@ -189,7 +203,8 @@ git log --oneline -5
    ```
 4. משתמש מאשר → stage + commit לכל אחד
 5. `git pull --rebase origin main` → clean
-6. `git push origin main` → success
+6. push לענף + `gh pr create` → CI ירוק → `gh pr merge <n> --merge`
+   באישור רונן
 
 ### דוגמה 2 — ספק פיצול
 **משתמש:** "תדחוף את השינויים שעשינו"
