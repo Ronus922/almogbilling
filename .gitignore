@@ -86,3 +86,6 @@ ref/
 # scripts/deploy.sh (PLAYWRIGHT_BROWSERS_PATH), ~300 MB of binaries.
 /.playwright-browsers/
 supabase/.temp/
+
+# מסמך הקשר פנימי — מכיל פרטי תשתית, הריפו ציבורי
+ALMOG_BILLING_BRIEF.md

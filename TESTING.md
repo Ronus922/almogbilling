@@ -11,7 +11,7 @@
 > ו-`no-console` (לוגים דרך `src/lib/logger.ts`). בנוסף **SafeQL** מאמת כל SQL סטטי
 > שמועבר ל-`query`/`queryOne`/`client.query`/`pool.query` מול הסכימה החיה של
 > `DATABASE_URL` (טבלה/עמודה לא קיימת, שגיאת תחביר) — ראה `scripts/lint/`. לכן
-> `check:all` = **typecheck → lint → `npm test` → בדיקות האינווריאנטות**. ה-pre-push של husky
+> `check:all` = **typecheck → lint → `npm test` → בדיקות האינווריאנטות → `check:knip`**. ה-pre-push של husky
 > מריץ רק את שלושת הראשונים (ו-lint **בלי** SafeQL) — ראה "מה רץ איפה" למטה.
 
 ## הבדיקות — מה כל אחת מגינה
