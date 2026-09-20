@@ -38,6 +38,11 @@ interface DebtorRow {
   hot_water_debt: number;
   phone_owner: string | null;
   phone_tenant: string | null;
+  /** "מקבל הודעות" — false means the resident opted out of broadcasts. The
+   *  legacy debtors fallback (rc.id is null) has no such column, so it defaults
+   *  to true: that path predates the flag and was never an opt-out signal. */
+  owner_primary: boolean;
+  tenant_primary: boolean;
 }
 
 const DEBTOR_COLS = `
@@ -49,7 +54,9 @@ const DEBTOR_COLS = `
   d.management_fees::float8 as management_fees,
   d.hot_water_debt::float8  as hot_water_debt,
   case when rc.id is null then d.phone_owner  else rc.owner_phone  end as phone_owner,
-  case when rc.id is null then d.phone_tenant else rc.tenant_phone end as phone_tenant
+  case when rc.id is null then d.phone_tenant else rc.tenant_phone end as phone_tenant,
+  case when rc.id is null then true else rc.owner_is_primary_contact  end as owner_primary,
+  case when rc.id is null then true else rc.tenant_is_primary_contact end as tenant_primary
 `;
 
 // resident identity from contacts (registry); debtors columns are frozen legacy fallback (no linked contact only)
@@ -88,6 +95,11 @@ function extraRoles(audience: BroadcastAudience): ContactPersonRole[] {
  * number becomes its own recipient — same debtor payload, so the template
  * variables ({{debt}}, {{apartment}}, …) interpolate identically. The phone
  * de-dup is global, so a person listed twice is still messaged once.
+ *
+ * The primary owner/tenant's own "מקבל הודעות" flag (contacts.owner_is_primary_
+ * contact / tenant_is_primary_contact) is honored the same way — EXCEPT for an
+ * explicit debtor_ids audience, where a human already hand-picked these exact
+ * recipients and silently dropping one would be confusing.
  */
 export async function resolveBroadcastRecipients(
   audience: BroadcastAudience,
@@ -95,6 +107,7 @@ export async function resolveBroadcastRecipients(
   let rows: DebtorRow[];
   let extras: ExtraRecipient[];
   const roles = extraRoles(audience);
+  const enforcePrimary = audience.type !== 'debtor_ids';
   if (audience.type === 'debtor_ids') {
     const ids = (audience.debtor_ids ?? []).filter((x) => typeof x === 'string');
     if (ids.length === 0) return [];
@@ -134,14 +147,16 @@ export async function resolveBroadcastRecipients(
   };
 
   for (const row of rows) {
+    const ownerOk = !enforcePrimary || row.owner_primary;
+    const tenantOk = !enforcePrimary || row.tenant_primary;
     let phoneIntl: string | null = null;
     if (audience.type === 'owners') {
-      phoneIntl = toIntl(row.phone_owner);
+      phoneIntl = ownerOk ? toIntl(row.phone_owner) : null;
     } else if (audience.type === 'tenants') {
-      phoneIntl = toIntl(row.phone_tenant);
+      phoneIntl = tenantOk ? toIntl(row.phone_tenant) : null;
     } else {
       // 'all' or 'debtor_ids' — prefer owner, fall back to tenant.
-      phoneIntl = toIntl(row.phone_owner) ?? toIntl(row.phone_tenant);
+      phoneIntl = (ownerOk ? toIntl(row.phone_owner) : null) ?? (tenantOk ? toIntl(row.phone_tenant) : null);
     }
     if (!phoneIntl) continue;
     push(row, phoneIntl);

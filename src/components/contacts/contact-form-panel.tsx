@@ -418,11 +418,11 @@ export function ContactFormPanel({
     form.resident_type === 'operator'
       ? {
           title: 'פרטי המפעיל', name: 'שם מפעיל', phone: 'טלפון מפעיל', email: 'אימייל מפעיל',
-          add: 'הוסף מפעיל', extraTitle: 'מפעיל נוסף', tone: 'amber' as const,
+          add: 'הוסף מפעיל', extraTitle: 'מפעיל נוסף', tone: 'amber' as const, primaryLabel: 'המפעיל מקבל הודעות',
         }
       : {
           title: 'פרטי השוכר', name: 'שם שוכר', phone: 'טלפון שוכר', email: 'אימייל שוכר',
-          add: 'הוסף שוכר', extraTitle: 'שוכר נוסף', tone: 'violet' as const,
+          add: 'הוסף שוכר', extraTitle: 'שוכר נוסף', tone: 'violet' as const, primaryLabel: 'השוכר מקבל הודעות',
         };
 
   return (
@@ -584,7 +584,7 @@ export function ContactFormPanel({
                     dir="ltr" placeholder="owner@example.com" />
                   <CheckboxRow
                     id="owner-primary"
-                    label="מקבל הודעות"
+                    label="הבעלים מקבל הודעות"
                     checked={form.owner_is_primary_contact}
                     onChange={(v) => set('owner_is_primary_contact', v)}
                     disabled={disabled}
@@ -630,7 +630,7 @@ export function ContactFormPanel({
                       dir="ltr" placeholder="name@example.com" />
                     <CheckboxRow
                       id="tenant-primary"
-                      label="מקבל הודעות"
+                      label={secondary.primaryLabel}
                       checked={form.tenant_is_primary_contact}
                       onChange={(v) => set('tenant_is_primary_contact', v)}
                       disabled={disabled}
