@@ -472,7 +472,7 @@ CREATE TABLE public.contacts (
     resident_type text DEFAULT 'owner'::text NOT NULL,
     operator_id uuid,
     owner_is_primary_contact boolean DEFAULT true NOT NULL,
-    tenant_is_primary_contact boolean DEFAULT false NOT NULL,
+    tenant_is_primary_contact boolean DEFAULT true NOT NULL,
     operator_is_primary_contact boolean DEFAULT false NOT NULL,
     address text,
     notes text,
@@ -4375,5 +4375,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260914170628'),
     ('20260914201005'),
     ('20260916061254'),
-    ('20260916170623')
+    ('20260916170623'),
+    ('20260920221954')
 ;
