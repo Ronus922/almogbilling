@@ -60,6 +60,7 @@ export function BroadcastComposeClient({
   const [content, setContent] = useState('');
   const [sending, setSending] = useState(false);
   const [count, setCount] = useState<number | null>(null);
+  const [partialCount, setPartialCount] = useState(0);
   const [launched, setLaunched] = useState<Campaign | null>(null);
   const [attachments, setAttachments] = useState<StagedAttachment[]>([]);
   const tokenRef = useRef(newToken());
@@ -87,20 +88,30 @@ export function BroadcastComposeClient({
     })();
   }, []);
 
-  // Live eligible-recipient estimate per audience.
+  // Live estimate of messages that will actually go out, for the CURRENT
+  // audience + content — the content decides free-form vs. debt-consolidated
+  // routing server-side (isDebtMessageTemplate), so both must be sent.
+  // Debounced: `content` changes on every keystroke, the count doesn't need to.
   useEffect(() => {
     let cancelled = false;
     setCount(null);
-    (async () => {
-      try {
-        const r = await fetch(`/api/whatsapp/audience-count?type=${audience}`, { credentials: 'include' });
-        if (!r.ok) throw new Error();
-        const d = (await r.json()) as { count: number };
-        if (!cancelled) setCount(d.count);
-      } catch { if (!cancelled) setCount(null); }
-    })();
-    return () => { cancelled = true; };
-  }, [audience]);
+    const timer = setTimeout(() => {
+      (async () => {
+        try {
+          const r = await fetch('/api/whatsapp/audience-count', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ type: audience, body: content }),
+          });
+          if (!r.ok) throw new Error();
+          const d = (await r.json()) as { count: number; partial_count: number };
+          if (!cancelled) { setCount(d.count); setPartialCount(d.partial_count); }
+        } catch { if (!cancelled) { setCount(null); setPartialCount(0); } }
+      })();
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [audience, content]);
 
   function selectTemplate(value: string | null) {
     const next = value ?? FREE_TEXT;
@@ -139,9 +150,10 @@ export function BroadcastComposeClient({
           attachment_ids: readyAttachmentIds(attachments),
         }),
       });
-      const data = (await r.json().catch(() => ({}))) as Campaign & { error?: string };
+      const data = (await r.json().catch(() => ({}))) as Campaign & { error?: string; partial_detail_count?: number };
       if (!r.ok) throw new Error(data.error || `יצירת תפוצה נכשלה (HTTP ${r.status})`);
-      toast.success(`התפוצה יצאה לדרך — ${data.total_count} נמענים`);
+      const partial = data.partial_detail_count ?? 0;
+      toast.success(`התפוצה יצאה לדרך — ${data.total_count} נמענים${partial > 0 ? `, ${partial} מהם עם פירוט חלקי` : ''}`);
       // The files now belong to the broadcast — nothing left to clean up.
       setAttachments([]);
       setLaunched(data);
@@ -204,6 +216,11 @@ export function BroadcastComposeClient({
           <p className="text-xs text-slate-500">
             {count === null ? 'מחשב נמענים…' : <>נמענים עם טלפון תקין: <span className="font-bold text-slate-700 tabular-nums">{count}</span></>}
           </p>
+          {count !== null && partialCount > 0 && (
+            <p className="text-xs font-medium text-amber-700">
+              {partialCount} {partialCount === 1 ? 'נמען יקבל' : 'נמענים יקבלו'} פירוט חלקי — רשימת הדירות ארוכה מדי להצגה מלאה.
+            </p>
+          )}
         </div>
 
         {/* Template */}

@@ -23,7 +23,7 @@ vi.mock('@/lib/db', () => ({
   query: (text: string, params?: unknown[]) => pool.query(text, params),
 }));
 
-const { resolveBroadcastRecipients } = await import('@/lib/whatsapp-broadcast');
+const { resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients } = await import('@/lib/whatsapp-broadcast');
 
 /** Every id this suite creates, so teardown removes exactly those (CLAUDE.md
  *  iron rule 12 — never clean up by filter). */
@@ -37,23 +37,29 @@ const uniqApt = () => `wa-bcast-test-${Date.now()}-${n++}`;
 interface ContactSpec {
   owner_phone?: string | null;
   owner_is_primary_contact?: boolean;
+  owner_name?: string | null;
   tenant_phone?: string | null;
   tenant_is_primary_contact?: boolean;
+  tenant_name?: string | null;
+  apartment_number?: string;
 }
 
 /** Inserts just the contact row (no debtor at all). Returns the contact id. */
 async function makeContact(spec: ContactSpec): Promise<string> {
   const contact = await pool.query<{ id: string }>(
     `insert into public.contacts
-       (apartment_number, owner_phone, owner_is_primary_contact, tenant_phone, tenant_is_primary_contact)
-     values ($1, $2, $3, $4, $5)
+       (apartment_number, owner_phone, owner_is_primary_contact, owner_name,
+        tenant_phone, tenant_is_primary_contact, tenant_name)
+     values ($1, $2, $3, $4, $5, $6, $7)
      returning id`,
     [
-      uniqApt(),
+      spec.apartment_number ?? uniqApt(),
       spec.owner_phone ?? null,
       spec.owner_is_primary_contact ?? true,
+      spec.owner_name ?? null,
       spec.tenant_phone ?? null,
       spec.tenant_is_primary_contact ?? false,
+      spec.tenant_name ?? null,
     ],
   );
   const contactId = contact.rows[0]!.id;
@@ -97,13 +103,17 @@ function intl(local: string): string {
 }
 
 /** Inserts one contact_people extra (additional owner/tenant beyond the
- *  primary on the contact row). */
-async function makeExtra(contactId: string, role: 'owner' | 'tenant', phone: string): Promise<void> {
+ *  primary on the contact row). isPrimaryContact defaults to true ("מקבל
+ *  הודעות" on) — pass false to simulate that person opting out. */
+async function makeExtra(
+  contactId: string, role: 'owner' | 'tenant', phone: string,
+  opts: { isPrimaryContact?: boolean; name?: string } = {},
+): Promise<void> {
   const extra = await pool.query<{ id: string }>(
     `insert into public.contact_people (contact_id, role, name, phone, is_primary_contact, sort_order)
-     values ($1, $2, 'Extra', $3, true, 0)
+     values ($1, $2, $3, $4, $5, 0)
      returning id`,
-    [contactId, role, phone],
+    [contactId, role, opts.name ?? 'Extra', phone, opts.isPrimaryContact ?? true],
   );
   made.contactPeople.push(extra.rows[0]!.id);
 }
@@ -232,4 +242,141 @@ d('resolveBroadcastRecipients — primary-contact opt-out enforcement', () => {
     expect(phones).toContain(intl(extraTenantPhone));
     expect(phones).not.toContain(intl(extraOwnerPhone));
   });
+});
+
+// PR ב': the debt-message counterpart — groups by phone instead of picking one
+// row per phone, so a recipient holding several apartments gets ALL of them
+// (the dedup bug's fix). Reuses the exact same per-row eligibility as
+// resolveBroadcastRecipients (fetchAudienceRows), so for a given audience the
+// SET of phones the two functions produce must always be identical — only the
+// SHAPE differs (one row per phone vs. one row per phone WITH an apartments[]
+// list). That equivalence is asserted directly below, not just assumed.
+d('resolveConsolidatedBroadcastRecipients — multi-apartment grouping + apartment-level opt-out', () => {
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: TEST_URL, max: 4 });
+    pool.on('error', () => undefined);
+  });
+
+  afterAll(async () => {
+    for (const id of made.contactPeople) await pool.query(`delete from public.contact_people where id = $1`, [id]);
+    for (const id of made.debtors) await pool.query(`delete from public.debtors where id = $1`, [id]);
+    for (const id of made.contacts) await pool.query(`delete from public.contacts where id = $1`, [id]);
+    await pool.end();
+  });
+
+  it('owners: two apartments sharing one phone consolidate into ONE recipient with 2 apartments (the dedup bug, fixed)', async () => {
+    const phone = uniqPhone();
+    const aptA = uniqApt();
+    const aptB = uniqApt();
+    await makeLinkedDebtor({ owner_phone: phone, owner_is_primary_contact: true, apartment_number: aptA, owner_name: 'ראובן כהן' });
+    await makeLinkedDebtor({ owner_phone: phone, owner_is_primary_contact: true, apartment_number: aptB, owner_name: 'ראובן כהן' });
+
+    const consolidated = await resolveConsolidatedBroadcastRecipients({ type: 'owners' });
+    const match = consolidated.find((r) => r.phoneIntl === intl(phone));
+    expect(match).toBeDefined();
+    expect(match!.apartments.map((a) => a.apartment_number).sort()).toEqual([aptA, aptB].sort());
+    expect(match!.rawNames).toEqual(['ראובן כהן', 'ראובן כהן']);
+  });
+
+  it('owners: an apartment with owner_is_primary_contact = false is excluded from the list even though the SAME phone has another apartment that is opted in', async () => {
+    const phone = uniqPhone();
+    const optedOutApt = uniqApt();
+    const optedInApt = uniqApt();
+    await makeLinkedDebtor({ owner_phone: phone, owner_is_primary_contact: false, apartment_number: optedOutApt });
+    await makeLinkedDebtor({ owner_phone: phone, owner_is_primary_contact: true, apartment_number: optedInApt });
+
+    const consolidated = await resolveConsolidatedBroadcastRecipients({ type: 'owners' });
+    const match = consolidated.find((r) => r.phoneIntl === intl(phone));
+    expect(match).toBeDefined(); // the phone still gets a message, via the opted-in apartment
+    const numbers = match!.apartments.map((a) => a.apartment_number);
+    expect(numbers).toContain(optedInApt);
+    expect(numbers).not.toContain(optedOutApt);
+  });
+
+  it('tenants: an apartment with tenant_is_primary_contact = false is excluded, same as the owners case', async () => {
+    const phone = uniqPhone();
+    const optedOutApt = uniqApt();
+    const optedInApt = uniqApt();
+    await makeLinkedDebtor({ tenant_phone: phone, tenant_is_primary_contact: false, apartment_number: optedOutApt });
+    await makeLinkedDebtor({ tenant_phone: phone, tenant_is_primary_contact: true, apartment_number: optedInApt });
+
+    const consolidated = await resolveConsolidatedBroadcastRecipients({ type: 'tenants' });
+    const match = consolidated.find((r) => r.phoneIntl === intl(phone));
+    expect(match).toBeDefined();
+    const numbers = match!.apartments.map((a) => a.apartment_number);
+    expect(numbers).toContain(optedInApt);
+    expect(numbers).not.toContain(optedOutApt);
+  });
+
+  it("all: an extra person's contact_people.is_primary_contact = false keeps THEIR apartment out of another apartment's list on the same phone", async () => {
+    const sharedPhone = uniqPhone();
+    const primaryApt = uniqApt();
+    const extraApt = uniqApt();
+    await makeLinkedDebtor({ owner_phone: sharedPhone, owner_is_primary_contact: true, apartment_number: primaryApt });
+    const extraContactId = await makeContact({ apartment_number: extraApt });
+    // This person opted out ("מקבל הודעות" off) — their apartment must not
+    // ride along on `sharedPhone` just because another apartment uses it.
+    await makeExtra(extraContactId, 'owner', sharedPhone, { isPrimaryContact: false });
+
+    const consolidated = await resolveConsolidatedBroadcastRecipients({ type: 'all' });
+    const match = consolidated.find((r) => r.phoneIntl === intl(sharedPhone));
+    expect(match).toBeDefined();
+    const numbers = match!.apartments.map((a) => a.apartment_number);
+    expect(numbers).toContain(primaryApt);
+    expect(numbers).not.toContain(extraApt);
+  });
+
+  it("all: an extra person's contact_people.is_primary_contact = true DOES add their apartment to an existing phone's list", async () => {
+    const sharedPhone = uniqPhone();
+    const primaryApt = uniqApt();
+    const extraApt = uniqApt();
+    await makeLinkedDebtor({ owner_phone: sharedPhone, owner_is_primary_contact: true, apartment_number: primaryApt });
+    const extraContactId = await makeContact({ apartment_number: extraApt });
+    await makeExtra(extraContactId, 'owner', sharedPhone, { isPrimaryContact: true, name: 'שכן שותף' });
+
+    const consolidated = await resolveConsolidatedBroadcastRecipients({ type: 'all' });
+    const match = consolidated.find((r) => r.phoneIntl === intl(sharedPhone));
+    expect(match).toBeDefined();
+    const numbers = match!.apartments.map((a) => a.apartment_number);
+    expect(numbers).toContain(primaryApt);
+    expect(numbers).toContain(extraApt);
+    expect(match!.rawNames).toContain('שכן שותף');
+  });
+
+  it('all: an apartment with NO debt record still contributes to consolidation (contacts is the base)', async () => {
+    const phone = uniqPhone();
+    const apt = uniqApt();
+    const contactId = await makeContact({ owner_phone: phone, owner_is_primary_contact: true, apartment_number: apt });
+
+    const consolidated = await resolveConsolidatedBroadcastRecipients({ type: 'all' });
+    const match = consolidated.find((r) => r.phoneIntl === intl(phone));
+    expect(match).toBeDefined();
+    expect(match!.apartments).toHaveLength(1);
+    expect(match!.apartments[0].contactId).toBe(contactId);
+    expect(match!.apartments[0].debtorId).toBeNull();
+  });
+
+  // The screen's recipient counter must show the SAME number regardless of
+  // which path a message routes through — both are one-message-per-phone,
+  // only the CONTENT differs. This proves the two resolvers' phone SETS never
+  // diverge, for every audience type, not just assumed from shared code.
+  it.each(['owners', 'tenants', 'all'] as const)(
+    '%s: resolveConsolidatedBroadcastRecipients and resolveBroadcastRecipients agree on the exact same set of phones',
+    async (type) => {
+      const p1 = uniqPhone();
+      const p2 = uniqPhone();
+      const p3 = uniqPhone();
+      await makeLinkedDebtor({ owner_phone: p1, owner_is_primary_contact: true, tenant_phone: p2, tenant_is_primary_contact: true });
+      await makeLinkedDebtor({ owner_phone: p1, owner_is_primary_contact: true }); // same owner phone, 2nd apartment
+      await makeLinkedDebtor({ owner_phone: p3, owner_is_primary_contact: false }); // opted out — excluded from both
+
+      const [plain, consolidated] = await Promise.all([
+        resolveBroadcastRecipients({ type }),
+        resolveConsolidatedBroadcastRecipients({ type }),
+      ]);
+      const plainPhones = new Set(plain.map((r) => r.phoneIntl));
+      const consolidatedPhones = new Set(consolidated.map((r) => r.phoneIntl));
+      expect(consolidatedPhones).toEqual(plainPhones);
+    },
+  );
 });

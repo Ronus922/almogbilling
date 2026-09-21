@@ -5,7 +5,7 @@ import {
 } from '@/lib/whatsapp';
 import {
   interpolateTemplate, formatDebt, resolveConsolidatedName, isDebtMessageTemplate,
-  parseApartmentsBlock, interpolateBroadcastTemplate,
+  parseApartmentsBlock, interpolateBroadcastTemplate, templateUsesApartmentOutsideBlock,
 } from '@/lib/whatsapp-template';
 
 describe('normalizePhone — Israeli phone → Green API chatId', () => {
@@ -340,9 +340,8 @@ describe('resolveConsolidatedName — {{name}} for a recipient with several apar
 });
 
 describe('isDebtMessageTemplate — routes free-form announcements vs debt broadcasts', () => {
-  it('a debt/apartment token, or the repeating block, makes it a debt message', () => {
+  it('a money token, or the repeating block, makes it a debt message', () => {
     expect(isDebtMessageTemplate('חוב: {{debt}}')).toBe(true);
-    expect(isDebtMessageTemplate('דירה {{apartment}}')).toBe(true);
     expect(isDebtMessageTemplate('{{monthly}} / {{special}}')).toBe(true);
     expect(isDebtMessageTemplate('סה"כ {{total_debt}}')).toBe(true);
     expect(isDebtMessageTemplate('{{#apartments}}{{/apartments}}')).toBe(true);
@@ -350,6 +349,19 @@ describe('isDebtMessageTemplate — routes free-form announcements vs debt broad
 
   it('{{name}} alone does NOT make it a debt message', () => {
     expect(isDebtMessageTemplate('{{name}} שלום,')).toBe(false);
+  });
+
+  // PR ב': {{apartment}} alone (no money token) is free-form — e.g. a
+  // malfunction notice naming one apartment doesn't need a debt breakdown, and
+  // must not be blocked/consolidated. It stays on the untouched single-value
+  // path, {{apartment}} resolving exactly as interpolateTemplate always has.
+  it('{{apartment}} alone does NOT make it a debt message (malfunction-notice case)', () => {
+    expect(isDebtMessageTemplate('יש תקלה בדירה {{apartment}}, אנא פנו למשרד')).toBe(false);
+    expect(isDebtMessageTemplate('{{name}} שלום, דירה {{apartment}}')).toBe(false);
+  });
+
+  it('{{apartment}} together with a money token IS a debt message', () => {
+    expect(isDebtMessageTemplate('לדירה {{apartment}}: {{debt}}')).toBe(true);
   });
 
   // Regression: the 3 real historical broadcasts (verified against production
@@ -362,6 +374,29 @@ describe('isDebtMessageTemplate — routes free-form announcements vs debt broad
     expect(isDebtMessageTemplate(assembly)).toBe(false);
     expect(isDebtMessageTemplate(ac)).toBe(false);
     expect(isDebtMessageTemplate(coolingTowers)).toBe(false);
+  });
+});
+
+// PR ב': the campaign-creation hard block only applies to a DEBT-classified
+// template (see isDebtMessageTemplate) that uses bare {{apartment}} where the
+// consolidation engine can't resolve it to one value — never to a free-form
+// template, which keeps {{apartment}}'s pre-existing single-value behavior.
+describe('templateUsesApartmentOutsideBlock — the campaign-creation hard-block signal', () => {
+  it('bare {{apartment}} with no block at all → true', () => {
+    expect(templateUsesApartmentOutsideBlock('לדירה {{apartment}}: {{debt}}')).toBe(true);
+  });
+
+  it('{{apartment}} used ONLY inside the repeating block → false', () => {
+    expect(templateUsesApartmentOutsideBlock('שלום {{name}},\n{{#apartments}}דירה {{apartment}}: {{debt}}\n{{/apartments}}')).toBe(false);
+  });
+
+  it('{{apartment}} in the prefix/suffix, outside the block → true even though a block exists', () => {
+    expect(templateUsesApartmentOutsideBlock('דירה ראשית: {{apartment}}\n{{#apartments}}{{debt}}\n{{/apartments}}')).toBe(true);
+    expect(templateUsesApartmentOutsideBlock('{{#apartments}}{{debt}}\n{{/apartments}}\nלשאלות בדירה {{apartment}} פנו למשרד')).toBe(true);
+  });
+
+  it('no {{apartment}} anywhere → false', () => {
+    expect(templateUsesApartmentOutsideBlock('שלום {{name}}, חובך: {{debt}}')).toBe(false);
   });
 });
 

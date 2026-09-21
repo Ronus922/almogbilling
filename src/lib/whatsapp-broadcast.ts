@@ -22,7 +22,8 @@ import type { ContactPersonRole } from '@/lib/types/contacts';
 // JOINing the active debtor when one exists; an apartment with no debt record
 // still gets its owner/tenant recipients, just with zero-valued debt template
 // fields. The campaigns route (POST /api/whatsapp/campaigns) and the live
-// estimate (GET /api/whatsapp/audience-count) both call it.
+// estimate (POST /api/whatsapp/audience-count) both call it; the estimate also
+// calls resolveConsolidatedBroadcastRecipients (below) for a debt message.
 
 export interface BroadcastRecipient {
   debtor: TemplateDebtor;
@@ -116,6 +117,36 @@ function extraRoles(audience: BroadcastAudience): ContactPersonRole[] {
   return ['owner', 'tenant']; // 'all' / 'debtor_ids'
 }
 
+interface AudienceRows {
+  rows: ContactRow[];
+  extrasByContact: ContactExtraRecipient[];
+  extrasByDebtor: ExtraRecipient[];
+  /** false only for debtor_ids — an explicit pick skips the opt-out flags. */
+  enforcePrimary: boolean;
+}
+
+/** The DB fetch shared by resolveBroadcastRecipients (free-form, unchanged)
+ *  and resolveConsolidatedBroadcastRecipients (debt messages, PR ב') — same
+ *  rows, same extras, same roles/enforcePrimary rule per audience type. Each
+ *  caller applies its OWN grouping on top; this only fetches. */
+async function fetchAudienceRows(audience: BroadcastAudience): Promise<AudienceRows> {
+  const roles = extraRoles(audience);
+  const enforcePrimary = audience.type !== 'debtor_ids';
+  if (audience.type === 'debtor_ids') {
+    const ids = (audience.debtor_ids ?? []).filter((x) => typeof x === 'string');
+    if (ids.length === 0) return { rows: [], extrasByContact: [], extrasByDebtor: [], enforcePrimary };
+    const r = await query<ContactRow>(
+      `select ${DEBTOR_COLS} ${DEBTOR_FROM} where d.id = any($1::uuid[])`,
+      [ids],
+    );
+    const extrasByDebtor = await listExtraRecipientsForDebtors(ids, roles);
+    return { rows: r.rows, extrasByContact: [], extrasByDebtor, enforcePrimary };
+  }
+  const r = await query<ContactRow>(`select ${CONTACT_COLS} ${CONTACT_FROM}`);
+  const extrasByContact = await listExtraRecipientsForAllContacts(roles);
+  return { rows: r.rows, extrasByContact, extrasByDebtor: [], enforcePrimary };
+}
+
 /**
  * Resolve the recipient list for an audience. Picks the matching phone field
  * (owners → phone_owner, tenants → phone_tenant, all/explicit → owner else
@@ -140,29 +171,11 @@ function extraRoles(audience: BroadcastAudience): ContactPersonRole[] {
 export async function resolveBroadcastRecipients(
   audience: BroadcastAudience,
 ): Promise<BroadcastRecipient[]> {
-  let rows: ContactRow[];
   // Extras are matched back to their row by contact_id for owners/tenants/all
   // (contacts is the base — an apartment may have no debtor at all) and by
   // debtor_id for an explicit debtor_ids pick (unchanged — still resolved
   // through debtors.contact_id, per listExtraRecipientsForDebtors).
-  let extrasByContact: ContactExtraRecipient[] = [];
-  let extrasByDebtor: ExtraRecipient[] = [];
-  const roles = extraRoles(audience);
-  const enforcePrimary = audience.type !== 'debtor_ids';
-  if (audience.type === 'debtor_ids') {
-    const ids = (audience.debtor_ids ?? []).filter((x) => typeof x === 'string');
-    if (ids.length === 0) return [];
-    const r = await query<ContactRow>(
-      `select ${DEBTOR_COLS} ${DEBTOR_FROM} where d.id = any($1::uuid[])`,
-      [ids],
-    );
-    rows = r.rows;
-    extrasByDebtor = await listExtraRecipientsForDebtors(ids, roles);
-  } else {
-    const r = await query<ContactRow>(`select ${CONTACT_COLS} ${CONTACT_FROM}`);
-    rows = r.rows;
-    extrasByContact = await listExtraRecipientsForAllContacts(roles);
-  }
+  const { rows, extrasByContact, extrasByDebtor, enforcePrimary } = await fetchAudienceRows(audience);
 
   const out: BroadcastRecipient[] = [];
   const seen = new Set<string>();
@@ -226,4 +239,121 @@ export async function resolveBroadcastRecipients(
     push(row, phoneIntl);
   }
   return out;
+}
+
+/** One apartment contributing to a consolidated (debt-message) recipient. */
+export interface ConsolidatedApartment {
+  contactId: string;
+  debtorId: string | null;
+  apartment_number: string;
+  total_debt: number | null;
+  management_fees: number | null;
+  hot_water_debt: number | null;
+}
+
+/** A broadcast recipient consolidated across every apartment sharing one
+ *  phone (see resolveConsolidatedBroadcastRecipients). `rawNames` is one
+ *  candidate per contributing apartment/extra — resolveConsolidatedName
+ *  (whatsapp-template.ts) turns it into the final {{name}}. */
+export interface ConsolidatedBroadcastRecipient {
+  phoneIntl: string;
+  rawNames: Array<string | null | undefined>;
+  apartments: ConsolidatedApartment[];
+}
+
+/**
+ * Debt-message counterpart to resolveBroadcastRecipients: groups by phone
+ * INSTEAD of picking one row per phone, so a recipient holding several
+ * apartments (or an operator managing dozens) gets ALL of them, not just
+ * whichever row happened to be processed first — this is the dedup bug's fix
+ * (PR ב'). Reuses the exact same per-row eligibility as resolveBroadcastRecipients
+ * (fetchAudienceRows + the identical ownerOk/tenantOk/audience.type branches),
+ * so the SET of phones this produces is always identical to
+ * resolveBroadcastRecipients' — verified by tests/whatsapp-broadcast-consolidated.test.ts.
+ *
+ * Apartment-level opt-out: an apartment whose relevant flag
+ * (owner_is_primary_contact / tenant_is_primary_contact / contact_people.
+ * is_primary_contact for an extra) is off contributes NOTHING to the phone's
+ * apartments[] — even when another apartment on the SAME phone passes and the
+ * phone still gets a message. This falls out of the per-row/per-extra gate
+ * below; there is no separate "apartment opt-out" flag to check.
+ */
+export async function resolveConsolidatedBroadcastRecipients(
+  audience: BroadcastAudience,
+): Promise<ConsolidatedBroadcastRecipient[]> {
+  const { rows, extrasByContact, extrasByDebtor, enforcePrimary } = await fetchAudienceRows(audience);
+
+  const byDebtorId = new Map<string, ContactRow>();
+  const byContactId = new Map<string, ContactRow>();
+  for (const row of rows) {
+    if (row.debtor_id) byDebtorId.set(row.debtor_id, row);
+    if (row.contact_id) byContactId.set(row.contact_id, row);
+  }
+
+  const byPhone = new Map<string, { rawNames: Array<string | null | undefined>; apartments: Map<string, ConsolidatedApartment> }>();
+
+  const contribute = (row: ContactRow, phoneIntl: string, name: string | null | undefined) => {
+    if (!row.contact_id) return; // orphaned debtor — see DEBTOR_COLS header comment
+    let bucket = byPhone.get(phoneIntl);
+    if (!bucket) {
+      bucket = { rawNames: [], apartments: new Map() };
+      byPhone.set(phoneIntl, bucket);
+    }
+    bucket.rawNames.push(name);
+    if (!bucket.apartments.has(row.contact_id)) {
+      bucket.apartments.set(row.contact_id, {
+        contactId: row.contact_id,
+        debtorId: row.debtor_id,
+        apartment_number: row.apartment_number,
+        total_debt: row.total_debt,
+        management_fees: row.management_fees,
+        hot_water_debt: row.hot_water_debt,
+      });
+    }
+  };
+
+  for (const row of rows) {
+    const ownerOk = !enforcePrimary || row.owner_primary;
+    const tenantOk = !enforcePrimary || row.tenant_primary;
+    if (audience.type === 'owners') {
+      const phoneIntl = ownerOk ? toIntl(row.phone_owner) : null;
+      if (phoneIntl) contribute(row, phoneIntl, row.owner_name);
+    } else if (audience.type === 'tenants') {
+      const phoneIntl = tenantOk ? toIntl(row.phone_tenant) : null;
+      if (phoneIntl) contribute(row, phoneIntl, row.tenant_name);
+    } else {
+      // 'all' or 'debtor_ids' — prefer owner, fall back to tenant; the name
+      // candidate follows whichever phone actually won, same as the phone itself.
+      const ownerPhone = ownerOk ? toIntl(row.phone_owner) : null;
+      if (ownerPhone) {
+        contribute(row, ownerPhone, row.owner_name);
+      } else {
+        const tenantPhone = tenantOk ? toIntl(row.phone_tenant) : null;
+        if (tenantPhone) contribute(row, tenantPhone, row.tenant_name);
+      }
+    }
+  }
+
+  // Additional owners/tenants from the apartment card — each is its own name
+  // candidate, tied to the SAME apartment as the row it's matched back to.
+  for (const extra of extrasByDebtor) {
+    const row = byDebtorId.get(extra.debtor_id);
+    if (!row) continue;
+    const phoneIntl = toIntl(extra.phone);
+    if (!phoneIntl) continue;
+    contribute(row, phoneIntl, extra.name);
+  }
+  for (const extra of extrasByContact) {
+    const row = byContactId.get(extra.contact_id);
+    if (!row) continue;
+    const phoneIntl = toIntl(extra.phone);
+    if (!phoneIntl) continue;
+    contribute(row, phoneIntl, extra.name);
+  }
+
+  return Array.from(byPhone.entries()).map(([phoneIntl, bucket]) => ({
+    phoneIntl,
+    rawNames: bucket.rawNames,
+    apartments: Array.from(bucket.apartments.values()),
+  }));
 }
