@@ -27,6 +27,7 @@ const {
   resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients,
   resolveSupplierRecipients, resolveSelectionRecipients, resolveConsolidatedSelectionRecipients,
   parseBroadcastDebtFilter,
+  countInvalidBroadcastPhones, countInvalidSupplierPhones, countInvalidSelectionPhones,
 } = await import('@/lib/whatsapp-broadcast');
 const { isValidMinDebtAmount, MIN_DEBT_AMOUNT_ERROR } = await import('@/lib/whatsapp-audience-filter');
 
@@ -38,6 +39,10 @@ let n = 0;
 /** A unique, valid Israeli mobile local number: "050" + 7 digits. */
 const uniqPhone = () => `050${String(1000000 + n++).padStart(7, '0')}`;
 const uniqApt = () => `wa-bcast-test-${Date.now()}-${n++}`;
+/** A landline in the format Israeli area codes use: "0" + digit 2-9 + 7 more
+ *  digits (9 total) — normalizes to 972 + 8 digits, the shape classifyPhone
+ *  (Section 6) treats as a landline, never a WhatsApp-capable mobile. */
+const uniqLandline = () => `02${String(1000000 + n++).padStart(7, '0')}`;
 
 interface ContactSpec {
   owner_phone?: string | null;
@@ -699,5 +704,111 @@ describe('isValidMinDebtAmount (pure — no DB, client + server share this)', ()
     expect(isValidMinDebtAmount(NaN)).toBe(false);
     expect(isValidMinDebtAmount('100')).toBe(false);
     expect(isValidMinDebtAmount(undefined)).toBe(false);
+  });
+});
+
+// Section 6: report-only invalid-phone count ("something entered, but it can't
+// receive WhatsApp" — unparseable OR a landline). NEVER filters the actual
+// recipient list (resolveBroadcastRecipients/resolveSelectionRecipients are
+// untouched) — only an informational number alongside the live estimate.
+d('countInvalidBroadcastPhones / countInvalidSupplierPhones / countInvalidSelectionPhones — Section 6', () => {
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: TEST_URL, max: 4 });
+    pool.on('error', () => undefined);
+  });
+
+  afterAll(async () => {
+    for (const id of made.suppliers) await pool.query(`delete from public.suppliers where id = $1`, [id]);
+    for (const id of made.contactPeople) await pool.query(`delete from public.contact_people where id = $1`, [id]);
+    for (const id of made.debtors) await pool.query(`delete from public.debtors where id = $1`, [id]);
+    for (const id of made.contacts) await pool.query(`delete from public.contacts where id = $1`, [id]);
+    await pool.end();
+  });
+
+  it('an empty owner phone is NOT counted — no data, not a data problem', async () => {
+    const before = await countInvalidBroadcastPhones({ type: 'owners' });
+    await makeContact({ owner_phone: null, owner_is_primary_contact: true });
+    expect(await countInvalidBroadcastPhones({ type: 'owners' })).toBe(before);
+  });
+
+  it('unparseable garbage in the owner phone IS counted', async () => {
+    const before = await countInvalidBroadcastPhones({ type: 'owners' });
+    await makeContact({ owner_phone: 'לא זמין', owner_is_primary_contact: true });
+    expect(await countInvalidBroadcastPhones({ type: 'owners' })).toBe(before + 1);
+  });
+
+  it('a landline that normalizes fine is STILL counted — it has no WhatsApp account', async () => {
+    const before = await countInvalidBroadcastPhones({ type: 'owners' });
+    await makeContact({ owner_phone: uniqLandline(), owner_is_primary_contact: true });
+    expect(await countInvalidBroadcastPhones({ type: 'owners' })).toBe(before + 1);
+  });
+
+  it('a real mobile number is NOT counted', async () => {
+    const before = await countInvalidBroadcastPhones({ type: 'owners' });
+    await makeContact({ owner_phone: uniqPhone(), owner_is_primary_contact: true });
+    expect(await countInvalidBroadcastPhones({ type: 'owners' })).toBe(before);
+  });
+
+  it('tenants: the same rules apply to tenant_phone, independently of owner_phone', async () => {
+    const before = await countInvalidBroadcastPhones({ type: 'tenants' });
+    await makeContact({ tenant_phone: uniqLandline(), tenant_is_primary_contact: true });
+    expect(await countInvalidBroadcastPhones({ type: 'tenants' })).toBe(before + 1);
+  });
+
+  it('an opted-out owner (owner_is_primary_contact = false) with a bad phone is NOT counted — excluded by design, not by data quality', async () => {
+    const before = await countInvalidBroadcastPhones({ type: 'owners' });
+    await makeContact({ owner_phone: 'garbage', owner_is_primary_contact: false });
+    expect(await countInvalidBroadcastPhones({ type: 'owners' })).toBe(before);
+  });
+
+  it('a row that fails the debt filter with a bad phone is NOT counted — same gating as the recipient count', async () => {
+    const before = await countInvalidBroadcastPhones({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null });
+    await makeLinkedDebtor({ owner_phone: 'garbage', owner_is_primary_contact: true }, 0); // debt = 0, fails "only who owes"
+    expect(await countInvalidBroadcastPhones({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null })).toBe(before);
+  });
+
+  it('a row that PASSES the debt filter with a bad phone IS counted', async () => {
+    const before = await countInvalidBroadcastPhones({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null });
+    await makeLinkedDebtor({ owner_phone: 'garbage', owner_is_primary_contact: true }, 500);
+    expect(await countInvalidBroadcastPhones({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null })).toBe(before + 1);
+  });
+
+  it("'all'/'debtor_ids' are not scored — return 0, never called by the live compose screen", async () => {
+    await makeContact({ owner_phone: 'garbage', owner_is_primary_contact: true });
+    expect(await countInvalidBroadcastPhones({ type: 'all' })).toBe(0);
+    expect(await countInvalidBroadcastPhones({ type: 'debtor_ids', debtor_ids: [] })).toBe(0);
+  });
+
+  it('countInvalidSupplierPhones: both mobile and phone invalid → counted; mobile invalid but phone valid → NOT counted (fallback succeeds)', async () => {
+    const before = await countInvalidSupplierPhones();
+    await makeSupplier({ display_name: 'ספק עם טלפון קווי בלבד', mobile: uniqLandline(), phone: uniqLandline() });
+    await makeSupplier({ display_name: 'ספק עם נייד תקין בשדה phone', mobile: 'garbage', phone: uniqPhone() });
+    expect(await countInvalidSupplierPhones()).toBe(before + 1);
+  });
+
+  it('countInvalidSupplierPhones: archived/deleted suppliers are excluded, same scope as resolveSupplierRecipients', async () => {
+    const before = await countInvalidSupplierPhones();
+    await makeSupplier({ display_name: 'ספק בארכיון עם טלפון גרוע', mobile: 'garbage', status: 'archived' });
+    await makeSupplier({ display_name: 'ספק מחוק עם טלפון גרוע', mobile: 'garbage', deleted: true });
+    expect(await countInvalidSupplierPhones()).toBe(before);
+  });
+
+  it('countInvalidSelectionPhones: sums owners + tenants + suppliers for the checked roles only', async () => {
+    const before = await countInvalidSelectionPhones(['owners', 'tenants', 'suppliers']);
+    await makeContact({ owner_phone: uniqLandline(), owner_is_primary_contact: true });
+    await makeContact({ tenant_phone: 'garbage', tenant_is_primary_contact: true });
+    await makeSupplier({ display_name: 'ספק', mobile: 'garbage' });
+    expect(await countInvalidSelectionPhones(['owners', 'tenants', 'suppliers'])).toBe(before + 3);
+
+    // Unchecking a role stops counting its invalid phones.
+    const ownersOnlyBefore = await countInvalidBroadcastPhones({ type: 'owners' });
+    expect(await countInvalidSelectionPhones(['owners'])).toBe(ownersOnlyBefore);
+  });
+
+  it('invalid phones are report-only — resolveSelectionRecipients\' count never changes because of them', async () => {
+    const before = await resolveSelectionRecipients(['owners']);
+    await makeContact({ owner_phone: 'עוד ג׳אנק', owner_is_primary_contact: true });
+    const after = await resolveSelectionRecipients(['owners']);
+    expect(after.length).toBe(before.length); // the invalid one never became a recipient — same as before Section 6
   });
 });
