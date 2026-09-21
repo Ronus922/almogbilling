@@ -9,6 +9,8 @@ import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legal
 import { validatePhone } from '@/lib/validation';
 import { CHIP_RESIDENT_ROLES } from '@/lib/constants/chips';
 import { WHATSAPP_ATTACHMENT_LIMITS, WHATSAPP_MESSAGE_MAX_FILES } from '@/lib/constants/whatsappAttachments';
+import { FINANCE_RECEIPT_LIMITS } from '@/lib/constants/finance';
+import { isIsoDate, isMonthKey } from '@/lib/finance/period';
 import type { ChipHolderUpdate, ChipResidentRole } from '@/lib/types/chips';
 
 // POST /api/auth/login
@@ -134,3 +136,82 @@ export const campaignAttachmentIdsSchema = z
   .max(WHATSAPP_ATTACHMENT_LIMITS.maxFiles, `ניתן לצרף עד ${WHATSAPP_ATTACHMENT_LIMITS.maxFiles} קבצים לתפוצה`)
   .optional()
   .default([]);
+
+// ── Finance module ("שקיפות כספית") ──────────────────────────────────────────
+
+const finKindSchema = z.enum(['income', 'expense'], { error: 'סוג לא תקין' });
+const finSectionSchema = z.enum(['operating', 'renovation_fund'], { error: 'חלק לא תקין' });
+const finNameSchema = z
+  .string({ error: 'שם הסעיף הוא שדה חובה' })
+  .trim()
+  .min(1, 'שם הסעיף הוא שדה חובה')
+  .max(80, 'שם הסעיף ארוך מדי (עד 80 תווים)');
+
+// POST /api/finance/categories
+export const financeCategoryBodySchema = z.object({
+  kind: finKindSchema,
+  name: finNameSchema,
+  section: finSectionSchema.default('operating'),
+  is_hot_water: z.boolean().default(false),
+  is_active: z.boolean().default(true),
+});
+
+// PATCH /api/finance/categories/:id — kind is immutable
+export const financeCategoryPatchSchema = z
+  .object({
+    name: finNameSchema.optional(),
+    section: finSectionSchema.optional(),
+    is_hot_water: z.boolean().optional(),
+    is_active: z.boolean().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, 'אין שדות לעדכון');
+
+// PUT /api/finance/categories/order — the full ordered id list of one kind
+export const financeCategoryOrderSchema = z.object({
+  ids: z.array(z.uuid({ error: 'מזהה סעיף לא תקין' })).min(1, 'רשימה ריקה').max(200, 'רשימה ארוכה מדי'),
+});
+
+const finAmountSchema = z
+  .number({ error: 'סכום הוא שדה חובה' })
+  .positive('הסכום חייב להיות גדול מ-0')
+  .max(9_999_999_999, 'הסכום גדול מדי')
+  .refine((v) => Math.round(v * 100) / 100 === v, 'עד שתי ספרות אחרי הנקודה');
+const finIsoDateSchema = z.string({ error: 'תאריך תשלום הוא שדה חובה' }).refine(isIsoDate, 'תאריך לא תקין');
+const finMonthSchema = z.string({ error: 'חודש הוא שדה חובה' }).refine(isMonthKey, 'חודש לא תקין');
+const finCategoryIdSchema = z.uuid({ error: 'סעיף הוא שדה חובה' });
+const finDocumentIdsSchema = z
+  .array(z.uuid({ error: 'מזהה קובץ לא תקין' }))
+  .max(FINANCE_RECEIPT_LIMITS.maxFiles, `ניתן לצרף עד ${FINANCE_RECEIPT_LIMITS.maxFiles} קבצים`)
+  .default([]);
+const finText = (max: number, label: string) => z.string().trim().max(max, `${label} ארוך מדי (עד ${max} תווים)`).default('');
+
+// POST /api/finance/entries · PATCH /api/finance/entries/:id
+export const financeEntryBodySchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('expense'),
+    category_id: finCategoryIdSchema,
+    amount: finAmountSchema,
+    payment_date: finIsoDateSchema,
+    supplier_id: z.uuid({ error: 'מזהה ספק לא תקין' }).nullable().default(null),
+    supplier_name: finText(200, 'שם הספק'),
+    invoice_number: finText(100, 'מספר החשבונית'),
+    description: finText(500, 'התיאור'),
+    internal_note: finText(2000, 'ההערה'),
+    document_ids: finDocumentIdsSchema,
+  }),
+  z.object({
+    kind: z.literal('income'),
+    category_id: finCategoryIdSchema,
+    amount: finAmountSchema,
+    month: finMonthSchema,
+    description: finText(500, 'התיאור'),
+    internal_note: finText(2000, 'ההערה'),
+    document_ids: finDocumentIdsSchema,
+  }),
+], { error: 'סוג לא תקין' });
+export type FinanceEntryBody = z.infer<typeof financeEntryBodySchema>;
+
+// PUT /api/finance/settings
+export const financeSettingsBodySchema = z.object({
+  show_documents_to_residents: z.boolean({ error: 'ערך לא תקין' }),
+});
