@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { CloudUpload, Loader2, Paperclip, X, AlertCircle, Check } from 'lucide-react';
+import { Camera, CloudUpload, Loader2, Paperclip, X, AlertCircle, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import { fileMeta, formatBytes } from '@/components/documents/helpers';
 import {
   WHATSAPP_ATTACHMENT_ACCEPT,
@@ -25,11 +26,37 @@ import {
 // in-flight upload). The parent only ever needs the ids of the finished uploads
 // and sends them with the submit as attachment_ids.
 //
-// Two screens use it, with different endpoints and caps:
+// Three screens use it, with different endpoints, caps and (for the finance
+// receipts) a different file policy:
 //   • broadcast   — /api/whatsapp/campaigns/attachments, up to
 //                   WHATSAPP_ATTACHMENT_LIMITS.maxFiles (10)
 //   • one message — /api/whatsapp/messages/attachments, up to
 //                   WHATSAPP_MESSAGE_MAX_FILES (5)
+//   • finance     — /api/finance/documents, up to 5, PDF/JPG/PNG only, with a
+//                   camera button on phones (`policy` + `capture`)
+
+/** What may be attached and how it is validated — the WhatsApp policy is the
+ *  default; a screen with other rules passes its own (same shape). */
+export interface AttachmentPolicy {
+  /** `accept` attribute of the file input. */
+  accept: string;
+  /** Helper line under the dropzone. */
+  helpText: (maxFiles: number) => string;
+  /** Per-file rule (type / MIME / size) — Hebrew error or null. */
+  validateFile: (file: { name: string; size: number; type: string }) => string | null;
+  /** Set-level rule (count / total) for adding `next` on top of `existing`. */
+  validateSet: (existing: { size: number }[], next: { size: number }[], maxFiles: number) => string | null;
+  /** The MIME to record for a file (canonical for its extension, else the browser's). */
+  mimeOf: (file: { name: string; type: string }) => string;
+}
+
+export const WHATSAPP_ATTACHMENT_POLICY: AttachmentPolicy = {
+  accept: WHATSAPP_ATTACHMENT_ACCEPT,
+  helpText,
+  validateFile: validateBroadcastAttachment,
+  validateSet: validateBroadcastAttachmentSet,
+  mimeOf: (f) => canonicalMime(attachmentExt(f.name)) ?? f.type,
+};
 
 export type StagedStatus = 'uploading' | 'done' | 'error';
 
@@ -72,6 +99,9 @@ export function AttachmentPicker({
   maxFiles = WHATSAPP_ATTACHMENT_LIMITS.maxFiles,
   uploadUrl = '/api/whatsapp/campaigns/attachments',
   deleteUrl = uploadUrl,
+  policy = WHATSAPP_ATTACHMENT_POLICY,
+  capture = false,
+  label = 'קבצים מצורפים',
 }: {
   items: StagedAttachment[];
   onChange: (next: StagedAttachment[] | ((prev: StagedAttachment[]) => StagedAttachment[])) => void;
@@ -82,9 +112,15 @@ export function AttachmentPicker({
   uploadUrl?: string;
   /** Base for DELETE `${deleteUrl}/<id>` (defaults to uploadUrl). */
   deleteUrl?: string;
+  /** File rules of THIS screen (default: the WhatsApp policy). */
+  policy?: AttachmentPolicy;
+  /** Adds a phone-only "צלם" button that opens the camera (capture=environment). */
+  capture?: boolean;
+  label?: string;
 }) {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const cameraRef = useRef<HTMLInputElement | null>(null);
   const xhrs = useRef(new Map<string, XMLHttpRequest>());
 
   // Abort whatever is still in flight when the picker goes away.
@@ -140,15 +176,15 @@ export function AttachmentPicker({
 
     const additions: { item: StagedAttachment; file: File | null }[] = files.map((file) => {
       const err =
-        validateBroadcastAttachment({ name: file.name, size: file.size, type: file.type }) ??
-        validateBroadcastAttachmentSet(accepted, [{ size: file.size }], maxFiles);
+        policy.validateFile({ name: file.name, size: file.size, type: file.type }) ??
+        policy.validateSet(accepted, [{ size: file.size }], maxFiles);
       if (!err) accepted.push({ size: file.size });
       else if (!firstError) firstError = err;
       const item: StagedAttachment = {
         localId: newLocalId(),
         name: file.name,
         size: file.size,
-        mime: canonicalMime(attachmentExt(file.name)) ?? file.type,
+        mime: policy.mimeOf({ name: file.name, type: file.type }),
         status: err ? 'error' : 'uploading',
         progress: 0,
         error: err ?? undefined,
@@ -179,7 +215,7 @@ export function AttachmentPicker({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <Label className="text-base font-medium text-muted-foreground">קבצים מצורפים</Label>
+        <Label className="text-base font-medium text-muted-foreground">{label}</Label>
         {attachedCount > 0 && (
           <span className="font-num text-xs tabular-nums text-muted-foreground">
             {attachedCount}/{maxFiles}
@@ -223,13 +259,39 @@ export function AttachmentPicker({
         type="file"
         multiple
         hidden
-        accept={WHATSAPP_ATTACHMENT_ACCEPT}
+        accept={policy.accept}
         onChange={(e) => {
           if (e.target.files) addFiles(e.target.files);
           e.target.value = '';
         }}
       />
-      <p className="text-xs text-muted-foreground">{helpText(maxFiles)}</p>
+      {capture && (
+        <>
+          {/* Camera path (phones only) — same handler, capture opens the camera
+              instead of the gallery. Pattern from issues/issue-form-panel.tsx. */}
+          <input
+            ref={cameraRef}
+            type="file"
+            hidden
+            accept="image/*"
+            capture="environment"
+            onChange={(e) => {
+              if (e.target.files) addFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => cameraRef.current?.click()}
+            disabled={blocked}
+            className="w-full gap-2 sm:hidden"
+          >
+            <Camera className="h-4 w-4" /> צלם קבלה
+          </Button>
+        </>
+      )}
+      <p className="text-xs text-muted-foreground">{policy.helpText(maxFiles)}</p>
 
       {items.length > 0 && (
         <ul className="space-y-2">

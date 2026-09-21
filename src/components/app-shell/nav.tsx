@@ -4,7 +4,8 @@ import Link from 'next/link';
 import {
   Building2, LayoutDashboard, LayoutGrid, Users, Truck, CheckSquare, AlertTriangle,
   Calendar, FileText, MessageCircle, MessagesSquare, Bell, Sliders,
-  MapPin, UserCog, KeyRound, SquareParking, Settings as SettingsIcon, type LucideIcon,
+  MapPin, UserCog, KeyRound, SquareParking, Settings as SettingsIcon, Coins, SlidersHorizontal,
+  type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -26,6 +27,10 @@ export interface MenuItem {
    *  Used for /overview, which is role-gated (any non-viewer) rather than tied
    *  to a permission module. */
   visible?: (role: Role) => boolean;
+  /** Active only on the exact path (default: the path and everything under it).
+   *  For a module's overview item whose sibling lives under the same prefix
+   *  (/finance vs /finance/settings) — otherwise both light up together. */
+  exact?: boolean;
   /** Live count badge. Rendered ONLY when a real source sets `count`. No item
    *  carries a hard-coded demo number — the badge capability stays dormant
    *  until a real data source is wired (see DESIGN.md §14). */
@@ -66,6 +71,15 @@ const SECTIONS: MenuSection[] = [
       // and re-add the Upload/Download imports. Routes still reachable by URL.
       // { label: 'ייבוא נתונים',       icon: Upload, href: '/import', module: 'import' },
       // { label: 'ייצוא נתונים',       icon: Download, module: 'export' },
+    ],
+  },
+  // Finance transparency ("שקיפות כספית") — its own titled group. Both items
+  // sit on the `finance` module (admin / super_admin in slice A).
+  {
+    title: 'שקיפות כספית',
+    items: [
+      { label: 'סקירה חודשית',      icon: Coins, href: '/finance', module: 'finance', exact: true },
+      { label: 'סעיפים והגדרות',    icon: SlidersHorizontal, href: '/finance/settings', module: 'finance' },
     ],
   },
 ];
@@ -151,7 +165,7 @@ export function NavLink({
   /** Fired after a real navigation — lets the mobile drawer close itself. */
   onNavigate?: () => void;
 }) {
-  const isActive = !!item.href && (pathname === item.href || pathname.startsWith(item.href + '/'));
+  const isActive = !!item.href && (pathname === item.href || (!item.exact && pathname.startsWith(item.href + '/')));
   const isReady = !!item.href;
   const Icon = item.icon;
 
