@@ -67,12 +67,15 @@ async function runBatch(docs: DriveCandidate[]): Promise<{ done: number; failed:
   try {
     session = await openDriveSession();
   } catch (err) {
-    // Not connected (or the refresh token died): every document fails with
-    // the same clear reason, and one attempt is consumed — the connect screen
-    // re-runs the batch as soon as an account is linked.
-    const msg = err instanceof DriveNotConnectedError ? err.message : `חיבור ל-Google Drive נכשל: ${err instanceof Error ? err.message : String(err)}`;
+    // No account connected: a configuration state, not an upload failure —
+    // the documents are marked with the clear reason but NO attempt is
+    // consumed, so the connect callback can back up all of them at once.
+    // A connected account whose token no longer works IS an attempt.
+    const notConnected = err instanceof DriveNotConnectedError;
+    const msg = notConnected ? err.message : `חיבור ל-Google Drive נכשל: ${err instanceof Error ? err.message : String(err)}`;
+    if (!notConnected) log.warn(`drive session failed: ${msg}`);
     for (const d of docs) {
-      await markDriveAttempt(d.id);
+      if (!notConnected) await markDriveAttempt(d.id);
       await markDriveFailed(d.id, msg);
       out.failed++;
     }
@@ -99,9 +102,9 @@ export function syncDocument(id: string): Promise<'done' | 'failed' | 'skipped'>
 }
 
 /** Back up everything still pending/failed with attempts left, oldest first. */
-export function retryPendingDriveUploads(limit = 25): Promise<{ processed: number; done: number; failed: number }> {
+export function retryPendingDriveUploads(limit = 25, excludeIds: string[] = []): Promise<{ processed: number; done: number; failed: number }> {
   return serialize(async () => {
-    const docs = await listDriveCandidates(limit);
+    const docs = await listDriveCandidates(limit, excludeIds);
     const r = await runBatch(docs);
     return { processed: docs.length, ...r };
   });
@@ -112,7 +115,7 @@ export function syncDocumentsInBackground(ids: string[]): void {
   for (const id of ids) {
     void syncDocument(id).catch((err) => log.error(`syncDocument crashed doc=${id}`, err));
   }
-  // Each save also takes another pass at older failures (the "automatic
-  // retry on every new save" rule).
-  void retryPendingDriveUploads(10).catch((err) => log.error('retryPendingDriveUploads crashed', err));
+  // Each save also takes another pass at OLDER failures (the "automatic
+  // retry on every new save" rule) — not at the ones just synced above.
+  void retryPendingDriveUploads(10, ids).catch((err) => log.error('retryPendingDriveUploads crashed', err));
 }

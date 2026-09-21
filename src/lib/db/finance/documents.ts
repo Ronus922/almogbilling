@@ -143,15 +143,17 @@ export async function getDriveCandidate(id: string): Promise<DriveCandidate | nu
   return queryOne<DriveCandidate>(`${CANDIDATE_SQL} where d.id = $1`, [id]);
 }
 
-/** Linked documents that still need a Drive copy and have attempts left, oldest first. */
-export async function listDriveCandidates(limit: number): Promise<DriveCandidate[]> {
+/** Linked documents that still need a Drive copy and have attempts left,
+ *  oldest first. `excludeIds` = documents the caller has just synced itself. */
+export async function listDriveCandidates(limit: number, excludeIds: string[] = []): Promise<DriveCandidate[]> {
   const r = await query<DriveCandidate>(
     `${CANDIDATE_SQL}
       where d.drive_status <> 'done' and d.drive_attempts < $1
         and d.object_deleted_at is null and e.deleted_at is null
+        and not (d.id = any($3::uuid[]))
       order by d.created_at
       limit $2`,
-    [FINANCE_DRIVE_MAX_ATTEMPTS, limit],
+    [FINANCE_DRIVE_MAX_ATTEMPTS, limit, excludeIds],
   );
   return r.rows;
 }
