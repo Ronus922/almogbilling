@@ -16,6 +16,11 @@ export class ConflictError extends Error {
   }
 }
 
+/** Custom SQLSTATE the DB trigger (migration 20260921072925) raises when
+ *  deleting a contact with an active (non-archived) debtor is blocked. Detect
+ *  by this code, not by parsing the (Hebrew) exception message. */
+export const ACTIVE_DEBT_DELETE_BLOCKED_SQLSTATE = 'BL001';
+
 // The extra owners/tenants of a contact, aggregated inline so every read path
 // returns them in ONE query (no N+1). Correlates on the alias `contacts`, which
 // is the table's own name in every statement below — including RETURNING.
@@ -213,6 +218,10 @@ export async function updateContact(
   );
 }
 
+/** Throws (SQLSTATE 23503, wa_campaign_recipients_contact_id_fkey) if this
+ *  contact ever received a broadcast, and (ACTIVE_DEBT_DELETE_BLOCKED_SQLSTATE)
+ *  if it has an active debtor — both enforced in the DB itself (FK / trigger),
+ *  so no caller, including a script or manual query, can bypass them. */
 export async function deleteContact(id: string): Promise<boolean> {
   const r = await query(`delete from public.contacts where id = $1`, [id]);
   return (r.rowCount ?? 0) > 0;

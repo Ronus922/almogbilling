@@ -2,7 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
-import { getContactById, updateContact, deleteContact } from '@/lib/db/contacts';
+import {
+  getContactById, updateContact, deleteContact,
+  ACTIVE_DEBT_DELETE_BLOCKED_SQLSTATE,
+} from '@/lib/db/contacts';
 import { replaceContactPeople } from '@/lib/db/contactPeople';
 import { coerceContactInput, coerceContactPeople } from '@/lib/validation/contacts';
 import { getBillingSettings } from '@/lib/db/appSettings';
@@ -85,11 +88,13 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 }
 
-// DELETE /api/contacts/[id] — contacts:edit. debtors.contact_id resets via FK ON
-// DELETE SET NULL; wa_campaign_recipients.contact_id is ON DELETE RESTRICT (a
-// sent campaign's history must stay linked to the apartment it went to), so a
-// contact that ever received a broadcast blocks deletion — surfaced below with
-// an explicit reason instead of a raw 500.
+// DELETE /api/contacts/[id] — contacts:edit. Two DB-level guards, both
+// surfaced below with an explicit reason instead of a raw 500:
+//   - wa_campaign_recipients.contact_id is ON DELETE RESTRICT (23503) — a
+//     contact that ever received a broadcast can't be deleted.
+//   - a BEFORE DELETE trigger (ACTIVE_DEBT_DELETE_BLOCKED_SQLSTATE) blocks a
+//     contact with an active (non-archived) debtor — an FK can't express that
+//     condition, since debtors.contact_id itself is ON DELETE SET NULL.
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   try {
     await requirePermission('contacts', 'edit');
@@ -105,7 +110,13 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
     if (!ok) return NextResponse.json({ error: 'not_found' }, { status: 404 });
     return new NextResponse(null, { status: 204 });
   } catch (err) {
-    const e = err as { code?: string; constraint?: string };
+    const e = err as { code?: string; constraint?: string; message?: string };
+    if (e.code === ACTIVE_DEBT_DELETE_BLOCKED_SQLSTATE) {
+      // Message is authored in the trigger itself (migration 20260921072925)
+      // and already includes the apartment number — forwarded verbatim so it
+      // can't drift out of sync with a hardcoded copy here.
+      return NextResponse.json({ error: e.message ?? 'לא ניתן למחוק — קיים חוב פעיל לדירה זו' }, { status: 409 });
+    }
     if (e.code === '23503' && e.constraint === 'wa_campaign_recipients_contact_id_fkey') {
       return NextResponse.json(
         { error: 'לא ניתן למחוק את הדירה — נשלחו אליה תפוצות WhatsApp בעבר' },

@@ -29,6 +29,26 @@ COMMENT ON SCHEMA public IS 'standard public schema';
 
 
 --
+-- Name: block_delete_contact_with_active_debt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.block_delete_contact_with_active_debt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  if exists (
+    select 1 from public.debtors d
+    where d.contact_id = old.id and d.is_archived = false
+  ) then
+    raise exception 'לא ניתן למחוק — לדירה % קיים חוב פעיל', old.apartment_number
+      using errcode = 'BL001';
+  end if;
+  return old;
+end;
+$$;
+
+
+--
 -- Name: reconcile_wa_campaign(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3391,6 +3411,13 @@ CREATE TRIGGER contact_people_touch_updated_at BEFORE UPDATE ON public.contact_p
 
 
 --
+-- Name: contacts contacts_block_delete_with_active_debt; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER contacts_block_delete_with_active_debt BEFORE DELETE ON public.contacts FOR EACH ROW EXECUTE FUNCTION public.block_delete_contact_with_active_debt();
+
+
+--
 -- Name: contacts contacts_touch_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -4391,5 +4418,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260916061254'),
     ('20260916170623'),
     ('20260920221954'),
-    ('20260921000521')
+    ('20260921000521'),
+    ('20260921072925')
 ;
