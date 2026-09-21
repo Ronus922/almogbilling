@@ -27,7 +27,6 @@ const {
   resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients,
   resolveSupplierRecipients, resolveSelectionRecipients, resolveConsolidatedSelectionRecipients,
   parseBroadcastDebtFilter,
-  countInvalidBroadcastPhones, countInvalidSupplierPhones, countInvalidSelectionPhones,
 } = await import('@/lib/whatsapp-broadcast');
 const { isValidMinDebtAmount, MIN_DEBT_AMOUNT_ERROR } = await import('@/lib/whatsapp-audience-filter');
 
@@ -40,8 +39,8 @@ let n = 0;
 const uniqPhone = () => `050${String(1000000 + n++).padStart(7, '0')}`;
 const uniqApt = () => `wa-bcast-test-${Date.now()}-${n++}`;
 /** A landline in the format Israeli area codes use: "0" + digit 2-9 + 7 more
- *  digits (9 total) — normalizes to 972 + 8 digits, the shape classifyPhone
- *  (Section 6) treats as a landline, never a WhatsApp-capable mobile. */
+ *  digits (9 total) — normalizes fine (972 + 8 digits) but has no WhatsApp
+ *  account, so toIntl (Section 6) drops it from every broadcast resolver. */
 const uniqLandline = () => `02${String(1000000 + n++).padStart(7, '0')}`;
 
 interface ContactSpec {
@@ -707,11 +706,13 @@ describe('isValidMinDebtAmount (pure — no DB, client + server share this)', ()
   });
 });
 
-// Section 6: report-only invalid-phone count ("something entered, but it can't
-// receive WhatsApp" — unparseable OR a landline). NEVER filters the actual
-// recipient list (resolveBroadcastRecipients/resolveSelectionRecipients are
-// untouched) — only an informational number alongside the live estimate.
-d('countInvalidBroadcastPhones / countInvalidSupplierPhones / countInvalidSelectionPhones — Section 6', () => {
+// Section 6 (revised): a phone that can't receive WhatsApp — unparseable OR a
+// landline — is FILTERED OUT of the broadcast. Nothing is counted or shown;
+// the audience count only ever includes phones that will actually receive.
+// Unparseable values were always dropped (toIntl → null); the new part is
+// that a landline, which normalizes fine, is now dropped too — by the one
+// toIntl gate every resolver goes through.
+d('landline / unparseable phones are excluded from every resolver — Section 6', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: TEST_URL, max: 4 });
     pool.on('error', () => undefined);
@@ -725,90 +726,95 @@ d('countInvalidBroadcastPhones / countInvalidSupplierPhones / countInvalidSelect
     await pool.end();
   });
 
-  it('an empty owner phone is NOT counted — no data, not a data problem', async () => {
-    const before = await countInvalidBroadcastPhones({ type: 'owners' });
-    await makeContact({ owner_phone: null, owner_is_primary_contact: true });
-    expect(await countInvalidBroadcastPhones({ type: 'owners' })).toBe(before);
+  it('owners: a landline owner phone never becomes a recipient; a mobile one still does', async () => {
+    const landline = uniqLandline();
+    const mobile = uniqPhone();
+    await makeContact({ owner_phone: landline, owner_is_primary_contact: true });
+    await makeContact({ owner_phone: mobile, owner_is_primary_contact: true });
+
+    const phones = (await resolveBroadcastRecipients({ type: 'owners' })).map((r) => r.phoneIntl);
+    expect(phones).not.toContain(intl(landline));
+    expect(phones).toContain(intl(mobile));
   });
 
-  it('unparseable garbage in the owner phone IS counted', async () => {
-    const before = await countInvalidBroadcastPhones({ type: 'owners' });
-    await makeContact({ owner_phone: 'לא זמין', owner_is_primary_contact: true });
-    expect(await countInvalidBroadcastPhones({ type: 'owners' })).toBe(before + 1);
+  it('tenants: the same for tenant_phone', async () => {
+    const landline = uniqLandline();
+    await makeContact({ tenant_phone: landline, tenant_is_primary_contact: true });
+
+    const phones = (await resolveBroadcastRecipients({ type: 'tenants' })).map((r) => r.phoneIntl);
+    expect(phones).not.toContain(intl(landline));
   });
 
-  it('a landline that normalizes fine is STILL counted — it has no WhatsApp account', async () => {
-    const before = await countInvalidBroadcastPhones({ type: 'owners' });
-    await makeContact({ owner_phone: uniqLandline(), owner_is_primary_contact: true });
-    expect(await countInvalidBroadcastPhones({ type: 'owners' })).toBe(before + 1);
+  it('unparseable garbage is still dropped, exactly as before', async () => {
+    const contactId = await makeContact({ owner_phone: 'לא זמין', owner_is_primary_contact: true });
+
+    const recipients = await resolveBroadcastRecipients({ type: 'owners' });
+    expect(recipients.find((r) => r.contactId === contactId)).toBeUndefined();
   });
 
-  it('a real mobile number is NOT counted', async () => {
-    const before = await countInvalidBroadcastPhones({ type: 'owners' });
-    await makeContact({ owner_phone: uniqPhone(), owner_is_primary_contact: true });
-    expect(await countInvalidBroadcastPhones({ type: 'owners' })).toBe(before);
+  it('all: a landline owner falls back to a mobile tenant on the same apartment', async () => {
+    const landline = uniqLandline();
+    const tenantMobile = uniqPhone();
+    await makeContact({
+      owner_phone: landline, owner_is_primary_contact: true,
+      tenant_phone: tenantMobile, tenant_is_primary_contact: true,
+    });
+
+    const phones = (await resolveBroadcastRecipients({ type: 'all' })).map((r) => r.phoneIntl);
+    expect(phones).not.toContain(intl(landline));
+    expect(phones).toContain(intl(tenantMobile));
   });
 
-  it('tenants: the same rules apply to tenant_phone, independently of owner_phone', async () => {
-    const before = await countInvalidBroadcastPhones({ type: 'tenants' });
-    await makeContact({ tenant_phone: uniqLandline(), tenant_is_primary_contact: true });
-    expect(await countInvalidBroadcastPhones({ type: 'tenants' })).toBe(before + 1);
+  it('consolidated (debt-message) path drops the landline the same way — the two resolvers still agree on the phone set', async () => {
+    const landline = uniqLandline();
+    const mobile = uniqPhone();
+    await makeLinkedDebtor({ owner_phone: landline, owner_is_primary_contact: true }, 300);
+    await makeLinkedDebtor({ owner_phone: mobile, owner_is_primary_contact: true }, 300);
+
+    const [plain, consolidated] = await Promise.all([
+      resolveBroadcastRecipients({ type: 'owners' }),
+      resolveConsolidatedBroadcastRecipients({ type: 'owners' }),
+    ]);
+    const consolidatedPhones = consolidated.map((r) => r.phoneIntl);
+    expect(consolidatedPhones).not.toContain(intl(landline));
+    expect(consolidatedPhones).toContain(intl(mobile));
+    expect(new Set(consolidatedPhones)).toEqual(new Set(plain.map((r) => r.phoneIntl)));
   });
 
-  it('an opted-out owner (owner_is_primary_contact = false) with a bad phone is NOT counted — excluded by design, not by data quality', async () => {
-    const before = await countInvalidBroadcastPhones({ type: 'owners' });
-    await makeContact({ owner_phone: 'garbage', owner_is_primary_contact: false });
-    expect(await countInvalidBroadcastPhones({ type: 'owners' })).toBe(before);
+  it('an additional (contact_people) owner with a landline is dropped too — same gate', async () => {
+    const primaryMobile = uniqPhone();
+    const extraLandline = uniqLandline();
+    const contactId = await makeContact({ owner_phone: primaryMobile, owner_is_primary_contact: true });
+    await makeExtra(contactId, 'owner', extraLandline);
+
+    const phones = (await resolveBroadcastRecipients({ type: 'owners' })).map((r) => r.phoneIntl);
+    expect(phones).toContain(intl(primaryMobile));
+    expect(phones).not.toContain(intl(extraLandline));
   });
 
-  it('a row that fails the debt filter with a bad phone is NOT counted — same gating as the recipient count', async () => {
-    const before = await countInvalidBroadcastPhones({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null });
-    await makeLinkedDebtor({ owner_phone: 'garbage', owner_is_primary_contact: true }, 0); // debt = 0, fails "only who owes"
-    expect(await countInvalidBroadcastPhones({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null })).toBe(before);
+  it('suppliers: a landline in `mobile` falls back to a mobile in `phone`; landline in both → excluded', async () => {
+    const fallbackMobile = uniqPhone();
+    const withFallbackId = await makeSupplier({ display_name: 'ספק — נייח בשדה mobile, נייד בשדה phone', mobile: uniqLandline(), phone: fallbackMobile });
+    const landlineOnlyId = await makeSupplier({ display_name: 'ספק — נייח בלבד', mobile: uniqLandline(), phone: uniqLandline() });
+
+    const suppliers = await resolveSupplierRecipients();
+    expect(suppliers.find((s) => s.supplierId === withFallbackId)?.phoneIntl).toBe(intl(fallbackMobile));
+    expect(suppliers.find((s) => s.supplierId === landlineOnlyId)).toBeUndefined();
   });
 
-  it('a row that PASSES the debt filter with a bad phone IS counted', async () => {
-    const before = await countInvalidBroadcastPhones({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null });
-    await makeLinkedDebtor({ owner_phone: 'garbage', owner_is_primary_contact: true }, 500);
-    expect(await countInvalidBroadcastPhones({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null })).toBe(before + 1);
-  });
+  it('the multi-select audience (owners+tenants+suppliers) contains no landline on either routing path', async () => {
+    const ownerLandline = uniqLandline();
+    const tenantLandline = uniqLandline();
+    const supplierLandline = uniqLandline();
+    await makeContact({ owner_phone: ownerLandline, owner_is_primary_contact: true });
+    await makeContact({ tenant_phone: tenantLandline, tenant_is_primary_contact: true });
+    await makeSupplier({ display_name: 'ספק נייח', mobile: supplierLandline });
 
-  it("'all'/'debtor_ids' are not scored — return 0, never called by the live compose screen", async () => {
-    await makeContact({ owner_phone: 'garbage', owner_is_primary_contact: true });
-    expect(await countInvalidBroadcastPhones({ type: 'all' })).toBe(0);
-    expect(await countInvalidBroadcastPhones({ type: 'debtor_ids', debtor_ids: [] })).toBe(0);
-  });
-
-  it('countInvalidSupplierPhones: both mobile and phone invalid → counted; mobile invalid but phone valid → NOT counted (fallback succeeds)', async () => {
-    const before = await countInvalidSupplierPhones();
-    await makeSupplier({ display_name: 'ספק עם טלפון קווי בלבד', mobile: uniqLandline(), phone: uniqLandline() });
-    await makeSupplier({ display_name: 'ספק עם נייד תקין בשדה phone', mobile: 'garbage', phone: uniqPhone() });
-    expect(await countInvalidSupplierPhones()).toBe(before + 1);
-  });
-
-  it('countInvalidSupplierPhones: archived/deleted suppliers are excluded, same scope as resolveSupplierRecipients', async () => {
-    const before = await countInvalidSupplierPhones();
-    await makeSupplier({ display_name: 'ספק בארכיון עם טלפון גרוע', mobile: 'garbage', status: 'archived' });
-    await makeSupplier({ display_name: 'ספק מחוק עם טלפון גרוע', mobile: 'garbage', deleted: true });
-    expect(await countInvalidSupplierPhones()).toBe(before);
-  });
-
-  it('countInvalidSelectionPhones: sums owners + tenants + suppliers for the checked roles only', async () => {
-    const before = await countInvalidSelectionPhones(['owners', 'tenants', 'suppliers']);
-    await makeContact({ owner_phone: uniqLandline(), owner_is_primary_contact: true });
-    await makeContact({ tenant_phone: 'garbage', tenant_is_primary_contact: true });
-    await makeSupplier({ display_name: 'ספק', mobile: 'garbage' });
-    expect(await countInvalidSelectionPhones(['owners', 'tenants', 'suppliers'])).toBe(before + 3);
-
-    // Unchecking a role stops counting its invalid phones.
-    const ownersOnlyBefore = await countInvalidBroadcastPhones({ type: 'owners' });
-    expect(await countInvalidSelectionPhones(['owners'])).toBe(ownersOnlyBefore);
-  });
-
-  it('invalid phones are report-only — resolveSelectionRecipients\' count never changes because of them', async () => {
-    const before = await resolveSelectionRecipients(['owners']);
-    await makeContact({ owner_phone: 'עוד ג׳אנק', owner_is_primary_contact: true });
-    const after = await resolveSelectionRecipients(['owners']);
-    expect(after.length).toBe(before.length); // the invalid one never became a recipient — same as before Section 6
+    const selection = (await resolveSelectionRecipients(['owners', 'tenants', 'suppliers'])).map((r) => r.phoneIntl);
+    const consolidated = (await resolveConsolidatedSelectionRecipients(['owners', 'tenants'])).map((r) => r.phoneIntl);
+    for (const p of [intl(ownerLandline), intl(tenantLandline), intl(supplierLandline)]) {
+      expect(selection).not.toContain(p);
+      expect(consolidated).not.toContain(p);
+    }
   });
 });
