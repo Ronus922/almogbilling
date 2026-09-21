@@ -4,7 +4,10 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDbPool } from '@/lib/db';
 import { getTemplateById } from '@/lib/db/whatsappTemplates';
 import { resolveSendCreds, InstanceNotConfiguredError } from '@/lib/db/whatsappInstances';
-import { resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients } from '@/lib/whatsapp-broadcast';
+import {
+  resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients,
+  resolveSelectionRecipients, resolveConsolidatedSelectionRecipients,
+} from '@/lib/whatsapp-broadcast';
 import {
   interpolateTemplate, interpolateBroadcastTemplate, isDebtMessageTemplate,
   templateUsesApartmentOutsideBlock, resolveConsolidatedName, sortByApartmentNumberAscending,
@@ -14,8 +17,10 @@ import { listStagedAttachments } from '@/lib/wa-queue/attachments';
 import { campaignAttachmentIdsSchema } from '@/lib/validation/requests';
 import { validateBroadcastAttachmentSet } from '@/lib/constants/whatsappAttachments';
 import { withAttachmentUrls } from './_lib/attachmentUrls';
-import type { BroadcastAudience, BroadcastAudienceType } from '@/types/whatsapp';
+import type { BroadcastAudience, BroadcastAudienceType, BroadcastRoleSelection } from '@/types/whatsapp';
 import type { RecipientInput, CampaignStatus, CampaignListFilters, CampaignListPageView } from '@/lib/wa-queue/types';
+
+const ROLE_SELECTIONS: readonly BroadcastRoleSelection[] = ['owners', 'tenants', 'suppliers'];
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -53,6 +58,12 @@ function parseAudience(raw: unknown): BroadcastAudience | null {
   if (a.type === 'debtor_ids') {
     const ids = Array.isArray(a.debtor_ids) ? a.debtor_ids.filter((x): x is string => typeof x === 'string') : [];
     return ids.length ? { type: 'debtor_ids', debtor_ids: ids } : null;
+  }
+  if (a.type === 'selection') {
+    const roles = Array.isArray(a.roles)
+      ? Array.from(new Set(a.roles.filter((x): x is BroadcastRoleSelection => (ROLE_SELECTIONS as readonly string[]).includes(x as string))))
+      : [];
+    return roles.length ? { type: 'selection', roles } : null;
   }
   if (typeof a.type === 'string' && (AUDIENCE_TYPES as readonly string[]).includes(a.type))
     return { type: a.type as BroadcastAudienceType };
@@ -121,12 +132,26 @@ export async function POST(req: NextRequest) {
   // {{monthly}}, {{special}}, {{total_*}}, or a repeating block) is
   // consolidated: one message per phone listing every apartment it covers.
   const isDebt = isDebtMessageTemplate(messageBody);
+  const isSelection = audience.type === 'selection';
+  const selectionIncludesSuppliers = isSelection && (audience.roles ?? []).includes('suppliers');
+
+  // Suppliers carry no apartment/debt data at all — a debt-message template
+  // (consolidated per apartment) can never target one. Blocks the WHOLE
+  // campaign at creation, same pattern as the {{apartment}}-outside-block
+  // guard below: fail loudly at creation, never silently drop a recipient.
+  if (isDebt && selectionIncludesSuppliers) {
+    return NextResponse.json({
+      error: 'לא ניתן לשלוח הודעת חוב (עם משתני חוב/דירה) לקהל שכולל ספקים — לספקים אין דירה או חוב. הסירו את "ספקים" מקהל היעד, או השתמשו בתבנית ללא משתני חוב.',
+    }, { status: 400 });
+  }
 
   let recipients: RecipientInput[];
   let partialDetailCount = 0;
 
   if (isDebt) {
-    const consolidated = await resolveConsolidatedBroadcastRecipients(audience);
+    const consolidated = isSelection
+      ? await resolveConsolidatedSelectionRecipients(audience.roles ?? [])
+      : await resolveConsolidatedBroadcastRecipients(audience);
     if (consolidated.length === 0) return NextResponse.json({ error: 'לא נמצאו נמענים עם מספר תקין' }, { status: 400 });
 
     // Hard block: {{apartment}} outside the repeating block is ambiguous for
@@ -157,6 +182,21 @@ export async function POST(req: NextRequest) {
         apartments: apartments.map((a) => ({ contactId: a.contactId, debtorId: a.debtorId })),
       };
     });
+  } else if (isSelection) {
+    const resolved = await resolveSelectionRecipients(audience.roles ?? []);
+    if (resolved.length === 0) return NextResponse.json({ error: 'לא נמצאו נמענים עם מספר תקין' }, { status: 400 });
+    recipients = resolved.map((r) => r.kind === 'supplier'
+      ? {
+          contactId: null, debtorId: null, supplierId: r.supplierId, phoneIntl: r.phoneIntl,
+          payload: interpolateTemplate(messageBody, {
+            owner_name: r.name, tenant_name: null, apartment_number: null,
+            total_debt: null, management_fees: null, hot_water_debt: null,
+          }),
+        }
+      : {
+          contactId: r.contactId, debtorId: r.debtorId, phoneIntl: r.phoneIntl,
+          payload: interpolateTemplate(messageBody, r.debtor),
+        });
   } else {
     const resolved = await resolveBroadcastRecipients(audience);
     if (resolved.length === 0) return NextResponse.json({ error: 'לא נמצאו נמענים עם מספר תקין' }, { status: 400 });

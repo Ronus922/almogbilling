@@ -23,11 +23,14 @@ vi.mock('@/lib/db', () => ({
   query: (text: string, params?: unknown[]) => pool.query(text, params),
 }));
 
-const { resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients } = await import('@/lib/whatsapp-broadcast');
+const {
+  resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients,
+  resolveSupplierRecipients, resolveSelectionRecipients, resolveConsolidatedSelectionRecipients,
+} = await import('@/lib/whatsapp-broadcast');
 
 /** Every id this suite creates, so teardown removes exactly those (CLAUDE.md
  *  iron rule 12 — never clean up by filter). */
-const made = { contacts: [] as string[], debtors: [] as string[], contactPeople: [] as string[] };
+const made = { contacts: [] as string[], debtors: [] as string[], contactPeople: [] as string[], suppliers: [] as string[] };
 
 let n = 0;
 /** A unique, valid Israeli mobile local number: "050" + 7 digits. */
@@ -379,4 +382,146 @@ d('resolveConsolidatedBroadcastRecipients — multi-apartment grouping + apartme
       expect(consolidatedPhones).toEqual(plainPhones);
     },
   );
+});
+
+interface SupplierSpec {
+  display_name: string;
+  phone?: string;
+  mobile?: string;
+  status?: 'active' | 'archived';
+  deleted?: boolean;
+}
+
+async function makeSupplier(spec: SupplierSpec): Promise<string> {
+  const r = await pool.query<{ id: string }>(
+    `insert into public.suppliers (display_name, phone, mobile, status, deleted_at)
+     values ($1, $2, $3, $4, $5)
+     returning id`,
+    [spec.display_name, spec.phone ?? '', spec.mobile ?? '', spec.status ?? 'active', spec.deleted ? new Date() : null],
+  );
+  const id = r.rows[0]!.id;
+  made.suppliers.push(id);
+  return id;
+}
+
+// PR — Section 3: the compose screen's multi-select audience (owners/tenants/
+// suppliers checkboxes). "Union" semantics per the approved decision: an
+// apartment with both an eligible owner phone and an eligible tenant phone
+// gets TWO separate messages when both roles are checked — deliberately NOT
+// "all"'s single-recipient-per-apartment, owner-preferred behavior.
+d('resolveSelectionRecipients / resolveConsolidatedSelectionRecipients / resolveSupplierRecipients — multi-select audience', () => {
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: TEST_URL, max: 4 });
+    pool.on('error', () => undefined);
+  });
+
+  afterAll(async () => {
+    for (const id of made.suppliers) await pool.query(`delete from public.suppliers where id = $1`, [id]);
+    for (const id of made.contactPeople) await pool.query(`delete from public.contact_people where id = $1`, [id]);
+    for (const id of made.debtors) await pool.query(`delete from public.debtors where id = $1`, [id]);
+    for (const id of made.contacts) await pool.query(`delete from public.contacts where id = $1`, [id]);
+    await pool.end();
+  });
+
+  it('owners+tenants both checked: an apartment with distinct owner and tenant phones gets TWO recipients (true union, not "all"\'s single pick)', async () => {
+    const ownerPhone = uniqPhone();
+    const tenantPhone = uniqPhone();
+    await makeLinkedDebtor({
+      owner_phone: ownerPhone, owner_is_primary_contact: true,
+      tenant_phone: tenantPhone, tenant_is_primary_contact: true,
+    });
+
+    const selection = await resolveSelectionRecipients(['owners', 'tenants']);
+    const phones = selection.map((r) => r.phoneIntl);
+    expect(phones).toContain(intl(ownerPhone));
+    expect(phones).toContain(intl(tenantPhone));
+  });
+
+  it('owners only checked: tenant phone is not included, even when eligible', async () => {
+    const ownerPhone = uniqPhone();
+    const tenantPhone = uniqPhone();
+    await makeLinkedDebtor({
+      owner_phone: ownerPhone, owner_is_primary_contact: true,
+      tenant_phone: tenantPhone, tenant_is_primary_contact: true,
+    });
+
+    const selection = await resolveSelectionRecipients(['owners']);
+    const phones = selection.map((r) => r.phoneIntl);
+    expect(phones).toContain(intl(ownerPhone));
+    expect(phones).not.toContain(intl(tenantPhone));
+  });
+
+  it('a phone reached via BOTH owner and tenant roles (same number) is only messaged once', async () => {
+    const sharedPhone = uniqPhone();
+    await makeLinkedDebtor({
+      owner_phone: sharedPhone, owner_is_primary_contact: true,
+      tenant_phone: sharedPhone, tenant_is_primary_contact: true,
+    });
+
+    const selection = await resolveSelectionRecipients(['owners', 'tenants']);
+    const matches = selection.filter((r) => r.phoneIntl === intl(sharedPhone));
+    expect(matches).toHaveLength(1);
+  });
+
+  it('resolveSupplierRecipients: mobile preferred over phone, archived/deleted excluded', async () => {
+    const mobilePhone = uniqPhone();
+    const landline = uniqPhone();
+    const activeId = await makeSupplier({ display_name: 'ספק פעיל', mobile: mobilePhone, phone: landline });
+    await makeSupplier({ display_name: 'ספק בארכיון', mobile: uniqPhone(), status: 'archived' });
+    await makeSupplier({ display_name: 'ספק מחוק', mobile: uniqPhone(), deleted: true });
+    const phoneOnlyPhone = uniqPhone();
+    const phoneOnlyId = await makeSupplier({ display_name: 'ספק בלי נייד', phone: phoneOnlyPhone });
+
+    const suppliers = await resolveSupplierRecipients();
+    const active = suppliers.find((s) => s.supplierId === activeId);
+    expect(active?.phoneIntl).toBe(intl(mobilePhone)); // mobile wins over phone
+    const phoneOnly = suppliers.find((s) => s.supplierId === phoneOnlyId);
+    expect(phoneOnly?.phoneIntl).toBe(intl(phoneOnlyPhone)); // falls back to phone
+    expect(suppliers.map((s) => s.name)).not.toContain('ספק בארכיון');
+    expect(suppliers.map((s) => s.name)).not.toContain('ספק מחוק');
+  });
+
+  it('resolveSelectionRecipients(["suppliers"]) includes only supplier recipients, as the "supplier" kind', async () => {
+    const supplierPhone = uniqPhone();
+    const supplierId = await makeSupplier({ display_name: 'ספק ניקיון', mobile: supplierPhone });
+
+    const selection = await resolveSelectionRecipients(['suppliers']);
+    const match = selection.find((r) => r.phoneIntl === intl(supplierPhone));
+    expect(match).toBeDefined();
+    expect(match?.kind).toBe('supplier');
+    if (match?.kind === 'supplier') expect(match.supplierId).toBe(supplierId);
+  });
+
+  it('resolveConsolidatedSelectionRecipients: union of owners+tenants for a debt message, same true-union semantics', async () => {
+    const ownerPhone = uniqPhone();
+    const tenantPhone = uniqPhone();
+    const aptA = uniqApt();
+    const aptB = uniqApt();
+    await makeLinkedDebtor({
+      owner_phone: ownerPhone, owner_is_primary_contact: true, apartment_number: aptA,
+      tenant_phone: tenantPhone, tenant_is_primary_contact: true,
+    });
+    // A second apartment where the SAME owner phone also owns — should
+    // consolidate onto the owner's ONE recipient with 2 apartments, while the
+    // tenant phone (different apartment) is its OWN separate recipient.
+    await makeLinkedDebtor({ owner_phone: ownerPhone, owner_is_primary_contact: true, apartment_number: aptB });
+
+    const consolidated = await resolveConsolidatedSelectionRecipients(['owners', 'tenants']);
+    const ownerRecipient = consolidated.find((r) => r.phoneIntl === intl(ownerPhone));
+    const tenantRecipient = consolidated.find((r) => r.phoneIntl === intl(tenantPhone));
+    expect(ownerRecipient?.apartments.map((a) => a.apartment_number).sort()).toEqual([aptA, aptB].sort());
+    expect(tenantRecipient?.apartments.map((a) => a.apartment_number)).toEqual([aptA]);
+  });
+
+  it('resolveConsolidatedSelectionRecipients ignores "suppliers" in roles (defensive — the route blocks this combination before calling it)', async () => {
+    const supplierPhone = uniqPhone();
+    await makeSupplier({ display_name: 'ספק', mobile: supplierPhone });
+    const ownerPhone = uniqPhone();
+    await makeLinkedDebtor({ owner_phone: ownerPhone, owner_is_primary_contact: true });
+
+    const consolidated = await resolveConsolidatedSelectionRecipients(['owners', 'suppliers']);
+    const phones = consolidated.map((r) => r.phoneIntl);
+    expect(phones).toContain(intl(ownerPhone));
+    expect(phones).not.toContain(intl(supplierPhone));
+  });
 });

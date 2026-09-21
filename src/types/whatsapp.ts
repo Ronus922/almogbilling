@@ -263,14 +263,24 @@ export interface NewChatTarget {
 export type BroadcastStatus = 'pending' | 'running' | 'completed' | 'failed';
 
 /** Audience kinds. "owners"/"tenants" pick the matching debtor phone field;
- *  "all" = every non-archived debtor with any valid phone; "debtor_ids" = an
- *  explicit list (the task's contact_ids, mapped to debtors). */
+ *  "all" = every non-archived debtor with any valid phone (owner preferred,
+ *  tenant fallback — ONE recipient per apartment; legacy, kept for API/script
+ *  compat but no longer offered by the compose screen); "debtor_ids" = an
+ *  explicit list (the task's contact_ids, mapped to debtors); "selection" =
+ *  the compose screen's multi-select (owners/tenants/suppliers checkboxes,
+ *  any non-empty subset) — a TRUE UNION: an apartment with both an eligible
+ *  owner phone and an eligible tenant phone gets two separate messages when
+ *  both boxes are checked (deliberately different from "all"'s single-
+ *  recipient-per-apartment behavior). */
 export type BroadcastAudienceType = 'all' | 'owners' | 'tenants';
+export type BroadcastRoleSelection = 'owners' | 'tenants' | 'suppliers';
 
 export interface BroadcastAudience {
-  type: BroadcastAudienceType | 'debtor_ids';
+  type: BroadcastAudienceType | 'debtor_ids' | 'selection';
   /** Present only when type === 'debtor_ids'. */
   debtor_ids?: string[];
+  /** Present only when type === 'selection' — one or more roles. */
+  roles?: BroadcastRoleSelection[];
 }
 
 /**

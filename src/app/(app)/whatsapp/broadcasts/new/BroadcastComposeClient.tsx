@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  Megaphone, Send, Loader2, Users, Home, UserCheck, ArrowRight, Eye, CheckCircle2, OctagonX,
+  Megaphone, Send, Loader2, Home, UserCheck, Truck, ArrowRight, Eye, CheckCircle2, OctagonX,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -28,11 +28,13 @@ import { usePoll } from '../_lib/usePoll';
 import { isTerminal, isCancellable, progressPct, processed } from '../_lib/status';
 
 const FREE_TEXT = '__free__';
-const AUDIENCES: { value: 'all' | 'owners' | 'tenants'; label: string; icon: typeof Users }[] = [
-  { value: 'all', label: 'כל החייבים', icon: Users },
+type Role = 'owners' | 'tenants' | 'suppliers';
+const ROLES: { value: Role; label: string; icon: typeof Home }[] = [
   { value: 'owners', label: 'בעלי נכסים', icon: Home },
   { value: 'tenants', label: 'שוכרים', icon: UserCheck },
+  { value: 'suppliers', label: 'ספקים', icon: Truck },
 ];
+const DEFAULT_ROLES: Role[] = ['owners', 'tenants'];
 
 // A fresh idempotency token per compose session — a double-click / retry POSTs the
 // same token, so the server returns the SAME campaign instead of a duplicate.
@@ -54,13 +56,14 @@ export function BroadcastComposeClient({
   onCancel?: () => void;
 } = {}) {
   const [name, setName] = useState('');
-  const [audience, setAudience] = useState<'all' | 'owners' | 'tenants'>('all');
+  const [roles, setRoles] = useState<Role[]>(DEFAULT_ROLES);
   const [templates, setTemplates] = useState<Tpl[]>([]);
   const [templateId, setTemplateId] = useState(FREE_TEXT);
   const [content, setContent] = useState('');
   const [sending, setSending] = useState(false);
   const [count, setCount] = useState<number | null>(null);
   const [partialCount, setPartialCount] = useState(0);
+  const [audienceError, setAudienceError] = useState<string | null>(null);
   const [launched, setLaunched] = useState<Campaign | null>(null);
   const [attachments, setAttachments] = useState<StagedAttachment[]>([]);
   const tokenRef = useRef(newToken());
@@ -89,12 +92,17 @@ export function BroadcastComposeClient({
   }, []);
 
   // Live estimate of messages that will actually go out, for the CURRENT
-  // audience + content — the content decides free-form vs. debt-consolidated
-  // routing server-side (isDebtMessageTemplate), so both must be sent.
+  // role selection + content — the content decides free-form vs. debt-
+  // consolidated routing server-side (isDebtMessageTemplate), so both must be
+  // sent. A debt template with "ספקים" checked is blocked server-side (a
+  // supplier has no apartment/debt) — the same message surfaces here so send
+  // is disabled before the operator even attempts it.
   // Debounced: `content` changes on every keystroke, the count doesn't need to.
   useEffect(() => {
     let cancelled = false;
     setCount(null);
+    setAudienceError(null);
+    if (roles.length === 0) return;
     const timer = setTimeout(() => {
       (async () => {
         try {
@@ -102,16 +110,21 @@ export function BroadcastComposeClient({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ type: audience, body: content }),
+            body: JSON.stringify({ type: 'selection', roles, body: content }),
           });
-          if (!r.ok) throw new Error();
-          const d = (await r.json()) as { count: number; partial_count: number };
-          if (!cancelled) { setCount(d.count); setPartialCount(d.partial_count); }
+          const d = (await r.json().catch(() => ({}))) as { count?: number; partial_count?: number; error?: string };
+          if (cancelled) return;
+          if (!r.ok || d.error) { setCount(null); setPartialCount(0); setAudienceError(d.error ?? 'שגיאה בחישוב נמענים'); return; }
+          setCount(d.count ?? 0); setPartialCount(d.partial_count ?? 0);
         } catch { if (!cancelled) { setCount(null); setPartialCount(0); } }
       })();
     }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [audience, content]);
+  }, [roles, content]);
+
+  function toggleRole(role: Role) {
+    setRoles((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
+  }
 
   function selectTemplate(value: string | null) {
     const next = value ?? FREE_TEXT;
@@ -131,7 +144,8 @@ export function BroadcastComposeClient({
   }
 
   const uploading = isUploading(attachments);
-  const canSend = name.trim().length > 0 && content.trim().length > 0 && !sending && !uploading && (count ?? 0) > 0;
+  const canSend = name.trim().length > 0 && content.trim().length > 0 && roles.length > 0
+    && !sending && !uploading && !audienceError && (count ?? 0) > 0;
 
   async function handleSend() {
     if (!canSend) return;
@@ -145,7 +159,7 @@ export function BroadcastComposeClient({
           name: name.trim(),
           body: content.trim(),
           template_id: templateId === FREE_TEXT ? undefined : templateId,
-          audience: { type: audience },
+          audience: { type: 'selection', roles },
           client_token: tokenRef.current,
           attachment_ids: readyAttachmentIds(attachments),
         }),
@@ -166,7 +180,8 @@ export function BroadcastComposeClient({
 
   function reset() {
     setLaunched(null);
-    setName(''); setContent(''); setTemplateId(FREE_TEXT); setAudience('all'); setAttachments([]);
+    setName(''); setContent(''); setTemplateId(FREE_TEXT); setRoles(DEFAULT_ROLES); setAttachments([]);
+    setAudienceError(null);
     tokenRef.current = newToken();
   }
 
@@ -198,28 +213,37 @@ export function BroadcastComposeClient({
           <Input id="bc-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="לדוגמה: תזכורת תשלום דצמבר" className="h-10" disabled={sending} />
         </div>
 
-        {/* Audience */}
+        {/* Audience — multi-select: any combination of owners/tenants/suppliers */}
         <div className="space-y-1.5">
           <Label className="text-base font-medium text-muted-foreground">קהל יעד</Label>
           <div className="flex flex-wrap gap-2">
-            {AUDIENCES.map((a) => {
-              const active = audience === a.value;
+            {ROLES.map((role) => {
+              const active = roles.includes(role.value);
               return (
-                <button key={a.value} type="button" onClick={() => setAudience(a.value)} disabled={sending}
+                <button key={role.value} type="button" onClick={() => toggleRole(role.value)} disabled={sending}
+                  aria-pressed={active}
                   className={cn('inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-semibold transition-colors',
                     active ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}>
-                  <a.icon className="h-4 w-4" /> {a.label}
+                  <role.icon className="h-4 w-4" /> {role.label}
                 </button>
               );
             })}
           </div>
-          <p className="text-xs text-slate-500">
-            {count === null ? 'מחשב נמענים…' : <>נמענים עם טלפון תקין: <span className="font-bold text-slate-700 tabular-nums">{count}</span></>}
-          </p>
-          {count !== null && partialCount > 0 && (
-            <p className="text-xs font-medium text-amber-700">
-              {partialCount} {partialCount === 1 ? 'נמען יקבל' : 'נמענים יקבלו'} פירוט חלקי — רשימת הדירות ארוכה מדי להצגה מלאה.
-            </p>
+          {roles.length === 0 ? (
+            <p className="text-xs font-medium text-red-600">בחרו לפחות קהל יעד אחד.</p>
+          ) : audienceError ? (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700">{audienceError}</p>
+          ) : (
+            <>
+              <p className="text-xs text-slate-500">
+                {count === null ? 'מחשב נמענים…' : <>נמענים עם טלפון תקין: <span className="font-bold text-slate-700 tabular-nums">{count}</span></>}
+              </p>
+              {count !== null && partialCount > 0 && (
+                <p className="text-xs font-medium text-amber-700">
+                  {partialCount} {partialCount === 1 ? 'נמען יקבל' : 'נמענים יקבלו'} פירוט חלקי — רשימת הדירות ארוכה מדי להצגה מלאה.
+                </p>
+              )}
+            </>
           )}
         </div>
 
