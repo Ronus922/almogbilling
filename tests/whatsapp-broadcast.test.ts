@@ -27,7 +27,7 @@ const { resolveBroadcastRecipients } = await import('@/lib/whatsapp-broadcast');
 
 /** Every id this suite creates, so teardown removes exactly those (CLAUDE.md
  *  iron rule 12 — never clean up by filter). */
-const made = { contacts: [] as string[], debtors: [] as string[] };
+const made = { contacts: [] as string[], debtors: [] as string[], contactPeople: [] as string[] };
 
 let n = 0;
 /** A unique, valid Israeli mobile local number: "050" + 7 digits. */
@@ -96,6 +96,18 @@ function intl(local: string): string {
   return `972${local.slice(1)}`;
 }
 
+/** Inserts one contact_people extra (additional owner/tenant beyond the
+ *  primary on the contact row). */
+async function makeExtra(contactId: string, role: 'owner' | 'tenant', phone: string): Promise<void> {
+  const extra = await pool.query<{ id: string }>(
+    `insert into public.contact_people (contact_id, role, name, phone, is_primary_contact, sort_order)
+     values ($1, $2, 'Extra', $3, true, 0)
+     returning id`,
+    [contactId, role, phone],
+  );
+  made.contactPeople.push(extra.rows[0]!.id);
+}
+
 d('resolveBroadcastRecipients — primary-contact opt-out enforcement', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: TEST_URL, max: 4 });
@@ -103,6 +115,7 @@ d('resolveBroadcastRecipients — primary-contact opt-out enforcement', () => {
   });
 
   afterAll(async () => {
+    for (const id of made.contactPeople) await pool.query(`delete from public.contact_people where id = $1`, [id]);
     for (const id of made.debtors) await pool.query(`delete from public.debtors where id = $1`, [id]);
     for (const id of made.contacts) await pool.query(`delete from public.contacts where id = $1`, [id]);
     await pool.end();
@@ -190,5 +203,33 @@ d('resolveBroadcastRecipients — primary-contact opt-out enforcement', () => {
     expect(match).toBeDefined();
     expect(match?.contactId).toBe(contactId);
     expect(match?.debtorId).toBeNull();
+  });
+
+  it('owners: an apartment with NO debt record still resolves its ADDITIONAL owner (contact_people extras join through contacts)', async () => {
+    const primaryPhone = uniqPhone();
+    const extraPhone = uniqPhone();
+    const contactId = await makeContact({ owner_phone: primaryPhone, owner_is_primary_contact: true });
+    await makeExtra(contactId, 'owner', extraPhone);
+
+    const recipients = await resolveBroadcastRecipients({ type: 'owners' });
+    const phones = recipients.map((r) => r.phoneIntl);
+    expect(phones).toContain(intl(primaryPhone));
+    expect(phones).toContain(intl(extraPhone));
+    const match = recipients.find((r) => r.phoneIntl === intl(extraPhone));
+    expect(match?.contactId).toBe(contactId);
+    expect(match?.debtorId).toBeNull();
+  });
+
+  it('tenants: a no-debt apartment\'s extra tenant is included; an extra on an unrelated role is not', async () => {
+    const extraTenantPhone = uniqPhone();
+    const extraOwnerPhone = uniqPhone();
+    const contactId = await makeContact({});
+    await makeExtra(contactId, 'tenant', extraTenantPhone);
+    await makeExtra(contactId, 'owner', extraOwnerPhone);
+
+    const recipients = await resolveBroadcastRecipients({ type: 'tenants' });
+    const phones = recipients.map((r) => r.phoneIntl);
+    expect(phones).toContain(intl(extraTenantPhone));
+    expect(phones).not.toContain(intl(extraOwnerPhone));
   });
 });
