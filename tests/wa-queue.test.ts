@@ -28,6 +28,8 @@ let fixtureContactId: string;
 /** A second apartment, used only by the wa_campaign_recipient_apartments
  *  (PR ב') tests below — a consolidated recipient needs 2+ distinct apartments. */
 let fixtureContactId2: string;
+/** A supplier, for the multi-select audience (Section 3) supplier-recipient test. */
+let fixtureSupplierId: string;
 
 function recips(...phones: string[]): RecipientInput[] {
   return phones.map((p) => ({ contactId: fixtureContactId, debtorId: null, phoneIntl: p, payload: `hi ${p}` }));
@@ -93,10 +95,15 @@ d('wa-queue durable delivery engine', () => {
       [`wa-queue-test-2-${Date.now()}`],
     );
     fixtureContactId2 = c2.rows[0]!.id;
+    const s = await pool.query<{ id: string }>(
+      `insert into public.suppliers (display_name) values ('wa-queue test supplier') returning id`,
+    );
+    fixtureSupplierId = s.rows[0]!.id;
   });
   afterAll(async () => {
     await pool.query('delete from public.contacts where id = $1', [fixtureContactId]);
     await pool.query('delete from public.contacts where id = $1', [fixtureContactId2]);
+    await pool.query('delete from public.suppliers where id = $1', [fixtureSupplierId]);
     await pool.end();
   });
   beforeEach(async () => {
@@ -115,6 +122,25 @@ d('wa-queue durable delivery engine', () => {
   it('dedups duplicate recipients by idempotency key', async () => {
     const c = await createCampaign(pool, { ...base, recipients: recips('97250001', '97250001') });
     expect(c.total_count).toBe(1);
+  });
+
+  // Section 3: a supplier recipient (multi-select audience) has NO contact_id
+  // at all — the schema's CHECK constraint (contact_id is not null OR
+  // supplier_id is not null) is what actually enforces this is never both-null.
+  it('writes a supplier recipient with contact_id null and supplier_id set; the recipient log shows the supplier name', async () => {
+    const c = await createCampaign(pool, {
+      ...base,
+      recipients: [
+        { contactId: null, debtorId: null, supplierId: fixtureSupplierId, phoneIntl: '97250009', payload: 'hi supplier' },
+      ],
+    });
+    expect(c.total_count).toBe(1);
+    const raw = (await rawRecipients(c.id))[0]!;
+    expect(raw.contact_id).toBeNull();
+    expect(raw.supplier_id).toBe(fixtureSupplierId);
+
+    const log = await listRecipients(pool, c.id);
+    expect(log.rows[0]?.debtor_name).toBe('wa-queue test supplier');
   });
 
   // PR ב': a consolidated (debt-message) recipient carries `apartments` —

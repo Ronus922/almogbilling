@@ -64,8 +64,12 @@ export interface Campaign {
 export interface Recipient {
   id: string;
   campaign_id: string;
-  /** Apartment identity (public.contacts.id) — always present. */
-  contact_id: string;
+  /** Apartment identity (public.contacts.id) — null only for a supplier
+   *  recipient (supplier_id set instead; the schema's CHECK constraint
+   *  requires exactly one of the two). */
+  contact_id: string | null;
+  /** Supplier identity (public.suppliers.id) — set only for a supplier recipient. */
+  supplier_id: string | null;
   debtor_id: string | null;
   phone_intl: string;
   chat_id: string;
@@ -107,12 +111,16 @@ export interface RecipientApartmentLink {
 /** One recipient as supplied to createCampaign (identity + message snapshot).
  *  contactId/debtorId are the RECIPIENT'S representative apartment (the row's
  *  own FK, exactly as before this feature existed — a free-form recipient's
- *  whole identity). */
+ *  whole identity) — null for a supplier recipient, which carries supplierId
+ *  instead (the multi-select audience's "selection" path; the schema's CHECK
+ *  constraint requires exactly one of contact_id/supplier_id to be set). */
 export interface RecipientInput {
-  /** Apartment identity (public.contacts.id) — always present. */
-  contactId: string;
-  /** The active debt record's id, or null for an apartment with none. */
+  /** Apartment identity (public.contacts.id) — null only for a supplier recipient. */
+  contactId: string | null;
+  /** The active debt record's id, or null for an apartment with none/a supplier. */
   debtorId: string | null;
+  /** Supplier identity (public.suppliers.id) — set only for a supplier recipient. */
+  supplierId?: string | null;
   phoneIntl: string;   // '9725XXXXXXXX'
   payload: string;     // fully interpolated message
   /** Every apartment consolidated into this recipient (debt-message

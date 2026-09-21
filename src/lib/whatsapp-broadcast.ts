@@ -11,7 +11,7 @@ import {
   type ExtraRecipient,
 } from '@/lib/db/contactPeople';
 import type { TemplateDebtor } from '@/lib/whatsapp-template';
-import type { BroadcastAudience } from '@/types/whatsapp';
+import type { BroadcastAudience, BroadcastRoleSelection } from '@/types/whatsapp';
 import type { ContactPersonRole } from '@/lib/types/contacts';
 
 // Audience → recipient resolution for WhatsApp broadcasts. The actual sending is
@@ -356,4 +356,119 @@ export async function resolveConsolidatedBroadcastRecipients(
     rawNames: bucket.rawNames,
     apartments: Array.from(bucket.apartments.values()),
   }));
+}
+
+// ── Multi-select audience (owners/tenants/suppliers checkboxes) ────────────
+// The compose screen's "selection" audience is a TRUE UNION of the checked
+// roles: an apartment with both an eligible owner phone and an eligible
+// tenant phone gets two separate messages when both boxes are checked
+// (deliberately different from "all"'s single-recipient-per-apartment,
+// owner-preferred behavior, which stays untouched for any caller still using
+// it directly). A phone reached by more than one role is only ever messaged
+// ONCE — the union dedups globally by phone, contacts (owners/tenants) always
+// winning identity over a supplier on the same number.
+
+export interface SupplierRecipient {
+  supplierId: string;
+  phoneIntl: string;
+  name: string | null;
+}
+
+interface SupplierRow {
+  id: string;
+  display_name: string;
+  phone: string | null;
+  mobile: string | null;
+}
+
+/** Active, non-deleted suppliers with a valid WhatsApp-capable number — mobile
+ *  preferred, phone as fallback (same rule as getSupplierNotifyContact in
+ *  src/lib/db/suppliers.ts). Suppliers carry no apartment/debt data at all —
+ *  never eligible for a debt-message template; the campaigns route blocks
+ *  that combination outright at creation time. */
+export async function resolveSupplierRecipients(): Promise<SupplierRecipient[]> {
+  const r = await query<SupplierRow>(
+    `select id, display_name, phone, mobile from public.suppliers
+      where status = 'active' and deleted_at is null`,
+  );
+  const out: SupplierRecipient[] = [];
+  const seen = new Set<string>();
+  for (const row of r.rows) {
+    const phoneIntl = toIntl(row.mobile) ?? toIntl(row.phone);
+    if (!phoneIntl || seen.has(phoneIntl)) continue;
+    seen.add(phoneIntl);
+    out.push({ supplierId: row.id, phoneIntl, name: row.display_name || null });
+  }
+  return out;
+}
+
+function unionBroadcastRecipientsByPhone(lists: ReadonlyArray<BroadcastRecipient[]>): BroadcastRecipient[] {
+  const byPhone = new Map<string, BroadcastRecipient>();
+  for (const list of lists) for (const r of list) if (!byPhone.has(r.phoneIntl)) byPhone.set(r.phoneIntl, r);
+  return Array.from(byPhone.values());
+}
+
+function unionConsolidatedByPhone(
+  lists: ReadonlyArray<ConsolidatedBroadcastRecipient[]>,
+): ConsolidatedBroadcastRecipient[] {
+  const byPhone = new Map<string, { rawNames: Array<string | null | undefined>; apartments: Map<string, ConsolidatedApartment> }>();
+  for (const list of lists) {
+    for (const r of list) {
+      let bucket = byPhone.get(r.phoneIntl);
+      if (!bucket) { bucket = { rawNames: [], apartments: new Map() }; byPhone.set(r.phoneIntl, bucket); }
+      bucket.rawNames.push(...r.rawNames);
+      for (const apt of r.apartments) if (!bucket.apartments.has(apt.contactId)) bucket.apartments.set(apt.contactId, apt);
+    }
+  }
+  return Array.from(byPhone.entries()).map(([phoneIntl, bucket]) => ({
+    phoneIntl,
+    rawNames: bucket.rawNames,
+    apartments: Array.from(bucket.apartments.values()),
+  }));
+}
+
+/** A "selection" audience recipient — a resident (apartment-backed, same
+ *  shape as the free-form path today) or a supplier (no apartment/debt at
+ *  all; {{name}} is the supplier's display_name, every debt/apartment token
+ *  renders blank/₪0 via the same defensive TemplateDebtor defaults —
+ *  unreachable in practice since a debt template can't target suppliers). */
+export type SelectionRecipient =
+  | { kind: 'contact'; contactId: string; debtorId: string | null; debtor: TemplateDebtor; phoneIntl: string }
+  | { kind: 'supplier'; supplierId: string; name: string | null; phoneIntl: string };
+
+/** Free-form path for a multi-select audience — union of resolveBroadcastRecipients
+ *  per checked role (owners/tenants, each unchanged) plus resolveSupplierRecipients
+ *  when 'suppliers' is checked. */
+export async function resolveSelectionRecipients(
+  roles: ReadonlyArray<BroadcastRoleSelection>,
+): Promise<SelectionRecipient[]> {
+  const lists: BroadcastRecipient[][] = [];
+  if (roles.includes('owners')) lists.push(await resolveBroadcastRecipients({ type: 'owners' }));
+  if (roles.includes('tenants')) lists.push(await resolveBroadcastRecipients({ type: 'tenants' }));
+  const contacts: SelectionRecipient[] = unionBroadcastRecipientsByPhone(lists).map((r) => ({
+    kind: 'contact', contactId: r.contactId, debtorId: r.debtorId, debtor: r.debtor, phoneIntl: r.phoneIntl,
+  }));
+
+  const out: SelectionRecipient[] = [...contacts];
+  if (roles.includes('suppliers')) {
+    const seen = new Set(contacts.map((c) => c.phoneIntl));
+    for (const s of await resolveSupplierRecipients()) {
+      if (seen.has(s.phoneIntl)) continue; // a resident's identity on this phone wins
+      seen.add(s.phoneIntl);
+      out.push({ kind: 'supplier', supplierId: s.supplierId, name: s.name, phoneIntl: s.phoneIntl });
+    }
+  }
+  return out;
+}
+
+/** Debt-message (consolidated) path for a multi-select audience. Suppliers are
+ *  never included here — the campaigns route blocks a debt template + a
+ *  supplier-including selection outright before this would ever be called. */
+export async function resolveConsolidatedSelectionRecipients(
+  roles: ReadonlyArray<BroadcastRoleSelection>,
+): Promise<ConsolidatedBroadcastRecipient[]> {
+  const lists: ConsolidatedBroadcastRecipient[][] = [];
+  if (roles.includes('owners')) lists.push(await resolveConsolidatedBroadcastRecipients({ type: 'owners' }));
+  if (roles.includes('tenants')) lists.push(await resolveConsolidatedBroadcastRecipients({ type: 'tenants' }));
+  return unionConsolidatedByPhone(lists);
 }

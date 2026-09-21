@@ -81,11 +81,11 @@ export async function createCampaign(pool: Pool, input: CreateCampaignInput): Pr
     for (const r of input.recipients) {
       const inserted = await client.query<{ id: string }>(
         `insert into public.wa_campaign_recipients
-           (campaign_id, contact_id, debtor_id, phone_intl, chat_id, payload, idempotency_key)
-         values ($1,$2,$3,$4,$5,$6,$7)
+           (campaign_id, contact_id, supplier_id, debtor_id, phone_intl, chat_id, payload, idempotency_key)
+         values ($1,$2,$3,$4,$5,$6,$7,$8)
          on conflict (idempotency_key) do nothing
          returning id`,
-        [campaign.id, r.contactId, r.debtorId, r.phoneIntl, `${r.phoneIntl}@c.us`, r.payload, `${campaign.id}:${r.phoneIntl}`],
+        [campaign.id, r.contactId, r.supplierId ?? null, r.debtorId, r.phoneIntl, `${r.phoneIntl}@c.us`, r.payload, `${campaign.id}:${r.phoneIntl}`],
       );
       // Consolidated (debt-message) recipient — every apartment it covers,
       // for the delete-guard + future reporting. Skipped on a conflict (the
@@ -215,7 +215,7 @@ export async function listRecipients(
     `select
        r.id, r.status, r.attempt_count, r.sent_at, r.delivered_at, r.read_at,
        r.failed_at, r.last_error, r.error_class, r.created_at,
-       coalesce(rc.owner_name, rc.tenant_name)              as debtor_name,
+       coalesce(rc.owner_name, rc.tenant_name, sp.display_name) as debtor_name,
        rc.apartment_number,
        case
          when length(local.n) >= 5
@@ -223,9 +223,11 @@ export async function listRecipients(
          else '•••'
        end                                                 as phone_masked
      from public.wa_campaign_recipients r
-     -- resident identity + apartment from contacts (registry) via r.contact_id,
-     -- always present — independent of whether the apartment has a debt record.
+     -- resident identity + apartment from contacts (registry) via r.contact_id —
+     -- null for a supplier recipient (r.supplier_id set instead, PR ב' multi-
+     -- select audience), whose display_name fills debtor_name via the coalesce.
      left join public.contacts rc on rc.id = r.contact_id
+     left join public.suppliers sp on sp.id = r.supplier_id
      cross join lateral (
        select '0' || right(regexp_replace(r.phone_intl, '\\D', '', 'g'), 9) as n
      ) local
