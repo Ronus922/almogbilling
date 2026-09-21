@@ -11,8 +11,9 @@ import {
   type ExtraRecipient,
 } from '@/lib/db/contactPeople';
 import type { TemplateDebtor } from '@/lib/whatsapp-template';
-import type { BroadcastAudience, BroadcastRoleSelection } from '@/types/whatsapp';
+import type { BroadcastAudience, BroadcastDebtFilter, BroadcastRoleSelection } from '@/types/whatsapp';
 import type { ContactPersonRole } from '@/lib/types/contacts';
+import { isValidMinDebtAmount, MIN_DEBT_AMOUNT_ERROR } from '@/lib/whatsapp-audience-filter';
 
 // Audience → recipient resolution for WhatsApp broadcasts. The actual sending is
 // now the durable delivery queue's job (src/lib/wa-queue/*, drained by the
@@ -110,6 +111,40 @@ function toIntl(field: string | null): string | null {
   }
 }
 
+export type ParsedBroadcastDebtFilter =
+  | { ok: true; value: BroadcastDebtFilter | undefined }
+  | { ok: false; error: string };
+
+/** Parses a request body's `debt_filter` field into a BroadcastDebtFilter —
+ *  shared by the campaign-create and audience-count routes so the two never
+ *  drift. Absent/not-an-object/only_with_debt !== true all mean "no filter"
+ *  (`ok: true, value: undefined`) — those aren't errors, since the field is
+ *  simply off. Once only_with_debt is true, though, a min_debt_amount that IS
+ *  given must be a valid non-negative finite number (isValidMinDebtAmount,
+ *  the SAME rule the compose screen checks inline before ever sending), or a
+ *  negative/non-numeric amount would otherwise silently filter on the wrong
+ *  threshold — `ok: false` with the shared 400-ready Hebrew message. Omitted/
+ *  null is valid and means "any positive debt" (min_debt_amount: null). */
+export function parseBroadcastDebtFilter(raw: unknown): ParsedBroadcastDebtFilter {
+  if (typeof raw !== 'object' || raw === null) return { ok: true, value: undefined };
+  const d = raw as Record<string, unknown>;
+  if (d.only_with_debt !== true) return { ok: true, value: undefined };
+  const amount = d.min_debt_amount ?? null;
+  if (!isValidMinDebtAmount(amount)) return { ok: false, error: MIN_DEBT_AMOUNT_ERROR };
+  return { ok: true, value: { only_with_debt: true, min_debt_amount: amount } };
+}
+
+/** true when a row's total_debt clears the audience's debt filter (or there
+ *  is no filter at all). A row with no debtor (total_debt null) counts as 0
+ *  — it never "owes" anything. The comparison is strict ("מעל" = above), so
+ *  an omitted amount (→ threshold 0) means "any positive debt". */
+function passesDebtFilter(totalDebt: number | null, filter: BroadcastDebtFilter | undefined): boolean {
+  if (!filter?.only_with_debt) return true;
+  const debt = totalDebt ?? 0;
+  const threshold = filter.min_debt_amount ?? 0;
+  return debt > threshold;
+}
+
 /** Which contact_people roles an audience pulls in as extra recipients. */
 function extraRoles(audience: BroadcastAudience): ContactPersonRole[] {
   if (audience.type === 'owners') return ['owner'];
@@ -167,9 +202,14 @@ async function fetchAudienceRows(audience: BroadcastAudience): Promise<AudienceR
  * contact / tenant_is_primary_contact) is honored the same way — EXCEPT for an
  * explicit debtor_ids audience, where a human already hand-picked these exact
  * recipients and silently dropping one would be confusing.
+ *
+ * `debtFilter` (Section 4) drops a row — and every extra tied to it — BEFORE
+ * the owner/tenant phone is even picked, when its total_debt doesn't clear
+ * the filter. Undefined/off is a no-op, so every existing caller is unaffected.
  */
 export async function resolveBroadcastRecipients(
   audience: BroadcastAudience,
+  debtFilter?: BroadcastDebtFilter,
 ): Promise<BroadcastRecipient[]> {
   // Extras are matched back to their row by contact_id for owners/tenants/all
   // (contacts is the base — an apartment may have no debtor at all) and by
@@ -208,6 +248,7 @@ export async function resolveBroadcastRecipients(
   };
 
   for (const row of rows) {
+    if (!passesDebtFilter(row.total_debt, debtFilter)) continue;
     const ownerOk = !enforcePrimary || row.owner_primary;
     const tenantOk = !enforcePrimary || row.tenant_primary;
     let phoneIntl: string | null = null;
@@ -223,17 +264,19 @@ export async function resolveBroadcastRecipients(
     push(row, phoneIntl);
   }
 
-  // Additional owners/tenants from the apartment card.
+  // Additional owners/tenants from the apartment card — same debt filter as
+  // their apartment's own row (the debt is a property of the apartment, not
+  // of who's receiving the message on its behalf).
   for (const extra of extrasByDebtor) {
     const row = byDebtorId.get(extra.debtor_id);
-    if (!row) continue;
+    if (!row || !passesDebtFilter(row.total_debt, debtFilter)) continue;
     const phoneIntl = toIntl(extra.phone);
     if (!phoneIntl) continue;
     push(row, phoneIntl);
   }
   for (const extra of extrasByContact) {
     const row = byContactId.get(extra.contact_id);
-    if (!row) continue;
+    if (!row || !passesDebtFilter(row.total_debt, debtFilter)) continue;
     const phoneIntl = toIntl(extra.phone);
     if (!phoneIntl) continue;
     push(row, phoneIntl);
@@ -277,9 +320,16 @@ export interface ConsolidatedBroadcastRecipient {
  * apartments[] — even when another apartment on the SAME phone passes and the
  * phone still gets a message. This falls out of the per-row/per-extra gate
  * below; there is no separate "apartment opt-out" flag to check.
+ *
+ * `debtFilter` (Section 4) gates the SAME way, per apartment: a row whose
+ * total_debt doesn't clear the filter contributes nothing at all — so a
+ * failing apartment never appears in ANY phone's apartments[] (the consolidated
+ * message's detail only ever lists apartments that passed), while a phone
+ * whose every apartment fails simply never enters the map (no message).
  */
 export async function resolveConsolidatedBroadcastRecipients(
   audience: BroadcastAudience,
+  debtFilter?: BroadcastDebtFilter,
 ): Promise<ConsolidatedBroadcastRecipient[]> {
   const { rows, extrasByContact, extrasByDebtor, enforcePrimary } = await fetchAudienceRows(audience);
 
@@ -313,6 +363,7 @@ export async function resolveConsolidatedBroadcastRecipients(
   };
 
   for (const row of rows) {
+    if (!passesDebtFilter(row.total_debt, debtFilter)) continue;
     const ownerOk = !enforcePrimary || row.owner_primary;
     const tenantOk = !enforcePrimary || row.tenant_primary;
     if (audience.type === 'owners') {
@@ -335,17 +386,18 @@ export async function resolveConsolidatedBroadcastRecipients(
   }
 
   // Additional owners/tenants from the apartment card — each is its own name
-  // candidate, tied to the SAME apartment as the row it's matched back to.
+  // candidate, tied to the SAME apartment as the row it's matched back to
+  // (and gated by that SAME apartment's debt filter, not the extra person's).
   for (const extra of extrasByDebtor) {
     const row = byDebtorId.get(extra.debtor_id);
-    if (!row) continue;
+    if (!row || !passesDebtFilter(row.total_debt, debtFilter)) continue;
     const phoneIntl = toIntl(extra.phone);
     if (!phoneIntl) continue;
     contribute(row, phoneIntl, extra.name);
   }
   for (const extra of extrasByContact) {
     const row = byContactId.get(extra.contact_id);
-    if (!row) continue;
+    if (!row || !passesDebtFilter(row.total_debt, debtFilter)) continue;
     const phoneIntl = toIntl(extra.phone);
     if (!phoneIntl) continue;
     contribute(row, phoneIntl, extra.name);
@@ -438,13 +490,16 @@ export type SelectionRecipient =
 
 /** Free-form path for a multi-select audience — union of resolveBroadcastRecipients
  *  per checked role (owners/tenants, each unchanged) plus resolveSupplierRecipients
- *  when 'suppliers' is checked. */
+ *  when 'suppliers' is checked. `debtFilter` (Section 4) is forwarded to the
+ *  owners/tenants calls only — suppliers carry no debt data and are never
+ *  filtered by it, regardless of whether 'suppliers' is also checked. */
 export async function resolveSelectionRecipients(
   roles: ReadonlyArray<BroadcastRoleSelection>,
+  debtFilter?: BroadcastDebtFilter,
 ): Promise<SelectionRecipient[]> {
   const lists: BroadcastRecipient[][] = [];
-  if (roles.includes('owners')) lists.push(await resolveBroadcastRecipients({ type: 'owners' }));
-  if (roles.includes('tenants')) lists.push(await resolveBroadcastRecipients({ type: 'tenants' }));
+  if (roles.includes('owners')) lists.push(await resolveBroadcastRecipients({ type: 'owners' }, debtFilter));
+  if (roles.includes('tenants')) lists.push(await resolveBroadcastRecipients({ type: 'tenants' }, debtFilter));
   const contacts: SelectionRecipient[] = unionBroadcastRecipientsByPhone(lists).map((r) => ({
     kind: 'contact', contactId: r.contactId, debtorId: r.debtorId, debtor: r.debtor, phoneIntl: r.phoneIntl,
   }));
@@ -463,12 +518,14 @@ export async function resolveSelectionRecipients(
 
 /** Debt-message (consolidated) path for a multi-select audience. Suppliers are
  *  never included here — the campaigns route blocks a debt template + a
- *  supplier-including selection outright before this would ever be called. */
+ *  supplier-including selection outright before this would ever be called.
+ *  `debtFilter` (Section 4) is forwarded to both role calls. */
 export async function resolveConsolidatedSelectionRecipients(
   roles: ReadonlyArray<BroadcastRoleSelection>,
+  debtFilter?: BroadcastDebtFilter,
 ): Promise<ConsolidatedBroadcastRecipient[]> {
   const lists: ConsolidatedBroadcastRecipient[][] = [];
-  if (roles.includes('owners')) lists.push(await resolveConsolidatedBroadcastRecipients({ type: 'owners' }));
-  if (roles.includes('tenants')) lists.push(await resolveConsolidatedBroadcastRecipients({ type: 'tenants' }));
+  if (roles.includes('owners')) lists.push(await resolveConsolidatedBroadcastRecipients({ type: 'owners' }, debtFilter));
+  if (roles.includes('tenants')) lists.push(await resolveConsolidatedBroadcastRecipients({ type: 'tenants' }, debtFilter));
   return unionConsolidatedByPhone(lists);
 }

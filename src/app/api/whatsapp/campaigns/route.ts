@@ -7,6 +7,7 @@ import { resolveSendCreds, InstanceNotConfiguredError } from '@/lib/db/whatsappI
 import {
   resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients,
   resolveSelectionRecipients, resolveConsolidatedSelectionRecipients,
+  parseBroadcastDebtFilter,
 } from '@/lib/whatsapp-broadcast';
 import {
   interpolateTemplate, interpolateBroadcastTemplate, isDebtMessageTemplate,
@@ -52,22 +53,27 @@ export async function GET(req: NextRequest) {
 }
 
 const AUDIENCE_TYPES: readonly BroadcastAudienceType[] = ['all', 'owners', 'tenants'];
-function parseAudience(raw: unknown): BroadcastAudience | null {
-  if (typeof raw !== 'object' || raw === null) return null;
+const INVALID_AUDIENCE_ERROR = 'קהל יעד לא תקין';
+type ParsedAudience = { ok: true; audience: BroadcastAudience } | { ok: false; error: string };
+function parseAudience(raw: unknown): ParsedAudience {
+  if (typeof raw !== 'object' || raw === null) return { ok: false, error: INVALID_AUDIENCE_ERROR };
   const a = raw as Record<string, unknown>;
   if (a.type === 'debtor_ids') {
     const ids = Array.isArray(a.debtor_ids) ? a.debtor_ids.filter((x): x is string => typeof x === 'string') : [];
-    return ids.length ? { type: 'debtor_ids', debtor_ids: ids } : null;
+    return ids.length ? { ok: true, audience: { type: 'debtor_ids', debtor_ids: ids } } : { ok: false, error: INVALID_AUDIENCE_ERROR };
   }
   if (a.type === 'selection') {
     const roles = Array.isArray(a.roles)
       ? Array.from(new Set(a.roles.filter((x): x is BroadcastRoleSelection => (ROLE_SELECTIONS as readonly string[]).includes(x as string))))
       : [];
-    return roles.length ? { type: 'selection', roles } : null;
+    if (!roles.length) return { ok: false, error: INVALID_AUDIENCE_ERROR };
+    const filter = parseBroadcastDebtFilter(a.debt_filter);
+    if (!filter.ok) return { ok: false, error: filter.error };
+    return { ok: true, audience: { type: 'selection', roles, ...(filter.value ? { debt_filter: filter.value } : {}) } };
   }
   if (typeof a.type === 'string' && (AUDIENCE_TYPES as readonly string[]).includes(a.type))
-    return { type: a.type as BroadcastAudienceType };
-  return null;
+    return { ok: true, audience: { type: a.type as BroadcastAudienceType } };
+  return { ok: false, error: INVALID_AUDIENCE_ERROR };
 }
 
 // POST /api/whatsapp/campaigns — durably create + enqueue a campaign, returning
@@ -95,8 +101,9 @@ export async function POST(req: NextRequest) {
   }
   if (!messageBody.trim()) return NextResponse.json({ error: 'תוכן ההודעה ריק' }, { status: 400 });
 
-  const audience = parseAudience(body.audience);
-  if (!audience) return NextResponse.json({ error: 'קהל יעד לא תקין' }, { status: 400 });
+  const parsedAudience = parseAudience(body.audience);
+  if (!parsedAudience.ok) return NextResponse.json({ error: parsedAudience.error }, { status: 400 });
+  const audience = parsedAudience.audience;
 
   // Attachments: staged uploads of THIS actor, in the order given (= send order).
   // Count is zod's job; ownership + broadcast-level total size are checked here.
@@ -134,6 +141,9 @@ export async function POST(req: NextRequest) {
   const isDebt = isDebtMessageTemplate(messageBody);
   const isSelection = audience.type === 'selection';
   const selectionIncludesSuppliers = isSelection && (audience.roles ?? []).includes('suppliers');
+  // "רק מי שחייב" / "מעל ₪" (Section 4) — owners/tenants only; suppliers are
+  // never filtered, regardless of whether they're also in the selection.
+  const debtFilter = isSelection ? audience.debt_filter : undefined;
 
   // Suppliers carry no apartment/debt data at all — a debt-message template
   // (consolidated per apartment) can never target one. Blocks the WHOLE
@@ -150,7 +160,7 @@ export async function POST(req: NextRequest) {
 
   if (isDebt) {
     const consolidated = isSelection
-      ? await resolveConsolidatedSelectionRecipients(audience.roles ?? [])
+      ? await resolveConsolidatedSelectionRecipients(audience.roles ?? [], debtFilter)
       : await resolveConsolidatedBroadcastRecipients(audience);
     if (consolidated.length === 0) return NextResponse.json({ error: 'לא נמצאו נמענים עם מספר תקין' }, { status: 400 });
 
@@ -183,7 +193,7 @@ export async function POST(req: NextRequest) {
       };
     });
   } else if (isSelection) {
-    const resolved = await resolveSelectionRecipients(audience.roles ?? []);
+    const resolved = await resolveSelectionRecipients(audience.roles ?? [], debtFilter);
     if (resolved.length === 0) return NextResponse.json({ error: 'לא נמצאו נמענים עם מספר תקין' }, { status: 400 });
     recipients = resolved.map((r) => r.kind === 'supplier'
       ? {

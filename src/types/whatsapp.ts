@@ -275,12 +275,27 @@ export type BroadcastStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type BroadcastAudienceType = 'all' | 'owners' | 'tenants';
 export type BroadcastRoleSelection = 'owners' | 'tenants' | 'suppliers';
 
+/** "Only who owes" audience filter (Section 4) — applies to owners/tenants
+ *  only; suppliers carry no debt data and are never filtered. only_with_debt
+ *  = false (or the whole object absent) → no filtering at all. When true,
+ *  min_debt_amount = null means "any positive debt" (total_debt > 0);
+ *  otherwise a row's total_debt must exceed (strictly, "מעל") the given
+ *  amount. An apartment with no debtor record is treated as total_debt = 0
+ *  (never passes "only who owes"). */
+export interface BroadcastDebtFilter {
+  only_with_debt: boolean;
+  min_debt_amount: number | null;
+}
+
 export interface BroadcastAudience {
   type: BroadcastAudienceType | 'debtor_ids' | 'selection';
   /** Present only when type === 'debtor_ids'. */
   debtor_ids?: string[];
   /** Present only when type === 'selection' — one or more roles. */
   roles?: BroadcastRoleSelection[];
+  /** Present only when type === 'selection' and the operator turned on "רק
+   *  מי שחייב". Persisted as part of the campaign's stored audience JSON. */
+  debt_filter?: BroadcastDebtFilter;
 }
 
 /**

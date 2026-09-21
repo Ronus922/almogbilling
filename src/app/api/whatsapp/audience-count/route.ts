@@ -4,6 +4,7 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients,
   resolveSelectionRecipients, resolveConsolidatedSelectionRecipients,
+  parseBroadcastDebtFilter,
 } from '@/lib/whatsapp-broadcast';
 import {
   interpolateBroadcastTemplate, isDebtMessageTemplate, resolveConsolidatedName,
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  let parsed: { type?: unknown; roles?: unknown; body?: unknown };
+  let parsed: { type?: unknown; roles?: unknown; body?: unknown; debt_filter?: unknown };
   try { parsed = await req.json(); } catch { parsed = {}; }
   const messageBody = typeof parsed.body === 'string' ? parsed.body : '';
   const isDebt = isDebtMessageTemplate(messageBody);
@@ -55,8 +56,13 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
+    // "רק מי שחייב" / "מעל ₪" (Section 4) — owners/tenants only.
+    const parsedFilter = parseBroadcastDebtFilter(parsed.debt_filter);
+    if (!parsedFilter.ok) return NextResponse.json({ error: parsedFilter.error }, { status: 400 });
+    const debtFilter = parsedFilter.value;
+
     if (isDebt) {
-      const consolidated = await resolveConsolidatedSelectionRecipients(roles);
+      const consolidated = await resolveConsolidatedSelectionRecipients(roles, debtFilter);
       const partialCount = consolidated.reduce((n, r) => {
         const rendered = interpolateBroadcastTemplate(messageBody, {
           name: resolveConsolidatedName(r.rawNames),
@@ -67,7 +73,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ count: consolidated.length, partial_count: partialCount });
     }
 
-    const resolved = await resolveSelectionRecipients(roles);
+    const resolved = await resolveSelectionRecipients(roles, debtFilter);
     return NextResponse.json({ count: resolved.length, partial_count: 0 });
   }
 
