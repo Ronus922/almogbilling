@@ -6,7 +6,12 @@ import type { ContactPersonInput, ContactPersonRole } from '@/lib/types/contacts
 // first person of each role stays in contacts.owner_* / tenant_*). Two jobs:
 //   1. replaceContactPeople — the apartment card saves the whole list at once.
 //   2. listExtraRecipients* — recipient resolution for WhatsApp sends and
-//      broadcasts, which read debtors and join back through debtors.contact_id.
+//      broadcasts. listExtraRecipientsForDebtors (explicit debtor picks: bulk
+//      send, debtor_ids broadcasts, the debtor detail page) still joins through
+//      debtors.contact_id — those callers only ever have a debtor to start from.
+//      listExtraRecipientsForAllContacts (owners/tenants/all broadcasts) joins
+//      through contacts directly, so an apartment with no debt record still
+//      surfaces its additional owners/tenants, not just its primary one.
 
 /**
  * Replace a contact's extra people with `people`, in order. Delete-all +
@@ -39,12 +44,24 @@ export async function replaceContactPeople(
   });
 }
 
-/** One extra person resolved as a message recipient of a debtor's apartment. */
+/** One extra person resolved as a message recipient of a debtor's apartment
+ *  (explicit debtor-id callers — the debtor is always real here). */
 export interface ExtraRecipient {
   debtor_id: string;
   role: ContactPersonRole;
   name: string | null;
   /** Raw stored phone — the caller normalises/validates it. */
+  phone: string;
+}
+
+/** Same, but keyed by apartment (contacts) — for the owners/tenants/all
+ *  broadcast base, where an apartment may have no debt record at all. */
+export interface ContactExtraRecipient {
+  contact_id: string;
+  /** The active debt record's id, when this apartment has one; null otherwise. */
+  debtor_id: string | null;
+  role: ContactPersonRole;
+  name: string | null;
   phone: string;
 }
 
@@ -77,13 +94,21 @@ export async function listExtraRecipientsForDebtors(
   return r.rows;
 }
 
-/** Extra recipients across every active (non-archived) debtor. */
-export async function listExtraRecipientsForAllDebtors(
+const CONTACT_RECIPIENT_SELECT = `
+  select c.id as contact_id, d.id as debtor_id, p.role, p.name, p.phone
+  from public.contact_people p
+  join public.contacts c on c.id = p.contact_id
+  left join public.debtors d on d.contact_id = c.id and d.is_archived = false`;
+
+/** Extra recipients across every apartment — active debtor or none. Mirrors
+ *  whatsapp-broadcast.ts's CONTACT_FROM: contacts is the base, debt status
+ *  never gates inclusion, only the "מקבל הודעות" flag does (RECIPIENT_FILTER). */
+export async function listExtraRecipientsForAllContacts(
   roles: ContactPersonRole[],
-): Promise<ExtraRecipient[]> {
+): Promise<ContactExtraRecipient[]> {
   if (roles.length === 0) return [];
-  const r = await query<ExtraRecipient>(
-    `${RECIPIENT_SELECT} where ${RECIPIENT_FILTER} and d.is_archived = false${RECIPIENT_ORDER}`,
+  const r = await query<ContactExtraRecipient>(
+    `${CONTACT_RECIPIENT_SELECT} where ${RECIPIENT_FILTER}${RECIPIENT_ORDER}`,
     [roles],
   );
   return r.rows;

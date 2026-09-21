@@ -5,8 +5,9 @@ import {
   cleanPhoneField,
 } from '@/lib/whatsapp';
 import {
-  listExtraRecipientsForAllDebtors,
+  listExtraRecipientsForAllContacts,
   listExtraRecipientsForDebtors,
+  type ContactExtraRecipient,
   type ExtraRecipient,
 } from '@/lib/db/contactPeople';
 import type { TemplateDebtor } from '@/lib/whatsapp-template';
@@ -126,10 +127,10 @@ function extraRoles(audience: BroadcastAudience): ContactPersonRole[] {
  * card (public.contact_people) that is flagged "מקבל הודעות" and carries a valid
  * number becomes its own recipient — same debtor payload, so the template
  * variables ({{debt}}, {{apartment}}, …) interpolate identically. The phone
- * de-dup is global, so a person listed twice is still messaged once. Extras are
- * still resolved through debtors.contact_id (contactPeople.ts) — an apartment
- * with no debt record gets its own primary owner/tenant here, but not yet its
- * extras; that join flips in a separate, smaller change.
+ * de-dup is global, so a person listed twice is still messaged once. For
+ * owners/tenants/all, extras are matched back to their apartment by contact_id
+ * (listExtraRecipientsForAllContacts) — an apartment with no debt record gets
+ * its additional owners/tenants too, not just its primary one.
  *
  * The primary owner/tenant's own "מקבל הודעות" flag (contacts.owner_is_primary_
  * contact / tenant_is_primary_contact) is honored the same way — EXCEPT for an
@@ -140,7 +141,12 @@ export async function resolveBroadcastRecipients(
   audience: BroadcastAudience,
 ): Promise<BroadcastRecipient[]> {
   let rows: ContactRow[];
-  let extras: ExtraRecipient[];
+  // Extras are matched back to their row by contact_id for owners/tenants/all
+  // (contacts is the base — an apartment may have no debtor at all) and by
+  // debtor_id for an explicit debtor_ids pick (unchanged — still resolved
+  // through debtors.contact_id, per listExtraRecipientsForDebtors).
+  let extrasByContact: ContactExtraRecipient[] = [];
+  let extrasByDebtor: ExtraRecipient[] = [];
   const roles = extraRoles(audience);
   const enforcePrimary = audience.type !== 'debtor_ids';
   if (audience.type === 'debtor_ids') {
@@ -151,17 +157,21 @@ export async function resolveBroadcastRecipients(
       [ids],
     );
     rows = r.rows;
-    extras = await listExtraRecipientsForDebtors(ids, roles);
+    extrasByDebtor = await listExtraRecipientsForDebtors(ids, roles);
   } else {
     const r = await query<ContactRow>(`select ${CONTACT_COLS} ${CONTACT_FROM}`);
     rows = r.rows;
-    extras = await listExtraRecipientsForAllDebtors(roles);
+    extrasByContact = await listExtraRecipientsForAllContacts(roles);
   }
 
   const out: BroadcastRecipient[] = [];
   const seen = new Set<string>();
   const byDebtorId = new Map<string, ContactRow>();
-  for (const row of rows) if (row.debtor_id) byDebtorId.set(row.debtor_id, row);
+  const byContactId = new Map<string, ContactRow>();
+  for (const row of rows) {
+    if (row.debtor_id) byDebtorId.set(row.debtor_id, row);
+    if (row.contact_id) byContactId.set(row.contact_id, row);
+  }
 
   const push = (row: ContactRow, phoneIntl: string) => {
     // No linked contact (orphaned debtor) — can't form a valid recipient; see
@@ -201,8 +211,15 @@ export async function resolveBroadcastRecipients(
   }
 
   // Additional owners/tenants from the apartment card.
-  for (const extra of extras) {
+  for (const extra of extrasByDebtor) {
     const row = byDebtorId.get(extra.debtor_id);
+    if (!row) continue;
+    const phoneIntl = toIntl(extra.phone);
+    if (!phoneIntl) continue;
+    push(row, phoneIntl);
+  }
+  for (const extra of extrasByContact) {
+    const row = byContactId.get(extra.contact_id);
     if (!row) continue;
     const phoneIntl = toIntl(extra.phone);
     if (!phoneIntl) continue;
