@@ -111,6 +111,41 @@ function toIntl(field: string | null): string | null {
   }
 }
 
+/** 'empty' — nothing entered, not a data problem. 'invalid' — something WAS
+ *  entered but it can't receive a WhatsApp message: either it doesn't
+ *  normalize at all, or it normalizes to a LANDLINE (972 + 8 digits — a
+ *  landline has no WhatsApp account, so it would silently fail at send time
+ *  even though today it's accepted as a "valid" recipient). 'ok' — a real
+ *  mobile number (972 + 9 digits). Section 6's report-only invalid-phone
+ *  count (Section 4's debtFilter equivalent for data quality, not audience
+ *  scope) is built entirely from this — it never changes which phones
+ *  actually become recipients (toIntl/resolveBroadcastRecipients untouched). */
+type PhoneValidity = 'ok' | 'invalid' | 'empty';
+function classifyPhone(raw: string | null): PhoneValidity {
+  const hasContent = !!(raw && raw.trim());
+  const local = cleanPhoneField(raw);
+  if (!local) return hasContent ? 'invalid' : 'empty';
+  try {
+    return normalizePhone(local).phone.length === 12 ? 'ok' : 'invalid'; // 11 chars = landline
+  } catch {
+    return 'invalid';
+  }
+}
+
+/** Classifies several raw fields tried in priority order (e.g. a supplier's
+ *  mobile then phone — the same order the actual recipient resolution uses):
+ *  'ok' if any field would produce a usable mobile number, else 'invalid' if
+ *  any field had content that couldn't, else 'empty'. */
+function classifyPhoneFields(raws: ReadonlyArray<string | null>): PhoneValidity {
+  let sawContent = false;
+  for (const raw of raws) {
+    const c = classifyPhone(raw);
+    if (c === 'ok') return 'ok';
+    if (c === 'invalid') sawContent = true;
+  }
+  return sawContent ? 'invalid' : 'empty';
+}
+
 export type ParsedBroadcastDebtFilter =
   | { ok: true; value: BroadcastDebtFilter | undefined }
   | { ok: false; error: string };
@@ -284,6 +319,45 @@ export async function resolveBroadcastRecipients(
   return out;
 }
 
+/**
+ * Section 6 — report-only: counts rows whose relevant phone field (owner_phone
+ * for 'owners', tenant_phone for 'tenants') has SOMETHING entered but it can't
+ * actually receive a WhatsApp message (unparseable, or a landline — see
+ * classifyPhone). Applies the EXACT SAME eligibility gating as
+ * resolveBroadcastRecipients (primary-contact opt-out, debtFilter) so it only
+ * flags a row that WOULD have contributed a recipient had its phone been
+ * usable — never one excluded by design (opted out / fails the debt filter).
+ * Never touches — and is never called by — the actual recipient resolution;
+ * it only feeds an informational count next to the live estimate.
+ *
+ * Deliberately scoped to the apartment's own primary phone field, NOT
+ * contact_people extras (a rarer, supplementary data source) — the count may
+ * therefore slightly undercount in the rare case of a bad EXTRA phone, but
+ * always correctly reports on the primary fields operators actually edit on
+ * the contacts page. Only 'owners'/'tenants' are scored ('all'/'debtor_ids'
+ * return 0 — the live compose screen never sends them; resolveSelectionRecipients
+ * always calls with 'owners'/'tenants' separately, never 'all').
+ */
+export async function countInvalidBroadcastPhones(
+  audience: BroadcastAudience,
+  debtFilter?: BroadcastDebtFilter,
+): Promise<number> {
+  if (audience.type !== 'owners' && audience.type !== 'tenants') return 0;
+  const { rows, enforcePrimary } = await fetchAudienceRows(audience);
+  let n = 0;
+  for (const row of rows) {
+    if (!passesDebtFilter(row.total_debt, debtFilter)) continue;
+    if (audience.type === 'owners') {
+      const ownerOk = !enforcePrimary || row.owner_primary;
+      if (ownerOk && classifyPhone(row.phone_owner) === 'invalid') n += 1;
+    } else {
+      const tenantOk = !enforcePrimary || row.tenant_primary;
+      if (tenantOk && classifyPhone(row.phone_tenant) === 'invalid') n += 1;
+    }
+  }
+  return n;
+}
+
 /** One apartment contributing to a consolidated (debt-message) recipient. */
 export interface ConsolidatedApartment {
   contactId: string;
@@ -454,6 +528,19 @@ export async function resolveSupplierRecipients(): Promise<SupplierRecipient[]> 
   return out;
 }
 
+/** Section 6 — report-only: active, non-deleted suppliers whose mobile AND
+ *  phone fields both fail (something entered in at least one, but neither
+ *  produces a usable mobile number). Mirrors resolveSupplierRecipients'
+ *  mobile-preferred-then-phone rule exactly, so it only flags suppliers that
+ *  WOULD have been dropped as recipients due to their phone data specifically. */
+export async function countInvalidSupplierPhones(): Promise<number> {
+  const r = await query<SupplierRow>(
+    `select id, display_name, phone, mobile from public.suppliers
+      where status = 'active' and deleted_at is null`,
+  );
+  return r.rows.filter((row) => classifyPhoneFields([row.mobile, row.phone]) === 'invalid').length;
+}
+
 function unionBroadcastRecipientsByPhone(lists: ReadonlyArray<BroadcastRecipient[]>): BroadcastRecipient[] {
   const byPhone = new Map<string, BroadcastRecipient>();
   for (const list of lists) for (const r of list) if (!byPhone.has(r.phoneIntl)) byPhone.set(r.phoneIntl, r);
@@ -528,4 +615,26 @@ export async function resolveConsolidatedSelectionRecipients(
   if (roles.includes('owners')) lists.push(await resolveConsolidatedBroadcastRecipients({ type: 'owners' }, debtFilter));
   if (roles.includes('tenants')) lists.push(await resolveConsolidatedBroadcastRecipients({ type: 'tenants' }, debtFilter));
   return unionConsolidatedByPhone(lists);
+}
+
+/**
+ * Section 6 — report-only: sums the invalid-phone count across a multi-select
+ * audience's checked roles. Same value regardless of whether the message is a
+ * debt message or free-form — phone data quality doesn't depend on message
+ * content, so unlike resolveSelectionRecipients / resolveConsolidatedSelectionRecipients
+ * there's only ONE version of this, used by both routing paths. Owners/tenants
+ * go through countInvalidBroadcastPhones (debt-filtered, same as the recipient
+ * count); suppliers go through countInvalidSupplierPhones (never debt-filtered
+ * — suppliers carry no debt data at all). Never filters or blocks anything —
+ * purely an informational number surfaced next to the live estimate.
+ */
+export async function countInvalidSelectionPhones(
+  roles: ReadonlyArray<BroadcastRoleSelection>,
+  debtFilter?: BroadcastDebtFilter,
+): Promise<number> {
+  let n = 0;
+  if (roles.includes('owners')) n += await countInvalidBroadcastPhones({ type: 'owners' }, debtFilter);
+  if (roles.includes('tenants')) n += await countInvalidBroadcastPhones({ type: 'tenants' }, debtFilter);
+  if (roles.includes('suppliers')) n += await countInvalidSupplierPhones();
+  return n;
 }

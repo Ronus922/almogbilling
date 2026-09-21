@@ -4,7 +4,7 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients,
   resolveSelectionRecipients, resolveConsolidatedSelectionRecipients,
-  parseBroadcastDebtFilter,
+  parseBroadcastDebtFilter, countInvalidSelectionPhones,
 } from '@/lib/whatsapp-broadcast';
 import {
   interpolateBroadcastTemplate, isDebtMessageTemplate, resolveConsolidatedName,
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     const roles = Array.isArray(parsed.roles)
       ? Array.from(new Set(parsed.roles.filter((x): x is BroadcastRoleSelection => (ROLE_SELECTIONS as readonly string[]).includes(x as string))))
       : [];
-    if (roles.length === 0) return NextResponse.json({ count: 0, partial_count: 0 });
+    if (roles.length === 0) return NextResponse.json({ count: 0, partial_count: 0, invalid_phone_count: 0 });
 
     if (isDebt && roles.includes('suppliers')) {
       return NextResponse.json({
@@ -61,6 +61,11 @@ export async function POST(req: NextRequest) {
     if (!parsedFilter.ok) return NextResponse.json({ error: parsedFilter.error }, { status: 400 });
     const debtFilter = parsedFilter.value;
 
+    // Section 6 — report-only: how many of the selected roles have a phone
+    // entered that can't actually receive WhatsApp (unparseable/landline).
+    // Never filters `count` itself — purely informational.
+    const invalidPhoneCount = await countInvalidSelectionPhones(roles, debtFilter);
+
     if (isDebt) {
       const consolidated = await resolveConsolidatedSelectionRecipients(roles, debtFilter);
       const partialCount = consolidated.reduce((n, r) => {
@@ -70,11 +75,11 @@ export async function POST(req: NextRequest) {
         });
         return rendered.truncated ? n + 1 : n;
       }, 0);
-      return NextResponse.json({ count: consolidated.length, partial_count: partialCount });
+      return NextResponse.json({ count: consolidated.length, partial_count: partialCount, invalid_phone_count: invalidPhoneCount });
     }
 
     const resolved = await resolveSelectionRecipients(roles, debtFilter);
-    return NextResponse.json({ count: resolved.length, partial_count: 0 });
+    return NextResponse.json({ count: resolved.length, partial_count: 0, invalid_phone_count: invalidPhoneCount });
   }
 
   const type = (TYPES as readonly string[]).includes(parsed.type as string)

@@ -7,7 +7,7 @@ import { resolveSendCreds, InstanceNotConfiguredError } from '@/lib/db/whatsappI
 import {
   resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients,
   resolveSelectionRecipients, resolveConsolidatedSelectionRecipients,
-  parseBroadcastDebtFilter,
+  parseBroadcastDebtFilter, countInvalidSelectionPhones,
 } from '@/lib/whatsapp-broadcast';
 import {
   interpolateTemplate, interpolateBroadcastTemplate, isDebtMessageTemplate,
@@ -232,9 +232,10 @@ export async function POST(req: NextRequest) {
 
   // Default: start immediately (durably). Pass start:false to stage as 'queued'.
   const started = body.start === false ? campaign : await startCampaign(getDbPool(), campaign.id);
-  // partial_detail_count: how many recipients' consolidated apartment list was
-  // cut short by the truncation budget (interpolateBroadcastTemplate) — 0 for
-  // a free-form campaign. Computed here, not stored, so it needs no schema
-  // change; surfaced to the operator via the compose screen's success toast.
-  return NextResponse.json({ ...started, partial_detail_count: partialDetailCount }, { status: 201 });
+  // partial_detail_count / invalid_phone_count: report-only numbers, neither
+  // stored (no schema change) — surfaced to the operator via the compose
+  // screen's success toast. invalid_phone_count (Section 6) is 0 for a
+  // non-selection audience (legacy types aren't offered by the compose screen).
+  const invalidPhoneCount = isSelection ? await countInvalidSelectionPhones(audience.roles ?? [], debtFilter) : 0;
+  return NextResponse.json({ ...started, partial_detail_count: partialDetailCount, invalid_phone_count: invalidPhoneCount }, { status: 201 });
 }
