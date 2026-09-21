@@ -28,6 +28,7 @@ const {
   resolveSupplierRecipients, resolveSelectionRecipients, resolveConsolidatedSelectionRecipients,
   parseBroadcastDebtFilter,
 } = await import('@/lib/whatsapp-broadcast');
+const { isValidMinDebtAmount, MIN_DEBT_AMOUNT_ERROR } = await import('@/lib/whatsapp-audience-filter');
 
 /** Every id this suite creates, so teardown removes exactly those (CLAUDE.md
  *  iron rule 12 — never clean up by filter). */
@@ -654,26 +655,49 @@ d('debt filter ("רק מי שחייב" / "מעל ₪") — Section 4', () => {
 });
 
 describe('parseBroadcastDebtFilter (pure — no DB)', () => {
-  it('returns undefined when the input is missing, not an object, or only_with_debt is not exactly true', () => {
-    expect(parseBroadcastDebtFilter(undefined)).toBeUndefined();
-    expect(parseBroadcastDebtFilter(null)).toBeUndefined();
-    expect(parseBroadcastDebtFilter({})).toBeUndefined();
-    expect(parseBroadcastDebtFilter({ only_with_debt: false })).toBeUndefined();
-    expect(parseBroadcastDebtFilter({ only_with_debt: 'true' })).toBeUndefined();
+  it('ok: true, value: undefined when the input is missing, not an object, or only_with_debt is not exactly true', () => {
+    expect(parseBroadcastDebtFilter(undefined)).toEqual({ ok: true, value: undefined });
+    expect(parseBroadcastDebtFilter(null)).toEqual({ ok: true, value: undefined });
+    expect(parseBroadcastDebtFilter({})).toEqual({ ok: true, value: undefined });
+    expect(parseBroadcastDebtFilter({ only_with_debt: false })).toEqual({ ok: true, value: undefined });
+    expect(parseBroadcastDebtFilter({ only_with_debt: 'true' })).toEqual({ ok: true, value: undefined });
   });
 
-  it('accepts only_with_debt: true with no amount → min_debt_amount: null', () => {
-    expect(parseBroadcastDebtFilter({ only_with_debt: true })).toEqual({ only_with_debt: true, min_debt_amount: null });
+  it('accepts only_with_debt: true with no amount (or an explicit null) → min_debt_amount: null', () => {
+    expect(parseBroadcastDebtFilter({ only_with_debt: true })).toEqual({ ok: true, value: { only_with_debt: true, min_debt_amount: null } });
+    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: null })).toEqual({ ok: true, value: { only_with_debt: true, min_debt_amount: null } });
   });
 
   it('accepts a valid non-negative amount', () => {
-    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: 250 })).toEqual({ only_with_debt: true, min_debt_amount: 250 });
-    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: 0 })).toEqual({ only_with_debt: true, min_debt_amount: 0 });
+    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: 250 })).toEqual({ ok: true, value: { only_with_debt: true, min_debt_amount: 250 } });
+    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: 0 })).toEqual({ ok: true, value: { only_with_debt: true, min_debt_amount: 0 } });
   });
 
-  it('falls back to null for a negative, non-finite, or non-numeric amount', () => {
-    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: -5 })).toEqual({ only_with_debt: true, min_debt_amount: null });
-    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: Infinity })).toEqual({ only_with_debt: true, min_debt_amount: null });
-    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: 'abc' })).toEqual({ only_with_debt: true, min_debt_amount: null });
+  it('rejects (ok: false, the shared Hebrew message) a negative, non-finite, or non-numeric amount — never silently falls back', () => {
+    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: -5 })).toEqual({ ok: false, error: MIN_DEBT_AMOUNT_ERROR });
+    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: Infinity })).toEqual({ ok: false, error: MIN_DEBT_AMOUNT_ERROR });
+    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: NaN })).toEqual({ ok: false, error: MIN_DEBT_AMOUNT_ERROR });
+    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: 'abc' })).toEqual({ ok: false, error: MIN_DEBT_AMOUNT_ERROR });
+  });
+});
+
+describe('isValidMinDebtAmount (pure — no DB, client + server share this)', () => {
+  it('null (empty field / omitted) is valid — "any positive debt"', () => {
+    expect(isValidMinDebtAmount(null)).toBe(true);
+  });
+
+  it('a non-negative finite number is valid', () => {
+    expect(isValidMinDebtAmount(0)).toBe(true);
+    expect(isValidMinDebtAmount(250)).toBe(true);
+    expect(isValidMinDebtAmount(0.5)).toBe(true);
+  });
+
+  it('negative, non-finite, NaN, or non-number values are invalid', () => {
+    expect(isValidMinDebtAmount(-1)).toBe(false);
+    expect(isValidMinDebtAmount(Infinity)).toBe(false);
+    expect(isValidMinDebtAmount(-Infinity)).toBe(false);
+    expect(isValidMinDebtAmount(NaN)).toBe(false);
+    expect(isValidMinDebtAmount('100')).toBe(false);
+    expect(isValidMinDebtAmount(undefined)).toBe(false);
   });
 });

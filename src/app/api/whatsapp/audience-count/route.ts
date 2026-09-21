@@ -57,7 +57,9 @@ export async function POST(req: NextRequest) {
     }
 
     // "רק מי שחייב" / "מעל ₪" (Section 4) — owners/tenants only.
-    const debtFilter = parseBroadcastDebtFilter(parsed.debt_filter);
+    const parsedFilter = parseBroadcastDebtFilter(parsed.debt_filter);
+    if (!parsedFilter.ok) return NextResponse.json({ error: parsedFilter.error }, { status: 400 });
+    const debtFilter = parsedFilter.value;
 
     if (isDebt) {
       const consolidated = await resolveConsolidatedSelectionRecipients(roles, debtFilter);

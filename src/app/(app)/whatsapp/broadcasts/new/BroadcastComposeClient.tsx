@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { TEMPLATE_PLACEHOLDERS } from '@/lib/whatsapp-template';
+import { isValidMinDebtAmount, MIN_DEBT_AMOUNT_ERROR } from '@/lib/whatsapp-audience-filter';
 import type { Campaign } from '@/lib/wa-queue/types';
 import type { BroadcastDebtFilter, WhatsAppTemplate as Tpl } from '@/types/whatsapp';
 import { CampaignStatusBadge } from '../_components/StatusBadge';
@@ -43,17 +44,31 @@ function debtFilterApplies(roles: Role[]): boolean {
   return roles.includes('owners') || roles.includes('tenants');
 }
 
+// Empty → "any positive debt" (null); otherwise the typed value as a number,
+// valid or not — isValidMinDebtAmount is what actually judges it.
+function parsedMinDebtAmount(minDebtAmount: string): number | null {
+  const trimmed = minDebtAmount.trim();
+  return trimmed === '' ? null : Number(trimmed);
+}
+
+// The inline Hebrew error shown under the "מעל ₪" field — null while the
+// field doesn't need judging (checkbox off) or is valid.
+function minDebtAmountError(onlyWithDebt: boolean, minDebtAmount: string): string | null {
+  if (!onlyWithDebt) return null;
+  return isValidMinDebtAmount(parsedMinDebtAmount(minDebtAmount)) ? null : MIN_DEBT_AMOUNT_ERROR;
+}
+
 // undefined whenever the filter is off or hidden (roles no longer include
 // owners/tenants) — never sent to the server in that state, even if the
 // checkbox was left checked before the operator switched to suppliers-only.
-// An empty amount field means "any positive debt" (min_debt_amount: null);
-// a non-numeric/negative value falls back to that same default.
+// Assumes the amount already passed minDebtAmountError — canSend/the
+// debounced count effect both gate on that first, so this never actually
+// ships an invalid number; it's a defensive fallback to "no filter" only.
 function buildDebtFilterPayload(roles: Role[], onlyWithDebt: boolean, minDebtAmount: string): BroadcastDebtFilter | undefined {
   if (!onlyWithDebt || !debtFilterApplies(roles)) return undefined;
-  const trimmed = minDebtAmount.trim();
-  if (trimmed === '') return { only_with_debt: true, min_debt_amount: null };
-  const amount = Number(trimmed);
-  return { only_with_debt: true, min_debt_amount: Number.isFinite(amount) && amount >= 0 ? amount : null };
+  const amount = parsedMinDebtAmount(minDebtAmount);
+  if (!isValidMinDebtAmount(amount)) return undefined;
+  return { only_with_debt: true, min_debt_amount: amount };
 }
 
 // A fresh idempotency token per compose session — a double-click / retry POSTs the
@@ -88,6 +103,7 @@ export function BroadcastComposeClient({
   const [audienceError, setAudienceError] = useState<string | null>(null);
   const [launched, setLaunched] = useState<Campaign | null>(null);
   const [attachments, setAttachments] = useState<StagedAttachment[]>([]);
+  const minDebtAmountErr = minDebtAmountError(onlyWithDebt, minDebtAmount);
   const tokenRef = useRef(newToken());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   // Staged uploads that never became part of a broadcast are removed when the
@@ -125,6 +141,9 @@ export function BroadcastComposeClient({
     setCount(null);
     setAudienceError(null);
     if (roles.length === 0) return;
+    // An invalid "מעל ₪" already shows its own inline error below the field —
+    // no need to round-trip to the server just to get told the same thing.
+    if (minDebtAmountErr) return;
     const debtFilter = buildDebtFilterPayload(roles, onlyWithDebt, minDebtAmount);
     const timer = setTimeout(() => {
       (async () => {
@@ -143,7 +162,7 @@ export function BroadcastComposeClient({
       })();
     }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [roles, content, onlyWithDebt, minDebtAmount]);
+  }, [roles, content, onlyWithDebt, minDebtAmount, minDebtAmountErr]);
 
   function toggleRole(role: Role) {
     setRoles((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
@@ -168,7 +187,7 @@ export function BroadcastComposeClient({
 
   const uploading = isUploading(attachments);
   const canSend = name.trim().length > 0 && content.trim().length > 0 && roles.length > 0
-    && !sending && !uploading && !audienceError && (count ?? 0) > 0;
+    && !sending && !uploading && !audienceError && !minDebtAmountErr && (count ?? 0) > 0;
 
   async function handleSend() {
     if (!canSend) return;
@@ -265,11 +284,17 @@ export function BroadcastComposeClient({
                 <Label htmlFor="bc-only-debt" className="text-sm font-medium text-slate-700">רק מי שחייב</Label>
               </div>
               {onlyWithDebt && (
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="bc-min-debt" className="text-sm text-slate-600">מעל ₪</Label>
-                  <Input id="bc-min-debt" type="number" inputMode="decimal" min={0} step="1"
-                    value={minDebtAmount} onChange={(e) => setMinDebtAmount(e.target.value)}
-                    placeholder="0" className="h-10 w-28" disabled={sending} />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="bc-min-debt" className="text-sm text-slate-600">מעל ₪</Label>
+                    <Input id="bc-min-debt" type="number" inputMode="decimal" min={0} step="1"
+                      value={minDebtAmount} onChange={(e) => setMinDebtAmount(e.target.value)}
+                      placeholder="0" className={cn('h-10 w-28', minDebtAmountErr && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
+                      disabled={sending} />
+                  </div>
+                  {minDebtAmountErr && (
+                    <p className="mt-1 text-[12px] font-semibold text-red-500">⚠️ {minDebtAmountErr}</p>
+                  )}
                 </div>
               )}
             </div>
@@ -279,7 +304,7 @@ export function BroadcastComposeClient({
             <p className="text-xs font-medium text-red-600">בחרו לפחות קהל יעד אחד.</p>
           ) : audienceError ? (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700">{audienceError}</p>
-          ) : (
+          ) : minDebtAmountErr ? null : (
             <>
               <p className="text-xs text-slate-500">
                 {count === null ? 'מחשב נמענים…' : <>נמענים עם טלפון תקין: <span className="font-bold text-slate-700 tabular-nums">{count}</span></>}

@@ -13,6 +13,7 @@ import {
 import type { TemplateDebtor } from '@/lib/whatsapp-template';
 import type { BroadcastAudience, BroadcastDebtFilter, BroadcastRoleSelection } from '@/types/whatsapp';
 import type { ContactPersonRole } from '@/lib/types/contacts';
+import { isValidMinDebtAmount, MIN_DEBT_AMOUNT_ERROR } from '@/lib/whatsapp-audience-filter';
 
 // Audience → recipient resolution for WhatsApp broadcasts. The actual sending is
 // now the durable delivery queue's job (src/lib/wa-queue/*, drained by the
@@ -110,20 +111,27 @@ function toIntl(field: string | null): string | null {
   }
 }
 
-/** Parses a request body's `debt_filter` field into a BroadcastDebtFilter, or
- *  undefined when absent/off/malformed — shared by the campaign-create and
- *  audience-count routes so the two never drift. only_with_debt must be
- *  exactly `true` to activate; any other shape is treated as "no filter"
- *  rather than a 400, since this only narrows a count/recipient list, never
- *  writes anything. A negative/non-finite amount is treated as "not given"
- *  (falls back to the >0 default) rather than rejected. */
-export function parseBroadcastDebtFilter(raw: unknown): BroadcastDebtFilter | undefined {
-  if (typeof raw !== 'object' || raw === null) return undefined;
+export type ParsedBroadcastDebtFilter =
+  | { ok: true; value: BroadcastDebtFilter | undefined }
+  | { ok: false; error: string };
+
+/** Parses a request body's `debt_filter` field into a BroadcastDebtFilter —
+ *  shared by the campaign-create and audience-count routes so the two never
+ *  drift. Absent/not-an-object/only_with_debt !== true all mean "no filter"
+ *  (`ok: true, value: undefined`) — those aren't errors, since the field is
+ *  simply off. Once only_with_debt is true, though, a min_debt_amount that IS
+ *  given must be a valid non-negative finite number (isValidMinDebtAmount,
+ *  the SAME rule the compose screen checks inline before ever sending), or a
+ *  negative/non-numeric amount would otherwise silently filter on the wrong
+ *  threshold — `ok: false` with the shared 400-ready Hebrew message. Omitted/
+ *  null is valid and means "any positive debt" (min_debt_amount: null). */
+export function parseBroadcastDebtFilter(raw: unknown): ParsedBroadcastDebtFilter {
+  if (typeof raw !== 'object' || raw === null) return { ok: true, value: undefined };
   const d = raw as Record<string, unknown>;
-  if (d.only_with_debt !== true) return undefined;
-  const amount = d.min_debt_amount;
-  const min_debt_amount = typeof amount === 'number' && Number.isFinite(amount) && amount >= 0 ? amount : null;
-  return { only_with_debt: true, min_debt_amount };
+  if (d.only_with_debt !== true) return { ok: true, value: undefined };
+  const amount = d.min_debt_amount ?? null;
+  if (!isValidMinDebtAmount(amount)) return { ok: false, error: MIN_DEBT_AMOUNT_ERROR };
+  return { ok: true, value: { only_with_debt: true, min_debt_amount: amount } };
 }
 
 /** true when a row's total_debt clears the audience's debt filter (or there
