@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Save, X, MessageSquareText, Eye, Home, CheckCheck, Plus } from 'lucide-react';
+import { Save, X, MessageSquareText, Eye, Home, CheckCheck, Plus, Rows3, TriangleAlert } from 'lucide-react';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -15,8 +15,33 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
-import { TEMPLATE_PLACEHOLDERS } from '@/lib/whatsapp-template';
+import {
+  TEMPLATE_PLACEHOLDERS, APARTMENTS_BLOCK_OPEN, APARTMENTS_BLOCK_CLOSE, parseApartmentsBlock,
+} from '@/lib/whatsapp-template';
 import type { WhatsAppTemplate } from '@/types/whatsapp';
+
+/** Chips shown while the cursor sits INSIDE the repeating apartment block —
+ *  these four refer to the current apartment in the loop. */
+const INSIDE_BLOCK_TOKENS = new Set(['{{apartment}}', '{{monthly}}', '{{special}}', '{{debt}}']);
+const INSIDE_BLOCK_PLACEHOLDERS = TEMPLATE_PLACEHOLDERS.filter((p) => INSIDE_BLOCK_TOKENS.has(p.token));
+/** Chips shown OUTSIDE the block: the name + the three grand-total tokens
+ *  (the recommended way to reference "all apartments" there). */
+const OUTSIDE_BLOCK_PLACEHOLDERS = TEMPLATE_PLACEHOLDERS.filter((p) => (
+  p.token === '{{name}}' || p.token.startsWith('{{total_')
+));
+/** The original single-apartment tokens, still insertable outside a block
+ *  (single-recipient sends never have this ambiguity) but flagged — for a
+ *  multi-apartment broadcast recipient they resolve to a blank/summed value
+ *  rather than one specific apartment. */
+const AMBIGUOUS_OUTSIDE_TOKENS = TEMPLATE_PLACEHOLDERS.filter((p) => INSIDE_BLOCK_TOKENS.has(p.token));
+
+function isCursorInsideApartmentsBlock(content: string, pos: number): boolean {
+  const openIdx = content.indexOf(APARTMENTS_BLOCK_OPEN);
+  const closeIdx = content.indexOf(APARTMENTS_BLOCK_CLOSE);
+  if (openIdx === -1 || closeIdx === -1 || closeIdx < openIdx) return false;
+  const innerStart = openIdx + APARTMENTS_BLOCK_OPEN.length;
+  return pos >= innerStart && pos <= closeIdx;
+}
 
 interface FormState {
   name: string;
@@ -44,6 +69,7 @@ export function WhatsAppTemplateSheet({
   const [values, setValues] = useState<FormState>(EMPTY);
   const [saving, setSaving] = useState(false);
   const [confirmExit, setConfirmExit] = useState(false);
+  const [cursorPos, setCursorPos] = useState(0);
   const contentRef = useRef<HTMLTextAreaElement | null>(null);
 
   const initial = useMemo(() => (editing ? fromTemplate(editing) : EMPTY), [editing]);
@@ -61,6 +87,10 @@ export function WhatsAppTemplateSheet({
     values.content !== initial.content ||
     values.is_active !== initial.is_active
   ), [values, initial]);
+
+  const blockValidation = useMemo(() => parseApartmentsBlock(values.content), [values.content]);
+  const hasBlock = blockValidation.ok && blockValidation.block !== null;
+  const insideBlock = hasBlock && isCursorInsideApartmentsBlock(values.content, cursorPos);
 
   function set<K extends keyof FormState>(key: K, v: FormState[K]) {
     setValues((prev) => ({ ...prev, [key]: v }));
@@ -80,7 +110,32 @@ export function WhatsAppTemplateSheet({
       el.focus();
       const pos = start + token.length;
       el.setSelectionRange(pos, pos);
+      setCursorPos(pos);
     });
+  }
+
+  /** "קטע חוזר לפי דירה" chip — wraps the current selection in
+   *  {{#apartments}}...{{/apartments}}, or inserts an empty pair with the
+   *  cursor placed inside when nothing is selected. */
+  function insertApartmentsBlock() {
+    const el = contentRef.current;
+    const start = el?.selectionStart ?? values.content.length;
+    const end = el?.selectionEnd ?? values.content.length;
+    const selected = values.content.slice(start, end);
+    const wrapped = APARTMENTS_BLOCK_OPEN + selected + APARTMENTS_BLOCK_CLOSE;
+    const next = values.content.slice(0, start) + wrapped + values.content.slice(end);
+    set('content', next);
+    requestAnimationFrame(() => {
+      el?.focus();
+      const pos = selected ? start + wrapped.length : start + APARTMENTS_BLOCK_OPEN.length;
+      el?.setSelectionRange(pos, pos);
+      setCursorPos(pos);
+    });
+  }
+
+  function syncCursor() {
+    const el = contentRef.current;
+    if (el) setCursorPos(el.selectionStart ?? 0);
   }
 
   function attemptClose(next: boolean) {
@@ -101,6 +156,11 @@ export function WhatsAppTemplateSheet({
     }
     if (content.length < 1 || content.length > 4096) {
       toast.error('תוכן התבנית חייב להיות באורך 1-4096 תווים');
+      return;
+    }
+    const block = parseApartmentsBlock(content);
+    if (!block.ok) {
+      toast.error(block.error ?? 'שגיאה בקטע החוזר');
       return;
     }
 
@@ -183,9 +243,16 @@ export function WhatsAppTemplateSheet({
                     <Label htmlFor="tpl-content" className="text-[13.5px] font-bold text-ink-2">
                       תוכן<span className="text-[#e5484d]">*</span>
                     </Label>
-                    {/* Variable insert chips — above the textarea */}
+                    {/* Variable insert chips — position-aware: inside the
+                        repeating block they refer to the current apartment;
+                        outside it, to the recipient as a whole. */}
+                    <p className="text-[11.5px] text-ink-3">
+                      {insideBlock
+                        ? 'בתוך הקטע החוזר — הערכים מתייחסים לדירה הנוכחית.'
+                        : 'מחוץ לקטע — סה״כ מתייחס לכל הדירות של הנמען.'}
+                    </p>
                     <div className="flex flex-wrap items-center gap-2">
-                      {TEMPLATE_PLACEHOLDERS.map((p) => (
+                      {(insideBlock ? INSIDE_BLOCK_PLACEHOLDERS : OUTSIDE_BLOCK_PLACEHOLDERS).map((p) => (
                         <button
                           key={p.token}
                           type="button"
@@ -197,18 +264,48 @@ export function WhatsAppTemplateSheet({
                           <Plus className="h-3 w-3 opacity-70" />
                         </button>
                       ))}
+                      {!insideBlock && (
+                        <button
+                          type="button"
+                          onClick={insertApartmentsBlock}
+                          disabled={saving || hasBlock}
+                          title={hasBlock ? 'כבר קיים קטע חוזר בתבנית' : 'עטוף את חלק הדירה — יחזור לכל דירה של הנמען'}
+                          className="inline-flex items-center gap-1 rounded-full border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink-2 transition-colors hover:border-brand hover:text-brand-text disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <Rows3 className="h-3 w-3 opacity-70" />
+                          <span>קטע חוזר לפי דירה</span>
+                        </button>
+                      )}
                     </div>
+                    {!insideBlock && (
+                      <div className="flex items-start gap-1.5 text-[11.5px] text-ink-3">
+                        <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0 text-amber-600" />
+                        <span>
+                          {AMBIGUOUS_OUTSIDE_TOKENS.map((p) => p.token).join(' / ')} מחוץ לקטע אינם מוגדרים
+                          לנמען עם כמה דירות — עטפו אותם בקטע חוזר, או השתמשו בסה״כ הכללי.
+                        </span>
+                      </div>
+                    )}
                     <Textarea
                       id="tpl-content"
                       ref={contentRef}
                       value={values.content}
                       onChange={(e) => set('content', e.target.value)}
+                      onSelect={syncCursor}
+                      onClick={syncCursor}
+                      onKeyUp={syncCursor}
                       placeholder="שלום {{name}}, נותר חוב של {{debt}}. דמי ניהול: {{monthly}}..."
                       rows={6}
-                      className="min-h-[184px] resize-none border-[1.5px] border-line bg-white text-sm leading-[1.85] placeholder:text-ink-ghost focus-visible:border-brand focus-visible:ring-4 focus-visible:ring-[rgba(61,90,254,0.12)]"
+                      className={cn(
+                        'min-h-[184px] resize-none border-[1.5px] bg-white text-sm leading-[1.85] placeholder:text-ink-ghost focus-visible:ring-4 focus-visible:ring-[rgba(61,90,254,0.12)]',
+                        blockValidation.ok ? 'border-line focus-visible:border-brand' : 'border-red-400 bg-red-50',
+                      )}
                       disabled={saving}
                       dir="rtl"
                     />
+                    {!blockValidation.ok && (
+                      <p className="text-[12px] font-semibold text-red-600">{blockValidation.error}</p>
+                    )}
                     {/* Supported variables */}
                     <div className="flex flex-wrap items-center gap-1.5 rounded-[7px] border border-line-soft bg-surface-2 px-3 py-2">
                       <span className="text-xs text-ink-3">משתנים נתמכים:</span>
@@ -221,6 +318,9 @@ export function WhatsAppTemplateSheet({
                           {p.token}
                         </code>
                       ))}
+                      <code dir="ltr" className="rounded-[5px] border border-line bg-white px-1.5 py-0.5 font-num text-[11px] text-ink-2">
+                        {APARTMENTS_BLOCK_OPEN}...{APARTMENTS_BLOCK_CLOSE}
+                      </code>
                     </div>
                   </div>
 

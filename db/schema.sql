@@ -1490,6 +1490,19 @@ COMMENT ON COLUMN public.wa_campaign_attachments.object_deleted_at IS 'Set by sc
 
 
 --
+-- Name: wa_campaign_recipient_apartments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.wa_campaign_recipient_apartments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    recipient_id uuid NOT NULL,
+    contact_id uuid NOT NULL,
+    debtor_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: wa_campaign_recipients; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1519,7 +1532,9 @@ CREATE TABLE public.wa_campaign_recipients (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     attachments_sent integer DEFAULT 0 NOT NULL,
-    contact_id uuid NOT NULL,
+    contact_id uuid,
+    supplier_id uuid,
+    CONSTRAINT wa_campaign_recipients_contact_or_supplier_check CHECK (((contact_id IS NOT NULL) OR (supplier_id IS NOT NULL))),
     CONSTRAINT wa_campaign_recipients_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'sent'::text, 'failed'::text, 'skipped'::text, 'cancelled'::text])))
 );
 
@@ -2297,6 +2312,22 @@ ALTER TABLE ONLY public.wa_campaign_attachments
 
 ALTER TABLE ONLY public.wa_campaign_attachments
     ADD CONSTRAINT wa_campaign_attachments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: wa_campaign_recipient_apartments wa_campaign_recipient_apartments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wa_campaign_recipient_apartments
+    ADD CONSTRAINT wa_campaign_recipient_apartments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: wa_campaign_recipient_apartments wa_campaign_recipient_apartments_recipient_id_contact_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wa_campaign_recipient_apartments
+    ADD CONSTRAINT wa_campaign_recipient_apartments_recipient_id_contact_id_key UNIQUE (recipient_id, contact_id);
 
 
 --
@@ -3292,6 +3323,20 @@ CREATE INDEX wa_campaign_attachments_staged_idx ON public.wa_campaign_attachment
 
 
 --
+-- Name: wa_campaign_recipient_apartments_contact_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX wa_campaign_recipient_apartments_contact_id_idx ON public.wa_campaign_recipient_apartments USING btree (contact_id);
+
+
+--
+-- Name: wa_campaign_recipient_apartments_recipient_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX wa_campaign_recipient_apartments_recipient_id_idx ON public.wa_campaign_recipient_apartments USING btree (recipient_id);
+
+
+--
 -- Name: wa_campaign_recipients_contact_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4266,6 +4311,22 @@ ALTER TABLE ONLY public.wa_campaign_attachments
 
 
 --
+-- Name: wa_campaign_recipient_apartments wa_campaign_recipient_apartments_contact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wa_campaign_recipient_apartments
+    ADD CONSTRAINT wa_campaign_recipient_apartments_contact_id_fkey FOREIGN KEY (contact_id) REFERENCES public.contacts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wa_campaign_recipient_apartments wa_campaign_recipient_apartments_recipient_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wa_campaign_recipient_apartments
+    ADD CONSTRAINT wa_campaign_recipient_apartments_recipient_id_fkey FOREIGN KEY (recipient_id) REFERENCES public.wa_campaign_recipients(id) ON DELETE CASCADE;
+
+
+--
 -- Name: wa_campaign_recipients wa_campaign_recipients_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4279,6 +4340,14 @@ ALTER TABLE ONLY public.wa_campaign_recipients
 
 ALTER TABLE ONLY public.wa_campaign_recipients
     ADD CONSTRAINT wa_campaign_recipients_contact_id_fkey FOREIGN KEY (contact_id) REFERENCES public.contacts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: wa_campaign_recipients wa_campaign_recipients_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wa_campaign_recipients
+    ADD CONSTRAINT wa_campaign_recipients_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE RESTRICT;
 
 
 --
@@ -4419,5 +4488,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260916170623'),
     ('20260920221954'),
     ('20260921000521'),
-    ('20260921072925')
+    ('20260921072925'),
+    ('20260921090433')
 ;
