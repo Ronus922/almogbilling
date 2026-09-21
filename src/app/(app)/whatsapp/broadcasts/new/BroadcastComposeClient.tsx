@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -17,7 +18,7 @@ import {
 import { cn } from '@/lib/utils';
 import { TEMPLATE_PLACEHOLDERS } from '@/lib/whatsapp-template';
 import type { Campaign } from '@/lib/wa-queue/types';
-import type { WhatsAppTemplate as Tpl } from '@/types/whatsapp';
+import type { BroadcastDebtFilter, WhatsAppTemplate as Tpl } from '@/types/whatsapp';
 import { CampaignStatusBadge } from '../_components/StatusBadge';
 import { StopBroadcastDialog } from '../_components/StopBroadcastDialog';
 import {
@@ -35,6 +36,25 @@ const ROLES: { value: Role; label: string; icon: typeof Home }[] = [
   { value: 'suppliers', label: 'ספקים', icon: Truck },
 ];
 const DEFAULT_ROLES: Role[] = ['owners', 'tenants'];
+
+// "רק מי שחייב" applies to owners/tenants only — hidden entirely once the
+// selection has neither (e.g. "ספקים" alone), since it would filter nothing.
+function debtFilterApplies(roles: Role[]): boolean {
+  return roles.includes('owners') || roles.includes('tenants');
+}
+
+// undefined whenever the filter is off or hidden (roles no longer include
+// owners/tenants) — never sent to the server in that state, even if the
+// checkbox was left checked before the operator switched to suppliers-only.
+// An empty amount field means "any positive debt" (min_debt_amount: null);
+// a non-numeric/negative value falls back to that same default.
+function buildDebtFilterPayload(roles: Role[], onlyWithDebt: boolean, minDebtAmount: string): BroadcastDebtFilter | undefined {
+  if (!onlyWithDebt || !debtFilterApplies(roles)) return undefined;
+  const trimmed = minDebtAmount.trim();
+  if (trimmed === '') return { only_with_debt: true, min_debt_amount: null };
+  const amount = Number(trimmed);
+  return { only_with_debt: true, min_debt_amount: Number.isFinite(amount) && amount >= 0 ? amount : null };
+}
 
 // A fresh idempotency token per compose session — a double-click / retry POSTs the
 // same token, so the server returns the SAME campaign instead of a duplicate.
@@ -57,6 +77,8 @@ export function BroadcastComposeClient({
 } = {}) {
   const [name, setName] = useState('');
   const [roles, setRoles] = useState<Role[]>(DEFAULT_ROLES);
+  const [onlyWithDebt, setOnlyWithDebt] = useState(false);
+  const [minDebtAmount, setMinDebtAmount] = useState('');
   const [templates, setTemplates] = useState<Tpl[]>([]);
   const [templateId, setTemplateId] = useState(FREE_TEXT);
   const [content, setContent] = useState('');
@@ -103,6 +125,7 @@ export function BroadcastComposeClient({
     setCount(null);
     setAudienceError(null);
     if (roles.length === 0) return;
+    const debtFilter = buildDebtFilterPayload(roles, onlyWithDebt, minDebtAmount);
     const timer = setTimeout(() => {
       (async () => {
         try {
@@ -110,7 +133,7 @@ export function BroadcastComposeClient({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ type: 'selection', roles, body: content }),
+            body: JSON.stringify({ type: 'selection', roles, body: content, debt_filter: debtFilter }),
           });
           const d = (await r.json().catch(() => ({}))) as { count?: number; partial_count?: number; error?: string };
           if (cancelled) return;
@@ -120,7 +143,7 @@ export function BroadcastComposeClient({
       })();
     }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [roles, content]);
+  }, [roles, content, onlyWithDebt, minDebtAmount]);
 
   function toggleRole(role: Role) {
     setRoles((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
@@ -151,6 +174,7 @@ export function BroadcastComposeClient({
     if (!canSend) return;
     setSending(true);
     try {
+      const debtFilter = buildDebtFilterPayload(roles, onlyWithDebt, minDebtAmount);
       const r = await fetch('/api/whatsapp/campaigns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -159,7 +183,7 @@ export function BroadcastComposeClient({
           name: name.trim(),
           body: content.trim(),
           template_id: templateId === FREE_TEXT ? undefined : templateId,
-          audience: { type: 'selection', roles },
+          audience: { type: 'selection', roles, ...(debtFilter ? { debt_filter: debtFilter } : {}) },
           client_token: tokenRef.current,
           attachment_ids: readyAttachmentIds(attachments),
         }),
@@ -182,6 +206,7 @@ export function BroadcastComposeClient({
     setLaunched(null);
     setName(''); setContent(''); setTemplateId(FREE_TEXT); setRoles(DEFAULT_ROLES); setAttachments([]);
     setAudienceError(null);
+    setOnlyWithDebt(false); setMinDebtAmount('');
     tokenRef.current = newToken();
   }
 
@@ -229,6 +254,27 @@ export function BroadcastComposeClient({
               );
             })}
           </div>
+
+          {/* Debt filter (Section 4) — owners/tenants only; hidden once the
+              selection has neither (e.g. "ספקים" בלבד), since it would filter nothing. */}
+          {debtFilterApplies(roles) && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1">
+              <div className="flex items-center gap-2">
+                <Checkbox id="bc-only-debt" checked={onlyWithDebt} disabled={sending}
+                  onCheckedChange={(v) => setOnlyWithDebt(v === true)} />
+                <Label htmlFor="bc-only-debt" className="text-sm font-medium text-slate-700">רק מי שחייב</Label>
+              </div>
+              {onlyWithDebt && (
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="bc-min-debt" className="text-sm text-slate-600">מעל ₪</Label>
+                  <Input id="bc-min-debt" type="number" inputMode="decimal" min={0} step="1"
+                    value={minDebtAmount} onChange={(e) => setMinDebtAmount(e.target.value)}
+                    placeholder="0" className="h-10 w-28" disabled={sending} />
+                </div>
+              )}
+            </div>
+          )}
+
           {roles.length === 0 ? (
             <p className="text-xs font-medium text-red-600">בחרו לפחות קהל יעד אחד.</p>
           ) : audienceError ? (

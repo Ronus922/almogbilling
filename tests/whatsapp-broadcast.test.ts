@@ -26,6 +26,7 @@ vi.mock('@/lib/db', () => ({
 const {
   resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients,
   resolveSupplierRecipients, resolveSelectionRecipients, resolveConsolidatedSelectionRecipients,
+  parseBroadcastDebtFilter,
 } = await import('@/lib/whatsapp-broadcast');
 
 /** Every id this suite creates, so teardown removes exactly those (CLAUDE.md
@@ -72,14 +73,15 @@ async function makeContact(spec: ContactSpec): Promise<string> {
 
 /** Creates a contact + a linked, non-archived debtor for it — the shape
  *  resolveBroadcastRecipients actually reads from (contacts is the source of
- *  truth whenever contact_id is linked, per DEBTOR_COLS). Returns the debtor id. */
-async function makeLinkedDebtor(spec: ContactSpec): Promise<string> {
+ *  truth whenever contact_id is linked, per DEBTOR_COLS). `totalDebt` defaults
+ *  to the column default (0 — no debt) when omitted. Returns the debtor id. */
+async function makeLinkedDebtor(spec: ContactSpec, totalDebt?: number): Promise<string> {
   const contactId = await makeContact(spec);
   const debtor = await pool.query<{ id: string; apartment_number: string }>(
-    `insert into public.debtors (apartment_number, contact_id, is_archived)
-     select apartment_number, id, false from public.contacts where id = $1
+    `insert into public.debtors (apartment_number, contact_id, is_archived, total_debt)
+     select apartment_number, id, false, coalesce($2::numeric, 0) from public.contacts where id = $1
      returning id`,
-    [contactId],
+    [contactId, totalDebt ?? null],
   );
   const debtorId = debtor.rows[0]!.id;
   made.debtors.push(debtorId);
@@ -523,5 +525,155 @@ d('resolveSelectionRecipients / resolveConsolidatedSelectionRecipients / resolve
     const phones = consolidated.map((r) => r.phoneIntl);
     expect(phones).toContain(intl(ownerPhone));
     expect(phones).not.toContain(intl(supplierPhone));
+  });
+});
+
+// Section 4: "רק מי שחייב" (only who owes) + "מעל ₪" (above ₪) — a debt-amount
+// audience filter, owners/tenants only. Suppliers carry no debt data and are
+// never filtered by it, even when checked alongside owners/tenants.
+d('debt filter ("רק מי שחייב" / "מעל ₪") — Section 4', () => {
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: TEST_URL, max: 4 });
+    pool.on('error', () => undefined);
+  });
+
+  afterAll(async () => {
+    for (const id of made.suppliers) await pool.query(`delete from public.suppliers where id = $1`, [id]);
+    for (const id of made.contactPeople) await pool.query(`delete from public.contact_people where id = $1`, [id]);
+    for (const id of made.debtors) await pool.query(`delete from public.debtors where id = $1`, [id]);
+    for (const id of made.contacts) await pool.query(`delete from public.contacts where id = $1`, [id]);
+    await pool.end();
+  });
+
+  it('resolveBroadcastRecipients: only_with_debt off (or absent) filters nothing — a debt-free apartment is still included', async () => {
+    const phone = uniqPhone();
+    await makeLinkedDebtor({ owner_phone: phone, owner_is_primary_contact: true }, 0);
+
+    const recipients = await resolveBroadcastRecipients({ type: 'owners' });
+    expect(recipients.map((r) => r.phoneIntl)).toContain(intl(phone));
+  });
+
+  it('resolveBroadcastRecipients: only_with_debt on, no amount → excludes debt=0, includes any positive debt', async () => {
+    const zeroPhone = uniqPhone();
+    const debtPhone = uniqPhone();
+    await makeLinkedDebtor({ owner_phone: zeroPhone, owner_is_primary_contact: true }, 0);
+    await makeLinkedDebtor({ owner_phone: debtPhone, owner_is_primary_contact: true }, 1);
+
+    const recipients = await resolveBroadcastRecipients({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null });
+    const phones = recipients.map((r) => r.phoneIntl);
+    expect(phones).not.toContain(intl(zeroPhone));
+    expect(phones).toContain(intl(debtPhone));
+  });
+
+  it('resolveBroadcastRecipients: min_debt_amount is a strict "above" threshold — equal is excluded, above is included', async () => {
+    const equalPhone = uniqPhone();
+    const abovePhone = uniqPhone();
+    await makeLinkedDebtor({ owner_phone: equalPhone, owner_is_primary_contact: true }, 500);
+    await makeLinkedDebtor({ owner_phone: abovePhone, owner_is_primary_contact: true }, 500.01);
+
+    const recipients = await resolveBroadcastRecipients({ type: 'owners' }, { only_with_debt: true, min_debt_amount: 500 });
+    const phones = recipients.map((r) => r.phoneIntl);
+    expect(phones).not.toContain(intl(equalPhone));
+    expect(phones).toContain(intl(abovePhone));
+  });
+
+  it('resolveBroadcastRecipients: an apartment with NO debt record (total_debt null) counts as 0 — excluded when only_with_debt is on', async () => {
+    const phone = uniqPhone();
+    await makeContact({ owner_phone: phone, owner_is_primary_contact: true }); // contact only, no debtor row
+
+    const recipients = await resolveBroadcastRecipients({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null });
+    expect(recipients.map((r) => r.phoneIntl)).not.toContain(intl(phone));
+  });
+
+  it('resolveBroadcastRecipients: the filter also drops an apartment\'s additional (contact_people) owner/tenant, not just the primary', async () => {
+    const primaryPhone = uniqPhone();
+    const extraPhone = uniqPhone();
+    const contactId = await makeContact({ owner_phone: primaryPhone, owner_is_primary_contact: true });
+    await makeExtra(contactId, 'owner', extraPhone);
+    // No debtor row at all → total_debt is null → treated as 0.
+
+    const recipients = await resolveBroadcastRecipients({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null });
+    const phones = recipients.map((r) => r.phoneIntl);
+    expect(phones).not.toContain(intl(primaryPhone));
+    expect(phones).not.toContain(intl(extraPhone));
+  });
+
+  it('resolveConsolidatedBroadcastRecipients: an apartment that fails the filter is dropped from the detail even when another apartment on the SAME phone passes', async () => {
+    const phone = uniqPhone();
+    const passingApt = uniqApt();
+    const failingApt = uniqApt();
+    await makeLinkedDebtor({ owner_phone: phone, owner_is_primary_contact: true, apartment_number: passingApt }, 300);
+    await makeLinkedDebtor({ owner_phone: phone, owner_is_primary_contact: true, apartment_number: failingApt }, 0);
+
+    const consolidated = await resolveConsolidatedBroadcastRecipients({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null });
+    const match = consolidated.find((r) => r.phoneIntl === intl(phone));
+    expect(match).toBeDefined(); // still gets a message — via the passing apartment
+    const numbers = match!.apartments.map((a) => a.apartment_number);
+    expect(numbers).toContain(passingApt);
+    expect(numbers).not.toContain(failingApt);
+  });
+
+  it('resolveConsolidatedBroadcastRecipients: a phone whose EVERY apartment fails the filter never appears at all', async () => {
+    const phone = uniqPhone();
+    await makeLinkedDebtor({ owner_phone: phone, owner_is_primary_contact: true }, 0);
+    await makeLinkedDebtor({ owner_phone: phone, owner_is_primary_contact: true }, 0);
+
+    const consolidated = await resolveConsolidatedBroadcastRecipients({ type: 'owners' }, { only_with_debt: true, min_debt_amount: null });
+    expect(consolidated.find((r) => r.phoneIntl === intl(phone))).toBeUndefined();
+  });
+
+  it('resolveSelectionRecipients: a supplier is included regardless of the debt filter — suppliers carry no debt data', async () => {
+    const supplierPhone = uniqPhone();
+    await makeSupplier({ display_name: 'ספק', mobile: supplierPhone });
+    const debtFreeOwnerPhone = uniqPhone();
+    await makeLinkedDebtor({ owner_phone: debtFreeOwnerPhone, owner_is_primary_contact: true }, 0);
+
+    const selection = await resolveSelectionRecipients(['owners', 'suppliers'], { only_with_debt: true, min_debt_amount: null });
+    const phones = selection.map((r) => r.phoneIntl);
+    expect(phones).toContain(intl(supplierPhone));
+    expect(phones).not.toContain(intl(debtFreeOwnerPhone));
+  });
+
+  it('resolveConsolidatedSelectionRecipients: forwards the filter to both owners and tenants (per-apartment debt, not per-role)', async () => {
+    const ownerPhone = uniqPhone();
+    const tenantPhone = uniqPhone();
+    // Owner and tenant on the SAME apartment share its debt (250 > 200 → both pass).
+    await makeLinkedDebtor({
+      owner_phone: ownerPhone, owner_is_primary_contact: true,
+      tenant_phone: tenantPhone, tenant_is_primary_contact: true,
+    }, 250);
+    const unrelatedDebtFreePhone = uniqPhone();
+    await makeLinkedDebtor({ owner_phone: unrelatedDebtFreePhone, owner_is_primary_contact: true }, 0);
+
+    const consolidated = await resolveConsolidatedSelectionRecipients(['owners', 'tenants'], { only_with_debt: true, min_debt_amount: 200 });
+    const phones = consolidated.map((r) => r.phoneIntl);
+    expect(phones).toContain(intl(ownerPhone));
+    expect(phones).toContain(intl(tenantPhone));
+    expect(phones).not.toContain(intl(unrelatedDebtFreePhone));
+  });
+});
+
+describe('parseBroadcastDebtFilter (pure — no DB)', () => {
+  it('returns undefined when the input is missing, not an object, or only_with_debt is not exactly true', () => {
+    expect(parseBroadcastDebtFilter(undefined)).toBeUndefined();
+    expect(parseBroadcastDebtFilter(null)).toBeUndefined();
+    expect(parseBroadcastDebtFilter({})).toBeUndefined();
+    expect(parseBroadcastDebtFilter({ only_with_debt: false })).toBeUndefined();
+    expect(parseBroadcastDebtFilter({ only_with_debt: 'true' })).toBeUndefined();
+  });
+
+  it('accepts only_with_debt: true with no amount → min_debt_amount: null', () => {
+    expect(parseBroadcastDebtFilter({ only_with_debt: true })).toEqual({ only_with_debt: true, min_debt_amount: null });
+  });
+
+  it('accepts a valid non-negative amount', () => {
+    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: 250 })).toEqual({ only_with_debt: true, min_debt_amount: 250 });
+    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: 0 })).toEqual({ only_with_debt: true, min_debt_amount: 0 });
+  });
+
+  it('falls back to null for a negative, non-finite, or non-numeric amount', () => {
+    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: -5 })).toEqual({ only_with_debt: true, min_debt_amount: null });
+    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: Infinity })).toEqual({ only_with_debt: true, min_debt_amount: null });
+    expect(parseBroadcastDebtFilter({ only_with_debt: true, min_debt_amount: 'abc' })).toEqual({ only_with_debt: true, min_debt_amount: null });
   });
 });
