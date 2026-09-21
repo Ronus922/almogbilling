@@ -53,8 +53,10 @@ function cleanNameCandidate(v: string | null | undefined): string {
   return (v ?? '').replace(/^[\s\/,]+|[\s\/,]+$/g, '').trim();
 }
 
-/** owner_name → tenant_name (first non-empty), trimmed. Empty → "דייר יקר". */
-function resolveName(debtor: TemplateDebtor): string {
+/** owner_name → tenant_name (first non-empty), trimmed. Empty → "דייר יקר".
+ *  Exported for the recipient preview (Section 7), which needs the SAME name
+ *  {{name}} will resolve to without re-deriving the rule. */
+export function resolveName(debtor: TemplateDebtor): string {
   return cleanNameCandidate(debtor.owner_name) || cleanNameCandidate(debtor.tenant_name) || 'דייר יקר';
 }
 

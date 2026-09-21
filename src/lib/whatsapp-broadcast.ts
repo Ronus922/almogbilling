@@ -113,37 +113,62 @@ function toIntl(field: string | null): string | null {
 
 /** 'empty' — nothing entered, not a data problem. 'invalid' — something WAS
  *  entered but it can't receive a WhatsApp message: either it doesn't
- *  normalize at all, or it normalizes to a LANDLINE (972 + 8 digits — a
- *  landline has no WhatsApp account, so it would silently fail at send time
- *  even though today it's accepted as a "valid" recipient). 'ok' — a real
- *  mobile number (972 + 9 digits). Section 6's report-only invalid-phone
- *  count (Section 4's debtFilter equivalent for data quality, not audience
+ *  normalize at all ('unparseable'), or it normalizes to a LANDLINE (972 + 8
+ *  digits — a landline has no WhatsApp account, so it would silently fail at
+ *  send time even though today it's accepted as a "valid" recipient). 'ok' —
+ *  a real mobile number (972 + 9 digits). Section 6/7's invalid-phone
+ *  report (Section 4's debtFilter equivalent for data quality, not audience
  *  scope) is built entirely from this — it never changes which phones
- *  actually become recipients (toIntl/resolveBroadcastRecipients untouched). */
+ *  actually become recipients (toIntl/resolveBroadcastRecipients untouched).
+ *  `local` is the cleaned local-format number, present only for 'ok'/
+ *  'landline' (an 'unparseable' raw value has no coherent number to show). */
 type PhoneValidity = 'ok' | 'invalid' | 'empty';
-function classifyPhone(raw: string | null): PhoneValidity {
+interface PhoneClassification {
+  validity: PhoneValidity;
+  reason?: 'unparseable' | 'landline';
+  local?: string;
+}
+function classifyPhone(raw: string | null): PhoneClassification {
   const hasContent = !!(raw && raw.trim());
   const local = cleanPhoneField(raw);
-  if (!local) return hasContent ? 'invalid' : 'empty';
+  if (!local) return hasContent ? { validity: 'invalid', reason: 'unparseable' } : { validity: 'empty' };
   try {
-    return normalizePhone(local).phone.length === 12 ? 'ok' : 'invalid'; // 11 chars = landline
+    const intl = normalizePhone(local).phone;
+    return intl.length === 12 ? { validity: 'ok', local } : { validity: 'invalid', reason: 'landline', local };
   } catch {
-    return 'invalid';
+    return { validity: 'invalid', reason: 'unparseable' };
   }
 }
 
 /** Classifies several raw fields tried in priority order (e.g. a supplier's
  *  mobile then phone — the same order the actual recipient resolution uses):
- *  'ok' if any field would produce a usable mobile number, else 'invalid' if
- *  any field had content that couldn't, else 'empty'. */
-function classifyPhoneFields(raws: ReadonlyArray<string | null>): PhoneValidity {
-  let sawContent = false;
+ *  'ok' if any field would produce a usable mobile number, else the LAST
+ *  invalid classification seen (so its reason/local survive) if any field had
+ *  content, else 'empty'. */
+function classifyPhoneFields(raws: ReadonlyArray<string | null>): PhoneClassification {
+  let lastInvalid: PhoneClassification | null = null;
   for (const raw of raws) {
     const c = classifyPhone(raw);
-    if (c === 'ok') return 'ok';
-    if (c === 'invalid') sawContent = true;
+    if (c.validity === 'ok') return c;
+    if (c.validity === 'invalid') lastInvalid = c;
   }
-  return sawContent ? 'invalid' : 'empty';
+  return lastInvalid ?? { validity: 'empty' };
+}
+
+/** Masks a cleaned LOCAL phone ("0501234567") to "050-•••-••67" — keeps the
+ *  leading 3 and trailing 2 digits, bullets the rest. Same rule as the
+ *  campaign recipient log's SQL masking (wa-queue/campaigns.ts listRecipients)
+ *  — kept separate since this one runs on a resolver-side local string, not a
+ *  DB column, and a raw phone never leaves this module either way. */
+function maskLocalPhone(local: string): string {
+  return local.length >= 5 ? `${local.slice(0, 3)}-•••-••${local.slice(-2)}` : '•••';
+}
+
+/** Masks an already-valid international phone ("972501234567") the same way,
+ *  for the recipient preview (Section 7) — every entry it lists actually
+ *  passed toIntl, so this always has a coherent local form to mask. */
+export function maskPhoneIntl(phoneIntl: string): string {
+  return maskLocalPhone('0' + phoneIntl.slice(3));
 }
 
 export type ParsedBroadcastDebtFilter =
@@ -319,43 +344,79 @@ export async function resolveBroadcastRecipients(
   return out;
 }
 
+/** One recipient whose phone data is a problem (Section 6/7) — 'unparseable'
+ *  has no coherent number to show (phoneMasked: null); 'landline' does. The
+ *  raw phone never leaves this module, same policy as the campaign recipient
+ *  log (listRecipients) — phoneMasked is always already-masked or null. */
+export interface InvalidPhoneEntry {
+  role: 'owner' | 'tenant' | 'supplier';
+  name: string | null;
+  /** null for a supplier (suppliers carry no apartment). */
+  apartmentNumber: string | null;
+  phoneMasked: string | null;
+  reason: 'unparseable' | 'landline';
+}
+
 /**
- * Section 6 — report-only: counts rows whose relevant phone field (owner_phone
- * for 'owners', tenant_phone for 'tenants') has SOMETHING entered but it can't
- * actually receive a WhatsApp message (unparseable, or a landline — see
- * classifyPhone). Applies the EXACT SAME eligibility gating as
+ * Section 6/7 — report-only: lists rows whose relevant phone field
+ * (owner_phone for 'owners', tenant_phone for 'tenants') has SOMETHING
+ * entered but it can't actually receive a WhatsApp message (unparseable, or a
+ * landline — see classifyPhone). Applies the EXACT SAME eligibility gating as
  * resolveBroadcastRecipients (primary-contact opt-out, debtFilter) so it only
  * flags a row that WOULD have contributed a recipient had its phone been
  * usable — never one excluded by design (opted out / fails the debt filter).
  * Never touches — and is never called by — the actual recipient resolution;
- * it only feeds an informational count next to the live estimate.
+ * it only feeds an informational report next to the live estimate / the
+ * pre-send preview (Section 7).
  *
  * Deliberately scoped to the apartment's own primary phone field, NOT
  * contact_people extras (a rarer, supplementary data source) — the count may
  * therefore slightly undercount in the rare case of a bad EXTRA phone, but
  * always correctly reports on the primary fields operators actually edit on
  * the contacts page. Only 'owners'/'tenants' are scored ('all'/'debtor_ids'
- * return 0 — the live compose screen never sends them; resolveSelectionRecipients
+ * return [] — the live compose screen never sends them; resolveSelectionRecipients
  * always calls with 'owners'/'tenants' separately, never 'all').
  */
-export async function countInvalidBroadcastPhones(
+export async function listInvalidBroadcastPhones(
   audience: BroadcastAudience,
   debtFilter?: BroadcastDebtFilter,
-): Promise<number> {
-  if (audience.type !== 'owners' && audience.type !== 'tenants') return 0;
+): Promise<InvalidPhoneEntry[]> {
+  if (audience.type !== 'owners' && audience.type !== 'tenants') return [];
   const { rows, enforcePrimary } = await fetchAudienceRows(audience);
-  let n = 0;
+  const out: InvalidPhoneEntry[] = [];
   for (const row of rows) {
     if (!passesDebtFilter(row.total_debt, debtFilter)) continue;
     if (audience.type === 'owners') {
       const ownerOk = !enforcePrimary || row.owner_primary;
-      if (ownerOk && classifyPhone(row.phone_owner) === 'invalid') n += 1;
+      if (!ownerOk) continue;
+      const c = classifyPhone(row.phone_owner);
+      if (c.validity === 'invalid') {
+        out.push({
+          role: 'owner', name: row.owner_name, apartmentNumber: row.apartment_number,
+          phoneMasked: c.local ? maskLocalPhone(c.local) : null, reason: c.reason!,
+        });
+      }
     } else {
       const tenantOk = !enforcePrimary || row.tenant_primary;
-      if (tenantOk && classifyPhone(row.phone_tenant) === 'invalid') n += 1;
+      if (!tenantOk) continue;
+      const c = classifyPhone(row.phone_tenant);
+      if (c.validity === 'invalid') {
+        out.push({
+          role: 'tenant', name: row.tenant_name, apartmentNumber: row.apartment_number,
+          phoneMasked: c.local ? maskLocalPhone(c.local) : null, reason: c.reason!,
+        });
+      }
     }
   }
-  return n;
+  return out;
+}
+
+/** Count-only convenience wrapper — see listInvalidBroadcastPhones. */
+export async function countInvalidBroadcastPhones(
+  audience: BroadcastAudience,
+  debtFilter?: BroadcastDebtFilter,
+): Promise<number> {
+  return (await listInvalidBroadcastPhones(audience, debtFilter)).length;
 }
 
 /** One apartment contributing to a consolidated (debt-message) recipient. */
@@ -528,17 +589,34 @@ export async function resolveSupplierRecipients(): Promise<SupplierRecipient[]> 
   return out;
 }
 
-/** Section 6 — report-only: active, non-deleted suppliers whose mobile AND
+/** Section 6/7 — report-only: active, non-deleted suppliers whose mobile AND
  *  phone fields both fail (something entered in at least one, but neither
  *  produces a usable mobile number). Mirrors resolveSupplierRecipients'
  *  mobile-preferred-then-phone rule exactly, so it only flags suppliers that
- *  WOULD have been dropped as recipients due to their phone data specifically. */
-export async function countInvalidSupplierPhones(): Promise<number> {
+ *  WOULD have been dropped as recipients due to their phone data specifically.
+ *  reason/phoneMasked come from whichever field classifyPhoneFields judged
+ *  last (mobile if it had content, else phone). */
+export async function listInvalidSupplierPhones(): Promise<InvalidPhoneEntry[]> {
   const r = await query<SupplierRow>(
     `select id, display_name, phone, mobile from public.suppliers
       where status = 'active' and deleted_at is null`,
   );
-  return r.rows.filter((row) => classifyPhoneFields([row.mobile, row.phone]) === 'invalid').length;
+  const out: InvalidPhoneEntry[] = [];
+  for (const row of r.rows) {
+    const c = classifyPhoneFields([row.mobile, row.phone]);
+    if (c.validity === 'invalid') {
+      out.push({
+        role: 'supplier', name: row.display_name || null, apartmentNumber: null,
+        phoneMasked: c.local ? maskLocalPhone(c.local) : null, reason: c.reason!,
+      });
+    }
+  }
+  return out;
+}
+
+/** Count-only convenience wrapper — see listInvalidSupplierPhones. */
+export async function countInvalidSupplierPhones(): Promise<number> {
+  return (await listInvalidSupplierPhones()).length;
 }
 
 function unionBroadcastRecipientsByPhone(lists: ReadonlyArray<BroadcastRecipient[]>): BroadcastRecipient[] {
@@ -618,23 +696,32 @@ export async function resolveConsolidatedSelectionRecipients(
 }
 
 /**
- * Section 6 — report-only: sums the invalid-phone count across a multi-select
+ * Section 6/7 — report-only: the invalid-phone entries across a multi-select
  * audience's checked roles. Same value regardless of whether the message is a
  * debt message or free-form — phone data quality doesn't depend on message
  * content, so unlike resolveSelectionRecipients / resolveConsolidatedSelectionRecipients
  * there's only ONE version of this, used by both routing paths. Owners/tenants
- * go through countInvalidBroadcastPhones (debt-filtered, same as the recipient
- * count); suppliers go through countInvalidSupplierPhones (never debt-filtered
+ * go through listInvalidBroadcastPhones (debt-filtered, same as the recipient
+ * count); suppliers go through listInvalidSupplierPhones (never debt-filtered
  * — suppliers carry no debt data at all). Never filters or blocks anything —
- * purely an informational number surfaced next to the live estimate.
+ * purely informational, surfaced next to the live estimate (Section 6) and in
+ * the pre-send recipient preview (Section 7).
  */
+export async function listInvalidSelectionPhones(
+  roles: ReadonlyArray<BroadcastRoleSelection>,
+  debtFilter?: BroadcastDebtFilter,
+): Promise<InvalidPhoneEntry[]> {
+  const out: InvalidPhoneEntry[] = [];
+  if (roles.includes('owners')) out.push(...await listInvalidBroadcastPhones({ type: 'owners' }, debtFilter));
+  if (roles.includes('tenants')) out.push(...await listInvalidBroadcastPhones({ type: 'tenants' }, debtFilter));
+  if (roles.includes('suppliers')) out.push(...await listInvalidSupplierPhones());
+  return out;
+}
+
+/** Count-only convenience wrapper — see listInvalidSelectionPhones. */
 export async function countInvalidSelectionPhones(
   roles: ReadonlyArray<BroadcastRoleSelection>,
   debtFilter?: BroadcastDebtFilter,
 ): Promise<number> {
-  let n = 0;
-  if (roles.includes('owners')) n += await countInvalidBroadcastPhones({ type: 'owners' }, debtFilter);
-  if (roles.includes('tenants')) n += await countInvalidBroadcastPhones({ type: 'tenants' }, debtFilter);
-  if (roles.includes('suppliers')) n += await countInvalidSupplierPhones();
-  return n;
+  return (await listInvalidSelectionPhones(roles, debtFilter)).length;
 }

@@ -28,6 +28,8 @@ const {
   resolveSupplierRecipients, resolveSelectionRecipients, resolveConsolidatedSelectionRecipients,
   parseBroadcastDebtFilter,
   countInvalidBroadcastPhones, countInvalidSupplierPhones, countInvalidSelectionPhones,
+  listInvalidBroadcastPhones, listInvalidSupplierPhones, listInvalidSelectionPhones,
+  maskPhoneIntl,
 } = await import('@/lib/whatsapp-broadcast');
 const { isValidMinDebtAmount, MIN_DEBT_AMOUNT_ERROR } = await import('@/lib/whatsapp-audience-filter');
 
@@ -810,5 +812,108 @@ d('countInvalidBroadcastPhones / countInvalidSupplierPhones / countInvalidSelect
     await makeContact({ owner_phone: 'עוד ג׳אנק', owner_is_primary_contact: true });
     const after = await resolveSelectionRecipients(['owners']);
     expect(after.length).toBe(before.length); // the invalid one never became a recipient — same as before Section 6
+  });
+});
+
+// Section 7 — the recipient PREVIEW (POST /api/whatsapp/campaigns/preview)
+// needs actual ROWS (name/apartment/masked-phone/reason), not just counts —
+// these list* functions are what countInvalid* now delegate to internally.
+// This block asserts the row DATA is correct, not just its length (already
+// covered above).
+d('listInvalidBroadcastPhones / listInvalidSupplierPhones / listInvalidSelectionPhones — Section 7 preview data', () => {
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: TEST_URL, max: 4 });
+    pool.on('error', () => undefined);
+  });
+
+  afterAll(async () => {
+    for (const id of made.suppliers) await pool.query(`delete from public.suppliers where id = $1`, [id]);
+    for (const id of made.contactPeople) await pool.query(`delete from public.contact_people where id = $1`, [id]);
+    for (const id of made.debtors) await pool.query(`delete from public.debtors where id = $1`, [id]);
+    for (const id of made.contacts) await pool.query(`delete from public.contacts where id = $1`, [id]);
+    await pool.end();
+  });
+
+  it('an unparseable owner phone: reason "unparseable", phoneMasked null (nothing coherent to show)', async () => {
+    const apt = uniqApt();
+    await makeContact({ owner_phone: 'לא זמין', owner_is_primary_contact: true, owner_name: 'ישראל ישראלי', apartment_number: apt });
+    const list = await listInvalidBroadcastPhones({ type: 'owners' });
+    const match = list.find((e) => e.apartmentNumber === apt);
+    expect(match).toBeDefined();
+    expect(match?.role).toBe('owner');
+    expect(match?.name).toBe('ישראל ישראלי');
+    expect(match?.reason).toBe('unparseable');
+    expect(match?.phoneMasked).toBeNull();
+  });
+
+  it('a landline owner phone: reason "landline", phoneMasked keeps prefix(3)+suffix(2)', async () => {
+    const apt = uniqApt();
+    const landline = uniqLandline();
+    await makeContact({ owner_phone: landline, owner_is_primary_contact: true, owner_name: 'דנה כהן', apartment_number: apt });
+    const list = await listInvalidBroadcastPhones({ type: 'owners' });
+    const match = list.find((e) => e.apartmentNumber === apt);
+    expect(match).toBeDefined();
+    expect(match?.reason).toBe('landline');
+    expect(match?.phoneMasked).toBe(`${landline.slice(0, 3)}-•••-••${landline.slice(-2)}`);
+  });
+
+  it('tenants: same reason/phoneMasked rules apply to tenant_phone, role "tenant"', async () => {
+    const apt = uniqApt();
+    const landline = uniqLandline();
+    await makeContact({ tenant_phone: landline, tenant_is_primary_contact: true, tenant_name: 'רותם לוי', apartment_number: apt });
+    const list = await listInvalidBroadcastPhones({ type: 'tenants' });
+    const match = list.find((e) => e.apartmentNumber === apt);
+    expect(match).toBeDefined();
+    expect(match?.role).toBe('tenant');
+    expect(match?.name).toBe('רותם לוי');
+    expect(match?.reason).toBe('landline');
+  });
+
+  it('listInvalidSupplierPhones: role "supplier", apartmentNumber null, reason from whichever field had content', async () => {
+    const name = `ספק בדיקה ${Date.now()}-${n++}`;
+    await makeSupplier({ display_name: name, mobile: 'garbage' });
+    const list = await listInvalidSupplierPhones();
+    const match = list.find((e) => e.name === name);
+    expect(match).toBeDefined();
+    expect(match?.role).toBe('supplier');
+    expect(match?.apartmentNumber).toBeNull();
+    expect(match?.reason).toBe('unparseable');
+  });
+
+  it('listInvalidSelectionPhones: entries carry their originating role across owners+tenants+suppliers', async () => {
+    const ownerApt = uniqApt();
+    const tenantApt = uniqApt();
+    const supplierName = `ספק בדיקה ${Date.now()}-${n++}`;
+    await makeContact({ owner_phone: 'garbage', owner_is_primary_contact: true, apartment_number: ownerApt });
+    await makeContact({ tenant_phone: 'garbage', tenant_is_primary_contact: true, apartment_number: tenantApt });
+    await makeSupplier({ display_name: supplierName, mobile: 'garbage' });
+
+    const list = await listInvalidSelectionPhones(['owners', 'tenants', 'suppliers']);
+    expect(list.find((e) => e.apartmentNumber === ownerApt)?.role).toBe('owner');
+    expect(list.find((e) => e.apartmentNumber === tenantApt)?.role).toBe('tenant');
+    expect(list.find((e) => e.name === supplierName)?.role).toBe('supplier');
+  });
+
+  it('countInvalid* still agree with listInvalid*.length exactly (the refactor changed shape, not counts)', async () => {
+    const [ownersList, ownersCount] = await Promise.all([
+      listInvalidBroadcastPhones({ type: 'owners' }), countInvalidBroadcastPhones({ type: 'owners' }),
+    ]);
+    expect(ownersCount).toBe(ownersList.length);
+    const [suppliersList, suppliersCount] = await Promise.all([listInvalidSupplierPhones(), countInvalidSupplierPhones()]);
+    expect(suppliersCount).toBe(suppliersList.length);
+    const [selectionList, selectionCount] = await Promise.all([
+      listInvalidSelectionPhones(['owners', 'tenants', 'suppliers']), countInvalidSelectionPhones(['owners', 'tenants', 'suppliers']),
+    ]);
+    expect(selectionCount).toBe(selectionList.length);
+  });
+});
+
+describe('maskPhoneIntl (pure — no DB)', () => {
+  it('keeps the leading 3 and trailing 2 LOCAL digits, bullets the rest — same rule as the campaign recipient log', () => {
+    expect(maskPhoneIntl('972501234567')).toBe('050-•••-••67');
+  });
+
+  it('a landline-length international number masks the same way', () => {
+    expect(maskPhoneIntl('97221234567')).toBe('021-•••-••67');
   });
 });

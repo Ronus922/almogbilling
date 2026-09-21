@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Megaphone, Send, Loader2, Home, UserCheck, Truck, ArrowRight, Eye, CheckCircle2, OctagonX,
+  AlertTriangle, ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -15,6 +16,9 @@ import { Progress } from '@/components/ui/progress';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { TEMPLATE_PLACEHOLDERS } from '@/lib/whatsapp-template';
 import { isValidMinDebtAmount, MIN_DEBT_AMOUNT_ERROR } from '@/lib/whatsapp-audience-filter';
@@ -37,6 +41,35 @@ const ROLES: { value: Role; label: string; icon: typeof Home }[] = [
   { value: 'suppliers', label: 'ספקים', icon: Truck },
 ];
 const DEFAULT_ROLES: Role[] = ['owners', 'tenants'];
+
+// Section 7 — POST /api/whatsapp/campaigns/preview's response shape.
+interface PreviewRecipientRow {
+  kind: 'resident' | 'supplier';
+  name: string;
+  apartmentNumber: string | null;
+  extraApartmentCount: number;
+  phoneMasked: string;
+  truncated: boolean;
+  message: string;
+}
+interface PreviewRejectedRow {
+  role: 'owner' | 'tenant' | 'supplier';
+  name: string | null;
+  apartmentNumber: string | null;
+  phoneMasked: string | null;
+  reason: 'unparseable' | 'landline';
+}
+interface PreviewData {
+  count: number;
+  partial_detail_count: number;
+  invalid_phone_count: number;
+  recipients: PreviewRecipientRow[];
+  rejected: PreviewRejectedRow[];
+}
+const REJECTED_REASON_LABEL: Record<PreviewRejectedRow['reason'], string> = {
+  unparseable: 'מספר לא תקין',
+  landline: 'טלפון קווי (לא נייד)',
+};
 
 // "רק מי שחייב" applies to owners/tenants only — hidden entirely once the
 // selection has neither (e.g. "ספקים" alone), since it would filter nothing.
@@ -102,6 +135,8 @@ export function BroadcastComposeClient({
   const [partialCount, setPartialCount] = useState(0);
   const [invalidPhoneCount, setInvalidPhoneCount] = useState(0);
   const [audienceError, setAudienceError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<PreviewData | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [launched, setLaunched] = useState<Campaign | null>(null);
   const [attachments, setAttachments] = useState<StagedAttachment[]>([]);
   const minDebtAmountErr = minDebtAmountError(onlyWithDebt, minDebtAmount);
@@ -191,8 +226,35 @@ export function BroadcastComposeClient({
   const canSend = name.trim().length > 0 && content.trim().length > 0 && roles.length > 0
     && !sending && !uploading && !audienceError && !minDebtAmountErr && (count ?? 0) > 0;
 
-  async function handleSend() {
+  // Section 7 — the button no longer sends directly: it resolves the exact
+  // recipient list (same resolvers, same rendering) WITHOUT creating anything,
+  // so the operator can review who gets what before the real send. A
+  // dedicated read-only endpoint (POST /api/whatsapp/campaigns/preview) —
+  // never the campaign-creation route itself, which stays untouched.
+  async function openPreview() {
     if (!canSend) return;
+    setPreviewLoading(true);
+    try {
+      const debtFilter = buildDebtFilterPayload(roles, onlyWithDebt, minDebtAmount);
+      const r = await fetch('/api/whatsapp/campaigns/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ roles, body: content.trim(), debt_filter: debtFilter }),
+      });
+      const data = (await r.json().catch(() => ({}))) as PreviewData & { error?: string };
+      if (!r.ok) throw new Error(data.error || `תצוגה מקדימה נכשלה (HTTP ${r.status})`);
+      setPreview(data);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'תצוגה מקדימה נכשלה');
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  // The actual send — unchanged from before Section 7, just triggered from the
+  // preview step's confirm button instead of directly from the compose form.
+  async function confirmSend() {
     setSending(true);
     try {
       const debtFilter = buildDebtFilterPayload(roles, onlyWithDebt, minDebtAmount);
@@ -216,6 +278,7 @@ export function BroadcastComposeClient({
       toast.success(`התפוצה יצאה לדרך — ${data.total_count} נמענים${partial > 0 ? `, ${partial} מהם עם פירוט חלקי` : ''}${invalidPhones > 0 ? `. ${invalidPhones} נוספים לא נכללו — מספר טלפון לא תקין` : ''}`);
       // The files now belong to the broadcast — nothing left to clean up.
       setAttachments([]);
+      setPreview(null);
       setLaunched(data);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'יצירת תפוצה נכשלה');
@@ -226,6 +289,7 @@ export function BroadcastComposeClient({
 
   function reset() {
     setLaunched(null);
+    setPreview(null);
     setName(''); setContent(''); setTemplateId(FREE_TEXT); setRoles(DEFAULT_ROLES); setAttachments([]);
     setAudienceError(null);
     setOnlyWithDebt(false); setMinDebtAmount(''); setInvalidPhoneCount(0);
@@ -234,6 +298,14 @@ export function BroadcastComposeClient({
 
   // After launch, show ONLY the active-send status for that broadcast.
   if (launched) return <LaunchedStatus initial={launched} onReset={reset} onOpenDetail={onOpenDetail} />;
+  // Before launch, a resolved preview replaces the compose form until the
+  // operator confirms (or goes back to keep editing).
+  if (preview) {
+    return (
+      <PreviewStep data={preview} name={name.trim()} sending={sending}
+        onBack={() => setPreview(null)} onConfirm={() => void confirmSend()} />
+    );
+  }
 
   return (
     <div className={cn('space-y-6', !embedded && 'mx-auto max-w-3xl')}>
@@ -373,9 +445,140 @@ export function BroadcastComposeClient({
         ) : (
           <Button type="button" variant="outline" render={<Link href="/whatsapp/broadcasts" />}>ביטול</Button>
         )}
-        <Button type="button" onClick={handleSend} disabled={!canSend} variant="approve" className="gap-2">
-          {sending || uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          {sending ? 'שולח…' : uploading ? 'מעלה קבצים…' : `שלח לתפוצה${count ? ` (${count})` : ''}`}
+        <Button type="button" onClick={() => void openPreview()} disabled={!canSend || previewLoading} variant="approve" className="gap-2">
+          {previewLoading || uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+          {previewLoading ? 'טוען תצוגה מקדימה…' : uploading ? 'מעלה קבצים…' : `תצוגה מקדימה${count ? ` (${count})` : ''}`}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// Section 7 — the recipient preview shown between "תצוגה מקדימה" and the
+// actual send. Read-only review of exactly what POST /api/whatsapp/campaigns
+// preview resolved: nothing here can be edited (no per-recipient exclusion —
+// out of scope; "back" returns to the compose form to change the audience/
+// content instead). Mirrors the campaign detail page's RecipientLog styling
+// (mobile card list + desktop table) for a consistent recipient-list look.
+function PreviewStep({
+  data, name, sending, onBack, onConfirm,
+}: {
+  data: PreviewData;
+  name: string;
+  sending: boolean;
+  onBack: () => void;
+  onConfirm: () => void;
+}) {
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [rejectedOpen, setRejectedOpen] = useState(false);
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-5">
+      <div className="flex items-center gap-3">
+        <Button type="button" variant="ghost" size="icon" onClick={onBack} disabled={sending} aria-label="חזרה לעריכה">
+          <ArrowRight className="h-5 w-5" />
+        </Button>
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-600">
+          <Eye className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-extrabold text-slate-900">תצוגה מקדימה</h1>
+          <p className="mt-0.5 truncate text-sm text-muted-foreground">{name || 'תפוצה חדשה'} — בדקו לפני שליחה, אי אפשר לבטל אחרי.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Stat label="נמענים" value={data.count} tone="text-slate-700" />
+        <Stat label="פירוט חלקי" value={data.partial_detail_count} tone="text-amber-700" />
+        <Stat label="לא יקבלו (טלפון)" value={data.invalid_phone_count} tone="text-red-600" />
+      </div>
+
+      {data.rejected.length > 0 && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+          <button type="button" onClick={() => setRejectedOpen((o) => !o)}
+            className="flex w-full items-center justify-between gap-2 text-start text-sm font-semibold text-red-700">
+            <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> {data.rejected.length} לא יקבלו הודעה — מספר טלפון לא תקין</span>
+            <ChevronDown className={cn('h-4 w-4 shrink-0 transition-transform', rejectedOpen && 'rotate-180')} />
+          </button>
+          {rejectedOpen && (
+            <ul className="mt-2 space-y-1.5 border-t border-red-200 pt-2">
+              {data.rejected.map((r, i) => (
+                <li key={i} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-xs text-red-800">
+                  <span className="font-semibold">{r.name ?? '—'}{r.apartmentNumber ? ` · דירה ${r.apartmentNumber}` : ''}</span>
+                  <span className="flex items-center gap-2 text-red-600">
+                    {r.phoneMasked && <span dir="ltr" className="tabular-nums">{r.phoneMasked}</span>}
+                    <span className="rounded-full bg-red-100 px-2 py-0.5 font-semibold">{REJECTED_REASON_LABEL[r.reason]}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div className="rounded-lg border border-slate-200 bg-white">
+        <div className="max-h-[420px] overflow-y-auto">
+          {/* מובייל (<md) — כרטיס לכל נמען. */}
+          <ul className="space-y-2 p-3 roomy:hidden">
+            {data.recipients.map((r, i) => (
+              <li key={i} className="rounded-xl border border-slate-200 bg-white p-3 shadow-soft-xs">
+                <button type="button" onClick={() => setExpanded((e) => (e === i ? null : i))} className="w-full text-start">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0 flex-1 truncate text-[14.5px] font-semibold text-slate-800">{r.name}</span>
+                    {r.truncated && <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">פירוט חלקי</span>}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12.5px] text-slate-600">
+                    <span dir="ltr" className="tabular-nums">{r.phoneMasked}</span>
+                    {r.kind === 'supplier' ? <span>ספק</span> : r.apartmentNumber && (
+                      <span>דירה {r.apartmentNumber}{r.extraApartmentCount > 0 ? ` (+${r.extraApartmentCount} נוספות)` : ''}</span>
+                    )}
+                  </div>
+                </button>
+                {expanded === i && <p className="mt-2 whitespace-pre-wrap border-t border-slate-100 pt-2 text-[13px] text-slate-700">{r.message}</p>}
+              </li>
+            ))}
+          </ul>
+
+          <Table className="hidden roomy:table">
+            <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
+              <TableRow className="bg-slate-50 hover:bg-slate-50">
+                {['נמען', 'טלפון', 'דירה', ''].map((h, i) => (
+                  <TableHead key={h || 'expand'} className={cn('h-11 px-3 text-sm font-semibold text-slate-500', i === 3 ? 'w-10' : 'text-start')}>{h}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.recipients.map((r, i) => (
+                <Fragment key={i}>
+                  <TableRow className="cursor-pointer border-b border-slate-100 hover:bg-slate-50" onClick={() => setExpanded((e) => (e === i ? null : i))}>
+                    <TableCell className="px-3 py-3 text-start text-sm font-semibold text-slate-800 max-w-[220px] truncate">
+                      {r.name} {r.truncated && <span className="ms-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">פירוט חלקי</span>}
+                    </TableCell>
+                    <TableCell className="px-3 py-3 text-start text-sm text-slate-600 tabular-nums"><span dir="ltr">{r.phoneMasked}</span></TableCell>
+                    <TableCell className="px-3 py-3 text-start text-sm text-slate-600">
+                      {r.kind === 'supplier' ? 'ספק' : (r.apartmentNumber ?? '—')}{r.extraApartmentCount > 0 ? ` (+${r.extraApartmentCount})` : ''}
+                    </TableCell>
+                    <TableCell className="px-3 py-3 text-center">
+                      <ChevronDown className={cn('h-4 w-4 text-slate-400 transition-transform', expanded === i && 'rotate-180')} />
+                    </TableCell>
+                  </TableRow>
+                  {expanded === i && (
+                    <TableRow className="border-b border-slate-100 bg-slate-50">
+                      <TableCell colSpan={4} className="px-3 py-3 text-start text-sm whitespace-pre-wrap text-slate-700">{r.message}</TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button type="button" variant="outline" onClick={onBack} disabled={sending}>חזרה לעריכה</Button>
+        <Button type="button" onClick={onConfirm} disabled={sending} variant="approve" className="gap-2">
+          {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          {sending ? 'שולח…' : `אישור ושליחה (${data.count})`}
         </Button>
       </div>
     </div>
