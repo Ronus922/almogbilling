@@ -100,7 +100,6 @@ export function BroadcastComposeClient({
   const [sending, setSending] = useState(false);
   const [count, setCount] = useState<number | null>(null);
   const [partialCount, setPartialCount] = useState(0);
-  const [invalidPhoneCount, setInvalidPhoneCount] = useState(0);
   const [audienceError, setAudienceError] = useState<string | null>(null);
   const [launched, setLaunched] = useState<Campaign | null>(null);
   const [attachments, setAttachments] = useState<StagedAttachment[]>([]);
@@ -141,7 +140,6 @@ export function BroadcastComposeClient({
     let cancelled = false;
     setCount(null);
     setAudienceError(null);
-    setInvalidPhoneCount(0);
     if (roles.length === 0) return;
     // An invalid "מעל ₪" already shows its own inline error below the field —
     // no need to round-trip to the server just to get told the same thing.
@@ -156,11 +154,11 @@ export function BroadcastComposeClient({
             credentials: 'include',
             body: JSON.stringify({ type: 'selection', roles, body: content, debt_filter: debtFilter }),
           });
-          const d = (await r.json().catch(() => ({}))) as { count?: number; partial_count?: number; invalid_phone_count?: number; error?: string };
+          const d = (await r.json().catch(() => ({}))) as { count?: number; partial_count?: number; error?: string };
           if (cancelled) return;
-          if (!r.ok || d.error) { setCount(null); setPartialCount(0); setInvalidPhoneCount(0); setAudienceError(d.error ?? 'שגיאה בחישוב נמענים'); return; }
-          setCount(d.count ?? 0); setPartialCount(d.partial_count ?? 0); setInvalidPhoneCount(d.invalid_phone_count ?? 0);
-        } catch { if (!cancelled) { setCount(null); setPartialCount(0); setInvalidPhoneCount(0); } }
+          if (!r.ok || d.error) { setCount(null); setPartialCount(0); setAudienceError(d.error ?? 'שגיאה בחישוב נמענים'); return; }
+          setCount(d.count ?? 0); setPartialCount(d.partial_count ?? 0);
+        } catch { if (!cancelled) { setCount(null); setPartialCount(0); } }
       })();
     }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
@@ -209,11 +207,10 @@ export function BroadcastComposeClient({
           attachment_ids: readyAttachmentIds(attachments),
         }),
       });
-      const data = (await r.json().catch(() => ({}))) as Campaign & { error?: string; partial_detail_count?: number; invalid_phone_count?: number };
+      const data = (await r.json().catch(() => ({}))) as Campaign & { error?: string; partial_detail_count?: number };
       if (!r.ok) throw new Error(data.error || `יצירת תפוצה נכשלה (HTTP ${r.status})`);
       const partial = data.partial_detail_count ?? 0;
-      const invalidPhones = data.invalid_phone_count ?? 0;
-      toast.success(`התפוצה יצאה לדרך — ${data.total_count} נמענים${partial > 0 ? `, ${partial} מהם עם פירוט חלקי` : ''}${invalidPhones > 0 ? `. ${invalidPhones} נוספים לא נכללו — מספר טלפון לא תקין` : ''}`);
+      toast.success(`התפוצה יצאה לדרך — ${data.total_count} נמענים${partial > 0 ? `, ${partial} מהם עם פירוט חלקי` : ''}`);
       // The files now belong to the broadcast — nothing left to clean up.
       setAttachments([]);
       setLaunched(data);
@@ -228,7 +225,7 @@ export function BroadcastComposeClient({
     setLaunched(null);
     setName(''); setContent(''); setTemplateId(FREE_TEXT); setRoles(DEFAULT_ROLES); setAttachments([]);
     setAudienceError(null);
-    setOnlyWithDebt(false); setMinDebtAmount(''); setInvalidPhoneCount(0);
+    setOnlyWithDebt(false); setMinDebtAmount('');
     tokenRef.current = newToken();
   }
 
@@ -315,13 +312,6 @@ export function BroadcastComposeClient({
               {count !== null && partialCount > 0 && (
                 <p className="text-xs font-medium text-amber-700">
                   {partialCount} {partialCount === 1 ? 'נמען יקבל' : 'נמענים יקבלו'} פירוט חלקי — רשימת הדירות ארוכה מדי להצגה מלאה.
-                </p>
-              )}
-              {/* Section 6 — report-only: never filters `count`, just flags data
-                  quality (unparseable number / landline) before the operator sends. */}
-              {count !== null && invalidPhoneCount > 0 && (
-                <p className="text-xs font-medium text-amber-700">
-                  ⚠️ {invalidPhoneCount} {invalidPhoneCount === 1 ? 'נמען נוסף לא יקבל' : 'נמענים נוספים לא יקבלו'} הודעה — מספר הטלפון שלהם לא תקין (חסר/שגוי) או קווי (לא נייד).
                 </p>
               )}
             </>
