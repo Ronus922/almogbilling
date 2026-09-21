@@ -97,7 +97,17 @@ export interface Recipient {
   updated_at: string;
 }
 
-/** One recipient as supplied to createCampaign (identity + message snapshot). */
+/** One apartment consolidated into a debt-message recipient — becomes a row
+ *  in wa_campaign_recipient_apartments. */
+export interface RecipientApartmentLink {
+  contactId: string;
+  debtorId: string | null;
+}
+
+/** One recipient as supplied to createCampaign (identity + message snapshot).
+ *  contactId/debtorId are the RECIPIENT'S representative apartment (the row's
+ *  own FK, exactly as before this feature existed — a free-form recipient's
+ *  whole identity). */
 export interface RecipientInput {
   /** Apartment identity (public.contacts.id) — always present. */
   contactId: string;
@@ -105,6 +115,11 @@ export interface RecipientInput {
   debtorId: string | null;
   phoneIntl: string;   // '9725XXXXXXXX'
   payload: string;     // fully interpolated message
+  /** Every apartment consolidated into this recipient (debt-message
+   *  broadcasts only, PR ב') — including the representative one. Omitted for
+   *  a free-form recipient: no wa_campaign_recipient_apartments rows are
+   *  written, unchanged from before this feature existed. */
+  apartments?: RecipientApartmentLink[];
 }
 
 // ── Attachments (view models) ─────────────────────────────────────────────────

@@ -25,6 +25,9 @@ let pool: Pool;
  *  now) shared by every fixture in this file — this suite only exercises the
  *  delivery engine, not recipient identity, so a single fixture is enough. */
 let fixtureContactId: string;
+/** A second apartment, used only by the wa_campaign_recipient_apartments
+ *  (PR ב') tests below — a consolidated recipient needs 2+ distinct apartments. */
+let fixtureContactId2: string;
 
 function recips(...phones: string[]): RecipientInput[] {
   return phones.map((p) => ({ contactId: fixtureContactId, debtorId: null, phoneIntl: p, payload: `hi ${p}` }));
@@ -71,6 +74,12 @@ d('wa-queue durable delivery engine', () => {
     const up = att.split('-- migrate:down')[0].replace('-- migrate:up', '');
     const has = await pool.query(`select to_regclass('public.wa_campaign_attachments') as t`);
     if (!has.rows[0]?.t) await pool.query(up);
+    // wa_campaign_recipient_apartments + supplier_id + nullable contact_id
+    // (dbmate migration, after 20260914170628 above) — same idempotent apply.
+    const apts = readFileSync(fileURLToPath(new URL('../db/migrations/20260921090433_wa_campaign_recipient_apartments_and_suppliers.sql', import.meta.url)), 'utf8');
+    const aptsUp = apts.split('-- migrate:down')[0].replace('-- migrate:up', '');
+    const hasApts = await pool.query(`select to_regclass('public.wa_campaign_recipient_apartments') as t`);
+    if (!hasApts.rows[0]?.t) await pool.query(aptsUp);
 
     const c = await pool.query<{ id: string }>(
       `insert into public.contacts (apartment_number, owner_name)
@@ -78,13 +87,20 @@ d('wa-queue durable delivery engine', () => {
       [`wa-queue-test-${Date.now()}`],
     );
     fixtureContactId = c.rows[0]!.id;
+    const c2 = await pool.query<{ id: string }>(
+      `insert into public.contacts (apartment_number, owner_name)
+       values ($1, 'wa-queue test fixture 2') returning id`,
+      [`wa-queue-test-2-${Date.now()}`],
+    );
+    fixtureContactId2 = c2.rows[0]!.id;
   });
   afterAll(async () => {
     await pool.query('delete from public.contacts where id = $1', [fixtureContactId]);
+    await pool.query('delete from public.contacts where id = $1', [fixtureContactId2]);
     await pool.end();
   });
   beforeEach(async () => {
-    await pool.query('truncate public.wa_campaign_attachments, public.wa_campaign_recipients, public.wa_campaigns, public.wa_send_log, public.wa_worker_heartbeat');
+    await pool.query('truncate public.wa_campaign_attachments, public.wa_campaign_recipient_apartments, public.wa_campaign_recipients, public.wa_campaigns, public.wa_send_log, public.wa_worker_heartbeat');
   });
 
   it('creates + enqueues with unique idempotency keys and correct counts', async () => {
@@ -99,6 +115,44 @@ d('wa-queue durable delivery engine', () => {
   it('dedups duplicate recipients by idempotency key', async () => {
     const c = await createCampaign(pool, { ...base, recipients: recips('97250001', '97250001') });
     expect(c.total_count).toBe(1);
+  });
+
+  // PR ב': a consolidated (debt-message) recipient carries `apartments` —
+  // every apartment it covers becomes a wa_campaign_recipient_apartments row,
+  // on top of the recipient's own representative contact_id/debtor_id (which
+  // stays exactly what it was before this feature: the parent row's own FK).
+  it('writes one wa_campaign_recipient_apartments row per apartment for a consolidated recipient', async () => {
+    const c = await createCampaign(pool, {
+      ...base,
+      recipients: [
+        { contactId: fixtureContactId, debtorId: null, phoneIntl: '97250001', payload: 'consolidated', apartments: [
+          { contactId: fixtureContactId, debtorId: null },
+          { contactId: fixtureContactId2, debtorId: null },
+        ] },
+      ],
+    });
+    expect(c.total_count).toBe(1);
+    const rows = await pool.query<{ contact_id: string }>(
+      `select ra.contact_id from public.wa_campaign_recipient_apartments ra
+       join public.wa_campaign_recipients r on r.id = ra.recipient_id
+       where r.campaign_id = $1 order by ra.contact_id`,
+      [c.id],
+    );
+    expect(rows.rows.map((r) => r.contact_id).sort()).toEqual([fixtureContactId, fixtureContactId2].sort());
+  });
+
+  // A free-form recipient (no `apartments`) must write ZERO link rows — the
+  // free path stays exactly as it was before wa_campaign_recipient_apartments
+  // existed at all, byte-for-byte, schema-writes included.
+  it('writes NO wa_campaign_recipient_apartments rows for a free-form recipient', async () => {
+    const c = await createCampaign(pool, { ...base, recipients: recips('97250001') });
+    const rows = await pool.query(
+      `select 1 from public.wa_campaign_recipient_apartments ra
+       join public.wa_campaign_recipients r on r.id = ra.recipient_id
+       where r.campaign_id = $1`,
+      [c.id],
+    );
+    expect(rows.rowCount).toBe(0);
   });
 
   it('is idempotent on client_token (double create → same campaign)', async () => {

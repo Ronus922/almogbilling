@@ -113,12 +113,25 @@ export function interpolateTemplate(content: string, debtor: TemplateDebtor): st
 export const APARTMENTS_BLOCK_OPEN = '{{#apartments}}';
 export const APARTMENTS_BLOCK_CLOSE = '{{/apartments}}';
 
-/** A debt-relevant token — its presence (or the block markers) is what makes
- *  a template a "debt message" (see isDebtMessageTemplate). {{name}} alone
- *  does NOT count: several historical broadcasts (plain announcements) use
- *  only {{name}} and must keep routing through the untouched single-value path. */
+/** A money/debt token — its presence (or the block markers) is what makes a
+ *  template a "debt message" (see isDebtMessageTemplate) and routes it through
+ *  the per-apartment consolidation engine. {{name}} alone does NOT count:
+ *  several historical broadcasts (plain announcements) use only {{name}} and
+ *  must keep routing through the untouched single-value path.
+ *
+ *  {{apartment}} alone (no money token) also does NOT count, as of PR ב' — a
+ *  template like "יש תקלה בדירה {{apartment}}, אנא פנו למשרד" doesn't need a
+ *  debt breakdown, only ONE apartment number, so consolidating it would be
+ *  pure overhead. It stays on the free-form path (one message per phone,
+ *  {{apartment}} = whichever apartment happened to resolve first for that
+ *  phone) — exactly the pre-existing interpolateTemplate behavior, unchanged
+ *  by this feature. A template that mixes {{apartment}} WITH a money token
+ *  (e.g. "לדירה {{apartment}}: {{debt}}") IS a debt message, and bare
+ *  {{apartment}} outside a repeating block in a debt message for a
+ *  multi-apartment recipient is still blocked at campaign creation — see
+ *  templateUsesApartmentOutsideBlock. */
 const DEBT_TOKENS = new Set([
-  'apartment', 'debt', 'monthly', 'special',
+  'debt', 'monthly', 'special',
   'total_debt', 'total_monthly', 'total_special',
 ]);
 
@@ -128,13 +141,25 @@ function extractTemplateTokens(content: string): Set<string> {
   return tokens;
 }
 
-/** True if `content` needs the multi-apartment broadcast engine (any
- *  debt/apartment token, or a repeating block) rather than the plain
- *  single-value interpolateTemplate path. */
+/** True if `content` needs the multi-apartment broadcast engine (a money/debt
+ *  token, or a repeating block) rather than the plain single-value
+ *  interpolateTemplate path. See DEBT_TOKENS for why bare {{apartment}} does
+ *  not, on its own, trigger this. */
 export function isDebtMessageTemplate(content: string): boolean {
   if (content.includes(APARTMENTS_BLOCK_OPEN) || content.includes(APARTMENTS_BLOCK_CLOSE)) return true;
   for (const token of extractTemplateTokens(content)) if (DEBT_TOKENS.has(token)) return true;
   return false;
+}
+
+/** True if a DEBT-classified template (see isDebtMessageTemplate) uses bare
+ *  {{apartment}} outside its repeating block (or has no block at all). Used
+ *  only at campaign-creation time, together with a check for any recipient
+ *  having >1 apartment, to hard-block an ambiguous send — see the PR ב'
+ *  campaign route. Assumes `content` already passed parseApartmentsBlock. */
+export function templateUsesApartmentOutsideBlock(content: string): boolean {
+  const parsed = parseApartmentsBlock(content);
+  const outside = parsed.ok && parsed.block ? parsed.block.prefix + parsed.block.suffix : content;
+  return extractTemplateTokens(outside).has('apartment');
 }
 
 export interface ApartmentsBlockParts {
@@ -242,9 +267,16 @@ function sumBy(
   return items.reduce((sum, a) => sum + (pick(a) ?? 0), 0);
 }
 
-function sortByApartmentNumberAscending(
-  apartments: ReadonlyArray<ApartmentDebtEntry>,
-): ApartmentDebtEntry[] {
+/** Exported for reuse by campaign creation, which needs the SAME ascending
+ *  order to pick a consolidated recipient's representative apartment
+ *  (contact_id/debtor_id on its wa_campaign_recipients row) — the lowest
+ *  apartment number, matching the block's own rendering order. Generic so a
+ *  caller's richer apartment shape (e.g. whatsapp-broadcast.ts's
+ *  ConsolidatedApartment, which also carries contactId/debtorId) round-trips
+ *  without losing its extra fields to ApartmentDebtEntry's narrower type. */
+export function sortByApartmentNumberAscending<T extends ApartmentDebtEntry>(
+  apartments: ReadonlyArray<T>,
+): T[] {
   return [...apartments].sort((a, b) => {
     const na = Number(a.apartment_number);
     const nb = Number(b.apartment_number);

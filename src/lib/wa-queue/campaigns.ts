@@ -79,13 +79,29 @@ export async function createCampaign(pool: Pool, input: CreateCampaignInput): Pr
     );
     const campaign = c.rows[0];
     for (const r of input.recipients) {
-      await client.query(
+      const inserted = await client.query<{ id: string }>(
         `insert into public.wa_campaign_recipients
            (campaign_id, contact_id, debtor_id, phone_intl, chat_id, payload, idempotency_key)
          values ($1,$2,$3,$4,$5,$6,$7)
-         on conflict (idempotency_key) do nothing`,
+         on conflict (idempotency_key) do nothing
+         returning id`,
         [campaign.id, r.contactId, r.debtorId, r.phoneIntl, `${r.phoneIntl}@c.us`, r.payload, `${campaign.id}:${r.phoneIntl}`],
       );
+      // Consolidated (debt-message) recipient — every apartment it covers,
+      // for the delete-guard + future reporting. Skipped on a conflict (the
+      // idempotency guard above already fired, so there's no fresh row to
+      // link); free-form recipients never carry `apartments` at all.
+      const recipientId = inserted.rows[0]?.id;
+      if (recipientId && r.apartments && r.apartments.length > 0) {
+        for (const apt of r.apartments) {
+          await client.query(
+            `insert into public.wa_campaign_recipient_apartments (recipient_id, contact_id, debtor_id)
+             values ($1,$2,$3)
+             on conflict (recipient_id, contact_id) do nothing`,
+            [recipientId, apt.contactId, apt.debtorId],
+          );
+        }
+      }
     }
     const attachmentIds = input.attachmentIds ?? [];
     if (attachmentIds.length > 0) {

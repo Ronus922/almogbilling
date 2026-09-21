@@ -4,8 +4,11 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDbPool } from '@/lib/db';
 import { getTemplateById } from '@/lib/db/whatsappTemplates';
 import { resolveSendCreds, InstanceNotConfiguredError } from '@/lib/db/whatsappInstances';
-import { resolveBroadcastRecipients } from '@/lib/whatsapp-broadcast';
-import { interpolateTemplate } from '@/lib/whatsapp-template';
+import { resolveBroadcastRecipients, resolveConsolidatedBroadcastRecipients } from '@/lib/whatsapp-broadcast';
+import {
+  interpolateTemplate, interpolateBroadcastTemplate, isDebtMessageTemplate,
+  templateUsesApartmentOutsideBlock, resolveConsolidatedName, sortByApartmentNumberAscending,
+} from '@/lib/whatsapp-template';
 import { createCampaign, listCampaigns, startCampaign, CampaignConflictError } from '@/lib/wa-queue/campaigns';
 import { listStagedAttachments } from '@/lib/wa-queue/attachments';
 import { campaignAttachmentIdsSchema } from '@/lib/validation/requests';
@@ -111,12 +114,57 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  const resolved = await resolveBroadcastRecipients(audience);
-  if (resolved.length === 0) return NextResponse.json({ error: 'לא נמצאו נמענים עם מספר תקין' }, { status: 400 });
-  const recipients: RecipientInput[] = resolved.map((r) => ({
-    contactId: r.contactId, debtorId: r.debtorId, phoneIntl: r.phoneIntl,
-    payload: interpolateTemplate(messageBody, r.debtor),
-  }));
+  // Two broadcast types, auto-detected from the message content (PR ב'):
+  // a free-form message (no money token) behaves EXACTLY as before this
+  // feature existed — resolveBroadcastRecipients + interpolateTemplate,
+  // neither touched by this branch. A debt message (any of {{debt}},
+  // {{monthly}}, {{special}}, {{total_*}}, or a repeating block) is
+  // consolidated: one message per phone listing every apartment it covers.
+  const isDebt = isDebtMessageTemplate(messageBody);
+
+  let recipients: RecipientInput[];
+  let partialDetailCount = 0;
+
+  if (isDebt) {
+    const consolidated = await resolveConsolidatedBroadcastRecipients(audience);
+    if (consolidated.length === 0) return NextResponse.json({ error: 'לא נמצאו נמענים עם מספר תקין' }, { status: 400 });
+
+    // Hard block: {{apartment}} outside the repeating block is ambiguous for
+    // any recipient holding more than one apartment — blocks the WHOLE
+    // campaign at creation time (not a silent per-recipient skip at send).
+    if (templateUsesApartmentOutsideBlock(messageBody)) {
+      const affected = consolidated.filter((r) => r.apartments.length > 1).length;
+      if (affected > 0) {
+        return NextResponse.json({
+          error: `התבנית משתמשת ב-{{apartment}} מחוץ לקטע החוזר, ו-${affected} נמענים מחזיקים יותר מדירה אחת — לא ברור איזו דירה להציג. עטפו את החלק שחוזר לכל דירה ב-{{#apartments}}...{{/apartments}}.`,
+        }, { status: 400 });
+      }
+    }
+
+    recipients = consolidated.map((r) => {
+      const apartments = sortByApartmentNumberAscending(r.apartments);
+      const rep = apartments[0];
+      const rendered = interpolateBroadcastTemplate(messageBody, {
+        name: resolveConsolidatedName(r.rawNames),
+        apartments,
+      });
+      if (rendered.truncated) partialDetailCount += 1;
+      return {
+        contactId: rep.contactId,
+        debtorId: rep.debtorId,
+        phoneIntl: r.phoneIntl,
+        payload: rendered.text,
+        apartments: apartments.map((a) => ({ contactId: a.contactId, debtorId: a.debtorId })),
+      };
+    });
+  } else {
+    const resolved = await resolveBroadcastRecipients(audience);
+    if (resolved.length === 0) return NextResponse.json({ error: 'לא נמצאו נמענים עם מספר תקין' }, { status: 400 });
+    recipients = resolved.map((r) => ({
+      contactId: r.contactId, debtorId: r.debtorId, phoneIntl: r.phoneIntl,
+      payload: interpolateTemplate(messageBody, r.debtor),
+    }));
+  }
 
   let campaign;
   try {
@@ -134,5 +182,9 @@ export async function POST(req: NextRequest) {
 
   // Default: start immediately (durably). Pass start:false to stage as 'queued'.
   const started = body.start === false ? campaign : await startCampaign(getDbPool(), campaign.id);
-  return NextResponse.json(started, { status: 201 });
+  // partial_detail_count: how many recipients' consolidated apartment list was
+  // cut short by the truncation budget (interpolateBroadcastTemplate) — 0 for
+  // a free-form campaign. Computed here, not stored, so it needs no schema
+  // change; surfaced to the operator via the compose screen's success toast.
+  return NextResponse.json({ ...started, partial_detail_count: partialDetailCount }, { status: 201 });
 }
