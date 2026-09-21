@@ -64,6 +64,8 @@ export interface Campaign {
 export interface Recipient {
   id: string;
   campaign_id: string;
+  /** Apartment identity (public.contacts.id) — always present. */
+  contact_id: string;
   debtor_id: string | null;
   phone_intl: string;
   chat_id: string;
@@ -97,6 +99,9 @@ export interface Recipient {
 
 /** One recipient as supplied to createCampaign (identity + message snapshot). */
 export interface RecipientInput {
+  /** Apartment identity (public.contacts.id) — always present. */
+  contactId: string;
+  /** The active debt record's id, or null for an apartment with none. */
   debtorId: string | null;
   phoneIntl: string;   // '9725XXXXXXXX'
   payload: string;     // fully interpolated message

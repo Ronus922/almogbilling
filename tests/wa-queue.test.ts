@@ -21,9 +21,13 @@ const TEST_URL = process.env.WA_TEST_DATABASE_URL;
 const d = TEST_URL ? describe : describe.skip;
 
 let pool: Pool;
+/** One throwaway contacts row (contact_id is a required FK on every recipient
+ *  now) shared by every fixture in this file — this suite only exercises the
+ *  delivery engine, not recipient identity, so a single fixture is enough. */
+let fixtureContactId: string;
 
 function recips(...phones: string[]): RecipientInput[] {
-  return phones.map((p) => ({ debtorId: null, phoneIntl: p, payload: `hi ${p}` }));
+  return phones.map((p) => ({ contactId: fixtureContactId, debtorId: null, phoneIntl: p, payload: `hi ${p}` }));
 }
 
 // Raw recipient rows (table truth) — for asserting internal fields the public
@@ -67,8 +71,18 @@ d('wa-queue durable delivery engine', () => {
     const up = att.split('-- migrate:down')[0].replace('-- migrate:up', '');
     const has = await pool.query(`select to_regclass('public.wa_campaign_attachments') as t`);
     if (!has.rows[0]?.t) await pool.query(up);
+
+    const c = await pool.query<{ id: string }>(
+      `insert into public.contacts (apartment_number, owner_name)
+       values ($1, 'wa-queue test fixture') returning id`,
+      [`wa-queue-test-${Date.now()}`],
+    );
+    fixtureContactId = c.rows[0]!.id;
   });
-  afterAll(async () => { await pool.end(); });
+  afterAll(async () => {
+    await pool.query('delete from public.contacts where id = $1', [fixtureContactId]);
+    await pool.end();
+  });
   beforeEach(async () => {
     await pool.query('truncate public.wa_campaign_attachments, public.wa_campaign_recipients, public.wa_campaigns, public.wa_send_log, public.wa_worker_heartbeat');
   });

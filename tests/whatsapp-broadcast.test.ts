@@ -2,11 +2,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 import { Pool } from 'pg';
 
-// resolveBroadcastRecipients() now honors contacts.owner_is_primary_contact /
+// resolveBroadcastRecipients() honors contacts.owner_is_primary_contact /
 // tenant_is_primary_contact ("מקבל הודעות") the same way it already honors
 // contact_people.is_primary_contact — EXCEPT for an explicit debtor_ids
 // audience, where the recipients were hand-picked and silently dropping one
 // on an opt-out flag would be confusing rather than helpful.
+//
+// For owners/tenants/all, contacts is the base (not debtors): an apartment with
+// no active debt record still resolves a recipient, with debtorId: null. An
+// archived-only debtor is treated exactly like no debtor at all (the join to
+// debtors filters is_archived = false).
 //
 // Runs ONLY against a throwaway database (WA_TEST_DATABASE_URL), never prod —
 // same gate as tests/wa-queue.test.ts.
@@ -36,18 +41,15 @@ interface ContactSpec {
   tenant_is_primary_contact?: boolean;
 }
 
-/** Creates a contact + a linked, non-archived debtor for it — the shape
- *  resolveBroadcastRecipients actually reads from (contacts is the source of
- *  truth whenever contact_id is linked, per DEBTOR_COLS). Returns the debtor id. */
-async function makeLinkedDebtor(spec: ContactSpec): Promise<string> {
-  const apt = uniqApt();
+/** Inserts just the contact row (no debtor at all). Returns the contact id. */
+async function makeContact(spec: ContactSpec): Promise<string> {
   const contact = await pool.query<{ id: string }>(
     `insert into public.contacts
        (apartment_number, owner_phone, owner_is_primary_contact, tenant_phone, tenant_is_primary_contact)
      values ($1, $2, $3, $4, $5)
      returning id`,
     [
-      apt,
+      uniqApt(),
       spec.owner_phone ?? null,
       spec.owner_is_primary_contact ?? true,
       spec.tenant_phone ?? null,
@@ -56,16 +58,38 @@ async function makeLinkedDebtor(spec: ContactSpec): Promise<string> {
   );
   const contactId = contact.rows[0]!.id;
   made.contacts.push(contactId);
+  return contactId;
+}
 
-  const debtor = await pool.query<{ id: string }>(
+/** Creates a contact + a linked, non-archived debtor for it — the shape
+ *  resolveBroadcastRecipients actually reads from (contacts is the source of
+ *  truth whenever contact_id is linked, per DEBTOR_COLS). Returns the debtor id. */
+async function makeLinkedDebtor(spec: ContactSpec): Promise<string> {
+  const contactId = await makeContact(spec);
+  const debtor = await pool.query<{ id: string; apartment_number: string }>(
     `insert into public.debtors (apartment_number, contact_id, is_archived)
-     values ($1, $2, false)
+     select apartment_number, id, false from public.contacts where id = $1
      returning id`,
-    [apt, contactId],
+    [contactId],
   );
   const debtorId = debtor.rows[0]!.id;
   made.debtors.push(debtorId);
   return debtorId;
+}
+
+/** Creates a contact + a linked but ARCHIVED debtor — resolveBroadcastRecipients
+ *  must treat this exactly like "no debtor" (the join excludes archived rows). */
+async function makeArchivedDebtor(spec: ContactSpec): Promise<{ contactId: string; debtorId: string }> {
+  const contactId = await makeContact(spec);
+  const debtor = await pool.query<{ id: string }>(
+    `insert into public.debtors (apartment_number, contact_id, is_archived)
+     select apartment_number, id, true from public.contacts where id = $1
+     returning id`,
+    [contactId],
+  );
+  const debtorId = debtor.rows[0]!.id;
+  made.debtors.push(debtorId);
+  return { contactId, debtorId };
 }
 
 function intl(local: string): string {
@@ -143,5 +167,28 @@ d('resolveBroadcastRecipients — primary-contact opt-out enforcement', () => {
     const recipients = await resolveBroadcastRecipients({ type: 'debtor_ids', debtor_ids: [debtorId] });
     const phones = recipients.map((r) => r.phoneIntl);
     expect(phones).toContain(intl(blockedPhone));
+  });
+
+  it('owners: an apartment with NO debt record still resolves a recipient (contacts is the base)', async () => {
+    const phone = uniqPhone();
+    const contactId = await makeContact({ owner_phone: phone, owner_is_primary_contact: true });
+
+    const recipients = await resolveBroadcastRecipients({ type: 'owners' });
+    const match = recipients.find((r) => r.phoneIntl === intl(phone));
+    expect(match).toBeDefined();
+    expect(match?.contactId).toBe(contactId);
+    expect(match?.debtorId).toBeNull();
+    expect(match?.debtor.total_debt ?? null).toBeNull();
+  });
+
+  it('owners: an apartment whose only debtor is archived is treated as having no debt record', async () => {
+    const phone = uniqPhone();
+    const { contactId } = await makeArchivedDebtor({ owner_phone: phone, owner_is_primary_contact: true });
+
+    const recipients = await resolveBroadcastRecipients({ type: 'owners' });
+    const match = recipients.find((r) => r.phoneIntl === intl(phone));
+    expect(match).toBeDefined();
+    expect(match?.contactId).toBe(contactId);
+    expect(match?.debtorId).toBeNull();
   });
 });
