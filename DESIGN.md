@@ -1757,3 +1757,33 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 | Toggle על צ׳יפ שמור בתוך החלון | **הנחיה גוברת (09/2026 — מחליפה את חוק הדיאלוגים):** פעולה מיידית בלחיצה אחת, **אפס דיאלוגים**. כיבוי → `window.confirm("להשבית את צ׳יפ <מספר>?")` בלבד, ואז `POST …/deactivate` עם `reason='unknown'`; הדלקה → `POST …/reactivate` בלי סיבה ובלי שאלה. optimistic: התגית מתחלפת מיד, כשל (כולל 409 "מספר תפוס") מחזיר אותה + `toast.error`. סדר התגית: **[טוגל] [badge סטטוס] [מספר] [badge סוג]**. אין מחיקה — צ׳יפ שהונפק לעולם לא נמחק |
 | **תיקון מספר** על תגית שמורה (09/2026) | הנחיה גוברת: המספר בתגית הוא כפתור; לחיצה → שדה inline באותה תגית (`chip-num`, LTR, גבול brand + ring). **Enter/blur שומרים מיד** (כמו הטוגל), Escape מבטל. optimistic: המספר מתחלף מיד; `PATCH /api/chips/:id {chip_number}`; **409** כשצ׳יפ **פעיל** אחר מחזיק את המספר (בדיקה אפליקטיבית — האינדקס החלקי מכסה רק פעילים) → המספר חוזר + toast; מספר שכבר בחלון → toast בלי בקשה. האירוע: `chip_events` `event_type='note'`, `new_value={chip_number:{old,new}}`, `reason='תיקון מספר'` (בלי מיגרציה) |
 | **עריכת בעל צ׳יפ על בלוק שמור** (09/2026) | הנחיה גוברת: שם/טלפון ניתנים לעריכה גם כשלבלוק יש צ׳יפים שמורים; **תפקיד** ניתן לשינוי רק לתפקיד שאף בלוק אחר לא מחזיק (`takenRoles`; "אחר" תמיד פנוי). השינוי חל על **כל** צ׳יפי הבלוק בשמירה, ב**אותה טרנזקציה** עם ההנפקה (`POST /api/chips` עם `updates:[{id, holder_name?, holder_phone?, resident_role?}]`, zod, all-or-nothing). ה-diff נמדד מול הערכים שהבלוק נזרע בהם (`orig`) — בלוק שלא נגעו בו לא שולח דבר. הפוטר: "הנפק צ׳יפ" / "שמור שינויים" / "שמור והנפק" לפי מה שיש. עמלה/הערות של שמורים — לא נערכים |
+
+---
+
+## 35. שקיפות כספית — בורר חודש ואייקון סטטוס Drive
+
+מודול `/finance` נבנה על הקומפוננטות המשותפות (`Section` / `PanelFooter` / `Field`, Sheet לפי §12,
+טבלה בגרסת הטוקנים של `DebtorsTable` + כרטיסים במובייל דרך `roomy:`, `KpiCard`). שני דפוסים חדשים:
+
+### בורר חודש (`components/finance/MonthPicker.tsx`)
+
+`[›] ספטמבר 2026 [‹] [החודש]` — אותם כפתורים כמו ניווט היומן (§29): `h-[38px] w-[38px] rounded-[10px]
+border border-[#e2e8f0] bg-white text-[#475569]`, כותרת `text-[19px] font-extrabold text-[#0f172a]`
+ברוחב מינימלי `min-w-[128px]`. **RTL:** "הקודם" מימין = `ChevronRight`, "הבא" משמאל = `ChevronLeft`.
+כותב `?m=YYYY-MM` ל-URL ב-`startTransition` (כמו `OverviewControls`) — השרת מרנדר את החודש
+מחדש; ה-client מקבל `key={month}` ולכן אין סנכרון state ב-effect.
+
+### אייקון סטטוס Google Drive (`components/finance/DriveStatusIcon.tsx`)
+
+אייקון `h-4 w-4` יחיד ליד כל קובץ, עם Tooltip: `CloudUpload text-amber-500` = ממתין לגיבוי ·
+`Cloud text-emerald-600` = גובה · `CloudOff text-red-500` = נכשל (הסיבה ב-Tooltip, וציון "מוצו
+הניסיונות" אחרי 5). בשורת טבלה מוצג האייקון של המצב הגרוע ביותר בין הקבצים, בתוך צ׳יפ
+`Paperclip N` (`h-9`, `h-11` במובייל) שפותח `Popover` עם רשימת הקבצים (קישור ל-proxy + גודל + סטטוס).
+
+### שדה ספק עם טקסט חופשי (`components/finance/SupplierSearchField.tsx`)
+
+וריאציה של שדה החיפוש הניתן-לניקוי (§6): `Search` ב-start, `X` ב-end כשיש ערך, רשימת תוצאות
+`absolute` מתחת לשדה (`rounded-md border-slate-200 bg-white shadow-lg max-h-64`). בחירה = ספק
+מהטבלה (שורת אישור ירוקה "ספק מרשימת הספקים"); הקלדה חופשית = שם חופשי (שורת הסבר אפורה).
+**לא יוצר ספק** לעולם.
+
