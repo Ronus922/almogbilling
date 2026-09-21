@@ -3,7 +3,6 @@
 --
 
 
-
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -1500,6 +1499,7 @@ CREATE TABLE public.wa_campaign_recipients (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     attachments_sent integer DEFAULT 0 NOT NULL,
+    contact_id uuid NOT NULL,
     CONSTRAINT wa_campaign_recipients_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'sent'::text, 'failed'::text, 'skipped'::text, 'cancelled'::text])))
 );
 
@@ -3272,6 +3272,13 @@ CREATE INDEX wa_campaign_attachments_staged_idx ON public.wa_campaign_attachment
 
 
 --
+-- Name: wa_campaign_recipients_contact_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX wa_campaign_recipients_contact_id_idx ON public.wa_campaign_recipients USING btree (contact_id);
+
+
+--
 -- Name: wa_campaigns_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4240,6 +4247,14 @@ ALTER TABLE ONLY public.wa_campaign_recipients
 
 
 --
+-- Name: wa_campaign_recipients wa_campaign_recipients_contact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.wa_campaign_recipients
+    ADD CONSTRAINT wa_campaign_recipients_contact_id_fkey FOREIGN KEY (contact_id) REFERENCES public.contacts(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: wa_message_attachments wa_message_attachments_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4282,7 +4297,6 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 -- PostgreSQL database dump complete
 --
-
 
 
 --
@@ -4376,5 +4390,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260914201005'),
     ('20260916061254'),
     ('20260916170623'),
-    ('20260920221954')
+    ('20260920221954'),
+    ('20260921000521')
 ;

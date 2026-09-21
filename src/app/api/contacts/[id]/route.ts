@@ -85,7 +85,11 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 }
 
-// DELETE /api/contacts/[id] — contacts:edit. debtors.contact_id resets via FK ON DELETE SET NULL.
+// DELETE /api/contacts/[id] — contacts:edit. debtors.contact_id resets via FK ON
+// DELETE SET NULL; wa_campaign_recipients.contact_id is ON DELETE RESTRICT (a
+// sent campaign's history must stay linked to the apartment it went to), so a
+// contact that ever received a broadcast blocks deletion — surfaced below with
+// an explicit reason instead of a raw 500.
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   try {
     await requirePermission('contacts', 'edit');
@@ -96,7 +100,22 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   }
 
   const { id } = await ctx.params;
-  const ok = await deleteContact(id);
-  if (!ok) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  return new NextResponse(null, { status: 204 });
+  try {
+    const ok = await deleteContact(id);
+    if (!ok) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    return new NextResponse(null, { status: 204 });
+  } catch (err) {
+    const e = err as { code?: string; constraint?: string };
+    if (e.code === '23503' && e.constraint === 'wa_campaign_recipients_contact_id_fkey') {
+      return NextResponse.json(
+        { error: 'לא ניתן למחוק את הדירה — נשלחו אליה תפוצות WhatsApp בעבר' },
+        { status: 409 },
+      );
+    }
+    if (e.code === '23503') {
+      return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });
+    }
+    logger.error('[DELETE /api/contacts/:id]', err);
+    return NextResponse.json({ error: 'server_error' }, { status: 500 });
+  }
 }

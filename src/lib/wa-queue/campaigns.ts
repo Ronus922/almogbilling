@@ -81,10 +81,10 @@ export async function createCampaign(pool: Pool, input: CreateCampaignInput): Pr
     for (const r of input.recipients) {
       await client.query(
         `insert into public.wa_campaign_recipients
-           (campaign_id, debtor_id, phone_intl, chat_id, payload, idempotency_key)
-         values ($1,$2,$3,$4,$5,$6)
+           (campaign_id, contact_id, debtor_id, phone_intl, chat_id, payload, idempotency_key)
+         values ($1,$2,$3,$4,$5,$6,$7)
          on conflict (idempotency_key) do nothing`,
-        [campaign.id, r.debtorId, r.phoneIntl, `${r.phoneIntl}@c.us`, r.payload, `${campaign.id}:${r.phoneIntl}`],
+        [campaign.id, r.contactId, r.debtorId, r.phoneIntl, `${r.phoneIntl}@c.us`, r.payload, `${campaign.id}:${r.phoneIntl}`],
       );
     }
     const attachmentIds = input.attachmentIds ?? [];
@@ -199,20 +199,17 @@ export async function listRecipients(
     `select
        r.id, r.status, r.attempt_count, r.sent_at, r.delivered_at, r.read_at,
        r.failed_at, r.last_error, r.error_class, r.created_at,
-       coalesce(
-         case when rc.id is null then d.owner_name  else rc.owner_name  end,
-         case when rc.id is null then d.tenant_name else rc.tenant_name end
-       )                                                   as debtor_name,
-       d.apartment_number,
+       coalesce(rc.owner_name, rc.tenant_name)              as debtor_name,
+       rc.apartment_number,
        case
          when length(local.n) >= 5
            then substr(local.n,1,3) || '-•••-••' || right(local.n,2)
          else '•••'
        end                                                 as phone_masked
      from public.wa_campaign_recipients r
-     left join public.debtors d on d.id = r.debtor_id
-     -- resident identity from contacts (registry); debtors columns are frozen legacy fallback (no linked contact only)
-     left join public.contacts rc on rc.id = d.contact_id
+     -- resident identity + apartment from contacts (registry) via r.contact_id,
+     -- always present — independent of whether the apartment has a debt record.
+     left join public.contacts rc on rc.id = r.contact_id
      cross join lateral (
        select '0' || right(regexp_replace(r.phone_intl, '\\D', '', 'g'), 9) as n
      ) local

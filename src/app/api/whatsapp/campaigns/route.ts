@@ -114,7 +114,8 @@ export async function POST(req: NextRequest) {
   const resolved = await resolveBroadcastRecipients(audience);
   if (resolved.length === 0) return NextResponse.json({ error: 'לא נמצאו נמענים עם מספר תקין' }, { status: 400 });
   const recipients: RecipientInput[] = resolved.map((r) => ({
-    debtorId: r.debtor.id, phoneIntl: r.phoneIntl, payload: interpolateTemplate(messageBody, r.debtor),
+    contactId: r.contactId, debtorId: r.debtorId, phoneIntl: r.phoneIntl,
+    payload: interpolateTemplate(messageBody, r.debtor),
   }));
 
   let campaign;
