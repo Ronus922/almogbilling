@@ -1,11 +1,12 @@
 import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
+import { isElevatedRole } from '@/lib/permissions/constants';
 import { listCategories } from '@/lib/db/finance/categories';
 import { getDriveConnectionPublic } from '@/lib/db/finance/drive';
 import { driveBackupStats } from '@/lib/db/finance/documents';
 import { getFinanceSettings } from '@/lib/db/finance/settings';
-import { getDriveOAuthConfig } from '@/lib/finance/drive-oauth';
+import { getGoogleConfig } from '@/lib/auth/google';
 import { FINANCE_DRIVE_ACCOUNT } from '@/lib/constants/finance';
 import { FinanceSettingsClient } from '@/components/finance/FinanceSettingsClient';
 
@@ -23,6 +24,8 @@ export default async function FinanceSettingsPage({ searchParams }: { searchPara
   if (!actor) redirect('/login');
   if (!hasPermission(actor.role, actor.permissions, 'finance', 'view')) redirect('/dashboard');
   const canEdit = hasPermission(actor.role, actor.permissions, 'finance', 'edit');
+  // Same rule as requireDriveConnector(): finance:edit AND an admin-tier role.
+  const canConnectDrive = canEdit && isElevatedRole(actor.role);
 
   const sp = await searchParams;
   const [categories, connection, stats, settings] = await Promise.all([
@@ -35,9 +38,10 @@ export default async function FinanceSettingsPage({ searchParams }: { searchPara
   return (
     <FinanceSettingsClient
       categories={categories}
-      drive={{ connection, stats, expectedAccount: FINANCE_DRIVE_ACCOUNT, oauthConfigured: getDriveOAuthConfig() !== null }}
+      drive={{ connection, stats, expectedAccount: FINANCE_DRIVE_ACCOUNT, oauthConfigured: getGoogleConfig() !== null }}
       settings={settings}
       canEdit={canEdit}
+      canConnectDrive={canConnectDrive}
       driveNotice={{ status: one(sp.drive), reason: one(sp.reason) }}
     />
   );

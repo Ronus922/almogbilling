@@ -13,7 +13,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
-import { FIN_KIND_LABEL_PLURAL, FIN_KINDS, FIN_SECTION_LABEL, type FinKind } from '@/lib/constants/finance';
+import { FIN_KIND_LABEL_PLURAL, FIN_KINDS, FIN_SECTION_LABEL, FINANCE_DRIVE_ACCOUNT, type FinKind } from '@/lib/constants/finance';
 import type { DriveBackupStats, DriveConnectionPublic, FinCategory, FinanceSettings } from '@/lib/types/finance';
 import { CategorySheet } from './CategorySheet';
 
@@ -28,14 +28,24 @@ export interface DriveStatusPayload {
   oauthConfigured: boolean;
 }
 
+// Every `reason` the OAuth callback can send back (src/lib/finance/drive-callback.ts).
 const DRIVE_ERROR_TEXT: Record<string, string> = {
   unavailable: 'Google OAuth לא מוגדר בשרת (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)',
   denied: 'ההרשאה נדחתה בחשבון Google',
-  state: 'האימות פג או לא תואם — נסה שוב',
-  exchange: 'החלפת הקוד מול Google נכשלה — ודא שה-redirect URI רשום ב-OAuth client ב-GCP',
-  no_refresh_token: 'Google לא החזיר refresh token. הסר את ההרשאה של האפליקציה בחשבון Google (myaccount.google.com/permissions) וחבר שוב',
-  no_email: 'לא התקבל מייל מאומת מ-Google',
+  state: 'האימות פג או לא תואם — לחץ שוב על „חבר Google Drive”',
+  session: 'החיבור התחיל ממשתמש אחר או שההתחברות פגה — התחבר מחדש ולחץ שוב על „חבר Google Drive”',
+  exchange: 'החלפת הקוד מול Google נכשלה — נסה שוב',
+  wrong_account: `נבחר חשבון אחר ולא נשמר. יש לבחור את ${FINANCE_DRIVE_ACCOUNT}`,
+  no_email: 'לא התקבל מייל מאומת מ-Google — לא נשמר',
+  no_refresh_token: `Google לא החזיר refresh token — ההרשאה הקודמת בוטלה. לחץ שוב על „חבר Google Drive” ואשר; אם זה חוזר, הסר את האפליקציה בחשבון ${FINANCE_DRIVE_ACCOUNT} (myaccount.google.com/permissions) וחבר שוב`,
 };
+
+/** The toast text for a ?reason= from the URL — own keys only, never a prototype member. */
+function driveErrorText(reason: string | null): string {
+  return reason && Object.prototype.hasOwnProperty.call(DRIVE_ERROR_TEXT, reason)
+    ? DRIVE_ERROR_TEXT[reason]
+    : 'חיבור Google Drive נכשל';
+}
 
 interface SheetState { open: boolean; kind: FinKind; category: FinCategory | null }
 
@@ -61,12 +71,14 @@ function CardHeader({ icon: Icon, tone, title, subtitle, action }: {
 }
 
 export function FinanceSettingsClient({
-  categories: initialCategories, drive: initialDrive, settings: initialSettings, canEdit, driveNotice,
+  categories: initialCategories, drive: initialDrive, settings: initialSettings, canEdit, canConnectDrive, driveNotice,
 }: {
   categories: FinCategory[];
   drive: DriveStatusPayload;
   settings: FinanceSettings;
   canEdit: boolean;
+  /** finance:edit AND admin-tier — who may hand the Google grant to the system. */
+  canConnectDrive: boolean;
   driveNotice: { status: string | null; reason: string | null };
 }) {
   const router = useRouter();
@@ -84,7 +96,7 @@ export function FinanceSettingsClient({
   useEffect(() => {
     if (!driveNotice.status) return;
     if (driveNotice.status === 'connected') toast.success('Google Drive חובר בהצלחה');
-    else toast.error(DRIVE_ERROR_TEXT[driveNotice.reason ?? ''] ?? 'חיבור Google Drive נכשל');
+    else toast.error(driveErrorText(driveNotice.reason));
     router.replace('/finance/settings');
   }, [driveNotice.status, driveNotice.reason, router]);
 
@@ -202,7 +214,6 @@ export function FinanceSettingsClient({
   }
 
   const conn = drive.connection;
-  const wrongAccount = conn.connected && conn.email !== drive.expectedAccount;
   const retryable = drive.stats.pending + drive.stats.failed + drive.stats.exhausted;
 
   return (
@@ -303,7 +314,7 @@ export function FinanceSettingsClient({
                 <>מחובר: <span dir="ltr" className="font-num font-semibold text-slate-900">{conn.email}</span></>
               ) : 'לא מחובר'}
             </span>
-            {canEdit && (
+            {canConnectDrive && (
               <Tooltip>
                 <TooltipTrigger render={<span className="block" />}>
                   {/* A real navigation to the OAuth start route (not a Next page) —
@@ -316,16 +327,10 @@ export function FinanceSettingsClient({
                     <Cloud className="h-4 w-4" /> {conn.connected ? 'חבר מחדש' : 'חבר Google Drive'}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>{drive.oauthConfigured ? `יש להתחבר כ-${drive.expectedAccount}` : 'Google OAuth לא מוגדר בשרת'}</TooltipContent>
+                <TooltipContent>{drive.oauthConfigured ? `במסך של Google יש לבחור את ${drive.expectedAccount} — חשבון אחר לא יישמר` : 'Google OAuth לא מוגדר בשרת'}</TooltipContent>
               </Tooltip>
             )}
           </div>
-          {wrongAccount && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              חובר חשבון אחר (<span dir="ltr" className="font-num">{conn.email}</span>). החשבון המיועד לגיבוי הוא{' '}
-              <span dir="ltr" className="font-num font-semibold">{drive.expectedAccount}</span> — לחץ „חבר מחדש” ובחר אותו.
-            </div>
-          )}
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-4 text-sm">
             <dl className="flex flex-wrap gap-x-5 gap-y-1">
               <div className="flex items-baseline gap-1.5"><dt className="text-slate-500">גובו</dt><dd className="font-num font-bold tabular-nums text-emerald-700">{drive.stats.done}</dd></div>

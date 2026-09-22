@@ -3,7 +3,7 @@ import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDriveConnectionPublic } from '@/lib/db/finance/drive';
 import { driveBackupStats } from '@/lib/db/finance/documents';
-import { getDriveOAuthConfig } from '@/lib/finance/drive-oauth';
+import { getGoogleConfig } from '@/lib/auth/google';
 import { FINANCE_DRIVE_ACCOUNT } from '@/lib/constants/finance';
 
 export const runtime = 'nodejs';
@@ -19,6 +19,6 @@ export async function GET() {
     connection,
     stats,
     expectedAccount: FINANCE_DRIVE_ACCOUNT,
-    oauthConfigured: getDriveOAuthConfig() !== null,
+    oauthConfigured: getGoogleConfig() !== null,
   });
 }

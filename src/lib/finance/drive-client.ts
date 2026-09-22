@@ -1,10 +1,9 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import type { OAuth2Client } from 'google-auth-library';
-import { createGoogleClient } from '@/lib/auth/google';
+import { createGoogleClient, getGoogleConfig } from '@/lib/auth/google';
 import { getDriveCredentials, setDriveRootFolderId } from '@/lib/db/finance/drive';
 import { FINANCE_DRIVE_ROOT_FOLDER } from '@/lib/constants/finance';
-import { getDriveOAuthConfig } from './drive-oauth';
 import { escapeDriveQuery } from './drive-naming';
 
 /**
@@ -35,7 +34,7 @@ export interface DriveSession {
 let cached: { refreshToken: string; client: OAuth2Client } | null = null;
 
 export async function openDriveSession(): Promise<DriveSession> {
-  const cfg = getDriveOAuthConfig();
+  const cfg = getGoogleConfig();
   if (!cfg) throw new Error('google_oauth_not_configured');
   const creds = await getDriveCredentials();
   if (!creds) throw new DriveNotConnectedError();

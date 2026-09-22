@@ -97,8 +97,8 @@ export type DriveStatus = 'pending' | 'done' | 'failed';
 
 // ── Google Drive backup ───────────────────────────────────────────────────────
 
-/** The account meant to hold the backups; the settings screen warns when
- *  another one was connected. */
+/** The ONLY Google account allowed to hold the backups — the OAuth callback
+ *  refuses (and revokes) any other account; nothing else is ever stored. */
 export const FINANCE_DRIVE_ACCOUNT = 'lahav.yeadim@gmail.com';
 /** Root folder in that Drive; year / month folders are created under it. */
 export const FINANCE_DRIVE_ROOT_FOLDER = 'ALMOG — קבלות';
