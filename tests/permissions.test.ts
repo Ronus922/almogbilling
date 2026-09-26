@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { hasPermission, getDefaultPermissions, canManageRole } from '@/lib/permissions/check';
+import { hasPermission, getDefaultPermissions, canManageRole, canUseAssistant } from '@/lib/permissions/check';
 import {
-  DEFAULT_VIEWER, DEFAULT_MANAGER, DEFAULT_WORKER,
-  ROLE_VALUES, isMatrixRole, isElevatedRole, isWorkerRole,
+  ASSISTANT_ROLES, DEFAULT_VIEWER, DEFAULT_MANAGER, DEFAULT_WORKER,
+  ROLE_VALUES, isMatrixRole, isElevatedRole, isWorkerRole, type Role,
 } from '@/lib/permissions/constants';
 import { homePathFor } from '@/lib/auth/home';
 
@@ -142,5 +142,39 @@ describe('field-worker roles — cleaner / maintenance', () => {
     expect(getDefaultPermissions('viewer')).toEqual(DEFAULT_VIEWER);
     expect(getDefaultPermissions('admin')).toBeNull();
     expect(getDefaultPermissions('super_admin')).toBeNull();
+  });
+});
+
+// The personal assistant ("עוזר אישי") answers with other residents' debts, so
+// it is STAFF-ONLY: an allowlist of roles on top of the permission gate it always
+// had (dashboard:view OR contacts:view). Decision of 26/09/2026.
+describe('canUseAssistant — the personal assistant is staff-only (allowlist)', () => {
+  const dashView = [{ module: 'dashboard', canView: true, canEdit: false }];
+  const contactsView = [{ module: 'contacts', canView: true, canEdit: false }];
+
+  it('ASSISTANT_ROLES is exactly the four staff roles', () => {
+    expect([...ASSISTANT_ROLES]).toEqual(['super_admin', 'admin', 'manager', 'viewer']);
+  });
+
+  it('staff keep exactly the access they have today (dashboard OR contacts view)', () => {
+    expect(canUseAssistant('super_admin', [])).toBe(true);
+    expect(canUseAssistant('admin', [])).toBe(true);
+    expect(canUseAssistant('manager', DEFAULT_MANAGER)).toBe(true);
+    expect(canUseAssistant('viewer', DEFAULT_VIEWER)).toBe(true);
+    expect(canUseAssistant('manager', contactsView)).toBe(true);
+    // The permission gate still bites: a matrix role with no matching row is out.
+    expect(canUseAssistant('manager', [])).toBe(false);
+    expect(canUseAssistant('viewer', [])).toBe(false);
+  });
+
+  it('a field worker is denied even if an admin granted dashboard view (allowlist beats matrix)', () => {
+    expect(canUseAssistant('cleaner', DEFAULT_WORKER)).toBe(false);
+    expect(canUseAssistant('cleaner', dashView)).toBe(false);
+    expect(canUseAssistant('maintenance', dashView)).toBe(false);
+  });
+
+  it('a role added later (a resident) is denied by default — allowlist, not blocklist', () => {
+    expect(canUseAssistant('resident' as Role, dashView)).toBe(false);
+    expect(canUseAssistant('resident' as Role, [...dashView, ...contactsView])).toBe(false);
   });
 });

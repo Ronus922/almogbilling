@@ -1,6 +1,6 @@
 import { type NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { requireAnyPermission } from '@/lib/auth/actor';
+import { requireAssistantAccess } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { searchDebtors } from '@/lib/db/debtors';
 import { writeAudit } from '@/lib/db/audit';
@@ -18,9 +18,11 @@ export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 
 // POST /api/agent/chat — read-only collection agent, streamed over SSE.
-// Same RBAC gate as the debtors screen (dashboard:view OR contacts:view). The
-// single tool (search_debtors) is just another consumer of searchDebtors — no new
-// SQL, no mutations. The agent loop is capped at MAX_ITERATIONS as a safety net.
+// STAFF-ONLY (requireAssistantAccess): the staff-role allowlist AND the debtors
+// screen gate (dashboard:view OR contacts:view) — a resident must never reach
+// this, because the answers are other residents' debts. The single tool
+// (search_debtors) is just another consumer of searchDebtors — no new SQL, no
+// mutations. The agent loop is capped at MAX_ITERATIONS as a safety net.
 
 const MODEL = 'claude-sonnet-4-6';
 const MAX_ITERATIONS = 5;
@@ -71,10 +73,7 @@ async function runSearchDebtors(input: unknown) {
 export async function POST(req: NextRequest) {
   let actorId: string;
   try {
-    const actor = await requireAnyPermission([
-      { module: 'dashboard', action: 'view' },
-      { module: 'contacts', action: 'view' },
-    ]);
+    const actor = await requireAssistantAccess();
     actorId = actor.id;
   } catch (err) {
     const r = authErrorResponse(err);

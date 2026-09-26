@@ -7,9 +7,11 @@
 //       elevated (admin/super_admin) role.
 //     • a matrix role (manager/viewer/worker) is allowed ONLY what its
 //       user_permissions rows grant — no row ⇒ denied.
+//     • the personal assistant is STAFF-ONLY: a role off ASSISTANT_ROLES (a
+//       field worker, a future resident) is denied even with matrix rows.
 //   Run under tsx (imports .ts source). Pure — no DB.
 import { run, fail, ok } from './_check-lib.mjs';
-import { hasPermission, canManageRole } from '../src/lib/permissions/check.ts';
+import { hasPermission, canManageRole, canUseAssistant } from '../src/lib/permissions/check.ts';
 
 run('check-rbac', async () => {
   const t = (name, cond) => (cond ? ok(name) : fail(name));
@@ -36,4 +38,17 @@ run('check-rbac', async () => {
   t('admin לא מנהל super_admin', canManageRole('admin', 'super_admin') === false);
   t('manager לא מנהל אף תפקיד', canManageRole('manager', 'viewer') === false);
   t('super_admin מנהל super_admin', canManageRole('super_admin', 'super_admin') === true);
+
+  // canUseAssistant — staff-role ALLOWLIST + the debtors-screen gate (dashboard
+  // OR contacts view). Allowlist, not blocklist: a role that is not listed is
+  // denied even when its rows would pass the permission gate.
+  const dash = [{ module: 'dashboard', canView: true, canEdit: false }];
+  t('assistant: super_admin רשאי', canUseAssistant('super_admin', []) === true);
+  t('assistant: admin רשאי', canUseAssistant('admin', []) === true);
+  t('assistant: manager עם dashboard/view רשאי', canUseAssistant('manager', dash) === true);
+  t('assistant: manager בלי שורות נחסם', canUseAssistant('manager', []) === false);
+  t('assistant: viewer עם dashboard/view רשאי', canUseAssistant('viewer', dash) === true);
+  t('assistant: cleaner נחסם גם עם dashboard/view', canUseAssistant('cleaner', dash) === false);
+  t('assistant: maintenance נחסם גם עם dashboard/view', canUseAssistant('maintenance', dash) === false);
+  t('assistant: תפקיד עתידי (resident) נחסם כברירת מחדל', canUseAssistant('resident', dash) === false);
 });
