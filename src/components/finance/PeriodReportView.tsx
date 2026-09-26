@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertTriangle, ChevronDown, Scale, TrendingDown, TrendingUp } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Info, Scale, TrendingDown, TrendingUp } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { KpiCard } from '@/components/KpiCard';
@@ -186,7 +186,12 @@ function CategoryRows({ category: c, months, isOpen, onToggle, tone }: {
   );
 }
 
-export function PeriodReportView({ report, period }: { report: PeriodReport; period: Period }) {
+export function PeriodReportView({ report, period, residentMode = false }: {
+  report: PeriodReport;
+  period: Period;
+  /** Resident view: the hidden-months warning becomes a plain "כולל N מתוך M חודשים". */
+  residentMode?: boolean;
+}) {
   const months = report.months.map((m) => m.month);
   const hidden = report.months.filter((m) => !m.published).map((m) => m.month);
   const shown = report.months.length - hidden.length;
@@ -194,7 +199,16 @@ export function PeriodReportView({ report, period }: { report: PeriodReport; per
 
   return (
     <div className="space-y-6">
-      {hidden.length > 0 && (
+      {residentMode && report.months.length > 0 && (
+        <p className="flex items-center gap-2 rounded-md border border-line bg-surface-2 p-4 text-sm text-ink-2">
+          <Info className="h-4 w-4 shrink-0 text-ink-3" aria-hidden />
+          <span>
+            כולל <span className="font-num font-bold tabular-nums">{shown}</span> מתוך{' '}
+            <span className="font-num font-bold tabular-nums">{report.months.length}</span> חודשים.
+          </span>
+        </p>
+      )}
+      {!residentMode && hidden.length > 0 && (
         <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden />
           <p>

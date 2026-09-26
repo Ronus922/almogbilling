@@ -2,7 +2,8 @@ import 'server-only';
 import { query } from '@/lib/db';
 import type { FinKind, FinSection } from '@/lib/constants/finance';
 import type {
-  PeriodReport, PeriodReportCategory, PeriodReportMonth, RenovationFundKpis, ResidentEntry, ResidentMonthData,
+  PeriodReport, PeriodReportCategory, PeriodReportMonth, RenovationFundKpis, ResidentEntry, ResidentFundKpis,
+  ResidentMonthData,
 } from '@/lib/types/finance';
 import { currentMonthKey, periodMonthOf, shiftMonthKey } from '@/lib/finance/period';
 import { PUBLISHED_JOIN, listFundEntries } from './entries';
@@ -105,6 +106,26 @@ export async function getRenovationFundKpis(opts: { publishedOnly: boolean }): P
     pct: target > 0 ? (collected / target) * 100 : 0,
     by_purpose: purposes.rows,
     entries,
+  };
+}
+
+/** The fund as a resident gets it: getRenovationFundKpis over published months
+ *  only, with the ledger stripped to the resident-safe row — no entry id,
+ *  supplier, invoice number, internal note or files leave this function, so
+ *  a page that serialises the result to the browser cannot leak them. */
+export async function getResidentFundKpis(): Promise<ResidentFundKpis> {
+  const { entries, ...rest } = await getRenovationFundKpis({ publishedOnly: true });
+  return {
+    ...rest,
+    entries: entries.map((e) => ({
+      kind: e.kind,
+      category_name: e.category_name,
+      description: e.description,
+      amount: e.amount,
+      payment_date: e.payment_date,
+      period_month: e.period_month,
+      published: e.published,
+    })),
   };
 }
 

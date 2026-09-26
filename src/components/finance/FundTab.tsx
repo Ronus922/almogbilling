@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Pencil, PiggyBank, Settings2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ils } from '@/lib/finance/format';
-import type { FinEntry, RenovationFundKpis, RenovationFundSettings } from '@/lib/types/finance';
+import type { FundLedgerRow, RenovationFundKpis, RenovationFundSettings } from '@/lib/types/finance';
 import { FundLedgerTable } from './FundLedgerTable';
 import { FundTargetDialog } from './FundTargetDialog';
 
@@ -23,12 +23,15 @@ function Metric({ label, value, tone }: { label: string; value: number; tone: st
   );
 }
 
-export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved }: {
-  kpis: RenovationFundKpis;
+export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved, residentMode = false }: {
+  /** RenovationFundKpis for the admin, ResidentFundKpis in the resident view. */
+  kpis: Omit<RenovationFundKpis, 'entries'> & { entries: FundLedgerRow[] };
   canEdit: boolean;
-  onEdit: (e: FinEntry) => void;
-  onDelete: (e: FinEntry) => void;
+  onEdit: (e: FundLedgerRow) => void;
+  onDelete: (e: FundLedgerRow) => void;
   onTargetSaved: (s: RenovationFundSettings) => void;
+  /** Resident view: no target edit, no purpose management, no actions, no tags. */
+  residentMode?: boolean;
 }) {
   const [target, setTarget] = useState(kpis.target_amount);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -50,7 +53,7 @@ export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved }: {
               <span dir="ltr" className="font-num text-[26px] font-bold tracking-[-0.5px] text-emerald-700">{ils(kpis.collected)}</span>
               <span className="text-sm text-ink-3">מתוך</span>
               <span dir="ltr" className="font-num text-lg font-bold tabular-nums text-ink">{target > 0 ? ils(target) : '—'}</span>
-              {canEdit && (
+              {canEdit && !residentMode && (
                 <button
                   type="button"
                   onClick={() => { setDialogKey((k) => k + 1); setDialogOpen(true); }}
@@ -96,13 +99,17 @@ export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved }: {
       <section className="rounded-2xl border border-line bg-white p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-bold text-slate-900">יצא לפי מטרה</h2>
-          <Link href="/finance/settings#renovation-fund" className="inline-flex h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-semibold text-blue-700 hover:bg-blue-50">
-            <Settings2 className="h-4 w-4" aria-hidden /> ניהול מטרות
-          </Link>
+          {!residentMode && (
+            <Link href="/finance/settings#renovation-fund" className="inline-flex h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-semibold text-blue-700 hover:bg-blue-50">
+              <Settings2 className="h-4 w-4" aria-hidden /> ניהול מטרות
+            </Link>
+          )}
         </div>
         {kpis.by_purpose.length === 0 ? (
           <p className="mt-4 rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
-            אין מטרות עדיין. הוסף מטרות ב<Link href="/finance/settings#renovation-fund" className="font-semibold underline underline-offset-2">ניהול מטרות</Link>.
+            {residentMode
+              ? 'אין מטרות עדיין.'
+              : <>אין מטרות עדיין. הוסף מטרות ב<Link href="/finance/settings#renovation-fund" className="font-semibold underline underline-offset-2">ניהול מטרות</Link>.</>}
           </p>
         ) : (
           <ul className="mt-4 space-y-3">
@@ -110,7 +117,7 @@ export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved }: {
               <li key={p.category_id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,220px)_minmax(0,1fr)_160px]">
                 <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-ink">
                   <span className="truncate" title={p.name}>{p.name}</span>
-                  {!p.is_active && <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">מושבתת</span>}
+                  {!residentMode && !p.is_active && <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">מושבתת</span>}
                 </span>
                 <span dir="ltr" className="font-num text-sm font-bold tabular-nums text-rose-700 sm:order-3 sm:text-center">{ils(p.total)}</span>
                 <span className="col-span-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-100 sm:col-span-1 sm:order-2" aria-hidden>
@@ -128,16 +135,18 @@ export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved }: {
           כל תנועות הקרן
           <span className="font-num text-sm font-medium tabular-nums text-slate-400">{kpis.entries.length}</span>
         </h2>
-        <FundLedgerTable entries={kpis.entries} canEdit={canEdit} onEdit={onEdit} onDelete={onDelete} emptyText="אין עדיין תנועות בקרן השיפוצים." />
+        <FundLedgerTable entries={kpis.entries} canEdit={canEdit} onEdit={onEdit} onDelete={onDelete} residentMode={residentMode} emptyText="אין עדיין תנועות בקרן השיפוצים." />
       </section>
 
-      <FundTargetDialog
-        key={dialogKey}
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        target={target}
-        onSaved={(s) => { setTarget(s.target_amount); onTargetSaved(s); }}
-      />
+      {!residentMode && (
+        <FundTargetDialog
+          key={dialogKey}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          target={target}
+          onSaved={(s) => { setTarget(s.target_amount); onTargetSaved(s); }}
+        />
+      )}
     </div>
   );
 }

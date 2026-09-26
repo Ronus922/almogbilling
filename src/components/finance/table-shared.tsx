@@ -3,7 +3,6 @@
 import { Pencil, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import type { FinEntry } from '@/lib/types/finance';
 
 // What every table of the finance module shares (DESIGN.md §35): the fixed
 // column widths, the table class, the header cell class, the date format and
@@ -32,8 +31,8 @@ export function fmtDate(iso: string | null): string {
   return iso ? iso.split('-').reverse().join('/') : '—';
 }
 
-export function RowActions({ entry, canEdit, onEdit, onDelete, size }: {
-  entry: FinEntry; canEdit: boolean; onEdit: (e: FinEntry) => void; onDelete: (e: FinEntry) => void; size: 'sm' | 'lg';
+export function RowActions<T>({ entry, canEdit, onEdit, onDelete, size }: {
+  entry: T; canEdit: boolean; onEdit: (e: T) => void; onDelete: (e: T) => void; size: 'sm' | 'lg';
 }) {
   if (!canEdit) return null;
   const btn = cn(

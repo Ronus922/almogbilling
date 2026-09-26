@@ -3,7 +3,7 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { ils } from '@/lib/finance/format';
-import type { FinEntry, FundLedgerEntry } from '@/lib/types/finance';
+import type { FundLedgerRow } from '@/lib/types/finance';
 import { COL_PX, HEAD_CLASS, RowActions, TABLE_CLASS, fmtDate } from './table-shared';
 
 // "כל תנועות הקרן" — every line of the renovation fund, all months, newest
@@ -20,18 +20,23 @@ function UnpublishedBadge() {
 }
 
 /** Expense: its payment date. Income: the month it was filed to ('MM/YYYY'). */
-function whenOf(e: FundLedgerEntry): string {
+function whenOf(e: FundLedgerRow): string {
   if (e.kind === 'expense') return fmtDate(e.payment_date);
   return `${e.period_month.slice(5, 7)}/${e.period_month.slice(0, 4)}`;
 }
 
-export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText }: {
-  entries: FundLedgerEntry[];
+export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText, residentMode = false }: {
+  /** FundLedgerEntry for the admin; the stripped resident row otherwise. */
+  entries: FundLedgerRow[];
   canEdit: boolean;
-  onEdit: (e: FinEntry) => void;
-  onDelete: (e: FinEntry) => void;
+  onEdit: (e: FundLedgerRow) => void;
+  onDelete: (e: FundLedgerRow) => void;
   emptyText: string;
+  /** Resident view: no actions column at all, no "לא פורסם" tag. */
+  residentMode?: boolean;
 }) {
+  const showActions = !residentMode;
+  const showUnpublished = !residentMode;
   const income = entries.filter((e) => e.kind === 'income').reduce((s, e) => s + e.amount, 0);
   const expense = entries.filter((e) => e.kind === 'expense').reduce((s, e) => s + e.amount, 0);
 
@@ -44,13 +49,13 @@ export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText 
       {/* Phones: cards */}
       <div className="space-y-2 roomy:hidden">
         <ul className="space-y-2">
-          {entries.map((e) => (
-            <li key={e.id} className="rounded-xl border border-line bg-white p-4 shadow-soft-xs">
+          {entries.map((e, i) => (
+            <li key={e.id ?? i} className="rounded-xl border border-line bg-white p-4 shadow-soft-xs">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink">
                     <span className="truncate">{e.category_name}</span>
-                    {!e.published && <UnpublishedBadge />}
+                    {showUnpublished && !e.published && <UnpublishedBadge />}
                   </p>
                   <p className="mt-1 text-xs text-ink-3">
                     <span dir="ltr" className="font-num tabular-nums">{whenOf(e)}</span>
@@ -61,7 +66,7 @@ export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText 
                   {e.kind === 'income' ? '+' : '−'}{ils(e.amount)}
                 </span>
               </div>
-              {canEdit && (
+              {showActions && canEdit && (
                 <div className="mt-3 flex items-center justify-end">
                   <RowActions entry={e} canEdit={canEdit} onEdit={onEdit} onDelete={onDelete} size="lg" />
                 </div>
@@ -83,7 +88,7 @@ export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText 
             <col />
             <col style={{ width: COL_PX.amount }} />
             <col style={{ width: COL_PX.amount }} />
-            <col style={{ width: COL_PX.actions }} />
+            {showActions && <col style={{ width: COL_PX.actions }} />}
           </colgroup>
           <TableHeader className="[&_tr]:border-b [&_tr]:border-line">
             <TableRow className="bg-surface-2 hover:bg-surface-2">
@@ -91,17 +96,17 @@ export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText 
               <TableHead className={cn(HEAD_CLASS, 'text-start')}>מטרה / תיאור</TableHead>
               <TableHead className={cn(HEAD_CLASS, 'text-center')}>הכנסה</TableHead>
               <TableHead className={cn(HEAD_CLASS, 'text-center')}>הוצאה</TableHead>
-              <TableHead className={cn(HEAD_CLASS, 'text-end')}>פעולות</TableHead>
+              {showActions && <TableHead className={cn(HEAD_CLASS, 'text-end')}>פעולות</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {entries.map((e) => (
-              <TableRow key={e.id} className="h-[46px] border-b border-line-soft hover:bg-row-hover">
+            {entries.map((e, i) => (
+              <TableRow key={e.id ?? i} className="h-[46px] border-b border-line-soft hover:bg-row-hover">
                 <TableCell dir="ltr" className="px-4 py-3 text-center font-num text-sm tabular-nums text-ink-2">{whenOf(e)}</TableCell>
                 <TableCell className="truncate px-4 py-3 text-start text-sm" title={e.description ? `${e.category_name} — ${e.description}` : e.category_name}>
                   <span className="font-medium text-ink">{e.category_name}</span>
                   {e.description && <span className="text-ink-2"> — {e.description}</span>}
-                  {!e.published && <span className="ms-2 inline-block align-middle"><UnpublishedBadge /></span>}
+                  {showUnpublished && !e.published && <span className="ms-2 inline-block align-middle"><UnpublishedBadge /></span>}
                 </TableCell>
                 <TableCell dir="ltr" className="px-4 py-3 text-center font-num text-sm font-bold tabular-nums text-emerald-700">
                   {e.kind === 'income' ? ils(e.amount) : <span className="font-normal text-ink-ghost">—</span>}
@@ -109,18 +114,20 @@ export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText 
                 <TableCell dir="ltr" className="px-4 py-3 text-center font-num text-sm font-bold tabular-nums text-rose-700">
                   {e.kind === 'expense' ? ils(e.amount) : <span className="font-normal text-ink-ghost">—</span>}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-end" onClick={(ev) => ev.stopPropagation()}>
-                  <div className="flex justify-end">
-                    <RowActions entry={e} canEdit={canEdit} onEdit={onEdit} onDelete={onDelete} size="sm" />
-                  </div>
-                </TableCell>
+                {showActions && (
+                  <TableCell className="px-4 py-3 text-end" onClick={(ev) => ev.stopPropagation()}>
+                    <div className="flex justify-end">
+                      <RowActions entry={e} canEdit={canEdit} onEdit={onEdit} onDelete={onDelete} size="sm" />
+                    </div>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
             <TableRow className="border-t border-line bg-surface-2 hover:bg-surface-2">
               <TableCell colSpan={2} className="px-4 py-3 text-start text-sm font-bold text-ink">סה״כ</TableCell>
               <TableCell dir="ltr" className="px-4 py-3 text-center font-num text-sm font-bold tabular-nums text-emerald-700">{ils(income)}</TableCell>
               <TableCell dir="ltr" className="px-4 py-3 text-center font-num text-sm font-bold tabular-nums text-rose-700">{ils(expense)}</TableCell>
-              <TableCell />
+              {showActions && <TableCell />}
             </TableRow>
           </TableBody>
         </Table>

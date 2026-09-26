@@ -131,6 +131,28 @@ export interface FundLedgerEntry extends FinEntry {
   published: boolean;
 }
 
+/** What the fund ledger TABLE needs of a line — the resident-safe subset.
+ *  FundLedgerEntry satisfies it; a resident row carries nothing more. */
+export interface FundLedgerRow {
+  /** Entry id for the admin (edit / delete); absent on a resident row. */
+  id?: string;
+  kind: FinKind;
+  category_name: string;
+  description: string;
+  amount: number;
+  /** 'YYYY-MM-DD' or null (incomes). */
+  payment_date: string | null;
+  /** 'YYYY-MM-01' */
+  period_month: string;
+  published: boolean;
+}
+
+/** The fund KPIs as a resident gets them: published months only, ledger rows
+ *  stripped to FundLedgerRow (no id, supplier, invoice, note or files). */
+export interface ResidentFundKpis extends Omit<RenovationFundKpis, 'entries'> {
+  entries: FundLedgerRow[];
+}
+
 export interface RenovationFundKpis {
   target_amount: number;
   /** Sum of every fund income (all months). */

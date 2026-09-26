@@ -24,6 +24,7 @@ import { FundTab } from './FundTab';
 import { PeriodPicker } from './PeriodPicker';
 import { PeriodReportView } from './PeriodReportView';
 import { PublishToggle } from './PublishToggle';
+import { ResidentViewToggle } from './ResidentViewToggle';
 
 // /finance — two tabs. "שוטף": the period picker, then either one month (the
 // KPIs + the income / expense tables + the publish switch) or a period report.
@@ -123,7 +124,10 @@ export function FinancePageClient({
             <h1 className="text-2xl font-extrabold text-slate-900">שקיפות כספית</h1>
             <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
           </div>
-          <FinanceTabs active={tab} />
+          <div className="flex flex-wrap items-center gap-3">
+            <FinanceTabs active={tab} />
+            <ResidentViewToggle active={false} />
+          </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
           {isFund ? (
@@ -225,7 +229,14 @@ export function FinancePageClient({
       {!isFund && !isMonth && report && <PeriodReportView report={report} period={period} />}
 
       {isFund && fund && (
-        <FundTab kpis={fund} canEdit={canEdit} onEdit={openEdit} onDelete={setDeleteTarget} onTargetSaved={refresh} />
+        <FundTab
+          kpis={fund}
+          canEdit={canEdit}
+          // The ledger hands back its (resident-shaped) row; the full entry is looked up by id.
+          onEdit={(row) => { const e = fund.entries.find((x) => x.id === row.id); if (e) openEdit(e); }}
+          onDelete={(row) => { const e = fund.entries.find((x) => x.id === row.id); if (e) setDeleteTarget(e); }}
+          onTargetSaved={refresh}
+        />
       )}
 
       <EntrySheet

@@ -9,6 +9,7 @@ import { useMediaQuery } from '@/lib/hooks/useMediaQuery';
 import { cn } from '@/lib/utils';
 import { HE_MONTH_NAMES } from '@/lib/constants/calendar';
 import { HALF_LABEL, currentMonthKey, makePeriod, periodLabel, type Period } from '@/lib/finance/period';
+import { rangeHasPublished } from '@/lib/finance/resident';
 
 // The period picker of the operating overview (DESIGN.md §35): one trigger
 // showing the selection; a panel with « כל YYYY » (year arrows, the title
@@ -16,7 +17,9 @@ import { HALF_LABEL, currentMonthKey, makePeriod, periodLabel, type Period } fro
 // clickable "רבעון N" label and each pair of rows a vertical "מחצית" label.
 // Every click selects AND closes — no range mode, no second click. Published
 // months carry a green dot; future months are grey and inert. Desktop: an
-// anchored panel; phones: a bottom sheet — the same grid in both.
+// anchored panel; phones: a bottom sheet — the same grid in both. In the
+// resident view (`residentMode`) only published months are selectable, and a
+// quarter / half / year only when it holds a published month.
 
 const DESKTOP = '(min-width: 768px)';
 
@@ -24,16 +27,21 @@ function pad(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-function PeriodGrid({ year, onYear, selected, published, onPick }: {
+function PeriodGrid({ year, onYear, selected, published, residentMode, onPick }: {
   year: number;
   onYear: (y: number) => void;
   selected: Period;
   published: ReadonlySet<string>;
+  residentMode: boolean;
   onPick: (p: Period) => void;
 }) {
   const current = currentMonthKey();
   const future = (monthKey: string) => monthKey > current;
-  const yearFuture = future(`${year}-01`);
+  /** A month is inert when future — or, for residents, when not published. */
+  const monthBlocked = (monthKey: string) => future(monthKey) || (residentMode && !published.has(monthKey));
+  /** A range is inert when it has not started — or, for residents, holds no published month. */
+  const rangeBlocked = (from: string, to: string) => future(from) || (residentMode && !rangeHasPublished(from, to, published));
+  const yearFuture = rangeBlocked(`${year}-01`, `${year}-12`);
   const inSelection = (monthKey: string) => selected.kind !== 'month' && monthKey >= selected.from && monthKey <= selected.to;
 
   const label = (active: boolean, disabled: boolean) => cn(
@@ -77,7 +85,11 @@ function PeriodGrid({ year, onYear, selected, published, onPick }: {
         {[1, 2, 3, 4].map((q) => {
           const half = q <= 2 ? 1 : 2;
           const quarterFrom = `${year}-${pad((q - 1) * 3 + 1)}`;
+          const quarterTo = `${year}-${pad(q * 3)}`;
           const halfFrom = `${year}-${pad((half - 1) * 6 + 1)}`;
+          const halfTo = `${year}-${pad(half * 6)}`;
+          const quarterBlocked = rangeBlocked(quarterFrom, quarterTo);
+          const halfBlocked = rangeBlocked(halfFrom, halfTo);
           const quarterActive = selected.kind === 'quarter' && selected.year === year && selected.index === q;
           const halfActive = selected.kind === 'half' && selected.year === year && selected.index === half;
           return (
@@ -86,9 +98,9 @@ function PeriodGrid({ year, onYear, selected, published, onPick }: {
                 <button
                   type="button"
                   onClick={() => onPick(makePeriod('half', year, half))}
-                  disabled={future(halfFrom)}
+                  disabled={halfBlocked}
                   aria-label={`בחר ${HALF_LABEL[half]} ${year}`}
-                  className={cn(label(halfActive, future(halfFrom)), 'row-span-2')}
+                  className={cn(label(halfActive, halfBlocked), 'row-span-2')}
                 >
                   <span className="[writing-mode:vertical-rl] rotate-180">{HALF_LABEL[half]}</span>
                 </button>
@@ -96,16 +108,16 @@ function PeriodGrid({ year, onYear, selected, published, onPick }: {
               <button
                 type="button"
                 onClick={() => onPick(makePeriod('quarter', year, q))}
-                disabled={future(quarterFrom)}
+                disabled={quarterBlocked}
                 aria-label={`בחר רבעון ${q} ${year}`}
-                className={label(quarterActive, future(quarterFrom))}
+                className={label(quarterActive, quarterBlocked)}
               >
                 רבעון {q}
               </button>
               {[0, 1, 2].map((i) => {
                 const m = (q - 1) * 3 + i + 1;
                 const key = `${year}-${pad(m)}`;
-                const disabled = future(key);
+                const disabled = monthBlocked(key);
                 const active = selected.kind === 'month' && selected.key === key;
                 return (
                   <button
@@ -140,16 +152,19 @@ function PeriodGrid({ year, onYear, selected, published, onPick }: {
       </div>
 
       <p className="flex items-center gap-1.5 text-[11px] text-ink-3">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden /> חודש שמוצג לדיירים
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+        {residentMode ? 'חודש שפורסם — רק אלה זמינים' : 'חודש שמוצג לדיירים'}
       </p>
     </div>
   );
 }
 
-export function PeriodPicker({ period, publishedMonths }: {
+export function PeriodPicker({ period, publishedMonths, residentMode = false }: {
   period: Period;
   /** 'YYYY-MM' keys of the published months (green dots). */
   publishedMonths: string[];
+  /** Resident view: unpublished months (and ranges without one) are inert. */
+  residentMode?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -192,7 +207,7 @@ export function PeriodPicker({ period, publishedMonths }: {
     </button>
   );
 
-  const grid = <PeriodGrid year={year} onYear={setYear} selected={period} published={published} onPick={pick} />;
+  const grid = <PeriodGrid year={year} onYear={setYear} selected={period} published={published} residentMode={residentMode} onPick={pick} />;
 
   if (isDesktop) {
     return (
