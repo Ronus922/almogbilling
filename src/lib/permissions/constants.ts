@@ -86,6 +86,17 @@ export const MODULES: ModuleMeta[] = [
 
 export const SUPER_ADMIN_ONLY: readonly string[] = ['users_management', 'roles_management'];
 
+// ── Personal assistant ("עוזר אישי", the floating bot) ───────────────────────
+// ALLOWLIST of the staff roles that may use it. The assistant answers with other
+// residents' debts, so it is staff-only by design: a role that is NOT listed
+// here — including any future resident / owners-portal role — gets 403 from
+// /api/agent/* (requireAssistantAccess) and never sees the button (AgentFab).
+// Allowlist, not blocklist: a role added later is denied until someone adds it
+// here on purpose. The permission gate (dashboard:view OR contacts:view) still
+// applies on top — see canUseAssistant() — so no staff user gains or loses
+// anything they have today.
+export const ASSISTANT_ROLES: readonly Role[] = ['super_admin', 'admin', 'manager', 'viewer'];
+
 function noPerm(module: string): ModulePermission {
   return { module, canView: false, canEdit: false };
 }

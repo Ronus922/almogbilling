@@ -2,6 +2,7 @@ import {
   type Action,
   type ModulePermission,
   type Role,
+  ASSISTANT_ROLES,
   ROLE_DEFAULTS,
   isElevatedRole,
   SUPER_ADMIN_ONLY,
@@ -53,4 +54,23 @@ export function getDefaultPermissions(role: Role): ModulePermission[] | null {
 export function hasAnyAccess(role: Role, permissions: ModulePermission[]): boolean {
   if (role === 'super_admin' || role === 'admin') return true;
   return permissions.some((p) => p.canView || p.canEdit);
+}
+
+/**
+ * May this actor use the personal assistant (/api/agent/*, the floating bot)?
+ * Two gates, BOTH required:
+ *   1. the role is on the staff allowlist (ASSISTANT_ROLES) — a resident, or any
+ *      role added later, is denied here no matter what its matrix rows say;
+ *   2. the permission gate the assistant always had — the same one as the
+ *      debtors screen (dashboard:view OR contacts:view) — so a staff user keeps
+ *      exactly the access they have today.
+ * One predicate for both layers: requireAssistantAccess() (server) and
+ * AgentFab (UI) call this, so they cannot drift apart.
+ */
+export function canUseAssistant(role: Role, permissions: ModulePermission[]): boolean {
+  if (!ASSISTANT_ROLES.includes(role)) return false;
+  return (
+    hasPermission(role, permissions, 'dashboard', 'view') ||
+    hasPermission(role, permissions, 'contacts', 'view')
+  );
 }

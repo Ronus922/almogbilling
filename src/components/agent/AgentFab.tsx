@@ -8,15 +8,19 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { AlertCircle, Bot, Building2, Check, Send, X } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/lib/auth/context';
+import { canUseAssistant } from '@/lib/permissions/check';
 import { cn } from '@/lib/utils';
 
 // Floating read-only collection assistant — a bounded chat widget anchored above
 // the FAB (reference layout: fixed-size card, no dimming overlay; the FAB toggles
-// to an X to close). Renders only for users who can read the debtors screen
-// (same gate as /api/agent/chat: dashboard:view OR contacts:view).
+// to an X to close). STAFF-ONLY: renders only for canUseAssistant() — the same
+// predicate /api/agent/chat enforces (staff-role allowlist + dashboard/contacts
+// view) — and never in the resident preview (`?view=resident`), so that screen
+// shows exactly what a resident will get: no bot, no way to ask about debts.
 //
 // State is in-memory only (no localStorage). Closing the panel RESETS the
 // conversation and aborts any in-flight stream (abort BEFORE reset). A late
@@ -45,8 +49,23 @@ function statusMessage(status: number): string {
   return 'שגיאה בעיבוד הבקשה — נסה שוב.';
 }
 
+/**
+ * The gate. Two reasons to render nothing at all:
+ *  - the user is not staff-with-debtors-access (canUseAssistant — the exact
+ *    predicate /api/agent/chat enforces, so the UI never promises a 403);
+ *  - the admin is in the resident preview (`?view=resident`, the URL is the
+ *    source of truth — see ResidentViewToggle).
+ * Rendering nothing UNMOUNTS the widget, so an open conversation is gone the
+ * moment the preview starts and comes back empty when it ends.
+ */
 export function AgentFab() {
-  const { can } = useAuth();
+  const { user } = useAuth();
+  const residentView = useSearchParams().get('view') === 'resident';
+  if (residentView || !canUseAssistant(user.role, user.permissions)) return null;
+  return <AssistantWidget />;
+}
+
+function AssistantWidget() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
@@ -87,8 +106,16 @@ export function AgentFab() {
     return () => window.removeEventListener('keydown', onKey);
   }, [open, closePanel]);
 
-  const allowed = can('dashboard', 'view') || can('contacts', 'view');
-  if (!allowed) return null;
+  // Unmount (the gate above went false mid-answer, e.g. the resident preview
+  // started): abort the in-flight stream. State dies with the component, so the
+  // next mount is a fresh, empty conversation — the same contract as closing.
+  useEffect(
+    () => () => {
+      cancelledRef.current = true;
+      abortRef.current?.abort();
+    },
+    [],
+  );
 
   function openPanel() {
     cancelledRef.current = false; // fresh conversation
