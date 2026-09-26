@@ -39,6 +39,7 @@ export type Cause =
   | 'pg_dump_failed'
   | 'cleanup_job_failed'
   | 'bllink_scrape_failed'
+  | 'bllink_sync_failed'
   | 'timeout'
   | 'oom'
   | 'unknown';
@@ -170,6 +171,9 @@ export function classify(f: FailureFacts): Cause {
   // Any failure of the Bllink scraper, whatever the step: the script records its
   // own stage in bllink_scrapes; for the reader the meaning is the same.
   if (f.unit.startsWith('billing-bllink-scrape')) return 'bllink_scrape_failed';
+  // The daily copy into debtors refused (stage stale / guard / pull — the reason
+  // is on sync_runs and in the dashboard banner) or could not reach the app.
+  if (f.unit.startsWith('billing-sync')) return 'bllink_sync_failed';
   return 'unknown';
 }
 
@@ -259,6 +263,21 @@ export function explain(f: FailureFacts): Explanation {
         action:
           `${retryLine(f)} אם זה נכשל גם מחר — כנראה בלינק שינו משהו בעמוד ההתחברות או בדוח, ` +
           'וצריך לבדוק (צילום מסך של הכשל נשמר ב-/var/log/billing).',
+      };
+
+    case 'bllink_sync_failed':
+      return {
+        title: 'עדכון החובות מבלינק לא בוצע הבוקר',
+        what:
+          'הסנכרון היומי של נתוני החוב נעצר לפני הכתיבה. שום נתון לא הועתק ולא שונה — ' +
+          'המערכת מציגה את העדכון המוצלח האחרון, והבאנר האדום בדשבורד כבר מוצג לכולם.',
+        urgency:
+          since !== null && since >= 2
+            ? `דחוף. נתוני החוב לא התעדכנו מבלינק מאז ${ilTime(f.lastGoodIso)} — ${since} ימים.`
+            : `לא דחוף אם זה קרה פעם אחת. העדכון המוצלח האחרון: ${ilTime(f.lastGoodIso)}.`,
+        action:
+          `${retryLine(f)} הסיבה המדויקת כתובה בבאנר בדשבורד, תחת "פרטים טכניים". ` +
+          'אם זה נכשל גם מחר — צריך לבדוק.',
       };
 
     case 'timeout':

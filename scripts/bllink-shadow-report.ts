@@ -25,7 +25,15 @@ interface Summary {
   extra?: string[];
   diffs?: Diff[];
   diff_count?: number;
+  /** Who compared: 'scrape' (05:30, against what the CRM held then) or 'sync'
+   *  (06:00, against the CRM's fresh report — the definitive one). */
+  compared_by?: 'scrape' | 'sync';
+  /** BLLINK_SOURCE=billing: the CRM could not be asked — a warning, not a failure. */
+  compare?: 'unavailable';
+  reason?: string;
 }
+
+const COMPARED_BY_LABEL: Record<string, string> = { scrape: 'סורק', sync: 'סנכרון' };
 interface Row {
   id: string;
   started_at: Date;
@@ -89,7 +97,7 @@ async function main(): Promise<void> {
 
     const header = [
       pad('תאריך (IL)', 17), pad('סטטוס', 8), pad('שלב', 9), pad('מקומי', 6), pad('CRM', 5),
-      pad('חסרות', 6), pad('עודפות', 7), pad('הפרשים', 7), pad('משך', 5), 'מזהה',
+      pad('חסרות', 6), pad('עודפות', 7), pad('הפרשים', 7), pad('עד', 6), pad('משך', 5), 'מזהה',
     ].join(' ');
     console.log(header);
     console.log('-'.repeat(header.length + 24));
@@ -106,11 +114,13 @@ async function main(): Promise<void> {
           pad(num(s?.missing?.length), 6),
           pad(num(s?.extra?.length), 7),
           pad(num(s?.diffs?.length), 7),
+          pad(s?.compared_by ? (COMPARED_BY_LABEL[s.compared_by] ?? s.compared_by) : '—', 6),
           pad(duration(r.started_at, r.finished_at), 5),
           r.id.slice(0, 8),
         ].join(' '),
       );
       if (r.status === 'error' && r.error_message) console.log(`    ↳ ${r.error_message.slice(0, 160)}`);
+      if (s?.compare === 'unavailable') console.log(`    ↳ ה-CRM לא היה זמין להשוואה (אזהרה בלבד): ${(s.reason ?? '').slice(0, 160)}`);
       if (showDiffs && s) {
         if (s.missing?.length) console.log(`    חסרות במקומי (יש ב-CRM): ${s.missing.join(', ')}`);
         if (s.extra?.length) console.log(`    עודפות במקומי (אין ב-CRM): ${s.extra.join(', ')}`);

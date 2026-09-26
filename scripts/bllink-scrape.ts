@@ -1,30 +1,39 @@
-// scripts/bllink-scrape.ts — Bllink SHADOW scraper (Phase 1 of the CRM-independence plan).
+// scripts/bllink-scrape.ts — billing's own Bllink scraper.
 //
 // billing logs into Bllink itself, exports the "udnp" building-debt report as
 // Excel (the same Playwright sequence the CRM runs in
 // /var/www/almog-gmail/lib/jobs/bllink-sync.ts), parses it with the app's own
 // parseDebtorsWorkbook, stores the RAW snapshot in public.bllink_scrapes /
 // public.bllink_scrape_rows, and compares it — apartment by apartment — with
-// the CRM snapshot of the same morning (CRM_DEBTORS_REST_URL, read-only).
+// the snapshot the CRM holds (CRM_DEBTORS_REST_URL, read-only).
 //
-// It writes NOTHING to debtors / contacts / sync_runs / import_runs. The
-// existing CRM sync (billing-sync.timer → /api/sync/bllink) stays the only
-// writer until Phase 2 (BLLINK_SOURCE flag) is approved. Differences are
-// information, not a failure.
+// It writes NOTHING to debtors / contacts / sync_runs / import_runs itself.
+// Who copies the snapshot into debtors depends on BLLINK_SOURCE (Phase 2,
+// 26/09/2026): with `billing`, /api/sync/bllink (billing-sync.timer, 06:00)
+// copies THIS snapshot and refuses anything not from today; with `crm` (the
+// default) the CRM sync stays the writer and this is a shadow, as in Phase 1.
 //
 // Runs as its own oneshot process (systemd: deploy/systemd/billing-bllink-scrape.service,
-// timer 06:10 Asia/Jerusalem — ten minutes after the CRM run):
+// timer 05:30 Asia/Jerusalem — thirty minutes BEFORE the sync; until 26/09/2026 it
+// was 06:10, ten minutes after the CRM's run):
 //   /usr/bin/node node_modules/tsx/dist/cli.mjs scripts/bllink-scrape.ts
 // Manual run with the production env: sudo systemctl start billing-bllink-scrape.service
 //
 // Env (all from /etc/billing/billing.env): DATABASE_URL, BLLINK_USER, BLLINK_PASSWORD,
-// PLAYWRIGHT_BROWSERS_PATH, CRM_DEBTORS_REST_URL, CRM_DEBTORS_REST_KEY,
+// PLAYWRIGHT_BROWSERS_PATH, CRM_DEBTORS_REST_URL, CRM_DEBTORS_REST_KEY, BLLINK_SOURCE,
 // SETTINGS_ENC_KEY + ADMIN_ALERT_PHONE/BLLINK_ALERT_PHONE (WhatsApp alert on
 // failure, best-effort — scripts/lib/admin-alert.ts).
 //
 // Failure = status 'error' with the stage (login/navigate/download/parse/compare),
-// a screenshot in /var/log/billing/bllink-scrape-<ts>.png, and a WhatsApp alert to
-// the admin through billing's own Green API instance. The password is never logged.
+// a screenshot in /var/log/billing/bllink-scrape-<ts>.png, exit 1 (→ the unit's
+// OnFailure= email + WhatsApp) and the script's own WhatsApp alert. The password
+// is never logged.
+//
+// The compare stage is a WARNING, not a failure, when BLLINK_SOURCE=billing: the
+// CRM is then only a witness, so a CRM that cannot be reached is recorded as
+// `compare: unavailable` on a scrape that stays `success` — no alert. The
+// definitive comparison of the morning is made by the sync at 06:00 (against
+// the CRM's fresh report) and written over this one on the same row.
 import dotenv from 'dotenv';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -35,6 +44,12 @@ import { chromium, type Browser, type Page } from 'playwright';
 import ExcelJS from 'exceljs';
 import { parseDebtorsWorkbook, type ParsedDebtorRow } from '../src/lib/excel/parse';
 import { toArrayBuffer, worksheetToMatrix } from '../src/lib/excel/workbook';
+import {
+  compareSnapshots, isCompareUnavailable, round2, toNum, toText,
+  type CompareResult, type CompareRow,
+} from '../src/lib/sync/bllinkCompare';
+import { toCompareMap } from '../src/lib/sync/bllinkMap';
+import { resolveBllinkSource } from '../src/lib/sync/decision';
 import { sendAdminAlert } from './lib/admin-alert';
 
 // Local runs read .env.local (never overriding what the shell / systemd already set).
@@ -49,11 +64,6 @@ const REPORT_URL = 'https://app.bllink.co/reports/building-debt/udnp';
 const TOTAL_TIMEOUT_MS = 180_000;
 const RETENTION_DAYS = 90;
 const LOG_DIR = '/var/log/billing';
-const MONEY_TOLERANCE = 0.005;
-
-// Compared per shared apartment (CRM debtor_records naming).
-const COMPARE_FIELDS = ['total_debt', 'monthly_debt', 'special_debt', 'management_months_raw', 'notes'] as const;
-type CompareField = (typeof COMPARE_FIELDS)[number];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -80,38 +90,6 @@ interface CrmDebtorRecord {
   last_import_at: string | null;
 }
 
-interface CompareRow {
-  total_debt: number;
-  monthly_debt: number;
-  special_debt: number;
-  management_months_raw: string | null;
-  notes: string | null;
-}
-
-interface Diff {
-  apt: string;
-  field: CompareField;
-  crm: number | string | null;
-  local: number | string | null;
-}
-
-interface CompareSummary {
-  crm_rows: number;
-  local_rows: number;
-  /** Newest last_import_at of the CRM run — when the CRM actually scraped Bllink. */
-  crm_snapshot_at: string | null;
-  /** Apartments in the CRM snapshot that the local scrape lacks. */
-  missing: string[];
-  /** Apartments in the local scrape that the CRM snapshot lacks. */
-  extra: string[];
-  diffs: Diff[];
-  /** missing + extra + diffs — 0 means the two snapshots agree. */
-  diff_count: number;
-  /** Header-less / apartment-less rows the parser dropped. */
-  parse_skipped: number;
-}
-
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function log(msg: string): void {
@@ -122,20 +100,6 @@ function requireEnv(name: string): string {
   const v = (process.env[name] ?? '').trim();
   if (!v) throw new Error(`${name} is not set`);
   return v;
-}
-
-function toText(v: unknown): string | null {
-  if (v == null) return null;
-  const s = String(v).trim();
-  return s.length === 0 ? null : s;
-}
-
-function toNum(v: number | null | undefined): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 function errorText(err: unknown): string {
@@ -226,51 +190,6 @@ async function fetchCrmSnapshot(): Promise<{ byApt: Map<string, CompareRow>; sna
     if (r.last_import_at && (snapshotAt === null || r.last_import_at > snapshotAt)) snapshotAt = r.last_import_at;
   }
   return { byApt, snapshotAt };
-}
-
-// ─── Compare ──────────────────────────────────────────────────────────────────
-
-function sameValue(field: CompareField, a: number | string | null, b: number | string | null): boolean {
-  if (field === 'management_months_raw' || field === 'notes') {
-    return (toText(a) ?? '') === (toText(b) ?? '');
-  }
-  return Math.abs(toNum(a as number | null) - toNum(b as number | null)) < MONEY_TOLERANCE;
-}
-
-function compare(local: ScrapeRow[], crm: Map<string, CompareRow>, snapshotAt: string | null, skipped: number): CompareSummary {
-  const localByApt = new Map<string, CompareRow>();
-  for (const r of local) {
-    localByApt.set(r.apartment_number, {
-      total_debt: r.total_debt,
-      monthly_debt: r.monthly_debt,
-      special_debt: r.special_debt,
-      management_months_raw: r.management_months_raw,
-      notes: r.notes,
-    });
-  }
-
-  const missing = [...crm.keys()].filter((apt) => !localByApt.has(apt)).sort();
-  const extra = [...localByApt.keys()].filter((apt) => !crm.has(apt)).sort();
-
-  const diffs: Diff[] = [];
-  for (const [apt, l] of localByApt) {
-    const c = crm.get(apt);
-    if (!c) continue;
-    for (const field of COMPARE_FIELDS) {
-      if (!sameValue(field, c[field], l[field])) diffs.push({ apt, field, crm: c[field], local: l[field] });
-    }
-  }
-
-  return {
-    crm_rows: crm.size,
-    local_rows: localByApt.size,
-    crm_snapshot_at: snapshotAt,
-    missing,
-    extra,
-    diffs,
-    diff_count: missing.length + extra.length + diffs.length,
-    parse_skipped: skipped,
-  };
 }
 
 // ─── Bllink (Playwright) ──────────────────────────────────────────────────────
@@ -457,10 +376,26 @@ async function main(): Promise<number> {
     }
     log(`parsed ${rows.length} rows (skipped ${skipped}) and stored them`);
 
-    // ── compare with the CRM snapshot of the same morning ──
+    // ── compare with the snapshot the CRM holds ──
     stage = 'compare';
-    const crm = await fetchCrmSnapshot();
-    const summary = compare(rows, crm.byApt, crm.snapshotAt, skipped);
+    const source = resolveBllinkSource(process.env.BLLINK_SOURCE);
+    let summary: CompareResult;
+    try {
+      const crm = await fetchCrmSnapshot();
+      summary = compareSnapshots(toCompareMap(rows), crm.byApt, {
+        crmSnapshotAt: crm.snapshotAt, parseSkipped: skipped, comparedBy: 'scrape',
+      });
+    } catch (err) {
+      // BLLINK_SOURCE=billing: the CRM is a witness, not the source — record the
+      // absence as a warning and keep the scrape (the data path) a success.
+      // BLLINK_SOURCE=crm: the comparison IS the point of a shadow scrape → fail.
+      if (source !== 'billing') throw err;
+      summary = {
+        compare: 'unavailable', reason: redact(errorText(err), secrets), local_rows: rows.length,
+        compared_by: 'scrape', compared_at: new Date().toISOString(),
+      };
+      log(`compare skipped — CRM unavailable (BLLINK_SOURCE=billing, warning only): ${summary.reason}`);
+    }
 
     await db.query(
       `update public.bllink_scrapes
@@ -471,17 +406,21 @@ async function main(): Promise<number> {
     );
     settled = true;
 
-    log(
-      `run=${scrapeId} status=success local=${summary.local_rows} crm=${summary.crm_rows} ` +
-        `missing=${summary.missing.length} extra=${summary.extra.length} field_diffs=${summary.diffs.length} ` +
-        `crm_snapshot_at=${summary.crm_snapshot_at ?? '?'} took=${((Date.now() - t0) / 1000).toFixed(1)}s`,
-    );
-    if (summary.missing.length) log(`missing in local (present in CRM): ${summary.missing.join(', ')}`);
-    if (summary.extra.length) log(`extra in local (absent in CRM): ${summary.extra.join(', ')}`);
-    for (const d of summary.diffs.slice(0, 50)) {
-      log(`diff apt=${d.apt} ${d.field}: crm=${JSON.stringify(d.crm)} local=${JSON.stringify(d.local)}`);
+    if (isCompareUnavailable(summary)) {
+      log(`run=${scrapeId} status=success local=${summary.local_rows} crm=unavailable took=${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    } else {
+      log(
+        `run=${scrapeId} status=success local=${summary.local_rows} crm=${summary.crm_rows} ` +
+          `missing=${summary.missing.length} extra=${summary.extra.length} field_diffs=${summary.diffs.length} ` +
+          `crm_snapshot_at=${summary.crm_snapshot_at ?? '?'} took=${((Date.now() - t0) / 1000).toFixed(1)}s`,
+      );
+      if (summary.missing.length) log(`missing in local (present in CRM): ${summary.missing.join(', ')}`);
+      if (summary.extra.length) log(`extra in local (absent in CRM): ${summary.extra.join(', ')}`);
+      for (const d of summary.diffs.slice(0, 50)) {
+        log(`diff apt=${d.apt} ${d.field}: crm=${JSON.stringify(d.crm)} local=${JSON.stringify(d.local)}`);
+      }
+      if (summary.diffs.length > 50) log(`… ${summary.diffs.length - 50} more field diffs in compare_summary`);
     }
-    if (summary.diffs.length > 50) log(`… ${summary.diffs.length - 50} more field diffs in compare_summary`);
   } catch (err) {
     await fail(err, stage);
   } finally {

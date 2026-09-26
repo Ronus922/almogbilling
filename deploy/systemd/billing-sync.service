@@ -8,6 +8,12 @@
 Description=ALMOG CRM — daily Bllink sync (one-shot)
 After=network.target billing.service
 Wants=billing.service
+# The route records every refusal on sync_runs and turns the dashboard banner
+# red, and run-bllink-sync.sh exits non-zero on it (curl --fail-with-body).
+# With BLLINK_SOURCE=billing a refusal means "billing's own scrape is not from
+# today — nothing was copied" (stage 'stale'); this makes that an email +
+# WhatsApp as well, not only a banner. See deploy/systemd/billing-alert@.service.
+OnFailure=billing-alert@%n.service
 
 [Service]
 Type=oneshot
