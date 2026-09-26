@@ -29,12 +29,10 @@ const KNOWN_STATES: readonly InstanceState[] = [
 
 // POST /api/webhooks/greenapi — PUBLIC (no session). The canonical Green API
 // inbound webhook for the messaging module. Authenticated (constant-time, see
-// lib/whatsapp-webhook-auth) by EITHER
-//   • `Authorization: Bearer <GREENAPI_WEBHOOK_TOKEN>` — Green API's webhookUrlToken
-//     (the target state), or
-//   • `?secret=<GREEN_API_WEBHOOK_SECRET>` — the legacy query form, kept only
-//     while the instance is being switched over (F8: it lands in access logs).
-// Every accepted request logs which one it used (auth=header | legacy-query).
+// lib/whatsapp-webhook-auth) ONLY by `Authorization: Bearer <GREENAPI_WEBHOOK_TOKEN>`
+// — the instance's webhookUrlToken. Nothing rides in the URL (the former
+// `?secret=` leaked into access logs — F8, retired 26/09/2026). Every accepted
+// request logs auth=header.
 //
 // Handles, by typeWebhook:
 //   • incomingMessageReceived   → store inbound (person + groups, debtor match)
@@ -50,8 +48,8 @@ const KNOWN_STATES: readonly InstanceState[] = [
 
 export async function POST(req: NextRequest) {
   const auth = authenticateWebhook(
-    { authorization: req.headers.get('authorization'), querySecret: req.nextUrl.searchParams.get('secret') },
-    { token: env.GREENAPI_WEBHOOK_TOKEN ?? '', legacySecret: env.GREEN_API_WEBHOOK_SECRET ?? '' },
+    { authorization: req.headers.get('authorization') },
+    { token: env.GREENAPI_WEBHOOK_TOKEN ?? '' },
   );
   if (!auth) {
     return new NextResponse(null, { status: 401 });

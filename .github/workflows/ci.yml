@@ -99,7 +99,6 @@ jobs:
       # test-only values; the real ones live in /etc/billing on the server
       BILLING_CRON_SECRET: ci-only-cron-secret
       CRM_CRON_SECRET: ci-only-crm-secret
-      GREEN_API_WEBHOOK_SECRET: ci-only-webhook-secret
       GREENAPI_WEBHOOK_TOKEN: ci-only-webhook-token
       NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
       SUPABASE_SERVICE_ROLE_KEY: ci-only
