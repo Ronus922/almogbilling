@@ -2,16 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { authenticateWebhook, bearerToken } from '@/lib/whatsapp-webhook-auth';
 
-// F8 — the Green API inbound webhook authenticates on a header, not a query
-// string. Transition contract (both ways in, until the instance is switched):
+// F8 — the Green API inbound webhook authenticates on a header ONLY:
 //   no auth → 401 · wrong header → 401 · right header → 200 (auth=header)
-//   right legacy ?secret → 200 (auth=legacy-query) · wrong ?secret → 401
+//   the former ?secret= (even with the old, still-configured value) → 401
 // The route is exercised for real; only its downstream (DB, inbox pipeline,
 // queue, SSE, logger, env) is mocked. Body `{}` → "unknown instance" → 200 ack.
 
 // vi.mock factories are hoisted above every import/const — the fixtures must be too.
 const { TOKEN, LEGACY } = vi.hoisted(() => ({
   TOKEN: 'ci-only-webhook-token-0123456789abcdef0123456789abcdef',
+  // The retired query secret. Still present in the env mock ON PURPOSE: the
+  // code must ignore it even if an old env file still carries it.
   LEGACY: 'ci-only-legacy-secret-fedcba9876543210fedcba9876543210',
 }));
 
@@ -45,7 +46,7 @@ const infoLines = () =>
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('POST /api/webhooks/greenapi — authentication (F8 transition)', () => {
+describe('POST /api/webhooks/greenapi — header authentication only (F8)', () => {
   it('no authentication → 401, nothing processed, nothing logged as accepted', async () => {
     const res = await call();
     expect(res.status).toBe(401);
@@ -54,7 +55,7 @@ describe('POST /api/webhooks/greenapi — authentication (F8 transition)', () =>
     expect(infoLines()).toEqual([]);
   });
 
-  it('wrong header → 401 (wrong token, the legacy secret as bearer, other scheme)', async () => {
+  it('wrong header → 401 (wrong token, the old secret as bearer, other scheme, bare token)', async () => {
     expect((await call({ authorization: 'Bearer nope' })).status).toBe(401);
     expect((await call({ authorization: `Bearer ${LEGACY}` })).status).toBe(401);
     expect((await call({ authorization: `Basic ${TOKEN}` })).status).toBe(401);
@@ -72,19 +73,15 @@ describe('POST /api/webhooks/greenapi — authentication (F8 transition)', () =>
     expect(lines[0]).not.toContain(TOKEN);
   });
 
-  it('right legacy ?secret → 200, logged as auth=legacy-query (no value)', async () => {
-    const res = await call({ query: LEGACY });
-    expect(res.status).toBe(200);
-    const lines = infoLines();
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('auth=legacy-query');
-    expect(lines[0]).not.toContain(LEGACY);
+  it('the former ?secret= is dead: the old secret → 401 even though the env still has it; the new token in the query → 401', async () => {
+    expect((await call({ query: LEGACY })).status).toBe(401);
+    expect((await call({ query: TOKEN })).status).toBe(401);
+    expect((await call({ query: 'nope' })).status).toBe(401);
+    expect(infoLines()).toEqual([]);
   });
 
-  it('wrong ?secret → 401 (wrong value, and the NEW token in the query is not accepted)', async () => {
-    expect((await call({ query: 'nope' })).status).toBe(401);
-    expect((await call({ query: TOKEN })).status).toBe(401);
-    expect(infoLines()).toEqual([]);
+  it('a query secret does not help nor hurt a valid header', async () => {
+    expect((await call({ authorization: `Bearer ${TOKEN}`, query: LEGACY })).status).toBe(200);
   });
 
   it('a malformed body on an authenticated request is acked with 200 and logged with its auth method', async () => {
@@ -96,21 +93,20 @@ describe('POST /api/webhooks/greenapi — authentication (F8 transition)', () =>
 });
 
 describe('authenticateWebhook / bearerToken — the pure decision', () => {
-  const expected = { token: TOKEN, legacySecret: LEGACY };
+  const expected = { token: TOKEN };
 
-  it('header wins, then legacy query, else null; case-insensitive scheme, trimmed', () => {
-    expect(authenticateWebhook({ authorization: `Bearer ${TOKEN}`, querySecret: null }, expected)).toBe('header');
-    expect(authenticateWebhook({ authorization: `  bearer ${TOKEN}  `, querySecret: null }, expected)).toBe('header');
-    expect(authenticateWebhook({ authorization: `Bearer ${TOKEN}`, querySecret: 'nope' }, expected)).toBe('header');
-    expect(authenticateWebhook({ authorization: null, querySecret: LEGACY }, expected)).toBe('legacy-query');
-    expect(authenticateWebhook({ authorization: 'Bearer nope', querySecret: LEGACY }, expected)).toBe('legacy-query');
-    expect(authenticateWebhook({ authorization: null, querySecret: null }, expected)).toBeNull();
-    expect(authenticateWebhook({ authorization: `Bearer ${LEGACY}`, querySecret: TOKEN }, expected)).toBeNull();
+  it('Bearer with the token → header; anything else → null; case-insensitive scheme, trimmed', () => {
+    expect(authenticateWebhook({ authorization: `Bearer ${TOKEN}` }, expected)).toBe('header');
+    expect(authenticateWebhook({ authorization: `  bearer ${TOKEN}  ` }, expected)).toBe('header');
+    expect(authenticateWebhook({ authorization: `Bearer ${LEGACY}` }, expected)).toBeNull();
+    expect(authenticateWebhook({ authorization: 'Bearer nope' }, expected)).toBeNull();
+    expect(authenticateWebhook({ authorization: null }, expected)).toBeNull();
+    expect(authenticateWebhook({ authorization: undefined }, expected)).toBeNull();
   });
 
-  it('an unconfigured side never matches (empty expected ≠ empty provided)', () => {
-    expect(authenticateWebhook({ authorization: 'Bearer ', querySecret: '' }, { token: '', legacySecret: '' })).toBeNull();
-    expect(authenticateWebhook({ authorization: null, querySecret: LEGACY }, { token: TOKEN, legacySecret: '' })).toBeNull();
+  it('an unconfigured token never matches (empty expected ≠ empty provided)', () => {
+    expect(authenticateWebhook({ authorization: 'Bearer ' }, { token: '' })).toBeNull();
+    expect(authenticateWebhook({ authorization: `Bearer ${TOKEN}` }, { token: '' })).toBeNull();
   });
 
   it('bearerToken extracts only a Bearer scheme', () => {

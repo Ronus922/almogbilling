@@ -853,13 +853,12 @@ export async function getIncomingMessages(
  * Enables the full notification set the inbox needs: incoming messages, outgoing
  * messages (sent from the API or the phone) and outgoing delivery status
  * (delivered/read). webhookToken → webhookUrlToken: Green API sends it back as
- * `Authorization: Bearer <token>` on every notification, and that is what the
- * canonical webhook authenticates on (lib/whatsapp-webhook-auth). Omitted only
- * in the legacy `?secret=` mode. The instance reboots for a few seconds
- * afterwards (Green API behaviour).
+ * `Authorization: Bearer <token>` on every notification, and that is the ONLY
+ * thing the canonical webhook authenticates on (lib/whatsapp-webhook-auth).
+ * The instance reboots for a few seconds afterwards (Green API behaviour).
  */
 export async function setWebhookSettings(
-  args: ProbeArgs & { webhookUrl: string; webhookToken?: string },
+  args: ProbeArgs & { webhookUrl: string; webhookToken: string },
 ): Promise<void> {
   const url = `${baseFor(args)}/waInstance${args.instanceId}/setSettings/${args.token}`;
   const payload: Record<string, string> = {
@@ -871,7 +870,7 @@ export async function setWebhookSettings(
     // Track instance auth/connection changes (drives the per-employee state badge).
     stateWebhook: 'yes',
   };
-  if (args.webhookToken) payload.webhookUrlToken = args.webhookToken;
+  payload.webhookUrlToken = args.webhookToken;
 
   let res: Response;
   let raw: string;

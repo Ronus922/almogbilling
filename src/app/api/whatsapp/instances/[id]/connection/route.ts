@@ -116,7 +116,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
       await setWebhookSettings({
         instanceId: creds.greenInstanceId, token: creds.token, apiUrl: creds.apiUrl,
         webhookUrl: greenWebhookUrl(),
-        webhookToken: greenWebhookToken() || undefined,
+        webhookToken: greenWebhookToken(),
       });
       return NextResponse.json({ ok: true });
     }

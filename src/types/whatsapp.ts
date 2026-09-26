@@ -16,7 +16,7 @@
 //                                                 (creates a supplier from the conversation's number, then links it)
 //   GET    /api/suppliers/search?q=…             → SupplierSearchResult[] (supplier link dialog; whatsapp:edit)
 //   POST   /api/whatsapp/pull                   pull inbound (fallback) → { received, skipped }
-//   POST   /api/webhooks/greenapi              PUBLIC — Green API inbound (canonical; ?secret= query param)
+//   POST   /api/webhooks/greenapi              PUBLIC — Green API inbound (canonical; Authorization: Bearer <webhookUrlToken>)
 //   GET    /api/debtors/search?q=…              → DebtorSearchResult[] (link dialog)
 //   (Per-employee Green API instances are managed via /api/whatsapp/instances/*;
 //    the canonical inbound webhook receiver is POST /api/webhooks/greenapi.)

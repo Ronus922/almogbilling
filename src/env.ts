@@ -38,7 +38,6 @@ export const env = createEnv({
     // Cron/webhook secrets: the routes fail closed (503/401) when unset.
     BILLING_CRON_SECRET: optionalString,
     CRM_CRON_SECRET: optionalString,
-    GREEN_API_WEBHOOK_SECRET: optionalString,
     // Green API webhookUrlToken — sent back as `Authorization: Bearer` on every
     // notification; the inbound webhook authenticates on it (header, never query).
     GREENAPI_WEBHOOK_TOKEN: optionalString,
