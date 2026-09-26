@@ -1,10 +1,10 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
-import type { FinKind } from '@/lib/constants/finance';
-import type { DuplicateExpense, FinEntry } from '@/lib/types/finance';
+import type { FinKind, FinSection } from '@/lib/constants/finance';
+import type { DuplicateExpense, FinEntry, FundLedgerEntry } from '@/lib/types/finance';
 import { listDocumentsForEntries, toDocumentView } from './documents';
 
-export type { FinEntry, DuplicateExpense };
+export type { FinEntry, FundLedgerEntry, DuplicateExpense };
 
 export interface FinEntryInput {
   kind: FinKind;
@@ -25,6 +25,14 @@ export interface FinEntryInput {
 
 type EntryRow = Omit<FinEntry, 'documents'>;
 
+/** Joins the month's publish row onto `e` (alias `s`). A month with no row is
+ *  unpublished, so callers read `coalesce(s.published, false)`. Shared with
+ *  portal.ts so "published" means exactly one thing everywhere. */
+export const PUBLISHED_JOIN = `
+  left join public.finance_month_status s
+    on s.year = extract(year from e.period_month)::int
+   and s.month = extract(month from e.period_month)::int`;
+
 const COLS = `
   e.id, e.kind, e.category_id, c.name as category_name, c.section as category_section,
   c.is_hot_water as category_is_hot_water, c.sort_order as category_sort_order,
@@ -32,20 +40,40 @@ const COLS = `
   e.supplier_id, e.supplier_name, e.invoice_number, e.payment_date::text as payment_date,
   e.source, e.created_at, e.updated_at`;
 
-async function withDocuments(rows: EntryRow[]): Promise<FinEntry[]> {
+async function withDocuments<R extends EntryRow>(rows: R[]): Promise<Array<R & { documents: FinEntry['documents'] }>> {
   const docs = await listDocumentsForEntries(rows.map((r) => r.id));
   return rows.map((r) => ({ ...r, documents: (docs.get(r.id) ?? []).map(toDocumentView) }));
 }
 
-/** All live entries of one month ('YYYY-MM-01'), in display order. */
-export async function listEntriesForMonth(periodMonth: string): Promise<FinEntry[]> {
+/** All live entries of one month ('YYYY-MM-01'), in display order — of one
+ *  section when given (the overview shows the operating budget only; the
+ *  fund has its own all-time ledger, listFundEntries). */
+export async function listEntriesForMonth(periodMonth: string, opts: { section?: FinSection } = {}): Promise<FinEntry[]> {
   const r = await query<EntryRow>(
     `select ${COLS}
        from public.fin_entries e
        join public.fin_categories c on c.id = e.category_id
       where e.deleted_at is null and e.period_month = $1::date
+        and ($2::text is null or c.section = $2::text)
       order by e.kind, c.section, c.sort_order, c.name, coalesce(e.payment_date, e.period_month), e.created_at`,
-    [periodMonth],
+    [periodMonth, opts.section ?? null],
+  );
+  return withDocuments(r.rows);
+}
+
+/** Every live line of the renovation fund, all months, newest first, each with
+ *  whether its month is published. `publishedOnly` keeps only published months
+ *  — in the query, so the future owners portal cannot see a hidden month. */
+export async function listFundEntries(opts: { publishedOnly: boolean }): Promise<FundLedgerEntry[]> {
+  const r = await query<EntryRow & { published: boolean }>(
+    `select ${COLS}, coalesce(s.published, false) as published
+       from public.fin_entries e
+       join public.fin_categories c on c.id = e.category_id
+       ${PUBLISHED_JOIN}
+      where e.deleted_at is null and c.section = 'renovation_fund'
+        and ($1::boolean = false or coalesce(s.published, false))
+      order by coalesce(e.payment_date, e.period_month) desc, e.created_at desc`,
+    [opts.publishedOnly],
   );
   return withDocuments(r.rows);
 }

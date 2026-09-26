@@ -28,7 +28,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 }
 
 // PATCH /api/finance/entries/[id] — full update (the sheet always sends every
-// field). kind cannot change; new staged documents are linked on top of the
+// field). kind and section (operating / fund) cannot change; new staged documents are linked on top of the
 // existing ones (removal goes through DELETE /api/finance/documents/[docId]).
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
@@ -43,6 +43,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   const body = await parseJsonBody(req, financeEntryBodySchema);
   if (!body.ok) return body.response;
   if (body.data.kind !== existing.kind) return NextResponse.json({ error: 'לא ניתן לשנות את סוג השורה' }, { status: 400 });
+  if (body.data.section !== existing.category_section) {
+    return NextResponse.json({ error: 'לא ניתן להעביר שורה בין התקציב השוטף לקרן השיפוצים' }, { status: 400 });
+  }
   if (existing.documents.length + body.data.document_ids.length > 5) {
     return NextResponse.json({ error: 'ניתן לצרף עד 5 קבצים' }, { status: 400 });
   }

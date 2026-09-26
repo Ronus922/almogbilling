@@ -3,6 +3,7 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { financeEntryBodySchema } from '@/lib/validation/requests';
+import { FIN_SECTIONS, type FinSection } from '@/lib/constants/finance';
 import { createEntry, getEntry, listEntriesForMonth } from '@/lib/db/finance/entries';
 import { linkDocuments } from '@/lib/db/finance/documents';
 import { resolveEntryInput } from '@/lib/finance/entry-input';
@@ -13,13 +14,19 @@ import { writeAudit } from '@/lib/db/audit';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// GET /api/finance/entries?m=YYYY-MM — the live entries of one month.
+// GET /api/finance/entries?m=YYYY-MM[&section=operating|renovation_fund] — the
+// live entries of one month (both sections unless one is asked for).
 export async function GET(req: NextRequest) {
   try { await requirePermission('finance', 'view'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const m = req.nextUrl.searchParams.get('m');
   if (!isMonthKey(m)) return NextResponse.json({ error: 'חודש לא תקין' }, { status: 400 });
-  return NextResponse.json({ month: m, entries: await listEntriesForMonth(periodMonthOf(m)) });
+  const s = req.nextUrl.searchParams.get('section');
+  if (s !== null && !(FIN_SECTIONS as readonly string[]).includes(s)) {
+    return NextResponse.json({ error: 'חלק לא תקין' }, { status: 400 });
+  }
+  const section = s === null ? undefined : (s as FinSection);
+  return NextResponse.json({ month: m, entries: await listEntriesForMonth(periodMonthOf(m), { section }) });
 }
 
 // POST /api/finance/entries — a new income/expense line. Staged documents

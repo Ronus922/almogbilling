@@ -879,6 +879,28 @@ COMMENT ON TABLE public.fin_settings IS 'Single-row settings of the finance modu
 
 
 --
+-- Name: finance_month_status; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.finance_month_status (
+    year integer NOT NULL,
+    month integer NOT NULL,
+    published boolean DEFAULT false NOT NULL,
+    published_at timestamp with time zone,
+    published_by uuid,
+    CONSTRAINT finance_month_status_month_check CHECK (((month >= 1) AND (month <= 12))),
+    CONSTRAINT finance_month_status_year_check CHECK (((year >= 2000) AND (year <= 2100)))
+);
+
+
+--
+-- Name: TABLE finance_month_status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.finance_month_status IS 'Per-month resident visibility of the finance module. No row = not published. published_at / published_by record the LAST toggle (either direction).';
+
+
+--
 -- Name: import_runs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1169,6 +1191,27 @@ CREATE TABLE public.reminders (
 --
 
 COMMENT ON COLUMN public.reminders.notify_owner IS 'When true, the reminder engine also notifies the row owner (user_id) — the "אליי"/self opt-in — in addition to the entity assignees.';
+
+
+--
+-- Name: renovation_fund_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.renovation_fund_settings (
+    id smallint DEFAULT 1 NOT NULL,
+    target_amount numeric(12,2) DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by uuid,
+    CONSTRAINT renovation_fund_settings_single_row CHECK ((id = 1)),
+    CONSTRAINT renovation_fund_settings_target_check CHECK ((target_amount >= (0)::numeric))
+);
+
+
+--
+-- Name: TABLE renovation_fund_settings; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.renovation_fund_settings IS 'Single row: the renovation fund collection target (יעד גבייה) the cumulative KPI is measured against.';
 
 
 --
@@ -2219,6 +2262,14 @@ ALTER TABLE ONLY public.fin_settings
 
 
 --
+-- Name: finance_month_status finance_month_status_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.finance_month_status
+    ADD CONSTRAINT finance_month_status_pkey PRIMARY KEY (year, month);
+
+
+--
 -- Name: import_runs import_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2344,6 +2395,14 @@ ALTER TABLE ONLY public.reminder_categories
 
 ALTER TABLE ONLY public.reminders
     ADD CONSTRAINT reminders_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: renovation_fund_settings renovation_fund_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.renovation_fund_settings
+    ADD CONSTRAINT renovation_fund_settings_pkey PRIMARY KEY (id);
 
 
 --
@@ -4287,6 +4346,14 @@ ALTER TABLE ONLY public.fin_settings
 
 
 --
+-- Name: finance_month_status finance_month_status_published_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.finance_month_status
+    ADD CONSTRAINT finance_month_status_published_by_fkey FOREIGN KEY (published_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: import_runs import_runs_initiated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4460,6 +4527,14 @@ ALTER TABLE ONLY public.reminder_categories
 
 ALTER TABLE ONLY public.reminders
     ADD CONSTRAINT reminders_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: renovation_fund_settings renovation_fund_settings_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.renovation_fund_settings
+    ADD CONSTRAINT renovation_fund_settings_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -4882,5 +4957,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260921000521'),
     ('20260921072925'),
     ('20260921090433'),
-    ('20260921171135')
+    ('20260921171135'),
+    ('20260926074117')
 ;

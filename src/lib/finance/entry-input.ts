@@ -7,8 +7,9 @@ import { monthKeyOf, periodMonthOf } from './period';
 /**
  * Turns a validated request body into what fin_entries stores — shared by
  * POST and PATCH so the two can never disagree on the rules:
- *   • the category must exist and match the entry's kind; on CREATE it must
- *     also be active (an inactive one keeps its old lines but takes no new);
+ *   • the category must exist, match the entry's kind AND its section (the
+ *     tab it is entered from — operating / renovation fund); on CREATE it
+ *     must also be active (an inactive one keeps its old lines but takes no new);
  *   • an expense's period_month is derived from payment_date, an income's
  *     from the month picked;
  *   • a supplier picked from the table sets supplier_name from its
@@ -20,6 +21,14 @@ export async function resolveEntryInput(body: FinanceEntryBody, mode: 'create' |
   const category = await getCategory(body.category_id);
   if (!category) return { ok: false, error: 'הסעיף לא נמצא' };
   if (category.kind !== body.kind) return { ok: false, error: 'הסעיף אינו מתאים לסוג השורה' };
+  if (category.section !== body.section) {
+    return {
+      ok: false,
+      error: body.section === 'renovation_fund'
+        ? 'הסעיף אינו שייך לקרן השיפוצים — בחר מטרה מרשימת הקרן'
+        : 'הסעיף שייך לקרן השיפוצים ולא לתקציב השוטף',
+    };
+  }
   if (mode === 'create' && !category.is_active) return { ok: false, error: 'הסעיף אינו פעיל' };
 
   if (body.kind === 'income') {

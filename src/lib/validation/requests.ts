@@ -156,11 +156,12 @@ export const financeCategoryBodySchema = z.object({
   is_active: z.boolean().default(true),
 });
 
-// PATCH /api/finance/categories/:id — kind is immutable
+// PATCH /api/finance/categories/:id — kind and section are immutable (the
+// section is fixed by the tab the category was created from; a `section` key
+// in the body is dropped)
 export const financeCategoryPatchSchema = z
   .object({
     name: finNameSchema.optional(),
-    section: finSectionSchema.optional(),
     is_hot_water: z.boolean().optional(),
     is_active: z.boolean().optional(),
   })
@@ -186,9 +187,12 @@ const finDocumentIdsSchema = z
 const finText = (max: number, label: string) => z.string().trim().max(max, `${label} ארוך מדי (עד ${max} תווים)`).default('');
 
 // POST /api/finance/entries · PATCH /api/finance/entries/:id
+// `section` = which tab the line is entered from; the category MUST belong to
+// it (resolveEntryInput) — a fund line can never sit on an operating category.
 export const financeEntryBodySchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('expense'),
+    section: finSectionSchema.default('operating'),
     category_id: finCategoryIdSchema,
     amount: finAmountSchema,
     payment_date: finIsoDateSchema,
@@ -201,6 +205,7 @@ export const financeEntryBodySchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('income'),
+    section: finSectionSchema.default('operating'),
     category_id: finCategoryIdSchema,
     amount: finAmountSchema,
     month: finMonthSchema,
@@ -214,4 +219,19 @@ export type FinanceEntryBody = z.infer<typeof financeEntryBodySchema>;
 // PUT /api/finance/settings
 export const financeSettingsBodySchema = z.object({
   show_documents_to_residents: z.boolean({ error: 'ערך לא תקין' }),
+});
+
+// PUT /api/finance/month-status — publish / hide one month for residents
+export const financeMonthStatusBodySchema = z.object({
+  month: finMonthSchema,
+  published: z.boolean({ error: 'ערך לא תקין' }),
+});
+
+// PUT /api/finance/fund-settings — the renovation fund collection target
+export const financeFundSettingsBodySchema = z.object({
+  target_amount: z
+    .number({ error: 'יעד הגבייה הוא שדה חובה' })
+    .min(0, 'היעד לא יכול להיות שלילי')
+    .max(9_999_999_999, 'הסכום גדול מדי')
+    .refine((v) => Math.round(v * 100) / 100 === v, 'עד שתי ספרות אחרי הנקודה'),
 });

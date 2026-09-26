@@ -25,7 +25,7 @@ import { todayInJerusalem } from '@/lib/dates';
 import {
   FINANCE_RECEIPT_ACCEPT, FINANCE_RECEIPT_LIMITS, FIN_KIND_LABEL,
   receiptCanonicalMime, receiptExt, receiptHelpText, validateFinanceReceipt, validateFinanceReceiptSet,
-  type FinKind,
+  type FinKind, type FinSection,
 } from '@/lib/constants/finance';
 import { amountToInput, ils } from '@/lib/finance/format';
 import { monthLabel, shiftMonthKey } from '@/lib/finance/period';
@@ -34,7 +34,10 @@ import { DriveStatusIcon } from './DriveStatusIcon';
 import { SupplierSearchField } from './SupplierSearchField';
 
 // The one CREATE / EDIT sheet of the finance module — an expense or an income
-// (`kind`). Same skeleton as issues/issue-form-panel.tsx: gradient header,
+// (`kind`) of the operating budget or of the renovation fund (`section`, fixed
+// by the tab it opens from: only that section's active categories are offered,
+// and the server refuses a category of the other section). In the fund an
+// expense's category is its "מטרה". Same skeleton as issues/issue-form-panel.tsx: gradient header,
 // Sections, PanelFooter, dirty-close guard. Receipts are STAGED through the
 // shared AttachmentPicker (POST /api/finance/documents) and linked on save.
 // Mount with a fresh `key` per open so the form starts from `entry`.
@@ -77,10 +80,11 @@ function initialForm(kind: FinKind, entry: FinEntry | null, defaultMonth: string
 const fmtDate = (iso: string | null) => (iso ? iso.split('-').reverse().join('/') : '—');
 
 export function EntrySheet({
-  open, kind, entry, defaultMonth, categories, suppliers, canEdit, onOpenChange, onSaved, onDelete,
+  open, kind, section, entry, defaultMonth, categories, suppliers, canEdit, onOpenChange, onSaved, onDelete,
 }: {
   open: boolean;
   kind: FinKind;
+  section: FinSection;
   entry: FinEntry | null;
   /** The month the overview shows — the default for a new income. */
   defaultMonth: string;
@@ -93,6 +97,10 @@ export function EntrySheet({
 }) {
   const isEdit = entry !== null;
   const isExpense = kind === 'expense';
+  const isFund = section === 'renovation_fund';
+  /** In the fund an expense line is filed under a "מטרה", not a "סעיף". */
+  const catLabel = isFund && isExpense ? 'מטרה' : 'סעיף';
+  const noun = isFund ? (isExpense ? 'הוצאה מהקרן' : 'הפקדה לקרן') : FIN_KIND_LABEL[kind];
   const initial = useMemo(() => initialForm(kind, entry, defaultMonth), [kind, entry, defaultMonth]);
   const [form, setForm] = useState<FormState>(initial);
   const [touched, setTouched] = useState<Partial<Record<keyof FormState, boolean>>>({});
@@ -106,11 +114,11 @@ export function EntrySheet({
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => ({ ...f, [k]: v }));
   const touch = (k: keyof FormState) => setTouched((t) => ({ ...t, [k]: true }));
 
-  // Active categories of this kind (+ the entry's own one even if it was
-  // deactivated since — the line keeps its category).
+  // Active categories of this kind AND section (+ the entry's own one even if
+  // it was deactivated since — the line keeps its category).
   const categoryOptions = useMemo(
-    () => categories.filter((c) => c.kind === kind && (c.is_active || c.id === entry?.category_id)),
-    [categories, kind, entry?.category_id],
+    () => categories.filter((c) => c.kind === kind && c.section === section && (c.is_active || c.id === entry?.category_id)),
+    [categories, kind, section, entry?.category_id],
   );
   const monthOptions = useMemo(() => {
     const set = new Set<string>();
@@ -121,7 +129,7 @@ export function EntrySheet({
 
   const amountNum = Number(form.amount.replace(/,/g, '').trim());
   const errors: Partial<Record<keyof FormState, string>> = {
-    category_id: !form.category_id ? 'סעיף הוא שדה חובה' : undefined,
+    category_id: !form.category_id ? `${catLabel} ${catLabel === 'מטרה' ? 'היא' : 'הוא'} שדה חובה` : undefined,
     amount: !form.amount.trim()
       ? 'סכום הוא שדה חובה'
       : !Number.isFinite(amountNum) || amountNum <= 0 ? 'הסכום חייב להיות מספר גדול מ-0' : undefined,
@@ -185,6 +193,7 @@ export function EntrySheet({
     setSubmitting(true);
     try {
       const base = {
+        section,
         category_id: form.category_id,
         amount: Math.round(amountNum * 100) / 100,
         description: form.description.trim(),
@@ -207,7 +216,7 @@ export function EntrySheet({
       if ((data.documents_linked ?? 0) < (data.documents_requested ?? 0)) {
         toast.warning('חלק מהקבצים לא צורפו — פתח את השורה וצרף אותם שוב');
       }
-      toast.success(isEdit ? 'השורה עודכנה' : `${FIN_KIND_LABEL[kind]} נשמרה`);
+      toast.success(isEdit ? 'השורה עודכנה' : `${noun} נשמרה`);
       onSaved(data.entry);
       if (again) {
         setForm(initialForm(kind, null, defaultMonth, { payment_date: form.payment_date, month: form.month }));
@@ -238,8 +247,10 @@ export function EntrySheet({
   }
 
   const disabled = !canEdit || submitting;
-  const title = isEdit ? `עריכת ${FIN_KIND_LABEL[kind]}` : `${FIN_KIND_LABEL[kind]} חדשה`;
-  const selectedCategory = categoryOptions.find((c) => c.id === form.category_id);
+  const title = isEdit ? `עריכת ${noun}` : isFund ? noun : `${noun} חדשה`;
+  const emptyOptionsLabel = isFund
+    ? (isExpense ? 'אין מטרות פעילות — הוסף בהגדרות' : 'אין סעיפי הפקדה פעילים — הוסף בהגדרות')
+    : 'אין סעיפים פעילים — הוסף בהגדרות';
 
   return (
     <>
@@ -255,6 +266,7 @@ export function EntrySheet({
               <div className="min-w-0 flex-1">
                 <SheetTitle className="text-2xl font-bold text-white">{title}</SheetTitle>
                 <p className="mt-1 text-sm text-white/70">
+                  {isFund && 'נרשמת בקרן השיפוצים, מחוץ לתקציב השוטף. '}
                   {isExpense
                     ? 'ההוצאה נספרת במלואה בחודש של תאריך התשלום.'
                     : 'ההכנסה נרשמת לחודש שנבחר.'}
@@ -276,9 +288,9 @@ export function EntrySheet({
           <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5">
             <div className="space-y-4">
               <Section
-                title={isExpense ? 'פרטי ההוצאה' : 'פרטי ההכנסה'}
+                title={isFund ? (isExpense ? 'פרטי ההוצאה מהקרן' : 'פרטי ההפקדה') : isExpense ? 'פרטי ההוצאה' : 'פרטי ההכנסה'}
                 icon={isExpense ? Receipt : Coins}
-                iconTone={isExpense ? 'rose' : 'emerald'}
+                iconTone={isFund ? 'violet' : isExpense ? 'rose' : 'emerald'}
               >
                 <div className="space-y-4 py-2">
                   {isExpense && (
@@ -293,7 +305,7 @@ export function EntrySheet({
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="fin-entry-category" className="text-base font-medium text-muted-foreground">
-                        סעיף<span className="text-red-500"> *</span>
+                        {catLabel}<span className="text-red-500"> *</span>
                       </Label>
                       <Select
                         value={form.category_id || null}
@@ -305,23 +317,17 @@ export function EntrySheet({
                           aria-invalid={err('category_id') ? true : undefined}
                           className={cn('w-full data-[size=default]:h-10', err('category_id') && 'border-red-400 bg-red-50')}
                         >
-                          <SelectValue placeholder={categoryOptions.length ? 'בחר סעיף' : 'אין סעיפים פעילים — הוסף בהגדרות'}>
+                          <SelectValue placeholder={categoryOptions.length ? `בחר ${catLabel}` : emptyOptionsLabel}>
                             {(v: string | null) => (v ? categoryOptions.find((c) => c.id === v)?.name ?? null : null)}
                           </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           {categoryOptions.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>
-                              {c.name}{c.section === 'renovation_fund' ? ' · קרן שיפוצים' : ''}
-                            </SelectItem>
+                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      {err('category_id')
-                        ? <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {err('category_id')}</p>
-                        : selectedCategory?.section === 'renovation_fund'
-                          ? <p className="text-[12px] text-slate-500 text-start">סעיף בקרן השיפוצים — מוצג בנפרד מהתקציב השוטף.</p>
-                          : null}
+                      {err('category_id') && <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {err('category_id')}</p>}
                     </div>
 
                     <Field
@@ -425,7 +431,7 @@ export function EntrySheet({
                       maxLength={500}
                       placeholder={isExpense ? 'למשל: חשמל לחדר המדרגות — ספטמבר' : 'למשל: דמי ניהול ספטמבר'}
                     />
-                    <p className="text-[12px] text-slate-500 text-start">יוצג בעתיד לבעלי הדירות בפורטל, לצד הסעיף והסכום.</p>
+                    <p className="text-[12px] text-slate-500 text-start">יוצג בעתיד לבעלי הדירות בפורטל, לצד {catLabel === 'מטרה' ? 'המטרה' : 'הסעיף'} והסכום.</p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="fin-entry-note" className="text-base font-medium text-muted-foreground">הערה פנימית</Label>

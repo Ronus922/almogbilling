@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowDown, ArrowUp, Cloud, Eye, Pencil, Plus, RefreshCw, Tags, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Cloud, Eye, Pencil, PiggyBank, Plus, RefreshCw, Tags, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -13,13 +13,15 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
-import { FIN_KIND_LABEL_PLURAL, FIN_KINDS, FIN_SECTION_LABEL, FINANCE_DRIVE_ACCOUNT, type FinKind } from '@/lib/constants/finance';
+import { FINANCE_DRIVE_ACCOUNT, type FinKind, type FinSection } from '@/lib/constants/finance';
 import type { DriveBackupStats, DriveConnectionPublic, FinCategory, FinanceSettings } from '@/lib/types/finance';
 import { CategorySheet } from './CategorySheet';
 
-// /finance/settings — three cards in the settings column pattern
-// (src/app/(app)/settings/page.tsx): categories per kind, the Google Drive
-// connection, and the residents-documents switch.
+// /finance/settings — four cards in the settings column pattern
+// (src/app/(app)/settings/page.tsx): the operating categories per kind, the
+// renovation-fund purposes (its expense categories) and deposit categories,
+// the Google Drive connection, and the residents-documents switch. A
+// category's section is fixed by the card it is created from.
 
 export interface DriveStatusPayload {
   connection: DriveConnectionPublic;
@@ -47,7 +49,19 @@ function driveErrorText(reason: string | null): string {
     : 'חיבור Google Drive נכשל';
 }
 
-interface SheetState { open: boolean; kind: FinKind; category: FinCategory | null }
+interface SheetState { open: boolean; kind: FinKind; section: FinSection; category: FinCategory | null }
+
+/** One list of categories of one kind in one section, with its add button. */
+interface GroupDef { kind: FinKind; title: string; addLabel: string; emptyText: string }
+
+const OPERATING_GROUPS: GroupDef[] = [
+  { kind: 'income',  title: 'הכנסות', addLabel: 'סעיף חדש', emptyText: 'אין סעיפי הכנסות עדיין.' },
+  { kind: 'expense', title: 'הוצאות', addLabel: 'סעיף חדש', emptyText: 'אין סעיפי הוצאות עדיין.' },
+];
+const FUND_GROUPS: GroupDef[] = [
+  { kind: 'expense', title: 'מטרות (הוצאות מהקרן)', addLabel: 'מטרה חדשה', emptyText: 'אין מטרות עדיין.' },
+  { kind: 'income',  title: 'סעיפי הפקדה (הכנסות לקרן)', addLabel: 'סעיף הפקדה חדש', emptyText: 'אין סעיפי הפקדה עדיין.' },
+];
 
 const cardCls = 'ring-1 ring-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)] p-6';
 
@@ -83,7 +97,7 @@ export function FinanceSettingsClient({
 }) {
   const router = useRouter();
   const [categories, setCategories] = useState(initialCategories);
-  const [sheet, setSheet] = useState<SheetState>({ open: false, kind: 'expense', category: null });
+  const [sheet, setSheet] = useState<SheetState>({ open: false, kind: 'expense', section: 'operating', category: null });
   const [sheetKey, setSheetKey] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<FinCategory | null>(null);
   const [drive, setDrive] = useState(initialDrive);
@@ -100,15 +114,16 @@ export function FinanceSettingsClient({
     router.replace('/finance/settings');
   }, [driveNotice.status, driveNotice.reason, router]);
 
-  const byKind = (kind: FinKind) => categories.filter((c) => c.kind === kind).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'he'));
+  const listOf = (kind: FinKind, section: FinSection) =>
+    categories.filter((c) => c.kind === kind && c.section === section).sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'he'));
 
-  function openCreate(kind: FinKind) {
+  function openCreate(kind: FinKind, section: FinSection) {
     setSheetKey((k) => k + 1);
-    setSheet({ open: true, kind, category: null });
+    setSheet({ open: true, kind, section, category: null });
   }
   function openEdit(c: FinCategory) {
     setSheetKey((k) => k + 1);
-    setSheet({ open: true, kind: c.kind, category: c });
+    setSheet({ open: true, kind: c.kind, section: c.section, category: c });
   }
   function upsertLocal(c: FinCategory) {
     setCategories((list) => (list.some((x) => x.id === c.id) ? list.map((x) => (x.id === c.id ? c : x)) : [...list, c]));
@@ -132,7 +147,7 @@ export function FinanceSettingsClient({
   }
 
   async function move(c: FinCategory, dir: -1 | 1) {
-    const list = byKind(c.kind);
+    const list = listOf(c.kind, c.section);
     const idx = list.findIndex((x) => x.id === c.id);
     const j = idx + dir;
     if (idx < 0 || j < 0 || j >= list.length) return;
@@ -216,90 +231,98 @@ export function FinanceSettingsClient({
   const conn = drive.connection;
   const retryable = drive.stats.pending + drive.stats.failed + drive.stats.exhausted;
 
+  const renderGroup = (g: GroupDef, section: FinSection) => {
+    const list = listOf(g.kind, section);
+    return (
+      <div key={`${section}:${g.kind}`} className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="flex items-baseline gap-2 text-base font-semibold text-slate-800">
+            {g.title}
+            <span className="font-num text-xs font-medium tabular-nums text-slate-400">{list.length}</span>
+          </h3>
+          {canEdit && (
+            <Button type="button" variant="outline" size="sm" onClick={() => openCreate(g.kind, section)} className="gap-1.5">
+              <Plus className="h-4 w-4" /> {g.addLabel}
+            </Button>
+          )}
+        </div>
+        {list.length === 0 ? (
+          <p className="py-2 text-center text-xs text-slate-400">{g.emptyText}</p>
+        ) : (
+          <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
+            {list.map((c, i) => (
+              <li key={c.id} className={cn('flex flex-wrap items-center gap-2 p-3 sm:flex-nowrap', !c.is_active && 'bg-slate-50/60')}>
+                <div className="min-w-0 flex-1">
+                  <p className={cn('truncate text-sm font-semibold', c.is_active ? 'text-slate-900' : 'text-slate-400 line-through')}>{c.name}</p>
+                  <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                    {!c.is_active && <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">מושבת</span>}
+                    {c.is_hot_water && <span className="rounded-full bg-sky-50 px-2 py-0.5 font-semibold text-sky-700">מים חמים</span>}
+                    <span className="font-num tabular-nums">{c.entries_count} שורות</span>
+                  </p>
+                </div>
+                {canEdit && (
+                  <div className="flex items-center gap-1">
+                    <Tooltip>
+                      <TooltipTrigger render={<span className="block" />}>
+                        <label className="flex h-11 cursor-pointer select-none items-center px-1">
+                          <Switch checked={c.is_active} onCheckedChange={(v) => void toggleActive(c, v)} aria-label={c.is_active ? 'השבת' : 'הפעל'} />
+                        </label>
+                      </TooltipTrigger>
+                      <TooltipContent>{c.is_active ? 'פעיל — לחץ להשבתה' : 'מושבת — לחץ להפעלה'}</TooltipContent>
+                    </Tooltip>
+                    <button type="button" onClick={() => void move(c, -1)} disabled={i === 0} aria-label="הזז למעלה" className="grid h-11 w-11 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30">
+                      <ArrowUp className="h-4 w-4" />
+                    </button>
+                    <button type="button" onClick={() => void move(c, 1)} disabled={i === list.length - 1} aria-label="הזז למטה" className="grid h-11 w-11 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30">
+                      <ArrowDown className="h-4 w-4" />
+                    </button>
+                    <button type="button" onClick={() => openEdit(c)} aria-label="עריכה" className="grid h-11 w-11 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-blue-600">
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <Tooltip>
+                      <TooltipTrigger render={<span className="block" />}>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteTarget(c)}
+                          disabled={c.entries_count > 0}
+                          aria-label="מחיקה"
+                          className="grid h-11 w-11 place-items-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>{c.entries_count > 0 ? 'יש שורות — ניתן להשבית בלבד' : 'מחיקה'}</TooltipContent>
+                    </Tooltip>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
       <div>
         <h1 className="text-2xl font-extrabold text-slate-900">סעיפים והגדרות</h1>
-        <p className="mt-1 text-sm text-muted-foreground">שקיפות כספית — הגדרות המודול. אדמין בלבד.</p>
+        <p className="mt-1 text-sm text-muted-foreground">שקיפות כספית — סעיפי השוטף, מטרות הקרן, גיבוי ל-Drive והצגה לדיירים. אדמין בלבד.</p>
       </div>
 
-      {/* ── Categories ─────────────────────────────────────────────────── */}
-      <Card className={cardCls}>
-        <CardHeader icon={Tags} tone="bg-blue-50 text-blue-600" title="סעיפים" subtitle="סעיפי ההכנסה וההוצאה שמוצעים בטופס ההזנה. סעיף שיש לו שורות לא נמחק — רק מושבת." />
+      {/* ── Operating categories ───────────────────────────────────────── */}
+      <Card id="operating" className={cardCls}>
+        <CardHeader icon={Tags} tone="bg-blue-50 text-blue-600" title="סעיפים — תקציב שוטף" subtitle="סעיפי ההכנסה וההוצאה שמוצעים בטופס ההזנה בלשונית „שוטף”. סעיף שיש לו שורות לא נמחק — רק מושבת." />
         <div className="mt-6 space-y-6">
-          {FIN_KINDS.map((kind) => {
-            const list = byKind(kind);
-            return (
-              <div key={kind} className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="flex items-baseline gap-2 text-base font-semibold text-slate-800">
-                    {FIN_KIND_LABEL_PLURAL[kind]}
-                    <span className="font-num text-xs font-medium tabular-nums text-slate-400">{list.length}</span>
-                  </h3>
-                  {canEdit && (
-                    <Button type="button" variant="outline" size="sm" onClick={() => openCreate(kind)} className="gap-1.5">
-                      <Plus className="h-4 w-4" /> סעיף חדש
-                    </Button>
-                  )}
-                </div>
-                {list.length === 0 ? (
-                  <p className="py-2 text-center text-xs text-slate-400">אין סעיפי {FIN_KIND_LABEL_PLURAL[kind]} עדיין.</p>
-                ) : (
-                  <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
-                    {list.map((c, i) => (
-                      <li key={c.id} className={cn('flex flex-wrap items-center gap-2 p-3 sm:flex-nowrap', !c.is_active && 'bg-slate-50/60')}>
-                        <div className="min-w-0 flex-1">
-                          <p className={cn('truncate text-sm font-semibold', c.is_active ? 'text-slate-900' : 'text-slate-400 line-through')}>{c.name}</p>
-                          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                            <span className={cn('rounded-full px-2 py-0.5 font-semibold', c.section === 'renovation_fund' ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 text-slate-600')}>
-                              {FIN_SECTION_LABEL[c.section]}
-                            </span>
-                            {c.is_hot_water && <span className="rounded-full bg-sky-50 px-2 py-0.5 font-semibold text-sky-700">מים חמים</span>}
-                            <span className="font-num tabular-nums">{c.entries_count} שורות</span>
-                          </p>
-                        </div>
-                        {canEdit && (
-                          <div className="flex items-center gap-1">
-                            <Tooltip>
-                              <TooltipTrigger render={<span className="block" />}>
-                                <label className="flex h-11 cursor-pointer select-none items-center px-1">
-                                  <Switch checked={c.is_active} onCheckedChange={(v) => void toggleActive(c, v)} aria-label={c.is_active ? 'השבת' : 'הפעל'} />
-                                </label>
-                              </TooltipTrigger>
-                              <TooltipContent>{c.is_active ? 'פעיל — לחץ להשבתה' : 'מושבת — לחץ להפעלה'}</TooltipContent>
-                            </Tooltip>
-                            <button type="button" onClick={() => void move(c, -1)} disabled={i === 0} aria-label="הזז למעלה" className="grid h-11 w-11 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30">
-                              <ArrowUp className="h-4 w-4" />
-                            </button>
-                            <button type="button" onClick={() => void move(c, 1)} disabled={i === list.length - 1} aria-label="הזז למטה" className="grid h-11 w-11 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30">
-                              <ArrowDown className="h-4 w-4" />
-                            </button>
-                            <button type="button" onClick={() => openEdit(c)} aria-label="עריכה" className="grid h-11 w-11 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-blue-600">
-                              <Pencil className="h-4 w-4" />
-                            </button>
-                            <Tooltip>
-                              <TooltipTrigger render={<span className="block" />}>
-                                <button
-                                  type="button"
-                                  onClick={() => setDeleteTarget(c)}
-                                  disabled={c.entries_count > 0}
-                                  aria-label="מחיקה"
-                                  className="grid h-11 w-11 place-items-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent>{c.entries_count > 0 ? 'יש שורות בסעיף — ניתן להשבית בלבד' : 'מחיקה'}</TooltipContent>
-                            </Tooltip>
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            );
-          })}
+          {OPERATING_GROUPS.map((g) => renderGroup(g, 'operating'))}
+        </div>
+      </Card>
+
+      {/* ── Renovation-fund purposes ───────────────────────────────────── */}
+      <Card id="renovation-fund" className={cn(cardCls, 'scroll-mt-24')}>
+        <CardHeader icon={PiggyBank} tone="bg-violet-50 text-violet-600" title="מטרות — קרן שיפוצים" subtitle="מטרות ההוצאה של הקרן וסעיפי ההפקדה אליה. „יצא לפי מטרה” בלשונית הקרן מציג כל מטרה, גם ב-0 ₪. מטרה שיש לה תנועות לא נמחקת — רק מושבתת." />
+        <div className="mt-6 space-y-6">
+          {FUND_GROUPS.map((g) => renderGroup(g, 'renovation_fund'))}
         </div>
       </Card>
 
@@ -371,6 +394,7 @@ export function FinanceSettingsClient({
         key={sheetKey}
         open={sheet.open}
         kind={sheet.kind}
+        section={sheet.section}
         category={sheet.category}
         onOpenChange={(o) => setSheet((s) => ({ ...s, open: o }))}
         onSaved={upsertLocal}
@@ -380,7 +404,7 @@ export function FinanceSettingsClient({
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
             <AlertDialogTitle>למחוק את הסעיף?</AlertDialogTitle>
-            <AlertDialogDescription>{deleteTarget ? `הסעיף «${deleteTarget.name}» יימחק לצמיתות.` : ''}</AlertDialogDescription>
+            <AlertDialogDescription>{deleteTarget ? `${deleteTarget.section === 'renovation_fund' && deleteTarget.kind === 'expense' ? 'המטרה' : 'הסעיף'} «${deleteTarget.name}» ${deleteTarget.section === 'renovation_fund' && deleteTarget.kind === 'expense' ? 'תימחק' : 'יימחק'} לצמיתות.` : ''}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>ביטול</AlertDialogCancel>

@@ -64,3 +64,43 @@ describe('finance request schemas', () => {
     expect(financeSettingsBodySchema.safeParse({ show_documents_to_residents: 'yes' }).success).toBe(false);
   });
 });
+
+// ── Section (operating / renovation fund) + month publishing + fund target ──
+import { financeFundSettingsBodySchema, financeMonthStatusBodySchema } from '@/lib/validation/requests';
+
+describe('finance request schemas — fund + publishing', () => {
+  it('entry: section defaults to operating, accepts the fund, rejects anything else', () => {
+    const base = { kind: 'income', category_id: CAT, amount: 10, month: '2026-09' };
+    const def = financeEntryBodySchema.safeParse(base);
+    expect(def.success).toBe(true);
+    if (def.success) expect(def.data.section).toBe('operating');
+    const fund = financeEntryBodySchema.safeParse({ ...base, section: 'renovation_fund' });
+    expect(fund.success).toBe(true);
+    if (fund.success) expect(fund.data.section).toBe('renovation_fund');
+    expect(financeEntryBodySchema.safeParse({ ...base, section: 'savings' }).success).toBe(false);
+    expect(financeEntryBodySchema.safeParse({ kind: 'expense', section: 'renovation_fund', category_id: CAT, amount: 10, payment_date: '2026-09-15' }).success).toBe(true);
+  });
+
+  it('category patch drops section (immutable after creation)', () => {
+    const r = financeCategoryPatchSchema.safeParse({ name: 'x', section: 'renovation_fund' });
+    expect(r.success).toBe(true);
+    if (r.success) expect('section' in r.data).toBe(false);
+  });
+
+  it('month status needs a month key and a boolean', () => {
+    expect(financeMonthStatusBodySchema.safeParse({ month: '2026-09', published: true }).success).toBe(true);
+    expect(financeMonthStatusBodySchema.safeParse({ month: '2026-9', published: true }).success).toBe(false);
+    expect(financeMonthStatusBodySchema.safeParse({ month: '2026-09', published: 'yes' }).success).toBe(false);
+    expect(financeMonthStatusBodySchema.safeParse({ month: '2026-09' }).success).toBe(false);
+  });
+
+  it('fund target: 0 or more, two decimals', () => {
+    expect(financeFundSettingsBodySchema.safeParse({ target_amount: 0 }).success).toBe(true);
+    expect(financeFundSettingsBodySchema.safeParse({ target_amount: 200000 }).success).toBe(true);
+    expect(financeFundSettingsBodySchema.safeParse({ target_amount: 12.34 }).success).toBe(true);
+    expect(financeFundSettingsBodySchema.safeParse({ target_amount: -1 }).success).toBe(false);
+    expect(financeFundSettingsBodySchema.safeParse({ target_amount: 1.234 }).success).toBe(false);
+    expect(financeFundSettingsBodySchema.safeParse({ target_amount: '5' }).success).toBe(false);
+    expect(financeFundSettingsBodySchema.safeParse({}).success).toBe(false);
+  });
+});

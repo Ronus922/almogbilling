@@ -1,37 +1,19 @@
 'use client';
 
-import { Pencil, Trash2 } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { ils } from '@/lib/finance/format';
 import type { FinKind } from '@/lib/constants/finance';
 import type { FinEntry } from '@/lib/types/finance';
 import { EntryFilesPopover } from './EntryFilesPopover';
+import { COL_PX, HEAD_CLASS, RowActions, TABLE_CLASS, fmtDate } from './table-shared';
 
 // One month's lines of one kind, grouped by category with a subtotal per
 // category and a total at the bottom. Desktop: a table (DESIGN.md §9, token
 // variant of DebtorsTable); phones: cards per line (`roomy:` variant).
 
-/** Column widths (px) shared by the income and the expense table, so that
- *  "סכום", "קבצים" and "פעולות" — the last three columns of both — sit on one
- *  vertical line across the two tables. `table-fixed` + `<colgroup>` make the
- *  widths hold regardless of content; the columns that differ between the two
- *  (description / date · supplier · invoice · description) share what is left.
- *  Date and invoice number hold short fixed-length content, so they are fixed
- *  too and leave the flexible room to supplier and description. */
-const COL_PX = {
-  amount: 160,
-  files: 128,
-  actions: 112,
-  date: 112,
-  invoice: 144,
-} as const;
-
-/** Both tables must be equally wide for the shared columns to line up: the
- *  same `w-full` inside the same parent, and the same minimum below which the
- *  `Table` wrapper scrolls horizontally instead of crushing the text columns. */
-const TABLE_CLASS = 'table-fixed min-w-[960px]';
+// Column widths, table class, date format and row actions come from
+// table-shared.tsx — the fund ledger uses the very same ones.
 
 function ColGroup({ isExpense }: { isExpense: boolean }) {
   return (
@@ -75,44 +57,9 @@ function groupByCategory(entries: FinEntry[]): Group[] {
   return [...map.values()];
 }
 
-/** 'YYYY-MM-DD' → 'DD/MM/YYYY' without touching Date (no time zone games). */
-function fmtDate(iso: string | null): string {
-  return iso ? iso.split('-').reverse().join('/') : '—';
-}
-
 function HotWaterBadge() {
   return (
     <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">מים חמים</span>
-  );
-}
-
-function RowActions({ entry, canEdit, onEdit, onDelete, size }: {
-  entry: FinEntry; canEdit: boolean; onEdit: (e: FinEntry) => void; onDelete: (e: FinEntry) => void; size: 'sm' | 'lg';
-}) {
-  if (!canEdit) return null;
-  const btn = cn(
-    'grid place-items-center rounded-lg transition-colors',
-    size === 'lg' ? 'h-11 w-11' : 'h-9 w-9',
-  );
-  return (
-    <div className="flex items-center gap-1">
-      <Tooltip>
-        <TooltipTrigger render={<span className="block" />}>
-          <button type="button" onClick={() => onEdit(entry)} aria-label="עריכה" className={cn(btn, 'text-slate-400 hover:bg-slate-100 hover:text-blue-600')}>
-            <Pencil className="h-4 w-4" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>עריכה</TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger render={<span className="block" />}>
-          <button type="button" onClick={() => onDelete(entry)} aria-label="מחיקה" className={cn(btn, 'text-slate-400 hover:bg-red-50 hover:text-red-600')}>
-            <Trash2 className="h-4 w-4" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>מחיקה</TooltipContent>
-      </Tooltip>
-    </div>
   );
 }
 
@@ -138,7 +85,7 @@ export function EntryGroupTable({
     );
   }
 
-  const head = 'h-11 px-4 text-sm font-semibold text-ink-2';
+  const head = HEAD_CLASS;
   return (
     <>
       {/* Phones: cards */}
