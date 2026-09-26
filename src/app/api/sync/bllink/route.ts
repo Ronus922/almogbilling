@@ -5,10 +5,14 @@ import { secretsMatch } from '@/lib/auth/cronSecret';
 import { createImportRun } from '@/lib/db/importRuns';
 import { createSyncRun, finishSyncRunSuccess, finishSyncRunError, type SyncTriggerSource } from '@/lib/db/syncRuns';
 import { fetchCrmDebtorRows, writeCrmSnapshot } from '@/lib/sync/bllinkPull';
+import { fetchLocalDebtorRows, recordWitnessCompare, type LocalSnapshot } from '@/lib/sync/localPull';
+import { compareSnapshots, isCompareUnavailable, type CompareResult } from '@/lib/sync/bllinkCompare';
 import {
   SyncStageError,
   checkSnapshotFreshness,
+  localFreshnessLimitHours,
   parseCrmScrapeResponse,
+  resolveBllinkSource,
   stageHttpStatus,
   type SyncStage,
 } from '@/lib/sync/decision';
@@ -43,6 +47,23 @@ const SCRAPE_TIMEOUT_MS = 120_000;
  *
  * Success returns { ok:true, stage:'done', sourceRunAt, merged, … } — the
  * dashboard shows sourceRunAt ("נתוני בלינק נכונים ל-"), never the copy time.
+ *
+ * ── BLLINK_SOURCE=billing (Phase 2, 26/09/2026) ──────────────────────────────
+ * The snapshot comes from billing's OWN newest successful scrape
+ * (bllink_scrapes, 05:30 Asia/Jerusalem) instead of the CRM:
+ *   stale  → that scrape must be younger than BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS
+ *            (strict, no default: unset = fail closed). Yesterday's snapshot is
+ *            NEVER copied quietly — the run stops, sync_runs says why, nothing
+ *            is written, and the failed unit alerts. (409)
+ *   guard  → the same guards.                                            (409)
+ *   pull   → the same write (importParsedRows: merge + zero-out).       (502)
+ *   witness → AFTER the write and the success record, the CRM is asked for the
+ *            same morning's report (triggerCrmScrape + fetchCrmDebtorRows) and
+ *            compared with what was written; the result goes onto the scrape
+ *            row (compare_summary). Best-effort: a CRM failure is a warning
+ *            in the journal and `compare: unavailable`, never a failed sync.
+ * sourceRunAt is then the scrape's finished_at — so the banner and the
+ * freshness indicator watch billing's own scraper, not the CRM.
  */
 export async function POST(req: Request) {
   // ── auth: machine job (header) or admin session ─────────────────────────
@@ -83,8 +104,60 @@ export async function POST(req: Request) {
   const syncRunId = await createSyncRun({ triggeredBy: actorId, source });
   let sourceRunAt: string | null = null;
   let importRunId: string | null = null;
+  const origin = resolveBllinkSource(env.BLLINK_SOURCE);
 
   try {
+    if (origin === 'billing') {
+      // ── stage: stale — billing's own newest scrape, and it must be today's ──
+      const local = await fetchLocalDebtorRows(); // throws → 'pull' below
+      if (!local) {
+        throw new SyncStageError('stale', 'אין סריקה מוצלחת של billing ב-bllink_scrapes — לא הועתק דבר');
+      }
+      sourceRunAt = local.finishedAt;
+      const limitHours = localFreshnessLimitHours(env.BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS);
+      if (limitHours === null) {
+        throw new SyncStageError(
+          'stale',
+          'BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS אינו מוגדר — במקור billing הסנכרון עוצר (fail-closed), לא הועתק דבר',
+          sourceRunAt,
+        );
+      }
+      const freshness = checkSnapshotFreshness(local.finishedAt, limitHours, Date.now());
+      if (!freshness.fresh) {
+        throw new SyncStageError(
+          'stale',
+          `הסריקה המוצלחת האחרונה של billing אינה מהיום — ${freshness.message}. לא הועתק דבר.`,
+          sourceRunAt,
+        );
+      }
+
+      // ── stages: guard + pull (write) — the same guards, the same write ──────
+      importRunId = await createImportRun('merge', actorId);
+      const merged = await writeCrmSnapshot(local.rows, local.report, importRunId);
+
+      await finishSyncRunSuccess(syncRunId, { sourceRunAt, rowsCount: merged, importRunId });
+      logger.info(
+        `[bllink:sync] OK syncRun=${syncRunId} source=${source} origin=billing scrape=${local.scrapeId} merged=${merged} sourceRunAt=${sourceRunAt}`,
+      );
+
+      // ── witness: the CRM's report of the same morning, compared, off the data path ──
+      const witness = await witnessCompare(local);
+      return NextResponse.json({
+        ok: true,
+        stage: 'done',
+        message: `סונכרנו ${merged} דירות`,
+        sourceRunAt,
+        merged,
+        runId: importRunId,
+        syncRunId,
+        syncedAt: new Date().toISOString(),
+        origin,
+        witness: isCompareUnavailable(witness)
+          ? { unavailable: witness.reason }
+          : { crm_rows: witness.crm_rows, local_rows: witness.local_rows, diff_count: witness.diff_count, crm_snapshot_at: witness.crm_snapshot_at },
+      });
+    }
+
     // ── stage: scrape ──────────────────────────────────────────────────────
     await triggerCrmScrape();
 
@@ -127,6 +200,42 @@ export async function POST(req: Request) {
       { status: stageHttpStatus(stage) },
     );
   }
+}
+
+/**
+ * BLLINK_SOURCE=billing: after debtors were written from the local snapshot,
+ * ask the CRM to scrape Bllink now and compare its report with what was
+ * written — two independent readings of the same morning. The CRM is a
+ * WITNESS: whatever happens here is logged and stored on the scrape row, and
+ * NOTHING here can fail the sync (the run is already recorded as success).
+ * A CRM that cannot be reached is `compare: unavailable`, a warning, no alert.
+ */
+async function witnessCompare(local: LocalSnapshot): Promise<CompareResult> {
+  const comparedAt = new Date().toISOString();
+  let result: CompareResult;
+  try {
+    await triggerCrmScrape();
+    const crm = await fetchCrmDebtorRows();
+    result = compareSnapshots(local.compareRows, crm.compareRows, {
+      crmSnapshotAt: crm.report.runMaxAt,
+      comparedBy: 'sync',
+    });
+    const line =
+      `[bllink:witness] scrape=${local.scrapeId} local=${result.local_rows} crm=${result.crm_rows} ` +
+      `missing=${result.missing.length} extra=${result.extra.length} field_diffs=${result.diffs.length} ` +
+      `crm_snapshot_at=${result.crm_snapshot_at ?? '?'}`;
+    if (result.diff_count > 0) logger.warn(line); else logger.info(line);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    result = { compare: 'unavailable', reason, local_rows: local.compareRows.size, compared_by: 'sync', compared_at: comparedAt };
+    logger.warn(`[bllink:witness] scrape=${local.scrapeId} CRM unavailable — warning only: ${reason}`);
+  }
+  try {
+    await recordWitnessCompare(local.scrapeId, result);
+  } catch (err) {
+    logger.warn(`[bllink:witness] could not store the comparison: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return result;
 }
 
 /**

@@ -3,10 +3,12 @@ import { query } from '@/lib/db';
 import { importParsedRows } from '@/lib/import/runner';
 import { finishRunError } from '@/lib/db/importRuns';
 import { SyncStageError } from '@/lib/sync/decision';
-import { splitOwnerTenantPhones } from '@/lib/whatsapp';
 import type { ParsedDebtorRow } from '@/lib/excel/parse';
 import { logger } from '@/lib/logger';
 import { env } from '@/env';
+import { buildSnapshot, type BllinkPullReport, type Snapshot, type SourceDebtorRecord } from './bllinkMap';
+
+export type { BllinkPullReport };
 
 /**
  * Pulls the current Bllink debt report from the CRM's `debtor_records`
@@ -60,27 +62,17 @@ import { env } from '@/env';
  * all-zero column not fed by Bllink; the sync leaves it 0 (the zero-out keeps
  * absent apartments at 0).
  *
- * Column mapping (CRM debtor_records → billing debtors / ParsedDebtorRow):
- *   apartment_number  →  apartment_number
- *   owner_name        →  owner_name (feeds the contacts hook only)
- *   phone_primary     →  phone_owner / phone_tenant (split; contacts hook only)
- *   monthly_debt (E)  →  management_fees
- *   special_debt (G)  →  hot_water_debt
- *   management_months_raw (F) → monthly_debt (text month-range)
- *   total_debt   (D)  →  reconciliation only; billing total_debt is RECOMPUTED
- *                         = management_fees + hot_water_debt
- *   notes        (H)  →  details
+ * Column mapping: src/lib/sync/bllinkMap.ts (shared with the local source).
+ *
+ * ── BLLINK_SOURCE=billing (26/09/2026) ───────────────────────────────────────
+ * The route may take the snapshot from billing's own scrape instead
+ * (localPull.ts). It then still calls fetchCrmDebtorRows — as a WITNESS, for
+ * the comparison only — and writes through the very same writeCrmSnapshot
+ * below, so both sources share the guards, the merge, the zero-out and the
+ * "manual fields are never touched" rule by construction.
  */
 
-interface CrmDebtorRecord {
-  apartment_number: string | null;
-  owner_name: string | null;
-  phone_primary: string | null;
-  total_debt: number | null;
-  monthly_debt: number | null;
-  management_months_raw: string | null;
-  special_debt: number | null;
-  notes: string | null;
+interface CrmDebtorRecord extends SourceDebtorRecord {
   imported_this_run: boolean | null;
   last_import_at: string | null;
 }
@@ -97,57 +89,13 @@ const MIN_ROWS = Number(env.BLLINK_SYNC_MIN_ROWS ?? 50);
 const MIN_FRACTION = Number(env.BLLINK_SYNC_MIN_FRACTION ?? 0.4);
 const RECON_TOL = 0.01;
 
-function toNum(v: number | null): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
-}
-
-function toText(v: string | null): string | null {
-  const s = (v ?? '').trim();
-  return s.length === 0 ? null : s;
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
-function mapRow(r: CrmDebtorRecord): ParsedDebtorRow | null {
-  const apt = toText(r.apartment_number);
-  if (!apt) return null;
-  // phone_primary may be compound/labelled ("054… (בעלים) 050… (שוכר/ת)") —
-  // split into clean local owner/tenant numbers before writing.
-  const phones = splitOwnerTenantPhones(r.phone_primary);
-  const management_fees = toNum(r.monthly_debt);
-  const hot_water_debt = toNum(r.special_debt);
-  return {
-    apartment_number: apt,
-    owner_name: toText(r.owner_name),
-    phone_owner: phones.owner,
-    phone_tenant: phones.tenant,
-    // Absolute overwrite: total_debt is REBUILT from the components (default 0),
-    // never the raw source total — so a stale/inconsistent source total cannot
-    // leak in. Reconciled against the source total before writing.
-    total_debt: round2(management_fees + hot_water_debt),
-    management_fees,
-    monthly_debt: toText(r.management_months_raw),
-    hot_water_debt,
-    details: toText(r.notes),
-  };
-}
-
-export interface BllinkPullReport {
-  count: number;
-  rawTotal: number; // Σ CRM-reported total_debt (current run)
-  componentTotal: number; // Σ (management_fees + hot_water_debt)
-  runMinAt: string | null;
-  runMaxAt: string | null;
-}
-
 /**
  * Fetches + maps ONLY the current Bllink run (`imported_this_run = true`).
  * Read-only — does not write. Returns the mapped rows plus a reconciliation
- * report used by the freshness check (route) and the safety guards (writeCrmSnapshot).
+ * report used by the freshness check (route) and the safety guards
+ * (writeCrmSnapshot), and the compare rows the witness comparison reads.
  */
-export async function fetchCrmDebtorRows(): Promise<{ rows: ParsedDebtorRow[]; report: BllinkPullReport }> {
+export async function fetchCrmDebtorRows(): Promise<Snapshot> {
   const base = env.CRM_DEBTORS_REST_URL;
   const key = env.CRM_DEBTORS_REST_KEY;
   if (!base || !key) {
@@ -171,43 +119,19 @@ export async function fetchCrmDebtorRows(): Promise<{ rows: ParsedDebtorRow[]; r
     throw new Error('CRM debtor_records returned non-array payload');
   }
 
-  // The CRM source can hold near-duplicate apartment numbers (whitespace
-  // variants that trim to the same key). Dedupe the RAW records by
-  // apartment_number — last occurrence wins — then map + reconcile.
-  const rawByApt = new Map<string, CrmDebtorRecord>();
-  for (const r of data) {
-    const apt = toText(r.apartment_number);
-    if (apt) rawByApt.set(apt, r);
-  }
-
-  const rows: ParsedDebtorRow[] = [];
-  let rawTotal = 0;
-  let componentTotal = 0;
+  // The snapshot is dated by the CRM's last_import_at (oldest / newest row of
+  // the run); dedupe (last occurrence wins), mapping and reconciliation are the
+  // shared bllinkMap.buildSnapshot — the same code the local source goes through.
   let runMinAt: string | null = null;
   let runMaxAt: string | null = null;
-  for (const r of rawByApt.values()) {
-    const mapped = mapRow(r);
-    if (!mapped) continue;
-    rows.push(mapped);
-    rawTotal += toNum(r.total_debt);
-    componentTotal += mapped.total_debt;
+  for (const r of data) {
     const at = r.last_import_at;
     if (at) {
       if (runMinAt === null || at < runMinAt) runMinAt = at;
       if (runMaxAt === null || at > runMaxAt) runMaxAt = at;
     }
   }
-
-  return {
-    rows,
-    report: {
-      count: rows.length,
-      rawTotal: round2(rawTotal),
-      componentTotal: round2(componentTotal),
-      runMinAt,
-      runMaxAt,
-    },
-  };
+  return buildSnapshot(data, { minAt: runMinAt, maxAt: runMaxAt });
 }
 
 /** Apartments that currently carry a balance in billing — the denominator for

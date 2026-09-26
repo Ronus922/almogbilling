@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   SyncStageError,
   checkSnapshotFreshness,
+  localFreshnessLimitHours,
   parseCrmScrapeResponse,
+  resolveBllinkSource,
   stageHttpStatus,
 } from '@/lib/sync/decision';
 import { secretsMatch } from '@/lib/auth/cronSecret';
@@ -97,5 +99,39 @@ describe('secretsMatch — constant-time x-cron-secret compare', () => {
     expect(secretsMatch('abd', 'abc')).toBe(false);
     expect(secretsMatch('ab', 'abc')).toBe(false);
     expect(secretsMatch('', 'abc')).toBe(false);
+  });
+});
+
+describe('resolveBllinkSource — the flag switches the source only when it says exactly "billing"', () => {
+  it('missing, empty or unknown = crm (the pre-Phase-2 behaviour)', () => {
+    expect(resolveBllinkSource(undefined)).toBe('crm');
+    expect(resolveBllinkSource(null)).toBe('crm');
+    expect(resolveBllinkSource('')).toBe('crm');
+    expect(resolveBllinkSource('crm')).toBe('crm');
+    expect(resolveBllinkSource('local')).toBe('crm');
+    expect(resolveBllinkSource('Billing')).toBe('crm');
+    expect(resolveBllinkSource('billing ')).toBe('billing'); // trimmed
+  });
+  it('billing = billing', () => {
+    expect(resolveBllinkSource('billing')).toBe('billing');
+  });
+});
+
+describe('localFreshnessLimitHours — no default: unset means the caller fails closed', () => {
+  it('parses a positive number of hours', () => {
+    expect(localFreshnessLimitHours('20')).toBe(20);
+    expect(localFreshnessLimitHours('0.5')).toBe(0.5);
+  });
+  it('unset, empty, zero, negative or non-numeric = null', () => {
+    expect(localFreshnessLimitHours(undefined)).toBeNull();
+    expect(localFreshnessLimitHours('')).toBeNull();
+    expect(localFreshnessLimitHours('0')).toBeNull();
+    expect(localFreshnessLimitHours('-3')).toBeNull();
+    expect(localFreshnessLimitHours('twenty')).toBeNull();
+  });
+  it('with the limit, yesterday\'s 05:30 scrape is refused at 06:00 today and today\'s is accepted', () => {
+    const now = Date.parse('2026-09-27T03:00:00Z'); // 06:00 Israel
+    expect(checkSnapshotFreshness('2026-09-26T02:30:40Z', 20, now).fresh).toBe(false);
+    expect(checkSnapshotFreshness('2026-09-27T02:30:40Z', 20, now).fresh).toBe(true);
   });
 });

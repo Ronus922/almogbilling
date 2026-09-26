@@ -64,6 +64,14 @@ export const env = createEnv({
     BLLINK_SYNC_MIN_FRACTION: numeric,
     // Newest CRM snapshot the sync will copy, in hours (default 36). Older → stage 'stale', nothing written.
     BLLINK_MAX_SNAPSHOT_AGE_HOURS: numeric,
+    // Where /api/sync/bllink takes the debtors snapshot from (Phase 2, 26/09/2026):
+    // 'billing' = the newest successful scrape in public.bllink_scrapes (the CRM
+    // is then only a witness); unset or anything else = 'crm', the previous path.
+    BLLINK_SOURCE: optionalString,
+    // BLLINK_SOURCE=billing only: the local scrape must be younger than this
+    // (hours) or the sync stops at stage 'stale' and writes nothing. Deliberately
+    // no default — unset = fail closed.
+    BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS: numeric,
     CHROME_PATH: optionalString,
     // Bllink shadow scraper (scripts/bllink-scrape.ts, billing-bllink-scrape.timer).
     // All optional: the Next app never reads them; the oneshot unit fails loudly

@@ -10,10 +10,41 @@
  *   pull   → fetching the snapshot / writing it into public.debtors
  * The stage is persisted on sync_runs.error_stage and shown to the user; the
  * HTTP status tells the two families apart (upstream broke vs. data rejected).
+ *
+ * BLLINK_SOURCE=billing (26/09/2026) changes where the snapshot comes from, not
+ * the stages: 'stale' then means billing's own latest scrape is not from today
+ * (limit BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS, strict, no default), 'guard' and
+ * 'pull' are the same guards and the same write, and the CRM scrape becomes a
+ * best-effort WITNESS after the write — never a stage that can fail the run.
  */
 import { z } from 'zod';
 
 export type SyncStage = 'scrape' | 'stale' | 'guard' | 'pull';
+
+/** Where /api/sync/bllink takes the debtors snapshot from. */
+export type BllinkSource = 'crm' | 'billing';
+
+/**
+ * BLLINK_SOURCE → 'billing' only when it says exactly that. Missing, empty or
+ * anything else = 'crm', i.e. the pre-Phase-2 behaviour — a typo in the env
+ * must never switch the source, in either direction, by accident.
+ */
+export function resolveBllinkSource(raw: string | null | undefined): BllinkSource {
+  return (raw ?? '').trim() === 'billing' ? 'billing' : 'crm';
+}
+
+/**
+ * BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS → hours, or null when unset / not a
+ * positive number. There is deliberately NO default: with BLLINK_SOURCE=billing
+ * the caller fails closed (stage 'stale', nothing written) until the limit is
+ * configured, rather than copying a snapshot of unknown age.
+ */
+export function localFreshnessLimitHours(raw: string | null | undefined): number | null {
+  const s = (raw ?? '').trim();
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  return n > 0 ? n : null;
+}
 
 export const SYNC_STAGE_LABELS: Record<SyncStage, string> = {
   scrape: 'סריקת בלינק ב-CRM',

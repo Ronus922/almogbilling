@@ -1,12 +1,19 @@
+# /etc/systemd/system/billing-bllink-scrape.timer
 [Unit]
-Description=Run billing-bllink-scrape.service daily at 06:10 Asia/Jerusalem
+Description=Run billing-bllink-scrape.service daily at 05:30 Asia/Jerusalem
 
 [Timer]
-# Ten minutes after billing-sync.timer (06:00) so the CRM snapshot of the same
-# morning already exists when we compare. The host clock is UTC; the timezone
-# suffix keeps the run at 06:10 local through DST changes.
-OnCalendar=*-*-* 06:10:00 Asia/Jerusalem
-# Catch up a missed run (server was down at 06:10).
+# Thirty minutes BEFORE billing-sync.timer (06:00). With BLLINK_SOURCE=billing the
+# sync copies THIS morning's snapshot into debtors and refuses anything older
+# (BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS) — so the scrape must be finished first,
+# with room for a slow Bllink or a retry, not a 10-minute gap (26/09/2026).
+# Until 26/09/2026 it ran at 06:10, ten minutes AFTER the CRM's own scrape, so
+# the shadow comparison could use the same morning's CRM snapshot; that
+# comparison is now made by the sync itself (the CRM as a witness).
+# The host clock is UTC; the timezone suffix keeps the run at 05:30 local
+# through DST changes.
+OnCalendar=*-*-* 05:30:00 Asia/Jerusalem
+# Catch up a missed run (server was down at 05:30).
 Persistent=true
 AccuracySec=1min
 Unit=billing-bllink-scrape.service
