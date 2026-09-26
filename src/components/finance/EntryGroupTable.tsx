@@ -13,6 +13,46 @@ import { EntryFilesPopover } from './EntryFilesPopover';
 // category and a total at the bottom. Desktop: a table (DESIGN.md §9, token
 // variant of DebtorsTable); phones: cards per line (`roomy:` variant).
 
+/** Column widths (px) shared by the income and the expense table, so that
+ *  "סכום", "קבצים" and "פעולות" — the last three columns of both — sit on one
+ *  vertical line across the two tables. `table-fixed` + `<colgroup>` make the
+ *  widths hold regardless of content; the columns that differ between the two
+ *  (description / date · supplier · invoice · description) share what is left.
+ *  Date and invoice number hold short fixed-length content, so they are fixed
+ *  too and leave the flexible room to supplier and description. */
+const COL_PX = {
+  amount: 160,
+  files: 128,
+  actions: 112,
+  date: 112,
+  invoice: 144,
+} as const;
+
+/** Both tables must be equally wide for the shared columns to line up: the
+ *  same `w-full` inside the same parent, and the same minimum below which the
+ *  `Table` wrapper scrolls horizontally instead of crushing the text columns. */
+const TABLE_CLASS = 'table-fixed min-w-[960px]';
+
+function ColGroup({ isExpense }: { isExpense: boolean }) {
+  return (
+    <colgroup>
+      {isExpense ? (
+        <>
+          <col style={{ width: COL_PX.date }} />
+          <col />
+          <col style={{ width: COL_PX.invoice }} />
+          <col />
+        </>
+      ) : (
+        <col />
+      )}
+      <col style={{ width: COL_PX.amount }} />
+      <col style={{ width: COL_PX.files }} />
+      <col style={{ width: COL_PX.actions }} />
+    </colgroup>
+  );
+}
+
 interface Group {
   categoryId: string;
   name: string;
@@ -151,7 +191,8 @@ export function EntryGroupTable({
 
       {/* Desktop: table */}
       <div className="hidden overflow-hidden rounded-xl border border-line bg-white roomy:block">
-        <Table>
+        <Table className={TABLE_CLASS}>
+          <ColGroup isExpense={isExpense} />
           <TableHeader className="[&_tr]:border-b [&_tr]:border-line">
             <TableRow className="bg-surface-2 hover:bg-surface-2">
               {isExpense ? (
@@ -207,18 +248,18 @@ function GroupRows({ group: g, isExpense, colCount, amountTone, canEdit, onEdit,
           {isExpense ? (
             <>
               <TableCell dir="ltr" className="px-4 py-3 text-center font-num text-sm tabular-nums text-ink-2">{fmtDate(e.payment_date)}</TableCell>
-              <TableCell className="px-4 py-3 text-start text-sm font-medium text-ink">
+              <TableCell className="truncate px-4 py-3 text-start text-sm font-medium text-ink" title={e.supplier_name || undefined}>
                 {e.supplier_name || <span className="text-ink-ghost">—</span>}
               </TableCell>
-              <TableCell dir="ltr" className="px-4 py-3 text-center font-num text-sm tabular-nums text-ink-2">
+              <TableCell dir="ltr" className="truncate px-4 py-3 text-center font-num text-sm tabular-nums text-ink-2" title={e.invoice_number || undefined}>
                 {e.invoice_number || <span className="text-ink-ghost">—</span>}
               </TableCell>
-              <TableCell className="max-w-[320px] truncate px-4 py-3 text-start text-sm text-ink-2" title={e.description}>
+              <TableCell className="truncate px-4 py-3 text-start text-sm text-ink-2" title={e.description}>
                 {e.description || <span className="text-ink-ghost">—</span>}
               </TableCell>
             </>
           ) : (
-            <TableCell className="max-w-[480px] truncate px-4 py-3 text-start text-sm font-medium text-ink" title={e.description}>
+            <TableCell className="truncate px-4 py-3 text-start text-sm font-medium text-ink" title={e.description}>
               {e.description || <span className="text-ink-ghost">—</span>}
             </TableCell>
           )}
