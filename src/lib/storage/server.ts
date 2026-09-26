@@ -26,7 +26,12 @@ import { env } from '@/env';
  *  Green API a link it obtains from Green's own uploadFile, never ours. */
 export const WHATSAPP_ATTACHMENTS_BUCKET = 'whatsapp-attachments';
 
-export const PRIVATE_BUCKETS = ['supplier-documents', 'documents', 'issue-attachments', WHATSAPP_ATTACHMENTS_BUCKET] as const;
+/** Receipts/invoices of the finance module (fin_documents) — PRIVATE. */
+export const FINANCE_RECEIPTS_BUCKET = 'finance-receipts';
+
+export const PRIVATE_BUCKETS = [
+  'supplier-documents', 'documents', 'issue-attachments', WHATSAPP_ATTACHMENTS_BUCKET, FINANCE_RECEIPTS_BUCKET,
+] as const;
 export type PrivateBucket = (typeof PRIVATE_BUCKETS)[number];
 
 /** The public bucket — served by /api/public/wa-media, not by /api/files. */

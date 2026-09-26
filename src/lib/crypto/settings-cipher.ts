@@ -5,6 +5,7 @@ import { env } from '@/env';
 const ALGO = 'aes-256-gcm';
 const IV_BYTES = 12;
 const KEY_BYTES = 32;
+const TAG_BYTES = 16; // encrypt() always emits the full tag; decrypt() refuses anything shorter
 
 export interface EncryptedBlob {
   iv: string;   // base64
@@ -40,7 +41,7 @@ export function decrypt(blob: EncryptedBlob): string {
   const iv = Buffer.from(blob.iv, 'base64');
   const ct = Buffer.from(blob.ct, 'base64');
   const tag = Buffer.from(blob.tag, 'base64');
-  const decipher = createDecipheriv(ALGO, key, iv);
+  const decipher = createDecipheriv(ALGO, key, iv, { authTagLength: TAG_BYTES });
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
 }

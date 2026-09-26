@@ -43,6 +43,8 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<unknown>> = {
       { module: 'whatsapp_chat', action: 'view' },
       { module: 'whatsapp', action: 'view' },
     ]),
+  // Finance receipts — whoever may open the finance module (admin+ in slice A).
+  'finance-receipts': () => requirePermission('finance', 'view'),
 };
 
 /**
@@ -93,6 +95,13 @@ async function lookupFileName(bucket: PrivateBucket, path: string): Promise<stri
       [path],
     );
     return msgRow?.original_name ?? null;
+  }
+  if (bucket === 'finance-receipts') {
+    const row = await queryOne<{ original_name: string }>(
+      `select original_name from public.fin_documents where object_key = $1 limit 1`,
+      [path],
+    );
+    return row?.original_name ?? null;
   }
   return null; // issue-attachments stores bare paths, no display name
 }

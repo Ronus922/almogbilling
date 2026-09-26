@@ -21,6 +21,7 @@ export const BILLING_BUCKETS = [
   'supplier-documents',
   'whatsapp-attachments',
   'whatsapp-media',
+  'finance-receipts',
 ] as const;
 export type BillingBucket = (typeof BILLING_BUCKETS)[number];
 
@@ -228,7 +229,7 @@ export function planBucket(
 
 /** The only tables a `staged_old` ref can come from: `bound: false` is produced
  *  nowhere else (scripts/storage-audit.ts collectDbRefs is the authority). */
-export const STAGED_REF_TABLES = ['wa_campaign_attachments', 'wa_message_attachments'] as const;
+export const STAGED_REF_TABLES = ['wa_campaign_attachments', 'wa_message_attachments', 'fin_documents'] as const;
 export type StagedRefTable = (typeof STAGED_REF_TABLES)[number];
 
 export function isStagedRefTable(v: string): v is StagedRefTable {

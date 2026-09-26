@@ -11,7 +11,8 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 
 // Any of these tokens in the file body ⇒ the route is gated.
-const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|CanManageRole)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREEN_API_WEBHOOK_SECRET/;
+//   requireDriveConnector = requireAdmin + finance:edit (src/lib/finance/drive-oauth.ts).
+const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|CanManageRole|DriveConnector)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREEN_API_WEBHOOK_SECRET/;
 
 // Routes that are legitimately public (pre-auth flows + health + public media).
 // Keep tiny and justified — each is unauthenticated BY DESIGN.

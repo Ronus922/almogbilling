@@ -112,7 +112,7 @@ async function removeKeys(sc: StorageClient, bucket: string, keys: string[]): Pr
 async function markRowsObjectDeleted(db: Client, removedObjects: ClassifiedObject[]): Promise<number> {
   let marked = 0;
   for (const [table, ids] of rowsToMarkDeleted(removedObjects)) {
-    // The table comes from a two-value union, never interpolated from data.
+    // The table comes from a closed union, never interpolated from data.
     const r =
       table === 'wa_campaign_attachments'
         ? await db.query(
@@ -120,11 +120,17 @@ async function markRowsObjectDeleted(db: Client, removedObjects: ClassifiedObjec
               where id = any($1::uuid[]) and object_deleted_at is null`,
             [ids],
           )
-        : await db.query(
-            `update public.wa_message_attachments set object_deleted_at = now()
-              where id = any($1::uuid[]) and object_deleted_at is null`,
-            [ids],
-          );
+        : table === 'wa_message_attachments'
+          ? await db.query(
+              `update public.wa_message_attachments set object_deleted_at = now()
+                where id = any($1::uuid[]) and object_deleted_at is null`,
+              [ids],
+            )
+          : await db.query(
+              `update public.fin_documents set object_deleted_at = now()
+                where id = any($1::uuid[]) and object_deleted_at is null`,
+              [ids],
+            );
     marked += r.rowCount ?? 0;
   }
   return marked;

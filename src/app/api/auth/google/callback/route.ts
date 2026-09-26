@@ -5,6 +5,8 @@ import { createSession } from '@/lib/auth/session';
 import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { getGoogleConfig, createGoogleClient, appUrl } from '@/lib/auth/google';
 import { AUTH_RATE_WINDOW_SEC, LOGIN_MAX_PER_IP } from '@/lib/constants';
+import { openDriveState } from '@/lib/finance/drive-oauth';
+import { handleDriveCallback } from '@/lib/finance/drive-callback';
 
 export const runtime = 'nodejs';
 
@@ -17,6 +19,13 @@ interface GateRow {
 }
 
 export async function GET(req: NextRequest) {
+  // ── Drive backup branch ─────────────────────────────────────────────
+  // "חבר Google Drive" (/api/finance/drive/start) shares this redirect URI.
+  // Its `state` is a sealed blob only our key can open; a login state never
+  // opens, so everything below this line is the login flow, untouched.
+  const driveState = openDriveState(new URL(req.url).searchParams.get('state'));
+  if (driveState) return handleDriveCallback(req.url, driveState);
+
   const cookieStore = await cookies();
   const clearTemp = () => TEMP_COOKIES.forEach((n) => cookieStore.delete(n));
 

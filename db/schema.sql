@@ -679,6 +679,228 @@ CREATE TABLE public.entity_assignees (
 
 
 --
+-- Name: fin_categories; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_categories (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    kind text NOT NULL,
+    name text NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    is_hot_water boolean DEFAULT false NOT NULL,
+    section text DEFAULT 'operating'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by uuid,
+    CONSTRAINT fin_categories_kind_check CHECK ((kind = ANY (ARRAY['income'::text, 'expense'::text]))),
+    CONSTRAINT fin_categories_section_check CHECK ((section = ANY (ARRAY['operating'::text, 'renovation_fund'::text])))
+);
+
+
+--
+-- Name: TABLE fin_categories; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fin_categories IS 'Income/expense categories of the building finance module. Dynamic, start empty (no seed). A category with entries is never deleted — only deactivated.';
+
+
+--
+-- Name: COLUMN fin_categories.is_hot_water; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_categories.is_hot_water IS 'Flags the hot-water category so it can be told apart in reports (no behaviour in slice A).';
+
+
+--
+-- Name: COLUMN fin_categories.section; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_categories.section IS 'operating = the running budget; renovation_fund = קרן שיפוצים, shown apart from the operating totals.';
+
+
+--
+-- Name: fin_documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    entry_id uuid,
+    uploaded_by uuid,
+    bucket text DEFAULT 'finance-receipts'::text NOT NULL,
+    object_key text NOT NULL,
+    original_name text NOT NULL,
+    mime text NOT NULL,
+    size bigint NOT NULL,
+    drive_file_id text,
+    drive_status text DEFAULT 'pending'::text NOT NULL,
+    drive_error text,
+    drive_attempts integer DEFAULT 0 NOT NULL,
+    object_deleted_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT fin_documents_drive_status_check CHECK ((drive_status = ANY (ARRAY['pending'::text, 'done'::text, 'failed'::text]))),
+    CONSTRAINT fin_documents_size_check CHECK ((size > 0))
+);
+
+
+--
+-- Name: TABLE fin_documents; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fin_documents IS 'Receipts/invoices attached to a fin_entries row. entry_id NULL = uploaded but not yet saved with an entry (staged by uploaded_by). Each file is backed up to Google Drive in the background: drive_status pending → done | failed, up to 5 attempts.';
+
+
+--
+-- Name: COLUMN fin_documents.object_key; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_documents.object_key IS 'Storage key in `bucket` (finance-receipts, private) — <uuid>.<ext>, ASCII only. The readable name is original_name.';
+
+
+--
+-- Name: COLUMN fin_documents.object_deleted_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_documents.object_deleted_at IS 'Stamped by the Storage GC when it removed an abandoned staged object. Non-null = the bytes are gone.';
+
+
+--
+-- Name: fin_drive_connection; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_drive_connection (
+    id smallint DEFAULT 1 NOT NULL,
+    email text NOT NULL,
+    refresh_token_enc jsonb NOT NULL,
+    root_folder_id text,
+    connected_at timestamp with time zone DEFAULT now() NOT NULL,
+    connected_by uuid,
+    CONSTRAINT fin_drive_connection_single_row CHECK ((id = 1))
+);
+
+
+--
+-- Name: TABLE fin_drive_connection; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fin_drive_connection IS 'The ONE Google account whose Drive receives the receipt backups (scope drive.file). refresh_token_enc = AES-256-GCM blob {iv,ct,tag} under SETTINGS_ENC_KEY (src/lib/crypto/settings-cipher.ts). root_folder_id caches the id of the "ALMOG — קבלות" folder.';
+
+
+--
+-- Name: fin_entries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_entries (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    kind text NOT NULL,
+    category_id uuid NOT NULL,
+    period_month date NOT NULL,
+    amount numeric(12,2) NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    internal_note text DEFAULT ''::text NOT NULL,
+    supplier_id uuid,
+    supplier_name text DEFAULT ''::text NOT NULL,
+    invoice_number text DEFAULT ''::text NOT NULL,
+    payment_date date,
+    source text DEFAULT 'manual'::text NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    deleted_at timestamp with time zone,
+    deleted_by uuid,
+    CONSTRAINT fin_entries_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT fin_entries_expense_payment_date_check CHECK (((kind = 'income'::text) OR (payment_date IS NOT NULL))),
+    CONSTRAINT fin_entries_kind_check CHECK ((kind = ANY (ARRAY['income'::text, 'expense'::text]))),
+    CONSTRAINT fin_entries_period_month_check CHECK ((period_month = (date_trunc('month'::text, (period_month)::timestamp with time zone))::date)),
+    CONSTRAINT fin_entries_source_check CHECK ((source = ANY (ARRAY['manual'::text, 'ledger_import'::text, 'scan'::text])))
+);
+
+
+--
+-- Name: TABLE fin_entries; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fin_entries IS 'One income or expense line of the building, entered per month. Soft-deleted (deleted_at/deleted_by); an expense counts in full in the month of payment_date (period_month is derived from it).';
+
+
+--
+-- Name: COLUMN fin_entries.period_month; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_entries.period_month IS 'The first day of the month the line belongs to. For an expense it is derived from payment_date; for an income it is the month the operator picked.';
+
+
+--
+-- Name: COLUMN fin_entries.description; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_entries.description IS 'The text a resident will see in the future portal (with the category and the amount).';
+
+
+--
+-- Name: COLUMN fin_entries.internal_note; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_entries.internal_note IS 'Internal only — never shown to residents.';
+
+
+--
+-- Name: COLUMN fin_entries.supplier_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_entries.supplier_name IS 'Internal only (never shown to residents). Copied from suppliers.display_name when supplier_id is set, or free text when the supplier is not in the table.';
+
+
+--
+-- Name: COLUMN fin_entries.source; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_entries.source IS 'manual (this slice) | ledger_import | scan — the later slices write the other two.';
+
+
+--
+-- Name: fin_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_settings (
+    id smallint DEFAULT 1 NOT NULL,
+    show_documents_to_residents boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by uuid,
+    CONSTRAINT fin_settings_single_row CHECK ((id = 1))
+);
+
+
+--
+-- Name: TABLE fin_settings; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fin_settings IS 'Single-row settings of the finance module. show_documents_to_residents is persisted here (default OFF) and enforced only by the future owners portal.';
+
+
+--
+-- Name: finance_month_status; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.finance_month_status (
+    year integer NOT NULL,
+    month integer NOT NULL,
+    published boolean DEFAULT false NOT NULL,
+    published_at timestamp with time zone,
+    published_by uuid,
+    CONSTRAINT finance_month_status_month_check CHECK (((month >= 1) AND (month <= 12))),
+    CONSTRAINT finance_month_status_year_check CHECK (((year >= 2000) AND (year <= 2100)))
+);
+
+
+--
+-- Name: TABLE finance_month_status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.finance_month_status IS 'Per-month resident visibility of the finance module. No row = not published. published_at / published_by record the LAST toggle (either direction).';
+
+
+--
 -- Name: import_runs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -969,6 +1191,27 @@ CREATE TABLE public.reminders (
 --
 
 COMMENT ON COLUMN public.reminders.notify_owner IS 'When true, the reminder engine also notifies the row owner (user_id) — the "אליי"/self opt-in — in addition to the entity assignees.';
+
+
+--
+-- Name: renovation_fund_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.renovation_fund_settings (
+    id smallint DEFAULT 1 NOT NULL,
+    target_amount numeric(12,2) DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by uuid,
+    CONSTRAINT renovation_fund_settings_single_row CHECK ((id = 1)),
+    CONSTRAINT renovation_fund_settings_target_check CHECK ((target_amount >= (0)::numeric))
+);
+
+
+--
+-- Name: TABLE renovation_fund_settings; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.renovation_fund_settings IS 'Single row: the renovation fund collection target (יעד גבייה) the cumulative KPI is measured against.';
 
 
 --
@@ -1963,6 +2206,70 @@ ALTER TABLE ONLY public.entity_assignees
 
 
 --
+-- Name: fin_categories fin_categories_kind_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_categories
+    ADD CONSTRAINT fin_categories_kind_name_key UNIQUE (kind, name);
+
+
+--
+-- Name: fin_categories fin_categories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_categories
+    ADD CONSTRAINT fin_categories_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_documents fin_documents_object_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_documents
+    ADD CONSTRAINT fin_documents_object_key_key UNIQUE (object_key);
+
+
+--
+-- Name: fin_documents fin_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_documents
+    ADD CONSTRAINT fin_documents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_drive_connection fin_drive_connection_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_drive_connection
+    ADD CONSTRAINT fin_drive_connection_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_entries fin_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_entries
+    ADD CONSTRAINT fin_entries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fin_settings fin_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_settings
+    ADD CONSTRAINT fin_settings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: finance_month_status finance_month_status_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.finance_month_status
+    ADD CONSTRAINT finance_month_status_pkey PRIMARY KEY (year, month);
+
+
+--
 -- Name: import_runs import_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2088,6 +2395,14 @@ ALTER TABLE ONLY public.reminder_categories
 
 ALTER TABLE ONLY public.reminders
     ADD CONSTRAINT reminders_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: renovation_fund_settings renovation_fund_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.renovation_fund_settings
+    ADD CONSTRAINT renovation_fund_settings_pkey PRIMARY KEY (id);
 
 
 --
@@ -2798,6 +3113,55 @@ CREATE INDEX entity_assignees_user_idx ON public.entity_assignees USING btree (u
 
 
 --
+-- Name: fin_categories_kind_sort_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_categories_kind_sort_idx ON public.fin_categories USING btree (kind, sort_order, name);
+
+
+--
+-- Name: fin_documents_drive_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_documents_drive_pending_idx ON public.fin_documents USING btree (drive_status, created_at) WHERE (drive_status <> 'done'::text);
+
+
+--
+-- Name: fin_documents_entry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_documents_entry_idx ON public.fin_documents USING btree (entry_id, created_at);
+
+
+--
+-- Name: fin_documents_staged_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_documents_staged_idx ON public.fin_documents USING btree (uploaded_by, created_at) WHERE (entry_id IS NULL);
+
+
+--
+-- Name: fin_entries_category_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_entries_category_idx ON public.fin_entries USING btree (category_id);
+
+
+--
+-- Name: fin_entries_invoice_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_entries_invoice_idx ON public.fin_entries USING btree (lower(invoice_number), supplier_id) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: fin_entries_period_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fin_entries_period_idx ON public.fin_entries USING btree (period_month) WHERE (deleted_at IS NULL);
+
+
+--
 -- Name: idx_chat_messages_supplier; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3491,6 +3855,13 @@ CREATE TRIGGER documents_touch_updated_at BEFORE UPDATE ON public.documents FOR 
 
 
 --
+-- Name: fin_entries fin_entries_touch_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER fin_entries_touch_updated_at BEFORE UPDATE ON public.fin_entries FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
+
+
+--
 -- Name: issue_comments issue_comments_touch_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -3895,6 +4266,94 @@ ALTER TABLE ONLY public.entity_assignees
 
 
 --
+-- Name: fin_categories fin_categories_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_categories
+    ADD CONSTRAINT fin_categories_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: fin_documents fin_documents_entry_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_documents
+    ADD CONSTRAINT fin_documents_entry_id_fkey FOREIGN KEY (entry_id) REFERENCES public.fin_entries(id) ON DELETE CASCADE;
+
+
+--
+-- Name: fin_documents fin_documents_uploaded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_documents
+    ADD CONSTRAINT fin_documents_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: fin_drive_connection fin_drive_connection_connected_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_drive_connection
+    ADD CONSTRAINT fin_drive_connection_connected_by_fkey FOREIGN KEY (connected_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: fin_entries fin_entries_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_entries
+    ADD CONSTRAINT fin_entries_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.fin_categories(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: fin_entries fin_entries_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_entries
+    ADD CONSTRAINT fin_entries_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: fin_entries fin_entries_deleted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_entries
+    ADD CONSTRAINT fin_entries_deleted_by_fkey FOREIGN KEY (deleted_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: fin_entries fin_entries_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_entries
+    ADD CONSTRAINT fin_entries_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE SET NULL;
+
+
+--
+-- Name: fin_entries fin_entries_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_entries
+    ADD CONSTRAINT fin_entries_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: fin_settings fin_settings_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fin_settings
+    ADD CONSTRAINT fin_settings_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: finance_month_status finance_month_status_published_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.finance_month_status
+    ADD CONSTRAINT finance_month_status_published_by_fkey FOREIGN KEY (published_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: import_runs import_runs_initiated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4068,6 +4527,14 @@ ALTER TABLE ONLY public.reminder_categories
 
 ALTER TABLE ONLY public.reminders
     ADD CONSTRAINT reminders_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: renovation_fund_settings renovation_fund_settings_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.renovation_fund_settings
+    ADD CONSTRAINT renovation_fund_settings_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -4489,5 +4956,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260920221954'),
     ('20260921000521'),
     ('20260921072925'),
-    ('20260921090433')
+    ('20260921090433'),
+    ('20260921171135'),
+    ('20260926074117')
 ;

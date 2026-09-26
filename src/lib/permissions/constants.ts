@@ -78,6 +78,10 @@ export const MODULES: ModuleMeta[] = [
   { key: 'roles_management',   label: 'הרשאות',             group: 'admin' },
   { key: 'users_management',   label: 'ניהול משתמשים',      group: 'admin' },
   { key: 'settings',           label: 'הגדרות',             group: 'admin' },
+  // Finance transparency ("שקיפות כספית") — admin / super_admin only in slice A.
+  // Deny by default for every matrix role (no row = denied, fail-closed), so no
+  // user_permissions re-seed is needed; an admin may grant it later per user.
+  { key: 'finance',            label: 'שקיפות כספית',       group: 'admin' },
 ];
 
 export const SUPER_ADMIN_ONLY: readonly string[] = ['users_management', 'roles_management'];
@@ -116,6 +120,7 @@ export const DEFAULT_MANAGER: ModulePermission[] = [
   noPerm('roles_management'),
   noPerm('users_management'),
   noPerm('settings'),
+  noPerm('finance'),
 ];
 
 // Viewer defaults — read-only access to the DEBTORS SCREEN (dashboard) ONLY.
@@ -151,6 +156,7 @@ export const DEFAULT_VIEWER: ModulePermission[] = [
   noPerm('roles_management'),
   noPerm('users_management'),
   noPerm('settings'),
+  noPerm('finance'),
 ];
 
 // Field-worker defaults (cleaner + maintenance) — tasks + issues only, view+edit.
@@ -185,6 +191,7 @@ export const DEFAULT_WORKER: ModulePermission[] = [
   noPerm('roles_management'),
   noPerm('users_management'),
   noPerm('settings'),
+  noPerm('finance'),
 ];
 
 // ── Role classification ──────────────────────────────────────────────────────

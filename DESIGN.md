@@ -1757,3 +1757,118 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 | Toggle על צ׳יפ שמור בתוך החלון | **הנחיה גוברת (09/2026 — מחליפה את חוק הדיאלוגים):** פעולה מיידית בלחיצה אחת, **אפס דיאלוגים**. כיבוי → `window.confirm("להשבית את צ׳יפ <מספר>?")` בלבד, ואז `POST …/deactivate` עם `reason='unknown'`; הדלקה → `POST …/reactivate` בלי סיבה ובלי שאלה. optimistic: התגית מתחלפת מיד, כשל (כולל 409 "מספר תפוס") מחזיר אותה + `toast.error`. סדר התגית: **[טוגל] [badge סטטוס] [מספר] [badge סוג]**. אין מחיקה — צ׳יפ שהונפק לעולם לא נמחק |
 | **תיקון מספר** על תגית שמורה (09/2026) | הנחיה גוברת: המספר בתגית הוא כפתור; לחיצה → שדה inline באותה תגית (`chip-num`, LTR, גבול brand + ring). **Enter/blur שומרים מיד** (כמו הטוגל), Escape מבטל. optimistic: המספר מתחלף מיד; `PATCH /api/chips/:id {chip_number}`; **409** כשצ׳יפ **פעיל** אחר מחזיק את המספר (בדיקה אפליקטיבית — האינדקס החלקי מכסה רק פעילים) → המספר חוזר + toast; מספר שכבר בחלון → toast בלי בקשה. האירוע: `chip_events` `event_type='note'`, `new_value={chip_number:{old,new}}`, `reason='תיקון מספר'` (בלי מיגרציה) |
 | **עריכת בעל צ׳יפ על בלוק שמור** (09/2026) | הנחיה גוברת: שם/טלפון ניתנים לעריכה גם כשלבלוק יש צ׳יפים שמורים; **תפקיד** ניתן לשינוי רק לתפקיד שאף בלוק אחר לא מחזיק (`takenRoles`; "אחר" תמיד פנוי). השינוי חל על **כל** צ׳יפי הבלוק בשמירה, ב**אותה טרנזקציה** עם ההנפקה (`POST /api/chips` עם `updates:[{id, holder_name?, holder_phone?, resident_role?}]`, zod, all-or-nothing). ה-diff נמדד מול הערכים שהבלוק נזרע בהם (`orig`) — בלוק שלא נגעו בו לא שולח דבר. הפוטר: "הנפק צ׳יפ" / "שמור שינויים" / "שמור והנפק" לפי מה שיש. עמלה/הערות של שמורים — לא נערכים |
+
+---
+
+## 35. שקיפות כספית — לשוניות, תאריכון, פרסום חודש, קרן שיפוצים
+
+מודול `/finance` נבנה על הקומפוננטות המשותפות (`Section` / `PanelFooter` / `Field`, Sheet לפי §12,
+טבלה בגרסת הטוקנים של `DebtorsTable` + כרטיסים במובייל דרך `roomy:`, `KpiCard`). הדפוסים של המודול:
+
+### לשוניות (`components/finance/FinanceTabs.tsx`)
+
+שתי לשוניות בראש העמוד, בדפוס §16 בלי מונים: "שוטף" (ברירת מחדל, בלי פרמטר) ו"קרן שיפוצים"
+(`?tab=fund`). כפתור `h-11 rounded-xl px-4 text-sm font-semibold` עם אייקון; פעיל = `bg-blue-600`
+(שוטף) / `bg-violet-600` (קרן) + `text-white shadow-soft-sm`; לא פעיל = `border border-line bg-white
+text-ink-2 hover:bg-row-hover`. המעבר שומר את `?m=` כדי שחזרה ל"שוטף" תחזיר את התקופה.
+
+### תאריכון בלחיצה אחת (`components/finance/PeriodPicker.tsx`) — מחליף את חצי החודש
+
+טריגר `h-[38px] rounded-[10px] border border-[#e2e8f0] bg-white px-3` עם `CalendarDays`, תווית התקופה
+(`text-[17px] font-extrabold`, `min-w-[128px]`) ו-`ChevronDown`. הפאנל: שורת «כל YYYY» — חץ שנה קודמת
+מימין (`ChevronRight`), הכותרת עצמה כפתור שבוחר את השנה, חץ שנה הבאה משמאל; מתחתיה גריד
+`grid-template-columns: 2.75rem 4.5rem repeat(3, 1fr)` בשורות של `2.75rem`: כל שורה = רבעון עם תווית
+לחיצה "רבעון N", כל צמד שורות = תווית אנכית "מחצית א׳/ב׳" (`[writing-mode:vertical-rl] rotate-180`,
+`row-span-2`), ושלושה תאי חודש `rounded-lg text-[13px] font-semibold`. מצבים: נבחר `bg-blue-600
+text-white`; בתוך תקופה נבחרת `border-blue-200 bg-blue-50 text-blue-700`; החודש הנוכחי `ring-1
+ring-inset ring-blue-300`; **חודש עתידי `text-slate-300 cursor-not-allowed` ולא לחיץ** (וכך גם רבעון /
+מחצית / שנה שטרם התחילו); **חודש שפורסם = נקודה ירוקה** `h-1.5 w-1.5 bg-emerald-500` בפינת ה-end.
+**כל לחיצה בוחרת וסוגרת** — אין מצב טווח ואין לחיצה שנייה. מחשב (`min-width: 768px`): פאנל מעוגן
+`absolute start-0 top-full w-[400px] rounded-xl border p-4 shadow-soft-md` עם שכבת סגירה
+`fixed inset-0`; מובייל: `Sheet side="bottom"` (`rounded-t-2xl p-4`, safe-area) — אותה קומפוננטה, אותו
+גריד, מטרות מגע `min-h-11`. הבחירה נכתבת ל-`?m=` בדקדוק `YYYY-MM · YYYY-Qn · YYYY-Hn · YYYY`
+(`lib/finance/period.ts`), ב-`startTransition`; השרת מרנדר מחדש וה-client מקבל `key={tab:period}`.
+
+### טוגל פרסום חודש (`components/finance/PublishToggle.tsx`)
+
+מופיע ליד התאריכון **רק כשנבחר חודש בודד** (לא בדוח תקופה, לא בלשונית הקרן): `Switch` + תגית
+`h-[38px] rounded-[10px] border px-3 text-sm font-semibold` — "מוצג לדיירים" (`Eye`,
+`border-emerald-200 bg-emerald-50 text-emerald-700`) / "מוסתר מדיירים" (`EyeOff`, `border-slate-200
+bg-slate-50 text-slate-600`). נשמר מיד (`PUT /api/finance/month-status`), אופטימי עם rollback. צופה
+רואה את התגית בלי ה-Switch. בחודש מפורסם מוצג באנר ירוק קבוע מעל ה-KPI (`border-emerald-200
+bg-emerald-50 text-emerald-900`): "חודש זה מוצג לדיירים — שינויים ייראו מיד".
+
+### דוח תקופה (`components/finance/PeriodReportView.tsx`)
+
+לרבעון / מחצית / שנה: 3 `KpiCard` (הכנסות · הוצאות · עודף בתקופה, טון `amber` בגירעון), ואז "הכנסות
+לפי סעיף" ו"הוצאות לפי סעיף" — טבלה `table-fixed` עם `<colgroup>` [סעיף | סה"כ 160 | ממוצע חודשי 160]
+(אותו רוחב `COL_PX.amount` של טבלאות החודש); לחיצה על שורה פותחת מתחתיה שורת `colSpan={3}` עם
+גרף עמודות `recharts` בגובה 220px לפי חודש (עטיפה `dir="ltr"`, ציר X `reversed`, ציר Y מימין — כמו
+`CollectionChart`; ירוק `#16a34a` להכנסה, אדום `#e5484d` להוצאה). במובייל — כרטיסים שנפתחים לגרף.
+כשיש בטווח חודשים מוסתרים — באנר `amber` בראש: "X מוסתר מדיירים — אצלם הדוח יכלול N מתוך M חודשים".
+חודשים עתידיים בטווח לא נספרים (המכנה של הממוצע = חודשי התקופה עד החודש הנוכחי).
+
+### לשונית הקרן (`components/finance/FundTab.tsx`, `FundLedgerTable.tsx`, `FundTargetDialog.tsx`)
+
+בלי בורר חודש — הכול מצטבר. כרטיס KPI אחד `rounded-2xl border border-line bg-white p-5`: "נגבה מתוך
+יעד" (`text-[26px] font-bold text-emerald-700` / `text-lg` ליעד) + אייקון עריכה `h-11 w-11` שפותח
+**Dialog** לשדה בודד (§12) — `Field` "יעד גבייה (₪)"; שורת "אחוז גבייה" ופס `h-2.5 rounded-full
+bg-slate-100` עם מילוי `bg-emerald-500` (`role="progressbar"`, נחתך ב-100%); ושלושה מדדים ב-`dl`
+`grid sm:grid-cols-3` (`rounded-xl border bg-surface-2 p-4`): נגבה (emerald) · יצא (rose) · יתרה בקרן
+(ink, `amber` כששלילית). כרטיס "יצא לפי מטרה": כל סעיפי ההוצאה של הקרן, גם ב-0 ₪ — שם (+ תגית
+"מושבתת") · פס יחסי `bg-rose-400` על `bg-slate-100` · סכום; קישור "ניהול מטרות" →
+`/finance/settings#renovation-fund`. "כל תנועות הקרן": `FundLedgerTable` — יומן אחד, מהחדש לישן,
+`<colgroup>` [תאריך 112 | מטרה / תיאור | הכנסה 160 | הוצאה 160 | פעולות 112] מאותם קבועים; הכנסה מציגה
+`MM/YYYY` (חודש הרישום), הוצאה `DD/MM/YYYY`; תנועה מחודש שלא פורסם מקבלת תגית `bg-amber-50
+text-amber-700` "לא פורסם". הכפתורים בלשונית: "הוצאה מהקרן" ו"הפקדה לקרן" — אותו `EntrySheet` עם
+`section='renovation_fund'`: שדה הסעיף נקרא "מטרה" בהוצאה ומציע רק מטרות פעילות של הקרן.
+
+### תצוגת דייר (`components/finance/ResidentViewToggle.tsx`, `ResidentViewClient.tsx`, `ResidentMonthView.tsx`)
+
+מתג `Switch` בתוך תווית `h-11 rounded-xl border px-3 text-sm font-semibold` עם `Eye` — "תצוגת דייר" —
+ליד הלשוניות; פעיל = `border-indigo-200 bg-indigo-50 text-indigo-800`. כותב `?view=resident` (שומר
+`tab` ו-`m`). במצב הזה: באנר קבוע `role="status"` `border-indigo-200 bg-indigo-50 text-indigo-900`
+"אתה צופה כמו דייר — מוצגים רק חודשים שפורסמו, בלי פרטים פנימיים" עם `Button variant="outline"`
+"יציאה מתצוגת דייר" (`LogOut`); אין כפתורי הוספה, אין טוגל פרסום ובאנרי פרסום, אין עריכת יעד /
+"ניהול מטרות", אין עמודות ספק / מס׳ חשבונית / קבצים / פעולות, אין תגיות "לא פורסם" ואין "מושבתת".
+התאריכון ב-`residentMode`: חודש שלא פורסם `text-slate-300 cursor-not-allowed` כמו חודש עתידי, רבעון /
+מחצית / שנה לחיצים רק אם יש בהם חודש מפורסם; המקרא: "חודש שפורסם — רק אלה זמינים". חודש בודד =
+`ResidentMonthView`: 3 `KpiCard` + טבלאות לפי סעיף `[תאריך 112 | תיאור | סכום 160]` (הוצאה) /
+`[תיאור | סכום 160]` (הכנסה) מאותם קבועים; דוח תקופה = שורת מידע `border-line bg-surface-2`
+"כולל N מתוך M חודשים" (`Info`) במקום באנר האזהרה; אף חודש לא פורסם = `rounded-lg border bg-card p-12`
+"עוד לא פורסמו חודשים".
+
+### סעיפים ומטרות (`/finance/settings`, `CategorySheet.tsx`)
+
+אין יותר שדה "חלק בתקציב": ה-`section` נקבע לפי הכרטיס שממנו נוצר הסעיף — "סעיפים — תקציב שוטף"
+(`Tags`, כחול) או "מטרות — קרן שיפוצים" (`PiggyBank`, סגול, `id="renovation-fund"` + `scroll-mt-24`
+לקישור מהלשונית). בכרטיס הקרן: "מטרות (הוצאות מהקרן)" ו"סעיפי הפקדה (הכנסות לקרן)". סעיף/מטרה עם
+תנועות לא נמחקים — רק מושבתים (`Switch` inline, 409 במחיקה).
+
+### אייקון סטטוס Google Drive (`components/finance/DriveStatusIcon.tsx`)
+
+אייקון `h-4 w-4` יחיד ליד כל קובץ, עם Tooltip: `CloudUpload text-amber-500` = ממתין לגיבוי ·
+`Cloud text-emerald-600` = גובה · `CloudOff text-red-500` = נכשל (הסיבה ב-Tooltip, וציון "מוצו
+הניסיונות" אחרי 5). בשורת טבלה מוצג האייקון של המצב הגרוע ביותר בין הקבצים, בתוך צ׳יפ
+`Paperclip N` (`h-9`, `h-11` במובייל) שפותח `Popover` עם רשימת הקבצים (קישור ל-proxy + גודל + סטטוס).
+
+### יישור העמודות בין הטבלאות (`components/finance/table-shared.tsx` → `EntryGroupTable.tsx`, `FundLedgerTable.tsx`)
+
+טבלאות ההכנסות וההוצאות הן אותה קומפוננטה, אך עם מבנה עמודות שונה (הכנסות: תיאור · סכום · קבצים · פעולות;
+הוצאות: תאריך · ספק · מס׳ חשבונית · תיאור · סכום · קבצים · פעולות). כדי ש"סכום", "קבצים" ו"פעולות" ישבו
+על אותו קו אנכי: `<Table className="table-fixed min-w-[960px]">` + `<colgroup>` עם רוחבים קבועים (px)
+מקונסטנטה אחת, `COL_PX` ב-`table-shared.tsx` (יחד עם `TABLE_CLASS`, `HEAD_CLASS`, `fmtDate` ו-`RowActions`
+— כל טבלה של המודול, כולל יומן הקרן ודוח התקופה, מייבאת משם) — **סכום 160 · קבצים 128 · פעולות 112**,
+ובהוצאות גם **תאריך 112 · מס׳ חשבונית 144**. שאר העמודות (תיאור; ספק + תיאור) מתחלקות ברוחב הנותר, עם `truncate` + `title`.
+שורות הקבוצה והסה״כ: `colSpan` מכסה **רק** את העמודות שמימין ל"סכום", תא הסכום נפרד, ותא ריק
+`colSpan={2}` לקבצים/פעולות — כך הסכום נופל בדיוק בעמודה שלו. יישור זהה בשתיהן: סכום `text-center`,
+קבצים `text-center`, פעולות `text-end`. מתחת ל-960px עטיפת ה-`Table` (`overflow-x-auto`) גוללת
+אופקית — אותה גלילה בשתי הטבלאות — במקום למחוץ את עמודות הטקסט; מתחת ל-`roomy` מוצגים כרטיסים.
+
+### שדה ספק עם טקסט חופשי (`components/finance/SupplierSearchField.tsx`)
+
+וריאציה של שדה החיפוש הניתן-לניקוי (§6): `Search` ב-start, `X` ב-end כשיש ערך, רשימת תוצאות
+`absolute` מתחת לשדה (`rounded-md border-slate-200 bg-white shadow-lg max-h-64`). בחירה = ספק
+מהטבלה (שורת אישור ירוקה "ספק מרשימת הספקים"); הקלדה חופשית = שם חופשי (שורת הסבר אפורה).
+**לא יוצר ספק** לעולם.
+

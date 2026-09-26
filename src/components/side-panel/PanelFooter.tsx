@@ -32,6 +32,10 @@ export interface PanelFooterProps {
    *  Caller is responsible for the confirmation dialog + RBAC gating. */
   onDelete?: () => void;
   deleteLabel?: string;
+  /** Optional second primary-side action rendered before the save button
+   *  (e.g. "שמור והוסף עוד"). Outline style; same disabled state as save
+   *  unless it says otherwise. */
+  secondaryAction?: { label: string; onClick: () => void; disabled?: boolean };
 }
 
 export function PanelFooter({
@@ -49,6 +53,7 @@ export function PanelFooter({
   exportingPdf = false,
   onDelete,
   deleteLabel = 'מחק',
+  secondaryAction,
 }: PanelFooterProps) {
   return (
     // Mobile: the two action groups stack (`flex-col-reverse` puts the primary
@@ -113,6 +118,16 @@ export function PanelFooter({
               </TooltipTrigger>
               <TooltipContent>בקרוב</TooltipContent>
             </Tooltip>
+          )}
+          {secondaryAction && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={secondaryAction.onClick}
+              disabled={secondaryAction.disabled ?? saveDisabled}
+            >
+              {secondaryAction.label}
+            </Button>
           )}
           {saveDisabled && saveDisabledReason ? (
             <Tooltip>
