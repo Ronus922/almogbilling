@@ -852,9 +852,10 @@ export async function getIncomingMessages(
  * POST waInstance{id}/setSettings/{token} — register our webhook.
  * Enables the full notification set the inbox needs: incoming messages, outgoing
  * messages (sent from the API or the phone) and outgoing delivery status
- * (delivered/read). webhookUrlToken is optional — the canonical webhook
- * authenticates with a `?secret=` query param baked into webhookUrl, so the
- * bearer token is defence-in-depth only. The instance reboots for a few seconds
+ * (delivered/read). webhookToken → webhookUrlToken: Green API sends it back as
+ * `Authorization: Bearer <token>` on every notification, and that is what the
+ * canonical webhook authenticates on (lib/whatsapp-webhook-auth). Omitted only
+ * in the legacy `?secret=` mode. The instance reboots for a few seconds
  * afterwards (Green API behaviour).
  */
 export async function setWebhookSettings(

@@ -7,7 +7,9 @@
 // Run (loads the production env):
 //   set -a; . /etc/billing/billing.env; set +a; npx tsx scripts/register-whatsapp-webhooks.ts
 //
-// Needs: DATABASE_URL, SETTINGS_ENC_KEY, GREEN_API_WEBHOOK_SECRET, APP_URL.
+// Needs: DATABASE_URL, SETTINGS_ENC_KEY, APP_URL and GREENAPI_WEBHOOK_TOKEN
+// (registered as webhookUrlToken → `Authorization: Bearer`); falls back to the
+// legacy `?secret=` URL from GREEN_API_WEBHOOK_SECRET while that still exists.
 
 import { Client } from 'pg';
 import { createDecipheriv } from 'node:crypto';
@@ -22,18 +24,21 @@ function decrypt(blob: EncBlob): string {
   return Buffer.concat([d.update(Buffer.from(blob.ct, 'base64')), d.final()]).toString('utf8');
 }
 
+const webhookToken = (process.env.GREENAPI_WEBHOOK_TOKEN ?? '').trim();
+
 function webhookUrl(): string {
   const app = (process.env.APP_URL ?? '').replace(/\/+$/, '');
-  const secret = (process.env.GREEN_API_WEBHOOK_SECRET ?? '').trim();
   if (!app) throw new Error('APP_URL not set');
-  if (!secret) throw new Error('GREEN_API_WEBHOOK_SECRET not set');
+  if (webhookToken) return `${app}/api/webhooks/greenapi`;
+  const secret = (process.env.GREEN_API_WEBHOOK_SECRET ?? '').trim();
+  if (!secret) throw new Error('neither GREENAPI_WEBHOOK_TOKEN nor GREEN_API_WEBHOOK_SECRET is set');
   return `${app}/api/webhooks/greenapi?secret=${secret}`;
 }
 
 async function main() {
   const url = webhookUrl();
   const masked = url.replace(/(secret=)[^&]*/, '$1•••');
-  console.log(`Webhook URL: ${masked}\n`);
+  console.log(`Webhook URL: ${masked}  auth: ${webhookToken ? 'header (webhookUrlToken)' : 'legacy ?secret'}\n`);
 
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
@@ -63,6 +68,7 @@ async function main() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           webhookUrl: url,
+          ...(webhookToken ? { webhookUrlToken: webhookToken } : {}),
           incomingWebhook: 'yes',
           outgoingWebhook: 'yes',
           outgoingMessageWebhook: 'yes',
@@ -80,7 +86,9 @@ async function main() {
     try {
       const res = await fetch(`${base}/waInstance${r.green_instance_id}/getSettings/${token}`);
       const s = JSON.parse(await res.text()) as Record<string, unknown>;
+      const tok = typeof s.webhookUrlToken === 'string' ? s.webhookUrlToken : '';
       console.log(`  getSettings: webhookUrl=${(s.webhookUrl as string)?.replace(/(secret=)[^&]*/, '$1•••')} ` +
+        `webhookUrlToken=${tok ? `${tok.slice(0, 4)}…(len ${tok.length})` : '<empty>'} ` +
         `incoming=${s.incomingWebhook} outMsg=${s.outgoingMessageWebhook} outApi=${s.outgoingAPIMessageWebhook} state=${s.stateWebhook}`);
     } catch (e) {
       console.log(`  getSettings FAILED: ${(e as Error).message}`);

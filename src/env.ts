@@ -39,6 +39,9 @@ export const env = createEnv({
     BILLING_CRON_SECRET: optionalString,
     CRM_CRON_SECRET: optionalString,
     GREEN_API_WEBHOOK_SECRET: optionalString,
+    // Green API webhookUrlToken — sent back as `Authorization: Bearer` on every
+    // notification; the inbound webhook authenticates on it (header, never query).
+    GREENAPI_WEBHOOK_TOKEN: optionalString,
 
     // ── Supabase storage (documents / media; "storage not configured" if unset)
     SUPABASE_SERVICE_ROLE_KEY: optionalString,

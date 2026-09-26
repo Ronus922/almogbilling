@@ -12,7 +12,7 @@
 //   set -a; . /etc/billing/billing.env; set +a; npx tsx scripts/drain-whatsapp-backlog.ts
 //   (env file is root-only → run under sudo, see register-whatsapp-webhooks.ts)
 //
-// Needs: DATABASE_URL, SETTINGS_ENC_KEY, GREEN_API_WEBHOOK_SECRET, APP_URL.
+// Needs: DATABASE_URL, SETTINGS_ENC_KEY, APP_URL, GREENAPI_WEBHOOK_TOKEN (or, legacy, GREEN_API_WEBHOOK_SECRET).
 
 import { Client } from 'pg';
 import { createDecipheriv } from 'node:crypto';
@@ -27,13 +27,24 @@ function decrypt(blob: EncBlob): string {
   return Buffer.concat([d.update(Buffer.from(blob.ct, 'base64')), d.final()]).toString('utf8');
 }
 
+// Replays go through the live webhook exactly like Green API's own calls:
+// `Authorization: Bearer <GREENAPI_WEBHOOK_TOKEN>` on a clean URL; the legacy
+// `?secret=` URL only while GREEN_API_WEBHOOK_SECRET is still the way in.
+const webhookToken = (process.env.GREENAPI_WEBHOOK_TOKEN ?? '').trim();
+
 function webhookUrl(): string {
   const app = (process.env.APP_URL ?? '').replace(/\/+$/, '');
-  const secret = (process.env.GREEN_API_WEBHOOK_SECRET ?? '').trim();
   if (!app) throw new Error('APP_URL not set');
-  if (!secret) throw new Error('GREEN_API_WEBHOOK_SECRET not set');
+  if (webhookToken) return `${app}/api/webhooks/greenapi`;
+  const secret = (process.env.GREEN_API_WEBHOOK_SECRET ?? '').trim();
+  if (!secret) throw new Error('neither GREENAPI_WEBHOOK_TOKEN nor GREEN_API_WEBHOOK_SECRET is set');
   return `${app}/api/webhooks/greenapi?secret=${secret}`;
 }
+
+const webhookHeaders = (): Record<string, string> => ({
+  'Content-Type': 'application/json',
+  ...(webhookToken ? { Authorization: `Bearer ${webhookToken}` } : {}),
+});
 
 const MAX_PER_INSTANCE = 1000; // safety cap against an infinite loop
 
@@ -97,7 +108,7 @@ async function main() {
       try {
         const post = await fetch(wh, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: webhookHeaders(),
           body: JSON.stringify(recv.body ?? {}),
         });
         if (post.status !== 200) {

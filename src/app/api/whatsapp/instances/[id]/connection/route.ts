@@ -14,7 +14,7 @@ import {
   setWebhookSettings,
   WhatsAppError,
 } from '@/lib/whatsapp';
-import { greenWebhookUrl } from '@/lib/whatsapp-webhook';
+import { greenWebhookToken, greenWebhookUrl } from '@/lib/whatsapp-webhook';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -116,6 +116,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
       await setWebhookSettings({
         instanceId: creds.greenInstanceId, token: creds.token, apiUrl: creds.apiUrl,
         webhookUrl: greenWebhookUrl(),
+        webhookToken: greenWebhookToken() || undefined,
       });
       return NextResponse.json({ ok: true });
     }

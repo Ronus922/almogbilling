@@ -11,7 +11,7 @@ import {
 } from '@/lib/db/whatsappInstances';
 import { setWebhookSettings, getInstanceState } from '@/lib/whatsapp';
 import { updateInstanceState, type InstanceState } from '@/lib/db/whatsappInstances';
-import { greenWebhookUrl, maskWebhookSecret } from '@/lib/whatsapp-webhook';
+import { greenWebhookToken, greenWebhookUrl, maskWebhookSecret } from '@/lib/whatsapp-webhook';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -112,6 +112,7 @@ export async function POST(req: NextRequest) {
         token: creds.token,
         apiUrl: creds.apiUrl,
         webhookUrl: greenWebhookUrl(),
+        webhookToken: greenWebhookToken() || undefined,
       });
     } catch (err) {
       webhookWarning = `החיבור נוצר אך רישום ה-webhook נכשל: ${(err as Error).message}`;

@@ -1,5 +1,4 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { timingSafeEqual } from 'node:crypto';
 import {
   parseWebhookNotificationFull,
   parseOutgoingStatus,
@@ -17,6 +16,7 @@ import {
   updateInstanceState,
   type InstanceState,
 } from '@/lib/db/whatsappInstances';
+import { authenticateWebhook } from '@/lib/whatsapp-webhook-auth';
 import { logger } from '@/lib/logger';
 import { env } from '@/env';
 
@@ -27,9 +27,14 @@ const KNOWN_STATES: readonly InstanceState[] = [
   'notAuthorized', 'authorized', 'blocked', 'starting', 'yellowCard', 'sleepMode',
 ];
 
-// POST /api/webhooks/greenapi?secret=… — PUBLIC (no session). The canonical
-// Green API inbound webhook for the messaging module. Authenticated by a shared
-// `secret` query param compared (constant-time) against GREEN_API_WEBHOOK_SECRET.
+// POST /api/webhooks/greenapi — PUBLIC (no session). The canonical Green API
+// inbound webhook for the messaging module. Authenticated (constant-time, see
+// lib/whatsapp-webhook-auth) by EITHER
+//   • `Authorization: Bearer <GREENAPI_WEBHOOK_TOKEN>` — Green API's webhookUrlToken
+//     (the target state), or
+//   • `?secret=<GREEN_API_WEBHOOK_SECRET>` — the legacy query form, kept only
+//     while the instance is being switched over (F8: it lands in access logs).
+// Every accepted request logs which one it used (auth=header | legacy-query).
 //
 // Handles, by typeWebhook:
 //   • incomingMessageReceived   → store inbound (person + groups, debtor match)
@@ -43,18 +48,12 @@ const KNOWN_STATES: readonly InstanceState[] = [
 //     queues retries; failures are logged internally. Dedup is downstream
 //     (ON CONFLICT external_message_id DO NOTHING).
 
-function secretMatches(provided: string, expected: string): boolean {
-  if (!provided || !expected) return false;
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
-}
-
 export async function POST(req: NextRequest) {
-  const expected = env.GREEN_API_WEBHOOK_SECRET ?? '';
-  const provided = req.nextUrl.searchParams.get('secret') ?? '';
-  if (!secretMatches(provided, expected)) {
+  const auth = authenticateWebhook(
+    { authorization: req.headers.get('authorization'), querySecret: req.nextUrl.searchParams.get('secret') },
+    { token: env.GREENAPI_WEBHOOK_TOKEN ?? '', legacySecret: env.GREEN_API_WEBHOOK_SECRET ?? '' },
+  );
+  if (!auth) {
     return new NextResponse(null, { status: 401 });
   }
 
@@ -63,6 +62,7 @@ export async function POST(req: NextRequest) {
     payload = await req.json();
   } catch {
     // Malformed body — ack so Green API stops retrying.
+    logger.warn(`[webhooks/greenapi] auth=${auth} malformed body — acked`);
     return NextResponse.json({ ok: true });
   }
 
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   const instance = greenId ? await getInstanceByGreenId(greenId) : null;
   // One-line audit of every notification (typeWebhook + idInstance + resolved row).
   logger.info(
-    `[webhooks/greenapi] type=${typeWebhook} idInstance=${greenId ?? '—'} instance=${instance?.id ?? 'UNKNOWN'}`,
+    `[webhooks/greenapi] auth=${auth} type=${typeWebhook} idInstance=${greenId ?? '—'} instance=${instance?.id ?? 'UNKNOWN'}`,
   );
 
   if (!instance) {
