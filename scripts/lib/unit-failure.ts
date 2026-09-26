@@ -38,6 +38,7 @@ export type Cause =
   | 'restic_failed'
   | 'pg_dump_failed'
   | 'cleanup_job_failed'
+  | 'bllink_scrape_failed'
   | 'timeout'
   | 'oom'
   | 'unknown';
@@ -166,6 +167,9 @@ export function classify(f: FailureFacts): Cause {
   if (/\[restic-push\] ERROR/.test(j)) return 'restic_failed';
   if (/\[pg-backup\] ERROR/.test(j)) return 'pg_dump_failed';
   if (f.unit.startsWith('billing-storage-cleanup') && f.failingStep === 'ExecStart') return 'cleanup_job_failed';
+  // Any failure of the Bllink scraper, whatever the step: the script records its
+  // own stage in bllink_scrapes; for the reader the meaning is the same.
+  if (f.unit.startsWith('billing-bllink-scrape')) return 'bllink_scrape_failed';
   return 'unknown';
 }
 
@@ -240,6 +244,21 @@ export function explain(f: FailureFacts): Explanation {
           'הוא רץ במצב בדיקה בלבד ואינו מוחק כלום, אז שום קובץ לא נפגע.',
         urgency: 'לא דחוף. המערכת עובדת רגיל.',
         action: `אין צורך לעשות כלום — ${retryLine(f)}`,
+      };
+
+    case 'bllink_scrape_failed':
+      return {
+        title: 'סריקת החובות מבלינק נכשלה',
+        what:
+          'המערכת לא הצליחה להוריד הבוקר את דוח החובות מבלינק. ' +
+          'שום נתון לא נמחק ולא שונה — נתוני החוב במערכת נשארו כפי שהיו.',
+        urgency:
+          since !== null && since >= 2
+            ? `דחוף. נתוני החוב לא התעדכנו מבלינק מאז ${ilTime(f.lastGoodIso)} — ${since} ימים.`
+            : `לא דחוף אם זה קרה פעם אחת. הסריקה המוצלחת האחרונה: ${ilTime(f.lastGoodIso)}.`,
+        action:
+          `${retryLine(f)} אם זה נכשל גם מחר — כנראה בלינק שינו משהו בעמוד ההתחברות או בדוח, ` +
+          'וצריך לבדוק (צילום מסך של הכשל נשמר ב-/var/log/billing).',
       };
 
     case 'timeout':

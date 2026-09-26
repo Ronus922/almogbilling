@@ -13,6 +13,12 @@
 Description=ALMOG CRM — Bllink shadow scrape + compare with the CRM snapshot (one-shot)
 After=network-online.target
 Wants=network-online.target
+# A scrape that dies silently is the 25/08–11/09/2026 outage again (17 days of
+# frozen debt, nobody told). The script's own WhatsApp alert covers a failure it
+# survives; OnFailure= also covers the ones it cannot report — a missing env
+# var before the run row exists, the 5min TimeoutStartSec kill, an OOM kill.
+# See deploy/systemd/billing-alert@.service. Drill passed 26/09/2026.
+OnFailure=billing-alert@%n.service
 
 [Service]
 Type=oneshot

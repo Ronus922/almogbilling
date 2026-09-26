@@ -63,6 +63,11 @@ describe('classify', () => {
     expect(classify(f({ result: 'timeout' }))).toBe('timeout');
     expect(classify(f({ result: 'oom-kill' }))).toBe('oom');
   });
+  it('recognises the Bllink scraper by unit name, whatever the step or journal text', () => {
+    expect(classify(f({ unit: 'billing-bllink-scrape.service', journal: '', failingStep: 'ExecStart' }))).toBe('bllink_scrape_failed');
+    expect(classify(f({ unit: 'billing-bllink-scrape.service', journal: '[bllink:shadow] run=x FAILED stage=login: net::ERR', failingStep: null }))).toBe('bllink_scrape_failed');
+  });
+
   it('falls back to unknown rather than guessing', () => {
     expect(classify(f({ journal: 'something nobody has seen before', failingStep: null }))).toBe('unknown');
   });
@@ -95,6 +100,19 @@ describe('explain', () => {
     });
     expect(e.title).toContain('לא הועלה לענן');
     expect(e.urgency).toContain('לא דחוף הלילה');
+  });
+
+  it('a failed Bllink scrape says nothing changed, dates the last good scrape, and escalates after two days', () => {
+    const scrape = { ...base, unit: 'billing-bllink-scrape.service', journal: '[bllink:shadow] run=x FAILED stage=login: boom', failingStep: 'ExecStart' as const };
+    const once = explain({ ...scrape, lastGoodIso: '2026-09-16T03:10:00Z' });
+    expect(once.title).toBe('סריקת החובות מבלינק נכשלה');
+    expect(once.what).toContain('שום נתון לא נמחק ולא שונה');
+    expect(once.urgency).toContain('לא דחוף');
+    expect(once.urgency).toContain('16/09/2026 06:10');
+    expect(once.action).toContain('/var/log/billing');
+    const days = explain({ ...scrape, lastGoodIso: '2026-09-13T03:10:00Z' }); // 3 days 22h before whenIso
+    expect(days.urgency).toContain('דחוף.');
+    expect(days.urgency).toContain('3 ימים');
   });
 
   it('an unknown failure admits it rather than inventing a cause', () => {
