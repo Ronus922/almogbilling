@@ -1823,6 +1823,21 @@ bg-slate-100` עם מילוי `bg-emerald-500` (`role="progressbar"`, נחתך �
 text-amber-700` "לא פורסם". הכפתורים בלשונית: "הוצאה מהקרן" ו"הפקדה לקרן" — אותו `EntrySheet` עם
 `section='renovation_fund'`: שדה הסעיף נקרא "מטרה" בהוצאה ומציע רק מטרות פעילות של הקרן.
 
+### תצוגת דייר (`components/finance/ResidentViewToggle.tsx`, `ResidentViewClient.tsx`, `ResidentMonthView.tsx`)
+
+מתג `Switch` בתוך תווית `h-11 rounded-xl border px-3 text-sm font-semibold` עם `Eye` — "תצוגת דייר" —
+ליד הלשוניות; פעיל = `border-indigo-200 bg-indigo-50 text-indigo-800`. כותב `?view=resident` (שומר
+`tab` ו-`m`). במצב הזה: באנר קבוע `role="status"` `border-indigo-200 bg-indigo-50 text-indigo-900`
+"אתה צופה כמו דייר — מוצגים רק חודשים שפורסמו, בלי פרטים פנימיים" עם `Button variant="outline"`
+"יציאה מתצוגת דייר" (`LogOut`); אין כפתורי הוספה, אין טוגל פרסום ובאנרי פרסום, אין עריכת יעד /
+"ניהול מטרות", אין עמודות ספק / מס׳ חשבונית / קבצים / פעולות, אין תגיות "לא פורסם" ואין "מושבתת".
+התאריכון ב-`residentMode`: חודש שלא פורסם `text-slate-300 cursor-not-allowed` כמו חודש עתידי, רבעון /
+מחצית / שנה לחיצים רק אם יש בהם חודש מפורסם; המקרא: "חודש שפורסם — רק אלה זמינים". חודש בודד =
+`ResidentMonthView`: 3 `KpiCard` + טבלאות לפי סעיף `[תאריך 112 | תיאור | סכום 160]` (הוצאה) /
+`[תיאור | סכום 160]` (הכנסה) מאותם קבועים; דוח תקופה = שורת מידע `border-line bg-surface-2`
+"כולל N מתוך M חודשים" (`Info`) במקום באנר האזהרה; אף חודש לא פורסם = `rounded-lg border bg-card p-12`
+"עוד לא פורסמו חודשים".
+
 ### סעיפים ומטרות (`/finance/settings`, `CategorySheet.tsx`)
 
 אין יותר שדה "חלק בתקציב": ה-`section` נקבע לפי הכרטיס שממנו נוצר הסעיף — "סעיפים — תקציב שוטף"
