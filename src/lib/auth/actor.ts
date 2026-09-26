@@ -2,7 +2,7 @@ import 'server-only';
 import { query } from '@/lib/db';
 import { getSession, type SessionUser } from './session';
 import { AuthorizationError } from './errors';
-import { hasPermission, canManageRole } from '@/lib/permissions/check';
+import { hasPermission, canManageRole, canUseAssistant } from '@/lib/permissions/check';
 import { isMatrixRole } from '@/lib/permissions/constants';
 import type { Action, ModulePermission, Role } from '@/lib/permissions/constants';
 
@@ -103,6 +103,21 @@ export async function requireAnyPermission(
 export async function requireNotificationsAccess(): Promise<Actor> {
   const actor = await requireActor();
   if (actor.role === 'viewer') {
+    throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
+  }
+  return actor;
+}
+
+/**
+ * The personal assistant (/api/agent/*) is STAFF-ONLY: it answers with other
+ * residents' debts, so a resident must never reach it. Role allowlist
+ * (ASSISTANT_ROLES) AND the debtors-screen permission gate — canUseAssistant().
+ * 401 without a session, 403 for any role off the list (a future resident role
+ * included) or any staff user without dashboard/contacts view.
+ */
+export async function requireAssistantAccess(): Promise<Actor> {
+  const actor = await requireActor();
+  if (!canUseAssistant(actor.role, actor.permissions)) {
     throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
   }
   return actor;

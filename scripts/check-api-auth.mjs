@@ -12,7 +12,8 @@ import { join } from 'node:path';
 
 // Any of these tokens in the file body ⇒ the route is gated.
 //   requireDriveConnector = requireAdmin + finance:edit (src/lib/finance/drive-oauth.ts).
-const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|CanManageRole|DriveConnector)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREEN_API_WEBHOOK_SECRET/;
+//   requireAssistantAccess = staff-role allowlist + dashboard/contacts view (src/lib/auth/actor.ts).
+const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|AssistantAccess|CanManageRole|DriveConnector)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREEN_API_WEBHOOK_SECRET/;
 
 // Routes that are legitimately public (pre-auth flows + health + public media).
 // Keep tiny and justified — each is unauthenticated BY DESIGN.
