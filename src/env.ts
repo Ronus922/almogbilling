@@ -83,6 +83,12 @@ export const env = createEnv({
     PLAYWRIGHT_BROWSERS_PATH: optionalString,
     // WhatsApp recipient (local IL format) for a shadow-scrape failure alert.
     BLLINK_ALERT_PHONE: optionalString,
+    // The manager's WhatsApp/email for operational alerts. Read by
+    // scripts/lib/admin-alert.ts and, since the owners portal, by the app itself
+    // (the third-lockout alert) — hence validated here too. Unset = that alert
+    // is skipped with a warning, never an error.
+    ADMIN_ALERT_PHONE: optionalString,
+    ADMIN_ALERT_EMAIL: optionalString,
 
     // ── monitoring (all optional; unset = off) ────────────────────────────
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).optional(),

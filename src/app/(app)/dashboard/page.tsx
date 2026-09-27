@@ -64,6 +64,11 @@ export default async function DashboardPage({
   const canChangeStatus = hasPermission(actor.role, actor.permissions, 'status_management', 'edit');
   const canViewChips = hasPermission(actor.role, actor.permissions, 'chips', 'view');
   const canEditChips = hasPermission(actor.role, actor.permissions, 'chips', 'edit');
+  // Owners portal ("פורטל בעלי דירות") — the roster + login-log tabs of the
+  // apartment card. `portal_manage` is admin / super_admin only (deny by default
+  // for every matrix role), so a manager sees neither tab.
+  const canViewPortal = hasPermission(actor.role, actor.permissions, 'portal_manage', 'view');
+  const canEditPortal = hasPermission(actor.role, actor.permissions, 'portal_manage', 'edit');
   // Bulk export / print (`export`) — manager+ only; a read-only viewer cannot
   // bulk-download the debtors list, only read the on-screen table.
   const canExport = hasPermission(actor.role, actor.permissions, 'export', 'view');
@@ -106,6 +111,8 @@ export default async function DashboardPage({
           canSendWhatsapp={canSendWhatsapp}
           canViewChips={canViewChips}
           canEditChips={canEditChips}
+          canViewPortal={canViewPortal}
+          canEditPortal={canEditPortal}
         />
       </div>
     </div>
