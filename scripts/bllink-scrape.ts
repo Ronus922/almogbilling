@@ -50,6 +50,7 @@ import {
 } from '../src/lib/sync/bllinkCompare';
 import { toCompareMap } from '../src/lib/sync/bllinkMap';
 import { resolveBllinkSource } from '../src/lib/sync/decision';
+import { tryAcquireScrapeLock } from '../src/lib/sync/scrapeLock';
 import { sendAdminAlert } from './lib/admin-alert';
 
 // Local runs read .env.local (never overriding what the shell / systemd already set).
@@ -263,6 +264,19 @@ async function main(): Promise<number> {
 
   const db = new Client({ connectionString: requireEnv('DATABASE_URL') });
   await db.connect();
+
+  // One scrape at a time (27/09/2026). The timer and the dashboard's "סנכרן
+  // עכשיו" both start this unit, and a hand-run `tsx scripts/bllink-scrape.ts`
+  // bypasses systemd's coalescing entirely — two Bllink logins at once is how a
+  // snapshot ends up half-written. Refused lock = exit 0 WITHOUT a run row:
+  // the other process is already producing the snapshot we wanted, so this is a
+  // skip, not a failure, and must not fire the unit's OnFailure alert. The
+  // caller that asked for a fresh snapshot notices by checking finished_at.
+  if (!(await tryAcquireScrapeLock(db))) {
+    log('skipped: another Bllink scrape holds the lock — nothing scraped, no run row');
+    await db.end().catch(() => undefined);
+    return 0;
+  }
 
   const { rows: opened } = await db.query<{ id: string }>(
     `insert into public.bllink_scrapes default values returning id`,

@@ -6,6 +6,7 @@ import { createImportRun } from '@/lib/db/importRuns';
 import { createSyncRun, finishSyncRunSuccess, finishSyncRunError, type SyncTriggerSource } from '@/lib/db/syncRuns';
 import { fetchCrmDebtorRows, writeCrmSnapshot } from '@/lib/sync/bllinkPull';
 import { fetchLocalDebtorRows, recordWitnessCompare, type LocalSnapshot } from '@/lib/sync/localPull';
+import { runScrapeUnit } from '@/lib/sync/scrapeUnit';
 import { compareSnapshots, isCompareUnavailable, type CompareResult } from '@/lib/sync/bllinkCompare';
 import {
   SyncStageError,
@@ -18,6 +19,7 @@ import {
 } from '@/lib/sync/decision';
 import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { SYNC_BLLINK_MAX_PER_IP, AUTH_RATE_WINDOW_SEC, BLLINK_MAX_SNAPSHOT_AGE_HOURS_DEFAULT } from '@/lib/constants';
+import { syncBllinkBodySchema } from '@/lib/validation/requests';
 import { logger } from '@/lib/logger';
 import { env } from '@/env';
 
@@ -32,7 +34,7 @@ const SCRAPE_TIMEOUT_MS = 120_000;
  * admin session (the dashboard button) or by billing-sync.timer with the
  * x-cron-secret header (constant-time compare against CRM_CRON_SECRET).
  *
- * Every run is a sync_runs row and walks four stages; the first failure stops
+ * Every run is a sync_runs row and walks the stages below; the first failure stops
  * the run, is persisted with its stage + full message, is logged to the journal
  * and is returned as { ok:false, stage, message, sourceRunAt }:
  *
@@ -51,6 +53,13 @@ const SCRAPE_TIMEOUT_MS = 120_000;
  * ── BLLINK_SOURCE=billing (Phase 2, 26/09/2026) ──────────────────────────────
  * The snapshot comes from billing's OWN newest successful scrape
  * (bllink_scrapes, 05:30 Asia/Jerusalem) instead of the CRM:
+ *   scrape → ONLY when the caller posts {"fresh":true} (the dashboard button,
+ *            27/09/2026): start billing-bllink-scrape.service and wait for it,
+ *            so the button really refreshes instead of re-copying the morning
+ *            snapshot. Refused for a cron caller — the timer scraped at 05:30.
+ *            A unit that "succeeded" is not proof: it also exits 0 when another
+ *            scrape holds the advisory lock, so the new snapshot's finished_at
+ *            must post-date the request or the run fails here. (502)
  *   stale  → that scrape must be younger than BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS
  *            (strict, no default: unset = fail closed). Yesterday's snapshot is
  *            NEVER copied quietly — the run stops, sync_runs says why, nothing
@@ -101,6 +110,41 @@ export async function POST(req: Request) {
     );
   }
 
+  // ── the optional body ──────────────────────────────────────────────────
+  // NOT parseJsonBody: billing-sync.timer posts no body at all, and
+  // parseJsonBody answers 400 invalid_json for an empty one — the daily sync
+  // must never depend on sending anything. An absent body reads as {}; a body
+  // that IS sent is validated by the same zod schema and answered in the same
+  // shape parseJsonBody uses (message + issues).
+  let fresh = false;
+  {
+    const raw = (await req.text()).trim();
+    if (raw.length > 0) {
+      let json: unknown;
+      try {
+        json = JSON.parse(raw);
+      } catch {
+        return NextResponse.json({ ok: false, stage: 'body', message: 'invalid_json' }, { status: 400 });
+      }
+      const parsed = syncBllinkBodySchema.safeParse(json);
+      if (!parsed.success) {
+        return NextResponse.json(
+          {
+            ok: false,
+            stage: 'body',
+            message: parsed.error.issues[0]?.message ?? 'invalid_body',
+            issues: parsed.error.issues,
+          },
+          { status: 400 },
+        );
+      }
+      // Only an operator may ask for a scrape. The timer already scraped at
+      // 05:30, and a cron caller queueing a second Playwright run would double
+      // the morning's memory for nothing.
+      fresh = parsed.data.fresh === true && source === 'ui';
+    }
+  }
+
   const syncRunId = await createSyncRun({ triggeredBy: actorId, source });
   let sourceRunAt: string | null = null;
   let importRunId: string | null = null;
@@ -108,12 +152,37 @@ export async function POST(req: Request) {
 
   try {
     if (origin === 'billing') {
+      // ── stage: scrape — a real Bllink scrape, only when asked for ──────────
+      // Without this, "סנכרן עכשיו" re-copied the 05:30 snapshot: the numbers
+      // never moved and the toast still said "סונכרנו" (found 27/09/2026 — five
+      // manual runs, all with the same source_run_at).
+      let scrapeAskedAt: number | null = null;
+      if (fresh) {
+        scrapeAskedAt = Date.now();
+        const unit = await runScrapeUnit();
+        if (!unit.ok) {
+          throw new SyncStageError('scrape', `סריקת בלינק נכשלה — ${unit.reason}. לא הועתק דבר.`);
+        }
+      }
+
       // ── stage: stale — billing's own newest scrape, and it must be today's ──
       const local = await fetchLocalDebtorRows(); // throws → 'pull' below
       if (!local) {
         throw new SyncStageError('stale', 'אין סריקה מוצלחת של billing ב-bllink_scrapes — לא הועתק דבר');
       }
       sourceRunAt = local.finishedAt;
+
+      // The unit exits 0 also when the scraper found the advisory lock taken and
+      // skipped (scrapeLock.ts), so a successful unit is NOT proof of a new
+      // snapshot — the timestamp is. Copying the older one here would answer
+      // "סונכרנו" to a request for fresh data, which is the bug this stage fixes.
+      if (scrapeAskedAt !== null && new Date(local.finishedAt).getTime() < scrapeAskedAt) {
+        throw new SyncStageError(
+          'scrape',
+          'סריקה אחרת של בלינק רצה כרגע ולכן לא נוצרה סריקה חדשה — נסה שוב בעוד דקה. לא הועתק דבר.',
+          sourceRunAt,
+        );
+      }
       const limitHours = localFreshnessLimitHours(env.BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS);
       if (limitHours === null) {
         throw new SyncStageError(

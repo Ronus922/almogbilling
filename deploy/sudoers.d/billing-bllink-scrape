@@ -1,0 +1,20 @@
+# billing-bllink-scrape — passwordless start of ONE unit, for the dashboard's
+# "סנכרן עכשיו" (src/lib/sync/scrapeUnit.ts, 27/09/2026).
+#
+# Why: starting a *system* unit needs root, and billing.service runs as ubuntu.
+# The alternative — running Playwright inside the web process — was rejected on
+# 26/09/2026 (~490MB peak in billing.service, and a deploy restart would kill a
+# scrape mid-flight). Starting the unit that the 05:30 timer already uses reuses
+# its OnFailure alert, its TimeoutStartSec and its env file.
+#
+# Least privilege, same shape as billing-deploy: one unit, one verb. No stop, no
+# restart, no daemon-reload, no wildcard. sudo matches the whole argv, so this
+# line and ARGV in scrapeUnit.ts must stay identical — including --wait, which is
+# what makes the route wait for the real exit status instead of guessing.
+#
+# Install (prod):
+#   sudo install -m 440 -o root -g root \
+#     deploy/sudoers.d/billing-bllink-scrape /etc/sudoers.d/billing-bllink-scrape
+#   sudo visudo -c        # must print "parsed OK" for every file
+#   sudo -n /usr/bin/systemctl start --wait billing-bllink-scrape.service   # smoke
+ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl start --wait billing-bllink-scrape.service
