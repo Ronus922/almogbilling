@@ -50,7 +50,7 @@ import {
 } from '../src/lib/sync/bllinkCompare';
 import { toCompareMap } from '../src/lib/sync/bllinkMap';
 import { resolveBllinkSource } from '../src/lib/sync/decision';
-import { tryAcquireScrapeLock } from '../src/lib/sync/scrapeLock';
+import { resolveScrapeConnection, tryAcquireScrapeLock } from '../src/lib/sync/scrapeLock';
 import { sendAdminAlert } from './lib/admin-alert';
 
 // Local runs read .env.local (never overriding what the shell / systemd already set).
@@ -262,7 +262,11 @@ async function main(): Promise<number> {
   const bllinkPassword = requireEnv('BLLINK_PASSWORD');
   const secrets = [bllinkPassword];
 
-  const db = new Client({ connectionString: requireEnv('DATABASE_URL') });
+  // DIRECT (port 5432) and not the pooler, because of the lock below —
+  // see resolveScrapeConnection. A 20-second batch job has no business in
+  // Supavisor's pool anyway.
+  const conn = resolveScrapeConnection(process.env);
+  const db = new Client({ connectionString: conn.connectionString });
   await db.connect();
 
   // One scrape at a time (27/09/2026). The timer and the dashboard's "סנכרן
@@ -272,10 +276,14 @@ async function main(): Promise<number> {
   // the other process is already producing the snapshot we wanted, so this is a
   // skip, not a failure, and must not fire the unit's OnFailure alert. The
   // caller that asked for a fresh snapshot notices by checking finished_at.
-  if (!(await tryAcquireScrapeLock(db))) {
-    log('skipped: another Bllink scrape holds the lock — nothing scraped, no run row');
-    await db.end().catch(() => undefined);
-    return 0;
+  if (conn.lockable) {
+    if (!(await tryAcquireScrapeLock(db))) {
+      log('skipped: another Bllink scrape holds the lock — nothing scraped, no run row');
+      await db.end().catch(() => undefined);
+      return 0;
+    }
+  } else {
+    log('warning: DIRECT_URL is not set — running WITHOUT the scrape lock (systemd coalescing only)');
   }
 
   const { rows: opened } = await db.query<{ id: string }>(
