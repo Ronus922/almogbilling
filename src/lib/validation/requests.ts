@@ -304,3 +304,11 @@ export const portalUnlockBodySchema = z.object({
     .min(9, 'מספר טלפון לא תקין')
     .max(20, 'מספר טלפון לא תקין'),
 });
+
+// POST /api/sync/bllink — the body is OPTIONAL: billing-sync.timer posts none at
+// all (scripts/run-bllink-sync.sh), so an absent body must read as {} and behave
+// exactly as before. `fresh` is the dashboard button asking for a real Bllink
+// scrape first, instead of re-copying the morning snapshot.
+export const syncBllinkBodySchema = z.object({
+  fresh: z.boolean().optional(),
+});

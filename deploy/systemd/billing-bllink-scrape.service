@@ -9,6 +9,13 @@
 #   sudo cp deploy/systemd/billing-bllink-scrape.{service,timer} /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now billing-bllink-scrape.timer
 #   systemctl list-timers billing-bllink-scrape.timer   # next run: 05:30 Asia/Jerusalem
+# Started by two paths (27/09/2026): this timer, and the dashboard's "סנכרן
+# עכשיו" — POST /api/sync/bllink {"fresh":true} runs
+# `sudo -n systemctl start --wait` on THIS unit (src/lib/sync/scrapeUnit.ts,
+# rule in deploy/sudoers.d/billing-bllink-scrape). Two scrapes never overlap: the
+# script takes a Postgres session advisory lock (src/lib/sync/scrapeLock.ts) and,
+# when it is held, exits 0 without a run row — a skip, not a failure, so this
+# unit's OnFailure= stays quiet.
 # Manual run + log:
 #   sudo systemctl start billing-bllink-scrape.service && journalctl -u billing-bllink-scrape -n 60
 #   npm run bllink:shadow-report

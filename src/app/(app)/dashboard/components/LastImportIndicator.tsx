@@ -98,7 +98,14 @@ export function LastImportIndicator({
     if (syncing) return;
     setSyncing(true);
     try {
-      const res = await fetch('/api/sync/bllink', { method: 'POST' });
+      // fresh: a real Bllink scrape first, then the copy into debtors. Without it
+      // the button re-copied the 05:30 snapshot and nothing on screen moved
+      // (27/09/2026). Takes ~50s end to end, hence the "סורק" label below.
+      const res = await fetch('/api/sync/bllink', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ fresh: true }),
+      });
       const body = (await res.json().catch(() => null)) as SyncResponse | null;
       if (!res.ok || !body?.ok) {
         // Same first line as the banner, nothing technical — the stage and the
@@ -169,7 +176,7 @@ export function LastImportIndicator({
               className="h-9 gap-2 rounded-lg bg-gradient-to-l from-[#16a34a] to-[#0c7a37] px-4 text-sm font-bold text-white shadow-[0_4px_14px_rgba(22,163,74,0.3)] hover:brightness-105"
             >
               <RefreshCw className={cn('h-4 w-4', syncing && 'animate-spin')} />
-              <span>{syncing ? 'מסנכרן…' : 'סנכרן עכשיו'}</span>
+              <span>{syncing ? 'סורק את בלינק…' : 'סנכרן עכשיו'}</span>
             </Button>
           )}
           {isAdmin && (
