@@ -13,7 +13,10 @@ import { join } from 'node:path';
 // Any of these tokens in the file body ⇒ the route is gated.
 //   requireDriveConnector = requireAdmin + finance:edit (src/lib/finance/drive-oauth.ts).
 //   requireAssistantAccess = staff-role allowlist + dashboard/contacts view (src/lib/auth/actor.ts).
-const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|AssistantAccess|CanManageRole|DriveConnector)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREENAPI_WEBHOOK_TOKEN/;
+//   requirePortalSession = the owners portal's OWN session guard (portal_session
+//     cookie + "is this phone still an active owner", src/lib/portal/session.ts).
+//     A separate auth layer, not a weaker one: it grants nothing outside /portal.
+const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|AssistantAccess|CanManageRole|DriveConnector|PortalSession)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREENAPI_WEBHOOK_TOKEN/;
 
 // Routes that are legitimately public (pre-auth flows + health + public media).
 // Keep tiny and justified — each is unauthenticated BY DESIGN.
@@ -27,6 +30,12 @@ const PUBLIC = new Set([
   'src/app/api/auth/google/start/route.ts',         // OAuth redirect
   'src/app/api/auth/google/callback/route.ts',      // OAuth callback (state-gated)
   'src/app/api/public/wa-media/[...path]/route.ts', // deliberately public media proxy
+  // Owners portal, pre-auth — the exact counterparts of the three staff entries
+  // above: request a WhatsApp code, exchange it for a session, drop a session.
+  // They reveal no resident data; every /portal read is behind requirePortalSession.
+  'src/app/api/portal/otp/request/route.ts',
+  'src/app/api/portal/otp/verify/route.ts',
+  'src/app/api/portal/logout/route.ts',
 ]);
 
 run('check-api-auth', async () => {

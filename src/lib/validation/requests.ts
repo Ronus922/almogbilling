@@ -235,3 +235,72 @@ export const financeFundSettingsBodySchema = z.object({
     .max(9_999_999_999, 'הסכום גדול מדי')
     .refine((v) => Math.round(v * 100) / 100 === v, 'עד שתי ספרות אחרי הנקודה'),
 });
+
+// ── Owners portal ("פורטל בעלי דירות") ──────────────────────────────────────
+// The phone arrives as the resident typed it (any Israeli format); the routes
+// normalise it with toPortalE164 (src/lib/portal/phone.ts). The schema only
+// checks that SOMETHING plausible was typed — telling an unregistered number
+// apart from a malformed one is the route's job, and both get the same answer.
+
+// POST /api/portal/otp/request
+export const portalOtpRequestBodySchema = z.object({
+  phone: z
+    .string({ error: 'מספר טלפון לא תקין' })
+    .trim()
+    .min(9, 'מספר טלפון לא תקין')
+    .max(20, 'מספר טלפון לא תקין'),
+});
+
+// POST /api/portal/otp/verify
+export const portalOtpVerifyBodySchema = z.object({
+  phone: z
+    .string({ error: 'מספר טלפון לא תקין' })
+    .trim()
+    .min(9, 'מספר טלפון לא תקין')
+    .max(20, 'מספר טלפון לא תקין'),
+  code: z
+    .string({ error: 'הקוד חייב להכיל 6 ספרות' })
+    .trim()
+    .regex(/^\d{6}$/, 'הקוד חייב להכיל 6 ספרות'),
+});
+
+// POST /api/apartments/[apartment]/owner-phones
+export const ownerPhoneCreateBodySchema = z.object({
+  phone: z
+    .string({ error: 'מספר טלפון לא תקין' })
+    .trim()
+    .min(9, 'מספר טלפון לא תקין')
+    .max(20, 'מספר טלפון לא תקין'),
+  owner_name: z
+    .string()
+    .trim()
+    .max(120, 'השם ארוך מדי')
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : null)),
+});
+
+// PATCH /api/apartments/[apartment]/owner-phones — edit name / deactivate
+export const ownerPhoneUpdateBodySchema = z
+  .object({
+    id: z.uuid({ error: 'מזהה לא תקין' }),
+    owner_name: z
+      .string()
+      .trim()
+      .max(120, 'השם ארוך מדי')
+      .nullable()
+      .optional()
+      .transform((v) => (v && v.length > 0 ? v : v === undefined ? undefined : null)),
+    is_active: z.boolean().optional(),
+  })
+  .refine((b) => b.owner_name !== undefined || b.is_active !== undefined, {
+    error: 'לא נשלח שדה לעדכון',
+  });
+
+// POST /api/apartments/[apartment]/portal-unlock
+export const portalUnlockBodySchema = z.object({
+  phone: z
+    .string({ error: 'מספר טלפון לא תקין' })
+    .trim()
+    .min(9, 'מספר טלפון לא תקין')
+    .max(20, 'מספר טלפון לא תקין'),
+});
