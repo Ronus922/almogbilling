@@ -32,6 +32,15 @@ run('check-rbac', async () => {
   t('manager עם canView בלבד נחסם edit', hasPermission('manager', rows, 'dashboard', 'edit') === false);
   t('viewer עם canView רשאי view', hasPermission('viewer', rows, 'dashboard', 'view') === true);
 
+  // portal_manage (owners portal: the roster, the login log, manual unlocks) —
+  // admin / super_admin only, deny-by-default for every matrix role. Same shape
+  // as `finance`: no user_permissions row ⇒ denied, so no re-seed was needed.
+  t('portal_manage: super_admin רשאי edit', hasPermission('super_admin', [], 'portal_manage', 'edit') === true);
+  t('portal_manage: admin רשאי edit', hasPermission('admin', [], 'portal_manage', 'edit') === true);
+  t('portal_manage: manager ללא שורה נחסם', hasPermission('manager', [], 'portal_manage', 'view') === false);
+  t('portal_manage: viewer ללא שורה נחסם', hasPermission('viewer', [], 'portal_manage', 'view') === false);
+  t('portal_manage: cleaner ללא שורה נחסם', hasPermission('cleaner', [], 'portal_manage', 'view') === false);
+
   // canManageRole — admin can't touch elevated roles
   t('admin מנהל manager', canManageRole('admin', 'manager') === true);
   t('admin לא מנהל admin', canManageRole('admin', 'admin') === false);

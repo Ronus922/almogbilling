@@ -76,6 +76,8 @@ export function DebtorsTable({
   canSendWhatsapp,
   canViewChips,
   canEditChips,
+  canViewPortal,
+  canEditPortal,
 }: {
   rows: Debtor[];
   page: number;
@@ -87,6 +89,8 @@ export function DebtorsTable({
   canSendWhatsapp: boolean;
   canViewChips: boolean;
   canEditChips: boolean;
+  canViewPortal: boolean;
+  canEditPortal: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -595,6 +599,8 @@ export function DebtorsTable({
         canSendWhatsapp={canSendWhatsapp}
         canViewChips={canViewChips}
         canEditChips={canEditChips}
+        canViewPortal={canViewPortal}
+        canEditPortal={canEditPortal}
         onOpenChange={(o) => {
           setPanelOpen(o);
           if (!o) setSelectedId(null);

@@ -27,6 +27,8 @@ import { CompletedActionsCard } from './CompletedActionsCard';
 import { HistoryTimeline } from './HistoryTimeline';
 import { DocumentsSection } from './DocumentsSection';
 import { ChipsTab } from './ChipsTab';
+import { OwnerPhonesTab } from './OwnerPhonesTab';
+import { PortalLoginsTab } from './PortalLoginsTab';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { PanelTabs, type PanelTabKey } from './PanelTabs';
@@ -46,6 +48,10 @@ interface Props {
   canViewChips?: boolean;
   /** chips:edit — issue chip + resident-type editing. Default false. */
   canEditChips?: boolean;
+  /** portal_manage:view — without it BOTH owners-portal tabs are hidden. Default false. */
+  canViewPortal?: boolean;
+  /** portal_manage:edit — add/edit an owner phone, release a lockout. Default false. */
+  canEditPortal?: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -58,7 +64,8 @@ function dateToIsoStr(raw: string | null): string {
 
 export function TenantDetailPanel({
   open, debtorId, canEdit, canChangeStatus, canSendWhatsapp,
-  canViewChips = false, canEditChips = false, onOpenChange,
+  canViewChips = false, canEditChips = false,
+  canViewPortal = false, canEditPortal = false, onOpenChange,
 }: Props) {
   const router = useRouter();
   const [tenant, setTenant] = useState<Tenant | null>(null);
@@ -394,7 +401,10 @@ export function TenantDetailPanel({
             <PanelTabs
               active={activeTab}
               onChange={setActiveTab}
-              hiddenTabs={canViewChips ? [] : ['chips']}
+              hiddenTabs={[
+                ...(canViewChips ? [] : (['chips'] as const)),
+                ...(canViewPortal ? [] : (['owners', 'portalLogins'] as const)),
+              ]}
             />
           )}
 
@@ -460,6 +470,16 @@ export function TenantDetailPanel({
                 contactId={tenant.contact_id}
                 apartmentNumber={tenant.apartment_number}
                 canEditChips={canEditChips}
+              />
+            ) : activeTab === 'owners' ? (
+              <OwnerPhonesTab
+                apartmentNumber={tenant.apartment_number}
+                canEdit={canEditPortal}
+              />
+            ) : activeTab === 'portalLogins' ? (
+              <PortalLoginsTab
+                apartmentNumber={tenant.apartment_number}
+                canEdit={canEditPortal}
               />
             ) : (
               <div className="space-y-4">

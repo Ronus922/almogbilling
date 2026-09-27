@@ -82,6 +82,11 @@ export const MODULES: ModuleMeta[] = [
   // Deny by default for every matrix role (no row = denied, fail-closed), so no
   // user_permissions re-seed is needed; an admin may grant it later per user.
   { key: 'finance',            label: 'שקיפות כספית',       group: 'admin' },
+  // Owners portal ("פורטל בעלי דירות") — managing the owner-phone roster, the
+  // login log and manual unlocks. Admin / super_admin only, exactly like
+  // `finance`: deny by default for every matrix role (no row = denied), so no
+  // user_permissions re-seed is needed and an admin may grant it per user later.
+  { key: 'portal_manage',      label: 'פורטל בעלי דירות',   group: 'admin' },
 ];
 
 export const SUPER_ADMIN_ONLY: readonly string[] = ['users_management', 'roles_management'];
@@ -132,6 +137,7 @@ export const DEFAULT_MANAGER: ModulePermission[] = [
   noPerm('users_management'),
   noPerm('settings'),
   noPerm('finance'),
+  noPerm('portal_manage'),
 ];
 
 // Viewer defaults — read-only access to the DEBTORS SCREEN (dashboard) ONLY.
@@ -168,6 +174,7 @@ export const DEFAULT_VIEWER: ModulePermission[] = [
   noPerm('users_management'),
   noPerm('settings'),
   noPerm('finance'),
+  noPerm('portal_manage'),
 ];
 
 // Field-worker defaults (cleaner + maintenance) — tasks + issues only, view+edit.
@@ -203,6 +210,7 @@ export const DEFAULT_WORKER: ModulePermission[] = [
   noPerm('users_management'),
   noPerm('settings'),
   noPerm('finance'),
+  noPerm('portal_manage'),
 ];
 
 // ── Role classification ──────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import {
   Building2, LayoutDashboard, LayoutGrid, Users, Truck, CheckSquare, AlertTriangle,
   Calendar, FileText, MessageCircle, MessagesSquare, Bell, Sliders,
   MapPin, UserCog, KeyRound, SquareParking, Settings as SettingsIcon, Coins, SlidersHorizontal,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -80,6 +81,15 @@ const SECTIONS: MenuSection[] = [
     items: [
       { label: 'סקירה חודשית',      icon: Coins, href: '/finance', module: 'finance', exact: true },
       { label: 'סעיפים והגדרות',    icon: SlidersHorizontal, href: '/finance/settings', module: 'finance' },
+    ],
+  },
+  // Owners portal ("פורטל בעלי דירות") — the log of every login attempt. The
+  // roster itself is managed per apartment, on the apartment card, so there is
+  // only one screen here. `portal_manage` = admin / super_admin.
+  {
+    title: 'פורטל בעלי דירות',
+    items: [
+      { label: 'התחברויות לפורטל',  icon: ShieldCheck, href: '/admin/portal-log', module: 'portal_manage' },
     ],
   },
 ];
