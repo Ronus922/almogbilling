@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Activity, Plus, Pencil, Archive, RotateCcw, Upload, FileText, Trash2, User,
+  Activity, Plus, Pencil, Archive, RotateCcw, Upload, FileText, Trash2, Eye, User,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -46,6 +46,8 @@ const ACTION_META: Record<string, ActionMeta> = {
   document_uploaded: { label: 'מסמך הועלה', icon: Upload, tone: 'bg-[#fff3e6] text-[#ea8a18]' },
   document_renamed: { label: 'שם מסמך שונה', icon: FileText, tone: 'bg-[#eef2f7] text-[#475569]' },
   document_deleted: { label: 'מסמך נמחק', icon: Trash2, tone: 'bg-[#ffe4e6] text-[#e11d48]' },
+  // F9 — a supplier document was opened/downloaded (one row per user+file per 10 min).
+  file_viewed: { label: 'צפייה בקובץ', icon: Eye, tone: 'bg-[#e8f0ff] text-[#2563eb]' },
 };
 
 function fallbackMeta(action: string): ActionMeta {
@@ -69,6 +71,7 @@ function describe(entry: SupplierActivityEntry): string | null {
     }
     case 'document_uploaded':
     case 'document_deleted':
+    case 'file_viewed':
       return typeof metadata?.file_name === 'string' ? (metadata.file_name as string) : null;
     case 'document_renamed': {
       const from = typeof metadata?.from === 'string' ? (metadata.from as string) : '';
