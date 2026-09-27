@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SYNC_STAGE_LABELS,
   SyncStageError,
   checkSnapshotFreshness,
   localFreshnessLimitHours,
@@ -84,6 +85,13 @@ describe('stage → HTTP status and error carrier', () => {
     expect(stageHttpStatus('pull')).toBe(502);
     expect(stageHttpStatus('stale')).toBe(409);
     expect(stageHttpStatus('guard')).toBe(409);
+    // reconcile (27/09/2026) fails AFTER the write — still "data rejected", not "upstream broke".
+    expect(stageHttpStatus('reconcile')).toBe(409);
+  });
+  it('every stage has a Hebrew label for the banner and the history sheet', () => {
+    const stages = ['scrape', 'stale', 'guard', 'pull', 'reconcile'] as const;
+    for (const st of stages) expect(SYNC_STAGE_LABELS[st].length).toBeGreaterThan(0);
+    expect(SYNC_STAGE_LABELS.reconcile).toContain('אחרי הכתיבה');
   });
   it('SyncStageError keeps the stage and the source timestamp', () => {
     const e = new SyncStageError('stale', 'x', '2026-08-25T06:21:05Z');

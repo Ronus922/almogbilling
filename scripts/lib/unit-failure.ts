@@ -40,6 +40,7 @@ export type Cause =
   | 'cleanup_job_failed'
   | 'bllink_scrape_failed'
   | 'bllink_sync_failed'
+  | 'bllink_sync_mismatch'
   | 'timeout'
   | 'oom'
   | 'unknown';
@@ -171,9 +172,14 @@ export function classify(f: FailureFacts): Cause {
   // Any failure of the Bllink scraper, whatever the step: the script records its
   // own stage in bllink_scrapes; for the reader the meaning is the same.
   if (f.unit.startsWith('billing-bllink-scrape')) return 'bllink_scrape_failed';
-  // The daily copy into debtors refused (stage stale / guard / pull — the reason
-  // is on sync_runs and in the dashboard banner) or could not reach the app.
-  if (f.unit.startsWith('billing-sync')) return 'bllink_sync_failed';
+  // The daily copy into debtors. Stage 'reconcile' is the one failure that
+  // happens AFTER data was written (the route's JSON answer lands in the journal
+  // through curl --fail-with-body) — it must not be described as "nothing was
+  // copied". Every other stage (stale / guard / pull) refused before the write,
+  // or the app could not be reached at all.
+  if (f.unit.startsWith('billing-sync')) {
+    return /"stage":\s*"reconcile"/.test(j) ? 'bllink_sync_mismatch' : 'bllink_sync_failed';
+  }
   return 'unknown';
 }
 
@@ -278,6 +284,19 @@ export function explain(f: FailureFacts): Explanation {
         action:
           `${retryLine(f)} הסיבה המדויקת כתובה בבאנר בדשבורד, תחת "פרטים טכניים". ` +
           'אם זה נכשל גם מחר — צריך לבדוק.',
+      };
+
+    case 'bllink_sync_mismatch':
+      return {
+        title: 'עדכון החובות מבלינק הסתיים עם פער בסכומים',
+        what:
+          'הסנכרון הבוקר העתיק את דוח בלינק, אבל בדיקת ההתאמה שאחרי הכתיבה מצאה פער בין ' +
+          'סכומי החוב במערכת לדוח (דמי ניהול / מים חמים) — ייתכן שחוב שכבר נפרע עדיין מוצג, ' +
+          'או שדירה נכתבה בסכום שונה. הבאנר האדום בדשבורד כבר מוצג לכולם.',
+        urgency: 'דחוף. עד לסנכרון מוצלח, מספרי החוב על המסך עשויים להיות שגויים — לא לשלוח תזכורות חוב על בסיסם.',
+        action:
+          'ללחוץ "סנכרן עכשיו" בדשבורד; אם הפער חוזר — הדירות שבפער כתובות בבאנר תחת "פרטים טכניים", ' +
+          `וצריך לבדוק אותן מול בלינק. ${retryLine(f)}`,
       };
 
     case 'timeout':

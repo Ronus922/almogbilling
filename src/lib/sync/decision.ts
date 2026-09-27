@@ -3,11 +3,14 @@
  * it is unit-tested in isolation (tests/sync-decision.test.ts) and shared by
  * the route handler and the dashboard.
  *
- * A sync moves through four stages, each of which can fail on its own:
- *   scrape → the CRM re-scrapes Bllink (POST CRM_SYNC_URL)
- *   stale  → the snapshot the CRM holds is recent enough to copy
- *   guard  → completeness + reconciliation checks on the snapshot
- *   pull   → fetching the snapshot / writing it into public.debtors
+ * A sync moves through five stages, each of which can fail on its own:
+ *   scrape    → the CRM re-scrapes Bllink (POST CRM_SYNC_URL)
+ *   stale     → the snapshot the CRM holds is recent enough to copy
+ *   guard     → completeness + consistency checks on the snapshot, BEFORE the write
+ *   pull      → fetching the snapshot / writing it into public.debtors
+ *   reconcile → AFTER the write: the sums now in debtors, per category, equal the
+ *               report's (reconcile.ts). The only stage that can fail once data
+ *               has been written — its message says so.
  * The stage is persisted on sync_runs.error_stage and shown to the user; the
  * HTTP status tells the two families apart (upstream broke vs. data rejected).
  *
@@ -19,7 +22,7 @@
  */
 import { z } from 'zod';
 
-export type SyncStage = 'scrape' | 'stale' | 'guard' | 'pull';
+export type SyncStage = 'scrape' | 'stale' | 'guard' | 'pull' | 'reconcile';
 
 /** Where /api/sync/bllink takes the debtors snapshot from. */
 export type BllinkSource = 'crm' | 'billing';
@@ -51,6 +54,7 @@ export const SYNC_STAGE_LABELS: Record<SyncStage, string> = {
   stale: 'רעננות הנתון במקור',
   guard: 'בדיקת שלמות הנתון',
   pull: 'משיכה וכתיבה',
+  reconcile: 'התאמת הסכומים אחרי הכתיבה',
 };
 
 export class SyncStageError extends Error {
@@ -65,7 +69,8 @@ export class SyncStageError extends Error {
   }
 }
 
-/** 502 when the upstream/infrastructure failed, 409 when the data was rejected. */
+/** 502 when the upstream/infrastructure failed, 409 when the data was rejected
+ *  (stale / guard) or did not reconcile after the write (reconcile). */
 export function stageHttpStatus(stage: SyncStage): 502 | 409 {
   return stage === 'scrape' || stage === 'pull' ? 502 : 409;
 }

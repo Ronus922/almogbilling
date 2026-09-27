@@ -44,8 +44,12 @@ const SCRAPE_TIMEOUT_MS = 120_000;
  *   stale  → the CRM snapshot's last_import_at must be within
  *            BLLINK_MAX_SNAPSHOT_AGE_HOURS (default 36). A frozen snapshot is
  *            never copied again as if it were fresh. (409)
- *   guard  → completeness + reconciliation (writeCrmSnapshot). (409)
+ *   guard  → completeness + consistency of the snapshot (writeCrmSnapshot). (409)
  *   pull   → fetching the snapshot / writing it. (502)
+ *   reconcile → AFTER the write (27/09/2026): the sums now in debtors, per
+ *            category, must equal the report's and no apartment may be left
+ *            with a balance the report dropped (reconcile.ts). The data IS
+ *            written by then — the run is still an error and the banner red. (409)
  *
  * Success returns { ok:true, stage:'done', sourceRunAt, merged, … } — the
  * dashboard shows sourceRunAt ("נתוני בלינק נכונים ל-"), never the copy time.
@@ -66,6 +70,7 @@ const SCRAPE_TIMEOUT_MS = 120_000;
  *            is written, and the failed unit alerts. (409)
  *   guard  → the same guards.                                            (409)
  *   pull   → the same write (importParsedRows: merge + zero-out).       (502)
+ *   reconcile → the same post-write reconciliation.                     (409)
  *   witness → AFTER the write and the success record, the CRM is asked for the
  *            same morning's report (triggerCrmScrape + fetchCrmDebtorRows) and
  *            compared with what was written; the result goes onto the scrape
