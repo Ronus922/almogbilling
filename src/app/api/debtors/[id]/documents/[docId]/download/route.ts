@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requireAnyPermission } from '@/lib/auth/actor';
+import { requireAnyPermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDocumentById } from '@/lib/db/documents';
+import { logFileView } from '@/lib/db/fileViewAudit';
 import { downloadDocumentFile, extOf } from '@/lib/storage/documentStorage';
 import { UUID_RE } from '@/lib/validation/documents';
 import { logger } from '@/lib/logger';
@@ -22,9 +23,10 @@ function contentDisposition(name: string): string {
 // STREAMS the file under its readable (Hebrew) name. It used to redirect to a
 // signed URL, which handed the caller a permission-free bearer link to the
 // storage host; the bytes now never leave the app origin.
-export async function GET(_req: NextRequest, ctx: RouteCtx) {
+export async function GET(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requireAnyPermission([
+    actor = await requireAnyPermission([
       { module: 'dashboard', action: 'view' },
       { module: 'contacts', action: 'view' },
     ]);
@@ -55,6 +57,16 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'download_failed' }, { status: 502 });
   }
   if (!blob) return NextResponse.json({ error: 'file_unavailable' }, { status: 502 });
+
+  // F9: the download is a view — same row shape as the `uploaded` audit entry.
+  await logFileView(req, actor, {
+    bucket: 'documents',
+    objectKey: doc.storage_path,
+    fileName: doc.file_name,
+    entityType: 'document',
+    entityId: doc.id,
+    extra: { debtor_id: id },
+  });
 
   // Keep the real extension even if the user renamed the document ("דוח" → "דוח.pdf").
   const base = (doc.file_name || '').trim() || 'document';

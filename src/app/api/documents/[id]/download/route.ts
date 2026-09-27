@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDocumentById } from '@/lib/db/documents';
+import { logFileView } from '@/lib/db/fileViewAudit';
 import { downloadDocumentFile, extOf } from '@/lib/storage/documentStorage';
 import { UUID_RE } from '@/lib/validation/documents';
 import { logger } from '@/lib/logger';
@@ -37,9 +38,10 @@ function contentDisposition(name: string): string {
 
 // GET /api/documents/[id]/download  (documents:view) — streams the file with the
 // readable (Hebrew) filename + extension and the stored mime type.
-export async function GET(_req: NextRequest, ctx: RouteCtx) {
+export async function GET(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('documents', 'view');
+    actor = await requirePermission('documents', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -65,6 +67,16 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'download_failed' }, { status: 502 });
   }
   if (!blob) return NextResponse.json({ error: 'file_unavailable' }, { status: 502 });
+
+  // F9: the download is a view — same row shape as the `uploaded` audit entry.
+  await logFileView(req, actor, {
+    bucket: 'documents',
+    objectKey: doc.storage_path,
+    fileName: doc.file_name,
+    entityType: 'document',
+    entityId: doc.id,
+    extra: doc.entity_type === 'debtor' && doc.entity_id ? { debtor_id: doc.entity_id } : undefined,
+  });
 
   const filename = downloadName(doc.file_name, doc.storage_path);
   return new NextResponse(blob, {

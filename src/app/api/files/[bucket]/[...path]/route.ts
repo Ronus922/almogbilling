@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, requireAnyPermission } from '@/lib/auth/actor';
+import { requirePermission, requireAnyPermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { queryOne } from '@/lib/db';
+import { logFileView, type ServedFile } from '@/lib/db/fileViewAudit';
 import { getObjectStream, PRIVATE_BUCKETS, type PrivateBucket } from '@/lib/storage/server';
 import { logger } from '@/lib/logger';
 
@@ -22,7 +23,7 @@ interface RouteCtx {
  */
 
 /** Per-bucket authorization. A bucket missing from this map is not servable. */
-const BUCKET_GUARD: Record<PrivateBucket, () => Promise<unknown>> = {
+const BUCKET_GUARD: Record<PrivateBucket, () => Promise<Actor>> = {
   'supplier-documents': () => requirePermission('suppliers', 'view'),
   'issue-attachments': () => requirePermission('issues', 'view'),
   // The `documents` bucket backs two modules: the documents browser AND debtor
@@ -67,43 +68,82 @@ function isSafePath(segments: string[]): boolean {
   return LEAF_RE.test(segments[segments.length - 1]);
 }
 
-/** The readable (Hebrew) name from the owning table, when the bucket has one. */
-async function lookupFileName(bucket: PrivateBucket, path: string): Promise<string | null> {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The served object as its owning table knows it: the readable (Hebrew) name
+ * for Content-Disposition, and the parent entity for the audit row — named
+ * exactly as the matching upload audit row names it, so the supplier activity
+ * tab (entity_type='supplier') lists views next to uploads.
+ * An object no table claims (orphan) is still served and still logged, under
+ * entity_type='file'.
+ */
+function unclaimedFile(bucket: PrivateBucket, path: string): ServedFile {
+  return { bucket, objectKey: path, fileName: null, entityType: 'file', entityId: `${bucket}/${path}` };
+}
+
+async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<ServedFile> {
+  const base = { bucket, objectKey: path };
+  const orphan = unclaimedFile(bucket, path);
+
   if (bucket === 'documents') {
-    const row = await queryOne<{ file_name: string }>(
-      `select file_name from public.documents where storage_path = $1 limit 1`,
+    const row = await queryOne<{ id: string; file_name: string; entity_type: string | null; entity_id: string | null }>(
+      `select id, file_name, entity_type, entity_id from public.documents where storage_path = $1 limit 1`,
       [path],
     );
-    return row?.file_name ?? null;
+    if (!row) return orphan;
+    return {
+      ...base,
+      fileName: row.file_name,
+      entityType: 'document',
+      entityId: row.id,
+      extra: row.entity_type === 'debtor' && row.entity_id ? { debtor_id: row.entity_id } : undefined,
+    };
   }
   if (bucket === 'supplier-documents') {
-    const row = await queryOne<{ file_name: string }>(
-      `select file_name from public.supplier_documents where file_url = $1 limit 1`,
+    const row = await queryOne<{ id: string; supplier_id: string; file_name: string }>(
+      `select id, supplier_id, file_name from public.supplier_documents where file_url = $1 limit 1`,
       [path],
     );
-    return row?.file_name ?? null;
+    if (!row) return orphan;
+    return { ...base, fileName: row.file_name, entityType: 'supplier', entityId: row.supplier_id, documentId: row.id };
   }
   if (bucket === 'whatsapp-attachments') {
     // One bucket, two owners: a broadcast's files and a single message's.
-    const row = await queryOne<{ original_name: string }>(
-      `select original_name from public.wa_campaign_attachments where object_key = $1 limit 1`,
+    const row = await queryOne<{ id: string; campaign_id: string | null; original_name: string }>(
+      `select id, campaign_id, original_name from public.wa_campaign_attachments where object_key = $1 limit 1`,
       [path],
     );
-    if (row) return row.original_name;
-    const msgRow = await queryOne<{ original_name: string }>(
-      `select original_name from public.wa_message_attachments where object_key = $1 limit 1`,
+    if (row) {
+      return row.campaign_id
+        ? { ...base, fileName: row.original_name, entityType: 'wa_campaign', entityId: row.campaign_id, documentId: row.id }
+        : { ...base, fileName: row.original_name, entityType: 'wa_campaign_attachment', entityId: row.id };
+    }
+    const msgRow = await queryOne<{ id: string; message_id: string | null; original_name: string }>(
+      `select id, message_id, original_name from public.wa_message_attachments where object_key = $1 limit 1`,
       [path],
     );
-    return msgRow?.original_name ?? null;
+    if (!msgRow) return orphan;
+    return msgRow.message_id
+      ? { ...base, fileName: msgRow.original_name, entityType: 'wa_message', entityId: msgRow.message_id, documentId: msgRow.id }
+      : { ...base, fileName: msgRow.original_name, entityType: 'wa_message_attachment', entityId: msgRow.id };
   }
   if (bucket === 'finance-receipts') {
-    const row = await queryOne<{ original_name: string }>(
-      `select original_name from public.fin_documents where object_key = $1 limit 1`,
+    const row = await queryOne<{ id: string; entry_id: string | null; original_name: string }>(
+      `select id, entry_id, original_name from public.fin_documents where object_key = $1 limit 1`,
       [path],
     );
-    return row?.original_name ?? null;
+    if (!row) return orphan;
+    // Mirrors `document_removed`: the entry is the parent, the receipt id rides in metadata.
+    return row.entry_id
+      ? { ...base, fileName: row.original_name, entityType: 'fin_entry', entityId: row.entry_id, documentId: row.id }
+      : { ...base, fileName: row.original_name, entityType: 'fin_document', entityId: row.id };
   }
-  return null; // issue-attachments stores bare paths, no display name
+  // issue-attachments: bare paths `<issueId>/<uuid>.<ext>`, no display name — the
+  // prefix IS the parent (enforced at upload by buildObjectKey / isPathUnderIssue).
+  const [prefix] = path.split('/');
+  if (UUID_RE.test(prefix)) return { ...base, fileName: null, entityType: 'issue', entityId: prefix };
+  return orphan;
 }
 
 /** RFC 5987: ASCII fallback + UTF-8 form so a Hebrew name survives. */
@@ -113,7 +153,7 @@ function contentDisposition(name: string | null): string {
   return `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
-export async function GET(_req: NextRequest, ctx: RouteCtx) {
+export async function GET(req: NextRequest, ctx: RouteCtx) {
   const { bucket, path } = await ctx.params;
 
   // Unknown bucket → 404, never 403: don't confirm what buckets exist.
@@ -122,8 +162,9 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   }
   const known = bucket as PrivateBucket;
 
+  let actor: Actor;
   try {
-    await BUCKET_GUARD[known]();
+    actor = await BUCKET_GUARD[known]();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -148,11 +189,23 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   }
   if (!blob) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
+  // Permission passed and the object exists: record the view (F9), then serve.
+  // Neither step may withhold the file — the owner lookup falls back to the
+  // bare object and logFileView never throws.
+  let file: ServedFile;
+  try {
+    file = await describeStoredFile(known, objectPath);
+  } catch (err) {
+    logger.error(`[GET /api/files/${bucket}] owner lookup failed`, err);
+    file = unclaimedFile(known, objectPath);
+  }
+  await logFileView(req, actor, file);
+
   return new NextResponse(blob, {
     status: 200,
     headers: {
       'Content-Type': blob.type || 'application/octet-stream',
-      'Content-Disposition': contentDisposition(await lookupFileName(known, objectPath)),
+      'Content-Disposition': contentDisposition(file.fileName),
       'Content-Length': String(blob.size),
       'Cache-Control': 'private, no-store',
     },
