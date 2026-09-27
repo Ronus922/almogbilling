@@ -114,6 +114,36 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: apartment_owner_phones; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.apartment_owner_phones (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    apartment_number text NOT NULL,
+    owner_name text,
+    phone_e164 text NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by uuid,
+    CONSTRAINT apartment_owner_phones_phone_e164_check CHECK ((phone_e164 ~ '^\+9725[0-9]{8}$'::text))
+);
+
+
+--
+-- Name: TABLE apartment_owner_phones; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.apartment_owner_phones IS 'Owners-portal roster: which phone (E.164) may sign in on behalf of which apartment. Several owners per apartment and several apartments per phone are both normal. is_active = false revokes access without losing the record. Israeli MOBILE only — the code is delivered over WhatsApp.';
+
+
+--
+-- Name: COLUMN apartment_owner_phones.owner_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apartment_owner_phones.owner_name IS 'Display name for the admin log ("בעלים" column). Nullable: some rows come from contact_people entries that have a phone but no name.';
+
+
+--
 -- Name: app_settings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1150,6 +1180,109 @@ CREATE TABLE public.password_reset_tokens (
 
 
 --
+-- Name: portal_lockouts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.portal_lockouts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    phone_e164 text NOT NULL,
+    locked_until timestamp with time zone NOT NULL,
+    tier smallint NOT NULL,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    released_by uuid,
+    released_at timestamp with time zone,
+    CONSTRAINT portal_lockouts_reason_check CHECK ((reason = ANY (ARRAY['too_many_invalid_codes'::text, 'too_many_code_requests'::text]))),
+    CONSTRAINT portal_lockouts_tier_check CHECK (((tier >= 1) AND (tier <= 3)))
+);
+
+
+--
+-- Name: TABLE portal_lockouts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.portal_lockouts IS 'Escalating temporary lockouts of a phone: tier 1 = 30 minutes, 2 = 2 hours, 3 = 24 hours. The tier rises when a lockout repeats within 24h. released_by / released_at record a manual "שחרר חסימה" from the apartment card.';
+
+
+--
+-- Name: portal_login_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.portal_login_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    phone_e164 text NOT NULL,
+    apartment_numbers text[] DEFAULT '{}'::text[] NOT NULL,
+    event_type text NOT NULL,
+    ip text,
+    user_agent text,
+    details jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT portal_login_events_event_type_check CHECK ((event_type = ANY (ARRAY['code_requested'::text, 'code_sent'::text, 'send_failed'::text, 'code_invalid'::text, 'code_expired'::text, 'login_success'::text, 'phone_not_found'::text, 'phone_inactive'::text, 'locked_out'::text, 'unlocked_manually'::text, 'session_revoked'::text])))
+);
+
+
+--
+-- Name: TABLE portal_login_events; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.portal_login_events IS 'Every portal login attempt, including attempts from a phone that is not on the roster (apartment_numbers stays empty — the admin screen shows "—"). Kept for a year; no automatic purge in this slice. details NEVER contains the code itself.';
+
+
+--
+-- Name: COLUMN portal_login_events.apartment_numbers; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.portal_login_events.apartment_numbers IS 'Every apartment the phone owns at the time of the event. Empty when the phone is unknown. A plain text[] snapshot, not an FK: the log must survive a roster change.';
+
+
+--
+-- Name: portal_otp_codes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.portal_otp_codes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    phone_e164 text NOT NULL,
+    code_hash text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    consumed_at timestamp with time zone,
+    ip text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT portal_otp_codes_attempts_check CHECK ((attempts >= 0))
+);
+
+
+--
+-- Name: TABLE portal_otp_codes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.portal_otp_codes IS 'WhatsApp one-time codes for the owners portal. code_hash is bcrypt of the 6 digits (never the digits themselves, here or in the log). attempts counts wrong guesses against THIS code; consumed_at marks a successful login.';
+
+
+--
+-- Name: portal_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.portal_sessions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    token_hash text NOT NULL,
+    phone_e164 text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone,
+    ip text,
+    user_agent text
+);
+
+
+--
+-- Name: TABLE portal_sessions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.portal_sessions IS 'Sessions of the owners portal — deliberately NOT public.sessions: a portal session has no users row, and the staff cookie must never open /portal. token_hash is sha256 of the raw token that lives only in the portal_session cookie (same contract as public.sessions.id).';
+
+
+--
 -- Name: reminder_categories; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2006,6 +2139,22 @@ ALTER TABLE ONLY public.wa_send_log ALTER COLUMN id SET DEFAULT nextval('public.
 
 
 --
+-- Name: apartment_owner_phones apartment_owner_phones_apartment_phone_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.apartment_owner_phones
+    ADD CONSTRAINT apartment_owner_phones_apartment_phone_key UNIQUE (apartment_number, phone_e164);
+
+
+--
+-- Name: apartment_owner_phones apartment_owner_phones_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.apartment_owner_phones
+    ADD CONSTRAINT apartment_owner_phones_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: app_settings app_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2382,6 +2531,46 @@ ALTER TABLE ONLY public.password_reset_tokens
 
 
 --
+-- Name: portal_lockouts portal_lockouts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_lockouts
+    ADD CONSTRAINT portal_lockouts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: portal_login_events portal_login_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_login_events
+    ADD CONSTRAINT portal_login_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: portal_otp_codes portal_otp_codes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_otp_codes
+    ADD CONSTRAINT portal_otp_codes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: portal_sessions portal_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_sessions
+    ADD CONSTRAINT portal_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: portal_sessions portal_sessions_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_sessions
+    ADD CONSTRAINT portal_sessions_token_hash_key UNIQUE (token_hash);
+
+
+--
 -- Name: reminder_categories reminder_categories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2739,6 +2928,13 @@ ALTER TABLE ONLY public.whatsapp_instances
 
 ALTER TABLE ONLY public.whatsapp_templates
     ADD CONSTRAINT whatsapp_templates_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: apartment_owner_phones_phone_e164_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX apartment_owner_phones_phone_e164_idx ON public.apartment_owner_phones USING btree (phone_e164);
 
 
 --
@@ -3428,6 +3624,41 @@ CREATE INDEX password_reset_tokens_user_idx ON public.password_reset_tokens USIN
 
 
 --
+-- Name: portal_lockouts_phone_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX portal_lockouts_phone_created_idx ON public.portal_lockouts USING btree (phone_e164, created_at DESC);
+
+
+--
+-- Name: portal_login_events_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX portal_login_events_created_at_idx ON public.portal_login_events USING btree (created_at DESC);
+
+
+--
+-- Name: portal_login_events_phone_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX portal_login_events_phone_idx ON public.portal_login_events USING btree (phone_e164);
+
+
+--
+-- Name: portal_otp_codes_phone_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX portal_otp_codes_phone_created_idx ON public.portal_otp_codes USING btree (phone_e164, created_at DESC);
+
+
+--
+-- Name: portal_sessions_phone_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX portal_sessions_phone_idx ON public.portal_sessions USING btree (phone_e164);
+
+
+--
 -- Name: reminder_categories_created_by_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4002,6 +4233,22 @@ CREATE TRIGGER whatsapp_templates_touch_updated_at BEFORE UPDATE ON public.whats
 
 
 --
+-- Name: apartment_owner_phones apartment_owner_phones_apartment_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.apartment_owner_phones
+    ADD CONSTRAINT apartment_owner_phones_apartment_number_fkey FOREIGN KEY (apartment_number) REFERENCES public.contacts(apartment_number) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: apartment_owner_phones apartment_owner_phones_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.apartment_owner_phones
+    ADD CONSTRAINT apartment_owner_phones_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: app_settings app_settings_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4514,6 +4761,14 @@ ALTER TABLE ONLY public.password_reset_tokens
 
 
 --
+-- Name: portal_lockouts portal_lockouts_released_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_lockouts
+    ADD CONSTRAINT portal_lockouts_released_by_fkey FOREIGN KEY (released_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: reminder_categories reminder_categories_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4958,5 +5213,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260921072925'),
     ('20260921090433'),
     ('20260921171135'),
-    ('20260926074117')
+    ('20260926074117'),
+    ('20260927053126')
 ;
