@@ -1,5 +1,5 @@
 import 'server-only';
-import { query } from '@/lib/db';
+import { getDbPool, query } from '@/lib/db';
 import { importParsedRows } from '@/lib/import/runner';
 import { finishRunError } from '@/lib/db/importRuns';
 import { SyncStageError } from '@/lib/sync/decision';
@@ -7,6 +7,8 @@ import type { ParsedDebtorRow } from '@/lib/excel/parse';
 import { logger } from '@/lib/logger';
 import { env } from '@/env';
 import { buildSnapshot, type BllinkPullReport, type Snapshot, type SourceDebtorRecord } from './bllinkMap';
+import { reconcileAfterWrite, snapshotTotals } from './reconcile';
+import { readDebtorsAfterWrite } from './reconcileRead';
 
 export type { BllinkPullReport };
 
@@ -42,6 +44,16 @@ export type { BllinkPullReport };
  * currently owe in billing (BLLINK_SYNC_MIN_FRACTION) — or if the response is
  * internally inconsistent (Σtotal ≠ Σcomponents). A clear error is recorded on
  * import_runs + sync_runs (stage 'guard') and the sync returns 409.
+ *
+ * ── Reconciliation AFTER the write (27/09/2026) ──────────────────────────────
+ * The guards above see only the snapshot. Once importParsedRows has run, the
+ * sums now in debtors — per category, over every non-archived row plus the
+ * archived rows the report names — must equal the report's, and no apartment
+ * may be left with a balance the report does not list, written with a different
+ * amount, or missing altogether (reconcile.ts / reconcileRead.ts). A gap is
+ * stage 'reconcile': the sync is an error, the banner turns red, the timer's
+ * unit fails and alerts. Unlike every other stage, data HAS been written by
+ * then — the message says so instead of "nothing was written".
  *
  * ── Freshness (11/09/2026) ───────────────────────────────────────────────────
  * The snapshot is dated: every row carries the CRM's last_import_at, the moment
@@ -149,8 +161,10 @@ async function countBillingDebtorsWithDebt(): Promise<number> {
  * Runs the safety guards on an already-fetched snapshot and, if they pass,
  * OVERWRITES public.debtors with it (same merge + zero-out pipeline as a manual
  * import). A guard failure marks the import_run as error and throws a
- * SyncStageError('guard') — nothing is written or zeroed. Returns the number of
- * rows written.
+ * SyncStageError('guard') — nothing is written or zeroed. After the write, the
+ * result is reconciled against the snapshot; a gap throws
+ * SyncStageError('reconcile') with the data already written. Returns the number
+ * of rows written.
  *
  * Fetching is separate (fetchCrmDebtorRows) so the caller can check freshness
  * BEFORE opening an import_run.
@@ -197,5 +211,21 @@ export async function writeCrmSnapshot(
       `zero-out of every other non-archived apartment (paid off / absent from Bllink).`,
   );
   await importParsedRows(rows, 0, 'merge', runId);
+
+  // ── Reconciliation AFTER the write: what debtors holds now vs. the snapshot ──
+  // importParsedRows swallows its own errors (it marks the import_run and
+  // returns), so this is also what turns a half-written merge into a failed sync.
+  const after = await readDebtorsAfterWrite(getDbPool(), rows);
+  const outcome = reconcileAfterWrite(snapshotTotals(rows), after);
+  if (!outcome.ok) {
+    logger.error(`${summary}\n[bllink:sync] reconcile FAILED — ${outcome.message}`);
+    await finishRunError(runId, outcome.message);
+    throw new SyncStageError('reconcile', outcome.message, report.runMaxAt);
+  }
+  if (outcome.warning) logger.warn(`[bllink:sync] run=${runId} ${outcome.warning}`);
+  logger.info(
+    `[bllink:sync] run=${runId} reconcile OK — management=${after.totals.management.toFixed(2)} ` +
+      `hotWater=${after.totals.hotWater.toFixed(2)} match the snapshot; no leftovers, no mismatches.`,
+  );
   return rows.length;
 }

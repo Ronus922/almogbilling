@@ -276,3 +276,30 @@ describe('latestFinishedIso — the NEWEST successful run, whatever order journa
     expect(latestFinishedIso('')).toBeNull();
   });
 });
+
+// Stage 'reconcile' (27/09/2026) is the one sync failure that happens AFTER the
+// data was written — the reader must not be told "nothing was copied".
+describe('billing-sync at stage reconcile — an honest "data was written" alert', () => {
+  const reconcile = {
+    ...base,
+    unit: 'billing-sync.service',
+    failingStep: 'ExecStart' as const,
+    journal:
+      '[billing-sync] POST http://127.0.0.1:3003/api/sync/bllink\n' +
+      '{"ok":false,"stage":"reconcile","message":"הסכומים ב-debtors אחרי הכתיבה אינם תואמים לדוח בלינק. …","sourceRunAt":"2026-09-27T02:30:23.000Z"}\n' +
+      '[billing-sync] FAILED (curl exit 22)',
+  };
+  it('is classified apart from a pre-write refusal', () => {
+    expect(classify(reconcile)).toBe('bllink_sync_mismatch');
+    expect(classify({ ...reconcile, journal: '{"ok":false,"stage":"stale"}' })).toBe('bllink_sync_failed');
+    expect(classify({ ...reconcile, journal: '{"ok":false,"stage":"guard"}' })).toBe('bllink_sync_failed');
+  });
+  it('says the data WAS written and that the numbers may be wrong — never "nothing was copied"', () => {
+    const e = explain(reconcile);
+    expect(e.title).toContain('פער בסכומים');
+    expect(e.what).toContain('העתיק');
+    expect(e.what).not.toContain('שום נתון לא הועתק');
+    expect(e.urgency).toContain('דחוף');
+    expect(e.action).toContain('סנכרן עכשיו');
+  });
+});

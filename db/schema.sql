@@ -1543,7 +1543,7 @@ CREATE TABLE public.sync_runs (
     rows_count integer,
     import_run_id uuid,
     trigger_source text DEFAULT 'ui'::text NOT NULL,
-    CONSTRAINT sync_runs_error_stage_check CHECK (((error_stage IS NULL) OR (error_stage = ANY (ARRAY['scrape'::text, 'stale'::text, 'guard'::text, 'pull'::text])))),
+    CONSTRAINT sync_runs_error_stage_check CHECK (((error_stage IS NULL) OR (error_stage = ANY (ARRAY['scrape'::text, 'stale'::text, 'guard'::text, 'pull'::text, 'reconcile'::text])))),
     CONSTRAINT sync_runs_status_check CHECK ((status = ANY (ARRAY['running'::text, 'success'::text, 'error'::text]))),
     CONSTRAINT sync_runs_trigger_source_check CHECK ((trigger_source = ANY (ARRAY['ui'::text, 'cron'::text])))
 );
@@ -1553,7 +1553,7 @@ CREATE TABLE public.sync_runs (
 -- Name: COLUMN sync_runs.error_stage; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.sync_runs.error_stage IS 'Stage that failed: scrape (CRM/Bllink download), stale (snapshot older than BLLINK_MAX_SNAPSHOT_AGE_HOURS), guard (completeness/reconciliation), pull (fetch or write)';
+COMMENT ON COLUMN public.sync_runs.error_stage IS 'Stage that failed: scrape (Bllink download), stale (snapshot older than the freshness limit), guard (pre-write completeness/consistency of the snapshot), pull (fetch or write), reconcile (post-write: debtors sums per category or per apartment differ from the report)';
 
 
 --
@@ -5214,5 +5214,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260921090433'),
     ('20260921171135'),
     ('20260926074117'),
-    ('20260927053126')
+    ('20260927053126'),
+    ('20260927125643')
 ;
