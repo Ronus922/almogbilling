@@ -26,10 +26,10 @@ export function PortalLoginBrand({ className }: { className?: string }) {
         className,
       )}
     >
-      {/* dot grid — mobile: 2.5px dots at 20px, alpha .22 (the reference's 2px/.09 vanish on a phone); desktop: the reference's 2px/22px/.09 unchanged */}
+      {/* dot grid — exactly the references' `radial-gradient(rgba(255,255,255,.09) 1px, transparent 1px)`: 20px cell on mobile, 22px on desktop */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(255,255,255,0.22)_1.25px,transparent_1.6px)] [background-size:20px_20px] min-[901px]:bg-[radial-gradient(rgba(255,255,255,0.09)_1px,transparent_1px)] min-[901px]:[background-size:22px_22px]"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(255,255,255,0.09)_1px,transparent_1px)] [background-size:20px_20px] min-[901px]:[background-size:22px_22px]"
       />
 
       {/* logo + name */}
