@@ -1,4 +1,3 @@
-import { Building2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // The brand side of /portal/login. Portal-only: the staff login keeps its own
@@ -46,7 +45,21 @@ export function PortalLoginBrand({ className }: { className?: string }) {
       {/* logo + name */}
       <div className="relative flex items-center gap-[12px] min-[901px]:gap-[14px]">
         <span className="grid size-[44px] shrink-0 place-items-center rounded-[13px] border border-[rgba(255,255,255,0.25)] bg-[rgba(255,255,255,0.14)] min-[901px]:size-[52px] min-[901px]:rounded-[14px]">
-          <Building2 className="size-[22px] min-[901px]:size-[26px]" strokeWidth={1.8} aria-hidden />
+          {/* the references' building glyph, verbatim: 22px on the mobile hero, 26px on the desktop column */}
+          <svg
+            className="size-[22px] min-[901px]:size-[26px]"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#fff"
+            strokeWidth={1.8}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <rect x="4" y="3" width="12" height="18" rx="2" />
+            <path d="M16 9h3a1 1 0 0 1 1 1v11h-4" />
+            <path d="M8 7h4M8 11h4M8 15h4M9 21v-3h2v3" />
+          </svg>
         </span>
         <span className="min-w-0">
           <span className="block font-num text-[19px] font-extrabold leading-[normal] min-[901px]:text-[22px]">ALMOG</span>
