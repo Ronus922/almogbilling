@@ -125,7 +125,7 @@ CREATE TABLE public.apartment_owner_phones (
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by uuid,
-    CONSTRAINT apartment_owner_phones_phone_e164_check CHECK ((phone_e164 ~ '^\+9725[0-9]{8}$'::text))
+    CONSTRAINT apartment_owner_phones_phone_e164_check CHECK (((phone_e164 ~ '^\+9725[0-9]{8}$'::text) OR ((phone_e164 !~ '^\+972'::text) AND (phone_e164 ~ '^\+[1-9][0-9]{6,14}$'::text))))
 );
 
 
@@ -141,6 +141,13 @@ COMMENT ON TABLE public.apartment_owner_phones IS 'Owners-portal roster: which p
 --
 
 COMMENT ON COLUMN public.apartment_owner_phones.owner_name IS 'Display name for the admin log ("בעלים" column). Nullable: some rows come from contact_people entries that have a phone but no name.';
+
+
+--
+-- Name: COLUMN apartment_owner_phones.phone_e164; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apartment_owner_phones.phone_e164 IS 'E.164. Israel: mobile only (+9725XXXXXXXX). Other countries: general E.164 (+CC…, 7–15 digits). Same rule as toPortalE164().';
 
 
 --
@@ -5215,5 +5222,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260921171135'),
     ('20260926074117'),
     ('20260927053126'),
-    ('20260927125643')
+    ('20260927125643'),
+    ('20260928175919')
 ;

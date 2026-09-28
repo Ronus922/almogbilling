@@ -40,6 +40,10 @@ export class WhatsAppError extends Error {
   }
 }
 
+/** E.164 without its '+': 7–15 digits, no leading zero (ITU-T E.164). The same
+ *  rule, with the '+', is toPortalE164's foreign branch and the roster's CHECK. */
+export const E164_DIGITS = /^[1-9]\d{6,14}$/;
+
 export interface NormalizedPhone {
   /** International digits, e.g. "972541234567". */
   phone: string;
@@ -48,16 +52,25 @@ export interface NormalizedPhone {
 }
 
 /**
- * Normalises a raw Israeli phone string into Green API's `<digits>@c.us` chatId.
+ * Normalises a raw phone string into Green API's `<digits>@c.us` chatId.
  *
- * Steps:
- *   1. Take the first token (Excel cells like "0541234567 / 0521234567").
- *   2. Strip every non-digit.
- *   3. Drop a "00" international prefix.
- *   4. Leading 0 → 972; bare 9-digit subscriber numbers → prefix 972.
- *   5. Validate the result is 972 + 8–9 subscriber digits (mobile/landline).
+ * Two entrances (decision 28/09/2026 — the owners portal accepts foreign numbers):
+ *   • Written WITH a leading '+' → general E.164: '+' then 7–15 digits, first
+ *     digit 1–9 (`^\+[1-9]\d{6,14}$`), kept verbatim — nothing is injected, so
+ *     '+0541234567' is junk, not an Israeli mobile. A '+972…' number still has
+ *     to be a real Israeli number (972 + 8–9 subscriber digits), exactly as it
+ *     did before; general E.164 alone would let '+9720541234567' through.
+ *   • Written WITHOUT a '+' → Israeli, as always:
+ *       1. Take the first token (Excel cells like "0541234567 / 0521234567").
+ *       2. Strip every non-digit.
+ *       3. Drop a "00" international prefix.
+ *       4. Leading 0 → 972; bare 9-digit subscriber numbers → prefix 972.
+ *       5. Validate the result is 972 + 8–9 subscriber digits (mobile/landline).
  *
- * Throws WhatsAppError on anything that doesn't resolve to a valid IL number.
+ * This is the ONE phone rule of the system: toPortalE164 (src/lib/portal/phone.ts)
+ * and the CHECK on apartment_owner_phones.phone_e164 narrow it, never widen it.
+ *
+ * Throws WhatsAppError on anything that doesn't resolve to a valid number.
  */
 export function normalizePhone(raw: string | null | undefined): NormalizedPhone {
   if (!raw || !String(raw).trim()) {
@@ -67,6 +80,15 @@ export function normalizePhone(raw: string | null | undefined): NormalizedPhone 
   const first = String(raw).split(/[\/,;|]+/)[0]?.trim() ?? '';
   let digits = first.replace(/\D+/g, '');
   if (!digits) throw new WhatsAppError(`מספר טלפון לא תקין: ${raw}`);
+
+  // A '+' means E.164 as written. Non-Israeli → validated and returned as-is;
+  // Israeli (+972…) falls through to the same checks an unprefixed number gets.
+  if (first.startsWith('+') && !digits.startsWith('972')) {
+    if (!E164_DIGITS.test(digits)) {
+      throw new WhatsAppError(`מספר טלפון לא תקין: ${raw}`);
+    }
+    return { phone: digits, chatId: `${digits}@c.us` };
+  }
 
   // International "00" prefix → drop it.
   if (digits.startsWith('00')) digits = digits.slice(2);
