@@ -1,7 +1,7 @@
 'use client';
 
 import type { ResidentEntry } from '@/lib/types/finance';
-import { fmtEntryDate, monthTitle, type TxFilter } from '@/lib/portal/ui';
+import { fmtEntryDate, monthTitle, sanitizeCell, type TxFilter } from '@/lib/portal/ui';
 
 // "ייצוא לאקסל" of the transactions tab: exactly the rows on screen (the
 // chosen month, the chosen filter), which portal.ts already restricted to
@@ -23,9 +23,11 @@ export async function exportPortalMonthExcel(args: { monthKey: string; filter: T
   const ws = wb.addWorksheet(monthTitle(args.monthKey), { views: [{ rightToLeft: true }] });
   ws.columns = COLUMNS.map((c) => ({ header: c.header, width: c.width }));
   for (const e of args.rows) {
+    // Text cells go through sanitizeCell: a description typed as "=…" or
+    // "@…" must open as text, never as a formula (formula injection).
     ws.addRow([
-      e.description || e.category_name,
-      e.category_name,
+      sanitizeCell(e.description || e.category_name),
+      sanitizeCell(e.category_name),
       e.kind === 'income' ? 'הכנסה' : 'הוצאה',
       fmtEntryDate(e),
       Number(e.amount),

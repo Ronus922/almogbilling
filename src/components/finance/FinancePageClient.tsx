@@ -24,6 +24,7 @@ import { FundTab } from './FundTab';
 import { PeriodPicker } from './PeriodPicker';
 import { PeriodReportView } from './PeriodReportView';
 import { PublishToggle } from './PublishToggle';
+import { BankBalanceField } from './BankBalanceField';
 import { ResidentViewToggle } from './ResidentViewToggle';
 
 // /finance — two tabs. "שוטף": the period picker, then either one month (the
@@ -136,13 +137,16 @@ export function FinancePageClient({
             <div className="flex flex-wrap items-center gap-3">
               <PeriodPicker period={period} publishedMonths={publishedMonths} />
               {isMonth && monthStatus && (
-                <PublishToggle
-                  month={period.key}
-                  status={monthStatus}
-                  canEdit={canEdit}
-                  // Re-render the server data too, so the picker's green dots follow.
-                  onChange={(s) => { setPublished(s.published); refresh(); }}
-                />
+                <>
+                  <PublishToggle
+                    month={period.key}
+                    status={monthStatus}
+                    canEdit={canEdit}
+                    // Re-render the server data too, so the picker's green dots follow.
+                    onChange={(s) => { setPublished(s.published); refresh(); }}
+                  />
+                  <BankBalanceField key={period.key} month={period.key} status={monthStatus} canEdit={canEdit} />
+                </>
               )}
             </div>
           )}

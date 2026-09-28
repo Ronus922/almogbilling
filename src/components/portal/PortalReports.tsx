@@ -9,6 +9,7 @@ import { fmtIls, monthShort } from '@/lib/portal/ui';
 import { PortalBarChart, type ChartPoint } from './PortalBarChart';
 import { PortalSoon } from './PortalSoon';
 import { ArrowDownIcon, ArrowUpIcon, ChevronIcon, InfoIcon, ReportsIcon, ScaleIcon } from './PortalIcons';
+import { usePortalHref } from './usePortalHref';
 
 // The reports tab: the period report the old picker opened for a quarter, a
 // half or a year — same functions, same figures (getPeriodReport with
@@ -96,6 +97,7 @@ export function PortalReports({ ranges, range, report }: {
   report: PeriodReport | null;
 }) {
   const router = useRouter();
+  const href = usePortalHref();
   const [pending, startTransition] = useTransition();
 
   if (!range || !report) {
@@ -120,7 +122,7 @@ export function PortalReports({ ranges, range, report }: {
           <p>דוח תקופה — {periodLabel(range)}</p>
         </div>
         <div className="per" style={pending ? { opacity: 0.7 } : undefined}>
-          <select className="sel" aria-label="תקופת הדוח" value={range.key} onChange={(e) => { const k = e.target.value; startTransition(() => router.push(`/portal?tab=rep&r=${k}`)); }}>
+          <select className="sel" aria-label="תקופת הדוח" value={range.key} onChange={(e) => { const k = e.target.value; startTransition(() => router.push(href({ tab: 'rep', r: k }))); }}>
             {[...byYear.entries()].map(([year, list]) => (
               <optgroup key={year} label={String(year)}>
                 {list.map((p) => <option key={p.key} value={p.key}>{periodLabel(p)}</option>)}

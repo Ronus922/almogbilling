@@ -118,6 +118,19 @@
 /* the reference's inline KPI row: 3 columns; 2 when the cash KPI is off (PORTAL_BLOCKS) */
 .portal-skin .kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
 .portal-skin .kpis[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.portal-skin .kpis[data-count="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+/* "אין חוב" on the dark card (28/09/2026): the reference's t-red, in green */
+.portal-skin .mine .tag.t-ok { background: rgba(18, 161, 80, .2); color: #9BE3B8; }
+.portal-skin .mine .asof { font-size: 13px; color: #AAB4C8; margin-top: -6px; }
+.portal-skin .mine .pbtn-more { width: 100%; background: rgba(255, 255, 255, .1); color: #fff; }
+.portal-skin .mine .pbtn-more:hover { background: rgba(255, 255, 255, .16); }
+/* "החשבון שלי" */
+.portal-skin .kpi .v.txt { font-size: 18px; margin-top: 14px; font-family: var(--font-heebo), Heebo, sans-serif; letter-spacing: 0; }
+.portal-skin .kpi .v.red { color: var(--red-ink); }
+.portal-skin .details { margin-top: 14px; font-size: 14px; line-height: 1.7; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; }
+.portal-skin .foot { font-size: 13px; color: var(--ink-muted); margin-top: 20px; line-height: 1.6; }
+.portal-skin .acc-block + .acc-block { margin-top: 28px; }
+.portal-skin .acc-block > h2 { font-size: 18px; font-weight: 800; margin-bottom: 14px; }
 
 /* ── chart ─────────────────────────────────────────────────────────── */
 .portal-skin .legend { display: flex; gap: 16px; font-size: 13px; color: var(--ink-muted); font-weight: 500; }
@@ -204,6 +217,7 @@
   .portal-skin .c3, .portal-skin .c6 { grid-column: span 12; }
   .portal-skin .pgrid { gap: 14px; }
   .portal-skin .kpis { grid-template-columns: 1fr 1fr !important; gap: 14px !important; }
+  .portal-skin .kpis[data-count="4"] .card { grid-column: auto; }
   /* the reference's "first KPI spans both" only makes sense with three KPIs */
   .portal-skin .kpis[data-count="3"] .card:first-child { grid-column: 1 / -1; }
   .portal-skin .card { padding: 18px; }

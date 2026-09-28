@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test';
 
 // The floating assistant ("עוזר אישי") must not exist in the resident preview
-// (/finance?view=resident): that screen shows exactly what a resident will get,
-// and the bot answers with other residents' debts. Outside the preview the
-// seeded super_admin (a staff role with dashboard view) sees the button as before.
+// (/finance?view=resident — since 28/09/2026 the owners portal itself, mounted
+// under an admin strip): that screen shows exactly what a resident gets, and
+// the bot answers with other residents' debts. Outside the preview the seeded
+// super_admin (a staff role with dashboard view) sees the button as before.
 const FAB = '[data-agent-fab]';
-const RESIDENT_BANNER = 'אתה צופה כמו דייר';
+const RESIDENT_BANNER = 'תצוגה מקדימה — כך רואה דייר';
 
 for (const [name, viewport] of [
   ['desktop', { width: 1280, height: 720 }],

@@ -216,16 +216,29 @@ export const financeEntryBodySchema = z.discriminatedUnion('kind', [
 ], { error: 'סוג לא תקין' });
 export type FinanceEntryBody = z.infer<typeof financeEntryBodySchema>;
 
-// PUT /api/finance/settings
-export const financeSettingsBodySchema = z.object({
-  show_documents_to_residents: z.boolean({ error: 'ערך לא תקין' }),
-});
+// PUT /api/finance/settings — the residents switches; at least one of them.
+export const financeSettingsBodySchema = z
+  .object({
+    show_documents_to_residents: z.boolean({ error: 'ערך לא תקין' }).optional(),
+    show_bank_balance_to_residents: z.boolean({ error: 'ערך לא תקין' }).optional(),
+  })
+  .refine((v) => v.show_documents_to_residents !== undefined || v.show_bank_balance_to_residents !== undefined, 'אין מה לשמור');
 
-// PUT /api/finance/month-status — publish / hide one month for residents
-export const financeMonthStatusBodySchema = z.object({
-  month: finMonthSchema,
-  published: z.boolean({ error: 'ערך לא תקין' }),
-});
+// PUT /api/finance/month-status — publish / hide one month for residents,
+// and/or set (null = clear) its hand-entered month-end bank balance.
+export const financeMonthStatusBodySchema = z
+  .object({
+    month: finMonthSchema,
+    published: z.boolean({ error: 'ערך לא תקין' }).optional(),
+    bank_balance: z
+      .number({ error: 'יתרת הבנק חייבת להיות מספר' })
+      .min(-9_999_999_999, 'הסכום קטן מדי')
+      .max(9_999_999_999, 'הסכום גדול מדי')
+      .refine((v) => Math.round(v * 100) / 100 === v, 'עד שתי ספרות אחרי הנקודה')
+      .nullable()
+      .optional(),
+  })
+  .refine((v) => v.published !== undefined || v.bank_balance !== undefined, 'אין מה לשמור');
 
 // PUT /api/finance/fund-settings — the renovation fund collection target
 export const financeFundSettingsBodySchema = z.object({

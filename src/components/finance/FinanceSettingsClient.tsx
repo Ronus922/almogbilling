@@ -207,19 +207,25 @@ export function FinanceSettingsClient({
     }
   }
 
-  async function saveSettings(next: boolean) {
+  type ResidentsSwitch = 'show_documents_to_residents' | 'show_bank_balance_to_residents';
+  const SWITCH_LABEL: Record<ResidentsSwitch, string> = {
+    show_documents_to_residents: 'הצגת מסמכים לדיירים',
+    show_bank_balance_to_residents: 'הצגת יתרת הבנק לדיירים',
+  };
+
+  async function saveSettings(key: ResidentsSwitch, next: boolean) {
     const before = settings;
-    setSettings((s) => ({ ...s, show_documents_to_residents: next }));
+    setSettings((s) => ({ ...s, [key]: next }));
     setSavingSettings(true);
     try {
       const r = await fetch('/api/finance/settings', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ show_documents_to_residents: next }),
+        body: JSON.stringify({ [key]: next }),
       });
       const data = (await r.json().catch(() => ({}))) as { error?: string; settings?: FinanceSettings };
       if (!r.ok || !data.settings) throw new Error(data.error ?? 'שמירה נכשלה');
       setSettings(data.settings);
-      toast.success(next ? 'הצגת מסמכים לדיירים הופעלה' : 'הצגת מסמכים לדיירים כבויה');
+      toast.success(next ? `${SWITCH_LABEL[key]} הופעלה` : `${SWITCH_LABEL[key]} כבויה`);
     } catch (err) {
       setSettings(before);
       toast.error((err as Error).message);
@@ -372,21 +378,37 @@ export function FinanceSettingsClient({
 
       {/* ── Residents documents switch ─────────────────────────────────── */}
       <Card className={cardCls}>
-        <CardHeader icon={Eye} tone="bg-violet-50 text-violet-600" title="מסמכים לדיירים" subtitle="האם בעלי הדירות יראו את הקבצים המצורפים בפורטל (ייבנה בשלב הבא)." />
-        <div className="mt-6 space-y-3">
-          <label className="flex cursor-pointer select-none items-center gap-3 text-sm font-medium text-slate-800">
-            <Switch
-              size="lg"
-              checked={settings.show_documents_to_residents}
-              onCheckedChange={(v) => void saveSettings(v)}
-              disabled={!canEdit || savingSettings}
-            />
-            הצג מסמכים לדיירים
-          </label>
-          <p className="text-[12px] text-slate-500">
-            כבוי כברירת מחדל. בשלב זה ההגדרה רק נשמרת — האכיפה תיבנה יחד עם פורטל בעלי הדירות.
-          </p>
-          <p className="text-[12px] font-semibold text-amber-700">שים לב: שם הספק מופיע על המסמך עצמו.</p>
+        <CardHeader icon={Eye} tone="bg-violet-50 text-violet-600" title="מה הדיירים רואים" subtitle="שני מתגים של פורטל בעלי הדירות. שניהם כבויים כברירת מחדל ונאכפים בשרת." />
+        <div className="mt-6 space-y-5">
+          <div className="space-y-2">
+            <label className="flex cursor-pointer select-none items-center gap-3 text-sm font-medium text-slate-800">
+              <Switch
+                size="lg"
+                checked={settings.show_documents_to_residents}
+                onCheckedChange={(v) => void saveSettings('show_documents_to_residents', v)}
+                disabled={!canEdit || savingSettings}
+              />
+              הצג מסמכים לדיירים
+            </label>
+            <p className="text-[12px] text-slate-500">
+              כשדלוק, כפתור „מסמך” בטבלאות הפורטל פותח את הקבלה של תנועה בחודש שפורסם. כל פתיחה נרשמת ביומן.
+            </p>
+            <p className="text-[12px] font-semibold text-amber-700">שים לב: שם הספק מופיע על המסמך עצמו.</p>
+          </div>
+          <div className="space-y-2 border-t border-line-soft pt-5">
+            <label className="flex cursor-pointer select-none items-center gap-3 text-sm font-medium text-slate-800">
+              <Switch
+                size="lg"
+                checked={settings.show_bank_balance_to_residents}
+                onCheckedChange={(v) => void saveSettings('show_bank_balance_to_residents', v)}
+                disabled={!canEdit || savingSettings}
+              />
+              הצג יתרת בנק לדיירים
+            </label>
+            <p className="text-[12px] text-slate-500">
+              כשדלוק, „יתרת קופת הבניין” בפורטל מציגה את יתרת הבנק שהוזנה לחודש שפורסם (בשוטף, ליד בורר החודש). חודש בלי ערך אינו מוצג.
+            </p>
+          </div>
         </div>
       </Card>
 

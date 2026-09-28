@@ -5,6 +5,7 @@ import { HE_MONTH_NAMES } from '@/lib/constants/calendar';
 import { makePeriod, parsePeriod, shiftMonthKey, type Period } from '@/lib/finance/period';
 import type { FinKind } from '@/lib/constants/finance';
 import type { ResidentEntry } from '@/lib/types/finance';
+import type { PortalAccount } from '@/lib/types/portal';
 
 // ── Tabs & URL ────────────────────────────────────────────────────────────────
 
@@ -235,4 +236,49 @@ export function catColor(i: number): string {
 export function flatEntries(entries: readonly ResidentEntry[], filter: TxFilter): ResidentEntry[] {
   const list = entries.filter((e) => filter === 'all' || (filter === 'in' ? e.kind === 'income' : e.kind === 'expense'));
   return [...list].sort((a, b) => entryDateKey(b).localeCompare(entryDateKey(a)) || (a.kind === b.kind ? 0 : a.kind === 'income' ? -1 : 1));
+}
+
+// ── "החשבון שלי" ─────────────────────────────────────────────────────────────
+
+/** An ISO timestamp → 'DD.MM.YYYY' in Asia/Jerusalem ("נכון ל-…"). */
+export function fmtDateDMY(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: 'numeric' }).formatToParts(d);
+  const get = (t: string) => parts.find((x) => x.type === t)?.value ?? '';
+  return `${get('day')}.${get('month')}.${get('year')}`;
+}
+
+/** The figures of the dark "היתרה שלך לתשלום" card: the sum over the owner's
+ *  live records (archived rows carry no figures and are left out). */
+export function accountTotals(accounts: readonly PortalAccount[]): {
+  total: number; management: number; hotWater: number; live: number; archived: number;
+} {
+  let total = 0, management = 0, hotWater = 0, live = 0, archived = 0;
+  for (const a of accounts) {
+    if (a.archived) { archived += 1; continue; }
+    live += 1;
+    total += a.total_debt ?? 0;
+    management += a.management_fees ?? 0;
+    hotWater += a.hot_water_debt ?? 0;
+  }
+  return { total, management, hotWater, live, archived };
+}
+
+/** '+₪2,140' / '−₪2,140' / '₪0' — the KPI's "מול החודש הקודם" delta. */
+export function fmtDelta(n: number): string {
+  if (n > 0) return `+${fmtIls(n)}`;
+  if (n < 0) return `−${fmtIls(n)}`;
+  return fmtIls(0);
+}
+
+// ── Excel ────────────────────────────────────────────────────────────────────
+
+/** A text cell that a spreadsheet would read as a formula (= + - @, or a
+ *  leading tab / CR) is neutralised with a leading apostrophe — the cell shows
+ *  the text, and nothing executes when the file is opened. Numbers are never
+ *  passed through here. */
+export function sanitizeCell(value: string): string {
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
 }

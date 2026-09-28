@@ -50,3 +50,23 @@ export interface PortalLogFilters {
   to?: string;
   limit?: number;
 }
+
+/** "החשבון שלי" — one apartment of the signed-in owner, as the portal shows
+ *  it (src/lib/db/portal/account.ts). Figures are null on an archived row (no
+ *  live record: the screen shows a note instead of numbers). */
+export interface PortalAccount {
+  apartment_number: string;
+  /** The signed-in owner's own name from the roster (null when unknown). */
+  owner_display_name: string | null;
+  /** The debtors row is archived — no figures are shown. */
+  archived: boolean;
+  total_debt: number | null;
+  management_fees: number | null;
+  hot_water_debt: number | null;
+  /** The CRM's monthly-charge text as is (e.g. "3/26"), or null. */
+  monthly_debt: string | null;
+  /** Free text from the CRM (hot-water periods etc.), or null. */
+  details: string | null;
+  /** When the debt figures were last refreshed from Bllink (ISO), or null. */
+  synced_at: string | null;
+}

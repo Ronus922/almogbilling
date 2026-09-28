@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  apartmentsLabel, axisLabel, categoriesOf, categoryShares, firstName, flatEntries, fmtEntryDate, fmtIls, initials,
-  monthShort, monthsByYear, niceAxis, parseOverviewSpan, parsePortalTab, parseTxFilter, pctVsAverage, reportRangeFor,
-  reportRanges, windowKeys,
+  accountTotals, apartmentsLabel, axisLabel, categoriesOf, categoryShares, firstName, flatEntries, fmtDateDMY, fmtDelta,
+  fmtEntryDate, fmtIls, initials, monthShort, monthsByYear, niceAxis, parseOverviewSpan, parsePortalTab, parseTxFilter,
+  pctVsAverage, reportRangeFor, reportRanges, sanitizeCell, windowKeys,
 } from '@/lib/portal/ui';
+import type { PortalAccount } from '@/lib/types/portal';
 import type { ResidentEntry } from '@/lib/types/finance';
 
 // The pure helpers behind the owners-portal screens (src/lib/portal/ui.ts):
@@ -131,5 +132,38 @@ describe('overview arithmetic', () => {
     expect(flatEntries(rows, 'all').map((e) => e.description)).toEqual(['new', 'old', 'inc']);
     expect(flatEntries(rows, 'in').map((e) => e.description)).toEqual(['inc']);
     expect(flatEntries(rows, 'out').map((e) => e.description)).toEqual(['new', 'old']);
+  });
+});
+
+describe('my account + Excel safety (28/09/2026)', () => {
+  const acc = (o: Partial<PortalAccount>): PortalAccount => ({
+    apartment_number: '7', owner_display_name: null, archived: false, total_debt: 0, management_fees: 0, hot_water_debt: 0,
+    monthly_debt: null, details: null, synced_at: null, ...o,
+  });
+  it('sums the live records only; an archived record is counted, not summed', () => {
+    const t = accountTotals([
+      acc({ total_debt: 1240, management_fees: 840, hot_water_debt: 400 }),
+      acc({ apartment_number: '8', total_debt: 300, hot_water_debt: 300 }),
+      acc({ apartment_number: '9', archived: true, total_debt: null, management_fees: null, hot_water_debt: null }),
+    ]);
+    expect(t).toEqual({ total: 1540, management: 840, hotWater: 700, live: 2, archived: 1 });
+  });
+  it('formats the "as of" date in Israel time and the bank delta with its sign', () => {
+    expect(fmtDateDMY('2026-09-28T02:30:23.953Z')).toBe('28.09.2026');
+    expect(fmtDateDMY('2026-09-27T21:30:00Z')).toBe('28.09.2026');
+    expect(fmtDateDMY(null)).toBeNull();
+    expect(fmtDateDMY('not a date')).toBeNull();
+    expect(fmtDelta(2140)).toBe('+₪2,140');
+    expect(fmtDelta(-2140)).toBe('−₪2,140');
+    expect(fmtDelta(0)).toBe('₪0');
+  });
+  it('neutralises a cell a spreadsheet would run as a formula', () => {
+    expect(sanitizeCell('=1+1')).toBe("'=1+1");
+    expect(sanitizeCell('+972')).toBe("'+972");
+    expect(sanitizeCell('-5')).toBe("'-5");
+    expect(sanitizeCell('@SUM')).toBe("'@SUM");
+    expect(sanitizeCell('\tx')).toBe("'\tx");
+    expect(sanitizeCell('ניקיון')).toBe('ניקיון');
+    expect(sanitizeCell('')).toBe('');
   });
 });
