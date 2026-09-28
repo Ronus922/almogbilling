@@ -1719,7 +1719,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 
 ### מסך כניסת פורטל הבעלים (`/portal/login`) — חריג מוצהר (28/09/2026)
 
-**מקור-האמת העיצובי:** `ref/proof/tenant-portal-login.md` + `Tenant Portal (standalone).html` (≥901px) ו-`ref/proof/tenant-login-mobile.md` + `Tenant Login Mobile (standalone).html` (≤900px). **ה-HTML גובר על מסמך זה בכל התנגשות, בהיקף המסך הזה בלבד** (החלטת מוצר 28/09/2026). הקבצים: `src/app/portal/login/page.tsx`, `src/components/portal/PortalLoginForm.tsx`, `src/components/portal/PortalLoginBrand.tsx`. אסור לייבא את הערכים למסכים אחרים, ו-`/login` של הצוות (`(auth)`, `components/auth`) אינו חלק מהחריג.
+**מקור-האמת העיצובי:** `ref/proof/tenant-portal-login.md` + `Tenant Portal (standalone).html` (≥901px), הכלל ≤900 של `ref/Tenant Portal.html` **בטווח 601–900px** (עמודה אחת; פאנל המותג = פס עם הלוגו בלבד, `28px 24px`; שדות וכפתור בגדלי הדסקטופ; `.pane` = `40px 20px` — מ-28/09/2026 ערב), ו-`ref/proof/tenant-login-mobile.md` + `Tenant Login Mobile (standalone).html` (**≤600px**). **ה-HTML גובר על מסמך זה בכל התנגשות, בהיקף המסך הזה בלבד** (החלטת מוצר 28/09/2026). הקבצים: `src/app/portal/login/page.tsx`, `src/components/portal/PortalLoginForm.tsx`, `src/components/portal/PortalLoginBrand.tsx`. אסור לייבא את הערכים למסכים אחרים, ו-`/login` של הצוות (`(auth)`, `components/auth`) אינו חלק מהחריג.
 
 ערכים בלי טוקן, כ-arbitrary values במכוון:
 - **פלטת slate של הרפרנס** במקום טוקני הסקין: `#0F172A` ink · `#334155` label · `#64748B` muted · `#94A3B8` soft/placeholder · `#E2E8F0` border · `#CBD5E1` border-strong · `#F5F7FB` field.
@@ -1729,6 +1729,20 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 - **תיבות קוד:** 56px / 22px (דסקטופ), 60px / 26px (מובייל), Inter 700, ריווח 10px / 8px.
 - **מובייל:** sheet לבן ברדיוס `28px 28px 0 0` שחופף את ה-hero ב-28px; padding-top של ה-hero = `24px + env(safe-area-inset-top)` (ה-74px שברפרנס כוללים 50px של status bar שאינו חלק מה-viewport); padding-bottom של ה-sheet = `env(safe-area-inset-bottom)`.
 - **קישורי "שינוי מספר" / "שליחה חוזרת":** `min-h-[44px]` (כלל ברזל 6) בתוך שורת ה-hint של הרפרנס.
+
+### פורטל בעלי הדירות (`/portal`) — חריג מוצהר (28/09/2026)
+
+**מקור-האמת העיצובי:** `ref/Tenant Portal.html` (המסך `#scrPortal`) + `ref/tenant-portal-responsive.md`. **ה-HTML/CSS של הרפרנס גובר על מסמך זה בכל התנגשות, בהיקף `/portal` בלבד.** הקבצים: `src/app/portal/page.tsx`, `src/components/portal/Portal{Shell,Overview,Transactions,Reports,FundView,TxTable,BarChart,Soon,Icons}.tsx`, `src/lib/portal/{ui,blocks,export}.ts`, `src/app/styles/portal.css`.
+
+- **סקין סקופי:** כל ה-CSS של הרפרנס הועתק כמו שהוא (ערכי px, צבעים, רדיוסים, צללים) לקובץ `portal.css` תחת `.portal-skin` — משתני ה-`:root` של הרפרנס מוגדרים על האלמנט הזה בלבד ולא נוגעים בטוקני ה-`@theme`. שמות שהתנגשו עם Tailwind או עם `buttons.css` קיבלו קידומת `p` (`.pgrid`, `.pring`, `.pbtn*`); כללי הטבלה תקפים רק בתוך `.tw`, כך שטאב הקרן (`FundTab` של `finance/*`, ללא שינוי) מרונדר כמו ב-`/finance?view=resident`.
+- **Inter למספרים** (`.num` = `--font-inter` + `tnum` + `direction:ltr; unicode-bidi:isolate`), ו**gradient בפאנל המותג בכניסה** — שני החריגים ל"Heebo בלבד" ול"שטוח בלבד" בפורטל. Inter נטען פעם אחת ב-root layout (`--font-inter`) ולא נטען שוב ב-layout של הפורטל.
+- **מבנה:** תוכן `max-width:1280px`, grid של 12 עמודות (`gap:20px`, 14 במובייל), כרטיסים ברדיוס 16 (`22px 24px`, 18 במובייל), top bar 68px בשורה אחת מעל 1180 · ≤1180 הטאבים בשורה נפרדת עם גלילה אופקית בלי scrollbar · ≤600 אווטאר בלבד. Breakpoints של הרפרנס: 1180 → 900 → 600 (`max-width`).
+- **Top bar (סטייה מתועדת):** עם שם הבניין המלא ("מגדלי חוף הכרמל — בניין אלמוג, חיפה") ושישה טאבים שורת הרפרנס לא נכנסת ב-1280px (נמדד: 307 + 697 + 212 + מרווחים > 1216). ההחלטה: הטאבים ובלוק המשתמש **לא מתכווצים** (`flex:none`), ושם הבניין הוא שמתקצר ב-ellipsis (המנגנון של הרפרנס עצמו, `.bld b`). ב-≤1180 בלוק הבניין `flex:1 1 0` כדי שהמשתמש יישאר בשורה הראשונה.
+- **גרף:** SVG ידני לפי `drawChart` (padding 28/44, `bw=min(18, gw×.28)`, תווית כל חודש שני כשהקבוצה צרה מ-34px, redraw ב-`ResizeObserver`, tooltip `.tip` על hover, לחיצה על חודש → טאב "הכנסות והוצאות" של אותו חודש). בלי ספריית גרפים. ציר Y ב-`niceAxis` (4 מדרגות "יפות") — הרפרנס השתמש במקסימום קבוע.
+- **טבלאות:** 5 עמודות (תיאור · קטגוריה · תאריך · סכום · מסמך) ב-`.tw`; ≤600 list rows לפי ה-MD. תגית `t-green` להכנסה / `t-gray` להוצאה; סכום `+` ירוק / `−`; **תאריך: הוצאה `DD.MM.YYYY`, הכנסה `MM.YYYY`** (להכנסה אין תאריך — רק חודש). אין שורת `.sb` (הרפרנס מציג שם צד-נגדי, ושם ספק לעולם לא יוצא לפורטל). כפתור `.doc` רק כשמתג "הצג מסמכים לדיירים" דלוק.
+- **בלוקים כבויים (`PORTAL_BLOCKS`, `src/lib/portal/blocks.ts`):** "היתרה שלך לתשלום", "יתרת קופת הבניין", "שיעור גבייה" + "X מתוך Y דירות שילמו" — כבויים; ה-markup וכללי ה-grid נשמרים, הדלקה משחזרת את הרפרנס. כשהם כבויים: שני KPI ב-`c6` בדסקטופ, **שניים זה לצד זה במובייל** (הכלל "הראשון על שתי העמודות" חל רק ב-`data-count="3"`).
+- **פורמט סכום של הרפרנס:** `₪8,820` (סימן צמוד, קיבוץ en-US, אגורות כשיש) — `fmtIls`; ה-`ils()` של המערכת (`₪ 8,820`) נשאר בטאב הקרן.
+- **URL:** `?tab=ov|tx|fund|rep|acc|dec`, `m=YYYY-MM` (חודש), `r=YYYY-Qn|YYYY-Hn|YYYY` (דוח), `n=6|12` (סקירה), `f=in|out` (סינון). `?tab=fund` הישן ו-`?m=<טווח>` הישן ממשיכים לעבוד.
 
 ### מודול צ׳יפים — חריג מוצהר (08/2026)
 
