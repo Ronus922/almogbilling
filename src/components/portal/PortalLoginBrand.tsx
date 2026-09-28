@@ -34,12 +34,12 @@ export function PortalLoginBrand({ className }: { className?: string }) {
 
       {/* logo + name */}
       <div className="relative flex items-center gap-3 min-[901px]:gap-3.5">
-        <span className="grid size-11 shrink-0 place-items-center rounded-[13px] border border-white/25 bg-white/15 min-[901px]:size-[52px] min-[901px]:rounded-[14px]">
+        <span className="grid size-11 shrink-0 place-items-center rounded-[13px] border border-white/25 bg-[rgba(255,255,255,0.14)] min-[901px]:size-[52px] min-[901px]:rounded-[14px] min-[901px]:bg-white/15">
           <Building2 className="size-[22px] min-[901px]:size-[26px]" strokeWidth={1.8} aria-hidden />
         </span>
         <span className="min-w-0">
-          <span className="block font-num text-[19px] font-extrabold leading-tight min-[901px]:text-[22px]">ALMOG</span>
-          <span className="mt-0.5 block text-[12.5px] font-medium text-[#C9D3FF] min-[901px]:text-[13px]">פורטל בעלי דירות</span>
+          <span className="block font-num text-[19px] font-extrabold leading-[normal] min-[901px]:text-[22px] min-[901px]:leading-tight">ALMOG</span>
+          <span className="block text-[12.5px] font-normal leading-[normal] text-[#C9D3FF] min-[901px]:mt-0.5 min-[901px]:text-[13px] min-[901px]:font-medium min-[901px]:leading-[1.5]">פורטל בעלי דירות</span>
         </span>
       </div>
 

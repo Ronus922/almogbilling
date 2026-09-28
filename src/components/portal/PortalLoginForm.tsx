@@ -83,7 +83,7 @@ function formatCountdown(sec: number): string {
 const FIELD_BASE =
   'flex items-center rounded-xl border-[1.5px] transition-[border-color,background-color,box-shadow] duration-150 min-[901px]:rounded-[11px]';
 const FIELD_IDLE =
-  'border-[#E2E8F0] bg-[#F5F7FB] hover:border-[#CBD5E1] focus-within:border-brand focus-within:bg-white focus-within:ring-4 focus-within:ring-[rgba(61,90,254,0.12)]';
+  'border-[#E2E8F0] bg-[#F5F7FB] min-[901px]:hover:border-[#CBD5E1] focus-within:border-brand focus-within:bg-white focus-within:ring-4 focus-within:ring-[rgba(61,90,254,0.12)]';
 const FIELD_ERROR =
   'border-[#E5484D] bg-white focus-within:ring-4 focus-within:ring-[rgba(229,72,77,0.12)]';
 
@@ -91,7 +91,7 @@ const LINK_BUTTON =
   '-my-3 inline-flex min-h-[44px] items-center font-semibold text-brand transition-colors hover:text-[#2B3FB8] hover:underline disabled:pointer-events-none disabled:opacity-50';
 
 const INLINE_MESSAGE =
-  'flex items-start gap-1.5 text-[13.5px] font-medium leading-[1.5] min-[901px]:text-[13px]';
+  'flex items-center gap-1.5 text-[13.5px] font-medium leading-[normal] min-[901px]:items-start min-[901px]:text-[13px] min-[901px]:leading-[1.5]';
 
 export function PortalLoginForm() {
   const [step, setStep] = useState<Step>('phone');
@@ -270,7 +270,7 @@ export function PortalLoginForm() {
             onClick={backToPhone}
             disabled={busy}
             aria-label="חזרה"
-            className="grid size-11 place-items-center rounded-xl text-[#0F172A] transition-colors hover:bg-[#F5F7FB] disabled:opacity-50"
+            className="grid size-11 place-items-center rounded-xl text-[#0F172A] disabled:opacity-50"
           >
             <ChevronRight className="size-[22px]" strokeWidth={2} aria-hidden />
           </button>
@@ -279,7 +279,7 @@ export function PortalLoginForm() {
 
       <section
         className={cn(
-          'relative z-[1] flex flex-1 flex-col bg-white px-6 pb-[max(12px,env(safe-area-inset-bottom))]',
+          'relative z-[2] flex flex-1 flex-col bg-white px-6 pb-[env(safe-area-inset-bottom)]',
           step === 'code' ? 'pt-2' : '-mt-7 rounded-t-[28px] pt-7',
           'min-[901px]:mt-0 min-[901px]:items-center min-[901px]:justify-center min-[901px]:rounded-none min-[901px]:px-8 min-[901px]:py-12',
         )}
@@ -291,13 +291,13 @@ export function PortalLoginForm() {
         >
           {step === 'phone' ? (
             <>
-              <h1 className="text-2xl font-extrabold text-[#0F172A] min-[901px]:text-[32px]">כניסת בעלי דירות</h1>
+              <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[901px]:text-[32px] min-[901px]:leading-[calc(2/1.5)]">כניסת בעלי דירות</h1>
               <p className="mt-1.5 text-[15px] leading-[1.5] text-[#64748B] min-[901px]:mt-2 min-[901px]:leading-[1.55]">
                 נשלח אליך קוד חד-פעמי בוואטסאפ למספר הטלפון הרשום בוועד הבית.
               </p>
 
-              <div className="mt-6 flex flex-col gap-2 min-[901px]:mt-7">
-                <Label htmlFor="portal-phone" className="text-sm font-semibold text-[#334155]">מספר טלפון</Label>
+              <div className="mt-5 flex flex-col gap-2 min-[901px]:mt-7">
+                <Label htmlFor="portal-phone" className="text-sm font-semibold leading-[normal] text-[#334155] min-[901px]:leading-none">מספר טלפון</Label>
                 <div className={cn(FIELD_BASE, 'h-[54px] min-[901px]:h-12', phoneFieldError ? FIELD_ERROR : FIELD_IDLE)}>
                   <span aria-hidden className="hidden w-11 shrink-0 place-items-center text-[#94A3B8] min-[901px]:grid">
                     <Smartphone className="size-[18px]" strokeWidth={1.8} />
@@ -317,14 +317,14 @@ export function PortalLoginForm() {
                     }}
                     aria-invalid={phoneFieldError || undefined}
                     aria-describedby={phoneInvalid ? 'portal-phone-error' : undefined}
-                    className="h-full min-w-0 flex-1 bg-transparent px-3.5 text-end font-num text-[17px] font-semibold text-[#0F172A] outline-none placeholder:text-[#94A3B8] min-[901px]:text-[15px] min-[901px]:font-medium"
+                    className="h-full min-w-0 flex-1 bg-transparent px-3.5 text-end font-num text-[17px] font-semibold text-[#0F172A] outline-none placeholder:font-medium placeholder:text-[#94A3B8] min-[901px]:text-[15px] min-[901px]:font-medium"
                     required
                   />
                   {/* Visual prefix only — the number is sent exactly as typed. */}
                   <span
                     dir="ltr"
                     aria-hidden
-                    className="ms-3.5 flex h-[26px] shrink-0 items-center border-e border-[#E2E8F0] pe-3.5 font-num text-base font-semibold text-[#64748B] min-[901px]:ms-3 min-[901px]:h-auto min-[901px]:pe-3 min-[901px]:text-sm"
+                    className="flex h-[26px] shrink-0 items-center border-e border-[#E2E8F0] ps-3.5 pe-3.5 font-num text-base font-semibold text-[#64748B] min-[901px]:ms-3 min-[901px]:h-auto min-[901px]:ps-0 min-[901px]:pe-3 min-[901px]:text-sm"
                   >
                     +972
                   </span>
@@ -349,7 +349,7 @@ export function PortalLoginForm() {
                 <Button
                   type="submit"
                   disabled={busy || cooldown > 0}
-                  className="h-[54px] w-full rounded-[14px] text-[17px] min-[901px]:mt-7 min-[901px]:h-12 min-[901px]:rounded-[11px] min-[901px]:text-[16px]"
+                  className="h-[54px] w-full gap-2.5 rounded-[14px] text-[17px] min-[901px]:mt-7 min-[901px]:h-12 min-[901px]:gap-[9px] min-[901px]:rounded-[11px] min-[901px]:text-[16px]"
                 >
                   {busy ? (
                     <>
@@ -362,15 +362,15 @@ export function PortalLoginForm() {
                     'שלח קוד אימות'
                   )}
                 </Button>
-                <p className="flex items-center justify-center gap-2 pb-1 text-[12.5px] text-[#64748B] min-[901px]:mt-8 min-[901px]:justify-start min-[901px]:gap-2.5 min-[901px]:rounded-[11px] min-[901px]:bg-[#F5F7FB] min-[901px]:px-3.5 min-[901px]:py-3 min-[901px]:text-[13px]">
-                  <ShieldCheck className="size-[15px] shrink-0 min-[901px]:size-[18px]" strokeWidth={1.8} aria-hidden />
+                <p className="flex items-center justify-center gap-2 pb-1 text-[12.5px] leading-[normal] text-[#64748B] min-[901px]:mt-8 min-[901px]:leading-[1.5] min-[901px]:justify-start min-[901px]:gap-2.5 min-[901px]:rounded-[11px] min-[901px]:bg-[#F5F7FB] min-[901px]:px-3.5 min-[901px]:py-3 min-[901px]:text-[13px]">
+                  <ShieldCheck className="size-[15px] shrink-0 [stroke-width:2] min-[901px]:size-[18px] min-[901px]:[stroke-width:1.8]" aria-hidden />
                   הגישה מוגבלת לבעלי דירות רשומים בבניין
                 </p>
               </div>
             </>
           ) : (
             <>
-              <h1 className="text-2xl font-extrabold text-[#0F172A] min-[901px]:text-[32px]">הזנת קוד</h1>
+              <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[901px]:text-[32px] min-[901px]:leading-[calc(2/1.5)]">הזנת קוד</h1>
               <p className="mt-1.5 text-[15px] leading-[1.5] text-[#64748B] min-[901px]:mt-2 min-[901px]:leading-[1.55]">
                 שלחנו קוד בן {PORTAL_OTP_DIGITS} ספרות בוואטסאפ למספר{' '}
                 <b dir="ltr" className="font-num font-bold whitespace-nowrap text-[#0F172A]">{formatPhoneForDisplay(phone)}</b>
@@ -436,7 +436,7 @@ export function PortalLoginForm() {
                 <Button
                   type="submit"
                   disabled={busy}
-                  className="h-[54px] w-full rounded-[14px] text-[17px] min-[901px]:mt-7 min-[901px]:h-12 min-[901px]:rounded-[11px] min-[901px]:text-[16px]"
+                  className="h-[54px] w-full gap-2.5 rounded-[14px] text-[17px] min-[901px]:mt-7 min-[901px]:h-12 min-[901px]:gap-[9px] min-[901px]:rounded-[11px] min-[901px]:text-[16px]"
                 >
                   {busy ? (
                     <>
