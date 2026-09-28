@@ -43,7 +43,11 @@ vi.mock('@/lib/db', () => ({
 }));
 
 const { createEntry, listEntriesForMonth, listFundEntries } = await import('@/lib/db/finance/entries');
-const { getPeriodReport, getPublishedMonths, getRenovationFundKpis, getResidentMonthData } = await import('@/lib/db/finance/portal');
+const {
+  findResidentReceipt, getPeriodReport, getPublishedMonths, getRenovationFundKpis, getResidentMonthData, getResidentOverview,
+  listRecentResidentEntries,
+} = await import('@/lib/db/finance/portal');
+const { getFinanceSettings, updateFinanceSettings } = await import('@/lib/db/finance/settings');
 const { setMonthPublished } = await import('@/lib/db/finance/month-status');
 const { getRenovationFundSettings, updateRenovationFundSettings } = await import('@/lib/db/finance/fund-settings');
 const { resolveEntryInput } = await import('@/lib/finance/entry-input');
@@ -270,5 +274,138 @@ d('finance read layer — sections, cumulative fund, publishedOnly, period repor
       expect(r.months.every((m) => m.month <= cur)).toBe(true);
       expect(r.months[0]!.month).toBe(p.from);
     }
+  });
+});
+
+// ── The portal screens' additions (28/09/2026): the newest lines, the overview
+// data set and receipts behind the "הצג מסמכים לדיירים" switch. Own pool and
+// own fixtures (the block above closes its pool); cleanup by exact id.
+d('portal additions — recent lines, overview window, receipts behind the switch', () => {
+  const made2 = { categories: [] as string[], entries: [] as string[], months: [] as Array<{ year: number; month: number }>, documents: [] as string[] };
+  const tag = `fin-portal2-${Date.now()}`;
+  let switchBefore = false;
+  let pubEntryId = '';
+  let hiddenEntryId = '';
+  let pubDocKey = '';
+  let hiddenDocKey = '';
+  let catInc = '';
+  let catExp = '';
+  let catFund = '';
+
+  async function category(kind: 'income' | 'expense', section: 'operating' | 'renovation_fund'): Promise<string> {
+    const r = await pool.query<{ id: string }>(
+      `insert into public.fin_categories (kind, name, section, created_by) values ($1, $2, $3, $4) returning id`,
+      [kind, `${tag}-${kind}-${section}`, section, actorId],
+    );
+    made2.categories.push(r.rows[0]!.id);
+    return r.rows[0]!.id;
+  }
+  async function line(kind: 'income' | 'expense', categoryId: string, month: string, amount: number, day = 15): Promise<string> {
+    const e = await createEntry(
+      {
+        kind, category_id: categoryId, period_month: periodMonthOf(month), amount, description: `${tag} ${kind} ${month}`,
+        internal_note: 'internal', supplier_id: null, supplier_name: kind === 'expense' ? 'secret supplier' : '', invoice_number: '',
+        payment_date: kind === 'expense' ? `${month}-${String(day).padStart(2, '0')}` : null,
+      },
+      actorId,
+    );
+    made2.entries.push(e.id);
+    return e.id;
+  }
+  async function setPublished(month: string, published: boolean): Promise<void> {
+    const { year, month: m } = monthKeyParts(month);
+    const existing = await pool.query(`select 1 from public.finance_month_status where year = $1 and month = $2`, [year, m]);
+    if (existing.rowCount === 0) made2.months.push({ year, month: m });
+    await setMonthPublished(year, m, published, actorId);
+  }
+  async function receipt(entryId: string): Promise<string> {
+    const key = `${crypto.randomUUID()}.pdf`;
+    const r = await pool.query<{ id: string }>(
+      `insert into public.fin_documents (entry_id, uploaded_by, object_key, original_name, mime, size)
+       values ($1, $2, $3, $4, 'application/pdf', 10) returning id`,
+      [entryId, actorId, key, `${tag}.pdf`],
+    );
+    made2.documents.push(r.rows[0]!.id);
+    return key;
+  }
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: TEST_URL, max: 4 });
+    pool.on('error', () => undefined);
+    const admin = await pool.query<{ id: string }>(`select id from public.users where username = 'e2e-admin'`);
+    actorId = admin.rows[0]!.id;
+    switchBefore = (await getFinanceSettings()).show_documents_to_residents;
+
+    catInc = await category('income', 'operating');
+    catExp = await category('expense', 'operating');
+    catFund = await category('expense', 'renovation_fund');
+    // prev: published (with a receipt) · cur: hidden (with a receipt) · prev2: published
+    pubEntryId = await line('expense', catExp, prev, 700, 20);
+    await line('income', catInc, prev, 4000);
+    await line('expense', catExp, prev2, 300, 3);
+    await line('expense', catFund, prev, 999);
+    hiddenEntryId = await line('expense', catExp, cur, 5000, 1);
+    await setPublished(prev, true);
+    await setPublished(prev2, true);
+    await setPublished(cur, false);
+    pubDocKey = await receipt(pubEntryId);
+    hiddenDocKey = await receipt(hiddenEntryId);
+    await updateFinanceSettings({ show_documents_to_residents: false }, actorId);
+  });
+
+  afterAll(async () => {
+    for (const id of made2.documents) await pool.query(`delete from public.fin_documents where id = $1`, [id]);
+    for (const id of made2.entries) await pool.query(`delete from public.fin_entries where id = $1`, [id]);
+    for (const id of made2.categories) await pool.query(`delete from public.fin_categories where id = $1`, [id]);
+    for (const m of made2.months) await pool.query(`delete from public.finance_month_status where year = $1 and month = $2`, [m.year, m.month]);
+    await updateFinanceSettings({ show_documents_to_residents: switchBefore }, actorId);
+    await pool.end();
+  });
+
+  it('recent lines: operating lines of published months only, newest first, no id / supplier / note', async () => {
+    const rows = await listRecentResidentEntries(50);
+    const mine = rows.filter((r) => r.description.startsWith(tag));
+    expect(mine.map((r) => r.description)).toEqual([`${tag} expense ${prev}`, `${tag} income ${prev}`, `${tag} expense ${prev2}`]);
+    for (const r of mine) {
+      expect(r).not.toHaveProperty('entry_id');
+      expect(r).not.toHaveProperty('supplier_name');
+      expect(r).not.toHaveProperty('internal_note');
+      expect(r.period_month).toMatch(/^\d{4}-\d{2}-01$/);
+    }
+    expect(rows.every((r) => r.section === 'operating')).toBe(true);
+  });
+
+  it('the overview window holds only published months and re-totals categories per month', async () => {
+    const ov = await getResidentOverview(12);
+    expect(ov).not.toBeNull();
+    const months = new Set(ov!.months.map((m) => m.month));
+    expect(months.has(prev)).toBe(true);
+    expect(months.has(prev2)).toBe(true);
+    expect(months.has(cur)).toBe(false);
+    const mine = ov!.expense_categories.find((c) => c.name === `${tag}-expense-operating`);
+    expect(mine?.by_month[prev]).toBe(700);
+    expect(mine?.by_month[prev2]).toBe(300);
+    expect(mine?.by_month[cur]).toBeUndefined();
+    expect(ov!.expense_categories.some((c) => c.name === `${tag}-expense-renovation_fund`)).toBe(false);
+    expect(ov!.recent.length).toBeLessThanOrEqual(5);
+  });
+
+  it('receipts: absent while the switch is off, attached (proxy URL, no key elsewhere) once it is on', async () => {
+    const { year, month } = monthKeyParts(prev);
+    const off = await getResidentMonthData(year, month);
+    const offRow = off!.operating.expense.find((e) => e.description === `${tag} expense ${prev}`);
+    expect(offRow?.documents).toBeUndefined();
+    expect(await findResidentReceipt(pubDocKey)).toBeNull();
+
+    await updateFinanceSettings({ show_documents_to_residents: true }, actorId);
+    const on = await getResidentMonthData(year, month);
+    const onRow = on!.operating.expense.find((e) => e.description === `${tag} expense ${prev}`);
+    expect(onRow?.documents).toEqual([{ url: `/api/files/finance-receipts/${pubDocKey}`, name: `${tag}.pdf` }]);
+    expect(onRow).not.toHaveProperty('entry_id');
+    const found = await findResidentReceipt(pubDocKey);
+    expect(found).toMatchObject({ entry_id: pubEntryId, original_name: `${tag}.pdf` });
+    // the hidden month's receipt stays out of reach even with the switch on
+    expect(await findResidentReceipt(hiddenDocKey)).toBeNull();
+    expect(await findResidentReceipt('00000000-0000-4000-8000-000000000000.pdf')).toBeNull();
   });
 });

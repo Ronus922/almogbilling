@@ -137,6 +137,13 @@ export async function listApartmentNumbers(): Promise<string[]> {
   return r.rows.map((row) => row.apartment_number);
 }
 
+/** How many apartments the building has — one contacts row per apartment.
+ *  The owners portal shows it in its top bar ("290 דירות · ועד הבית"). */
+export async function countContacts(): Promise<number> {
+  const r = await query<{ n: number }>(`select count(*)::int as n from public.contacts`);
+  return r.rows[0]?.n ?? 0;
+}
+
 export async function getContactById(id: string): Promise<Contact | null> {
   return queryOne<Contact>(
     `select ${CONTACT_COLUMNS} from public.contacts where id = $1`,

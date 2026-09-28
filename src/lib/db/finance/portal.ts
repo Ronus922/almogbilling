@@ -1,14 +1,17 @@
 import 'server-only';
-import { query } from '@/lib/db';
+import { query, queryOne } from '@/lib/db';
 import type { FinKind, FinSection } from '@/lib/constants/finance';
 import type {
-  PeriodReport, PeriodReportCategory, PeriodReportMonth, RenovationFundKpis, ResidentEntry, ResidentFundKpis,
-  ResidentMonthData,
+  PeriodReport, PeriodReportCategory, PeriodReportMonth, RenovationFundKpis, ResidentDocument, ResidentEntry,
+  ResidentFundKpis, ResidentMonthData, ResidentOverview,
 } from '@/lib/types/finance';
 import { currentMonthKey, periodMonthOf, shiftMonthKey } from '@/lib/finance/period';
+import { publishedMonthKeys } from '@/lib/finance/resident';
+import { buildProxyUrl, FINANCE_RECEIPTS_BUCKET } from '@/lib/storage/server';
 import { PUBLISHED_JOIN, listFundEntries } from './entries';
 import { getRenovationFundSettings } from './fund-settings';
 import { getMonthStatus, listPublishedMonths } from './month-status';
+import { getFinanceSettings } from './settings';
 
 // The read layer the owners portal will stand on (no route, no UI yet), also
 // used by the admin overview with publishedOnly = false.
@@ -24,9 +27,14 @@ export async function getPublishedMonths(): Promise<Array<{ year: number; month:
   return listPublishedMonths();
 }
 
+// The entry id rides along INTERNALLY (to attach receipts) and is dropped by
+// toResidentEntries before anything leaves this module — a resident row never
+// carries an id, so nothing on the portal can address a line.
 const RESIDENT_COLS = `
-  e.kind, c.section, c.name as category_name, e.description, e.amount::float8 as amount,
-  e.payment_date::text as payment_date`;
+  e.id as entry_id, e.kind, c.section, c.name as category_name, e.description, e.amount::float8 as amount,
+  e.payment_date::text as payment_date, e.period_month::text as period_month`;
+
+type ResidentRow = ResidentEntry & { entry_id: string };
 
 function sectionOf(rows: ResidentEntry[], section: FinSection) {
   const income = rows.filter((r) => r.section === section && r.kind === 'income');
@@ -37,13 +45,45 @@ function sectionOf(rows: ResidentEntry[], section: FinSection) {
   return { income, expense, totals: { income: i, expense: x, diff: i - x } };
 }
 
+/** The receipts of these entries, keyed by entry id — ONLY when the
+ *  "הצג מסמכים לדיירים" switch is on; an empty map otherwise, so the object
+ *  keys never reach a resident while the switch is off. */
+async function residentDocumentsFor(entryIds: string[]): Promise<Map<string, ResidentDocument[]>> {
+  const out = new Map<string, ResidentDocument[]>();
+  if (entryIds.length === 0) return out;
+  const settings = await getFinanceSettings();
+  if (!settings.show_documents_to_residents) return out;
+  const r = await query<{ entry_id: string; object_key: string; original_name: string }>(
+    `select entry_id, object_key, original_name from public.fin_documents
+      where entry_id = any($1::uuid[]) and object_deleted_at is null
+      order by created_at`,
+    [entryIds],
+  );
+  for (const d of r.rows) {
+    const doc = { url: buildProxyUrl(FINANCE_RECEIPTS_BUCKET, d.object_key), name: d.original_name };
+    const list = out.get(d.entry_id);
+    if (list) list.push(doc);
+    else out.set(d.entry_id, [doc]);
+  }
+  return out;
+}
+
+/** Strips the internal entry id and attaches the receipts (when allowed). */
+async function toResidentEntries(rows: ResidentRow[]): Promise<ResidentEntry[]> {
+  const docs = await residentDocumentsFor(rows.map((r) => r.entry_id));
+  return rows.map(({ entry_id, ...rest }) => {
+    const list = docs.get(entry_id);
+    return list ? { ...rest, documents: list } : rest;
+  });
+}
+
 /** The resident-visible lines of one month, or null when the month is not
  *  published. The entries query joins on the published row itself, so an
  *  unpublished month yields no rows even before the status check. */
 export async function getResidentMonthData(year: number, month: number): Promise<ResidentMonthData | null> {
   const status = await getMonthStatus(year, month);
   if (!status.published) return null;
-  const r = await query<ResidentEntry>(
+  const r = await query<ResidentRow>(
     `select ${RESIDENT_COLS}
        from public.fin_entries e
        join public.fin_categories c on c.id = e.category_id
@@ -55,11 +95,79 @@ export async function getResidentMonthData(year: number, month: number): Promise
       order by e.kind, c.section, c.sort_order, c.name, coalesce(e.payment_date, e.period_month), e.created_at`,
     [year, month],
   );
+  const rows = await toResidentEntries(r.rows);
   return {
     year,
     month,
-    operating: sectionOf(r.rows, 'operating'),
-    fund: sectionOf(r.rows, 'renovation_fund'),
+    operating: sectionOf(rows, 'operating'),
+    fund: sectionOf(rows, 'renovation_fund'),
+  };
+}
+
+/** The newest operating lines a resident may see, newest first — the
+ *  overview's "תנועות אחרונות". Published months only, in the query itself. */
+export async function listRecentResidentEntries(limit: number): Promise<ResidentEntry[]> {
+  const r = await query<ResidentRow>(
+    `select ${RESIDENT_COLS}
+       from public.fin_entries e
+       join public.fin_categories c on c.id = e.category_id
+       join public.finance_month_status s
+         on s.year = extract(year from e.period_month)::int
+        and s.month = extract(month from e.period_month)::int
+      where s.published and e.deleted_at is null and c.section = 'operating'
+      order by coalesce(e.payment_date, e.period_month) desc, e.created_at desc
+      limit $1`,
+    [Math.max(1, Math.min(50, Math.floor(limit)))],
+  );
+  return toResidentEntries(r.rows);
+}
+
+/** Whether this receipt may be shown to a resident right now: the switch is
+ *  on, the object belongs to a live entry, and that entry's month is
+ *  published. The /api/files proxy asks this before serving a portal session.
+ *  Returns the owning entry + name for the audit row, or null. */
+export async function findResidentReceipt(objectKey: string): Promise<{ entry_id: string; document_id: string; original_name: string } | null> {
+  const settings = await getFinanceSettings();
+  if (!settings.show_documents_to_residents) return null;
+  return queryOne<{ entry_id: string; document_id: string; original_name: string }>(
+    `select d.entry_id, d.id as document_id, d.original_name
+       from public.fin_documents d
+       join public.fin_entries e on e.id = d.entry_id
+       ${PUBLISHED_JOIN}
+      where d.object_key = $1 and d.object_deleted_at is null
+        and e.deleted_at is null and coalesce(s.published, false)
+      limit 1`,
+    [objectKey],
+  );
+}
+
+/** The overview tab's data set: the last `monthsBack` calendar months up to
+ *  the newest published month (only the published ones among them), the
+ *  operating expense categories over that window and the newest lines.
+ *  null when nothing is published. Every figure comes from published months —
+ *  getPeriodReport with publishedOnly and the published join of the lines. */
+export async function getResidentOverview(monthsBack: number): Promise<ResidentOverview | null> {
+  const keys = publishedMonthKeys(await listPublishedMonths());
+  if (keys.length === 0) return null;
+  const latest = keys[0];
+  const span = Math.max(1, Math.min(24, Math.floor(monthsBack)));
+  const from = shiftMonthKey(latest, -(span - 1));
+  const [report, recent] = await Promise.all([
+    getPeriodReport(from, latest, { publishedOnly: true }),
+    listRecentResidentEntries(5),
+  ]);
+  const months = report.months
+    .filter((m) => m.included)
+    .map((m) => ({
+      month: m.month,
+      income: report.income.reduce((s, c) => s + (c.by_month[m.month] ?? 0), 0),
+      expense: report.expense.reduce((s, c) => s + (c.by_month[m.month] ?? 0), 0),
+    }));
+  return {
+    latest,
+    months,
+    expense_categories: report.expense.map((c) => ({ name: c.name, by_month: c.by_month })),
+    recent,
   };
 }
 

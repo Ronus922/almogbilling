@@ -1,8 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, requireAnyPermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { AuthorizationError } from '@/lib/auth/errors';
 import { queryOne } from '@/lib/db';
-import { logFileView, type ServedFile } from '@/lib/db/fileViewAudit';
+import { findResidentReceipt } from '@/lib/db/finance/portal';
+import { findOwnerIdentity } from '@/lib/db/portal/ownerPhones';
+import { logFileView, type FileViewActor, type PortalFileViewer, type ServedFile } from '@/lib/db/fileViewAudit';
+import { getPortalSession } from '@/lib/portal/session';
 import { getObjectStream, PRIVATE_BUCKETS, type PrivateBucket } from '@/lib/storage/server';
 import { logger } from '@/lib/logger';
 
@@ -45,8 +49,35 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<Actor>> = {
       { module: 'whatsapp', action: 'view' },
     ]),
   // Finance receipts — whoever may open the finance module (admin+ in slice A).
+  // An apartment OWNER may also open one through the portal, under the
+  // conditions of residentReceiptViewer() below.
   'finance-receipts': () => requirePermission('finance', 'view'),
 };
+
+/**
+ * The owners-portal path to a receipt (the portal's document button). Granted
+ * only when ALL of these hold; otherwise the staff verdict (401 / 403) stands
+ * unchanged, so the response confirms nothing about the object:
+ *   • a live portal session (portal_session cookie, phone still an active owner);
+ *   • the "הצג מסמכים לדיירים" switch is on;
+ *   • the object belongs to a live entry of a PUBLISHED month
+ *     (findResidentReceipt checks all three in one place).
+ * Returns the viewer for the audit row: actor_user_id NULL, identified by
+ * phone + apartments in metadata (see PortalFileViewer).
+ */
+async function residentReceiptViewer(objectPath: string): Promise<PortalFileViewer | null> {
+  const session = await getPortalSession();
+  if (!session) return null;
+  const receipt = await findResidentReceipt(objectPath);
+  if (!receipt) return null;
+  const identity = await findOwnerIdentity(session.phoneE164, { onlyActive: true });
+  return {
+    kind: 'portal_owner',
+    phoneE164: session.phoneE164,
+    ownerName: identity?.ownerName ?? null,
+    apartmentNumbers: identity?.apartmentNumbers ?? [],
+  };
+}
 
 /**
  * Object keys are machine-built and ASCII (see lib/storage/objectKey.ts).
@@ -162,18 +193,28 @@ export async function GET(req: NextRequest, ctx: RouteCtx) {
   }
   const known = bucket as PrivateBucket;
 
-  let actor: Actor;
-  try {
-    actor = await BUCKET_GUARD[known]();
-  } catch (err) {
-    const r = authErrorResponse(err);
-    if (r) return r;
-    throw err;
-  }
-
+  // The path is validated before the guard only because the portal branch of
+  // finance-receipts needs the object key to decide; the check itself reveals
+  // nothing (a bad path is a 404 whoever asks).
   const segments = path.map((s) => decodeURIComponent(s));
   if (!isSafePath(segments)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   const objectPath = segments.join('/');
+
+  let actor: FileViewActor | PortalFileViewer;
+  try {
+    actor = await BUCKET_GUARD[known]();
+  } catch (err) {
+    if (!(err instanceof AuthorizationError)) throw err;
+    // Not staff (or staff without finance:view). A receipt may still be served
+    // to an owner through the portal — otherwise the staff verdict stands.
+    const viewer = known === 'finance-receipts' ? await residentReceiptViewer(objectPath) : null;
+    if (!viewer) {
+      const r = authErrorResponse(err);
+      if (r) return r;
+      throw err;
+    }
+    actor = viewer;
+  }
 
   let blob: Blob | null;
   try {

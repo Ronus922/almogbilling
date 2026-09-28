@@ -9,7 +9,10 @@ import { cn } from '@/lib/utils';
 //     right-hand 46% column. Navy→blue gradient + dot grid, logo/name at the
 //     top, headline + paragraph + preview card in the middle, copyright at
 //     the bottom, `justify-content: space-between`.
-//   • ≤900px — ref/proof/Tenant Login Mobile (standalone).html `.hero`: a hero
+//   • 601–900px — the reference's own ≤900 rule (ref/Tenant Portal.html):
+//     one column, the brand reduced to a strip with the logo only (28px 24px),
+//     the headline / copy / preview / footer hidden (28/09/2026).
+//   • ≤600px — ref/proof/Tenant Login Mobile (standalone).html `.hero`: a hero
 //     the white sheet overlaps by 28px. Logo/name, headline, one short line.
 //
 // The preview card (fund balance · collection rate · ten bars) is the
@@ -31,23 +34,25 @@ export function PortalLoginBrand({ className }: { className?: string }) {
         'relative overflow-hidden text-white',
         // mobile hero — the 24px sits under the status bar on a notched phone
         'bg-[linear-gradient(165deg,#0E1F5C_0%,#1633A8_60%,#2A55E8_100%)] px-[28px] pb-[64px] pt-[calc(24px+env(safe-area-inset-top))]',
+        // 601–900: the reference's one-column strip — logo only, 28px 24px
+        'min-[601px]:bg-[linear-gradient(160deg,#0E1F5C_0%,#1633A8_55%,#2A55E8_100%)] min-[601px]:px-[24px] min-[601px]:py-[28px]',
         // desktop column
-        'min-[901px]:flex min-[901px]:flex-col min-[901px]:justify-between min-[901px]:gap-[40px] min-[901px]:bg-[linear-gradient(160deg,#0E1F5C_0%,#1633A8_55%,#2A55E8_100%)] min-[901px]:px-[64px] min-[901px]:py-[56px]',
+        'min-[901px]:flex min-[901px]:flex-col min-[901px]:justify-between min-[901px]:gap-[40px] min-[901px]:px-[64px] min-[901px]:py-[56px]',
         className,
       )}
     >
       {/* dot grid — the references' radial-gradient(rgba(255,255,255,.09) 1px, transparent 1px): a 20px cell on the mobile hero, 22px on the desktop column */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(255,255,255,0.09)_1px,transparent_1px)] [background-size:20px_20px] min-[901px]:[background-size:22px_22px]"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(255,255,255,0.09)_1px,transparent_1px)] [background-size:20px_20px] min-[601px]:[background-size:22px_22px]"
       />
 
       {/* logo + name */}
-      <div className="relative flex items-center gap-[12px] min-[901px]:gap-[14px]">
-        <span className="grid size-[44px] shrink-0 place-items-center rounded-[13px] border border-[rgba(255,255,255,0.25)] bg-[rgba(255,255,255,0.14)] min-[901px]:size-[52px] min-[901px]:rounded-[14px]">
+      <div className="relative flex items-center gap-[12px] min-[601px]:gap-[14px]">
+        <span className="grid size-[44px] shrink-0 place-items-center rounded-[13px] border border-[rgba(255,255,255,0.25)] bg-[rgba(255,255,255,0.14)] min-[601px]:size-[52px] min-[601px]:rounded-[14px]">
           {/* the references' building glyph, verbatim: 22px on the mobile hero, 26px on the desktop column */}
           <svg
-            className="size-[22px] min-[901px]:size-[26px]"
+            className="size-[22px] min-[601px]:size-[26px]"
             viewBox="0 0 24 24"
             fill="none"
             stroke="#fff"
@@ -62,15 +67,15 @@ export function PortalLoginBrand({ className }: { className?: string }) {
           </svg>
         </span>
         <span className="min-w-0">
-          <span className="block font-num text-[19px] font-extrabold leading-[normal] min-[901px]:text-[22px]">ALMOG</span>
-          <span className="block text-[12.5px] font-normal leading-[normal] text-[#C9D3FF] min-[901px]:mt-[2px] min-[901px]:text-[13px] min-[901px]:font-medium">
+          <span className="block font-num text-[19px] font-extrabold leading-[normal] min-[601px]:text-[22px]">ALMOG</span>
+          <span className="block text-[12.5px] font-normal leading-[normal] text-[#C9D3FF] min-[601px]:mt-[2px] min-[601px]:text-[13px] min-[601px]:font-medium">
             פורטל בעלי דירות
           </span>
         </span>
       </div>
 
       {/* headline + copy (+ the preview card on desktop) */}
-      <div className="relative min-[901px]:max-w-[480px]">
+      <div className="relative min-[601px]:hidden min-[901px]:block min-[901px]:max-w-[480px]">
         <p className="mt-[26px] text-[30px] font-extrabold leading-[1.2] text-balance min-[901px]:mt-0 min-[901px]:text-[42px] min-[901px]:leading-[1.15]">
           הבניין שלך, בשקיפות מלאה
         </p>
