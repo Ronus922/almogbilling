@@ -1717,6 +1717,19 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 
 חיווי נוכחות בצ׳אט הפנימי (`/chat`) — חריג מאושר. ה**ירוק** (`emerald-500` נקודה, `text-emerald-600` לטקסט „מחובר עכשיו”) הוא חיווי **online/presence** בלבד — נקודה על האווטאר ב-header וברשימה, ושורת „● מחובר עכשיו” ב-header של שיחת 1:1. תואם את ה-Active-dot המוצהר (sect 9b). זה **אינו** primary — כל שאר הצ׳אט נשאר blue-600 (בועות נשלח, badge, כפתורים). הנוכחות נגזרת מ-`users.last_seen_at < 60s`, מתעדכנת חי דרך ה-SSE (`/api/chat/stream`).
 
+### מסך כניסת פורטל הבעלים (`/portal/login`) — חריג מוצהר (28/09/2026)
+
+**מקור-האמת העיצובי:** `ref/proof/tenant-portal-login.md` + `Tenant Portal (standalone).html` (≥901px) ו-`ref/proof/tenant-login-mobile.md` + `Tenant Login Mobile (standalone).html` (≤900px). **ה-HTML גובר על מסמך זה בכל התנגשות, בהיקף המסך הזה בלבד** (החלטת מוצר 28/09/2026). הקבצים: `src/app/portal/login/page.tsx`, `src/components/portal/PortalLoginForm.tsx`, `src/components/portal/PortalLoginBrand.tsx`. אסור לייבא את הערכים למסכים אחרים, ו-`/login` של הצוות (`(auth)`, `components/auth`) אינו חלק מהחריג.
+
+ערכים בלי טוקן, כ-arbitrary values במכוון:
+- **פלטת slate של הרפרנס** במקום טוקני הסקין: `#0F172A` ink · `#334155` label · `#64748B` muted · `#94A3B8` soft/placeholder · `#E2E8F0` border · `#CBD5E1` border-strong · `#F5F7FB` field.
+- **פאנל מותג:** gradient `linear-gradient(160deg,#0E1F5C 0%,#1633A8 55%,#2A55E8 100%)` (דסקטופ) / `165deg … 60% …` (מובייל); dot grid `radial-gradient(rgba(255,255,255,.09) 1px,transparent 1px)` בתא 22px (דסקטופ) / 20px (מובייל), בלי הגדלה; טקסטים `#C9D3FF` / `#D6DEFF` / `#AFBDF5`; תיבת לוגו `rgba(255,255,255,.14)` + גבול `rgba(255,255,255,.25)`. כרטיס ה-preview עם המספרים הבדויים **לא** מרונדר.
+- **שדות:** 48px / רדיוס 11 (דסקטופ), **54px / רדיוס 12** (מובייל), גבול 1.5px, focus ring מותגי — ולא `h-10` של הפאנלים. שגיאה = גבול `#E5484D` על רקע לבן (ולא `border-red-400 bg-red-50`); תיבת התראה `#FDECEC` / `#B03A3E`. קלט במובייל 17px (בלי zoom ב-iOS).
+- **CTA:** `<Button>` של המערכת השטוחה עם override של **48px / רדיוס 11** (דסקטופ) ו-**54px / רדיוס 14 / 17px** (מובייל). ה-hover וה-disabled נשארים של המערכת (`#2C44E0`, `opacity-50`) ולא של הרפרנס (`#3149E0`, `#C9D3FF`).
+- **תיבות קוד:** 56px / 22px (דסקטופ), 60px / 26px (מובייל), Inter 700, ריווח 10px / 8px.
+- **מובייל:** sheet לבן ברדיוס `28px 28px 0 0` שחופף את ה-hero ב-28px; padding-top של ה-hero = `24px + env(safe-area-inset-top)` (ה-74px שברפרנס כוללים 50px של status bar שאינו חלק מה-viewport); padding-bottom של ה-sheet = `env(safe-area-inset-bottom)`.
+- **קישורי "שינוי מספר" / "שליחה חוזרת":** `min-h-[44px]` (כלל ברזל 6) בתוך שורת ה-hint של הרפרנס.
+
 ### מודול צ׳יפים — חריג מוצהר (08/2026)
 
 **מקור-האמת העיצובי: `ref/proof/Chip2.html` (חלון ההנפקה הרב-אישי) + `ref/proof/Chip2.md` (השפה הוויזואלית — פלטה/טיפוגרפיה/מידות; זהה בתוכנו ל-`Chip.md` המקורי). הרפרנס גובר על מסמך זה בכל התנגשות, בהיקף מודול הצ׳יפים בלבד** (החלטת מוצר). הרפרנס המקורי `ref/proof/whatsapp-broadcast/Chip.html` **הוסר מהדיסק** — העיצוב שנגזר ממנו מיושם בקוד וסעיף (א) להלן נשאר התיעוד שלו. ה-scope נאכף טכנית: כל הטוקנים מוגדרים כ-CSS vars תחת המחלקה **`.chips-skin`** (`src/app/styles/chips.css`) — שום ערך לא דורס את ה-`@theme` הגלובלי, ו-`font-num` הגלובלי נשאר Inter. אסור לייבא את פלטת הצ׳יפים למסכים אחרים.
