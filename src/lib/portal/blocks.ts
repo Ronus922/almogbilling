@@ -1,15 +1,17 @@
-// Which reference blocks the owners portal renders. The reference screen
-// (ref/Tenant Portal.html) carries a personal "my balance" card, a building
-// cash-balance KPI and a collection-rate ring; none of them has data behind it
-// in this system (decision 28/09/2026 — no personal ledger, no payments, no
-// per-apartment figures for residents), so all three are OFF. The markup and
-// the grid rules for them are kept in place: switching one on restores the
-// reference layout without touching any component.
+// Which reference blocks the owners portal renders (ref/Tenant Portal.html).
+// Two of the three blocks switched off on 28/09/2026 came back the same
+// evening once they had data behind them — an owner's own balance (debtors,
+// through the session's roster) and the building's month-end bank balance
+// (hand-entered per month, behind the "הצג יתרת בנק לדיירים" switch). A block
+// that is ON here is still drawn only when its data exists: no bank value or
+// switch off → no cash card, and the grid closes the gap.
 export const PORTAL_BLOCKS = {
-  /** The dark "היתרה שלך לתשלום" card + the pay button (overview, c4). */
-  myBalance: false,
-  /** The "יתרת קופת הבניין" KPI (overview, first of the three KPIs). */
-  cashBalance: false,
-  /** The "שיעור גבייה" ring card + the "X מתוך Y דירות שילמו" line. */
+  /** The dark "היתרה שלך לתשלום" card (overview, c4) — the owner's debt. */
+  myBalance: true,
+  /** The "יתרת קופת הבניין" KPI — shown when the server sends a bank balance. */
+  cashBalance: true,
+  /** The "שיעור גבייה" ring card + "X מתוך Y דירות שילמו": no data, off. */
   collectionRate: false,
+  /** The personal ledger table of "החשבון שלי": no per-payment data, off. */
+  ledger: false,
 } as const;

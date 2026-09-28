@@ -3,13 +3,15 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import type { FinKind } from '@/lib/constants/finance';
 import type { ResidentMonthData } from '@/lib/types/finance';
 import { exportPortalMonthExcel } from '@/lib/portal/export';
 import {
-  catColor, categoriesOf, flatEntries, fmtIls, monthName, monthTitle, monthsByYear, type TxFilter,
+  catColor, categoriesOf, flatEntries, fmtIls, fmtSigned, monthName, monthTitle, monthsByYear, signClass, type TxFilter,
 } from '@/lib/portal/ui';
 import { PortalTxTable } from './PortalTxTable';
-import { ArrowDownIcon, ArrowUpIcon, ExportIcon, ScaleIcon } from './PortalIcons';
+import { ArrowDownIcon, ArrowUpIcon, ExportIcon, ScaleIcon, WalletIcon } from './PortalIcons';
+import { usePortalHref } from './usePortalHref';
 
 // The transactions tab (#t-tx of the reference) for one published month:
 // the month select (the old picker's rule, unchanged — only published months,
@@ -17,7 +19,10 @@ import { ArrowDownIcon, ArrowUpIcon, ExportIcon, ScaleIcon } from './PortalIcons
 // export in the header; the month's three KPIs; the all / income / expense
 // chips over the five-column table; and the month's lines per category.
 // The month is a navigation (`?m=`, server data); the chip filter is a local
-// state mirrored into `?f=` so a refresh keeps it.
+// state mirrored into `?f=` so a refresh keeps it. Every amount is shown in
+// whole shekels (fmtIls); the KPIs come from the server's exact totals; an
+// income is green-ink, an expense red-ink, the difference by its sign, the
+// bank balance neutral (decision 28/09/2026).
 
 const FILTERS: ReadonlyArray<{ key: TxFilter; label: string }> = [
   { key: 'all', label: 'הכל' },
@@ -25,7 +30,8 @@ const FILTERS: ReadonlyArray<{ key: TxFilter; label: string }> = [
   { key: 'out', label: 'הוצאות' },
 ];
 
-function Cats({ title, items }: { title: string; items: ReturnType<typeof categoriesOf> }) {
+function Cats({ title, kind, items }: { title: string; kind: FinKind; items: ReturnType<typeof categoriesOf> }) {
+  const tone = kind === 'income' ? 'in' : 'out';
   return (
     <div className="card c6">
       <h3>{title}</h3>
@@ -34,7 +40,7 @@ function Cats({ title, items }: { title: string; items: ReturnType<typeof catego
         {items.map((c, i) => (
           <div className="cat" key={c.name}>
             <span className="n"><i style={{ background: catColor(i) }} /><em title={c.name}>{c.name}</em></span>
-            <span className="a num">{fmtIls(c.total)}<small>{c.pct}%</small></span>
+            <span className={`a num ${tone}`}>{fmtIls(c.total)}<small>{c.pct}%</small></span>
             <div className="bar"><b style={{ width: `${c.bar}%`, background: catColor(i) }} /></div>
           </div>
         ))}
@@ -52,22 +58,19 @@ export function PortalTransactions({ monthKey, publishedMonths, data, filter: in
   filter: TxFilter;
 }) {
   const router = useRouter();
+  const href = usePortalHref();
   const [pending, startTransition] = useTransition();
   const [filter, setFilter] = useState<TxFilter>(initialFilter);
   const [exporting, setExporting] = useState(false);
 
   function changeMonth(key: string) {
     if (key === monthKey) return;
-    startTransition(() => router.push(`/portal?tab=tx&m=${key}${filter === 'all' ? '' : `&f=${filter}`}`));
+    startTransition(() => router.push(href({ tab: 'tx', m: key, f: filter === 'all' ? null : filter })));
   }
 
   function changeFilter(next: TxFilter) {
     setFilter(next);
-    const url = new URL(window.location.href);
-    url.searchParams.set('tab', 'tx');
-    url.searchParams.set('m', monthKey);
-    if (next === 'all') url.searchParams.delete('f'); else url.searchParams.set('f', next);
-    window.history.replaceState(window.history.state, '', url);
+    window.history.replaceState(window.history.state, '', href({ tab: 'tx', m: monthKey, f: next === 'all' ? null : next }));
   }
 
   const op = data?.operating ?? null;
@@ -112,25 +115,33 @@ export function PortalTransactions({ monthKey, publishedMonths, data, filter: in
         <div className="card empty"><h2>החודש הזה לא פורסם.</h2></div>
       ) : (
         <div className="pgrid">
-          <div className="kpis c12" data-count={3}>
+          <div className="kpis c12" data-count={data?.bank_balance !== undefined ? 4 : 3}>
             <div className="card kpi">
               <span className="kpi-ic" style={{ background: 'var(--green-soft)', color: 'var(--green)' }}><ArrowUpIcon /></span>
               <div className="k">הכנסות</div>
-              <div className="v num">{fmtIls(op.totals.income)}</div>
+              <div className="v num in">{fmtIls(op.totals.income)}</div>
               <div className="d">תקציב שוטף</div>
             </div>
             <div className="card kpi">
               <span className="kpi-ic" style={{ background: 'var(--red-soft)', color: 'var(--red)' }}><ArrowDownIcon /></span>
               <div className="k">הוצאות</div>
-              <div className="v num">{fmtIls(op.totals.expense)}</div>
+              <div className="v num out">{fmtIls(op.totals.expense)}</div>
               <div className="d">תקציב שוטף</div>
             </div>
             <div className="card kpi">
               <span className="kpi-ic" style={{ background: op.totals.diff < 0 ? 'var(--amber-soft)' : 'var(--brand-soft)', color: op.totals.diff < 0 ? 'var(--amber)' : 'var(--brand)' }}><ScaleIcon /></span>
               <div className="k">הפרש</div>
-              <div className="v num">{op.totals.diff < 0 ? '−' : ''}{fmtIls(op.totals.diff)}</div>
+              <div className={`v num ${signClass(op.totals.diff)}`}>{fmtSigned(op.totals.diff)}</div>
               <div className="d">{op.totals.diff < 0 ? <span className="dn">גירעון בחודש</span> : <span className="up">עודף בחודש</span>}</div>
             </div>
+            {data?.bank_balance !== undefined && (
+              <div className="card kpi">
+                <span className="kpi-ic" style={{ background: 'var(--brand-soft)', color: 'var(--brand)' }}><WalletIcon /></span>
+                <div className="k">יתרת בנק לסוף החודש</div>
+                <div className="v num">{fmtSigned(data.bank_balance)}</div>
+                <div className="d">{monthTitle(monthKey)}</div>
+              </div>
+            )}
           </div>
 
           <div className="card c12">
@@ -144,8 +155,8 @@ export function PortalTransactions({ monthKey, publishedMonths, data, filter: in
             <PortalTxTable rows={rows} emptyText={filter === 'in' ? `אין הכנסות ב${monthTitle(monthKey)}.` : filter === 'out' ? `אין הוצאות ב${monthTitle(monthKey)}.` : `אין תנועות ב${monthTitle(monthKey)}.`} />
           </div>
 
-          {filter !== 'out' && <Cats title="הכנסות לפי קטגוריה" items={categoriesOf(op.income, 'income')} />}
-          {filter !== 'in' && <Cats title="הוצאות לפי קטגוריה" items={categoriesOf(op.expense, 'expense')} />}
+          {filter !== 'out' && <Cats title="הכנסות לפי קטגוריה" kind="income" items={categoriesOf(op.income, 'income')} />}
+          {filter !== 'in' && <Cats title="הוצאות לפי קטגוריה" kind="expense" items={categoriesOf(op.expense, 'expense')} />}
         </div>
       )}
     </section>

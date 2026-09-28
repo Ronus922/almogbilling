@@ -4,7 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils';
 import { ils } from '@/lib/finance/format';
 import type { FundLedgerRow } from '@/lib/types/finance';
-import { COL_PX, HEAD_CLASS, RowActions, TABLE_CLASS, fmtDate } from './table-shared';
+import { COL_PX, HEAD_CLASS, RowActions, TABLE_CLASS, amountTones, fmtDate } from './table-shared';
 
 // "כל תנועות הקרן" — every line of the renovation fund, all months, newest
 // first, incomes and expenses in one ledger. Same widths as the operating
@@ -25,16 +25,19 @@ function whenOf(e: FundLedgerRow): string {
   return `${e.period_month.slice(5, 7)}/${e.period_month.slice(0, 4)}`;
 }
 
-export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText, residentMode = false }: {
+export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText, residentMode = false, format = ils }: {
   /** FundLedgerEntry for the admin; the stripped resident row otherwise. */
   entries: FundLedgerRow[];
   canEdit: boolean;
   onEdit: (e: FundLedgerRow) => void;
   onDelete: (e: FundLedgerRow) => void;
   emptyText: string;
-  /** Resident view: no actions column at all, no "לא פורסם" tag. */
+  /** Resident view: no actions column at all, no "לא פורסם" tag, the portal's colours. */
   residentMode?: boolean;
+  /** How an amount is written — `ils` unless the caller (the portal) says otherwise. */
+  format?: (value: number) => string;
 }) {
+  const tones = amountTones(residentMode);
   const showActions = !residentMode;
   const showUnpublished = !residentMode;
   const income = entries.filter((e) => e.kind === 'income').reduce((s, e) => s + e.amount, 0);
@@ -62,8 +65,8 @@ export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText,
                     {e.description && <> · {e.description}</>}
                   </p>
                 </div>
-                <span dir="ltr" className={cn('shrink-0 font-num text-base font-bold tabular-nums', e.kind === 'income' ? 'text-emerald-700' : 'text-rose-700')}>
-                  {e.kind === 'income' ? '+' : '−'}{ils(e.amount)}
+                <span dir="ltr" className={cn('shrink-0 font-num text-base font-bold tabular-nums', e.kind === 'income' ? tones.in : tones.out)}>
+                  {e.kind === 'income' ? '+' : '−'}{format(e.amount)}
                 </span>
               </div>
               {showActions && canEdit && (
@@ -75,8 +78,8 @@ export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText,
           ))}
         </ul>
         <div className="grid grid-cols-2 gap-2 rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm font-bold text-ink">
-          <span className="flex items-baseline gap-1.5"><span className="text-xs font-medium text-ink-3">נכנס</span><span dir="ltr" className="font-num tabular-nums text-emerald-700">{ils(income)}</span></span>
-          <span className="flex items-baseline gap-1.5"><span className="text-xs font-medium text-ink-3">יצא</span><span dir="ltr" className="font-num tabular-nums text-rose-700">{ils(expense)}</span></span>
+          <span className="flex items-baseline gap-1.5"><span className="text-xs font-medium text-ink-3">נכנס</span><span dir="ltr" className={cn('font-num tabular-nums', tones.in)}>{format(income)}</span></span>
+          <span className="flex items-baseline gap-1.5"><span className="text-xs font-medium text-ink-3">יצא</span><span dir="ltr" className={cn('font-num tabular-nums', tones.out)}>{format(expense)}</span></span>
         </div>
       </div>
 
@@ -108,11 +111,11 @@ export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText,
                   {e.description && <span className="text-ink-2"> — {e.description}</span>}
                   {showUnpublished && !e.published && <span className="ms-2 inline-block align-middle"><UnpublishedBadge /></span>}
                 </TableCell>
-                <TableCell dir="ltr" className="px-4 py-3 text-center font-num text-sm font-bold tabular-nums text-emerald-700">
-                  {e.kind === 'income' ? ils(e.amount) : <span className="font-normal text-ink-ghost">—</span>}
+                <TableCell dir="ltr" className={cn('px-4 py-3 text-center font-num text-sm font-bold tabular-nums', tones.in)}>
+                  {e.kind === 'income' ? format(e.amount) : <span className="font-normal text-ink-ghost">—</span>}
                 </TableCell>
-                <TableCell dir="ltr" className="px-4 py-3 text-center font-num text-sm font-bold tabular-nums text-rose-700">
-                  {e.kind === 'expense' ? ils(e.amount) : <span className="font-normal text-ink-ghost">—</span>}
+                <TableCell dir="ltr" className={cn('px-4 py-3 text-center font-num text-sm font-bold tabular-nums', tones.out)}>
+                  {e.kind === 'expense' ? format(e.amount) : <span className="font-normal text-ink-ghost">—</span>}
                 </TableCell>
                 {showActions && (
                   <TableCell className="px-4 py-3 text-end" onClick={(ev) => ev.stopPropagation()}>
@@ -125,8 +128,8 @@ export function FundLedgerTable({ entries, canEdit, onEdit, onDelete, emptyText,
             ))}
             <TableRow className="border-t border-line bg-surface-2 hover:bg-surface-2">
               <TableCell colSpan={2} className="px-4 py-3 text-start text-sm font-bold text-ink">סה״כ</TableCell>
-              <TableCell dir="ltr" className="px-4 py-3 text-center font-num text-sm font-bold tabular-nums text-emerald-700">{ils(income)}</TableCell>
-              <TableCell dir="ltr" className="px-4 py-3 text-center font-num text-sm font-bold tabular-nums text-rose-700">{ils(expense)}</TableCell>
+              <TableCell dir="ltr" className={cn('px-4 py-3 text-center font-num text-sm font-bold tabular-nums', tones.in)}>{format(income)}</TableCell>
+              <TableCell dir="ltr" className={cn('px-4 py-3 text-center font-num text-sm font-bold tabular-nums', tones.out)}>{format(expense)}</TableCell>
               {showActions && <TableCell />}
             </TableRow>
           </TableBody>

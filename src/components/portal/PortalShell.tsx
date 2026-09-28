@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useTransition, type ReactNode } from 'react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { apartmentsLabel, initials, type PortalTab } from '@/lib/portal/ui';
 import { BuildingGlyph, LogoutIcon } from './PortalIcons';
+import { usePortalHref } from './usePortalHref';
 
 // The portal's chrome (ref/Tenant Portal.html #scrPortal): the sticky top bar
 // with the building block, the tab row and the user block, over a 1280px
@@ -13,13 +14,15 @@ import { BuildingGlyph, LogoutIcon } from './PortalIcons';
 //
 // The active tab lives in the URL (`?tab=`), so a refresh keeps it, and a tab
 // switch is a navigation: the page reloads only that tab's data. The other
-// selections (`m`, `r`, `n`) are carried along untouched.
+// selections (`m`, `r`, `n`) are carried along untouched. Links are built by
+// usePortalHref, so the same shell serves /portal and the admin preview
+// mounted on /finance (which carries `view` and `apt`).
 
 const TABS: ReadonlyArray<{ key: PortalTab; label: string; soon?: boolean }> = [
   { key: 'ov', label: 'סקירה' },
   { key: 'tx', label: 'הכנסות והוצאות' },
   { key: 'fund', label: 'קרן שיפוצים' },
-  { key: 'acc', label: 'החשבון שלי', soon: true },
+  { key: 'acc', label: 'החשבון שלי' },
   { key: 'dec', label: 'החלטות', soon: true },
   { key: 'rep', label: 'דוחות' },
 ];
@@ -29,24 +32,25 @@ export interface PortalUser {
   apartments: string[];
 }
 
-export function PortalShell({ tab, apartments, user, children }: {
+export function PortalShell({ tab, apartments, user, preview = false, children }: {
   tab: PortalTab;
   /** How many apartments the building has (contacts). */
   apartments: number;
   user: PortalUser;
+  /** The admin preview (/finance?view=resident): read-only, no logout. */
+  preview?: boolean;
   children: ReactNode;
 }) {
   const router = useRouter();
-  const pathname = usePathname();
-  const sp = useSearchParams();
+  const href = usePortalHref();
   const [pending, startTransition] = useTransition();
   const [leaving, setLeaving] = useState(false);
 
   function go(next: PortalTab) {
     if (next === tab) return;
-    const q = new URLSearchParams(sp.toString());
-    q.set('tab', next);
-    startTransition(() => router.push(`${pathname}?${q.toString()}`));
+    // A tab switch keeps the other selections (m, r, n, f) — they are read
+    // back when their tab is opened again.
+    startTransition(() => router.push(href({ tab: next })));
   }
 
   async function logout() {
@@ -71,7 +75,7 @@ export function PortalShell({ tab, apartments, user, children }: {
           <div className="bld">
             <div className="lg"><BuildingGlyph /></div>
             <div>
-              <b>מגדלי חוף הכרמל — בניין אלמוג, חיפה</b>
+              <b>בניין אלמוג, חיפה</b>
               <span><span className="num">{apartments}</span> דירות · ועד הבית</span>
             </div>
           </div>
@@ -92,9 +96,11 @@ export function PortalShell({ tab, apartments, user, children }: {
           <div className="me">
             <div className="av" aria-hidden>{initials(user.name)}</div>
             <div className="nm">{nm}<span>{sub}</span></div>
-            <button type="button" className="pbtn pbtn-ghost pbtn-sm" onClick={logout} disabled={leaving} title="התנתקות" aria-label="התנתקות">
-              <LogoutIcon />
-            </button>
+            {!preview && (
+              <button type="button" className="pbtn pbtn-ghost pbtn-sm" onClick={logout} disabled={leaving} title="התנתקות" aria-label="התנתקות">
+                <LogoutIcon />
+              </button>
+            )}
           </div>
         </div>
       </header>

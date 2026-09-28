@@ -64,6 +64,8 @@ export interface FinEntry {
 
 export interface FinanceSettings {
   show_documents_to_residents: boolean;
+  /** Whether residents see the hand-entered month-end bank balance (28/09/2026). */
+  show_bank_balance_to_residents: boolean;
   updated_at: string | null;
 }
 
@@ -108,6 +110,10 @@ export interface FinMonthStatus {
   /** Time of the LAST toggle, either direction. */
   published_at: string | null;
   published_by: string | null;
+  /** Bank balance at the end of the month, entered by hand; null = not entered. */
+  bank_balance: number | null;
+  bank_balance_updated_at: string | null;
+  bank_balance_updated_by: string | null;
 }
 
 // ── Renovation fund ───────────────────────────────────────────────────────────
@@ -235,6 +241,20 @@ export interface ResidentMonthData {
   month: number;
   operating: ResidentMonthSection;
   fund: ResidentMonthSection;
+  /** The month-end bank balance — present ONLY while the "הצג יתרת בנק
+   *  לדיירים" switch is on and a value was entered; absent otherwise. */
+  bank_balance?: number;
+}
+
+/** The building's bank balance as the overview shows it: the newest published
+ *  month that has a value, and the published month right before it when that
+ *  one has a value too (for the "מול החודש הקודם" line). Only while the switch
+ *  is on — portal.ts never builds it otherwise. */
+export interface ResidentBankBalance {
+  /** 'YYYY-MM' */
+  month: string;
+  value: number;
+  previous: { month: string; value: number } | null;
 }
 
 // ── Resident overview (the portal's "סקירה" tab) ─────────────────────────────
@@ -265,4 +285,6 @@ export interface ResidentOverview {
   expense_categories: ResidentOverviewCategory[];
   /** Newest operating lines across published months, newest first. */
   recent: ResidentEntry[];
+  /** Absent while the bank-balance switch is off or nothing was entered. */
+  bank_balance?: ResidentBankBalance;
 }

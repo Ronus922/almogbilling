@@ -2,15 +2,15 @@ import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import type { FinKind, FinSection } from '@/lib/constants/finance';
 import type {
-  PeriodReport, PeriodReportCategory, PeriodReportMonth, RenovationFundKpis, ResidentDocument, ResidentEntry,
-  ResidentFundKpis, ResidentMonthData, ResidentOverview,
+  PeriodReport, PeriodReportCategory, PeriodReportMonth, RenovationFundKpis, ResidentBankBalance, ResidentDocument,
+  ResidentEntry, ResidentFundKpis, ResidentMonthData, ResidentOverview,
 } from '@/lib/types/finance';
 import { currentMonthKey, periodMonthOf, shiftMonthKey } from '@/lib/finance/period';
 import { publishedMonthKeys } from '@/lib/finance/resident';
 import { buildProxyUrl, FINANCE_RECEIPTS_BUCKET } from '@/lib/storage/server';
 import { PUBLISHED_JOIN, listFundEntries } from './entries';
 import { getRenovationFundSettings } from './fund-settings';
-import { getMonthStatus, listPublishedMonths } from './month-status';
+import { getMonthStatus, listPublishedMonthBalances, listPublishedMonths } from './month-status';
 import { getFinanceSettings } from './settings';
 
 // The read layer the owners portal will stand on (no route, no UI yet), also
@@ -77,6 +77,33 @@ async function toResidentEntries(rows: ResidentRow[]): Promise<ResidentEntry[]> 
   });
 }
 
+/** Month-end bank balances of published months ('YYYY-MM' → value), ONLY
+ *  while the "הצג יתרת בנק לדיירים" switch is on — an empty map otherwise,
+ *  so no balance can reach a resident with the switch off. Newest first. */
+async function residentBankBalances(): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const settings = await getFinanceSettings();
+  if (!settings.show_bank_balance_to_residents) return out;
+  for (const r of await listPublishedMonthBalances()) {
+    out.set(`${String(r.year).padStart(4, '0')}-${String(r.month).padStart(2, '0')}`, r.bank_balance);
+  }
+  return out;
+}
+
+/** The overview's bank-balance card: the newest published month with a value,
+ *  plus the published month right before it when that one has a value. */
+async function residentBankBalanceCard(publishedKeys: readonly string[]): Promise<ResidentBankBalance | undefined> {
+  const balances = await residentBankBalances();
+  if (balances.size === 0) return undefined;
+  const sorted = [...publishedKeys].sort().reverse();
+  const idx = sorted.findIndex((k) => balances.has(k));
+  if (idx < 0) return undefined;
+  const month = sorted[idx];
+  const prevMonth = sorted[idx + 1];
+  const prev = prevMonth !== undefined && balances.has(prevMonth) ? { month: prevMonth, value: balances.get(prevMonth)! } : null;
+  return { month, value: balances.get(month)!, previous: prev };
+}
+
 /** The resident-visible lines of one month, or null when the month is not
  *  published. The entries query joins on the published row itself, so an
  *  unpublished month yields no rows even before the status check. */
@@ -96,11 +123,15 @@ export async function getResidentMonthData(year: number, month: number): Promise
     [year, month],
   );
   const rows = await toResidentEntries(r.rows);
+  const balances = await residentBankBalances();
+  const key = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`;
+  const bank = balances.get(key);
   return {
     year,
     month,
     operating: sectionOf(rows, 'operating'),
     fund: sectionOf(rows, 'renovation_fund'),
+    ...(bank !== undefined ? { bank_balance: bank } : {}),
   };
 }
 
@@ -152,9 +183,10 @@ export async function getResidentOverview(monthsBack: number): Promise<ResidentO
   const latest = keys[0];
   const span = Math.max(1, Math.min(24, Math.floor(monthsBack)));
   const from = shiftMonthKey(latest, -(span - 1));
-  const [report, recent] = await Promise.all([
+  const [report, recent, bank] = await Promise.all([
     getPeriodReport(from, latest, { publishedOnly: true }),
     listRecentResidentEntries(5),
+    residentBankBalanceCard(keys),
   ]);
   const months = report.months
     .filter((m) => m.included)
@@ -168,6 +200,7 @@ export async function getResidentOverview(monthsBack: number): Promise<ResidentO
     months,
     expense_categories: report.expense.map((c) => ({ name: c.name, by_month: c.by_month })),
     recent,
+    ...(bank ? { bank_balance: bank } : {}),
   };
 }
 

@@ -5,20 +5,22 @@ import { listEntriesForMonth } from '@/lib/db/finance/entries';
 import { listCategories } from '@/lib/db/finance/categories';
 import { getDriveConnectionPublic } from '@/lib/db/finance/drive';
 import { getMonthStatus, listPublishedMonths } from '@/lib/db/finance/month-status';
-import {
-  getPeriodReport, getPublishedMonths, getRenovationFundKpis, getResidentFundKpis, getResidentMonthData,
-} from '@/lib/db/finance/portal';
+import { getPeriodReport, getRenovationFundKpis } from '@/lib/db/finance/portal';
+import { listApartmentNumbers } from '@/lib/db/contacts';
+import { getAdminPreviewAccount } from '@/lib/db/portal/account';
 import { listSuppliers } from '@/lib/db/suppliers';
 import { monthKeyParts, parsePeriodParam, periodMonthOf } from '@/lib/finance/period';
-import { publishedMonthKeys, residentPeriodFor } from '@/lib/finance/resident';
+import { publishedMonthKeys } from '@/lib/finance/resident';
 import { FinancePageClient } from '@/components/finance/FinancePageClient';
-import { ResidentViewClient } from '@/components/finance/ResidentViewClient';
+import { AdminPreviewBar } from '@/components/finance/AdminPreviewBar';
+import { PortalScreen } from '@/components/portal/PortalScreen';
 import type { FinanceTab } from '@/components/finance/FinanceTabs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type SearchParams = Promise<{ m?: string | string[]; tab?: string | string[]; view?: string | string[] }>;
+type Param = string | string[] | undefined;
+type SearchParams = Promise<{ m?: Param; tab?: Param; view?: Param; apt?: Param; r?: Param; n?: Param; f?: Param }>;
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
@@ -29,9 +31,12 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 // and the client mounts fresh (key). The supplier roster is loaded here (like
 // tasks/issues do) and searched client-side.
 //
-// ?view=resident renders the resident preview instead: the data comes ONLY
-// from portal.ts with publishedOnly = true (the read layer the owners portal
-// will use), and none of the admin data is loaded at all.
+// ?view=resident renders the owners portal itself (PortalScreen, the same
+// components /portal mounts) in read-only preview, with an admin strip above
+// it: the data comes ONLY from portal.ts with publishedOnly = true, none of
+// the admin data is loaded, and "החשבון שלי" shows the apartment the admin
+// picked (`apt`, validated against the building's list) through
+// getAdminPreviewAccount — a staff-only entry point the portal never uses.
 export default async function FinancePage({ searchParams }: { searchParams: SearchParams }) {
   const actor = await getCurrentActor();
   if (!actor) redirect('/login');
@@ -42,25 +47,20 @@ export default async function FinancePage({ searchParams }: { searchParams: Sear
   const tab: FinanceTab = one(sp.tab) === 'fund' ? 'fund' : 'operating';
 
   if (one(sp.view) === 'resident') {
-    const publishedMonths = publishedMonthKeys(await getPublishedMonths());
-    const period = residentPeriodFor(sp.m, publishedMonths);
-    const isMonth = tab === 'operating' && period?.kind === 'month';
-    const mp = period ? monthKeyParts(period.key) : null;
-    const [monthData, report, fund] = await Promise.all([
-      isMonth && mp ? getResidentMonthData(mp.year, mp.month) : Promise.resolve(null),
-      tab === 'operating' && period && period.kind !== 'month' ? getPeriodReport(period.from, period.to, { publishedOnly: true }) : Promise.resolve(null),
-      tab === 'fund' && period ? getResidentFundKpis() : Promise.resolve(null),
-    ]);
+    const apartments = await listApartmentNumbers();
+    const requested = one(sp.apt) ?? null;
+    const apt = requested && apartments.includes(requested) ? requested : null;
+    const account = apt ? await getAdminPreviewAccount(apt) : null;
     return (
-      <ResidentViewClient
-        key={`resident:${tab}:${period?.key ?? 'none'}`}
-        tab={tab}
-        period={period}
-        publishedMonths={publishedMonths}
-        monthData={monthData}
-        report={report}
-        fund={fund}
-      />
+      <div>
+        <AdminPreviewBar apartments={apartments} selected={apt} />
+        <PortalScreen
+          params={{ tab: one(sp.tab), m: one(sp.m), r: one(sp.r), n: one(sp.n), f: one(sp.f) }}
+          user={{ name: account?.owner_display_name ?? null, apartments: apt ? [apt] : [] }}
+          accounts={account ? [account] : []}
+          preview
+        />
+      </div>
     );
   }
 

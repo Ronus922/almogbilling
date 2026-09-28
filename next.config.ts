@@ -43,6 +43,12 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: SECURITY_HEADERS,
       },
+      // The owners portal and the file proxy serve personal data: never cached
+      // by a browser or an intermediary, whatever the route's own headers say.
+      ...["/portal", "/portal/:path*", "/api/portal/:path*", "/api/files/:path*"].map((source) => ({
+        source,
+        headers: [{ key: "Cache-Control", value: "private, no-store" }],
+      })),
     ];
   },
 };

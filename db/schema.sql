@@ -904,6 +904,7 @@ CREATE TABLE public.fin_settings (
     show_documents_to_residents boolean DEFAULT false NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_by uuid,
+    show_bank_balance_to_residents boolean DEFAULT false NOT NULL,
     CONSTRAINT fin_settings_single_row CHECK ((id = 1))
 );
 
@@ -925,6 +926,9 @@ CREATE TABLE public.finance_month_status (
     published boolean DEFAULT false NOT NULL,
     published_at timestamp with time zone,
     published_by uuid,
+    bank_balance numeric(12,2),
+    bank_balance_updated_at timestamp with time zone,
+    bank_balance_updated_by uuid,
     CONSTRAINT finance_month_status_month_check CHECK (((month >= 1) AND (month <= 12))),
     CONSTRAINT finance_month_status_year_check CHECK (((year >= 2000) AND (year <= 2100)))
 );
@@ -935,6 +939,13 @@ CREATE TABLE public.finance_month_status (
 --
 
 COMMENT ON TABLE public.finance_month_status IS 'Per-month resident visibility of the finance module. No row = not published. published_at / published_by record the LAST toggle (either direction).';
+
+
+--
+-- Name: COLUMN finance_month_status.bank_balance; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.finance_month_status.bank_balance IS 'Bank balance at the end of the month, entered by hand on /finance. NULL = not entered. Shown to residents only while fin_settings.show_bank_balance_to_residents is on.';
 
 
 --
@@ -4600,6 +4611,14 @@ ALTER TABLE ONLY public.fin_settings
 
 
 --
+-- Name: finance_month_status finance_month_status_bank_balance_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.finance_month_status
+    ADD CONSTRAINT finance_month_status_bank_balance_updated_by_fkey FOREIGN KEY (bank_balance_updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: finance_month_status finance_month_status_published_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5223,5 +5242,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260926074117'),
     ('20260927053126'),
     ('20260927125643'),
-    ('20260928175919')
+    ('20260928175919'),
+    ('20260928201600')
 ;

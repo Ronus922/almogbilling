@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  apartmentsLabel, axisLabel, categoriesOf, categoryShares, firstName, flatEntries, fmtEntryDate, fmtIls, initials,
-  monthShort, monthsByYear, niceAxis, parseOverviewSpan, parsePortalTab, parseTxFilter, pctVsAverage, reportRangeFor,
-  reportRanges, windowKeys,
+  accountTotals, apartmentsLabel, axisLabel, categoriesOf, categoryShares, firstName, flatEntries, fmtDateDMY, fmtDelta,
+  fmtEntryDate, fmtIls, fmtSigned, initials, monthShort, monthsByYear, niceAxis, parseOverviewSpan, parsePortalTab,
+  parseTxFilter, pctVsAverage, reportRangeFor, reportRanges, roundShekels, sanitizeCell, signClass, sumExact, windowKeys,
 } from '@/lib/portal/ui';
+import { AMOUNT_NUM_FMT, buildPortalMonthWorkbook } from '@/lib/portal/export';
+import type { PortalAccount } from '@/lib/types/portal';
 import type { ResidentEntry } from '@/lib/types/finance';
 
 // The pure helpers behind the owners-portal screens (src/lib/portal/ui.ts):
@@ -38,10 +40,10 @@ describe('portal tabs in the URL', () => {
 });
 
 describe("the reference's formats", () => {
-  it('₪ with en-US grouping, no space, absolute value, agorot kept', () => {
+  it('₪ with en-US grouping, no space, absolute value, whole shekels', () => {
     expect(fmtIls(8820)).toBe('₪8,820');
     expect(fmtIls(-1240)).toBe('₪1,240');
-    expect(fmtIls(1234.5)).toBe('₪1,234.5');
+    expect(fmtIls(1234.5)).toBe('₪1,235');
     expect(fmtIls(0)).toBe('₪0');
   });
   it('an expense shows its full date, an income only its month', () => {
@@ -131,5 +133,97 @@ describe('overview arithmetic', () => {
     expect(flatEntries(rows, 'all').map((e) => e.description)).toEqual(['new', 'old', 'inc']);
     expect(flatEntries(rows, 'in').map((e) => e.description)).toEqual(['inc']);
     expect(flatEntries(rows, 'out').map((e) => e.description)).toEqual(['new', 'old']);
+  });
+});
+
+describe('my account + Excel safety (28/09/2026)', () => {
+  const acc = (o: Partial<PortalAccount>): PortalAccount => ({
+    apartment_number: '7', owner_display_name: null, total_debt: 0, management_fees: 0, hot_water_debt: 0,
+    monthly_debt: null, details: null, synced_at: null, ...o,
+  });
+  it('sums every record of the owner exactly — the card rounds, the sum does not', () => {
+    const t = accountTotals([
+      acc({ total_debt: 1240.6, management_fees: 840.6, hot_water_debt: 400 }),
+      acc({ apartment_number: '8', total_debt: 300.5, hot_water_debt: 300.5 }),
+    ]);
+    expect(t).toEqual({ total: 1541.1, management: 840.6, hotWater: 700.5 });
+    expect(fmtIls(t.total)).toBe('₪1,541');
+    expect(accountTotals([])).toEqual({ total: 0, management: 0, hotWater: 0 });
+  });
+  it('formats the "as of" date in Israel time and the bank delta with its sign', () => {
+    expect(fmtDateDMY('2026-09-28T02:30:23.953Z')).toBe('28.09.2026');
+    expect(fmtDateDMY('2026-09-27T21:30:00Z')).toBe('28.09.2026');
+    expect(fmtDateDMY(null)).toBeNull();
+    expect(fmtDateDMY('not a date')).toBeNull();
+    expect(fmtDelta(2140)).toBe('+₪2,140');
+    expect(fmtDelta(-2140)).toBe('−₪2,140');
+    expect(fmtDelta(0)).toBe('₪0');
+    // the sign is decided after rounding: a delta under half a shekel is ₪0
+    expect(fmtDelta(0.3)).toBe('₪0');
+    expect(fmtDelta(-0.49)).toBe('₪0');
+    expect(fmtDelta(0.5)).toBe('+₪1');
+  });
+  it('neutralises a cell a spreadsheet would run as a formula', () => {
+    expect(sanitizeCell('=1+1')).toBe("'=1+1");
+    expect(sanitizeCell('+972')).toBe("'+972");
+    expect(sanitizeCell('-5')).toBe("'-5");
+    expect(sanitizeCell('@SUM')).toBe("'@SUM");
+    expect(sanitizeCell('\tx')).toBe("'\tx");
+    expect(sanitizeCell('ניקיון')).toBe('ניקיון');
+    expect(sanitizeCell('')).toBe('');
+  });
+});
+
+describe('whole shekels on the screen, agorot in the file (28/09/2026)', () => {
+  it('rounds half up on the agorot, away from zero for a negative figure', () => {
+    expect(roundShekels(1240.6)).toBe(1241);
+    expect(roundShekels(1240.5)).toBe(1241);
+    expect(roundShekels(1240.49)).toBe(1240);
+    expect(roundShekels(0.5)).toBe(1);
+    expect(roundShekels(2.5)).toBe(3);
+    expect(roundShekels(0.4999)).toBe(0);
+    expect(roundShekels(-2.5)).toBe(-3);
+    expect(roundShekels(-1240.49)).toBe(-1240);
+    expect(roundShekels(-0.3)).toBe(0);
+    expect(Object.is(roundShekels(-0.3), 0)).toBe(true);
+    // float noise on a numeric 1,240.50 still rounds up; a real 0.4999 stays 0
+    expect(roundShekels(1240.4999999999)).toBe(1241);
+    expect(roundShekels(0.1 + 0.2 + 0.2)).toBe(1);
+    expect(fmtIls(1240.6)).toBe('₪1,241');
+    expect(fmtIls(-1240.5)).toBe('₪1,241');
+    expect(fmtIls(999999.5)).toBe('₪1,000,000');
+  });
+  it('a signed figure shows its sign after rounding, and its colour follows', () => {
+    expect(fmtSigned(7020.9)).toBe('₪7,021');
+    expect(fmtSigned(-412.4)).toBe('−₪412');
+    expect(fmtSigned(-0.3)).toBe('₪0');
+    expect(fmtSigned(0)).toBe('₪0');
+    expect(signClass(0.6)).toBe('in');
+    expect(signClass(-0.6)).toBe('out');
+    expect(signClass(0.4)).toBe('');
+    expect(signClass(-0.4)).toBe('');
+  });
+  it('a total is the exact sum, rounded once — not a sum of rounded lines', () => {
+    const lines = [1240.6, 0.6, 0.6];
+    expect(sumExact(lines)).toBeCloseTo(1241.8, 10);
+    expect(fmtIls(sumExact(lines))).toBe('₪1,242');
+    expect(lines.map(fmtIls)).toEqual(['₪1,241', '₪1', '₪1']);
+    // (₪1,243 by adding the rounded lines — the ₪1 gap is expected)
+    expect(fmtIls(lines.map(roundShekels).reduce((s, v) => s + v, 0))).toBe('₪1,243');
+    // shares and averages are computed on the exact figures too
+    expect(categoryShares([{ name: 'a', total: 0.6 }, { name: 'b', total: 0.6 }, { name: 'c', total: 0.2 }]).map((c) => c.pct)).toEqual([43, 43, 14]);
+    expect(pctVsAverage(1.5, [1, 1, 1, 1.5])).toBe(33);
+  });
+  it('the Excel workbook keeps the agorot as a number formatted with two decimals', async () => {
+    const wb = await buildPortalMonthWorkbook({ monthKey: '2026-08', rows: [
+      entry({ kind: 'expense', amount: 1800.5, description: 'ניקיון' }),
+      entry({ kind: 'income', amount: 8820.4, description: 'דמי ועד', payment_date: null, period_month: '2026-08-01' }),
+    ] });
+    const ws = wb.worksheets[0];
+    expect(ws.getRow(2).getCell(5).value).toBe(1800.5);
+    expect(ws.getRow(3).getCell(5).value).toBe(8820.4);
+    expect(ws.getRow(2).getCell(5).numFmt).toBe(AMOUNT_NUM_FMT);
+    expect(ws.getRow(3).getCell(5).numFmt).toBe('#,##0.00');
+    expect(ws.getRow(2).getCell(4).value).toBe('15.09.2026');
   });
 });
