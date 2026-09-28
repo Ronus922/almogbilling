@@ -88,10 +88,10 @@ const FIELD_ERROR =
   'border-[#E5484D] bg-white focus-within:ring-4 focus-within:ring-[rgba(229,72,77,0.12)]';
 
 const LINK_BUTTON =
-  '-my-[12px] inline-flex min-h-[44px] items-center font-semibold text-brand transition-colors hover:text-[#2B3FB8] hover:underline disabled:pointer-events-none disabled:opacity-50 min-[901px]:-my-3';
+  '-my-[12px] inline-flex min-h-[44px] items-center font-semibold text-brand transition-colors hover:text-[#2B3FB8] hover:underline disabled:pointer-events-none disabled:opacity-50';
 
 const INLINE_MESSAGE =
-  'flex items-center gap-[6px] text-[13.5px] font-medium leading-[normal] min-[901px]:items-start min-[901px]:gap-1.5 min-[901px]:text-[13px] min-[901px]:leading-[1.5]';
+  'flex items-center gap-[6px] text-[13.5px] font-medium leading-[normal] min-[901px]:text-[13px]';
 
 export function PortalLoginForm() {
   const [step, setStep] = useState<Step>('phone');
@@ -281,7 +281,7 @@ export function PortalLoginForm() {
         className={cn(
           'relative z-[2] flex flex-1 flex-col bg-white px-[24px] pb-[env(safe-area-inset-bottom)]',
           step === 'code' ? 'pt-[8px]' : '-mt-[28px] rounded-t-[28px] pt-[28px]',
-          'min-[901px]:mt-0 min-[901px]:items-center min-[901px]:justify-center min-[901px]:rounded-none min-[901px]:px-8 min-[901px]:py-12',
+          'min-[901px]:mt-0 min-[901px]:items-center min-[901px]:justify-center min-[901px]:rounded-none min-[901px]:px-[32px] min-[901px]:py-[48px]',
         )}
       >
         <form
@@ -291,15 +291,15 @@ export function PortalLoginForm() {
         >
           {step === 'phone' ? (
             <>
-              <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[901px]:text-[32px] min-[901px]:leading-[var(--text-2xl--line-height)]">כניסת בעלי דירות</h1>
-              <p className="mt-[6px] text-[15px] leading-[1.5] text-[#64748B] min-[901px]:mt-2 min-[901px]:leading-[1.55]">
+              <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[901px]:text-[32px]">כניסת בעלי דירות</h1>
+              <p className="mt-[6px] text-[15px] leading-[1.5] text-[#64748B] min-[901px]:mt-[8px] min-[901px]:leading-[1.55]">
                 נשלח אליך קוד חד-פעמי בוואטסאפ למספר הטלפון הרשום בוועד הבית.
               </p>
 
-              <div className="mt-[20px] flex flex-col gap-[8px] min-[901px]:mt-7 min-[901px]:gap-2">
-                <Label htmlFor="portal-phone" className="text-[14px] font-semibold leading-[normal] text-[#334155] min-[901px]:text-sm min-[901px]:leading-[var(--text-sm--line-height)]">מספר טלפון</Label>
-                <div className={cn(FIELD_BASE, 'h-[54px] min-[901px]:h-12', phoneFieldError ? FIELD_ERROR : FIELD_IDLE)}>
-                  <span aria-hidden className="hidden w-11 shrink-0 place-items-center text-[#94A3B8] min-[901px]:grid">
+              <div className="mt-[20px] flex flex-col gap-[8px] min-[901px]:mt-[24px]">
+                <Label htmlFor="portal-phone" className="text-[14px] font-semibold leading-[normal] text-[#334155]">מספר טלפון</Label>
+                <div className={cn(FIELD_BASE, 'h-[54px] min-[901px]:h-[48px]', phoneFieldError ? FIELD_ERROR : FIELD_IDLE)}>
+                  <span aria-hidden className="hidden w-[44px] shrink-0 place-items-center text-[#94A3B8] min-[901px]:grid">
                     <Smartphone className="size-[18px]" strokeWidth={1.8} />
                   </span>
                   <input
@@ -317,29 +317,29 @@ export function PortalLoginForm() {
                     }}
                     aria-invalid={phoneFieldError || undefined}
                     aria-describedby={phoneInvalid ? 'portal-phone-error' : undefined}
-                    className="h-full min-w-0 flex-1 bg-transparent px-[14px] text-end font-num text-[17px] font-semibold text-[#0F172A] outline-none placeholder:font-medium placeholder:text-[#94A3B8] min-[901px]:px-3.5 min-[901px]:text-[15px] min-[901px]:font-medium"
+                    className="h-full min-w-0 flex-1 bg-transparent px-[14px] text-end font-num text-[17px] font-semibold text-[#0F172A] outline-none placeholder:font-medium placeholder:text-[#94A3B8] min-[901px]:text-[15px] min-[901px]:font-medium"
                     required
                   />
                   {/* Visual prefix only — the number is sent exactly as typed. */}
                   <span
                     dir="ltr"
                     aria-hidden
-                    className="flex h-[26px] shrink-0 items-center border-e border-[#E2E8F0] ps-[14px] pe-[14px] font-num text-[16px] font-semibold text-[#64748B] min-[901px]:ms-3 min-[901px]:h-auto min-[901px]:ps-0 min-[901px]:pe-3 min-[901px]:text-sm"
+                    className="flex h-[26px] shrink-0 items-center border-e border-[#E2E8F0] ps-[14px] pe-[14px] font-num text-[16px] font-semibold leading-[normal] text-[#64748B] min-[901px]:ms-[12px] min-[901px]:h-auto min-[901px]:ps-0 min-[901px]:pe-[12px] min-[901px]:text-[14px]"
                   >
                     +972
                   </span>
                 </div>
                 {phoneInvalid && (
                   <p id="portal-phone-error" role="alert" className={cn(INLINE_MESSAGE, 'text-[#E5484D]')}>
-                    <CircleAlert className="size-[15px] shrink-0 min-[901px]:mt-0.5" strokeWidth={2.2} aria-hidden />
+                    <CircleAlert className="size-[15px] shrink-0" strokeWidth={2.2} aria-hidden />
                     {PHONE_INVALID_MESSAGE}
                   </p>
                 )}
               </div>
 
               {error && (
-                <div role="alert" className="mt-[18px] flex gap-[10px] rounded-[12px] bg-[#FDECEC] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#B03A3E] min-[901px]:gap-2.5 min-[901px]:rounded-xl min-[901px]:px-3.5 min-[901px]:py-3 min-[901px]:text-sm">
-                  <CircleAlert className="mt-[2px] size-[18px] shrink-0 min-[901px]:mt-0.5" strokeWidth={2} aria-hidden />
+                <div role="alert" className="mt-[18px] flex gap-[10px] rounded-[12px] bg-[#FDECEC] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#B03A3E]">
+                  <CircleAlert className="mt-[2px] size-[18px] shrink-0" strokeWidth={2} aria-hidden />
                   <span>{error}</span>
                 </div>
               )}
@@ -349,7 +349,7 @@ export function PortalLoginForm() {
                 <Button
                   type="submit"
                   disabled={busy || cooldown > 0}
-                  className="h-[54px] w-full gap-[10px] rounded-[14px] text-[17px] min-[901px]:mt-7 min-[901px]:h-12 min-[901px]:gap-[9px] min-[901px]:rounded-[11px] min-[901px]:text-[16px]"
+                  className="h-[54px] w-full gap-[10px] rounded-[14px] text-[17px] min-[901px]:mt-[28px] min-[901px]:h-[48px] min-[901px]:gap-[8px] min-[901px]:rounded-[11px] min-[901px]:px-[18px] min-[901px]:text-[16px]"
                 >
                   {busy ? (
                     <>
@@ -362,7 +362,7 @@ export function PortalLoginForm() {
                     'שלח קוד אימות'
                   )}
                 </Button>
-                <p className="flex items-center justify-center gap-[8px] pb-[4px] text-[12.5px] leading-[normal] text-[#64748B] min-[901px]:mt-8 min-[901px]:leading-[1.5] min-[901px]:justify-start min-[901px]:gap-2.5 min-[901px]:rounded-[11px] min-[901px]:bg-[#F5F7FB] min-[901px]:px-3.5 min-[901px]:py-3 min-[901px]:text-[13px]">
+                <p className="flex items-center justify-center gap-[8px] pb-[4px] text-[12.5px] leading-[normal] text-[#64748B] min-[901px]:mt-[32px] min-[901px]:justify-start min-[901px]:gap-[10px] min-[901px]:rounded-[11px] min-[901px]:bg-[#F5F7FB] min-[901px]:px-[14px] min-[901px]:py-[12px] min-[901px]:text-[13px]">
                   <ShieldCheck className="size-[15px] shrink-0 [stroke-width:2] min-[901px]:size-[18px] min-[901px]:[stroke-width:1.8]" aria-hidden />
                   הגישה מוגבלת לבעלי דירות רשומים בבניין
                 </p>
@@ -370,14 +370,14 @@ export function PortalLoginForm() {
             </>
           ) : (
             <>
-              <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[901px]:text-[32px] min-[901px]:leading-[var(--text-2xl--line-height)]">הזנת קוד</h1>
-              <p className="mt-[6px] text-[15px] leading-[1.5] text-[#64748B] min-[901px]:mt-2 min-[901px]:leading-[1.55]">
+              <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[901px]:text-[32px]">הזנת קוד</h1>
+              <p className="mt-[6px] text-[15px] leading-[1.5] text-[#64748B] min-[901px]:mt-[8px] min-[901px]:leading-[1.55]">
                 שלחנו קוד בן {PORTAL_OTP_DIGITS} ספרות בוואטסאפ למספר{' '}
                 <b dir="ltr" className="font-num font-bold whitespace-nowrap text-[#0F172A]">{formatPhoneForDisplay(phone)}</b>
                 . הקוד תקף ל-{PORTAL_OTP_TTL_MINUTES} דקות.
               </p>
 
-              <div dir="ltr" className="mt-[28px] flex justify-between gap-[8px] min-[901px]:mt-6 min-[901px]:gap-2.5">
+              <div dir="ltr" className="mt-[28px] flex justify-between gap-[8px] min-[901px]:mt-[24px] min-[901px]:gap-[10px]">
                 {digits.map((d, i) => (
                   <input
                     key={i}
@@ -395,7 +395,7 @@ export function PortalLoginForm() {
                     onPaste={(ev) => handleBoxPaste(i, ev)}
                     onFocus={(ev) => ev.currentTarget.select()}
                     className={cn(
-                      'h-[60px] w-full min-w-0 rounded-[12px] border-[1.5px] text-center font-num text-[26px] font-bold text-[#0F172A] outline-none transition-[border-color,background-color,box-shadow] duration-150 min-[901px]:h-14 min-[901px]:rounded-[11px] min-[901px]:text-[22px]',
+                      'h-[60px] w-full min-w-0 rounded-[12px] border-[1.5px] text-center font-num text-[26px] font-bold text-[#0F172A] outline-none transition-[border-color,background-color,box-shadow] duration-150 min-[901px]:h-[56px] min-[901px]:rounded-[11px] min-[901px]:text-[22px]',
                       error ? 'border-[#E5484D] bg-white' : d ? 'border-[#CBD5E1] bg-white' : 'border-[#E2E8F0] bg-[#F5F7FB]',
                       'focus:border-brand focus:bg-white focus:ring-4 focus:ring-[rgba(61,90,254,0.12)]',
                     )}
@@ -404,24 +404,24 @@ export function PortalLoginForm() {
               </div>
 
               {error && (
-                <p role="alert" className={cn(INLINE_MESSAGE, 'mt-3 text-[#E5484D]')}>
-                  <CircleAlert className="size-[15px] shrink-0 min-[901px]:mt-0.5" strokeWidth={2.2} aria-hidden />
+                <p role="alert" className={cn(INLINE_MESSAGE, 'mt-[12px] text-[#E5484D]')}>
+                  <CircleAlert className="size-[15px] shrink-0" strokeWidth={2.2} aria-hidden />
                   {error}
                 </p>
               )}
               {notice && !error && (
-                <p role="status" className={cn(INLINE_MESSAGE, 'mt-3 text-[#0B7A3B]')}>
-                  <CircleCheck className="size-[15px] shrink-0 min-[901px]:mt-0.5" strokeWidth={2.2} aria-hidden />
+                <p role="status" className={cn(INLINE_MESSAGE, 'mt-[12px] text-[#0B7A3B]')}>
+                  <CircleCheck className="size-[15px] shrink-0" strokeWidth={2.2} aria-hidden />
                   {notice}
                 </p>
               )}
 
-              <div className="mt-[16px] flex items-center justify-between gap-0 text-[14px] leading-[normal] text-[#64748B] min-[901px]:mt-3.5 min-[901px]:gap-3 min-[901px]:text-sm min-[901px]:leading-[var(--text-sm--line-height)]">
+              <div className="mt-[16px] flex items-center justify-between gap-0 text-[14px] leading-[normal] text-[#64748B] min-[901px]:mt-[14px] min-[901px]:gap-[12px]">
                 <button type="button" onClick={backToPhone} disabled={busy} className={LINK_BUTTON}>
                   שינוי מספר
                 </button>
                 {cooldown > 0 ? (
-                  <span className="-my-[12px] inline-flex min-h-[44px] items-center gap-[4px] min-[901px]:-my-3 min-[901px]:gap-1">
+                  <span className="-my-[12px] inline-flex min-h-[44px] items-center gap-[4px]">
                     שליחה חוזרת בעוד
                     <b dir="ltr" className="font-num font-bold">{formatCountdown(cooldown)}</b>
                   </span>
@@ -436,7 +436,7 @@ export function PortalLoginForm() {
                 <Button
                   type="submit"
                   disabled={busy}
-                  className="h-[54px] w-full gap-[10px] rounded-[14px] text-[17px] min-[901px]:mt-7 min-[901px]:h-12 min-[901px]:gap-[9px] min-[901px]:rounded-[11px] min-[901px]:text-[16px]"
+                  className="h-[54px] w-full gap-[10px] rounded-[14px] text-[17px] min-[901px]:mt-[28px] min-[901px]:h-[48px] min-[901px]:gap-[8px] min-[901px]:rounded-[11px] min-[901px]:px-[18px] min-[901px]:text-[16px]"
                 >
                   {busy ? (
                     <>
