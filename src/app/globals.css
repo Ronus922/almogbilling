@@ -6,6 +6,7 @@
 @import "./styles/chat.css";
 @import "./styles/chips.css";
 @import "./styles/responsive.css";
+@import "./styles/portal.css";
 
 @custom-variant dark (&:is(.dark *));
 

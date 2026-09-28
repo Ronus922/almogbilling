@@ -18,8 +18,10 @@ import {
 // by the page because the mobile code step swaps the brand hero for a top bar
 // with a back chevron, and which step is showing is client state.
 //
-// Design: ref/proof/tenant-portal-login.md (≥901px) and
-// ref/proof/tenant-login-mobile.md (≤900px). What the references show and this
+// Design: ref/proof/tenant-portal-login.md (≥901px), ref/Tenant Portal.html
+// ≤900 rule between 601 and 900px (one column, a brand strip with the logo
+// only, the desktop field sizes, pane 40px 20px — 28/09/2026) and
+// ref/proof/tenant-login-mobile.md (≤600px, untouched since PR #43). What the references show and this
 // screen does NOT: the "אימייל וסיסמה" segmented control and its email mode,
 // the Face ID / "remember me" returning-user screen, the SMS autofill chip, the
 // "בקשת הצטרפות" link — none of them exists in the system (28/09/2026).
@@ -114,9 +116,9 @@ function formatCountdown(sec: number): string {
 // Field chrome (reference `.inp`): 1.5px line, soft field background, brand
 // focus ring; error = red line on white. Mobile is 54px/12px, desktop 48px/11px.
 const FIELD_BASE =
-  'flex items-center rounded-[12px] border-[1.5px] transition-[border-color,background-color,box-shadow] duration-150 min-[901px]:rounded-[11px]';
+  'flex items-center rounded-[12px] border-[1.5px] transition-[border-color,background-color,box-shadow] duration-150 min-[601px]:rounded-[11px]';
 const FIELD_IDLE =
-  'border-[#E2E8F0] bg-[#F5F7FB] min-[901px]:hover:border-[#CBD5E1] focus-within:border-brand focus-within:bg-white focus-within:ring-4 focus-within:ring-[rgba(61,90,254,0.12)]';
+  'border-[#E2E8F0] bg-[#F5F7FB] min-[601px]:hover:border-[#CBD5E1] focus-within:border-brand focus-within:bg-white focus-within:ring-4 focus-within:ring-[rgba(61,90,254,0.12)]';
 const FIELD_ERROR =
   'border-[#E5484D] bg-white focus-within:ring-4 focus-within:ring-[rgba(229,72,77,0.12)]';
 
@@ -125,9 +127,9 @@ const LINK_BUTTON =
 
 // The prefix chip (reference `.pre`): separator line, muted Inter, 16px on
 // the phone / 14px on the desktop. The same classes dress the edit field.
-const PREFIX_CHIP = 'flex h-[26px] shrink-0 items-center border-e border-[#E2E8F0] ps-[14px] pe-[14px] font-num text-[16px] font-semibold leading-[normal] text-[#64748B] min-[901px]:ms-[12px] min-[901px]:h-auto min-[901px]:ps-0 min-[901px]:pe-[12px] min-[901px]:text-[14px]';
+const PREFIX_CHIP = 'flex h-[26px] shrink-0 items-center border-e border-[#E2E8F0] ps-[14px] pe-[14px] font-num text-[16px] font-semibold leading-[normal] text-[#64748B] min-[601px]:ms-[12px] min-[601px]:h-auto min-[601px]:ps-0 min-[601px]:pe-[12px] min-[601px]:text-[14px]';
 const INLINE_MESSAGE =
-  'flex items-center gap-[6px] text-[13.5px] font-medium leading-[normal] min-[901px]:text-[13px]';
+  'flex items-center gap-[6px] text-[13.5px] font-medium leading-[normal] min-[601px]:text-[13px]';
 
 export function PortalLoginForm() {
   const [step, setStep] = useState<Step>('phone');
@@ -304,11 +306,11 @@ export function PortalLoginForm() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-white min-[901px]:grid min-[901px]:grid-cols-[minmax(0,46fr)_minmax(0,54fr)]">
-      <PortalLoginBrand className={cn(step === 'code' && 'hidden min-[901px]:flex')} />
+      <PortalLoginBrand className={cn(step === 'code' && 'hidden min-[601px]:block min-[901px]:flex')} />
 
       {/* Mobile, code step: the hero gives way to a top bar with "back". */}
       {step === 'code' && (
-        <div className="flex h-[52px] shrink-0 items-center px-[12px] min-[901px]:hidden">
+        <div className="flex h-[52px] shrink-0 items-center px-[12px] min-[601px]:hidden">
           <button
             type="button"
             onClick={backToPhone}
@@ -325,25 +327,25 @@ export function PortalLoginForm() {
         className={cn(
           'relative z-[2] flex flex-1 flex-col bg-white px-[24px] pb-[env(safe-area-inset-bottom)]',
           step === 'code' ? 'pt-[8px]' : '-mt-[28px] rounded-t-[28px] pt-[28px]',
-          'min-[901px]:mt-0 min-[901px]:items-center min-[901px]:justify-center min-[901px]:rounded-none min-[901px]:px-[32px] min-[901px]:py-[48px]',
+          'min-[601px]:mt-0 min-[601px]:items-center min-[601px]:justify-center min-[601px]:rounded-none min-[601px]:px-[20px] min-[601px]:py-[40px] min-[901px]:px-[32px] min-[901px]:py-[48px]',
         )}
       >
         <form
           onSubmit={step === 'phone' ? requestCode : (e) => verifyCode(code, e)}
           noValidate
-          className="flex w-full flex-1 flex-col min-[901px]:max-w-[400px] min-[901px]:flex-none"
+          className="flex w-full flex-1 flex-col min-[601px]:max-w-[400px] min-[601px]:flex-none"
         >
           {step === 'phone' ? (
             <>
-              <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[901px]:text-[32px]">כניסת בעלי דירות</h1>
-              <p className="mt-[6px] text-[15px] leading-[1.5] text-[#64748B] min-[901px]:mt-[8px] min-[901px]:leading-[1.55]">
+              <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[601px]:text-[32px]">כניסת בעלי דירות</h1>
+              <p className="mt-[6px] text-[15px] leading-[1.5] text-[#64748B] min-[601px]:mt-[8px] min-[601px]:leading-[1.55]">
                 נשלח אליך קוד חד-פעמי בוואטסאפ למספר הטלפון הרשום בוועד הבית.
               </p>
 
-              <div className="mt-[20px] flex flex-col gap-[8px] min-[901px]:mt-[24px]">
+              <div className="mt-[20px] flex flex-col gap-[8px] min-[601px]:mt-[24px]">
                 <Label htmlFor="portal-phone" className="text-[14px] font-semibold leading-[normal] text-[#334155]">מספר טלפון</Label>
-                <div className={cn(FIELD_BASE, 'h-[54px] min-[901px]:h-[48px]', phoneFieldError ? FIELD_ERROR : FIELD_IDLE)}>
-                  <span aria-hidden className="hidden w-[44px] shrink-0 place-items-center text-[#94A3B8] min-[901px]:grid">
+                <div className={cn(FIELD_BASE, 'h-[54px] min-[601px]:h-[48px]', phoneFieldError ? FIELD_ERROR : FIELD_IDLE)}>
+                  <span aria-hidden className="hidden w-[44px] shrink-0 place-items-center text-[#94A3B8] min-[601px]:grid">
                     <Smartphone className="size-[18px]" strokeWidth={1.8} />
                   </span>
                   <input
@@ -361,7 +363,7 @@ export function PortalLoginForm() {
                     }}
                     aria-invalid={phoneFieldError || undefined}
                     aria-describedby={phoneInvalid ? 'portal-phone-error' : undefined}
-                    className="h-full min-w-0 flex-1 bg-transparent px-[14px] text-end font-num text-[17px] font-semibold text-[#0F172A] outline-none placeholder:font-medium placeholder:text-[#94A3B8] min-[901px]:text-[15px] min-[901px]:font-medium"
+                    className="h-full min-w-0 flex-1 bg-transparent px-[14px] text-end font-num text-[17px] font-semibold text-[#0F172A] outline-none placeholder:font-medium placeholder:text-[#94A3B8] min-[601px]:text-[15px] min-[601px]:font-medium"
                     required
                   />
                   {/* Country prefix: the reference's chip, pressed → a free field
@@ -413,11 +415,11 @@ export function PortalLoginForm() {
               )}
 
               {/* Mobile: pinned to the bottom of the sheet. Desktop: in flow. */}
-              <div className="mt-auto flex flex-col gap-[6px] pt-[16px] pb-[12px] min-[901px]:mt-0 min-[901px]:gap-0 min-[901px]:p-0">
+              <div className="mt-auto flex flex-col gap-[6px] pt-[16px] pb-[12px] min-[601px]:mt-0 min-[601px]:gap-0 min-[601px]:p-0">
                 <Button
                   type="submit"
                   disabled={busy || cooldown > 0}
-                  className="h-[54px] w-full gap-[10px] rounded-[14px] text-[17px] min-[901px]:mt-[28px] min-[901px]:h-[48px] min-[901px]:gap-[8px] min-[901px]:rounded-[11px] min-[901px]:px-[18px] min-[901px]:text-[16px]"
+                  className="h-[54px] w-full gap-[10px] rounded-[14px] text-[17px] min-[601px]:mt-[28px] min-[601px]:h-[48px] min-[601px]:gap-[8px] min-[601px]:rounded-[11px] min-[601px]:px-[18px] min-[601px]:text-[16px]"
                 >
                   {busy ? (
                     <>
@@ -430,22 +432,22 @@ export function PortalLoginForm() {
                     'שלח קוד אימות'
                   )}
                 </Button>
-                <p className="flex items-center justify-center gap-[8px] pb-[4px] text-[12.5px] leading-[normal] text-[#64748B] min-[901px]:mt-[32px] min-[901px]:justify-start min-[901px]:gap-[10px] min-[901px]:rounded-[11px] min-[901px]:bg-[#F5F7FB] min-[901px]:px-[14px] min-[901px]:py-[12px] min-[901px]:text-[13px]">
-                  <ShieldCheck className="size-[15px] shrink-0 [stroke-width:2] min-[901px]:size-[18px] min-[901px]:[stroke-width:1.8]" aria-hidden />
+                <p className="flex items-center justify-center gap-[8px] pb-[4px] text-[12.5px] leading-[normal] text-[#64748B] min-[601px]:mt-[32px] min-[601px]:justify-start min-[601px]:gap-[10px] min-[601px]:rounded-[11px] min-[601px]:bg-[#F5F7FB] min-[601px]:px-[14px] min-[601px]:py-[12px] min-[601px]:text-[13px]">
+                  <ShieldCheck className="size-[15px] shrink-0 [stroke-width:2] min-[601px]:size-[18px] min-[601px]:[stroke-width:1.8]" aria-hidden />
                   הגישה מוגבלת לבעלי דירות רשומים בבניין
                 </p>
               </div>
             </>
           ) : (
             <>
-              <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[901px]:text-[32px]">הזנת קוד</h1>
-              <p className="mt-[6px] text-[15px] leading-[1.5] text-[#64748B] min-[901px]:mt-[8px] min-[901px]:leading-[1.55]">
+              <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[601px]:text-[32px]">הזנת קוד</h1>
+              <p className="mt-[6px] text-[15px] leading-[1.5] text-[#64748B] min-[601px]:mt-[8px] min-[601px]:leading-[1.55]">
                 שלחנו קוד בן {PORTAL_OTP_DIGITS} ספרות בוואטסאפ למספר{' '}
                 <b dir="ltr" className="font-num font-bold whitespace-nowrap text-[#0F172A]">{formatPhoneForDisplay(prefix, phone)}</b>
                 . הקוד תקף ל-{PORTAL_OTP_TTL_MINUTES} דקות.
               </p>
 
-              <div dir="ltr" className="mt-[28px] flex justify-between gap-[8px] min-[901px]:mt-[24px] min-[901px]:gap-[10px]">
+              <div dir="ltr" className="mt-[28px] flex justify-between gap-[8px] min-[601px]:mt-[24px] min-[601px]:gap-[10px]">
                 {digits.map((d, i) => (
                   <input
                     key={i}
@@ -463,7 +465,7 @@ export function PortalLoginForm() {
                     onPaste={(ev) => handleBoxPaste(i, ev)}
                     onFocus={(ev) => ev.currentTarget.select()}
                     className={cn(
-                      'h-[60px] w-full min-w-0 rounded-[12px] border-[1.5px] text-center font-num text-[26px] font-bold text-[#0F172A] outline-none transition-[border-color,background-color,box-shadow] duration-150 min-[901px]:h-[56px] min-[901px]:rounded-[11px] min-[901px]:text-[22px]',
+                      'h-[60px] w-full min-w-0 rounded-[12px] border-[1.5px] text-center font-num text-[26px] font-bold text-[#0F172A] outline-none transition-[border-color,background-color,box-shadow] duration-150 min-[601px]:h-[56px] min-[601px]:rounded-[11px] min-[601px]:text-[22px]',
                       error ? 'border-[#E5484D] bg-white' : d ? 'border-[#CBD5E1] bg-white' : 'border-[#E2E8F0] bg-[#F5F7FB]',
                       'focus:border-brand focus:bg-white focus:ring-4 focus:ring-[rgba(61,90,254,0.12)]',
                     )}
@@ -484,7 +486,7 @@ export function PortalLoginForm() {
                 </p>
               )}
 
-              <div className="mt-[16px] flex items-center justify-between gap-0 text-[14px] leading-[normal] text-[#64748B] min-[901px]:mt-[14px] min-[901px]:gap-[12px]">
+              <div className="mt-[16px] flex items-center justify-between gap-0 text-[14px] leading-[normal] text-[#64748B] min-[601px]:mt-[14px] min-[601px]:gap-[12px]">
                 <button type="button" onClick={backToPhone} disabled={busy} className={LINK_BUTTON}>
                   שינוי מספר
                 </button>
@@ -500,11 +502,11 @@ export function PortalLoginForm() {
                 )}
               </div>
 
-              <div className="mt-auto pt-[16px] pb-[12px] min-[901px]:mt-0 min-[901px]:p-0">
+              <div className="mt-auto pt-[16px] pb-[12px] min-[601px]:mt-0 min-[601px]:p-0">
                 <Button
                   type="submit"
                   disabled={busy}
-                  className="h-[54px] w-full gap-[10px] rounded-[14px] text-[17px] min-[901px]:mt-[28px] min-[901px]:h-[48px] min-[901px]:gap-[8px] min-[901px]:rounded-[11px] min-[901px]:px-[18px] min-[901px]:text-[16px]"
+                  className="h-[54px] w-full gap-[10px] rounded-[14px] text-[17px] min-[601px]:mt-[28px] min-[601px]:h-[48px] min-[601px]:gap-[8px] min-[601px]:rounded-[11px] min-[601px]:px-[18px] min-[601px]:text-[16px]"
                 >
                   {busy ? (
                     <>

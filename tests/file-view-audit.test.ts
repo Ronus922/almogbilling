@@ -28,6 +28,10 @@ const h = vi.hoisted(() => ({
   dbDown: false,
   supplierDoc: null as null | { id: string; supplier_id: string; file_name: string },
   actor: null as null | { id: string; username: string; email: string; full_name: string | null; role: string },
+  /** The owners-portal branch of finance-receipts (28/09/2026). */
+  portalSession: null as null | { id: string; phoneE164: string },
+  receipt: null as null | { entry_id: string; document_id: string; original_name: string },
+  finDoc: null as null | { id: string; entry_id: string | null; original_name: string },
 }));
 
 vi.mock('@/lib/db', () => ({
@@ -49,15 +53,18 @@ vi.mock('@/lib/db', () => ({
   queryOne: vi.fn(async (sql: string, params: unknown[] = []) => {
     if (h.dbDown) throw new Error('db down');
     if (/from public\.audit_log/i.test(sql)) {
-      const [actor, action, entityType, entityId, fileKey, mins] = params as [string, string, string, string, string, number];
+      const [who, action, entityType, entityId, fileKey, mins] = params as [string, string, string, string, string, number];
       const since = Date.now() - mins * 60_000;
+      const portal = /portal_phone/.test(sql);
       const hit = h.rows.find(
-        (r) => r.actor_user_id === actor && r.action === action && r.entity_type === entityType
+        (r) => (portal ? r.actor_user_id === null && r.metadata?.portal_phone === who : r.actor_user_id === who)
+          && r.action === action && r.entity_type === entityType
           && r.entity_id === entityId && r.metadata?.file_key === fileKey && r.created_at > since,
       );
       return hit ? { hit: 1 } : null;
     }
     if (/from public\.supplier_documents/i.test(sql)) return h.supplierDoc;
+    if (/from public\.fin_documents/i.test(sql)) return h.finDoc;
     return null;
   }),
 }));
@@ -72,6 +79,15 @@ vi.mock('@/lib/auth/actor', async () => {
   });
   return { requirePermission: guard, requireAnyPermission: guard };
 });
+vi.mock('@/lib/portal/session', () => ({
+  getPortalSession: vi.fn(async () => h.portalSession),
+}));
+vi.mock('@/lib/db/finance/portal', () => ({
+  findResidentReceipt: vi.fn(async () => h.receipt),
+}));
+vi.mock('@/lib/db/portal/ownerPhones', () => ({
+  findOwnerIdentity: vi.fn(async () => ({ apartmentNumbers: ['7', '12'], ownerName: 'דנה לוי' })),
+}));
 vi.mock('@/lib/storage/server', () => ({
   PRIVATE_BUCKETS: ['supplier-documents', 'documents', 'issue-attachments', 'whatsapp-attachments', 'finance-receipts'],
   getObjectStream: vi.fn(async () => new Blob(['%PDF-1.4 test'], { type: 'application/pdf' })),
@@ -124,6 +140,9 @@ beforeEach(() => {
   h.dbDown = false;
   h.supplierDoc = { id: 'doc-1', supplier_id: 'sup-1', file_name: 'חוזה שירות 2026.pdf' };
   h.actor = ronen;
+  h.portalSession = null;
+  h.receipt = null;
+  h.finDoc = null;
 });
 
 afterEach(() => {
@@ -251,5 +270,74 @@ describe('GET /api/documents/[id]/download — the download route logs too', () 
       file_name: 'דוח שנתי',
       file_key: 'documents/d0000000-0000-4000-8000-000000000001.pdf',
     });
+  });
+});
+
+// ── The owners portal (28/09/2026): an apartment owner opening a receipt ──────
+const RECEIPT = 'f1e2d3c4-0000-4000-8000-000000000009.pdf';
+const owner = { id: 'ps-1', phoneE164: '+972524187730' };
+
+describe('logFileView — a portal owner', () => {
+  it('records the view with no users row: actor_user_id NULL, identified by phone + apartments', async () => {
+    const viewer = { kind: 'portal_owner' as const, phoneE164: owner.phoneE164, ownerName: 'דנה לוי', apartmentNumbers: ['7', '12'] };
+    const file = { bucket: 'finance-receipts', objectKey: RECEIPT, fileName: 'קבלה.pdf', entityType: 'fin_entry', entityId: 'e-1', documentId: 'd-1' };
+    await logFileView(req('http://x/api/files/finance-receipts/' + RECEIPT, '5.6.7.8'), viewer, file);
+    expect(h.rows).toHaveLength(1);
+    expect(h.rows[0]).toMatchObject({ actor_user_id: null, action: FILE_VIEW_ACTION, entity_type: 'fin_entry', entity_id: 'e-1' });
+    expect(h.rows[0].metadata).toMatchObject({
+      actor_kind: 'portal_owner', actor_name: 'דנה לוי', portal_phone: owner.phoneE164, apartment_numbers: ['7', '12'],
+      file_key: `finance-receipts/${RECEIPT}`, document_id: 'd-1', ip: '5.6.7.8',
+    });
+    // the same owner again inside the window is not a new row; another owner is
+    await logFileView(req('http://x/'), viewer, file);
+    expect(h.rows).toHaveLength(1);
+    await logFileView(req('http://x/'), { ...viewer, phoneE164: '+972501111111' }, file);
+    expect(h.rows).toHaveLength(2);
+    vi.setSystemTime(T0 + (FILE_VIEW_DEDUPE_MINUTES + 1) * MIN);
+    await logFileView(req('http://x/'), viewer, file);
+    expect(h.rows).toHaveLength(3);
+  });
+});
+
+describe('GET /api/files/finance-receipts — the portal branch', () => {
+  const ctx = { params: Promise.resolve({ bucket: 'finance-receipts', path: [RECEIPT] }) };
+  beforeEach(() => {
+    h.actor = null; // not staff
+    h.finDoc = { id: 'd-1', entry_id: 'e-1', original_name: 'קבלה.pdf' };
+  });
+
+  it('no staff, no portal session → the staff verdict (403 here), nothing logged', async () => {
+    const res = await filesGET(req(`http://x/api/files/finance-receipts/${RECEIPT}`), ctx);
+    expect(res.status).toBe(403);
+    expect(h.rows).toHaveLength(0);
+  });
+
+  it('a portal session but the receipt is not open to residents (switch off / hidden month) → the staff verdict, nothing logged', async () => {
+    h.portalSession = owner;
+    h.receipt = null;
+    const res = await filesGET(req(`http://x/api/files/finance-receipts/${RECEIPT}`), ctx);
+    expect(res.status).toBe(403);
+    expect(h.rows).toHaveLength(0);
+  });
+
+  it('a portal session and an open receipt → 200, logged as a portal owner under the entry', async () => {
+    h.portalSession = owner;
+    h.receipt = { entry_id: 'e-1', document_id: 'd-1', original_name: 'קבלה.pdf' };
+    const res = await filesGET(req(`http://x/api/files/finance-receipts/${RECEIPT}`, '9.9.9.9'), ctx);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('%PDF-1.4 test');
+    expect(h.rows).toHaveLength(1);
+    expect(h.rows[0]).toMatchObject({ actor_user_id: null, entity_type: 'fin_entry', entity_id: 'e-1' });
+    expect(h.rows[0].metadata).toMatchObject({ actor_kind: 'portal_owner', portal_phone: owner.phoneE164, document_id: 'd-1', ip: '9.9.9.9' });
+  });
+
+  it('staff with finance:view still wins the staff path (logged under the user, not as an owner)', async () => {
+    h.actor = ronen;
+    h.portalSession = owner;
+    h.receipt = { entry_id: 'e-1', document_id: 'd-1', original_name: 'קבלה.pdf' };
+    const res = await filesGET(req(`http://x/api/files/finance-receipts/${RECEIPT}`), ctx);
+    expect(res.status).toBe(200);
+    expect(h.rows[0]).toMatchObject({ actor_user_id: 'u-ronen' });
+    expect(h.rows[0].metadata).not.toHaveProperty('actor_kind');
   });
 });

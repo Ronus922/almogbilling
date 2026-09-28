@@ -201,6 +201,15 @@ export interface PeriodReport {
 
 // ── Resident (portal) shapes — only what a resident may see ───────────────────
 
+/** A receipt of a resident-visible line, as the portal's document button
+ *  opens it: the authenticated proxy URL (/api/files/finance-receipts/…) and
+ *  the readable name. Present ONLY while "הצג מסמכים לדיירים" is on —
+ *  portal.ts never attaches it otherwise, so the key cannot reach a browser. */
+export interface ResidentDocument {
+  url: string;
+  name: string;
+}
+
 export interface ResidentEntry {
   kind: FinKind;
   section: FinSection;
@@ -209,6 +218,10 @@ export interface ResidentEntry {
   amount: number;
   /** 'YYYY-MM-DD' or null (incomes). */
   payment_date: string | null;
+  /** 'YYYY-MM-01' — the month the line is filed to (an income has no other date). */
+  period_month: string;
+  /** Receipts — only when show_documents_to_residents is on; absent otherwise. */
+  documents?: ResidentDocument[];
 }
 
 export interface ResidentMonthSection {
@@ -222,4 +235,34 @@ export interface ResidentMonthData {
   month: number;
   operating: ResidentMonthSection;
   fund: ResidentMonthSection;
+}
+
+// ── Resident overview (the portal's "סקירה" tab) ─────────────────────────────
+
+/** One published month of the overview window with its operating totals. */
+export interface ResidentOverviewMonth {
+  /** 'YYYY-MM' */
+  month: string;
+  income: number;
+  expense: number;
+}
+
+/** An operating expense category over the window — 'YYYY-MM' → sum, so the
+ *  screen can re-total it for a shorter window without another request. */
+export interface ResidentOverviewCategory {
+  name: string;
+  by_month: Record<string, number>;
+}
+
+/** Everything the overview tab shows, published months only (portal.ts):
+ *  the last `months.length` published months up to the newest one, the expense
+ *  categories over that window and the newest operating lines. */
+export interface ResidentOverview {
+  /** Newest published month, 'YYYY-MM'. */
+  latest: string;
+  /** Published months inside the window, OLDEST first. */
+  months: ResidentOverviewMonth[];
+  expense_categories: ResidentOverviewCategory[];
+  /** Newest operating lines across published months, newest first. */
+  recent: ResidentEntry[];
 }
