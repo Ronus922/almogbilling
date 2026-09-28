@@ -26,6 +26,19 @@ export const TABLE_CLASS = 'table-fixed min-w-[960px]';
 
 export const HEAD_CLASS = 'h-11 px-4 text-sm font-semibold text-ink-2';
 
+/** Amount colours of the fund screens: the admin's emerald / rose on
+ *  /finance; the portal's own green-ink / red-ink tokens (defined on
+ *  `.portal-skin`, portal.css) in the resident view, where a balance is green
+ *  above zero and red below (decision 28/09/2026). */
+export function amountTones(residentMode: boolean): { in: string; out: string; balance: (v: number) => string } {
+  if (!residentMode) {
+    return { in: 'text-emerald-700', out: 'text-rose-700', balance: (v) => (v < 0 ? 'text-amber-700' : 'text-ink') };
+  }
+  const inTone = 'text-(color:--green-ink)';
+  const outTone = 'text-(color:--red-ink)';
+  return { in: inTone, out: outTone, balance: (v) => (v > 0 ? inTone : v < 0 ? outTone : 'text-ink') };
+}
+
 /** 'YYYY-MM-DD' → 'DD/MM/YYYY' without touching Date (no time zone games). */
 export function fmtDate(iso: string | null): string {
   return iso ? iso.split('-').reverse().join('/') : '—';

@@ -23,8 +23,9 @@ export interface ChartPoint {
   label: string;
   /** Right to left inside the group (the reference draws income right of centre, expense left). */
   bars: ChartBar[];
-  /** The tooltip lines under the month title. */
-  tip: Array<{ label: string; value: string }>;
+  /** The tooltip lines under the month title; `tone` colours the value
+   *  (income green-ink, expense red-ink — decision 28/09/2026). */
+  tip: Array<{ label: string; value: string; tone?: 'in' | 'out' }>;
   /** An extra red line at the bottom of the tooltip — only when the month has one. */
   note?: string | null;
 }
@@ -117,7 +118,7 @@ export function PortalBarChart({ points, onPick, ariaLabel }: {
           <>
             <b>{hovered.label}</b>
             {hovered.tip.map((t) => (
-              <span key={t.label}><br />{t.label} <span className="num">{t.value}</span></span>
+              <span key={t.label}><br />{t.label} <span className={t.tone ? `num ${t.tone}` : 'num'}>{t.value}</span></span>
             ))}
             {hovered.note && <><br /><span className="note">{hovered.note}</span></>}
           </>

@@ -37,13 +37,47 @@ export function parseTxFilter(v: string | undefined): TxFilter {
 
 // ── Formats (the reference's) ────────────────────────────────────────────────
 
-const money = new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const group = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
-/** '₪8,820' — the reference's fmt(): shekel sign, en-US grouping, no space.
- *  Agorot are kept when present ('₪1,234.5'). Always the absolute value; the
- *  sign is the caller's ('+' / '−'). */
+/** Whole shekels for the screen (decision 28/09/2026): ordinary half-up
+ *  rounding — 1,240.50 → 1,241, 1,240.49 → 1,240 — done on the absolute
+ *  value, so −2.5 rounds away from zero like 2.5 does (Math.round would give
+ *  −2). A hair of float noise (1240.4999999999 for a numeric 1,240.50 that
+ *  went through float8 or a sum) still rounds up; a real 0.4999 does not.
+ *  The sign is kept; a value that rounds to nothing is 0, never −0. */
+export function roundShekels(n: number): number {
+  const whole = Math.floor(Math.abs(n) + 0.5 + 1e-9);
+  return whole === 0 ? 0 : n < 0 ? -whole : whole;
+}
+
+/** '₪8,820' — the reference's fmt(): shekel sign, en-US grouping, no space,
+ *  always the absolute value (the sign is the caller's: '+' / '−'), and
+ *  whole shekels — EVERY amount a resident sees goes through here. Totals,
+ *  averages, deltas and shares are computed by the callers from the exact
+ *  amounts and rounded here, at the last step, so a ₪1 gap between rounded
+ *  lines and their rounded total is normal. The database, the admin screens
+ *  and the Excel export keep the agorot. */
 export function fmtIls(n: number): string {
-  return `₪${money.format(Math.abs(n))}`;
+  return `₪${group.format(Math.abs(roundShekels(n)))}`;
+}
+
+/** A figure that may be negative — a balance, a surplus, a difference: the
+ *  sign is decided AFTER rounding ('₪0', never '−₪0'): '₪7,021' / '−₪412'. */
+export function fmtSigned(n: number): string {
+  return `${roundShekels(n) < 0 ? '−' : ''}${fmtIls(n)}`;
+}
+
+/** The colour class of a signed figure, by its rounded value: 'in' (green)
+ *  above zero, 'out' (red) below, '' at zero — a difference or a balance is
+ *  green when positive and red when negative (decision 28/09/2026). */
+export function signClass(n: number): 'in' | 'out' | '' {
+  const r = roundShekels(n);
+  return r > 0 ? 'in' : r < 0 ? 'out' : '';
+}
+
+/** The exact sum of amounts — a total is never a sum of rounded figures. */
+export function sumExact(values: readonly number[]): number {
+  return values.reduce((s, v) => s + v, 0);
 }
 
 /** 'DD.MM.YYYY' for a dated line (an expense's payment date); an income has
@@ -250,26 +284,23 @@ export function fmtDateDMY(iso: string | null): string | null {
   return `${get('day')}.${get('month')}.${get('year')}`;
 }
 
-/** The figures of the dark "היתרה שלך לתשלום" card: the sum over the owner's
- *  live records (archived rows carry no figures and are left out). */
-export function accountTotals(accounts: readonly PortalAccount[]): {
-  total: number; management: number; hotWater: number; live: number; archived: number;
-} {
-  let total = 0, management = 0, hotWater = 0, live = 0, archived = 0;
-  for (const a of accounts) {
-    if (a.archived) { archived += 1; continue; }
-    live += 1;
-    total += a.total_debt ?? 0;
-    management += a.management_fees ?? 0;
-    hotWater += a.hot_water_debt ?? 0;
-  }
-  return { total, management, hotWater, live, archived };
+/** The figures of the dark "היתרה שלך לתשלום" card: the exact sums over the
+ *  owner's records (one per apartment); the card rounds them when it shows
+ *  them. */
+export function accountTotals(accounts: readonly PortalAccount[]): { total: number; management: number; hotWater: number } {
+  return {
+    total: sumExact(accounts.map((a) => a.total_debt)),
+    management: sumExact(accounts.map((a) => a.management_fees)),
+    hotWater: sumExact(accounts.map((a) => a.hot_water_debt)),
+  };
 }
 
-/** '+₪2,140' / '−₪2,140' / '₪0' — the KPI's "מול החודש הקודם" delta. */
+/** '+₪2,140' / '−₪2,140' / '₪0' — the KPI's "מול החודש הקודם" delta, its
+ *  sign decided after rounding (a delta of 0.3 is '₪0', not '+₪0'). */
 export function fmtDelta(n: number): string {
-  if (n > 0) return `+${fmtIls(n)}`;
-  if (n < 0) return `−${fmtIls(n)}`;
+  const r = roundShekels(n);
+  if (r > 0) return `+${fmtIls(r)}`;
+  if (r < 0) return `−${fmtIls(r)}`;
   return fmtIls(0);
 }
 

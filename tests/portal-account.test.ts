@@ -10,7 +10,8 @@ import { Pool, type PoolClient } from 'pg';
 //     roster of its phone, the SELECT names its columns, nothing else of the
 //     debtors row leaves (legal status, notes, phones, other owners' names);
 //   • a phone with two apartments gets two accounts; a missing debtors row is
-//     0 debt; an archived row carries no figures;
+//     0 debt; an archived row is shown like any other (decision 28/09/2026),
+//     with its exact figures and no status of any kind;
 //   • getAdminPreviewAccount is a separate entry point for ONE apartment;
 //   • the bank balance reaches the resident data only while the switch is on;
 //   • a code is consumed once, refused when expired, and never crosses phones;
@@ -98,7 +99,7 @@ d('owners portal — my account, bank balance, one-time codes', () => {
     await debtor(apt.a, { total: 1240, mgmt: 840, hot: 400, monthly: '3/26', details: 'מים חמים 01-03/26' });
     await debtor(apt.b, { total: 300, mgmt: 0, hot: 300, monthly: ' ' });
     await debtor(apt.c, { total: 0 });
-    await debtor(apt.d, { total: 999, mgmt: 999, archived: true, details: 'CANARY-DETAILS' });
+    await debtor(apt.d, { total: 999.5, mgmt: 999.5, archived: true, monthly: '9/26', details: 'מים חמים 07-09/26' });
     await roster(apt.a, phone.a1, 'דנה');
     await roster(apt.a, phone.a2, 'יוסי');
     await roster(apt.b, phone.b, 'בני');
@@ -131,11 +132,11 @@ d('owners portal — my account, bank balance, one-time codes', () => {
     const acc = await getPortalMyAccount({ id: 's', phoneE164: phone.a1 });
     expect(acc).toHaveLength(1);
     expect(acc[0]).toEqual({
-      apartment_number: apt.a, owner_display_name: 'דנה', archived: false,
+      apartment_number: apt.a, owner_display_name: 'דנה',
       total_debt: 1240, management_fees: 840, hot_water_debt: 400, monthly_debt: '3/26', details: 'מים חמים 01-03/26',
       synced_at: await getLastSyncAt(),
     });
-    expect(JSON.stringify(acc)).not.toMatch(/CANARY|050-9999999|canary@example/);
+    expect(JSON.stringify(acc)).not.toMatch(/CANARY|050-9999999|canary@example|archived|legal|status|notes/);
     // the second owner of the same apartment gets the same figures, under their own name
     const acc2 = await getPortalMyAccount({ id: 's', phoneE164: phone.a2 });
     expect(acc2[0]).toMatchObject({ apartment_number: apt.a, owner_display_name: 'יוסי', total_debt: 1240 });
@@ -147,11 +148,20 @@ d('owners portal — my account, bank balance, one-time codes', () => {
     expect(acc[1]).toMatchObject({ total_debt: 300, hot_water_debt: 300, monthly_debt: null });
   });
 
-  it('no debtors row → 0; an archived row → no figures; a phone that owns nothing → []', async () => {
+  it('no debtors row → 0; an archived row → its exact figures like any other, no status; a phone that owns nothing → []', async () => {
     const none = await getPortalMyAccount({ id: 's', phoneE164: phone.none });
-    expect(none[0]).toMatchObject({ apartment_number: apt.none, archived: false, total_debt: 0, management_fees: 0, hot_water_debt: 0, monthly_debt: null, details: null });
+    expect(none[0]).toEqual({ apartment_number: apt.none, owner_display_name: 'בלי חייב', total_debt: 0, management_fees: 0, hot_water_debt: 0, monthly_debt: null, details: null, synced_at: await getLastSyncAt() });
     const archived = await getPortalMyAccount({ id: 's', phoneE164: phone.d });
-    expect(archived[0]).toMatchObject({ apartment_number: apt.d, archived: true, total_debt: null, management_fees: null, hot_water_debt: null, monthly_debt: null, details: null });
+    expect(archived).toHaveLength(1);
+    expect(archived[0]).toEqual({
+      apartment_number: apt.d, owner_display_name: 'דוד',
+      total_debt: 999.5, management_fees: 999.5, hot_water_debt: 0, monthly_debt: '9/26', details: 'מים חמים 07-09/26',
+      synced_at: await getLastSyncAt(),
+    });
+    expect(JSON.stringify(archived)).not.toMatch(/CANARY|archived|legal|status|notes|050-9999999/);
+    // the admin preview of the same apartment: the same figures, no mark
+    expect(await getAdminPreviewAccount(apt.d)).toMatchObject({ total_debt: 999.5, management_fees: 999.5, details: 'מים חמים 07-09/26' });
+    expect(JSON.stringify(await getAdminPreviewAccount(apt.d))).not.toMatch(/archived|legal|status|notes/);
     expect(await getPortalMyAccount({ id: 's', phoneE164: '+972529999999' })).toEqual([]);
   });
 

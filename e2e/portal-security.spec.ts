@@ -33,6 +33,8 @@ const CANARIES = [
 ];
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
+// an idle client a pooler closes between tests must not surface as a run error
+pool.on('error', () => undefined);
 const FIXTURE_PHONES = ['+972501111111', '+972501111112', '+972502222222', '+972503333333', '+972504444444', '+972505555555'];
 
 // The OTP checks consume codes, lock a phone and start cooldowns; put the

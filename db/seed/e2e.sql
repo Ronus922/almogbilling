@@ -37,8 +37,10 @@ commit;
 
 -- ── Owners portal fixtures (28/09/2026) — e2e/portal-security.spec.ts ─────
 -- Four apartments: A (debt, two owners, a disabled owner, a tenant phone),
--- B (hot-water debt), C (no debt), D (archived with a balance). Every field
--- a resident must never see carries a CANARY-… value the spec greps for.
+-- B (hot-water debt), C (no debt), D (archived with a balance, shown like any
+-- other — decision 28/09/2026; its figures carry agorot for the rounding
+-- checks of e2e/portal-numbers.spec.ts). Every field a resident must never
+-- see carries a CANARY-… value the spec greps for.
 -- Live portal sessions for the owners (raw token → sha256, like the app),
 -- one expired and one revoked. Two finance months: the previous month
 -- published (with a receipt and a bank balance), the current one hidden with
@@ -56,7 +58,7 @@ values
   ('00000000-0000-4000-8000-0000000e2e0a', 'E2E-A', 'CANARY-OWNER-A', '050-1111111', 'canary-a@example.com', 1240, 840, 400, 0, '3/26', E'מים חמים 01-03/26 <script>window.__pwned=1</script>', false, 'CANARY-NOTE-A', 'CANARY-ACTION-A', 'CANARY-LEGAL-A'),
   ('00000000-0000-4000-8000-0000000e2e0b', 'E2E-B', 'CANARY-OWNER-B', '050-2222222', 'canary-b@example.com', 300, 0, 300, 0, '1/26', 'מים חמים 02/26', false, 'CANARY-NOTE-B', 'CANARY-ACTION-B', 'CANARY-LEGAL-B'),
   ('00000000-0000-4000-8000-0000000e2e0c', 'E2E-C', 'CANARY-OWNER-C', '050-3333333', null, 0, 0, 0, 0, null, null, false, 'CANARY-NOTE-C', null, null),
-  ('00000000-0000-4000-8000-0000000e2e0d', 'E2E-D', 'CANARY-OWNER-D', '050-4444444', null, 999, 999, 0, 0, '9/26', 'CANARY-DETAILS-D', true, 'CANARY-NOTE-D', null, null)
+  ('00000000-0000-4000-8000-0000000e2e0d', 'E2E-D', 'CANARY-OWNER-D', '050-4444444', null, 999.5, 999.5, 0, 0, '9/26', 'E2E-DETAILS-D מים חמים 07-09/26', true, 'CANARY-NOTE-D', 'CANARY-ACTION-D', 'CANARY-LEGAL-D')
 on conflict (id) do update set total_debt = excluded.total_debt, management_fees = excluded.management_fees, hot_water_debt = excluded.hot_water_debt, monthly_debt = excluded.monthly_debt, details = excluded.details, is_archived = excluded.is_archived, notes = excluded.notes;
 
 insert into public.apartment_owner_phones (apartment_number, owner_name, phone_e164, is_active)
@@ -93,19 +95,27 @@ select v.p, crypt('123456', gen_salt('bf', 10)), v.exp from (values
 ) v(p, exp)
 where not exists (select 1 from public.portal_otp_codes c where c.phone_e164 = v.p);
 
--- finance: categories, two months (previous = published, current = hidden)
+-- finance: categories, two months (previous = published, current = hidden).
+-- The published month's amounts carry agorot (8,820.40 + 1 in, 1,800.50 out)
+-- so the screen's whole shekels (₪8,821 / ₪1,801 / ₪7,021) and the export's
+-- exact numbers can both be checked; the fund holds one income and one
+-- expense of the same month for the fund tab's rounding and colours.
 insert into public.fin_categories (id, kind, name, sort_order, section) values
   ('e2e00000-0000-4000-8000-0000000000c1', 'income',  'E2E דמי ועד', 90, 'operating'),
-  ('e2e00000-0000-4000-8000-0000000000c2', 'expense', 'E2E ניקיון', 90, 'operating')
+  ('e2e00000-0000-4000-8000-0000000000c2', 'expense', 'E2E ניקיון', 90, 'operating'),
+  ('e2e00000-0000-4000-8000-0000000000c3', 'income',  'E2E תשלום לקרן', 90, 'renovation_fund'),
+  ('e2e00000-0000-4000-8000-0000000000c4', 'expense', 'E2E זיפות גג', 90, 'renovation_fund')
 on conflict (id) do nothing;
 
 insert into public.fin_entries (id, kind, category_id, period_month, amount, description, supplier_name, invoice_number, internal_note, payment_date)
 values
-  ('e2e00000-0000-4000-8000-0000000000e1', 'income',  'e2e00000-0000-4000-8000-0000000000c1', date_trunc('month', now() - interval '1 month')::date, 8820, 'E2E דמי ועד <script>window.__pwned=1</script>', '', '', 'CANARY-INTERNAL-PUB', null),
-  ('e2e00000-0000-4000-8000-0000000000e2', 'expense', 'e2e00000-0000-4000-8000-0000000000c2', date_trunc('month', now() - interval '1 month')::date, 1800, 'E2E ניקיון חדר מדרגות', 'CANARY-SUPPLIER-PUB', 'CANARY-INVOICE-PUB', 'CANARY-INTERNAL-PUB', (date_trunc('month', now() - interval '1 month') + interval '14 days')::date),
+  ('e2e00000-0000-4000-8000-0000000000e1', 'income',  'e2e00000-0000-4000-8000-0000000000c1', date_trunc('month', now() - interval '1 month')::date, 8820.4, 'E2E דמי ועד <script>window.__pwned=1</script>', '', '', 'CANARY-INTERNAL-PUB', null),
+  ('e2e00000-0000-4000-8000-0000000000e2', 'expense', 'e2e00000-0000-4000-8000-0000000000c2', date_trunc('month', now() - interval '1 month')::date, 1800.5, 'E2E ניקיון חדר מדרגות', 'CANARY-SUPPLIER-PUB', 'CANARY-INVOICE-PUB', 'CANARY-INTERNAL-PUB', (date_trunc('month', now() - interval '1 month') + interval '14 days')::date),
   ('e2e00000-0000-4000-8000-0000000000e3', 'expense', 'e2e00000-0000-4000-8000-0000000000c2', date_trunc('month', now())::date, 6543.21, 'CANARY-HIDDEN-ENTRY', 'CANARY-SUPPLIER-HIDDEN', 'CANARY-INVOICE-HIDDEN', 'CANARY-INTERNAL-HIDDEN', (date_trunc('month', now()) + interval '2 days')::date),
-  ('e2e00000-0000-4000-8000-0000000000e4', 'income',  'e2e00000-0000-4000-8000-0000000000c1', date_trunc('month', now() - interval '1 month')::date, 1, '=1+1 E2E-FORMULA', '', '', '', null)
-on conflict (id) do nothing;
+  ('e2e00000-0000-4000-8000-0000000000e4', 'income',  'e2e00000-0000-4000-8000-0000000000c1', date_trunc('month', now() - interval '1 month')::date, 1, '=1+1 E2E-FORMULA', '', '', '', null),
+  ('e2e00000-0000-4000-8000-0000000000e5', 'income',  'e2e00000-0000-4000-8000-0000000000c3', date_trunc('month', now() - interval '1 month')::date, 5000.5, 'E2E קרן — גבייה', '', '', '', null),
+  ('e2e00000-0000-4000-8000-0000000000e6', 'expense', 'e2e00000-0000-4000-8000-0000000000c4', date_trunc('month', now() - interval '1 month')::date, 1200.25, 'E2E קרן — זיפות', 'CANARY-SUPPLIER-FUND', '', 'CANARY-INTERNAL-FUND', (date_trunc('month', now() - interval '1 month') + interval '9 days')::date)
+on conflict (id) do update set amount = excluded.amount, description = excluded.description;
 
 -- a staff user WITHOUT the finance module (viewer: debtors screen only) — the admin-preview gate check
 insert into public.users (username, email, password_hash, full_name, role, is_active)

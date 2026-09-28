@@ -1,6 +1,6 @@
 import type { PortalAccount } from '@/lib/types/portal';
 import { PORTAL_BLOCKS } from '@/lib/portal/blocks';
-import { fmtDateDMY, fmtIls } from '@/lib/portal/ui';
+import { fmtDateDMY, fmtIls, roundShekels } from '@/lib/portal/ui';
 import { PortalSoon } from './PortalSoon';
 import { AccountIcon } from './PortalIcons';
 
@@ -9,9 +9,9 @@ import { AccountIcon } from './PortalIcons';
 // then the CRM's free-text details, and the reference's personal ledger,
 // built but off (PORTAL_BLOCKS.ledger). One block per apartment of the
 // signed-in owner; the figures come from getPortalMyAccount, which reads
-// nothing but the session. An archived record shows a note instead of
-// numbers (decision 28/09/2026). `details` is rendered as text (pre-line) —
-// never as HTML.
+// nothing but the session, and an archived record is shown exactly like a
+// live one (decision 28/09/2026). Whole shekels; the balance due in red-ink
+// above zero. `details` is rendered as text (pre-line) — never as HTML.
 
 const FOOTNOTE = 'הנתונים מתעדכנים פעם ביום ממערכת הגבייה. תשלום שבוצע היום יופיע בעדכון הבא.';
 
@@ -24,33 +24,21 @@ function subtitleOf(a: PortalAccount): string {
 }
 
 function AccountBlock({ account: a, heading }: { account: PortalAccount; heading: boolean }) {
-  if (a.archived) {
-    return (
-      <div className="acc-block">
-        {heading && <h2>דירה {a.apartment_number}</h2>}
-        <div className="card">
-          <h3>הנתונים בבדיקה מול חברת הניהול</h3>
-          <p className="details">הרשומה של הדירה אינה פעילה במערכת הגבייה, ולכן לא מוצגים כאן סכומים. לפרטים פנו לחברת הניהול.</p>
-        </div>
-      </div>
-    );
-  }
-  const due = a.total_debt ?? 0;
   return (
     <div className="acc-block">
       {heading && <h2>דירה {a.apartment_number}</h2>}
       <div className="pgrid">
         <div className="card kpi c3">
           <div className="k">יתרה לתשלום</div>
-          <div className={`v num${due > 0 ? ' red' : ''}`}>{fmtIls(due)}</div>
+          <div className={`v num${roundShekels(a.total_debt) > 0 ? ' red' : ''}`}>{fmtIls(a.total_debt)}</div>
         </div>
         <div className="card kpi c3">
           <div className="k">חוב דמי ניהול</div>
-          <div className="v num">{fmtIls(a.management_fees ?? 0)}</div>
+          <div className="v num">{fmtIls(a.management_fees)}</div>
         </div>
         <div className="card kpi c3">
           <div className="k">חוב מים חמים</div>
-          <div className="v num">{fmtIls(a.hot_water_debt ?? 0)}</div>
+          <div className="v num">{fmtIls(a.hot_water_debt)}</div>
         </div>
         <div className="card kpi c3">
           <div className="k">חיוב חודשי</div>

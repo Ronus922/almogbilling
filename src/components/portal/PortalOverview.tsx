@@ -6,8 +6,8 @@ import type { ResidentOverview } from '@/lib/types/finance';
 import type { PortalAccount } from '@/lib/types/portal';
 import { PORTAL_BLOCKS } from '@/lib/portal/blocks';
 import {
-  accountTotals, apartmentsLabel, catColor, categoryShares, fmtDateDMY, fmtDelta, fmtIls, monthName, monthShort,
-  monthTitle, pctVsAverage, sumOverWindow, windowKeys, type OverviewSpan,
+  accountTotals, apartmentsLabel, catColor, categoryShares, fmtDateDMY, fmtDelta, fmtIls, fmtSigned, monthName,
+  monthShort, monthTitle, pctVsAverage, roundShekels, sumOverWindow, windowKeys, type OverviewSpan,
 } from '@/lib/portal/ui';
 import { PortalBarChart, type ChartPoint } from './PortalBarChart';
 import { PortalTxTable } from './PortalTxTable';
@@ -26,34 +26,34 @@ import { usePortalHref } from './usePortalHref';
 // card needs an account, the cash KPI needs a bank balance (the switch and a
 // value), the collection ring has no data and stays off. Without the cash KPI
 // the two KPIs share the row (c6 each on the desktop, two columns on a phone).
+//
+// Amounts: whole shekels everywhere (fmtIls), computed from the exact figures;
+// the income KPI is green-ink, the expense KPI red-ink, the category list
+// red-ink, the tooltip lines by kind; the bank balance and the dark card stay
+// neutral (decision 28/09/2026).
 
 /** The dark "היתרה שלך לתשלום" card (the reference's .mine): the owner's
- *  balance due summed over their live records, the management / hot-water
- *  split, "as of" the last sync, and a link to the full account. */
+ *  balance due summed over their records (an archived apartment counts like
+ *  any other), the management / hot-water split, "as of" the last sync, and
+ *  a link to the full account. */
 function MyBalanceCard({ accounts, onMore }: { accounts: readonly PortalAccount[]; onMore: () => void }) {
   const t = accountTotals(accounts);
   const asOf = fmtDateDMY(accounts[0]?.synced_at ?? null);
   const label = accounts.length > 1 ? apartmentsLabel(accounts.map((a) => a.apartment_number)) : null;
-  const inDebt = t.total > 0;
+  const inDebt = roundShekels(t.total) > 0;
   return (
     <div className="card mine c4">
       <div className="lab">
         היתרה שלך לתשלום
-        {t.live > 0 && (
-          inDebt
-            ? <span className="tag t-red"><i />חוב פתוח</span>
-            : <span className="tag t-ok"><i />אין חוב</span>
-        )}
+        {inDebt
+          ? <span className="tag t-red"><i />חוב פתוח</span>
+          : <span className="tag t-ok"><i />אין חוב</span>}
       </div>
-      {t.live > 0
-        ? <div className="big num">{fmtIls(t.total)}</div>
-        : <div className="big" style={{ fontSize: 18, fontFamily: 'var(--font-heebo), Heebo, sans-serif', letterSpacing: 0 }}>הנתונים בבדיקה מול חברת הניהול</div>}
-      {t.live > 0 && (
-        <div className="row2">
-          <span>דמי ניהול <b className="num">{fmtIls(t.management)}</b></span>
-          <span>מים חמים <b className="num">{fmtIls(t.hotWater)}</b></span>
-        </div>
-      )}
+      <div className="big num">{fmtIls(t.total)}</div>
+      <div className="row2">
+        <span>דמי ניהול <b className="num">{fmtIls(t.management)}</b></span>
+        <span>מים חמים <b className="num">{fmtIls(t.hotWater)}</b></span>
+      </div>
       {(label || asOf) && (
         <div className="asof">
           {label}
@@ -97,8 +97,8 @@ export function PortalOverview({ overview, span: initialSpan, greeting, accounts
       { value: m.expense, fill: m.expense > m.income ? '#E5484D' : '#FDA4A7' },
     ],
     tip: [
-      { label: 'הכנסות', value: fmtIls(m.income) },
-      { label: 'הוצאות', value: fmtIls(m.expense) },
+      { label: 'הכנסות', value: fmtIls(m.income), tone: 'in' },
+      { label: 'הוצאות', value: fmtIls(m.expense), tone: 'out' },
     ],
     // No month note exists in the finance model (Phase 0, 28/09/2026) — the
     // line stays conditional so a future note field lights it up.
@@ -134,7 +134,7 @@ export function PortalOverview({ overview, span: initialSpan, greeting, accounts
             <div className="card kpi">
               <span className="kpi-ic" style={{ background: 'var(--brand-soft)', color: 'var(--brand)' }}><WalletIcon /></span>
               <div className="k">יתרת קופת הבניין · {monthName(bank.month)}</div>
-              <div className="v num">{bank.value < 0 ? '−' : ''}{fmtIls(bank.value)}</div>
+              <div className="v num">{fmtSigned(bank.value)}</div>
               {bankDelta !== null && (
                 <div className="d">
                   <span className={`num ${bankDelta > 0 ? 'up' : bankDelta < 0 ? 'dn' : ''}`}>{fmtDelta(bankDelta)}</span>
@@ -146,13 +146,13 @@ export function PortalOverview({ overview, span: initialSpan, greeting, accounts
           <div className="card kpi">
             <span className="kpi-ic" style={{ background: 'var(--green-soft)', color: 'var(--green)' }}><ArrowUpIcon /></span>
             <div className="k">הכנסות · {monthName(overview.latest)}</div>
-            <div className="v num">{fmtIls(latest.income)}</div>
+            <div className="v num in">{fmtIls(latest.income)}</div>
             {PORTAL_BLOCKS.collectionRate && <div className="d">—</div>}
           </div>
           <div className="card kpi">
             <span className="kpi-ic" style={{ background: 'var(--red-soft)', color: 'var(--red)' }}><ArrowDownIcon /></span>
             <div className="k">הוצאות · {monthName(overview.latest)}</div>
-            <div className="v num">{fmtIls(latest.expense)}</div>
+            <div className="v num out">{fmtIls(latest.expense)}</div>
             {expensePct !== null && (
               <div className="d">
                 <span className={`num ${expensePct > 0 ? 'dn' : expensePct < 0 ? 'up' : ''}`}>
@@ -182,7 +182,7 @@ export function PortalOverview({ overview, span: initialSpan, greeting, accounts
             {cats.map((c, i) => (
               <div className="cat" key={c.name}>
                 <span className="n"><i style={{ background: catColor(i) }} /><em title={c.name}>{c.name}</em></span>
-                <span className="a num">{fmtIls(c.total)}<small>{c.pct}%</small></span>
+                <span className="a num out">{fmtIls(c.total)}<small>{c.pct}%</small></span>
                 <div className="bar"><b style={{ width: `${c.bar}%`, background: catColor(i) }} /></div>
               </div>
             ))}

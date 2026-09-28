@@ -52,17 +52,17 @@ export interface PortalLogFilters {
 }
 
 /** "החשבון שלי" — one apartment of the signed-in owner, as the portal shows
- *  it (src/lib/db/portal/account.ts). Figures are null on an archived row (no
- *  live record: the screen shows a note instead of numbers). */
+ *  it (src/lib/db/portal/account.ts): the six figures and nothing else. An
+ *  archived debtors row is shown exactly like a live one (decision
+ *  28/09/2026), so no status of any kind travels here. Amounts are exact
+ *  (agorot included); the screen rounds them. */
 export interface PortalAccount {
   apartment_number: string;
   /** The signed-in owner's own name from the roster (null when unknown). */
   owner_display_name: string | null;
-  /** The debtors row is archived — no figures are shown. */
-  archived: boolean;
-  total_debt: number | null;
-  management_fees: number | null;
-  hot_water_debt: number | null;
+  total_debt: number;
+  management_fees: number;
+  hot_water_debt: number;
   /** The CRM's monthly-charge text as is (e.g. "3/26"), or null. */
   monthly_debt: string | null;
   /** Free text from the CRM (hot-water periods etc.), or null. */

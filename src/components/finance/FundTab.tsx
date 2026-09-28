@@ -8,22 +8,25 @@ import { ils } from '@/lib/finance/format';
 import type { FundLedgerRow, RenovationFundKpis, RenovationFundSettings } from '@/lib/types/finance';
 import { FundLedgerTable } from './FundLedgerTable';
 import { FundTargetDialog } from './FundTargetDialog';
+import { amountTones } from './table-shared';
 
 // The "קרן שיפוצים" tab: cumulative over ALL months (no month picker) — the
 // collection target with its progress, collected / spent / balance, the spend
 // per purpose (every fund expense category, 0 ₪ included) and the whole
-// ledger. Fund lines never touch the operating KPIs and vice versa.
+// ledger. Fund lines never touch the operating KPIs and vice versa. The
+// resident view (the portal) passes its own amount formatter (whole shekels)
+// and gets the portal's income / expense colours; the admin keeps `ils`.
 
-function Metric({ label, value, tone }: { label: string; value: number; tone: string }) {
+function Metric({ label, value, tone, format }: { label: string; value: number; tone: string; format: (v: number) => string }) {
   return (
     <div className="rounded-xl border border-line bg-surface-2 p-4">
       <dt className="text-xs font-medium text-ink-3">{label}</dt>
-      <dd dir="ltr" className={cn('mt-1 font-num text-xl font-bold tabular-nums', tone)}>{ils(value)}</dd>
+      <dd dir="ltr" className={cn('mt-1 font-num text-xl font-bold tabular-nums', tone)}>{format(value)}</dd>
     </div>
   );
 }
 
-export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved, residentMode = false }: {
+export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved, residentMode = false, format = ils }: {
   /** RenovationFundKpis for the admin, ResidentFundKpis in the resident view. */
   kpis: Omit<RenovationFundKpis, 'entries'> & { entries: FundLedgerRow[] };
   canEdit: boolean;
@@ -32,7 +35,10 @@ export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved, reside
   onTargetSaved: (s: RenovationFundSettings) => void;
   /** Resident view: no target edit, no purpose management, no actions, no tags. */
   residentMode?: boolean;
+  /** How an amount is written — `ils` (agorot kept) unless the caller says otherwise. */
+  format?: (value: number) => string;
 }) {
+  const tones = amountTones(residentMode);
   const [target, setTarget] = useState(kpis.target_amount);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogKey, setDialogKey] = useState(0);
@@ -50,9 +56,9 @@ export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved, reside
           <div className="min-w-0 flex-1">
             <div className="text-[13px] font-medium text-ink-2">נגבה מתוך יעד</div>
             <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span dir="ltr" className="font-num text-[26px] font-bold tracking-[-0.5px] text-emerald-700">{ils(kpis.collected)}</span>
+              <span dir="ltr" className={cn('font-num text-[26px] font-bold tracking-[-0.5px]', tones.in)}>{format(kpis.collected)}</span>
               <span className="text-sm text-ink-3">מתוך</span>
-              <span dir="ltr" className="font-num text-lg font-bold tabular-nums text-ink">{target > 0 ? ils(target) : '—'}</span>
+              <span dir="ltr" className="font-num text-lg font-bold tabular-nums text-ink">{target > 0 ? format(target) : '—'}</span>
               {canEdit && !residentMode && (
                 <button
                   type="button"
@@ -89,9 +95,9 @@ export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved, reside
         </div>
 
         <dl className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Metric label="נגבה" value={kpis.collected} tone="text-emerald-700" />
-          <Metric label="יצא" value={kpis.spent} tone="text-rose-700" />
-          <Metric label="יתרה בקרן" value={kpis.balance} tone={kpis.balance < 0 ? 'text-amber-700' : 'text-ink'} />
+          <Metric label="נגבה" value={kpis.collected} tone={tones.in} format={format} />
+          <Metric label="יצא" value={kpis.spent} tone={tones.out} format={format} />
+          <Metric label="יתרה בקרן" value={kpis.balance} tone={tones.balance(kpis.balance)} format={format} />
         </dl>
       </section>
 
@@ -119,7 +125,7 @@ export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved, reside
                   <span className="truncate" title={p.name}>{p.name}</span>
                   {!residentMode && !p.is_active && <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">מושבתת</span>}
                 </span>
-                <span dir="ltr" className="font-num text-sm font-bold tabular-nums text-rose-700 sm:order-3 sm:text-center">{ils(p.total)}</span>
+                <span dir="ltr" className={cn('font-num text-sm font-bold tabular-nums sm:order-3 sm:text-center', tones.out)}>{format(p.total)}</span>
                 <span className="col-span-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-100 sm:col-span-1 sm:order-2" aria-hidden>
                   <span className="block h-full rounded-full bg-rose-400" style={{ width: `${maxPurpose > 0 ? (p.total / maxPurpose) * 100 : 0}%` }} />
                 </span>
@@ -135,7 +141,7 @@ export function FundTab({ kpis, canEdit, onEdit, onDelete, onTargetSaved, reside
           כל תנועות הקרן
           <span className="font-num text-sm font-medium tabular-nums text-slate-400">{kpis.entries.length}</span>
         </h2>
-        <FundLedgerTable entries={kpis.entries} canEdit={canEdit} onEdit={onEdit} onDelete={onDelete} residentMode={residentMode} emptyText="אין עדיין תנועות בקרן השיפוצים." />
+        <FundLedgerTable entries={kpis.entries} canEdit={canEdit} onEdit={onEdit} onDelete={onDelete} residentMode={residentMode} format={format} emptyText="אין עדיין תנועות בקרן השיפוצים." />
       </section>
 
       {!residentMode && (
