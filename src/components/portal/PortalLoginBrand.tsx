@@ -20,7 +20,7 @@ export function PortalLoginBrand({ className }: { className?: string }) {
       className={cn(
         'relative overflow-hidden text-white',
         // mobile hero — the 24px sits under the status bar on a notched phone
-        'bg-[linear-gradient(165deg,#0E1F5C_0%,#1633A8_60%,#2A55E8_100%)] px-7 pb-16 pt-[calc(24px+env(safe-area-inset-top))]',
+        'bg-[linear-gradient(165deg,#0E1F5C_0%,#1633A8_60%,#2A55E8_100%)] px-[28px] pb-[64px] pt-[calc(24px+env(safe-area-inset-top))]',
         // desktop column
         'min-[901px]:flex min-[901px]:flex-col min-[901px]:justify-between min-[901px]:gap-10 min-[901px]:bg-[linear-gradient(160deg,#0E1F5C_0%,#1633A8_55%,#2A55E8_100%)] min-[901px]:px-16 min-[901px]:py-14',
         className,
@@ -33,8 +33,8 @@ export function PortalLoginBrand({ className }: { className?: string }) {
       />
 
       {/* logo + name */}
-      <div className="relative flex items-center gap-3 min-[901px]:gap-3.5">
-        <span className="grid size-11 shrink-0 place-items-center rounded-[13px] border border-white/25 bg-[rgba(255,255,255,0.14)] min-[901px]:size-[52px] min-[901px]:rounded-[14px] min-[901px]:bg-white/15">
+      <div className="relative flex items-center gap-[12px] min-[901px]:gap-3.5">
+        <span className="grid size-[44px] shrink-0 place-items-center rounded-[13px] border border-white/25 bg-[rgba(255,255,255,0.14)] min-[901px]:size-[52px] min-[901px]:rounded-[14px] min-[901px]:bg-white/15">
           <Building2 className="size-[22px] min-[901px]:size-[26px]" strokeWidth={1.8} aria-hidden />
         </span>
         <span className="min-w-0">
@@ -48,7 +48,7 @@ export function PortalLoginBrand({ className }: { className?: string }) {
         <p className="mt-[26px] text-[30px] font-extrabold leading-[1.2] text-balance min-[901px]:mt-0 min-[901px]:text-[42px] min-[901px]:leading-[1.15]">
           הבניין שלך, בשקיפות מלאה
         </p>
-        <p className="mt-2 text-[15px] leading-[1.55] text-[#D6DEFF] text-pretty min-[901px]:hidden">
+        <p className="mt-[8px] text-[15px] leading-[1.55] text-[#D6DEFF] text-pretty min-[901px]:hidden">
           הכנסות, הוצאות וחשבון אישי — בכף היד.
         </p>
         <p className="mt-4 hidden text-lg leading-[1.6] text-[#D6DEFF] text-pretty min-[901px]:block">
