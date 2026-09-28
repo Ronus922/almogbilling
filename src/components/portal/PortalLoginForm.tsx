@@ -57,21 +57,54 @@ async function post(url: string, body: unknown): Promise<{ status: number; data:
   return { status: res.status, data };
 }
 
-/** Reference rule: fewer than this many digits is not a phone number at all. */
+/** Reference rule for Israel: fewer than this many subscriber digits is not a
+ *  phone number at all. */
 const PHONE_MIN_DIGITS = 9;
 const PHONE_INVALID_MESSAGE = 'יש להזין מספר טלפון תקין';
+/** The country prefix the field opens with (digits only; the '+' is drawn). */
+const DEFAULT_PREFIX = '972';
+/** ITU-T E.164: '+', then 7–15 digits, the first one 1–9. The server applies
+ *  the same rule (normalizePhone / toPortalE164) — this is only the early "not
+ *  a number at all" check the reference makes before sending. */
+const E164_RE = /^\+[1-9]\d{6,14}$/;
+
+/** What goes to the server: '+' + prefix + number, the number's leading 0
+ *  dropped when there is a prefix ('+972' + '054…' → '+97254…'). A number the
+ *  resident typed with its own '+' is sent as is (an autofill of the full
+ *  international number). With an empty prefix the number goes exactly as
+ *  typed and the server decides — the pre-28/09/2026 behaviour. */
+function composePhone(prefixDigits: string, typed: string): string {
+  const raw = typed.trim();
+  if (raw.startsWith('+')) return raw.replace(/[^\d+]/g, '');
+  if (!prefixDigits) return raw;
+  let n = raw.replace(/\D+/g, '');
+  if (n.startsWith('0')) n = n.slice(1);
+  return `+${prefixDigits}${n}`;
+}
+
+/** Client-side plausibility before the request: E.164 length for a prefixed
+ *  number, plus the reference's nine-digit floor for Israel. */
+function isPlausiblePhone(prefixDigits: string, typed: string): boolean {
+  const full = composePhone(prefixDigits, typed);
+  if (!full.startsWith('+')) return full.replace(/\D+/g, '').length >= PHONE_MIN_DIGITS;
+  if (!E164_RE.test(full)) return false;
+  return !full.startsWith(`+${DEFAULT_PREFIX}`) || full.length - 1 - DEFAULT_PREFIX.length >= PHONE_MIN_DIGITS;
+}
 
 const EMPTY_CODE: readonly string[] = Array.from({ length: PORTAL_OTP_DIGITS }, () => '');
 
-/** What the resident typed, echoed on the code step as 052-418-7730 when it is
- *  an Israeli local number (with or without the trunk 0); anything else is shown
- *  as typed. Display only — the server always receives the raw input. */
-function formatPhoneForDisplay(raw: string): string {
-  const digits = raw.replace(/\D+/g, '');
+/** The number echoed on the code step: 052-418-7730 for an Israeli number
+ *  (with or without the trunk 0, under the +972 prefix or none); a foreign
+ *  number is shown as the E.164 that was sent. Display only. */
+function formatPhoneForDisplay(prefixDigits: string, typed: string): string {
+  const full = composePhone(prefixDigits, typed);
+  const digits = full.startsWith(`+${DEFAULT_PREFIX}`)
+    ? `0${full.slice(1 + DEFAULT_PREFIX.length)}`
+    : full.startsWith('+') ? '' : full.replace(/\D+/g, '');
   const local = /^\d{9}$/.test(digits) ? `0${digits}` : digits;
   return /^0\d{9}$/.test(local)
     ? `${local.slice(0, 3)}-${local.slice(3, 6)}-${local.slice(6)}`
-    : raw.trim();
+    : full;
 }
 
 function formatCountdown(sec: number): string {
@@ -90,12 +123,21 @@ const FIELD_ERROR =
 const LINK_BUTTON =
   '-my-[12px] inline-flex min-h-[44px] items-center font-semibold text-brand transition-colors hover:text-[#2B3FB8] hover:underline disabled:pointer-events-none disabled:opacity-50';
 
+// The prefix chip (reference `.pre`): separator line, muted Inter, 16px on
+// the phone / 14px on the desktop. The same classes dress the edit field.
+const PREFIX_CHIP = 'flex h-[26px] shrink-0 items-center border-e border-[#E2E8F0] ps-[14px] pe-[14px] font-num text-[16px] font-semibold leading-[normal] text-[#64748B] min-[901px]:ms-[12px] min-[901px]:h-auto min-[901px]:ps-0 min-[901px]:pe-[12px] min-[901px]:text-[14px]';
 const INLINE_MESSAGE =
   'flex items-center gap-[6px] text-[13.5px] font-medium leading-[normal] min-[901px]:text-[13px]';
 
 export function PortalLoginForm() {
   const [step, setStep] = useState<Step>('phone');
   const [phone, setPhone] = useState('');
+  // Country prefix, digits only ('972'). A button until the resident presses
+  // it, then a free field — no list, no flags (decision 28/09/2026).
+  const [prefix, setPrefix] = useState(DEFAULT_PREFIX);
+  const [prefixEditing, setPrefixEditing] = useState(false);
+  // Exactly the string the request carried — the verify step sends the same one.
+  const [sentPhone, setSentPhone] = useState('');
   const [digits, setDigits] = useState<string[]>([...EMPTY_CODE]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -123,16 +165,18 @@ export function PortalLoginForm() {
     e?.preventDefault();
     if (busy || cooldown > 0) return;
     setError(null); setNotice(null);
-    if (phone.replace(/\D+/g, '').length < PHONE_MIN_DIGITS) {
+    if (!isPlausiblePhone(prefix, phone)) {
       setPhoneInvalid(true);
       return;
     }
     setPhoneInvalid(false);
     setBusy(true);
+    const outgoing = composePhone(prefix, phone);
     try {
-      const { data } = await post('/api/portal/otp/request', { phone: phone.trim() });
+      const { data } = await post('/api/portal/otp/request', { phone: outgoing });
       if (data.sent) {
         const resend = step === 'code';
+        setSentPhone(outgoing);
         setStep('code');
         setDigits([...EMPTY_CODE]);
         lastSubmittedCode.current = null;
@@ -169,7 +213,7 @@ export function PortalLoginForm() {
     lastSubmittedCode.current = code;
     setBusy(true);
     try {
-      const { data } = await post('/api/portal/otp/verify', { phone: phone.trim(), code });
+      const { data } = await post('/api/portal/otp/verify', { phone: sentPhone, code });
       if (data.ok) {
         // Hard navigation so the session cookie is on the next request.
         window.location.assign('/portal');
@@ -307,7 +351,7 @@ export function PortalLoginForm() {
                     name="phone"
                     type="tel"
                     inputMode="tel"
-                    autoComplete="tel"
+                    autoComplete="tel-national"
                     placeholder="050-000-0000"
                     dir="ltr"
                     value={phone}
@@ -320,14 +364,38 @@ export function PortalLoginForm() {
                     className="h-full min-w-0 flex-1 bg-transparent px-[14px] text-end font-num text-[17px] font-semibold text-[#0F172A] outline-none placeholder:font-medium placeholder:text-[#94A3B8] min-[901px]:text-[15px] min-[901px]:font-medium"
                     required
                   />
-                  {/* Visual prefix only — the number is sent exactly as typed. */}
-                  <span
-                    dir="ltr"
-                    aria-hidden
-                    className="flex h-[26px] shrink-0 items-center border-e border-[#E2E8F0] ps-[14px] pe-[14px] font-num text-[16px] font-semibold leading-[normal] text-[#64748B] min-[901px]:ms-[12px] min-[901px]:h-auto min-[901px]:ps-0 min-[901px]:pe-[12px] min-[901px]:text-[14px]"
-                  >
-                    +972
-                  </span>
+                  {/* Country prefix: the reference's chip, pressed → a free field
+                      ('+' and up to four digits). The field's own focus ring marks
+                      the edit; the number is composed on submit (composePhone). */}
+                  {prefixEditing ? (
+                    <input
+                      aria-label="קידומת מדינה"
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="off"
+                      dir="ltr"
+                      autoFocus
+                      maxLength={5}
+                      value={`+${prefix}`}
+                      onChange={(ev) => {
+                        setPrefix(ev.target.value.replace(/\D+/g, '').slice(0, 4));
+                        if (phoneInvalid) setPhoneInvalid(false);
+                      }}
+                      // content-box: the width is the digits' own, the chip's padding
+                      // is added outside it (border-box would eat it — invisible text).
+                      style={{ width: `${prefix.length + 1.75}ch` }}
+                      className={cn(PREFIX_CHIP, 'box-content bg-transparent text-[#0F172A] outline-none')}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setPrefixEditing(true)}
+                      aria-label={`קידומת מדינה +${prefix} — לחיצה לעריכה`}
+                      className="flex h-full shrink-0 items-center"
+                    >
+                      <span dir="ltr" className={PREFIX_CHIP}>+{prefix}</span>
+                    </button>
+                  )}
                 </div>
                 {phoneInvalid && (
                   <p id="portal-phone-error" role="alert" className={cn(INLINE_MESSAGE, 'text-[#E5484D]')}>
@@ -373,7 +441,7 @@ export function PortalLoginForm() {
               <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[901px]:text-[32px]">הזנת קוד</h1>
               <p className="mt-[6px] text-[15px] leading-[1.5] text-[#64748B] min-[901px]:mt-[8px] min-[901px]:leading-[1.55]">
                 שלחנו קוד בן {PORTAL_OTP_DIGITS} ספרות בוואטסאפ למספר{' '}
-                <b dir="ltr" className="font-num font-bold whitespace-nowrap text-[#0F172A]">{formatPhoneForDisplay(phone)}</b>
+                <b dir="ltr" className="font-num font-bold whitespace-nowrap text-[#0F172A]">{formatPhoneForDisplay(prefix, phone)}</b>
                 . הקוד תקף ל-{PORTAL_OTP_TTL_MINUTES} דקות.
               </p>
 

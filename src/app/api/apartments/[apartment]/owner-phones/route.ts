@@ -4,7 +4,7 @@ import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { ownerPhoneCreateBodySchema, ownerPhoneUpdateBodySchema } from '@/lib/validation/requests';
-import { toPortalE164 } from '@/lib/portal/phone';
+import { OWNER_PHONE_RULE_MESSAGE, toPortalE164 } from '@/lib/portal/phone';
 import { createOwnerPhone, listOwnerPhones, updateOwnerPhone } from '@/lib/db/portal/ownerPhones';
 import { revokePortalSessionsForPhone } from '@/lib/db/portal/sessions';
 import { logPortalEvent } from '@/lib/db/portal/events';
@@ -55,12 +55,13 @@ export async function POST(req: Request, { params }: Params) {
     const body = await parseJsonBody(req, ownerPhoneCreateBodySchema);
     if (!body.ok) return body.response;
 
-    // Mobile only — the code travels over WhatsApp, so a landline row would be a
-    // roster entry that can never sign in. Same rule as the backfill.
+    // Israeli mobile, or a foreign number in E.164 — the code travels over
+    // WhatsApp, so an Israeli landline row would be a roster entry that can
+    // never sign in. Same rule as the table's CHECK and the login.
     const phoneE164 = toPortalE164(body.data.phone);
     if (!phoneE164) {
       return NextResponse.json(
-        { error: 'נדרש מספר נייד ישראלי — הקוד נשלח בוואטסאפ' },
+        { error: OWNER_PHONE_RULE_MESSAGE },
         { status: 400 },
       );
     }

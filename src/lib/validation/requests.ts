@@ -237,17 +237,19 @@ export const financeFundSettingsBodySchema = z.object({
 });
 
 // ── Owners portal ("פורטל בעלי דירות") ──────────────────────────────────────
-// The phone arrives as the resident typed it (any Israeli format); the routes
-// normalise it with toPortalE164 (src/lib/portal/phone.ts). The schema only
-// checks that SOMETHING plausible was typed — telling an unregistered number
-// apart from a malformed one is the route's job, and both get the same answer.
+// The phone arrives as the resident typed it (any Israeli format, or a foreign
+// number with its '+' and country code); the routes normalise it with
+// toPortalE164 (src/lib/portal/phone.ts). The schema only checks that SOMETHING
+// plausible was typed — 8 chars is the shortest E.164 ('+' + 7 digits) — telling
+// an unregistered number apart from a malformed one is the route's job, and
+// both get the same answer.
 
 // POST /api/portal/otp/request
 export const portalOtpRequestBodySchema = z.object({
   phone: z
     .string({ error: 'מספר טלפון לא תקין' })
     .trim()
-    .min(9, 'מספר טלפון לא תקין')
+    .min(8, 'מספר טלפון לא תקין')
     .max(20, 'מספר טלפון לא תקין'),
 });
 
@@ -256,7 +258,7 @@ export const portalOtpVerifyBodySchema = z.object({
   phone: z
     .string({ error: 'מספר טלפון לא תקין' })
     .trim()
-    .min(9, 'מספר טלפון לא תקין')
+    .min(8, 'מספר טלפון לא תקין')
     .max(20, 'מספר טלפון לא תקין'),
   code: z
     .string({ error: 'הקוד חייב להכיל 6 ספרות' })
@@ -269,7 +271,7 @@ export const ownerPhoneCreateBodySchema = z.object({
   phone: z
     .string({ error: 'מספר טלפון לא תקין' })
     .trim()
-    .min(9, 'מספר טלפון לא תקין')
+    .min(8, 'מספר טלפון לא תקין')
     .max(20, 'מספר טלפון לא תקין'),
   owner_name: z
     .string()
@@ -301,7 +303,7 @@ export const portalUnlockBodySchema = z.object({
   phone: z
     .string({ error: 'מספר טלפון לא תקין' })
     .trim()
-    .min(9, 'מספר טלפון לא תקין')
+    .min(8, 'מספר טלפון לא תקין')
     .max(20, 'מספר טלפון לא תקין'),
 });
 

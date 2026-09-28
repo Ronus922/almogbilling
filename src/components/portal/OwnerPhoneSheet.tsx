@@ -14,7 +14,7 @@ import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { Field } from '@/components/side-panel/Field';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { validatePhone } from '@/lib/validation';
-import { e164ToLocal, toPortalE164 } from '@/lib/portal/phone';
+import { OWNER_PHONE_RULE_MESSAGE, e164ToLocal, toPortalE164 } from '@/lib/portal/phone';
 import type { OwnerPhone } from '@/lib/types/portal';
 
 // Add / edit one owner phone of an apartment — a Sheet, like every CREATE/EDIT
@@ -47,15 +47,21 @@ export function OwnerPhoneSheet({ open, apartmentNumber, row, onOpenChange, onSa
   const [serverError, setServerError] = useState<string | null>(null);
   const [confirmClose, setConfirmClose] = useState(false);
 
-  // Mobile only — the code is delivered over WhatsApp, so a landline row could
-  // never sign in. Same rule as the server's and as the backfill's.
+  // Israeli mobile or a foreign E.164 — the code is delivered over WhatsApp, so
+  // an Israeli landline row could never sign in. Same rule as the server's
+  // (toPortalE164) and as the table's CHECK. validatePhone only adds its
+  // friendlier messages for an Israeli spelling; a '+…' number is judged by
+  // toPortalE164 alone.
   const phoneError = (() => {
     if (serverError) return serverError;
     if (!touched || isEdit) return null;
-    if (!form.phone.trim()) return 'מספר טלפון הוא שדה חובה';
-    const v = validatePhone(form.phone);
-    if (!v.valid) return v.error ?? 'מספר טלפון לא תקין';
-    if (!toPortalE164(form.phone)) return 'נדרש מספר נייד ישראלי — הקוד נשלח בוואטסאפ';
+    const typed = form.phone.trim();
+    if (!typed) return 'מספר טלפון הוא שדה חובה';
+    if (!typed.startsWith('+')) {
+      const v = validatePhone(typed);
+      if (!v.valid) return v.error ?? 'מספר טלפון לא תקין';
+    }
+    if (!toPortalE164(typed)) return OWNER_PHONE_RULE_MESSAGE;
     return null;
   })();
 
@@ -119,7 +125,7 @@ export function OwnerPhoneSheet({ open, apartmentNumber, row, onOpenChange, onSa
                   {isEdit ? 'עריכת בעלים' : 'בעלים חדש'}
                 </SheetTitle>
                 <p className="mt-1 text-sm text-white/70">
-                  דירה {apartmentNumber} — מספר נייד שמורשה להיכנס לפורטל בעלי הדירות.
+                  דירה {apartmentNumber} — מספר טלפון שמורשה להיכנס לפורטל בעלי הדירות.
                   {isEdit && ' המספר עצמו אינו נערך: להחלפה — השבת את הקיים והוסף חדש.'}
                 </p>
               </div>
@@ -141,7 +147,7 @@ export function OwnerPhoneSheet({ open, apartmentNumber, row, onOpenChange, onSa
                 <div className="space-y-4 py-2">
                   <Field
                     id="owner-phone"
-                    label="טלפון נייד"
+                    label="טלפון"
                     value={form.phone}
                     onChange={(v) => { setForm((f) => ({ ...f, phone: v })); setServerError(null); }}
                     onBlur={() => setTouched(true)}
@@ -154,7 +160,7 @@ export function OwnerPhoneSheet({ open, apartmentNumber, row, onOpenChange, onSa
                     tabularNums
                     placeholder="050-0000000"
                     autoFocus={!isEdit}
-                    hint={isEdit ? undefined : 'נייד ישראלי בלבד — הקוד נשלח בוואטסאפ.'}
+                    hint={isEdit ? undefined : 'נייד ישראלי, או מספר בינלאומי עם קידומת (למשל ‎+44…) — הקוד נשלח בוואטסאפ.'}
                   />
                   <Field
                     id="owner-name"

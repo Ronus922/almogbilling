@@ -45,6 +45,43 @@ describe('normalizePhone — Israeli phone → Green API chatId', () => {
     expect(() => normalizePhone('123')).toThrow(WhatsAppError);
     expect(() => normalizePhone('abc')).toThrow(WhatsAppError);
   });
+
+  // 28/09/2026: a '+' means E.164 as written — the owners portal takes foreign
+  // numbers, and the roster's CHECK and toPortalE164 apply the same rule.
+  describe("a leading '+' = E.164 as written", () => {
+    it('keeps a foreign number verbatim and builds its chat id', () => {
+      expect(normalizePhone('+14155552671')).toEqual({ phone: '14155552671', chatId: '14155552671@c.us' });
+      expect(normalizePhone('+1 (415) 555-2671').phone).toBe('14155552671');
+      expect(normalizePhone('+44 7911 123456').phone).toBe('447911123456');
+      expect(normalizePhone('+49-30-1234567').phone).toBe('49301234567');
+    });
+
+    it('never injects 972 after a +', () => {
+      // '+0…' is not E.164 — and it is NOT rescued into an Israeli mobile.
+      expect(() => normalizePhone('+0541234567')).toThrow(WhatsAppError);
+      // '+54…' is Argentina, kept verbatim — not '972541234567'.
+      expect(normalizePhone('+541234567').phone).toBe('541234567');
+    });
+
+    it('+972 is still held to the Israeli rule, not to bare E.164', () => {
+      expect(normalizePhone('+972541234567').phone).toBe('972541234567');
+      expect(normalizePhone('+972-3-1234567').phone).toBe('97231234567');
+      expect(() => normalizePhone('+9720541234567')).toThrow(WhatsAppError); // trunk 0 kept
+      expect(() => normalizePhone('+97254123')).toThrow(WhatsAppError);      // too short
+    });
+
+    it('enforces the E.164 length: 7–15 digits', () => {
+      expect(normalizePhone('+1234567').phone).toBe('1234567');
+      expect(() => normalizePhone('+123456')).toThrow(WhatsAppError);
+      expect(normalizePhone('+123456789012345').phone).toBe('123456789012345');
+      expect(() => normalizePhone('+1234567890123456')).toThrow(WhatsAppError);
+    });
+
+    it("a foreign number WITHOUT its '+' is still not a number (nothing changed there)", () => {
+      expect(() => normalizePhone('14155552671')).toThrow(WhatsAppError);
+      expect(() => normalizePhone('0014155552671')).toThrow(WhatsAppError);
+    });
+  });
 });
 
 describe('parsePhoneCandidates — compound debtor phone fields', () => {
