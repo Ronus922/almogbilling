@@ -13,13 +13,14 @@ export const PORTAL_TABS = ['ov', 'tx', 'fund', 'acc', 'dec', 'rep'] as const;
 export type PortalTab = (typeof PORTAL_TABS)[number];
 
 /** `?tab=` → a tab. The old portal's `fund` keeps working; anything else is
- *  the overview. A range in `?m=` (the old picker's quarter / half / year)
- *  opens the reports tab on that range, so an old link still lands right. */
+ *  the overview. `?m=` is the transactions tab's period in all four of its
+ *  grammars (month · quarter · half · year), so a link from before the
+ *  six-tab shell — which carried the period alone — opens that tab on that
+ *  period, exactly where it used to land. The reports tab has its own `?r=`. */
 export function parsePortalTab(tab: string | undefined, m: string | undefined): PortalTab {
   if (tab && (PORTAL_TABS as readonly string[]).includes(tab)) return tab as PortalTab;
   if (tab === 'operating') return 'tx';
-  const p = m ? parsePeriod(m) : null;
-  if (p && p.kind !== 'month') return 'rep';
+  if (m && parsePeriod(m)) return 'tx';
   return 'ov';
 }
 
@@ -136,28 +137,45 @@ export function apartmentsLabel(numbers: readonly string[]): string {
 
 // ── Selectors ────────────────────────────────────────────────────────────────
 
-/** Published months grouped by year for the month select: years newest
- *  first, months newest first inside a year. */
-export function monthsByYear(publishedKeys: readonly string[]): Array<{ year: string; months: string[] }> {
-  const map = new Map<string, string[]>();
-  for (const k of [...publishedKeys].sort().reverse()) {
-    const y = k.slice(0, 4);
-    const list = map.get(y);
-    if (list) list.push(k);
-    else map.set(y, [k]);
-  }
-  return [...map.entries()].map(([year, months]) => ({ year, months }));
+/** The years that hold a published month, newest first. */
+function publishedYears(publishedKeys: readonly string[]): number[] {
+  return [...new Set(publishedKeys.map((k) => Number(k.slice(0, 4))))].sort((a, b) => b - a);
+}
+
+/** A range is offered only when it holds at least one published month — the
+ *  one rule behind both selects below. */
+function holdsPublished(published: ReadonlySet<string>): (p: Period) => boolean {
+  return (p) => [...published].some((k) => k >= p.from && k <= p.to);
+}
+
+/** The period picker of the transactions tab, grouped by year (years newest
+ *  first). Inside a year, fine to coarse and newest first in each step: its
+ *  PUBLISHED months, then the quarters, the halves and the year itself that
+ *  hold one. A month nobody published is not in the list at all, so it cannot
+ *  be picked — and neither can an empty quarter, half or year. */
+export function periodOptionsByYear(publishedKeys: readonly string[]): Array<{ year: number; periods: Period[] }> {
+  const published = new Set(publishedKeys);
+  const has = holdsPublished(published);
+  const newestFirst = [...publishedKeys].sort().reverse();
+  return publishedYears(publishedKeys).map((year) => {
+    const periods: Period[] = newestFirst
+      .filter((k) => Number(k.slice(0, 4)) === year)
+      .map((k) => makePeriod('month', year, Number(k.slice(5, 7))));
+    for (const q of [4, 3, 2, 1]) { const p = makePeriod('quarter', year, q); if (has(p)) periods.push(p); }
+    for (const h of [2, 1]) { const p = makePeriod('half', year, h); if (has(p)) periods.push(p); }
+    const whole = makePeriod('year', year, 1);
+    if (has(whole)) periods.push(whole);
+    return { year, periods };
+  });
 }
 
 /** Every quarter, half and year that holds at least one published month —
  *  the reports select. Newest first; inside a year: the year, then halves,
  *  then quarters (all newest first). */
 export function reportRanges(publishedKeys: readonly string[]): Period[] {
-  const published = new Set(publishedKeys);
-  const years = [...new Set(publishedKeys.map((k) => Number(k.slice(0, 4))))].sort((a, b) => b - a);
-  const has = (p: Period) => [...published].some((k) => k >= p.from && k <= p.to);
+  const has = holdsPublished(new Set(publishedKeys));
   const out: Period[] = [];
-  for (const y of years) {
+  for (const y of publishedYears(publishedKeys)) {
     const candidates: Period[] = [
       makePeriod('year', y, 1),
       makePeriod('half', y, 2), makePeriod('half', y, 1),

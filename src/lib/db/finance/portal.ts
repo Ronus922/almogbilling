@@ -3,9 +3,10 @@ import { query, queryOne } from '@/lib/db';
 import type { FinKind, FinSection } from '@/lib/constants/finance';
 import type {
   PeriodReport, PeriodReportCategory, PeriodReportMonth, RenovationFundKpis, ResidentBankBalance, ResidentDocument,
-  ResidentEntry, ResidentFundKpis, ResidentMonthData, ResidentOverview,
+  ResidentEntry, ResidentFundKpis, ResidentMonthData, ResidentMonthSection, ResidentOverview, ResidentPeriodData,
+  ResidentPeriodMonth,
 } from '@/lib/types/finance';
-import { currentMonthKey, periodMonthOf, shiftMonthKey } from '@/lib/finance/period';
+import { currentMonthKey, monthKeyOf, periodMonthOf, shiftMonthKey } from '@/lib/finance/period';
 import { publishedMonthKeys } from '@/lib/finance/resident';
 import { buildProxyUrl, FINANCE_RECEIPTS_BUCKET } from '@/lib/storage/server';
 import { PUBLISHED_JOIN, listFundEntries } from './entries';
@@ -132,6 +133,69 @@ export async function getResidentMonthData(year: number, month: number): Promise
     operating: sectionOf(rows, 'operating'),
     fund: sectionOf(rows, 'renovation_fund'),
     ...(bank !== undefined ? { bank_balance: bank } : {}),
+  };
+}
+
+/** The operating lines and totals of a whole period — the transactions tab's
+ *  four levels (a month, a quarter, a half, a year), published months only.
+ *
+ *  Same rule as everywhere in this module: the entries query joins on the
+ *  published row and filters on it, so a month residents do not get yields no
+ *  rows — it cannot reach a total, a category, a line or a chart column even
+ *  if a caller forgot to check. `months` still LISTS every calendar month of
+ *  the period up to the current one (a future month is not part of it), each
+ *  flagged `included`, which is what the screen's "N of M months" line and the
+ *  chart read. The closing balance is the newest included month that has one,
+ *  and only while the bank-balance switch is on. */
+export async function getResidentPeriodData(from: string, to: string): Promise<ResidentPeriodData> {
+  const cutoff = currentMonthKey();
+  const last = to < cutoff ? to : cutoff;
+  const keys: string[] = [];
+  for (let m = from; m <= last; m = shiftMonthKey(m, 1)) keys.push(m);
+
+  const empty: ResidentMonthSection = { income: [], expense: [], totals: { income: 0, expense: 0, diff: 0 } };
+  if (keys.length === 0) return { from, to, months: [], operating: empty };
+
+  const [statuses, r] = await Promise.all([
+    query<{ year: number; month: number; published: boolean }>(
+      `select year, month, published from public.finance_month_status
+        where make_date(year, month, 1) between $1::date and $2::date`,
+      [periodMonthOf(from), periodMonthOf(last)],
+    ),
+    query<ResidentRow>(
+      `select ${RESIDENT_COLS}
+         from public.fin_entries e
+         join public.fin_categories c on c.id = e.category_id
+         join public.finance_month_status s
+           on s.year = extract(year from e.period_month)::int
+          and s.month = extract(month from e.period_month)::int
+        where s.published and e.deleted_at is null and c.section = 'operating'
+          and e.period_month between $1::date and $2::date
+        order by e.kind, c.sort_order, c.name, coalesce(e.payment_date, e.period_month), e.created_at`,
+      [periodMonthOf(from), periodMonthOf(last)],
+    ),
+  ]);
+
+  const published = new Set(
+    statuses.rows.filter((x) => x.published).map((x) => `${String(x.year).padStart(4, '0')}-${String(x.month).padStart(2, '0')}`),
+  );
+  const rows = await toResidentEntries(r.rows);
+  const operating = sectionOf(rows, 'operating');
+
+  const months: ResidentPeriodMonth[] = keys.map((month) => {
+    const of = (list: ResidentEntry[]) => list.filter((e) => monthKeyOf(e.period_month) === month).reduce((sum, e) => sum + e.amount, 0);
+    return { month, included: published.has(month), income: of(operating.income), expense: of(operating.expense) };
+  });
+
+  const balances = await residentBankBalances();
+  const closing = [...keys].reverse().find((k) => published.has(k) && balances.has(k));
+
+  return {
+    from,
+    to,
+    months,
+    operating,
+    ...(closing !== undefined ? { bank_balance: balances.get(closing)!, bank_balance_month: closing } : {}),
   };
 }
 
