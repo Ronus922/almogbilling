@@ -246,6 +246,38 @@ export interface ResidentMonthData {
   bank_balance?: number;
 }
 
+/** One calendar month of the transactions tab's period: whether residents get
+ *  it (published), and its operating totals — a month they do not get carries
+ *  zeros and contributes nothing, so a hidden month cannot show up as a column
+ *  or inside a total. */
+export interface ResidentPeriodMonth {
+  /** 'YYYY-MM' */
+  month: string;
+  included: boolean;
+  income: number;
+  expense: number;
+}
+
+/** Everything the transactions tab shows for the selected period — one month,
+ *  a quarter, a half or a year (the period picker's four levels). The lines
+ *  and the totals cover the INCLUDED months only; `months` lists every
+ *  calendar month of the period up to the current one, so the screen can say
+ *  "N of M months" and draw a column per month residents actually get. */
+export interface ResidentPeriodData {
+  /** 'YYYY-MM', inclusive. */
+  from: string;
+  to: string;
+  /** Oldest first. */
+  months: ResidentPeriodMonth[];
+  operating: ResidentMonthSection;
+  /** The period's closing bank balance: the newest included month that has a
+   *  value. Absent while the "הצג יתרת בנק לדיירים" switch is off, or when no
+   *  included month carries one. */
+  bank_balance?: number;
+  /** 'YYYY-MM' of the month that balance belongs to. */
+  bank_balance_month?: string;
+}
+
 /** The building's bank balance as the overview shows it: the newest published
  *  month that has a value, and the published month right before it when that
  *  one has a value too (for the "מול החודש הקודם" line). Only while the switch

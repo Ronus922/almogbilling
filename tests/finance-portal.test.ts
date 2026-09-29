@@ -48,7 +48,7 @@ vi.mock('@/lib/db', () => ({
 const { createEntry, listEntriesForMonth, listFundEntries } = await import('@/lib/db/finance/entries');
 const {
   findResidentReceipt, getPeriodReport, getPublishedMonths, getRenovationFundKpis, getResidentMonthData, getResidentOverview,
-  listRecentResidentEntries,
+  getResidentPeriodData, listRecentResidentEntries,
 } = await import('@/lib/db/finance/portal');
 const { getFinanceSettings, updateFinanceSettings } = await import('@/lib/db/finance/settings');
 const { setMonthPublished } = await import('@/lib/db/finance/month-status');
@@ -290,6 +290,46 @@ d('finance read layer — sections, cumulative fund, publishedOnly, period repor
     const pubInc = pub.income.find((c) => c.category_id === cat.opInc)!;
     expect(pubInc.total).toBe(2000);
     expect(pubInc.average).toBe(2000);
+  });
+
+  // The transactions tab's period reader, restored with the picker on
+  // 29/09/2026: the same "published lives in the SQL" rule, now over a whole
+  // period — the tab's KPIs, chart, categories and rows all come from here.
+  it('period data: only published months reach the lines and the totals', async () => {
+    const data = await getResidentPeriodData(prev2, cur);
+    // Every calendar month of the range is listed, flagged by what residents get.
+    expect(data.months.map((m) => m.month)).toEqual([prev2, prev, cur]);
+    expect(data.months.map((m) => m.included)).toEqual([false, true, false]);
+
+    // prev is published (2000 in / 500 out); prev2 and cur are not.
+    const mine = (list: ReadonlyArray<{ category_name: string; amount: number }>) => list.filter((e) => e.category_name.startsWith(uniq));
+    expect(mine(data.operating.income).map((e) => e.amount)).toEqual([2000]);
+    expect(mine(data.operating.expense).map((e) => e.amount)).toEqual([500]);
+    for (const e of data.operating.expense) {
+      expect(e).not.toHaveProperty('supplier_name');
+      expect(e).not.toHaveProperty('internal_note');
+    }
+
+    // The per-month figures the chart draws carry nothing of a hidden month.
+    const byMonth = new Map(data.months.map((m) => [m.month, m]));
+    expect(byMonth.get(cur)).toMatchObject({ income: 0, expense: 0, included: false });
+    expect(byMonth.get(prev2)).toMatchObject({ income: 0, expense: 0, included: false });
+    // prev holds my 2000/500 plus whatever else the database has for it.
+    expect(byMonth.get(prev)!.income).toBeGreaterThanOrEqual(2000);
+
+    // A month alone is the same reader with from = to.
+    const one = await getResidentPeriodData(prev, prev);
+    expect(one.months).toHaveLength(1);
+    expect(mine(one.operating.income).map((e) => e.amount)).toEqual([2000]);
+    expect(one.operating.totals.diff).toBe(one.operating.totals.income - one.operating.totals.expense);
+
+    // No fund line ever reaches the operating tab.
+    const names = [...data.operating.income, ...data.operating.expense].map((e) => e.category_name);
+    expect(names.some((n) => n === `${uniq}-fundInc` || n === `${uniq}-fundExp1`)).toBe(false);
+
+    // A period entirely in the future has no months and no figures.
+    const future = shiftMonthKey(cur, 6);
+    expect((await getResidentPeriodData(future, shiftMonthKey(future, 2))).months).toEqual([]);
   });
 
   it('quarter, half and year ranges sum the right months', async () => {

@@ -36,7 +36,7 @@ vi.mock('@/lib/db', () => ({
 }));
 
 const { getAdminPreviewAccount, getLastSyncAt, getPortalMyAccount } = await import('@/lib/db/portal/account');
-const { getResidentMonthData, getResidentOverview } = await import('@/lib/db/finance/portal');
+const { getResidentMonthData, getResidentOverview, getResidentPeriodData } = await import('@/lib/db/finance/portal');
 const { listPublishedMonthBalances, setMonthBankBalance, setMonthPublished, getMonthStatus } = await import('@/lib/db/finance/month-status');
 const { getFinanceSettings, updateFinanceSettings } = await import('@/lib/db/finance/settings');
 const { issueCode, verifyCode, resendCooldownRemaining } = await import('@/lib/db/portal/otp');
@@ -204,6 +204,7 @@ d('owners portal — my account, bank balance, one-time codes', () => {
     const off = await getResidentOverview(12);
     expect(off?.bank_balance).toBeUndefined();
     expect((await getResidentMonthData(p1.year, p1.month))?.bank_balance).toBeUndefined();
+    expect((await getResidentPeriodData(prev2, cur)).bank_balance).toBeUndefined();
 
     await updateFinanceSettings({ show_bank_balance_to_residents: true }, actorId);
     const on = await getResidentOverview(12);
@@ -211,6 +212,18 @@ d('owners portal — my account, bank balance, one-time codes', () => {
     expect((await getResidentMonthData(p1.year, p1.month))?.bank_balance).toBe(48320);
     // the hidden month's balance is nowhere, switch or no switch
     expect(JSON.stringify(on)).not.toContain('7654321');
+
+    // The transactions tab's closing balance (the picker restored 29/09/2026):
+    // the newest month residents get INSIDE the period — never the hidden one,
+    // even though it is the period's last calendar month and has a value.
+    const range = await getResidentPeriodData(prev2, cur);
+    expect(range.bank_balance).toBe(48320);
+    expect(range.bank_balance_month).toBe(prev);
+    expect(JSON.stringify(range)).not.toContain('7654321');
+    const first = await getResidentPeriodData(prev2, prev2);
+    expect(first.bank_balance).toBe(46180);
+    expect(first.bank_balance_month).toBe(prev2);
+
     // clearing the previous month's value drops the delta line
     await setMonthBankBalance(p2.year, p2.month, null, actorId);
     expect((await getResidentOverview(12))?.bank_balance).toEqual({ month: prev, value: 48320, previous: null });

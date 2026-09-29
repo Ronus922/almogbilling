@@ -1,9 +1,8 @@
 import type { ReactNode } from 'react';
 import {
-  getPeriodReport, getPublishedMonths, getResidentFundKpis, getResidentMonthData, getResidentOverview,
+  getPeriodReport, getPublishedMonths, getResidentFundKpis, getResidentOverview, getResidentPeriodData,
 } from '@/lib/db/finance/portal';
 import { countContacts } from '@/lib/db/contacts';
-import { monthKeyParts, parsePeriod } from '@/lib/finance/period';
 import { publishedMonthKeys, residentPeriodFor } from '@/lib/finance/resident';
 import {
   firstName, parseOverviewSpan, parsePortalTab, parseTxFilter, reportRangeFor, reportRanges,
@@ -29,10 +28,11 @@ import { DecisionsIcon, ReportsIcon } from './PortalIcons';
 //     apartment and passes `preview`, which hides the logout button. Nothing
 //     in here reads a cookie, so the same rendering cannot differ by caller.
 //
-// The URL vocabulary — `tab`, `m` (month of the transactions tab), `r` (range
-// of the reports tab), `n` (overview span), `f` (transactions filter) — is not
-// trusted: an unpublished month falls back to the newest published one, a
-// range not in the list to the newest range.
+// The URL vocabulary — `tab`, `m` (the transactions tab's period, in any of
+// the four grammars of lib/finance/period), `r` (range of the reports tab),
+// `n` (overview span), `f` (transactions filter) — is not trusted:
+// residentPeriodFor() sends a period residents may not open back to the newest
+// published month, and a range not in the reports list to the newest range.
 
 export interface PortalScreenParams {
   tab?: string;
@@ -68,19 +68,15 @@ export async function PortalScreen({ params, user, accounts, preview = false }: 
       break;
     }
     case 'tx': {
-      if (nothing) { body = nothingPublished; break; }
-      const period = residentPeriodFor(params.m, publishedMonths);
-      const monthKey = period?.kind === 'month' ? period.key : publishedMonths[0];
-      const mp = monthKeyParts(monthKey);
-      const data = await getResidentMonthData(mp.year, mp.month);
-      body = <PortalTransactions key={monthKey} monthKey={monthKey} publishedMonths={publishedMonths} data={data} filter={parseTxFilter(params.f)} />;
+      const period = nothing ? null : residentPeriodFor(params.m, publishedMonths);
+      if (!period) { body = nothingPublished; break; }
+      const data = await getResidentPeriodData(period.from, period.to);
+      body = <PortalTransactions key={period.key} period={period} publishedMonths={publishedMonths} data={data} filter={parseTxFilter(params.f)} />;
       break;
     }
     case 'rep': {
       const ranges = reportRanges(publishedMonths);
-      // An old `?m=2026-Q3` link (the previous picker) still opens its report.
-      const requested = params.r ?? (params.m && parsePeriod(params.m)?.kind !== 'month' ? params.m : undefined);
-      const range = reportRangeFor(requested, ranges);
+      const range = reportRangeFor(params.r, ranges);
       const report = range ? await getPeriodReport(range.from, range.to, { publishedOnly: true }) : null;
       body = <PortalReports key={range?.key ?? 'none'} ranges={ranges} range={range} report={report} />;
       break;

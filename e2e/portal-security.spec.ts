@@ -245,6 +245,10 @@ test.describe('4. staff and residents are separate worlds', () => {
   });
 });
 
+/** The short label the chart would draw for the hidden (current) month. */
+const hiddenShort = () =>
+  ['ינו׳', 'פבר׳', 'מרץ', 'אפר׳', 'מאי', 'יוני', 'יולי', 'אוג׳', 'ספט׳', 'אוק׳', 'נוב׳', 'דצמ׳'][Number(nowKey().slice(5)) - 1];
+
 test.describe('5. unpublished months', () => {
   test('?m=, ?r=, the report, the export and the chart never show the hidden month', async ({ browser }) => {
     const ctx = await owner(browser, A1);
@@ -257,12 +261,21 @@ test.describe('5. unpublished months', () => {
     const rep = await page.content();
     expect(scan(rep)).toEqual([]);
     expect(rep).toContain('כולל');
-    await page.goto(`/portal?m=${nowKey().slice(0, 4)}-Q${Math.floor((Number(nowKey().slice(5)) - 1) / 3) + 1}`);
-    expect(await page.$eval('.nav button.on', (b) => b.textContent)).toBe('דוחות');
+    // A link carrying only a period opens the transactions tab on it (the
+    // period picker, restored 29/09/2026). The quarter is built around the
+    // PUBLISHED month, so it is always one residents may open — it holds the
+    // hidden month too whenever the two share a quarter — and either way
+    // nothing of that month may appear in it.
+    const q = Math.floor((Number(prevKey().slice(5)) - 1) / 3) + 1;
+    const quarter = `${prevKey().slice(0, 4)}-Q${q}`;
+    await page.goto(`/portal?m=${quarter}`);
+    expect(await page.$eval('.nav button.on', (b) => b.textContent)).toBe('הכנסות והוצאות');
+    expect(await page.inputValue('#t-tx select.sel')).toBe(quarter);
+    expect(scan(await page.content())).toEqual([]);
+    expect(await page.$$eval('#t-tx .chart .grp text', (t) => t.map((x) => x.textContent))).not.toContain(hiddenShort());
     await page.goto('/portal?tab=ov');
     const labels = await page.$$eval('.chart .grp text', (t) => t.map((x) => x.textContent));
-    const hiddenShort = ['ינו׳', 'פבר׳', 'מרץ', 'אפר׳', 'מאי', 'יוני', 'יולי', 'אוג׳', 'ספט׳', 'אוק׳', 'נוב׳', 'דצמ׳'][Number(nowKey().slice(5)) - 1];
-    expect(labels).not.toContain(hiddenShort);
+    expect(labels).not.toContain(hiddenShort());
     await ctx.close();
   });
 });

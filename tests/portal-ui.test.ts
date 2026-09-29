@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   accountTotals, apartmentsLabel, axisLabel, categoriesOf, categoryShares, firstName, flatEntries, fmtDateDMY, fmtDelta,
-  fmtEntryDate, fmtIls, fmtSigned, initials, monthShort, monthsByYear, niceAxis, parseOverviewSpan, parsePortalTab,
-  parseTxFilter, pctVsAverage, reportRangeFor, reportRanges, roundShekels, sanitizeCell, signClass, sumExact, windowKeys,
+  fmtEntryDate, fmtIls, fmtSigned, initials, monthShort, niceAxis, parseOverviewSpan, parsePortalTab,
+  parseTxFilter, pctVsAverage, periodOptionsByYear, reportRangeFor, reportRanges, roundShekels, sanitizeCell,
+  signClass, sumExact, windowKeys,
 } from '@/lib/portal/ui';
-import { AMOUNT_NUM_FMT, buildPortalMonthWorkbook } from '@/lib/portal/export';
+import { AMOUNT_NUM_FMT, buildPortalPeriodWorkbook } from '@/lib/portal/export';
+import { makePeriod } from '@/lib/finance/period';
 import type { PortalAccount } from '@/lib/types/portal';
 import type { ResidentEntry } from '@/lib/types/finance';
 
@@ -26,10 +28,17 @@ describe('portal tabs in the URL', () => {
     expect(parsePortalTab(undefined, undefined)).toBe('ov');
     expect(parsePortalTab('nope', undefined)).toBe('ov');
   });
-  it('an old range link (?m=2026-Q3) lands on the reports tab; a month does not', () => {
-    expect(parsePortalTab(undefined, '2026-Q3')).toBe('rep');
-    expect(parsePortalTab(undefined, '2026')).toBe('rep');
-    expect(parsePortalTab(undefined, '2026-09')).toBe('ov');
+  // The period picker writes `?m=` in all four grammars; a link that carries
+  // only a period — the ones the pre-PR#44 portal produced — opens the
+  // transactions tab on it, which is where it used to land (29/09/2026).
+  it('a period in ?m= opens the transactions tab, whichever of the four it is', () => {
+    expect(parsePortalTab(undefined, '2026-09')).toBe('tx');
+    expect(parsePortalTab(undefined, '2026-Q3')).toBe('tx');
+    expect(parsePortalTab(undefined, '2026-H1')).toBe('tx');
+    expect(parsePortalTab(undefined, '2026')).toBe('tx');
+    expect(parsePortalTab(undefined, 'garbage')).toBe('ov');
+    // an explicit tab still wins over the period
+    expect(parsePortalTab('rep', '2026-Q3')).toBe('rep');
   });
   it('span and filter fall back safely', () => {
     expect(parseOverviewSpan('6')).toBe(6);
@@ -67,11 +76,18 @@ describe("the reference's formats", () => {
 
 describe('selectors — published months only, grouped by year, newest first', () => {
   const published = ['2025-11', '2026-01', '2026-02', '2026-07'];
-  it('groups months by year, newest year and newest month first', () => {
-    expect(monthsByYear(published)).toEqual([
-      { year: '2026', months: ['2026-07', '2026-02', '2026-01'] },
-      { year: '2025', months: ['2025-11'] },
+  it('the period picker offers published months then the ranges that hold one, per year', () => {
+    expect(periodOptionsByYear(published).map((y) => ({ year: y.year, keys: y.periods.map((p) => p.key) }))).toEqual([
+      { year: 2026, keys: ['2026-07', '2026-02', '2026-01', '2026-Q3', '2026-Q1', '2026-H2', '2026-H1', '2026'] },
+      { year: 2025, keys: ['2025-11', '2025-Q4', '2025-H2', '2025'] },
     ]);
+  });
+  it('a month nobody published is not in the picker, and neither is an empty range', () => {
+    const keys = periodOptionsByYear(['2026-02']).flatMap((y) => y.periods.map((p) => p.key));
+    expect(keys).toEqual(['2026-02', '2026-Q1', '2026-H1', '2026']);
+    expect(keys).not.toContain('2026-01'); // published: only 02
+    expect(keys).not.toContain('2026-Q2'); // holds no published month
+    expect(periodOptionsByYear([])).toEqual([]);
   });
   it('lists only ranges that hold a published month', () => {
     const keys = reportRanges(published).map((p) => p.key);
@@ -215,7 +231,7 @@ describe('whole shekels on the screen, agorot in the file (28/09/2026)', () => {
     expect(pctVsAverage(1.5, [1, 1, 1, 1.5])).toBe(33);
   });
   it('the Excel workbook keeps the agorot as a number formatted with two decimals', async () => {
-    const wb = await buildPortalMonthWorkbook({ monthKey: '2026-08', rows: [
+    const wb = await buildPortalPeriodWorkbook({ period: makePeriod('month', 2026, 8), rows: [
       entry({ kind: 'expense', amount: 1800.5, description: 'ניקיון' }),
       entry({ kind: 'income', amount: 8820.4, description: 'דמי ועד', payment_date: null, period_month: '2026-08-01' }),
     ] });
