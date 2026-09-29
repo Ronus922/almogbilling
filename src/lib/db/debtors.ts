@@ -104,6 +104,13 @@ const OWNER_NAME_SQL   = `case when rc.id is null then d.owner_name   else rc.ow
 const TENANT_NAME_SQL  = `case when rc.id is null then d.tenant_name  else rc.tenant_name  end`;
 const PHONE_OWNER_SQL  = `case when rc.id is null then d.phone_owner  else rc.owner_phone  end`;
 const PHONE_TENANT_SQL = `case when rc.id is null then d.phone_tenant else rc.tenant_phone end`;
+// Addresses follow the same rule as the four above (29/09/2026): the registry
+// is the source of truth for a LINKED apartment, and debtors.email_* is the
+// legacy copy for one that is not. Until now the panel read the legacy column
+// unconditionally, so an address changed in the residents list — or approved
+// out of the Bllink queue — was written to contacts and never shown.
+const EMAIL_OWNER_SQL  = `case when rc.id is null then d.email_owner  else rc.owner_email  end`;
+const EMAIL_TENANT_SQL = `case when rc.id is null then d.email_tenant else rc.tenant_email end`;
 
 export async function getDashboardKpis(): Promise<DashboardKpis> {
   const row = await queryOne<{
@@ -384,7 +391,8 @@ const SELECT_COLUMNS = `
   d.address,
   ${PHONE_OWNER_SQL} as phone_owner,
   ${PHONE_TENANT_SQL} as phone_tenant,
-  d.email_owner, d.email_tenant,
+  ${EMAIL_OWNER_SQL} as email_owner,
+  ${EMAIL_TENANT_SQL} as email_tenant,
   d.total_debt::float8 as total_debt,
   d.management_fees::float8 as management_fees,
   d.monthly_debt,
@@ -523,7 +531,8 @@ export async function getDebtorById(id: string): Promise<Tenant | null> {
        ${TENANT_NAME_SQL} as tenant_name,
        ${PHONE_OWNER_SQL} as phone_owner,
        ${PHONE_TENANT_SQL} as phone_tenant,
-       d.email_owner, d.email_tenant,
+       ${EMAIL_OWNER_SQL} as email_owner,
+       ${EMAIL_TENANT_SQL} as email_tenant,
        coalesce(d.phones_manual_override, false) as phones_manual_override,
        d.total_debt::float8       as total_debt,
        d.management_fees::float8  as management_fees,

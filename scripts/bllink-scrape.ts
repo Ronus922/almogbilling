@@ -49,6 +49,7 @@ import {
   type CompareResult, type CompareRow,
 } from '../src/lib/sync/bllinkCompare';
 import { toCompareMap } from '../src/lib/sync/bllinkMap';
+import { extractTenantEmails, type ApartmentEmails } from '../src/lib/sync/tenantList';
 import { resolveBllinkSource } from '../src/lib/sync/decision';
 import { resolveScrapeConnection, tryAcquireScrapeLock } from '../src/lib/sync/scrapeLock';
 import { sendAdminAlert } from './lib/admin-alert';
@@ -62,6 +63,10 @@ type Stage = 'login' | 'navigate' | 'download' | 'parse' | 'compare';
 
 const TAG = '[bllink:shadow]';
 const REPORT_URL = 'https://app.bllink.co/reports/building-debt/udnp';
+// Bllink's own resident list. The debt export above carries no address at all
+// (Phase 0, 29/09/2026 — nine columns, zero email-shaped cells); this screen
+// does, and the same signed-in session reaches it. src/lib/sync/tenantList.ts.
+const TENANT_LIST_URL = 'https://app.bllink.co/reports/tenant-list/udnp';
 const TOTAL_TIMEOUT_MS = 180_000;
 const RETENTION_DAYS = 90;
 const LOG_DIR = '/var/log/billing';
@@ -78,6 +83,8 @@ interface ScrapeRow {
   special_debt: number;
   management_months_raw: string | null;
   notes: string | null;
+  owner_email: string | null;
+  tenant_email: string | null;
   raw: Record<string, unknown>;
 }
 
@@ -161,6 +168,9 @@ async function workbookToScrapeRows(buffer: Buffer): Promise<{ rows: ScrapeRow[]
       special_debt: round2(p.hot_water_debt), // column G
       management_months_raw: p.monthly_debt, // column F (text)
       notes: p.details, // column H
+      // Filled from the resident list afterwards — the export has no address.
+      owner_email: null,
+      tenant_email: null,
       raw: {
         col_A: r[0] ?? null, col_B: r[1] ?? null, col_C: r[2] ?? null, col_D: r[3] ?? null,
         col_E: r[4] ?? null, col_F: r[5] ?? null, col_G: r[6] ?? null, col_H: r[7] ?? null,
@@ -249,6 +259,25 @@ async function downloadExcel(page: Page, scrapeId: string): Promise<Buffer> {
   } finally {
     fs.rmSync(tmpPath, { force: true });
   }
+}
+
+/**
+ * The resident list's payload, read off the page rather than requested
+ * directly: the endpoint wants an Authorization header and a family of
+ * x-bllink-* headers that only the app sets, and a bare GET on the same
+ * cookies answers 502. Driving the screen is also exactly what the Excel
+ * export above does, so there is one way in and not two.
+ */
+async function fetchTenantEmails(page: Page): Promise<Map<string, ApartmentEmails>> {
+  const waiter = page.waitForResponse(
+    (r) => r.request().method() === 'GET' && r.url().endsWith('/tenants') && r.status() === 200,
+    { timeout: 45_000 },
+  );
+  await page.goto(TENANT_LIST_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  const payload: unknown = await (await waiter).json();
+  const byApt = extractTenantEmails(payload);
+  if (byApt.size === 0) throw new Error('resident list returned no apartment with an address');
+  return byApt;
 }
 
 // ─── Retention ────────────────────────────────────────────────────────────────
@@ -377,6 +406,21 @@ async function main(): Promise<number> {
     const buffer = await downloadExcel(page, scrapeId);
     const sha256 = createHash('sha256').update(buffer).digest('hex');
     log(`excel downloaded: ${buffer.length} bytes sha256=${sha256.slice(0, 12)}…`);
+
+    // The addresses, off Bllink's resident list — the same signed-in session,
+    // one screen away, before the browser goes. BEST-EFFORT on purpose: the
+    // debt figures are what this unit exists for, and Bllink renaming a
+    // screen must not stop them being copied. A failure leaves both columns
+    // NULL, which the queue reads as "Bllink said nothing" — ours stands, no
+    // suggestion is withdrawn, and tomorrow tries again.
+    let emails = new Map<string, ApartmentEmails>();
+    try {
+      emails = await fetchTenantEmails(page);
+      log(`resident list: addresses for ${emails.size} apartments`);
+    } catch (e) {
+      log(`warning: resident list unavailable — no addresses this run: ${redact(errorText(e), secrets)}`);
+    }
+
     await browser.close();
     browser = null;
     page = null;
@@ -385,17 +429,25 @@ async function main(): Promise<number> {
     stage = 'parse';
     const { rows, skipped } = await workbookToScrapeRows(buffer);
     if (rows.length === 0) throw new Error('the report parsed to 0 rows');
+
+    for (const r of rows) {
+      const found = emails.get(r.apartment_number);
+      r.owner_email = found?.owner_email ?? null;
+      r.tenant_email = found?.tenant_email ?? null;
+    }
+
     await db.query('begin');
     try {
       for (const r of rows) {
         await db.query(
           `insert into public.bllink_scrape_rows
              (scrape_id, apartment_number, owner_name, phone_primary, total_debt, monthly_debt,
-              special_debt, management_months_raw, notes, raw)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
+              special_debt, management_months_raw, notes, owner_email, tenant_email, raw)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)`,
           [
             scrapeId, r.apartment_number, r.owner_name, r.phone_primary, r.total_debt, r.monthly_debt,
-            r.special_debt, r.management_months_raw, r.notes, JSON.stringify(r.raw),
+            r.special_debt, r.management_months_raw, r.notes, r.owner_email, r.tenant_email,
+            JSON.stringify(r.raw),
           ],
         );
       }

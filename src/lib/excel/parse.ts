@@ -25,6 +25,10 @@ export interface ParsedDebtorRow {
   tenant_name: string | null;
   phone_owner: string | null;
   phone_tenant: string | null;
+  /** Never in the debtors workbook — only the Bllink sync fills these, from
+   *  the resident list (src/lib/sync/tenantList.ts). */
+  owner_email: string | null;
+  tenant_email: string | null;
   total_debt: number;
   management_fees: number;
   monthly_debt: string | null;
@@ -86,6 +90,8 @@ export async function parseDebtorsWorkbook(buffer: ArrayBuffer | Buffer): Promis
       tenant_name: names.tenant,
       phone_owner: phones.owner,
       phone_tenant: phones.tenant,
+      owner_email: null,
+      tenant_email: null,
       total_debt: toNumber(r[3]),
       management_fees: toNumber(r[4]),
       monthly_debt: toText(r[5]),

@@ -52,7 +52,8 @@ const NEW = '990003';    // not in the registry at all
 const TEN_OWN = '990011';   // an owner name of ours, no tenant name
 const TEN_KEPT = '990012';  // a tenant name of ours; Bllink disagrees
 const TEN_NEW = '990013';   // not in the registry at all
-const APTS = [KEPT, EMPTY, NEW, TEN_OWN, TEN_KEPT, TEN_NEW];
+const MAIL = '990021';      // an address of ours; Bllink disagrees
+const APTS = [KEPT, EMPTY, NEW, TEN_OWN, TEN_KEPT, TEN_NEW, MAIL];
 
 type Row = {
   apartment_number: string;
@@ -60,24 +61,30 @@ type Row = {
   tenant_name: string | null;
   phone_owner: string | null;
   phone_tenant: string | null;
+  owner_email: string | null;
+  tenant_email: string | null;
 };
 
 const report = (over: Partial<Row> & { apartment_number: string }): Row =>
-  ({ owner_name: null, tenant_name: null, phone_owner: null, phone_tenant: null, ...over });
+  ({
+    owner_name: null, tenant_name: null, phone_owner: null, phone_tenant: null,
+    owner_email: null, tenant_email: null, ...over,
+  });
 
 /** One raw report row, split exactly the way the sync splits it — the point of
  *  the tenant-name tests is that NOBODY writes a second parser. */
 const fromCell = (apartment_number: string, cell: string): Row => {
   const names = splitOwnerTenantNames(cell);
-  return { apartment_number, owner_name: names.owner, tenant_name: names.tenant, phone_owner: null, phone_tenant: null };
+  return report({ apartment_number, owner_name: names.owner, tenant_name: names.tenant });
 };
 
 async function contact(apt: string) {
   const r = await pool.query<{
-    owner_name: string | null; owner_phone: string | null;
-    tenant_name: string | null; tenant_phone: string | null; source: string | null;
+    owner_name: string | null; owner_phone: string | null; owner_email: string | null;
+    tenant_name: string | null; tenant_phone: string | null; tenant_email: string | null;
+    source: string | null;
   }>(
-    `select owner_name, owner_phone, tenant_name, tenant_phone, source
+    `select owner_name, owner_phone, owner_email, tenant_name, tenant_phone, tenant_email, source
        from public.contacts where apartment_number = $1`, [apt]);
   return r.rows[0] ?? null;
 }
@@ -278,6 +285,54 @@ d('the Bllink approval queue', () => {
     await pool.query(`update public.contacts set tenant_name = ' קטי ' where apartment_number = $1`, [TEN_KEPT]);
     expect((await pendingOf(TEN_KEPT)).filter((x) => x.field === 'tenant_name')).toHaveLength(0);
     expect((await getContactFieldState(TEN_KEPT)).sources.tenant_name?.source).toBe('manual');
+  });
+
+  // ── the addresses (29/09/2026) ─────────────────────────────────────────
+  // Not from the debt export — it has none — but from Bllink's resident list,
+  // which the scraper now reads on the same session (src/lib/sync/tenantList).
+  // Once here they are just two more fields under the same seven rules.
+
+  it('an address is filled where we have none, and asked about where we disagree', async () => {
+    await pool.query(
+      `insert into public.contacts (apartment_number, owner_email, source)
+       values ($1, 'uziyoeli@gmail.com', 'manual')`,
+      [MAIL]);
+
+    const out = await syncContactsFromReport([
+      report({ apartment_number: MAIL, owner_email: 'eliyoeli@gmail.com', tenant_email: 'itamor@gmail.com' }),
+    ]);
+    expect(out).toMatchObject({ applied: 1, suggested: 1 });
+    expect(await contact(MAIL)).toMatchObject({
+      owner_email: 'uziyoeli@gmail.com',   // ours stands
+      tenant_email: 'itamor@gmail.com',    // we had none
+    });
+    const open = (await pendingOf(MAIL)).filter((x) => x.field === 'owner_email');
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ current_value: 'uziyoeli@gmail.com', proposed_value: 'eliyoeli@gmail.com' });
+  });
+
+  it('case, spacing and an invisible bidi mark are not a difference', async () => {
+    // Apartment 1033 of the live registry holds an address with a trailing
+    // U+202C. It reads identically to Bllink's and compared as different, so
+    // the queue produced a suggestion approving which would change nothing.
+    await pool.query(
+      `update public.contacts set owner_email = $2 where apartment_number = $1`,
+      [MAIL, ' Uzi.Yoeli@Gmail.com\u202c']);
+    const out = await syncContactsFromReport([
+      report({ apartment_number: MAIL, owner_email: 'uzi.yoeli@gmail.com' }),
+    ]);
+    expect(out).toMatchObject({ applied: 0, suggested: 0 });
+  });
+
+  it('approving an address writes it, and the card reads it from the registry', async () => {
+    await pool.query(
+      `update public.contacts set owner_email = 'old@example.com' where apartment_number = $1`, [MAIL]);
+    await syncContactsFromReport([report({ apartment_number: MAIL, owner_email: 'new@example.com' })]);
+    const open = (await pendingOf(MAIL)).filter((x) => x.field === 'owner_email');
+    expect(open).toHaveLength(1);
+    expect(await resolveSuggestions([open[0]!.id], 'approve', null)).toBe(1);
+    expect((await contact(MAIL))?.owner_email).toBe('new@example.com');
+    expect((await getContactFieldState(MAIL)).sources.owner_email?.source).toBe('bllink');
   });
 
   it('resolving the same id twice is a no-op, and the queue only ever lists open rows', async () => {

@@ -40,8 +40,8 @@ test.beforeAll(async () => {
   );
   // One Bllink report that disagrees with both.
   await pool.query(
-    `select public.contact_sync_ingest($1::text[], $2::text[], $3::text[], $4::text[])`,
-    [APTS, [null, null], [THEIRS, THEIRS], [null, null]],
+    `select public.contact_sync_ingest($1::text[], $2::text[], $3::text[])`,
+    [APTS, ['owner_phone', 'owner_phone'], [THEIRS, THEIRS]],
   );
 });
 
@@ -89,8 +89,8 @@ test('the queue: a conflict is offered, approving writes it, rejecting keeps our
 
   // And a rejected value does not come back on the next sync.
   await pool.query(
-    `select public.contact_sync_ingest($1::text[], $2::text[], $3::text[], $4::text[])`,
-    [[REJECT_APT], [null], [THEIRS], [null]],
+    `select public.contact_sync_ingest($1::text[], $2::text[], $3::text[])`,
+    [[REJECT_APT], ['owner_phone'], [THEIRS]],
   );
   const still = await pool.query<{ n: string }>(
     `select count(*)::text as n from public.contact_sync_suggestions

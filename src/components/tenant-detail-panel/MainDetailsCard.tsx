@@ -75,6 +75,26 @@ export function MainDetailsCard({
           suggestion={suggestionFor('tenant_phone')}
           onResolve={onResolveSuggestion}
         />
+        {/* Addresses, on the same terms as the tenant's name: drawn only for
+            an apartment that has one, a proposal for one, or a stamp on one.
+            Bllink holds an address for 185 of the 290 apartments, so a
+            permanent empty line would be wrong on both counts. */}
+        <EmailRow
+          label="מייל בעלים"
+          value={tenant.email_owner}
+          source={contactFields.sources.owner_email}
+          suggestion={suggestionFor('owner_email')}
+          canEdit={canEdit}
+          onResolve={onResolveSuggestion}
+        />
+        <EmailRow
+          label="מייל שוכר"
+          value={tenant.email_tenant}
+          source={contactFields.sources.tenant_email}
+          suggestion={suggestionFor('tenant_email')}
+          canEdit={canEdit}
+          onResolve={onResolveSuggestion}
+        />
       </dl>
     </Section>
   );
@@ -171,6 +191,35 @@ function Row({ label, children, source, suggestion, canEdit = false, onResolve }
         <SuggestionTag suggestion={suggestion} canEdit={canEdit} onResolve={onResolve} />
       )}
     </div>
+  );
+}
+
+/** An address, when there is one to show. Read-only here — the residents list
+ *  is where an address is typed; this card shows what it holds and what
+ *  Bllink proposes for it. */
+function EmailRow({ label, value, source, suggestion, canEdit, onResolve }: {
+  label: string;
+  value: string | null;
+  source?: ContactFieldState['sources']['owner_email'];
+  suggestion: ContactSuggestion | null;
+  canEdit: boolean;
+  onResolve: (id: string, action: 'approve' | 'reject') => void;
+}) {
+  if (!value && !suggestion && !source) return null;
+  return (
+    <Row label={label} source={source} suggestion={suggestion} canEdit={canEdit} onResolve={onResolve}>
+      {value ? (
+        <a
+          href={`mailto:${value}`}
+          dir="ltr"
+          className="font-semibold text-slate-900 underline-offset-2 hover:underline"
+        >
+          {value}
+        </a>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      )}
+    </Row>
   );
 }
 

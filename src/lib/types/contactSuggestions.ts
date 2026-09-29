@@ -1,29 +1,37 @@
 // The Bllink → residents-list approval queue (29/09/2026).
 //
 // The sync no longer overwrites a resident field it disagrees with: it files a
-// suggestion and the value stands until someone decides. See the migration
-// 20260929194811_contact_sync_suggestions for the seven rules.
+// suggestion and the value stands until someone decides. The seven rules live
+// in SQL: 20260929194811_contact_sync_suggestions, widened to the tenant's
+// name by 20260929211433 and to the two addresses by 20260929212603.
 
 /** The fields Bllink carries about people — the same ones the migrations'
- *  CHECKs name. The report's single name cell holds BOTH names, tagged
- *  "(בעלים)" / "(שוכר/ת)" (src/lib/sync/reportNames.ts). */
+ *  CHECKs name. Two sources feed them: the debt report's single name cell,
+ *  which holds BOTH names tagged "(בעלים)" / "(שוכר/ת)"
+ *  (src/lib/sync/reportNames.ts), and Bllink's resident list, the only screen
+ *  that carries an address at all (src/lib/sync/tenantList.ts). */
 export type SuggestionField =
-  | 'owner_name' | 'owner_phone'
-  | 'tenant_name' | 'tenant_phone';
+  | 'owner_name' | 'owner_phone' | 'owner_email'
+  | 'tenant_name' | 'tenant_phone' | 'tenant_email';
 
 export const SUGGESTION_FIELD_LABEL: Record<SuggestionField, string> = {
   owner_name: 'שם בעלים',
   owner_phone: 'טלפון בעלים',
+  owner_email: 'מייל בעלים',
   tenant_name: 'שם שוכר',
   tenant_phone: 'טלפון שוכר',
+  tenant_email: 'מייל שוכר',
 };
 
-/** Which fields read as a number — right-to-left text everywhere else. */
+/** Which fields read left to right — numbers and addresses. Hebrew names do
+ *  not, so they keep the page's own direction. */
 export const SUGGESTION_FIELD_IS_NUMERIC: Record<SuggestionField, boolean> = {
   owner_name: false,
   owner_phone: true,
+  owner_email: true,
   tenant_name: false,
   tenant_phone: true,
+  tenant_email: true,
 };
 
 export interface ContactSuggestion {

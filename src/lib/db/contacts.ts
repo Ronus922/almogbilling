@@ -395,6 +395,8 @@ export async function syncContactsFromReport(
     tenant_name: string | null;
     phone_owner: string | null;
     phone_tenant: string | null;
+    owner_email?: string | null;
+    tenant_email?: string | null;
   }>,
 ): Promise<ContactSyncOutcome> {
   return withTransaction(async (client) => {
@@ -413,8 +415,10 @@ export async function syncContactsFromReport(
       for (const [field, value] of [
         ['owner_name', r.owner_name],
         ['owner_phone', r.phone_owner],
+        ['owner_email', r.owner_email ?? null],
         ['tenant_name', r.tenant_name],
         ['tenant_phone', r.phone_tenant],
+        ['tenant_email', r.tenant_email ?? null],
       ] as const) {
         apartments.push(apt);
         fields.push(field);
