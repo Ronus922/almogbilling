@@ -11,6 +11,8 @@
     "deploy": "bash scripts/deploy.sh",
     "prepare": "husky || true",
     "test": "vitest run",
+    "test:db": "vitest run --no-file-parallelism --reporter=default --reporter=json --outputFile.json=.vitest-db-report.json",
+    "check:no-skipped": "node scripts/check-no-skipped-tests.mjs .vitest-db-report.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "check:secrets": "node scripts/check-no-secrets.mjs",

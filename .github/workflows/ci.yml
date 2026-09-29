@@ -119,6 +119,22 @@ jobs:
           npx dbmate --url "$DATABASE_URL" --migrations-dir db/migrations --no-dump-schema up
           npm run db:seed:e2e
 
+      # The DB-backed vitest suites gate on WA_TEST_DATABASE_URL. Until
+      # 29/09/2026 nothing set it, so 114 tests across 9 files skipped on every
+      # run and nobody saw it — skipped reads as green, and one file even
+      # reported as "passed" with all 10 of its tests skipped. This job already
+      # has the schema and the fixtures they need, so they run here, before the
+      # build, and the guard below fails the job if any of them skip again.
+      # Single-file (--no-file-parallelism): they share one database and several
+      # assert on whole-table aggregates.
+      - name: DB-backed vitest suites
+        run: npm run test:db
+        env:
+          WA_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
+
+      - name: Prove the DB-backed suites actually ran
+        run: npm run check:no-skipped
+
       - name: Mailpit
         run: npm run e2e:mailpit
 
