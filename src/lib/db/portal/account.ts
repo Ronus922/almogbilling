@@ -1,5 +1,6 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
+import { visibleImportText } from '@/lib/debtor-import-text';
 import type { PortalSession } from '@/lib/portal/session';
 import type { PortalAccount } from '@/lib/types/portal';
 
@@ -63,8 +64,10 @@ function toAccount(apartment: string, ownerName: string | null, row: DebtRow | u
   return {
     apartment_number: apartment, owner_display_name: ownerName,
     total_debt: row.total_debt, management_fees: row.management_fees, hot_water_debt: row.hot_water_debt,
-    monthly_debt: row.monthly_debt && row.monthly_debt.trim() ? row.monthly_debt : null,
-    details: row.details && row.details.trim() ? row.details : null,
+    // Both describe the debt, so a leftover from an earlier report is never
+    // shown next to a ₪0 balance — see lib/debtor-import-text.ts.
+    monthly_debt: visibleImportText(row.monthly_debt, row.total_debt),
+    details: visibleImportText(row.details, row.total_debt),
     synced_at: syncedAt,
   };
 }

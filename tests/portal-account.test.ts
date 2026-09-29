@@ -98,7 +98,8 @@ d('owners portal — my account, bank balance, one-time codes', () => {
     for (const n of Object.values(apt)) await contact(n);
     await debtor(apt.a, { total: 1240, mgmt: 840, hot: 400, monthly: '3/26', details: 'מים חמים 01-03/26' });
     await debtor(apt.b, { total: 300, mgmt: 0, hot: 300, monthly: ' ' });
-    await debtor(apt.c, { total: 0 });
+    // settled, but the row still carries the text an earlier report brought
+    await debtor(apt.c, { total: 0, monthly: '1/26 - 9/26', details: 'מים חמים 05-06/25' });
     await debtor(apt.d, { total: 999.5, mgmt: 999.5, archived: true, monthly: '9/26', details: 'מים חמים 07-09/26' });
     await roster(apt.a, phone.a1, 'דנה');
     await roster(apt.a, phone.a2, 'יוסי');
@@ -163,6 +164,14 @@ d('owners portal — my account, bank balance, one-time codes', () => {
     expect(await getAdminPreviewAccount(apt.d)).toMatchObject({ total_debt: 999.5, management_fees: 999.5, details: 'מים חמים 07-09/26' });
     expect(JSON.stringify(await getAdminPreviewAccount(apt.d))).not.toMatch(/archived|legal|status|notes/);
     expect(await getPortalMyAccount({ id: 's', phoneE164: '+972529999999' })).toEqual([]);
+  });
+
+  it('a settled apartment shows no debt text, even when the row still holds it (29/09/2026)', async () => {
+    const settled = await getPortalMyAccount({ id: 's', phoneE164: phone.otp });
+    expect(settled[0]).toMatchObject({ apartment_number: apt.c, total_debt: 0, monthly_debt: null, details: null });
+    expect(JSON.stringify(settled)).not.toContain('מים חמים');
+    // the admin preview of the same apartment hides it too — one chokepoint
+    expect(await getAdminPreviewAccount(apt.c)).toMatchObject({ total_debt: 0, monthly_debt: null, details: null });
   });
 
   it('the admin preview reads one apartment by number, and null for an unknown one', async () => {

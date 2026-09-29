@@ -662,6 +662,26 @@ COMMENT ON COLUMN public.debtors.phone_tenant_raw_backup IS 'Pre-015 raw phone_t
 
 
 --
+-- Name: debtors_stale_import_text_backup; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.debtors_stale_import_text_backup (
+    debtor_id uuid NOT NULL,
+    apartment_number text NOT NULL,
+    details text,
+    monthly_debt text,
+    cleared_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE debtors_stale_import_text_backup; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.debtors_stale_import_text_backup IS 'Pre-clearing snapshot of debtors.details / debtors.monthly_debt for apartments whose debt was fully settled (one-time cleanup 29/09/2026). Rollback source for migration 20260929043204; safe to drop once the cleanup is confirmed.';
+
+
+--
 -- Name: document_folders; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2346,6 +2366,14 @@ ALTER TABLE ONLY public.debtors
 
 ALTER TABLE ONLY public.debtors
     ADD CONSTRAINT debtors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: debtors_stale_import_text_backup debtors_stale_import_text_backup_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.debtors_stale_import_text_backup
+    ADD CONSTRAINT debtors_stale_import_text_backup_pkey PRIMARY KEY (debtor_id);
 
 
 --
@@ -4475,6 +4503,14 @@ ALTER TABLE ONLY public.debtors
 
 
 --
+-- Name: debtors_stale_import_text_backup debtors_stale_import_text_backup_debtor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.debtors_stale_import_text_backup
+    ADD CONSTRAINT debtors_stale_import_text_backup_debtor_id_fkey FOREIGN KEY (debtor_id) REFERENCES public.debtors(id) ON DELETE CASCADE;
+
+
+--
 -- Name: document_folders document_folders_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5243,5 +5279,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260927053126'),
     ('20260927125643'),
     ('20260928175919'),
-    ('20260928201600')
+    ('20260928201600'),
+    ('20260929043204')
 ;
