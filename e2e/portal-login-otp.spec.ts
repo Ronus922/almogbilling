@@ -173,16 +173,20 @@ test.describe('portal login — the whole flow', () => {
 
       if (i === 0) {
         // The reference's primary button, which had no destination at all
-        // until it was wired to tel: / mailto:. On this viewport (desktop) it
-        // reveals the two details; on a phone the same label is a tel: link.
-        await expect(sheet.getByRole('link', { name: 'שליחת בקשת הצטרפות' }))
-          .toHaveAttribute('href', 'tel:+97248341881');
+        // until it was wired to tel: / mailto:. The phone variant is in the
+        // DOM but display:none on this viewport — hence a css locator and not
+        // a role: a hidden element is out of the accessibility tree.
+        await expect(sheet.locator('a[href^="tel:"]')).toHaveAttribute('href', 'tel:+97248341881');
+
+        // Desktop: the button reveals both details instead of dialling.
         await sheet.getByRole('button', { name: 'שליחת בקשת הצטרפות' }).click();
-        await expect(sheet.getByText('04-834-1881')).toBeVisible();
-        await expect(sheet.getByText('mgmt@example.test')).toBeVisible();
-        // The address carries the join request's subject with the number in it.
-        await expect(sheet.getByRole('link', { name: /mgmt@example\.test/ }))
-          .toHaveAttribute('href', `mailto:mgmt@example.test?subject=${encodeURIComponent('בקשת הצטרפות לפורטל — 050-999-9999')}`);
+        await expect(sheet.getByText('04-834-1881', { exact: true })).toBeVisible();
+        await expect(sheet.getByText('mgmt@example.test', { exact: true })).toBeVisible();
+        // The address carries the join request's subject, with the number in it.
+        await expect(sheet.locator('a[href^="mailto:"]')).toHaveAttribute(
+          'href',
+          `mailto:mgmt@example.test?subject=${encodeURIComponent('בקשת הצטרפות לפורטל — 050-999-9999')}`,
+        );
       }
 
       await sheet.getByRole('button', { name: 'הזנת מספר אחר' }).click();
