@@ -18,15 +18,38 @@ export const PORTAL_SESSION_LIFETIME_HOURS = 12;
 export const PORTAL_OTP_DIGITS = 6;
 export const PORTAL_OTP_TTL_MINUTES = 5;
 
-/** No second code to the same phone before this many seconds. */
-export const PORTAL_OTP_RESEND_COOLDOWN_SEC = 60;
+/** No second code to the same phone before this many seconds. 45, aligned to
+ *  the reference on 29/09/2026 (ref/otp-states.md "Resend cooldown 45s"); it
+ *  was 60, which made the screen's timer and the server disagree. */
+export const PORTAL_OTP_RESEND_COOLDOWN_SEC = 45;
 
 /** Per-phone: this many code requests inside the window trigger a lockout. */
 export const PORTAL_OTP_MAX_REQUESTS_PER_WINDOW = 5;
 export const PORTAL_OTP_REQUEST_WINDOW_SEC = 15 * 60;
 
-/** Per-phone: this many wrong codes trigger a lockout. */
+/**
+ * Per-phone: this many wrong codes trigger a lockout (decision 29/09/2026 —
+ * confirmed at 5, it was already 5 and never 3).
+ *
+ * It used to FEEL like two: the code boxes kept their digits after a wrong
+ * code and re-submitted themselves on every keystroke of the correction, so
+ * one honest retype spent four attempts. The count was right; the client was
+ * spending it. Fixed in PortalOtpStep (the boxes clear on correction, exactly
+ * as state 06 of ref/otp-states.md always said they should).
+ */
 export const PORTAL_OTP_MAX_ATTEMPTS = 5;
+
+/** The resident is warned before the LAST attempt, so a lockout never arrives
+ *  as a surprise (state 08). */
+export function portalLastAttemptMessage(): string {
+  return `ניסיון אחרון. קוד שגוי נוסף יחסום את הכניסה ל-${PORTAL_LOCKOUT_TIER_MINUTES[0]} דקות.`;
+}
+
+/** "הקוד שגוי. נותרו N ניסיונות." — the count comes from the server, so the
+ *  screen can never disagree with what the next wrong code will actually do. */
+export function portalWrongCodeMessage(attemptsLeft: number): string {
+  return `הקוד שגוי. נותרו ${attemptsLeft} ניסיונות.`;
+}
 
 /** Per-IP ceiling on code requests (a plain 429 — an IP is never locked out).
  *  An IP is shared: a whole building behind one NAT, or a household. Locking it
@@ -64,6 +87,7 @@ export const PORTAL_LOG_RETENTION_DAYS = 365;
  *  the management company instead of leaving them guessing. */
 export const PORTAL_NOT_OWNER_MESSAGE =
   'המספר אינו רשום כבעל דירה בבניין. פנה לחברת הניהול כדי לוודא שהטלפון שלך רשום במערכת.';
+
 
 /** Locked out. `minutes` is always rounded UP, so "0 דקות" can never show. */
 export function portalLockedMessage(minutes: number): string {

@@ -25,10 +25,23 @@ export const runtime = 'nodejs';
 // of guessing. The response NEVER carries apartment details, a name, or the code.
 //
 // Order of checks (each one is a gate for the next):
-//   lockout → IP ceiling → 60-second cooldown → per-phone window → roster
-// The per-phone window is checked LAST of the throttles because exhausting it is
-// itself a lockout trigger, and a locked-out phone must not also be told
-// "wait 60 seconds".
+//   lockout → IP ceiling → 60-second cooldown → ROSTER → per-phone window
+//
+// The roster moved AHEAD of the per-phone window on 29/09/2026. It used to sit
+// last, so a number that is not an owner still spent a window slot on every
+// tap — and the sixth tap locked it out for 30 minutes although no code had
+// ever been sent to it. That is exactly what happened to apartment 1233 on
+// 29/09 08:02–08:06 UTC: five `phone_not_found`, then `locked_out`
+// (`too_many_code_requests`). The 60-second cooldown could not slow it down
+// either, because that cooldown is measured on the newest portal_otp_codes row
+// and an unregistered phone never gets one.
+//
+// Nothing is leaked by the new order: this endpoint already tells the caller
+// outright that a number is not registered (a deliberate product decision —
+// the owner should ring the management company, not guess). Enumeration is
+// bounded by the per-IP ceiling above, which is what that ceiling is for. The
+// per-phone window keeps its real job: stopping a REAL owner's phone from
+// being flooded with WhatsApp codes.
 
 export async function POST(req: Request) {
   const body = await parseJsonBody(req, portalOtpRequestBodySchema);
@@ -55,7 +68,10 @@ export async function POST(req: Request) {
       details: { stage: 'request', tier: locked.tier, until: locked.locked_until },
     });
     return NextResponse.json(
-      { ok: false, locked: true, message: portalLockedMessage(lockoutMinutesRemaining(locked)) },
+      {
+        ok: false, locked: true, lockedUntil: locked.locked_until,
+        message: portalLockedMessage(lockoutMinutesRemaining(locked)),
+      },
       { status: 429 },
     );
   }
@@ -81,27 +97,6 @@ export async function POST(req: Request) {
     );
   }
 
-  const windowLimit = await checkRateLimit(`portal:otp:phone:${phoneE164}`, {
-    max: PORTAL_OTP_MAX_REQUESTS_PER_WINDOW,
-    windowSec: PORTAL_OTP_REQUEST_WINDOW_SEC,
-  });
-  if (!windowLimit.allowed) {
-    const { lockout, countInWindow } = await createLockout(phoneE164, 'too_many_code_requests');
-    const identity = await findOwnerIdentity(phoneE164, { onlyActive: false });
-    await logPortalEvent({
-      phoneE164, eventType: 'locked_out', ip, userAgent,
-      apartmentNumbers: identity?.apartmentNumbers ?? [],
-      details: { reason: 'too_many_code_requests', tier: lockout.tier, until: lockout.locked_until },
-    });
-    if (countInWindow >= PORTAL_LOCKOUT_ALERT_TIER) {
-      await alertManagerAboutLockout(phoneE164);
-    }
-    return NextResponse.json(
-      { ok: false, locked: true, message: portalLockedMessage(lockoutMinutesRemaining(lockout)) },
-      { status: 429 },
-    );
-  }
-
   // Roster lookup. onlyActive: false first, so a switched-off owner is logged as
   // phone_inactive rather than phone_not_found — the admin needs to tell a sold
   // apartment apart from a wrong number.
@@ -115,8 +110,32 @@ export async function POST(req: Request) {
       apartmentNumbers: known?.apartmentNumbers ?? [],
       ip, userAgent,
     });
-    // 200 with the same message either way — the caller cannot tell the two apart.
-    return NextResponse.json({ ok: true, message: PORTAL_NOT_OWNER_MESSAGE });
+    // 200 with the same message either way — the caller cannot tell the two
+    // apart, and neither answer can ever lead to a lockout.
+    return NextResponse.json({ ok: true, notRegistered: true, message: PORTAL_NOT_OWNER_MESSAGE });
+  }
+
+  const windowLimit = await checkRateLimit(`portal:otp:phone:${phoneE164}`, {
+    max: PORTAL_OTP_MAX_REQUESTS_PER_WINDOW,
+    windowSec: PORTAL_OTP_REQUEST_WINDOW_SEC,
+  });
+  if (!windowLimit.allowed) {
+    const { lockout, countInWindow } = await createLockout(phoneE164, 'too_many_code_requests');
+    await logPortalEvent({
+      phoneE164, eventType: 'locked_out', ip, userAgent,
+      apartmentNumbers: active.apartmentNumbers,
+      details: { reason: 'too_many_code_requests', tier: lockout.tier, until: lockout.locked_until },
+    });
+    if (countInWindow >= PORTAL_LOCKOUT_ALERT_TIER) {
+      await alertManagerAboutLockout(phoneE164);
+    }
+    return NextResponse.json(
+      {
+        ok: false, locked: true, lockedUntil: lockout.locked_until,
+        message: portalLockedMessage(lockoutMinutesRemaining(lockout)),
+      },
+      { status: 429 },
+    );
   }
 
   const { code } = await issueCode(phoneE164, ip);

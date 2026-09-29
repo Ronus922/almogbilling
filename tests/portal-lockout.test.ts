@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   PORTAL_LOCKOUT_ALERT_TIER, PORTAL_LOCKOUT_TIER_MINUTES, PORTAL_NOT_OWNER_MESSAGE,
   PORTAL_OTP_MAX_ATTEMPTS, PORTAL_OTP_MAX_PER_IP, PORTAL_OTP_MAX_REQUESTS_PER_WINDOW,
+  PORTAL_OTP_RESEND_COOLDOWN_SEC, PORTAL_OTP_TTL_MINUTES,
   PORTAL_SESSION_LIFETIME_HOURS, PORTAL_VERIFY_MAX_PER_IP,
-  portalLockedMessage, portalLockoutAlertMessage,
+  portalLastAttemptMessage, portalLockedMessage, portalLockoutAlertMessage, portalWrongCodeMessage,
 } from '@/lib/constants/portal';
 
 // The escalation ladder createLockout() walks: tier = (lockouts inside the 24h
@@ -52,6 +53,32 @@ describe('the ceilings that trigger a lockout', () => {
   it('locks out on the 5th wrong code, not the 4th', () => {
     expect(4 >= PORTAL_OTP_MAX_ATTEMPTS).toBe(false);
     expect(5 >= PORTAL_OTP_MAX_ATTEMPTS).toBe(true);
+  });
+
+  // What the verify route hands the screen after each wrong code. The count is
+  // the SERVER's, so "נותרו N" can never promise an attempt that does not
+  // exist — and the amber warning lands on the one before the last.
+  it('counts down 4, 3, 2, 1 and warns before the fifth', () => {
+    const left = (attempts: number) => PORTAL_OTP_MAX_ATTEMPTS - attempts;
+    expect([1, 2, 3, 4].map(left)).toEqual([4, 3, 2, 1]);
+    expect(portalWrongCodeMessage(4)).toBe('הקוד שגוי. נותרו 4 ניסיונות.');
+    // left === 1 is the moment the screen switches to the warning (state 08).
+    expect(left(4)).toBe(1);
+    expect(portalLastAttemptMessage()).toBe('ניסיון אחרון. קוד שגוי נוסף יחסום את הכניסה ל-30 דקות.');
+  });
+
+  it('the warning names the tier-1 duration, so the two cannot drift', () => {
+    expect(portalLastAttemptMessage()).toContain(String(PORTAL_LOCKOUT_TIER_MINUTES[0]));
+  });
+});
+
+describe('the timings the screen shows', () => {
+  // ref/otp-states.md: "Code: 6 digits, valid 5 minutes. Resend cooldown 45s."
+  // The screen counts with these constants and the routes enforce them, so a
+  // mismatch would be a timer that lies to the resident.
+  it('match the reference — 5 minutes of validity, 45 seconds between sends', () => {
+    expect(PORTAL_OTP_TTL_MINUTES).toBe(5);
+    expect(PORTAL_OTP_RESEND_COOLDOWN_SEC).toBe(45);
   });
 });
 
