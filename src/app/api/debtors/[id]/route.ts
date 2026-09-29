@@ -3,6 +3,7 @@ import { requirePermission, requireAnyPermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorById, updateDebtorFields } from '@/lib/db/debtors';
 import { updateContactPhonesByDebtor } from '@/lib/db/contacts';
+import { getContactFieldState } from '@/lib/db/contactSuggestions';
 import { listCommentsByDebtor } from '@/lib/db/comments';
 import { validatePhone, isFutureDate } from '@/lib/validation';
 import type { TenantFieldsUpdate } from '@/types/tenant';
@@ -31,7 +32,11 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   if (!tenant) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
   const recent_notes = await listCommentsByDebtor(id, 3);
-  return NextResponse.json({ tenant, recent_notes });
+  // The card's two decorations on the resident fields: open Bllink suggestions
+  // and who last changed each field. Read here so the panel needs no second
+  // round trip on open.
+  const contact_fields = await getContactFieldState(tenant.apartment_number);
+  return NextResponse.json({ tenant, recent_notes, contact_fields });
 }
 
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {

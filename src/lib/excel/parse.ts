@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { splitOwnerTenantPhones } from '@/lib/whatsapp';
+import { splitOwnerTenantNames } from '@/lib/sync/reportNames';
 import { MAX_EXCEL_BYTES, toArrayBuffer, worksheetToMatrix } from '@/lib/excel/workbook';
 
 /**
@@ -77,7 +78,9 @@ export async function parseDebtorsWorkbook(buffer: ArrayBuffer | Buffer): Promis
     const phones = splitOwnerTenantPhones(rawPhone);
     rows.push({
       apartment_number: apt,
-      owner_name: toText(r[1]),
+      // Same compound, labelled cell as the sync's — split by role, never
+      // stored raw (src/lib/sync/reportNames.ts).
+      owner_name: splitOwnerTenantNames(r[1] == null ? null : String(r[1])).owner,
       phone_owner: phones.owner,
       phone_tenant: phones.tenant,
       total_debt: toNumber(r[3]),

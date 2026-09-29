@@ -1,16 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, Upload, Download, Plus } from 'lucide-react';
+import { Search, Upload, Download, Plus, RefreshCcwDot } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { residentTypeLabel } from '@/lib/constants/contacts';
 import type { Contact } from '@/lib/types/contacts';
+import type { ContactSuggestion } from '@/lib/types/contactSuggestions';
 import { ContactsTable } from '@/components/contacts/contacts-table';
 import { ContactFormPanel } from '@/components/contacts/contact-form-panel';
 import { ContactImportPanel } from '@/components/contacts/contact-import-panel';
+import { ContactSuggestionsPanel } from '@/components/contacts/contact-suggestions-panel';
 
 /** Registry coverage quick-filter: whole list / no person at all / needs review. */
 type QuickFilter = 'all' | 'no_contact' | 'needs_review';
@@ -29,11 +31,14 @@ export function ContactsPageClient({
   canEdit,
   canViewParking,
   canEditParking,
+  pendingSuggestions,
 }: {
   initialContacts: Contact[];
   canEdit: boolean;
   canViewParking: boolean;
   canEditParking: boolean;
+  /** Open Bllink proposals. Zero hides the button entirely. */
+  pendingSuggestions: number;
 }) {
   const [contacts, setContacts] = useState<Contact[]>(initialContacts);
   const [search, setSearch] = useState('');
@@ -42,6 +47,12 @@ export function ContactsPageClient({
   const [loading, setLoading] = useState(false);
 
   const [showImport, setShowImport] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestionCount, setSuggestionCount] = useState(pendingSuggestions);
+  // null = the queue is being fetched. Loaded on the click that opens the
+  // panel, never with the page: the queue is usually empty and its button is
+  // not even drawn then.
+  const [suggestions, setSuggestions] = useState<ContactSuggestion[] | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
 
@@ -98,6 +109,22 @@ export function ContactsPageClient({
     setSelectedTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
   }
 
+  async function openSuggestions() {
+    setShowSuggestions(true);
+    setSuggestions(null);
+    try {
+      const res = await fetch('/api/contacts/suggestions', { credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { items?: ContactSuggestion[] };
+      const items = Array.isArray(data.items) ? data.items : [];
+      setSuggestions(items);
+      setSuggestionCount(items.length);
+    } catch (err) {
+      setSuggestions([]);
+      toast.error(`טעינת ההצעות נכשלה: ${(err as Error).message}`);
+    }
+  }
+
   function openCreate() {
     setEditingContact(null);
     setFormOpen(true);
@@ -138,6 +165,19 @@ export function ContactsPageClient({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* The Bllink queue. Only drawn when something is actually waiting —
+              an empty queue is not news. */}
+          {suggestionCount > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void openSuggestions()}
+              className="gap-2 border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:text-amber-800"
+            >
+              <RefreshCcwDot className="h-4 w-4" />
+              {suggestionCount} הצעות מבלינק
+            </Button>
+          )}
           {canEdit && (
             <Button type="button" onClick={() => setShowImport(true)}
               className="gap-2">
@@ -216,6 +256,19 @@ export function ContactsPageClient({
 
         <ContactsTable rows={visibleContacts} loading={loading} canEdit={canEdit} onRowClick={openEdit} />
       </div>
+
+      <ContactSuggestionsPanel
+        open={showSuggestions}
+        items={suggestions}
+        canEdit={canEdit}
+        onOpenChange={setShowSuggestions}
+        onChanged={(items) => {
+          setSuggestions(items);
+          setSuggestionCount(items.length);
+          // An approval wrote into contacts — reload so the table shows it.
+          void fetchContacts();
+        }}
+      />
 
       <ContactImportPanel
         open={showImport}

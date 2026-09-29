@@ -7,6 +7,7 @@ import type {
   ContactWritableFields,
 } from '@/lib/types/contacts';
 import type { ContactResidentCard, ContactResidents } from '@/lib/types/chips';
+import type { ContactSyncOutcome } from '@/lib/types/contactSuggestions';
 
 /** Thrown when an insert/upsert collides with an existing apartment_number. */
 export class ConflictError extends Error {
@@ -369,54 +370,51 @@ export async function upsertContactByApartment(
 }
 
 /**
- * Import hook: ensure every imported apartment has a contacts row, WITHOUT ever
- * touching an existing one — INSERT … ON CONFLICT (apartment_number) DO NOTHING
- * only. New rows are stamped source='bllink_sync' + needs_review=true so the
- * user can vet them in the registry. Then relinks ANY debtor with a NULL
- * contact_id to its apartment's contact (replace-mode recreates debtors
- * unlinked — this restores the links). One transaction, two bulk statements.
- * Returns how many contacts were created and how many debtors were relinked.
+ * The debt report's ONE hook into the residents list — shared by the Bllink
+ * sync and the Excel import (both go through importParsedRows).
+ *
+ * Until 29/09/2026 this was insert-missing only: a missing apartment was
+ * created, an existing one was never touched, not even an empty field. That is
+ * why a phone changing in Bllink went unnoticed for months. Now the decision
+ * per apartment+field lives in SQL (public.contact_sync_ingest, migration
+ * 20260929194811):
+ *
+ *   • an apartment we do not have  → created from the report, exactly as before
+ *   • a field of ours that is EMPTY → filled straight in (nothing to overwrite)
+ *   • a field that CONFLICTS       → a pending suggestion; OURS STANDS
+ *   • the same value, any spelling → nothing at all
+ *
+ * Then relinks any debtor left with contact_id NULL (replace-mode recreates
+ * debtors unlinked). Best-effort by the caller: a registry hiccup must never
+ * fail an import.
  */
-export async function ensureContactsForApartments(
+export async function syncContactsFromReport(
   rows: Array<{
     apartment_number: string;
     owner_name: string | null;
     phone_owner: string | null;
     phone_tenant: string | null;
   }>,
-): Promise<{ created: number; relinked: number }> {
+): Promise<ContactSyncOutcome> {
   return withTransaction(async (client) => {
-    // Dedupe by normalized apartment (first occurrence wins) so the unnest
-    // arrays never carry the same key twice — ON CONFLICT DO NOTHING cannot
-    // dedupe duplicates within a single INSERT's own row set.
-    const byApt = new Map<string, (typeof rows)[number]>();
+    const apartments: string[] = [];
+    const ownerNames: Array<string | null> = [];
+    const ownerPhones: Array<string | null> = [];
+    const tenantPhones: Array<string | null> = [];
     for (const r of rows) {
-      const apt = normalizeApartmentNumber(r.apartment_number ?? '');
-      if (!byApt.has(apt)) byApt.set(apt, r);
+      apartments.push(normalizeApartmentNumber(r.apartment_number ?? ''));
+      ownerNames.push(r.owner_name);
+      ownerPhones.push(r.phone_owner);
+      tenantPhones.push(r.phone_tenant);
     }
 
-    let created = 0;
-    if (byApt.size > 0) {
-      const apts: string[] = [];
-      const ownerNames: Array<string | null> = [];
-      const ownerPhones: Array<string | null> = [];
-      const tenantPhones: Array<string | null> = [];
-      for (const [apt, r] of byApt) {
-        apts.push(apt);
-        ownerNames.push(r.owner_name);
-        ownerPhones.push(r.phone_owner);
-        tenantPhones.push(r.phone_tenant);
-      }
-      const ins = await client.query(
-        `insert into public.contacts
-           (apartment_number, owner_name, owner_phone, tenant_phone, source, needs_review)
-         select t.apt, t.owner_name, t.owner_phone, t.tenant_phone, 'bllink_sync', true
-         from unnest($1::text[], $2::text[], $3::text[], $4::text[])
-           as t(apt, owner_name, owner_phone, tenant_phone)
-         on conflict (apartment_number) do nothing`,
-        [apts, ownerNames, ownerPhones, tenantPhones],
+    let outcome = { created: 0, applied: 0, suggested: 0, closed: 0 };
+    if (apartments.length > 0) {
+      const ing = await client.query<{ created: number; applied: number; suggested: number; closed: number }>(
+        `select * from public.contact_sync_ingest($1::text[], $2::text[], $3::text[], $4::text[])`,
+        [apartments, ownerNames, ownerPhones, tenantPhones],
       );
-      created = ins.rowCount ?? 0;
+      outcome = ing.rows[0] ?? outcome;
     }
 
     const upd = await client.query(
@@ -426,7 +424,7 @@ export async function ensureContactsForApartments(
         where d.contact_id is null
           and ${APT_KEY_SQL('d.apartment_number')} = ${APT_KEY_SQL('c.apartment_number')}`,
     );
-    return { created, relinked: upd.rowCount ?? 0 };
+    return { ...outcome, relinked: upd.rowCount ?? 0 };
   });
 }
 

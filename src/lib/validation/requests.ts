@@ -327,3 +327,11 @@ export const portalUnlockBodySchema = z.object({
 export const syncBllinkBodySchema = z.object({
   fresh: z.boolean().optional(),
 });
+
+// POST /api/contacts/suggestions — approve or reject Bllink proposals by id.
+// The client sends every id it means to resolve, "אשר הכל" included, so the
+// server never has to guess what "all" was at the moment of the click.
+export const contactSuggestionsResolveSchema = z.object({
+  action: z.enum(['approve', 'reject']),
+  ids: z.array(z.uuid()).min(1, { error: 'missing_ids' }).max(500),
+});

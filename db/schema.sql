@@ -49,69 +49,272 @@ $$;
 
 
 --
--- Name: reconcile_wa_campaign(uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: contact_suggestion_resolve(uuid[], text, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.reconcile_wa_campaign(p_campaign uuid) RETURNS void
+CREATE FUNCTION public.contact_suggestion_resolve(p_ids uuid[], p_action text, p_actor uuid) RETURNS integer
     LANGUAGE plpgsql
     AS $$
-declare c record;
+declare
+  v_now timestamptz := clock_timestamp();
+  v_n integer;
 begin
-  select
-    count(*)                                    as total,
-    count(*) filter (where status='pending')    as pending,
-    count(*) filter (where status='processing') as processing,
-    count(*) filter (where status='sent')       as sent,
-    count(*) filter (where status='failed')     as failed,
-    count(*) filter (where status='skipped')    as skipped,
-    count(*) filter (where status='cancelled')  as cancelled
-  into c
-  from public.wa_campaign_recipients where campaign_id = p_campaign;
+  if p_action not in ('approve', 'reject') then
+    raise exception 'contact_suggestion_resolve: unknown action %', p_action;
+  end if;
 
-  update public.wa_campaigns w set
-    total_count=c.total, pending_count=c.pending, processing_count=c.processing,
-    sent_count=c.sent, failed_count=c.failed, skipped_count=c.skipped,
-    cancelled_count=c.cancelled,
-    status = case
-      when w.status in ('cancelled','draft','paused') then w.status
-      when (c.pending + c.processing) = 0 and c.total > 0
-        then case when c.failed > 0 then 'completed_with_errors' else 'completed' end
-      else w.status end,
-    completed_at = case
-      when w.status not in ('cancelled','draft','paused')
-       and (c.pending + c.processing) = 0 and c.total > 0 and w.completed_at is null
-        then now() else w.completed_at end
-  where w.id = p_campaign;
-end $$;
+  -- Mark BEFORE writing the value: the provenance trigger closes any pending
+  -- suggestion the new value satisfies, and it must not race this one into
+  -- 'obsolete' while we are approving it. v_now identifies exactly the rows
+  -- this call resolved.
+  update public.contact_sync_suggestions
+     set status = case when p_action = 'approve' then 'approved' else 'rejected' end,
+         resolved_at = v_now,
+         resolved_by = p_actor
+   where id = any(p_ids) and status = 'pending';
+  get diagnostics v_n = row_count;
 
+  if p_action = 'approve' and v_n > 0 then
+    -- The value is Bllink's; the decision was a person's. Provenance records
+    -- where the value came from.
+    perform set_config('app.write_source', 'bllink', true);
 
---
--- Name: touch_updated_at(); Type: FUNCTION; Schema: public; Owner: -
---
+    update public.contacts c set owner_name = s.proposed_value
+      from public.contact_sync_suggestions s
+     where s.id = any(p_ids) and s.resolved_at = v_now and s.field = 'owner_name'
+       and c.apartment_number = s.apartment_number;
 
-CREATE FUNCTION public.touch_updated_at() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-begin
-  new.updated_at = now();
-  return new;
+    update public.contacts c set owner_phone = s.proposed_value
+      from public.contact_sync_suggestions s
+     where s.id = any(p_ids) and s.resolved_at = v_now and s.field = 'owner_phone'
+       and c.apartment_number = s.apartment_number;
+
+    update public.contacts c set tenant_phone = s.proposed_value
+      from public.contact_sync_suggestions s
+     where s.id = any(p_ids) and s.resolved_at = v_now and s.field = 'tenant_phone'
+       and c.apartment_number = s.apartment_number;
+
+    perform set_config('app.write_source', '', true);
+  end if;
+
+  return v_n;
 end;
 $$;
 
 
 --
--- Name: wa_touch_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: contact_sync_incoming(text[], text[], text[], text[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.wa_touch_updated_at() RETURNS trigger
+CREATE FUNCTION public.contact_sync_incoming(p_apartments text[], p_owner_names text[], p_owner_phones text[], p_tenant_phones text[]) RETURNS TABLE(apartment_number text, field text, value text)
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  select distinct on (btrim(t.a), f.n) btrim(t.a), f.n, btrim(f.v)
+    from unnest(p_apartments, p_owner_names, p_owner_phones, p_tenant_phones)
+           as t(a, onm, oph, tph)
+    cross join lateral (values ('owner_name', t.onm),
+                               ('owner_phone', t.oph),
+                               ('tenant_phone', t.tph)) as f(n, v)
+   where btrim(coalesce(t.a, '')) <> ''
+     and nullif(btrim(coalesce(f.v, '')), '') is not null
+   order by btrim(t.a), f.n;
+$$;
+
+
+--
+-- Name: contact_sync_ingest(text[], text[], text[], text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.contact_sync_ingest(p_apartments text[], p_owner_names text[], p_owner_phones text[], p_tenant_phones text[]) RETURNS TABLE(created integer, applied integer, suggested integer, closed integer)
     LANGUAGE plpgsql
     AS $$
-begin new.updated_at = now(); return new; end $$;
+declare
+  v_created integer := 0;
+  v_applied integer := 0;
+  v_suggested integer := 0;
+  v_closed integer := 0;
+  v_n integer;
+begin
+  -- Everything this function writes to contacts came from Bllink. Transaction
+  -- local; cleared before returning.
+  perform set_config('app.write_source', 'bllink', true);
+
+  -- 1. Apartments missing from the registry, exactly as before: created with
+  --    whatever the report knows, flagged for review, never an UPDATE.
+  insert into public.contacts (apartment_number, owner_name, owner_phone, tenant_phone, source, needs_review)
+  select btrim(t.a),
+         max(nullif(btrim(coalesce(t.onm, '')), '')),
+         max(nullif(btrim(coalesce(t.oph, '')), '')),
+         max(nullif(btrim(coalesce(t.tph, '')), '')),
+         'bllink_sync', true
+    from unnest(p_apartments, p_owner_names, p_owner_phones, p_tenant_phones) as t(a, onm, oph, tph)
+   where btrim(coalesce(t.a, '')) <> ''
+   group by btrim(t.a)
+  on conflict (apartment_number) do nothing;
+  get diagnostics v_created = row_count;
+
+  -- 2. Fields we simply do not have. No approval: there is nothing to overwrite.
+  update public.contacts c set owner_name = i.value
+    from public.contact_sync_incoming(p_apartments, p_owner_names, p_owner_phones, p_tenant_phones) i
+   where c.apartment_number = i.apartment_number and i.field = 'owner_name'
+     and nullif(btrim(coalesce(c.owner_name, '')), '') is null;
+  get diagnostics v_n = row_count; v_applied := v_applied + v_n;
+
+  update public.contacts c set owner_phone = i.value
+    from public.contact_sync_incoming(p_apartments, p_owner_names, p_owner_phones, p_tenant_phones) i
+   where c.apartment_number = i.apartment_number and i.field = 'owner_phone'
+     and nullif(btrim(coalesce(c.owner_phone, '')), '') is null;
+  get diagnostics v_n = row_count; v_applied := v_applied + v_n;
+
+  update public.contacts c set tenant_phone = i.value
+    from public.contact_sync_incoming(p_apartments, p_owner_names, p_owner_phones, p_tenant_phones) i
+   where c.apartment_number = i.apartment_number and i.field = 'tenant_phone'
+     and nullif(btrim(coalesce(c.tenant_phone, '')), '') is null;
+  get diagnostics v_n = row_count; v_applied := v_applied + v_n;
+
+  -- 3. Open suggestions the live value already satisfies. The trigger closes
+  --    these the moment the value is typed; this is the safety net for rows
+  --    that predate it or that changed outside a trigger's reach.
+  update public.contact_sync_suggestions s
+     set status = 'obsolete', resolved_at = now()
+    from public.contacts c
+   where s.status = 'pending'
+     and c.apartment_number = s.apartment_number
+     and public.contact_value_norm(s.field, s.proposed_value)
+         is not distinct from public.contact_value_norm(s.field,
+           case s.field
+             when 'owner_name'  then c.owner_name
+             when 'owner_phone' then c.owner_phone
+             else c.tenant_phone end);
+  get diagnostics v_closed = row_count;
+
+  -- 4. The conflicts. Ours stands; the difference waits for a decision.
+  insert into public.contact_sync_suggestions
+    (apartment_number, field, current_value, proposed_value, source)
+  select i.apartment_number, i.field, cur.v, i.value, 'bllink'
+    from public.contact_sync_incoming(p_apartments, p_owner_names, p_owner_phones, p_tenant_phones) i
+    join public.contacts c on c.apartment_number = i.apartment_number
+    cross join lateral (select case i.field
+                                 when 'owner_name'  then c.owner_name
+                                 when 'owner_phone' then c.owner_phone
+                                 else c.tenant_phone end as v) cur
+   where nullif(btrim(coalesce(cur.v, '')), '') is not null
+     and public.contact_value_norm(i.field, cur.v)
+         is distinct from public.contact_value_norm(i.field, i.value)
+     -- A value that was turned down does not come back. It returns only when
+     -- Bllink itself changes to something else.
+     and not exists (
+       select 1 from public.contact_sync_suggestions r
+        where r.apartment_number = i.apartment_number
+          and r.field = i.field
+          and r.status = 'rejected'
+          and public.contact_value_norm(r.field, r.proposed_value)
+              is not distinct from public.contact_value_norm(i.field, i.value))
+  on conflict (apartment_number, field) where status = 'pending'
+  do update set current_value  = excluded.current_value,
+                proposed_value = excluded.proposed_value,
+                created_at     = now()
+   -- An unchanged proposal keeps its original date: the second sync of the day
+   -- must not make yesterday's suggestion look new.
+   where public.contact_value_norm(public.contact_sync_suggestions.field,
+                                   public.contact_sync_suggestions.proposed_value)
+         is distinct from public.contact_value_norm(excluded.field, excluded.proposed_value);
+  get diagnostics v_suggested = row_count;
+
+  perform set_config('app.write_source', '', true);
+
+  created := v_created; applied := v_applied; suggested := v_suggested; closed := v_closed;
+  return next;
+end;
+$$;
 
 
-SET default_tablespace = '';
+--
+-- Name: contact_value_norm(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
 
-SET default_table_access_method = heap;
+CREATE FUNCTION public.contact_value_norm(p_field text, raw text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+declare
+  first_part text;
+  digits text;
+begin
+  if raw is null then return null; end if;
+
+  if p_field in ('owner_phone', 'tenant_phone') then
+    -- A cell can hold two numbers ("054… / 050…") — the first one is the value,
+    -- exactly as splitOwnerTenantPhones() and normalizePhone() read it.
+    first_part := btrim(split_part(regexp_replace(raw, '[/,;|]', '/', 'g'), '/', 1));
+    digits := regexp_replace(first_part, '\D', '', 'g');
+    if digits = '' then return null; end if;
+    if left(digits, 2) = '00' then digits := substr(digits, 3); end if;
+    if left(digits, 3) = '972' then digits := '0' || substr(digits, 4); end if;
+    return digits;
+  end if;
+
+  return nullif(lower(btrim(regexp_replace(raw, '\s+', ' ', 'g'))), '');
+end;
+$$;
+
+
+--
+-- Name: FUNCTION contact_value_norm(p_field text, raw text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.contact_value_norm(p_field text, raw text) IS 'Equality rule for the resident-list fields Bllink supplies. Phones compare as local digits, names case- and whitespace-insensitively. Never rejects a value — it only decides whether two values differ.';
+
+
+--
+-- Name: contacts_field_provenance(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.contacts_field_provenance() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_source text := coalesce(nullif(current_setting('app.write_source', true), ''), 'manual');
+  f text;
+  old_v text;
+  new_v text;
+begin
+  foreach f in array array['owner_name', 'owner_phone', 'tenant_phone'] loop
+    new_v := case f
+               when 'owner_name'  then new.owner_name
+               when 'owner_phone' then new.owner_phone
+               else new.tenant_phone end;
+    old_v := case
+               when tg_op = 'INSERT' then null
+               when f = 'owner_name'  then old.owner_name
+               when f = 'owner_phone' then old.owner_phone
+               else old.tenant_phone end;
+
+    -- Only a real change counts: re-saving the same number in a different
+    -- spelling is not an edit, and must not restamp the field.
+    continue when public.contact_value_norm(f, new_v)
+                  is not distinct from public.contact_value_norm(f, old_v);
+
+    insert into public.contact_field_sources (apartment_number, field, source, updated_at)
+    values (new.apartment_number, f, v_source, now())
+    on conflict (apartment_number, field)
+      do update set source = excluded.source, updated_at = excluded.updated_at;
+
+    -- The local value now IS what Bllink proposed — whoever typed it. There is
+    -- nothing left to approve, so the open suggestion closes itself and the
+    -- badge disappears from the card at once, not at tomorrow's sync.
+    update public.contact_sync_suggestions s
+       set status = 'obsolete', resolved_at = now()
+     where s.apartment_number = new.apartment_number
+       and s.field = f
+       and s.status = 'pending'
+       and public.contact_value_norm(f, s.proposed_value)
+           is not distinct from public.contact_value_norm(f, new_v);
+  end loop;
+
+  return null;
+end;
+$$;
+
 
 --
 -- Name: portal_owner_e164(text); Type: FUNCTION; Schema: public; Owner: -
@@ -155,6 +358,13 @@ begin
   return null;
 end;
 $_$;
+
+
+--
+-- Name: FUNCTION portal_owner_e164(raw text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.portal_owner_e164(raw text) IS 'Owner phone -> E.164 roster key, or NULL. Mirrors toPortalE164() in src/lib/portal/phone.ts; pinned to it by tests/portal-owner-roster.test.ts.';
 
 
 --
@@ -219,11 +429,69 @@ $$;
 
 
 --
--- Name: FUNCTION portal_owner_e164(raw text); Type: COMMENT; Schema: public; Owner: -
+-- Name: reconcile_wa_campaign(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.portal_owner_e164(raw text) IS 'Owner phone -> E.164 roster key, or NULL. Mirrors toPortalE164() in src/lib/portal/phone.ts; pinned to it by tests/portal-owner-roster.test.ts.';
+CREATE FUNCTION public.reconcile_wa_campaign(p_campaign uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+declare c record;
+begin
+  select
+    count(*)                                    as total,
+    count(*) filter (where status='pending')    as pending,
+    count(*) filter (where status='processing') as processing,
+    count(*) filter (where status='sent')       as sent,
+    count(*) filter (where status='failed')     as failed,
+    count(*) filter (where status='skipped')    as skipped,
+    count(*) filter (where status='cancelled')  as cancelled
+  into c
+  from public.wa_campaign_recipients where campaign_id = p_campaign;
 
+  update public.wa_campaigns w set
+    total_count=c.total, pending_count=c.pending, processing_count=c.processing,
+    sent_count=c.sent, failed_count=c.failed, skipped_count=c.skipped,
+    cancelled_count=c.cancelled,
+    status = case
+      when w.status in ('cancelled','draft','paused') then w.status
+      when (c.pending + c.processing) = 0 and c.total > 0
+        then case when c.failed > 0 then 'completed_with_errors' else 'completed' end
+      else w.status end,
+    completed_at = case
+      when w.status not in ('cancelled','draft','paused')
+       and (c.pending + c.processing) = 0 and c.total > 0 and w.completed_at is null
+        then now() else w.completed_at end
+  where w.id = p_campaign;
+end $$;
+
+
+--
+-- Name: touch_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.touch_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+
+--
+-- Name: wa_touch_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.wa_touch_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin new.updated_at = now(); return new; end $$;
+
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
 
 --
 -- Name: apartment_owner_phones; Type: TABLE; Schema: public; Owner: -
@@ -599,6 +867,27 @@ CREATE TABLE public.completed_actions (
 
 
 --
+-- Name: contact_field_sources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.contact_field_sources (
+    apartment_number text NOT NULL,
+    field text NOT NULL,
+    source text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT contact_field_sources_field_check CHECK ((field = ANY (ARRAY['owner_name'::text, 'owner_phone'::text, 'tenant_phone'::text]))),
+    CONSTRAINT contact_field_sources_source_check CHECK ((source = ANY (ARRAY['manual'::text, 'bllink'::text])))
+);
+
+
+--
+-- Name: TABLE contact_field_sources; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.contact_field_sources IS 'Provenance of the resident-list fields Bllink also supplies: who last CHANGED each one. Written by a trigger, so no call site can forget.';
+
+
+--
 -- Name: contact_people; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -622,6 +911,42 @@ CREATE TABLE public.contact_people (
 --
 
 COMMENT ON TABLE public.contact_people IS 'Additional owners/tenants of an apartment. The first person of each role lives in contacts.owner_*/tenant_*; these are the extras. is_primary_contact = receives WhatsApp messages/broadcasts.';
+
+
+--
+-- Name: contact_sync_suggestions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.contact_sync_suggestions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    apartment_number text NOT NULL,
+    field text NOT NULL,
+    current_value text,
+    proposed_value text NOT NULL,
+    source text DEFAULT 'bllink'::text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    resolved_at timestamp with time zone,
+    resolved_by uuid,
+    CONSTRAINT contact_sync_suggestions_field_check CHECK ((field = ANY (ARRAY['owner_name'::text, 'owner_phone'::text, 'tenant_phone'::text]))),
+    CONSTRAINT contact_sync_suggestions_resolution_shape CHECK ((((status = 'pending'::text) AND (resolved_at IS NULL)) OR ((status <> 'pending'::text) AND (resolved_at IS NOT NULL)))),
+    CONSTRAINT contact_sync_suggestions_source_check CHECK ((source = 'bllink'::text)),
+    CONSTRAINT contact_sync_suggestions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'obsolete'::text])))
+);
+
+
+--
+-- Name: TABLE contact_sync_suggestions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.contact_sync_suggestions IS 'Bllink proposals for the resident list. One OPEN row per apartment+field; approved / rejected / obsolete rows are history. obsolete = the local value changed by itself and now matches the proposal, so there was nothing left to decide.';
+
+
+--
+-- Name: COLUMN contact_sync_suggestions.resolved_by; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.contact_sync_suggestions.resolved_by IS 'The user who pressed approve/reject. NULL on an obsolete row — nobody decided it.';
 
 
 --
@@ -2417,11 +2742,27 @@ ALTER TABLE ONLY public.completed_actions
 
 
 --
+-- Name: contact_field_sources contact_field_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.contact_field_sources
+    ADD CONSTRAINT contact_field_sources_pkey PRIMARY KEY (apartment_number, field);
+
+
+--
 -- Name: contact_people contact_people_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.contact_people
     ADD CONSTRAINT contact_people_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: contact_sync_suggestions contact_sync_suggestions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.contact_sync_suggestions
+    ADD CONSTRAINT contact_sync_suggestions_pkey PRIMARY KEY (id);
 
 
 --
@@ -3327,6 +3668,27 @@ CREATE INDEX contact_people_recipients_idx ON public.contact_people USING btree 
 
 
 --
+-- Name: contact_sync_suggestions_one_open; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX contact_sync_suggestions_one_open ON public.contact_sync_suggestions USING btree (apartment_number, field) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: contact_sync_suggestions_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX contact_sync_suggestions_pending_idx ON public.contact_sync_suggestions USING btree (created_at DESC) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: contact_sync_suggestions_rejected_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX contact_sync_suggestions_rejected_idx ON public.contact_sync_suggestions USING btree (apartment_number, field) WHERE (status = 'rejected'::text);
+
+
+--
 -- Name: contacts_operator_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4216,6 +4578,13 @@ CREATE TRIGGER contacts_block_delete_with_active_debt BEFORE DELETE ON public.co
 
 
 --
+-- Name: contacts contacts_field_provenance_aiu; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER contacts_field_provenance_aiu AFTER INSERT OR UPDATE OF owner_name, owner_phone, tenant_phone ON public.contacts FOR EACH ROW EXECUTE FUNCTION public.contacts_field_provenance();
+
+
+--
 -- Name: contacts contacts_touch_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -4276,6 +4645,20 @@ CREATE TRIGGER notifications_touch_updated_at BEFORE UPDATE ON public.notificati
 --
 
 CREATE TRIGGER parking_spots_touch_updated_at BEFORE UPDATE ON public.parking_spots FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
+
+
+--
+-- Name: contacts portal_roster_from_contact_aiu; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER portal_roster_from_contact_aiu AFTER INSERT OR UPDATE OF owner_phone, owner_name, apartment_number ON public.contacts FOR EACH ROW EXECUTE FUNCTION public.portal_roster_from_contact();
+
+
+--
+-- Name: contact_people portal_roster_from_contact_person_aiu; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER portal_roster_from_contact_person_aiu AFTER INSERT OR UPDATE OF phone, name, role, contact_id ON public.contact_people FOR EACH ROW EXECUTE FUNCTION public.portal_roster_from_contact_person();
 
 
 --
@@ -4388,20 +4771,6 @@ CREATE TRIGGER whatsapp_instances_touch_updated_at BEFORE UPDATE ON public.whats
 --
 
 CREATE TRIGGER whatsapp_templates_touch_updated_at BEFORE UPDATE ON public.whatsapp_templates FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
-
-
---
--- Name: contacts portal_roster_from_contact_aiu; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER portal_roster_from_contact_aiu AFTER INSERT OR UPDATE OF owner_phone, owner_name, apartment_number ON public.contacts FOR EACH ROW EXECUTE FUNCTION public.portal_roster_from_contact();
-
-
---
--- Name: contact_people portal_roster_from_contact_person_aiu; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER portal_roster_from_contact_person_aiu AFTER INSERT OR UPDATE OF phone, name, role, contact_id ON public.contact_people FOR EACH ROW EXECUTE FUNCTION public.portal_roster_from_contact_person();
 
 
 --
@@ -4581,11 +4950,35 @@ ALTER TABLE ONLY public.completed_actions
 
 
 --
+-- Name: contact_field_sources contact_field_sources_apartment_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.contact_field_sources
+    ADD CONSTRAINT contact_field_sources_apartment_number_fkey FOREIGN KEY (apartment_number) REFERENCES public.contacts(apartment_number) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
 -- Name: contact_people contact_people_contact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.contact_people
     ADD CONSTRAINT contact_people_contact_id_fkey FOREIGN KEY (contact_id) REFERENCES public.contacts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: contact_sync_suggestions contact_sync_suggestions_apartment_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.contact_sync_suggestions
+    ADD CONSTRAINT contact_sync_suggestions_apartment_number_fkey FOREIGN KEY (apartment_number) REFERENCES public.contacts(apartment_number) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: contact_sync_suggestions contact_sync_suggestions_resolved_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.contact_sync_suggestions
+    ADD CONSTRAINT contact_sync_suggestions_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -5406,5 +5799,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260927125643'),
     ('20260928175919'),
     ('20260928201600'),
-    ('20260929043204')
+    ('20260929043204'),
+    ('20260929162740'),
+    ('20260929194811')
 ;
