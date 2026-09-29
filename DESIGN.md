@@ -1922,3 +1922,63 @@ text-amber-700` "לא פורסם". הכפתורים בלשונית: "הוצאה 
 מהטבלה (שורת אישור ירוקה "ספק מרשימת הספקים"); הקלדה חופשית = שם חופשי (שורת הסבר אפורה).
 **לא יוצר ספק** לעולם.
 
+
+---
+
+## 36. תור ההצעות מבלינק (`/contacts` + כרטיס הדירה)
+
+הסנכרון מבלינק לא דורס שדה של דייר שהוא חולק עליו — הוא מציע, ורונן מכריע
+(29/09/2026). שני משטחים, שניהם מהפלטה הקיימת, בלי צבע חדש.
+
+### כפתור התור (ראש `/contacts`)
+
+```tsx
+<Button variant="outline" className="gap-2 border-amber-200 bg-amber-50 text-amber-700
+                                     hover:bg-amber-100 hover:text-amber-800">
+  <RefreshCcwDot className="h-4 w-4" /> {n} הצעות מבלינק
+</Button>
+```
+
+יושב ראשון בשורת הפעולות (לפני "ייבוא Excel"), **ומצויר רק כש-`n > 0`** — תור ריק
+אינו חדשות. הספירה מגיעה מה-server component בטעינה הראשונה; הרשימה עצמה נטענת
+רק בלחיצה. ענבר ולא אדום: זו החלטה שממתינה, לא תקלה.
+
+### פאנל התור (`contact-suggestions-panel.tsx`)
+
+`Sheet` תקני לפי §12 (‏`side="left"`, סולם הרוחב, כותרת gradient, גוף
+`bg-slate-50/60 p-5`, `PanelFooter`). שורה לכל דירה+שדה, בקלף לפי §9b:
+
+- כותרת השורה: `דירה {n}` + צ׳יפ שדה (`bg-slate-100 text-slate-600`) + זמן יחסי.
+- הערכים בשורה אחת: **שלנו** `text-muted-foreground line-through`, ‏`ArrowLeft`
+  אפור, **המוצע** `font-semibold text-slate-900`. טלפונים `dir="ltr" tabular-nums`.
+  ערך ריק = "— ריק".
+- שתי פעולות בקצה: "אשר" `border-emerald-200 text-emerald-700` · "דחה"
+  `border-rose-200 text-rose-600` (אותו ניסוח של כפתור המחיקה ב-`PanelFooter`).
+  במובייל הן נערמות מתחת לערכים (`flex-col` → `sm:flex-row`).
+- ב-footer "אשר הכל" דרך `PanelFooter`, עם `AlertDialog` לאישור (§12 — פעולה
+  רוחבית על נתונים קיימים).
+- תור ריק = מצב ריק לפי §17 עם `Inbox`; טעינה = שלושה `h-20 animate-pulse`.
+
+### תג ההצעה בכרטיס הדירה (`MainDetailsCard`)
+
+מתחת לשדה שיש לו הצעה פתוחה, ברוחב מלא:
+
+```tsx
+<div className="mt-1 flex flex-wrap items-center justify-end gap-1.5
+                rounded-md border border-amber-200 bg-amber-50 px-2 py-1">
+  <span className="text-[11px] font-semibold text-amber-700">בלינק:</span>
+  <span className="text-xs font-semibold text-amber-900">{proposed}</span>
+  {/* Check ירוק · X ורוד — כפתורי אייקון p-1 עם Tooltip */}
+</div>
+```
+
+אותו ענבר של הכפתור, כך שהתג והכפתור נקראים כאותו דבר. האייקונים הם כפתורי
+`Tooltip` בלבד — הטקסט המלא ("אשר — הערך ייכתב כאן" / "דחה — שלכם נשאר, וההצעה
+לא תחזור") יושב ב-Tooltip ולא על הכרטיס.
+
+### סימון מקור השדה ("ידני · תאריך")
+
+שורת כיתוב אחת מתחת לערך, `text-[11px] text-slate-400`, בלי אייקון ובלי רקע:
+`ידני · 29.09` או `בלינק · 29.09`, והמשפט המלא ב-Tooltip. **רק שדה שמישהו באמת
+שינה** מקבל אותה — שדה שאיש לא נגע בו פשוט אין לו שורה, וכך הכרטיס לא מתמלא
+בסימונים.
