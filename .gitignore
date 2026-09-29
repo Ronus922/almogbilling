@@ -89,3 +89,6 @@ supabase/.temp/
 
 # מסמך הקשר פנימי — מכיל פרטי תשתית, הריפו ציבורי
 ALMOG_BILLING_BRIEF.md
+
+# vitest JSON report used by scripts/check-no-skipped-tests.mjs (CI artefact)
+.vitest-db-report.json

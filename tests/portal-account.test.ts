@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Pool, type PoolClient } from 'pg';
+import { requireSeededAdmin } from './db-fixtures';
 
 // "החשבון שלי", the month-end bank balance behind its switch, and the OTP /
 // lockout / rate-limit layers of the owners portal (28/09/2026), against a
@@ -17,7 +18,9 @@ import { Pool, type PoolClient } from 'pg';
 //   • a code is consumed once, refused when expired, and never crosses phones;
 //     lockouts escalate 30m → 2h → 24h; the rate-limit buckets count.
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
-const d = TEST_URL ? describe : describe.skip;
+// Explicit gate: without a throwaway database these report as SKIPPED, never
+// as passed — scripts/check-no-skipped-tests.mjs fails CI if any of them do.
+const d = describe.skipIf(!TEST_URL);
 
 let pool: Pool;
 
@@ -88,8 +91,7 @@ d('owners portal — my account, bank balance, one-time codes', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: TEST_URL, max: 4 });
     pool.on('error', () => undefined);
-    const admin = await pool.query<{ id: string }>(`select id from public.users where username = 'e2e-admin'`);
-    actorId = admin.rows[0]!.id;
+    actorId = await requireSeededAdmin(pool);
     const s = await getFinanceSettings();
     settingsBefore = { docs: s.show_documents_to_residents, bank: s.show_bank_balance_to_residents };
     monthsBefore = new Map();

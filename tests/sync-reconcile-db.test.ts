@@ -1,18 +1,28 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { Pool } from 'pg';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { Pool, type PoolClient } from 'pg';
 import { readDebtorsAfterWrite, type ReconcileRow } from '@/lib/sync/reconcileRead';
 import { reconcileAfterWrite, snapshotTotals } from '@/lib/sync/reconcile';
 
 // The post-write reconciliation against a REAL public.debtors — the SQL in
 // reconcileRead.ts exercised end to end, with a simulated gap. Runs ONLY when a
 // throwaway test DB is wired (WA_TEST_DATABASE_URL, same switch as the other
-// DB-backed suites) — never production. Every fixture row is deleted by the id
-// its insert returned (iron rule 12), never by a filter.
+// DB-backed suites) — never production.
+//
+// readDebtorsAfterWrite aggregates the WHOLE debtors table, so these
+// assertions are only meaningful when the table holds this file's fixtures and
+// nothing else. Everything therefore runs inside a transaction that is ALWAYS
+// rolled back: the emptying, the fixtures and the assertions all live and die
+// inside it, so the suite is hermetic on a seeded database too and no row it
+// touches outlives it (iron rule 12 — the same shape as
+// tests/import-clearing-db.test.ts).
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
-const d = TEST_URL ? describe : describe.skip;
+// Explicit gate: without a throwaway database these report as SKIPPED, never
+// as passed — scripts/check-no-skipped-tests.mjs fails CI if any of them do.
+const d = describe.skipIf(!TEST_URL);
 
 let pool: Pool;
-/** apartment_number → debtors.id of the rows THIS file inserted. */
+let tx: PoolClient;
+/** apartment_number → debtors.id of the rows the CURRENT transaction inserted. */
 const ids = new Map<string, string>();
 
 const A1 = 'RC-A1';
@@ -28,7 +38,7 @@ function row(apartment_number: string, management_fees: number, hot_water_debt: 
 async function setDebt(apt: string, management: number, hotWater: number, archived = false): Promise<void> {
   const id = ids.get(apt);
   if (!id) throw new Error(`fixture ${apt} not inserted`);
-  await pool.query(
+  await tx.query(
     `update public.debtors
         set management_fees = $2::numeric, hot_water_debt = $3::numeric,
             total_debt = $2::numeric + $3::numeric, is_archived = $4::boolean
@@ -38,36 +48,44 @@ async function setDebt(apt: string, management: number, hotWater: number, archiv
 }
 
 d('readDebtorsAfterWrite — the real SQL against a throwaway debtors table', () => {
-  beforeAll(async () => {
+  beforeAll(() => {
     pool = new Pool({ connectionString: TEST_URL, max: 2 });
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  // The state a correct merge leaves: report rows written, Z1 zeroed, B1
+  // archived and in the report — in a table that holds nothing else, so the
+  // whole-table totals below mean what they say. Rolled back in afterEach.
+  beforeEach(async () => {
+    tx = await pool.connect();
+    await tx.query('begin');
+    await tx.query('delete from public.debtors');
+    ids.clear();
     for (const apt of [A1, A2, B1, Z1]) {
-      const r = await pool.query<{ id: string }>(
+      const r = await tx.query<{ id: string }>(
         `insert into public.debtors (apartment_number) values ($1) returning id`,
         [apt],
       );
       ids.set(apt, r.rows[0].id);
     }
-  });
-
-  afterAll(async () => {
-    for (const id of ids.values()) {
-      await pool.query(`delete from public.debtors where id = $1`, [id]);
-    }
-    await pool.end();
-  });
-
-  // The state a correct merge leaves: report rows written, Z1 zeroed, B1 archived and in the report.
-  beforeEach(async () => {
     await setDebt(A1, 100, 10);
     await setDebt(A2, 200, 20);
     await setDebt(B1, 176, 251, true);
     await setDebt(Z1, 0, 0);
   });
 
+  afterEach(async () => {
+    await tx.query('rollback');
+    tx.release();
+  });
+
   const report = [row(A1, 100, 10), row(A2, 200, 20), row(B1, 176, 251)];
 
   it('a clean merge reconciles: sums include the archived-but-reported row, all lists empty', async () => {
-    const after = await readDebtorsAfterWrite(pool, report);
+    const after = await readDebtorsAfterWrite(tx, report);
     expect(after.totals).toEqual({ management: 476, hotWater: 281 });
     expect(after.leftovers).toEqual([]);
     expect(after.unwritten).toEqual([]);
@@ -78,7 +96,7 @@ d('readDebtorsAfterWrite — the real SQL against a throwaway debtors table', ()
 
   it('SIMULATED GAP (the 27/09 case): a non-archived apartment the report dropped still carries debt → fails, named', async () => {
     await setDebt(Z1, 9810, 190); // paid in Bllink, not zeroed here
-    const after = await readDebtorsAfterWrite(pool, report);
+    const after = await readDebtorsAfterWrite(tx, report);
     expect(after.leftovers).toEqual([Z1]);
     expect(after.totals).toEqual({ management: 476 + 9810, hotWater: 281 + 190 });
     const r = reconcileAfterWrite(snapshotTotals(report), after);
@@ -91,13 +109,13 @@ d('readDebtorsAfterWrite — the real SQL against a throwaway debtors table', ()
 
   it('a report apartment written with a different amount is listed even when only agorot differ', async () => {
     await setDebt(A2, 200.01, 20);
-    const after = await readDebtorsAfterWrite(pool, report);
+    const after = await readDebtorsAfterWrite(tx, report);
     expect(after.mismatched).toEqual([A2]);
     expect(reconcileAfterWrite(snapshotTotals(report), after).ok).toBe(false);
   });
 
   it('a report apartment with no debtors row is "unwritten"', async () => {
-    const after = await readDebtorsAfterWrite(pool, [...report, row(N1, 50, 5)]);
+    const after = await readDebtorsAfterWrite(tx, [...report, row(N1, 50, 5)]);
     expect(after.unwritten).toEqual([N1]);
     const r = reconcileAfterWrite(snapshotTotals([...report, row(N1, 50, 5)]), after);
     expect(r.ok).toBe(false);
@@ -106,7 +124,7 @@ d('readDebtorsAfterWrite — the real SQL against a throwaway debtors table', ()
 
   it('an archived apartment the report dropped is a warning, outside the totals', async () => {
     const withoutB1 = [row(A1, 100, 10), row(A2, 200, 20)];
-    const after = await readDebtorsAfterWrite(pool, withoutB1);
+    const after = await readDebtorsAfterWrite(tx, withoutB1);
     expect(after.archivedLeftovers).toEqual([B1]);
     expect(after.leftovers).toEqual([]);
     expect(after.totals).toEqual({ management: 300, hotWater: 30 });
@@ -116,7 +134,7 @@ d('readDebtorsAfterWrite — the real SQL against a throwaway debtors table', ()
   });
 
   it('an empty report expects every non-archived apartment at zero', async () => {
-    const after = await readDebtorsAfterWrite(pool, []);
+    const after = await readDebtorsAfterWrite(tx, []);
     expect(after.leftovers).toEqual([A1, A2]);
     expect(after.totals).toEqual({ management: 300, hotWater: 30 });
     expect(reconcileAfterWrite(snapshotTotals([]), after).ok).toBe(false);
