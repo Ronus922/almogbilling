@@ -254,9 +254,17 @@ test.describe('5. unpublished months', () => {
     const ctx = await owner(browser, A1);
     const page = await ctx.newPage();
     await page.goto(`/portal?tab=tx&m=${nowKey()}`);
-    expect(await page.inputValue('#t-tx select.sel')).toBe(prevKey());
-    const options = await page.$$eval('#t-tx option', (o) => o.map((x) => (x as HTMLOptionElement).value));
-    expect(options).not.toContain(nowKey());
+    // The hidden month falls back to the newest published one, and the picker
+    // cannot reach it: in the one-click grid its cell is drawn but disabled.
+    const months = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+    const labelOf = (k: string) => `${months[Number(k.slice(5, 7)) - 1]} ${k.slice(0, 4)}`;
+    const trigger = page.locator('#t-tx .per button[aria-label="תקופה"]');
+    expect(await trigger.textContent()).toBe(labelOf(prevKey()));
+    await trigger.click();
+    const grid = page.locator('[role="dialog"][aria-label="בחירת תקופה"]');
+    expect(await grid.getByLabel(`בחר ${labelOf(nowKey())}`, { exact: true }).isDisabled()).toBe(true);
+    expect(await grid.getByLabel(`בחר ${labelOf(prevKey())}`, { exact: true }).isDisabled()).toBe(false);
+    await page.keyboard.press('Escape');
     await page.goto(`/portal?tab=rep&r=${nowKey().slice(0, 4)}`);
     const rep = await page.content();
     expect(scan(rep)).toEqual([]);
@@ -270,7 +278,8 @@ test.describe('5. unpublished months', () => {
     const quarter = `${prevKey().slice(0, 4)}-Q${q}`;
     await page.goto(`/portal?m=${quarter}`);
     expect(await page.$eval('.nav button.on', (b) => b.textContent)).toBe('הכנסות והוצאות');
-    expect(await page.inputValue('#t-tx select.sel')).toBe(quarter);
+    expect(await page.locator('#t-tx .per button[aria-label="תקופה"]').textContent())
+      .toBe(`רבעון ${q} · ${prevKey().slice(0, 4)}`);
     expect(scan(await page.content())).toEqual([]);
     expect(await page.$$eval('#t-tx .chart .grp text', (t) => t.map((x) => x.textContent))).not.toContain(hiddenShort());
     await page.goto('/portal?tab=ov');
@@ -327,16 +336,21 @@ test.describe('7. one-time codes', () => {
     // D: the code exists but is past its TTL
     const expired = await request.post('/api/portal/otp/verify', { data: { phone: '0504444444', code: '123456' } });
     expect(expired.status()).toBe(401);
-    expect((await expired.json()).message).toContain('פג תוקף');
+    // The reference's wording since 29/09/2026 (ref/otp-states.md, key
+    // `expired`), plus the flag the screen switches its primary action on.
+    const expiredBody = await expired.json();
+    expect(expiredBody.message).toContain('תוקף הקוד פג');
+    expect(expiredBody.expired).toBe(true);
   });
 
-  test("a tenant's phone gets the decided message and no code; a repeat request inside 60s is throttled", async ({ request }) => {
+  test("a tenant's phone gets the decided message and no code; a repeat request inside the cooldown is throttled", async ({ request }) => {
     const tenant = await request.post('/api/portal/otp/request', { data: { phone: '050-6666666' } });
     expect(tenant.status()).toBe(200);
     const body = await tenant.json();
     expect(body.sent).toBeUndefined();
     expect(body.message).toContain('אינו רשום');
-    // an owner: the code is issued (the send fails here — no WhatsApp instance), the 60s cooldown holds
+    // an owner: the code is issued and the resend cooldown (45s since
+    // 29/09/2026, the reference's value) refuses the next request
     const first = await request.post('/api/portal/otp/request', { data: { phone: '0501111112' } });
     expect([200, 502]).toContain(first.status());
     const second = await request.post('/api/portal/otp/request', { data: { phone: '0501111112' } });

@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   accountTotals, apartmentsLabel, axisLabel, categoriesOf, categoryShares, firstName, flatEntries, fmtDateDMY, fmtDelta,
   fmtEntryDate, fmtIls, fmtSigned, initials, monthShort, niceAxis, parseOverviewSpan, parsePortalTab,
-  parseTxFilter, pctVsAverage, periodOptionsByYear, reportRangeFor, reportRanges, roundShekels, sanitizeCell,
+  parseTxFilter, pctVsAverage, reportRangeFor, reportRanges, roundShekels, sanitizeCell,
   signClass, sumExact, windowKeys,
 } from '@/lib/portal/ui';
 import { AMOUNT_NUM_FMT, buildPortalPeriodWorkbook } from '@/lib/portal/export';
 import { makePeriod } from '@/lib/finance/period';
+import { rangeHasPublished } from '@/lib/finance/resident';
 import type { PortalAccount } from '@/lib/types/portal';
 import type { ResidentEntry } from '@/lib/types/finance';
 
@@ -76,18 +77,23 @@ describe("the reference's formats", () => {
 
 describe('selectors — published months only, grouped by year, newest first', () => {
   const published = ['2025-11', '2026-01', '2026-02', '2026-07'];
-  it('the period picker offers published months then the ranges that hold one, per year', () => {
-    expect(periodOptionsByYear(published).map((y) => ({ year: y.year, keys: y.periods.map((p) => p.key) }))).toEqual([
-      { year: 2026, keys: ['2026-07', '2026-02', '2026-01', '2026-Q3', '2026-Q1', '2026-H2', '2026-H1', '2026'] },
-      { year: 2025, keys: ['2025-11', '2025-Q4', '2025-H2', '2025'] },
-    ]);
+
+  // What the ONE-CLICK picker (components/finance/PeriodPicker, residentMode)
+  // asks of every cell it draws: a month must be published, and a quarter /
+  // half / year must hold one. Pinned here because it is the rule that keeps a
+  // hidden month out of the resident's reach.
+  it('a resident may open a published month, and no other', () => {
+    const set = new Set(published);
+    expect(set.has('2026-07')).toBe(true);
+    expect(set.has('2026-03')).toBe(false);
   });
-  it('a month nobody published is not in the picker, and neither is an empty range', () => {
-    const keys = periodOptionsByYear(['2026-02']).flatMap((y) => y.periods.map((p) => p.key));
-    expect(keys).toEqual(['2026-02', '2026-Q1', '2026-H1', '2026']);
-    expect(keys).not.toContain('2026-01'); // published: only 02
-    expect(keys).not.toContain('2026-Q2'); // holds no published month
-    expect(periodOptionsByYear([])).toEqual([]);
+  it('a resident may open a range only when it holds a published month', () => {
+    const set = new Set(published);
+    expect(rangeHasPublished('2026-07', '2026-09', set)).toBe(true);  // Q3 holds 07
+    expect(rangeHasPublished('2026-04', '2026-06', set)).toBe(false); // Q2 holds none
+    expect(rangeHasPublished('2026-01', '2026-12', set)).toBe(true);  // the year
+    expect(rangeHasPublished('2024-01', '2024-12', set)).toBe(false);
+    expect(rangeHasPublished('2026-01', '2026-12', new Set())).toBe(false);
   });
   it('lists only ranges that hold a published month', () => {
     const keys = reportRanges(published).map((p) => p.key);

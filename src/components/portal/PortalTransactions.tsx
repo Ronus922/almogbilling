@@ -4,11 +4,12 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import type { FinKind } from '@/lib/constants/finance';
+import { PeriodPicker } from '@/components/finance/PeriodPicker';
 import { periodLabel, type Period } from '@/lib/finance/period';
 import type { ResidentPeriodData } from '@/lib/types/finance';
 import { exportPortalPeriodExcel } from '@/lib/portal/export';
 import {
-  catColor, categoriesOf, flatEntries, fmtIls, fmtSigned, monthShort, monthTitle, periodOptionsByYear, signClass,
+  catColor, categoriesOf, flatEntries, fmtIls, fmtSigned, monthShort, monthTitle, signClass,
   type TxFilter,
 } from '@/lib/portal/ui';
 import { PortalBarChart, type ChartPoint } from './PortalBarChart';
@@ -16,13 +17,20 @@ import { PortalTxTable } from './PortalTxTable';
 import { ArrowDownIcon, ArrowUpIcon, ExportIcon, InfoIcon, ScaleIcon, WalletIcon } from './PortalIcons';
 import { usePortalHref } from './usePortalHref';
 
-// The transactions tab (#t-tx of the reference) for the selected period — the
-// period picker restored on 29/09/2026 after PR #44 (b51b791) left the tab
-// with a month-only select: one month, a quarter, a half or a whole year, and
-// EVERY figure on the tab follows it (the KPIs, the income-vs-expenses chart,
-// the categories, the rows and the closing bank balance). Only published
-// months are in the picker and in the figures — the server puts that rule in
-// the SQL (getResidentPeriodData), so nothing here has to hide anything.
+// The transactions tab (#t-tx of the reference) for the selected period — one
+// month, a quarter, a half or a whole year, and EVERY figure on the tab
+// follows it (the KPIs, the income-vs-expenses chart, the categories, the rows
+// and the closing bank balance). Only published months are in the picker and
+// in the figures — the server puts that rule in the SQL
+// (getResidentPeriodData), so nothing here has to hide anything.
+//
+// The picker is the ONE-CLICK grid of /finance (components/finance/PeriodPicker
+// in `portal` dress), restored here on 29/09/2026: PR #44 (b51b791) deleted it
+// with PortalFinanceView, and PR #49 brought back only a flat `<select>`. The
+// grid is the decision of 27/09/2026 ("תאריכון בלחיצה אחת") and a permanent
+// capability — « כל YYYY » with year arrows, a 3×4 month grid whose rows are
+// quarters and row-pairs halves, every click selects and closes, published
+// months carry a green dot and nothing else is reachable.
 //
 // The period is a navigation (`?m=`, the four grammars of lib/finance/period),
 // which is what keeps a refresh and a shared link on the same period; the chip
@@ -70,11 +78,6 @@ export function PortalTransactions({ period, publishedMonths, data, filter: init
   const [pending, startTransition] = useTransition();
   const [filter, setFilter] = useState<TxFilter>(initialFilter);
   const [exporting, setExporting] = useState(false);
-
-  function changePeriod(key: string) {
-    if (key === period.key) return;
-    startTransition(() => router.push(href({ tab: 'tx', m: key, f: filter === 'all' ? null : filter })));
-  }
 
   function changeFilter(next: TxFilter) {
     setFilter(next);
@@ -125,13 +128,7 @@ export function PortalTransactions({ period, publishedMonths, data, filter: init
           <p>כל תנועה בקופת הבניין{showsDocs ? ', כולל חשבוניות וקבלות' : ''} — {label}</p>
         </div>
         <div className="per" style={pending ? { opacity: 0.7 } : undefined}>
-          <select className="sel" aria-label="תקופה" value={period.key} onChange={(e) => changePeriod(e.target.value)}>
-            {periodOptionsByYear(publishedMonths).map((y) => (
-              <optgroup key={y.year} label={String(y.year)}>
-                {y.periods.map((p) => <option key={p.key} value={p.key}>{periodLabel(p)}</option>)}
-              </optgroup>
-            ))}
-          </select>
+          <PeriodPicker period={period} publishedMonths={publishedMonths} residentMode variant="portal" />
           <button type="button" className="pbtn pbtn-secondary" onClick={exportExcel} disabled={exporting || rows.length === 0}>
             <ExportIcon />ייצוא לאקסל
           </button>

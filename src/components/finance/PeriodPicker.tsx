@@ -49,7 +49,7 @@ function PeriodGrid({ year, onYear, selected, published, residentMode, onPick }:
     disabled
       ? 'cursor-not-allowed border border-transparent text-slate-300'
       : active
-        ? 'bg-blue-600 text-white shadow-soft-sm'
+        ? 'bg-brand text-white shadow-soft-sm'
         : 'cursor-pointer border border-line bg-white text-ink-2 hover:bg-slate-50',
   );
 
@@ -70,7 +70,7 @@ function PeriodGrid({ year, onYear, selected, published, residentMode, onPick }:
             yearFuture
               ? 'cursor-not-allowed text-slate-300'
               : selected.kind === 'year' && selected.year === year
-                ? 'bg-blue-600 text-white shadow-soft-sm'
+                ? 'bg-brand text-white shadow-soft-sm'
                 : 'cursor-pointer text-[#0f172a] hover:bg-slate-50',
           )}
         >
@@ -132,11 +132,11 @@ function PeriodGrid({ year, onYear, selected, published, residentMode, onPick }:
                       disabled
                         ? 'cursor-not-allowed border border-transparent text-slate-300'
                         : active
-                          ? 'bg-blue-600 text-white shadow-soft-sm'
+                          ? 'bg-brand text-white shadow-soft-sm'
                           : inSelection(key)
-                            ? 'cursor-pointer border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                            ? 'cursor-pointer border-brand-border bg-brand-soft text-brand-text hover:brightness-[0.97] border'
                             : 'cursor-pointer border border-line bg-white text-ink hover:bg-slate-50',
-                      key === current && !active && 'ring-1 ring-inset ring-blue-300',
+                      key === current && !active && 'ring-1 ring-inset ring-brand-border',
                     )}
                   >
                     {HE_MONTH_NAMES[m - 1]}
@@ -159,12 +159,14 @@ function PeriodGrid({ year, onYear, selected, published, residentMode, onPick }:
   );
 }
 
-export function PeriodPicker({ period, publishedMonths, residentMode = false }: {
+export function PeriodPicker({ period, publishedMonths, residentMode = false, variant = 'staff' }: {
   period: Period;
   /** 'YYYY-MM' keys of the published months (green dots). */
   publishedMonths: string[];
   /** Resident view: unpublished months (and ranges without one) are inert. */
   residentMode?: boolean;
+  /** Trigger chrome. The panel is the same either way. */
+  variant?: 'staff' | 'portal';
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -190,20 +192,32 @@ export function PeriodPicker({ period, publishedMonths, residentMode = false }: 
     startTransition(() => router.push(`${pathname}?${q.toString()}`));
   }
 
+  const portal = variant === 'portal';
   const trigger = (
     <button
       type="button"
       onClick={toggle}
       aria-haspopup="dialog"
       aria-expanded={open}
+      aria-label="תקופה"
       className={cn(
-        'flex h-[38px] items-center gap-2 rounded-[10px] border border-[#e2e8f0] bg-white px-3 text-[#0f172a] transition-colors hover:bg-slate-50',
+        'flex items-center gap-2 transition-colors',
+        // `sel` is the reference's own select chrome (height, border, radius,
+        // font); portal.css also makes it full width and 44px on a phone.
+        portal
+          ? 'sel justify-center'
+          : 'h-[38px] rounded-[10px] border border-[#e2e8f0] bg-white px-3 text-[#0f172a] hover:bg-slate-50',
         pending && 'opacity-70',
       )}
     >
-      <CalendarDays className="h-4 w-4 text-[#475569]" aria-hidden />
-      <span className="min-w-[128px] text-center text-[17px] font-extrabold">{periodLabel(period)}</span>
-      <ChevronDown className={cn('h-4 w-4 text-[#475569] transition-transform', open && 'rotate-180')} aria-hidden />
+      <CalendarDays className={cn('h-4 w-4 shrink-0', portal ? 'text-ink-muted' : 'text-[#475569]')} aria-hidden />
+      <span className={cn('text-center', portal ? 'font-semibold' : 'min-w-[128px] text-[17px] font-extrabold')}>
+        {periodLabel(period)}
+      </span>
+      <ChevronDown
+        className={cn('h-4 w-4 shrink-0 transition-transform', portal ? 'text-ink-muted' : 'text-[#475569]', open && 'rotate-180')}
+        aria-hidden
+      />
     </button>
   );
 
@@ -216,7 +230,10 @@ export function PeriodPicker({ period, publishedMonths, residentMode = false }: 
         {open && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden />
-            <div role="dialog" aria-label="בחירת תקופה" className="absolute start-0 top-full z-50 mt-2 w-[400px] rounded-xl border border-line bg-white p-4 shadow-soft-md">
+            <div role="dialog" aria-label="בחירת תקופה" className={cn(
+              'absolute top-full z-50 mt-2 w-[400px] max-w-[calc(100vw-2rem)] rounded-xl border border-line bg-white p-4 text-start shadow-soft-md',
+              portal ? 'end-0' : 'start-0',
+            )}>
               {grid}
             </div>
           </>
