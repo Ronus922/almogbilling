@@ -35,3 +35,22 @@ export function supportTelHref(raw: string | null | undefined): string | null {
   if (digits.startsWith('0')) return `tel:+972${digits.slice(1)}`;
   return `tel:${digits}`;
 }
+
+/** Is there anything at all to show? Callers that draw their own layout around
+ *  the action ask this first, so a missing configuration leaves no empty box
+ *  and no lonely secondary button behind. */
+export function hasPortalSupport(support: { phone?: string | null; email?: string | null }): boolean {
+  return Boolean((support.phone ?? '').trim() || (support.email ?? '').trim());
+}
+
+/** A pre-addressed message to the management company. `subject` is encoded, so
+ *  a Hebrew subject with a dash survives the mail client. */
+export function supportMailtoHref(
+  email: string | null | undefined,
+  subject?: string,
+): string | null {
+  const address = (email ?? '').trim();
+  if (!address) return null;
+  const s = (subject ?? '').trim();
+  return s ? `mailto:${address}?subject=${encodeURIComponent(s)}` : `mailto:${address}`;
+}

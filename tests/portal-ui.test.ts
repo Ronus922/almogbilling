@@ -6,7 +6,9 @@ import {
   signClass, sumExact, windowKeys,
 } from '@/lib/portal/ui';
 import { AMOUNT_NUM_FMT, buildPortalPeriodWorkbook } from '@/lib/portal/export';
-import { formatSupportPhone, supportTelHref } from '@/lib/portal/support';
+import { formatSupportPhone, hasPortalSupport, supportMailtoHref, supportTelHref } from '@/lib/portal/support';
+import { PORTAL_NOT_OWNER_MESSAGE, pointsAtManagementCompany, portalLockedMessage } from '@/lib/constants/portal';
+import { joinRequestSubject } from '@/components/portal/PortalOtpOverlay';
 import { makePeriod } from '@/lib/finance/period';
 import { rangeHasPublished } from '@/lib/finance/resident';
 import type { PortalAccount } from '@/lib/types/portal';
@@ -268,5 +270,27 @@ describe('the management company details on the lock screens', () => {
     expect(supportTelHref('04-834-1881')).toBe('tel:+97248341881');
     expect(supportTelHref('+1 415 555 2671')).toBe('tel:+14155552671');
     expect(supportTelHref(null)).toBeNull();
+  });
+  it('knows when there is nothing to offer, so no empty box is drawn', () => {
+    expect(hasPortalSupport({ phone: null, email: null })).toBe(false);
+    expect(hasPortalSupport({ phone: '  ', email: '' })).toBe(false);
+    expect(hasPortalSupport({ phone: null, email: 'a@b.co' })).toBe(true);
+    expect(hasPortalSupport({ phone: '048341881', email: null })).toBe(true);
+  });
+  it('addresses the join request with the number in the subject', () => {
+    expect(joinRequestSubject('050-999-9999')).toBe('בקשת הצטרפות לפורטל — 050-999-9999');
+    expect(supportMailtoHref('mgmt@example.test', joinRequestSubject('050-999-9999')))
+      .toBe(`mailto:mgmt@example.test?subject=${encodeURIComponent('בקשת הצטרפות לפורטל — 050-999-9999')}`);
+    // No subject → a plain address; no address → no link at all.
+    expect(supportMailtoHref('mgmt@example.test')).toBe('mailto:mgmt@example.test');
+    expect(supportMailtoHref(null, 'x')).toBeNull();
+  });
+  it('spots the copy that sends a resident to the management company', () => {
+    expect(pointsAtManagementCompany(PORTAL_NOT_OWNER_MESSAGE)).toBe(true);
+    expect(pointsAtManagementCompany(portalLockedMessage(30))).toBe(true);
+    expect(pointsAtManagementCompany('שליחת הקוד נכשלה. נסה שוב בעוד רגע, או פנה לחברת הניהול.')).toBe(true);
+    // Copy that merely mentions the code is not an invitation to ring anyone.
+    expect(pointsAtManagementCompany('הקוד שגוי. נותרו 4 ניסיונות.')).toBe(false);
+    expect(pointsAtManagementCompany(null)).toBe(false);
   });
 });

@@ -72,7 +72,11 @@ describe('mapSourceRow — the write is rebuilt from the components, identically
   it('E → management_fees, G → hot_water_debt, F → monthly_debt text, H → details, total RECOMPUTED', () => {
     const m = mapSourceRow(src({ total_debt: 999, notes: ' בהסדר ' }));
     expect(m).toEqual({
-      apartment_number: '1035', owner_name: 'ישראל ישראלי', phone_owner: '0501234567', phone_tenant: null,
+      apartment_number: '1035', owner_name: 'ישראל ישראלי', tenant_name: null,
+      phone_owner: '0501234567', phone_tenant: null,
+      // No address in the debt export — the scraper fills these from Bllink's
+      // resident list, and the CRM source never has them at all.
+      owner_email: null, tenant_email: null,
       total_debt: 100, management_fees: 80, monthly_debt: '07/26-09/26', hot_water_debt: 20, details: 'בהסדר',
     });
   });

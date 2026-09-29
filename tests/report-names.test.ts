@@ -33,9 +33,17 @@ describe('the report name cell, split by role', () => {
     expect(splitOwnerTenantNames('חברה (2010) בע״מ').owner).toBe('חברה (2010) בע״מ');
   });
 
+  it('a trailing unlabelled name is the tenant — Bllink drops the label, not the person', () => {
+    // Apartment 504 of the 29/09/2026 report. Bllink's own tenant list has
+    // "רחל פנחסי" as a renter of that apartment, so reading the unlabelled
+    // tail as the tenant is not a guess — it is what the source means.
+    expect(splitOwnerTenantNames('אלי - הבת רננה מילשטיין (בעלים) רחל פנחס'))
+      .toEqual({ owner: 'אלי - הבת רננה מילשטיין', tenant: 'רחל פנחס' });
+  });
+
   it('empty input yields nothing', () => {
-    for (const raw of [null, undefined, '', '   ', '(בעלים)']) {
-      expect(splitOwnerTenantNames(raw).owner).toBeNull();
+    for (const raw of [null, undefined, '', '   ', '(בעלים)', '(שוכר/ת)']) {
+      expect(splitOwnerTenantNames(raw)).toEqual({ owner: null, tenant: null });
     }
   });
 });

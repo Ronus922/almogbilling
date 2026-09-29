@@ -376,8 +376,8 @@ export async function upsertContactByApartment(
  * Until 29/09/2026 this was insert-missing only: a missing apartment was
  * created, an existing one was never touched, not even an empty field. That is
  * why a phone changing in Bllink went unnoticed for months. Now the decision
- * per apartment+field lives in SQL (public.contact_sync_ingest, migration
- * 20260929194811):
+ * per apartment+field lives in SQL (public.contact_sync_ingest, migrations
+ * 20260929194811 and 20260929211433):
  *
  *   • an apartment we do not have  → created from the report, exactly as before
  *   • a field of ours that is EMPTY → filled straight in (nothing to overwrite)
@@ -392,27 +392,45 @@ export async function syncContactsFromReport(
   rows: Array<{
     apartment_number: string;
     owner_name: string | null;
+    tenant_name: string | null;
     phone_owner: string | null;
     phone_tenant: string | null;
+    owner_email?: string | null;
+    tenant_email?: string | null;
   }>,
 ): Promise<ContactSyncOutcome> {
   return withTransaction(async (client) => {
+    // The report, already unpivoted: three PARALLEL arrays of
+    // (apartment, field, value) — the shape the queue itself stores, so a new
+    // field costs a line here and a name in a CHECK, not another array.
+    //
+    // Every field of every row is pushed, blank ones included: the SQL drops
+    // blank VALUES but still reads the apartment column, and an apartment
+    // whose contact cells are all empty must go on being created.
     const apartments: string[] = [];
-    const ownerNames: Array<string | null> = [];
-    const ownerPhones: Array<string | null> = [];
-    const tenantPhones: Array<string | null> = [];
+    const fields: string[] = [];
+    const values: Array<string | null> = [];
     for (const r of rows) {
-      apartments.push(normalizeApartmentNumber(r.apartment_number ?? ''));
-      ownerNames.push(r.owner_name);
-      ownerPhones.push(r.phone_owner);
-      tenantPhones.push(r.phone_tenant);
+      const apt = normalizeApartmentNumber(r.apartment_number ?? '');
+      for (const [field, value] of [
+        ['owner_name', r.owner_name],
+        ['owner_phone', r.phone_owner],
+        ['owner_email', r.owner_email ?? null],
+        ['tenant_name', r.tenant_name],
+        ['tenant_phone', r.phone_tenant],
+        ['tenant_email', r.tenant_email ?? null],
+      ] as const) {
+        apartments.push(apt);
+        fields.push(field);
+        values.push(value);
+      }
     }
 
     let outcome = { created: 0, applied: 0, suggested: 0, closed: 0 };
     if (apartments.length > 0) {
       const ing = await client.query<{ created: number; applied: number; suggested: number; closed: number }>(
-        `select * from public.contact_sync_ingest($1::text[], $2::text[], $3::text[], $4::text[])`,
-        [apartments, ownerNames, ownerPhones, tenantPhones],
+        `select * from public.contact_sync_ingest($1::text[], $2::text[], $3::text[])`,
+        [apartments, fields, values],
       );
       outcome = ing.rows[0] ?? outcome;
     }

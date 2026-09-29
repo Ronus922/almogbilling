@@ -158,15 +158,39 @@ test.describe('portal login — the whole flow', () => {
     await page.waitForURL('**/portal');
   });
 
-  test('an unregistered number is told to call the management company — and is NOT locked out', async ({ page }) => {
+  test('16: an unregistered number gets the sheet WITH the contact details — and is NOT locked out', async ({ page }) => {
     await page.goto('/portal/login');
     // Six taps: one more than PORTAL_OTP_MAX_REQUESTS_PER_WINDOW. Before
     // 29/09/2026 the sixth locked the number out for 30 minutes although no
     // code had ever been sent to it — which is what happened to apartment 1233.
-    const notice = page.getByRole('alert').filter({ hasText: 'המספר אינו רשום' });
+    const sheet = page.getByRole('dialog', { name: 'המספר לא מזוהה' });
     for (let i = 0; i < 6; i += 1) {
       await sendCode(page, NOT_AN_OWNER);
-      await expect(notice).toBeVisible();
+      // State 16 of the reference — until 29/09/2026 this answer was a red
+      // line of text on step 1 and the sheet was unreachable from here.
+      await expect(sheet).toBeVisible();
+      await expect(sheet).toContainText('אינו רשום באף דירה');
+
+      if (i === 0) {
+        // The reference's primary button, which had no destination at all
+        // until it was wired to tel: / mailto:. The phone variant is in the
+        // DOM but display:none on this viewport — hence a css locator and not
+        // a role: a hidden element is out of the accessibility tree.
+        await expect(sheet.locator('a[href^="tel:"]')).toHaveAttribute('href', 'tel:+97248341881');
+
+        // Desktop: the button reveals both details instead of dialling.
+        await sheet.getByRole('button', { name: 'שליחת בקשת הצטרפות' }).click();
+        await expect(sheet.getByText('04-834-1881', { exact: true })).toBeVisible();
+        await expect(sheet.getByText('mgmt@example.test', { exact: true })).toBeVisible();
+        // The address carries the join request's subject, with the number in it.
+        await expect(sheet.locator('a[href^="mailto:"]')).toHaveAttribute(
+          'href',
+          `mailto:mgmt@example.test?subject=${encodeURIComponent('בקשת הצטרפות לפורטל — 050-999-9999')}`,
+        );
+      }
+
+      await sheet.getByRole('button', { name: 'הזנת מספר אחר' }).click();
+      await expect(sheet).toBeHidden();
     }
     const locks = await pool.query(`select 1 from public.portal_lockouts where phone_e164 = $1`, ['+972509999999']);
     expect(locks.rowCount).toBe(0);

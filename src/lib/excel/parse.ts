@@ -7,7 +7,7 @@ import { MAX_EXCEL_BYTES, toArrayBuffer, worksheetToMatrix } from '@/lib/excel/w
  * Parsed row from the debtors Excel file.
  * Column mapping (row 1 is the header, parsing starts from row 2):
  *   A → apartment_number
- *   B → owner_name
+ *   B → owner_name + tenant_name (one labelled cell, split by role)
  *   C → phone (raw) — split into clean local owner/tenant numbers on parse
  *   D → total_debt
  *   E → management_fees
@@ -22,8 +22,13 @@ import { MAX_EXCEL_BYTES, toArrayBuffer, worksheetToMatrix } from '@/lib/excel/w
 export interface ParsedDebtorRow {
   apartment_number: string;
   owner_name: string | null;
+  tenant_name: string | null;
   phone_owner: string | null;
   phone_tenant: string | null;
+  /** Never in the debtors workbook — only the Bllink sync fills these, from
+   *  the resident list (src/lib/sync/tenantList.ts). */
+  owner_email: string | null;
+  tenant_email: string | null;
   total_debt: number;
   management_fees: number;
   monthly_debt: string | null;
@@ -76,13 +81,17 @@ export async function parseDebtorsWorkbook(buffer: ArrayBuffer | Buffer): Promis
     }
     const rawPhone = r[2] == null ? null : String(r[2]);
     const phones = splitOwnerTenantPhones(rawPhone);
+    // Same compound, labelled cell as the phone one — split by role, never
+    // stored raw (src/lib/sync/reportNames.ts).
+    const names = splitOwnerTenantNames(r[1] == null ? null : String(r[1]));
     rows.push({
       apartment_number: apt,
-      // Same compound, labelled cell as the sync's — split by role, never
-      // stored raw (src/lib/sync/reportNames.ts).
-      owner_name: splitOwnerTenantNames(r[1] == null ? null : String(r[1])).owner,
+      owner_name: names.owner,
+      tenant_name: names.tenant,
       phone_owner: phones.owner,
       phone_tenant: phones.tenant,
+      owner_email: null,
+      tenant_email: null,
       total_debt: toNumber(r[3]),
       management_fees: toNumber(r[4]),
       monthly_debt: toText(r[5]),

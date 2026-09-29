@@ -7,8 +7,9 @@ import { formatPhoneDisplay } from '@/lib/phone';
 import { cn } from '@/lib/utils';
 import type { Tenant } from '@/types/tenant';
 import type { PhoneField } from './EditPhoneDialog';
-import type {
-  ContactFieldState, ContactSuggestion, SuggestionField,
+import {
+  SUGGESTION_FIELD_IS_NUMERIC,
+  type ContactFieldState, type ContactSuggestion, type SuggestionField,
 } from '@/lib/types/contactSuggestions';
 
 interface Props {
@@ -50,6 +51,21 @@ export function MainDetailsCard({
           suggestion={suggestionFor('owner_phone')}
           onResolve={onResolveSuggestion}
         />
+        {/* The tenant's name is drawn only when there is something to say —
+            a value, a Bllink proposal or a provenance stamp. Most apartments
+            have no tenant at all, and the card must not grow a permanent
+            empty line for them. */}
+        {(tenant.tenant_name || suggestionFor('tenant_name') || contactFields.sources.tenant_name) && (
+          <Row
+            label="שם שוכר"
+            source={contactFields.sources.tenant_name}
+            suggestion={suggestionFor('tenant_name')}
+            canEdit={canEdit}
+            onResolve={onResolveSuggestion}
+          >
+            <span className="font-semibold">{tenant.tenant_name ?? '—'}</span>
+          </Row>
+        )}
         <PhoneRow
           label="טלפון שוכר"
           value={tenant.phone_tenant}
@@ -57,6 +73,26 @@ export function MainDetailsCard({
           onEdit={() => onEditPhone('phone_tenant')}
           source={contactFields.sources.tenant_phone}
           suggestion={suggestionFor('tenant_phone')}
+          onResolve={onResolveSuggestion}
+        />
+        {/* Addresses, on the same terms as the tenant's name: drawn only for
+            an apartment that has one, a proposal for one, or a stamp on one.
+            Bllink holds an address for 185 of the 290 apartments, so a
+            permanent empty line would be wrong on both counts. */}
+        <EmailRow
+          label="מייל בעלים"
+          value={tenant.email_owner}
+          source={contactFields.sources.owner_email}
+          suggestion={suggestionFor('owner_email')}
+          canEdit={canEdit}
+          onResolve={onResolveSuggestion}
+        />
+        <EmailRow
+          label="מייל שוכר"
+          value={tenant.email_tenant}
+          source={contactFields.sources.tenant_email}
+          suggestion={suggestionFor('tenant_email')}
+          canEdit={canEdit}
           onResolve={onResolveSuggestion}
         />
       </dl>
@@ -90,7 +126,7 @@ function SuggestionTag({ suggestion, canEdit, onResolve }: {
   canEdit: boolean;
   onResolve: (id: string, action: 'approve' | 'reject') => void;
 }) {
-  const numeric = suggestion.field !== 'owner_name';
+  const numeric = SUGGESTION_FIELD_IS_NUMERIC[suggestion.field];
   return (
     <div className="mt-1 flex flex-wrap items-center justify-end gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1">
       <span className="text-[11px] font-semibold text-amber-700">בלינק:</span>
@@ -155,6 +191,35 @@ function Row({ label, children, source, suggestion, canEdit = false, onResolve }
         <SuggestionTag suggestion={suggestion} canEdit={canEdit} onResolve={onResolve} />
       )}
     </div>
+  );
+}
+
+/** An address, when there is one to show. Read-only here — the residents list
+ *  is where an address is typed; this card shows what it holds and what
+ *  Bllink proposes for it. */
+function EmailRow({ label, value, source, suggestion, canEdit, onResolve }: {
+  label: string;
+  value: string | null;
+  source?: ContactFieldState['sources']['owner_email'];
+  suggestion: ContactSuggestion | null;
+  canEdit: boolean;
+  onResolve: (id: string, action: 'approve' | 'reject') => void;
+}) {
+  if (!value && !suggestion && !source) return null;
+  return (
+    <Row label={label} source={source} suggestion={suggestion} canEdit={canEdit} onResolve={onResolve}>
+      {value ? (
+        <a
+          href={`mailto:${value}`}
+          dir="ltr"
+          className="font-semibold text-slate-900 underline-offset-2 hover:underline"
+        >
+          {value}
+        </a>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      )}
+    </Row>
   );
 }
 

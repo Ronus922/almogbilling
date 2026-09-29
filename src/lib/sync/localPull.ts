@@ -35,7 +35,7 @@ export async function fetchLocalDebtorRows(): Promise<LocalSnapshot | null> {
   if (!scrape) return null;
 
   const r = await query<SourceDebtorRecord>(
-    `select apartment_number, owner_name, phone_primary,
+    `select apartment_number, owner_name, phone_primary, owner_email, tenant_email,
             total_debt::float8 as total_debt, monthly_debt::float8 as monthly_debt,
             special_debt::float8 as special_debt, management_months_raw, notes
        from public.bllink_scrape_rows

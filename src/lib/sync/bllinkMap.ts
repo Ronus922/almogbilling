@@ -8,8 +8,13 @@
  *
  * Column mapping (source → billing debtors / ParsedDebtorRow):
  *   apartment_number      →  apartment_number
- *   owner_name            →  owner_name — the "(בעלים)" part only (reportNames.ts)
+ *   owner_name            →  owner_name + tenant_name — the "(בעלים)" and the
+ *                            "(שוכר/ת)" halves of one cell (reportNames.ts)
  *   phone_primary         →  phone_owner / phone_tenant (split; contacts hook only)
+ *   owner_email / tenant_email → the same, straight through. NOT from the debt
+ *                            export (it has no address) — the scraper reads
+ *                            them off Bllink's resident list (tenantList.ts)
+ *                            and stores them on the same snapshot row.
  *   monthly_debt (E)      →  management_fees
  *   special_debt (G)      →  hot_water_debt
  *   management_months_raw (F) → monthly_debt (text month-range)
@@ -28,6 +33,9 @@ export interface SourceDebtorRecord {
   apartment_number: string | null;
   owner_name: string | null;
   phone_primary: string | null;
+  /** Absent from the CRM's debtor_records — that source simply never has one. */
+  owner_email?: string | null;
+  tenant_email?: string | null;
   total_debt: number | string | null;
   monthly_debt: number | string | null;
   special_debt: number | string | null;
@@ -60,8 +68,11 @@ export function mapSourceRow(r: SourceDebtorRecord): ParsedDebtorRow | null {
   return {
     apartment_number: apt,
     owner_name: names.owner,
+    tenant_name: names.tenant,
     phone_owner: phones.owner,
     phone_tenant: phones.tenant,
+    owner_email: toText(r.owner_email),
+    tenant_email: toText(r.tenant_email),
     // Absolute overwrite: total_debt is REBUILT from the components (default 0),
     // never the raw source total — so a stale/inconsistent source total cannot
     // leak in. Reconciled against the source total before writing.

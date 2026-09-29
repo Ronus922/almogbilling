@@ -29,7 +29,7 @@ describe('fetchLocalDebtorRows', () => {
     mQueryOne.mockResolvedValue({ id: 'scrape-1', finished_at: new Date('2026-09-26T02:30:40.500Z') });
     mQuery.mockResolvedValue({
       rows: [
-        { apartment_number: '1035', owner_name: 'א', phone_primary: '0501234567', total_debt: '261.00', monthly_debt: '0.00', special_debt: '261.00', management_months_raw: null, notes: 'מים חמים' },
+        { apartment_number: '1035', owner_name: 'א', phone_primary: '0501234567', owner_email: 'a@example.com', tenant_email: null, total_debt: '261.00', monthly_debt: '0.00', special_debt: '261.00', management_months_raw: null, notes: 'מים חמים' },
         { apartment_number: '2001', owner_name: 'ב', phone_primary: null, total_debt: '1500.00', monthly_debt: '1500.00', special_debt: '0.00', management_months_raw: '07/26-09/26', notes: null },
       ],
     });
@@ -37,14 +37,16 @@ describe('fetchLocalDebtorRows', () => {
     expect(snap?.scrapeId).toBe('scrape-1');
     expect(snap?.finishedAt).toBe('2026-09-26T02:30:40.500Z');
     expect(mQuery.mock.calls[0][0]).toMatch(/from public\.bllink_scrape_rows/);
+    // The addresses come off the same snapshot row (migration 20260929212603).
+    expect(mQuery.mock.calls[0][0]).toMatch(/owner_email, tenant_email/);
     expect(mQuery.mock.calls[0][1]).toEqual(['scrape-1']);
     expect(snap?.report).toEqual({
       count: 2, rawTotal: 1761, componentTotal: 1761,
       runMinAt: '2026-09-26T02:30:40.500Z', runMaxAt: '2026-09-26T02:30:40.500Z',
     });
     expect(snap?.rows).toEqual([
-      { apartment_number: '1035', owner_name: 'א', phone_owner: '0501234567', phone_tenant: null, total_debt: 261, management_fees: 0, monthly_debt: null, hot_water_debt: 261, details: 'מים חמים' },
-      { apartment_number: '2001', owner_name: 'ב', phone_owner: null, phone_tenant: null, total_debt: 1500, management_fees: 1500, monthly_debt: '07/26-09/26', hot_water_debt: 0, details: null },
+      { apartment_number: '1035', owner_name: 'א', tenant_name: null, phone_owner: '0501234567', phone_tenant: null, owner_email: 'a@example.com', tenant_email: null, total_debt: 261, management_fees: 0, monthly_debt: null, hot_water_debt: 261, details: 'מים חמים' },
+      { apartment_number: '2001', owner_name: 'ב', tenant_name: null, phone_owner: null, phone_tenant: null, owner_email: null, tenant_email: null, total_debt: 1500, management_fees: 1500, monthly_debt: '07/26-09/26', hot_water_debt: 0, details: null },
     ]);
     expect(snap?.compareRows.get('1035')).toEqual({ total_debt: 261, monthly_debt: 0, special_debt: 261, management_months_raw: null, notes: 'מים חמים' });
   });

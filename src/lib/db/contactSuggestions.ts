@@ -4,8 +4,8 @@ import type {
   ContactFieldSources, ContactFieldState, ContactSuggestion, SuggestionField,
 } from '@/lib/types/contactSuggestions';
 
-// The Bllink approval queue. Every rule lives in SQL (migration
-// 20260929194811) — one implementation of "did this value change", shared by
+// The Bllink approval queue. Every rule lives in SQL (migrations
+// 20260929194811 + 20260929211433 + 20260929212603) — one implementation of "did this value change", shared by
 // the sync, the trigger and the approve/reject path, so no two copies of it can
 // drift apart. This file only carries values across.
 
@@ -14,9 +14,12 @@ import type {
  *  suggestion was raised, and ours may have moved on since. */
 const LIVE_VALUE = `
   case s.field
-    when 'owner_name'  then c.owner_name
-    when 'owner_phone' then c.owner_phone
-    else c.tenant_phone
+    when 'owner_name'   then c.owner_name
+    when 'owner_phone'  then c.owner_phone
+    when 'owner_email'  then c.owner_email
+    when 'tenant_name'  then c.tenant_name
+    when 'tenant_phone' then c.tenant_phone
+    else c.tenant_email
   end`;
 
 /** Every open suggestion, newest first. The list is small by construction —
