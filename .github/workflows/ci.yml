@@ -114,6 +114,13 @@ jobs:
 
       - run: npm ci
 
+      # BEFORE the fixtures, not after: the seeded WhatsApp instance stores its
+      # token encrypted under this key (scripts/e2e/seed-whatsapp-instance.mjs),
+      # and the app decrypts it when the portal sends a login code. A key
+      # generated later would leave a token nothing can read.
+      - name: Settings encryption key (fresh per run)
+        run: echo "SETTINGS_ENC_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
       - name: Schema + e2e fixtures
         run: |
           npx dbmate --url "$DATABASE_URL" --migrations-dir db/migrations --no-dump-schema up
@@ -140,9 +147,6 @@ jobs:
 
       - name: Playwright browser
         run: npx playwright install --with-deps chromium
-
-      - name: Settings encryption key (fresh per run)
-        run: echo "SETTINGS_ENC_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
 
       - name: Build (standalone)
         run: npm run build
