@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { env } from '@/env';
 import { getPortalSession } from '@/lib/portal/session';
 import { PortalLoginForm } from '@/components/portal/PortalLoginForm';
 
@@ -17,5 +18,7 @@ export const dynamic = 'force-dynamic';
 export default async function PortalLoginPage() {
   if (await getPortalSession()) redirect('/portal');
 
-  return <PortalLoginForm />;
+  // Read here rather than in the client component: one place decides whether
+  // the lock screens can offer "פנייה לחברת הניהול" at all.
+  return <PortalLoginForm supportPhone={env.NEXT_PUBLIC_PORTAL_SUPPORT_PHONE ?? null} />;
 }

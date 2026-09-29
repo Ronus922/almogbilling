@@ -266,3 +266,13 @@
   .portal-skin .hd > .pbtn { width: 100%; }
   .portal-skin .b-prev { display: none; }
 }
+
+/* ── /portal/login, the code step ──────────────────────────────────────
+   State 06 of ref/otp-states.md: a wrong code shakes the row twice, ±4px
+   over 0.4s. Declared here (not inline) so `motion-safe:` can switch it
+   off for a resident who asked for reduced motion. NOT under
+   `.portal-skin` — the login screen is outside that scope. */
+@keyframes portal-otp-shake {
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}

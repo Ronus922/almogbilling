@@ -110,9 +110,15 @@ export const env = createEnv({
   client: {
     // Storage host; read server-side only today, but NEXT_PUBLIC_ by name.
     NEXT_PUBLIC_SUPABASE_URL: optionalUrl,
+    // The number behind "פנייה לחברת הניהול" on the portal's lock screens
+    // (ref/otp-states.md states 12 and 14). Optional on purpose: with no value
+    // the action is not drawn, because a support button that dials nobody is
+    // worse than no button. Any format normalizePhone accepts.
+    NEXT_PUBLIC_PORTAL_SUPPORT_PHONE: z.string().trim().min(1).optional(),
   },
   experimental__runtimeEnv: {
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_PORTAL_SUPPORT_PHONE: process.env.NEXT_PUBLIC_PORTAL_SUPPORT_PHONE,
   },
   emptyStringAsUndefined: true,
   skipValidation:
