@@ -11,7 +11,7 @@ import {
   type ImportMode,
 } from '@/lib/db/importRuns';
 import { upsertMonthlyDebtSnapshot } from '@/lib/db/debtors';
-import { ensureContactsForApartments } from '@/lib/db/contacts';
+import { syncContactsFromReport } from '@/lib/db/contacts';
 import { accrueDebtorCollection, pruneDebtorSnapshotsNotIn } from '@/lib/db/collectionTracking';
 import { logger } from '@/lib/logger';
 
@@ -109,19 +109,22 @@ export async function importParsedRows(
         pruneErr instanceof Error ? pruneErr.message : String(pruneErr));
     }
 
-    // Resident registry (contacts) hook — insert-missing ONLY (an existing
-    // apartment is NEVER updated) + relink debtors left with contact_id NULL
-    // (replace-mode recreates debtors unlinked). Best-effort — a registry
-    // hiccup must never fail the import. When new apartments were created,
-    // a Hebrew summary is persisted for the import UI (else stays NULL).
+    // Resident registry (contacts) hook — creates apartments we do not have,
+    // fills fields of ours that are EMPTY, and files anything that CONFLICTS
+    // as a suggestion instead of overwriting it (migration 20260929194811).
+    // Also relinks debtors left with contact_id NULL (replace-mode recreates
+    // debtors unlinked). Best-effort — a registry hiccup must never fail the
+    // import. A Hebrew summary is persisted for the import UI when there is
+    // something to say (else stays NULL).
     try {
-      const registry = await ensureContactsForApartments(rows);
-      if (registry.created > 0) {
-        let summary = `מרשם דיירים: נוצרו ${registry.created} דירות חדשות לבדיקה`;
-        if (registry.relinked > 0) {
-          summary += ` · קושרו מחדש ${registry.relinked} דירות`;
-        }
-        await setRunErrorSummary(runId, summary);
+      const registry = await syncContactsFromReport(rows);
+      const parts: string[] = [];
+      if (registry.created > 0) parts.push(`נוצרו ${registry.created} דירות חדשות לבדיקה`);
+      if (registry.applied > 0) parts.push(`הושלמו ${registry.applied} שדות ריקים`);
+      if (registry.suggested > 0) parts.push(`${registry.suggested} הצעות ממתינות לאישור`);
+      if (registry.relinked > 0) parts.push(`קושרו מחדש ${registry.relinked} דירות`);
+      if (parts.length > 0) {
+        await setRunErrorSummary(runId, `מרשם דיירים: ${parts.join(' · ')}`);
       }
     } catch (regErr) {
       logger.error('[import:contacts-registry]', runId,

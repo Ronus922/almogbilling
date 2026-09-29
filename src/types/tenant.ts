@@ -1,3 +1,4 @@
+import type { ContactFieldState } from '@/lib/types/contactSuggestions';
 // Shared contract for Slice 3 (TenantDetailPanel).
 // Consumed by both UI components and backend API routes / DB helpers.
 //
@@ -80,6 +81,8 @@ export type TenantFieldsUpdate = PhonesUpdate & NextActionUpdate;
 export interface TenantDetailResponse {
   tenant: Tenant;
   recent_notes: TenantNote[];
+  /** Open Bllink suggestions + field provenance for this apartment. */
+  contact_fields: ContactFieldState;
 }
 
 export interface CompletedAction {

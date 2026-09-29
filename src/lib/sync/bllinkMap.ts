@@ -8,7 +8,7 @@
  *
  * Column mapping (source → billing debtors / ParsedDebtorRow):
  *   apartment_number      →  apartment_number
- *   owner_name            →  owner_name (feeds the contacts insert-missing hook only)
+ *   owner_name            →  owner_name — the "(בעלים)" part only (reportNames.ts)
  *   phone_primary         →  phone_owner / phone_tenant (split; contacts hook only)
  *   monthly_debt (E)      →  management_fees
  *   special_debt (G)      →  hot_water_debt
@@ -18,6 +18,7 @@
  *   notes (H)             →  details
  */
 import { splitOwnerTenantPhones } from '@/lib/whatsapp';
+import { splitOwnerTenantNames } from './reportNames';
 import type { ParsedDebtorRow } from '@/lib/excel/parse';
 import { round2, toNum, toText, type CompareRow } from './bllinkCompare';
 
@@ -51,11 +52,14 @@ export function mapSourceRow(r: SourceDebtorRecord): ParsedDebtorRow | null {
   // phone_primary may be compound/labelled ("054… (בעלים) 050… (שוכר/ת)") —
   // split into clean local owner/tenant numbers before writing.
   const phones = splitOwnerTenantPhones(r.phone_primary);
+  // The name cell is compound and labelled in the same way the phone cell is
+  // ("בלכנר חנה (בעלים) אור מזוז (שוכר/ת)") — see reportNames.ts.
+  const names = splitOwnerTenantNames(r.owner_name);
   const management_fees = toNum(r.monthly_debt);
   const hot_water_debt = toNum(r.special_debt);
   return {
     apartment_number: apt,
-    owner_name: toText(r.owner_name),
+    owner_name: names.owner,
     phone_owner: phones.owner,
     phone_tenant: phones.tenant,
     // Absolute overwrite: total_debt is REBUILT from the components (default 0),

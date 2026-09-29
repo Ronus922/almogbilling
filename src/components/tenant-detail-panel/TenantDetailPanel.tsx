@@ -15,6 +15,7 @@ import type {
   Tenant, TenantDetailResponse, TenantNote, PhonesUpdate, NextActionUpdate,
   LegalStatus, LegalStatusId, CompletedAction,
 } from '@/types/tenant';
+import type { ContactFieldState } from '@/lib/types/contactSuggestions';
 import { StatusBadge } from './StatusBadge';
 import { MainDetailsCard } from './MainDetailsCard';
 import { AdditionalInfoCard } from './AdditionalInfoCard';
@@ -62,6 +63,9 @@ function dateToIsoStr(raw: string | null): string {
   return String(raw).slice(0, 10);
 }
 
+/** One frozen empty value — a new object per render would restart the card. */
+const EMPTY_FIELDS: ContactFieldState = { suggestions: [], sources: {} };
+
 export function TenantDetailPanel({
   open, debtorId, canEdit, canChangeStatus, canSendWhatsapp,
   canViewChips = false, canEditChips = false,
@@ -86,6 +90,9 @@ export function TenantDetailPanel({
   // Quick-actions WhatsApp swaps the panel body in-place (no second sheet).
   const [view, setView] = useState<PanelView>('details');
   const [waHistoryKey, setWaHistoryKey] = useState(0);
+  // Open Bllink suggestions + provenance for this apartment. Arrives with the
+  // detail; re-read from its own endpoint after a decision.
+  const [contactFields, setContactFields] = useState<ContactFieldState>(EMPTY_FIELDS);
   const waFormRef = useRef<WhatsAppSendFormHandle | null>(null);
 
   useEffect(() => {
@@ -99,6 +106,7 @@ export function TenantDetailPanel({
       return;
     }
     let cancelled = false;
+    setContactFields(EMPTY_FIELDS);
     setLoading(true); setError(null); setTenant(null); setNotes([]); setCompletedActions([]); setHasMutated(false); setView('details');
     Promise.all([
       fetch(`/api/debtors/${debtorId}`, { credentials: 'include' })
@@ -113,6 +121,7 @@ export function TenantDetailPanel({
       .then(([detail, stats, cs, cas]: [TenantDetailResponse, LegalStatus[], TenantNote[], CompletedAction[]]) => {
         if (cancelled) return;
         setTenant(detail.tenant);
+        setContactFields(detail.contact_fields ?? EMPTY_FIELDS);
         setStatuses(stats);
         setNotes(cs);
         setCompletedActions(cas);
@@ -187,6 +196,38 @@ export function TenantDetailPanel({
     setHasMutated(true);
     toast.success('הטלפון עודכן');
     router.refresh();
+  }
+
+  /** Approve or reject one Bllink suggestion straight from the card. Approving
+   *  writes the value exactly as the queue does — and an owner phone reaches
+   *  the portal roster through the same trigger. */
+  async function resolveSuggestion(id: string, action: 'approve' | 'reject') {
+    if (!tenant) return;
+    try {
+      const res = await fetch('/api/contacts/suggestions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action, ids: [id] }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      // The approved value landed in contacts, so BOTH the card's decorations
+      // and the fields themselves have to be re-read.
+      const [fields, detail] = await Promise.all([
+        fetch(`/api/apartments/${encodeURIComponent(tenant.apartment_number)}/contact-fields`,
+          { credentials: 'include' }).then((r) => r.json() as Promise<ContactFieldState>),
+        fetch(`/api/debtors/${debtorId}`, { credentials: 'include' })
+          .then((r) => r.json() as Promise<TenantDetailResponse>),
+      ]);
+      setContactFields(fields);
+      setTenant(detail.tenant);
+      setHasMutated(true);
+      toast.success(action === 'approve' ? 'ההצעה אושרה ונכתבה' : 'ההצעה נדחתה');
+      router.refresh();
+    } catch (err) {
+      toast.error(`הפעולה נכשלה: ${(err as Error).message}`);
+    }
   }
 
   async function handleSaveLegalStatus(id: LegalStatusId) {
@@ -498,6 +539,8 @@ export function TenantDetailPanel({
                     tenant={tenant}
                     canEdit={canEdit}
                     onEditPhone={(f) => setEditField(f)}
+                    contactFields={contactFields}
+                    onResolveSuggestion={(id, action) => void resolveSuggestion(id, action)}
                   />
                   <AdditionalInfoCard tenant={tenant} />
                   <QuickActionsCard

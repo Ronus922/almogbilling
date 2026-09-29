@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
 import { listContacts } from '@/lib/db/contacts';
+import { countPendingSuggestions } from '@/lib/db/contactSuggestions';
 import { ContactsPageClient } from './contacts-page-client';
 
 export const runtime = 'nodejs';
@@ -22,6 +23,9 @@ export default async function ContactsPage() {
   const canViewParking = hasPermission(actor.role, actor.permissions, 'parking', 'view');
   const canEditParking = hasPermission(actor.role, actor.permissions, 'parking', 'edit');
   const initialContacts = await listContacts({});
+  // The Bllink queue's size, so the chip is rendered on the first paint rather
+  // than appearing a moment later. Only ever shown when it is > 0.
+  const pendingSuggestions = await countPendingSuggestions();
 
   return (
     <ContactsPageClient
@@ -29,6 +33,7 @@ export default async function ContactsPage() {
       canEdit={canEdit}
       canViewParking={canViewParking}
       canEditParking={canEditParking}
+      pendingSuggestions={pendingSuggestions}
     />
   );
 }

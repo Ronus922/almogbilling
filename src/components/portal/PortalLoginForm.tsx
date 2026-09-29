@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { PortalLoginBrand } from '@/components/portal/PortalLoginBrand';
 import { PortalOtpStep, type OtpRequestOutcome } from '@/components/portal/PortalOtpStep';
+import type { PortalSupport } from '@/components/portal/PortalSupportAction';
 import { PORTAL_OTP_RESEND_COOLDOWN_SEC } from '@/lib/constants/portal';
 
 // /portal/login — the whole screen: brand side + form pane, two steps on one
@@ -126,10 +127,10 @@ const PREFIX_CHIP = 'flex h-[26px] shrink-0 items-center border-e border-[#E2E8F
 const INLINE_MESSAGE =
   'flex items-center gap-[6px] text-[13.5px] font-medium leading-[normal] min-[601px]:text-[13px]';
 
-export function PortalLoginForm({ supportPhone = null }: {
-  /** NEXT_PUBLIC_PORTAL_SUPPORT_PHONE, read on the server and handed down —
-   *  the lock screens' "פנייה לחברת הניהול" dials it. */
-  supportPhone?: string | null;
+export function PortalLoginForm({ support = { phone: null, email: null } }: {
+  /** NEXT_PUBLIC_PORTAL_SUPPORT_PHONE / _EMAIL, read on the server and handed
+   *  down — the lock screens' "פנייה לחברת הניהול" uses them. */
+  support?: PortalSupport;
 }) {
   const [step, setStep] = useState<Step>('phone');
   const [phone, setPhone] = useState('');
@@ -340,7 +341,7 @@ export function PortalLoginForm({ supportPhone = null }: {
             sentPhone={sentPhone}
             phoneDisplay={formatPhoneForDisplay(prefix, phone)}
             initialCooldown={cooldown}
-            supportPhone={supportPhone}
+            support={support}
             onBack={backToPhone}
             onRequestCode={requestCode}
           />
