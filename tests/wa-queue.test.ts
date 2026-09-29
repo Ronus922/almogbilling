@@ -18,7 +18,9 @@ import type { RecipientInput, Recipient } from '@/lib/wa-queue/types';
 // throwaway test DB is wired (WA_TEST_DATABASE_URL) — never the prod DB — and uses
 // the mock provider so NO real WhatsApp message is ever sent.
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
-const d = TEST_URL ? describe : describe.skip;
+// Explicit gate: without a throwaway database these report as SKIPPED, never
+// as passed — scripts/check-no-skipped-tests.mjs fails CI if any of them do.
+const d = describe.skipIf(!TEST_URL);
 
 let pool: Pool;
 /** One throwaway contacts row (contact_id is a required FK on every recipient

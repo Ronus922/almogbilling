@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Pool, type PoolClient } from 'pg';
+import { requireSeededAdmin } from './db-fixtures';
 
 // The finance read layer (src/lib/db/finance/portal.ts) + the section rule:
 //   • a line's category must belong to the section it is entered from — a
@@ -16,7 +17,9 @@ import { Pool, type PoolClient } from 'pg';
 // the same gate tests/wa-queue.test.ts uses. Everything it creates is removed
 // by the exact ids it recorded (CLAUDE.md iron rule 12).
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
-const d = TEST_URL ? describe : describe.skip;
+// Explicit gate: without a throwaway database these report as SKIPPED, never
+// as passed — scripts/check-no-skipped-tests.mjs fails CI if any of them do.
+const d = describe.skipIf(!TEST_URL);
 
 let pool: Pool;
 
@@ -53,7 +56,8 @@ const { getRenovationFundSettings, updateRenovationFundSettings } = await import
 const { resolveEntryInput } = await import('@/lib/finance/entry-input');
 const { currentMonthKey, makePeriod, monthKeyParts, periodMonthOf, shiftMonthKey } = await import('@/lib/finance/period');
 
-const made = { categories: [] as string[], entries: [] as string[], months: [] as Array<{ year: number; month: number }> };
+// Months are handled by monthsBefore/forceMonth below, not by id.
+const made = { categories: [] as string[], entries: [] as string[] };
 let actorId = '';
 let targetBefore = 0;
 /** Fund sums before this suite adds its lines — the DB may hold other fund
@@ -97,10 +101,26 @@ async function makeEntry(kind: 'income' | 'expense', categoryKey: string, month:
   return e.id;
 }
 
-async function publish(month: string, published: boolean): Promise<void> {
+/** The publication state of the months this suite reasons about, as it found
+ *  them, so afterAll can put each one back exactly as it was. */
+const monthsBefore: Array<{ year: number; month: number; published: boolean | null }> = [];
+
+/**
+ * Take ownership of a month's publication state instead of assuming it.
+ *
+ * The three assertions that broke on 29/09/2026 all assumed prev2 was hidden —
+ * true on an empty database, false against scripts/e2e/seed.sh, which publishes
+ * it. The fund logic was right (a published month's income IS collected); the
+ * premise was stale. So the suite now states the state it needs for all three
+ * months and restores whatever was there before.
+ */
+async function forceMonth(month: string, published: boolean): Promise<void> {
   const { year, month: m } = monthKeyParts(month);
-  const existing = await pool.query(`select 1 from public.finance_month_status where year = $1 and month = $2`, [year, m]);
-  if (existing.rowCount === 0) made.months.push({ year, month: m });
+  const existing = await pool.query<{ published: boolean }>(
+    `select published from public.finance_month_status where year = $1 and month = $2`,
+    [year, m],
+  );
+  monthsBefore.push({ year, month: m, published: existing.rows[0]?.published ?? null });
   await setMonthPublished(year, m, published, actorId);
 }
 
@@ -113,9 +133,16 @@ d('finance read layer — sections, cumulative fund, publishedOnly, period repor
   beforeAll(async () => {
     pool = new Pool({ connectionString: TEST_URL, max: 4 });
     pool.on('error', () => undefined);
-    const admin = await pool.query<{ id: string }>(`select id from public.users where username = 'e2e-admin'`);
-    actorId = admin.rows[0]!.id;
+    actorId = await requireSeededAdmin(pool);
     targetBefore = (await getRenovationFundSettings()).target_amount;
+
+    // Settle the publication state BEFORE the baseline is taken: the baseline
+    // is "everyone else's fund money under the state these tests assert on",
+    // so publishing a month afterwards would move it under the delta.
+    await forceMonth(prev2, false);
+    await forceMonth(prev, true);
+    await forceMonth(cur, false);
+
     const [all, published] = await Promise.all([
       getRenovationFundKpis({ publishedOnly: false }),
       getRenovationFundKpis({ publishedOnly: true }),
@@ -138,14 +165,19 @@ d('finance read layer — sections, cumulative fund, publishedOnly, period repor
     await makeEntry('expense', 'fundExp1', prev, 1500);
     await makeEntry('expense', 'fundExp2', cur, 250);
 
-    await publish(prev, true);
     await updateRenovationFundSettings({ target_amount: 20000 }, actorId);
   });
 
   afterAll(async () => {
     for (const id of made.entries) await pool.query(`delete from public.fin_entries where id = $1`, [id]);
     for (const id of made.categories) await pool.query(`delete from public.fin_categories where id = $1`, [id]);
-    for (const m of made.months) await pool.query(`delete from public.finance_month_status where year = $1 and month = $2`, [m.year, m.month]);
+    for (const m of monthsBefore) {
+      if (m.published === null) {
+        await pool.query(`delete from public.finance_month_status where year = $1 and month = $2`, [m.year, m.month]);
+      } else {
+        await setMonthPublished(m.year, m.month, m.published, actorId);
+      }
+    }
     await updateRenovationFundSettings({ target_amount: targetBefore }, actorId);
     await pool.end();
   });
@@ -332,8 +364,7 @@ d('portal additions — recent lines, overview window, receipts behind the switc
   beforeAll(async () => {
     pool = new Pool({ connectionString: TEST_URL, max: 4 });
     pool.on('error', () => undefined);
-    const admin = await pool.query<{ id: string }>(`select id from public.users where username = 'e2e-admin'`);
-    actorId = admin.rows[0]!.id;
+    actorId = await requireSeededAdmin(pool);
     switchBefore = (await getFinanceSettings()).show_documents_to_residents;
 
     catInc = await category('income', 'operating');

@@ -16,7 +16,9 @@ import { Pool } from 'pg';
 // Runs ONLY against a throwaway database (WA_TEST_DATABASE_URL), never prod —
 // same gate as tests/wa-queue.test.ts.
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
-const d = TEST_URL ? describe : describe.skip;
+// Explicit gate: without a throwaway database these report as SKIPPED, never
+// as passed — scripts/check-no-skipped-tests.mjs fails CI if any of them do.
+const d = describe.skipIf(!TEST_URL);
 
 let pool: Pool;
 vi.mock('@/lib/db', () => ({
