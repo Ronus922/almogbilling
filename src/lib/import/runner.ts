@@ -1,6 +1,7 @@
 import 'server-only';
-import { query } from '@/lib/db';
+import { getDbPool, query } from '@/lib/db';
 import { parseDebtorsWorkbook, type ParsedDebtorRow } from '@/lib/excel/parse';
+import { clearDebtorsNotInImport } from '@/lib/import/clearing';
 import {
   bumpRunProgress,
   finishRunError,
@@ -94,7 +95,8 @@ export async function importParsedRows(
 
     const importedApts = rows.map((r) => r.apartment_number);
     if (mode === 'merge') {
-      await zeroOutAptsNotInImport(importedApts);
+      // Amounts AND the import's free-text fields — see lib/import/clearing.ts.
+      await clearDebtorsNotInImport(getDbPool(), importedApts);
     }
 
     // Drop snapshots for debtors absent from this import (cleared in merge,
@@ -196,32 +198,5 @@ async function updateDebtorMerge(r: ParsedDebtorRow): Promise<void> {
       r.hot_water_debt,
       r.details,
     ],
-  );
-}
-
-async function zeroOutAptsNotInImport(importedApts: string[]): Promise<void> {
-  if (importedApts.length === 0) {
-    // No apts in import → zero out everything that's not archived
-    await query(
-      `update public.debtors set
-         total_debt = 0,
-         management_fees = 0,
-         hot_water_debt = 0,
-         special_debt = 0,
-         monthly_debt = null
-       where is_archived = false`,
-    );
-    return;
-  }
-  await query(
-    `update public.debtors set
-       total_debt = 0,
-       management_fees = 0,
-       hot_water_debt = 0,
-       special_debt = 0,
-       monthly_debt = null
-     where is_archived = false
-       and apartment_number <> all($1::text[])`,
-    [importedApts],
   );
 }

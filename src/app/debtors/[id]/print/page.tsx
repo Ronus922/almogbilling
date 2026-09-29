@@ -9,7 +9,7 @@ import { listCommentsByDebtor } from '@/lib/db/comments';
 import { listCompletedActionsByDebtor } from '@/lib/db/completedActions';
 import { listDebtorHistory } from '@/lib/db/debtorHistory';
 import { formatPhoneDisplay } from '@/lib/phone';
-import type { Tenant } from '@/types/tenant';
+import { visibleImportText } from '@/lib/debtor-import-text';
 import { AutoPrint } from './AutoPrint';
 
 export const runtime = 'nodejs';
@@ -137,11 +137,15 @@ export default async function DebtorPrintPage({
         <dl className="space-y-2 text-sm">
           <div>
             <dt className="font-semibold text-slate-500">פרטים</dt>
-            <dd className="whitespace-pre-wrap break-words">{tenant.details ?? '—'}</dd>
+            <dd className="whitespace-pre-wrap break-words">
+              {visibleImportText(tenant.details, tenant.total_debt) ?? '—'}
+            </dd>
           </div>
           <div>
             <dt className="font-semibold text-slate-500">חודשי פיגור</dt>
-            <dd className="whitespace-pre-wrap break-words text-rose-700">{tenant.monthly_debt ?? '—'}</dd>
+            <dd className="whitespace-pre-wrap break-words text-rose-700">
+              {visibleImportText(tenant.monthly_debt, tenant.total_debt) ?? '—'}
+            </dd>
           </div>
         </dl>
       </PrintSection>
