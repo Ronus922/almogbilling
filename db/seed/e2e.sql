@@ -67,6 +67,10 @@ select v.a, v.n, v.p, v.act from (values
   ('E2E-A', 'יוסי E2E', '+972501111112', true),
   ('E2E-A', 'CANARY-DISABLED', '+972505555555', false),
   ('E2E-B', 'בני E2E', '+972502222222', true),
+  -- A second owner on B, so e2e/portal-login-otp.spec.ts can give every test a
+  -- phone of its own: the 45-second resend cooldown means a number that has
+  -- just been sent a code cannot be sent another inside one run.
+  ('E2E-B', 'רותי E2E', '+972502222223', true),
   ('E2E-C', 'גלית E2E', '+972503333333', true),
   ('E2E-D', 'דוד E2E', '+972504444444', true)
 ) v(a, n, p, act)

@@ -114,6 +114,118 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: portal_owner_e164(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.portal_owner_e164(raw text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+declare
+  first_part text;
+  digits     text;
+begin
+  if raw is null or btrim(raw) = '' then return null; end if;
+
+  -- normalizePhone: a cell may hold several numbers — the first one wins.
+  first_part := btrim(split_part(regexp_replace(raw, '[/,;|]', '/', 'g'), '/', 1));
+  digits := regexp_replace(first_part, '\D', '', 'g');
+  if digits = '' then return null; end if;
+
+  -- A '+' with a non-Israeli country code is E.164 exactly as written.
+  if left(first_part, 1) = '+' and left(digits, 3) <> '972' then
+    if digits ~ '^[1-9][0-9]{6,14}$' then return '+' || digits; end if;
+    return null;
+  end if;
+
+  if left(digits, 2) = '00' then digits := substr(digits, 3); end if;
+
+  if left(digits, 3) = '972' then
+    null;                                            -- already international
+  elsif left(digits, 1) = '0' then
+    digits := '972' || substr(digits, 2);            -- local trunk 0
+  elsif length(digits) = 9 and digits ~ '^[2-9]' then
+    digits := '972' || digits;                       -- subscriber, no trunk 0
+  end if;
+
+  if digits !~ '^972[0-9]{8,9}$' then return null; end if;
+
+  -- Israel: a MOBILE only. 072/073/074/076/077 are ten digits exactly like a
+  -- mobile, so this is a PREFIX test, never a length test.
+  if digits ~ '^9725[0-9]{8}$' then return '+' || digits; end if;
+  return null;
+end;
+$_$;
+
+
+--
+-- Name: portal_roster_from_contact(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.portal_roster_from_contact() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  perform public.portal_roster_upsert(new.apartment_number, new.owner_name, new.owner_phone);
+  return null;
+end;
+$$;
+
+
+--
+-- Name: portal_roster_from_contact_person(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.portal_roster_from_contact_person() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+  apt text;
+begin
+  if new.role is distinct from 'owner' then return null; end if;
+  select c.apartment_number into apt from public.contacts c where c.id = new.contact_id;
+  perform public.portal_roster_upsert(apt, new.name, new.phone);
+  return null;
+end;
+$$;
+
+
+--
+-- Name: portal_roster_upsert(text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.portal_roster_upsert(p_apartment text, p_name text, p_raw_phone text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+declare
+  e164 text := public.portal_owner_e164(p_raw_phone);
+begin
+  if e164 is null or p_apartment is null or btrim(p_apartment) = '' then return; end if;
+  -- The apartment must exist: the roster's FK points at contacts, and a
+  -- contact_people row can in principle outlive its contact mid-transaction.
+  if not exists (select 1 from public.contacts c where c.apartment_number = p_apartment) then
+    return;
+  end if;
+
+  insert into public.apartment_owner_phones (apartment_number, owner_name, phone_e164)
+  values (p_apartment, nullif(btrim(coalesce(p_name, '')), ''), e164)
+  on conflict (apartment_number, phone_e164) do update
+    -- Refresh the display name only; is_active is the admin's, not the sync's.
+    set owner_name = coalesce(
+      nullif(btrim(coalesce(excluded.owner_name, '')), ''),
+      public.apartment_owner_phones.owner_name
+    );
+end;
+$$;
+
+
+--
+-- Name: FUNCTION portal_owner_e164(raw text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.portal_owner_e164(raw text) IS 'Owner phone -> E.164 roster key, or NULL. Mirrors toPortalE164() in src/lib/portal/phone.ts; pinned to it by tests/portal-owner-roster.test.ts.';
+
+
+--
 -- Name: apartment_owner_phones; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4279,11 +4391,25 @@ CREATE TRIGGER whatsapp_templates_touch_updated_at BEFORE UPDATE ON public.whats
 
 
 --
+-- Name: contacts portal_roster_from_contact_aiu; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER portal_roster_from_contact_aiu AFTER INSERT OR UPDATE OF owner_phone, owner_name, apartment_number ON public.contacts FOR EACH ROW EXECUTE FUNCTION public.portal_roster_from_contact();
+
+
+--
+-- Name: contact_people portal_roster_from_contact_person_aiu; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER portal_roster_from_contact_person_aiu AFTER INSERT OR UPDATE OF phone, name, role, contact_id ON public.contact_people FOR EACH ROW EXECUTE FUNCTION public.portal_roster_from_contact_person();
+
+
+--
 -- Name: apartment_owner_phones apartment_owner_phones_apartment_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.apartment_owner_phones
-    ADD CONSTRAINT apartment_owner_phones_apartment_number_fkey FOREIGN KEY (apartment_number) REFERENCES public.contacts(apartment_number) ON UPDATE CASCADE ON DELETE RESTRICT;
+    ADD CONSTRAINT apartment_owner_phones_apartment_number_fkey FOREIGN KEY (apartment_number) REFERENCES public.contacts(apartment_number) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --

@@ -143,30 +143,10 @@ function publishedYears(publishedKeys: readonly string[]): number[] {
 }
 
 /** A range is offered only when it holds at least one published month — the
- *  one rule behind both selects below. */
+ *  rule behind the reports select. (The transactions tab asks the same question
+ *  through rangeHasPublished, inside the one-click picker.) */
 function holdsPublished(published: ReadonlySet<string>): (p: Period) => boolean {
   return (p) => [...published].some((k) => k >= p.from && k <= p.to);
-}
-
-/** The period picker of the transactions tab, grouped by year (years newest
- *  first). Inside a year, fine to coarse and newest first in each step: its
- *  PUBLISHED months, then the quarters, the halves and the year itself that
- *  hold one. A month nobody published is not in the list at all, so it cannot
- *  be picked — and neither can an empty quarter, half or year. */
-export function periodOptionsByYear(publishedKeys: readonly string[]): Array<{ year: number; periods: Period[] }> {
-  const published = new Set(publishedKeys);
-  const has = holdsPublished(published);
-  const newestFirst = [...publishedKeys].sort().reverse();
-  return publishedYears(publishedKeys).map((year) => {
-    const periods: Period[] = newestFirst
-      .filter((k) => Number(k.slice(0, 4)) === year)
-      .map((k) => makePeriod('month', year, Number(k.slice(5, 7))));
-    for (const q of [4, 3, 2, 1]) { const p = makePeriod('quarter', year, q); if (has(p)) periods.push(p); }
-    for (const h of [2, 1]) { const p = makePeriod('half', year, h); if (has(p)) periods.push(p); }
-    const whole = makePeriod('year', year, 1);
-    if (has(whole)) periods.push(whole);
-    return { year, periods };
-  });
 }
 
 /** Every quarter, half and year that holds at least one published month —

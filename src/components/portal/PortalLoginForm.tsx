@@ -1,17 +1,13 @@
 'use client';
 
-import {
-  useEffect, useRef, useState,
-  type ClipboardEvent, type FormEvent, type KeyboardEvent,
-} from 'react';
-import { ChevronRight, CircleAlert, CircleCheck, LoaderCircle, ShieldCheck, Smartphone } from 'lucide-react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { ChevronRight, CircleAlert, LoaderCircle, ShieldCheck, Smartphone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { PortalLoginBrand } from '@/components/portal/PortalLoginBrand';
-import {
-  PORTAL_OTP_DIGITS, PORTAL_OTP_RESEND_COOLDOWN_SEC, PORTAL_OTP_TTL_MINUTES,
-} from '@/lib/constants/portal';
+import { PortalOtpStep, type OtpRequestOutcome } from '@/components/portal/PortalOtpStep';
+import { PORTAL_OTP_RESEND_COOLDOWN_SEC } from '@/lib/constants/portal';
 
 // /portal/login — the whole screen: brand side + form pane, two steps on one
 // page (phone → code). The screen is owned by this client component rather than
@@ -25,6 +21,10 @@ import {
 // screen does NOT: the "אימייל וסיסמה" segmented control and its email mode,
 // the Face ID / "remember me" returning-user screen, the SMS autofill chip, the
 // "בקשת הצטרפות" link — none of them exists in the system (28/09/2026).
+//
+// Step 2 lives in PortalOtpStep: all sixteen states of ref/OTP States.html,
+// rebuilt on 29/09/2026. This file keeps step 1 and owns the code REQUEST,
+// because the first send and every resend are the same call.
 //
 // Every message the resident reads comes from the SERVER's `message` field, so
 // the wording of "not a registered owner" and of a lockout lives in exactly one
@@ -42,6 +42,8 @@ interface ApiResponse {
   ok?: boolean;
   sent?: boolean;
   locked?: boolean;
+  lockedUntil?: string | null;
+  notRegistered?: boolean;
   message?: string;
   retryAfterSec?: number;
   error?: string;
@@ -93,7 +95,6 @@ function isPlausiblePhone(prefixDigits: string, typed: string): boolean {
   return !full.startsWith(`+${DEFAULT_PREFIX}`) || full.length - 1 - DEFAULT_PREFIX.length >= PHONE_MIN_DIGITS;
 }
 
-const EMPTY_CODE: readonly string[] = Array.from({ length: PORTAL_OTP_DIGITS }, () => '');
 
 /** The number echoed on the code step: 052-418-7730 for an Israeli number
  *  (with or without the trunk 0, under the +972 prefix or none); a foreign
@@ -109,10 +110,6 @@ function formatPhoneForDisplay(prefixDigits: string, typed: string): string {
     : full;
 }
 
-function formatCountdown(sec: number): string {
-  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
-}
-
 // Field chrome (reference `.inp`): 1.5px line, soft field background, brand
 // focus ring; error = red line on white. Mobile is 54px/12px, desktop 48px/11px.
 const FIELD_BASE =
@@ -122,8 +119,6 @@ const FIELD_IDLE =
 const FIELD_ERROR =
   'border-[#E5484D] bg-white focus-within:ring-4 focus-within:ring-[rgba(229,72,77,0.12)]';
 
-const LINK_BUTTON =
-  '-my-[12px] inline-flex min-h-[44px] items-center font-semibold text-brand transition-colors hover:text-[#2B3FB8] hover:underline disabled:pointer-events-none disabled:opacity-50';
 
 // The prefix chip (reference `.pre`): separator line, muted Inter, 16px on
 // the phone / 14px on the desktop. The same classes dress the edit field.
@@ -131,7 +126,11 @@ const PREFIX_CHIP = 'flex h-[26px] shrink-0 items-center border-e border-[#E2E8F
 const INLINE_MESSAGE =
   'flex items-center gap-[6px] text-[13.5px] font-medium leading-[normal] min-[601px]:text-[13px]';
 
-export function PortalLoginForm() {
+export function PortalLoginForm({ supportPhone = null }: {
+  /** NEXT_PUBLIC_PORTAL_SUPPORT_PHONE, read on the server and handed down —
+   *  the lock screens' "פנייה לחברת הניהול" dials it. */
+  supportPhone?: string | null;
+}) {
   const [step, setStep] = useState<Step>('phone');
   const [phone, setPhone] = useState('');
   // Country prefix, digits only ('972'). A button until the resident presses
@@ -140,91 +139,55 @@ export function PortalLoginForm() {
   const [prefixEditing, setPrefixEditing] = useState(false);
   // Exactly the string the request carried — the verify step sends the same one.
   const [sentPhone, setSentPhone] = useState('');
-  const [digits, setDigits] = useState<string[]>([...EMPTY_CODE]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [phoneInvalid, setPhoneInvalid] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(0);
-  const boxRefs = useRef<Array<HTMLInputElement | null>>([]);
-  // The last six digits that went to the server. The boxes submit by themselves
-  // when the sixth digit lands — but never the same code twice: after a wrong
-  // code the resident either changes a digit or presses the button.
-  const lastSubmittedCode = useRef<string | null>(null);
 
-  // Resend countdown. One interval, cleared on unmount and whenever it hits 0.
+  // Step 1's own resend guard — step 2 runs its own timer off the same value.
   useEffect(() => {
     if (cooldown <= 0) return;
     const t = setInterval(() => setCooldown((s) => (s <= 1 ? 0 : s - 1)), 1000);
     return () => clearInterval(t);
   }, [cooldown]);
 
-  useEffect(() => {
-    if (step === 'code') boxRefs.current[0]?.focus();
-  }, [step]);
+  /** The one code-request call: step 1's submit and step 2's resend. */
+  async function requestCode(): Promise<OtpRequestOutcome> {
+    const outgoing = composePhone(prefix, phone);
+    const { status, data } = await post('/api/portal/otp/request', { phone: outgoing });
+    if (data.sent) {
+      setSentPhone(outgoing);
+      setCooldown(PORTAL_OTP_RESEND_COOLDOWN_SEC);
+      return { sent: true };
+    }
+    if (typeof data.retryAfterSec === 'number' && data.retryAfterSec > 0) setCooldown(data.retryAfterSec);
+    return {
+      sent: false,
+      locked: data.locked === true || status === 429,
+      lockedUntil: data.lockedUntil ?? null,
+      notRegistered: data.notRegistered === true,
+      message: data.message ?? data.error,
+      retryAfterSec: data.retryAfterSec,
+    };
+  }
 
-  async function requestCode(e?: FormEvent) {
+  /** Step 1's submit. A "not registered" answer is a 200 with a message and no
+   *  `sent` flag — the form stays here and shows it, which is the deliberate
+   *  product decision to send the owner to the management company. */
+  async function submitPhone(e?: FormEvent) {
     e?.preventDefault();
     if (busy || cooldown > 0) return;
-    setError(null); setNotice(null);
+    setError(null);
     if (!isPlausiblePhone(prefix, phone)) {
       setPhoneInvalid(true);
       return;
     }
     setPhoneInvalid(false);
     setBusy(true);
-    const outgoing = composePhone(prefix, phone);
     try {
-      const { data } = await post('/api/portal/otp/request', { phone: outgoing });
-      if (data.sent) {
-        const resend = step === 'code';
-        setSentPhone(outgoing);
-        setStep('code');
-        setDigits([...EMPTY_CODE]);
-        lastSubmittedCode.current = null;
-        setCooldown(PORTAL_OTP_RESEND_COOLDOWN_SEC);
-        // On the first send the code step's own subtitle says all of this; the
-        // line is for a resend, where nothing else on the screen changes.
-        if (resend) {
-          setNotice(`נשלח קוד בוואטסאפ. הקוד תקף ל-${PORTAL_OTP_TTL_MINUTES} דקות.`);
-          boxRefs.current[0]?.focus();
-        }
-        return;
-      }
-      // Not registered / inactive / locked / throttled / send failure — the server
-      // says what to show. Stay on the step the resident is on.
-      setError(data.message ?? data.error ?? 'שליחת הקוד נכשלה. נסה שוב.');
-      if (typeof data.retryAfterSec === 'number' && data.retryAfterSec > 0) {
-        setCooldown(data.retryAfterSec);
-      }
-    } catch {
-      setError('שגיאה זמנית. נסה שוב בעוד רגע.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function verifyCode(code: string, e?: FormEvent) {
-    e?.preventDefault();
-    if (busy) return;
-    setError(null); setNotice(null);
-    if (!new RegExp(`^\\d{${PORTAL_OTP_DIGITS}}$`).test(code)) {
-      setError(`הקוד חייב להכיל ${PORTAL_OTP_DIGITS} ספרות`);
-      return;
-    }
-    lastSubmittedCode.current = code;
-    setBusy(true);
-    try {
-      const { data } = await post('/api/portal/otp/verify', { phone: sentPhone, code });
-      if (data.ok) {
-        // Hard navigation so the session cookie is on the next request.
-        window.location.assign('/portal');
-        return;
-      }
-      setError(data.message ?? data.error ?? 'הקוד שהוזן שגוי. נסה שוב.');
-      // The digits stay put: the resident fixes the wrong one and the form
-      // re-submits by itself (a changed code), or presses the button.
-      boxRefs.current[0]?.focus();
+      const out = await requestCode();
+      if (out.sent) { setStep('code'); return; }
+      setError(out.message ?? 'שליחת הקוד נכשלה. נסה שוב.');
     } catch {
       setError('שגיאה זמנית. נסה שוב בעוד רגע.');
     } finally {
@@ -234,75 +197,10 @@ export function PortalLoginForm() {
 
   function backToPhone() {
     setStep('phone');
-    setDigits([...EMPTY_CODE]);
-    lastSubmittedCode.current = null;
     setError(null);
-    setNotice(null);
   }
 
-  // ── OTP boxes ──────────────────────────────────────────────────────────────
-
-  /** Writes `insert` into the boxes from `start`, moves focus past the last
-   *  digit written, and submits when all six are in and differ from the last
-   *  code sent. Typing, paste and OS autofill all end up here. */
-  function fillFrom(start: number, insert: string, base: readonly string[]) {
-    const next = [...base];
-    let k = start;
-    for (const ch of insert) {
-      if (k >= PORTAL_OTP_DIGITS) break;
-      next[k] = ch;
-      k += 1;
-    }
-    setDigits(next);
-    boxRefs.current[Math.min(k, PORTAL_OTP_DIGITS - 1)]?.focus();
-    const joined = next.join('');
-    if (joined.length === PORTAL_OTP_DIGITS && joined !== lastSubmittedCode.current) {
-      void verifyCode(joined);
-    }
-  }
-
-  function handleBoxChange(i: number, value: string) {
-    const typed = value.replace(/\D+/g, '');
-    if (!typed) {
-      const next = [...digits];
-      next[i] = '';
-      setDigits(next);
-      return;
-    }
-    let insert = typed;
-    // Typing over a filled box hands back old+new (or new+old): keep the new one.
-    if (digits[i] && typed.length === 2) {
-      insert = typed.startsWith(digits[i]) ? typed.slice(1) : typed.slice(0, 1);
-    }
-    fillFrom(i, insert, digits);
-  }
-
-  function handleBoxKeyDown(i: number, ev: KeyboardEvent<HTMLInputElement>) {
-    if (ev.key === 'Backspace' && !digits[i] && i > 0) {
-      ev.preventDefault();
-      const next = [...digits];
-      next[i - 1] = '';
-      setDigits(next);
-      boxRefs.current[i - 1]?.focus();
-    } else if (ev.key === 'ArrowLeft' && i > 0) {
-      ev.preventDefault();
-      boxRefs.current[i - 1]?.focus();
-    } else if (ev.key === 'ArrowRight' && i < PORTAL_OTP_DIGITS - 1) {
-      ev.preventDefault();
-      boxRefs.current[i + 1]?.focus();
-    }
-  }
-
-  function handleBoxPaste(i: number, ev: ClipboardEvent<HTMLInputElement>) {
-    const pasted = ev.clipboardData.getData('text').replace(/\D+/g, '');
-    if (!pasted) return;
-    ev.preventDefault();
-    // A whole code pasted anywhere fills from the first box.
-    fillFrom(pasted.length >= PORTAL_OTP_DIGITS ? 0 : i, pasted.slice(0, PORTAL_OTP_DIGITS), digits);
-  }
-
-  const code = digits.join('');
-  const phoneFieldError = phoneInvalid || (step === 'phone' && error !== null);
+  const phoneFieldError = phoneInvalid || error !== null;
 
   return (
     <div className="flex min-h-dvh flex-col bg-white min-[901px]:grid min-[901px]:grid-cols-[minmax(0,46fr)_minmax(0,54fr)]">
@@ -330,13 +228,12 @@ export function PortalLoginForm() {
           'min-[601px]:mt-0 min-[601px]:items-center min-[601px]:justify-center min-[601px]:rounded-none min-[601px]:px-[20px] min-[601px]:py-[40px] min-[901px]:px-[32px] min-[901px]:py-[48px]',
         )}
       >
+        {step === 'phone' ? (
         <form
-          onSubmit={step === 'phone' ? requestCode : (e) => verifyCode(code, e)}
+          onSubmit={submitPhone}
           noValidate
           className="flex w-full flex-1 flex-col min-[601px]:max-w-[400px] min-[601px]:flex-none"
         >
-          {step === 'phone' ? (
-            <>
               <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[601px]:text-[32px]">כניסת בעלי דירות</h1>
               <p className="mt-[6px] text-[15px] leading-[1.5] text-[#64748B] min-[601px]:mt-[8px] min-[601px]:leading-[1.55]">
                 נשלח אליך קוד חד-פעמי בוואטסאפ למספר הטלפון הרשום בוועד הבית.
@@ -437,90 +334,17 @@ export function PortalLoginForm() {
                   הגישה מוגבלת לבעלי דירות רשומים בבניין
                 </p>
               </div>
-            </>
-          ) : (
-            <>
-              <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[601px]:text-[32px]">הזנת קוד</h1>
-              <p className="mt-[6px] text-[15px] leading-[1.5] text-[#64748B] min-[601px]:mt-[8px] min-[601px]:leading-[1.55]">
-                שלחנו קוד בן {PORTAL_OTP_DIGITS} ספרות בוואטסאפ למספר{' '}
-                <b dir="ltr" className="font-num font-bold whitespace-nowrap text-[#0F172A]">{formatPhoneForDisplay(prefix, phone)}</b>
-                . הקוד תקף ל-{PORTAL_OTP_TTL_MINUTES} דקות.
-              </p>
-
-              <div dir="ltr" className="mt-[28px] flex justify-between gap-[8px] min-[601px]:mt-[24px] min-[601px]:gap-[10px]">
-                {digits.map((d, i) => (
-                  <input
-                    key={i}
-                    ref={(el) => { boxRefs.current[i] = el; }}
-                    type="text"
-                    // Numeric keypad on mobile; autocomplete lets the OS offer the code.
-                    inputMode="numeric"
-                    pattern="\d*"
-                    autoComplete={i === 0 ? 'one-time-code' : 'off'}
-                    aria-label={`ספרה ${i + 1} מתוך ${PORTAL_OTP_DIGITS}`}
-                    value={d}
-                    readOnly={busy}
-                    onChange={(ev) => handleBoxChange(i, ev.target.value)}
-                    onKeyDown={(ev) => handleBoxKeyDown(i, ev)}
-                    onPaste={(ev) => handleBoxPaste(i, ev)}
-                    onFocus={(ev) => ev.currentTarget.select()}
-                    className={cn(
-                      'h-[60px] w-full min-w-0 rounded-[12px] border-[1.5px] text-center font-num text-[26px] font-bold text-[#0F172A] outline-none transition-[border-color,background-color,box-shadow] duration-150 min-[601px]:h-[56px] min-[601px]:rounded-[11px] min-[601px]:text-[22px]',
-                      error ? 'border-[#E5484D] bg-white' : d ? 'border-[#CBD5E1] bg-white' : 'border-[#E2E8F0] bg-[#F5F7FB]',
-                      'focus:border-brand focus:bg-white focus:ring-4 focus:ring-[rgba(61,90,254,0.12)]',
-                    )}
-                  />
-                ))}
-              </div>
-
-              {error && (
-                <p role="alert" className={cn(INLINE_MESSAGE, 'mt-[12px] text-[#E5484D]')}>
-                  <CircleAlert className="size-[15px] shrink-0" strokeWidth={2.2} aria-hidden />
-                  {error}
-                </p>
-              )}
-              {notice && !error && (
-                <p role="status" className={cn(INLINE_MESSAGE, 'mt-[12px] text-[#0B7A3B]')}>
-                  <CircleCheck className="size-[15px] shrink-0" strokeWidth={2.2} aria-hidden />
-                  {notice}
-                </p>
-              )}
-
-              <div className="mt-[16px] flex items-center justify-between gap-0 text-[14px] leading-[normal] text-[#64748B] min-[601px]:mt-[14px] min-[601px]:gap-[12px]">
-                <button type="button" onClick={backToPhone} disabled={busy} className={LINK_BUTTON}>
-                  שינוי מספר
-                </button>
-                {cooldown > 0 ? (
-                  <span className="-my-[12px] inline-flex min-h-[44px] items-center gap-[4px]">
-                    שליחה חוזרת בעוד
-                    <b dir="ltr" className="font-num font-bold">{formatCountdown(cooldown)}</b>
-                  </span>
-                ) : (
-                  <button type="button" onClick={() => requestCode()} disabled={busy} className={LINK_BUTTON}>
-                    שליחה חוזרת
-                  </button>
-                )}
-              </div>
-
-              <div className="mt-auto pt-[16px] pb-[12px] min-[601px]:mt-0 min-[601px]:p-0">
-                <Button
-                  type="submit"
-                  disabled={busy}
-                  className="h-[54px] w-full gap-[10px] rounded-[14px] text-[17px] min-[601px]:mt-[28px] min-[601px]:h-[48px] min-[601px]:gap-[8px] min-[601px]:rounded-[11px] min-[601px]:px-[18px] min-[601px]:text-[16px]"
-                >
-                  {busy ? (
-                    <>
-                      <LoaderCircle className="size-[18px] animate-spin" aria-hidden />
-                      מאמת…
-                    </>
-                  ) : (
-                    'כניסה לפורטל'
-                  )}
-                </Button>
-              </div>
-            </>
-          )}
         </form>
+        ) : (
+          <PortalOtpStep
+            sentPhone={sentPhone}
+            phoneDisplay={formatPhoneForDisplay(prefix, phone)}
+            initialCooldown={cooldown}
+            supportPhone={supportPhone}
+            onBack={backToPhone}
+            onRequestCode={requestCode}
+          />
+        )}
       </section>
     </div>
   );

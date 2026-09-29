@@ -12,7 +12,7 @@ import { logPortalEvent } from '@/lib/db/portal/events';
 import {
   PORTAL_LOCKOUT_ALERT_TIER, PORTAL_NOT_OWNER_MESSAGE,
   PORTAL_OTP_IP_WINDOW_SEC, PORTAL_OTP_MAX_ATTEMPTS, PORTAL_VERIFY_MAX_PER_IP,
-  portalLockedMessage,
+  portalLockedMessage, portalWrongCodeMessage,
 } from '@/lib/constants/portal';
 
 export const runtime = 'nodejs';
@@ -66,7 +66,10 @@ export async function POST(req: Request) {
       details: { stage: 'verify', tier: locked.tier, until: locked.locked_until },
     });
     return NextResponse.json(
-      { ok: false, locked: true, message: portalLockedMessage(lockoutMinutesRemaining(locked)) },
+      {
+        ok: false, locked: true, lockedUntil: locked.locked_until,
+        message: portalLockedMessage(lockoutMinutesRemaining(locked)),
+      },
       { status: 429 },
     );
   }
@@ -85,7 +88,7 @@ export async function POST(req: Request) {
   if (outcome.kind === 'none' || outcome.kind === 'expired') {
     await logPortalEvent({ phoneE164, eventType: 'code_expired', apartmentNumbers, ip, userAgent });
     return NextResponse.json(
-      { ok: false, message: 'הקוד פג תוקף. בקש קוד חדש.' },
+      { ok: false, expired: true, message: 'תוקף הקוד פג. שלחו קוד חדש כדי להמשיך.' },
       { status: 401 },
     );
   }
@@ -105,12 +108,20 @@ export async function POST(req: Request) {
         await alertManagerAboutLockout(phoneE164);
       }
       return NextResponse.json(
-        { ok: false, locked: true, message: portalLockedMessage(lockoutMinutesRemaining(lockout)) },
+        {
+          ok: false, locked: true, attemptsLeft: 0,
+          lockedUntil: lockout.locked_until,
+          message: portalLockedMessage(lockoutMinutesRemaining(lockout)),
+        },
         { status: 429 },
       );
     }
+    // The remaining attempts come from the SERVER, never from a client-side
+    // tally: the screen's "נותרו N" and its last-attempt warning then say
+    // exactly what the next wrong code will really do (state 06 / 08).
+    const attemptsLeft = PORTAL_OTP_MAX_ATTEMPTS - outcome.attempts;
     return NextResponse.json(
-      { ok: false, message: 'הקוד שהוזן שגוי. נסה שוב.' },
+      { ok: false, attemptsLeft, message: portalWrongCodeMessage(attemptsLeft) },
       { status: 401 },
     );
   }
@@ -121,7 +132,10 @@ export async function POST(req: Request) {
   const active = await findOwnerIdentity(phoneE164, { onlyActive: true });
   if (!active) {
     await logPortalEvent({ phoneE164, eventType: 'phone_inactive', apartmentNumbers, ip, userAgent });
-    return NextResponse.json({ ok: false, message: PORTAL_NOT_OWNER_MESSAGE }, { status: 403 });
+    return NextResponse.json(
+      { ok: false, notRegistered: true, message: PORTAL_NOT_OWNER_MESSAGE },
+      { status: 403 },
+    );
   }
 
   await startPortalSession({ phoneE164, ip, userAgent });

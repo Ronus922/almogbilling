@@ -1,9 +1,11 @@
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
-// The period picker of the portal's "הכנסות והוצאות" tab, restored 29/09/2026
-// after PR #44 (b51b791) left the tab with a month-only select. Four levels —
-// month · quarter · half · year — and every figure of the tab follows the
-// selection, published months only.
+// The ONE-CLICK period picker of the portal's "הכנסות והוצאות" tab — the
+// component of 27/09/2026, dropped from the portal by PR #44 (b51b791),
+// half-restored as a flat <select> by PR #49 and put back in full on
+// 29/09/2026. « כל YYYY » with year arrows over a 3×4 grid whose rows are
+// quarters and whose row-pairs are halves; one click selects AND closes; every
+// figure of the tab follows the selection, published months only.
 //
 // Against db/seed/e2e.sql: the month before this one is published and holds
 // 8,820.40 + 1 of income and 1,800.50 of expense; the month before THAT is
@@ -63,26 +65,70 @@ async function owner(browser: Browser, token = 'e2e-owner-a1'): Promise<BrowserC
 const kpisOf = (page: Page) =>
   page.evaluate(() => [...document.querySelectorAll('#t-tx .kpi')].map((k) => `${k.querySelector('.k')?.textContent}=${k.querySelector('.v')?.textContent}`));
 
-const picker = (page: Page) => page.locator('#t-tx select.sel');
+const trigger = (page: Page) => page.locator('#t-tx .per button[aria-label="תקופה"]');
+const panel = (page: Page) => page.locator('[role="dialog"][aria-label="בחירת תקופה"]');
+const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+const HALF = { 1: 'מחצית א׳', 2: 'מחצית ב׳' } as const;
+
+/** The aria-label of the cell that selects `key`, whatever level it is. */
+function cellLabel(key: string): string {
+  const y = Number(key.slice(0, 4));
+  if (/^\d{4}$/.test(key)) return `בחר את כל ${y}`;
+  if (/-Q[1-4]$/.test(key)) return `בחר רבעון ${key.slice(-1)} ${y}`;
+  if (/-H[12]$/.test(key)) return `בחר ${HALF[Number(key.slice(-1)) as 1 | 2]} ${y}`;
+  return `בחר ${MONTHS[Number(key.slice(5, 7)) - 1]} ${y}`;
+}
+
+/** Opens the panel and clicks one cell — the only gesture this picker has. */
+async function pick(page: Page, key: string) {
+  await trigger(page).click();
+  await expect(panel(page)).toBeVisible();
+  await panel(page).getByLabel(cellLabel(key), { exact: true }).click();
+  // Every click closes: there is no range mode and no second click.
+  await expect(panel(page)).toHaveCount(0);
+}
+
+/** What the trigger reads — periodLabel(). */
+function label(key: string): string {
+  const y = key.slice(0, 4);
+  if (/^\d{4}$/.test(key)) return `כל ${y}`;
+  if (/-Q[1-4]$/.test(key)) return `רבעון ${key.slice(-1)} · ${y}`;
+  if (/-H[12]$/.test(key)) return `${HALF[Number(key.slice(-1)) as 1 | 2]} · ${y}`;
+  return `${MONTHS[Number(key.slice(5, 7)) - 1]} ${y}`;
+}
 
 test.describe('the transactions tab period picker', () => {
-  test('offers month, quarter, half and year — published only, newest published month first', async ({ browser }) => {
+  test('is the one-click grid: a year header, quarter rows, half labels and months', async ({ browser }) => {
     const ctx = await owner(browser);
     const page = await ctx.newPage();
     await page.goto('/portal?tab=tx');
 
-    await expect(picker(page)).toHaveAttribute('aria-label', 'תקופה');
-    await expect(picker(page)).toHaveValue(prev);
+    // Default = the newest published month.
+    await expect(trigger(page)).toHaveText(label(prev));
+    await trigger(page).click();
+    const p = panel(page);
+    await expect(p).toBeVisible();
 
-    const values = await picker(page).locator('option').evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
-    for (const k of [prev, prev2, ...RANGES.map((r) => r.key)]) expect(values, k).toContain(k);
-    // The current month is not published: it is not an option at all, so no
-    // click in this picker can open it.
-    expect(values).not.toContain(cur);
-    // All four levels are represented.
-    expect(values.some((v) => /^\d{4}-Q[1-4]$/.test(v))).toBe(true);
-    expect(values.some((v) => /^\d{4}-H[12]$/.test(v))).toBe(true);
-    expect(values.some((v) => /^\d{4}$/.test(v))).toBe(true);
+    // « כל YYYY » between two year arrows.
+    await expect(p.getByLabel('שנה קודמת')).toBeVisible();
+    await expect(p.getByLabel('שנה הבאה')).toBeVisible();
+    await expect(p.getByLabel(`בחר את כל ${py}`, { exact: true })).toBeVisible();
+    // Four quarter labels and two half labels, one grid.
+    for (const q of [1, 2, 3, 4]) await expect(p.getByLabel(`בחר רבעון ${q} ${py}`, { exact: true })).toBeVisible();
+    for (const h of [1, 2] as const) await expect(p.getByLabel(`בחר ${HALF[h]} ${py}`, { exact: true })).toBeVisible();
+    // Twelve months, every one of them drawn.
+    for (const m of MONTHS) await expect(p.getByLabel(`בחר ${m} ${py}`, { exact: true })).toBeVisible();
+
+    // A resident may open ONLY what was published: the published month is
+    // live, the unpublished current month is inert, and so is its quarter
+    // when it holds nothing published.
+    const [cy, cm] = cur.split('-').map(Number) as [number, number];
+    await expect(p.getByLabel(cellLabel(prev), { exact: true })).toBeEnabled();
+    if (cy === py) await expect(p.getByLabel(cellLabel(cur), { exact: true })).toBeDisabled();
+    // The green dot marks what residents can actually open.
+    await expect(p.getByLabel(cellLabel(prev), { exact: true }).getByLabel('פורסם לדיירים')).toBeVisible();
+    await expect(p.getByText('חודש שפורסם — רק אלה זמינים')).toBeVisible();
+    void cm;
     await ctx.close();
   });
 
@@ -91,9 +137,9 @@ test.describe('the transactions tab period picker', () => {
       const ctx = await owner(browser);
       const page = await ctx.newPage();
       await page.goto('/portal?tab=tx');
-      await picker(page).selectOption(range.key);
+      await pick(page, range.key);
       await page.waitForURL((u) => u.searchParams.get('m') === range.key);
-      await expect(picker(page)).toHaveValue(range.key);
+      await expect(trigger(page)).toHaveText(label(range.key));
 
       // Only the published month carries figures, so the period equals it.
       expect(await kpisOf(page)).toEqual(KPIS);
@@ -129,9 +175,9 @@ test.describe('the transactions tab period picker', () => {
     // No ?tab= at all — a link that carries only the period lands on this tab.
     await page.goto(`/portal?m=${quarter}`);
     await expect(page.locator('#t-tx')).toBeVisible();
-    await expect(picker(page)).toHaveValue(quarter);
+    await expect(trigger(page)).toHaveText(label(quarter));
     await page.reload();
-    await expect(picker(page)).toHaveValue(quarter);
+    await expect(trigger(page)).toHaveText(label(quarter));
     expect(await kpisOf(page)).toEqual(KPIS);
     await ctx.close();
   });
@@ -141,7 +187,7 @@ test.describe('the transactions tab period picker', () => {
     const page = await ctx.newPage();
     for (const m of [cur, '1999-Q1', 'garbage']) {
       await page.goto(`/portal?tab=tx&m=${m}`);
-      await expect(picker(page)).toHaveValue(prev);
+      await expect(trigger(page)).toHaveText(label(prev));
       expect(await page.locator('#t-tx').innerText()).not.toContain('CANARY-HIDDEN-ENTRY');
     }
     await ctx.close();
@@ -153,10 +199,10 @@ test.describe('the transactions tab period picker', () => {
     const page = await ctx.newPage();
     await page.goto(`/finance?view=resident&apt=E2E-A&tab=tx&m=${quarter}`);
     await expect(page.getByText('תצוגה מקדימה — כך רואה דייר')).toBeVisible();
-    await expect(picker(page)).toHaveValue(quarter);
+    await expect(trigger(page)).toHaveText(label(quarter));
     expect(await kpisOf(page)).toEqual(KPIS);
     // The preview carries its own params through the picker.
-    await picker(page).selectOption(prev);
+    await pick(page, prev);
     await page.waitForURL((u) => u.searchParams.get('m') === prev);
     expect(new URL(page.url()).searchParams.get('view')).toBe('resident');
     expect(new URL(page.url()).searchParams.get('apt')).toBe('E2E-A');

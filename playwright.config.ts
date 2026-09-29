@@ -13,6 +13,9 @@ const PORT = Number(process.env.E2E_PORT ?? 3100);
 const HOST = 'localhost';
 const BASE_URL = `http://${HOST}:${PORT}`;
 const MAILPIT_SMTP_PORT = process.env.MAILPIT_SMTP_PORT ?? '55525';
+// The portal's login code is delivered over WhatsApp, so the e2e stack runs a
+// stand-in for Green API and db/seed/e2e.sql points its one instance at it.
+const GREENAPI_PORT = process.env.E2E_GREENAPI_PORT ?? '3110';
 
 export default defineConfig({
   testDir: './e2e',
@@ -35,7 +38,15 @@ export default defineConfig({
       dependencies: ['setup'],
     },
   ],
-  webServer: {
+  webServer: [{
+    command: 'node scripts/e2e/greenapi-stub.mjs',
+    url: `http://127.0.0.1:${GREENAPI_PORT}/__health`,
+    reuseExistingServer: !process.env.CI,
+    timeout: 30_000,
+    stdout: 'ignore',
+    stderr: 'pipe',
+    env: { ...process.env, E2E_GREENAPI_PORT: GREENAPI_PORT },
+  }, {
     command: 'bash scripts/e2e/start-server.sh',
     url: `${BASE_URL}/api/health`,
     reuseExistingServer: !process.env.CI,
@@ -54,5 +65,5 @@ export default defineConfig({
       SMTP_PORT: MAILPIT_SMTP_PORT,
       SMTP_REQUIRE_TLS: 'false',
     },
-  },
+  }],
 });
