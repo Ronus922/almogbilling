@@ -8,6 +8,11 @@ import { test, expect, type Browser, type BrowserContext } from '@playwright/tes
 //     number with two decimals;
 //   • an income amount wears .in (green-ink #0B7A3B), an expense .out
 //     (red-ink #B03A3E) — rows, KPIs, categories, report totals, the fund;
+//     inside the chart tooltip, whose ground is dark (--ink #0F172A), the same
+//     two classes resolve to the BRIGHT pair instead (--green #12A150 5.30:1,
+//     --red #E5484D 4.56:1) because the ink pair falls under WCAG AA there
+//     (3.28:1 / 2.99:1) — contrast fix 29/09/2026. Both halves are asserted in
+//     one test on purpose: it is what proves the swap stayed inside .tip;
 //   • E2E-D is archived with a balance: its owner sees the figures exactly
 //     like any other owner — no note, no status, no word about it — and
 //     none of the canaries; the admin preview shows the same.
@@ -18,6 +23,10 @@ test.use({ storageState: { cookies: [], origins: [] } });
 
 const GREEN_INK = 'rgb(11, 122, 59)';
 const RED_INK = 'rgb(176, 58, 62)';
+// The bright pair, used on the chart tooltip's dark ground only (29/09/2026).
+const GREEN = 'rgb(18, 161, 80)';
+const RED = 'rgb(229, 72, 77)';
+const TIP_BG = 'rgb(15, 23, 42)';
 const CANARIES = ['CANARY-', '050-4444444', 'is_archived'];
 /** Words that must not appear anywhere on an archived apartment's screens. */
 const NOT_SHOWN = ['בבדיקה מול חברת הניהול', 'מאורכב', 'ארכיון', 'משפטי', 'פתאל', 'לא פעיל'];
@@ -158,11 +167,13 @@ test.describe('income green, expense red', () => {
     expect(await colorOf(page, '#t-ov .kpi .v.in')).toBe(GREEN_INK);
     expect(await colorOf(page, '#t-ov .kpi .v.out')).toBe(RED_INK);
     expect(await colorOf(page, '#t-ov .cats .a.out')).toBe(RED_INK);
-    // the tooltip lines: hover the newest month
+    // the tooltip lines: hover the newest month. The dark ground is asserted
+    // too — it is the premise the 4.5:1 of the bright pair was measured on.
     await page.locator('.chart .grp').last().hover();
     await expect(page.locator('.tip.on')).toBeVisible();
-    expect(await colorOf(page, '.tip.on .in')).toBe(GREEN_INK);
-    expect(await colorOf(page, '.tip.on .out')).toBe(RED_INK);
+    expect(await page.locator('.tip.on').first().evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(TIP_BG);
+    expect(await colorOf(page, '.tip.on .in')).toBe(GREEN);
+    expect(await colorOf(page, '.tip.on .out')).toBe(RED);
     await page.goto('/portal?tab=rep');
     expect(await colorOf(page, '#t-rep .tot .amt.in')).toBe(GREEN_INK);
     expect(await colorOf(page, '#t-rep .tot .amt.out')).toBe(RED_INK);
