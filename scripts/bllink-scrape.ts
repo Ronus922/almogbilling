@@ -124,10 +124,18 @@ function stamp(d = new Date()): string {
 // ─── Excel → rows (CRM naming) ────────────────────────────────────────────────
 
 /**
- * parseDebtorsWorkbook gives the app's canonical parse (clean phones, numbers).
- * The raw eight cells (and the raw phone cell, like the CRM's phone_primary)
- * come from the same worksheet through the shared worksheetToMatrix, filtered
- * with the parser's own rule (a row counts when column A has text).
+ * parseDebtorsWorkbook gives the app's canonical parse (clean numbers). The
+ * RAW cells — the name cell and the phone cell, like the CRM's owner_name /
+ * phone_primary — come from the same worksheet through the shared
+ * worksheetToMatrix, filtered with the parser's own rule (a row counts when
+ * column A has text).
+ *
+ * owner_name is stored RAW on purpose (restored 29/09/2026): this table holds
+ * the source snapshot in the CRM's naming, and the split into owner / tenant
+ * belongs to the mapper both sources share (bllinkMap.mapSourceRow). Writing
+ * the parser's already-split owner here would have fed a split value back into
+ * the splitter on the next sync, and the tenant half — the one the queue now
+ * proposes — would have been gone before anyone could see it.
  */
 async function workbookToScrapeRows(buffer: Buffer): Promise<{ rows: ScrapeRow[]; skipped: number }> {
   const parsed = await parseDebtorsWorkbook(buffer);
@@ -146,7 +154,7 @@ async function workbookToScrapeRows(buffer: Buffer): Promise<{ rows: ScrapeRow[]
     const r = rawRows[i] ?? [];
     return {
       apartment_number: p.apartment_number,
-      owner_name: p.owner_name,
+      owner_name: toText(r[1]),
       phone_primary: toText(r[2]),
       total_debt: round2(p.total_debt),
       monthly_debt: round2(p.management_fees), // column E

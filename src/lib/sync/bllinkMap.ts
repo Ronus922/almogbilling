@@ -8,7 +8,8 @@
  *
  * Column mapping (source → billing debtors / ParsedDebtorRow):
  *   apartment_number      →  apartment_number
- *   owner_name            →  owner_name — the "(בעלים)" part only (reportNames.ts)
+ *   owner_name            →  owner_name + tenant_name — the "(בעלים)" and the
+ *                            "(שוכר/ת)" halves of one cell (reportNames.ts)
  *   phone_primary         →  phone_owner / phone_tenant (split; contacts hook only)
  *   monthly_debt (E)      →  management_fees
  *   special_debt (G)      →  hot_water_debt
@@ -60,6 +61,7 @@ export function mapSourceRow(r: SourceDebtorRecord): ParsedDebtorRow | null {
   return {
     apartment_number: apt,
     owner_name: names.owner,
+    tenant_name: names.tenant,
     phone_owner: phones.owner,
     phone_tenant: phones.tenant,
     // Absolute overwrite: total_debt is REBUILT from the components (default 0),

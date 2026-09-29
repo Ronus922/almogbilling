@@ -7,7 +7,7 @@ import { MAX_EXCEL_BYTES, toArrayBuffer, worksheetToMatrix } from '@/lib/excel/w
  * Parsed row from the debtors Excel file.
  * Column mapping (row 1 is the header, parsing starts from row 2):
  *   A → apartment_number
- *   B → owner_name
+ *   B → owner_name + tenant_name (one labelled cell, split by role)
  *   C → phone (raw) — split into clean local owner/tenant numbers on parse
  *   D → total_debt
  *   E → management_fees
@@ -22,6 +22,7 @@ import { MAX_EXCEL_BYTES, toArrayBuffer, worksheetToMatrix } from '@/lib/excel/w
 export interface ParsedDebtorRow {
   apartment_number: string;
   owner_name: string | null;
+  tenant_name: string | null;
   phone_owner: string | null;
   phone_tenant: string | null;
   total_debt: number;
@@ -76,11 +77,13 @@ export async function parseDebtorsWorkbook(buffer: ArrayBuffer | Buffer): Promis
     }
     const rawPhone = r[2] == null ? null : String(r[2]);
     const phones = splitOwnerTenantPhones(rawPhone);
+    // Same compound, labelled cell as the phone one — split by role, never
+    // stored raw (src/lib/sync/reportNames.ts).
+    const names = splitOwnerTenantNames(r[1] == null ? null : String(r[1]));
     rows.push({
       apartment_number: apt,
-      // Same compound, labelled cell as the sync's — split by role, never
-      // stored raw (src/lib/sync/reportNames.ts).
-      owner_name: splitOwnerTenantNames(r[1] == null ? null : String(r[1])).owner,
+      owner_name: names.owner,
+      tenant_name: names.tenant,
       phone_owner: phones.owner,
       phone_tenant: phones.tenant,
       total_debt: toNumber(r[3]),

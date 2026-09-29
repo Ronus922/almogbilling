@@ -4,14 +4,26 @@
 // suggestion and the value stands until someone decides. See the migration
 // 20260929194811_contact_sync_suggestions for the seven rules.
 
-/** The only fields the Bllink report carries about people — the same three the
- *  migration's CHECKs name. */
-export type SuggestionField = 'owner_name' | 'owner_phone' | 'tenant_phone';
+/** The fields Bllink carries about people — the same ones the migrations'
+ *  CHECKs name. The report's single name cell holds BOTH names, tagged
+ *  "(בעלים)" / "(שוכר/ת)" (src/lib/sync/reportNames.ts). */
+export type SuggestionField =
+  | 'owner_name' | 'owner_phone'
+  | 'tenant_name' | 'tenant_phone';
 
 export const SUGGESTION_FIELD_LABEL: Record<SuggestionField, string> = {
   owner_name: 'שם בעלים',
   owner_phone: 'טלפון בעלים',
+  tenant_name: 'שם שוכר',
   tenant_phone: 'טלפון שוכר',
+};
+
+/** Which fields read as a number — right-to-left text everywhere else. */
+export const SUGGESTION_FIELD_IS_NUMERIC: Record<SuggestionField, boolean> = {
+  owner_name: false,
+  owner_phone: true,
+  tenant_name: false,
+  tenant_phone: true,
 };
 
 export interface ContactSuggestion {
@@ -25,8 +37,8 @@ export interface ContactSuggestion {
   created_at: string;
 }
 
-/** Who last changed each of the three fields of one apartment. A field nobody
- *  ever touched is simply absent. */
+/** Who last changed each synced field of one apartment. A field nobody ever
+ *  touched is simply absent. */
 export type ContactFieldSources = Partial<Record<SuggestionField, {
   source: 'manual' | 'bllink';
   updated_at: string;

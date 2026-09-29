@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Pool, type PoolClient } from 'pg';
 import { requireSeededAdmin } from './db-fixtures';
+import { splitOwnerTenantNames } from '@/lib/sync/reportNames';
 
 // Bllink PROPOSES, Ronen APPROVES (29/09/2026).
 //
@@ -48,21 +49,36 @@ const { findOwnerIdentity } = await import('@/lib/db/portal/ownerPhones');
 const KEPT = '990001';   // we hold values; Bllink disagrees
 const EMPTY = '990002';  // we hold nothing
 const NEW = '990003';    // not in the registry at all
-const APTS = [KEPT, EMPTY, NEW];
+const TEN_OWN = '990011';   // an owner name of ours, no tenant name
+const TEN_KEPT = '990012';  // a tenant name of ours; Bllink disagrees
+const TEN_NEW = '990013';   // not in the registry at all
+const APTS = [KEPT, EMPTY, NEW, TEN_OWN, TEN_KEPT, TEN_NEW];
 
 type Row = {
   apartment_number: string;
   owner_name: string | null;
+  tenant_name: string | null;
   phone_owner: string | null;
   phone_tenant: string | null;
 };
 
 const report = (over: Partial<Row> & { apartment_number: string }): Row =>
-  ({ owner_name: null, phone_owner: null, phone_tenant: null, ...over });
+  ({ owner_name: null, tenant_name: null, phone_owner: null, phone_tenant: null, ...over });
+
+/** One raw report row, split exactly the way the sync splits it — the point of
+ *  the tenant-name tests is that NOBODY writes a second parser. */
+const fromCell = (apartment_number: string, cell: string): Row => {
+  const names = splitOwnerTenantNames(cell);
+  return { apartment_number, owner_name: names.owner, tenant_name: names.tenant, phone_owner: null, phone_tenant: null };
+};
 
 async function contact(apt: string) {
-  const r = await pool.query<{ owner_name: string | null; owner_phone: string | null; tenant_phone: string | null; source: string | null }>(
-    `select owner_name, owner_phone, tenant_phone, source from public.contacts where apartment_number = $1`, [apt]);
+  const r = await pool.query<{
+    owner_name: string | null; owner_phone: string | null;
+    tenant_name: string | null; tenant_phone: string | null; source: string | null;
+  }>(
+    `select owner_name, owner_phone, tenant_name, tenant_phone, source
+       from public.contacts where apartment_number = $1`, [apt]);
   return r.rows[0] ?? null;
 }
 
@@ -186,6 +202,82 @@ d('the Bllink approval queue', () => {
     expect(found?.apartmentNumbers).toEqual([KEPT]);
     // the value came from Bllink even though a person pressed the button
     expect((await getContactFieldState(KEPT)).sources.owner_phone?.source).toBe('bllink');
+  });
+
+  // ── the tenant's name (29/09/2026) ─────────────────────────────────────
+  // Bllink always supplied it: the report's ONE name cell carries the owner
+  // and the tenant, each tagged, and until now the tenant half was split off
+  // and thrown away. It goes through the very same mechanism, with the very
+  // same splitter — no second parser, and no new rule.
+
+  it('a cell with only a tenant fills the tenant name and never touches the owner', async () => {
+    await pool.query(
+      `insert into public.contacts (apartment_number, owner_name, source) values ($1, 'בעלים שלנו', 'manual')`,
+      [TEN_OWN]);
+
+    // The real shape of such a cell in the 29/09 report (apartment 814).
+    const row = fromCell(TEN_OWN, 'טלי אראל (שוכר/ת)');
+    expect(row).toMatchObject({ owner_name: null, tenant_name: 'טלי אראל' });
+
+    const out = await syncContactsFromReport([row]);
+    expect(out).toMatchObject({ applied: 1, suggested: 0 });
+    // The owner is untouched — a tenant-only cell must never be read as one.
+    expect(await contact(TEN_OWN)).toMatchObject({ owner_name: 'בעלים שלנו', tenant_name: 'טלי אראל' });
+    // The owner's stamp is still the hand that typed it — the sync did not
+    // touch that field, so it did not restamp it either.
+    const state = await getContactFieldState(TEN_OWN);
+    expect(state.sources.owner_name?.source).toBe('manual');
+    expect(state.sources.tenant_name?.source).toBe('bllink');
+  });
+
+  it('the tenant name obeys the same seven rules as every other field', async () => {
+    await pool.query(
+      `insert into public.contacts (apartment_number, owner_name, tenant_name, source)
+       values ($1, 'תמנה כץ', 'צמרת אליקו', 'manual')`,
+      [TEN_KEPT]);
+
+    // (3) a new apartment is created from the report, both halves of the cell
+    const created = await syncContactsFromReport([fromCell(TEN_NEW, 'בעלים חדש (בעלים) שוכר חדש (שוכר/ת)')]);
+    expect(created.created).toBe(1);
+    expect(await contact(TEN_NEW)).toMatchObject({ owner_name: 'בעלים חדש', tenant_name: 'שוכר חדש' });
+
+    // (1) the same value in another spelling is not a change
+    const same = await syncContactsFromReport([fromCell(TEN_KEPT, 'תמנה כץ (בעלים)  צמרת   אליקו  (שוכר/ת)')]);
+    expect(same).toMatchObject({ applied: 0, suggested: 0 });
+
+    // (4) a real difference is a question, and OURS STANDS
+    const conflict = await syncContactsFromReport([fromCell(TEN_KEPT, 'תמנה כץ (בעלים) אליקו צמרת (שוכר/ת)')]);
+    expect(conflict).toMatchObject({ applied: 0, suggested: 1 });
+    expect((await contact(TEN_KEPT))?.tenant_name).toBe('צמרת אליקו');
+    let open = (await pendingOf(TEN_KEPT)).filter((x) => x.field === 'tenant_name');
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ current_value: 'צמרת אליקו', proposed_value: 'אליקו צמרת' });
+
+    // (5) an empty cell changes nothing and does not withdraw the question
+    await syncContactsFromReport([report({ apartment_number: TEN_KEPT })]);
+    expect((await contact(TEN_KEPT))?.tenant_name).toBe('צמרת אליקו');
+    expect((await pendingOf(TEN_KEPT)).filter((x) => x.field === 'tenant_name')).toHaveLength(1);
+
+    // (6) rejected — and it does not come back while Bllink says the same
+    expect(await resolveSuggestions([open[0]!.id], 'reject', null)).toBe(1);
+    await syncContactsFromReport([fromCell(TEN_KEPT, 'תמנה כץ (בעלים) אליקו צמרת (שוכר/ת)')]);
+    expect((await pendingOf(TEN_KEPT)).filter((x) => x.field === 'tenant_name')).toHaveLength(0);
+    expect((await contact(TEN_KEPT))?.tenant_name).toBe('צמרת אליקו');
+
+    // …a third value is a new question, and approving it writes ours
+    await syncContactsFromReport([fromCell(TEN_KEPT, 'תמנה כץ (בעלים) חגית סימסולו רוזן (שוכר/ת)')]);
+    open = (await pendingOf(TEN_KEPT)).filter((x) => x.field === 'tenant_name');
+    expect(open).toHaveLength(1);
+    expect(await resolveSuggestions([open[0]!.id], 'approve', null)).toBe(1);
+    expect((await contact(TEN_KEPT))?.tenant_name).toBe('חגית סימסולו רוזן');
+    expect((await getContactFieldState(TEN_KEPT)).sources.tenant_name?.source).toBe('bllink');
+
+    // (7) an open question our own edit answers closes itself
+    await syncContactsFromReport([fromCell(TEN_KEPT, 'תמנה כץ (בעלים) קטי (שוכר/ת)')]);
+    expect((await pendingOf(TEN_KEPT)).filter((x) => x.field === 'tenant_name')).toHaveLength(1);
+    await pool.query(`update public.contacts set tenant_name = ' קטי ' where apartment_number = $1`, [TEN_KEPT]);
+    expect((await pendingOf(TEN_KEPT)).filter((x) => x.field === 'tenant_name')).toHaveLength(0);
+    expect((await getContactFieldState(TEN_KEPT)).sources.tenant_name?.source).toBe('manual');
   });
 
   it('resolving the same id twice is a no-op, and the queue only ever lists open rows', async () => {

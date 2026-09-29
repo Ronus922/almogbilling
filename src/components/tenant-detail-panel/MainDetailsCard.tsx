@@ -7,8 +7,9 @@ import { formatPhoneDisplay } from '@/lib/phone';
 import { cn } from '@/lib/utils';
 import type { Tenant } from '@/types/tenant';
 import type { PhoneField } from './EditPhoneDialog';
-import type {
-  ContactFieldState, ContactSuggestion, SuggestionField,
+import {
+  SUGGESTION_FIELD_IS_NUMERIC,
+  type ContactFieldState, type ContactSuggestion, type SuggestionField,
 } from '@/lib/types/contactSuggestions';
 
 interface Props {
@@ -50,6 +51,21 @@ export function MainDetailsCard({
           suggestion={suggestionFor('owner_phone')}
           onResolve={onResolveSuggestion}
         />
+        {/* The tenant's name is drawn only when there is something to say —
+            a value, a Bllink proposal or a provenance stamp. Most apartments
+            have no tenant at all, and the card must not grow a permanent
+            empty line for them. */}
+        {(tenant.tenant_name || suggestionFor('tenant_name') || contactFields.sources.tenant_name) && (
+          <Row
+            label="שם שוכר"
+            source={contactFields.sources.tenant_name}
+            suggestion={suggestionFor('tenant_name')}
+            canEdit={canEdit}
+            onResolve={onResolveSuggestion}
+          >
+            <span className="font-semibold">{tenant.tenant_name ?? '—'}</span>
+          </Row>
+        )}
         <PhoneRow
           label="טלפון שוכר"
           value={tenant.phone_tenant}
@@ -90,7 +106,7 @@ function SuggestionTag({ suggestion, canEdit, onResolve }: {
   canEdit: boolean;
   onResolve: (id: string, action: 'approve' | 'reject') => void;
 }) {
-  const numeric = suggestion.field !== 'owner_name';
+  const numeric = SUGGESTION_FIELD_IS_NUMERIC[suggestion.field];
   return (
     <div className="mt-1 flex flex-wrap items-center justify-end gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1">
       <span className="text-[11px] font-semibold text-amber-700">בלינק:</span>

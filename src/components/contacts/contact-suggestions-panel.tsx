@@ -11,7 +11,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { formatRelativeTime } from '@/lib/notifications/registry';
-import { SUGGESTION_FIELD_LABEL, type ContactSuggestion } from '@/lib/types/contactSuggestions';
+import {
+  SUGGESTION_FIELD_IS_NUMERIC, SUGGESTION_FIELD_LABEL, type ContactSuggestion,
+} from '@/lib/types/contactSuggestions';
 
 /**
  * The Bllink approval queue (29/09/2026).
@@ -154,7 +156,7 @@ function SuggestionRow({ suggestion, canEdit, busy, onApprove, onReject }: {
   onApprove: () => void;
   onReject: () => void;
 }) {
-  const numeric = suggestion.field !== 'owner_name';
+  const numeric = SUGGESTION_FIELD_IS_NUMERIC[suggestion.field];
   return (
     <div
       data-suggestion={`${suggestion.apartment_number}:${suggestion.field}`}
