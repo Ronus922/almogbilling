@@ -8,6 +8,7 @@ import {
   CircleAlert, CircleCheck, Info, LoaderCircle, Lock, RefreshCw, TriangleAlert, WifiOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PortalSupportAction, type PortalSupport } from '@/components/portal/PortalSupportAction';
 import {
   PORTAL_OTP_DIGITS, PORTAL_OTP_RESEND_COOLDOWN_SEC, PORTAL_OTP_TTL_MINUTES,
   portalLastAttemptMessage,
@@ -117,16 +118,16 @@ const BTN_SEC = 'border-[#E2E8F0] bg-white text-[#0F172A] hover:bg-[#F5F7FB]';
 const BTN_GHOST = 'flex h-[44px] w-full items-center justify-center rounded-[14px] text-[15px] font-semibold text-brand transition-colors hover:bg-[#F5F7FB]';
 const LINK = '-my-[12px] inline-flex min-h-[44px] items-center font-semibold text-brand transition-colors hover:text-[#2B3FB8] hover:underline disabled:pointer-events-none disabled:opacity-50';
 
-export function PortalOtpStep({ sentPhone, phoneDisplay, initialCooldown, supportPhone, onBack, onRequestCode }: {
+export function PortalOtpStep({ sentPhone, phoneDisplay, initialCooldown, support, onBack, onRequestCode }: {
   /** Exactly the string the request carried — the verify sends the same one. */
   sentPhone: string;
   /** 052-418-7730 — display only. */
   phoneDisplay: string;
   initialCooldown: number;
-  /** NEXT_PUBLIC_PORTAL_SUPPORT_PHONE, resolved on the server. null hides the
-   *  "פנייה לחברת הניהול" action rather than drawing a button that dials
-   *  nobody. */
-  supportPhone: string | null;
+  /** NEXT_PUBLIC_PORTAL_SUPPORT_PHONE / _EMAIL, resolved on the server. With
+   *  neither set the "פנייה לחברת הניהול" action is not drawn at all, rather
+   *  than drawing a button that reaches nobody. */
+  support: PortalSupport;
   onBack: () => void;
   /** Asks the server for another code. Owned by the parent because the phone
    *  step uses the very same call for the first send. */
@@ -153,7 +154,6 @@ export function PortalOtpStep({ sentPhone, phoneDisplay, initialCooldown, suppor
    *  state is derived from it. */
   const [lastSubmitted, setLastSubmitted] = useState<string | null>(null);
 
-  const support = supportPhone;
   const code = digits.join('');
   const complete = digits.every((d) => d !== '');
   const busy = phase === 'verifying';
@@ -388,9 +388,7 @@ export function PortalOtpStep({ sentPhone, phoneDisplay, initialCooldown, suppor
     if (phase === 'locked') {
       // 12 — no login button at all. The only actions are contacting the
       // management company and changing the number.
-      return support
-        ? <a href={`tel:${support}`} className={cn(BTN, BTN_SEC)}>פנייה לחברת הניהול</a>
-        : null;
+      return <PortalSupportAction support={support} className={cn(BTN, BTN_SEC)} />;
     }
     const ready = complete && code !== lastSubmitted;
     return (
@@ -556,7 +554,7 @@ function OtpOverlay({ overlay, phoneDisplay, lockLeft, support, onChangeNumber, 
   overlay: NonNullable<Overlay>;
   phoneDisplay: string;
   lockLeft: number;
-  support: string | null;
+  support: PortalSupport;
   onChangeNumber: () => void;
   onRetry: () => void;
   onClose: () => void;
@@ -606,7 +604,7 @@ function OtpOverlay({ overlay, phoneDisplay, lockLeft, support, onChangeNumber, 
               <b dir="ltr" className="font-num text-[28px] font-extrabold">{formatLock(lockLeft)}</b>
             </div>
             <div className="mt-[14px] flex w-full flex-col gap-[6px]">
-              {support && <a href={`tel:${support}`} className={cn(BTN, BTN_ON)}>פנייה לחברת הניהול</a>}
+              <PortalSupportAction support={support} className={cn(BTN, BTN_ON)} />
               <button type="button" onClick={onChangeNumber} className={BTN_GHOST}>שינוי מספר</button>
             </div>
           </>
@@ -634,7 +632,7 @@ function OtpOverlay({ overlay, phoneDisplay, lockLeft, support, onChangeNumber, 
             </p>
             <div className="mt-[14px] flex w-full flex-col gap-[6px]">
               <button type="button" onClick={onChangeNumber} className={cn(BTN, BTN_ON)}>הזנת מספר אחר</button>
-              {support && <a href={`tel:${support}`} className={cn(BTN, BTN_SEC)}>פנייה לחברת הניהול</a>}
+              <PortalSupportAction support={support} className={cn(BTN, BTN_SEC)} />
             </div>
           </>
         )}

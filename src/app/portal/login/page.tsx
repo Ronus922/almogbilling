@@ -20,5 +20,12 @@ export default async function PortalLoginPage() {
 
   // Read here rather than in the client component: one place decides whether
   // the lock screens can offer "פנייה לחברת הניהול" at all.
-  return <PortalLoginForm supportPhone={env.NEXT_PUBLIC_PORTAL_SUPPORT_PHONE ?? null} />;
+  return (
+    <PortalLoginForm
+      support={{
+        phone: env.NEXT_PUBLIC_PORTAL_SUPPORT_PHONE ?? null,
+        email: env.NEXT_PUBLIC_PORTAL_SUPPORT_EMAIL ?? null,
+      }}
+    />
+  );
 }

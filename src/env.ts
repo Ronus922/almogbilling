@@ -115,10 +115,14 @@ export const env = createEnv({
     // the action is not drawn, because a support button that dials nobody is
     // worse than no button. Any format normalizePhone accepts.
     NEXT_PUBLIC_PORTAL_SUPPORT_PHONE: z.string().trim().min(1).optional(),
+    // The address shown beside that number on a desktop, where a tel: link is
+    // useless. Same rule: missing = that line is not drawn.
+    NEXT_PUBLIC_PORTAL_SUPPORT_EMAIL: z.string().trim().email().optional(),
   },
   experimental__runtimeEnv: {
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_PORTAL_SUPPORT_PHONE: process.env.NEXT_PUBLIC_PORTAL_SUPPORT_PHONE,
+    NEXT_PUBLIC_PORTAL_SUPPORT_EMAIL: process.env.NEXT_PUBLIC_PORTAL_SUPPORT_EMAIL,
   },
   emptyStringAsUndefined: true,
   skipValidation:

@@ -6,6 +6,7 @@ import {
   signClass, sumExact, windowKeys,
 } from '@/lib/portal/ui';
 import { AMOUNT_NUM_FMT, buildPortalPeriodWorkbook } from '@/lib/portal/export';
+import { formatSupportPhone, supportTelHref } from '@/lib/portal/support';
 import { makePeriod } from '@/lib/finance/period';
 import { rangeHasPublished } from '@/lib/finance/resident';
 import type { PortalAccount } from '@/lib/types/portal';
@@ -247,5 +248,25 @@ describe('whole shekels on the screen, agorot in the file (28/09/2026)', () => {
     expect(ws.getRow(2).getCell(5).numFmt).toBe(AMOUNT_NUM_FMT);
     expect(ws.getRow(3).getCell(5).numFmt).toBe('#,##0.00');
     expect(ws.getRow(2).getCell(4).value).toBe('15.09.2026');
+  });
+});
+
+describe('the management company details on the lock screens', () => {
+  it('formats a landline, a mobile and anything else exactly as configured', () => {
+    // Ronen's number, as he asked for it to read on screen.
+    expect(formatSupportPhone('048341881')).toBe('04-834-1881');
+    expect(formatSupportPhone('04-834-1881')).toBe('04-834-1881');
+    expect(formatSupportPhone('+97248341881')).toBe('04-834-1881');
+    expect(formatSupportPhone('0525460546')).toBe('052-546-0546');
+    // Not an Israeli number — shown as typed rather than mangled into one.
+    expect(formatSupportPhone('+1 415 555 2671')).toBe('+1 415 555 2671');
+    expect(formatSupportPhone('  ')).toBeNull();
+    expect(formatSupportPhone(null)).toBeNull();
+  });
+  it('dials E.164 so the call connects from abroad too', () => {
+    expect(supportTelHref('048341881')).toBe('tel:+97248341881');
+    expect(supportTelHref('04-834-1881')).toBe('tel:+97248341881');
+    expect(supportTelHref('+1 415 555 2671')).toBe('tel:+14155552671');
+    expect(supportTelHref(null)).toBeNull();
   });
 });
