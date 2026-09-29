@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { env } from '@/env';
 import { getPortalSession } from '@/lib/portal/session';
 import { findOwnerIdentity } from '@/lib/db/portal/ownerPhones';
 import { getPortalMyAccount } from '@/lib/db/portal/account';
@@ -36,6 +37,10 @@ export default async function PortalPage({ searchParams }: { searchParams: Searc
       params={{ tab: one(sp.tab), m: one(sp.m), r: one(sp.r), n: one(sp.n), f: one(sp.f) }}
       user={{ name: identity?.ownerName ?? null, apartments: identity?.apartmentNumbers ?? [] }}
       accounts={accounts}
+      support={{
+        phone: env.NEXT_PUBLIC_PORTAL_SUPPORT_PHONE ?? null,
+        email: env.NEXT_PUBLIC_PORTAL_SUPPORT_EMAIL ?? null,
+      }}
     />
   );
 }

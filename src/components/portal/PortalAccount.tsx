@@ -2,6 +2,7 @@ import type { PortalAccount } from '@/lib/types/portal';
 import { PORTAL_BLOCKS } from '@/lib/portal/blocks';
 import { fmtDateDMY, fmtIls, roundShekels } from '@/lib/portal/ui';
 import { PortalSoon } from './PortalSoon';
+import { PortalSupportAction, type PortalSupport } from './PortalSupportAction';
 import { AccountIcon } from './PortalIcons';
 
 // "החשבון שלי" (#t-acc of the reference, without the pay button): four KPIs
@@ -66,9 +67,21 @@ function AccountBlock({ account: a, heading }: { account: PortalAccount; heading
   );
 }
 
-export function PortalAccountView({ accounts }: { accounts: readonly PortalAccount[] }) {
+export function PortalAccountView({ accounts, support }: {
+  accounts: readonly PortalAccount[];
+  /** The management company's details — this tab's empty state is the one
+   *  place inside the portal whose copy sends the resident to them. */
+  support: PortalSupport;
+}) {
   if (accounts.length === 0) {
-    return <PortalSoon icon={<AccountIcon />} title="החשבון שלי" text="לא נמצאה דירה פעילה עבור המספר הזה. פנו לחברת הניהול." />;
+    return (
+      <PortalSoon
+        icon={<AccountIcon />}
+        title="החשבון שלי"
+        text="לא נמצאה דירה פעילה עבור המספר הזה. פנו לחברת הניהול."
+        action={<PortalSupportAction support={support} className="pbtn pbtn-secondary w-full" />}
+      />
+    );
   }
   const single = accounts.length === 1;
   const first = accounts[0];

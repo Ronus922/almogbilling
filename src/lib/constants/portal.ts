@@ -89,6 +89,16 @@ export const PORTAL_NOT_OWNER_MESSAGE =
   'המספר אינו רשום כבעל דירה בבניין. פנה לחברת הניהול כדי לוודא שהטלפון שלך רשום במערכת.';
 
 
+/** The words that send a resident to the management company. Every screen that
+ *  shows such a message offers the contact details beside it (29/09/2026), so
+ *  the test is on the copy itself rather than on a flag each call site has to
+ *  remember to set — new copy is covered the day it is written. */
+export const PORTAL_MANAGEMENT_COMPANY = 'חברת הניהול';
+
+export function pointsAtManagementCompany(message: string | null | undefined): boolean {
+  return Boolean(message && message.includes(PORTAL_MANAGEMENT_COMPANY));
+}
+
 /** Locked out. `minutes` is always rounded UP, so "0 דקות" can never show. */
 export function portalLockedMessage(minutes: number): string {
   return `המספר נחסם זמנית עקב ניסיונות רבים. נסה שוב בעוד ${Math.max(1, Math.ceil(minutes))} דקות, או פנה לחברת הניהול.`;

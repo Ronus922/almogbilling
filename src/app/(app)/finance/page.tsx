@@ -1,3 +1,4 @@
+import { env } from '@/env';
 import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
@@ -58,6 +59,10 @@ export default async function FinancePage({ searchParams }: { searchParams: Sear
           params={{ tab: one(sp.tab), m: one(sp.m), r: one(sp.r), n: one(sp.n), f: one(sp.f) }}
           user={{ name: account?.owner_display_name ?? null, apartments: apt ? [apt] : [] }}
           accounts={account ? [account] : []}
+          support={{
+            phone: env.NEXT_PUBLIC_PORTAL_SUPPORT_PHONE ?? null,
+            email: env.NEXT_PUBLIC_PORTAL_SUPPORT_EMAIL ?? null,
+          }}
           preview
         />
       </div>

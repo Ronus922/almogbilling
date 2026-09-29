@@ -64,6 +64,11 @@ export default defineConfig({
       SMTP_HOST: '127.0.0.1',
       SMTP_PORT: MAILPIT_SMTP_PORT,
       SMTP_REQUIRE_TLS: 'false',
+      // The management company's details, exactly as production carries them
+      // in /etc/billing/billing.env — NOT in .env.local, so Next leaves them a
+      // live process.env read and the value below is what the screens show.
+      NEXT_PUBLIC_PORTAL_SUPPORT_PHONE: '048341881',
+      NEXT_PUBLIC_PORTAL_SUPPORT_EMAIL: 'mgmt@example.test',
     },
   }],
 });

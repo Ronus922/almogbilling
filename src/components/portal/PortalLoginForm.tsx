@@ -7,8 +7,10 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { PortalLoginBrand } from '@/components/portal/PortalLoginBrand';
 import { PortalOtpStep, type OtpRequestOutcome } from '@/components/portal/PortalOtpStep';
-import type { PortalSupport } from '@/components/portal/PortalSupportAction';
-import { PORTAL_OTP_RESEND_COOLDOWN_SEC } from '@/lib/constants/portal';
+import { PortalSupportAction, type PortalSupport } from '@/components/portal/PortalSupportAction';
+import { PortalOtpOverlay } from '@/components/portal/PortalOtpOverlay';
+import { BTN, BTN_SEC } from './portalButtons';
+import { PORTAL_OTP_RESEND_COOLDOWN_SEC, pointsAtManagementCompany } from '@/lib/constants/portal';
 
 // /portal/login — the whole screen: brand side + form pane, two steps on one
 // page (phone → code). The screen is owned by this client component rather than
@@ -144,6 +146,11 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
   const [error, setError] = useState<string | null>(null);
   const [phoneInvalid, setPhoneInvalid] = useState(false);
   const [cooldown, setCooldown] = useState(0);
+  // State 16 of the reference. Reached from HERE far more often than from the
+  // code step: an unregistered number is answered on the very first submit,
+  // and until 29/09/2026 that answer was a red line of text with nothing to
+  // act on — the screen Ronen reported as "state 16 with no phone and no mail".
+  const [unregistered, setUnregistered] = useState(false);
 
   // Step 1's own resend guard — step 2 runs its own timer off the same value.
   useEffect(() => {
@@ -188,6 +195,7 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
     try {
       const out = await requestCode();
       if (out.sent) { setStep('code'); return; }
+      if (out.notRegistered) { setUnregistered(true); return; }
       setError(out.message ?? 'שליחת הקוד נכשלה. נסה שוב.');
     } catch {
       setError('שגיאה זמנית. נסה שוב בעוד רגע.');
@@ -306,9 +314,16 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
               </div>
 
               {error && (
-                <div role="alert" className="mt-[18px] flex gap-[10px] rounded-[12px] bg-[#FDECEC] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#B03A3E]">
-                  <CircleAlert className="mt-[2px] size-[18px] shrink-0" strokeWidth={2} aria-hidden />
-                  <span>{error}</span>
+                <div className="mt-[18px] flex flex-col gap-[10px]">
+                  <div role="alert" className="flex gap-[10px] rounded-[12px] bg-[#FDECEC] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#B03A3E]">
+                    <CircleAlert className="mt-[2px] size-[18px] shrink-0" strokeWidth={2} aria-hidden />
+                    <span>{error}</span>
+                  </div>
+                  {/* A message that says "פנה לחברת הניהול" gets the way to do
+                      it — a lockout here, or a WhatsApp send that failed. */}
+                  {pointsAtManagementCompany(error) && (
+                    <PortalSupportAction support={support} className={cn(BTN, BTN_SEC)} />
+                  )}
                 </div>
               )}
 
@@ -347,6 +362,16 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
           />
         )}
       </section>
+
+      {unregistered && (
+        <PortalOtpOverlay
+          overlay={{ kind: 'unregistered' }}
+          phoneDisplay={formatPhoneForDisplay(prefix, phone)}
+          support={support}
+          onChangeNumber={() => setUnregistered(false)}
+          onClose={() => setUnregistered(false)}
+        />
+      )}
     </div>
   );
 }

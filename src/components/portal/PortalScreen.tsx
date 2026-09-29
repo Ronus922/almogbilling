@@ -14,6 +14,7 @@ import { PortalTransactions } from './PortalTransactions';
 import { PortalReports } from './PortalReports';
 import { PortalFundView } from './PortalFundView';
 import { PortalAccountView } from './PortalAccount';
+import type { PortalSupport } from './PortalSupportAction';
 import { PortalSoon } from './PortalSoon';
 import { DecisionsIcon, ReportsIcon } from './PortalIcons';
 
@@ -42,11 +43,15 @@ export interface PortalScreenParams {
   f?: string;
 }
 
-export async function PortalScreen({ params, user, accounts, preview = false }: {
+export async function PortalScreen({ params, user, accounts, support, preview = false }: {
   params: PortalScreenParams;
   user: PortalUser;
   /** The owner's account(s) — the dark card and "החשבון שלי". */
   accounts: PortalAccount[];
+  /** NEXT_PUBLIC_PORTAL_SUPPORT_PHONE / _EMAIL, resolved by the caller: the
+   *  account tab's empty state tells the resident to ring the management
+   *  company, so it shows them how. */
+  support: PortalSupport;
   preview?: boolean;
 }) {
   const tab = parsePortalTab(params.tab, params.m);
@@ -87,7 +92,7 @@ export async function PortalScreen({ params, user, accounts, preview = false }: 
       break;
     }
     case 'acc':
-      body = <PortalAccountView accounts={accounts} />;
+      body = <PortalAccountView accounts={accounts} support={support} />;
       break;
     case 'dec':
       body = <PortalSoon icon={<DecisionsIcon size={28} />} title="החלטות ועד" text="בקרוב תוכלו להצביע על החלטות, לצפות בפרוטוקולים ולאשר את תקציב הבניין — ישירות מכאן." />;

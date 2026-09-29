@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Check, Copy, Mail, Phone } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { formatSupportPhone, supportTelHref } from '@/lib/portal/support';
+import { formatSupportPhone, supportMailtoHref, supportTelHref } from '@/lib/portal/support';
 
 /** Both details, as resolved on the server. Either may be null. */
 export interface PortalSupport {
@@ -12,8 +12,10 @@ export interface PortalSupport {
 }
 
 /**
- * "פנייה לחברת הניהול" — the one action the OTP lock screens offer when the
- * owner cannot get in (ref/otp-states.md, states 12 / 14 / 16).
+ * "פנייה לחברת הניהול" — the action offered wherever the portal's own copy
+ * sends the resident to the management company: the OTP lock screens
+ * (ref/otp-states.md, states 12 / 14 / 16), the phone step's error banner and
+ * the account tab's empty state.
  *
  * It behaves differently by device, deliberately:
  *   • phone (< 601px)  — a tel: link that opens the dialler, one tap;
@@ -25,6 +27,11 @@ export interface PortalSupport {
  * variants render identically on the server and after hydration, and the one
  * that is `display:none` is out of the accessibility tree as well.
  *
+ * `mailSubject` turns it into a pre-addressed message — state 16's "שליחת
+ * בקשת הצטרפות", which had no destination at all until 29/09/2026. The subject
+ * rides on the mailto: of the address row (and on the mobile link when no
+ * number is configured); nothing here builds a form.
+ *
  * With neither detail configured the component renders NOTHING — the callers
  * simply get no action, instead of a button that reaches nobody.
  */
@@ -32,16 +39,21 @@ export function PortalSupportAction({
   support,
   className,
   label = 'פנייה לחברת הניהול',
+  mailSubject,
 }: {
   support: PortalSupport;
-  /** The caller's button classes — the portal's flat BTN set. */
+  /** The caller's button classes — the portal's flat BTN set, or the skin's
+   *  own `pbtn` family inside /portal. */
   className: string;
   label?: string;
+  /** Subject line for the address row's mailto:, e.g. a join request. */
+  mailSubject?: string;
 }) {
   const [open, setOpen] = useState(false);
   const phoneDisplay = formatSupportPhone(support.phone);
   const tel = supportTelHref(support.phone);
   const email = support.email?.trim() || null;
+  const mailto = supportMailtoHref(email, mailSubject);
 
   if (!phoneDisplay && !email) return null;
 
@@ -52,7 +64,7 @@ export function PortalSupportAction({
       {tel ? (
         <a href={tel} className={cn(className, 'min-[601px]:hidden')}>{label}</a>
       ) : (
-        <a href={`mailto:${email}`} className={cn(className, 'min-[601px]:hidden')}>{label}</a>
+        <a href={mailto ?? '#'} className={cn(className, 'min-[601px]:hidden')}>{label}</a>
       )}
 
       {/* Desktop: reveal the details in place. */}
@@ -68,10 +80,17 @@ export function PortalSupportAction({
         {open && (
           <div className="flex w-full flex-col gap-[6px] rounded-[12px] bg-[#F5F7FB] p-[10px]">
             {phoneDisplay && (
-              <CopyRow icon={<Phone className="size-[15px]" aria-hidden />} value={phoneDisplay} copy={phoneDisplay} numeric />
+              <DetailRow icon={<Phone className="size-[15px]" aria-hidden />} value={phoneDisplay} copy={phoneDisplay} numeric />
             )}
             {email && (
-              <CopyRow icon={<Mail className="size-[15px]" aria-hidden />} value={email} copy={email} />
+              <DetailRow
+                icon={<Mail className="size-[15px]" aria-hidden />}
+                value={email}
+                copy={email}
+                // Only when there is something to say: a bare mailto: adds
+                // nothing the address itself does not already offer.
+                href={mailSubject ? mailto : null}
+              />
             )}
           </div>
         )}
@@ -80,12 +99,16 @@ export function PortalSupportAction({
   );
 }
 
-/** One detail line: click anywhere on it to copy, with a two-second receipt. */
-function CopyRow({ icon, value, copy, numeric = false }: {
+/** One detail line. Click anywhere on it to copy, with a two-second receipt —
+ *  and, when the row has an `href`, the value itself opens the mail app while
+ *  copying moves to its own button beside it (a button inside an anchor is not
+ *  valid HTML, so the row splits rather than nests). */
+function DetailRow({ icon, value, copy, numeric = false, href = null }: {
   icon: React.ReactNode;
   value: string;
   copy: string;
   numeric?: boolean;
+  href?: string | null;
 }) {
   const [done, setDone] = useState(false);
 
@@ -105,19 +128,45 @@ function CopyRow({ icon, value, copy, numeric = false }: {
     }
   }
 
+  const body = (
+    <>
+      <span className="flex items-center gap-[8px] text-[#64748B]">{icon}</span>
+      <span dir="ltr" className={cn('min-w-0 flex-1 truncate text-start', numeric && 'font-num')}>{value}</span>
+    </>
+  );
+  const shell = 'flex min-h-[44px] items-center gap-[10px] rounded-[10px] bg-white px-[12px] text-[15px] font-semibold text-[#0F172A] transition-colors hover:bg-[#EEF2FF]';
+  const receipt = (
+    <span className="flex items-center gap-[6px] text-[13px] font-semibold text-[#64748B]">
+      {done ? <Check className="size-[15px] text-[#12A150]" aria-hidden /> : <Copy className="size-[15px]" aria-hidden />}
+      {done ? 'הועתק' : 'העתקה'}
+    </span>
+  );
+
+  if (href) {
+    return (
+      <div className="flex w-full items-center gap-[6px]">
+        <a href={href} className={cn(shell, 'min-w-0 flex-1 justify-between')}>{body}</a>
+        <button
+          type="button"
+          onClick={() => void onCopy()}
+          className={cn(shell, 'shrink-0')}
+          title={done ? 'הועתק' : 'העתקה'}
+        >
+          {receipt}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
       onClick={() => void onCopy()}
-      className="flex min-h-[44px] w-full items-center justify-between gap-[10px] rounded-[10px] bg-white px-[12px] text-[15px] font-semibold text-[#0F172A] transition-colors hover:bg-[#EEF2FF]"
+      className={cn(shell, 'w-full justify-between')}
       title={done ? 'הועתק' : 'העתקה'}
     >
-      <span className="flex items-center gap-[8px] text-[#64748B]">{icon}</span>
-      <span dir="ltr" className={cn('min-w-0 flex-1 truncate text-start', numeric && 'font-num')}>{value}</span>
-      <span className="flex items-center gap-[6px] text-[13px] font-semibold text-[#64748B]">
-        {done ? <Check className="size-[15px] text-[#12A150]" aria-hidden /> : <Copy className="size-[15px]" aria-hidden />}
-        {done ? 'הועתק' : 'העתקה'}
-      </span>
+      {body}
+      {receipt}
     </button>
   );
 }
