@@ -54,7 +54,7 @@ export function getStorage(): StorageClient {
 /**
  * The in-app URL for a stored object: always relative, always behind the session
  * + permission check of /api/files. The browser resolves it against the app
- * origin (billing.bios.co.il), so the storage host never reaches the client.
+ * origin (almog-haifa.co.il), so the storage host never reaches the client.
  *
  * The runtime assertion below is a safety net, not decoration: if a future edit
  * ever makes this return an absolute or host-bearing URL, the request dies here

@@ -6,7 +6,7 @@ import { env } from '@/env';
  * Google OAuth configuration, read from env. Returns null when any required
  * value is missing so callers can fail soft (redirect to a friendly error)
  * instead of throwing 500s. The redirect URI is derived from APP_URL — the
- * PUBLIC origin (https://billing.bios.co.il) — never request.url, which behind
+ * PUBLIC origin (https://almog-haifa.co.il) — never request.url, which behind
  * nginx resolves to the internal upstream (127.0.0.1:3003).
  */
 export interface GoogleConfig {
