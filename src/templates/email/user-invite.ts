@@ -1,3 +1,5 @@
+import { emailFooterHtml, emailFooterText } from '@/templates/email/footer';
+
 interface Args {
   inviterName: string;
   inviteeName: string;
@@ -81,9 +83,7 @@ export function userInviteTemplate(args: Args): Rendered {
         </tr>
         <tr>
           <td style="padding:32px 40px 32px 40px;">
-            <div style="border-top:1px solid #e2e8f0;padding-top:16px;font-size:12px;color:#64748b;text-align:center;">
-              ALMOG CRM &bull; <a href="https://billing.bios.co.il" style="color:#64748b;text-decoration:none;">billing.bios.co.il</a>
-            </div>
+            ${emailFooterHtml()}
           </td>
         </tr>
       </table>
@@ -104,8 +104,7 @@ ${args.acceptUrl}
 אם לא ציפית להזמנה הזו — התעלם מהמייל.
 
 —
-ALMOG CRM
-https://billing.bios.co.il
+${emailFooterText()}
 `;
 
   return { subject, html, text };
