@@ -49,7 +49,9 @@ import {
   type CompareResult, type CompareRow,
 } from '../src/lib/sync/bllinkCompare';
 import { toCompareMap } from '../src/lib/sync/bllinkMap';
-import { extractTenantEmails, type ApartmentEmails } from '../src/lib/sync/tenantList';
+import {
+  EMPTY_CONTACTS, extractTenantContacts, type ApartmentContacts,
+} from '../src/lib/sync/tenantList';
 import { resolveBllinkSource } from '../src/lib/sync/decision';
 import { resolveScrapeConnection, tryAcquireScrapeLock } from '../src/lib/sync/scrapeLock';
 import { sendAdminAlert } from './lib/admin-alert';
@@ -63,9 +65,11 @@ type Stage = 'login' | 'navigate' | 'download' | 'parse' | 'compare';
 
 const TAG = '[bllink:shadow]';
 const REPORT_URL = 'https://app.bllink.co/reports/building-debt/udnp';
-// Bllink's own resident list. The debt export above carries no address at all
-// (Phase 0, 29/09/2026 — nine columns, zero email-shaped cells); this screen
-// does, and the same signed-in session reaches it. src/lib/sync/tenantList.ts.
+// Bllink's own resident list — the source of every CONTACT field since
+// 30/09/2026 (names and phones as well as the addresses it gave from 29/09).
+// The debt export above stays the source of truth for MONEY; its two identity
+// cells — one person per apartment, often the tenant alone — are kept as the
+// fallback for a run that loses this read.
 const TENANT_LIST_URL = 'https://app.bllink.co/reports/tenant-list/udnp';
 const TOTAL_TIMEOUT_MS = 180_000;
 const RETENTION_DAYS = 90;
@@ -83,8 +87,8 @@ interface ScrapeRow {
   special_debt: number;
   management_months_raw: string | null;
   notes: string | null;
-  owner_email: string | null;
-  tenant_email: string | null;
+  /** Bllink's resident list, raw, per field — null when that read failed. */
+  list: ApartmentContacts;
   raw: Record<string, unknown>;
 }
 
@@ -168,9 +172,8 @@ async function workbookToScrapeRows(buffer: Buffer): Promise<{ rows: ScrapeRow[]
       special_debt: round2(p.hot_water_debt), // column G
       management_months_raw: p.monthly_debt, // column F (text)
       notes: p.details, // column H
-      // Filled from the resident list afterwards — the export has no address.
-      owner_email: null,
-      tenant_email: null,
+      // Filled from the resident list afterwards.
+      list: { ...EMPTY_CONTACTS },
       raw: {
         col_A: r[0] ?? null, col_B: r[1] ?? null, col_C: r[2] ?? null, col_D: r[3] ?? null,
         col_E: r[4] ?? null, col_F: r[5] ?? null, col_G: r[6] ?? null, col_H: r[7] ?? null,
@@ -268,15 +271,15 @@ async function downloadExcel(page: Page, scrapeId: string): Promise<Buffer> {
  * cookies answers 502. Driving the screen is also exactly what the Excel
  * export above does, so there is one way in and not two.
  */
-async function fetchTenantEmails(page: Page): Promise<Map<string, ApartmentEmails>> {
+async function fetchTenantContacts(page: Page): Promise<Map<string, ApartmentContacts>> {
   const waiter = page.waitForResponse(
     (r) => r.request().method() === 'GET' && r.url().endsWith('/tenants') && r.status() === 200,
     { timeout: 45_000 },
   );
   await page.goto(TENANT_LIST_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   const payload: unknown = await (await waiter).json();
-  const byApt = extractTenantEmails(payload);
-  if (byApt.size === 0) throw new Error('resident list returned no apartment with an address');
+  const byApt = extractTenantContacts(payload);
+  if (byApt.size === 0) throw new Error('resident list returned no apartment with a contact');
   return byApt;
 }
 
@@ -413,12 +416,14 @@ async function main(): Promise<number> {
     // screen must not stop them being copied. A failure leaves both columns
     // NULL, which the queue reads as "Bllink said nothing" — ours stands, no
     // suggestion is withdrawn, and tomorrow tries again.
-    let emails = new Map<string, ApartmentEmails>();
+    let contacts = new Map<string, ApartmentContacts>();
+    let tenantListOk = false;
     try {
-      emails = await fetchTenantEmails(page);
-      log(`resident list: addresses for ${emails.size} apartments`);
+      contacts = await fetchTenantContacts(page);
+      tenantListOk = true;
+      log(`resident list: contacts for ${contacts.size} apartments`);
     } catch (e) {
-      log(`warning: resident list unavailable — no addresses this run: ${redact(errorText(e), secrets)}`);
+      log(`warning: resident list unavailable — names and phones fall back to the debt export for this run: ${redact(errorText(e), secrets)}`);
     }
 
     await browser.close();
@@ -431,9 +436,7 @@ async function main(): Promise<number> {
     if (rows.length === 0) throw new Error('the report parsed to 0 rows');
 
     for (const r of rows) {
-      const found = emails.get(r.apartment_number);
-      r.owner_email = found?.owner_email ?? null;
-      r.tenant_email = found?.tenant_email ?? null;
+      r.list = contacts.get(r.apartment_number) ?? { ...EMPTY_CONTACTS };
     }
 
     await db.query('begin');
@@ -442,15 +445,23 @@ async function main(): Promise<number> {
         await db.query(
           `insert into public.bllink_scrape_rows
              (scrape_id, apartment_number, owner_name, phone_primary, total_debt, monthly_debt,
-              special_debt, management_months_raw, notes, owner_email, tenant_email, raw)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)`,
+              special_debt, management_months_raw, notes,
+              list_owner_name, list_owner_phone, list_owner_email,
+              list_tenant_name, list_tenant_phone, list_tenant_email, raw)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)`,
           [
             scrapeId, r.apartment_number, r.owner_name, r.phone_primary, r.total_debt, r.monthly_debt,
-            r.special_debt, r.management_months_raw, r.notes, r.owner_email, r.tenant_email,
+            r.special_debt, r.management_months_raw, r.notes,
+            r.list.owner_name, r.list.owner_phone, r.list.owner_email,
+            r.list.tenant_name, r.list.tenant_phone, r.list.tenant_email,
             JSON.stringify(r.raw),
           ],
         );
       }
+      await db.query(
+        `update public.bllink_scrapes set tenant_list_ok = $2 where id = $1`,
+        [scrapeId, tenantListOk],
+      );
       await db.query('commit');
     } catch (e) {
       await db.query('rollback').catch(() => undefined);

@@ -23,6 +23,12 @@ export interface ParsedDebtorRow {
   apartment_number: string;
   owner_name: string | null;
   tenant_name: string | null;
+  /** Did this name come from Bllink's resident list, or from the debt
+   *  export's labelled cell? The export names one person per apartment behind
+   *  labels that are sometimes missing, so a name off it fills an empty field
+   *  but never raises a suggestion (migration 20260930054613). */
+  owner_name_from_list: boolean;
+  tenant_name_from_list: boolean;
   phone_owner: string | null;
   phone_tenant: string | null;
   /** Never in the debtors workbook — only the Bllink sync fills these, from
@@ -88,6 +94,9 @@ export async function parseDebtorsWorkbook(buffer: ArrayBuffer | Buffer): Promis
       apartment_number: apt,
       owner_name: names.owner,
       tenant_name: names.tenant,
+      // The debtors workbook IS the export — the same single-person cell.
+      owner_name_from_list: false,
+      tenant_name_from_list: false,
       phone_owner: phones.owner,
       phone_tenant: phones.tenant,
       owner_email: null,

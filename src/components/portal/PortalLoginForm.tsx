@@ -1,15 +1,15 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
-import { ChevronRight, CircleAlert, LoaderCircle, ShieldCheck, Smartphone } from 'lucide-react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { ChevronRight, CircleAlert, LoaderCircle, ShieldCheck, Smartphone, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { PortalLoginBrand } from '@/components/portal/PortalLoginBrand';
 import { PortalOtpStep, type OtpRequestOutcome } from '@/components/portal/PortalOtpStep';
 import { PortalSupportAction, type PortalSupport } from '@/components/portal/PortalSupportAction';
-import { PortalOtpOverlay } from '@/components/portal/PortalOtpOverlay';
 import { BTN, BTN_SEC } from './portalButtons';
+import { joinRequestSubject } from '@/lib/portal/support';
 import { PORTAL_OTP_RESEND_COOLDOWN_SEC, pointsAtManagementCompany } from '@/lib/constants/portal';
 
 // /portal/login — the whole screen: brand side + form pane, two steps on one
@@ -146,11 +146,19 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
   const [error, setError] = useState<string | null>(null);
   const [phoneInvalid, setPhoneInvalid] = useState(false);
   const [cooldown, setCooldown] = useState(0);
-  // State 16 of the reference. Reached from HERE far more often than from the
-  // code step: an unregistered number is answered on the very first submit,
-  // and until 29/09/2026 that answer was a red line of text with nothing to
-  // act on — the screen Ronen reported as "state 16 with no phone and no mail".
-  const [unregistered, setUnregistered] = useState(false);
+  /**
+   * State 16 — "המספר לא מזוהה". An INLINE message under the field since
+   * 30/09/2026 (Ronen's decision), not the reference's bottom sheet: an
+   * unregistered number is almost always a typo, and a window that has to be
+   * dismissed before the number can be corrected is in the way of the one
+   * thing the person came to do. The field keeps its value and its focus; the
+   * details of the management company sit inside the message, open.
+   *
+   * It holds the number the answer was about, so correcting the field cannot
+   * leave a message pointing at a number that is no longer on screen.
+   */
+  const [unregistered, setUnregistered] = useState<string | null>(null);
+  const phoneRef = useRef<HTMLInputElement>(null);
 
   // Step 1's own resend guard — step 2 runs its own timer off the same value.
   useEffect(() => {
@@ -186,6 +194,7 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
     e?.preventDefault();
     if (busy || cooldown > 0) return;
     setError(null);
+    setUnregistered(null);
     if (!isPlausiblePhone(prefix, phone)) {
       setPhoneInvalid(true);
       return;
@@ -195,7 +204,12 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
     try {
       const out = await requestCode();
       if (out.sent) { setStep('code'); return; }
-      if (out.notRegistered) { setUnregistered(true); return; }
+      if (out.notRegistered) {
+        setUnregistered(formatPhoneForDisplay(prefix, phone));
+        // Straight back to the field: the correction is the next thing to do.
+        phoneRef.current?.focus();
+        return;
+      }
       setError(out.message ?? 'שליחת הקוד נכשלה. נסה שוב.');
     } catch {
       setError('שגיאה זמנית. נסה שוב בעוד רגע.');
@@ -207,6 +221,15 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
   function backToPhone() {
     setStep('phone');
     setError(null);
+  }
+
+  /** The code step found the number is no longer an owner (it was when the
+   *  code was sent). One presentation for one answer: back to the field, with
+   *  the same inline message the first submit would have produced. */
+  function notRegisteredFromCodeStep() {
+    setStep('phone');
+    setError(null);
+    setUnregistered(formatPhoneForDisplay(prefix, phone));
   }
 
   const phoneFieldError = phoneInvalid || error !== null;
@@ -263,9 +286,11 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
                     placeholder="050-000-0000"
                     dir="ltr"
                     value={phone}
+                    ref={phoneRef}
                     onChange={(ev) => {
                       setPhone(ev.target.value);
                       if (phoneInvalid) setPhoneInvalid(false);
+                      if (unregistered) setUnregistered(null);
                     }}
                     aria-invalid={phoneFieldError || undefined}
                     aria-describedby={phoneInvalid ? 'portal-phone-error' : undefined}
@@ -313,6 +338,32 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
                 )}
               </div>
 
+              {/* 16 — inline, amber, and already carrying the way to act on
+                  it. No window: the field below keeps its value and its
+                  focus, and one corrected digit makes the message go away. */}
+              {unregistered && (
+                <div
+                  role="alert"
+                  className="mt-[18px] flex flex-col gap-[10px] rounded-[12px] bg-[#FEF4E2] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#A15C07]"
+                >
+                  <div className="flex gap-[10px]">
+                    <TriangleAlert className="mt-[2px] size-[18px] shrink-0" strokeWidth={2} aria-hidden />
+                    <span>
+                      {'המספר '}
+                      <b dir="ltr" className="font-num">{unregistered}</b>
+                      {' אינו רשום באף דירה. ייתכן שהוועד עדיין לא עדכן את הפרטים.'}
+                    </span>
+                  </div>
+                  <PortalSupportAction
+                    support={support}
+                    className={cn(BTN, BTN_SEC)}
+                    label="שליחת בקשת הצטרפות"
+                    mailSubject={joinRequestSubject(unregistered)}
+                    alwaysOpen
+                  />
+                </div>
+              )}
+
               {error && (
                 <div className="mt-[18px] flex flex-col gap-[10px]">
                   <div role="alert" className="flex gap-[10px] rounded-[12px] bg-[#FDECEC] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#B03A3E]">
@@ -358,20 +409,11 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
             initialCooldown={cooldown}
             support={support}
             onBack={backToPhone}
+            onNotRegistered={notRegisteredFromCodeStep}
             onRequestCode={requestCode}
           />
         )}
       </section>
-
-      {unregistered && (
-        <PortalOtpOverlay
-          overlay={{ kind: 'unregistered' }}
-          phoneDisplay={formatPhoneForDisplay(prefix, phone)}
-          support={support}
-          onChangeNumber={() => setUnregistered(false)}
-          onClose={() => setUnregistered(false)}
-        />
-      )}
     </div>
   );
 }
