@@ -1,31 +1,35 @@
 /**
- * Bllink's "רשימת דיירים" report — the ONE place in Bllink that carries an
- * email address (Phase 0, 29/09/2026).
+ * Bllink's "רשימת דיירים" report — the source of every CONTACT field since
+ * 30/09/2026, and of the email since 29/09.
  *
- * The debt report billing has always scraped is nine columns wide and has no
- * address in any of them: דירה · דייר/ת · טלפון · סה״כ חוב · סה״כ חוב לתשלום
- * חודשי · פרטים · חוב מיוחד · פרטים · תשלום חודשי. Not one cell in the whole
- * export matches an email pattern. The addresses Ronen sees in Bllink's
- * interface live on a DIFFERENT screen — /reports/tenant-list/<building> —
- * which the page fills from
+ * Why it replaced the debt export for people. The export carries ONE name
+ * cell and ONE phone cell per apartment, holding whichever single person
+ * Bllink chose to print, behind "(בעלים)" / "(שוכר/ת)" labels that are
+ * sometimes missing altogether. Very often that person is the tenant and the
+ * owner is simply absent: on the snapshot of 30/09/2026, 53 of 219 apartments
+ * name NO owner in the export while the resident list knows one. The list has
+ * one entry per PERSON with an explicit role and a primary-contact flag — no
+ * labels to parse, both roles, and a phone that belongs to the name beside it.
+ *
+ * What it does NOT fix: a name Bllink itself holds truncated. Apartment 514
+ * reads "' אפרטמנטס- טלי אראל" in the resident list too — the export was
+ * carrying that faithfully, not cutting it. (PR #52's report said the export
+ * truncates; it compared two different apartments and was wrong. Corrected
+ * here on the evidence of the 30/09 dry run.)
+ *
+ * It is the same screen and the same request either way:
  *   GET https://api.bllink.co/api/v1/managers/buildings/<building>/tenants
- * on the very session the scraper is already signed into. 290 apartments,
- * 185 of them with at least one address.
+ * driven by /reports/tenant-list/<building> on the session the scraper is
+ * already signed into. The debt export stays the source of truth for MONEY.
  *
- * That payload is far richer than the report cell it feeds: one entry per
- * PERSON, with an explicit role instead of a "(בעלים)" label glued into a
- * name. Only the address is read here — the names and phones deliberately go
- * on coming from the report and its shared splitter, so this round changes one
- * thing at a time and the 47 owner-name suggestions already waiting for Ronen
- * do not move under him.
- *
- * Everything in this module is pure, so the picking rule is testable without
- * a browser.
+ * Everything here is pure, so the picking rule is testable without a browser.
  */
 
 /** Only what we read. Bllink sends a great deal more per person. */
 interface RawTenantDetails {
   tenantType?: unknown;
+  name?: unknown;
+  phone?: unknown;
   email?: unknown;
 }
 interface RawTenant {
@@ -37,10 +41,22 @@ interface RawApartment {
   tenants?: unknown;
 }
 
-export interface ApartmentEmails {
+/** One apartment's people, flattened to the registry's own field names. Every
+ *  value is RAW as Bllink holds it — normalising belongs to the mapper that
+ *  both sources share (bllinkMap.mapSourceRow). */
+export interface ApartmentContacts {
+  owner_name: string | null;
+  owner_phone: string | null;
   owner_email: string | null;
+  tenant_name: string | null;
+  tenant_phone: string | null;
   tenant_email: string | null;
 }
+
+export const EMPTY_CONTACTS: ApartmentContacts = {
+  owner_name: null, owner_phone: null, owner_email: null,
+  tenant_name: null, tenant_phone: null, tenant_email: null,
+};
 
 const text = (v: unknown): string | null => {
   if (typeof v !== 'string') return null;
@@ -49,25 +65,30 @@ const text = (v: unknown): string | null => {
 };
 
 /** Bllink's word for a tenant is "renter"; ours is "tenant". */
-const ROLE: Record<string, keyof ApartmentEmails> = {
-  owner: 'owner_email',
-  renter: 'tenant_email',
-};
+const ROLE: Record<string, 'owner' | 'tenant'> = { owner: 'owner', renter: 'tenant' };
+const SOURCE_FIELDS = ['name', 'phone', 'email'] as const;
 
 /**
- * One address per apartment per role.
+ * One value per apartment per role per field.
  *
- * An apartment can hold several people of the same role with different
- * addresses (12 of the 290 do). The primary contact wins; between two equally
- * primary ones the lower Bllink id wins, so the choice is the same every
- * morning and a suggestion cannot flap between two addresses. Where Ronen
- * disagrees with the pick he rejects it once and it does not come back.
+ * An apartment can hold several active people of the same role. The primary
+ * contact wins; between two equally primary ones the lower Bllink id wins, so
+ * the choice is the same every morning and a suggestion cannot flap between
+ * two values — a flapping proposal would make a rejection impossible to make
+ * stick.
+ *
+ * The pick is made per FIELD (the first person of that role who HAS one)
+ * rather than per person, which finds 207 addresses instead of 192. It cannot
+ * build a Frankenstein record out of two people: measured on the live list of
+ * 30/09/2026, the person who carries the name and the person who carries the
+ * phone are the same in all 442 role-slots, and the address is an independent
+ * contact detail in any case.
  *
  * Nothing here is trusted to be well-formed: the payload is a third party's,
  * and every field is checked before it is read.
  */
-export function extractTenantEmails(payload: unknown): Map<string, ApartmentEmails> {
-  const out = new Map<string, ApartmentEmails>();
+export function extractTenantContacts(payload: unknown): Map<string, ApartmentContacts> {
+  const out = new Map<string, ApartmentContacts>();
   const apartments = (payload as { apartments?: unknown } | null)?.apartments;
   if (!Array.isArray(apartments)) return out;
 
@@ -76,27 +97,30 @@ export function extractTenantEmails(payload: unknown): Map<string, ApartmentEmai
     if (!apt) continue;
     const people = Array.isArray(raw?.tenants) ? (raw.tenants as RawTenant[]) : [];
 
-    const best: Partial<Record<keyof ApartmentEmails, { email: string; primary: boolean; id: number }>> = {};
+    const found: ApartmentContacts = { ...EMPTY_CONTACTS };
+    const best = new Map<string, { primary: boolean; id: number }>();
+    let any = false;
+
     for (const p of people) {
       if (p?.tenant?.isActive === false) continue;
-      const field = ROLE[text(p?.details?.tenantType) ?? ''];
-      if (!field) continue;
-      const email = text(p?.details?.email);
-      if (!email) continue;
+      const role = ROLE[text(p?.details?.tenantType) ?? ''];
+      if (!role) continue;
       const primary = p.tenant?.isPrimary === true;
       const id = typeof p.tenant?.id === 'number' ? p.tenant.id : Number.MAX_SAFE_INTEGER;
-      const held = best[field];
-      if (!held || (primary && !held.primary) || (primary === held.primary && id < held.id)) {
-        best[field] = { email, primary, id };
+
+      for (const f of SOURCE_FIELDS) {
+        const value = text(p.details?.[f]);
+        if (!value) continue;
+        const key = `${role}_${f}` as keyof ApartmentContacts;
+        const held = best.get(key);
+        if (held && !(primary && !held.primary) && !(primary === held.primary && id < held.id)) continue;
+        best.set(key, { primary, id });
+        found[key] = value;
+        any = true;
       }
     }
 
-    if (best.owner_email || best.tenant_email) {
-      out.set(apt, {
-        owner_email: best.owner_email?.email ?? null,
-        tenant_email: best.tenant_email?.email ?? null,
-      });
-    }
+    if (any) out.set(apt, found);
   }
   return out;
 }

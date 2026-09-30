@@ -18,6 +18,11 @@ export interface LocalSnapshot {
   /** bllink_scrapes.finished_at, ISO — the moment billing downloaded the report.
    *  Becomes sync_runs.source_run_at ("נתוני בלינק נכונים ל-"). */
   finishedAt: string;
+  /** Did that scrape reach Bllink's resident list? false = its names and
+   *  phones came from the debt export's labelled cells alone. Recorded for
+   *  the log and for anyone reading the run afterwards; the per-row decision
+   *  travels on the rows themselves (owner_name_from_list). */
+  tenantListOk: boolean;
   rows: ParsedDebtorRow[];
   report: BllinkPullReport;
   compareRows: Map<string, CompareRow>;
@@ -25,8 +30,8 @@ export interface LocalSnapshot {
 
 /** The newest SUCCESSFUL scrape, mapped; null when there is none yet. */
 export async function fetchLocalDebtorRows(): Promise<LocalSnapshot | null> {
-  const scrape = await queryOne<{ id: string; finished_at: Date }>(
-    `select id, finished_at
+  const scrape = await queryOne<{ id: string; finished_at: Date; tenant_list_ok: boolean }>(
+    `select id, finished_at, tenant_list_ok
        from public.bllink_scrapes
       where status = 'success' and finished_at is not null
       order by finished_at desc
@@ -35,7 +40,9 @@ export async function fetchLocalDebtorRows(): Promise<LocalSnapshot | null> {
   if (!scrape) return null;
 
   const r = await query<SourceDebtorRecord>(
-    `select apartment_number, owner_name, phone_primary, owner_email, tenant_email,
+    `select apartment_number, owner_name, phone_primary,
+            list_owner_name, list_owner_phone, list_owner_email,
+            list_tenant_name, list_tenant_phone, list_tenant_email,
             total_debt::float8 as total_debt, monthly_debt::float8 as monthly_debt,
             special_debt::float8 as special_debt, management_months_raw, notes
        from public.bllink_scrape_rows
@@ -44,7 +51,12 @@ export async function fetchLocalDebtorRows(): Promise<LocalSnapshot | null> {
     [scrape.id],
   );
   const finishedAt = new Date(scrape.finished_at).toISOString();
-  return { scrapeId: scrape.id, finishedAt, ...buildSnapshot(r.rows, { minAt: finishedAt, maxAt: finishedAt }) };
+  return {
+    scrapeId: scrape.id,
+    finishedAt,
+    tenantListOk: scrape.tenant_list_ok,
+    ...buildSnapshot(r.rows, { minAt: finishedAt, maxAt: finishedAt }),
+  };
 }
 
 /** The sync's witness comparison (or its unavailability) goes onto the scrape

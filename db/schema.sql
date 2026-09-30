@@ -118,14 +118,17 @@ $$;
 
 
 --
--- Name: contact_sync_incoming(text[], text[], text[]); Type: FUNCTION; Schema: public; Owner: -
+-- Name: contact_sync_incoming(text[], text[], text[], boolean[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.contact_sync_incoming(p_apartments text[], p_fields text[], p_values text[]) RETURNS TABLE(apartment_number text, field text, value text)
+CREATE FUNCTION public.contact_sync_incoming(p_apartments text[], p_fields text[], p_values text[], p_may_suggest boolean[] DEFAULT NULL::boolean[]) RETURNS TABLE(apartment_number text, field text, value text, may_suggest boolean)
     LANGUAGE sql IMMUTABLE
     AS $$
-  select distinct on (btrim(t.a), t.f) btrim(t.a), t.f, btrim(t.v)
-    from unnest(p_apartments, p_fields, p_values) as t(a, f, v)
+  select distinct on (btrim(t.a), t.f) btrim(t.a), t.f, btrim(t.v), coalesce(t.s, true)
+    from unnest(p_apartments, p_fields, p_values,
+                coalesce(p_may_suggest,
+                         array_fill(true, array[coalesce(array_length(p_apartments, 1), 0)])))
+           as t(a, f, v, s)
    where btrim(coalesce(t.a, '')) <> ''
      and t.f = any (array['owner_name', 'owner_phone', 'owner_email',
                           'tenant_name', 'tenant_phone', 'tenant_email'])
@@ -135,10 +138,10 @@ $$;
 
 
 --
--- Name: contact_sync_ingest(text[], text[], text[]); Type: FUNCTION; Schema: public; Owner: -
+-- Name: contact_sync_ingest(text[], text[], text[], boolean[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.contact_sync_ingest(p_apartments text[], p_fields text[], p_values text[]) RETURNS TABLE(created integer, applied integer, suggested integer, closed integer)
+CREATE FUNCTION public.contact_sync_ingest(p_apartments text[], p_fields text[], p_values text[], p_may_suggest boolean[] DEFAULT NULL::boolean[]) RETURNS TABLE(created integer, applied integer, suggested integer, closed integer)
     LANGUAGE plpgsql
     AS $$
 declare
@@ -169,7 +172,7 @@ begin
     from (select distinct btrim(x) as apt
             from unnest(p_apartments) x
            where btrim(coalesce(x, '')) <> '') a
-    left join public.contact_sync_incoming(p_apartments, p_fields, p_values) i
+    left join public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
            on i.apartment_number = a.apt
    group by a.apt
   on conflict (apartment_number) do nothing;
@@ -177,37 +180,37 @@ begin
 
   -- 2. Fields we simply do not have. No approval: there is nothing to overwrite.
   update public.contacts c set owner_name = i.value
-    from public.contact_sync_incoming(p_apartments, p_fields, p_values) i
+    from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
    where c.apartment_number = i.apartment_number and i.field = 'owner_name'
      and nullif(btrim(coalesce(c.owner_name, '')), '') is null;
   get diagnostics v_n = row_count; v_applied := v_applied + v_n;
 
   update public.contacts c set owner_phone = i.value
-    from public.contact_sync_incoming(p_apartments, p_fields, p_values) i
+    from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
    where c.apartment_number = i.apartment_number and i.field = 'owner_phone'
      and nullif(btrim(coalesce(c.owner_phone, '')), '') is null;
   get diagnostics v_n = row_count; v_applied := v_applied + v_n;
 
   update public.contacts c set owner_email = i.value
-    from public.contact_sync_incoming(p_apartments, p_fields, p_values) i
+    from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
    where c.apartment_number = i.apartment_number and i.field = 'owner_email'
      and nullif(btrim(coalesce(c.owner_email, '')), '') is null;
   get diagnostics v_n = row_count; v_applied := v_applied + v_n;
 
   update public.contacts c set tenant_name = i.value
-    from public.contact_sync_incoming(p_apartments, p_fields, p_values) i
+    from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
    where c.apartment_number = i.apartment_number and i.field = 'tenant_name'
      and nullif(btrim(coalesce(c.tenant_name, '')), '') is null;
   get diagnostics v_n = row_count; v_applied := v_applied + v_n;
 
   update public.contacts c set tenant_phone = i.value
-    from public.contact_sync_incoming(p_apartments, p_fields, p_values) i
+    from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
    where c.apartment_number = i.apartment_number and i.field = 'tenant_phone'
      and nullif(btrim(coalesce(c.tenant_phone, '')), '') is null;
   get diagnostics v_n = row_count; v_applied := v_applied + v_n;
 
   update public.contacts c set tenant_email = i.value
-    from public.contact_sync_incoming(p_apartments, p_fields, p_values) i
+    from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
    where c.apartment_number = i.apartment_number and i.field = 'tenant_email'
      and nullif(btrim(coalesce(c.tenant_email, '')), '') is null;
   get diagnostics v_n = row_count; v_applied := v_applied + v_n;
@@ -231,11 +234,36 @@ begin
              else c.tenant_email end);
   get diagnostics v_closed = row_count;
 
+  -- 3b. Open questions the SOURCE has stopped asking. Until 30/09/2026 a
+  --     suggestion only closed when OUR value moved to meet it; a proposal
+  --     the source itself withdrew stayed open for ever. It withdrew plenty
+  --     the day the names moved to the resident list: the debt export's
+  --     truncated "' אפרטמנטס- טלי אראל" had been proposed against our full
+  --     name, and the list now says our name was right all along. Nobody
+  --     should have to reject 27 proposals that nothing is making any more.
+  update public.contact_sync_suggestions s
+     set status = 'obsolete', resolved_at = now()
+    from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
+    join public.contacts c on c.apartment_number = i.apartment_number
+   where s.status = 'pending'
+     and s.apartment_number = i.apartment_number
+     and s.field = i.field
+     and public.contact_value_norm(i.field, i.value)
+         is not distinct from public.contact_value_norm(i.field,
+           case i.field
+             when 'owner_name'   then c.owner_name
+             when 'owner_phone'  then c.owner_phone
+             when 'owner_email'  then c.owner_email
+             when 'tenant_name'  then c.tenant_name
+             when 'tenant_phone' then c.tenant_phone
+             else c.tenant_email end);
+  get diagnostics v_n = row_count; v_closed := v_closed + v_n;
+
   -- 4. The conflicts. Ours stands; the difference waits for a decision.
   insert into public.contact_sync_suggestions
     (apartment_number, field, current_value, proposed_value, source)
   select i.apartment_number, i.field, cur.v, i.value, 'bllink'
-    from public.contact_sync_incoming(p_apartments, p_fields, p_values) i
+    from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
     join public.contacts c on c.apartment_number = i.apartment_number
     cross join lateral (select case i.field
                                  when 'owner_name'   then c.owner_name
@@ -245,6 +273,11 @@ begin
                                  when 'tenant_phone' then c.tenant_phone
                                  else c.tenant_email end as v) cur
    where nullif(btrim(coalesce(cur.v, '')), '') is not null
+     -- A value the caller flagged as second-best (the resident list was
+     -- unreachable and this came from the truncating export) fills an empty
+     -- field but never ASKS anything: a suggestion is a question put to a
+     -- person, and a question built on a value we already distrust is noise.
+     and i.may_suggest
      and public.contact_value_norm(i.field, cur.v)
          is distinct from public.contact_value_norm(i.field, i.value)
      -- A value that was turned down does not come back. It returns only when
@@ -692,8 +725,12 @@ CREATE TABLE public.bllink_scrape_rows (
     management_months_raw text,
     notes text,
     raw jsonb DEFAULT '{}'::jsonb NOT NULL,
-    owner_email text,
-    tenant_email text
+    list_owner_email text,
+    list_tenant_email text,
+    list_owner_name text,
+    list_owner_phone text,
+    list_tenant_name text,
+    list_tenant_phone text
 );
 
 
@@ -705,10 +742,17 @@ COMMENT ON TABLE public.bllink_scrape_rows IS 'Raw rows of one Bllink shadow scr
 
 
 --
--- Name: COLUMN bllink_scrape_rows.owner_email; Type: COMMENT; Schema: public; Owner: -
+-- Name: COLUMN bllink_scrape_rows.list_owner_email; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.bllink_scrape_rows.owner_email IS 'From Bllink''s tenant-list endpoint, not from the debt export (which has no address). NULL when that read failed — the scrape does not fail with it.';
+COMMENT ON COLUMN public.bllink_scrape_rows.list_owner_email IS 'From Bllink''s tenant-list endpoint, not from the debt export (which has no address). NULL when that read failed — the scrape does not fail with it.';
+
+
+--
+-- Name: COLUMN bllink_scrape_rows.list_owner_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.bllink_scrape_rows.list_owner_name IS 'From Bllink''s resident list, raw. NULL when that read failed — the scrape does not fail with it, and the sync falls back to the export''s labelled name cell for that run.';
 
 
 --
@@ -744,6 +788,7 @@ CREATE TABLE public.bllink_scrapes (
     rows_count integer,
     xlsx_sha256 text,
     compare_summary jsonb,
+    tenant_list_ok boolean DEFAULT false NOT NULL,
     CONSTRAINT bllink_scrapes_error_stage_check CHECK (((error_stage IS NULL) OR (error_stage = ANY (ARRAY['login'::text, 'navigate'::text, 'download'::text, 'parse'::text, 'compare'::text])))),
     CONSTRAINT bllink_scrapes_status_check CHECK ((status = ANY (ARRAY['running'::text, 'success'::text, 'error'::text])))
 );
@@ -754,6 +799,13 @@ CREATE TABLE public.bllink_scrapes (
 --
 
 COMMENT ON TABLE public.bllink_scrapes IS 'One row per shadow scrape of the Bllink udnp report (scripts/bllink-scrape.ts). compare_summary = diff against the CRM snapshot of the same run.';
+
+
+--
+-- Name: COLUMN bllink_scrapes.tenant_list_ok; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.bllink_scrapes.tenant_list_ok IS 'Did this scrape manage to read the resident list? false = names and phones in it came from the debt export alone.';
 
 
 --
@@ -5874,5 +5926,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260929162740'),
     ('20260929194811'),
     ('20260929211433'),
-    ('20260929212603')
+    ('20260929212603'),
+    ('20260930054613')
 ;

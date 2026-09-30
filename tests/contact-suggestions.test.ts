@@ -53,7 +53,8 @@ const TEN_OWN = '990011';   // an owner name of ours, no tenant name
 const TEN_KEPT = '990012';  // a tenant name of ours; Bllink disagrees
 const TEN_NEW = '990013';   // not in the registry at all
 const MAIL = '990021';      // an address of ours; Bllink disagrees
-const APTS = [KEPT, EMPTY, NEW, TEN_OWN, TEN_KEPT, TEN_NEW, MAIL];
+const FALLBACK = '990031';  // the resident list was unreachable for this run
+const APTS = [KEPT, EMPTY, NEW, TEN_OWN, TEN_KEPT, TEN_NEW, MAIL, FALLBACK];
 
 type Row = {
   apartment_number: string;
@@ -63,12 +64,17 @@ type Row = {
   phone_tenant: string | null;
   owner_email: string | null;
   tenant_email: string | null;
+  owner_name_from_list: boolean;
+  tenant_name_from_list: boolean;
 };
 
 const report = (over: Partial<Row> & { apartment_number: string }): Row =>
   ({
     owner_name: null, tenant_name: null, phone_owner: null, phone_tenant: null,
-    owner_email: null, tenant_email: null, ...over,
+    owner_email: null, tenant_email: null,
+    // The resident list is the source since 30/09/2026; a row that says
+    // otherwise is the fallback case, which may fill but may not ask.
+    owner_name_from_list: true, tenant_name_from_list: true, ...over,
   });
 
 /** One raw report row, split exactly the way the sync splits it — the point of
@@ -333,6 +339,62 @@ d('the Bllink approval queue', () => {
     expect(await resolveSuggestions([open[0]!.id], 'approve', null)).toBe(1);
     expect((await contact(MAIL))?.owner_email).toBe('new@example.com');
     expect((await getContactFieldState(MAIL)).sources.owner_email?.source).toBe('bllink');
+  });
+
+  // ── the resident list becomes the source of names (30/09/2026) ────────
+  // Two new behaviours, both about the day the source changes underneath a
+  // queue that is already full of the old source's questions.
+
+  it('a name from the debt export fills an empty field but asks nothing', async () => {
+    await pool.query(
+      `insert into public.contacts (apartment_number, owner_name, source)
+       values ($1, 'כרמל ביץ אפרטמנטס- טלי אראל', 'manual')`, [FALLBACK]);
+
+    // The resident list was unreachable, so the names came off the export's
+    // labelled cell — the one that truncates. It disagrees with ours.
+    const out = await syncContactsFromReport([
+      report({
+        apartment_number: FALLBACK,
+        owner_name: "' אפרטמנטס- טלי אראל",
+        tenant_name: 'שוכר מהדוח',
+        owner_name_from_list: false,
+        tenant_name_from_list: false,
+      }),
+    ]);
+    // Ours stands and NOTHING is asked — that truncation is not a question.
+    expect(out.suggested).toBe(0);
+    expect((await pendingOf(FALLBACK))).toHaveLength(0);
+    expect((await contact(FALLBACK))?.owner_name).toBe('כרמל ביץ אפרטמנטס- טלי אראל');
+    // …but an EMPTY field is still worth filling from a second-best source.
+    expect(out.applied).toBe(1);
+    expect((await contact(FALLBACK))?.tenant_name).toBe('שוכר מהדוח');
+
+    // The same value FROM THE LIST does ask.
+    const asked = await syncContactsFromReport([
+      report({ apartment_number: FALLBACK, owner_name: "' אפרטמנטס- טלי אראל" }),
+    ]);
+    expect(asked.suggested).toBe(1);
+  });
+
+  it('a suggestion the SOURCE withdraws closes itself, without anyone deciding', async () => {
+    // It is open from the run above: the export proposed a truncated name.
+    const open = (await pendingOf(FALLBACK)).filter((x) => x.field === 'owner_name');
+    expect(open).toHaveLength(1);
+
+    // Now the resident list says our name was right all along. Nobody should
+    // have to reject a question nothing is asking any more.
+    const out = await syncContactsFromReport([
+      report({ apartment_number: FALLBACK, owner_name: 'כרמל ביץ אפרטמנטס- טלי אראל' }),
+    ]);
+    expect(out.closed).toBeGreaterThanOrEqual(1);
+    expect(await pendingOf(FALLBACK)).toHaveLength(0);
+    const row = await pool.query<{ status: string; resolved_by: string | null }>(
+      `select status, resolved_by from public.contact_sync_suggestions
+        where apartment_number = $1 and field = 'owner_name'
+        order by created_at desc limit 1`, [FALLBACK]);
+    expect(row.rows[0]).toMatchObject({ status: 'obsolete', resolved_by: null });
+    // Ours was never written over — it was right.
+    expect((await contact(FALLBACK))?.owner_name).toBe('כרמל ביץ אפרטמנטס- טלי אראל');
   });
 
   it('resolving the same id twice is a no-op, and the queue only ever lists open rows', async () => {

@@ -8,13 +8,12 @@
  *
  * Column mapping (source → billing debtors / ParsedDebtorRow):
  *   apartment_number      →  apartment_number
- *   owner_name            →  owner_name + tenant_name — the "(בעלים)" and the
- *                            "(שוכר/ת)" halves of one cell (reportNames.ts)
- *   phone_primary         →  phone_owner / phone_tenant (split; contacts hook only)
- *   owner_email / tenant_email → the same, straight through. NOT from the debt
- *                            export (it has no address) — the scraper reads
- *                            them off Bllink's resident list (tenantList.ts)
- *                            and stores them on the same snapshot row.
+ *   list_*                →  every CONTACT field, straight through. Bllink's
+ *                            resident list (tenantList.ts) is the source of
+ *                            names, phones and addresses since 30/09/2026.
+ *   owner_name            →  the FALLBACK for the two names — the "(בעלים)"
+ *                            and "(שוכר/ת)" halves of one cell (reportNames.ts)
+ *   phone_primary         →  the FALLBACK for the two phones (split)
  *   monthly_debt (E)      →  management_fees
  *   special_debt (G)      →  hot_water_debt
  *   management_months_raw (F) → monthly_debt (text month-range)
@@ -22,7 +21,7 @@
  *                            = management_fees + hot_water_debt
  *   notes (H)             →  details
  */
-import { splitOwnerTenantPhones } from '@/lib/whatsapp';
+import { cleanPhoneField, splitOwnerTenantPhones } from '@/lib/whatsapp';
 import { splitOwnerTenantNames } from './reportNames';
 import type { ParsedDebtorRow } from '@/lib/excel/parse';
 import { round2, toNum, toText, type CompareRow } from './bllinkCompare';
@@ -33,9 +32,14 @@ export interface SourceDebtorRecord {
   apartment_number: string | null;
   owner_name: string | null;
   phone_primary: string | null;
-  /** Absent from the CRM's debtor_records — that source simply never has one. */
-  owner_email?: string | null;
-  tenant_email?: string | null;
+  /** Bllink's resident list, per field. All absent from the CRM's
+   *  debtor_records — that source only ever had the export's two cells. */
+  list_owner_name?: string | null;
+  list_owner_phone?: string | null;
+  list_owner_email?: string | null;
+  list_tenant_name?: string | null;
+  list_tenant_phone?: string | null;
+  list_tenant_email?: string | null;
   total_debt: number | string | null;
   monthly_debt: number | string | null;
   special_debt: number | string | null;
@@ -57,22 +61,32 @@ export interface BllinkPullReport {
 export function mapSourceRow(r: SourceDebtorRecord): ParsedDebtorRow | null {
   const apt = toText(r.apartment_number);
   if (!apt) return null;
-  // phone_primary may be compound/labelled ("054… (בעלים) 050… (שוכר/ת)") —
-  // split into clean local owner/tenant numbers before writing.
+  // The export's two identity cells, kept as the FALLBACK for a sync that
+  // could not read the resident list. Each holds whichever single person
+  // Bllink printed, behind labels that are sometimes missing
+  // ("בלכנר חנה (בעלים) אור מזוז (שוכר/ת)") — which is why they stopped being
+  // the first choice on 30/09/2026: 53 of 219 apartments name no owner there.
   const phones = splitOwnerTenantPhones(r.phone_primary);
-  // The name cell is compound and labelled in the same way the phone cell is
-  // ("בלכנר חנה (בעלים) אור מזוז (שוכר/ת)") — see reportNames.ts.
   const names = splitOwnerTenantNames(r.owner_name);
+  // Bllink's resident list: one entry per person, an explicit role, nothing
+  // truncated. Per FIELD, so a list that knows the owner but not the tenant
+  // still contributes what it knows.
+  const listOwnerName = toText(r.list_owner_name);
+  const listTenantName = toText(r.list_tenant_name);
   const management_fees = toNum(r.monthly_debt);
   const hot_water_debt = toNum(r.special_debt);
   return {
     apartment_number: apt,
-    owner_name: names.owner,
-    tenant_name: names.tenant,
-    phone_owner: phones.owner,
-    phone_tenant: phones.tenant,
-    owner_email: toText(r.owner_email),
-    tenant_email: toText(r.tenant_email),
+    owner_name: listOwnerName ?? names.owner,
+    tenant_name: listTenantName ?? names.tenant,
+    // Where a name came from decides whether it may ASK anything: a name off
+    // the truncating export fills an empty field but raises no suggestion.
+    owner_name_from_list: listOwnerName !== null,
+    tenant_name_from_list: listTenantName !== null,
+    phone_owner: cleanPhoneField(r.list_owner_phone) ?? phones.owner,
+    phone_tenant: cleanPhoneField(r.list_tenant_phone) ?? phones.tenant,
+    owner_email: toText(r.list_owner_email),
+    tenant_email: toText(r.list_tenant_email),
     // Absolute overwrite: total_debt is REBUILT from the components (default 0),
     // never the raw source total — so a stale/inconsistent source total cannot
     // leak in. Reconciled against the source total before writing.

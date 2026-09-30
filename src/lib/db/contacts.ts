@@ -377,7 +377,7 @@ export async function upsertContactByApartment(
  * created, an existing one was never touched, not even an empty field. That is
  * why a phone changing in Bllink went unnoticed for months. Now the decision
  * per apartment+field lives in SQL (public.contact_sync_ingest, migrations
- * 20260929194811 and 20260929211433):
+ * 20260929194811 → 20260930054613):
  *
  *   • an apartment we do not have  → created from the report, exactly as before
  *   • a field of ours that is EMPTY → filled straight in (nothing to overwrite)
@@ -397,6 +397,10 @@ export async function syncContactsFromReport(
     phone_tenant: string | null;
     owner_email?: string | null;
     tenant_email?: string | null;
+    /** Did the name come from Bllink's resident list? A name off the debt
+     *  export fills an empty field but asks nothing — see below. */
+    owner_name_from_list?: boolean;
+    tenant_name_from_list?: boolean;
   }>,
 ): Promise<ContactSyncOutcome> {
   return withTransaction(async (client) => {
@@ -410,27 +414,36 @@ export async function syncContactsFromReport(
     const apartments: string[] = [];
     const fields: string[] = [];
     const values: Array<string | null> = [];
+    const maySuggest: boolean[] = [];
     for (const r of rows) {
       const apt = normalizeApartmentNumber(r.apartment_number ?? '');
-      for (const [field, value] of [
-        ['owner_name', r.owner_name],
-        ['owner_phone', r.phone_owner],
-        ['owner_email', r.owner_email ?? null],
-        ['tenant_name', r.tenant_name],
-        ['tenant_phone', r.phone_tenant],
-        ['tenant_email', r.tenant_email ?? null],
+      // A name that came from the debt export rather than from Bllink's
+      // resident list may FILL an empty field but may not ASK anything. The
+      // export prints ONE person per apartment behind labels that are
+      // sometimes missing, so which role a name belongs to is a guess there —
+      // and a question built on a guess is noise someone clears by hand.
+      const ownerNameAsks = r.owner_name_from_list !== false;
+      const tenantNameAsks = r.tenant_name_from_list !== false;
+      for (const [field, value, asks] of [
+        ['owner_name', r.owner_name, ownerNameAsks],
+        ['owner_phone', r.phone_owner, true],
+        ['owner_email', r.owner_email ?? null, true],
+        ['tenant_name', r.tenant_name, tenantNameAsks],
+        ['tenant_phone', r.phone_tenant, true],
+        ['tenant_email', r.tenant_email ?? null, true],
       ] as const) {
         apartments.push(apt);
         fields.push(field);
         values.push(value);
+        maySuggest.push(asks);
       }
     }
 
     let outcome = { created: 0, applied: 0, suggested: 0, closed: 0 };
     if (apartments.length > 0) {
       const ing = await client.query<{ created: number; applied: number; suggested: number; closed: number }>(
-        `select * from public.contact_sync_ingest($1::text[], $2::text[], $3::text[])`,
-        [apartments, fields, values],
+        `select * from public.contact_sync_ingest($1::text[], $2::text[], $3::text[], $4::boolean[])`,
+        [apartments, fields, values, maySuggest],
       );
       outcome = ing.rows[0] ?? outcome;
     }
