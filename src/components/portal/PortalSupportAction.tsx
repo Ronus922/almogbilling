@@ -32,6 +32,12 @@ export interface PortalSupport {
  * rides on the mailto: of the address row (and on the mobile link when no
  * number is configured); nothing here builds a form.
  *
+ * `alwaysOpen` drops the desktop toggle and shows the two details at once.
+ * It is what an INLINE message wants (state 16 since 30/09/2026): the message
+ * is already the answer to "what do I do now", and hiding the answer behind a
+ * second click inside it would be one click too many. The lock sheets keep the
+ * toggle, where the button is the action and the details are the fallback.
+ *
  * With neither detail configured the component renders NOTHING — the callers
  * simply get no action, instead of a button that reaches nobody.
  */
@@ -40,6 +46,7 @@ export function PortalSupportAction({
   className,
   label = 'פנייה לחברת הניהול',
   mailSubject,
+  alwaysOpen = false,
 }: {
   support: PortalSupport;
   /** The caller's button classes — the portal's flat BTN set, or the skin's
@@ -48,6 +55,8 @@ export function PortalSupportAction({
   label?: string;
   /** Subject line for the address row's mailto:, e.g. a join request. */
   mailSubject?: string;
+  /** Desktop: show the details straight away instead of behind the button. */
+  alwaysOpen?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const phoneDisplay = formatSupportPhone(support.phone);
@@ -69,15 +78,17 @@ export function PortalSupportAction({
 
       {/* Desktop: reveal the details in place. */}
       <div className="hidden w-full flex-col gap-[8px] min-[601px]:flex">
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          aria-expanded={open}
-          className={className}
-        >
-          {label}
-        </button>
-        {open && (
+        {!alwaysOpen && (
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            className={className}
+          >
+            {label}
+          </button>
+        )}
+        {(open || alwaysOpen) && (
           <div className="flex w-full flex-col gap-[6px] rounded-[12px] bg-[#F5F7FB] p-[10px]">
             {phoneDisplay && (
               <DetailRow icon={<Phone className="size-[15px]" aria-hidden />} value={phoneDisplay} copy={phoneDisplay} numeric />

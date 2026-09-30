@@ -6,9 +6,10 @@ import {
   signClass, sumExact, windowKeys,
 } from '@/lib/portal/ui';
 import { AMOUNT_NUM_FMT, buildPortalPeriodWorkbook } from '@/lib/portal/export';
-import { formatSupportPhone, hasPortalSupport, supportMailtoHref, supportTelHref } from '@/lib/portal/support';
+import {
+  formatSupportPhone, hasPortalSupport, joinRequestSubject, supportMailtoHref, supportTelHref,
+} from '@/lib/portal/support';
 import { PORTAL_NOT_OWNER_MESSAGE, pointsAtManagementCompany, portalLockedMessage } from '@/lib/constants/portal';
-import { joinRequestSubject } from '@/components/portal/PortalOtpOverlay';
 import { makePeriod } from '@/lib/finance/period';
 import { rangeHasPublished } from '@/lib/finance/resident';
 import type { PortalAccount } from '@/lib/types/portal';

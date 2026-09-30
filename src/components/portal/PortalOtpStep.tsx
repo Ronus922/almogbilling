@@ -101,7 +101,9 @@ function useCountdown(initial: number): [number, (n: number) => void] {
 }
 
 
-export function PortalOtpStep({ sentPhone, phoneDisplay, initialCooldown, support, onBack, onRequestCode }: {
+export function PortalOtpStep({
+  sentPhone, phoneDisplay, initialCooldown, support, onBack, onNotRegistered, onRequestCode,
+}: {
   /** Exactly the string the request carried — the verify sends the same one. */
   sentPhone: string;
   /** 052-418-7730 — display only. */
@@ -112,6 +114,11 @@ export function PortalOtpStep({ sentPhone, phoneDisplay, initialCooldown, suppor
    *  than drawing a button that reaches nobody. */
   support: PortalSupport;
   onBack: () => void;
+  /** The number stopped being an owner between the request and now. Handed
+   *  UP rather than shown here: state 16 is one inline message under the
+   *  phone field (30/09/2026), and two presentations of one answer would be
+   *  two things to keep in step. */
+  onNotRegistered: () => void;
   /** Asks the server for another code. Owned by the parent because the phone
    *  step uses the very same call for the first send. */
   onRequestCode: () => Promise<OtpRequestOutcome>;
@@ -218,7 +225,7 @@ export function PortalOtpStep({ sentPhone, phoneDisplay, initialCooldown, suppor
 
     if (data.notRegistered) {
       setPhase('idle');
-      setOverlay({ kind: 'unregistered' });
+      onNotRegistered();
       return;
     }
 
@@ -340,7 +347,7 @@ export function PortalOtpStep({ sentPhone, phoneDisplay, initialCooldown, suppor
         return;
       }
       if (out.locked) { enterLock(out.lockedUntil); return; }
-      if (out.notRegistered) { setOverlay({ kind: 'unregistered' }); return; }
+      if (out.notRegistered) { onNotRegistered(); return; }
       if (typeof out.retryAfterSec === 'number' && out.retryAfterSec > 0) setCooldown(out.retryAfterSec);
       setMsg({ tone: 'err', text: out.message ?? 'שליחת הקוד נכשלה. נסו שוב בעוד רגע.' });
     } catch {
@@ -518,7 +525,6 @@ export function PortalOtpStep({ sentPhone, phoneDisplay, initialCooldown, suppor
       {overlay && !(overlay.kind === 'lock' && lockLeft <= 0) && (
         <PortalOtpOverlay
           overlay={overlay}
-          phoneDisplay={phoneDisplay}
           lockLeft={lockLeft}
           support={support}
           onChangeNumber={onBack}

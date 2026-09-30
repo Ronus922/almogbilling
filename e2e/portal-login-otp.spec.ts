@@ -158,40 +158,46 @@ test.describe('portal login — the whole flow', () => {
     await page.waitForURL('**/portal');
   });
 
-  test('16: an unregistered number gets the sheet WITH the contact details — and is NOT locked out', async ({ page }) => {
+  test('16: an unregistered number gets an INLINE message with the details — no window, field still live', async ({ page }) => {
     await page.goto('/portal/login');
+    const field = page.getByLabel('מספר טלפון');
+    const notice = page.getByRole('alert').filter({ hasText: 'אינו רשום באף דירה' });
+
     // Six taps: one more than PORTAL_OTP_MAX_REQUESTS_PER_WINDOW. Before
     // 29/09/2026 the sixth locked the number out for 30 minutes although no
     // code had ever been sent to it — which is what happened to apartment 1233.
-    const sheet = page.getByRole('dialog', { name: 'המספר לא מזוהה' });
     for (let i = 0; i < 6; i += 1) {
       await sendCode(page, NOT_AN_OWNER);
-      // State 16 of the reference — until 29/09/2026 this answer was a red
-      // line of text on step 1 and the sheet was unreachable from here.
-      await expect(sheet).toBeVisible();
-      await expect(sheet).toContainText('אינו רשום באף דירה');
+      await expect(notice).toBeVisible();
+      await expect(notice).toContainText('050-999-9999');
+
+      // Ronen's decision, 30/09/2026: NO window. A number that is almost
+      // always a typo must not need a dismiss before it can be corrected.
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      // …and the field is still live, still holding what was typed.
+      await expect(field).toBeEnabled();
+      await expect(field).toHaveValue(NOT_AN_OWNER);
+      await expect(field).toBeFocused();
 
       if (i === 0) {
-        // The reference's primary button, which had no destination at all
-        // until it was wired to tel: / mailto:. The phone variant is in the
-        // DOM but display:none on this viewport — hence a css locator and not
-        // a role: a hidden element is out of the accessibility tree.
-        await expect(sheet.locator('a[href^="tel:"]')).toHaveAttribute('href', 'tel:+97248341881');
-
-        // Desktop: the button reveals both details instead of dialling.
-        await sheet.getByRole('button', { name: 'שליחת בקשת הצטרפות' }).click();
-        await expect(sheet.getByText('04-834-1881', { exact: true })).toBeVisible();
-        await expect(sheet.getByText('mgmt@example.test', { exact: true })).toBeVisible();
+        // The details are INSIDE the message and already open — no second
+        // click. The tel: variant is in the DOM but display:none on this
+        // viewport, so it is out of the accessibility tree: css, not role.
+        await expect(notice.locator('a[href^="tel:"]')).toHaveAttribute('href', 'tel:+97248341881');
+        await expect(notice.getByText('04-834-1881', { exact: true })).toBeVisible();
+        await expect(notice.getByText('mgmt@example.test', { exact: true })).toBeVisible();
         // The address carries the join request's subject, with the number in it.
-        await expect(sheet.locator('a[href^="mailto:"]')).toHaveAttribute(
+        await expect(notice.locator('a[href^="mailto:"]')).toHaveAttribute(
           'href',
           `mailto:mgmt@example.test?subject=${encodeURIComponent('בקשת הצטרפות לפורטל — 050-999-9999')}`,
         );
       }
-
-      await sheet.getByRole('button', { name: 'הזנת מספר אחר' }).click();
-      await expect(sheet).toBeHidden();
     }
+
+    // Correcting the number clears the message on the first keystroke.
+    await field.fill('050999999');
+    await expect(notice).toBeHidden();
+
     const locks = await pool.query(`select 1 from public.portal_lockouts where phone_e164 = $1`, ['+972509999999']);
     expect(locks.rowCount).toBe(0);
     // It stays on step 1 — no code step for a number that got no code.

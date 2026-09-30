@@ -54,3 +54,9 @@ export function supportMailtoHref(
   const s = (subject ?? '').trim();
   return s ? `mailto:${address}?subject=${encodeURIComponent(s)}` : `mailto:${address}`;
 }
+
+/** The subject of the join request state 16 offers. The number is part of it
+ *  so the management company can look the flat up without a reply. */
+export function joinRequestSubject(phoneDisplay: string): string {
+  return `בקשת הצטרפות לפורטל — ${phoneDisplay}`;
+}
