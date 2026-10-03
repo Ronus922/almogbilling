@@ -39,7 +39,8 @@ export function reporterLabel(issue: ReporterFields): string | null {
   if (issue.source !== 'portal') return null;
   const parts = [
     issue.reporter_name?.trim() || null,
-    issue.reporter_apartment ? `דירה ${issue.reporter_apartment}` : null,
+    // '' = an unidentified reporter (a mixed-owners phone): no apartment.
+    issue.reporter_apartment?.trim() ? `דירה ${issue.reporter_apartment.trim()}` : null,
   ].filter((p): p is string => !!p);
   return parts.length ? parts.join(' · ') : null;
 }
@@ -127,7 +128,7 @@ export function IssueReporterSection({ issue, phone, canSeePhone }: {
     <Section title="נפתח ע״י" icon={Megaphone} iconTone="violet" headerSlot={<PortalSourceTag />}>
       <dl className="space-y-2.5 py-2 text-sm">
         <Row label="שם">{issue.reporter_name?.trim() || '—'}</Row>
-        <Row label="דירה"><span className="font-num">{issue.reporter_apartment ?? '—'}</span></Row>
+        <Row label="דירה"><span className="font-num">{issue.reporter_apartment?.trim() || '—'}</span></Row>
         {showPhone && (
           <Row label="טלפון">
             <span className="inline-flex items-center gap-2">

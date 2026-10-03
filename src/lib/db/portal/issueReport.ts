@@ -1,6 +1,7 @@
 import 'server-only';
-import { queryOne } from '@/lib/db';
+import { query, queryOne } from '@/lib/db';
 import { portalIssueTitle, urgencyToPriority, type PortalIssueReport } from '@/lib/portal/issueReport';
+import { hasMixedOwners, PORTAL_UNIDENTIFIED_REPORTER } from '@/lib/portal/ownership';
 
 // The owners portal's fault report, on the database side. Two rules live here:
 //   • WHO reported is resolved from the session's phone only — the route
@@ -9,9 +10,11 @@ import { portalIssueTitle, urgencyToPriority, type PortalIssueReport } from '@/l
 //     issues screen, panel, handlers and notifications treat it like any other.
 
 export interface PortalReporter {
-  /** apartment_owner_phones.id — the phone + apartment that signed in. */
-  rosterId: string;
-  apartmentNumber: string;
+  /** apartment_owner_phones.id — the phone + apartment that signed in; null
+   *  for an unidentified reporter (a mixed-owners phone). */
+  rosterId: string | null;
+  /** null for an unidentified reporter — no apartment is claimed for them. */
+  apartmentNumber: string | null;
   name: string | null;
   phoneE164: string;
 }
@@ -28,6 +31,22 @@ export interface PortalReporter {
  * phone's name on another of its rows (it is the same person).
  */
 export async function resolvePortalReporter(phoneE164: string): Promise<PortalReporter | null> {
+  // Containment (03/10/2026, lib/portal/ownership.ts): when the phone's
+  // apartments belong to different people, none of them — and none of their
+  // owners' names — is this reporter's. The report is still taken: recorded as
+  // "לא מזוהה", with no apartment and no roster link; the verified phone stays
+  // in reporter_phone for staff with contacts:view.
+  const active = await query<{ apartment_number: string; owner_name: string | null }>(
+    `select apartment_number, owner_name
+       from public.apartment_owner_phones
+      where phone_e164 = $1 and is_active`,
+    [phoneE164],
+  );
+  if (active.rows.length === 0) return null;
+  if (hasMixedOwners(active.rows)) {
+    return { rosterId: null, apartmentNumber: null, name: PORTAL_UNIDENTIFIED_REPORTER, phoneE164 };
+  }
+
   const row = await queryOne<{ id: string; apartment_number: string; phone_e164: string; name: string | null }>(
     `select r.id, r.apartment_number, r.phone_e164,
             coalesce(
@@ -75,6 +94,12 @@ export async function insertPortalIssue(args: {
 }): Promise<CreatedPortalIssue> {
   const { id, report, reporter, images } = args;
   const title = portalIssueTitle(report.location);
+  // issues_portal_reporter_check requires a non-null reporter_apartment on
+  // every portal row; an unidentified reporter has none, so it is stored as ''
+  // (read back as "no apartment" — reporterLabel / IssueReporterSection).
+  // Containment is code-only; the column semantics are revisited with the
+  // roster fix.
+  const apartment = reporter.apartmentNumber ?? '';
   const row = await queryOne<{ id: string; ticket_number: number }>(
     `insert into public.issues
        (id, title, description, priority, status, images,
@@ -89,7 +114,7 @@ export async function insertPortalIssue(args: {
     [
       id, title, report.description, urgencyToPriority(report.urgency), images,
       reporter.name,
-      reporter.rosterId, reporter.phoneE164, reporter.apartmentNumber,
+      reporter.rosterId, reporter.phoneE164, apartment,
       report.location, report.area,
     ],
   );

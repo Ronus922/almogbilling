@@ -30,6 +30,8 @@ const h = vi.hoisted(() => ({
   actor: null as null | { id: string; username: string; email: string; full_name: string | null; role: string },
   /** The owners-portal branch of finance-receipts (28/09/2026). */
   portalSession: null as null | { id: string; phoneE164: string },
+  /** The session phone's apartments belong to different people (containment 03/10/2026). */
+  mixedOwners: false,
   receipt: null as null | { entry_id: string; document_id: string; original_name: string },
   finDoc: null as null | { id: string; entry_id: string | null; original_name: string },
 }));
@@ -86,7 +88,7 @@ vi.mock('@/lib/db/finance/portal', () => ({
   findResidentReceipt: vi.fn(async () => h.receipt),
 }));
 vi.mock('@/lib/db/portal/ownerPhones', () => ({
-  findOwnerIdentity: vi.fn(async () => ({ apartmentNumbers: ['7', '12'], ownerName: 'דנה לוי' })),
+  findOwnerIdentity: vi.fn(async () => ({ apartmentNumbers: ['7', '12'], ownerName: 'דנה לוי', mixedOwners: h.mixedOwners })),
 }));
 vi.mock('@/lib/storage/server', () => ({
   PRIVATE_BUCKETS: ['supplier-documents', 'documents', 'issue-attachments', 'whatsapp-attachments', 'finance-receipts'],
@@ -141,6 +143,7 @@ beforeEach(() => {
   h.supplierDoc = { id: 'doc-1', supplier_id: 'sup-1', file_name: 'חוזה שירות 2026.pdf' };
   h.actor = ronen;
   h.portalSession = null;
+  h.mixedOwners = false;
   h.receipt = null;
   h.finDoc = null;
 });
@@ -329,6 +332,16 @@ describe('GET /api/files/finance-receipts — the portal branch', () => {
     expect(h.rows).toHaveLength(1);
     expect(h.rows[0]).toMatchObject({ actor_user_id: null, entity_type: 'fin_entry', entity_id: 'e-1' });
     expect(h.rows[0].metadata).toMatchObject({ actor_kind: 'portal_owner', portal_phone: owner.phoneE164, document_id: 'd-1', ip: '9.9.9.9' });
+  });
+
+  it('a mixed-owners phone (apartments of different people) → the staff verdict, nothing logged, nothing served', async () => {
+    h.portalSession = owner;
+    h.mixedOwners = true;
+    h.receipt = { entry_id: 'e-1', document_id: 'd-1', original_name: 'קבלה.pdf' };
+    const res = await filesGET(req(`http://x/api/files/finance-receipts/${RECEIPT}`), ctx);
+    expect(res.status).toBe(403);
+    expect(await res.text()).not.toContain('%PDF');
+    expect(h.rows).toHaveLength(0);
   });
 
   it('staff with finance:view still wins the staff path (logged under the user, not as an owner)', async () => {

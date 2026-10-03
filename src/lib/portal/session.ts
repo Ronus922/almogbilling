@@ -2,7 +2,8 @@ import 'server-only';
 import { cookies } from 'next/headers';
 import { PORTAL_SESSION_COOKIE } from '@/lib/constants/portal';
 import { AuthorizationError } from '@/lib/auth/errors';
-import { isActiveOwner } from '@/lib/db/portal/ownerPhones';
+import { isActiveOwner, isMixedOwnerPhone } from '@/lib/db/portal/ownerPhones';
+import { PORTAL_ACCOUNT_REVIEW_MESSAGE } from '@/lib/portal/ownership';
 import { logPortalEvent } from '@/lib/db/portal/events';
 import {
   createPortalSessionRow, findPortalSession, revokePortalSession,
@@ -94,6 +95,20 @@ export async function getPortalSession(): Promise<PortalSession | null> {
 export async function requirePortalSession(): Promise<PortalSession> {
   const session = await getPortalSession();
   if (!session) throw new AuthorizationError('לא מחובר', 401);
+  return session;
+}
+
+/**
+ * The guard of every /api/portal/* endpoint that serves FINANCIAL data: a live
+ * session (requirePortalSession) whose phone is not a mixed-owners phone
+ * (lib/portal/ownership.ts — containment 03/10/2026). Such a phone gets 403
+ * with the "we are updating your account" message and no figure at all.
+ */
+export async function requirePortalFinanceAccess(): Promise<PortalSession> {
+  const session = await requirePortalSession();
+  if (await isMixedOwnerPhone(session.phoneE164)) {
+    throw new AuthorizationError(PORTAL_ACCOUNT_REVIEW_MESSAGE, 403);
+  }
   return session;
 }
 

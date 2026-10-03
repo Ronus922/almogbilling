@@ -71,11 +71,14 @@ async function residentReceiptViewer(objectPath: string): Promise<PortalFileView
   const receipt = await findResidentReceipt(objectPath);
   if (!receipt) return null;
   const identity = await findOwnerIdentity(session.phoneE164, { onlyActive: true });
+  // A mixed-owners phone gets no financial document either (containment
+  // 03/10/2026, lib/portal/ownership.ts) — the staff verdict stands.
+  if (!identity || identity.mixedOwners) return null;
   return {
     kind: 'portal_owner',
     phoneE164: session.phoneE164,
-    ownerName: identity?.ownerName ?? null,
-    apartmentNumbers: identity?.apartmentNumbers ?? [],
+    ownerName: identity.ownerName,
+    apartmentNumbers: identity.apartmentNumbers,
   };
 }
 

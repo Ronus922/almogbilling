@@ -17,6 +17,9 @@ export interface OwnerIdentity {
   apartmentNumbers: string[];
   /** The first non-empty owner_name across those rows, for the log. */
   ownerName: string | null;
+  /** The active apartments belong to different people (or cannot be shown to
+   *  be one person's) — no financial data for this phone. lib/portal/ownership.ts */
+  mixedOwners: boolean;
 }
 
 export interface PortalLockout {
