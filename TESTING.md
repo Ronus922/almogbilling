@@ -103,3 +103,5 @@ npm run check:all     # typecheck + lint + vitest + כל בדיקות האינו
 3. **אדום = לא פורסים.** מתקנים את השורש (אסור להחליש בדיקה כדי שתעבור), ומריצים שוב.
 4. פריסה לפרודקשן היא תמיד `npm run deploy` (build → restart → אימות) — לעולם לא
    `next build` לבד (דורס את `.next/standalone` בלי restart → ChunkLoadError).
+
+<!-- ci-gate check — PR closed without merge -->
