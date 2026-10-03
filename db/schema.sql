@@ -63,6 +63,8 @@ CREATE FUNCTION public.bllink_link_verdict(p_scrape_id uuid) RETURNS TABLE(link_
            -- 2. no phone to match: by name
            when bn.active then 'name_match'
            when bn.name is not null then 'inactive'
+           -- 3. not listed: an extra owner's absence proves nothing
+           when l.role = 'owner' and l.source_table = 'contact_people' then 'extra_owner_not_listed'
            else 'phone_not_listed'
          end,
          bp.name
@@ -90,7 +92,7 @@ $$;
 -- Name: FUNCTION bllink_link_verdict(p_scrape_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.bllink_link_verdict(p_scrape_id uuid) IS 'Per active portal link of an apartment one scrape''s list spoke about: listed (phone active there, any name) / name_match (no usable phone in Bllink, same name) / inactive (isActive = false) / phone_not_listed. Matched by E.164 phone first, by name only when Bllink has no phone for the person.';
+COMMENT ON FUNCTION public.bllink_link_verdict(p_scrape_id uuid) IS 'Per active portal link of an apartment one scrape''s list spoke about: listed (phone active there, any name) / name_match (no usable phone in Bllink, same name) / inactive (isActive = false) / extra_owner_not_listed (an extra owner — contact_people — Bllink does not list: no evidence, never "ניתוק") / phone_not_listed. Matched by E.164 phone first, by name only when Bllink has no phone for the person.';
 
 
 --
@@ -1257,11 +1259,12 @@ begin
                                          and r.phone_e164 = s.phone_e164 and r.is_active)
                      then 'link_inactive'
                      else (select case v.verdict when 'listed' then 'bllink_lists_phone'
-                                                 when 'name_match' then 'bllink_lists_name' end
+                                                 when 'name_match' then 'bllink_lists_name'
+                                                 when 'extra_owner_not_listed' then 'extra_owner_not_listed' end
                              from v
                             where v.apartment_number = s.apartment_number
                               and v.phone_e164 = s.phone_e164
-                              and v.verdict in ('listed', 'name_match')
+                              and v.verdict in ('listed', 'name_match', 'extra_owner_not_listed')
                             limit 1)
                 end as reason
            from public.contact_sync_suggestions s
@@ -1290,7 +1293,7 @@ $$;
 -- Name: FUNCTION portal_unlink_close(p_scrape_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.portal_unlink_close(p_scrape_id uuid) IS 'Closes (obsolete, never deletes) every open portal_unlink of the apartments one scrape''s list spoke about that the phone-first rule no longer supports — the link is gone, or Bllink lists the phone / the name — one audit_log row each (contact_suggestion_closed).';
+COMMENT ON FUNCTION public.portal_unlink_close(p_scrape_id uuid) IS 'Closes (obsolete, never deletes) every open portal_unlink of the apartments one scrape''s list spoke about that the rule no longer supports — the link is gone, Bllink lists the phone / the name, or it is an extra owner the list does not mention — one audit_log row each (contact_suggestion_closed).';
 
 
 --
@@ -7111,5 +7114,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261003161746'),
     ('20261003161747'),
     ('20261003161749'),
-    ('20261003191659')
+    ('20261003191659'),
+    ('20261003202918')
 ;

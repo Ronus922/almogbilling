@@ -4,7 +4,8 @@ import { requireSeededAdmin } from './db-fixtures';
 import { extractTenantPeople } from '@/lib/sync/tenantList';
 
 // Bllink "ניתוק" decided by PHONE, not by name (migration 20261003191659,
-// 03/10/2026) — against a throwaway database (WA_TEST_DATABASE_URL), through
+// 03/10/2026), and never for an extra owner Bllink merely does not list
+// (20261003202918) — against a throwaway database (WA_TEST_DATABASE_URL), through
 // the real SQL. Fixtures are made here and removed by their exact apartments /
 // ids (iron rule 12); the phones below exist nowhere else.
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
@@ -28,12 +29,15 @@ const { listSuggestionsForApartment, suggestPortalLinks } = await import('@/lib/
 const A = {
   renamed: '990801', gone: '990802', inactive: '990803', formats: '990804',
   byName: '990805', otherName: '990806', stale: '990807', extra: '990808',
+  extraAbsent: '990809', extraInactive: '990810', tenantGone: '990811', extraStale: '990812',
 };
 const APTS = Object.values(A);
 const P = {
   renamed: '0527700801', gone: '0527700802', goneNew: '0527700812', inactive: '0527700803',
   f9: '0527700804', fIntl: '0527700814', fDash: '0527700824',
   byName: '0527700805', otherName: '0527700806', stale: '0527700807', extra: '0527700808',
+  main: '0527700831', extraAbsent: '0527700832', extraInactive: '0527700833',
+  tenantGone: '0527700834', extraTenantGone: '0527700835', extraStale: '0527700836',
 };
 const e164 = (local: string) => `+972${local.slice(1)}`;
 
@@ -78,7 +82,13 @@ async function cleanup() {
   await pool.query(`delete from public.contacts where apartment_number = any($1::text[])`, [APTS]);
 }
 
-d('Bllink "ניתוק" by phone (20261003191659)', () => {
+async function extraPerson(apt: string, role: 'owner' | 'tenant', name: string, phone: string) {
+  await pool.query(`insert into public.contact_people (contact_id, role, name, phone)
+    select id, $2, $3, $4 from public.contacts where apartment_number = $1`, [apt, role, name, phone]);
+}
+const unlinks = async (apt: string) => (await open(apt)).filter((s) => s.field === 'portal_unlink');
+
+d('Bllink "ניתוק" by phone (20261003191659, 20261003202918)', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: TEST_URL, max: 4 });
     pool.on('error', () => undefined);
@@ -182,5 +192,64 @@ d('Bllink "ניתוק" by phone (20261003191659)', () => {
     ] });
     expect(await suggestPortalLinks(id)).toMatchObject({ suggested_unlink: 0, suggested_name: 0 });
     expect((await open(A.extra)).filter((s) => s.field === 'portal_unlink' || s.field === 'owner_name')).toEqual([]);
+  });
+
+  // ── 20261003202918: an extra owner's absence is not evidence ────────────
+  it('an extra owner Bllink does not list → no "ניתוק" (removed by hand only)', async () => {
+    await card(A.extraAbsent, { owner_name: 'בעלים ראשי', owner_phone: P.main });
+    await extraPerson(A.extraAbsent, 'owner', 'בת זוג', P.extraAbsent);
+    const id = await scrape({ [A.extraAbsent]: [{ name: 'בעלים ראשי', phone: P.main, primary: true }] });
+    expect(await suggestPortalLinks(id)).toMatchObject({ suggested_unlink: 0, suggested_link: 0, suggested_name: 0 });
+    expect(await open(A.extraAbsent)).toEqual([]);
+    const v = await pool.query(`select verdict from public.bllink_link_verdict($1) where phone_e164 = $2`,
+      [id, e164(P.extraAbsent)]);
+    expect(v.rows).toEqual([{ verdict: 'extra_owner_not_listed' }]);
+  });
+
+  it('an extra owner Bllink lists with isActive = false → "ניתוק", reason inactive', async () => {
+    await card(A.extraInactive, { owner_name: 'בעלים ראשי', owner_phone: P.main });
+    await extraPerson(A.extraInactive, 'owner', 'שותף לשעבר', P.extraInactive);
+    const id = await scrape({ [A.extraInactive]: [
+      { name: 'בעלים ראשי', phone: P.main, primary: true },
+      { name: 'שותף לשעבר', phone: P.extraInactive, active: false },
+    ] });
+    expect(await suggestPortalLinks(id)).toMatchObject({ suggested_unlink: 1 });
+    expect(await unlinks(A.extraInactive)).toEqual([
+      expect.objectContaining({ phone: e164(P.extraInactive), reason: 'inactive' }),
+    ]);
+  });
+
+  it('a tenant who vanished from Bllink → "ניתוק" — the tenant field and an extra tenant alike', async () => {
+    await card(A.tenantGone, { owner_name: 'בעלים ראשי', owner_phone: P.main,
+      resident_type: 'tenant', tenant_name: 'שוכר שעזב', tenant_phone: P.tenantGone });
+    await extraPerson(A.tenantGone, 'tenant', 'שותפה שעזבה', P.extraTenantGone);
+    const id = await scrape({ [A.tenantGone]: [{ name: 'בעלים ראשי', phone: P.main, primary: true }] });
+    expect(await suggestPortalLinks(id)).toMatchObject({ suggested_unlink: 2 });
+    expect((await unlinks(A.tenantGone)).map((s) => [s.phone, s.reason]).sort()).toEqual([
+      [e164(P.tenantGone), 'phone_not_listed'],
+      [e164(P.extraTenantGone), 'phone_not_listed'],
+    ].sort());
+  });
+
+  it('an open "ניתוק" of an extra owner the list does not mention is closed (obsolete) and logged', async () => {
+    const since = (await pool.query<{ t: string }>(`select clock_timestamp()::text as t`)).rows[0]!.t;
+    await card(A.extraStale, { owner_name: 'בעלים ראשי', owner_phone: P.main });
+    await extraPerson(A.extraStale, 'owner', 'בן משפחה', P.extraStale);
+    const old = await pool.query<{ id: string }>(
+      `insert into public.contact_sync_suggestions
+         (apartment_number, field, current_value, proposed_value, source, phone_e164, person_role, person_name, unlink_reason)
+       values ($1, 'portal_unlink', 'בן משפחה', $2, 'bllink', $2, 'owner', 'בן משפחה', 'phone_not_listed') returning id`,
+      [A.extraStale, e164(P.extraStale)]);
+    const id = await scrape({ [A.extraStale]: [{ name: 'בעלים ראשי', phone: P.main, primary: true }] });
+    const out = await suggestPortalLinks(id);
+    expect(out.suggested_unlink).toBe(0);
+    expect(out.closed).toBeGreaterThanOrEqual(1);
+    const row = await pool.query(`select status from public.contact_sync_suggestions where id = $1`, [old.rows[0]!.id]);
+    expect(row.rows[0]).toEqual({ status: 'obsolete' });
+    const audit = await pool.query(
+      `select metadata->>'reason' as reason from public.audit_log
+        where action = 'contact_suggestion_closed' and entity_id = $1 and created_at >= $2::timestamptz`,
+      [old.rows[0]!.id, since]);
+    expect(audit.rows).toEqual([{ reason: 'extra_owner_not_listed' }]);
   });
 });
