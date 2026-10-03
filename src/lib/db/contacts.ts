@@ -202,6 +202,9 @@ export async function createContact(
 export async function updateContact(
   id: string,
   data: Partial<ContactWritableFields>,
+  /** Run inside the caller's transaction (the apartment card saves the contact
+   *  and its people together — see PATCH /api/contacts/[id]). */
+  client?: PoolClient,
 ): Promise<Contact | null> {
   const rec = { ...data } as Record<string, unknown>;
   delete rec.apartment_number; // immutable
@@ -220,10 +223,9 @@ export async function updateContact(
     return getContactById(id);
   }
 
-  return queryOne<Contact>(
-    `update public.contacts set ${set.join(', ')} where id = $1 returning ${CONTACT_COLUMNS}`,
-    vals,
-  );
+  const sql = `update public.contacts set ${set.join(', ')} where id = $1 returning ${CONTACT_COLUMNS}`;
+  if (client) return (await client.query<Contact>(sql, vals)).rows[0] ?? null;
+  return queryOne<Contact>(sql, vals);
 }
 
 /** Throws (SQLSTATE 23503, wa_campaign_recipients_contact_id_fkey) if this

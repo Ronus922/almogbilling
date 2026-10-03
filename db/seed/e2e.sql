@@ -49,9 +49,31 @@ commit;
 -- checks. Idempotent: every insert is guarded.
 begin;
 
-insert into public.contacts (apartment_number, tenant_phone)
-select v.a, v.t from (values ('E2E-A', '050-6666666'), ('E2E-B', null), ('E2E-C', null), ('E2E-D', null)) v(a, t)
-on conflict (apartment_number) do nothing;
+-- The owners come from the apartments' OWNER RECORDS — the owner field, and an
+-- extra owner on the card — exactly as in production: since 20261003095149
+-- the roster MIRRORS those records at COMMIT, and a roster row with no record
+-- behind it is switched off. (Inserting the rows straight into the roster,
+-- as this seed did before phase C, left every fixture owner inactive on a
+-- fresh database.) The roster insert below stays for idempotency and for the
+-- one row that must exist switched off.
+insert into public.contacts (apartment_number, tenant_phone, owner_name, owner_phone)
+select v.a, v.t, v.n, v.p from (values
+  ('E2E-A', '050-6666666', 'דנה E2E', '+972501111111'),
+  ('E2E-B', null, 'בני E2E', '+972502222222'),
+  ('E2E-C', null, 'גלית E2E', '+972503333333'),
+  ('E2E-D', null, 'דוד E2E', '+972504444444')
+) v(a, t, n, p)
+on conflict (apartment_number) do update
+  set owner_name = excluded.owner_name, owner_phone = excluded.owner_phone;
+
+-- The second owner of A and of B: an extra owner on the card.
+insert into public.contact_people (contact_id, role, name, phone, sort_order)
+select c.id, 'owner', v.n, v.p, 0
+  from (values ('E2E-A', 'יוסי E2E', '+972501111112'),
+               ('E2E-B', 'רותי E2E', '+972502222223')) v(a, n, p)
+  join public.contacts c on c.apartment_number = v.a
+ where not exists (select 1 from public.contact_people x
+                    where x.contact_id = c.id and x.role = 'owner' and x.phone = v.p);
 
 insert into public.debtors (id, apartment_number, owner_name, phone_owner, email_owner, total_debt, management_fees, hot_water_debt, special_debt, monthly_debt, details, is_archived, notes, next_action_description, legal_status_updated_by_name)
 values

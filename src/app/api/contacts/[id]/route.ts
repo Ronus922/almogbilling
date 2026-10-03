@@ -6,6 +6,7 @@ import {
   getContactById, updateContact, deleteContact,
   ACTIVE_DEBT_DELETE_BLOCKED_SQLSTATE,
 } from '@/lib/db/contacts';
+import { withTransaction } from '@/lib/db';
 import { replaceContactPeople } from '@/lib/db/contactPeople';
 import { coerceContactInput, coerceContactPeople } from '@/lib/validation/contacts';
 import { getBillingSettings } from '@/lib/db/appSettings';
@@ -73,9 +74,15 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 
   try {
-    const updated = await updateContact(id, result.fields);
+    // The contact and its people in ONE transaction: the portal roster is
+    // recomputed from both at COMMIT (migration 20261003095149), so a phone
+    // moved between the owner field and the people list never looks removed.
+    const updated = await withTransaction(async (client) => {
+      const row = await updateContact(id, result.fields, client);
+      if (row && peopleResult) await replaceContactPeople(id, peopleResult.people, client);
+      return row;
+    });
     if (!updated) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-    if (peopleResult) await replaceContactPeople(id, peopleResult.people);
     const contact = peopleResult ? (await getContactById(id)) ?? updated : updated;
     return NextResponse.json({ contact });
   } catch (err) {

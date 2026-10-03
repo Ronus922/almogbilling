@@ -1,4 +1,5 @@
 import 'server-only';
+import type { PoolClient } from 'pg';
 import { query, withTransaction } from '@/lib/db';
 import type { ContactPersonInput, ContactPersonRole } from '@/lib/types/contacts';
 
@@ -18,30 +19,43 @@ import type { ContactPersonInput, ContactPersonRole } from '@/lib/types/contacts
  * insert inside one transaction: the client always sends the complete list, so
  * a diff would only add failure modes. sort_order is the array index within the
  * role, so the card's ordering round-trips.
+ *
+ * With `client`, it runs inside the caller's transaction instead — the portal
+ * roster is recomputed at COMMIT (deferred triggers, migration 20261003095149),
+ * so a card save that moves a phone between the owner field and the people
+ * list is judged on its final state, not on the two halves.
  */
 export async function replaceContactPeople(
   contactId: string,
   people: ContactPersonInput[],
+  client?: PoolClient,
 ): Promise<void> {
-  await withTransaction(async (client) => {
-    await client.query(`delete from public.contact_people where contact_id = $1`, [contactId]);
-    if (people.length === 0) return;
+  if (client) return writeContactPeople(client, contactId, people);
+  await withTransaction((c) => writeContactPeople(c, contactId, people));
+}
 
-    const perRole: Record<ContactPersonRole, number> = { owner: 0, tenant: 0 };
-    const values: string[] = [];
-    const params: unknown[] = [contactId];
-    for (const p of people) {
-      params.push(p.role, p.name, p.phone, p.email, p.is_primary_contact, perRole[p.role]++);
-      const n = params.length;
-      values.push(`($1, $${n - 5}, $${n - 4}, $${n - 3}, $${n - 2}, $${n - 1}, $${n})`);
-    }
-    await client.query(
-      `insert into public.contact_people
-         (contact_id, role, name, phone, email, is_primary_contact, sort_order)
-       values ${values.join(', ')}`,
-      params,
-    );
-  });
+async function writeContactPeople(
+  client: PoolClient,
+  contactId: string,
+  people: ContactPersonInput[],
+): Promise<void> {
+  await client.query(`delete from public.contact_people where contact_id = $1`, [contactId]);
+  if (people.length === 0) return;
+
+  const perRole: Record<ContactPersonRole, number> = { owner: 0, tenant: 0 };
+  const values: string[] = [];
+  const params: unknown[] = [contactId];
+  for (const p of people) {
+    params.push(p.role, p.name, p.phone, p.email, p.is_primary_contact, perRole[p.role]++);
+    const n = params.length;
+    values.push(`($1, $${n - 5}, $${n - 4}, $${n - 3}, $${n - 2}, $${n - 1}, $${n})`);
+  }
+  await client.query(
+    `insert into public.contact_people
+       (contact_id, role, name, phone, email, is_primary_contact, sort_order)
+     values ${values.join(', ')}`,
+    params,
+  );
 }
 
 /** One extra person resolved as a message recipient of a debtor's apartment

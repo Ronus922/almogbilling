@@ -9,9 +9,11 @@ import { cn } from '@/lib/utils';
 import type { Issue } from '@/lib/types/issues';
 
 // An issue opened by an owner from the portal (/portal/report, source='portal'):
-// the "פורטל דיירים" tag + "name · apartment" on the list rows and kanban cards,
-// and the read-only "נפתח ע״י" block in the issue panel. The rest of the issue
-// is edited in the existing panel exactly like any other issue.
+// the violet "דיווח דייר · name · apartment" marking (ResidentReportStrip +
+// RESIDENT_REPORT_ACCENT) on the kanban card, the table row and the top of the
+// issue panel; the read-only "נפתח ע״י" block in the panel; and on the worker
+// screens the smaller "פורטל דיירים" tag + "name · apartment". The rest of the
+// issue is edited in the existing panel exactly like any other issue.
 //
 // The reporter's PHONE is never part of the issue row (ISSUE_COLUMNS leaves it
 // out): the panel gets it from GET /api/issues/[id] only for contacts:view.
@@ -39,10 +41,60 @@ export function reporterLabel(issue: ReporterFields): string | null {
   if (issue.source !== 'portal') return null;
   const parts = [
     issue.reporter_name?.trim() || null,
-    // '' = an unidentified reporter (a mixed-owners phone): no apartment.
+    // NULL = an unidentified reporter (a mixed-owners phone): no apartment.
     issue.reporter_apartment?.trim() ? `דירה ${issue.reporter_apartment.trim()}` : null,
   ].filter((p): p is string => !!p);
   return parts.length ? parts.join(' · ') : null;
+}
+
+/** "דיווח דייר · ישראל ישראלי · דירה 520"; an unidentified reporter reads
+ *  "דיווח דייר · לא מזוהה" (their name IS "לא מזוהה" and they have no apartment).
+ *  null for a staff issue. */
+export function residentReportLabel(issue: ReporterFields): string | null {
+  if (issue.source !== 'portal') return null;
+  const who = reporterLabel(issue);
+  return who ? `דיווח דייר · ${who}` : 'דיווח דייר';
+}
+
+/** The resident-report edge: border-inline-start in the same violet as the
+ *  strip, on the kanban card, the table row's first cell and the mobile card. */
+export const RESIDENT_REPORT_ACCENT = 'border-s-[3px] border-s-violet-500';
+
+/**
+ * The resident-report marking — DESIGN §2 violet tone (`bg-violet-50` /
+ * `text-violet-700`, the same family as the "מדיירים" filter), Megaphone icon.
+ *   card  — full-width strip across the top of a kanban card;
+ *   row   — compact line under the title in the table / mobile list;
+ *   panel — the banner at the top of the issue panel.
+ */
+export function ResidentReportStrip({ issue, variant }: {
+  issue: ReporterFields;
+  variant: 'card' | 'row' | 'panel';
+}) {
+  const label = residentReportLabel(issue);
+  if (!label) return null;
+  if (variant === 'card') {
+    return (
+      <div className="flex min-w-0 items-center gap-1.5 border-b border-violet-200 bg-violet-50 px-3.5 py-1.5 text-[12px] font-semibold text-violet-700">
+        <Megaphone className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="min-w-0 truncate">{label}</span>
+      </div>
+    );
+  }
+  if (variant === 'row') {
+    return (
+      <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md bg-violet-50 px-2 py-0.5 text-[12px] font-semibold text-violet-700">
+        <Megaphone className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="min-w-0 truncate">{label}</span>
+      </span>
+    );
+  }
+  return (
+    <div className={cn('flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-bold text-violet-700', RESIDENT_REPORT_ACCENT)}>
+      <Megaphone className="h-4 w-4 shrink-0" aria-hidden />
+      <span className="min-w-0 [overflow-wrap:anywhere]">{label}</span>
+    </div>
+  );
 }
 
 /** "חדר מדרגות · בין קומה 2 ל-3" — where the resident said the fault is, as
@@ -115,7 +167,8 @@ function CopyPhone({ value }: { value: string }) {
  * "נפתח ע״י" — read-only, portal issues only: who reported (the snapshot taken
  * at report time), how to reach them, and the location as they wrote it. The
  * phone row exists only for an actor with contacts:view AND a phone the API
- * actually sent; otherwise name + apartment only.
+ * actually sent; otherwise name + apartment only. The violet tag that sat in
+ * its header gave way to the ResidentReportStrip above the block.
  */
 export function IssueReporterSection({ issue, phone, canSeePhone }: {
   issue: Pick<Issue, 'source' | 'reporter_name' | 'reporter_apartment' | 'reporter_location' | 'reporter_area' | 'ticket_number'>;
@@ -124,10 +177,19 @@ export function IssueReporterSection({ issue, phone, canSeePhone }: {
 }) {
   if (issue.source !== 'portal') return null;
   const showPhone = canSeePhone && !!phone;
+  // An unidentified reporter (no roster link, no apartment): for an actor who
+  // may see phones the name row says WHICH phone — "לא מזוהה — טלפון 052-…".
+  // Everyone else sees "לא מזוהה" only (the phone is contacts:view).
+  const unidentified = !issue.reporter_apartment?.trim();
+  const name = issue.reporter_name?.trim() || '—';
   return (
-    <Section title="נפתח ע״י" icon={Megaphone} iconTone="violet" headerSlot={<PortalSourceTag />}>
+    <Section title="נפתח ע״י" icon={Megaphone} iconTone="violet">
       <dl className="space-y-2.5 py-2 text-sm">
-        <Row label="שם">{issue.reporter_name?.trim() || '—'}</Row>
+        <Row label="שם">
+          {unidentified && showPhone && phone ? (
+            <>{name} — טלפון <span dir="ltr" className="font-num">{phoneDisplay(phone)}</span></>
+          ) : name}
+        </Row>
         <Row label="דירה"><span className="font-num">{issue.reporter_apartment?.trim() || '—'}</span></Row>
         {showPhone && (
           <Row label="טלפון">

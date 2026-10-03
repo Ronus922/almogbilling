@@ -93,3 +93,7 @@ ALMOG_BILLING_BRIEF.md.bak-*
 
 # vitest JSON report used by scripts/check-no-skipped-tests.mjs (CI artefact)
 .vitest-db-report.json
+
+# Audit / clean-up reports (portal roster audit 03/10/2026 and its data-change
+# batches) — they hold residents' phone numbers and names. Local only.
+/reports/

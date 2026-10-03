@@ -279,37 +279,16 @@ export const portalOtpVerifyBodySchema = z.object({
     .regex(/^\d{6}$/, 'הקוד חייב להכיל 6 ספרות'),
 });
 
-// POST /api/apartments/[apartment]/owner-phones
-export const ownerPhoneCreateBodySchema = z.object({
-  phone: z
-    .string({ error: 'מספר טלפון לא תקין' })
-    .trim()
-    .min(8, 'מספר טלפון לא תקין')
-    .max(20, 'מספר טלפון לא תקין'),
-  owner_name: z
-    .string()
-    .trim()
-    .max(120, 'השם ארוך מדי')
-    .optional()
-    .transform((v) => (v && v.length > 0 ? v : null)),
-});
-
-// PATCH /api/apartments/[apartment]/owner-phones — edit name / deactivate
-export const ownerPhoneUpdateBodySchema = z
+// PATCH /api/apartments/[apartment]/owner-phones — DETACH, the only write the
+// admin screen has (decision 5 of the 03/10/2026 audit): a phone reaches the
+// portal through the apartment's owner record and nothing else, so there is no
+// add, no rename and no re-activation here. `.strict()` rejects any other key.
+export const ownerPhoneDetachBodySchema = z
   .object({
     id: z.uuid({ error: 'מזהה לא תקין' }),
-    owner_name: z
-      .string()
-      .trim()
-      .max(120, 'השם ארוך מדי')
-      .nullable()
-      .optional()
-      .transform((v) => (v && v.length > 0 ? v : v === undefined ? undefined : null)),
-    is_active: z.boolean().optional(),
+    is_active: z.literal(false, { error: 'אפשר רק לנתק שיוך' }),
   })
-  .refine((b) => b.owner_name !== undefined || b.is_active !== undefined, {
-    error: 'לא נשלח שדה לעדכון',
-  });
+  .strict();
 
 // POST /api/apartments/[apartment]/portal-unlock
 export const portalUnlockBodySchema = z.object({

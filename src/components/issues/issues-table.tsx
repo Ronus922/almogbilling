@@ -7,7 +7,7 @@ import {
 import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { TargetCell } from '@/components/targets/TargetCell';
 import { RowActions } from '@/components/shared/RowActions';
-import { IssueSourceLine } from './IssueReporter';
+import { RESIDENT_REPORT_ACCENT, ResidentReportStrip } from './IssueReporter';
 import { cn } from '@/lib/utils';
 import {
   ISSUE_STATUS_BADGE, ISSUE_PRIORITY_BADGE, issueStatusLabel, issuePriorityLabel,
@@ -37,7 +37,13 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect, onDelete }: 
       {/* Mobile (<md) — one card per issue, mirroring the tasks table pattern. */}
       <ul className="space-y-2 roomy:hidden">
         {issues.map((i) => (
-          <li key={i.id} className="relative rounded-xl border border-slate-200 bg-white p-3 shadow-soft-xs">
+          <li
+            key={i.id}
+            className={cn(
+              'relative rounded-xl border border-slate-200 bg-white p-3 shadow-soft-xs',
+              i.source === 'portal' && RESIDENT_REPORT_ACCENT,
+            )}
+          >
             <button
               type="button"
               onClick={() => onSelect(i)}
@@ -64,7 +70,7 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect, onDelete }: 
                   )}
                 </div>
                 {i.source === 'portal' && (
-                  <div className="mt-1.5"><IssueSourceLine issue={i} /></div>
+                  <div className="mt-1.5"><ResidentReportStrip issue={i} variant="row" /></div>
                 )}
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <span className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium', ISSUE_STATUS_BADGE[i.status])}>
@@ -110,7 +116,7 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect, onDelete }: 
               onClick={() => onSelect(i)}
               className="h-12 cursor-pointer border-b border-slate-100 hover:bg-slate-50"
             >
-              <TableCell className="px-6 py-3.5 text-start text-sm">
+              <TableCell className={cn('px-6 py-3.5 text-start text-sm', i.source === 'portal' && RESIDENT_REPORT_ACCENT)}>
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-slate-900">{i.title}</span>
                   {i.images.length > 0 && (
@@ -127,7 +133,7 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect, onDelete }: 
                   )}
                 </div>
                 {i.source === 'portal' && (
-                  <div className="mt-1"><IssueSourceLine issue={i} /></div>
+                  <div className="mt-1"><ResidentReportStrip issue={i} variant="row" /></div>
                 )}
               </TableCell>
               <TableCell className="px-6 py-3.5 text-center text-sm">

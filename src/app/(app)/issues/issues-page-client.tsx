@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
-  Plus, Search, AlertTriangle, Flame, CircleCheckBig, LayoutGrid, List, Megaphone, UserX,
+  Plus, Search, AlertTriangle, Flame, CircleCheckBig, LayoutGrid, List, Megaphone, UserX, CalendarClock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -21,6 +21,8 @@ import { IssuesKanban } from '@/components/issues/issues-kanban';
 import { IssueFormPanel } from '@/components/issues/issue-form-panel';
 import { cn } from '@/lib/utils';
 import { urgentFirst } from '@/lib/priority-sort';
+import { boardDropAction, issueBoardColumn, type IssueBoardColumnKey } from '@/lib/issues/board';
+import { useJerusalemToday } from '@/lib/hooks/useJerusalemToday';
 import {
   ISSUE_STATUSES, ISSUE_PRIORITIES, issueStatusLabel, issuePriorityLabel,
   ACTIVE_ISSUE_STATUSES, isCompletedIssueStatus,
@@ -69,14 +71,20 @@ export function IssuesPageClient({
   const [priorityFilter, setPriorityFilter] = useState<IssuePriority | 'all'>('all');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
   const [supplierFilter, setSupplierFilter] = useState<string>('all');
-  // "מדיירים" (portal reports) and "ממתין לשיוך" (open, no handler) — computed
-  // filters applied by the server, never statuses.
+  // "מדיירים" (portal reports, both views) and "ממתין לשיוך" (no handler —
+  // table view only: on the kanban it is a column) — computed filters applied
+  // by the server, never statuses. "לטיפול היום" (table view only) is the
+  // board's column of the same name, computed here on the Jerusalem day.
   const [fromResidents, setFromResidents] = useState(false);
   const [awaiting, setAwaiting] = useState(false);
+  const [dueToday, setDueToday] = useState(false);
+  const today = useJerusalemToday();
   const [sort, setSort] = useState<IssueSort>('created_desc');
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<IssueWithMeta | null>(null);
+  // A kanban drop that opens the panel may come with today's date filled in.
+  const [prefillDueDate, setPrefillDueDate] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<IssueWithMeta | null>(null);
 
   const didMount = useRef(false);
@@ -91,7 +99,7 @@ export function IssuesPageClient({
       if (assigneeFilter !== 'all') params.set('assignedTo', assigneeFilter);
       if (supplierFilter !== 'all') params.set('supplier_id', supplierFilter);
       if (fromResidents) params.set('source', 'portal');
-      if (awaiting) params.set('awaiting', '1');
+      if (awaiting && view === 'table') params.set('awaiting', '1');
       params.set('sort', sort);
       params.set('kpis', '1');
       const res = await fetch(`/api/issues?${params.toString()}`, { credentials: 'include' });
@@ -102,18 +110,20 @@ export function IssuesPageClient({
     } catch (err) {
       toast.error(`טעינת התקלות נכשלה: ${(err as Error).message}`);
     }
-  }, [search, priorityFilter, assigneeFilter, supplierFilter, fromResidents, awaiting, sort]);
+  }, [search, priorityFilter, assigneeFilter, supplierFilter, fromResidents, awaiting, view, sort]);
 
   // Active / completed partition (client-side — "filter only", no new status).
   const activeIssues = useMemo(() => issues.filter((i) => !isCompletedIssueStatus(i.status)), [issues]);
   const completedIssues = useMemo(() => issues.filter((i) => isCompletedIssueStatus(i.status)), [issues]);
   const tabIssues = tab === 'active' ? activeIssues : completedIssues;
-  // The status dropdown narrows further, but only in table view (the kanban
-  // always shows its full set of columns).
+  // The status dropdown and "לטיפול היום" narrow further, but only in table
+  // view (the kanban always shows its full set of columns).
   const shown = useMemo(() => {
-    if (view === 'table' && statusFilter !== 'all') return tabIssues.filter((i) => i.status === statusFilter);
-    return tabIssues;
-  }, [tabIssues, statusFilter, view]);
+    if (view !== 'table') return tabIssues;
+    return tabIssues.filter((i) =>
+      (statusFilter === 'all' || i.status === statusFilter) &&
+      (!dueToday || issueBoardColumn(i, today) === 'today'));
+  }, [tabIssues, statusFilter, dueToday, today, view]);
 
   // Initial data is server-rendered; refetch when filters/sort change.
   useEffect(() => {
@@ -145,10 +155,12 @@ export function IssuesPageClient({
 
   function openCreate() {
     setEditing(null);
+    setPrefillDueDate(null);
     setFormOpen(true);
   }
-  function openEdit(i: IssueWithMeta) {
+  function openEdit(i: IssueWithMeta, dueDate: string | null = null) {
     setEditing(i);
+    setPrefillDueDate(dueDate);
     setFormOpen(true);
   }
 
@@ -166,24 +178,33 @@ export function IssuesPageClient({
     }
   }
 
-  // Persist a priority lane's full order after a kanban drag — covers cross-lane
-  // moves (re-prioritise) AND within-lane manual reorder, symmetric to tasks. The
-  // board's axis is priority; status is unchanged here. Priority change is silent.
-  async function handleReorder(priority: IssuePriority, orderedIds: string[]) {
+  // A card dropped on another kanban column (lib/issues/board.ts decides what
+  // that means). Nothing is written before the user confirms in the panel, so
+  // closing the panel leaves the card where it was.
+  function handleDropInto(issue: IssueWithMeta, column: IssueBoardColumnKey) {
+    const action = boardDropAction(issue, column, today);
+    switch (action.kind) {
+      case 'set_due_today': void setDueDate(issue, action.dueDate); break;
+      case 'open_panel': openEdit(issue, action.prefillDueDate); break;
+      case 'complete': void handleComplete(issue); break;
+      case 'noop':
+      case 'blocked': break;
+    }
+  }
+
+  // "לטיפול היום" for an issue that already has a handler: today's date and
+  // nothing else. Optimistic, rolled back on failure.
+  async function setDueDate(issue: IssueWithMeta, dueDate: string) {
     const prev = issues;
-    const orderMap = new Map(orderedIds.map((id, i) => [id, i] as const));
-    setIssues(issues.map((i) =>
-      orderMap.has(i.id) ? { ...i, priority, sort_order: orderMap.get(i.id)! } : i,
-    ));
+    setIssues(issues.map((i) => (i.id === issue.id ? { ...i, due_date: dueDate } : i)));
     try {
-      const items = orderedIds.map((id, i) => ({ id, priority, sort_order: i }));
-      const r = await fetch('/api/issues/reorder', {
+      const r = await fetch(`/api/issues/${issue.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({ due_date: dueDate }),
       });
-      if (!r.ok) throw new Error('שמירת הסידור נכשלה');
+      if (!r.ok) throw new Error('עדכון התאריך נכשל');
       void fetchIssues();
     } catch (e) {
       setIssues(prev);
@@ -330,13 +351,24 @@ export function IssuesPageClient({
             label="מדיירים"
             tone="violet"
           />
-          <FilterToggle
-            pressed={awaiting}
-            onToggle={() => setAwaiting((v) => !v)}
-            icon={UserX}
-            label="ממתין לשיוך"
-            tone="amber"
-          />
+          {view === 'table' && (
+            <>
+              <FilterToggle
+                pressed={awaiting}
+                onToggle={() => setAwaiting((v) => !v)}
+                icon={UserX}
+                label="ממתין לשיוך"
+                tone="amber"
+              />
+              <FilterToggle
+                pressed={dueToday}
+                onToggle={() => setDueToday((v) => !v)}
+                icon={CalendarClock}
+                label="לטיפול היום"
+                tone="rose"
+              />
+            </>
+          )}
 
           <Select value={priorityFilter} onValueChange={(v) => { if (v) setPriorityFilter(v as IssuePriority | 'all'); }}>
             <SelectTrigger className="h-10 w-36 data-[size=default]:h-10">
@@ -380,17 +412,19 @@ export function IssuesPageClient({
         </div>
       </div>
 
-      {/* Board / Table — completed tab is always a table. The table is urgent-first
-          then the selected sort within each group (issues have no due-date field). */}
+      {/* Board / Table — completed tab is always a table. The board sorts each
+          column itself (lib/issues/board.ts); the table is urgent-first, then
+          the selected sort within each group. */}
       {tab === 'active' && view === 'kanban' ? (
-        <IssuesKanban issues={shown} canEdit={canEdit} onSelect={openEdit} onReorder={handleReorder} onComplete={handleComplete} onDelete={canEdit ? setDeleteTarget : undefined} />
+        <IssuesKanban issues={shown} today={today} canEdit={canEdit} onSelect={(i) => openEdit(i)} onDropInto={handleDropInto} onDelete={canEdit ? setDeleteTarget : undefined} />
       ) : (
-        <IssuesTable issues={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={openEdit} onDelete={canEdit ? setDeleteTarget : undefined} />
+        <IssuesTable issues={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={(i) => openEdit(i)} onDelete={canEdit ? setDeleteTarget : undefined} />
       )}
 
       <IssueFormPanel
         open={formOpen}
         issue={editing}
+        prefillDueDate={prefillDueDate}
         canEdit={canEdit}
         canSeeReporterPhone={canSeeReporterPhone}
         assignees={assignees}
@@ -424,6 +458,7 @@ export function IssuesPageClient({
 const FILTER_TONES = {
   violet: 'border-violet-200 bg-violet-50 text-violet-700',
   amber: 'border-amber-200 bg-amber-50 text-amber-700',
+  rose: 'border-rose-200 bg-rose-50 text-rose-700',
 } as const;
 
 /** An on/off filter of the toolbar — the same h-10 row as its selects. */

@@ -51,7 +51,7 @@ interface Props {
   canEditChips?: boolean;
   /** portal_manage:view — without it BOTH owners-portal tabs are hidden. Default false. */
   canViewPortal?: boolean;
-  /** portal_manage:edit — add/edit an owner phone, release a lockout. Default false. */
+  /** portal_manage:edit — detach a portal phone link, release a lockout. Default false. */
   canEditPortal?: boolean;
   onOpenChange: (open: boolean) => void;
 }
