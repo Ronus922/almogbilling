@@ -1,6 +1,9 @@
 import 'server-only';
 import type { PoolClient } from 'pg';
 import { query, queryOne, withTransaction } from '@/lib/db';
+import {
+  findPhoneEntryConflicts, PhoneEntryConflictError, registrationsOf,
+} from '@/lib/db/portal/identityApprovals';
 import type {
   Contact,
   ContactListFilters,
@@ -255,6 +258,13 @@ export interface UpsertContactOpts {
    * clobber a column it never meant to write.
    */
   allowedFields?: string[];
+  /**
+   * The apartment card's entry warning, for a write nobody can be asked about
+   * (a file import): a phone — or a name over one — that another apartment
+   * carries under another name refuses the whole row (PhoneEntryConflictError,
+   * rolled back); the question is then asked on the card ("אותו אדם?").
+   */
+  refusePhoneConflicts?: boolean;
 }
 
 /**
@@ -464,65 +474,86 @@ export async function syncContactsFromReport(
   });
 }
 
+/** The apartment a debtor's phones are written to — its linked contact's, or
+ *  (not linked yet) the one updateContactPhonesByDebtor resolves-or-creates.
+ *  null when the debtor id does not exist. */
+export async function debtorContactApartment(client: PoolClient, debtorId: string): Promise<string | null> {
+  const r = await client.query<{ contact_apartment: string | null; debtor_apartment: string | null }>(
+    `select c.apartment_number as contact_apartment, d.apartment_number as debtor_apartment
+       from public.debtors d
+       left join public.contacts c on c.id = d.contact_id
+      where d.id = $1`,
+    [debtorId],
+  );
+  const row = r.rows[0];
+  if (!row) return null;
+  return row.contact_apartment ?? normalizeApartmentNumber(row.debtor_apartment ?? '');
+}
+
 /**
  * Set contact phone fields for the apartment a debtor belongs to — the write
  * path for the tenant-panel phone edit. Direct SET of only the provided keys:
  * null CLEARS the field, so this must NOT go through the coalesce-based upsert
  * (which treats null as "preserve existing"). Creates + links the apartment's
  * contact row when the debtor has none. Returns 'no_contact' only when the
- * debtor id itself does not exist.
+ * debtor id itself does not exist; otherwise the apartment written to.
  */
 export async function updateContactPhonesByDebtor(
   debtorId: string,
   phones: { owner_phone?: string | null; tenant_phone?: string | null },
-): Promise<'updated' | 'no_contact'> {
-  return withTransaction(async (client) => {
-    const d = await client.query<{ apartment_number: string; contact_id: string | null }>(
-      `select apartment_number, contact_id from public.debtors where id = $1`,
-      [debtorId],
+  /** Run inside the caller's transaction (the entry warning — see
+   *  PATCH /api/debtors/[id]). */
+  client?: PoolClient,
+): Promise<{ apartment: string } | 'no_contact'> {
+  if (!client) return withTransaction((c) => updateContactPhonesByDebtor(debtorId, phones, c));
+  const d = await client.query<{ apartment_number: string; contact_id: string | null }>(
+    `select apartment_number, contact_id from public.debtors where id = $1`,
+    [debtorId],
+  );
+  const debtor = d.rows[0];
+  if (!debtor) return 'no_contact';
+
+  let contactId = debtor.contact_id;
+  if (!contactId) {
+    // Debtor not linked yet — resolve-or-create the apartment's contact row, then link.
+    const apt = normalizeApartmentNumber(debtor.apartment_number ?? '');
+    await client.query(
+      `insert into public.contacts (apartment_number, source)
+       values ($1, 'manual')
+       on conflict (apartment_number) do nothing`,
+      [apt],
     );
-    const debtor = d.rows[0];
-    if (!debtor) return 'no_contact';
+    const c = await client.query<{ id: string }>(
+      `select id from public.contacts where apartment_number = $1`,
+      [apt],
+    );
+    contactId = c.rows[0].id;
+    await client.query(
+      `update public.debtors set contact_id = $1 where id = $2`,
+      [contactId, debtorId],
+    );
+  }
 
-    let contactId = debtor.contact_id;
-    if (!contactId) {
-      // Debtor not linked yet — resolve-or-create the apartment's contact row, then link.
-      const apt = normalizeApartmentNumber(debtor.apartment_number ?? '');
-      await client.query(
-        `insert into public.contacts (apartment_number, source)
-         values ($1, 'manual')
-         on conflict (apartment_number) do nothing`,
-        [apt],
-      );
-      const c = await client.query<{ id: string }>(
-        `select id from public.contacts where apartment_number = $1`,
-        [apt],
-      );
-      contactId = c.rows[0].id;
-      await client.query(
-        `update public.debtors set contact_id = $1 where id = $2`,
-        [contactId, debtorId],
-      );
-    }
-
-    const set: string[] = [];
-    const vals: unknown[] = [contactId];
-    if (phones.owner_phone !== undefined) {
-      vals.push(phones.owner_phone);
-      set.push(`owner_phone = $${vals.length}`);
-    }
-    if (phones.tenant_phone !== undefined) {
-      vals.push(phones.tenant_phone);
-      set.push(`tenant_phone = $${vals.length}`);
-    }
-    if (set.length > 0) {
-      await client.query(
-        `update public.contacts set ${set.join(', ')} where id = $1`,
-        vals,
-      );
-    }
-    return 'updated';
-  });
+  const set: string[] = [];
+  const vals: unknown[] = [contactId];
+  if (phones.owner_phone !== undefined) {
+    vals.push(phones.owner_phone);
+    set.push(`owner_phone = $${vals.length}`);
+  }
+  if (phones.tenant_phone !== undefined) {
+    vals.push(phones.tenant_phone);
+    set.push(`tenant_phone = $${vals.length}`);
+  }
+  const c = set.length > 0
+    ? await client.query<{ apartment_number: string }>(
+      `update public.contacts set ${set.join(', ')} where id = $1 returning apartment_number`,
+      vals,
+    )
+    : await client.query<{ apartment_number: string }>(
+      `select apartment_number from public.contacts where id = $1`,
+      [contactId],
+    );
+  return { apartment: c.rows[0].apartment_number };
 }
 
 // ── Registry helpers (chips module consumes these) ───────────────────────
@@ -637,7 +668,13 @@ export async function upsertContactAndLinkDebtor(
   opts: UpsertContactOpts = {},
 ): Promise<UpsertContactResult & { debtorLinked: number }> {
   return withTransaction(async (client) => {
+    const apartment = normalizeApartmentNumber(data.apartment_number ?? '');
+    const before = opts.refusePhoneConflicts ? await registrationsOf(client, apartment) : [];
     const result = await _upsertContactByApartment(client, data, opts);
+    if (opts.refusePhoneConflicts) {
+      const conflicts = await findPhoneEntryConflicts(client, result.contact.apartment_number, before);
+      if (conflicts.length > 0) throw new PhoneEntryConflictError(conflicts);
+    }
     const debtorLinked = await _linkDebtorToContact(client, data.apartment_number, result.contact.id);
     return { ...result, debtorLinked };
   });

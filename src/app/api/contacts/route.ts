@@ -10,11 +10,7 @@ import { computeManagementFee } from '@/lib/billing/managementFee';
 import type { ContactSort, ContactWritableFields } from '@/lib/types/contacts';
 import { logger } from '@/lib/logger';
 import { withTransaction } from '@/lib/db';
-import { hasPermission } from '@/lib/permissions/check';
-import { phoneEntryDecisionsSchema } from '@/lib/validation/requests';
-import {
-  checkPhoneEntry, IdentityDecisionError, PhoneEntryConflictError,
-} from '@/lib/db/portal/identityApprovals';
+import { phoneEntryErrorResponse, readPhoneDecisions, withPhoneEntryCheck } from '@/lib/http/phoneEntry';
 
 export const runtime = 'nodejs';
 
@@ -76,8 +72,8 @@ export async function POST(req: NextRequest) {
   }
 
   // The entry warning — see PATCH /api/contacts/[id].
-  const decisions = rec.phone_decisions === undefined ? null : phoneEntryDecisionsSchema.safeParse(rec.phone_decisions);
-  if (decisions && !decisions.success) {
+  const decisions = readPhoneDecisions(rec);
+  if (!decisions.ok) {
     return NextResponse.json({ error: 'invalid_phone_decisions' }, { status: 400 });
   }
 
@@ -91,41 +87,29 @@ export async function POST(req: NextRequest) {
   try {
     // The contact and its people in ONE transaction, the entry warning before
     // COMMIT: an unanswered conflict leaves no half-created apartment.
-    const created = await withTransaction(async (client) => {
-      const row = await createContact(
-        result.fields as Partial<ContactWritableFields> & { apartment_number: string },
-        actor.id,
-        client,
-      );
-      if (peopleResult && peopleResult.people.length > 0) {
-        await replaceContactPeople(row.id, peopleResult.people, client);
-      }
-      await checkPhoneEntry(client, {
-        apartment: row.apartment_number,
-        before: [],
-        decisions: decisions?.data,
-        actor: { id: actor.id, canManagePortal: hasPermission(actor.role, actor.permissions, 'portal_manage', 'edit') },
-      });
-      return row;
-    });
+    const created = await withTransaction((client) => withPhoneEntryCheck(
+      client,
+      { apartments: [], decisions: decisions.decisions, actor },
+      async () => {
+        const row = await createContact(
+          result.fields as Partial<ContactWritableFields> & { apartment_number: string },
+          actor.id,
+          client,
+        );
+        if (peopleResult && peopleResult.people.length > 0) {
+          await replaceContactPeople(row.id, peopleResult.people, client);
+        }
+        return { result: row, apartments: [row.apartment_number] };
+      },
+    ));
     const contact = (await getContactById(created.id)) ?? created;
     return NextResponse.json({ contact }, { status: 201 });
   } catch (err) {
     if (err instanceof ConflictError) {
       return NextResponse.json({ error: 'apartment_number_exists' }, { status: 409 });
     }
-    if (err instanceof PhoneEntryConflictError) {
-      // can_approve: a "yes" from this user approves the identity there and
-      // then (portal_manage), so the card also asks for the name and relations.
-      return NextResponse.json({
-        error: 'phone_conflict',
-        conflicts: err.conflicts,
-        can_approve: hasPermission(actor.role, actor.permissions, 'portal_manage', 'edit'),
-      }, { status: 409 });
-    }
-    if (err instanceof IdentityDecisionError) {
-      return NextResponse.json({ error: err.message }, { status: 400 });
-    }
+    const warn = phoneEntryErrorResponse(err, actor);
+    if (warn) return warn;
     const e = err as { code?: string };
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });

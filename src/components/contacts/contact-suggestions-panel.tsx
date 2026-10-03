@@ -17,6 +17,8 @@ import {
 import { PORTAL_ROLE_LABEL } from '@/lib/portal/identity';
 import { rosterPhoneDisplay } from '@/lib/portal/rosterLabels';
 import { OwnerNameDecision } from './OwnerNameDecision';
+import { usePhoneEntryWarning } from './PhoneEntryDialog';
+import type { PhoneEntryDecision } from '@/lib/types/portal';
 
 type ResolveAction = 'approve' | 'reject' | 'approve_rename' | 'approve_replace';
 
@@ -53,21 +55,25 @@ export function ContactSuggestionsPanel({ open, items, canEdit, onOpenChange, on
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
+  // An approval writes to the apartment card — the card's "אותו אדם?" too.
+  const phoneWarning = usePhoneEntryWarning(busy !== null);
   const loading = items === null;
   const accessItems = (items ?? []).filter((s) => s.access || s.owner_change);
   const otherItems = (items ?? []).filter(bulkApprovable);
 
-  async function resolve(ids: string[], action: ResolveAction) {
+  async function resolve(ids: string[], action: ResolveAction, phoneDecisions?: PhoneEntryDecision[]) {
     setBusy(ids.length === 1 ? ids[0] : 'all');
     try {
       const res = await fetch('/api/contacts/suggestions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ action, ids }),
+        body: JSON.stringify({ action, ids, ...(phoneDecisions ? { phone_decisions: phoneDecisions } : {}) }),
       });
+      const body: unknown = await res.json().catch(() => ({}));
+      if (phoneWarning.ask(res.status, body, (d) => { void resolve(ids, action, d); })) return;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { resolved: number; items: ContactSuggestion[] };
+      const data = body as { resolved: number; items: ContactSuggestion[] };
       onChanged(data.items);
       toast.success(action === 'reject'
         ? `${data.resolved} הצעות נדחו`
@@ -161,6 +167,8 @@ export function ContactSuggestionsPanel({ open, items, canEdit, onOpenChange, on
           />
         </SheetContent>
       </Sheet>
+
+      {phoneWarning.dialog}
 
       <AlertDialog open={confirmAll} onOpenChange={setConfirmAll}>
         <AlertDialogContent dir="rtl">

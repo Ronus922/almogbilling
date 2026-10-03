@@ -6,19 +6,21 @@ import { Pool } from 'pg';
 // through their cards; the "טלפונים חסומים" screen; and the apartment card's
 // "אותו אדם?" when a phone typed in is registered elsewhere under another name.
 //
-// The apartments E2E-X1..X3 and the phone +972509999991 exist only in this
-// file; they are removed by those exact values (iron rule 12).
+// The apartments E2E-X1..X4, the debtor of E2E-X4 and the phone +972509999991
+// exist only in this file; they are removed by those exact values (iron rule 12).
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
 const STORAGE_STATE = 'e2e/.auth/state.json';
 const X_PHONE = '+972509999991';
-const X_APTS = ['E2E-X1', 'E2E-X2', 'E2E-X3'];
+const X_APTS = ['E2E-X1', 'E2E-X2', 'E2E-X3', 'E2E-X4'];
+const X_DEBTOR = '00000000-0000-4000-8000-0000000e2ef4';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
 pool.on('error', () => undefined);
 
 async function cleanup() {
+  await pool.query(`delete from public.debtors where id = $1`, [X_DEBTOR]);
   await pool.query(`delete from public.portal_phone_entry_flags where phone_e164 = $1`, [X_PHONE]);
   await pool.query(`delete from public.portal_identity_approvals where phone_e164 = $1`, [X_PHONE]);
   await pool.query(`delete from public.contacts where apartment_number = any($1::text[])`, [X_APTS]);
@@ -31,8 +33,15 @@ test.beforeAll(async () => {
     `insert into public.contacts (apartment_number, owner_name, owner_phone, source) values
        ('E2E-X1', 'ראשון E2E', $1, 'manual'),
        ('E2E-X2', 'שני E2E', $1, 'manual'),
-       ('E2E-X3', 'שלישי E2E', null, 'manual')`,
+       ('E2E-X3', 'שלישי E2E', null, 'manual'),
+       ('E2E-X4', 'רביעי E2E', null, 'manual')`,
     [X_PHONE],
+  );
+  // A debtor row for E2E-X4 — the dashboard's panel edits ITS card's phones.
+  await pool.query(
+    `insert into public.debtors (id, apartment_number, owner_name, total_debt, is_archived, contact_id)
+     select $1, 'E2E-X4', 'רביעי E2E', 100, false, id from public.contacts where apartment_number = 'E2E-X4'`,
+    [X_DEBTOR],
   );
 });
 test.afterAll(async () => {
@@ -110,6 +119,43 @@ test('the apartment card asks "אותו אדם?" — cancel saves nothing, "no" 
   await expect(dialog).toBeHidden();
   await expect.poll(ownerPhone).not.toBeNull();
   const flags = await pool.query(`select 1 from public.portal_phone_entry_flags where phone_e164 = $1 and apartment_number = 'E2E-X3'`, [X_PHONE]);
+  expect(flags.rowCount).toBe(1);
+  await ctx.close();
+});
+
+test('the debtor panel asks the same "אותו אדם?" — cancel saves nothing, "no" saves and flags', async ({ browser }) => {
+  const ctx = await browser.newContext({ storageState: STORAGE_STATE });
+  const page = await ctx.newPage();
+  const ownerPhone = async () =>
+    (await pool.query<{ owner_phone: string | null }>(
+      `select owner_phone from public.contacts where apartment_number = 'E2E-X4'`)).rows[0]?.owner_phone ?? null;
+
+  await page.goto('/dashboard?apt=E2E-X4&open=details');
+  const panel = page.getByRole('dialog').filter({ hasText: 'רביעי E2E' });
+  await expect(panel).toBeVisible({ timeout: 15_000 });
+  await panel.locator('button[title="לחצו לעריכה"]').first().click();   // טלפון בעלים
+
+  const edit = page.getByRole('dialog').filter({ hasText: 'עריכת טלפון בעלים' });
+  await edit.locator('#phone-input').fill('050-999-9991');
+  await edit.getByRole('button', { name: 'שמור' }).click();
+
+  const ask = page.getByRole('alertdialog');
+  await expect(ask).toContainText('הטלפון הזה רשום אצל');
+  await expect(ask).toContainText('ראשון E2E בדירה E2E-X1');
+  await expect(ask).toContainText('אותו אדם?');
+  await ask.getByRole('button', { name: 'ביטול' }).click();
+  await expect(ask).toBeHidden();
+  await expect(edit).toBeVisible();                       // back to editing, the number still typed
+  await expect(edit.locator('#phone-input')).toHaveValue(/999/);
+  expect(await ownerPhone()).toBeNull();
+
+  await edit.getByRole('button', { name: 'שמור' }).click();
+  await expect(ask).toContainText('אותו אדם?');
+  await ask.getByRole('button', { name: 'לא, אדם אחר' }).click();
+  await expect(ask).toBeHidden();
+  await expect(edit).toBeHidden();
+  await expect.poll(ownerPhone).not.toBeNull();
+  const flags = await pool.query(`select 1 from public.portal_phone_entry_flags where phone_e164 = $1 and apartment_number = 'E2E-X4'`, [X_PHONE]);
   expect(flags.rowCount).toBe(1);
   await ctx.close();
 });

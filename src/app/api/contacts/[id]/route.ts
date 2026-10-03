@@ -12,11 +12,7 @@ import { coerceContactInput, coerceContactPeople } from '@/lib/validation/contac
 import { getBillingSettings } from '@/lib/db/appSettings';
 import { computeManagementFee } from '@/lib/billing/managementFee';
 import { logger } from '@/lib/logger';
-import { hasPermission } from '@/lib/permissions/check';
-import { phoneEntryDecisionsSchema } from '@/lib/validation/requests';
-import {
-  checkPhoneEntry, IdentityDecisionError, PhoneEntryConflictError, registrationsOf,
-} from '@/lib/db/portal/identityApprovals';
+import { phoneEntryErrorResponse, readPhoneDecisions, withPhoneEntryCheck } from '@/lib/http/phoneEntry';
 
 export const runtime = 'nodejs';
 
@@ -41,7 +37,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 // ANOTHER apartment carries under ANOTHER name answers 409
 // { error: 'phone_conflict', conflicts } and saves NOTHING; the card asks
 // "אותו אדם?" and sends the answers back as `phone_decisions`
-// (lib/db/portal/identityApprovals.ts → checkPhoneEntry).
+// (lib/http/phoneEntry.ts).
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
@@ -74,8 +70,8 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: peopleResult.error }, { status: 400 });
   }
 
-  const decisions = rec.phone_decisions === undefined ? null : phoneEntryDecisionsSchema.safeParse(rec.phone_decisions);
-  if (decisions && !decisions.success) {
+  const decisions = readPhoneDecisions(rec);
+  if (!decisions.ok) {
     return NextResponse.json({ error: 'invalid_phone_decisions' }, { status: 400 });
   }
 
@@ -99,36 +95,22 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
         `select apartment_number from public.contacts where id = $1`,
         [id],
       );
-      const apartment = apt.rows[0]?.apartment_number;
-      const before = apartment ? await registrationsOf(client, apartment) : [];
-      const row = await updateContact(id, result.fields, client);
-      if (row && peopleResult) await replaceContactPeople(id, peopleResult.people, client);
-      if (row) {
-        await checkPhoneEntry(client, {
-          apartment: row.apartment_number,
-          before,
-          decisions: decisions?.data,
-          actor: { id: actor.id, canManagePortal: hasPermission(actor.role, actor.permissions, 'portal_manage', 'edit') },
-        });
-      }
-      return row;
+      return withPhoneEntryCheck(
+        client,
+        { apartments: apt.rows.map((r) => r.apartment_number), decisions: decisions.decisions, actor },
+        async () => {
+          const row = await updateContact(id, result.fields, client);
+          if (row && peopleResult) await replaceContactPeople(id, peopleResult.people, client);
+          return { result: row, apartments: row ? [row.apartment_number] : [] };
+        },
+      );
     });
     if (!updated) return NextResponse.json({ error: 'not_found' }, { status: 404 });
     const contact = peopleResult ? (await getContactById(id)) ?? updated : updated;
     return NextResponse.json({ contact });
   } catch (err) {
-    if (err instanceof PhoneEntryConflictError) {
-      // can_approve: a "yes" from this user approves the identity there and
-      // then (portal_manage), so the card also asks for the name and relations.
-      return NextResponse.json({
-        error: 'phone_conflict',
-        conflicts: err.conflicts,
-        can_approve: hasPermission(actor.role, actor.permissions, 'portal_manage', 'edit'),
-      }, { status: 409 });
-    }
-    if (err instanceof IdentityDecisionError) {
-      return NextResponse.json({ error: err.message }, { status: 400 });
-    }
+    const warn = phoneEntryErrorResponse(err, actor);
+    if (warn) return warn;
     const e = err as { code?: string };
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });

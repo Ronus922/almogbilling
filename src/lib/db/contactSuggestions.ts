@@ -1,4 +1,5 @@
 import 'server-only';
+import type { PoolClient } from 'pg';
 import { query, queryOne } from '@/lib/db';
 import type {
   CardSuggestionField, ContactFieldSources, ContactFieldState, ContactSuggestion, OwnerReplacementPreview,
@@ -81,13 +82,26 @@ export async function resolveSuggestions(
   ids: string[],
   action: 'approve' | 'reject' | 'approve_rename' | 'approve_replace',
   actorId: string | null,
+  /** Run inside the caller's transaction (the entry warning — see
+   *  POST /api/contacts/suggestions). */
+  client?: PoolClient,
 ): Promise<number> {
   if (ids.length === 0) return 0;
-  const row = await queryOne<{ n: number }>(
-    `select public.contact_suggestion_resolve($1::uuid[], $2, $3::uuid) as n`,
-    [ids, action, actorId],
-  );
+  const sql = `select public.contact_suggestion_resolve($1::uuid[], $2, $3::uuid) as n`;
+  const row = client
+    ? (await client.query<{ n: number }>(sql, [ids, action, actorId])).rows[0]
+    : await queryOne<{ n: number }>(sql, [ids, action, actorId]);
   return row?.n ?? 0;
+}
+
+/** The apartments of these open suggestions — what an approval may write to. */
+export async function suggestionApartments(client: PoolClient, ids: string[]): Promise<string[]> {
+  const r = await client.query<{ apartment_number: string }>(
+    `select distinct apartment_number from public.contact_sync_suggestions
+      where id = any($1::uuid[]) and status = 'pending'`,
+    [ids],
+  );
+  return r.rows.map((x) => x.apartment_number);
 }
 
 /** "החלפת בעלים" for one owner-name suggestion: which phones it detaches

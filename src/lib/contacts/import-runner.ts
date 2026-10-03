@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import { toArrayBuffer, worksheetToMatrix } from '@/lib/excel/workbook';
 import { query, queryOne } from '@/lib/db';
 import { upsertContactAndLinkDebtor } from '@/lib/db/contacts';
+import { PhoneEntryConflictError } from '@/lib/db/portal/identityApprovals';
 import type { ContactWritableFields } from '@/lib/types/contacts';
 import { logger } from '@/lib/logger';
 
@@ -150,12 +151,14 @@ export async function runContactsImport(runId: string, filePath: string): Promis
           try {
             const { created: wasCreated } = await upsertContactAndLinkDebtor(payload, {
               allowedFields: IMPORT_ALLOWED_FIELDS,
+              refusePhoneConflicts: true,
             });
             if (wasCreated) created++;
             else updated++;
           } catch (e) {
             failed++;
-            const msg = e instanceof Error ? e.message : String(e);
+            const msg = e instanceof PhoneEntryConflictError ? e.summary
+              : e instanceof Error ? e.message : String(e);
             failedRows.push({ row: excelRow, apartment_number, error: msg.slice(0, 200) });
           }
         }

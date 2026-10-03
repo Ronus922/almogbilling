@@ -19,14 +19,14 @@ import { Section } from '@/components/side-panel/Section';
 import { Field } from '@/components/side-panel/Field';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { ContactAssetsSection, useContactAssets } from './contact-assets-section';
-import { PhoneEntryDialog } from './PhoneEntryDialog';
+import { usePhoneEntryWarning } from './PhoneEntryDialog';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
 import { validatePhone } from '@/lib/validation';
 import { computeManagementFee, MANAGEMENT_FEE_MULTIPLIER } from '@/lib/billing/managementFee';
 import { RESIDENT_TYPES, residentTypeLabel } from '@/lib/constants/contacts';
 import { UNIT_TYPE_LABEL } from '@/lib/constants/chips';
-import type { PhoneEntryConflict, PhoneEntryDecision } from '@/lib/types/portal';
+import type { PhoneEntryDecision } from '@/lib/types/portal';
 import type {
   Contact, ContactPersonRole, ContactResidentType, ContactUnitType,
 } from '@/lib/types/contacts';
@@ -155,7 +155,7 @@ export function ContactFormPanel({
   const [submitting, setSubmitting] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   // The entry warning: a 409 phone_conflict from the save (see PhoneEntryDialog).
-  const [phoneConflicts, setPhoneConflicts] = useState<{ conflicts: PhoneEntryConflict[]; canApprove: boolean } | null>(null);
+  const phoneWarning = usePhoneEntryWarning(submitting);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [tagInput, setTagInput] = useState('');
   // Monotonic source of stable keys for newly added person rows.
@@ -378,14 +378,9 @@ export function ContactFormPanel({
           credentials: 'include',
           body: JSON.stringify(body),
         });
-        const data = (await r.json().catch(() => ({}))) as {
-          error?: string; conflicts?: PhoneEntryConflict[]; can_approve?: boolean;
-        };
-        if (r.status === 409 && data.error === 'phone_conflict' && data.conflicts) {
-          // Nothing was saved: ask "אותו אדם?" and resend with the answers.
-          setPhoneConflicts({ conflicts: data.conflicts, canApprove: data.can_approve === true });
-          return;
-        }
+        const data = (await r.json().catch(() => ({}))) as { error?: string };
+        // Nothing was saved: ask "אותו אדם?" and resend with the answers.
+        if (phoneWarning.ask(r.status, data, (decisions) => { void handleSubmit(decisions); })) return;
         if (!r.ok) {
           const msg =
             data.error === 'apartment_number_exists' ? 'מספר דירה כבר קיים' :
@@ -756,13 +751,7 @@ export function ContactFormPanel({
         </SheetContent>
       </Sheet>
 
-      <PhoneEntryDialog
-        conflicts={phoneConflicts?.conflicts ?? null}
-        canApprove={phoneConflicts?.canApprove ?? false}
-        busy={submitting}
-        onAnswered={(decisions) => { setPhoneConflicts(null); void handleSubmit(decisions); }}
-        onCancel={() => setPhoneConflicts(null)}
-      />
+      {phoneWarning.dialog}
 
       <AlertDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}>
         <AlertDialogContent dir="rtl">

@@ -307,25 +307,6 @@ export const syncBllinkBodySchema = z.object({
   fresh: z.boolean().optional(),
 });
 
-// POST /api/contacts/suggestions — approve or reject Bllink proposals by id.
-// The client sends every id it means to resolve, "אשר הכל" included, so the
-// server never has to guess what "all" was at the moment of the click.
-//   • approve with SEVERAL ids ("אשר הכל") resolves only the suggestions that
-//     do not change portal access — a phone, a link, an unlink and an owner
-//     change are approved one by one (03/10/2026);
-//   • approve_rename / approve_replace decide ONE owner-name suggestion: a
-//     name fix, or a new owner whose predecessor's phones are detached.
-export const contactSuggestionsResolveSchema = z.discriminatedUnion('action', [
-  z.object({
-    action: z.enum(['approve', 'reject']),
-    ids: z.array(z.uuid()).min(1, { error: 'missing_ids' }).max(500),
-  }),
-  z.object({
-    action: z.enum(['approve_rename', 'approve_replace']),
-    ids: z.array(z.uuid()).length(1, { error: 'one_owner_name_suggestion' }),
-  }),
-]);
-
 // GET /api/contacts/suggestions/replacement?id= — the phones an owner
 // replacement would detach, for its confirmation dialog.
 export const ownerReplacementQuerySchema = z.object({ id: z.uuid() });
@@ -349,8 +330,8 @@ export const portalIdentityActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.enum(['revoke', 'reject']), id: z.uuid() }),
 ]);
 
-// The answers to the apartment card's "אותו אדם?" (body key `phone_decisions`
-// of POST /api/contacts and PATCH /api/contacts/[id]).
+// The answers to "אותו אדם?" (body key `phone_decisions` of every write under
+// the entry warning — lib/http/phoneEntry.ts).
 export const phoneEntryDecisionsSchema = z.array(z.object({
   phone_e164: e164Schema,
   decision: z.enum(['same', 'different']),
@@ -359,3 +340,26 @@ export const phoneEntryDecisionsSchema = z.array(z.object({
     apartments: identityApartmentsSchema,
   }).optional(),
 })).max(20);
+
+// POST /api/contacts/suggestions — approve or reject Bllink proposals by id.
+// The client sends every id it means to resolve, "אשר הכל" included, so the
+// server never has to guess what "all" was at the moment of the click.
+//   • approve with SEVERAL ids ("אשר הכל") resolves only the suggestions that
+//     do not change portal access — a phone, a link, an unlink and an owner
+//     change are approved one by one (03/10/2026);
+//   • approve_rename / approve_replace decide ONE owner-name suggestion: a
+//     name fix, or a new owner whose predecessor's phones are detached;
+//   • phone_decisions — the answers to "אותו אדם?" when an approval came back
+//     409 phone_conflict (lib/http/phoneEntry.ts).
+export const contactSuggestionsResolveSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.enum(['approve', 'reject']),
+    ids: z.array(z.uuid()).min(1, { error: 'missing_ids' }).max(500),
+    phone_decisions: phoneEntryDecisionsSchema.optional(),
+  }),
+  z.object({
+    action: z.enum(['approve_rename', 'approve_replace']),
+    ids: z.array(z.uuid()).length(1, { error: 'one_owner_name_suggestion' }),
+    phone_decisions: phoneEntryDecisionsSchema.optional(),
+  }),
+]);

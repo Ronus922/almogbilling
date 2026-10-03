@@ -13,8 +13,12 @@
 //   • "ביטול" — back to editing, nothing saved.
 // The answers go back with the same save (phone_decisions); the server logs
 // each one with the user who gave it.
+//
+// Every screen that writes a resident phone asks through usePhoneEntryWarning
+// below — the apartment card and the debtor panel — so there is one flow, not
+// a copy per screen (server half: lib/http/phoneEntry.ts).
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -127,4 +131,46 @@ export function PhoneEntryDialog({ conflicts, canApprove, busy, onAnswered, onCa
       )}
     </>
   );
+}
+
+/**
+ * The entry warning for one screen. Hand every phone-write response to `ask`:
+ * when it is the 409 phone_conflict, the dialog opens and `ask` answers true —
+ * nothing was saved; once every phone is answered, `resend` runs with the
+ * answers (send the SAME write again with them as phone_decisions). "ביטול"
+ * just closes it, back to editing. Render `dialog` once; `open` lets the
+ * screen hold its own Escape handling while the question is up.
+ */
+export function usePhoneEntryWarning(busy: boolean): {
+  ask: (status: number, body: unknown, resend: (decisions: PhoneEntryDecision[]) => void) => boolean;
+  open: boolean;
+  dialog: ReactNode;
+} {
+  const [pending, setPending] = useState<{
+    conflicts: PhoneEntryConflict[];
+    canApprove: boolean;
+    resend: (decisions: PhoneEntryDecision[]) => void;
+  } | null>(null);
+
+  function ask(status: number, body: unknown, resend: (decisions: PhoneEntryDecision[]) => void): boolean {
+    const b = (body ?? {}) as { error?: string; conflicts?: PhoneEntryConflict[]; can_approve?: boolean };
+    if (status !== 409 || b.error !== 'phone_conflict' || !b.conflicts) return false;
+    setPending({ conflicts: b.conflicts, canApprove: b.can_approve === true, resend });
+    return true;
+  }
+
+  const dialog = (
+    <PhoneEntryDialog
+      conflicts={pending?.conflicts ?? null}
+      canApprove={pending?.canApprove ?? false}
+      busy={busy}
+      onAnswered={(decisions) => {
+        const resend = pending?.resend;
+        setPending(null);
+        resend?.(decisions);
+      }}
+      onCancel={() => setPending(null)}
+    />
+  );
+  return { ask, open: pending !== null, dialog };
 }

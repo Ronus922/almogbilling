@@ -42,6 +42,13 @@ export class PhoneEntryConflictError extends Error {
   constructor(public readonly conflicts: PhoneEntryConflict[]) {
     super('phone_conflict');
   }
+
+  /** One line for a report where nobody can be asked (a file import). */
+  get summary(): string {
+    const where = this.conflicts.map((c) => `הטלפון ${c.phone_e164} רשום אצל ${
+      c.others.map((o) => `${o.name?.trim() || 'רשומה ללא שם'} בדירה ${o.apartment_number}`).join(', ')}`);
+    return `${where.join(' · ')} — לא נשמר; יש להזין אותו בכרטיס הדירה ("אותו אדם?")`;
+  }
 }
 
 /** A decision that cannot be carried out as given (400, message in Hebrew). */
@@ -99,16 +106,14 @@ async function approvedNames(client: PoolClient, phoneE164: string): Promise<str
 }
 
 /**
- * Ask — or apply the answers. `before` is registrationsOf() taken before the
- * card was written ([] for a new apartment).
+ * What the write needs answered: each phone it put on the apartment — or the
+ * new name it put over one — that another apartment carries under another
+ * name, unless an approval already covers every name involved. `before` is
+ * registrationsOf() taken before the write ([] for a new apartment).
  */
-export async function checkPhoneEntry(client: PoolClient, args: {
-  apartment: string;
-  before: PortalRegistration[];
-  decisions: PhoneEntryDecision[] | undefined;
-  actor: { id: string; canManagePortal: boolean };
-}): Promise<void> {
-  const { apartment, before, decisions, actor } = args;
+export async function findPhoneEntryConflicts(
+  client: PoolClient, apartment: string, before: PortalRegistration[],
+): Promise<PhoneEntryConflict[]> {
   const after = await registrationsOf(client, apartment);
   const introduced = after.filter((a) => !before.some(
     (b) => b.phone_e164 === a.phone_e164 && identityNameKey(b.owner_name) === identityNameKey(a.owner_name),
@@ -131,6 +136,21 @@ export async function checkPhoneEntry(client: PoolClient, args: {
       others,
     });
   }
+  return conflicts;
+}
+
+/**
+ * Ask — or apply the answers. `before` is registrationsOf() taken before the
+ * card was written ([] for a new apartment).
+ */
+export async function checkPhoneEntry(client: PoolClient, args: {
+  apartment: string;
+  before: PortalRegistration[];
+  decisions: PhoneEntryDecision[] | undefined;
+  actor: { id: string; canManagePortal: boolean };
+}): Promise<void> {
+  const { apartment, before, decisions, actor } = args;
+  const conflicts = await findPhoneEntryConflicts(client, apartment, before);
   if (conflicts.length === 0) return;
 
   const answerOf = (c: PhoneEntryConflict) => decisions?.find((d) => d.phone_e164 === c.phone_e164);
