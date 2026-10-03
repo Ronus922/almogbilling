@@ -20,7 +20,7 @@ import {
 import { Section, SectionHint } from '@/components/side-panel/Section';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { ImageLightbox } from './ImageLightbox';
-import { IssueReporterSection } from './IssueReporter';
+import { IssueReporterSection, ResidentReportStrip } from './IssueReporter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
 import {
@@ -59,6 +59,10 @@ interface Props {
   open: boolean;
   /** null → create mode; an issue → edit mode. */
   issue: IssueWithMeta | null;
+  /** A kanban drop onto "לטיפול היום" opens the panel with today's date in
+   *  "תאריך יעד" (lib/issues/board.ts). It counts as the starting value, so
+   *  closing the panel without saving discards it silently — the card stays. */
+  prefillDueDate?: string | null;
   canEdit: boolean;
   /** contacts:view (canSeeReporterPhone) — the "נפתח ע״י" block of a portal
    *  report shows the phone only then; the API sends it only then, too. */
@@ -341,7 +345,7 @@ function MediaDropSection({ canAdd, canEdit, busy, imageCount, videoCount, tiles
   );
 }
 
-export function IssueFormPanel({ open, issue, canEdit, canSeeReporterPhone, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete }: Props) {
+export function IssueFormPanel({ open, issue, prefillDueDate = null, canEdit, canSeeReporterPhone, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete }: Props) {
   const isEdit = !!issue;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
@@ -396,7 +400,8 @@ export function IssueFormPanel({ open, issue, canEdit, canSeeReporterPhone, assi
 
   useEffect(() => {
     if (open) {
-      const init = issue ? fromIssue(issue) : EMPTY_FORM;
+      const base = issue ? fromIssue(issue) : EMPTY_FORM;
+      const init = prefillDueDate ? { ...base, due_date: prefillDueDate } : base;
       setForm(init);
       setInitial(init);
       setComments([]);
@@ -415,7 +420,7 @@ export function IssueFormPanel({ open, issue, canEdit, canSeeReporterPhone, assi
       setSelf(false);
       if (issue) void loadDetail(issue.id);
     }
-  }, [open, issue, loadDetail]);
+  }, [open, issue, prefillDueDate, loadDetail]);
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -758,8 +763,10 @@ export function IssueFormPanel({ open, issue, canEdit, canSeeReporterPhone, assi
 
           <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5">
             <div className="space-y-4">
-              {/* Portal report: who opened it (read-only snapshot) — first, so the
-                  manager sees who to call before assigning. Nothing for staff issues. */}
+              {/* Portal report: the resident-report banner, then who opened it
+                  (read-only snapshot) — first, so the manager sees who to call
+                  before assigning. Nothing for staff issues. */}
+              {issue && <ResidentReportStrip issue={issue} variant="panel" />}
               {issue && (
                 <IssueReporterSection issue={issue} phone={reporterPhone} canSeePhone={canSeeReporterPhone} />
               )}

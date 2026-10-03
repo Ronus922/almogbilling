@@ -75,13 +75,15 @@ const META_JOINS = `
 `;
 
 /**
- * "ממתין לשיוך" — computed, never a status value: an OPEN issue (not
- * in_progress), not archived, with no handler of either kind — no user and no
- * supplier row in entity_assignees. The frozen assigned_to_user_id /
- * supplier_id columns are not consulted: the junction is the only truth.
+ * "ממתין לשיוך" — computed, never a status value: an issue that is not done
+ * (open or in_progress), not archived, with no handler of either kind — no
+ * user and no supplier row in entity_assignees — whatever its date. The same
+ * rule as the kanban column of that name (lib/issues/board.ts). The frozen
+ * assigned_to_user_id / supplier_id columns are not consulted: the junction is
+ * the only truth.
  */
 const AWAITING_ASSIGNMENT_SQL = `(
-  i.status = 'open'
+  i.status in ('open', 'in_progress')
   and i.is_archived = false
   and not exists (
     select 1 from public.entity_assignees ea

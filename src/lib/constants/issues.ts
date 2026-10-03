@@ -15,8 +15,9 @@ export function isCompletedIssueStatus(s: IssueStatus): boolean {
   return COMPLETED_ISSUE_STATUSES.includes(s);
 }
 
-// Priority is the kanban's primary axis: exactly three levels (no low/medium).
-// Select order = רגילה → גבוהה → דחוף (default רגילה).
+// Priority: exactly three levels (no low/medium) — a tag, a filter and the
+// first sort key inside a kanban column. Select order = רגילה → גבוהה → דחוף
+// (default רגילה).
 export const ISSUE_PRIORITIES: { value: IssuePriority; label: string; tone: string }[] = [
   { value: 'normal', label: 'רגילה', tone: 'blue' },
   { value: 'high', label: 'גבוהה', tone: 'amber' },
@@ -55,26 +56,10 @@ export const ISSUE_PRIORITY_BADGE: Record<IssuePriority, string> = {
   urgent: 'bg-rose-100 text-rose-700',
 };
 
-// ── Kanban board axis (3 priority lanes + terminal "done" lane) ──────────────
-// The board groups active issues by priority into three lanes, plus a fourth
-// "בוצע" drop-lane that resolves the issue (moving it to the completed tab).
-// RTL order right→left: דחוף · גבוהה · רגילה · בוצע.
-const ISSUE_PRIORITY_DOT: Record<IssuePriority, string> = {
-  urgent: 'bg-rose-500',
-  high: 'bg-amber-500',
-  normal: 'bg-blue-500',
-};
-
-export type IssueKanbanColumn =
-  | { kind: 'priority'; key: IssuePriority; label: string; dot: string }
-  | { kind: 'done'; key: 'done'; label: string; dot: string; status: IssueStatus };
-
-export const ISSUE_KANBAN_COLUMNS: IssueKanbanColumn[] = [
-  { kind: 'priority', key: 'urgent', label: PRIORITY_LABELS.urgent, dot: ISSUE_PRIORITY_DOT.urgent },
-  { kind: 'priority', key: 'high', label: PRIORITY_LABELS.high, dot: ISSUE_PRIORITY_DOT.high },
-  { kind: 'priority', key: 'normal', label: PRIORITY_LABELS.normal, dot: ISSUE_PRIORITY_DOT.normal },
-  { kind: 'done', key: 'done', label: 'בוצע', dot: 'bg-emerald-500', status: 'closed' },
-];
+// ── Kanban board ─────────────────────────────────────────────────────────────
+// Since 03/10/2026 the board's columns are STAGES OF HANDLING (ממתין לשיוך ·
+// לטיפול היום · בטיפול · בוצע), computed in lib/issues/board.ts. Priority is a
+// tag, a filter and the first sort key inside a column.
 
 // ── Image upload validation (server-enforced; mirrored in the client) ────────
 export const ISSUE_ALLOWED_IMAGE_TYPES: readonly string[] = [

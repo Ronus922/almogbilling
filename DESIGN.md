@@ -2008,25 +2008,42 @@ text-amber-700` "לא פורסם". הכפתורים בלשונית: "הוצאה 
 
 ---
 
-## 37. תקלות מפורטל הדיירים במודול התקלות (03/10/2026)
+## 37. תקלות מפורטל הדיירים במודול התקלות (03/10/2026, כרטיס דייר וקנבן לפי שלב טיפול — שלב ג׳)
 
 תקלה שבעל דירה פתח ב-`/portal/report` היא שורה רגילה של `issues` (`source='portal'`) — אותה טבלה,
-אותו קנבן, אותו פאנל עריכה (`IssueFormPanel`, Sheet לפי §12). שלושה רכיבים בלבד, ב-`components/issues/IssueReporter.tsx`:
+אותו קנבן, אותו פאנל עריכה (`IssueFormPanel`, Sheet לפי §12). הכותרת שלה: **"דיווח דייר · <מיקום>"**.
+הרכיבים ב-`components/issues/IssueReporter.tsx`:
 
-- **תגית "פורטל דיירים"** (`PortalSourceTag`) — soft pill §10 בטון **violet** (`bg-violet-100 text-violet-600`,
-  `rounded-full px-2.5 py-0.5 text-xs font-medium`; `sm` בקנבן: `px-2 text-[11px]`). violet כי אינו בשימוש
-  בסטטוסים/עדיפויות של התקלות, כך שהמקור לא נקרא כאחד מהם. אחריה "שם · דירה N" (`text-slate-500`) —
-  `IssueSourceLine`: בשורת הטבלה מתחת לכותרת, בכרטיס המובייל מתחת לשורת הכותרת, ובקנבן מתחת לכותרת.
-- **בלוק "נפתח ע״י"** (`IssueReporterSection`) — `Section` §8 עם `Megaphone`, `iconTone="violet"`, התגית
-  ב-`headerSlot`; ראשון בפאנל (לפני "פרטי התקלה"), קריאה בלבד. `dl` בשורות label/value (כמו `MainDetailsCard`):
-  `dt text-base font-medium text-muted-foreground`, `dd font-semibold text-slate-900`. שורות: שם · דירה ·
-  טלפון · מיקום · קומה / אזור · מספר קריאה. **הטלפון:** `<a href="tel:+972…">` בתצוגה ישראלית
+- **סימון "דיווח דייר"** (`ResidentReportStrip` + `RESIDENT_REPORT_ACCENT`) — מחליף את התגית הקטנה בצוות.
+  טון **violet** של §2 (אותה משפחה של המסנן "מדיירים"), אייקון `Megaphone`, הטקסט
+  "דיווח דייר · <שם> · דירה <מספר>" (מדווח לא מזוהה: "דיווח דייר · לא מזוהה"). **אין צבע חדש** — רק
+  `violet-50/200/500/700` מהפלטה של Tailwind ש-§2 מתעד.
+  - **כרטיס קנבן** (`variant="card"`): פס ברוחב הכרטיס מעל הכותרת — `border-b border-violet-200 bg-violet-50
+    px-3.5 py-1.5 text-[12px] font-semibold text-violet-700`, אייקון `h-3.5`; והכרטיס כולו
+    `border-s-[3px] border-s-violet-500` (גם ב-hover).
+  - **שורת טבלה** (`variant="row"`): מתחת לכותרת — `rounded-md bg-violet-50 px-2 py-0.5 text-[12px] font-semibold
+    text-violet-700`; ה-accent על התא הראשון (`border-s` של השורה ב-RTL). בכרטיס המובייל — על ה-`li`.
+  - **ראש חלון התקלה** (`variant="panel"`): באנר ראשון בגוף הפאנל — `rounded-xl border border-violet-200 bg-violet-50
+    px-4 py-3 text-sm font-bold text-violet-700` + accent.
+- **בלוק "נפתח ע״י"** (`IssueReporterSection`) — `Section` §8 עם `Megaphone`, `iconTone="violet"` (בלי תגית
+  ב-`headerSlot` — הבאנר מעליו נושא את הסימון); מיד אחרי הבאנר, לפני "פרטי התקלה", קריאה בלבד. `dl` בשורות
+  label/value (כמו `MainDetailsCard`): `dt text-base font-medium text-muted-foreground`, `dd font-semibold text-slate-900`.
+  שורות: שם · דירה · טלפון · מיקום · קומה / אזור · מספר קריאה. **הטלפון:** `<a href="tel:+972…">` בתצוגה ישראלית
   (`050-111-1112`, `font-num`, `text-brand`, `min-h-11`) + כפתור העתקה 44px עם Tooltip — **רק** ל-`contacts:view`
-  (`canSeeReporterPhone`); בלי ההרשאה השורה לא קיימת והערך לא נשלח ב-API.
-- **שני מסננים** בסרגל `/issues` — כפתורי toggle בגובה ה-Selects (`h-10 rounded-lg border px-3 text-sm
-  font-medium`, `aria-pressed`): "מדיירים" (`Megaphone`, פעיל `border-violet-200 bg-violet-50 text-violet-700`) ו"ממתין
-  לשיוך" (`UserX`, פעיל `border-amber-200 bg-amber-50 text-amber-700`); כבוי `border-slate-200 bg-white text-slate-600`.
-  שניהם מסננים מחושבים בשרת (`?source=portal`, `?awaiting=1`), לא סטטוסים.
-- **מסך העובד** (`worker-issue-detail` / `worker-issues-view`): המיקום כפי שהדייר כתב בשורת `MapPin`, והתגית +
-  שם + דירה. בלי טלפון.
+  (`canSeeReporterPhone`); בלי ההרשאה השורה לא קיימת והערך לא נשלח ב-API. מדווח לא מזוהה + `contacts:view`:
+  שורת השם "לא מזוהה — טלפון 052-…".
+- **הקנבן — ארבע עמודות לפי שלב טיפול** (`lib/issues/board.ts`, מימין לשמאל): ממתין לשיוך (`amber-500`) ·
+  לטיפול היום (`rose-500`) · בטיפול (`blue-500`) · בוצע (`emerald-500`) — אותה מסגרת עמודה ואותו כרטיס כמו קודם.
+  עמודה מחושבת משיוך + סטטוס + `due_date`, "היום" לפי Asia/Jerusalem. בכרטיס: תגית הדחיפות כמו קודם;
+  **"באיחור X ימים"** (`rounded-md bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700`) לתאריך שעבר;
+  **צ'יפ תאריך** (`rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700` + `CalendarDays h-3`,
+  "05/10 · 10:00") לכל כרטיס עם תאריך שאינו באיחור. גרירה ל"ממתין לשיוך" לא מתקבלת (סמן not-allowed).
+- **מסננים** בסרגל `/issues` — כפתורי toggle בגובה ה-Selects (`h-10 rounded-lg border px-3 text-sm
+  font-medium`, `aria-pressed`): "מדיירים" (`Megaphone`, פעיל `border-violet-200 bg-violet-50 text-violet-700`) — בשתי
+  התצוגות; "ממתין לשיוך" (`UserX`, פעיל `border-amber-200 bg-amber-50 text-amber-700`) ו"לטיפול היום"
+  (`CalendarClock`, פעיל `border-rose-200 bg-rose-50 text-rose-700`) — **בטבלה בלבד** (בקנבן הן עמודות);
+  כבוי `border-slate-200 bg-white text-slate-600`.
+- **מסך העובד** (`worker-issue-detail` / `worker-issues-view`) — לא השתנה: המיקום כפי שהדייר כתב בשורת `MapPin`,
+  והתגית הקטנה "פורטל דיירים" (`PortalSourceTag`, soft pill §10 `bg-violet-100 text-violet-600`) + שם + דירה
+  (`IssueSourceLine`). בלי טלפון.
 
