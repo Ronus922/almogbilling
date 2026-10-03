@@ -1720,7 +1720,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 
 ### מסך כניסת פורטל הבעלים (`/portal/login`) — חריג מוצהר (28/09/2026)
 
-**מקור-האמת העיצובי:** `ref/proof/tenant-portal-login.md` + `Tenant Portal (standalone).html` (≥901px), הכלל ≤900 של `ref/Tenant Portal.html` **בטווח 601–900px** (עמודה אחת; פאנל המותג = פס עם הלוגו בלבד, `28px 24px`; שדות וכפתור בגדלי הדסקטופ; `.pane` = `40px 20px` — מ-28/09/2026 ערב), ו-`ref/proof/tenant-login-mobile.md` + `Tenant Login Mobile (standalone).html` (**≤600px**). **ה-HTML גובר על מסמך זה בכל התנגשות, בהיקף המסך הזה בלבד** (החלטת מוצר 28/09/2026). הקבצים: `src/app/portal/login/page.tsx`, `src/components/portal/PortalLoginForm.tsx`, `src/components/portal/PortalLoginBrand.tsx`. אסור לייבא את הערכים למסכים אחרים, ו-`/login` של הצוות (`(auth)`, `components/auth`) אינו חלק מהחריג.
+**מקור-האמת העיצובי:** `/var/billing-proof/tenant-portal-login.md` + `Tenant Portal (standalone).html` (≥901px), הכלל ≤900 של `ref/Tenant Portal.html` **בטווח 601–900px** (עמודה אחת; פאנל המותג = פס עם הלוגו בלבד, `28px 24px`; שדות וכפתור בגדלי הדסקטופ; `.pane` = `40px 20px` — מ-28/09/2026 ערב), ו-`/var/billing-proof/tenant-login-mobile.md` + `Tenant Login Mobile (standalone).html` (**≤600px**). **ה-HTML גובר על מסמך זה בכל התנגשות, בהיקף המסך הזה בלבד** (החלטת מוצר 28/09/2026). הקבצים: `src/app/portal/login/page.tsx`, `src/components/portal/PortalLoginForm.tsx`, `src/components/portal/PortalLoginBrand.tsx`. אסור לייבא את הערכים למסכים אחרים, ו-`/login` של הצוות (`(auth)`, `components/auth`) אינו חלק מהחריג.
 
 ערכים בלי טוקן, כ-arbitrary values במכוון:
 - **פלטת slate של הרפרנס** במקום טוקני הסקין: `#0F172A` ink · `#334155` label · `#64748B` muted · `#94A3B8` soft/placeholder · `#E2E8F0` border · `#CBD5E1` border-strong · `#F5F7FB` field.
@@ -1781,7 +1781,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 
 ### מודול צ׳יפים — חריג מוצהר (08/2026)
 
-**מקור-האמת העיצובי: `ref/proof/Chip2.html` (חלון ההנפקה הרב-אישי) + `ref/proof/Chip2.md` (השפה הוויזואלית — פלטה/טיפוגרפיה/מידות; זהה בתוכנו ל-`Chip.md` המקורי). הרפרנס גובר על מסמך זה בכל התנגשות, בהיקף מודול הצ׳יפים בלבד** (החלטת מוצר). הרפרנס המקורי `ref/proof/whatsapp-broadcast/Chip.html` **הוסר מהדיסק** — העיצוב שנגזר ממנו מיושם בקוד וסעיף (א) להלן נשאר התיעוד שלו. ה-scope נאכף טכנית: כל הטוקנים מוגדרים כ-CSS vars תחת המחלקה **`.chips-skin`** (`src/app/styles/chips.css`) — שום ערך לא דורס את ה-`@theme` הגלובלי, ו-`font-num` הגלובלי נשאר Inter. אסור לייבא את פלטת הצ׳יפים למסכים אחרים.
+**מקור-האמת העיצובי: `/var/billing-proof/Chip2.html` (חלון ההנפקה הרב-אישי) + `/var/billing-proof/Chip2.md` (השפה הוויזואלית — פלטה/טיפוגרפיה/מידות; זהה בתוכנו ל-`Chip.md` המקורי). הרפרנס גובר על מסמך זה בכל התנגשות, בהיקף מודול הצ׳יפים בלבד** (החלטת מוצר). הרפרנס המקורי `/var/billing-proof/whatsapp-broadcast/Chip.html` **הוסר מהדיסק** — העיצוב שנגזר ממנו מיושם בקוד וסעיף (א) להלן נשאר התיעוד שלו. ה-scope נאכף טכנית: כל הטוקנים מוגדרים כ-CSS vars תחת המחלקה **`.chips-skin`** (`src/app/styles/chips.css`) — שום ערך לא דורס את ה-`@theme` הגלובלי, ו-`font-num` הגלובלי נשאר Inter. אסור לייבא את פלטת הצ׳יפים למסכים אחרים.
 
 **(א) נגזר ישירות מהרפרנס (מחייב 1:1) — חלון ההנפקה (`IssueChipSheet`):**
 
