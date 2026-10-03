@@ -35,13 +35,16 @@ export interface PortalUser {
   apartments: string[];
 }
 
-export function PortalShell({ tab, apartments, user, preview = false, children }: {
+export function PortalShell({ tab, apartments, user, preview = false, restricted = false, children }: {
   tab: PortalTab;
   /** How many apartments the building has (contacts). */
   apartments: number;
   user: PortalUser;
   /** The admin preview (/finance?view=resident): read-only, no logout. */
   preview?: boolean;
+  /** A mixed-owners phone (containment 03/10/2026): no tab row — every tab
+   *  would show the same notice. The fault report and logout stay. */
+  restricted?: boolean;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -69,7 +72,11 @@ export function PortalShell({ tab, apartments, user, preview = false, children }
   }
 
   const nm = user.name ?? 'בעל/ת דירה';
-  const sub = user.name ? `${apartmentsLabel(user.apartments)} · בעל/ת דירה` : apartmentsLabel(user.apartments);
+  // No name and no apartment (a mixed-owners phone) → no second line, rather
+  // than "בעל/ת דירה" twice.
+  const sub = user.name
+    ? `${apartmentsLabel(user.apartments)} · בעל/ת דירה`
+    : user.apartments.length > 0 ? apartmentsLabel(user.apartments) : null;
 
   return (
     <div className="portal-skin">
@@ -82,23 +89,25 @@ export function PortalShell({ tab, apartments, user, preview = false, children }
               <span><span className="num">{apartments}</span> דירות · ועד הבית</span>
             </div>
           </div>
-          <nav className="nav" aria-label="חלקי הפורטל" style={pending ? { opacity: 0.7 } : undefined}>
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                className={t.key === tab ? 'on' : undefined}
-                aria-current={t.key === tab ? 'page' : undefined}
-                onClick={() => go(t.key)}
-              >
-                {t.label}
-                {t.soon && <span className="soon">בקרוב</span>}
-              </button>
-            ))}
-          </nav>
+          {!restricted && (
+            <nav className="nav" aria-label="חלקי הפורטל" style={pending ? { opacity: 0.7 } : undefined}>
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  className={t.key === tab ? 'on' : undefined}
+                  aria-current={t.key === tab ? 'page' : undefined}
+                  onClick={() => go(t.key)}
+                >
+                  {t.label}
+                  {t.soon && <span className="soon">בקרוב</span>}
+                </button>
+              ))}
+            </nav>
+          )}
           <div className="me">
             <div className="av" aria-hidden>{initials(user.name)}</div>
-            <div className="nm">{nm}<span>{sub}</span></div>
+            <div className="nm">{nm}{sub && <span>{sub}</span>}</div>
             {!preview && (
               <button type="button" className="pbtn pbtn-ghost pbtn-sm" onClick={logout} disabled={leaving} title="התנתקות" aria-label="התנתקות">
                 <LogoutIcon />

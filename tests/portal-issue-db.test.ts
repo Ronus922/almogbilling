@@ -86,6 +86,31 @@ d('portal fault report — the real SQL', () => {
     expect(r).toEqual({ rosterId: id520, apartmentNumber: '520', name: 'בעל שתי דירות', phoneE164: PHONE_TWO_APTS });
   });
 
+  it('containment: a phone with apartments of two different people reports as "לא מזוהה", no apartment, no roster link', async () => {
+    await apartment('1210');
+    await apartment('520');
+    await roster('1210', PHONE_TWO_APTS, 'רונן בדיקה');
+    await roster('520', PHONE_TWO_APTS, 'טלי בדיקה');
+
+    const reporter = await resolvePortalReporter(PHONE_TWO_APTS);
+    expect(reporter).toEqual({ rosterId: null, apartmentNumber: null, name: 'לא מזוהה', phoneE164: PHONE_TWO_APTS });
+    const created = await insertPortalIssue({ id: randomUUID(), report, reporter: reporter!, images: [] });
+    const row = (await tx.query(
+      `select reporter_contact_id, reporter_name, created_by_name, reporter_phone, reporter_apartment from public.issues where id = $1`,
+      [created.id],
+    )).rows[0];
+    // the CHECK wants a non-null apartment on a portal row: '' = none
+    expect(row).toEqual({ reporter_contact_id: null, reporter_name: 'לא מזוהה', created_by_name: 'לא מזוהה', reporter_phone: PHONE_TWO_APTS, reporter_apartment: '' });
+  });
+
+  it('containment: the same person on two apartments (names differ only in spaces) is still identified — lowest apartment', async () => {
+    await apartment('1001');
+    await apartment('520');
+    await roster('1001', PHONE_TWO_APTS, 'בעל  שתי דירות');
+    const id520 = await roster('520', PHONE_TWO_APTS, 'בעל שתי דירות ');
+    expect(await resolvePortalReporter(PHONE_TWO_APTS)).toMatchObject({ rosterId: id520, apartmentNumber: '520' });
+  });
+
   it('an inactive roster row is never the reporter; no active row → null (no error)', async () => {
     await apartment('520');
     await apartment('1001');

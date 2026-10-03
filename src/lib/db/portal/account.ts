@@ -1,6 +1,7 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import { visibleImportText } from '@/lib/debtor-import-text';
+import { hasMixedOwners } from '@/lib/portal/ownership';
 import type { PortalSession } from '@/lib/portal/session';
 import type { PortalAccount } from '@/lib/types/portal';
 
@@ -85,7 +86,9 @@ async function debtRowsFor(apartments: string[]): Promise<Map<string, DebtRow>> 
 
 /** The signed-in owner's account(s): one per apartment the session's phone is
  *  an ACTIVE owner of, in apartment order. Empty when the phone owns nothing
- *  (the session guard would already have revoked it). */
+ *  (the session guard would already have revoked it) — and empty for a
+ *  mixed-owners phone (containment 03/10/2026, lib/portal/ownership.ts): its
+ *  apartments are not shown to be its own, so no debt row is even read. */
 export async function getPortalMyAccount(session: PortalSession): Promise<PortalAccount[]> {
   const roster = await query<{ apartment_number: string; owner_name: string | null }>(
     `select apartment_number, owner_name
@@ -94,6 +97,7 @@ export async function getPortalMyAccount(session: PortalSession): Promise<Portal
       order by apartment_number`,
     [session.phoneE164],
   );
+  if (hasMixedOwners(roster.rows)) return [];
   const apartments = roster.rows.map((r) => r.apartment_number);
   const [rows, syncedAt] = await Promise.all([debtRowsFor(apartments), getLastSyncAt()]);
   return roster.rows.map((r) => toAccount(r.apartment_number, r.owner_name, rows.get(r.apartment_number), syncedAt));

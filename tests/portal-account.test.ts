@@ -41,13 +41,18 @@ const { listPublishedMonthBalances, setMonthBankBalance, setMonthPublished, getM
 const { getFinanceSettings, updateFinanceSettings } = await import('@/lib/db/finance/settings');
 const { issueCode, verifyCode, resendCooldownRemaining } = await import('@/lib/db/portal/otp');
 const { activeLockout, createLockout } = await import('@/lib/db/portal/lockouts');
+const { findOwnerIdentity, isMixedOwnerPhone } = await import('@/lib/db/portal/ownerPhones');
 const { checkRateLimit, clearRateLimit } = await import('@/lib/auth/rateLimit');
 const { createEntry } = await import('@/lib/db/finance/entries');
 const { currentMonthKey, monthKeyParts, periodMonthOf, shiftMonthKey } = await import('@/lib/finance/period');
 
 const tag = `pa-${Date.now()}`;
 const apt = { a: `${tag}-A`, b: `${tag}-B`, c: `${tag}-C`, d: `${tag}-D`, none: `${tag}-N` };
-const phone = { a1: '+972521000001', a2: '+972521000002', b: '+972521000003', ab: '+972521000004', d: '+972521000005', none: '+972521000006', otp: '+972521000007', otp2: '+972521000008' };
+const phone = {
+  a1: '+972521000001', a2: '+972521000002', b: '+972521000003', ab: '+972521000004', d: '+972521000005', none: '+972521000006', otp: '+972521000007', otp2: '+972521000008',
+  // containment (03/10/2026): two people's apartments on one phone; one person with spacing noise; a nameless second row
+  mixed: '+972521000009', spaced: '+972521000010', unnamed: '+972521000011',
+};
 const made = {
   contacts: [] as string[], debtors: [] as string[], roster: [] as string[], categories: [] as string[], entries: [] as string[],
   months: [] as Array<{ year: number; month: number }>, otp: [] as string[], lockouts: [] as string[], buckets: [] as string[],
@@ -111,6 +116,12 @@ d('owners portal — my account, bank balance, one-time codes', () => {
     await roster(apt.d, phone.d, 'דוד');
     await roster(apt.none, phone.none, 'בלי חייב');
     await roster(apt.c, phone.otp, 'גלית');
+    await roster(apt.a, phone.mixed, 'אדם ראשון');
+    await roster(apt.b, phone.mixed, 'אדם שני');
+    await roster(apt.a, phone.spaced, 'משה  כהן');
+    await roster(apt.b, phone.spaced, ' משה כהן ');
+    await roster(apt.a, phone.unnamed, 'נעם');
+    await roster(apt.b, phone.unnamed, null);
   });
 
   afterAll(async () => {
@@ -149,6 +160,22 @@ d('owners portal — my account, bank balance, one-time codes', () => {
     const acc = await getPortalMyAccount({ id: 's', phoneE164: phone.ab });
     expect(acc.map((a) => a.apartment_number)).toEqual([apt.a, apt.b]);
     expect(acc[1]).toMatchObject({ total_debt: 300, hot_water_debt: 300, monthly_debt: null });
+  });
+
+  it('containment: apartments of two different people on one phone → no account at all; one person → every apartment', async () => {
+    expect(await getPortalMyAccount({ id: 's', phoneE164: phone.mixed })).toEqual([]);
+    expect(await getPortalMyAccount({ id: 's', phoneE164: phone.unnamed })).toEqual([]);
+    const mixed = await findOwnerIdentity(phone.mixed, { onlyActive: true });
+    expect(mixed?.mixedOwners).toBe(true);
+    expect(await isMixedOwnerPhone(phone.mixed)).toBe(true);
+    expect(await isMixedOwnerPhone(phone.unnamed)).toBe(true);
+
+    const spaced = await getPortalMyAccount({ id: 's', phoneE164: phone.spaced });
+    expect(spaced.map((a) => a.apartment_number)).toEqual([apt.a, apt.b]);
+    expect(spaced.map((a) => a.total_debt)).toEqual([1240, 300]);
+    expect(await isMixedOwnerPhone(phone.spaced)).toBe(false);
+    expect(await isMixedOwnerPhone(phone.ab)).toBe(false);
+    expect((await findOwnerIdentity(phone.ab, { onlyActive: true }))?.mixedOwners).toBe(false);
   });
 
   it('no debtors row → 0; an archived row → its exact figures like any other, no status; a phone that owns nothing → []', async () => {

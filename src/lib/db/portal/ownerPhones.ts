@@ -1,5 +1,6 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
+import { hasMixedOwners } from '@/lib/portal/ownership';
 import type { OwnerIdentity, OwnerPhone } from '@/lib/types/portal';
 
 // The portal roster (apartment_owner_phones): which phone may sign in for which
@@ -29,8 +30,8 @@ export async function findOwnerIdentity(
   phoneE164: string,
   opts: { onlyActive: boolean },
 ): Promise<OwnerIdentity | null> {
-  const r = await query<{ apartment_number: string; owner_name: string | null }>(
-    `select apartment_number, owner_name
+  const r = await query<{ apartment_number: string; owner_name: string | null; is_active: boolean }>(
+    `select apartment_number, owner_name, is_active
        from public.apartment_owner_phones
       where phone_e164 = $1
         and ($2::boolean = false or is_active)
@@ -41,7 +42,25 @@ export async function findOwnerIdentity(
   return {
     apartmentNumbers: r.rows.map((x) => x.apartment_number),
     ownerName: r.rows.find((x) => x.owner_name && x.owner_name.trim())?.owner_name ?? null,
+    // Judged on the ACTIVE rows only — they are what the portal would show.
+    mixedOwners: hasMixedOwners(r.rows.filter((x) => x.is_active)),
   };
+}
+
+/**
+ * Containment (03/10/2026, lib/portal/ownership.ts): does this phone's set of
+ * ACTIVE apartments span different people? Such a phone signs in and may
+ * report a fault, but no financial figure is served to it — every finance
+ * entry point of the portal asks this first.
+ */
+export async function isMixedOwnerPhone(phoneE164: string): Promise<boolean> {
+  const r = await query<{ apartment_number: string; owner_name: string | null }>(
+    `select apartment_number, owner_name
+       from public.apartment_owner_phones
+      where phone_e164 = $1 and is_active`,
+    [phoneE164],
+  );
+  return hasMixedOwners(r.rows);
 }
 
 /**

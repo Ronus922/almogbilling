@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ChevronRight, CircleAlert, LoaderCircle, ShieldCheck, Smartphone, TriangleAlert } from 'lucide-react';
+import { ChevronRight, CircleAlert, LoaderCircle, ShieldCheck, Smartphone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { PortalLoginBrand } from '@/components/portal/PortalLoginBrand';
 import { PortalOtpStep, type OtpRequestOutcome } from '@/components/portal/PortalOtpStep';
 import { PortalSupportAction, type PortalSupport } from '@/components/portal/PortalSupportAction';
+import { PortalWarnNotice } from '@/components/portal/PortalWarnNotice';
 import { BTN, BTN_SEC } from './portalButtons';
 import { joinRequestSubject } from '@/lib/portal/support';
 import { PORTAL_OTP_RESEND_COOLDOWN_SEC, pointsAtManagementCompany } from '@/lib/constants/portal';
@@ -342,26 +343,22 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
                   it. No window: the field below keeps its value and its
                   focus, and one corrected digit makes the message go away. */}
               {unregistered && (
-                <div
-                  role="alert"
-                  className="mt-[18px] flex flex-col gap-[10px] rounded-[12px] bg-[#FEF4E2] px-[14px] py-[12px] text-[14px] leading-[1.5] text-[#A15C07]"
+                <PortalWarnNotice
+                  className="mt-[18px]"
+                  action={
+                    <PortalSupportAction
+                      support={support}
+                      className={cn(BTN, BTN_SEC)}
+                      label="שליחת בקשת הצטרפות"
+                      mailSubject={joinRequestSubject(unregistered)}
+                      alwaysOpen
+                    />
+                  }
                 >
-                  <div className="flex gap-[10px]">
-                    <TriangleAlert className="mt-[2px] size-[18px] shrink-0" strokeWidth={2} aria-hidden />
-                    <span>
-                      {'המספר '}
-                      <b dir="ltr" className="font-num">{unregistered}</b>
-                      {' אינו רשום באף דירה. ייתכן שהוועד עדיין לא עדכן את הפרטים.'}
-                    </span>
-                  </div>
-                  <PortalSupportAction
-                    support={support}
-                    className={cn(BTN, BTN_SEC)}
-                    label="שליחת בקשת הצטרפות"
-                    mailSubject={joinRequestSubject(unregistered)}
-                    alwaysOpen
-                  />
-                </div>
+                  {'המספר '}
+                  <b dir="ltr" className="font-num">{unregistered}</b>
+                  {' אינו רשום באף דירה. ייתכן שהוועד עדיין לא עדכן את הפרטים.'}
+                </PortalWarnNotice>
               )}
 
               {error && (
