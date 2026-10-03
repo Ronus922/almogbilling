@@ -83,7 +83,7 @@ d('portal fault report — the real SQL', () => {
     expect(text.rows[0]!.a).toBe('1001');
 
     const r = await resolvePortalReporter(PHONE_TWO_APTS);
-    expect(r).toEqual({ rosterId: id520, apartmentNumber: '520', name: 'בעל שתי דירות', phoneE164: PHONE_TWO_APTS });
+    expect(r).toEqual({ rosterId: id520, apartmentNumber: '520', role: 'owner', name: 'בעל שתי דירות', phoneE164: PHONE_TWO_APTS });
   });
 
   it('containment: a phone with apartments of two different people reports as "לא מזוהה", no apartment, no roster link', async () => {
@@ -93,7 +93,7 @@ d('portal fault report — the real SQL', () => {
     await roster('520', PHONE_TWO_APTS, 'טלי בדיקה');
 
     const reporter = await resolvePortalReporter(PHONE_TWO_APTS);
-    expect(reporter).toEqual({ rosterId: null, apartmentNumber: null, name: 'לא מזוהה', phoneE164: PHONE_TWO_APTS });
+    expect(reporter).toEqual({ rosterId: null, apartmentNumber: null, role: null, name: 'לא מזוהה', phoneE164: PHONE_TWO_APTS });
     const created = await insertPortalIssue({ id: randomUUID(), report, reporter: reporter!, images: [] });
     const row = (await tx.query(
       `select reporter_contact_id, reporter_name, created_by_name, reporter_phone, reporter_apartment from public.issues where id = $1`,

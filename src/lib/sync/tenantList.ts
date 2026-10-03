@@ -124,3 +124,49 @@ export function extractTenantContacts(payload: unknown): Map<string, ApartmentCo
   }
   return out;
 }
+
+/** One person of Bllink's resident list — the portal-link comparison
+ *  (bllink_scrapes.list_people, migrations 20261003161749 + 20261003191659).
+ *  Raw values. */
+export interface ListPerson {
+  role: 'owner' | 'tenant';
+  name: string | null;
+  phone: string | null;
+  primary: boolean;
+  /** isActive. An inactive person is kept so a "ניתוק" can say why. */
+  active: boolean;
+}
+
+/**
+ * EVERY person per apartment, not one value per field: the portal links are
+ * per person, so each one is compared on its own, by phone first — an active
+ * person the card does not carry becomes a "שיוך" suggestion; a linked phone
+ * Bllink does not list there, or lists only with isActive = false, a "ניתוק"
+ * one. Inactive people are kept (active: false) for exactly that reason, and
+ * never proposed for "שיוך". An apartment the list names with nobody in it is
+ * kept, empty: that IS information ("nobody lives there any more"). People
+ * with neither a name nor a phone carry nothing to compare and are left out.
+ */
+export function extractTenantPeople(payload: unknown): Record<string, ListPerson[]> {
+  const out: Record<string, ListPerson[]> = {};
+  const apartments = (payload as { apartments?: unknown } | null)?.apartments;
+  if (!Array.isArray(apartments)) return out;
+
+  for (const raw of apartments as RawApartment[]) {
+    const apt = text(raw?.apartmentNum) ?? text(String(raw?.apartmentNum ?? ''));
+    if (!apt) continue;
+    const list = out[apt] ?? [];
+    const people = Array.isArray(raw?.tenants) ? (raw.tenants as RawTenant[]) : [];
+    for (const p of people) {
+      const role = ROLE[text(p?.details?.tenantType) ?? ''];
+      if (!role) continue;
+      const name = text(p.details?.name);
+      const phone = text(p.details?.phone);
+      if (!name && !phone) continue;
+      list.push({ role, name, phone, primary: p.tenant?.isPrimary === true, active: p.tenant?.isActive !== false });
+    }
+    out[apt] = list;
+  }
+  return out;
+}
+

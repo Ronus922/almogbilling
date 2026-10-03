@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   getContactById, updateContact, deleteContact,
@@ -12,6 +12,7 @@ import { coerceContactInput, coerceContactPeople } from '@/lib/validation/contac
 import { getBillingSettings } from '@/lib/db/appSettings';
 import { computeManagementFee } from '@/lib/billing/managementFee';
 import { logger } from '@/lib/logger';
+import { phoneEntryErrorResponse, readPhoneDecisions, withPhoneEntryCheck } from '@/lib/http/phoneEntry';
 
 export const runtime = 'nodejs';
 
@@ -31,9 +32,16 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 }
 
 // PATCH /api/contacts/[id] — contacts:edit. apartment_number is ignored (immutable).
+//
+// The entry warning (03/10/2026): a save that puts a phone on this card which
+// ANOTHER apartment carries under ANOTHER name answers 409
+// { error: 'phone_conflict', conflicts } and saves NOTHING; the card asks
+// "אותו אדם?" and sends the answers back as `phone_decisions`
+// (lib/http/phoneEntry.ts).
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('contacts', 'edit');
+    actor = await requirePermission('contacts', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -62,6 +70,11 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: peopleResult.error }, { status: 400 });
   }
 
+  const decisions = readPhoneDecisions(rec);
+  if (!decisions.ok) {
+    return NextResponse.json({ error: 'invalid_phone_decisions' }, { status: 400 });
+  }
+
   // management_fee is DERIVED — see POST /api/contacts. On a partial update the
   // size may not be in the payload, so fall back to the stored one.
   const { managementFeePerSqm } = await getBillingSettings();
@@ -78,14 +91,26 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     // recomputed from both at COMMIT (migration 20261003095149), so a phone
     // moved between the owner field and the people list never looks removed.
     const updated = await withTransaction(async (client) => {
-      const row = await updateContact(id, result.fields, client);
-      if (row && peopleResult) await replaceContactPeople(id, peopleResult.people, client);
-      return row;
+      const apt = await client.query<{ apartment_number: string }>(
+        `select apartment_number from public.contacts where id = $1`,
+        [id],
+      );
+      return withPhoneEntryCheck(
+        client,
+        { apartments: apt.rows.map((r) => r.apartment_number), decisions: decisions.decisions, actor },
+        async () => {
+          const row = await updateContact(id, result.fields, client);
+          if (row && peopleResult) await replaceContactPeople(id, peopleResult.people, client);
+          return { result: row, apartments: row ? [row.apartment_number] : [] };
+        },
+      );
     });
     if (!updated) return NextResponse.json({ error: 'not_found' }, { status: 404 });
     const contact = peopleResult ? (await getContactById(id)) ?? updated : updated;
     return NextResponse.json({ contact });
   } catch (err) {
+    const warn = phoneEntryErrorResponse(err, actor);
+    if (warn) return warn;
     const e = err as { code?: string };
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });

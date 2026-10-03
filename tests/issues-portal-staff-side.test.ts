@@ -67,6 +67,7 @@ function issue(source: 'portal' | 'staff', assignedUserId: string | null = null)
     images: [], videos: [], resolution_notes: null, resolved_at: null, is_archived: false, sort_order: 0,
     created_by: null, created_by_name: 'בעלת הדירה', created_at: '2026-10-03', updated_at: '2026-10-03',
     source, reporter_name: source === 'portal' ? 'בעלת הדירה' : null, reporter_apartment: source === 'portal' ? '520' : null,
+    reporter_role: source === 'portal' ? 'owner' : null,
     reporter_location: source === 'portal' ? 'לובי' : null, reporter_area: null, ticket_number: source === 'portal' ? 1001 : null,
     assignees: assignedUserId
       ? [{ assignee_type: 'user', user_id: assignedUserId, supplier_id: null, display_name: 'עובד' }] as IssueWithMeta['assignees']

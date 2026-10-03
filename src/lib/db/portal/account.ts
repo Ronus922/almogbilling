@@ -1,25 +1,29 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import { visibleImportText } from '@/lib/debtor-import-text';
-import { hasMixedOwners } from '@/lib/portal/ownership';
+import { resolvePortalIdentity } from '@/lib/db/portal/identity';
+import type { PortalRole } from '@/lib/portal/identity';
 import type { PortalSession } from '@/lib/portal/session';
 import type { PortalAccount } from '@/lib/types/portal';
 
 // "החשבון שלי" — what an owner sees of their OWN apartment(s) in the portal,
 // read from the debtors table (the Bllink sync target).
 //
-// THE RULE: the only input is the portal session. The apartments come from the
-// roster (apartment_owner_phones) for the session's phone, never from the
-// request, so no parameter, query string, body or header can point this at
-// another apartment. A phone that owns several apartments (59 in production,
-// 28/09/2026) gets one account per apartment.
+// THE RULE: the only input is the portal session. The apartments — and the
+// role the phone holds in each — come from the portal's one identity for the
+// session's phone (lib/portal/identity.ts), never from the request, so no
+// parameter, query string, body or header can point this at another
+// apartment. A phone registered in several apartments gets one account per
+// apartment, each tagged with its role (בעלים / שוכר / מפעיל). Which role sees
+// the apartment's debt is ROLE_SEES_APARTMENT_DEBT — today every one of the
+// three (Bllink has no payer marker, 03/10/2026).
 //
 // The SELECT names its columns: total_debt, management_fees, hot_water_debt,
 // monthly_debt, details — and nothing else. Legal status, notes, next action,
 // phones, emails, the operator, the archive flag and the other owners' names
 // live in the same table and never leave this module. The name shown is the
-// roster row's own owner_name (the person who signed in), not
-// debtors.owner_name.
+// identity's name (the person who signed in, the same name everywhere in the
+// portal), not debtors.owner_name.
 //
 // Two edge cases:
 //   • no debtors row (2 apartments in production) → a record with 0 debt;
@@ -55,15 +59,21 @@ export async function getLastSyncAt(): Promise<string | null> {
   return row?.at ?? null;
 }
 
-function toAccount(apartment: string, ownerName: string | null, row: DebtRow | undefined, syncedAt: string | null): PortalAccount {
+function toAccount(
+  apartment: string,
+  role: PortalRole,
+  ownerName: string | null,
+  row: DebtRow | undefined,
+  syncedAt: string | null,
+): PortalAccount {
   if (!row) {
     return {
-      apartment_number: apartment, owner_display_name: ownerName,
+      apartment_number: apartment, role, owner_display_name: ownerName,
       total_debt: 0, management_fees: 0, hot_water_debt: 0, monthly_debt: null, details: null, synced_at: syncedAt,
     };
   }
   return {
-    apartment_number: apartment, owner_display_name: ownerName,
+    apartment_number: apartment, role, owner_display_name: ownerName,
     total_debt: row.total_debt, management_fees: row.management_fees, hot_water_debt: row.hot_water_debt,
     // Both describe the debt, so a leftover from an earlier report is never
     // shown next to a ₪0 balance — see lib/debtor-import-text.ts.
@@ -84,23 +94,20 @@ async function debtRowsFor(apartments: string[]): Promise<Map<string, DebtRow>> 
   return out;
 }
 
-/** The signed-in owner's account(s): one per apartment the session's phone is
- *  an ACTIVE owner of, in apartment order. Empty when the phone owns nothing
- *  (the session guard would already have revoked it) — and empty for a
- *  mixed-owners phone (containment 03/10/2026, lib/portal/ownership.ts): its
+/** The signed-in person's account(s): one per apartment the session's phone
+ *  is registered in, in apartment order, for each role that sees the debt.
+ *  Empty when the phone opens nothing (the session guard would already have
+ *  revoked it) — and empty for a BLOCKED phone (lib/portal/identity.ts): its
  *  apartments are not shown to be its own, so no debt row is even read. */
 export async function getPortalMyAccount(session: PortalSession): Promise<PortalAccount[]> {
-  const roster = await query<{ apartment_number: string; owner_name: string | null }>(
-    `select apartment_number, owner_name
-       from public.apartment_owner_phones
-      where phone_e164 = $1 and is_active
-      order by apartment_number`,
-    [session.phoneE164],
-  );
-  if (hasMixedOwners(roster.rows)) return [];
-  const apartments = roster.rows.map((r) => r.apartment_number);
-  const [rows, syncedAt] = await Promise.all([debtRowsFor(apartments), getLastSyncAt()]);
-  return roster.rows.map((r) => toAccount(r.apartment_number, r.owner_name, rows.get(r.apartment_number), syncedAt));
+  const identity = await resolvePortalIdentity(session.phoneE164);
+  if (!identity || identity.status !== 'ok') return [];
+  const visible = identity.apartments.filter((a) => a.canSeeDebt);
+  const [rows, syncedAt] = await Promise.all([
+    debtRowsFor(visible.map((a) => a.apartmentNumber)),
+    getLastSyncAt(),
+  ]);
+  return visible.map((a) => toAccount(a.apartmentNumber, a.role, identity.name, rows.get(a.apartmentNumber), syncedAt));
 }
 
 /** The admin preview's "החשבון שלי" for ONE apartment the admin picked. Same
@@ -120,5 +127,5 @@ export async function getAdminPreviewAccount(apartment: string): Promise<PortalA
     getLastSyncAt(),
     queryOne<{ owner_name: string | null }>(`select owner_name from public.debtors where apartment_number = $1`, [apartment]),
   ]);
-  return toAccount(apartment, name?.owner_name ?? null, rows.get(apartment), syncedAt);
+  return toAccount(apartment, 'owner', name?.owner_name ?? null, rows.get(apartment), syncedAt);
 }

@@ -5,7 +5,7 @@ import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { toPortalE164 } from '@/lib/portal/phone';
 import { alertManagerAboutLockout } from '@/lib/portal/send';
 import { startPortalSession } from '@/lib/portal/session';
-import { findOwnerIdentity } from '@/lib/db/portal/ownerPhones';
+import { findPortalRegistration } from '@/lib/db/portal/identity';
 import { verifyCode } from '@/lib/db/portal/otp';
 import { activeLockout, createLockout, lockoutMinutesRemaining } from '@/lib/db/portal/lockouts';
 import { logPortalEvent } from '@/lib/db/portal/events';
@@ -59,7 +59,7 @@ export async function POST(req: Request) {
 
   const locked = await activeLockout(phoneE164);
   if (locked) {
-    const known = await findOwnerIdentity(phoneE164, { onlyActive: false });
+    const known = await findPortalRegistration(phoneE164, { onlyActive: false });
     await logPortalEvent({
       phoneE164, eventType: 'locked_out', ip, userAgent,
       apartmentNumbers: known?.apartmentNumbers ?? [],
@@ -82,7 +82,7 @@ export async function POST(req: Request) {
   // not the four wrong codes that led to it. A phone that is not on the roster
   // resolves to [] and shows as "—" on the admin screen, which is the point of
   // logging it at all.
-  const identity = await findOwnerIdentity(phoneE164, { onlyActive: false });
+  const identity = await findPortalRegistration(phoneE164, { onlyActive: false });
   const apartmentNumbers = identity?.apartmentNumbers ?? [];
 
   if (outcome.kind === 'none' || outcome.kind === 'expired') {
@@ -129,7 +129,7 @@ export async function POST(req: Request) {
   // The code matched. Re-check the roster: between the request and the code being
   // typed the row may have been switched off, and a consumed code must not open a
   // session for a phone that is no longer an active owner.
-  const active = await findOwnerIdentity(phoneE164, { onlyActive: true });
+  const active = await findPortalRegistration(phoneE164, { onlyActive: true });
   if (!active) {
     await logPortalEvent({ phoneE164, eventType: 'phone_inactive', apartmentNumbers, ip, userAgent });
     return NextResponse.json(

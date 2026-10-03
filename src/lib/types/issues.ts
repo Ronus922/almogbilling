@@ -3,6 +3,7 @@
 
 import type { TargetType } from './targets';
 import type { AssigneeRef } from './assignee';
+import type { PortalRole } from '@/lib/portal/identity';
 
 export type IssueStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type IssuePriority = 'normal' | 'high' | 'urgent';
@@ -49,6 +50,9 @@ export interface Issue {
   // reaches the panel only through GET /api/issues/[id], for contacts:view.
   reporter_name: string | null;
   reporter_apartment: string | null;
+  /** The role held in reporter_apartment (בעלים / שוכר / מפעיל); null when
+   *  unidentified. */
+  reporter_role: PortalRole | null;
   /** "מיקום" and "קומה / אזור" exactly as the resident typed them. */
   reporter_location: string | null;
   reporter_area: string | null;

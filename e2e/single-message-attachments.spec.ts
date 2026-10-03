@@ -22,10 +22,13 @@ test('single-recipient sheet: two files in one pick, listed and previewed', asyn
 
   await page.goto('/dashboard');
 
-  // The row action of the seeded debtor (apartment E2E-101, which has a phone).
+  // The row action of the seeded debtor (apartment E2E-101, which has a phone) —
+  // found by its apartment, not by position: the seed holds other debtors too
+  // (the portal fixtures), and the table's order is not this test's to assume.
   // The table renders a mobile card list AND a desktop table; only one of the two
   // copies of the action is visible at any width.
-  const openSheet = page.locator('button[aria-label="שליחת WhatsApp"]:visible').first();
+  const openSheet = page.getByRole('row').filter({ hasText: 'E2E-101' })
+    .locator('button[aria-label="שליחת WhatsApp"]:visible').first();
   await expect(openSheet).toBeVisible({ timeout: 15_000 });
   await openSheet.click();
 

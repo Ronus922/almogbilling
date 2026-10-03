@@ -3,8 +3,8 @@ import { PortalSupportAction, type PortalSupport } from './PortalSupportAction';
 import { PortalWarnNotice } from './PortalWarnNotice';
 
 /**
- * What a mixed-owners phone sees instead of the portal's tabs (containment
- * 03/10/2026, lib/portal/ownership.ts): one inline notice, in the style of the
+ * What a BLOCKED phone sees instead of the portal's tabs (the portal's one
+ * identity, lib/portal/identity.ts): one inline notice, in the style of the
  * login's "המספר אינו רשום", with the management company's details already
  * open. No figure, no apartment and no name — nothing of the roster rows that
  * may not be this person's.

@@ -32,7 +32,7 @@ const ISSUE_COLUMNS = `
   due_date::text as due_date, due_time::text as due_time,
   images, videos, resolution_notes, resolved_at::text as resolved_at, is_archived, sort_order,
   created_by, created_by_name, created_at::text as created_at, updated_at::text as updated_at,
-  source, reporter_name, reporter_apartment, reporter_location, reporter_area, ticket_number
+  source, reporter_name, reporter_apartment, reporter_role, reporter_location, reporter_area, ticket_number
 `;
 
 // Columns a create/update may set (title + created_by handled explicitly on
@@ -314,29 +314,6 @@ export async function deleteIssue(id: string): Promise<boolean> {
     );
     const r = await client.query(`delete from public.issues where id = $1`, [id]);
     return (r.rowCount ?? 0) > 0;
-  });
-}
-
-// ── Kanban batch reorder (migration 050) ─────────────────────────────────────
-export interface IssueReorderItem {
-  id: string;
-  priority: string;
-  sort_order: number;
-}
-
-/** Apply a batch of {id, priority, sort_order} updates to issues atomically. The
- *  board's primary axis is priority — dragging between lanes re-prioritises and
- *  reorders. Resolving ("בוצע") is a separate status change via the [id] PATCH
- *  route (which stamps resolved_at and clears reminders), never here. */
-export async function reorderIssues(items: IssueReorderItem[]): Promise<void> {
-  if (items.length === 0) return;
-  await withTransaction(async (client: PoolClient) => {
-    for (const it of items) {
-      await client.query(
-        `update public.issues set priority = $2, sort_order = $3 where id = $1`,
-        [it.id, it.priority, it.sort_order],
-      );
-    }
   });
 }
 

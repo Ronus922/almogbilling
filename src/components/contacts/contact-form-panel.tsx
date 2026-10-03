@@ -19,12 +19,14 @@ import { Section } from '@/components/side-panel/Section';
 import { Field } from '@/components/side-panel/Field';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { ContactAssetsSection, useContactAssets } from './contact-assets-section';
+import { usePhoneEntryWarning } from './PhoneEntryDialog';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
 import { validatePhone } from '@/lib/validation';
 import { computeManagementFee, MANAGEMENT_FEE_MULTIPLIER } from '@/lib/billing/managementFee';
 import { RESIDENT_TYPES, residentTypeLabel } from '@/lib/constants/contacts';
 import { UNIT_TYPE_LABEL } from '@/lib/constants/chips';
+import type { PhoneEntryDecision } from '@/lib/types/portal';
 import type {
   Contact, ContactPersonRole, ContactResidentType, ContactUnitType,
 } from '@/lib/types/contacts';
@@ -152,6 +154,8 @@ export function ContactFormPanel({
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  // The entry warning: a 409 phone_conflict from the save (see PhoneEntryDialog).
+  const phoneWarning = usePhoneEntryWarning(submitting);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [tagInput, setTagInput] = useState('');
   // Monotonic source of stable keys for newly added person rows.
@@ -315,7 +319,7 @@ export function ContactFormPanel({
     set('tags', form.tags.filter((x) => x !== t));
   }
 
-  async function handleSubmit() {
+  async function handleSubmit(phoneDecisions?: PhoneEntryDecision[]) {
     if (!canSubmit) {
       setTouched({
         apartment_number: true, owner_phone: true, tenant_phone: true,
@@ -359,6 +363,7 @@ export function ContactFormPanel({
         tags: form.tags,
       };
       if (!isEdit) body.apartment_number = form.apartment_number.trim();
+      if (phoneDecisions) body.phone_decisions = phoneDecisions;
 
       // The tenant must exist before anything can point at its apartment
       // number, so the contact is saved FIRST and the assets follow. If the
@@ -374,11 +379,14 @@ export function ContactFormPanel({
           body: JSON.stringify(body),
         });
         const data = (await r.json().catch(() => ({}))) as { error?: string };
+        // Nothing was saved: ask "אותו אדם?" and resend with the answers.
+        if (phoneWarning.ask(r.status, data, (decisions) => { void handleSubmit(decisions); })) return;
         if (!r.ok) {
           const msg =
             data.error === 'apartment_number_exists' ? 'מספר דירה כבר קיים' :
             data.error === 'invalid_phone' ? 'מספר טלפון לא תקין' :
             data.error === 'invalid_email' ? 'אימייל לא תקין' :
+            r.status === 400 && data.error && /[\u0590-\u05FF]/.test(data.error) ? data.error :
             isEdit ? 'עדכון הדייר נכשל' : 'יצירת הדייר נכשלה';
           throw new Error(msg);
         }
@@ -731,7 +739,7 @@ export function ContactFormPanel({
 
           <PanelFooter
             onClose={requestClose}
-            onSave={handleSubmit}
+            onSave={() => void handleSubmit()}
             saveDisabled={!canSubmit}
             saveDisabledReason={
               !canEdit && !assetsEditable ? 'אין הרשאה — כניסה כצופה'
@@ -742,6 +750,8 @@ export function ContactFormPanel({
           />
         </SheetContent>
       </Sheet>
+
+      {phoneWarning.dialog}
 
       <AlertDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}>
         <AlertDialogContent dir="rtl">

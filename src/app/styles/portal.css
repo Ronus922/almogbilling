@@ -130,7 +130,9 @@
 .portal-skin .details { margin-top: 14px; font-size: 14px; line-height: 1.7; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; }
 .portal-skin .foot { font-size: 13px; color: var(--ink-muted); margin-top: 20px; line-height: 1.6; }
 .portal-skin .acc-block + .acc-block { margin-top: 28px; }
-.portal-skin .acc-block > h2 { font-size: 18px; font-weight: 800; margin-bottom: 14px; }
+.portal-skin .acc-block > h2 { font-size: 18px; font-weight: 800; margin-bottom: 14px; display: flex; align-items: center; gap: 10px; }
+/* the role tag beside the apartment (03/10/2026): one apartment → in the subtitle */
+.portal-skin .acc-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
 /* ── chart ─────────────────────────────────────────────────────────── */
 .portal-skin .legend { display: flex; gap: 16px; font-size: 13px; color: var(--ink-muted); font-weight: 500; }

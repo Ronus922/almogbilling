@@ -1,8 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, requireAnyPermission } from '@/lib/auth/actor';
+import { requirePermission, requireAnyPermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getDebtorById, updateDebtorFields } from '@/lib/db/debtors';
-import { updateContactPhonesByDebtor } from '@/lib/db/contacts';
+import { debtorContactApartment, updateContactPhonesByDebtor } from '@/lib/db/contacts';
+import { withTransaction } from '@/lib/db';
+import { logger } from '@/lib/logger';
+import { phoneEntryErrorResponse, readPhoneDecisions, withPhoneEntryCheck } from '@/lib/http/phoneEntry';
 import { getContactFieldState } from '@/lib/db/contactSuggestions';
 import { listCommentsByDebtor } from '@/lib/db/comments';
 import { validatePhone, isFutureDate } from '@/lib/validation';
@@ -39,9 +42,15 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   return NextResponse.json({ tenant, recent_notes, contact_fields });
 }
 
+// PATCH — the phones go to the apartment's contact record, under the SAME
+// entry warning as the apartment card (lib/http/phoneEntry.ts): a phone that
+// another apartment carries under another name answers 409 phone_conflict and
+// nothing — phones or any other field — is saved; the panel asks "אותו אדם?"
+// and sends the edit again with `phone_decisions`.
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('contacts', 'edit');
+    actor = await requirePermission('contacts', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -57,6 +66,10 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     body = (await req.json()) as TenantFieldsUpdate;
   } catch {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
+  }
+  const decisions = readPhoneDecisions((body ?? {}) as Record<string, unknown>);
+  if (!decisions.ok) {
+    return NextResponse.json({ error: 'invalid_phone_decisions' }, { status: 400 });
   }
 
   const patch: Record<string, unknown> = {};
@@ -113,8 +126,25 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 
   if (Object.keys(contactPhones).length > 0) {
-    const r = await updateContactPhonesByDebtor(id, contactPhones);
-    if (r === 'no_contact') return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    try {
+      const r = await withTransaction(async (client) => {
+        const apartment = await debtorContactApartment(client, id);
+        return withPhoneEntryCheck(
+          client,
+          { apartments: apartment ? [apartment] : [], decisions: decisions.decisions, actor },
+          async () => {
+            const w = await updateContactPhonesByDebtor(id, contactPhones, client);
+            return { result: w, apartments: w === 'no_contact' ? [] : [w.apartment] };
+          },
+        );
+      });
+      if (r === 'no_contact') return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    } catch (err) {
+      const warn = phoneEntryErrorResponse(err, actor);
+      if (warn) return warn;
+      logger.error('[PATCH /api/debtors/:id] phones', err);
+      return NextResponse.json({ error: 'server_error' }, { status: 500 });
+    }
   }
   await updateDebtorFields(id, patch);
   const tenant = await getDebtorById(id);

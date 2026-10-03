@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import { toArrayBuffer, worksheetToMatrix } from '@/lib/excel/workbook';
 import { query, queryOne } from '@/lib/db';
 import { upsertContactAndLinkDebtor } from '@/lib/db/contacts';
+import { PhoneEntryConflictError } from '@/lib/db/portal/identityApprovals';
 import type { ContactWritableFields } from '@/lib/types/contacts';
 import { validatePhone } from '@/lib/validation';
 import { logger } from '@/lib/logger';
@@ -290,6 +291,7 @@ export async function runResidentsImport(runId: string, filePath: string): Promi
         try {
           const { contact, created: wasCreated } = await upsertContactAndLinkDebtor(payload, {
             allowedFields: IMPORT_ALLOWED_FIELDS,
+            refusePhoneConflicts: true,
           });
           // A residents import confirms the apartment: needs_review drops to
           // false; source is stamped only when NULL (i.e. the row the upsert
@@ -305,7 +307,8 @@ export async function runResidentsImport(runId: string, filePath: string): Promi
           else updated++;
         } catch (e) {
           failed += g.rows.length;
-          const msg = (e instanceof Error ? e.message : String(e)).slice(0, 200);
+          const msg = (e instanceof PhoneEntryConflictError ? e.summary
+            : e instanceof Error ? e.message : String(e)).slice(0, 200);
           for (const row of g.rows) {
             failedRows.push({ row, apartment_number: g.apartment_number, error: msg });
           }

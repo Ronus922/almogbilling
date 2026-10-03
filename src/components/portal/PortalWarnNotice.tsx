@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
  * The portal's inline amber notice (ref/otp-states.md, state 16): an icon, one
  * message, and under it the way to act on it — usually PortalSupportAction
  * with `alwaysOpen`. Shared by the login's "המספר אינו רשום" and the
- * "we are updating your account" screen of a mixed-owners phone
+ * "we are updating your account" screen of a blocked phone
  * (containment 03/10/2026), so both read as the same kind of message.
  */
 export function PortalWarnNotice({ children, action, className }: {

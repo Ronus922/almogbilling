@@ -1,7 +1,8 @@
 import 'server-only';
-import { query, queryOne } from '@/lib/db';
+import { queryOne } from '@/lib/db';
 import { portalIssueTitle, urgencyToPriority, type PortalIssueReport } from '@/lib/portal/issueReport';
-import { hasMixedOwners, PORTAL_UNIDENTIFIED_REPORTER } from '@/lib/portal/ownership';
+import { resolvePortalIdentity } from '@/lib/db/portal/identity';
+import type { PortalRole } from '@/lib/portal/identity';
 
 // The owners portal's fault report, on the database side. Two rules live here:
 //   • WHO reported is resolved from the session's phone only — the route
@@ -10,72 +11,39 @@ import { hasMixedOwners, PORTAL_UNIDENTIFIED_REPORTER } from '@/lib/portal/owner
 //     issues screen, panel, handlers and notifications treat it like any other.
 
 export interface PortalReporter {
-  /** apartment_owner_phones.id — the phone + apartment that signed in; null
-   *  for an unidentified reporter (a mixed-owners phone). */
+  /** apartment_owner_phones.id — the phone + apartment that reported; null
+   *  for an unidentified reporter (a blocked phone). */
   rosterId: string | null;
   /** null for an unidentified reporter — no apartment is claimed for them. */
   apartmentNumber: string | null;
+  /** The role held in that apartment; null for an unidentified reporter. */
+  role: PortalRole | null;
   name: string | null;
   phoneE164: string;
 }
 
 /**
- * The reporter behind a portal session — the PERSON whose phone was verified.
+ * The reporter behind a portal session — the PERSON whose phone was verified,
+ * as the portal's one identity says (lib/portal/identity.ts): the same name
+ * the header greets them by, never one worked out here.
  *
- *   • Name: from the owner record that carries this phone (the roster row's
- *     source — contacts.owner_name for the owner field, contact_people.name for
- *     an additional owner), read live; never the apartment's owner name for a
- *     phone someone else's record holds. The roster's own owner_name is only
- *     the fallback for a row whose record has gone.
- *   • Apartment: from the ACTIVE links only (the roster mirrors the owner
- *     records since migration 20261003095149). A phone may own several
- *     apartments — that is normal, and never a reason to refuse: the report is
- *     about a COMMON area, the apartment only identifies the reporter. The
- *     session carries no "active apartment", so the rule is the lowest
- *     apartment NUMBER — compared as a number ('520' before '1001'), not as
- *     text, where '1001' < '520'. A non-numeric apartment (none exist in
- *     production) sorts after every numeric one, then as text.
- *   • Containment (03/10/2026, lib/portal/ownership.ts): when the phone's
- *     apartments belong to different people, none of them — and none of their
- *     names — is this reporter's. The report is still taken: "לא מזוהה", NO
- *     apartment (NULL — issues_portal_reporter_check allows it only without a
- *     roster link) and no roster link; the verified phone stays in
+ *   • Apartment: a phone may hold several — that is normal, and never a reason
+ *     to refuse: the report is about a COMMON area, the apartment only
+ *     identifies the reporter. The session carries no "active apartment", so
+ *     it is the lowest apartment NUMBER ('520' before '1001') the reporter
+ *     owns; none → the lowest they operate; none → the lowest they rent —
+ *     with that role (identity.reporter, 03/10/2026).
+ *   • A BLOCKED phone: none of its apartments — and none of their names — is
+ *     this reporter's. The report is still taken: "לא מזוהה", NO apartment
+ *     (NULL — issues_portal_reporter_check allows it only without a roster
+ *     link), no role and no roster link; the verified phone stays in
  *     reporter_phone for staff with contacts:view.
  */
 export async function resolvePortalReporter(phoneE164: string): Promise<PortalReporter | null> {
-  const active = await query<{ apartment_number: string; owner_name: string | null }>(
-    `select apartment_number, owner_name
-       from public.apartment_owner_phones
-      where phone_e164 = $1 and is_active`,
-    [phoneE164],
-  );
-  if (active.rows.length === 0) return null;
-  if (hasMixedOwners(active.rows)) {
-    return { rosterId: null, apartmentNumber: null, name: PORTAL_UNIDENTIFIED_REPORTER, phoneE164 };
-  }
-
-  const row = await queryOne<{ id: string; apartment_number: string; phone_e164: string; name: string | null }>(
-    `select r.id, r.apartment_number, r.phone_e164,
-            coalesce(
-              case r.source_table
-                when 'contacts' then
-                  (select nullif(btrim(c.owner_name), '') from public.contacts c where c.id = r.source_row_id)
-                when 'contact_people' then
-                  (select nullif(btrim(p.name), '') from public.contact_people p where p.id = r.source_row_id)
-              end,
-              nullif(btrim(r.owner_name), '')
-            ) as name
-       from public.apartment_owner_phones r
-      where r.phone_e164 = $1 and r.is_active
-      order by (r.apartment_number ~ '^[0-9]+$') desc,
-               case when r.apartment_number ~ '^[0-9]+$' then r.apartment_number::numeric end asc,
-               r.apartment_number asc,
-               r.id asc
-      limit 1`,
-    [phoneE164],
-  );
-  if (!row) return null;
-  return { rosterId: row.id, apartmentNumber: row.apartment_number, name: row.name, phoneE164: row.phone_e164 };
+  const identity = await resolvePortalIdentity(phoneE164);
+  if (!identity) return null;
+  const r = identity.reporter;
+  return { rosterId: r.rosterId, apartmentNumber: r.apartmentNumber, role: r.role, name: r.name, phoneE164 };
 }
 
 export interface CreatedPortalIssue {
@@ -109,11 +77,11 @@ export async function insertPortalIssue(args: {
     `insert into public.issues
        (id, title, description, priority, status, images,
         created_by, created_by_name, source,
-        reporter_contact_id, reporter_name, reporter_phone, reporter_apartment,
+        reporter_contact_id, reporter_name, reporter_phone, reporter_apartment, reporter_role,
         reporter_location, reporter_area, ticket_number)
      values ($1, $2, $3, $4, 'open', $5,
              null, $6, 'portal',
-             $7, $6, $8, $9,
+             $7, $6, $8, $9, $12,
              $10, $11, nextval('public.issues_ticket_number_seq'))
      returning id, ticket_number`,
     [
@@ -121,6 +89,7 @@ export async function insertPortalIssue(args: {
       reporter.name,
       reporter.rosterId, reporter.phoneE164, apartment,
       report.location, report.area,
+      reporter.role,
     ],
   );
   if (!row) throw new Error('failed_to_create_portal_issue');

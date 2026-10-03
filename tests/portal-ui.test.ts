@@ -164,7 +164,7 @@ describe('overview arithmetic', () => {
 
 describe('my account + Excel safety (28/09/2026)', () => {
   const acc = (o: Partial<PortalAccount>): PortalAccount => ({
-    apartment_number: '7', owner_display_name: null, total_debt: 0, management_fees: 0, hot_water_debt: 0,
+    apartment_number: '7', role: 'owner', owner_display_name: null, total_debt: 0, management_fees: 0, hot_water_debt: 0,
     monthly_debt: null, details: null, synced_at: null, ...o,
   });
   it('sums every record of the owner exactly — the card rounds, the sum does not', () => {

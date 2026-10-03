@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { ArrowLeft, Check, Inbox, X } from 'lucide-react';
+import { ArrowLeft, Check, Inbox, KeyRound, ListChecks, X } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,17 +12,34 @@ import {
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { formatRelativeTime } from '@/lib/notifications/registry';
 import {
-  SUGGESTION_FIELD_IS_NUMERIC, SUGGESTION_FIELD_LABEL, type ContactSuggestion,
+  SUGGESTION_FIELD_IS_NUMERIC, SUGGESTION_FIELD_LABEL, UNLINK_REASON_LABEL, type ContactSuggestion,
 } from '@/lib/types/contactSuggestions';
+import { PORTAL_ROLE_LABEL } from '@/lib/portal/identity';
+import { rosterPhoneDisplay } from '@/lib/portal/rosterLabels';
+import { OwnerNameDecision } from './OwnerNameDecision';
+import { usePhoneEntryWarning } from './PhoneEntryDialog';
+import type { PhoneEntryDecision } from '@/lib/types/portal';
+
+type ResolveAction = 'approve' | 'reject' | 'approve_rename' | 'approve_replace';
+
+/** "אשר הכל" may take it: changes no portal access and needs no choice. */
+function bulkApprovable(s: ContactSuggestion): boolean {
+  return !s.access && !s.owner_change;
+}
 
 /**
- * The Bllink approval queue (29/09/2026).
+ * The Bllink approval queue (29/09/2026; split by portal access 03/10/2026).
  *
  * The sync stopped overwriting resident fields: a value that conflicts with
- * ours waits here. One row per apartment+field, ours on the right, Bllink's on
- * the left, and two buttons. Approving writes the value exactly as typing it
- * into the apartment card would — an approved owner phone reaches the portal
- * roster through the same trigger, so that owner can sign in at once.
+ * ours — and EVERY phone, even for an empty field — waits here, with the
+ * people Bllink lists that the portal does not have ("שיוך") and the linked
+ * phones Bllink no longer lists ("ניתוק"). Two groups:
+ *   • what changes portal access (a phone, a link, an unlink) — one by one;
+ *   • the rest (names, addresses) — one by one or "אשר הכל", which never
+ *     touches the first group.
+ * A new owner name is "תיקון שם" or "החלפת בעלים" (OwnerNameDecision), never
+ * a plain approve. Approving writes the value exactly as typing it into the
+ * apartment card would; the portal roster follows at commit.
  */
 export function ContactSuggestionsPanel({ open, items, canEdit, onOpenChange, onChanged }: {
   open: boolean;
@@ -38,23 +55,29 @@ export function ContactSuggestionsPanel({ open, items, canEdit, onOpenChange, on
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
+  // An approval writes to the apartment card — the card's "אותו אדם?" too.
+  const phoneWarning = usePhoneEntryWarning(busy !== null);
   const loading = items === null;
+  const accessItems = (items ?? []).filter((s) => s.access || s.owner_change);
+  const otherItems = (items ?? []).filter(bulkApprovable);
 
-  async function resolve(ids: string[], action: 'approve' | 'reject') {
+  async function resolve(ids: string[], action: ResolveAction, phoneDecisions?: PhoneEntryDecision[]) {
     setBusy(ids.length === 1 ? ids[0] : 'all');
     try {
       const res = await fetch('/api/contacts/suggestions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ action, ids }),
+        body: JSON.stringify({ action, ids, ...(phoneDecisions ? { phone_decisions: phoneDecisions } : {}) }),
       });
+      const body: unknown = await res.json().catch(() => ({}));
+      if (phoneWarning.ask(res.status, body, (d) => { void resolve(ids, action, d); })) return;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { resolved: number; items: ContactSuggestion[] };
+      const data = body as { resolved: number; items: ContactSuggestion[] };
       onChanged(data.items);
-      toast.success(action === 'approve'
-        ? `${data.resolved} הצעות אושרו ונכתבו לרשימת הדיירים`
-        : `${data.resolved} הצעות נדחו`);
+      toast.success(action === 'reject'
+        ? `${data.resolved} הצעות נדחו`
+        : `${data.resolved} הצעות אושרו ונכתבו לרשימת הדיירים`);
     } catch (e) {
       toast.error(`הפעולה נכשלה: ${(e as Error).message}`);
     } finally {
@@ -104,17 +127,31 @@ export function ContactSuggestionsPanel({ open, items, canEdit, onOpenChange, on
                 <p className="text-sm text-muted-foreground">כשבלינק יציע ערך שונה ממה שרשום כאן — הוא יופיע ברשימה הזו.</p>
               </div>
             ) : (
-              <div className="space-y-2">
-                {items!.map((s) => (
-                  <SuggestionRow
-                    key={s.id}
-                    suggestion={s}
-                    canEdit={canEdit}
-                    busy={busy !== null}
-                    onApprove={() => resolve([s.id], 'approve')}
-                    onReject={() => resolve([s.id], 'reject')}
-                  />
-                ))}
+              <div className="space-y-6">
+                {accessItems.length > 0 && (
+                  <SuggestionGroup
+                    icon={<KeyRound className="h-4 w-4 text-amber-600" aria-hidden />}
+                    title="משפיעות על הגישה לפורטל"
+                    hint="טלפון, שיוך, ניתוק והחלפת בעלים — אישור אחד-אחד בלבד"
+                  >
+                    {accessItems.map((s) => (
+                      <SuggestionRow key={s.id} suggestion={s} canEdit={canEdit} busy={busy !== null}
+                        onResolve={(action) => resolve([s.id], action)} />
+                    ))}
+                  </SuggestionGroup>
+                )}
+                {otherItems.length > 0 && (
+                  <SuggestionGroup
+                    icon={<ListChecks className="h-4 w-4 text-slate-500" aria-hidden />}
+                    title="שאר ההצעות"
+                    hint="שמות ומיילים — אפשר לאשר אחת-אחת או בבת אחת (״אשר הכל״)"
+                  >
+                    {otherItems.map((s) => (
+                      <SuggestionRow key={s.id} suggestion={s} canEdit={canEdit} busy={busy !== null}
+                        onResolve={(action) => resolve([s.id], action)} />
+                    ))}
+                  </SuggestionGroup>
+                )}
               </div>
             )}
           </div>
@@ -123,23 +160,28 @@ export function ContactSuggestionsPanel({ open, items, canEdit, onOpenChange, on
             onClose={() => onOpenChange(false)}
             onSave={() => setConfirmAll(true)}
             saveLabel="אשר הכל"
-            saveDisabled={!canEdit || !items || items.length === 0 || busy !== null}
-            saveDisabledReason={!canEdit ? 'אין הרשאה לעריכת רשימת דיירים' : undefined}
+            saveDisabled={!canEdit || otherItems.length === 0 || busy !== null}
+            saveDisabledReason={!canEdit
+              ? 'אין הרשאה לעריכת רשימת דיירים'
+              : otherItems.length === 0 ? 'אין הצעות שאפשר לאשר בבת אחת — הצעות גישה מאושרות אחת-אחת' : undefined}
           />
         </SheetContent>
       </Sheet>
 
+      {phoneWarning.dialog}
+
       <AlertDialog open={confirmAll} onOpenChange={setConfirmAll}>
         <AlertDialogContent dir="rtl">
           <AlertDialogHeader>
-            <AlertDialogTitle>לאשר את כל ההצעות?</AlertDialogTitle>
+            <AlertDialogTitle>לאשר את כל ההצעות שאינן משפיעות על גישה?</AlertDialogTitle>
             <AlertDialogDescription>
-              {items?.length ?? 0} ערכים מבלינק ייכתבו לרשימת הדיירים במקום הערכים הנוכחיים. אפשר לערוך כל שדה ידנית אחר כך.
+              {otherItems.length} ערכים מבלינק (שמות ומיילים) ייכתבו לרשימת הדיירים במקום הערכים הנוכחיים.
+              הצעות טלפון, שיוך, ניתוק והחלפת בעלים לא ייכללו — הן מאושרות אחת-אחת. אפשר לערוך כל שדה ידנית אחר כך.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>ביטול</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void resolve((items ?? []).map((s) => s.id), 'approve')}>
+            <AlertDialogAction onClick={() => void resolve(otherItems.map((s) => s.id), 'approve')}>
               אשר הכל
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -149,44 +191,95 @@ export function ContactSuggestionsPanel({ open, items, canEdit, onOpenChange, on
   );
 }
 
-function SuggestionRow({ suggestion, canEdit, busy, onApprove, onReject }: {
+function SuggestionGroup({ icon, title, hint, children }: {
+  icon: ReactNode;
+  title: string;
+  hint: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-2">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <h3 className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-900">{icon}{title}</h3>
+        <span className="text-xs text-muted-foreground">{hint}</span>
+      </div>
+      <div className="space-y-2">{children}</div>
+    </section>
+  );
+}
+
+/** "שיוך" / "ניתוק" — the person: name · phone · role. */
+function PersonLine({ s }: { s: ContactSuggestion }) {
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
+      <span className="font-semibold text-slate-900">{s.person_name ?? 'ללא שם'}</span>
+      {s.phone_e164 && <span dir="ltr" className="font-num tabular-nums text-slate-700">{rosterPhoneDisplay(s.phone_e164)}</span>}
+      {s.person_role && (
+        <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+          {PORTAL_ROLE_LABEL[s.person_role]}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function SuggestionRow({ suggestion, canEdit, busy, onResolve }: {
   suggestion: ContactSuggestion;
   canEdit: boolean;
   busy: boolean;
-  onApprove: () => void;
-  onReject: () => void;
+  onResolve: (action: ResolveAction) => void;
 }) {
   const numeric = SUGGESTION_FIELD_IS_NUMERIC[suggestion.field];
+  const person = suggestion.field === 'portal_link' || suggestion.field === 'portal_unlink';
+  const approveLabel = suggestion.field === 'portal_link' ? 'שייך' : suggestion.field === 'portal_unlink' ? 'נתק' : 'אשר';
   return (
     <div
-      data-suggestion={`${suggestion.apartment_number}:${suggestion.field}`}
+      data-suggestion={`${suggestion.apartment_number}:${suggestion.field}${suggestion.phone_e164 ? `:${suggestion.phone_e164}` : ''}`}
       className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 sm:flex-row sm:items-center"
     >
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-2">
           <span className="text-base font-semibold text-slate-900">דירה {suggestion.apartment_number}</span>
           <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-            {SUGGESTION_FIELD_LABEL[suggestion.field]}
+            {suggestion.owner_change ? 'שם בעלים חדש' : SUGGESTION_FIELD_LABEL[suggestion.field]}
           </span>
           <span className="text-xs text-muted-foreground">{formatRelativeTime(suggestion.created_at)}</span>
         </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
-          <Value value={suggestion.current_value} numeric={numeric} muted />
-          <ArrowLeft className="h-4 w-4 shrink-0 text-slate-400" aria-label="מוצע" />
-          <Value value={suggestion.proposed_value} numeric={numeric} />
-        </div>
+        {person ? (
+          <PersonLine s={suggestion} />
+        ) : (
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
+            <Value value={suggestion.current_value} numeric={numeric} muted />
+            <ArrowLeft className="h-4 w-4 shrink-0 text-slate-400" aria-label="מוצע" />
+            <Value value={suggestion.proposed_value} numeric={numeric} />
+          </div>
+        )}
+        {suggestion.field === 'portal_unlink' && suggestion.unlink_reason && (
+          <p className="mt-1.5 text-xs text-slate-600">למה: {UNLINK_REASON_LABEL[suggestion.unlink_reason]}</p>
+        )}
+        {suggestion.marks_rented && (
+          <p className="mt-1.5 text-xs text-amber-700">אישור יסמן בכרטיס הדירה סוג דייר &quot;שוכר&quot;.</p>
+        )}
+        {suggestion.waits_for_owner_name && (
+          <p className="mt-1.5 text-xs text-amber-700">ממתין להחלטה על שם הבעלים של הדירה (תיקון שם / החלפת בעלים).</p>
+        )}
       </div>
 
       {canEdit && (
-        <div className="flex items-center gap-2 sm:shrink-0">
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+          {suggestion.owner_change ? (
+            <OwnerNameDecision suggestion={suggestion} busy={busy} onResolve={onResolve} />
+          ) : (
+            <Button
+              type="button" variant="outline" size="sm" disabled={busy || suggestion.waits_for_owner_name}
+              onClick={() => onResolve('approve')}
+              className="flex-1 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-700 sm:flex-none"
+            >
+              <Check className="h-4 w-4" /> {approveLabel}
+            </Button>
+          )}
           <Button
-            type="button" variant="outline" size="sm" disabled={busy} onClick={onApprove}
-            className="flex-1 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-700 sm:flex-none"
-          >
-            <Check className="h-4 w-4" /> אשר
-          </Button>
-          <Button
-            type="button" variant="outline" size="sm" disabled={busy} onClick={onReject}
+            type="button" variant="outline" size="sm" disabled={busy} onClick={() => onResolve('reject')}
             className="flex-1 gap-1.5 border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700 sm:flex-none"
           >
             <X className="h-4 w-4" /> דחה

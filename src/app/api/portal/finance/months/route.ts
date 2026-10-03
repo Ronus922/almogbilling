@@ -8,7 +8,7 @@ export const runtime = 'nodejs';
 
 // GET /api/portal/finance/months — the months a resident may open ('YYYY-MM',
 // newest first). Read-only, and guarded by requirePortalFinanceAccess (the
-// session + not a mixed-owners phone, see lib/portal/ownership.ts) — NOT by
+// session + not a blocked phone, see lib/portal/identity.ts) — NOT by
 // requireAdmin: a resident holds no users row and no permission matrix.
 //
 // The published filter is not applied here at all: getPublishedMonths only ever

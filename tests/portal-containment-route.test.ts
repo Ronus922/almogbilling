@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // people gets NO financial data from the portal API. Exercised through the
 // REAL guard chain — requirePortalFinanceAccess → requirePortalSession →
 // getPortalSession → the cookie → findPortalSession → isActiveOwner — and the
-// REAL roster lookups (isMixedOwnerPhone, getPortalMyAccount) over a mocked
+// REAL identity (resolvePortalIdentity, getPortalMyAccount) over a mocked
 // query(): only the cookie store, the session row and the SQL results are
 // fakes. The finance layer returns canaries, so a leak would show in the body.
 
@@ -34,7 +34,10 @@ vi.mock('@/lib/db/portal/sessions', () => ({
 vi.mock('@/lib/db/portal/events', () => ({ logPortalEvent: vi.fn() }));
 vi.mock('@/lib/db', () => ({
   query: vi.fn(async (sql: string) => {
-    if (/from public\.apartment_owner_phones/.test(sql)) return { rows: h.roster, rowCount: h.roster.length };
+    // The identity reads each link with its id and role (owner here).
+    if (/from public\.apartment_owner_phones/.test(sql)) {
+      return { rows: h.roster.map((r, i) => ({ id: `r${i}`, role: 'owner', ...r })), rowCount: h.roster.length };
+    }
     if (/from public\.debtors/.test(sql)) {
       h.debtSql += 1;
       return {

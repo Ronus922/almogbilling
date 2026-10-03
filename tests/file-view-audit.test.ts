@@ -87,8 +87,18 @@ vi.mock('@/lib/portal/session', () => ({
 vi.mock('@/lib/db/finance/portal', () => ({
   findResidentReceipt: vi.fn(async () => h.receipt),
 }));
-vi.mock('@/lib/db/portal/ownerPhones', () => ({
-  findOwnerIdentity: vi.fn(async () => ({ apartmentNumbers: ['7', '12'], ownerName: 'דנה לוי', mixedOwners: h.mixedOwners })),
+// The portal's one identity (lib/db/portal/identity.ts): ok for one person,
+// blocked when the names differ — the files route reads nothing else.
+vi.mock('@/lib/db/portal/identity', () => ({
+  resolvePortalIdentity: vi.fn(async () => (h.mixedOwners
+    ? { status: 'blocked', name: null, apartments: [], canSeeBuildingFinance: false, approvalId: null,
+        reporter: { rosterId: null, apartmentNumber: null, role: null, name: 'לא מזוהה' } }
+    : { status: 'ok', name: 'דנה לוי', canSeeBuildingFinance: true, approvalId: null,
+        apartments: [
+          { apartmentNumber: '7', role: 'owner', rosterId: 'r7', canSeeDebt: true },
+          { apartmentNumber: '12', role: 'owner', rosterId: 'r12', canSeeDebt: true },
+        ],
+        reporter: { rosterId: 'r7', apartmentNumber: '7', role: 'owner', name: 'דנה לוי' } })),
 }));
 vi.mock('@/lib/storage/server', () => ({
   PRIVATE_BUCKETS: ['supplier-documents', 'documents', 'issue-attachments', 'whatsapp-attachments', 'finance-receipts'],

@@ -9,6 +9,8 @@ import { getBillingSettings } from '@/lib/db/appSettings';
 import { computeManagementFee } from '@/lib/billing/managementFee';
 import type { ContactSort, ContactWritableFields } from '@/lib/types/contacts';
 import { logger } from '@/lib/logger';
+import { withTransaction } from '@/lib/db';
+import { phoneEntryErrorResponse, readPhoneDecisions, withPhoneEntryCheck } from '@/lib/http/phoneEntry';
 
 export const runtime = 'nodejs';
 
@@ -69,6 +71,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: peopleResult.error }, { status: 400 });
   }
 
+  // The entry warning — see PATCH /api/contacts/[id].
+  const decisions = readPhoneDecisions(rec);
+  if (!decisions.ok) {
+    return NextResponse.json({ error: 'invalid_phone_decisions' }, { status: 400 });
+  }
+
   // management_fee is DERIVED (size × 150% × the per-m² rate in settings) — the
   // server owns the number, so a client value can never drift from the formula.
   // With no size or no configured rate, whatever the client sent stands.
@@ -77,19 +85,31 @@ export async function POST(req: NextRequest) {
   if (derivedFee !== null) result.fields.management_fee = derivedFee;
 
   try {
-    const created = await createContact(
-      result.fields as Partial<ContactWritableFields> & { apartment_number: string },
-      actor.id,
-    );
-    if (peopleResult && peopleResult.people.length > 0) {
-      await replaceContactPeople(created.id, peopleResult.people);
-    }
+    // The contact and its people in ONE transaction, the entry warning before
+    // COMMIT: an unanswered conflict leaves no half-created apartment.
+    const created = await withTransaction((client) => withPhoneEntryCheck(
+      client,
+      { apartments: [], decisions: decisions.decisions, actor },
+      async () => {
+        const row = await createContact(
+          result.fields as Partial<ContactWritableFields> & { apartment_number: string },
+          actor.id,
+          client,
+        );
+        if (peopleResult && peopleResult.people.length > 0) {
+          await replaceContactPeople(row.id, peopleResult.people, client);
+        }
+        return { result: row, apartments: [row.apartment_number] };
+      },
+    ));
     const contact = (await getContactById(created.id)) ?? created;
     return NextResponse.json({ contact }, { status: 201 });
   } catch (err) {
     if (err instanceof ConflictError) {
       return NextResponse.json({ error: 'apartment_number_exists' }, { status: 409 });
     }
+    const warn = phoneEntryErrorResponse(err, actor);
+    if (warn) return warn;
     const e = err as { code?: string };
     if (e.code === '23503') {
       return NextResponse.json({ error: 'invalid_reference' }, { status: 400 });

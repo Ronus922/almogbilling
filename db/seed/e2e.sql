@@ -66,6 +66,19 @@ select v.a, v.t, v.n, v.p from (values
 on conflict (apartment_number) do update
   set owner_name = excluded.owner_name, owner_phone = excluded.owner_phone;
 
+-- A tenant and an operator (03/10/2026, the portal by role), through the card
+-- exactly like the owners: E2E-T's card says a tenant lives there (resident
+-- type 'tenant'), E2E-O's says an operator runs it ('operator') — the section
+-- the card SHOWS is what links. E2E-A's tenant phone above sits in a section
+-- its card hides (resident type 'owner'), so it opens nothing.
+insert into public.contacts (apartment_number, owner_name, resident_type, tenant_name, tenant_phone)
+select v.a, v.o, v.rt, v.n, v.p from (values
+  ('E2E-T', 'בעלים T E2E', 'tenant',   'טל שוכרת E2E', '+972507777777'),
+  ('E2E-O', 'בעלים O E2E', 'operator', 'עומר מפעיל E2E', '+972508888888')
+) v(a, o, rt, n, p)
+on conflict (apartment_number) do update
+  set resident_type = excluded.resident_type, tenant_name = excluded.tenant_name, tenant_phone = excluded.tenant_phone;
+
 -- The second owner of A and of B: an extra owner on the card.
 insert into public.contact_people (contact_id, role, name, phone, sort_order)
 select c.id, 'owner', v.n, v.p, 0
@@ -80,7 +93,9 @@ values
   ('00000000-0000-4000-8000-0000000e2e0a', 'E2E-A', 'CANARY-OWNER-A', '050-1111111', 'canary-a@example.com', 1240, 840, 400, 0, '3/26', E'מים חמים 01-03/26 <script>window.__pwned=1</script>', false, 'CANARY-NOTE-A', 'CANARY-ACTION-A', 'CANARY-LEGAL-A'),
   ('00000000-0000-4000-8000-0000000e2e0b', 'E2E-B', 'CANARY-OWNER-B', '050-2222222', 'canary-b@example.com', 300, 0, 300, 0, '1/26', 'מים חמים 02/26', false, 'CANARY-NOTE-B', 'CANARY-ACTION-B', 'CANARY-LEGAL-B'),
   ('00000000-0000-4000-8000-0000000e2e0c', 'E2E-C', 'CANARY-OWNER-C', '050-3333333', null, 0, 0, 0, 0, null, null, false, 'CANARY-NOTE-C', null, null),
-  ('00000000-0000-4000-8000-0000000e2e0d', 'E2E-D', 'CANARY-OWNER-D', '050-4444444', null, 999.5, 999.5, 0, 0, '9/26', 'E2E-DETAILS-D מים חמים 07-09/26', true, 'CANARY-NOTE-D', 'CANARY-ACTION-D', 'CANARY-LEGAL-D')
+  ('00000000-0000-4000-8000-0000000e2e0d', 'E2E-D', 'CANARY-OWNER-D', '050-4444444', null, 999.5, 999.5, 0, 0, '9/26', 'E2E-DETAILS-D מים חמים 07-09/26', true, 'CANARY-NOTE-D', 'CANARY-ACTION-D', 'CANARY-LEGAL-D'),
+  ('00000000-0000-4000-8000-0000000e2e0e', 'E2E-T', 'CANARY-OWNER-T', '0507070707', null, 500, 500, 0, 0, '2/26', null, false, 'CANARY-NOTE-T', null, null),
+  ('00000000-0000-4000-8000-0000000e2e0f', 'E2E-O', 'CANARY-OWNER-O', '0508080808', null, 0, 0, 0, 0, null, null, false, 'CANARY-NOTE-O', null, null)
 on conflict (id) do update set total_debt = excluded.total_debt, management_fees = excluded.management_fees, hot_water_debt = excluded.hot_water_debt, monthly_debt = excluded.monthly_debt, details = excluded.details, is_archived = excluded.is_archived, notes = excluded.notes;
 
 insert into public.apartment_owner_phones (apartment_number, owner_name, phone_e164, is_active)
@@ -107,6 +122,8 @@ select encode(digest(v.tok, 'sha256'), 'hex'), v.p, v.exp, v.rev from (values
   ('e2e-owner-c',        '+972503333333', now() + interval '12 hours', null),
   ('e2e-owner-d',        '+972504444444', now() + interval '12 hours', null),
   ('e2e-owner-disabled', '+972505555555', now() + interval '12 hours', null),
+  ('e2e-tenant-t',       '+972507777777', now() + interval '12 hours', null),
+  ('e2e-operator-o',     '+972508888888', now() + interval '12 hours', null),
   ('e2e-expired',        '+972501111111', now() - interval '1 hour',   null),
   ('e2e-revoked',        '+972501111111', now() + interval '12 hours', now())
 ) v(tok, p, exp, rev)

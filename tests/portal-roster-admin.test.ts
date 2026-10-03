@@ -29,9 +29,12 @@ vi.mock('@/lib/db', () => ({
   queryOne: vi.fn(async (sql: string) =>
     sql.includes('from public.contacts') ? { n: 1 } : h.stillActive),
 }));
+vi.mock('@/lib/db/portal/blockedPhones', () => ({
+  listBlockedPortalPhones: vi.fn(async () => []),
+  listApprovedIdentities: vi.fn(async () => []),
+}));
 vi.mock('@/lib/db/portal/ownerPhones', () => ({
   listOwnerPhones: vi.fn(async () => []),
-  listBlockedPortalPhones: vi.fn(async () => []),
   detachOwnerPhone: vi.fn(async (apartment: string, id: string) => ({
     id, apartment_number: apartment, phone_e164: '+972525460546', owner_name: 'טלי בדיקה',
   })),
@@ -42,7 +45,8 @@ vi.mock('@/lib/db/audit', () => ({ writeAudit: vi.fn(async () => undefined) }));
 
 const route = await import('@/app/api/apartments/[apartment]/owner-phones/route');
 const blocked = await import('@/app/api/admin/portal-blocked/route');
-const { detachOwnerPhone, listBlockedPortalPhones } = await import('@/lib/db/portal/ownerPhones');
+const { detachOwnerPhone } = await import('@/lib/db/portal/ownerPhones');
+const { listBlockedPortalPhones } = await import('@/lib/db/portal/blockedPhones');
 const { writeAudit } = await import('@/lib/db/audit');
 const { revokePortalSessionsForPhone } = await import('@/lib/db/portal/sessions');
 const { ownerPhoneDetachBodySchema } = await import('@/lib/validation/requests');

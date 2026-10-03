@@ -14,7 +14,9 @@ import { splitOwnerTenantNames } from '@/lib/sync/reportNames';
 // entry point (syncContactsFromReport — what the Bllink sync and the Excel
 // import both call), not through hand-written SQL:
 //   • the same value in a different spelling is not a change;
-//   • an empty field of ours is filled with no approval;
+//   • an empty NAME or ADDRESS field of ours is filled with no approval — a
+//     PHONE never is (03/10/2026): a phone opens the portal, so even for an
+//     empty field it arrives as a suggestion;
 //   • a CONFLICT becomes a suggestion and OURS STANDS;
 //   • an empty value from Bllink changes nothing;
 //   • two syncs in a row leave ONE suggestion, with its original date;
@@ -22,6 +24,8 @@ import { splitOwnerTenantNames } from '@/lib/sync/reportNames';
 //   • a suggestion our own edit satisfies closes itself;
 //   • approving an owner phone puts that owner on the portal roster at once —
 //     the promise of PR #50, now reachable from the approval queue too.
+// The portal-access rules of the queue (several ids, owner names, Bllink's
+// people) are pinned in tests/portal-roles-identity.test.ts.
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
 const d = describe.skipIf(!TEST_URL);
 
@@ -41,7 +45,7 @@ vi.mock('@/lib/db', () => ({
 const { syncContactsFromReport } = await import('@/lib/db/contacts');
 const { listPendingSuggestions, resolveSuggestions, getContactFieldState } =
   await import('@/lib/db/contactSuggestions');
-const { findOwnerIdentity } = await import('@/lib/db/portal/ownerPhones');
+const { findPortalRegistration } = await import('@/lib/db/portal/identity');
 
 // Apartments this file creates. Removed by these exact strings (iron rule 12).
 // Numeric on purpose: the registry keys on digits only
@@ -120,7 +124,7 @@ d('the Bllink approval queue', () => {
     await pool.end();
   });
 
-  it('fills what we do not have, creates what we do not know, and asks about the rest', async () => {
+  it('fills names we do not have, creates what we do not know, and asks about the rest — every phone included', async () => {
     const out = await syncContactsFromReport([
       // same name in a different spelling + a DIFFERENT phone + a tenant phone
       // we do not have at all
@@ -129,19 +133,28 @@ d('the Bllink approval queue', () => {
       report({ apartment_number: NEW, owner_name: 'חדשה', phone_owner: '0504444444' }),
     ]);
     expect(out.created).toBe(1);
-    expect(out.applied).toBe(3);   // KEPT.tenant_phone + both EMPTY fields
-    expect(out.suggested).toBe(1); // only the owner phone conflicts
+    expect(out.applied).toBe(1);   // EMPTY.owner_name only — no phone is written in
+    // KEPT owner phone (conflict) + KEPT tenant phone + EMPTY owner phone +
+    // NEW owner phone: a phone for an EMPTY field is a suggestion too.
+    expect(out.suggested).toBe(4);
 
-    // ours stands where it conflicts, and is filled where it was empty
+    // ours stands where it conflicts; an empty phone field STAYS empty
     expect(await contact(KEPT)).toMatchObject({
-      owner_name: 'רונן משולם', owner_phone: '0541111111', tenant_phone: '0509999999',
+      owner_name: 'רונן משולם', owner_phone: '0541111111', tenant_phone: null,
     });
-    expect(await contact(EMPTY)).toMatchObject({ owner_name: 'דנה', owner_phone: '0503333333' });
-    expect(await contact(NEW)).toMatchObject({ owner_name: 'חדשה', source: 'bllink_sync' });
+    expect(await contact(EMPTY)).toMatchObject({ owner_name: 'דנה', owner_phone: null });
+    expect(await contact(NEW)).toMatchObject({ owner_name: 'חדשה', owner_phone: null, source: 'bllink_sync' });
 
     const open = await pendingOf(KEPT);
-    expect(open).toHaveLength(1);
-    expect(open[0]).toMatchObject({ field: 'owner_phone', current_value: '0541111111', proposed_value: '052-222-2222' });
+    expect(open.map((x) => x.field).sort()).toEqual(['owner_phone', 'tenant_phone']);
+    expect(open.find((x) => x.field === 'owner_phone')).toMatchObject({
+      current_value: '0541111111', proposed_value: '052-222-2222', access: true,
+    });
+    expect(open.find((x) => x.field === 'tenant_phone')).toMatchObject({
+      current_value: null, proposed_value: '0509999999', access: true,
+    });
+    expect((await pendingOf(EMPTY)).map((x) => x.field)).toEqual(['owner_phone']);
+    expect((await pendingOf(NEW)).map((x) => x.field)).toEqual(['owner_phone']);
   });
 
   it('records who wrote each field — a spelling change is not a change', async () => {
@@ -149,17 +162,18 @@ d('the Bllink approval queue', () => {
     // typed by hand before the sync, and the sync's identical name did not restamp it
     expect(sources.owner_name?.source).toBe('manual');
     expect(sources.owner_phone?.source).toBe('manual');
-    // the empty field the sync filled
-    expect(sources.tenant_phone?.source).toBe('bllink');
+    // the empty phone field was NOT filled — nobody wrote it
+    expect(sources.tenant_phone).toBeUndefined();
   });
 
   it('a second identical sync adds nothing and does not re-date the suggestion', async () => {
-    const before = (await pendingOf(KEPT))[0]!;
+    const ownerPhone = async () => (await pendingOf(KEPT)).filter((x) => x.field === 'owner_phone');
+    const before = (await ownerPhone())[0]!;
     const out = await syncContactsFromReport([
       report({ apartment_number: KEPT, owner_name: 'רונן משולם', phone_owner: '0522222222', phone_tenant: '050-999-9999' }),
     ]);
     expect(out).toMatchObject({ created: 0, applied: 0, suggested: 0 });
-    const after = await pendingOf(KEPT);
+    const after = await ownerPhone();
     expect(after).toHaveLength(1);
     expect(after[0]!.id).toBe(before.id);
     expect(after[0]!.created_at).toEqual(before.created_at);
@@ -168,21 +182,24 @@ d('the Bllink approval queue', () => {
   it('an empty value from Bllink changes nothing', async () => {
     const out = await syncContactsFromReport([report({ apartment_number: EMPTY })]);
     expect(out).toMatchObject({ applied: 0, suggested: 0 });
-    expect(await contact(EMPTY)).toMatchObject({ owner_name: 'דנה', owner_phone: '0503333333' });
+    expect(await contact(EMPTY)).toMatchObject({ owner_name: 'דנה', owner_phone: null });
+    // …and the open phone question stays open
+    expect((await pendingOf(EMPTY)).map((x) => x.field)).toEqual(['owner_phone']);
   });
 
   it('a rejected value does not come back — until Bllink changes it again', async () => {
-    const open = await pendingOf(KEPT);
+    const ownerPhone = async () => (await pendingOf(KEPT)).filter((x) => x.field === 'owner_phone');
+    const open = await ownerPhone();
     expect(await resolveSuggestions([open[0]!.id], 'reject', null)).toBe(1);
     // ours is untouched by a rejection
     expect((await contact(KEPT))?.owner_phone).toBe('0541111111');
 
     await syncContactsFromReport([report({ apartment_number: KEPT, phone_owner: '052-222-2222' })]);
-    expect(await pendingOf(KEPT)).toHaveLength(0);
+    expect(await ownerPhone()).toHaveLength(0);
 
     // a THIRD value is a new question
     await syncContactsFromReport([report({ apartment_number: KEPT, phone_owner: '0587777777' })]);
-    const again = await pendingOf(KEPT);
+    const again = await ownerPhone();
     expect(again).toHaveLength(1);
     expect(again[0]!.proposed_value).toBe('0587777777');
   });
@@ -190,7 +207,7 @@ d('the Bllink approval queue', () => {
   it('a suggestion our own edit satisfies closes itself', async () => {
     // the very same number, typed by hand in another spelling
     await pool.query(`update public.contacts set owner_phone = '058-777-7777' where apartment_number = $1`, [KEPT]);
-    expect(await pendingOf(KEPT)).toHaveLength(0);
+    expect((await pendingOf(KEPT)).filter((x) => x.field === 'owner_phone')).toHaveLength(0);
     const row = await pool.query<{ status: string; resolved_by: string | null }>(
       `select status, resolved_by from public.contact_sync_suggestions
         where apartment_number = $1 and proposed_value = '0587777777'`, [KEPT]);
@@ -201,17 +218,17 @@ d('the Bllink approval queue', () => {
 
   it('approving an owner phone lets that owner into the portal immediately', async () => {
     await syncContactsFromReport([report({ apartment_number: KEPT, phone_owner: '0526543210' })]);
-    const open = await pendingOf(KEPT);
+    const open = (await pendingOf(KEPT)).filter((x) => x.field === 'owner_phone');
     expect(open).toHaveLength(1);
 
     // nobody is on the roster for that number yet
-    expect(await findOwnerIdentity('+972526543210', { onlyActive: true })).toBeNull();
+    expect(await findPortalRegistration('+972526543210', { onlyActive: true })).toBeNull();
 
     expect(await resolveSuggestions([open[0]!.id], 'approve', null)).toBe(1);
     expect((await contact(KEPT))?.owner_phone).toBe('0526543210');
 
     // the roster trigger of 20260929162740 followed the write — no extra step
-    const found = await findOwnerIdentity('+972526543210', { onlyActive: true });
+    const found = await findPortalRegistration('+972526543210', { onlyActive: true });
     expect(found?.apartmentNumbers).toEqual([KEPT]);
     // the value came from Bllink even though a person pressed the button
     expect((await getContactFieldState(KEPT)).sources.owner_phone?.source).toBe('bllink');
@@ -399,13 +416,18 @@ d('the Bllink approval queue', () => {
 
   it('resolving the same id twice is a no-op, and the queue only ever lists open rows', async () => {
     await syncContactsFromReport([report({ apartment_number: KEPT, owner_name: 'שם אחר' })]);
-    const open = await pendingOf(KEPT);
+    const open = (await pendingOf(KEPT)).filter((x) => x.field === 'owner_name');
     expect(open).toHaveLength(1);
-    expect(await resolveSuggestions([open[0]!.id], 'approve', null)).toBe(1);
+    // a new owner NAME is a decision: a plain approve leaves it open…
+    expect(open[0]).toMatchObject({ owner_change: true });
     expect(await resolveSuggestions([open[0]!.id], 'approve', null)).toBe(0);
+    // …"תיקון שם" decides it, once
+    expect(await resolveSuggestions([open[0]!.id], 'approve_rename', null)).toBe(1);
+    expect(await resolveSuggestions([open[0]!.id], 'approve_rename', null)).toBe(0);
     expect((await contact(KEPT))?.owner_name).toBe('שם אחר');
 
     const queue = await listPendingSuggestions();
-    expect(queue.filter((s) => APTS.includes(s.apartment_number))).toHaveLength(0);
+    expect(queue.some((s) => s.id === open[0]!.id)).toBe(false);
+    expect(queue.every((s) => !APTS.includes(s.apartment_number) || s.field.endsWith('_phone'))).toBe(true);
   });
 });
