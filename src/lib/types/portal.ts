@@ -1,7 +1,11 @@
 // Owners-portal types shared by the server layer, the routes and the UI.
 import type { PortalEventType, PortalLockoutReason } from '@/lib/constants/portal';
 
-/** A row of the roster, as the apartment card's "בעלי דירה" tab shows it. */
+/** Which owner record carries a roster phone (migration 20261003095149). */
+export type OwnerPhoneSource = 'contacts' | 'contact_people';
+
+/** A row of the roster, as the apartment card's "טלפון ← דירות בפורטל" shows
+ *  it: the phone, the record that links it, and what else the phone opens. */
 export interface OwnerPhone {
   id: string;
   apartment_number: string;
@@ -9,6 +13,29 @@ export interface OwnerPhone {
   phone_e164: string;
   is_active: boolean;
   created_at: string;
+  /** The record that carries the phone today; null = none does (inactive). */
+  source_table: OwnerPhoneSource | null;
+  /** The name ON that record, read live. */
+  source_name: string | null;
+  /** A deliberate detach (admin / clean-up / owner replaced); null otherwise. */
+  detached_at: string | null;
+  detach_reason: string | null;
+  /** The phone's OTHER active apartments, numeric order. */
+  other_apartments: string[];
+  /** The phone's active apartments belong to different people — the portal
+   *  shows it no financial data (lib/portal/ownership.ts). */
+  mixed_owners: boolean;
+}
+
+/** One phone the containment blocks, with every active link behind it. */
+export interface BlockedPortalPhone {
+  phone_e164: string;
+  links: {
+    id: string;
+    apartment_number: string;
+    owner_name: string | null;
+    source_table: OwnerPhoneSource | null;
+  }[];
 }
 
 /** Who a phone is, resolved from the roster at login time. */
