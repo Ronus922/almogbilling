@@ -79,15 +79,62 @@ begin
     -- where the value came from.
     perform set_config('app.write_source', 'bllink', true);
 
-    update public.contacts c set owner_name = s.proposed_value
-      from public.contact_sync_suggestions s
-     where s.id = any(p_ids) and s.resolved_at = v_now and s.field = 'owner_name'
-       and c.apartment_number = s.apartment_number;
+    -- An approved owner NAME that differs from a non-empty current one is an
+    -- owner REPLACEMENT. The previous owner's phones in that apartment — the
+    -- phone the owner field held, and every roster phone recorded under the
+    -- previous owner's name — are detached now, in this call, unless the same
+    -- approval names that phone as the new owner's. Without this, the old
+    -- phone stays in owner_phone under the NEW name and keeps its access.
+    with repl as (
+      select c.apartment_number,
+             c.owner_name                                  as old_name,
+             public.portal_owner_e164(c.owner_phone)       as old_phone,
+             public.portal_owner_e164(sp.proposed_value)   as new_phone
+        from public.contact_sync_suggestions sn
+        join public.contacts c on c.apartment_number = sn.apartment_number
+        left join public.contact_sync_suggestions sp
+               on sp.apartment_number = sn.apartment_number
+              and sp.id = any(p_ids) and sp.resolved_at = v_now and sp.field = 'owner_phone'
+       where sn.id = any(p_ids) and sn.resolved_at = v_now and sn.field = 'owner_name'
+         and nullif(btrim(coalesce(c.owner_name, '')), '') is not null
+         and public.contact_value_norm('owner_name', c.owner_name)
+             is distinct from public.contact_value_norm('owner_name', sn.proposed_value)
+    ), det as (
+      update public.apartment_owner_phones r
+         set is_active = false, detached_at = v_now, detached_by = p_actor,
+             detach_reason = 'owner_replaced'
+        from repl
+       where r.apartment_number = repl.apartment_number
+         and r.detached_at is null
+         and (r.phone_e164 = repl.old_phone
+              or public.contact_value_norm('owner_name', r.owner_name)
+                 = public.contact_value_norm('owner_name', repl.old_name))
+         and r.phone_e164 is distinct from repl.new_phone
+      returning r.id, r.apartment_number, r.phone_e164, r.owner_name
+    )
+    insert into public.audit_log (actor_user_id, action, entity_type, entity_id, metadata)
+    select p_actor, 'portal_owner_phone_detached', 'apartment_owner_phone', det.id::text,
+           jsonb_build_object('apartment_number', det.apartment_number,
+                              'phone_e164', det.phone_e164, 'owner_name', det.owner_name,
+                              'reason', 'owner_replaced', 'via', 'contact_suggestion_resolve')
+      from det;
 
-    update public.contacts c set owner_phone = s.proposed_value
-      from public.contact_sync_suggestions s
-     where s.id = any(p_ids) and s.resolved_at = v_now and s.field = 'owner_phone'
-       and c.apartment_number = s.apartment_number;
+    -- The owner's name and phone in ONE statement: never a moment where the
+    -- new name sits on the previous owner's phone.
+    update public.contacts c
+       set owner_name  = coalesce(sn.proposed_value, c.owner_name),
+           owner_phone = coalesce(sp.proposed_value, c.owner_phone)
+      from (select distinct s.apartment_number
+              from public.contact_sync_suggestions s
+             where s.id = any(p_ids) and s.resolved_at = v_now
+               and s.field in ('owner_name', 'owner_phone')) a
+      left join public.contact_sync_suggestions sn
+             on sn.apartment_number = a.apartment_number
+            and sn.id = any(p_ids) and sn.resolved_at = v_now and sn.field = 'owner_name'
+      left join public.contact_sync_suggestions sp
+             on sp.apartment_number = a.apartment_number
+            and sp.id = any(p_ids) and sp.resolved_at = v_now and sp.field = 'owner_phone'
+     where c.apartment_number = a.apartment_number;
 
     update public.contacts c set owner_email = s.proposed_value
       from public.contact_sync_suggestions s
@@ -417,13 +464,18 @@ CREATE FUNCTION public.portal_owner_e164(raw text) RETURNS text
     LANGUAGE plpgsql IMMUTABLE
     AS $_$
 declare
+  ws constant text := '[\s   -     　﻿]';
   first_part text;
   digits     text;
 begin
-  if raw is null or btrim(raw) = '' then return null; end if;
+  if raw is null or regexp_replace(raw, '^' || ws || '+|' || ws || '+$', '', 'g') = '' then
+    return null;
+  end if;
 
   -- normalizePhone: a cell may hold several numbers — the first one wins.
-  first_part := btrim(split_part(regexp_replace(raw, '[/,;|]', '/', 'g'), '/', 1));
+  first_part := regexp_replace(
+    split_part(regexp_replace(raw, '[/,;|]', '/', 'g'), '/', 1),
+    '^' || ws || '+|' || ws || '+$', '', 'g');
   digits := regexp_replace(first_part, '\D', '', 'g');
   if digits = '' then return null; end if;
 
@@ -445,8 +497,7 @@ begin
 
   if digits !~ '^972[0-9]{8,9}$' then return null; end if;
 
-  -- Israel: a MOBILE only. 072/073/074/076/077 are ten digits exactly like a
-  -- mobile, so this is a PREFIX test, never a length test.
+  -- Israel: a MOBILE only (a PREFIX test — VoIP is ten digits too).
   if digits ~ '^9725[0-9]{8}$' then return '+' || digits; end if;
   return null;
 end;
@@ -458,6 +509,45 @@ $_$;
 --
 
 COMMENT ON FUNCTION public.portal_owner_e164(raw text) IS 'Owner phone -> E.164 roster key, or NULL. Mirrors toPortalE164() in src/lib/portal/phone.ts; pinned to it by tests/portal-owner-roster.test.ts.';
+
+
+--
+-- Name: portal_roster_desired(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.portal_roster_desired(p_apartment text) RETURNS TABLE(phone_e164 text, source_table text, source_row_id uuid, owner_name text)
+    LANGUAGE sql STABLE
+    AS $$
+  select distinct on (s.e164) s.e164, s.st, s.sid, s.nm
+    from (
+      select public.portal_owner_e164(c.owner_phone)          as e164,
+             'contacts'::text                                  as st,
+             c.id                                              as sid,
+             nullif(btrim(coalesce(c.owner_name, '')), '')     as nm,
+             0 as pri, 0 as so, c.created_at as ca
+        from public.contacts c
+       where c.apartment_number = p_apartment
+      union all
+      select public.portal_owner_e164(p.phone),
+             'contact_people',
+             p.id,
+             nullif(btrim(coalesce(p.name, '')), ''),
+             1, p.sort_order, p.created_at
+        from public.contact_people p
+        join public.contacts c on c.id = p.contact_id
+       where c.apartment_number = p_apartment
+         and p.role = 'owner'
+    ) s
+   where s.e164 is not null
+   order by s.e164, s.pri, s.so, s.ca, s.sid;
+$$;
+
+
+--
+-- Name: FUNCTION portal_roster_desired(p_apartment text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.portal_roster_desired(p_apartment text) IS 'The roster an apartment SHOULD have: one row per E.164 phone found in its owner records (contacts.owner_phone, contact_people role owner), with the record that carries it.';
 
 
 --
@@ -487,6 +577,190 @@ begin
   if new.role is distinct from 'owner' then return null; end if;
   select c.apartment_number into apt from public.contacts c where c.id = new.contact_id;
   perform public.portal_roster_upsert(apt, new.name, new.phone);
+  return null;
+end;
+$$;
+
+
+--
+-- Name: portal_roster_sync(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.portal_roster_sync(p_apartment text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+begin
+  if p_apartment is null
+     or not exists (select 1 from public.contacts c where c.apartment_number = p_apartment) then
+    return;
+  end if;
+
+  -- 1. An ACTIVE phone no owner record carries any more → off.
+  with gone as (
+    update public.apartment_owner_phones r
+       set is_active = false, source_table = null, source_row_id = null
+     where r.apartment_number = p_apartment
+       and r.is_active
+       and not exists (select 1 from public.portal_roster_desired(p_apartment) d
+                        where d.phone_e164 = r.phone_e164)
+    returning r.id, r.phone_e164, r.owner_name
+  )
+  insert into public.audit_log (action, entity_type, entity_id, metadata)
+  select 'portal_owner_phone_deactivated', 'apartment_owner_phone', g.id::text,
+         jsonb_build_object('apartment_number', p_apartment, 'phone_e164', g.phone_e164,
+                            'owner_name', g.owner_name, 'reason', 'source_removed',
+                            'via', 'portal_roster_sync')
+    from gone g;
+
+  -- 2. A DETACHED phone that left every owner record: the detach is released
+  --    (the row stays off). Typing the phone in again links it afresh.
+  with released as (
+    update public.apartment_owner_phones r
+       set detached_at = null, detached_by = null, detach_reason = null,
+           source_table = null, source_row_id = null
+     where r.apartment_number = p_apartment
+       and r.detached_at is not null
+       and not exists (select 1 from public.portal_roster_desired(p_apartment) d
+                        where d.phone_e164 = r.phone_e164)
+    returning r.id, r.phone_e164, r.owner_name
+  )
+  insert into public.audit_log (action, entity_type, entity_id, metadata)
+  select 'portal_owner_phone_detach_released', 'apartment_owner_phone', l.id::text,
+         jsonb_build_object('apartment_number', p_apartment, 'phone_e164', l.phone_e164,
+                            'owner_name', l.owner_name, 'reason', 'source_removed',
+                            'via', 'portal_roster_sync')
+    from released l;
+
+  -- An inactive row no record carries keeps no stale pointer.
+  update public.apartment_owner_phones r
+     set source_table = null, source_row_id = null
+   where r.apartment_number = p_apartment
+     and not r.is_active
+     and r.source_table is not null
+     and not exists (select 1 from public.portal_roster_desired(p_apartment) d
+                      where d.phone_e164 = r.phone_e164);
+
+  -- 3. A phone the records carry and the roster has never seen → linked.
+  with ins as (
+    insert into public.apartment_owner_phones
+      (apartment_number, owner_name, phone_e164, source_table, source_row_id)
+    select p_apartment, d.owner_name, d.phone_e164, d.source_table, d.source_row_id
+      from public.portal_roster_desired(p_apartment) d
+     where not exists (select 1 from public.apartment_owner_phones r
+                        where r.apartment_number = p_apartment and r.phone_e164 = d.phone_e164)
+    on conflict (apartment_number, phone_e164) do nothing
+    returning id, phone_e164, owner_name, source_table, source_row_id
+  )
+  insert into public.audit_log (action, entity_type, entity_id, metadata)
+  select 'portal_owner_phone_linked', 'apartment_owner_phone', i.id::text,
+         jsonb_build_object('apartment_number', p_apartment, 'phone_e164', i.phone_e164,
+                            'owner_name', i.owner_name, 'source_table', i.source_table,
+                            'source_row_id', i.source_row_id, 'via', 'portal_roster_sync')
+    from ins i;
+
+  -- 4. An inactive, NOT detached row whose phone a record carries again → on.
+  with back as (
+    update public.apartment_owner_phones r
+       set is_active = true, owner_name = d.owner_name,
+           source_table = d.source_table, source_row_id = d.source_row_id
+      from public.portal_roster_desired(p_apartment) d
+     where r.apartment_number = p_apartment
+       and r.phone_e164 = d.phone_e164
+       and not r.is_active
+       and r.detached_at is null
+    returning r.id, r.phone_e164, r.owner_name, r.source_table, r.source_row_id
+  )
+  insert into public.audit_log (action, entity_type, entity_id, metadata)
+  select 'portal_owner_phone_relinked', 'apartment_owner_phone', b.id::text,
+         jsonb_build_object('apartment_number', p_apartment, 'phone_e164', b.phone_e164,
+                            'owner_name', b.owner_name, 'source_table', b.source_table,
+                            'source_row_id', b.source_row_id, 'via', 'portal_roster_sync')
+    from back b;
+
+  -- 5. Active rows follow their record: the name on it, and where it lives.
+  --    A name change is logged — it decides whether a multi-apartment phone is
+  --    one person (lib/portal/ownership.ts). The record's id alone changes on
+  --    every card save (contact_people is rewritten), so that is not logged.
+  with cur as (
+    select r.id, r.phone_e164, r.owner_name as old_name, d.owner_name as new_name,
+           d.source_table, d.source_row_id
+      from public.apartment_owner_phones r
+      join public.portal_roster_desired(p_apartment) d on d.phone_e164 = r.phone_e164
+     where r.apartment_number = p_apartment
+       and r.is_active
+       and (r.owner_name is distinct from d.owner_name
+            or r.source_table is distinct from d.source_table
+            or r.source_row_id is distinct from d.source_row_id)
+  ), upd as (
+    update public.apartment_owner_phones r
+       set owner_name = cur.new_name,
+           source_table = cur.source_table, source_row_id = cur.source_row_id
+      from cur
+     where r.id = cur.id
+    returning r.id
+  )
+  insert into public.audit_log (action, entity_type, entity_id, metadata)
+  select 'portal_owner_phone_renamed', 'apartment_owner_phone', cur.id::text,
+         jsonb_build_object('apartment_number', p_apartment, 'phone_e164', cur.phone_e164,
+                            'from', cur.old_name, 'to', cur.new_name, 'via', 'portal_roster_sync')
+    from cur
+    join upd on upd.id = cur.id
+   where cur.old_name is distinct from cur.new_name;
+
+  -- 6. A detached row a record still carries: only the pointer follows, so the
+  --    admin screen can show WHICH record still holds the phone.
+  update public.apartment_owner_phones r
+     set source_table = d.source_table, source_row_id = d.source_row_id
+    from public.portal_roster_desired(p_apartment) d
+   where r.apartment_number = p_apartment
+     and r.phone_e164 = d.phone_e164
+     and r.detached_at is not null
+     and (r.source_table is distinct from d.source_table
+          or r.source_row_id is distinct from d.source_row_id);
+end;
+$$;
+
+
+--
+-- Name: FUNCTION portal_roster_sync(p_apartment text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.portal_roster_sync(p_apartment text) IS 'Recompute one apartment''s portal roster from its owner records, both directions, every link change logged in audit_log. Runs from the deferred triggers portal_roster_sync_*; never re-links a detached row.';
+
+
+--
+-- Name: portal_roster_sync_from_contact(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.portal_roster_sync_from_contact() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  -- DELETE is not an event here: the roster's FK cascades with the apartment.
+  perform public.portal_roster_sync(new.apartment_number);
+  return null;
+end;
+$$;
+
+
+--
+-- Name: portal_roster_sync_from_contact_person(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.portal_roster_sync_from_contact_person() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+  apt text;
+begin
+  if tg_op in ('UPDATE', 'DELETE') and old.role = 'owner' then
+    select c.apartment_number into apt from public.contacts c where c.id = old.contact_id;
+    perform public.portal_roster_sync(apt);
+  end if;
+  if tg_op in ('INSERT', 'UPDATE') and new.role = 'owner' then
+    select c.apartment_number into apt from public.contacts c where c.id = new.contact_id;
+    perform public.portal_roster_sync(apt);
+  end if;
   return null;
 end;
 $$;
@@ -598,7 +872,16 @@ CREATE TABLE public.apartment_owner_phones (
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by uuid,
-    CONSTRAINT apartment_owner_phones_phone_e164_check CHECK (((phone_e164 ~ '^\+9725[0-9]{8}$'::text) OR ((phone_e164 !~ '^\+972'::text) AND (phone_e164 ~ '^\+[1-9][0-9]{6,14}$'::text))))
+    source_table text,
+    source_row_id uuid,
+    detached_at timestamp with time zone,
+    detached_by uuid,
+    detach_reason text,
+    CONSTRAINT apartment_owner_phones_detach_shape_check CHECK (((detached_at IS NULL) = (detach_reason IS NULL))),
+    CONSTRAINT apartment_owner_phones_detached_inactive_check CHECK (((detached_at IS NULL) OR (NOT is_active))),
+    CONSTRAINT apartment_owner_phones_phone_e164_check CHECK (((phone_e164 ~ '^\+9725[0-9]{8}$'::text) OR ((phone_e164 !~ '^\+972'::text) AND (phone_e164 ~ '^\+[1-9][0-9]{6,14}$'::text)))),
+    CONSTRAINT apartment_owner_phones_source_pair_check CHECK (((source_table IS NULL) = (source_row_id IS NULL))),
+    CONSTRAINT apartment_owner_phones_source_table_check CHECK (((source_table IS NULL) OR (source_table = ANY (ARRAY['contacts'::text, 'contact_people'::text]))))
 );
 
 
@@ -621,6 +904,34 @@ COMMENT ON COLUMN public.apartment_owner_phones.owner_name IS 'Display name for 
 --
 
 COMMENT ON COLUMN public.apartment_owner_phones.phone_e164 IS 'E.164. Israel: mobile only (+9725XXXXXXXX). Other countries: general E.164 (+CC…, 7–15 digits). Same rule as toPortalE164().';
+
+
+--
+-- Name: COLUMN apartment_owner_phones.source_table; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apartment_owner_phones.source_table IS 'Which owner record carries this phone today: contacts (owner_phone) or contact_people (role owner). NULL = no record holds it (an inactive row). Written by portal_roster_sync only.';
+
+
+--
+-- Name: COLUMN apartment_owner_phones.source_row_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apartment_owner_phones.source_row_id IS 'contacts.id or contact_people.id of that record. Not an FK: the apartment card deletes and re-inserts contact_people on every save, and the sync repoints this at commit.';
+
+
+--
+-- Name: COLUMN apartment_owner_phones.detached_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apartment_owner_phones.detached_at IS 'A deliberate detach (admin / approved clean-up / owner replaced). Sticky: the sync does not re-link while the owner record still holds the phone; released when the phone leaves every owner record of the apartment.';
+
+
+--
+-- Name: COLUMN apartment_owner_phones.detach_reason; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apartment_owner_phones.detach_reason IS 'Why it was detached: admin · audit_2026_10 · owner_replaced (free text, the audit_log entry carries the detail).';
 
 
 --
@@ -1650,7 +1961,7 @@ CREATE TABLE public.issues (
     reporter_area text,
     ticket_number integer,
     CONSTRAINT issues_location_type_check CHECK ((location_type = ANY (ARRAY['apartment'::text, 'area'::text, 'general'::text]))),
-    CONSTRAINT issues_portal_reporter_check CHECK (((source <> 'portal'::text) OR ((reporter_phone IS NOT NULL) AND (reporter_apartment IS NOT NULL) AND (reporter_location IS NOT NULL) AND (ticket_number IS NOT NULL)))),
+    CONSTRAINT issues_portal_reporter_check CHECK (((source <> 'portal'::text) OR ((reporter_phone IS NOT NULL) AND (reporter_location IS NOT NULL) AND (ticket_number IS NOT NULL) AND ((reporter_apartment IS NULL) OR (btrim(reporter_apartment) <> ''::text)) AND ((reporter_contact_id IS NULL) OR (reporter_apartment IS NOT NULL))))),
     CONSTRAINT issues_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text]))),
     CONSTRAINT issues_reporter_phone_e164_check CHECK (((reporter_phone IS NULL) OR (reporter_phone ~ '^\+[1-9][0-9]{6,14}$'::text))),
     CONSTRAINT issues_source_check CHECK ((source = ANY (ARRAY['staff'::text, 'portal'::text]))),
@@ -1706,6 +2017,13 @@ COMMENT ON COLUMN public.issues.reporter_area IS 'Portal reports: "קומה / א
 --
 
 COMMENT ON COLUMN public.issues.ticket_number IS 'Portal reports: the call number shown to the resident (issues_ticket_number_seq, from 1001).';
+
+
+--
+-- Name: CONSTRAINT issues_portal_reporter_check ON issues; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON CONSTRAINT issues_portal_reporter_check ON public.issues IS 'Portal rows carry the reporter snapshot. reporter_apartment may be NULL only for an unidentified reporter (reporter_contact_id NULL — a phone whose apartments belong to different people); never ''''.';
 
 
 --
@@ -4862,12 +5180,30 @@ CREATE TRIGGER parking_spots_touch_updated_at BEFORE UPDATE ON public.parking_sp
 
 CREATE TRIGGER portal_roster_from_contact_aiu AFTER INSERT OR UPDATE OF owner_phone, owner_name, apartment_number ON public.contacts FOR EACH ROW EXECUTE FUNCTION public.portal_roster_from_contact();
 
+ALTER TABLE public.contacts DISABLE TRIGGER portal_roster_from_contact_aiu;
+
 
 --
 -- Name: contact_people portal_roster_from_contact_person_aiu; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER portal_roster_from_contact_person_aiu AFTER INSERT OR UPDATE OF phone, name, role, contact_id ON public.contact_people FOR EACH ROW EXECUTE FUNCTION public.portal_roster_from_contact_person();
+
+ALTER TABLE public.contact_people DISABLE TRIGGER portal_roster_from_contact_person_aiu;
+
+
+--
+-- Name: contacts portal_roster_sync_contact_aiu; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER portal_roster_sync_contact_aiu AFTER INSERT OR UPDATE OF owner_phone, owner_name, apartment_number ON public.contacts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.portal_roster_sync_from_contact();
+
+
+--
+-- Name: contact_people portal_roster_sync_contact_person_aiud; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER portal_roster_sync_contact_person_aiud AFTER INSERT OR DELETE OR UPDATE OF phone, name, role, contact_id ON public.contact_people DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.portal_roster_sync_from_contact_person();
 
 
 --
@@ -4996,6 +5332,14 @@ ALTER TABLE ONLY public.apartment_owner_phones
 
 ALTER TABLE ONLY public.apartment_owner_phones
     ADD CONSTRAINT apartment_owner_phones_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: apartment_owner_phones apartment_owner_phones_detached_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.apartment_owner_phones
+    ADD CONSTRAINT apartment_owner_phones_detached_by_fkey FOREIGN KEY (detached_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -6022,5 +6366,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260929211433'),
     ('20260929212603'),
     ('20260930054613'),
-    ('20261003074737')
+    ('20261003074737'),
+    ('20261003095149'),
+    ('20261003095150')
 ;

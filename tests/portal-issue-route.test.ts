@@ -38,7 +38,7 @@ vi.mock('@/lib/db/portal/issueReport', () => ({
     rosterId: 'roster-of-session', apartmentNumber: '520', name: 'בעלת הדירה', phoneE164: phone,
   })),
   insertPortalIssue: vi.fn(async (args: { id: string; report: { location: string; description: string } }) => ({
-    id: args.id, title: `תקלה בשטח משותף: ${args.report.location}`, description: args.report.description, ticketNumber: 1042,
+    id: args.id, title: `דיווח דייר · ${args.report.location}`, description: args.report.description, ticketNumber: 1042,
   })),
 }));
 vi.mock('@/lib/storage/issueStorage', () => ({
@@ -151,7 +151,7 @@ describe('POST /api/portal/issues — the reporter comes from the session only',
     for (const c of calls) {
       expect(c.type).toBe('issue_reported');
       expect(c.title).toBe('תקלה חדשה נפתחה');
-      expect(c.message).toContain('תקלה בשטח משותף: חדר מדרגות');
+      expect(c.message).toContain('דיווח דייר · חדר מדרגות');
     }
   });
 });

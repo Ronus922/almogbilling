@@ -120,7 +120,7 @@ test('an owner reports a fault: errors, chips, photo limits, confirmation — an
   )).rows[0];
   created.push(row.id);
   expect(row).toMatchObject({
-    source: 'portal', priority: 'urgent', status: 'open', title: 'תקלה בשטח משותף: מעלית', created_by: null,
+    source: 'portal', priority: 'urgent', status: 'open', title: 'דיווח דייר · מעלית', created_by: null,
     reporter_name: 'יוסי E2E', reporter_phone: A2_PHONE, reporter_apartment: 'E2E-A',
     reporter_location: 'מעלית', reporter_area: 'קומה 3',
   });

@@ -99,8 +99,44 @@ d('portal fault report — the real SQL', () => {
       `select reporter_contact_id, reporter_name, created_by_name, reporter_phone, reporter_apartment from public.issues where id = $1`,
       [created.id],
     )).rows[0];
-    // the CHECK wants a non-null apartment on a portal row: '' = none
-    expect(row).toEqual({ reporter_contact_id: null, reporter_name: 'לא מזוהה', created_by_name: 'לא מזוהה', reporter_phone: PHONE_TWO_APTS, reporter_apartment: '' });
+    // NULL — allowed only because there is no roster link (migration 20261003095150)
+    expect(row).toEqual({ reporter_contact_id: null, reporter_name: 'לא מזוהה', created_by_name: 'לא מזוהה', reporter_phone: PHONE_TWO_APTS, reporter_apartment: null });
+  });
+
+  it('the reporter is the PERSON who signed in: the name on the record that carries the phone, not the apartment owner', async () => {
+    // Apartment 990790: owner field = someone else; the signed-in phone belongs
+    // to an additional owner. The roster is built by the real deferred trigger.
+    await tx.query(
+      `insert into public.contacts (apartment_number, owner_name, owner_phone) values ('990790', 'בעלת הדירה', '0529990003')`);
+    const c = await tx.query<{ id: string }>(`select id from public.contacts where apartment_number = '990790'`);
+    await tx.query(
+      `insert into public.contact_people (contact_id, role, name, phone, is_primary_contact, sort_order)
+       values ($1, 'owner', 'השותף שהתחבר', '052-999-0001', true, 0)`, [c.rows[0]!.id]);
+    await tx.query('set constraints all immediate'); // run the deferred roster sync now
+    await tx.query('set constraints all deferred');
+
+    const reporter = await resolvePortalReporter(PHONE_A);
+    expect(reporter).toMatchObject({ apartmentNumber: '990790', name: 'השותף שהתחבר', phoneE164: PHONE_A });
+    // A stale label on the roster row does not win over the record.
+    await tx.query(`update public.apartment_owner_phones set owner_name = 'שם ישן' where id = $1`, [reporter!.rosterId]);
+    expect((await resolvePortalReporter(PHONE_A))?.name).toBe('השותף שהתחבר');
+  });
+
+  it('the CHECK: an unidentified reporter may have no apartment; an identified one must; \'\' is never an apartment', async () => {
+    await apartment('990791');
+    const rosterId = await roster('990791', PHONE_A, 'x');
+    const insert = (contactId: string | null, apt: string | null) => tx.query(
+      `insert into public.issues (title, source, reporter_contact_id, reporter_name, reporter_phone,
+                                  reporter_apartment, reporter_location, ticket_number)
+       values ('x', 'portal', $1, 'x', $2, $3, 'לובי', nextval('public.issues_ticket_number_seq'))`,
+      [contactId, PHONE_A, apt]);
+    await tx.query('savepoint s');
+    await expect(insert(rosterId, null)).rejects.toMatchObject({ code: '23514' });
+    await tx.query('rollback to savepoint s');
+    await expect(insert(null, '')).rejects.toMatchObject({ code: '23514' });
+    await tx.query('rollback to savepoint s');
+    await expect(insert(null, null)).resolves.toBeDefined();
+    await expect(insert(rosterId, '990791')).resolves.toBeDefined();
   });
 
   it('containment: the same person on two apartments (names differ only in spaces) is still identified — lowest apartment', async () => {
@@ -153,7 +189,7 @@ d('portal fault report — the real SQL', () => {
       [id],
     )).rows[0];
     expect(row).toMatchObject({
-      source: 'portal', priority: 'high', status: 'open', title: 'תקלה בשטח משותף: חדר מדרגות',
+      source: 'portal', priority: 'high', status: 'open', title: 'דיווח דייר · חדר מדרגות',
       description: 'נורה שרופה מעל המדרגות', created_by: null, images: [`${id}/a.jpg`],
       reporter_location: 'חדר מדרגות', reporter_area: 'בין קומה 2 ל-3', ticket_number: created.ticketNumber,
       // the frozen Base44 columns are left alone (default / null)
@@ -193,7 +229,7 @@ d('portal fault report — the real SQL', () => {
     await expect(tx.query(`insert into public.issues (title, source) values ('x', 'portal')`)).rejects.toMatchObject({ code: '23514' });
   });
 
-  it('"ממתין לשיוך": only OPEN, not archived, with no user AND no supplier — in_progress is excluded', async () => {
+  it('"ממתין לשיוך": not done (open or in_progress), not archived, with no user AND no supplier — the kanban column\'s rule', async () => {
     const openFree = await staffIssue('open');
     const inProgressFree = await staffIssue('in_progress');
     const archivedFree = await staffIssue('open', true);
@@ -212,8 +248,9 @@ d('portal fault report — the real SQL', () => {
 
     const ids = new Set((await listIssues({ awaitingAssignment: true, includeArchived: true })).map((i) => i.id));
     expect(ids.has(openFree)).toBe(true);
-    for (const id of [inProgressFree, archivedFree, closedFree, withUser, withSupplier]) expect(ids.has(id)).toBe(false);
-    for (const i of await listIssues({ awaitingAssignment: true })) expect(i.status).toBe('open');
+    expect(ids.has(inProgressFree)).toBe(true);
+    for (const id of [archivedFree, closedFree, withUser, withSupplier]) expect(ids.has(id)).toBe(false);
+    for (const i of await listIssues({ awaitingAssignment: true })) expect(['open', 'in_progress']).toContain(i.status);
   });
 
   it('"מדיירים": source=portal returns portal reports only', async () => {

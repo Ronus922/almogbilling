@@ -45,9 +45,11 @@ export function urgencyLabel(u: PortalUrgency): string {
   return PORTAL_URGENCIES.find((x) => x.key === u)!.label;
 }
 
-/** The issue's title, which the resident never types (decision 03/10/2026). */
+/** The issue's title, which the resident never types (decision 03/10/2026):
+ *  "דיווח דייר · <מיקום>" since phase C (was "תקלה בשטח משותף: <מיקום>";
+ *  migration 20261003095150 renamed the existing rows). */
 export function portalIssueTitle(location: string): string {
-  return `תקלה בשטח משותף: ${location}`;
+  return `דיווח דייר · ${location}`;
 }
 
 export const PORTAL_ISSUE_MESSAGES = {

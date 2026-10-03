@@ -20,22 +20,29 @@ export interface PortalReporter {
 }
 
 /**
- * The reporter behind a portal session. A phone may own several apartments —
- * that is normal (68 phones on 03/10/2026) and never a reason to refuse: the
- * report is about a COMMON area, the apartment only identifies the reporter.
- * The session carries no "active apartment", so the rule is the lowest
- * apartment NUMBER — compared as a number ('520' before '1001'), not as text,
- * where '1001' < '520'. A non-numeric apartment (none exist in production)
- * sorts after every numeric one, then as text, so the choice stays
- * deterministic. The name is that roster row's; when it has none, the same
- * phone's name on another of its rows (it is the same person).
+ * The reporter behind a portal session — the PERSON whose phone was verified.
+ *
+ *   • Name: from the owner record that carries this phone (the roster row's
+ *     source — contacts.owner_name for the owner field, contact_people.name for
+ *     an additional owner), read live; never the apartment's owner name for a
+ *     phone someone else's record holds. The roster's own owner_name is only
+ *     the fallback for a row whose record has gone.
+ *   • Apartment: from the ACTIVE links only (the roster mirrors the owner
+ *     records since migration 20261003095149). A phone may own several
+ *     apartments — that is normal, and never a reason to refuse: the report is
+ *     about a COMMON area, the apartment only identifies the reporter. The
+ *     session carries no "active apartment", so the rule is the lowest
+ *     apartment NUMBER — compared as a number ('520' before '1001'), not as
+ *     text, where '1001' < '520'. A non-numeric apartment (none exist in
+ *     production) sorts after every numeric one, then as text.
+ *   • Containment (03/10/2026, lib/portal/ownership.ts): when the phone's
+ *     apartments belong to different people, none of them — and none of their
+ *     names — is this reporter's. The report is still taken: "לא מזוהה", NO
+ *     apartment (NULL — issues_portal_reporter_check allows it only without a
+ *     roster link) and no roster link; the verified phone stays in
+ *     reporter_phone for staff with contacts:view.
  */
 export async function resolvePortalReporter(phoneE164: string): Promise<PortalReporter | null> {
-  // Containment (03/10/2026, lib/portal/ownership.ts): when the phone's
-  // apartments belong to different people, none of them — and none of their
-  // owners' names — is this reporter's. The report is still taken: recorded as
-  // "לא מזוהה", with no apartment and no roster link; the verified phone stays
-  // in reporter_phone for staff with contacts:view.
   const active = await query<{ apartment_number: string; owner_name: string | null }>(
     `select apartment_number, owner_name
        from public.apartment_owner_phones
@@ -50,13 +57,13 @@ export async function resolvePortalReporter(phoneE164: string): Promise<PortalRe
   const row = await queryOne<{ id: string; apartment_number: string; phone_e164: string; name: string | null }>(
     `select r.id, r.apartment_number, r.phone_e164,
             coalesce(
-              nullif(btrim(r.owner_name), ''),
-              (select nullif(btrim(o.owner_name), '')
-                 from public.apartment_owner_phones o
-                where o.phone_e164 = r.phone_e164 and o.is_active
-                  and nullif(btrim(o.owner_name), '') is not null
-                order by o.created_at, o.id
-                limit 1)
+              case r.source_table
+                when 'contacts' then
+                  (select nullif(btrim(c.owner_name), '') from public.contacts c where c.id = r.source_row_id)
+                when 'contact_people' then
+                  (select nullif(btrim(p.name), '') from public.contact_people p where p.id = r.source_row_id)
+              end,
+              nullif(btrim(r.owner_name), '')
             ) as name
        from public.apartment_owner_phones r
       where r.phone_e164 = $1 and r.is_active
@@ -94,12 +101,10 @@ export async function insertPortalIssue(args: {
 }): Promise<CreatedPortalIssue> {
   const { id, report, reporter, images } = args;
   const title = portalIssueTitle(report.location);
-  // issues_portal_reporter_check requires a non-null reporter_apartment on
-  // every portal row; an unidentified reporter has none, so it is stored as ''
-  // (read back as "no apartment" — reporterLabel / IssueReporterSection).
-  // Containment is code-only; the column semantics are revisited with the
-  // roster fix.
-  const apartment = reporter.apartmentNumber ?? '';
+  // NULL for an unidentified reporter — issues_portal_reporter_check
+  // (migration 20261003095150) allows it only when reporter_contact_id is NULL
+  // too, and demands an apartment for an identified one.
+  const apartment = reporter.apartmentNumber;
   const row = await queryOne<{ id: string; ticket_number: number }>(
     `insert into public.issues
        (id, title, description, priority, status, images,

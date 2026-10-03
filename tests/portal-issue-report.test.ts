@@ -92,8 +92,8 @@ describe('urgency → priority (decision 03/10/2026)', () => {
 });
 
 describe('portalIssueTitle', () => {
-  it('"תקלה בשטח משותף: <מיקום>"', () => {
-    expect(portalIssueTitle('חדר מדרגות')).toBe('תקלה בשטח משותף: חדר מדרגות');
+  it('"דיווח דייר · <מיקום>"', () => {
+    expect(portalIssueTitle('חדר מדרגות')).toBe('דיווח דייר · חדר מדרגות');
   });
 });
 

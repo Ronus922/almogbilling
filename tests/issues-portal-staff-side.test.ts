@@ -62,7 +62,7 @@ const ISSUE_ID = '11111111-1111-4111-8111-111111111111';
 
 function issue(source: 'portal' | 'staff', assignedUserId: string | null = null): IssueWithMeta {
   return {
-    id: ISSUE_ID, title: 'תקלה בשטח משותף: לובי', description: 'נורה שרופה', location_type: 'general', location_text: null,
+    id: ISSUE_ID, title: 'דיווח דייר · לובי', description: 'נורה שרופה', location_type: 'general', location_text: null,
     target_type: null, target_id: null, priority: 'high', status: 'open', due_date: null, due_time: null,
     images: [], videos: [], resolution_notes: null, resolved_at: null, is_archived: false, sort_order: 0,
     created_by: null, created_by_name: 'בעלת הדירה', created_at: '2026-10-03', updated_at: '2026-10-03',
