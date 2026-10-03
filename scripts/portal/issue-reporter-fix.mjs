@@ -9,11 +9,11 @@
 //
 // Nothing is guessed. The report's OWN verified phone (issues.reporter_phone)
 // must hold an ACTIVE link to exactly that apartment in exactly that role, and
-// that must be its only active apartment (so the phone is one person by the
-// portal's own rule — no approval needed, nothing to compare). The snapshot
-// then gets what the portal would write today: the roster link, the name on
-// it, the apartment and the role. One audit_log row with before and after.
-// Idempotent: a report already carrying that link is left alone.
+// the phone must be ONE person by the portal's rule (lib/portal/identity.ts):
+// every active link under the same whitespace-normalised name, or an approved
+// identity covering all of them. The snapshot then gets the roster link, the
+// name on it, the apartment and the role. One audit_log row with before and
+// after. Idempotent: a report already carrying that link is left alone.
 import pg from 'pg';
 
 const APPLY = process.argv.includes('--apply');
@@ -52,12 +52,18 @@ try {
       where phone_e164 = $1 and is_active`,
     [issue.reporter_phone],
   )).rows;
-  if (links.length !== 1) throw new Error(`the reporter phone holds ${links.length} active links — expected exactly one`);
-  const link = links[0];
-  if (link.apartment_number !== apartment || link.role !== role) {
-    throw new Error(`the reporter phone's active link is apartment ${link.apartment_number} as ${link.role}, not ${apartment} as ${role}`);
-  }
-  const name = (link.owner_name ?? '').trim().replace(/\s+/g, ' ') || null;
+  const link = links.find((l) => l.apartment_number === apartment && l.role === role);
+  if (!link) throw new Error(`the reporter phone holds no active link to apartment ${apartment} as ${role}`);
+  const key = (n) => (n ?? '').trim().replace(/\s+/g, ' ');
+  const names = [...new Set(links.map((l) => key(l.owner_name)))];
+  const approved = (await client.query(
+    `select names from public.portal_identity_approvals where phone_e164 = $1 and status = 'approved'`,
+    [issue.reporter_phone],
+  )).rows[0]?.names ?? null;
+  const onePerson = names.every((n) => n !== '')
+    && (names.length === 1 || (approved !== null && names.every((n) => approved.includes(n))));
+  if (!onePerson) throw new Error('the reporter phone is not one person (blocked) — nothing to identify');
+  const name = key(link.owner_name) || null;
 
   const done = issue.reporter_contact_id === link.id && issue.reporter_apartment === apartment && issue.reporter_role === role;
   if (done) console.log(`ticket ${ticket}: already ${apartment} / ${role} — nothing to do`);
