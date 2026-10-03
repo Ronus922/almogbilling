@@ -30,8 +30,9 @@ export interface PortalReporter {
  *   • Apartment: a phone may hold several — that is normal, and never a reason
  *     to refuse: the report is about a COMMON area, the apartment only
  *     identifies the reporter. The session carries no "active apartment", so
- *     it is the lowest apartment NUMBER ('520' before '1001'), with the role
- *     held there.
+ *     it is the lowest apartment NUMBER ('520' before '1001') the reporter
+ *     owns; none → the lowest they operate; none → the lowest they rent —
+ *     with that role (identity.reporter, 03/10/2026).
  *   • A BLOCKED phone: none of its apartments — and none of their names — is
  *     this reporter's. The report is still taken: "לא מזוהה", NO apartment
  *     (NULL — issues_portal_reporter_check allows it only without a roster

@@ -29,7 +29,8 @@ const FILE_ERROR_MESSAGES = {
  * the row.
  *
  *   • Who reported comes from the portal SESSION only: requirePortalSession()
- *     → the phone → its roster row (lowest apartment number). Any reporter /
+ *     → the phone → its roster row (owner → operator → tenant, lowest
+ *     apartment number within the role). Any reporter /
  *     phone / apartment key in the body is simply never read.
  *   • The text fields pass validatePortalIssueReport — the same function the
  *     screen validates with — and every photo the issues module's existing

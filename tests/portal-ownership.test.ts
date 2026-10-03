@@ -70,10 +70,20 @@ describe('decidePortalIdentity — who the phone is', () => {
     expect(decidePortalIdentity([link('1', '  '), link('2', 'דנה')], approval('דנה', ['', 'דנה']))?.status).toBe('blocked');
   });
 
-  it('the reporter is the LOWEST apartment number, with the role held there and the same name', () => {
-    const id = decidePortalIdentity([link('1001', 'דנה', 'owner'), link('520', 'דנה', 'tenant')], null);
-    expect(id?.reporter).toMatchObject({ apartmentNumber: '520', role: 'tenant', name: 'דנה' });
+  it('the reporter files under the lowest apartment OWNED, then operated, then rented — same name', () => {
+    // owner in 1210 + tenant in 730 → 1210 as owner (not the lower 730)
+    const id = decidePortalIdentity([link('1210', 'רונן', 'owner'), link('730', 'רונן', 'tenant')], null);
+    expect(id?.reporter).toMatchObject({ apartmentNumber: '1210', role: 'owner', name: 'רונן' });
     expect(id?.name).toBe(id?.reporter.name);
+    // the lowest owned, numerically
+    expect(decidePortalIdentity([link('1210', 'ר', 'owner'), link('926', 'ר', 'owner'), link('730', 'ר', 'tenant')], null)
+      ?.reporter).toMatchObject({ apartmentNumber: '926', role: 'owner' });
+    // no ownership → the lowest operated, before a lower rented one
+    expect(decidePortalIdentity([link('1424', 'ר', 'operator'), link('1006', 'ר', 'operator'), link('730', 'ר', 'tenant')], null)
+      ?.reporter).toMatchObject({ apartmentNumber: '1006', role: 'operator' });
+    // only rented → the lowest rented
+    expect(decidePortalIdentity([link('1001', 'ר', 'tenant'), link('520', 'ר', 'tenant')], null)
+      ?.reporter).toMatchObject({ apartmentNumber: '520', role: 'tenant' });
   });
 });
 

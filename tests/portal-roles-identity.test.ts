@@ -44,6 +44,7 @@ const A = {
   entry1: '990741', entry2: '990742', entry3: '990743', entry4: '990744',
   bl: '990751', sale: '990752',
   det: '990761',
+  repOwn: '990772', repRent: '990771',
 };
 const APTS = Object.values(A);
 const P = {
@@ -51,7 +52,7 @@ const P = {
   same: '0527700011', diff: '0527700021', nameless: '0527700031',
   entryNo: '0527700041', entryYes: '0527700042', entryMgr: '0527700043',
   blKept: '0527700051', blGone: '0527700052', blNew: '0527700053', saleOld: '0527700054', saleNew: '0527700055',
-  det: '0527700061',
+  det: '0527700061', rep: '0527700071',
 };
 const e164 = (local: string) => `+972${local.slice(1)}`;
 const PHONES = Object.values(P).map(e164);
@@ -162,6 +163,21 @@ d('portal roles + identity (03/10/2026)', () => {
     const id = await resolvePortalIdentity(e164(P.same));
     expect(id).toMatchObject({ status: 'ok', name: 'דנה לוי' });
     expect(id?.apartments.map((a) => a.role)).toEqual(['owner', 'tenant']);
+  });
+
+  it('a fault is filed under the apartment OWNED (1210-like), not the lower one rented (730-like)', async () => {
+    await card(A.repOwn, { owner_name: 'מדווח בדיקה', owner_phone: P.rep });
+    await card(A.repRent, { owner_name: 'מישהו', resident_type: 'tenant', tenant_name: 'מדווח בדיקה', tenant_phone: P.rep });
+    const reporter = await resolvePortalReporter(e164(P.rep));
+    expect(reporter).toMatchObject({ apartmentNumber: A.repOwn, role: 'owner', name: 'מדווח בדיקה' });
+    const issueId = randomUUID();
+    made.issues.push(issueId);
+    await insertPortalIssue({
+      id: issueId, reporter: reporter!, images: [],
+      report: { location: 'לובי', area: null, description: 'בדיקת דירת מדווח', urgency: 'medium' },
+    });
+    const row = await pool.query(`select reporter_role, reporter_apartment from public.issues where id = $1`, [issueId]);
+    expect(row.rows[0]).toEqual({ reporter_role: 'owner', reporter_apartment: A.repOwn });
   });
 
   it('different names → blocked everywhere; approved → one name everywhere; a name added later → blocked again', async () => {

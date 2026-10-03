@@ -129,6 +129,11 @@ export function compareApartmentNumbers(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
+/** Which apartment a fault report is filed under (03/10/2026): the lowest
+ *  number the reporter OWNS; none → the lowest they operate; none → the
+ *  lowest they rent. A report already filed keeps its snapshot. */
+const REPORTER_ROLE_ORDER: readonly PortalRole[] = ['owner', 'operator', 'tenant'];
+
 /** The key a name is compared and approved by: whitespace-normalised, '' for none. */
 export function identityNameKey(name: string | null | undefined): string {
   return normalizeOwnerName(name) ?? '';
@@ -168,7 +173,9 @@ export function decidePortalIdentity(
     };
   }
 
-  const first = sorted[0];
+  const filedUnder = REPORTER_ROLE_ORDER
+    .map((role) => sorted.find((l) => l.role === role))
+    .find((l): l is IdentityLink => l !== undefined) ?? sorted[0];
   return {
     status: 'ok',
     name,
@@ -181,9 +188,9 @@ export function decidePortalIdentity(
     canSeeBuildingFinance: true,
     approvalId,
     reporter: {
-      rosterId: first.rosterId,
-      apartmentNumber: first.apartmentNumber,
-      role: first.role,
+      rosterId: filedUnder.rosterId,
+      apartmentNumber: filedUnder.apartmentNumber,
+      role: filedUnder.role,
       // A record with no name still identifies the apartment; the issue then
       // reads "דיווח דייר · דירה 520 · בעלים".
       name,
