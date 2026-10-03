@@ -215,7 +215,7 @@ export async function POST(req: Request) {
       // Best-effort, like the registry hook: a queue hiccup never fails a sync.
       try {
         const p = await suggestPortalLinks(local.scrapeId);
-        logger.info(`[bllink:sync] portal links: +${p.suggested_link} link, +${p.suggested_unlink} unlink, ${p.closed} closed`);
+        logger.info(`[bllink:sync] portal links: +${p.suggested_link} link, +${p.suggested_unlink} unlink, +${p.suggested_name} name, ${p.closed} closed`);
       } catch (linkErr) {
         logger.error('[bllink:sync] portal link suggestions failed', linkErr instanceof Error ? linkErr.message : String(linkErr));
       }

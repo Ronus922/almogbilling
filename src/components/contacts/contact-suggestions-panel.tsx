@@ -12,7 +12,7 @@ import {
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { formatRelativeTime } from '@/lib/notifications/registry';
 import {
-  SUGGESTION_FIELD_IS_NUMERIC, SUGGESTION_FIELD_LABEL, type ContactSuggestion,
+  SUGGESTION_FIELD_IS_NUMERIC, SUGGESTION_FIELD_LABEL, UNLINK_REASON_LABEL, type ContactSuggestion,
 } from '@/lib/types/contactSuggestions';
 import { PORTAL_ROLE_LABEL } from '@/lib/portal/identity';
 import { rosterPhoneDisplay } from '@/lib/portal/rosterLabels';
@@ -245,6 +245,9 @@ function SuggestionRow({ suggestion, canEdit, busy, onResolve }: {
             <ArrowLeft className="h-4 w-4 shrink-0 text-slate-400" aria-label="מוצע" />
             <Value value={suggestion.proposed_value} numeric={numeric} />
           </div>
+        )}
+        {suggestion.field === 'portal_unlink' && suggestion.unlink_reason && (
+          <p className="mt-1.5 text-xs text-slate-600">למה: {UNLINK_REASON_LABEL[suggestion.unlink_reason]}</p>
         )}
         {suggestion.marks_rented && (
           <p className="mt-1.5 text-xs text-amber-700">אישור יסמן בכרטיס הדירה סוג דייר &quot;שוכר&quot;.</p>

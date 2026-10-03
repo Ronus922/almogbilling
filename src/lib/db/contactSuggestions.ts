@@ -1,5 +1,5 @@
 import 'server-only';
-import { query, queryOne, withTransaction } from '@/lib/db';
+import { query, queryOne } from '@/lib/db';
 import type {
   CardSuggestionField, ContactFieldSources, ContactFieldState, ContactSuggestion, OwnerReplacementPreview,
 } from '@/lib/types/contactSuggestions';
@@ -36,7 +36,7 @@ const SUGGESTION_SELECT = `
          ${LIVE_VALUE} as current_value,
          s.proposed_value,
          s.created_at,
-         s.phone_e164, s.person_role, s.person_name,
+         s.phone_e164, s.person_role, s.person_name, s.unlink_reason,
          s.field in ('owner_phone', 'tenant_phone', 'portal_link', 'portal_unlink') as access,
          ${OWNER_CHANGE('s')} as owner_change,
          (s.field = 'portal_link' and s.person_role = 'tenant' and c.resident_type = 'owner') as marks_rented,
@@ -113,32 +113,16 @@ export async function getOwnerReplacementPreview(id: string): Promise<OwnerRepla
   return { ...s, detach: t.rows };
 }
 
-/** Containment (03/10/2026): "ניתוק" suggestions from Bllink are held back
- *  until they are decided by phone and not by name. While false, the
- *  portal_unlink rows one run creates are dropped inside that same
- *  transaction, so none is ever visible; links and everything else still run. */
-const BLLINK_UNLINK_SUGGESTIONS = false;
-
-/** Bllink's people of one scrape vs the portal links → "שיוך" / "ניתוק"
- *  suggestions (portal_link_suggest). Suggests only. */
+/** Bllink's people of one scrape vs the portal links, matched by phone →
+ *  "שיוך" / "ניתוק" / name suggestions (portal_link_suggest). Suggests only. */
 export async function suggestPortalLinks(scrapeId: string): Promise<{
-  suggested_link: number; suggested_unlink: number; closed: number;
+  suggested_link: number; suggested_unlink: number; suggested_name: number; closed: number;
 }> {
-  return withTransaction(async (client) => {
-    const r = await client.query<{ suggested_link: number; suggested_unlink: number; closed: number }>(
-      `select * from public.portal_link_suggest($1::uuid)`,
-      [scrapeId],
-    );
-    const row = r.rows[0] ?? { suggested_link: 0, suggested_unlink: 0, closed: 0 };
-    if (BLLINK_UNLINK_SUGGESTIONS) return row;
-    // created_at defaults to now(), the transaction's start: exactly the rows
-    // this call inserted, never an older one.
-    await client.query(
-      `delete from public.contact_sync_suggestions
-        where field = 'portal_unlink' and status = 'pending' and created_at = now()`,
-    );
-    return { ...row, suggested_unlink: 0 };
-  });
+  const row = await queryOne<{ suggested_link: number; suggested_unlink: number; suggested_name: number; closed: number }>(
+    `select * from public.portal_link_suggest($1::uuid)`,
+    [scrapeId],
+  );
+  return row ?? { suggested_link: 0, suggested_unlink: 0, suggested_name: 0, closed: 0 };
 }
 
 /** Who last changed each synced field of one apartment — for the "ידני · תאריך"

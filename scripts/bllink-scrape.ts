@@ -283,8 +283,8 @@ async function fetchTenantContacts(page: Page): Promise<{
   const payload: unknown = await (await waiter).json();
   const byApt = extractTenantContacts(payload);
   if (byApt.size === 0) throw new Error('resident list returned no apartment with a contact');
-  // Every active person too — the portal links are compared per person
-  // (portal_link_suggest, after the sync).
+  // Every person too, isActive kept — the portal links are compared per
+  // person, by phone (portal_link_suggest, after the sync).
   return { contacts: byApt, people: extractTenantPeople(payload) };
 }
 

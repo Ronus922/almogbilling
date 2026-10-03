@@ -52,6 +52,15 @@ export const SUGGESTION_FIELD_IS_NUMERIC: Record<SuggestionField, boolean> = {
   portal_unlink: true,
 };
 
+/** Why a "ניתוק" was suggested — matched by phone first, so never because a
+ *  name differs (03/10/2026). */
+export type UnlinkReason = 'phone_not_listed' | 'inactive';
+
+export const UNLINK_REASON_LABEL: Record<UnlinkReason, string> = {
+  phone_not_listed: 'הטלפון לא נמצא ב-Bllink בדירה הזו',
+  inactive: 'הטלפון רשום ב-Bllink כלא פעיל',
+};
+
 export interface ContactSuggestion {
   id: string;
   apartment_number: string;
@@ -65,6 +74,9 @@ export interface ContactSuggestion {
   phone_e164: string | null;
   person_role: 'owner' | 'tenant' | 'operator' | null;
   person_name: string | null;
+  /** portal_unlink: why it was raised (migration 20261003191659). null on
+   *  every other row, and on an unlink raised before the reason existed. */
+  unlink_reason: UnlinkReason | null;
   /** Changes portal access → one by one, never "אשר הכל". */
   access: boolean;
   /** An owner-name CHANGE (ours is not empty): approved only as "תיקון שם"

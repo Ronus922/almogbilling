@@ -29,6 +29,71 @@ COMMENT ON SCHEMA public IS 'standard public schema';
 
 
 --
+-- Name: bllink_link_verdict(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bllink_link_verdict(p_scrape_id uuid) RETURNS TABLE(link_id uuid, apartment_number text, phone_e164 text, role text, link_name text, verdict text, bllink_name text)
+    LANGUAGE sql STABLE
+    AS $$
+  with ppl as (select * from public.bllink_scrape_persons(p_scrape_id)),
+       apts as (select distinct apartment_number from public.bllink_scrape_apartments(p_scrape_id)),
+       links as (
+         select r.id, r.apartment_number, r.phone_e164, r.role, r.source_table, r.source_field,
+                -- the link's name: the record's, live; the roster label when none
+                coalesce(case r.source_table
+                           when 'contacts' then (
+                             select nullif(btrim(case r.source_field
+                                                   when 'tenant_phone' then c.tenant_name
+                                                   when 'operator_phone' then c.operator_name
+                                                   else c.owner_name end), '')
+                               from public.contacts c where c.id = r.source_row_id)
+                           when 'contact_people' then (
+                             select nullif(btrim(cp.name), '')
+                               from public.contact_people cp where cp.id = r.source_row_id)
+                         end,
+                         nullif(btrim(r.owner_name), '')) as name
+           from public.apartment_owner_phones r
+          where r.is_active
+            and r.apartment_number in (select apartment_number from apts))
+  select l.id, l.apartment_number, l.phone_e164, l.role, l.name,
+         case
+           -- 1. by phone
+           when bp.active then 'listed'
+           when bp.phone_e164 is not null then 'inactive'
+           -- 2. no phone to match: by name
+           when bn.active then 'name_match'
+           when bn.name is not null then 'inactive'
+           else 'phone_not_listed'
+         end,
+         bp.name
+    from links l
+    left join lateral (
+      select p.phone_e164, p.name, p.active
+        from ppl p
+       where p.apartment_number = l.apartment_number and p.phone_e164 = l.phone_e164
+       order by p.active desc, (p.role = 'owner') desc, p.name nulls last
+       limit 1) bp on true
+    left join lateral (
+      select p.name, p.active
+        from ppl p
+       where p.apartment_number = l.apartment_number
+         and p.phone_e164 is null
+         and l.name is not null
+         and public.contact_value_norm('owner_name', p.name)
+             = public.contact_value_norm('owner_name', l.name)
+       order by p.active desc
+       limit 1) bn on true;
+$$;
+
+
+--
+-- Name: FUNCTION bllink_link_verdict(p_scrape_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.bllink_link_verdict(p_scrape_id uuid) IS 'Per active portal link of an apartment one scrape''s list spoke about: listed (phone active there, any name) / name_match (no usable phone in Bllink, same name) / inactive (isActive = false) / phone_not_listed. Matched by E.164 phone first, by name only when Bllink has no phone for the person.';
+
+
+--
 -- Name: bllink_scrape_apartments(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -52,10 +117,24 @@ $$;
 CREATE FUNCTION public.bllink_scrape_people(p_scrape_id uuid) RETURNS TABLE(apartment_number text, role text, name text, phone_e164 text)
     LANGUAGE sql STABLE
     AS $$
+  select p.apartment_number, p.role, p.name, p.phone_e164
+    from public.bllink_scrape_persons(p_scrape_id) p
+   where p.active;
+$$;
+
+
+--
+-- Name: bllink_scrape_persons(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bllink_scrape_persons(p_scrape_id uuid) RETURNS TABLE(apartment_number text, role text, name text, phone_e164 text, active boolean)
+    LANGUAGE sql STABLE
+    AS $$
   select btrim(a.key),
          case p.value->>'role' when 'owner' then 'owner' else 'tenant' end,
          nullif(btrim(coalesce(p.value->>'name', '')), ''),
-         public.portal_owner_e164(p.value->>'phone')
+         public.portal_owner_e164(p.value->>'phone'),
+         p.value->'active' is distinct from 'false'::jsonb
     from public.bllink_scrapes s
     cross join lateral jsonb_each(
       case when s.tenant_list_ok and jsonb_typeof(s.list_people) = 'object'
@@ -66,6 +145,13 @@ CREATE FUNCTION public.bllink_scrape_people(p_scrape_id uuid) RETURNS TABLE(apar
      and p.value->>'role' in ('owner', 'tenant')
      and exists (select 1 from public.contacts c where c.apartment_number = btrim(a.key));
 $$;
+
+
+--
+-- Name: FUNCTION bllink_scrape_persons(p_scrape_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.bllink_scrape_persons(p_scrape_id uuid) IS 'Every person of one scrape''s resident list on an apartment we have, with isActive (a scrape from before 20261003191659 kept active people only — read as active).';
 
 
 --
@@ -614,17 +700,18 @@ $$;
 -- Name: portal_link_suggest(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.portal_link_suggest(p_scrape_id uuid) RETURNS TABLE(suggested_link integer, suggested_unlink integer, closed integer)
+CREATE FUNCTION public.portal_link_suggest(p_scrape_id uuid) RETURNS TABLE(suggested_link integer, suggested_unlink integer, suggested_name integer, closed integer)
     LANGUAGE plpgsql
     AS $$
 declare
   v_link integer := 0;
   v_unlink integer := 0;
+  v_name integer := 0;
   v_closed integer := 0;
   v_n integer;
 begin
-  -- Close what the facts settled on their own: the card now carries the
-  -- phone, or Bllink stopped listing the person.
+  -- "שיוך" the facts settled on their own: the card now carries the phone,
+  -- or Bllink stopped listing the person.
   with apts as (select apartment_number from public.bllink_scrape_apartments(p_scrape_id)),
        ppl  as (select * from public.bllink_scrape_people(p_scrape_id))
   update public.contact_sync_suggestions s
@@ -638,25 +725,12 @@ begin
                           where p.apartment_number = s.apartment_number and p.phone_e164 = s.phone_e164));
   get diagnostics v_n = row_count; v_closed := v_closed + v_n;
 
-  -- …the link is no longer active, or Bllink lists the phone again.
-  with apts as (select apartment_number from public.bllink_scrape_apartments(p_scrape_id)),
-       ppl  as (select * from public.bllink_scrape_people(p_scrape_id))
-  update public.contact_sync_suggestions s
-     set status = 'obsolete', resolved_at = now()
-   where s.status = 'pending'
-     and s.field = 'portal_unlink'
-     and s.apartment_number in (select apartment_number from apts)
-     and (not exists (select 1 from public.apartment_owner_phones r
-                       where r.apartment_number = s.apartment_number
-                         and r.phone_e164 = s.phone_e164 and r.is_active)
-          or exists (select 1 from ppl p
-                      where p.apartment_number = s.apartment_number and p.phone_e164 = s.phone_e164));
-  get diagnostics v_n = row_count; v_closed := v_closed + v_n;
+  -- "ניתוק" the phone-first rule no longer supports — logged.
+  v_closed := v_closed + public.portal_unlink_close(p_scrape_id);
 
   -- A person Bllink lists whose phone the card does not carry in a portal
   -- role → "link?". Not when the same phone already waits as a field
-  -- suggestion of that apartment (the ingest proposes the primary contacts'
-  -- phones), and not when it was turned down before.
+  -- suggestion of that apartment, and not when it was turned down before.
   with ppl as (select * from public.bllink_scrape_people(p_scrape_id))
   insert into public.contact_sync_suggestions
     (apartment_number, field, current_value, proposed_value, source,
@@ -683,30 +757,79 @@ begin
   do nothing;
   get diagnostics v_link = row_count;
 
-  -- A phone linked here that Bllink no longer lists in that apartment →
-  -- "unlink?".
-  with apts as (select apartment_number from public.bllink_scrape_apartments(p_scrape_id)),
-       ppl  as (select * from public.bllink_scrape_people(p_scrape_id))
+  -- An open "ניתוק" whose reason moved (gone ↔ inactive) says the new one.
+  update public.contact_sync_suggestions s
+     set unlink_reason = v.verdict
+    from public.bllink_link_verdict(p_scrape_id) v
+   where s.status = 'pending'
+     and s.field = 'portal_unlink'
+     and s.apartment_number = v.apartment_number
+     and s.phone_e164 = v.phone_e164
+     and v.verdict in ('phone_not_listed', 'inactive')
+     and s.unlink_reason is distinct from v.verdict;
+
+  -- "ניתוק" only when the phone is not listed there at all, or only as
+  -- isActive = false — never because the name differs.
   insert into public.contact_sync_suggestions
     (apartment_number, field, current_value, proposed_value, source,
-     phone_e164, person_role, person_name)
-  select r.apartment_number, 'portal_unlink', r.owner_name, r.phone_e164, 'bllink',
-         r.phone_e164, r.role, r.owner_name
-    from public.apartment_owner_phones r
-   where r.is_active
-     and r.apartment_number in (select apartment_number from apts)
-     and not exists (select 1 from ppl p
-                      where p.apartment_number = r.apartment_number and p.phone_e164 = r.phone_e164)
+     phone_e164, person_role, person_name, unlink_reason)
+  select v.apartment_number, 'portal_unlink', v.link_name, v.phone_e164, 'bllink',
+         v.phone_e164, v.role, v.link_name, v.verdict
+    from public.bllink_link_verdict(p_scrape_id) v
+   where v.verdict in ('phone_not_listed', 'inactive')
      and not exists (select 1 from public.contact_sync_suggestions x
-                      where x.apartment_number = r.apartment_number
+                      where x.apartment_number = v.apartment_number
                         and x.field = 'portal_unlink'
                         and x.status = 'rejected'
-                        and x.phone_e164 = r.phone_e164)
+                        and x.phone_e164 = v.phone_e164)
   on conflict (apartment_number, field, phone_e164) where status = 'pending' and phone_e164 is not null
   do nothing;
   get diagnostics v_unlink = row_count;
 
-  suggested_link := v_link; suggested_unlink := v_unlink; closed := v_closed;
+  -- The phone is there under another name → a NAME suggestion for the card
+  -- field that phone sits in (owner / tenant). Only when the card's name is
+  -- nobody's in Bllink's list for that apartment (otherwise the phone, not the
+  -- name, is what differs), nothing is open on that field yet (the ingest's
+  -- own proposal stands), and the same name was not turned down before.
+  with ppl as (select * from public.bllink_scrape_people(p_scrape_id)),
+       cand as (
+         select distinct on (c.apartment_number, f.field)
+                c.apartment_number, f.field, f.card_name, v.bllink_name
+           from public.bllink_link_verdict(p_scrape_id) v
+           join public.apartment_owner_phones r on r.id = v.link_id
+           join public.contacts c on c.id = r.source_row_id
+           cross join lateral (
+             select case r.source_field when 'owner_phone' then 'owner_name'
+                                        when 'tenant_phone' then 'tenant_name' end as field,
+                    case r.source_field when 'owner_phone' then c.owner_name
+                                        when 'tenant_phone' then c.tenant_name end as card_name) f
+          where v.verdict = 'listed'
+            and r.source_table = 'contacts'
+            and f.field is not null
+            and v.bllink_name is not null
+            and nullif(btrim(coalesce(f.card_name, '')), '') is not null
+            and public.contact_value_norm('owner_name', f.card_name)
+                <> public.contact_value_norm('owner_name', v.bllink_name)
+            and not exists (select 1 from ppl p
+                             where p.apartment_number = c.apartment_number
+                               and public.contact_value_norm('owner_name', p.name)
+                                   = public.contact_value_norm('owner_name', f.card_name))
+            and not exists (select 1 from public.contact_sync_suggestions x
+                             where x.apartment_number = c.apartment_number
+                               and x.field = f.field
+                               and x.status = 'rejected'
+                               and public.contact_value_norm(x.field, x.proposed_value)
+                                   = public.contact_value_norm(f.field, v.bllink_name))
+          order by c.apartment_number, f.field, v.bllink_name)
+  insert into public.contact_sync_suggestions
+    (apartment_number, field, current_value, proposed_value, source)
+  select apartment_number, field, card_name, bllink_name, 'bllink'
+    from cand
+  on conflict (apartment_number, field) where status = 'pending' and phone_e164 is null
+  do nothing;
+  get diagnostics v_name = row_count;
+
+  suggested_link := v_link; suggested_unlink := v_unlink; suggested_name := v_name; closed := v_closed;
   return next;
 end;
 $$;
@@ -716,7 +839,7 @@ $$;
 -- Name: FUNCTION portal_link_suggest(p_scrape_id uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.portal_link_suggest(p_scrape_id uuid) IS 'Compare one scrape''s resident list (bllink_scrapes.list_people) with the portal links: a linked phone Bllink no longer lists → portal_unlink suggestion; a listed person the card does not carry → portal_link suggestion. Suggests only — nothing is linked or unlinked here.';
+COMMENT ON FUNCTION public.portal_link_suggest(p_scrape_id uuid) IS 'Compare one scrape''s resident list with the portal links, matched by phone first: a listed person the card does not carry → portal_link; a linked phone Bllink does not list in that apartment, or lists only as inactive → portal_unlink (with unlink_reason); a phone listed under another name → a name suggestion for its card field. Suggests only — nothing is linked or unlinked here.';
 
 
 --
@@ -1113,6 +1236,61 @@ begin
     );
 end;
 $$;
+
+
+--
+-- Name: portal_unlink_close(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.portal_unlink_close(p_scrape_id uuid) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_n integer;
+begin
+  with apts as (select distinct apartment_number from public.bllink_scrape_apartments(p_scrape_id)),
+       v as (select * from public.bllink_link_verdict(p_scrape_id)),
+       why as (
+         select s.id,
+                case when not exists (select 1 from public.apartment_owner_phones r
+                                       where r.apartment_number = s.apartment_number
+                                         and r.phone_e164 = s.phone_e164 and r.is_active)
+                     then 'link_inactive'
+                     else (select case v.verdict when 'listed' then 'bllink_lists_phone'
+                                                 when 'name_match' then 'bllink_lists_name' end
+                             from v
+                            where v.apartment_number = s.apartment_number
+                              and v.phone_e164 = s.phone_e164
+                              and v.verdict in ('listed', 'name_match')
+                            limit 1)
+                end as reason
+           from public.contact_sync_suggestions s
+          where s.status = 'pending'
+            and s.field = 'portal_unlink'
+            and s.apartment_number in (select apartment_number from apts)),
+       closed as (
+         update public.contact_sync_suggestions s
+            set status = 'obsolete', resolved_at = now()
+           from why
+          where s.id = why.id and why.reason is not null
+         returning s.id, s.apartment_number, s.phone_e164, s.person_role, why.reason)
+  insert into public.audit_log (actor_user_id, action, entity_type, entity_id, metadata)
+  select null, 'contact_suggestion_closed', 'contact_sync_suggestion', c.id::text,
+         jsonb_build_object('apartment_number', c.apartment_number, 'field', 'portal_unlink',
+                            'phone_e164', c.phone_e164, 'role', c.person_role,
+                            'reason', c.reason, 'scrape_id', p_scrape_id)
+    from closed c;
+  get diagnostics v_n = row_count;
+  return v_n;
+end;
+$$;
+
+
+--
+-- Name: FUNCTION portal_unlink_close(p_scrape_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.portal_unlink_close(p_scrape_id uuid) IS 'Closes (obsolete, never deletes) every open portal_unlink of the apartments one scrape''s list spoke about that the phone-first rule no longer supports — the link is gone, or Bllink lists the phone / the name — one audit_log row each (contact_suggestion_closed).';
 
 
 --
@@ -1710,12 +1888,14 @@ CREATE TABLE public.contact_sync_suggestions (
     phone_e164 text,
     person_role text,
     person_name text,
+    unlink_reason text,
     CONSTRAINT contact_sync_suggestions_field_check CHECK ((field = ANY (ARRAY['owner_name'::text, 'owner_phone'::text, 'owner_email'::text, 'tenant_name'::text, 'tenant_phone'::text, 'tenant_email'::text, 'portal_link'::text, 'portal_unlink'::text]))),
     CONSTRAINT contact_sync_suggestions_person_role_check CHECK (((person_role IS NULL) OR (person_role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text])))),
     CONSTRAINT contact_sync_suggestions_person_shape_check CHECK (((field = ANY (ARRAY['portal_link'::text, 'portal_unlink'::text])) = (phone_e164 IS NOT NULL))),
     CONSTRAINT contact_sync_suggestions_resolution_shape CHECK ((((status = 'pending'::text) AND (resolved_at IS NULL)) OR ((status <> 'pending'::text) AND (resolved_at IS NOT NULL)))),
     CONSTRAINT contact_sync_suggestions_source_check CHECK ((source = 'bllink'::text)),
-    CONSTRAINT contact_sync_suggestions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'obsolete'::text])))
+    CONSTRAINT contact_sync_suggestions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'obsolete'::text]))),
+    CONSTRAINT contact_sync_suggestions_unlink_reason_check CHECK (((unlink_reason IS NULL) OR ((field = 'portal_unlink'::text) AND (unlink_reason = ANY (ARRAY['phone_not_listed'::text, 'inactive'::text])))))
 );
 
 
@@ -1745,6 +1925,13 @@ COMMENT ON COLUMN public.contact_sync_suggestions.phone_e164 IS 'portal_link / p
 --
 
 COMMENT ON COLUMN public.contact_sync_suggestions.person_role IS 'portal_link: Bllink''s role for the person (owner / tenant). portal_unlink: the role of the link here.';
+
+
+--
+-- Name: COLUMN contact_sync_suggestions.unlink_reason; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.contact_sync_suggestions.unlink_reason IS 'portal_unlink only: why — phone_not_listed (Bllink does not list the phone in that apartment) or inactive (listed with isActive = false). NULL on every other row and on unlinks raised before 20261003191659.';
 
 
 --
@@ -6923,5 +7110,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261003161745'),
     ('20261003161746'),
     ('20261003161747'),
-    ('20261003161749')
+    ('20261003161749'),
+    ('20261003191659')
 ;
