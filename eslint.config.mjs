@@ -17,7 +17,7 @@ import dotenv from 'dotenv';
 // the rest of the lint still runs — CI always provides one.
 dotenv.config({ path: '.env.local', quiet: true });
 // SAFEQL=0 turns the SafeQL block off even when DATABASE_URL is available. The
-// husky pre-push hook uses it: live-schema SQL validation is CI's job (see
+// pre-push hook (.husky/pre-push) uses it: live-schema SQL validation is CI's job (see
 // TESTING.md → "מה רץ איפה"). Every other rule in this config is unaffected.
 const safeqlOff = process.env.SAFEQL === '0';
 const databaseUrl = safeqlOff ? undefined : process.env.DATABASE_URL;

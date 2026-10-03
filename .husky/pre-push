@@ -1,6 +1,15 @@
+#!/usr/bin/env sh
 # Fast local gate before anything leaves this machine: typecheck, lint, unit
 # tests. SAFEQL=0 turns off SafeQL's live-schema SQL validation — that, and the
 # DB invariant checks (check:money/phone/session/dupes/wa), need a database and
 # run in CI only (.github/workflows/ci.yml → npm run check:all). Full gate
 # locally: npm run check:all.  Skip once: HUSKY=0 git push
+#
+# Git runs this file straight from the checkout that pushes: core.hooksPath is
+# `.husky` (relative, so every worktree resolves it to its OWN tracked copy —
+# nothing generated, nothing to install per worktree). `npm install` sets it
+# (the `prepare` script); once per clone: git config core.hooksPath .husky
+# `npm run typecheck` regenerates .next/types from this tree first
+# (next typegen), so a previous build's route types never fail it.
+[ "${HUSKY-}" = "0" ] && exit 0
 npm run typecheck && SAFEQL=0 npm run lint && npm test
