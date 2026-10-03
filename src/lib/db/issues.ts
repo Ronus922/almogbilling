@@ -317,29 +317,6 @@ export async function deleteIssue(id: string): Promise<boolean> {
   });
 }
 
-// ── Kanban batch reorder (migration 050) ─────────────────────────────────────
-export interface IssueReorderItem {
-  id: string;
-  priority: string;
-  sort_order: number;
-}
-
-/** Apply a batch of {id, priority, sort_order} updates to issues atomically. The
- *  board's primary axis is priority — dragging between lanes re-prioritises and
- *  reorders. Resolving ("בוצע") is a separate status change via the [id] PATCH
- *  route (which stamps resolved_at and clears reminders), never here. */
-export async function reorderIssues(items: IssueReorderItem[]): Promise<void> {
-  if (items.length === 0) return;
-  await withTransaction(async (client: PoolClient) => {
-    for (const it of items) {
-      await client.query(
-        `update public.issues set priority = $2, sort_order = $3 where id = $1`,
-        [it.id, it.priority, it.sort_order],
-      );
-    }
-  });
-}
-
 /** The set of user-kind assignee ids + status of an issue, or null if it does
  *  not exist — used by PATCH for assignment-change set-diff + status-change notify. */
 export async function getIssueAssigneeStatus(
