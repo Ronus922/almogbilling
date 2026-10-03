@@ -130,7 +130,10 @@ describe('drag and drop', () => {
 
 describe('the resident-report marking', () => {
   const base = { source: 'portal' as const, reporter_name: 'רונן בדיקה', reporter_apartment: '1210' };
-  it('"דיווח דייר · <שם> · דירה <מספר>"; unidentified "דיווח דייר · לא מזוהה"; nothing on a staff issue', () => {
+  it('"דיווח דייר · <שם> · דירה <מספר> · <תפקיד>"; unidentified "דיווח דייר · לא מזוהה"; nothing on a staff issue', () => {
+    expect(residentReportLabel({ ...base, reporter_role: 'owner' })).toBe('דיווח דייר · רונן בדיקה · דירה 1210 · בעלים');
+    expect(residentReportLabel({ ...base, reporter_role: 'tenant' })).toBe('דיווח דייר · רונן בדיקה · דירה 1210 · שוכר');
+    expect(residentReportLabel({ ...base, reporter_name: null, reporter_role: 'operator' })).toBe('דיווח דייר · דירה 1210 · מפעיל');
     expect(residentReportLabel(base)).toBe('דיווח דייר · רונן בדיקה · דירה 1210');
     expect(residentReportLabel({ ...base, reporter_name: 'לא מזוהה', reporter_apartment: null })).toBe('דיווח דייר · לא מזוהה');
     expect(residentReportLabel({ source: 'staff', reporter_name: null, reporter_apartment: null })).toBeNull();

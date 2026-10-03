@@ -43,7 +43,8 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
-const { detachOwnerPhone, findOwnerIdentity, isActiveOwner } = await import('@/lib/db/portal/ownerPhones');
+const { detachOwnerPhone, isActiveOwner } = await import('@/lib/db/portal/ownerPhones');
+const { findPortalRegistration, resolvePortalIdentity } = await import('@/lib/db/portal/identity');
 const { toPortalE164 } = await import('@/lib/portal/phone');
 
 /** Apartments this file creates. Removed by these exact strings (iron rule 12). */
@@ -124,9 +125,9 @@ d('the roster follows the residents list', () => {
       `insert into public.contacts (apartment_number, owner_name, owner_phone, source)
        values ($1, 'נעמה בדיקה', '052-332-6911', 'manual')`, [APT_MAIN]);
 
-    const found = await findOwnerIdentity(NAAMA, { onlyActive: true });
-    expect(found?.apartmentNumbers).toEqual([APT_MAIN]);
-    expect(found?.ownerName).toBe('נעמה בדיקה');
+    const found = await resolvePortalIdentity(NAAMA);
+    expect(found?.apartments.map((a) => [a.apartmentNumber, a.role])).toEqual([[APT_MAIN, 'owner']]);
+    expect(found?.name).toBe('נעמה בדיקה');
     expect(await isActiveOwner(NAAMA)).toBe(true);
 
     // The three spellings an admin actually types all land on the one key —
@@ -148,16 +149,16 @@ d('the roster follows the residents list', () => {
       `insert into public.contact_people (contact_id, role, name, phone, is_primary_contact, sort_order)
        values ($1, 'owner', 'מיכה בדיקה', '0509123911', true, 0)`, [c.rows[0]!.id]);
 
-    const found = await findOwnerIdentity(MIKHA, { onlyActive: true });
-    expect(found?.apartmentNumbers).toEqual([APT_MAIN]);
-    expect(found?.ownerName).toBe('מיכה בדיקה');
+    const found = await resolvePortalIdentity(MIKHA);
+    expect(found?.apartments.map((a) => a.apartmentNumber)).toEqual([APT_MAIN]);
+    expect(found?.name).toBe('מיכה בדיקה');
   });
 
-  it('a tenant phone still grants nothing', async () => {
+  it('a tenant phone the card HIDES (resident type "owner") grants nothing', async () => {
     await pool.query(
       `update public.contacts set tenant_name = 'שוכר', tenant_phone = '0525550001' where apartment_number = $1`,
       [APT_MAIN]);
-    expect(await findOwnerIdentity('+972525550001', { onlyActive: false })).toBeNull();
+    expect(await findPortalRegistration('+972525550001', { onlyActive: false })).toBeNull();
   });
 
   it('a landline or VoIP owner number is not put on the roster', async () => {
@@ -291,7 +292,12 @@ d('the roster follows the residents list', () => {
       `insert into public.contact_sync_suggestions (apartment_number, field, current_value, proposed_value, source)
        values ($1, 'owner_name', 'בעלים ישן', 'בעלים חדש', 'bllink') returning id`, [APT_SALE]);
     suggestionIds.push(sug.rows[0]!.id);
-    await pool.query(`select public.contact_suggestion_resolve($1::uuid[], 'approve', $2)`, [[sug.rows[0]!.id], adminId]);
+    // A plain approve does not decide a new owner name — it stays open…
+    const plain = await pool.query<{ n: number }>(
+      `select public.contact_suggestion_resolve($1::uuid[], 'approve', $2) as n`, [[sug.rows[0]!.id], adminId]);
+    expect(plain.rows[0]!.n).toBe(0);
+    // …"החלפת בעלים" does.
+    await pool.query(`select public.contact_suggestion_resolve($1::uuid[], 'approve_replace', $2)`, [[sug.rows[0]!.id], adminId]);
 
     const contact = await pool.query<{ owner_name: string; owner_phone: string }>(
       `select owner_name, owner_phone from public.contacts where apartment_number = $1`, [APT_SALE]);
@@ -318,7 +324,7 @@ d('the roster follows the residents list', () => {
     expect((await rosterRow(APT_SALE, OLD_OWNER))?.is_active).toBe(true);
   });
 
-  it('a Bllink approval of the owner name AND phone together: previous phone off, the new one on under the new name', async () => {
+  it('"החלפת בעלים" takes the new owner phone along: previous phone off, the new one on under the new name', async () => {
     const ids = await pool.query<{ id: string }>(
       `insert into public.contact_sync_suggestions (apartment_number, field, current_value, proposed_value, source)
        values ($1, 'owner_name', 'בעלים חדש', 'קונה שלישי', 'bllink'),
@@ -326,7 +332,14 @@ d('the roster follows the residents list', () => {
        returning id`, [APT_SALE]);
     const list = ids.rows.map((r) => r.id);
     suggestionIds.push(...list);
-    await pool.query(`select public.contact_suggestion_resolve($1::uuid[], 'approve', $2)`, [list, adminId]);
+    // The phone waits for the owner-name decision…
+    const early = await pool.query<{ n: number }>(
+      `select public.contact_suggestion_resolve($1::uuid[], 'approve', $2) as n`, [[list[1]], adminId]);
+    expect(early.rows[0]!.n).toBe(0);
+    // …and the replacement, given the NAME suggestion only, approves both.
+    const n = await pool.query<{ n: number }>(
+      `select public.contact_suggestion_resolve($1::uuid[], 'approve_replace', $2) as n`, [[list[0]], adminId]);
+    expect(n.rows[0]!.n).toBe(2);
 
     expect((await rosterRow(APT_SALE, OLD_OWNER))?.is_active).toBe(false);
     const fresh = await rosterRow(APT_SALE, NEW_OWNER);

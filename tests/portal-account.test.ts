@@ -41,7 +41,7 @@ const { listPublishedMonthBalances, setMonthBankBalance, setMonthPublished, getM
 const { getFinanceSettings, updateFinanceSettings } = await import('@/lib/db/finance/settings');
 const { issueCode, verifyCode, resendCooldownRemaining } = await import('@/lib/db/portal/otp');
 const { activeLockout, createLockout } = await import('@/lib/db/portal/lockouts');
-const { findOwnerIdentity, isMixedOwnerPhone } = await import('@/lib/db/portal/ownerPhones');
+const { resolvePortalIdentity } = await import('@/lib/db/portal/identity');
 const { checkRateLimit, clearRateLimit } = await import('@/lib/auth/rateLimit');
 const { createEntry } = await import('@/lib/db/finance/entries');
 const { currentMonthKey, monthKeyParts, periodMonthOf, shiftMonthKey } = await import('@/lib/finance/period');
@@ -146,7 +146,7 @@ d('owners portal — my account, bank balance, one-time codes', () => {
     const acc = await getPortalMyAccount({ id: 's', phoneE164: phone.a1 });
     expect(acc).toHaveLength(1);
     expect(acc[0]).toEqual({
-      apartment_number: apt.a, owner_display_name: 'דנה',
+      apartment_number: apt.a, role: 'owner', owner_display_name: 'דנה',
       total_debt: 1240, management_fees: 840, hot_water_debt: 400, monthly_debt: '3/26', details: 'מים חמים 01-03/26',
       synced_at: await getLastSyncAt(),
     });
@@ -165,26 +165,24 @@ d('owners portal — my account, bank balance, one-time codes', () => {
   it('containment: apartments of two different people on one phone → no account at all; one person → every apartment', async () => {
     expect(await getPortalMyAccount({ id: 's', phoneE164: phone.mixed })).toEqual([]);
     expect(await getPortalMyAccount({ id: 's', phoneE164: phone.unnamed })).toEqual([]);
-    const mixed = await findOwnerIdentity(phone.mixed, { onlyActive: true });
-    expect(mixed?.mixedOwners).toBe(true);
-    expect(await isMixedOwnerPhone(phone.mixed)).toBe(true);
-    expect(await isMixedOwnerPhone(phone.unnamed)).toBe(true);
+    // the portal's one identity says why: blocked, no name, no apartment
+    expect(await resolvePortalIdentity(phone.mixed)).toMatchObject({ status: 'blocked', name: null, apartments: [] });
+    expect((await resolvePortalIdentity(phone.unnamed))?.status).toBe('blocked');
 
     const spaced = await getPortalMyAccount({ id: 's', phoneE164: phone.spaced });
     expect(spaced.map((a) => a.apartment_number)).toEqual([apt.a, apt.b]);
     expect(spaced.map((a) => a.total_debt)).toEqual([1240, 300]);
-    expect(await isMixedOwnerPhone(phone.spaced)).toBe(false);
-    expect(await isMixedOwnerPhone(phone.ab)).toBe(false);
-    expect((await findOwnerIdentity(phone.ab, { onlyActive: true }))?.mixedOwners).toBe(false);
+    expect(await resolvePortalIdentity(phone.spaced)).toMatchObject({ status: 'ok', name: 'משה כהן' });
+    expect(await resolvePortalIdentity(phone.ab)).toMatchObject({ status: 'ok', name: 'רב-דירתי' });
   });
 
   it('no debtors row → 0; an archived row → its exact figures like any other, no status; a phone that owns nothing → []', async () => {
     const none = await getPortalMyAccount({ id: 's', phoneE164: phone.none });
-    expect(none[0]).toEqual({ apartment_number: apt.none, owner_display_name: 'בלי חייב', total_debt: 0, management_fees: 0, hot_water_debt: 0, monthly_debt: null, details: null, synced_at: await getLastSyncAt() });
+    expect(none[0]).toEqual({ apartment_number: apt.none, role: 'owner', owner_display_name: 'בלי חייב', total_debt: 0, management_fees: 0, hot_water_debt: 0, monthly_debt: null, details: null, synced_at: await getLastSyncAt() });
     const archived = await getPortalMyAccount({ id: 's', phoneE164: phone.d });
     expect(archived).toHaveLength(1);
     expect(archived[0]).toEqual({
-      apartment_number: apt.d, owner_display_name: 'דוד',
+      apartment_number: apt.d, role: 'owner', owner_display_name: 'דוד',
       total_debt: 999.5, management_fees: 999.5, hot_water_debt: 0, monthly_debt: '9/26', details: 'מים חמים 07-09/26',
       synced_at: await getLastSyncAt(),
     });
