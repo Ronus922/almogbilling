@@ -11,8 +11,10 @@
 > ו-`no-console` (לוגים דרך `src/lib/logger.ts`). בנוסף **SafeQL** מאמת כל SQL סטטי
 > שמועבר ל-`query`/`queryOne`/`client.query`/`pool.query` מול הסכימה החיה של
 > `DATABASE_URL` (טבלה/עמודה לא קיימת, שגיאת תחביר) — ראה `scripts/lint/`. לכן
-> `check:all` = **typecheck → lint → `npm test` → בדיקות האינווריאנטות → `check:knip`**. ה-pre-push של husky
-> מריץ רק את שלושת הראשונים (ו-lint **בלי** SafeQL) — ראה "מה רץ איפה" למטה.
+> `check:all` = **typecheck → lint → `npm test` → בדיקות האינווריאנטות → `check:knip`**. ה-pre-push
+> מריץ רק את שלושת הראשונים (ו-lint **בלי** SafeQL) — ראה "מה רץ איפה" למטה. `typecheck` =
+> `next typegen && tsc --noEmit`: טיפוסי הנתיבים ב-`.next/types` נוצרים מחדש מהעץ הנוכחי, כך ש-build
+> קודם (למשל זה שפרוס בתיקיית הפרודקשן) לא מכשיל אותו.
 
 ## הבדיקות — מה כל אחת מגינה
 
@@ -44,7 +46,7 @@
 
 | שער | פקודה | מה רץ | זמן |
 |---|---|---|---|
-| **pre-push** (husky, `.husky/pre-push`) | `npm run typecheck && SAFEQL=0 npm run lint && npm test` | typecheck · lint (**בלי** SafeQL) · vitest | ~1 דק' (נמדד: 51 שנ' — typecheck 6, lint 41, vitest 4) |
+| **pre-push** (`.husky/pre-push`; `core.hooksPath=.husky` — נקבע ב-`npm install`, רץ בכל worktree) | `npm run typecheck && SAFEQL=0 npm run lint && npm test` | typecheck · lint (**בלי** SafeQL) · vitest | ~1 דק' (נמדד: 51 שנ' — typecheck 6, lint 41, vitest 4) |
 | **CI** (`.github/workflows/ci.yml`, job `check:all`) | `npm run check:all` | הכל: typecheck · lint **עם** SafeQL מול סכימת dbmate · vitest · `check:secrets`/`check:auth`/`check:rbac` · בדיקות ה-DB `check:money`/`check:phone`/`check:session`/`check:dupes`/`check:wa` | ~4–5 דק' |
 
 - **בדיקות שצריכות DB רצות ב-CI בלבד**: `check:money`, `check:phone`, `check:session`, `check:dupes`,

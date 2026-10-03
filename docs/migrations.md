@@ -15,9 +15,7 @@
 ```bash
 npm run db:new add_foo_column     # יוצר db/migrations/<timestamp>_add_foo_column.sql
 # כותבים SQL תחת -- migrate:up ואת ההיפוך תחת -- migrate:down
-npm run db:up                     # מריץ pending מול DATABASE_URL מ-.env.local
-# בפרודקשן (השרת ללא SSL, ודרך החיבור הישיר ולא ה-pooler):
-#   DATABASE_URL="<DIRECT_URL>?sslmode=disable" npm run db:up
+npm run db:up                     # מריץ pending מול DBMATE_DATABASE_URL מ-.env.local
 npm run db:status                 # Applied / Pending
 npm run db:rollback               # מבטל את האחרונה (migrate:down)
 npm run db:dump                   # מעדכן db/schema.sql — לקומיט יחד עם המיגרציה
@@ -25,6 +23,13 @@ npm run db:dump                   # מעדכן db/schema.sql — לקומיט י
 
 - כל מיגרציה רצה בטרנזקציה. אם צריך `create index concurrently` — כתוב
   `-- migrate:up transaction:false`.
+- **`DBMATE_DATABASE_URL`** (ב-`.env.local`) — ה-URL ש-`npm run db:*` מריצים מולו (`--env
+  DBMATE_DATABASE_URL`, מ-03/10/2026). **ה-`DIRECT_URL` (5432, לא ה-pooler) + `?sslmode=disable`.**
+  משתנה נפרד בכוונה: `DATABASE_URL` שב-`.env.local` הוא ה-pooler (6543) שה-build קורא, ו-dbmate
+  (lib/pq) מנסה SSL כברירת מחדל — לכן `npm run db:up` נכשל עליו ב-"SSL is not enabled on the
+  server". האפליקציה לא קוראת את המשתנה (לכן אינו ב-`src/env.ts`). חד-פעמי מול DB אחר:
+  `DBMATE_DATABASE_URL="<url>?sslmode=disable" npm run db:status` (משתנה סביבה גובר על הקובץ).
+  `db:new` לא צריך URL, רק ש-`.env.local` קיים.
 - `dbmate` (lib/pq) דורש `?sslmode=disable` ב-URL כשהשרת ללא SSL (מקומי, CI).
 - CI (`.github/workflows/ci.yml`): `dbmate up` על DB ריק (כל `db/migrations`), `dbmate status`,
   ובדיקת **parity** — הקבצים המקוריים דרך psql מול **העטיפות הישנות בלבד** (`20000101…`)
@@ -37,7 +42,7 @@ npm run db:dump                   # מעדכן db/schema.sql — לקומיט י
 (`public.handle_new_user()` — שריד Supabase-auth בלי טריגר ובלי טבלת `profiles`;
 ההגדרה נשמרה ב-`/var/backups/billing/handle_new_user-20260911.sql`). היא נמחקה,
 ה-diff יצא ריק, `mark-applied.sql` הורץ, ומאז `public.schema_migrations` קיימת
-ב-`proj_billing` ו-`npm run db:up` (עם `DIRECT_URL` + `?sslmode=disable`) הוא
+ב-`proj_billing` ו-`npm run db:up` (מול `DBMATE_DATABASE_URL` = `DIRECT_URL` + `?sslmode=disable`) הוא
 הדרך היחידה להחיל מיגרציה. הנוהל המקורי נשמר כאן לתיעוד:
 
 הטבלה `public.schema_migrations` לא הייתה קיימת ב-`proj_billing`. לפני שמסמנים
