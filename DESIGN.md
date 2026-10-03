@@ -7,7 +7,7 @@
 
 **Stack**: Next.js 16 + Tailwind 4 + shadcn/ui + lucide-react.
 **שפה**: עברית מלאה, RTL.
-**פונט**: Heebo (Google Fonts).
+**פונט**: Heebo (self-hosted, `src/fonts/` — Fontsource, OFL; מ-03/10/2026 בלי Google Fonts).
 
 ---
 
@@ -1118,9 +1118,10 @@ toast.info('...');
 - `<body dir="rtl" style="font-family:'Heebo',Arial,sans-serif;">` חובה
   על תג ה-body. גם על `<a>` של ה-CTA — חלק מהקליינטים לא יורשים
   font-family לתוך לינקים.
-- **Heebo** דרך `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;600;700;800&display=swap">`
-  ב-`<head>`. Arial = fallback (Gmail/Outlook web יחסמו את ה-link
-  לעיתים — תפול חזרה ל-Arial וזה בסדר).
+- **Heebo לפי שם בלבד, בלי `<link>` לפונט חיצוני** (מ-03/10/2026 — אין
+  תלות ב-Google Fonts בשום מקום בפרויקט). קליינט שיש בו Heebo יציג
+  אותו; האחרים נופלים ל-Arial וזה בסדר (Gmail/Outlook web ממילא לא
+  טענו את ה-link).
 - **Layout**: outer `<table width="100%">` + inner `<table width="600">`
   ממורכז. **לא** `<div>` — Outlook (במיוחד desktop) לא מבין flex/grid.
   ה-Tables משתמשות ב-`role="presentation"` כדי לא לבלבל screen readers.
