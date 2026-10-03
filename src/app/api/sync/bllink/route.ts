@@ -21,6 +21,7 @@ import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { SYNC_BLLINK_MAX_PER_IP, AUTH_RATE_WINDOW_SEC, BLLINK_MAX_SNAPSHOT_AGE_HOURS_DEFAULT } from '@/lib/constants';
 import { syncBllinkBodySchema } from '@/lib/validation/requests';
 import { logger } from '@/lib/logger';
+import { suggestPortalLinks } from '@/lib/db/contactSuggestions';
 import { env } from '@/env';
 
 export const runtime = 'nodejs';
@@ -208,6 +209,16 @@ export async function POST(req: Request) {
       // ── stages: guard + pull (write) — the same guards, the same write ──────
       importRunId = await createImportRun('merge', actorId);
       const merged = await writeCrmSnapshot(local.rows, local.report, importRunId);
+
+      // Bllink's people vs the portal links (03/10/2026): "שיוך" / "ניתוק"
+      // suggestions in the queue — nothing is linked or unlinked here.
+      // Best-effort, like the registry hook: a queue hiccup never fails a sync.
+      try {
+        const p = await suggestPortalLinks(local.scrapeId);
+        logger.info(`[bllink:sync] portal links: +${p.suggested_link} link, +${p.suggested_unlink} unlink, ${p.closed} closed`);
+      } catch (linkErr) {
+        logger.error('[bllink:sync] portal link suggestions failed', linkErr instanceof Error ? linkErr.message : String(linkErr));
+      }
 
       await finishSyncRunSuccess(syncRunId, { sourceRunAt, rowsCount: merged, importRunId });
       logger.info(

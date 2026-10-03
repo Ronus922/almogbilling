@@ -9,8 +9,11 @@ import type { Tenant } from '@/types/tenant';
 import type { PhoneField } from './EditPhoneDialog';
 import {
   SUGGESTION_FIELD_IS_NUMERIC,
-  type ContactFieldState, type ContactSuggestion, type SuggestionField,
+  type CardSuggestionField, type ContactFieldState, type ContactSuggestion,
 } from '@/lib/types/contactSuggestions';
+import { OwnerNameDecision } from '@/components/contacts/OwnerNameDecision';
+
+export type SuggestionAction = 'approve' | 'reject' | 'approve_rename' | 'approve_replace';
 
 interface Props {
   tenant: Tenant;
@@ -18,13 +21,13 @@ interface Props {
   onEditPhone: (field: PhoneField) => void;
   /** Open Bllink suggestions + who last changed each field (29/09/2026). */
   contactFields: ContactFieldState;
-  onResolveSuggestion: (id: string, action: 'approve' | 'reject') => void;
+  onResolveSuggestion: (id: string, action: SuggestionAction) => void;
 }
 
 export function MainDetailsCard({
   tenant, canEdit, onEditPhone, contactFields, onResolveSuggestion,
 }: Props) {
-  const suggestionFor = (field: SuggestionField): ContactSuggestion | null =>
+  const suggestionFor = (field: CardSuggestionField): ContactSuggestion | null =>
     contactFields.suggestions.find((s) => s.field === field) ?? null;
 
   return (
@@ -119,12 +122,14 @@ function SourceMark({ source }: { source: NonNullable<ContactFieldState['sources
   );
 }
 
-/** The open Bllink proposal for this field, with its two decisions in place.
- *  Rejecting keeps ours and stops that value coming back. */
+/** The open Bllink proposal for this field, with its decisions in place.
+ *  Rejecting keeps ours and stops that value coming back. A new owner name is
+ *  "תיקון שם" / "החלפת בעלים" (OwnerNameDecision); an owner phone waits for
+ *  that decision. */
 function SuggestionTag({ suggestion, canEdit, onResolve }: {
   suggestion: ContactSuggestion;
   canEdit: boolean;
-  onResolve: (id: string, action: 'approve' | 'reject') => void;
+  onResolve: (id: string, action: SuggestionAction) => void;
 }) {
   const numeric = SUGGESTION_FIELD_IS_NUMERIC[suggestion.field];
   return (
@@ -136,7 +141,24 @@ function SuggestionTag({ suggestion, canEdit, onResolve }: {
       >
         {suggestion.proposed_value}
       </span>
-      {canEdit && (
+      {canEdit && suggestion.owner_change && (
+        <span className="flex flex-wrap items-center gap-1">
+          <OwnerNameDecision suggestion={suggestion} busy={false} size="xs"
+            onResolve={(action) => onResolve(suggestion.id, action)} />
+          <button
+            type="button"
+            aria-label="דחה את ההצעה"
+            onClick={() => onResolve(suggestion.id, 'reject')}
+            className="rounded p-1 text-rose-600 transition-colors hover:bg-rose-100"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </span>
+      )}
+      {canEdit && suggestion.waits_for_owner_name && (
+        <span className="text-[11px] text-amber-700">ממתין להחלטה על שם הבעלים</span>
+      )}
+      {canEdit && !suggestion.owner_change && !suggestion.waits_for_owner_name && (
         <span className="flex items-center gap-0.5">
           <Tooltip>
             <TooltipTrigger
@@ -176,7 +198,7 @@ function Row({ label, children, source, suggestion, canEdit = false, onResolve }
   source?: ContactFieldState['sources']['owner_name'];
   suggestion?: ContactSuggestion | null;
   canEdit?: boolean;
-  onResolve?: (id: string, action: 'approve' | 'reject') => void;
+  onResolve?: (id: string, action: SuggestionAction) => void;
 }) {
   return (
     <div>
@@ -203,7 +225,7 @@ function EmailRow({ label, value, source, suggestion, canEdit, onResolve }: {
   source?: ContactFieldState['sources']['owner_email'];
   suggestion: ContactSuggestion | null;
   canEdit: boolean;
-  onResolve: (id: string, action: 'approve' | 'reject') => void;
+  onResolve: (id: string, action: SuggestionAction) => void;
 }) {
   if (!value && !suggestion && !source) return null;
   return (
@@ -230,7 +252,7 @@ function PhoneRow({ label, value, editable, onEdit, source, suggestion, onResolv
   onEdit: () => void;
   source?: ContactFieldState['sources']['owner_name'];
   suggestion: ContactSuggestion | null;
-  onResolve: (id: string, action: 'approve' | 'reject') => void;
+  onResolve: (id: string, action: SuggestionAction) => void;
 }) {
   const display = formatPhoneDisplay(value);
   return (

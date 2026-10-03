@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { apartmentsLabel, initials, type PortalTab } from '@/lib/portal/ui';
-import { AlertIcon, BuildingGlyph, LogoutIcon } from './PortalIcons';
+import { rolesLabel, type PortalRole } from '@/lib/portal/identity';
+import { AccountIcon, AlertIcon, BuildingGlyph, LogoutIcon } from './PortalIcons';
 import { usePortalHref } from './usePortalHref';
 
 // The portal's chrome (ref/Tenant Portal.html #scrPortal): the sticky top bar
@@ -30,9 +31,11 @@ const TABS: ReadonlyArray<{ key: PortalTab; label: string; soon?: boolean }> = [
   { key: 'rep', label: 'דוחות' },
 ];
 
+/** Who is signed in — the portal's one identity (lib/portal/identity.ts),
+ *  never worked out here. A blocked phone: no name, no apartment. */
 export interface PortalUser {
   name: string | null;
-  apartments: string[];
+  apartments: { number: string; role: PortalRole }[];
 }
 
 export function PortalShell({ tab, apartments, user, preview = false, restricted = false, children }: {
@@ -42,8 +45,8 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
   user: PortalUser;
   /** The admin preview (/finance?view=resident): read-only, no logout. */
   preview?: boolean;
-  /** A mixed-owners phone (containment 03/10/2026): no tab row — every tab
-   *  would show the same notice. The fault report and logout stay. */
+  /** A blocked phone (lib/portal/identity.ts): no tab row — every tab would
+   *  show the same notice. The fault report and logout stay. */
   restricted?: boolean;
   children: ReactNode;
 }) {
@@ -71,12 +74,13 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
     }
   }
 
-  const nm = user.name ?? 'בעל/ת דירה';
-  // No name and no apartment (a mixed-owners phone) → no second line, rather
-  // than "בעל/ת דירה" twice.
-  const sub = user.name
-    ? `${apartmentsLabel(user.apartments)} · בעל/ת דירה`
-    : user.apartments.length > 0 ? apartmentsLabel(user.apartments) : null;
+  // No name (a blocked phone, or a record that carries none) → the plain
+  // greeting "שלום" — never "בעל/ת דירה", which would claim a role, and never
+  // the name of any record. No apartment (a blocked phone) → no second line.
+  const nm = user.name ?? 'שלום';
+  const sub = user.apartments.length > 0
+    ? `${apartmentsLabel(user.apartments.map((a) => a.number))} · ${rolesLabel(user.apartments.map((a) => a.role))}`
+    : null;
 
   return (
     <div className="portal-skin">
@@ -106,7 +110,7 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
             </nav>
           )}
           <div className="me">
-            <div className="av" aria-hidden>{initials(user.name)}</div>
+            <div className="av" aria-hidden>{user.name ? initials(user.name) : <AccountIcon size={16} />}</div>
             <div className="nm">{nm}{sub && <span>{sub}</span>}</div>
             {!preview && (
               <button type="button" className="pbtn pbtn-ghost pbtn-sm" onClick={logout} disabled={leaving} title="התנתקות" aria-label="התנתקות">

@@ -2,8 +2,10 @@ import 'server-only';
 import { cookies } from 'next/headers';
 import { PORTAL_SESSION_COOKIE } from '@/lib/constants/portal';
 import { AuthorizationError } from '@/lib/auth/errors';
-import { isActiveOwner, isMixedOwnerPhone } from '@/lib/db/portal/ownerPhones';
+import { isActiveOwner } from '@/lib/db/portal/ownerPhones';
+import { resolvePortalIdentity } from '@/lib/db/portal/identity';
 import { PORTAL_ACCOUNT_REVIEW_MESSAGE } from '@/lib/portal/ownership';
+import type { PortalIdentity } from '@/lib/portal/identity';
 import { logPortalEvent } from '@/lib/db/portal/events';
 import {
   createPortalSessionRow, findPortalSession, revokePortalSession,
@@ -100,16 +102,21 @@ export async function requirePortalSession(): Promise<PortalSession> {
 
 /**
  * The guard of every /api/portal/* endpoint that serves FINANCIAL data: a live
- * session (requirePortalSession) whose phone is not a mixed-owners phone
- * (lib/portal/ownership.ts — containment 03/10/2026). Such a phone gets 403
+ * session (requirePortalSession) whose phone is ONE person by the portal's
+ * identity (lib/portal/identity.ts — not blocked). A blocked phone gets 403
  * with the "we are updating your account" message and no figure at all.
+ * Returns the identity, so the caller never works one out on its own.
  */
-export async function requirePortalFinanceAccess(): Promise<PortalSession> {
+export async function requirePortalFinanceAccess(): Promise<{
+  session: PortalSession;
+  identity: Extract<PortalIdentity, { status: 'ok' }>;
+}> {
   const session = await requirePortalSession();
-  if (await isMixedOwnerPhone(session.phoneE164)) {
+  const identity = await resolvePortalIdentity(session.phoneE164);
+  if (!identity || identity.status !== 'ok') {
     throw new AuthorizationError(PORTAL_ACCOUNT_REVIEW_MESSAGE, 403);
   }
-  return session;
+  return { session, identity };
 }
 
 /** Logout: revoke the row, clear the cookie, log it. */

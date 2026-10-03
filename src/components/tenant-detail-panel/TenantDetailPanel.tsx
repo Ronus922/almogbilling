@@ -17,7 +17,7 @@ import type {
 } from '@/types/tenant';
 import type { ContactFieldState } from '@/lib/types/contactSuggestions';
 import { StatusBadge } from './StatusBadge';
-import { MainDetailsCard } from './MainDetailsCard';
+import { MainDetailsCard, type SuggestionAction } from './MainDetailsCard';
 import { AdditionalInfoCard } from './AdditionalInfoCard';
 import { QuickActionsCard } from './QuickActionsCard';
 import { DebtsCard } from './DebtsCard';
@@ -201,7 +201,7 @@ export function TenantDetailPanel({
   /** Approve or reject one Bllink suggestion straight from the card. Approving
    *  writes the value exactly as the queue does — and an owner phone reaches
    *  the portal roster through the same trigger. */
-  async function resolveSuggestion(id: string, action: 'approve' | 'reject') {
+  async function resolveSuggestion(id: string, action: SuggestionAction) {
     if (!tenant) return;
     try {
       const res = await fetch('/api/contacts/suggestions', {
@@ -223,7 +223,7 @@ export function TenantDetailPanel({
       setContactFields(fields);
       setTenant(detail.tenant);
       setHasMutated(true);
-      toast.success(action === 'approve' ? 'ההצעה אושרה ונכתבה' : 'ההצעה נדחתה');
+      toast.success(action === 'reject' ? 'ההצעה נדחתה' : 'ההצעה אושרה ונכתבה');
       router.refresh();
     } catch (err) {
       toast.error(`הפעולה נכשלה: ${(err as Error).message}`);

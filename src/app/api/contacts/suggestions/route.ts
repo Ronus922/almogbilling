@@ -27,6 +27,10 @@ export async function GET() {
 }
 
 // POST /api/contacts/suggestions — contacts:edit. { action, ids }
+//   approve / reject — several ids allowed; approving several resolves only
+//     what does not change portal access (the SQL enforces it);
+//   approve_rename / approve_replace — ONE owner-name suggestion: "תיקון שם"
+//     or "החלפת בעלים" (its dialog reads ./replacement first).
 export async function POST(req: Request) {
   let actor: Actor;
   try {

@@ -310,7 +310,52 @@ export const syncBllinkBodySchema = z.object({
 // POST /api/contacts/suggestions — approve or reject Bllink proposals by id.
 // The client sends every id it means to resolve, "אשר הכל" included, so the
 // server never has to guess what "all" was at the moment of the click.
-export const contactSuggestionsResolveSchema = z.object({
-  action: z.enum(['approve', 'reject']),
-  ids: z.array(z.uuid()).min(1, { error: 'missing_ids' }).max(500),
-});
+//   • approve with SEVERAL ids ("אשר הכל") resolves only the suggestions that
+//     do not change portal access — a phone, a link, an unlink and an owner
+//     change are approved one by one (03/10/2026);
+//   • approve_rename / approve_replace decide ONE owner-name suggestion: a
+//     name fix, or a new owner whose predecessor's phones are detached.
+export const contactSuggestionsResolveSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.enum(['approve', 'reject']),
+    ids: z.array(z.uuid()).min(1, { error: 'missing_ids' }).max(500),
+  }),
+  z.object({
+    action: z.enum(['approve_rename', 'approve_replace']),
+    ids: z.array(z.uuid()).length(1, { error: 'one_owner_name_suggestion' }),
+  }),
+]);
+
+// GET /api/contacts/suggestions/replacement?id= — the phones an owner
+// replacement would detach, for its confirmation dialog.
+export const ownerReplacementQuerySchema = z.object({ id: z.uuid() });
+
+// ── Portal identity (03/10/2026) ─────────────────────────────────────────────
+const identityRelationSchema = z.enum(['personal', 'company_authorized', 'family']);
+const identityApartmentsSchema = z.array(z.object({
+  apartment_number: z.string().trim().min(1).max(20),
+  relation: identityRelationSchema,
+})).min(1).max(50);
+const e164Schema = z.string().regex(/^\+[1-9][0-9]{6,14}$/, { error: 'invalid_phone' });
+
+// POST /api/admin/portal-identity — "אדם אחד", revoking it, turning a request down.
+export const portalIdentityActionSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('approve'),
+    phone_e164: e164Schema,
+    display_name: z.string().trim().min(1, { error: 'missing_display_name' }).max(120),
+    apartments: identityApartmentsSchema,
+  }),
+  z.object({ action: z.enum(['revoke', 'reject']), id: z.uuid() }),
+]);
+
+// The answers to the apartment card's "אותו אדם?" (body key `phone_decisions`
+// of POST /api/contacts and PATCH /api/contacts/[id]).
+export const phoneEntryDecisionsSchema = z.array(z.object({
+  phone_e164: e164Schema,
+  decision: z.enum(['same', 'different']),
+  identity: z.object({
+    display_name: z.string().trim().min(1).max(120),
+    apartments: identityApartmentsSchema,
+  }).optional(),
+})).max(20);

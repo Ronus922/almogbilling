@@ -16,7 +16,7 @@ export const runtime = 'nodejs';
 // predicate lives inside each query: a hidden month yields no rows even if this
 // route forgot to check, and supplier names, invoice numbers, internal notes and
 // files never leave that module. Read-only; guarded by requirePortalFinanceAccess
-// (a live session whose phone is not a mixed-owners phone — 403 otherwise).
+// (a live session whose phone is not a blocked phone — 403 otherwise).
 //
 // `m` is not trusted: residentPeriodFor() falls back to the newest published
 // month for anything unparseable or not open to residents, so a hand-crafted

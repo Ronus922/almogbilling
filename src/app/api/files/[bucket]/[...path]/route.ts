@@ -4,7 +4,7 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { AuthorizationError } from '@/lib/auth/errors';
 import { queryOne } from '@/lib/db';
 import { findResidentReceipt } from '@/lib/db/finance/portal';
-import { findOwnerIdentity } from '@/lib/db/portal/ownerPhones';
+import { resolvePortalIdentity } from '@/lib/db/portal/identity';
 import { logFileView, type FileViewActor, type PortalFileViewer, type ServedFile } from '@/lib/db/fileViewAudit';
 import { getPortalSession } from '@/lib/portal/session';
 import { getObjectStream, PRIVATE_BUCKETS, type PrivateBucket } from '@/lib/storage/server';
@@ -70,15 +70,15 @@ async function residentReceiptViewer(objectPath: string): Promise<PortalFileView
   if (!session) return null;
   const receipt = await findResidentReceipt(objectPath);
   if (!receipt) return null;
-  const identity = await findOwnerIdentity(session.phoneE164, { onlyActive: true });
-  // A mixed-owners phone gets no financial document either (containment
-  // 03/10/2026, lib/portal/ownership.ts) — the staff verdict stands.
-  if (!identity || identity.mixedOwners) return null;
+  // Who the phone is — the portal's one identity (lib/portal/identity.ts). A
+  // blocked phone gets no financial document either; the staff verdict stands.
+  const identity = await resolvePortalIdentity(session.phoneE164);
+  if (!identity || identity.status !== 'ok') return null;
   return {
     kind: 'portal_owner',
     phoneE164: session.phoneE164,
-    ownerName: identity.ownerName,
-    apartmentNumbers: identity.apartmentNumbers,
+    ownerName: identity.name,
+    apartmentNumbers: identity.apartments.map((a) => a.apartmentNumber),
   };
 }
 

@@ -6,6 +6,7 @@ import { Section } from '@/components/side-panel/Section';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPhoneDisplay } from '@/lib/phone';
 import { cn } from '@/lib/utils';
+import { PORTAL_ROLE_LABEL } from '@/lib/portal/identity';
 import type { Issue } from '@/lib/types/issues';
 
 // An issue opened by an owner from the portal (/portal/report, source='portal'):
@@ -19,7 +20,8 @@ import type { Issue } from '@/lib/types/issues';
 // out): the panel gets it from GET /api/issues/[id] only for contacts:view.
 // `canSeePhone` is the UI gate of the same predicate (canSeeReporterPhone).
 
-type ReporterFields = Pick<Issue, 'source' | 'reporter_name' | 'reporter_apartment'>;
+type ReporterFields = Pick<Issue, 'source' | 'reporter_name' | 'reporter_apartment'>
+  & Partial<Pick<Issue, 'reporter_role'>>;
 
 /** "פורטל דיירים" — DESIGN §10 soft pill, violet tone (unused by the issue
  *  statuses / priorities, so the source never reads as one of them). */
@@ -36,18 +38,20 @@ export function PortalSourceTag({ size = 'md' }: { size?: 'sm' | 'md' }) {
   );
 }
 
-/** "ישראל ישראלי · דירה 520" — null for a staff issue. */
+/** "ישראל ישראלי · דירה 520 · שוכר" — null for a staff issue. The role is
+ *  the one held in that apartment when reporting (03/10/2026). */
 export function reporterLabel(issue: ReporterFields): string | null {
   if (issue.source !== 'portal') return null;
   const parts = [
     issue.reporter_name?.trim() || null,
-    // NULL = an unidentified reporter (a mixed-owners phone): no apartment.
+    // NULL = an unidentified reporter (a blocked phone): no apartment, no role.
     issue.reporter_apartment?.trim() ? `דירה ${issue.reporter_apartment.trim()}` : null,
+    issue.reporter_role ? PORTAL_ROLE_LABEL[issue.reporter_role] : null,
   ].filter((p): p is string => !!p);
   return parts.length ? parts.join(' · ') : null;
 }
 
-/** "דיווח דייר · ישראל ישראלי · דירה 520"; an unidentified reporter reads
+/** "דיווח דייר · ישראל ישראלי · דירה 520 · בעלים"; an unidentified reporter reads
  *  "דיווח דייר · לא מזוהה" (their name IS "לא מזוהה" and they have no apartment).
  *  null for a staff issue. */
 export function residentReportLabel(issue: ReporterFields): string | null {

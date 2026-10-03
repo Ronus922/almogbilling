@@ -50,7 +50,7 @@ import {
 } from '../src/lib/sync/bllinkCompare';
 import { toCompareMap } from '../src/lib/sync/bllinkMap';
 import {
-  EMPTY_CONTACTS, extractTenantContacts, type ApartmentContacts,
+  EMPTY_CONTACTS, extractTenantContacts, extractTenantPeople, type ApartmentContacts, type ListPerson,
 } from '../src/lib/sync/tenantList';
 import { resolveBllinkSource } from '../src/lib/sync/decision';
 import { resolveScrapeConnection, tryAcquireScrapeLock } from '../src/lib/sync/scrapeLock';
@@ -271,7 +271,10 @@ async function downloadExcel(page: Page, scrapeId: string): Promise<Buffer> {
  * cookies answers 502. Driving the screen is also exactly what the Excel
  * export above does, so there is one way in and not two.
  */
-async function fetchTenantContacts(page: Page): Promise<Map<string, ApartmentContacts>> {
+async function fetchTenantContacts(page: Page): Promise<{
+  contacts: Map<string, ApartmentContacts>;
+  people: Record<string, ListPerson[]>;
+}> {
   const waiter = page.waitForResponse(
     (r) => r.request().method() === 'GET' && r.url().endsWith('/tenants') && r.status() === 200,
     { timeout: 45_000 },
@@ -280,7 +283,9 @@ async function fetchTenantContacts(page: Page): Promise<Map<string, ApartmentCon
   const payload: unknown = await (await waiter).json();
   const byApt = extractTenantContacts(payload);
   if (byApt.size === 0) throw new Error('resident list returned no apartment with a contact');
-  return byApt;
+  // Every active person too — the portal links are compared per person
+  // (portal_link_suggest, after the sync).
+  return { contacts: byApt, people: extractTenantPeople(payload) };
 }
 
 // ─── Retention ────────────────────────────────────────────────────────────────
@@ -417,9 +422,10 @@ async function main(): Promise<number> {
     // NULL, which the queue reads as "Bllink said nothing" — ours stands, no
     // suggestion is withdrawn, and tomorrow tries again.
     let contacts = new Map<string, ApartmentContacts>();
+    let people: Record<string, ListPerson[]> | null = null;
     let tenantListOk = false;
     try {
-      contacts = await fetchTenantContacts(page);
+      ({ contacts, people } = await fetchTenantContacts(page));
       tenantListOk = true;
       log(`resident list: contacts for ${contacts.size} apartments`);
     } catch (e) {
@@ -459,8 +465,8 @@ async function main(): Promise<number> {
         );
       }
       await db.query(
-        `update public.bllink_scrapes set tenant_list_ok = $2 where id = $1`,
-        [scrapeId, tenantListOk],
+        `update public.bllink_scrapes set tenant_list_ok = $2, list_people = $3::jsonb where id = $1`,
+        [scrapeId, tenantListOk, people ? JSON.stringify(people) : null],
       );
       await db.query('commit');
     } catch (e) {

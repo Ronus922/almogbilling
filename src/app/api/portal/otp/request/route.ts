@@ -4,7 +4,7 @@ import { portalOtpRequestBodySchema } from '@/lib/validation/requests';
 import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { toPortalE164 } from '@/lib/portal/phone';
 import { sendPortalCode, alertManagerAboutLockout } from '@/lib/portal/send';
-import { findOwnerIdentity } from '@/lib/db/portal/ownerPhones';
+import { findPortalRegistration } from '@/lib/db/portal/identity';
 import { issueCode, resendCooldownRemaining } from '@/lib/db/portal/otp';
 import { activeLockout, createLockout, lockoutMinutesRemaining } from '@/lib/db/portal/lockouts';
 import { logPortalEvent } from '@/lib/db/portal/events';
@@ -61,7 +61,7 @@ export async function POST(req: Request) {
   if (locked) {
     // The apartments go on the event so the block shows up on the apartment
     // card's log, not only on the admin screen (the card filters on this array).
-    const known = await findOwnerIdentity(phoneE164, { onlyActive: false });
+    const known = await findPortalRegistration(phoneE164, { onlyActive: false });
     await logPortalEvent({
       phoneE164, eventType: 'locked_out', ip, userAgent,
       apartmentNumbers: known?.apartmentNumbers ?? [],
@@ -100,8 +100,8 @@ export async function POST(req: Request) {
   // Roster lookup. onlyActive: false first, so a switched-off owner is logged as
   // phone_inactive rather than phone_not_found — the admin needs to tell a sold
   // apartment apart from a wrong number.
-  const known = await findOwnerIdentity(phoneE164, { onlyActive: false });
-  const active = await findOwnerIdentity(phoneE164, { onlyActive: true });
+  const known = await findPortalRegistration(phoneE164, { onlyActive: false });
+  const active = await findPortalRegistration(phoneE164, { onlyActive: true });
 
   if (!active) {
     await logPortalEvent({

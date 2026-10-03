@@ -16,9 +16,9 @@ import { join } from 'node:path';
 //   requirePortalSession = the owners portal's OWN session guard (portal_session
 //     cookie + "is this phone still an active owner", src/lib/portal/session.ts).
 //     A separate auth layer, not a weaker one: it grants nothing outside /portal.
-//   requirePortalFinanceAccess = requirePortalSession + "not a mixed-owners
-//     phone" (containment 03/10/2026, src/lib/portal/ownership.ts) — the guard
-//     of the portal's financial endpoints.
+//   requirePortalFinanceAccess = requirePortalSession + "not a blocked phone"
+//     (the portal's one identity, 03/10/2026, src/lib/portal/identity.ts) — the
+//     guard of the portal's financial endpoints.
 const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|AssistantAccess|CanManageRole|DriveConnector|PortalSession|PortalFinanceAccess)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREENAPI_WEBHOOK_TOKEN/;
 
 // Routes that are legitimately public (pre-auth flows + health + public media).

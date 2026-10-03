@@ -157,6 +157,9 @@ export async function getContactById(id: string): Promise<Contact | null> {
 export async function createContact(
   data: Partial<ContactWritableFields> & { apartment_number: string },
   createdBy: string | null,
+  /** Run inside the caller's transaction (the apartment card's create — see
+   *  POST /api/contacts). */
+  client?: PoolClient,
 ): Promise<Contact> {
   const rec = data as Record<string, unknown>;
   // source is a SERVER-side stamp — not client-writable (coerceContactInput
@@ -177,13 +180,13 @@ export async function createContact(
   }
 
   const placeholders = vals.map((_, i) => `$${i + 1}`);
-  try {
-    const row = await queryOne<Contact>(
-      `insert into public.contacts (${cols.join(', ')})
+  const sql = `insert into public.contacts (${cols.join(', ')})
        values (${placeholders.join(', ')})
-       returning ${CONTACT_COLUMNS}`,
-      vals,
-    );
+       returning ${CONTACT_COLUMNS}`;
+  try {
+    const row = client
+      ? (await client.query<Contact>(sql, vals)).rows[0] ?? null
+      : await queryOne<Contact>(sql, vals);
     if (!row) throw new Error('failed_to_create_contact');
     return row;
   } catch (err) {

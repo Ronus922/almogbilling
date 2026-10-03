@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Search, Upload, Download, Plus, RefreshCcwDot } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -53,10 +54,29 @@ export function ContactsPageClient({
   // panel, never with the page: the queue is usually empty and its button is
   // not even drawn then.
   const [suggestions, setSuggestions] = useState<ContactSuggestion[] | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingContact, setEditingContact] = useState<Contact | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Deep link: ?apt=X opens that apartment's card (the "השלם שם" link of
+  // /admin/portal-blocked) — as the INITIAL state, so nothing re-renders for
+  // it. The param is stripped right after, so a refresh does not reopen it.
+  const [deepLinked] = useState<Contact | null>(
+    () => initialContacts.find((x) => x.apartment_number === searchParams.get('apt')) ?? null,
+  );
+  const [formOpen, setFormOpen] = useState(deepLinked !== null);
+  const [editingContact, setEditingContact] = useState<Contact | null>(deepLinked);
 
   const didMount = useRef(false);
+
+  useEffect(() => {
+    if (!searchParams.get('apt')) return;
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete('apt');
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+    // run-once on mount; later changes are the user's own navigation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchContacts = useCallback(async () => {
     setLoading(true);

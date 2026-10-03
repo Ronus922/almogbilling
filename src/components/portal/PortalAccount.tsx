@@ -1,6 +1,7 @@
 import type { PortalAccount } from '@/lib/types/portal';
 import { PORTAL_BLOCKS } from '@/lib/portal/blocks';
 import { fmtDateDMY, fmtIls, roundShekels } from '@/lib/portal/ui';
+import { PORTAL_ROLE_LABEL } from '@/lib/portal/identity';
 import { PortalSoon } from './PortalSoon';
 import { PortalSupportAction, type PortalSupport } from './PortalSupportAction';
 import { AccountIcon } from './PortalIcons';
@@ -9,7 +10,8 @@ import { AccountIcon } from './PortalIcons';
 // in c3 — balance due, management-fee debt, hot-water debt, monthly charge —
 // then the CRM's free-text details, and the reference's personal ledger,
 // built but off (PORTAL_BLOCKS.ledger). One block per apartment of the
-// signed-in owner; the figures come from getPortalMyAccount, which reads
+// signed-in person, each tagged with the role they hold in it (בעלים / שוכר /
+// מפעיל — the existing gray .tag); the figures come from getPortalMyAccount, which reads
 // nothing but the session, and an archived record is shown exactly like a
 // live one (decision 28/09/2026). Whole shekels; the balance due in red-ink
 // above zero. `details` is rendered as text (pre-line) — never as HTML.
@@ -24,10 +26,14 @@ function subtitleOf(a: PortalAccount): string {
   return parts.join(' · ');
 }
 
+function RoleTag({ account: a }: { account: PortalAccount }) {
+  return <span className="tag t-gray" data-role={a.role}>{PORTAL_ROLE_LABEL[a.role]}</span>;
+}
+
 function AccountBlock({ account: a, heading }: { account: PortalAccount; heading: boolean }) {
   return (
     <div className="acc-block">
-      {heading && <h2>דירה {a.apartment_number}</h2>}
+      {heading && <h2>דירה {a.apartment_number}<RoleTag account={a} /></h2>}
       <div className="pgrid">
         <div className="card kpi c3">
           <div className="k">יתרה לתשלום</div>
@@ -91,7 +97,9 @@ export function PortalAccountView({ accounts, support }: {
       <div className="hd">
         <div>
           <h1>החשבון שלי</h1>
-          <p>{single ? subtitleOf(first) : `${accounts.length} דירות${first.owner_display_name ? ` · ${first.owner_display_name}` : ''}${asOf ? ` · נכון ל-${asOf}` : ''}`}</p>
+          {single
+            ? <p className="acc-sub">{subtitleOf(first)}<RoleTag account={first} /></p>
+            : <p>{`${accounts.length} דירות${first.owner_display_name ? ` · ${first.owner_display_name}` : ''}${asOf ? ` · נכון ל-${asOf}` : ''}`}</p>}
         </div>
       </div>
       {accounts.map((a) => <AccountBlock key={a.apartment_number} account={a} heading={!single} />)}

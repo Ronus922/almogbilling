@@ -1,9 +1,10 @@
 'use client';
 
 // "נתק" — the one write the portal roster screens have. Detaching takes a
-// phone off ONE apartment in the portal; it stays off while the owner record
-// still holds the phone, and comes back only through that record (removed and
-// typed in again). Confirmation via AlertDialog (DESIGN.md §12).
+// phone off ONE apartment in the portal; it stays off while the card still
+// holds the phone in the same role, and comes back only through the card (the
+// phone removed and typed in again, or moved to its right role). Confirmation
+// via AlertDialog (DESIGN.md §12).
 
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -58,8 +59,8 @@ export function DetachLinkButton({ id, apartmentNumber, phoneE164, ownerName, on
             <AlertDialogDescription>
               <span dir="ltr" className="font-num">{rosterPhoneDisplay(phoneE164)}</span>
               {ownerName ? ` (${ownerName})` : ''} לא יראה עוד את דירה {apartmentNumber} בפורטל.
-              כל עוד הטלפון רשום ברשומת הבעלים של הדירה הוא יישאר מנותק — כדי להחזיר אותו
-              יש להסיר אותו מהרשומה ולהזין אותו מחדש. הפעולה נרשמת ביומן.
+              כל עוד הטלפון רשום בכרטיס הדירה באותו תפקיד הוא יישאר מנותק — כדי להחזיר אותו
+              יש להסיר אותו מהכרטיס ולהזין אותו מחדש, או לתקן את התפקיד שלו. הפעולה נרשמת ביומן.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

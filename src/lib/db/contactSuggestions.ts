@@ -1,7 +1,7 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import type {
-  ContactFieldSources, ContactFieldState, ContactSuggestion, SuggestionField,
+  CardSuggestionField, ContactFieldSources, ContactFieldState, ContactSuggestion, OwnerReplacementPreview,
 } from '@/lib/types/contactSuggestions';
 
 // The Bllink approval queue. Every rule lives in SQL (migrations
@@ -19,21 +19,41 @@ const LIVE_VALUE = `
     when 'owner_email'  then c.owner_email
     when 'tenant_name'  then c.tenant_name
     when 'tenant_phone' then c.tenant_phone
-    else c.tenant_email
+    when 'tenant_email' then c.tenant_email
+    else null
   end`;
 
-/** Every open suggestion, newest first. The list is small by construction —
- *  one row per apartment+field at most. */
+/** An owner-name CHANGE: ours is not empty and differs — the same predicate
+ *  contact_suggestion_resolve applies (migration 20261003161749). */
+const OWNER_CHANGE = (sug: string) => `(${sug}.field = 'owner_name'
+    and nullif(btrim(coalesce(c.owner_name, '')), '') is not null
+    and public.contact_value_norm('owner_name', c.owner_name)
+        is distinct from public.contact_value_norm('owner_name', ${sug}.proposed_value))`;
+
+/** Every column the screens need, decisions included. */
+const SUGGESTION_SELECT = `
+  select s.id, s.apartment_number, s.field,
+         ${LIVE_VALUE} as current_value,
+         s.proposed_value,
+         s.created_at,
+         s.phone_e164, s.person_role, s.person_name,
+         s.field in ('owner_phone', 'tenant_phone', 'portal_link', 'portal_unlink') as access,
+         ${OWNER_CHANGE('s')} as owner_change,
+         (s.field = 'portal_link' and s.person_role = 'tenant' and c.resident_type = 'owner') as marks_rented,
+         (s.field = 'owner_phone' and exists (
+            select 1 from public.contact_sync_suggestions n
+             where n.apartment_number = s.apartment_number and n.status = 'pending'
+               and ${OWNER_CHANGE('n')})) as waits_for_owner_name
+    from public.contact_sync_suggestions s
+    join public.contacts c on c.apartment_number = s.apartment_number`;
+
+/** Every open suggestion, newest first. Small by construction — one row per
+ *  apartment+field, and one per apartment+phone for the person suggestions. */
 export async function listPendingSuggestions(): Promise<ContactSuggestion[]> {
   const r = await query<ContactSuggestion>(
-    `select s.id, s.apartment_number, s.field,
-            ${LIVE_VALUE} as current_value,
-            s.proposed_value,
-            s.created_at
-       from public.contact_sync_suggestions s
-       join public.contacts c on c.apartment_number = s.apartment_number
+    `${SUGGESTION_SELECT}
       where s.status = 'pending'
-      order by s.created_at desc, s.apartment_number, s.field`,
+      order by s.created_at desc, s.apartment_number, s.field, s.phone_e164`,
   );
   return r.rows;
 }
@@ -48,8 +68,10 @@ export async function countPendingSuggestions(): Promise<number> {
 /**
  * Approve or reject by id. Approving writes the value through
  * public.contacts — the very column the apartment card writes — so the portal
- * roster trigger picks up an owner phone immediately and that owner can sign
- * in without another step.
+ * roster follows at COMMIT. The rules (all in contact_suggestion_resolve):
+ * several ids approve only what does not change portal access; an owner-name
+ * change needs 'approve_rename' or 'approve_replace'; every decision is
+ * logged.
  *
  * Returns how many rows this call actually resolved: an id that was already
  * decided (or closed itself in the meantime) counts zero, which makes a double
@@ -57,7 +79,7 @@ export async function countPendingSuggestions(): Promise<number> {
  */
 export async function resolveSuggestions(
   ids: string[],
-  action: 'approve' | 'reject',
+  action: 'approve' | 'reject' | 'approve_rename' | 'approve_replace',
   actorId: string | null,
 ): Promise<number> {
   if (ids.length === 0) return 0;
@@ -68,10 +90,45 @@ export async function resolveSuggestions(
   return row?.n ?? 0;
 }
 
+/** "החלפת בעלים" for one owner-name suggestion: which phones it detaches
+ *  (contact_owner_replacement_targets — the same function the approval
+ *  applies) and which new phone it approves with it. null = not a pending
+ *  owner-name change. */
+export async function getOwnerReplacementPreview(id: string): Promise<OwnerReplacementPreview | null> {
+  const s = await queryOne<{ apartment_number: string; from_name: string | null; to_name: string; new_phone: string | null }>(
+    `select s.apartment_number, c.owner_name as from_name, s.proposed_value as to_name,
+            (select p.proposed_value from public.contact_sync_suggestions p
+              where p.apartment_number = s.apartment_number
+                and p.field = 'owner_phone' and p.status = 'pending') as new_phone
+       from public.contact_sync_suggestions s
+       join public.contacts c on c.apartment_number = s.apartment_number
+      where s.id = $1 and s.status = 'pending' and ${OWNER_CHANGE('s')}`,
+    [id],
+  );
+  if (!s) return null;
+  const t = await query<{ phone_e164: string; owner_name: string | null }>(
+    `select phone_e164, owner_name from public.contact_owner_replacement_targets($1, $2)`,
+    [s.apartment_number, s.new_phone],
+  );
+  return { ...s, detach: t.rows };
+}
+
+/** Bllink's people of one scrape vs the portal links → "שיוך" / "ניתוק"
+ *  suggestions (portal_link_suggest). Suggests only. */
+export async function suggestPortalLinks(scrapeId: string): Promise<{
+  suggested_link: number; suggested_unlink: number; closed: number;
+}> {
+  const row = await queryOne<{ suggested_link: number; suggested_unlink: number; closed: number }>(
+    `select * from public.portal_link_suggest($1::uuid)`,
+    [scrapeId],
+  );
+  return row ?? { suggested_link: 0, suggested_unlink: 0, closed: 0 };
+}
+
 /** Who last changed each synced field of one apartment — for the "ידני · תאריך"
  *  marker on the card. */
 export async function getFieldSources(apartmentNumber: string): Promise<ContactFieldSources> {
-  const r = await query<{ field: SuggestionField; source: 'manual' | 'bllink'; updated_at: string }>(
+  const r = await query<{ field: CardSuggestionField; source: 'manual' | 'bllink'; updated_at: string }>(
     `select field, source, updated_at
        from public.contact_field_sources
       where apartment_number = $1`,
@@ -85,14 +142,9 @@ export async function getFieldSources(apartmentNumber: string): Promise<ContactF
 /** The open suggestions of ONE apartment — the badges on its card. */
 export async function listSuggestionsForApartment(apartmentNumber: string): Promise<ContactSuggestion[]> {
   const r = await query<ContactSuggestion>(
-    `select s.id, s.apartment_number, s.field,
-            ${LIVE_VALUE} as current_value,
-            s.proposed_value,
-            s.created_at
-       from public.contact_sync_suggestions s
-       join public.contacts c on c.apartment_number = s.apartment_number
+    `${SUGGESTION_SELECT}
       where s.status = 'pending' and s.apartment_number = $1
-      order by s.field`,
+      order by s.field, s.phone_e164`,
     [apartmentNumber],
   );
   return r.rows;

@@ -32,7 +32,7 @@ const ISSUE_COLUMNS = `
   due_date::text as due_date, due_time::text as due_time,
   images, videos, resolution_notes, resolved_at::text as resolved_at, is_archived, sort_order,
   created_by, created_by_name, created_at::text as created_at, updated_at::text as updated_at,
-  source, reporter_name, reporter_apartment, reporter_location, reporter_area, ticket_number
+  source, reporter_name, reporter_apartment, reporter_role, reporter_location, reporter_area, ticket_number
 `;
 
 // Columns a create/update may set (title + created_by handled explicitly on

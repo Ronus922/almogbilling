@@ -1,20 +1,20 @@
 'use client';
 
 // "בעלי דירה" tab → "טלפון ← דירות בפורטל": which phones open this apartment
-// in the owners portal, which owner record links each one, and what ELSE the
-// same phone opens. View and detach only (decision 5 of the 03/10/2026 audit):
-// the roster mirrors the apartment's owner records (migration 20261003095149),
-// so a phone is added — or brought back — by typing it into the owner record
-// on the "פרטי דייר" tab, never here. A row is never deleted: detached and
-// former phones stay listed, greyed, with the reason.
+// in the portal, in which ROLE (בעלים / שוכר / מפעיל), which record links each
+// one, and what ELSE the same phone opens. View and detach only (decision 5 of
+// the 03/10/2026 audit): the roster mirrors the apartment's records in the
+// three portal roles (migrations 20261003095149 + 20261003161745), so a phone
+// is added — or brought back — by typing it into the card, never here. A row
+// is never deleted: detached and former phones stay listed, greyed, with the
+// reason.
 
 import { useCallback, useEffect, useState } from 'react';
 import { Smartphone, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { OwnerPhone } from '@/lib/types/portal';
-import {
-  OWNER_PHONE_SOURCE_LABEL, ownerPhoneOffLabel, rosterPhoneDisplay,
-} from '@/lib/portal/rosterLabels';
+import { ownerPhoneOffLabel, rosterPhoneDisplay, rosterSourceLabel } from '@/lib/portal/rosterLabels';
+import { PORTAL_ROLE_LABEL } from '@/lib/portal/identity';
 import { DetachLinkButton } from '@/components/portal/DetachLinkButton';
 import { Section } from './Section';
 
@@ -51,8 +51,8 @@ export function OwnerPhonesTab({ apartmentNumber, canEdit }: {
       subtitle={items ? `${activeCount} מתוך ${items.length} טלפונים פותחים את הדירה בפורטל` : undefined}
     >
       <p className="pb-3 text-[13px] leading-relaxed text-slate-500">
-        טלפון נכנס לפורטל רק כשהוא רשום ברשומת הבעלים של הדירה (בעלים או איש קשר בעלים).
-        {'להוספה — רושמים אותו ברשומת הבעלים בטאב "פרטי דייר".'}
+        טלפון נכנס לפורטל כשהוא רשום בכרטיס הדירה כבעלים, כשוכר או כמפעיל (שוכר ומפעיל — רק כשסוג
+        הדייר בכרטיס אינו &quot;בעלים&quot;). {'להוספה — רושמים אותו בכרטיס הדירה.'}
       </p>
       {error ? (
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
@@ -65,7 +65,7 @@ export function OwnerPhonesTab({ apartmentNumber, canEdit }: {
         </div>
       ) : items.length === 0 ? (
         <p className="py-2 text-center text-xs text-slate-400">
-          אין טלפון שפותח את הדירה בפורטל — אין ברשומת הבעלים נייד תקין.
+          אין טלפון שפותח את הדירה בפורטל — אין בכרטיס הדירה נייד תקין בתפקיד בעלים, שוכר או מפעיל.
         </p>
       ) : (
         <ul className="space-y-2 pb-1">
@@ -88,6 +88,9 @@ export function OwnerPhonesTab({ apartmentNumber, canEdit }: {
                   <span className={cn('truncate text-sm', row.is_active ? 'text-slate-700' : 'text-slate-500')}>
                     {row.source_name ?? row.owner_name ?? '—'}
                   </span>
+                  <span className="inline-flex shrink-0 items-center rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                    {PORTAL_ROLE_LABEL[row.role]}
+                  </span>
                   <span
                     className={cn(
                       'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
@@ -98,7 +101,7 @@ export function OwnerPhonesTab({ apartmentNumber, canEdit }: {
                   </span>
                 </div>
                 <p className="text-xs text-slate-500">
-                  מקור: {row.source_table ? OWNER_PHONE_SOURCE_LABEL[row.source_table] : 'אין רשומה'}
+                  מקור: {rosterSourceLabel(row.source_table, row.role)}
                 </p>
                 {row.other_apartments.length > 0 && (
                   <p className="text-xs text-slate-500">
@@ -106,10 +109,10 @@ export function OwnerPhonesTab({ apartmentNumber, canEdit }: {
                     <span className="font-num font-semibold text-slate-700">{row.other_apartments.join(' · ')}</span>
                   </p>
                 )}
-                {row.is_active && row.mixed_owners && (
+                {row.is_active && row.blocked && (
                   <p className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700">
                     <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    חסום לנתונים כספיים: הדירות של הטלפון רשומות על שמות שונים
+                    חסום לנתונים כספיים: הדירות של הטלפון רשומות על שמות שונים (או בלי שם) ואין אישור &quot;אדם אחד&quot;
                   </p>
                 )}
               </div>

@@ -9,6 +9,12 @@ import { getBillingSettings } from '@/lib/db/appSettings';
 import { computeManagementFee } from '@/lib/billing/managementFee';
 import type { ContactSort, ContactWritableFields } from '@/lib/types/contacts';
 import { logger } from '@/lib/logger';
+import { withTransaction } from '@/lib/db';
+import { hasPermission } from '@/lib/permissions/check';
+import { phoneEntryDecisionsSchema } from '@/lib/validation/requests';
+import {
+  checkPhoneEntry, IdentityDecisionError, PhoneEntryConflictError,
+} from '@/lib/db/portal/identityApprovals';
 
 export const runtime = 'nodejs';
 
@@ -69,6 +75,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: peopleResult.error }, { status: 400 });
   }
 
+  // The entry warning — see PATCH /api/contacts/[id].
+  const decisions = rec.phone_decisions === undefined ? null : phoneEntryDecisionsSchema.safeParse(rec.phone_decisions);
+  if (decisions && !decisions.success) {
+    return NextResponse.json({ error: 'invalid_phone_decisions' }, { status: 400 });
+  }
+
   // management_fee is DERIVED (size × 150% × the per-m² rate in settings) — the
   // server owns the number, so a client value can never drift from the formula.
   // With no size or no configured rate, whatever the client sent stands.
@@ -77,18 +89,42 @@ export async function POST(req: NextRequest) {
   if (derivedFee !== null) result.fields.management_fee = derivedFee;
 
   try {
-    const created = await createContact(
-      result.fields as Partial<ContactWritableFields> & { apartment_number: string },
-      actor.id,
-    );
-    if (peopleResult && peopleResult.people.length > 0) {
-      await replaceContactPeople(created.id, peopleResult.people);
-    }
+    // The contact and its people in ONE transaction, the entry warning before
+    // COMMIT: an unanswered conflict leaves no half-created apartment.
+    const created = await withTransaction(async (client) => {
+      const row = await createContact(
+        result.fields as Partial<ContactWritableFields> & { apartment_number: string },
+        actor.id,
+        client,
+      );
+      if (peopleResult && peopleResult.people.length > 0) {
+        await replaceContactPeople(row.id, peopleResult.people, client);
+      }
+      await checkPhoneEntry(client, {
+        apartment: row.apartment_number,
+        before: [],
+        decisions: decisions?.data,
+        actor: { id: actor.id, canManagePortal: hasPermission(actor.role, actor.permissions, 'portal_manage', 'edit') },
+      });
+      return row;
+    });
     const contact = (await getContactById(created.id)) ?? created;
     return NextResponse.json({ contact }, { status: 201 });
   } catch (err) {
     if (err instanceof ConflictError) {
       return NextResponse.json({ error: 'apartment_number_exists' }, { status: 409 });
+    }
+    if (err instanceof PhoneEntryConflictError) {
+      // can_approve: a "yes" from this user approves the identity there and
+      // then (portal_manage), so the card also asks for the name and relations.
+      return NextResponse.json({
+        error: 'phone_conflict',
+        conflicts: err.conflicts,
+        can_approve: hasPermission(actor.role, actor.permissions, 'portal_manage', 'edit'),
+      }, { status: 409 });
+    }
+    if (err instanceof IdentityDecisionError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
     const e = err as { code?: string };
     if (e.code === '23503') {
