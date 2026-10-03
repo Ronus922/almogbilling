@@ -31,7 +31,7 @@
 10. **ניהול context (קריטי!)** - אחרי כל 2 משימות חייבים להריץ `/compact`. אם המשתמש מסרב - להזהיר: "השיחה תתקע בקרוב ולא יהיה אפשר לשחזר". לפני סגירה - `/end`. **אסור לחכות ל-3+ משימות בלי compact!**
 11. **Deploy = `npm run deploy` (לא `npm run build` לבד!)** - כל שינוי קוד שמיועד לפרודקשן **חייב** להסתיים ב-`npm run deploy` (build → `systemctl restart billing.service` → אימות שהשירות `active` ושהתהליך החדש עלה אחרי כתיבת `.next/BUILD_ID`). `npm run build` לבד דורס את `.next/standalone/` בלי restart → התהליך הרץ מגיש chunks ישנים → "This page couldn't load". `npm run build` לבד מותר **רק** לבדיקת קומפילציה, לעולם לא כ-deploy. הסקריפט: `scripts/deploy.sh`.
 12. **ניקוי נתוני בדיקה — לפי id שיצרת, לא לפי פילטר** - כשבדיקה/סקריפט יוצר רשומות זמניות (במיוחד ב-`public.sessions`), **שמור את ה-`id` המדויק ברגע היצירה ומחק רק אותו**. אסור לנקות לפי `user_id`, `expires_at`, טווח זמן, שם, או כל פילטר "שנראה נכון" — פילטר רחב מדי פוגע ברשומות של משתמשים חיים. ב-22/08/2026 ניקוי לפי `user_id + expires_at` ניתק משתמשים אמיתיים מהמערכת. הכלל חל על כל טבלה, לא רק sessions: אם לא שמרת את המזהה, אל תמחק — שאל.
-13. **קבצי עבודה לעולם לא תחת `public/`** - כל מה שתחת `public/` מוגש פומבית בשורש האתר, בלי אימות. **צילומי הוכחה, פלטי בדיקה וקבצי עבודה — רק ב-`ref/proof/` או מחוץ לריפו**, לעולם לא תחת `public/`. ב-07/09/2026 שישה צילומי אימות של מודול הצ׳יפים הגיעו לפרודקשן והוגשו חי תחת `/proof/chips-v3/`. אכיפה: `/public/proof/` ב-.gitignore + השומר `scripts/check-no-public-proof.sh` שרץ ב-`npm run deploy` לפני ה-build ועוצר את הפריסה.
+13. **קבצי עבודה לעולם לא תחת `public/`** - כל מה שתחת `public/` מוגש פומבית בשורש האתר, בלי אימות. **צילומי הוכחה — רק ב-`/var/billing-proof/<נושא>/`** (מחוץ לריפו ולתיקיית הפרודקשן, מ-03/10/2026); **פלטי בדיקה וקבצי עבודה — מחוץ לריפו**. לעולם לא תחת `public/`. ב-07/09/2026 שישה צילומי אימות של מודול הצ׳יפים הגיעו לפרודקשן והוגשו חי תחת `/proof/chips-v3/`. אכיפה: `/public/proof/` ב-.gitignore + השומר `scripts/check-no-public-proof.sh` שרץ ב-`npm run deploy` לפני ה-build ועוצר את הפריסה.
 14. **מחיקת קובץ מ-`public/` מחייבת restart** - אחרי כל מחיקה מ-`public/` (ומ-`.next/standalone/public/`) חובה `sudo systemctl restart billing.service`. Next מקבע את רשימת הקבצים הסטטיים בעליית התהליך: בלי restart הנתיב שנמחק מחזיר **500** ולא 404 (נתיב שמעולם לא היה קיים מחזיר 404 תקין — זה ההבדל שמזהה את המקרה). בפריסה רגילה `npm run deploy` כבר עושה זאת; במחיקה ידנית בלבד — לא.
 
 
@@ -40,9 +40,10 @@
 ## Git — זרימת PR (מחייב)
 
 - **`main` מוגן. אסור `git push origin main`** — בשום מצב, גם לשינוי תיעוד בלבד.
-  ההגנה מיושמת ב-**rulesets** (`main` + `protect-main`, שניהם `active`), לא ב-branch
-  protection הקלאסי — לכן `gh api .../branches/main/protection` מחזיר 404 מטעה.
-  לבדיקה אמיתית: `gh api repos/Ronus922/almogbilling/rules/branches/main`.
+  ההגנה מיושמת ב-**ruleset יחיד בשם `main`** (`active`), **בלי bypass — חל גם על
+  מנהלים** (מ-03/10/2026; ה-ruleset הכפול `protect-main` נמחק כי החזיק bypass
+  למנהלים). זו לא branch protection קלאסית — לכן `gh api .../branches/main/protection`
+  מחזיר 404 מטעה. לבדיקה אמיתית: `gh api repos/Ronus922/almogbilling/rules/branches/main`.
 - כל שינוי עובר בענף → push לענף → PR. כלל ה-`pull_request` נאכף בצד GitHub,
   וכך גם `deletion` ו-`non_fast_forward` (אין מחיקת `main` ואין force-push).
 - ה-CI (`.github/workflows/ci.yml`) מריץ שני jobs: `check:all` ו-e2e (Playwright +
@@ -51,6 +52,10 @@
 - **אין auto-merge.** ה-merge ידני: `gh pr merge <n> --merge`, ורק באישור מפורש של
   רונן. GitHub עצמו לא דורש review (`required_approving_review_count: 0`) — האישור
   של רונן הוא כלל עבודה מחמיר יותר, ולא משהו שהפלטפורמה תאכוף במקומנו.
+- **ענף נמחק אוטומטית ב-origin אחרי merge** (`delete_branch_on_merge`). מקומית:
+  `git branch -d <branch>` + `git fetch --prune`.
+- **פריסת חירום מענף עדיין אפשרית:** `npm run deploy` מהענף, וה-merge ל-`main` מגיע
+  מיד כשה-CI ירוק. פריסה הבאה מ-`main` בלי ה-merge הזה מגלגלת את התיקון אחורה.
 - אחרי merge שכולל שינוי קוד שמשפיע על runtime — להזכיר לרונן להריץ `npm run deploy`.
 - נוהל הדחיפה המלא: `GIT_PUSH_SKILL.md`.
 

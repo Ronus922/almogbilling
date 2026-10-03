@@ -9,8 +9,9 @@
 # On 07/09/2026 six chips verification screenshots reached production this way
 # and were served live at /proof/chips-v3/*.png until they were removed.
 #
-# Proof screenshots, test output and scratch files belong in ref/proof/
-# (gitignored) or outside the repo entirely — never under public/.
+# Proof screenshots belong in /var/billing-proof/<topic>/ (outside the repo
+# and the production directory); test output and scratch files outside the
+# repo entirely — never under public/.
 #
 # Exits 1 BEFORE any build runs if public/proof/ holds a file. Run it on its
 # own at any time; it touches nothing and needs no privileges.
@@ -54,7 +55,7 @@ fi
     printf '%s\n' "    ${GUARDED_REL}/${f}"
   done
   printf '\n'
-  printf '%s\n' "  ${BOLD}Move them to ref/proof/ (gitignored) or outside the repo, then re-run.${RESET}"
+  printf '%s\n' "  ${BOLD}Move them to /var/billing-proof/ (outside the repo), then re-run.${RESET}"
   printf '\n'
   printf '%s\n' "  If you delete them from a directory the running server already loaded,"
   printf '%s\n' "  also run: sudo systemctl restart billing.service"
