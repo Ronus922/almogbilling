@@ -3,6 +3,7 @@ import {
   type ModulePermission,
   type Role,
   ASSISTANT_ROLES,
+  REPORTER_PHONE_PERMISSION,
   ROLE_DEFAULTS,
   isElevatedRole,
   SUPER_ADMIN_ONLY,
@@ -73,4 +74,15 @@ export function canUseAssistant(role: Role, permissions: ModulePermission[]): bo
     hasPermission(role, permissions, 'dashboard', 'view') ||
     hasPermission(role, permissions, 'contacts', 'view')
   );
+}
+
+/**
+ * May this actor see the phone of a resident who reported a fault from the
+ * owners portal? The tenants-list permission (REPORTER_PHONE_PERMISSION,
+ * contacts:view) — the one that already governs owners' contact details. Used
+ * by GET /api/issues/[id] (the only route that ever sends the phone) and by
+ * /issues for the panel, so the two cannot drift apart.
+ */
+export function canSeeReporterPhone(role: Role, permissions: ModulePermission[]): boolean {
+  return hasPermission(role, permissions, REPORTER_PHONE_PERMISSION.module, REPORTER_PHONE_PERMISSION.action);
 }

@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useTransition, type ReactNode } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { apartmentsLabel, initials, type PortalTab } from '@/lib/portal/ui';
-import { BuildingGlyph, LogoutIcon } from './PortalIcons';
+import { AlertIcon, BuildingGlyph, LogoutIcon } from './PortalIcons';
 import { usePortalHref } from './usePortalHref';
 
 // The portal's chrome (ref/Tenant Portal.html #scrPortal): the sticky top bar
@@ -16,7 +17,9 @@ import { usePortalHref } from './usePortalHref';
 // switch is a navigation: the page reloads only that tab's data. The other
 // selections (`m`, `r`, `n`) are carried along untouched. Links are built by
 // usePortalHref, so the same shell serves /portal and the admin preview
-// mounted on /finance (which carries `view` and `apt`).
+// mounted on /finance (which carries `view` and `apt`). The "דיווח על תקלה"
+// button at the top of the content opens /portal/report (owners only, not the
+// preview).
 
 const TABS: ReadonlyArray<{ key: PortalTab; label: string; soon?: boolean }> = [
   { key: 'ov', label: 'סקירה' },
@@ -104,7 +107,21 @@ export function PortalShell({ tab, apartments, user, preview = false, children }
           </div>
         </div>
       </header>
-      <main className="wrap">{children}</main>
+      <main className="wrap">
+        {/* The fault report (/portal/report) — opens every tab, labelled at
+            every width (full-width on a phone). NOT in the top bar: its one
+            row (building · six tabs · user) has ~114px to spare at 1280 with a
+            short name and none with a real multi-apartment one (DESIGN.md).
+            Not in the admin preview: staff have no portal session. */}
+        {!preview && (
+          <div className="pir-entry">
+            <Link href="/portal/report" className="pbtn pbtn-primary pbtn-lg">
+              <AlertIcon />דיווח על תקלה
+            </Link>
+          </div>
+        )}
+        {children}
+      </main>
     </div>
   );
 }

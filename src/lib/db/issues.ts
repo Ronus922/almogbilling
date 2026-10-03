@@ -22,11 +22,17 @@ import { targetLabelSql } from '@/lib/db/targets';
 
 // Handlers live in entity_assignees (migration 047) — the legacy
 // assigned_to_user_id / supplier_id columns are frozen and no longer projected.
+// Portal reports (migration 20261003074737) add `source` + the reporter
+// snapshot. reporter_phone is NOT projected here, on purpose: every list,
+// detail, PATCH and kanban response is built from these columns, so leaving
+// the phone out makes "no phone in the API" the default. It is read only by
+// getIssueReporterPhone(), for an actor that may see it.
 const ISSUE_COLUMNS = `
   id, title, description, location_type, location_text, target_type, target_id, priority, status,
   due_date::text as due_date, due_time::text as due_time,
   images, videos, resolution_notes, resolved_at::text as resolved_at, is_archived, sort_order,
-  created_by, created_by_name, created_at::text as created_at, updated_at::text as updated_at
+  created_by, created_by_name, created_at::text as created_at, updated_at::text as updated_at,
+  source, reporter_name, reporter_apartment, reporter_location, reporter_area, ticket_number
 `;
 
 // Columns a create/update may set (title + created_by handled explicitly on
@@ -68,6 +74,21 @@ const META_JOINS = `
   ) lt on true
 `;
 
+/**
+ * "ממתין לשיוך" — computed, never a status value: an OPEN issue (not
+ * in_progress), not archived, with no handler of either kind — no user and no
+ * supplier row in entity_assignees. The frozen assigned_to_user_id /
+ * supplier_id columns are not consulted: the junction is the only truth.
+ */
+const AWAITING_ASSIGNMENT_SQL = `(
+  i.status = 'open'
+  and i.is_archived = false
+  and not exists (
+    select 1 from public.entity_assignees ea
+     where ea.entity_type = 'issue' and ea.entity_id = i.id
+  )
+)`;
+
 // ── List ──────────────────────────────────────────────────────────────────
 export async function listIssues(filters: IssueListFilters): Promise<IssueWithMeta[]> {
   const where: string[] = [];
@@ -92,10 +113,20 @@ export async function listIssues(filters: IssueListFilters): Promise<IssueWithMe
     vals.push(filters.supplier_id);
     where.push(assigneeExistsSql('issue', 'i', 'supplier', vals.length));
   }
+  if (filters.source) {
+    vals.push(filters.source);
+    where.push(`i.source = $${vals.length}`);
+  }
+  if (filters.awaitingAssignment) {
+    where.push(AWAITING_ASSIGNMENT_SQL);
+  }
   if (filters.search) {
     vals.push(`%${filters.search}%`);
+    // reporter_location / reporter_area are where a portal report keeps the
+    // free-text location that location_text held for the Base44 rows.
     where.push(
-      `(i.title ilike $${vals.length} or i.description ilike $${vals.length} or i.location_text ilike $${vals.length})`,
+      `(i.title ilike $${vals.length} or i.description ilike $${vals.length} or i.location_text ilike $${vals.length}` +
+        ` or i.reporter_location ilike $${vals.length} or i.reporter_area ilike $${vals.length})`,
     );
   }
 
@@ -157,6 +188,19 @@ export async function getIssueById(id: string): Promise<IssueWithMeta | null> {
     `select ${META_SELECT} ${META_JOINS} where i.id = $1 limit 1`,
     [id],
   );
+}
+
+/**
+ * The reporter's phone (E.164) of a portal report, or null. The ONLY reader of
+ * issues.reporter_phone — call it only for an actor with canSeeReporterPhone()
+ * (contacts:view); everyone else must not receive the value at all.
+ */
+export async function getIssueReporterPhone(id: string): Promise<string | null> {
+  const row = await queryOne<{ reporter_phone: string | null }>(
+    `select reporter_phone from public.issues where id = $1`,
+    [id],
+  );
+  return row?.reporter_phone ?? null;
 }
 
 // ── Create ──────────────────────────────────────────────────────────────────

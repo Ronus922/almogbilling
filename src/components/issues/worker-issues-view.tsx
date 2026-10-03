@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Wrench, MapPin, Play, Check, AlertTriangle, CircleCheckBig } from 'lucide-react';
 import { IssueFormPanel } from './issue-form-panel';
 import { WorkerIssueDetail } from './worker-issue-detail';
+import { IssueSourceLine, reporterWhere } from './IssueReporter';
 import { cn } from '@/lib/utils';
 import {
   ISSUE_STATUS_BADGE, ISSUE_PRIORITY_BADGE,
@@ -192,6 +193,16 @@ export function WorkerIssuesView({ issues, userName, roleName, todayLabel, curre
                     {issue.target_label}
                   </p>
                 )}
+                {/* A portal report: where the resident said it is, as typed. */}
+                {reporterWhere(issue) && (
+                  <p className="mt-3 flex items-center gap-1.5 text-[15px] font-semibold text-slate-700">
+                    <MapPin className="h-4 w-4 shrink-0 text-slate-400" />
+                    {reporterWhere(issue)}
+                  </p>
+                )}
+                {issue.source === 'portal' && (
+                  <div className="mt-2"><IssueSourceLine issue={issue} /></div>
+                )}
 
                 {/* Shared badge maps — never restyled locally, or this screen
                     drifts from the kanban. */}
@@ -240,6 +251,7 @@ export function WorkerIssuesView({ issues, userName, roleName, todayLabel, curre
         open={reportOpen}
         issue={null}
         canEdit
+        canSeeReporterPhone={false}
         assignees={[]}
         suppliers={[]}
         currentUser={currentUser}

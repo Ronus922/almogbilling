@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
-  Plus, Search, AlertTriangle, Flame, CircleCheckBig, LayoutGrid, List,
+  Plus, Search, AlertTriangle, Flame, CircleCheckBig, LayoutGrid, List, Megaphone, UserX,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -47,6 +47,7 @@ export function IssuesPageClient({
   suppliers,
   currentUser,
   canEdit,
+  canSeeReporterPhone,
 }: {
   initialIssues: IssueWithMeta[];
   initialKpis: IssueKpis;
@@ -54,6 +55,8 @@ export function IssuesPageClient({
   suppliers: SupplierOption[];
   currentUser: NotifyUserContact;
   canEdit: boolean;
+  /** contacts:view — the panel may show a portal reporter's phone. */
+  canSeeReporterPhone: boolean;
 }) {
   const searchParams = useSearchParams();
   const [issues, setIssues] = useState<IssueWithMeta[]>(initialIssues);
@@ -66,6 +69,10 @@ export function IssuesPageClient({
   const [priorityFilter, setPriorityFilter] = useState<IssuePriority | 'all'>('all');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
   const [supplierFilter, setSupplierFilter] = useState<string>('all');
+  // "מדיירים" (portal reports) and "ממתין לשיוך" (open, no handler) — computed
+  // filters applied by the server, never statuses.
+  const [fromResidents, setFromResidents] = useState(false);
+  const [awaiting, setAwaiting] = useState(false);
   const [sort, setSort] = useState<IssueSort>('created_desc');
 
   const [formOpen, setFormOpen] = useState(false);
@@ -83,6 +90,8 @@ export function IssuesPageClient({
       if (priorityFilter !== 'all') params.set('priority', priorityFilter);
       if (assigneeFilter !== 'all') params.set('assignedTo', assigneeFilter);
       if (supplierFilter !== 'all') params.set('supplier_id', supplierFilter);
+      if (fromResidents) params.set('source', 'portal');
+      if (awaiting) params.set('awaiting', '1');
       params.set('sort', sort);
       params.set('kpis', '1');
       const res = await fetch(`/api/issues?${params.toString()}`, { credentials: 'include' });
@@ -93,7 +102,7 @@ export function IssuesPageClient({
     } catch (err) {
       toast.error(`טעינת התקלות נכשלה: ${(err as Error).message}`);
     }
-  }, [search, priorityFilter, assigneeFilter, supplierFilter, sort]);
+  }, [search, priorityFilter, assigneeFilter, supplierFilter, fromResidents, awaiting, sort]);
 
   // Active / completed partition (client-side — "filter only", no new status).
   const activeIssues = useMemo(() => issues.filter((i) => !isCompletedIssueStatus(i.status)), [issues]);
@@ -314,6 +323,21 @@ export function IssuesPageClient({
             </Select>
           )}
 
+          <FilterToggle
+            pressed={fromResidents}
+            onToggle={() => setFromResidents((v) => !v)}
+            icon={Megaphone}
+            label="מדיירים"
+            tone="violet"
+          />
+          <FilterToggle
+            pressed={awaiting}
+            onToggle={() => setAwaiting((v) => !v)}
+            icon={UserX}
+            label="ממתין לשיוך"
+            tone="amber"
+          />
+
           <Select value={priorityFilter} onValueChange={(v) => { if (v) setPriorityFilter(v as IssuePriority | 'all'); }}>
             <SelectTrigger className="h-10 w-36 data-[size=default]:h-10">
               <SelectValue>{(v: string | null) => (v && v !== 'all' ? issuePriorityLabel(v as IssuePriority) : 'כל הדחיפויות')}</SelectValue>
@@ -368,6 +392,7 @@ export function IssuesPageClient({
         open={formOpen}
         issue={editing}
         canEdit={canEdit}
+        canSeeReporterPhone={canSeeReporterPhone}
         assignees={assignees}
         suppliers={suppliers}
         currentUser={currentUser}
@@ -393,5 +418,34 @@ export function IssuesPageClient({
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+const FILTER_TONES = {
+  violet: 'border-violet-200 bg-violet-50 text-violet-700',
+  amber: 'border-amber-200 bg-amber-50 text-amber-700',
+} as const;
+
+/** An on/off filter of the toolbar — the same h-10 row as its selects. */
+function FilterToggle({ pressed, onToggle, icon: Icon, label, tone }: {
+  pressed: boolean;
+  onToggle: () => void;
+  icon: typeof Megaphone;
+  label: string;
+  tone: keyof typeof FILTER_TONES;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onToggle}
+      className={cn(
+        'inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors cursor-pointer',
+        pressed ? FILTER_TONES[tone] : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+      )}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
   );
 }

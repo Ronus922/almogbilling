@@ -7,6 +7,7 @@ import {
   Send, MessageSquare, Images, Video, Loader2,
 } from 'lucide-react';
 import { ImageLightbox } from './ImageLightbox';
+import { IssueSourceLine, reporterWhere } from './IssueReporter';
 import { cn } from '@/lib/utils';
 import {
   ISSUE_STATUS_BADGE, ISSUE_PRIORITY_BADGE,
@@ -202,6 +203,15 @@ export function WorkerIssueDetail({ issue, onBack, onStatusChange }: Props) {
             {issue.target_label}
           </p>
         )}
+        {/* A portal report: the resident's own words for where, and who
+            reported (name + apartment — a worker gets no phone). */}
+        {reporterWhere(issue) && (
+          <p className="flex items-center gap-1.5 text-[15px] font-semibold text-slate-700">
+            <MapPin className="h-4 w-4 shrink-0 text-slate-400" />
+            {reporterWhere(issue)}
+          </p>
+        )}
+        {issue.source === 'portal' && <IssueSourceLine issue={issue} />}
         <div>
           <h2 className="text-sm font-bold text-slate-500">תיאור התקלה</h2>
           <p className="mt-1 whitespace-pre-wrap text-[15px] leading-relaxed text-slate-800">

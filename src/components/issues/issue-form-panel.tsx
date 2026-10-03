@@ -20,6 +20,7 @@ import {
 import { Section, SectionHint } from '@/components/side-panel/Section';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { ImageLightbox } from './ImageLightbox';
+import { IssueReporterSection } from './IssueReporter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
 import {
@@ -59,6 +60,9 @@ interface Props {
   /** null → create mode; an issue → edit mode. */
   issue: IssueWithMeta | null;
   canEdit: boolean;
+  /** contacts:view (canSeeReporterPhone) — the "נפתח ע״י" block of a portal
+   *  report shows the phone only then; the API sends it only then, too. */
+  canSeeReporterPhone: boolean;
   assignees: Assignee[];
   suppliers: SupplierOption[];
   currentUser: NotifyUserContact;
@@ -337,7 +341,7 @@ function MediaDropSection({ canAdd, canEdit, busy, imageCount, videoCount, tiles
   );
 }
 
-export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete }: Props) {
+export function IssueFormPanel({ open, issue, canEdit, canSeeReporterPhone, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete }: Props) {
   const isEdit = !!issue;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
@@ -360,6 +364,8 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [titleTouched, setTitleTouched] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  // Portal report: the reporter's phone, only when GET /api/issues/[id] sent it.
+  const [reporterPhone, setReporterPhone] = useState<string | null>(null);
 
   const loadDetail = useCallback(async (id: string) => {
     try {
@@ -371,7 +377,9 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
         images?: IssueImage[];
         videos?: IssueImage[];
         reminders?: { id: string; remind_at: string; channel: string; channels: ReminderRow['channels'] | null }[];
+        reporter_phone?: string | null;
       };
+      setReporterPhone(typeof data.reporter_phone === 'string' ? data.reporter_phone : null);
       setComments(Array.isArray(data.comments) ? data.comments : []);
       setImages(Array.isArray(data.images) ? data.images : []);
       setVideos(Array.isArray(data.videos) ? data.videos : []);
@@ -392,6 +400,7 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
       setForm(init);
       setInitial(init);
       setComments([]);
+      setReporterPhone(null);
       setImages([]);
       setVideos([]);
       setStagedImages((prev) => { prev.forEach((s) => URL.revokeObjectURL(s.url)); return []; });
@@ -749,6 +758,12 @@ export function IssueFormPanel({ open, issue, canEdit, assignees, suppliers, cur
 
           <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5">
             <div className="space-y-4">
+              {/* Portal report: who opened it (read-only snapshot) — first, so the
+                  manager sees who to call before assigning. Nothing for staff issues. */}
+              {issue && (
+                <IssueReporterSection issue={issue} phone={reporterPhone} canSeePhone={canSeeReporterPhone} />
+              )}
+
               {/* Details */}
               <Section title="פרטי התקלה" icon={AlertTriangle} iconTone="rose">
                 <div className="space-y-4 py-2">

@@ -2,8 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { actorMayAccessIssue, actorMayAccessIssueByUserIds } from '@/lib/auth/issueAccess';
+import { canSeeReporterPhone } from '@/lib/permissions/check';
 import {
   getIssueById,
+  getIssueReporterPhone,
   getIssueAssigneeStatus,
   updateIssue,
   deleteIssue,
@@ -38,6 +40,7 @@ interface RouteCtx {
 }
 
 // GET /api/issues/[id] — issue + comments + signed image URLs  (issues:view)
+// + reporter_phone of a portal report, only for contacts:view (canSeeReporterPhone)
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
@@ -58,7 +61,12 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 });
   }
 
-  const [comments, images, videos, reminders] = await Promise.all([
+  // A portal report's phone: read only for an actor allowed to see owners'
+  // contact details (contacts:view). For anyone else the key is null — the
+  // value never leaves the database. Staff rows have no reporter.
+  const phoneAllowed = issue.source === 'portal' && canSeeReporterPhone(actor.role, actor.permissions);
+
+  const [comments, images, videos, reminders, reporterPhone] = await Promise.all([
     listIssueComments(id),
     Promise.all(
       issue.images.map(
@@ -71,9 +79,10 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
       ),
     ),
     listRemindersForEntity('issue', id),
+    phoneAllowed ? getIssueReporterPhone(id) : Promise.resolve(null),
   ]);
 
-  return NextResponse.json({ issue, comments, images, videos, reminders });
+  return NextResponse.json({ issue, comments, images, videos, reminders, reporter_phone: reporterPhone });
 }
 
 // PATCH /api/issues/[id]  (issues:edit)

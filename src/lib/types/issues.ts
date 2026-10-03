@@ -7,6 +7,9 @@ import type { AssigneeRef } from './assignee';
 export type IssueStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type IssuePriority = 'normal' | 'high' | 'urgent';
 export type IssueLocationType = 'apartment' | 'area' | 'general';
+/** Who opened the issue (migration 20261003074737): the staff screen, or an
+ *  owner through the portal's fault report (/portal/report). */
+export type IssueSource = 'staff' | 'portal';
 
 export interface Issue {
   id: string;
@@ -39,6 +42,18 @@ export interface Issue {
   created_by_name: string | null;
   created_at: string;
   updated_at: string;
+  source: IssueSource;
+  // ── Portal reports only (null on staff rows) ──────────────────────────────
+  // A snapshot taken from the portal session at report time. The reporter's
+  // PHONE is deliberately not here: it is never part of a list/detail row and
+  // reaches the panel only through GET /api/issues/[id], for contacts:view.
+  reporter_name: string | null;
+  reporter_apartment: string | null;
+  /** "מיקום" and "קומה / אזור" exactly as the resident typed them. */
+  reporter_location: string | null;
+  reporter_area: string | null;
+  /** The "מספר קריאה" the resident was shown. */
+  ticket_number: number | null;
 }
 
 /** Issue enriched with its assignee set (json-agg over the junction) + comment count + linked task. */
@@ -74,6 +89,12 @@ export interface IssueListFilters {
   search?: string;
   sort?: IssueSort;
   includeArchived?: boolean;
+  /** "מדיירים" — only issues opened from the owners portal. */
+  source?: IssueSource;
+  /** "ממתין לשיוך" — a computed filter, not a status: status 'open', not
+   *  archived, and no handler at all (no user AND no supplier in
+   *  entity_assignees). 'in_progress' is excluded on purpose. */
+  awaitingAssignment?: boolean;
 }
 
 export interface IssueComment {

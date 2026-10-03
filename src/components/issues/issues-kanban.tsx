@@ -15,6 +15,7 @@ import {
   ISSUE_KANBAN_COLUMNS, ISSUE_PRIORITY_BADGE, issuePriorityLabel,
 } from '@/lib/constants/issues';
 import type { IssuePriority, IssueWithMeta } from '@/lib/types/issues';
+import { IssueSourceLine } from './IssueReporter';
 
 interface Props {
   issues: IssueWithMeta[];
@@ -162,6 +163,9 @@ export function IssuesKanban({ issues, canEdit, onSelect, onReorder, onComplete,
                         </span>
                       </div>
                     </div>
+                    {i.source === 'portal' && (
+                      <div className="mt-1.5"><IssueSourceLine issue={i} size="sm" /></div>
+                    )}
                     {i.description && (
                       <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-slate-500">{i.description}</p>
                     )}
