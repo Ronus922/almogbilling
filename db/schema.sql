@@ -29,6 +29,46 @@ COMMENT ON SCHEMA public IS 'standard public schema';
 
 
 --
+-- Name: bllink_scrape_apartments(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bllink_scrape_apartments(p_scrape_id uuid) RETURNS TABLE(apartment_number text)
+    LANGUAGE sql STABLE
+    AS $$
+  select distinct btrim(a.key)
+    from public.bllink_scrapes s
+    cross join lateral jsonb_each(
+      case when s.tenant_list_ok and jsonb_typeof(s.list_people) = 'object'
+           then s.list_people else '{}'::jsonb end) a
+   where s.id = p_scrape_id
+     and exists (select 1 from public.contacts c where c.apartment_number = btrim(a.key));
+$$;
+
+
+--
+-- Name: bllink_scrape_people(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bllink_scrape_people(p_scrape_id uuid) RETURNS TABLE(apartment_number text, role text, name text, phone_e164 text)
+    LANGUAGE sql STABLE
+    AS $$
+  select btrim(a.key),
+         case p.value->>'role' when 'owner' then 'owner' else 'tenant' end,
+         nullif(btrim(coalesce(p.value->>'name', '')), ''),
+         public.portal_owner_e164(p.value->>'phone')
+    from public.bllink_scrapes s
+    cross join lateral jsonb_each(
+      case when s.tenant_list_ok and jsonb_typeof(s.list_people) = 'object'
+           then s.list_people else '{}'::jsonb end) a
+    cross join lateral jsonb_array_elements(
+      case jsonb_typeof(a.value) when 'array' then a.value else '[]'::jsonb end) p
+   where s.id = p_scrape_id
+     and p.value->>'role' in ('owner', 'tenant')
+     and exists (select 1 from public.contacts c where c.apartment_number = btrim(a.key));
+$$;
+
+
+--
 -- Name: block_delete_contact_with_active_debt(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -49,6 +89,28 @@ $$;
 
 
 --
+-- Name: contact_owner_replacement_targets(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.contact_owner_replacement_targets(p_apartment text, p_new_phone text) RETURNS TABLE(id uuid, phone_e164 text, owner_name text)
+    LANGUAGE sql STABLE
+    AS $$
+  select r.id, r.phone_e164, r.owner_name
+    from public.contacts c
+    join public.apartment_owner_phones r on r.apartment_number = c.apartment_number
+   where c.apartment_number = p_apartment
+     and nullif(btrim(coalesce(c.owner_name, '')), '') is not null
+     and r.is_active
+     and r.role = 'owner'
+     and (r.phone_e164 = public.portal_owner_e164(c.owner_phone)
+          or public.contact_value_norm('owner_name', r.owner_name)
+             = public.contact_value_norm('owner_name', c.owner_name))
+     and r.phone_e164 is distinct from public.portal_owner_e164(p_new_phone)
+   order by r.phone_e164;
+$$;
+
+
+--
 -- Name: contact_suggestion_resolve(uuid[], text, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -58,103 +120,220 @@ CREATE FUNCTION public.contact_suggestion_resolve(p_ids uuid[], p_action text, p
 declare
   v_now timestamptz := clock_timestamp();
   v_n integer;
+  v_mode text;
+  v_bulk boolean;
+  v_ids uuid[] := p_ids;
+  v_link record;
+  v_contact public.contacts%rowtype;
+  v_role text;
 begin
-  if p_action not in ('approve', 'reject') then
+  if p_action not in ('approve', 'reject', 'approve_rename', 'approve_replace') then
     raise exception 'contact_suggestion_resolve: unknown action %', p_action;
   end if;
+  v_mode := case p_action when 'approve_rename' then 'rename'
+                          when 'approve_replace' then 'replace' end;
+  v_bulk := p_action = 'approve' and cardinality(p_ids) > 1;
 
-  -- Mark BEFORE writing the value: the provenance trigger closes any pending
-  -- suggestion the new value satisfies, and it must not race this one into
-  -- 'obsolete' while we are approving it. v_now identifies exactly the rows
-  -- this call resolved.
-  update public.contact_sync_suggestions
-     set status = case when p_action = 'approve' then 'approved' else 'rejected' end,
+  -- A replacement brings the new owner's phone along (one decision).
+  if v_mode = 'replace' then
+    v_ids := v_ids || array(
+      select sp.id
+        from public.contact_sync_suggestions sn
+        join public.contact_sync_suggestions sp
+          on sp.apartment_number = sn.apartment_number
+         and sp.field = 'owner_phone' and sp.status = 'pending'
+       where sn.id = any(p_ids) and sn.field = 'owner_name' and sn.status = 'pending');
+  end if;
+
+  -- Mark BEFORE writing the value (the provenance trigger must not race this
+  -- one into 'obsolete'). v_now identifies exactly the rows this call resolved.
+  update public.contact_sync_suggestions s
+     set status = case when p_action = 'reject' then 'rejected' else 'approved' end,
          resolved_at = v_now,
          resolved_by = p_actor
-   where id = any(p_ids) and status = 'pending';
+    from public.contacts c
+   where s.id = any(v_ids) and s.status = 'pending'
+     and c.apartment_number = s.apartment_number
+     and (p_action = 'reject'
+          or (-- the two owner-name decisions apply to an owner-name change
+              -- (and a replacement to its new phone) only
+              (v_mode is null
+               or s.field = 'owner_name'
+               or (v_mode = 'replace' and s.field = 'owner_phone'))
+              -- an owner-name CHANGE needs one of the two decisions
+              and (v_mode is not null
+                   or not (s.field = 'owner_name'
+                           and nullif(btrim(coalesce(c.owner_name, '')), '') is not null
+                           and public.contact_value_norm('owner_name', c.owner_name)
+                               is distinct from public.contact_value_norm('owner_name', s.proposed_value)))
+              -- "אשר הכל" never changes portal access
+              and not (v_bulk and s.field in ('owner_phone', 'tenant_phone', 'portal_link', 'portal_unlink'))
+              -- an owner phone waits for its apartment's owner-name decision
+              and not (s.field = 'owner_phone'
+                       and exists (select 1 from public.contact_sync_suggestions n
+                                    where n.apartment_number = s.apartment_number
+                                      and n.field = 'owner_name' and n.status = 'pending'
+                                      and not (v_mode = 'replace' and n.id = any(p_ids))
+                                      and nullif(btrim(coalesce(c.owner_name, '')), '') is not null
+                                      and public.contact_value_norm('owner_name', c.owner_name)
+                                          is distinct from public.contact_value_norm('owner_name', n.proposed_value)))));
   get diagnostics v_n = row_count;
 
-  if p_action = 'approve' and v_n > 0 then
-    -- The value is Bllink's; the decision was a person's. Provenance records
-    -- where the value came from.
+  if p_action <> 'reject' and v_n > 0 then
     perform set_config('app.write_source', 'bllink', true);
 
-    -- An approved owner NAME that differs from a non-empty current one is an
-    -- owner REPLACEMENT. The previous owner's phones in that apartment — the
-    -- phone the owner field held, and every roster phone recorded under the
-    -- previous owner's name — are detached now, in this call, unless the same
-    -- approval names that phone as the new owner's. Without this, the old
-    -- phone stays in owner_phone under the NEW name and keeps its access.
-    with repl as (
-      select c.apartment_number,
-             c.owner_name                                  as old_name,
-             public.portal_owner_e164(c.owner_phone)       as old_phone,
-             public.portal_owner_e164(sp.proposed_value)   as new_phone
-        from public.contact_sync_suggestions sn
-        join public.contacts c on c.apartment_number = sn.apartment_number
-        left join public.contact_sync_suggestions sp
-               on sp.apartment_number = sn.apartment_number
-              and sp.id = any(p_ids) and sp.resolved_at = v_now and sp.field = 'owner_phone'
-       where sn.id = any(p_ids) and sn.resolved_at = v_now and sn.field = 'owner_name'
-         and nullif(btrim(coalesce(c.owner_name, '')), '') is not null
-         and public.contact_value_norm('owner_name', c.owner_name)
-             is distinct from public.contact_value_norm('owner_name', sn.proposed_value)
-    ), det as (
-      update public.apartment_owner_phones r
-         set is_active = false, detached_at = v_now, detached_by = p_actor,
-             detach_reason = 'owner_replaced'
-        from repl
-       where r.apartment_number = repl.apartment_number
-         and r.detached_at is null
-         and (r.phone_e164 = repl.old_phone
-              or public.contact_value_norm('owner_name', r.owner_name)
-                 = public.contact_value_norm('owner_name', repl.old_name))
-         and r.phone_e164 is distinct from repl.new_phone
-      returning r.id, r.apartment_number, r.phone_e164, r.owner_name
-    )
-    insert into public.audit_log (actor_user_id, action, entity_type, entity_id, metadata)
-    select p_actor, 'portal_owner_phone_detached', 'apartment_owner_phone', det.id::text,
-           jsonb_build_object('apartment_number', det.apartment_number,
-                              'phone_e164', det.phone_e164, 'owner_name', det.owner_name,
-                              'reason', 'owner_replaced', 'via', 'contact_suggestion_resolve')
-      from det;
+    -- An owner REPLACEMENT: the previous owner's phones are detached now, in
+    -- this call — exactly contact_owner_replacement_targets(). A name FIX
+    -- detaches nothing.
+    if v_mode = 'replace' then
+      with repl as (
+        select sn.apartment_number, sp.proposed_value as new_phone
+          from public.contact_sync_suggestions sn
+          left join public.contact_sync_suggestions sp
+                 on sp.apartment_number = sn.apartment_number
+                and sp.id = any(v_ids) and sp.resolved_at = v_now and sp.field = 'owner_phone'
+         where sn.id = any(v_ids) and sn.resolved_at = v_now and sn.field = 'owner_name'
+      ), det as (
+        update public.apartment_owner_phones r
+           set is_active = false, detached_at = v_now, detached_by = p_actor,
+               detach_reason = 'owner_replaced'
+          from repl
+         where r.id in (select t.id from public.contact_owner_replacement_targets(repl.apartment_number, repl.new_phone) t)
+        returning r.id, r.apartment_number, r.phone_e164, r.owner_name
+      )
+      insert into public.audit_log (actor_user_id, action, entity_type, entity_id, metadata)
+      select p_actor, 'portal_owner_phone_detached', 'apartment_owner_phone', det.id::text,
+             jsonb_build_object('apartment_number', det.apartment_number,
+                                'phone_e164', det.phone_e164, 'owner_name', det.owner_name,
+                                'reason', 'owner_replaced', 'via', 'contact_suggestion_resolve')
+        from det;
+    end if;
 
-    -- The owner's name and phone in ONE statement: never a moment where the
-    -- new name sits on the previous owner's phone.
+    -- The owner-name decision itself, in audit_log: which of the two it was.
+    insert into public.audit_log (actor_user_id, action, entity_type, entity_id, metadata)
+    select p_actor, 'contact_owner_name_approved', 'contact_sync_suggestion', s.id::text,
+           jsonb_build_object('apartment_number', s.apartment_number,
+                              'from', s.current_value, 'to', s.proposed_value,
+                              'mode', coalesce(v_mode, 'fill'))
+      from public.contact_sync_suggestions s
+     where s.id = any(v_ids) and s.resolved_at = v_now and s.field = 'owner_name';
+
+    -- The owner's name and phone in ONE statement.
     update public.contacts c
        set owner_name  = coalesce(sn.proposed_value, c.owner_name),
            owner_phone = coalesce(sp.proposed_value, c.owner_phone)
       from (select distinct s.apartment_number
               from public.contact_sync_suggestions s
-             where s.id = any(p_ids) and s.resolved_at = v_now
+             where s.id = any(v_ids) and s.resolved_at = v_now
                and s.field in ('owner_name', 'owner_phone')) a
       left join public.contact_sync_suggestions sn
              on sn.apartment_number = a.apartment_number
-            and sn.id = any(p_ids) and sn.resolved_at = v_now and sn.field = 'owner_name'
+            and sn.id = any(v_ids) and sn.resolved_at = v_now and sn.field = 'owner_name'
       left join public.contact_sync_suggestions sp
              on sp.apartment_number = a.apartment_number
-            and sp.id = any(p_ids) and sp.resolved_at = v_now and sp.field = 'owner_phone'
+            and sp.id = any(v_ids) and sp.resolved_at = v_now and sp.field = 'owner_phone'
      where c.apartment_number = a.apartment_number;
 
     update public.contacts c set owner_email = s.proposed_value
       from public.contact_sync_suggestions s
-     where s.id = any(p_ids) and s.resolved_at = v_now and s.field = 'owner_email'
+     where s.id = any(v_ids) and s.resolved_at = v_now and s.field = 'owner_email'
        and c.apartment_number = s.apartment_number;
 
     update public.contacts c set tenant_name = s.proposed_value
       from public.contact_sync_suggestions s
-     where s.id = any(p_ids) and s.resolved_at = v_now and s.field = 'tenant_name'
+     where s.id = any(v_ids) and s.resolved_at = v_now and s.field = 'tenant_name'
        and c.apartment_number = s.apartment_number;
 
     update public.contacts c set tenant_phone = s.proposed_value
       from public.contact_sync_suggestions s
-     where s.id = any(p_ids) and s.resolved_at = v_now and s.field = 'tenant_phone'
+     where s.id = any(v_ids) and s.resolved_at = v_now and s.field = 'tenant_phone'
        and c.apartment_number = s.apartment_number;
 
     update public.contacts c set tenant_email = s.proposed_value
       from public.contact_sync_suggestions s
-     where s.id = any(p_ids) and s.resolved_at = v_now and s.field = 'tenant_email'
+     where s.id = any(v_ids) and s.resolved_at = v_now and s.field = 'tenant_email'
        and c.apartment_number = s.apartment_number;
+
+    -- "Unlink?" approved → the link is detached, like an admin detach (sticky
+    -- while the card still carries the phone; the card is fixed by hand).
+    with det as (
+      update public.apartment_owner_phones r
+         set is_active = false, detached_at = v_now, detached_by = p_actor,
+             detach_reason = 'bllink_removed'
+        from public.contact_sync_suggestions s
+       where s.id = any(v_ids) and s.resolved_at = v_now and s.field = 'portal_unlink'
+         and r.apartment_number = s.apartment_number
+         and r.phone_e164 = s.phone_e164
+         and r.is_active
+      returning r.id, r.apartment_number, r.phone_e164, r.owner_name, r.role
+    )
+    insert into public.audit_log (actor_user_id, action, entity_type, entity_id, metadata)
+    select p_actor, 'portal_owner_phone_detached', 'apartment_owner_phone', det.id::text,
+           jsonb_build_object('apartment_number', det.apartment_number,
+                              'phone_e164', det.phone_e164, 'owner_name', det.owner_name,
+                              'role', det.role, 'reason', 'bllink_removed',
+                              'via', 'contact_suggestion_resolve')
+      from det;
+
+    -- "Link?" approved → the person is written onto the CARD (the only way a
+    -- phone links — the roster follows at commit): into the role's own field
+    -- when it is free (or already holds this person's name), otherwise as an
+    -- additional person of that role. A tenant on an apartment whose card says
+    -- the owner lives there turns the card to 'tenant', so the person is shown.
+    for v_link in
+      select s.id, s.apartment_number, s.phone_e164, s.person_role, s.person_name
+        from public.contact_sync_suggestions s
+       where s.id = any(v_ids) and s.resolved_at = v_now and s.field = 'portal_link'
+       order by s.apartment_number, s.phone_e164
+    loop
+      select * into v_contact from public.contacts c where c.apartment_number = v_link.apartment_number;
+      v_role := case when v_link.person_role = 'owner' then 'owner' else 'tenant' end;
+
+      if v_role = 'owner' then
+        if public.portal_owner_e164(v_contact.owner_phone) is null
+           and (nullif(btrim(coalesce(v_contact.owner_name, '')), '') is null
+                or public.contact_value_norm('owner_name', v_contact.owner_name)
+                   = public.contact_value_norm('owner_name', v_link.person_name)) then
+          update public.contacts
+             set owner_phone = v_link.phone_e164,
+                 owner_name = coalesce(nullif(btrim(coalesce(owner_name, '')), ''), v_link.person_name)
+           where id = v_contact.id;
+        else
+          insert into public.contact_people (contact_id, role, name, phone, sort_order)
+          select v_contact.id, 'owner', v_link.person_name, v_link.phone_e164,
+                 coalesce(max(p.sort_order), -1) + 1
+            from public.contact_people p where p.contact_id = v_contact.id;
+        end if;
+      else
+        if v_contact.resident_type = 'owner' then
+          update public.contacts set resident_type = 'tenant' where id = v_contact.id;
+        end if;
+        if public.portal_owner_e164(v_contact.tenant_phone) = v_link.phone_e164 then
+          null;  -- already on the card, it was only hidden
+        elsif public.portal_owner_e164(v_contact.tenant_phone) is null
+              and (nullif(btrim(coalesce(v_contact.tenant_name, '')), '') is null
+                   or public.contact_value_norm('tenant_name', v_contact.tenant_name)
+                      = public.contact_value_norm('tenant_name', v_link.person_name)) then
+          update public.contacts
+             set tenant_phone = v_link.phone_e164,
+                 tenant_name = coalesce(nullif(btrim(coalesce(tenant_name, '')), ''), v_link.person_name)
+           where id = v_contact.id;
+        else
+          insert into public.contact_people (contact_id, role, name, phone, sort_order)
+          select v_contact.id, 'tenant', v_link.person_name, v_link.phone_e164,
+                 coalesce(max(p.sort_order), -1) + 1
+            from public.contact_people p where p.contact_id = v_contact.id;
+        end if;
+      end if;
+
+      insert into public.audit_log (actor_user_id, action, entity_type, entity_id, metadata)
+      values (p_actor, 'portal_link_approved', 'contact_sync_suggestion', v_link.id::text,
+              jsonb_build_object('apartment_number', v_link.apartment_number,
+                                 'phone_e164', v_link.phone_e164, 'role', v_link.person_role,
+                                 'name', v_link.person_name,
+                                 'resident_type_was', v_contact.resident_type,
+                                 'via', 'contact_suggestion_resolve'));
+    end loop;
 
     perform set_config('app.write_source', '', true);
   end if;
@@ -198,22 +377,18 @@ declare
   v_closed integer := 0;
   v_n integer;
 begin
-  -- Everything this function writes to contacts came from Bllink. Transaction
-  -- local; cleared before returning.
   perform set_config('app.write_source', 'bllink', true);
 
-  -- 1. Apartments missing from the registry, exactly as before: created with
-  --    whatever the report knows, flagged for review, never an UPDATE. Driven
-  --    by the APARTMENT list and not by the field rows, because an apartment
-  --    whose every contact cell is blank still has to exist.
-  insert into public.contacts (apartment_number, owner_name, owner_phone, owner_email,
-                               tenant_name, tenant_phone, tenant_email, source, needs_review)
+  -- 1. Apartments missing from the registry: created with the names and
+  --    addresses the report knows, flagged for review. NO phone — a phone
+  --    links the apartment to the portal, and that waits for a decision
+  --    (step 4 proposes it in this same run).
+  insert into public.contacts (apartment_number, owner_name, owner_email,
+                               tenant_name, tenant_email, source, needs_review)
   select a.apt,
          max(i.value) filter (where i.field = 'owner_name'),
-         max(i.value) filter (where i.field = 'owner_phone'),
          max(i.value) filter (where i.field = 'owner_email'),
          max(i.value) filter (where i.field = 'tenant_name'),
-         max(i.value) filter (where i.field = 'tenant_phone'),
          max(i.value) filter (where i.field = 'tenant_email'),
          'bllink_sync', true
     from (select distinct btrim(x) as apt
@@ -225,17 +400,12 @@ begin
   on conflict (apartment_number) do nothing;
   get diagnostics v_created = row_count;
 
-  -- 2. Fields we simply do not have. No approval: there is nothing to overwrite.
+  -- 2. Names and addresses we simply do not have: written straight in.
+  --    Phones are NOT here any more — see step 4.
   update public.contacts c set owner_name = i.value
     from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
    where c.apartment_number = i.apartment_number and i.field = 'owner_name'
      and nullif(btrim(coalesce(c.owner_name, '')), '') is null;
-  get diagnostics v_n = row_count; v_applied := v_applied + v_n;
-
-  update public.contacts c set owner_phone = i.value
-    from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
-   where c.apartment_number = i.apartment_number and i.field = 'owner_phone'
-     and nullif(btrim(coalesce(c.owner_phone, '')), '') is null;
   get diagnostics v_n = row_count; v_applied := v_applied + v_n;
 
   update public.contacts c set owner_email = i.value
@@ -250,25 +420,18 @@ begin
      and nullif(btrim(coalesce(c.tenant_name, '')), '') is null;
   get diagnostics v_n = row_count; v_applied := v_applied + v_n;
 
-  update public.contacts c set tenant_phone = i.value
-    from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
-   where c.apartment_number = i.apartment_number and i.field = 'tenant_phone'
-     and nullif(btrim(coalesce(c.tenant_phone, '')), '') is null;
-  get diagnostics v_n = row_count; v_applied := v_applied + v_n;
-
   update public.contacts c set tenant_email = i.value
     from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
    where c.apartment_number = i.apartment_number and i.field = 'tenant_email'
      and nullif(btrim(coalesce(c.tenant_email, '')), '') is null;
   get diagnostics v_n = row_count; v_applied := v_applied + v_n;
 
-  -- 3. Open suggestions the live value already satisfies. The trigger closes
-  --    these the moment the value is typed; this is the safety net for rows
-  --    that predate it or that changed outside a trigger's reach.
+  -- 3. Open FIELD suggestions the live value already satisfies.
   update public.contact_sync_suggestions s
      set status = 'obsolete', resolved_at = now()
     from public.contacts c
    where s.status = 'pending'
+     and s.phone_e164 is null
      and c.apartment_number = s.apartment_number
      and public.contact_value_norm(s.field, s.proposed_value)
          is not distinct from public.contact_value_norm(s.field,
@@ -281,16 +444,13 @@ begin
              else c.tenant_email end);
   get diagnostics v_closed = row_count;
 
-  -- 3b. Open questions the SOURCE has stopped asking. Until 30/09/2026 a
-  --     suggestion only closed when OUR value moved to meet it; a proposal
-  --     the source itself withdrew stayed open for ever. It withdrew plenty
-  --     the day the names moved to the resident list. Nobody should have to
-  --     reject a proposal that nothing is making any more.
+  -- 3b. Open FIELD questions the source has stopped asking.
   update public.contact_sync_suggestions s
      set status = 'obsolete', resolved_at = now()
     from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
     join public.contacts c on c.apartment_number = i.apartment_number
    where s.status = 'pending'
+     and s.phone_e164 is null
      and s.apartment_number = i.apartment_number
      and s.field = i.field
      and public.contact_value_norm(i.field, i.value)
@@ -304,7 +464,8 @@ begin
              else c.tenant_email end);
   get diagnostics v_n = row_count; v_closed := v_closed + v_n;
 
-  -- 4. The conflicts. Ours stands; the difference waits for a decision.
+  -- 4. The conflicts — and every phone we do not hold yet. Ours stands; the
+  --    difference waits for a decision.
   insert into public.contact_sync_suggestions
     (apartment_number, field, current_value, proposed_value, source)
   select i.apartment_number, i.field, cur.v, i.value, 'bllink'
@@ -317,16 +478,11 @@ begin
                                  when 'tenant_name'  then c.tenant_name
                                  when 'tenant_phone' then c.tenant_phone
                                  else c.tenant_email end as v) cur
-   where nullif(btrim(coalesce(cur.v, '')), '') is not null
-     -- A value the caller flagged as second-best (the resident list was
-     -- unreachable and this came from the truncating export) fills an empty
-     -- field but never ASKS anything: a suggestion is a question put to a
-     -- person, and a question built on a value we already distrust is noise.
+   where (nullif(btrim(coalesce(cur.v, '')), '') is not null
+          or i.field in ('owner_phone', 'tenant_phone'))
      and i.may_suggest
      and public.contact_value_norm(i.field, cur.v)
          is distinct from public.contact_value_norm(i.field, i.value)
-     -- A value that was turned down does not come back. It returns only when
-     -- Bllink itself changes to something else.
      and not exists (
        select 1 from public.contact_sync_suggestions r
         where r.apartment_number = i.apartment_number
@@ -334,12 +490,10 @@ begin
           and r.status = 'rejected'
           and public.contact_value_norm(r.field, r.proposed_value)
               is not distinct from public.contact_value_norm(i.field, i.value))
-  on conflict (apartment_number, field) where status = 'pending'
+  on conflict (apartment_number, field) where status = 'pending' and phone_e164 is null
   do update set current_value  = excluded.current_value,
                 proposed_value = excluded.proposed_value,
                 created_at     = now()
-   -- An unchanged proposal keeps its original date: the second sync of the day
-   -- must not make yesterday's suggestion look new.
    where public.contact_value_norm(public.contact_sync_suggestions.field,
                                    public.contact_sync_suggestions.proposed_value)
          is distinct from public.contact_value_norm(excluded.field, excluded.proposed_value);
@@ -457,6 +611,115 @@ $$;
 
 
 --
+-- Name: portal_link_suggest(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.portal_link_suggest(p_scrape_id uuid) RETURNS TABLE(suggested_link integer, suggested_unlink integer, closed integer)
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_link integer := 0;
+  v_unlink integer := 0;
+  v_closed integer := 0;
+  v_n integer;
+begin
+  -- Close what the facts settled on their own: the card now carries the
+  -- phone, or Bllink stopped listing the person.
+  with apts as (select apartment_number from public.bllink_scrape_apartments(p_scrape_id)),
+       ppl  as (select * from public.bllink_scrape_people(p_scrape_id))
+  update public.contact_sync_suggestions s
+     set status = 'obsolete', resolved_at = now()
+   where s.status = 'pending'
+     and s.field = 'portal_link'
+     and s.apartment_number in (select apartment_number from apts)
+     and (exists (select 1 from public.portal_roster_desired(s.apartment_number) d
+                   where d.phone_e164 = s.phone_e164)
+          or not exists (select 1 from ppl p
+                          where p.apartment_number = s.apartment_number and p.phone_e164 = s.phone_e164));
+  get diagnostics v_n = row_count; v_closed := v_closed + v_n;
+
+  -- …the link is no longer active, or Bllink lists the phone again.
+  with apts as (select apartment_number from public.bllink_scrape_apartments(p_scrape_id)),
+       ppl  as (select * from public.bllink_scrape_people(p_scrape_id))
+  update public.contact_sync_suggestions s
+     set status = 'obsolete', resolved_at = now()
+   where s.status = 'pending'
+     and s.field = 'portal_unlink'
+     and s.apartment_number in (select apartment_number from apts)
+     and (not exists (select 1 from public.apartment_owner_phones r
+                       where r.apartment_number = s.apartment_number
+                         and r.phone_e164 = s.phone_e164 and r.is_active)
+          or exists (select 1 from ppl p
+                      where p.apartment_number = s.apartment_number and p.phone_e164 = s.phone_e164));
+  get diagnostics v_n = row_count; v_closed := v_closed + v_n;
+
+  -- A person Bllink lists whose phone the card does not carry in a portal
+  -- role → "link?". Not when the same phone already waits as a field
+  -- suggestion of that apartment (the ingest proposes the primary contacts'
+  -- phones), and not when it was turned down before.
+  with ppl as (select * from public.bllink_scrape_people(p_scrape_id))
+  insert into public.contact_sync_suggestions
+    (apartment_number, field, current_value, proposed_value, source,
+     phone_e164, person_role, person_name)
+  select distinct on (p.apartment_number, p.phone_e164)
+         p.apartment_number, 'portal_link', null, p.phone_e164, 'bllink',
+         p.phone_e164, p.role, p.name
+    from ppl p
+   where p.phone_e164 is not null
+     and not exists (select 1 from public.portal_roster_desired(p.apartment_number) d
+                      where d.phone_e164 = p.phone_e164)
+     and not exists (select 1 from public.contact_sync_suggestions f
+                      where f.apartment_number = p.apartment_number
+                        and f.status = 'pending'
+                        and f.field in ('owner_phone', 'tenant_phone')
+                        and public.portal_owner_e164(f.proposed_value) = p.phone_e164)
+     and not exists (select 1 from public.contact_sync_suggestions r
+                      where r.apartment_number = p.apartment_number
+                        and r.field = 'portal_link'
+                        and r.status = 'rejected'
+                        and r.phone_e164 = p.phone_e164)
+   order by p.apartment_number, p.phone_e164, (p.role = 'owner') desc
+  on conflict (apartment_number, field, phone_e164) where status = 'pending' and phone_e164 is not null
+  do nothing;
+  get diagnostics v_link = row_count;
+
+  -- A phone linked here that Bllink no longer lists in that apartment →
+  -- "unlink?".
+  with apts as (select apartment_number from public.bllink_scrape_apartments(p_scrape_id)),
+       ppl  as (select * from public.bllink_scrape_people(p_scrape_id))
+  insert into public.contact_sync_suggestions
+    (apartment_number, field, current_value, proposed_value, source,
+     phone_e164, person_role, person_name)
+  select r.apartment_number, 'portal_unlink', r.owner_name, r.phone_e164, 'bllink',
+         r.phone_e164, r.role, r.owner_name
+    from public.apartment_owner_phones r
+   where r.is_active
+     and r.apartment_number in (select apartment_number from apts)
+     and not exists (select 1 from ppl p
+                      where p.apartment_number = r.apartment_number and p.phone_e164 = r.phone_e164)
+     and not exists (select 1 from public.contact_sync_suggestions x
+                      where x.apartment_number = r.apartment_number
+                        and x.field = 'portal_unlink'
+                        and x.status = 'rejected'
+                        and x.phone_e164 = r.phone_e164)
+  on conflict (apartment_number, field, phone_e164) where status = 'pending' and phone_e164 is not null
+  do nothing;
+  get diagnostics v_unlink = row_count;
+
+  suggested_link := v_link; suggested_unlink := v_unlink; closed := v_closed;
+  return next;
+end;
+$$;
+
+
+--
+-- Name: FUNCTION portal_link_suggest(p_scrape_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.portal_link_suggest(p_scrape_id uuid) IS 'Compare one scrape''s resident list (bllink_scrapes.list_people) with the portal links: a linked phone Bllink no longer lists → portal_unlink suggestion; a listed person the card does not carry → portal_link suggestion. Suggests only — nothing is linked or unlinked here.';
+
+
+--
 -- Name: portal_owner_e164(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -515,28 +778,56 @@ COMMENT ON FUNCTION public.portal_owner_e164(raw text) IS 'Owner phone -> E.164 
 -- Name: portal_roster_desired(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.portal_roster_desired(p_apartment text) RETURNS TABLE(phone_e164 text, source_table text, source_row_id uuid, owner_name text)
+CREATE FUNCTION public.portal_roster_desired(p_apartment text) RETURNS TABLE(phone_e164 text, source_table text, source_row_id uuid, owner_name text, role text, source_field text)
     LANGUAGE sql STABLE
     AS $$
-  select distinct on (s.e164) s.e164, s.st, s.sid, s.nm
+  select distinct on (s.e164) s.e164, s.st, s.sid, s.nm, s.rl, s.sf
     from (
       select public.portal_owner_e164(c.owner_phone)          as e164,
              'contacts'::text                                  as st,
              c.id                                              as sid,
              nullif(btrim(coalesce(c.owner_name, '')), '')     as nm,
+             'owner'::text                                     as rl,
+             'owner_phone'::text                               as sf,
              0 as pri, 0 as so, c.created_at as ca
         from public.contacts c
        where c.apartment_number = p_apartment
       union all
-      select public.portal_owner_e164(p.phone),
-             'contact_people',
-             p.id,
+      select public.portal_owner_e164(p.phone), 'contact_people', p.id,
              nullif(btrim(coalesce(p.name, '')), ''),
+             'owner', null::text,
              1, p.sort_order, p.created_at
         from public.contact_people p
         join public.contacts c on c.id = p.contact_id
        where c.apartment_number = p_apartment
          and p.role = 'owner'
+      union all
+      select public.portal_owner_e164(c.operator_phone), 'contacts', c.id,
+             nullif(btrim(coalesce(c.operator_name, '')), ''),
+             'operator', 'operator_phone',
+             2, 0, c.created_at
+        from public.contacts c
+       where c.apartment_number = p_apartment
+      union all
+      select public.portal_owner_e164(c.tenant_phone), 'contacts', c.id,
+             nullif(btrim(coalesce(c.tenant_name, '')), ''),
+             case c.resident_type when 'operator' then 'operator' else 'tenant' end,
+             'tenant_phone',
+             3, 0, c.created_at
+        from public.contacts c
+       where c.apartment_number = p_apartment
+         and c.resident_type in ('tenant', 'operator')
+      union all
+      select public.portal_owner_e164(p.phone), 'contact_people', p.id,
+             nullif(btrim(coalesce(p.name, '')), ''),
+             case c.resident_type when 'operator' then 'operator' else 'tenant' end,
+             null::text,
+             4, p.sort_order, p.created_at
+        from public.contact_people p
+        join public.contacts c on c.id = p.contact_id
+       where c.apartment_number = p_apartment
+         and p.role = 'tenant'
+         and c.resident_type in ('tenant', 'operator')
     ) s
    where s.e164 is not null
    order by s.e164, s.pri, s.so, s.ca, s.sid;
@@ -547,7 +838,7 @@ $$;
 -- Name: FUNCTION portal_roster_desired(p_apartment text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.portal_roster_desired(p_apartment text) IS 'The roster an apartment SHOULD have: one row per E.164 phone found in its owner records (contacts.owner_phone, contact_people role owner), with the record that carries it.';
+COMMENT ON FUNCTION public.portal_roster_desired(p_apartment text) IS 'The roster an apartment SHOULD have: one row per E.164 phone found in its records in a portal role (owner field / extra owners / operator field / the tenant-or-operator section when the card shows it), with the record, the name and the role.';
 
 
 --
@@ -595,45 +886,52 @@ begin
     return;
   end if;
 
-  -- 1. An ACTIVE phone no owner record carries any more → off.
+  -- 1. An ACTIVE phone no record carries any more → off.
   with gone as (
     update public.apartment_owner_phones r
-       set is_active = false, source_table = null, source_row_id = null
+       set is_active = false, source_table = null, source_row_id = null, source_field = null
      where r.apartment_number = p_apartment
        and r.is_active
        and not exists (select 1 from public.portal_roster_desired(p_apartment) d
                         where d.phone_e164 = r.phone_e164)
-    returning r.id, r.phone_e164, r.owner_name
+    returning r.id, r.phone_e164, r.owner_name, r.role
   )
   insert into public.audit_log (action, entity_type, entity_id, metadata)
   select 'portal_owner_phone_deactivated', 'apartment_owner_phone', g.id::text,
          jsonb_build_object('apartment_number', p_apartment, 'phone_e164', g.phone_e164,
-                            'owner_name', g.owner_name, 'reason', 'source_removed',
-                            'via', 'portal_roster_sync')
+                            'owner_name', g.owner_name, 'role', g.role,
+                            'reason', 'source_removed', 'via', 'portal_roster_sync')
     from gone g;
 
-  -- 2. A DETACHED phone that left every owner record: the detach is released
-  --    (the row stays off). Typing the phone in again links it afresh.
+  -- 2. A DETACHED phone is released when it left every record of the
+  --    apartment, or when the records now give it a DIFFERENT role (a detach
+  --    holds for the role it was made in). The row stays off here; a phone the
+  --    records still carry links afresh in step 4.
   with released as (
     update public.apartment_owner_phones r
        set detached_at = null, detached_by = null, detach_reason = null,
-           source_table = null, source_row_id = null
-     where r.apartment_number = p_apartment
-       and r.detached_at is not null
-       and not exists (select 1 from public.portal_roster_desired(p_apartment) d
-                        where d.phone_e164 = r.phone_e164)
-    returning r.id, r.phone_e164, r.owner_name
+           source_table = null, source_row_id = null, source_field = null
+      from (select r2.id,
+                   (select d.role from public.portal_roster_desired(p_apartment) d
+                     where d.phone_e164 = r2.phone_e164) as new_role
+              from public.apartment_owner_phones r2
+             where r2.apartment_number = p_apartment
+               and r2.detached_at is not null) x
+     where r.id = x.id
+       and (x.new_role is null or x.new_role <> r.role)
+    returning r.id, r.phone_e164, r.owner_name, r.role, x.new_role
   )
   insert into public.audit_log (action, entity_type, entity_id, metadata)
   select 'portal_owner_phone_detach_released', 'apartment_owner_phone', l.id::text,
          jsonb_build_object('apartment_number', p_apartment, 'phone_e164', l.phone_e164,
-                            'owner_name', l.owner_name, 'reason', 'source_removed',
-                            'via', 'portal_roster_sync')
+                            'owner_name', l.owner_name, 'role', l.role,
+                            'reason', case when l.new_role is null then 'source_removed' else 'role_changed' end,
+                            'new_role', l.new_role, 'via', 'portal_roster_sync')
     from released l;
 
   -- An inactive row no record carries keeps no stale pointer.
   update public.apartment_owner_phones r
-     set source_table = null, source_row_id = null
+     set source_table = null, source_row_id = null, source_field = null
    where r.apartment_number = p_apartment
      and not r.is_active
      and r.source_table is not null
@@ -643,80 +941,102 @@ begin
   -- 3. A phone the records carry and the roster has never seen → linked.
   with ins as (
     insert into public.apartment_owner_phones
-      (apartment_number, owner_name, phone_e164, source_table, source_row_id)
-    select p_apartment, d.owner_name, d.phone_e164, d.source_table, d.source_row_id
+      (apartment_number, owner_name, phone_e164, source_table, source_row_id, role, source_field)
+    select p_apartment, d.owner_name, d.phone_e164, d.source_table, d.source_row_id, d.role, d.source_field
       from public.portal_roster_desired(p_apartment) d
      where not exists (select 1 from public.apartment_owner_phones r
                         where r.apartment_number = p_apartment and r.phone_e164 = d.phone_e164)
     on conflict (apartment_number, phone_e164) do nothing
-    returning id, phone_e164, owner_name, source_table, source_row_id
+    returning id, phone_e164, owner_name, source_table, source_row_id, role
   )
   insert into public.audit_log (action, entity_type, entity_id, metadata)
   select 'portal_owner_phone_linked', 'apartment_owner_phone', i.id::text,
          jsonb_build_object('apartment_number', p_apartment, 'phone_e164', i.phone_e164,
-                            'owner_name', i.owner_name, 'source_table', i.source_table,
+                            'owner_name', i.owner_name, 'role', i.role,
+                            'source_table', i.source_table,
                             'source_row_id', i.source_row_id, 'via', 'portal_roster_sync')
     from ins i;
 
-  -- 4. An inactive, NOT detached row whose phone a record carries again → on.
+  -- 4. An inactive, NOT detached row whose phone a record carries again → on,
+  --    in the role the records give it now.
   with back as (
     update public.apartment_owner_phones r
-       set is_active = true, owner_name = d.owner_name,
-           source_table = d.source_table, source_row_id = d.source_row_id
+       set is_active = true, owner_name = d.owner_name, role = d.role,
+           source_table = d.source_table, source_row_id = d.source_row_id,
+           source_field = d.source_field
       from public.portal_roster_desired(p_apartment) d
      where r.apartment_number = p_apartment
        and r.phone_e164 = d.phone_e164
        and not r.is_active
        and r.detached_at is null
-    returning r.id, r.phone_e164, r.owner_name, r.source_table, r.source_row_id
+    returning r.id, r.phone_e164, r.owner_name, r.role, r.source_table, r.source_row_id
   )
   insert into public.audit_log (action, entity_type, entity_id, metadata)
   select 'portal_owner_phone_relinked', 'apartment_owner_phone', b.id::text,
          jsonb_build_object('apartment_number', p_apartment, 'phone_e164', b.phone_e164,
-                            'owner_name', b.owner_name, 'source_table', b.source_table,
+                            'owner_name', b.owner_name, 'role', b.role,
+                            'source_table', b.source_table,
                             'source_row_id', b.source_row_id, 'via', 'portal_roster_sync')
     from back b;
 
-  -- 5. Active rows follow their record: the name on it, and where it lives.
-  --    A name change is logged — it decides whether a multi-apartment phone is
-  --    one person (lib/portal/ownership.ts). The record's id alone changes on
-  --    every card save (contact_people is rewritten), so that is not logged.
+  -- 5. Active rows follow their record: the name, the role, where it lives.
+  --    A name change and a role change are logged — the name decides whether a
+  --    multi-apartment phone is one person (lib/portal/identity.ts), the role
+  --    what the phone sees. The record's id alone changes on every card save
+  --    (contact_people is rewritten), so that is not logged.
   with cur as (
     select r.id, r.phone_e164, r.owner_name as old_name, d.owner_name as new_name,
-           d.source_table, d.source_row_id
+           r.role as old_role, d.role as new_role,
+           d.source_table, d.source_row_id, d.source_field
       from public.apartment_owner_phones r
       join public.portal_roster_desired(p_apartment) d on d.phone_e164 = r.phone_e164
      where r.apartment_number = p_apartment
        and r.is_active
        and (r.owner_name is distinct from d.owner_name
+            or r.role is distinct from d.role
             or r.source_table is distinct from d.source_table
-            or r.source_row_id is distinct from d.source_row_id)
+            or r.source_row_id is distinct from d.source_row_id
+            or r.source_field is distinct from d.source_field)
   ), upd as (
     update public.apartment_owner_phones r
-       set owner_name = cur.new_name,
-           source_table = cur.source_table, source_row_id = cur.source_row_id
+       set owner_name = cur.new_name, role = cur.new_role,
+           source_table = cur.source_table, source_row_id = cur.source_row_id,
+           source_field = cur.source_field
       from cur
      where r.id = cur.id
     returning r.id
+  ), renamed as (
+    insert into public.audit_log (action, entity_type, entity_id, metadata)
+    select 'portal_owner_phone_renamed', 'apartment_owner_phone', cur.id::text,
+           jsonb_build_object('apartment_number', p_apartment, 'phone_e164', cur.phone_e164,
+                              'from', cur.old_name, 'to', cur.new_name, 'via', 'portal_roster_sync')
+      from cur
+      join upd on upd.id = cur.id
+     where cur.old_name is distinct from cur.new_name
+    returning 1
   )
   insert into public.audit_log (action, entity_type, entity_id, metadata)
-  select 'portal_owner_phone_renamed', 'apartment_owner_phone', cur.id::text,
+  select 'portal_owner_phone_role_changed', 'apartment_owner_phone', cur.id::text,
          jsonb_build_object('apartment_number', p_apartment, 'phone_e164', cur.phone_e164,
-                            'from', cur.old_name, 'to', cur.new_name, 'via', 'portal_roster_sync')
+                            'owner_name', cur.new_name,
+                            'from', cur.old_role, 'to', cur.new_role, 'via', 'portal_roster_sync')
     from cur
     join upd on upd.id = cur.id
-   where cur.old_name is distinct from cur.new_name;
+   where cur.old_role is distinct from cur.new_role;
 
-  -- 6. A detached row a record still carries: only the pointer follows, so the
-  --    admin screen can show WHICH record still holds the phone.
+  -- 6. A detached row a record still carries (in the same role — step 2
+  --    released the others): only the pointer follows, so the admin screen can
+  --    show WHICH record still holds the phone.
   update public.apartment_owner_phones r
-     set source_table = d.source_table, source_row_id = d.source_row_id
+     set source_table = d.source_table, source_row_id = d.source_row_id,
+         source_field = d.source_field
     from public.portal_roster_desired(p_apartment) d
    where r.apartment_number = p_apartment
      and r.phone_e164 = d.phone_e164
      and r.detached_at is not null
      and (r.source_table is distinct from d.source_table
-          or r.source_row_id is distinct from d.source_row_id);
+          or r.source_row_id is distinct from d.source_row_id
+          or r.source_field is distinct from d.source_field);
 end;
 $$;
 
@@ -725,7 +1045,7 @@ $$;
 -- Name: FUNCTION portal_roster_sync(p_apartment text); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.portal_roster_sync(p_apartment text) IS 'Recompute one apartment''s portal roster from its owner records, both directions, every link change logged in audit_log. Runs from the deferred triggers portal_roster_sync_*; never re-links a detached row.';
+COMMENT ON FUNCTION public.portal_roster_sync(p_apartment text) IS 'Recompute one apartment''s portal roster from its records in the three portal roles, both directions, every link change logged in audit_log. Runs from the deferred triggers portal_roster_sync_*; never re-links a detached row in the role it was detached in.';
 
 
 --
@@ -753,11 +1073,11 @@ CREATE FUNCTION public.portal_roster_sync_from_contact_person() RETURNS trigger
 declare
   apt text;
 begin
-  if tg_op in ('UPDATE', 'DELETE') and old.role = 'owner' then
+  if tg_op in ('UPDATE', 'DELETE') then
     select c.apartment_number into apt from public.contacts c where c.id = old.contact_id;
     perform public.portal_roster_sync(apt);
   end if;
-  if tg_op in ('INSERT', 'UPDATE') and new.role = 'owner' then
+  if tg_op in ('INSERT', 'UPDATE') then
     select c.apartment_number into apt from public.contacts c where c.id = new.contact_id;
     perform public.portal_roster_sync(apt);
   end if;
@@ -877,9 +1197,14 @@ CREATE TABLE public.apartment_owner_phones (
     detached_at timestamp with time zone,
     detached_by uuid,
     detach_reason text,
+    role text DEFAULT 'owner'::text NOT NULL,
+    source_field text,
     CONSTRAINT apartment_owner_phones_detach_shape_check CHECK (((detached_at IS NULL) = (detach_reason IS NULL))),
     CONSTRAINT apartment_owner_phones_detached_inactive_check CHECK (((detached_at IS NULL) OR (NOT is_active))),
     CONSTRAINT apartment_owner_phones_phone_e164_check CHECK (((phone_e164 ~ '^\+9725[0-9]{8}$'::text) OR ((phone_e164 !~ '^\+972'::text) AND (phone_e164 ~ '^\+[1-9][0-9]{6,14}$'::text)))),
+    CONSTRAINT apartment_owner_phones_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text]))),
+    CONSTRAINT apartment_owner_phones_source_field_check CHECK (((source_field IS NULL) OR (source_field = ANY (ARRAY['owner_phone'::text, 'tenant_phone'::text, 'operator_phone'::text])))),
+    CONSTRAINT apartment_owner_phones_source_field_shape_check CHECK (((NOT (source_table IS DISTINCT FROM 'contacts'::text)) = (source_field IS NOT NULL))),
     CONSTRAINT apartment_owner_phones_source_pair_check CHECK (((source_table IS NULL) = (source_row_id IS NULL))),
     CONSTRAINT apartment_owner_phones_source_table_check CHECK (((source_table IS NULL) OR (source_table = ANY (ARRAY['contacts'::text, 'contact_people'::text]))))
 );
@@ -932,6 +1257,20 @@ COMMENT ON COLUMN public.apartment_owner_phones.detached_at IS 'A deliberate det
 --
 
 COMMENT ON COLUMN public.apartment_owner_phones.detach_reason IS 'Why it was detached: admin · audit_2026_10 · owner_replaced (free text, the audit_log entry carries the detail).';
+
+
+--
+-- Name: COLUMN apartment_owner_phones.role; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apartment_owner_phones.role IS 'The role the phone holds in the apartment: owner · tenant · operator. The widest wins when one phone holds several (owner > operator > tenant). Written by portal_roster_sync only. owner_name holds the name of whoever carries the phone, whatever the role.';
+
+
+--
+-- Name: COLUMN apartment_owner_phones.source_field; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apartment_owner_phones.source_field IS 'For source_table = contacts: which field carries the phone (owner_phone · tenant_phone · operator_phone). NULL for contact_people.';
 
 
 --
@@ -1098,6 +1437,7 @@ CREATE TABLE public.bllink_scrapes (
     xlsx_sha256 text,
     compare_summary jsonb,
     tenant_list_ok boolean DEFAULT false NOT NULL,
+    list_people jsonb,
     CONSTRAINT bllink_scrapes_error_stage_check CHECK (((error_stage IS NULL) OR (error_stage = ANY (ARRAY['login'::text, 'navigate'::text, 'download'::text, 'parse'::text, 'compare'::text])))),
     CONSTRAINT bllink_scrapes_status_check CHECK ((status = ANY (ARRAY['running'::text, 'success'::text, 'error'::text])))
 );
@@ -1115,6 +1455,13 @@ COMMENT ON TABLE public.bllink_scrapes IS 'One row per shadow scrape of the Blli
 --
 
 COMMENT ON COLUMN public.bllink_scrapes.tenant_list_ok IS 'Did this scrape manage to read the resident list? false = names and phones in it came from the debt export alone.';
+
+
+--
+-- Name: COLUMN bllink_scrapes.list_people; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.bllink_scrapes.list_people IS 'Bllink''s resident list, every ACTIVE person: {"<apartment>": [{"role": "owner"|"tenant", "name": …, "phone": …, "primary": bool}]}. Raw values. NULL when the list read failed (tenant_list_ok = false) — then nothing is compared.';
 
 
 --
@@ -1360,7 +1707,12 @@ CREATE TABLE public.contact_sync_suggestions (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     resolved_at timestamp with time zone,
     resolved_by uuid,
-    CONSTRAINT contact_sync_suggestions_field_check CHECK ((field = ANY (ARRAY['owner_name'::text, 'owner_phone'::text, 'owner_email'::text, 'tenant_name'::text, 'tenant_phone'::text, 'tenant_email'::text]))),
+    phone_e164 text,
+    person_role text,
+    person_name text,
+    CONSTRAINT contact_sync_suggestions_field_check CHECK ((field = ANY (ARRAY['owner_name'::text, 'owner_phone'::text, 'owner_email'::text, 'tenant_name'::text, 'tenant_phone'::text, 'tenant_email'::text, 'portal_link'::text, 'portal_unlink'::text]))),
+    CONSTRAINT contact_sync_suggestions_person_role_check CHECK (((person_role IS NULL) OR (person_role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text])))),
+    CONSTRAINT contact_sync_suggestions_person_shape_check CHECK (((field = ANY (ARRAY['portal_link'::text, 'portal_unlink'::text])) = (phone_e164 IS NOT NULL))),
     CONSTRAINT contact_sync_suggestions_resolution_shape CHECK ((((status = 'pending'::text) AND (resolved_at IS NULL)) OR ((status <> 'pending'::text) AND (resolved_at IS NOT NULL)))),
     CONSTRAINT contact_sync_suggestions_source_check CHECK ((source = 'bllink'::text)),
     CONSTRAINT contact_sync_suggestions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'obsolete'::text])))
@@ -1379,6 +1731,20 @@ COMMENT ON TABLE public.contact_sync_suggestions IS 'Bllink proposals for the re
 --
 
 COMMENT ON COLUMN public.contact_sync_suggestions.resolved_by IS 'The user who pressed approve/reject. NULL on an obsolete row — nobody decided it.';
+
+
+--
+-- Name: COLUMN contact_sync_suggestions.phone_e164; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.contact_sync_suggestions.phone_e164 IS 'portal_link / portal_unlink only: the phone (E.164) the suggestion is about. NULL for a field suggestion.';
+
+
+--
+-- Name: COLUMN contact_sync_suggestions.person_role; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.contact_sync_suggestions.person_role IS 'portal_link: Bllink''s role for the person (owner / tenant). portal_unlink: the role of the link here.';
 
 
 --
@@ -1960,10 +2326,12 @@ CREATE TABLE public.issues (
     reporter_location text,
     reporter_area text,
     ticket_number integer,
+    reporter_role text,
     CONSTRAINT issues_location_type_check CHECK ((location_type = ANY (ARRAY['apartment'::text, 'area'::text, 'general'::text]))),
     CONSTRAINT issues_portal_reporter_check CHECK (((source <> 'portal'::text) OR ((reporter_phone IS NOT NULL) AND (reporter_location IS NOT NULL) AND (ticket_number IS NOT NULL) AND ((reporter_apartment IS NULL) OR (btrim(reporter_apartment) <> ''::text)) AND ((reporter_contact_id IS NULL) OR (reporter_apartment IS NOT NULL))))),
     CONSTRAINT issues_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text]))),
     CONSTRAINT issues_reporter_phone_e164_check CHECK (((reporter_phone IS NULL) OR (reporter_phone ~ '^\+[1-9][0-9]{6,14}$'::text))),
+    CONSTRAINT issues_reporter_role_check CHECK (((reporter_role IS NULL) OR (reporter_role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text])))),
     CONSTRAINT issues_source_check CHECK ((source = ANY (ARRAY['staff'::text, 'portal'::text]))),
     CONSTRAINT issues_status_check CHECK ((status = ANY (ARRAY['open'::text, 'in_progress'::text, 'resolved'::text, 'closed'::text]))),
     CONSTRAINT issues_target_type_check CHECK ((target_type = ANY (ARRAY['room'::text, 'area'::text])))
@@ -2017,6 +2385,13 @@ COMMENT ON COLUMN public.issues.reporter_area IS 'Portal reports: "קומה / א
 --
 
 COMMENT ON COLUMN public.issues.ticket_number IS 'Portal reports: the call number shown to the resident (issues_ticket_number_seq, from 1001).';
+
+
+--
+-- Name: COLUMN issues.reporter_role; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.reporter_role IS 'source=portal: the role the reporter held in reporter_apartment when reporting (owner · tenant · operator). NULL for an unidentified reporter and for staff issues.';
 
 
 --
@@ -2174,6 +2549,58 @@ CREATE TABLE public.password_reset_tokens (
 
 
 --
+-- Name: portal_identity_apartments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.portal_identity_apartments (
+    approval_id uuid NOT NULL,
+    apartment_number text NOT NULL,
+    relation text NOT NULL,
+    CONSTRAINT portal_identity_apartments_relation_check CHECK ((relation = ANY (ARRAY['personal'::text, 'company_authorized'::text, 'family'::text])))
+);
+
+
+--
+-- Name: TABLE portal_identity_apartments; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.portal_identity_apartments IS 'Per apartment of an approved identity: how the person is connected to it — personal (their own), company_authorized (authorised for a company), family (a relative).';
+
+
+--
+-- Name: portal_identity_approvals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.portal_identity_approvals (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    phone_e164 text NOT NULL,
+    status text NOT NULL,
+    display_name text,
+    names text[] DEFAULT '{}'::text[] NOT NULL,
+    request_source text NOT NULL,
+    requested_by uuid,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    decided_by uuid,
+    decided_at timestamp with time zone,
+    ended_by uuid,
+    ended_at timestamp with time zone,
+    CONSTRAINT portal_identity_approvals_approved_shape_check CHECK (((status <> ALL (ARRAY['approved'::text, 'superseded'::text, 'revoked'::text])) OR ((NULLIF(btrim(COALESCE(display_name, ''::text)), ''::text) IS NOT NULL) AND (decided_at IS NOT NULL)))),
+    CONSTRAINT portal_identity_approvals_ended_shape_check CHECK (((status = ANY (ARRAY['superseded'::text, 'revoked'::text, 'rejected'::text])) = (ended_at IS NOT NULL))),
+    CONSTRAINT portal_identity_approvals_names_check CHECK ((NOT (''::text = ANY (names)))),
+    CONSTRAINT portal_identity_approvals_phone_check CHECK ((phone_e164 ~ '^\+[1-9][0-9]{6,14}$'::text)),
+    CONSTRAINT portal_identity_approvals_source_check CHECK ((request_source = ANY (ARRAY['blocked_screen'::text, 'entry_warning'::text]))),
+    CONSTRAINT portal_identity_approvals_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'superseded'::text, 'revoked'::text, 'rejected'::text])))
+);
+
+
+--
+-- Name: TABLE portal_identity_approvals; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.portal_identity_approvals IS 'A person with portal_manage confirmed that one phone, carrying several names, is ONE person. status: pending (asked from the apartment card, waiting) · approved (in force) · superseded (replaced by a newer approval) · revoked · rejected. names = the whitespace-normalised names the approval covers; a name outside it blocks the phone again.';
+
+
+--
 -- Name: portal_lockouts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2251,6 +2678,30 @@ CREATE TABLE public.portal_otp_codes (
 --
 
 COMMENT ON TABLE public.portal_otp_codes IS 'WhatsApp one-time codes for the owners portal. code_hash is bcrypt of the 6 digits (never the digits themselves, here or in the log). attempts counts wrong guesses against THIS code; consumed_at marks a successful login.';
+
+
+--
+-- Name: portal_phone_entry_flags; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.portal_phone_entry_flags (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    phone_e164 text NOT NULL,
+    apartment_number text NOT NULL,
+    entered_name text,
+    other_apartments text[] DEFAULT '{}'::text[] NOT NULL,
+    flagged_by uuid,
+    flagged_at timestamp with time zone DEFAULT now() NOT NULL,
+    cleared_by uuid,
+    cleared_at timestamp with time zone
+);
+
+
+--
+-- Name: TABLE portal_phone_entry_flags; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.portal_phone_entry_flags IS 'Someone typed a phone on an apartment card that another apartment already carries under another name, and answered "a different person": a suspected typing mistake. The phone is blocked by the different names; the flag is what the blocked-phones screen shows about it.';
 
 
 --
@@ -3557,6 +4008,22 @@ ALTER TABLE ONLY public.password_reset_tokens
 
 
 --
+-- Name: portal_identity_apartments portal_identity_apartments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_identity_apartments
+    ADD CONSTRAINT portal_identity_apartments_pkey PRIMARY KEY (approval_id, apartment_number);
+
+
+--
+-- Name: portal_identity_approvals portal_identity_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_identity_approvals
+    ADD CONSTRAINT portal_identity_approvals_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: portal_lockouts portal_lockouts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3578,6 +4045,14 @@ ALTER TABLE ONLY public.portal_login_events
 
 ALTER TABLE ONLY public.portal_otp_codes
     ADD CONSTRAINT portal_otp_codes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: portal_phone_entry_flags portal_phone_entry_flags_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_phone_entry_flags
+    ADD CONSTRAINT portal_phone_entry_flags_pkey PRIMARY KEY (id);
 
 
 --
@@ -4198,7 +4673,14 @@ CREATE INDEX contact_people_recipients_idx ON public.contact_people USING btree 
 -- Name: contact_sync_suggestions_one_open; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX contact_sync_suggestions_one_open ON public.contact_sync_suggestions USING btree (apartment_number, field) WHERE (status = 'pending'::text);
+CREATE UNIQUE INDEX contact_sync_suggestions_one_open ON public.contact_sync_suggestions USING btree (apartment_number, field) WHERE ((status = 'pending'::text) AND (phone_e164 IS NULL));
+
+
+--
+-- Name: contact_sync_suggestions_one_open_person; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX contact_sync_suggestions_one_open_person ON public.contact_sync_suggestions USING btree (apartment_number, field, phone_e164) WHERE ((status = 'pending'::text) AND (phone_e164 IS NOT NULL));
 
 
 --
@@ -4671,6 +5153,20 @@ CREATE INDEX password_reset_tokens_user_idx ON public.password_reset_tokens USIN
 
 
 --
+-- Name: portal_identity_approvals_one_approved; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX portal_identity_approvals_one_approved ON public.portal_identity_approvals USING btree (phone_e164) WHERE (status = 'approved'::text);
+
+
+--
+-- Name: portal_identity_approvals_one_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX portal_identity_approvals_one_pending ON public.portal_identity_approvals USING btree (phone_e164) WHERE (status = 'pending'::text);
+
+
+--
 -- Name: portal_lockouts_phone_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4696,6 +5192,13 @@ CREATE INDEX portal_login_events_phone_idx ON public.portal_login_events USING b
 --
 
 CREATE INDEX portal_otp_codes_phone_created_idx ON public.portal_otp_codes USING btree (phone_e164, created_at DESC);
+
+
+--
+-- Name: portal_phone_entry_flags_open; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX portal_phone_entry_flags_open ON public.portal_phone_entry_flags USING btree (phone_e164) WHERE (cleared_at IS NULL);
 
 
 --
@@ -5196,7 +5699,7 @@ ALTER TABLE public.contact_people DISABLE TRIGGER portal_roster_from_contact_per
 -- Name: contacts portal_roster_sync_contact_aiu; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE CONSTRAINT TRIGGER portal_roster_sync_contact_aiu AFTER INSERT OR UPDATE OF owner_phone, owner_name, apartment_number ON public.contacts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.portal_roster_sync_from_contact();
+CREATE CONSTRAINT TRIGGER portal_roster_sync_contact_aiu AFTER INSERT OR UPDATE OF owner_phone, owner_name, tenant_phone, tenant_name, operator_phone, operator_name, resident_type, apartment_number ON public.contacts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.portal_roster_sync_from_contact();
 
 
 --
@@ -5903,11 +6406,59 @@ ALTER TABLE ONLY public.password_reset_tokens
 
 
 --
+-- Name: portal_identity_apartments portal_identity_apartments_approval_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_identity_apartments
+    ADD CONSTRAINT portal_identity_apartments_approval_id_fkey FOREIGN KEY (approval_id) REFERENCES public.portal_identity_approvals(id) ON DELETE CASCADE;
+
+
+--
+-- Name: portal_identity_approvals portal_identity_approvals_decided_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_identity_approvals
+    ADD CONSTRAINT portal_identity_approvals_decided_by_fkey FOREIGN KEY (decided_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: portal_identity_approvals portal_identity_approvals_ended_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_identity_approvals
+    ADD CONSTRAINT portal_identity_approvals_ended_by_fkey FOREIGN KEY (ended_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: portal_identity_approvals portal_identity_approvals_requested_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_identity_approvals
+    ADD CONSTRAINT portal_identity_approvals_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: portal_lockouts portal_lockouts_released_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.portal_lockouts
     ADD CONSTRAINT portal_lockouts_released_by_fkey FOREIGN KEY (released_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: portal_phone_entry_flags portal_phone_entry_flags_cleared_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_phone_entry_flags
+    ADD CONSTRAINT portal_phone_entry_flags_cleared_by_fkey FOREIGN KEY (cleared_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: portal_phone_entry_flags portal_phone_entry_flags_flagged_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_phone_entry_flags
+    ADD CONSTRAINT portal_phone_entry_flags_flagged_by_fkey FOREIGN KEY (flagged_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -6368,5 +6919,9 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260930054613'),
     ('20261003074737'),
     ('20261003095149'),
-    ('20261003095150')
+    ('20261003095150'),
+    ('20261003161745'),
+    ('20261003161746'),
+    ('20261003161747'),
+    ('20261003161749')
 ;
