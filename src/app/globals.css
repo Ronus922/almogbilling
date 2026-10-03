@@ -7,6 +7,7 @@
 @import "./styles/chips.css";
 @import "./styles/responsive.css";
 @import "./styles/portal.css";
+@import "./styles/portal-report.css";
 
 @custom-variant dark (&:is(.dark *));
 

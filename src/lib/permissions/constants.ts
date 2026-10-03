@@ -102,6 +102,20 @@ export const SUPER_ADMIN_ONLY: readonly string[] = ['users_management', 'roles_m
 // anything they have today.
 export const ASSISTANT_ROLES: readonly Role[] = ['super_admin', 'admin', 'manager', 'viewer'];
 
+// ── Phone of a resident who reported a fault from the owners portal ──────────
+// A portal report carries the reporter's phone. It is an apartment owner's
+// contact detail, so it follows the permission that already governs those —
+// the tenants list ("רשימת דיירים", contacts:view) — not a new module
+// (decision 03/10/2026). Without it the issue still shows name + apartment,
+// and the phone is never put in the API response at all. Today: super_admin,
+// admin and manager (default matrix) see it; cleaner / maintenance do not.
+// One predicate for the three layers: canSeeReporterPhone() (check.ts) in
+// GET /api/issues/[id] and on /issues for the panel.
+export const REPORTER_PHONE_PERMISSION = { module: 'contacts', action: 'view' } as const satisfies {
+  module: string;
+  action: Action;
+};
+
 function noPerm(module: string): ModulePermission {
   return { module, canView: false, canEdit: false };
 }

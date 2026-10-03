@@ -9,9 +9,12 @@
 //       user_permissions rows grant — no row ⇒ denied.
 //     • the personal assistant is STAFF-ONLY: a role off ASSISTANT_ROLES (a
 //       field worker, a future resident) is denied even with matrix rows.
+//     • a portal reporter's phone follows contacts:view (owners' contact
+//       details) — never a field worker's by default.
 //   Run under tsx (imports .ts source). Pure — no DB.
 import { run, fail, ok } from './_check-lib.mjs';
-import { hasPermission, canManageRole, canUseAssistant } from '../src/lib/permissions/check.ts';
+import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone } from '../src/lib/permissions/check.ts';
+import { DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER } from '../src/lib/permissions/constants.ts';
 
 run('check-rbac', async () => {
   const t = (name, cond) => (cond ? ok(name) : fail(name));
@@ -60,4 +63,15 @@ run('check-rbac', async () => {
   t('assistant: cleaner נחסם גם עם dashboard/view', canUseAssistant('cleaner', dash) === false);
   t('assistant: maintenance נחסם גם עם dashboard/view', canUseAssistant('maintenance', dash) === false);
   t('assistant: תפקיד עתידי (resident) נחסם כברירת מחדל', canUseAssistant('resident', dash) === false);
+
+  // canSeeReporterPhone — the phone of a resident who reported a fault from the
+  // portal is an owner's contact detail: contacts:view, no new module. The
+  // route sends it, and the panel shows it, only when this is true.
+  t('reporter phone: super_admin רשאי', canSeeReporterPhone('super_admin', []) === true);
+  t('reporter phone: admin רשאי', canSeeReporterPhone('admin', []) === true);
+  t('reporter phone: manager (מטריצת ברירת מחדל) רשאי', canSeeReporterPhone('manager', DEFAULT_MANAGER) === true);
+  t('reporter phone: manager בלי contacts/view נחסם', canSeeReporterPhone('manager', [{ module: 'issues', canView: true, canEdit: true }]) === false);
+  t('reporter phone: cleaner (ברירת מחדל) נחסם', canSeeReporterPhone('cleaner', DEFAULT_WORKER) === false);
+  t('reporter phone: maintenance (ברירת מחדל) נחסם', canSeeReporterPhone('maintenance', DEFAULT_WORKER) === false);
+  t('reporter phone: viewer (ברירת מחדל) נחסם', canSeeReporterPhone('viewer', DEFAULT_VIEWER) === false);
 });

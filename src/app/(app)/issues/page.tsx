@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
-import { hasPermission } from '@/lib/permissions/check';
+import { canSeeReporterPhone, hasPermission } from '@/lib/permissions/check';
 import { isWorkerRole, roleLabel } from '@/lib/permissions/constants';
 import { listIssues, getIssueKpis } from '@/lib/db/issues';
 import { listAssignableUsers, findUserById } from '@/lib/db/users';
@@ -54,6 +54,9 @@ export default async function IssuesPage() {
 
   // ── Manager / admin: the existing screen, unchanged ─────────────────────────
   const canEdit = hasPermission(actor.role, actor.permissions, 'issues', 'edit');
+  // A portal report's phone in the panel — the same predicate the detail route
+  // applies before it sends the phone at all (contacts:view).
+  const reporterPhoneVisible = canSeeReporterPhone(actor.role, actor.permissions);
 
   const [initialIssues, kpis, assigneeRows, supplierRows] = await Promise.all([
     listIssues({ sort: 'created_desc' }),
@@ -92,6 +95,7 @@ export default async function IssuesPage() {
       suppliers={suppliers}
       currentUser={currentUser}
       canEdit={canEdit}
+      canSeeReporterPhone={reporterPhoneVisible}
     />
   );
 }

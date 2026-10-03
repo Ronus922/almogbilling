@@ -237,10 +237,8 @@ begin
   -- 3b. Open questions the SOURCE has stopped asking. Until 30/09/2026 a
   --     suggestion only closed when OUR value moved to meet it; a proposal
   --     the source itself withdrew stayed open for ever. It withdrew plenty
-  --     the day the names moved to the resident list: the debt export's
-  --     truncated "' אפרטמנטס- טלי אראל" had been proposed against our full
-  --     name, and the list now says our name was right all along. Nobody
-  --     should have to reject 27 proposals that nothing is making any more.
+  --     the day the names moved to the resident list. Nobody should have to
+  --     reject a proposal that nothing is making any more.
   update public.contact_sync_suggestions s
      set status = 'obsolete', resolved_at = now()
     from public.contact_sync_incoming(p_apartments, p_fields, p_values, p_may_suggest) i
@@ -1643,11 +1641,91 @@ CREATE TABLE public.issues (
     due_date date,
     due_time time without time zone,
     videos text[] DEFAULT '{}'::text[] NOT NULL,
+    source text DEFAULT 'staff'::text NOT NULL,
+    reporter_contact_id uuid,
+    reporter_name text,
+    reporter_phone text,
+    reporter_apartment text,
+    reporter_location text,
+    reporter_area text,
+    ticket_number integer,
     CONSTRAINT issues_location_type_check CHECK ((location_type = ANY (ARRAY['apartment'::text, 'area'::text, 'general'::text]))),
+    CONSTRAINT issues_portal_reporter_check CHECK (((source <> 'portal'::text) OR ((reporter_phone IS NOT NULL) AND (reporter_apartment IS NOT NULL) AND (reporter_location IS NOT NULL) AND (ticket_number IS NOT NULL)))),
     CONSTRAINT issues_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text]))),
+    CONSTRAINT issues_reporter_phone_e164_check CHECK (((reporter_phone IS NULL) OR (reporter_phone ~ '^\+[1-9][0-9]{6,14}$'::text))),
+    CONSTRAINT issues_source_check CHECK ((source = ANY (ARRAY['staff'::text, 'portal'::text]))),
     CONSTRAINT issues_status_check CHECK ((status = ANY (ARRAY['open'::text, 'in_progress'::text, 'resolved'::text, 'closed'::text]))),
     CONSTRAINT issues_target_type_check CHECK ((target_type = ANY (ARRAY['room'::text, 'area'::text])))
 );
+
+
+--
+-- Name: COLUMN issues.source; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.source IS 'Who opened the issue: staff (the issues screen) or portal (an owner, through /portal/report).';
+
+
+--
+-- Name: COLUMN issues.reporter_contact_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.reporter_contact_id IS 'Portal reports: the apartment_owner_phones row (phone + apartment) that signed in. Pointer only — the reporter_* snapshot is the record.';
+
+
+--
+-- Name: COLUMN issues.reporter_phone; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.reporter_phone IS 'Portal reports: the reporter''s phone at report time, E.164, from the portal session. Served only to staff with contacts:view.';
+
+
+--
+-- Name: COLUMN issues.reporter_apartment; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.reporter_apartment IS 'Portal reports: the reporter''s apartment at report time (the lowest-numbered apartment of the phone).';
+
+
+--
+-- Name: COLUMN issues.reporter_location; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.reporter_location IS 'Portal reports: "מיקום" as the resident typed it.';
+
+
+--
+-- Name: COLUMN issues.reporter_area; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.reporter_area IS 'Portal reports: "קומה / אזור" as the resident typed it (optional).';
+
+
+--
+-- Name: COLUMN issues.ticket_number; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.ticket_number IS 'Portal reports: the call number shown to the resident (issues_ticket_number_seq, from 1001).';
+
+
+--
+-- Name: issues_ticket_number_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.issues_ticket_number_seq
+    AS integer
+    START WITH 1001
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: issues_ticket_number_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.issues_ticket_number_seq OWNED BY public.issues.ticket_number;
 
 
 --
@@ -3094,6 +3172,14 @@ ALTER TABLE ONLY public.issue_comments
 
 ALTER TABLE ONLY public.issues
     ADD CONSTRAINT issues_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issues issues_ticket_number_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_ticket_number_key UNIQUE (ticket_number);
 
 
 --
@@ -5385,6 +5471,14 @@ ALTER TABLE ONLY public.issues
 
 
 --
+-- Name: issues issues_reporter_contact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_reporter_contact_id_fkey FOREIGN KEY (reporter_contact_id) REFERENCES public.apartment_owner_phones(id) ON DELETE SET NULL;
+
+
+--
 -- Name: issues issues_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5927,5 +6021,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260929194811'),
     ('20260929211433'),
     ('20260929212603'),
-    ('20260930054613')
+    ('20260930054613'),
+    ('20261003074737')
 ;

@@ -9,12 +9,11 @@ import { coerceIssueInput } from '@/lib/validation/issues';
 // Generic, entity-agnostic reminders coercion (reused from the tasks module).
 import { coerceReminders, reminderInPast } from '@/lib/validation/tasks';
 import { coerceAssignees } from '@/lib/validation/assignee';
-import { notifyIssue, createNotification } from '@/services/notifications';
+import { notifyIssue } from '@/services/notifications';
+import { notifyAdminsOfIssueReported } from '@/services/issueReported';
 import { dispatchCreateNotifications, buildMatrixRecipients } from '@/services/createNotify';
 import { coerceNotifySelection } from '@/lib/notify/selection';
-import { listActiveAdmins } from '@/lib/db/users';
 import type {
-  Issue,
   IssuePriority,
   IssueSort,
   IssueStatus,
@@ -24,42 +23,11 @@ import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
-/**
- * Notify every active admin (super_admin + admin) — except the reporter — that a
- * new issue was opened. Complements the per-assignee `issue_assigned`: this is
- * the "תקלה חדשה נפתחה" broadcast. Best-effort, deduped per (issue, admin);
- * never throws (fire-and-forget after the issue is already persisted).
- */
-async function notifyAdminsOfIssueReported(issue: Issue, actorId: string): Promise<void> {
-  try {
-    const desc = issue.description?.trim();
-    const message = desc ? `${issue.title} — ${desc.slice(0, 120)}` : issue.title;
-    const admins = await listActiveAdmins();
-    for (const admin of admins) {
-      if (admin.id === actorId) continue;
-      await createNotification({
-        userId: admin.id,
-        type: 'issue_reported',
-        title: 'תקלה חדשה נפתחה',
-        message,
-        sourceModule: 'issues',
-        sourceEntityType: 'issue',
-        sourceEntityId: issue.id,
-        actionUrl: `/issues?issue=${issue.id}`,
-        priority: 'high',
-        dedupeKey: `issue_reported:${issue.id}:${admin.id}`,
-      });
-    }
-  } catch (err) {
-    logger.error('[issues] issue_reported notification failed', err);
-  }
-}
-
 const STATUSES: readonly IssueStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
 const PRIORITIES: readonly IssuePriority[] = ['normal', 'high', 'urgent'];
 const SORTS: readonly IssueSort[] = ['created_desc', 'priority_desc', 'updated_desc', 'status_asc'];
 
-// GET /api/issues?status&priority&assignedTo&search&sort&kpis  (issues:view)
+// GET /api/issues?status&priority&assignedTo&search&sort&source&awaiting&kpis  (issues:view)
 export async function GET(req: NextRequest) {
   let actor: Actor;
   try {
@@ -96,7 +64,12 @@ export async function GET(req: NextRequest) {
   const sortRaw = sp.get('sort')?.trim();
   const sort = sortRaw && SORTS.includes(sortRaw as IssueSort) ? (sortRaw as IssueSort) : undefined;
 
-  const items = await listIssues({ status, priority, assignedTo, search, sort });
+  // "מדיירים" (source=portal) and "ממתין לשיוך" (awaiting=1) — filters, not
+  // statuses. Anything else in either parameter is ignored (no filter).
+  const source = sp.get('source')?.trim() === 'portal' ? 'portal' as const : undefined;
+  const awaitingAssignment = sp.get('awaiting') === '1';
+
+  const items = await listIssues({ status, priority, assignedTo, search, sort, source, awaitingAssignment });
 
   if (sp.get('kpis') === '1') {
     const kpis = await getIssueKpis(scope);

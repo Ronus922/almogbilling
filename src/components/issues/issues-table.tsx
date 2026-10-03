@@ -7,6 +7,7 @@ import {
 import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { TargetCell } from '@/components/targets/TargetCell';
 import { RowActions } from '@/components/shared/RowActions';
+import { IssueSourceLine } from './IssueReporter';
 import { cn } from '@/lib/utils';
 import {
   ISSUE_STATUS_BADGE, ISSUE_PRIORITY_BADGE, issueStatusLabel, issuePriorityLabel,
@@ -62,6 +63,9 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect, onDelete }: 
                     </span>
                   )}
                 </div>
+                {i.source === 'portal' && (
+                  <div className="mt-1.5"><IssueSourceLine issue={i} /></div>
+                )}
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <span className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium', ISSUE_STATUS_BADGE[i.status])}>
                     {issueStatusLabel(i.status)}
@@ -122,6 +126,9 @@ export function IssuesTable({ issues, sort, onSortChange, onSelect, onDelete }: 
                     </span>
                   )}
                 </div>
+                {i.source === 'portal' && (
+                  <div className="mt-1"><IssueSourceLine issue={i} /></div>
+                )}
               </TableCell>
               <TableCell className="px-6 py-3.5 text-center text-sm">
                 <TargetCell type={i.target_type} label={i.target_label} />
