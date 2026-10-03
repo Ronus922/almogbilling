@@ -1,30 +1,76 @@
 import type { Metadata, Viewport } from 'next';
-import { Heebo, IBM_Plex_Mono, Inter } from 'next/font/google';
+import localFont from 'next/font/local';
 import { Toaster } from '@/components/ui/sonner';
 import { InstallPrompt } from '@/components/app-shell/InstallPrompt';
 import './globals.css';
 
-const heebo = Heebo({
+// The fonts are self-hosted (03/10/2026): the woff2 files are in src/fonts —
+// copied from Fontsource's npm packages, each folder with its OFL.txt — so the
+// build never reaches Google Fonts (which used to fail CI at random). Same
+// families, weights, CSS variables and display as the Google-hosted setup
+// they replace, and the SAME family names, because the CSS also names them
+// literally ('Heebo' in buttons.css, print.css and the portal skin).
+//
+// THE CONST NAMES ARE THE FAMILY NAMES: next/font/local names the family (and
+// its "<name> Fallback" face) after the variable it is assigned to. `Heebo`
+// and `Inter` stay exactly what Google served; the chips' mono font is
+// `IBMPlexMono` (only ever read through --font-chip-mono).
+//
+// One file = one subset, and next/font/local has no per-file unicode-range,
+// so Heebo's Hebrew subset is a second call that declares the family 'Heebo'
+// itself; the browser stitches the two by unicode-range. Only the call that
+// owns --font-heebo generates the "Heebo Fallback" face. The variable files cover
+// 100–900; the declared ranges keep today's weights (a 900 still resolves to
+// Heebo's 800, as it did with the static files). next/font takes literals
+// only, so each unicode-range is written out in full: Fontsource's "latin"
+// and "hebrew" ranges, the same ones Google serves for those subsets.
+
+const Heebo = localFont({
+  src: '../fonts/heebo/heebo-latin-wght-normal.woff2',
+  weight: '400 800',
+  display: 'swap',
   variable: '--font-heebo',
-  subsets: ['hebrew', 'latin'],
-  weight: ['400', '500', '600', '700', '800'],
+  declarations: [
+    { prop: 'unicode-range', value: 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD' },
+  ],
+});
+const HeeboHebrew = localFont({
+  src: '../fonts/heebo/heebo-hebrew-wght-normal.woff2',
+  weight: '400 800',
+  display: 'swap',
+  variable: '--font-heebo-hebrew',
+  adjustFontFallback: false,
+  declarations: [
+    { prop: 'font-family', value: "'Heebo'" },
+    { prop: 'unicode-range', value: 'U+0307-0308,U+0590-05FF,U+200C-2010,U+20AA,U+25CC,U+FB1D-FB4F' },
+  ],
 });
 
 // Inter — used for numbers, amounts and phones via the `font-num` utility
 // (tabular-nums) so figures align cleanly.
-const inter = Inter({
+const Inter = localFont({
+  src: '../fonts/inter/inter-latin-wght-normal.woff2',
+  weight: '400 700',
+  display: 'swap',
   variable: '--font-inter',
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
+  declarations: [
+    { prop: 'unicode-range', value: 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD' },
+  ],
 });
 
 // IBM Plex Mono — SCOPED to the chips module only (declared exception,
 // DESIGN.md "מודול צ'יפים"): chip numbers/phones there render via the
 // `.chip-num` class inside `.chips-skin`. The global `font-num` stays Inter.
-const chipMono = IBM_Plex_Mono({
+const IBMPlexMono = localFont({
+  src: [
+    { path: '../fonts/ibm-plex-mono/ibm-plex-mono-latin-500-normal.woff2', weight: '500', style: 'normal' },
+    { path: '../fonts/ibm-plex-mono/ibm-plex-mono-latin-600-normal.woff2', weight: '600', style: 'normal' },
+  ],
+  display: 'swap',
   variable: '--font-chip-mono',
-  subsets: ['latin'],
-  weight: ['500', '600'],
+  declarations: [
+    { prop: 'unicode-range', value: 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD' },
+  ],
 });
 
 export const metadata: Metadata = {
@@ -65,7 +111,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="he" dir="rtl" className={`${heebo.variable} ${inter.variable} ${chipMono.variable} h-full antialiased`}>
+    <html lang="he" dir="rtl" className={`${Heebo.variable} ${HeeboHebrew.variable} ${Inter.variable} ${IBMPlexMono.variable} h-full antialiased`}>
       <body className="min-h-full">
         {children}
         <Toaster richColors position="top-center" />
