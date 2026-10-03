@@ -294,7 +294,7 @@ d('portal roles + identity (03/10/2026)', () => {
   });
 
   // ── 5. Bllink ──────────────────────────────────────────────────────────
-  it('Bllink: a person who vanished → "ניתוק"; a new one → "שיוך" with the role; nothing applied by itself', async () => {
+  it('Bllink: a new person → "שיוך" with the role; "ניתוק" held back (containment); nothing applied by itself', async () => {
     await card(A.bl, { owner_name: 'נשאר', owner_phone: P.blKept });
     await pool.query(`insert into public.contact_people (contact_id, role, name, phone)
       select id, 'owner', 'נעלם', $2 from public.contacts where apartment_number = $1`, [A.bl, P.blGone]);
@@ -312,24 +312,19 @@ d('portal roles + identity (03/10/2026)', () => {
       [JSON.stringify(people)]);
     made.scrapes.push(s.rows[0]!.id);
     const out = await suggestPortalLinks(s.rows[0]!.id);
-    expect(out).toMatchObject({ suggested_link: 1, suggested_unlink: 1 });
+    expect(out).toMatchObject({ suggested_link: 1, suggested_unlink: 0 });
 
     const sug = await listSuggestionsForApartment(A.bl);
     const linkS = sug.find((x) => x.field === 'portal_link')!;
-    const unlinkS = sug.find((x) => x.field === 'portal_unlink')!;
+    expect(sug.some((x) => x.field === 'portal_unlink')).toBe(false);
     expect(linkS).toMatchObject({
       phone_e164: e164(P.blNew), person_role: 'tenant', person_name: 'שוכרת חדשה', access: true, marks_rented: true,
     });
-    expect(unlinkS).toMatchObject({ phone_e164: e164(P.blGone), access: true });
     // nothing changed by itself
     expect((await link(A.bl, P.blGone))?.is_active).toBe(true);
     expect(await link(A.bl, P.blNew)).toBeNull();
 
-    // "אשר הכל" never approves an access suggestion
-    expect(await resolveSuggestions([linkS.id, unlinkS.id], 'approve', adminId)).toBe(0);
-    // one by one: unlink detaches, link writes the person onto the card (role tenant)
-    expect(await resolveSuggestions([unlinkS.id], 'approve', adminId)).toBe(1);
-    expect(await link(A.bl, P.blGone)).toMatchObject({ is_active: false });
+    // one by one: the link writes the person onto the card (role tenant)
     expect(await resolveSuggestions([linkS.id], 'approve', adminId)).toBe(1);
     expect(await link(A.bl, P.blNew)).toMatchObject({ is_active: true, role: 'tenant' });
   });
