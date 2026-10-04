@@ -182,3 +182,27 @@ export function planBoardMove<T extends BoardIssue & { id: string }>(
   });
   return plan;
 }
+
+/** "העבר אל…" (the phone's card menu): every column but the one the card sits in. */
+export function moveToTargets(issue: BoardIssue, today: string): IssueBoardColumnDef[] {
+  const here = boardColumn(issue, today);
+  return ISSUE_BOARD_COLUMNS.filter((c) => c.key !== here);
+}
+
+export type MoveToAction =
+  | { kind: 'move'; column: IssueBoardColumn; beforeId: string | null }
+  /** "בוצע" closes the issue, exactly like a drop on it. */
+  | { kind: 'complete' };
+
+/** A choice in "העבר אל…": the card goes to the TOP of that column — above
+ *  its first card (null = the column is empty) — or, for "בוצע", is closed. */
+export function moveToAction<T extends BoardIssue & { id: string }>(
+  issues: T[],
+  movedId: string,
+  target: IssueBoardColumnKey,
+  today: string,
+): MoveToAction {
+  if (target === 'done') return { kind: 'complete' };
+  const top = groupBoard(issues, today)[target].find((i) => i.id !== movedId);
+  return { kind: 'move', column: target, beforeId: top?.id ?? null };
+}

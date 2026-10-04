@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   BOARD_SORT_GAP, ISSUE_BOARD_COLUMNS, boardColumn, compareBoardIssues, groupBoard, initialBoardColumn,
-  issueBoardColumn, jerusalemToday, overdueDays, overdueLabel, planBoardMove, type BoardIssue,
+  issueBoardColumn, jerusalemToday, moveToAction, moveToTargets, overdueDays, overdueLabel, planBoardMove,
+  type BoardIssue,
 } from '@/lib/issues/board';
 import type { IssueBoardColumn } from '@/lib/types/issues';
 import { residentReportLabel } from '@/components/issues/IssueReporter';
@@ -219,6 +220,41 @@ describe('a drop — planBoardMove', () => {
     const { board } = after(cards, 'h', 'awaiting', 'a1');
     const moved = board.awaiting.find((c) => c.id === 'h');
     expect(moved).toMatchObject({ assignees: HANDLER, due_date: TODAY, priority: 'urgent', board_column: 'awaiting' });
+  });
+});
+
+describe('"העבר אל…" — the phone\'s card menu', () => {
+  type Card = BoardIssue & { id: string };
+  const card = (id: string, column: IssueBoardColumn, sortOrder: number): Card =>
+    issue({ id, board_column: column, sort_order: sortOrder });
+  const cards = (): Card[] => [
+    card('a1', 'awaiting', 0), card('a2', 'awaiting', BOARD_SORT_GAP),
+    card('t1', 'today', -BOARD_SORT_GAP), card('t2', 'today', 0),
+    card('p1', 'in_progress', 0),
+  ];
+
+  it('offers the three other columns, "בוצע" included, in board order', () => {
+    expect(moveToTargets(cards()[0], TODAY).map((c) => c.key)).toEqual(['today', 'in_progress', 'done']);
+    expect(moveToTargets(cards()[4], TODAY).map((c) => c.key)).toEqual(['awaiting', 'today', 'done']);
+  });
+
+  it('a column → the top of it: above its first card — and the drop plan puts it there', () => {
+    const all = cards();
+    const action = moveToAction(all, 'p1', 'today', TODAY);
+    expect(action).toEqual({ kind: 'move', column: 'today', beforeId: 't1' });
+    if (action.kind !== 'move') throw new Error('expected a move');
+    const plan = planBoardMove(all, 'p1', action.column, action.beforeId, TODAY);
+    const next = all.map((c) => (c.id === 'p1' ? { ...c, board_column: 'today' as const, sort_order: plan!.get('p1')! } : c));
+    expect(groupBoard(next, TODAY).today.map((c) => c.id)).toEqual(['p1', 't1', 't2']);
+  });
+
+  it('an empty column → null (the plan keeps the card\'s own sort_order)', () => {
+    expect(moveToAction(cards().filter((c) => c.id !== 'p1').concat(card('x', 'awaiting', 5)), 'x', 'in_progress', TODAY))
+      .toEqual({ kind: 'move', column: 'in_progress', beforeId: null });
+  });
+
+  it('"בוצע" closes the issue, exactly like a drop on it', () => {
+    expect(moveToAction(cards(), 'a1', 'done', TODAY)).toEqual({ kind: 'complete' });
   });
 });
 
