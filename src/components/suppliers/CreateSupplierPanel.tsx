@@ -18,6 +18,10 @@ import {
 import { SupplierSection } from './SupplierSection';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { SupplierField, FIELD_LABEL } from './SupplierField';
+import {
+  SupplierContactsEditor, supplierContactErrors, contactRowsPayload,
+  type SupplierContactRow,
+} from './SupplierContacts';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { validatePhone } from '@/lib/validation';
 import { PAYMENT_TERMS, paymentTermsLabel } from '@/lib/constants/suppliers';
@@ -77,6 +81,7 @@ const EMPTY_FORM: FormState = {
 
 export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated }: Props) {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [contacts, setContacts] = useState<SupplierContactRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
@@ -85,6 +90,7 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
   useEffect(() => {
     if (open) {
       setForm(EMPTY_FORM);
+      setContacts([]);
       setTouched({});
       setSubmitting(false);
     }
@@ -116,12 +122,15 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
     return touched[key] ? errors[key] ?? null : null;
   }
 
+  const contactErrors = useMemo(() => supplierContactErrors(contacts), [contacts]);
+
   const dirty = useMemo(
-    () => JSON.stringify(form) !== JSON.stringify(EMPTY_FORM),
-    [form],
+    () => JSON.stringify(form) !== JSON.stringify(EMPTY_FORM) || contacts.length > 0,
+    [form, contacts],
   );
 
-  const canSubmit = !errors.display_name && !errors.phone && !errors.mobile && !submitting;
+  const canSubmit =
+    !errors.display_name && !errors.phone && !errors.mobile && contactErrors.size === 0 && !submitting;
 
   // Defensive ESC: panel listens unless the cancel-confirm dialog is open.
   useEscapeKey(open && !confirmCloseOpen, () => requestClose());
@@ -174,13 +183,14 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, additional_contacts: contactRowsPayload(contacts) }),
       });
       const data = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) throw new Error(data.error ?? 'יצירת הספק נכשלה');
 
       toast.success('הספק נוצר');
       setForm(EMPTY_FORM);
+      setContacts([]);
       setTouched({});
       onCreated();
       onOpenChange(false);
@@ -305,6 +315,13 @@ export function CreateSupplierPanel({ open, categories, onOpenChange, onCreated 
                     disabled={submitting}
                     dir="ltr"
                     placeholder="supplier@example.com"
+                  />
+                  <SupplierContactsEditor
+                    idPrefix="sup"
+                    rows={contacts}
+                    onChange={setContacts}
+                    errors={contactErrors}
+                    disabled={submitting}
                   />
                 </div>
               </SupplierSection>

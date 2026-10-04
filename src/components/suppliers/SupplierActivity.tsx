@@ -13,6 +13,7 @@ const FIELD_LABELS: Record<string, string> = {
   display_name: 'שם החברה',
   company_name: 'שם החברה',
   contact_person: 'איש קשר',
+  additional_contacts: 'אנשי קשר נוספים',
   supplier_type: 'סוג ספק',
   category_id: 'קטגוריה',
   status: 'סטטוס',

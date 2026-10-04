@@ -13,6 +13,7 @@ import { cleanPhoneField } from '@/lib/whatsapp';
 import { COLOR_HEX_RE } from '@/lib/validation/status';
 import type {
   Supplier,
+  SupplierContactInput,
   SupplierStatus,
   SupplierPaymentTerms,
   SupplierWritableFields,
@@ -134,6 +135,23 @@ export function supplierChangedFields(
   after: SupplierWritableFields,
 ): (keyof SupplierWritableFields)[] {
   return WRITABLE_KEYS.filter((k) => (before[k] ?? null) !== (after[k] ?? null));
+}
+
+/**
+ * Did a save change the additional contacts? Compares the saved list with the
+ * incoming one field by field, in order (sort_order = position), ignoring row
+ * ids — so a save that leaves them as they were neither rewrites the rows nor
+ * logs 'additional_contacts' in the activity log.
+ */
+export function supplierContactsChanged(
+  before: readonly SupplierContactInput[],
+  after: readonly SupplierContactInput[],
+): boolean {
+  if (before.length !== after.length) return true;
+  return before.some((b, i) => {
+    const a = after[i];
+    return b.name !== a.name || b.phone !== a.phone || b.email !== a.email;
+  });
 }
 
 // ─── Category form ────────────────────────────────────────────────────────

@@ -3,7 +3,9 @@ import {
   coerceAndValidateSupplier,
   validateSupplierCategoryForm,
   canDeleteSupplierCategory,
+  supplierContactsChanged,
 } from '@/lib/validation/suppliers';
+import { supplierContactsSchema } from '@/lib/validation/requests';
 
 const UUID = '11111111-1111-1111-1111-111111111111';
 
@@ -128,5 +130,80 @@ describe('canDeleteSupplierCategory — delete guard', () => {
   it('blocks deletion when live suppliers are linked', () => {
     expect(canDeleteSupplierCategory(1)).toBe(false);
     expect(canDeleteSupplierCategory(42)).toBe(false);
+  });
+});
+
+// Additional contacts ("הוסף איש קשר נוסף") — the body list of POST/PATCH.
+describe('supplierContactsSchema — additional contacts', () => {
+  const row = { name: 'דנה', phone: '052-1234567', email: 'dana@example.com' };
+
+  it('keeps name / email and cleans the phone like the supplier fields', () => {
+    const r = supplierContactsSchema.safeParse([row]);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data).toEqual([{ name: 'דנה', phone: '0521234567', email: 'dana@example.com' }]);
+    }
+  });
+
+  it('has exactly three fields — an unknown key (e.g. an old "role") is dropped', () => {
+    const r = supplierContactsSchema.safeParse([{ ...row, role: 'הנהלת חשבונות' }, { role: 'מנהל' }]);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data).toEqual([{ name: 'דנה', phone: '0521234567', email: 'dana@example.com' }]);
+    }
+  });
+
+  it('trims, defaults missing fields to empty, drops a fully blank row', () => {
+    const r = supplierContactsSchema.safeParse([
+      { name: '  יוסי  ' },
+      { name: ' ', phone: '', email: '' },
+      {},
+    ]);
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data).toEqual([{ name: 'יוסי', phone: '', email: '' }]);
+  });
+
+  it('accepts an empty list (removing every additional contact)', () => {
+    const r = supplierContactsSchema.safeParse([]);
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data).toEqual([]);
+  });
+
+  it('rejects an invalid phone with a Hebrew message', () => {
+    const r = supplierContactsSchema.safeParse([{ ...row, phone: '12' }]);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]?.message).toBe('מספר טלפון לא תקין באיש קשר נוסף');
+  });
+
+  it('rejects an invalid email with a Hebrew message', () => {
+    const r = supplierContactsSchema.safeParse([{ ...row, email: 'not-an-email' }]);
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]?.message).toBe('כתובת אימייל לא תקינה באיש קשר נוסף');
+  });
+
+  it('rejects a non-list and more than 50 rows', () => {
+    expect(supplierContactsSchema.safeParse('דנה').success).toBe(false);
+    expect(supplierContactsSchema.safeParse([1]).success).toBe(false);
+    expect(supplierContactsSchema.safeParse(Array.from({ length: 51 }, () => row)).success).toBe(false);
+    expect(supplierContactsSchema.safeParse(Array.from({ length: 50 }, () => row)).success).toBe(true);
+  });
+});
+
+describe('supplierContactsChanged — activity log + rewrite only on a real change', () => {
+  const a = { name: 'דנה', phone: '0521234567', email: 'dana@example.com' };
+  const b = { name: 'יוסי', phone: '', email: '' };
+
+  it('same list (ids ignored) → unchanged', () => {
+    expect(supplierContactsChanged([{ ...a, id: 'x', sort_order: 0 } as typeof a], [a])).toBe(false);
+    expect(supplierContactsChanged([], [])).toBe(false);
+  });
+
+  it('added, removed, edited or reordered → changed', () => {
+    expect(supplierContactsChanged([a], [a, b])).toBe(true);
+    expect(supplierContactsChanged([a, b], [a])).toBe(true);
+    expect(supplierContactsChanged([a], [{ ...a, name: 'דנה כהן' }])).toBe(true);
+    expect(supplierContactsChanged([a], [{ ...a, phone: '0529999999' }])).toBe(true);
+    expect(supplierContactsChanged([a], [{ ...a, email: 'other@example.com' }])).toBe(true);
+    expect(supplierContactsChanged([a, b], [b, a])).toBe(true);
   });
 });

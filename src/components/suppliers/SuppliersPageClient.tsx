@@ -134,12 +134,14 @@ export function SuppliersPageClient({
         />
       </div>
 
-      <CreateSupplierPanel
-        open={showCreate}
-        categories={categories}
-        onOpenChange={setShowCreate}
-        onCreated={fetchSuppliers}
-      />
+      {canEdit && (
+        <CreateSupplierPanel
+          open={showCreate}
+          categories={categories}
+          onOpenChange={setShowCreate}
+          onCreated={fetchSuppliers}
+        />
+      )}
 
       <SupplierDetailPanel
         supplierId={selectedId}

@@ -68,6 +68,31 @@ export interface Supplier {
   deleted_at: Date | null;
 }
 
+/** An additional contact person of a supplier (public.supplier_contacts) —
+ *  three fields: name, mobile phone and email. The primary contact is not one
+ *  of these rows and keeps its own fields on Supplier. */
+export interface SupplierContact {
+  id: string;
+  name: string;
+  /** The contact's mobile number (panel label "טלפון נייד"). */
+  phone: string;
+  email: string;
+  sort_order: number;
+}
+
+/** One additional contact as the panel sends it — the list is saved whole. */
+export interface SupplierContactInput {
+  name: string;
+  phone: string;
+  email: string;
+}
+
+/** The single-supplier read (GET / PATCH /api/suppliers/[id]). The list rows
+ *  and the pickers never load the additional contacts. */
+export interface SupplierDetail extends Supplier {
+  additional_contacts: SupplierContact[];
+}
+
 /** A supplier list row — adds a documents_count aggregate + the joined category name. */
 export interface SupplierListItem extends Supplier {
   documents_count: number;

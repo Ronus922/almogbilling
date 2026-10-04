@@ -1,10 +1,17 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
-import { getSupplierById, updateSupplier, softDeleteSupplier } from '@/lib/db/suppliers';
-import { coerceAndValidateSupplier, supplierChangedFields } from '@/lib/validation/suppliers';
+import { withTransaction } from '@/lib/db';
+import {
+  getSupplierById, updateSupplier, softDeleteSupplier, replaceSupplierContacts,
+} from '@/lib/db/suppliers';
+import {
+  coerceAndValidateSupplier, supplierChangedFields, supplierContactsChanged,
+} from '@/lib/validation/suppliers';
+import { supplierContactsSchema } from '@/lib/validation/requests';
 import { writeAudit } from '@/lib/db/audit';
 import { logger } from '@/lib/logger';
+import type { SupplierContactInput } from '@/lib/types/suppliers';
 
 export const runtime = 'nodejs';
 
@@ -50,9 +57,26 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
   }
 
-  const result = coerceAndValidateSupplier((body ?? {}) as Record<string, unknown>);
+  const rec = (body ?? {}) as Record<string, unknown>;
+  const result = coerceAndValidateSupplier(rec);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
+  }
+
+  // Additional contacts: the edit form sends the whole list. An ABSENT key
+  // leaves them untouched — the archive/restore button PATCHes the supplier
+  // without it, and so does any client that predates the field.
+  let contacts: SupplierContactInput[] | null = null;
+  if (rec.additional_contacts !== undefined) {
+    const parsed = supplierContactsSchema.safeParse(rec.additional_contacts);
+    if (!parsed.success) {
+      const issues = parsed.error.issues;
+      return NextResponse.json(
+        { error: issues[0]?.message ?? 'invalid_additional_contacts', issues },
+        { status: 400 },
+      );
+    }
+    contacts = parsed.data;
   }
 
   try {
@@ -61,15 +85,23 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       return NextResponse.json({ error: 'not_found' }, { status: 404 });
     }
 
-    const supplier = await updateSupplier(id, result.fields);
-    if (!supplier) {
+    const contactsChanged =
+      contacts !== null && supplierContactsChanged(before.additional_contacts, contacts);
+
+    const updated = await withTransaction(async (client) => {
+      const row = await updateSupplier(id, result.fields, client);
+      if (row && contacts && contactsChanged) await replaceSupplierContacts(client, id, contacts);
+      return row;
+    });
+    if (!updated) {
       return NextResponse.json({ error: 'not_found' }, { status: 404 });
     }
 
     // Activity log: one row per save. A status flip to/from 'archived' is
     // recorded as a distinct verb; any other field change is 'updated' with the
     // list of changed field keys (the UI renders Hebrew labels, not raw values).
-    const changed = supplierChangedFields(before, result.fields);
+    const changed: string[] = supplierChangedFields(before, result.fields);
+    if (contactsChanged) changed.push('additional_contacts');
     if (changed.length > 0) {
       const statusFlipped = before.status !== result.fields.status;
       const action = statusFlipped
@@ -84,6 +116,12 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       });
     }
 
+    // Re-read after COMMIT so the response carries the saved additional
+    // contacts (the panel replaces its state with it).
+    const supplier = await getSupplierById(id);
+    if (!supplier) {
+      return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    }
     return NextResponse.json({ supplier });
   } catch (err) {
     const e = err as { code?: string };

@@ -3109,6 +3109,36 @@ CREATE TABLE public.supplier_categories (
 
 
 --
+-- Name: supplier_contacts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.supplier_contacts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    supplier_id uuid NOT NULL,
+    name text DEFAULT ''::text NOT NULL,
+    phone text DEFAULT ''::text NOT NULL,
+    email text DEFAULT ''::text NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE supplier_contacts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.supplier_contacts IS 'Additional contact people of a supplier (the primary one stays in suppliers.contact_person). The supplier panel replaces the whole list on save; sort_order = panel order.';
+
+
+--
+-- Name: COLUMN supplier_contacts.phone; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.supplier_contacts.phone IS 'Mobile phone (טלפון נייד), stored as cleanPhoneField returns it.';
+
+
+--
 -- Name: supplier_documents; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4350,6 +4380,14 @@ ALTER TABLE ONLY public.supplier_categories
 
 
 --
+-- Name: supplier_contacts supplier_contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.supplier_contacts
+    ADD CONSTRAINT supplier_contacts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: supplier_documents supplier_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5490,6 +5528,13 @@ CREATE INDEX storage_units_owner_type_idx ON public.storage_units USING btree (o
 
 
 --
+-- Name: supplier_contacts_supplier_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX supplier_contacts_supplier_id_idx ON public.supplier_contacts USING btree (supplier_id, sort_order);
+
+
+--
 -- Name: sync_runs_started_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5932,6 +5977,13 @@ CREATE TRIGGER storage_units_touch_updated_at BEFORE UPDATE ON public.storage_un
 --
 
 CREATE TRIGGER supplier_categories_touch_updated_at BEFORE UPDATE ON public.supplier_categories FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
+
+
+--
+-- Name: supplier_contacts supplier_contacts_touch_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER supplier_contacts_touch_updated_at BEFORE UPDATE ON public.supplier_contacts FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
 
 
 --
@@ -6724,6 +6776,14 @@ ALTER TABLE ONLY public.storage_units
 
 
 --
+-- Name: supplier_contacts supplier_contacts_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.supplier_contacts
+    ADD CONSTRAINT supplier_contacts_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE CASCADE;
+
+
+--
 -- Name: supplier_documents supplier_documents_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7115,5 +7175,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261003161747'),
     ('20261003161749'),
     ('20261003191659'),
-    ('20261003202918')
+    ('20261003202918'),
+    ('20261004112133')
 ;

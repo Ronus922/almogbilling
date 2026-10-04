@@ -1,8 +1,11 @@
 import 'server-only';
+import type { PoolClient } from 'pg';
 import { query, queryOne } from '@/lib/db';
 import { phoneDigitsKey } from '@/lib/whatsapp';
 import type {
   Supplier,
+  SupplierContactInput,
+  SupplierDetail,
   SupplierListItem,
   SupplierListFilters,
   SupplierDocument,
@@ -10,6 +13,8 @@ import type {
   SupplierActivityEntry,
 } from '@/lib/types/suppliers';
 import type { SupplierSearchResult } from '@/types/whatsapp';
+
+type Queryable = Pick<PoolClient, 'query'>;
 
 const SUPPLIER_COLUMNS = `
   id, display_name, company_name, contact_person, supplier_type, category_id, status,
@@ -26,6 +31,19 @@ const SUPPLIER_COLUMNS_S = `
   s.bank_name, s.bank_branch, s.bank_account, s.payment_terms,
   s.notes, s.internal_notes, s.rating, s.created_by, s.created_by_name,
   s.created_at, s.updated_at, s.deleted_at`;
+
+// The supplier's additional contacts (public.supplier_contacts) as a JSON array
+// in panel order. Correlates on the unaliased table name — single-supplier
+// reads only; the list and the pickers never load them.
+const ADDITIONAL_CONTACTS_JSON = `
+  coalesce((
+    select json_agg(json_build_object(
+             'id', sc.id, 'name', sc.name, 'phone', sc.phone, 'email', sc.email,
+             'sort_order', sc.sort_order)
+           order by sc.sort_order, sc.created_at)
+      from public.supplier_contacts sc
+     where sc.supplier_id = suppliers.id
+  ), '[]'::json) as additional_contacts`;
 
 /** List active (non-deleted) suppliers with documents_count, filtered + sorted. */
 export async function listSuppliers(filters: SupplierListFilters): Promise<SupplierListItem[]> {
@@ -118,59 +136,95 @@ export async function findSupplierIdByPhone(localPhone: string): Promise<string 
   );
 }
 
-export async function getSupplierById(id: string): Promise<Supplier | null> {
-  return queryOne<Supplier>(
-    `select ${SUPPLIER_COLUMNS} from public.suppliers where id = $1 and deleted_at is null`,
+/** One supplier with its additional contacts (panel order). */
+export async function getSupplierById(id: string): Promise<SupplierDetail | null> {
+  return queryOne<SupplierDetail>(
+    `select ${SUPPLIER_COLUMNS}, ${ADDITIONAL_CONTACTS_JSON}
+       from public.suppliers where id = $1 and deleted_at is null`,
     [id],
   );
 }
 
+/** Accepts an optional pg client so it can join the caller's withTransaction()
+ *  (the supplier and its additional contacts are written together). */
 export async function createSupplier(
   fields: SupplierWritableFields,
   createdBy: string,
   createdByName: string,
+  client?: Queryable,
 ): Promise<string> {
-  const row = await queryOne<{ id: string }>(
-    `insert into public.suppliers
+  const sql = `insert into public.suppliers
        (display_name, company_name, contact_person, supplier_type, status,
         phone, mobile, email, website, address, city, tax_id,
         bank_name, bank_branch, bank_account, payment_terms,
         notes, internal_notes, rating, created_by, created_by_name, category_id)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
-     returning id`,
-    [
-      fields.display_name, fields.company_name, fields.contact_person, fields.supplier_type,
-      fields.status, fields.phone, fields.mobile, fields.email, fields.website, fields.address,
-      fields.city, fields.tax_id, fields.bank_name, fields.bank_branch, fields.bank_account,
-      fields.payment_terms, fields.notes, fields.internal_notes, fields.rating,
-      createdBy, createdByName, fields.category_id,
-    ],
-  );
+     returning id`;
+  const params = [
+    fields.display_name, fields.company_name, fields.contact_person, fields.supplier_type,
+    fields.status, fields.phone, fields.mobile, fields.email, fields.website, fields.address,
+    fields.city, fields.tax_id, fields.bank_name, fields.bank_branch, fields.bank_account,
+    fields.payment_terms, fields.notes, fields.internal_notes, fields.rating,
+    createdBy, createdByName, fields.category_id,
+  ];
+  const row = client
+    ? (await client.query<{ id: string }>(sql, params)).rows[0] ?? null
+    : await queryOne<{ id: string }>(sql, params);
   if (!row) throw new Error('failed_to_create_supplier');
   return row.id;
 }
 
 /** Whole-object update (the panel saves the full supplier in one PATCH).
  *  Returns the updated row (for the activity diff + live UI) or null if the
- *  supplier does not exist / is soft-deleted. */
+ *  supplier does not exist / is soft-deleted. Optional client: see createSupplier. */
 export async function updateSupplier(
   id: string,
   fields: SupplierWritableFields,
+  client?: Queryable,
 ): Promise<Supplier | null> {
-  return queryOne<Supplier>(
-    `update public.suppliers set
+  const sql = `update public.suppliers set
        display_name=$2, company_name=$3, contact_person=$4, supplier_type=$5, status=$6,
        phone=$7, mobile=$8, email=$9, website=$10, address=$11, city=$12, tax_id=$13,
        bank_name=$14, bank_branch=$15, bank_account=$16, payment_terms=$17,
        notes=$18, internal_notes=$19, rating=$20, category_id=$21
      where id=$1 and deleted_at is null
-     returning ${SUPPLIER_COLUMNS}`,
-    [
-      id, fields.display_name, fields.company_name, fields.contact_person, fields.supplier_type,
-      fields.status, fields.phone, fields.mobile, fields.email, fields.website, fields.address,
-      fields.city, fields.tax_id, fields.bank_name, fields.bank_branch, fields.bank_account,
-      fields.payment_terms, fields.notes, fields.internal_notes, fields.rating, fields.category_id,
-    ],
+     returning ${SUPPLIER_COLUMNS}`;
+  const params = [
+    id, fields.display_name, fields.company_name, fields.contact_person, fields.supplier_type,
+    fields.status, fields.phone, fields.mobile, fields.email, fields.website, fields.address,
+    fields.city, fields.tax_id, fields.bank_name, fields.bank_branch, fields.bank_account,
+    fields.payment_terms, fields.notes, fields.internal_notes, fields.rating, fields.category_id,
+  ];
+  return client
+    ? (await client.query<Supplier>(sql, params)).rows[0] ?? null
+    : queryOne<Supplier>(sql, params);
+}
+
+/**
+ * Replace a supplier's additional contacts with `contacts`, in order —
+ * delete-all + insert inside the caller's transaction (the panel always sends
+ * the complete list, so a diff would only add failure modes). sort_order is the
+ * array index, so the panel order round-trips.
+ */
+export async function replaceSupplierContacts(
+  client: Queryable,
+  supplierId: string,
+  contacts: readonly SupplierContactInput[],
+): Promise<void> {
+  await client.query(`delete from public.supplier_contacts where supplier_id = $1`, [supplierId]);
+  if (contacts.length === 0) return;
+
+  const values: string[] = [];
+  const params: unknown[] = [supplierId];
+  contacts.forEach((c, i) => {
+    params.push(c.name, c.phone, c.email, i);
+    const n = params.length;
+    values.push(`($1, $${n - 3}, $${n - 2}, $${n - 1}, $${n})`);
+  });
+  await client.query(
+    `insert into public.supplier_contacts (supplier_id, name, phone, email, sort_order)
+     values ${values.join(', ')}`,
+    params,
   );
 }
 
