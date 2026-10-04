@@ -25,13 +25,22 @@ function tracked(root) {
     .trim().split('\n').filter(Boolean);
 }
 
+// git grep exits 1 for "no match"; anything else means it did not scan, and
+// reading that as "no match" would pass the check without checking. Built from
+// status + stderr only: err.message holds the command line, i.e. the secret value.
+function gitGrepError(err) {
+  const stderr = String(err.stderr ?? '').trim();
+  return new Error(`git grep נכשל (exit ${err.status ?? err.code})${stderr ? ': ' + stderr : ''} — הבדיקה לא סרקה`);
+}
+
 // git grep for a fixed string; returns matching files (empty on no match).
 function grepFixed(root, needle) {
   try {
     return execFileSync('git', ['-C', root, 'grep', '-l', '-F', '-e', needle], { encoding: 'utf8' })
       .trim().split('\n').filter(Boolean);
-  } catch {
-    return []; // exit 1 = no match
+  } catch (err) {
+    if (err.status === 1) return []; // exit 1 = no match
+    throw gitGrepError(err);
   }
 }
 
@@ -40,8 +49,9 @@ function grepRegex(root, pattern) {
   try {
     return execFileSync('git', ['-C', root, 'grep', '-l', '-E', '-e', pattern], { encoding: 'utf8' })
       .trim().split('\n').filter(Boolean);
-  } catch {
-    return []; // exit 1 = no match
+  } catch (err) {
+    if (err.status === 1) return []; // exit 1 = no match
+    throw gitGrepError(err);
   }
 }
 
