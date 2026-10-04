@@ -130,6 +130,16 @@ test('create with two additional contacts → edit one, remove one → reload: s
   await panel.getByRole('button', { name: 'שמור שינויים' }).click();
   await expect(page.getByText('הספק עודכן')).toBeVisible();
 
+  // Before any reload: the open panel shows what the PATCH response returned —
+  // and the NEXT edit starts from it (a response without the saved contacts
+  // would make that edit send [] and wipe them).
+  await expect(panel.getByRole('group', { name: 'איש קשר נוסף 2' })).toContainText('מנהלת חשבונות');
+  await expect(panel.getByRole('group', { name: 'איש קשר נוסף 3' })).toHaveCount(0);
+  await panel.getByRole('button', { name: 'ערוך' }).click();
+  await expect(panel.locator('#esup-contact-0-role')).toHaveValue('מנהלת חשבונות');
+  await expect(panel.locator('#esup-contact-1-name')).toHaveCount(0);
+  await panel.getByRole('button', { name: 'ביטול' }).click();
+
   // Reload from scratch — what the screen shows comes from the database.
   await page.reload();
   panel = await openSupplier(page, NEW_NAME);
@@ -152,9 +162,25 @@ test('create with two additional contacts → edit one, remove one → reload: s
   expect(audit.rows.map((r) => r.changes.fields)).toContainEqual(['additional_contacts']);
 
   // Archiving PATCHes the whole supplier WITHOUT the contacts key — they stay.
+  const archivePatch = page.waitForRequest(
+    (req) => req.method() === 'PATCH' && req.url().endsWith(`/api/suppliers/${id}`),
+  );
   await panel.getByRole('button', { name: 'העבר לארכיון' }).click();
+  const archiveBody = JSON.parse((await archivePatch).postData() ?? '{}') as Record<string, unknown>;
+  expect(archiveBody.status).toBe('archived');
+  expect(Object.keys(archiveBody)).not.toContain('additional_contacts');
   await expect(page.getByText('הסטטוס עודכן')).toBeVisible();
+  await expect(panel.getByRole('group', { name: 'איש קשר נוסף 2' })).toContainText('דנה E2E');
   expect(await contactsOf(id)).toEqual(saved);
+  expect(await primaryOf(id)).toEqual(primary);
+
+  // Removing the LAST additional contact sends an empty list — and it sticks.
+  await panel.getByRole('button', { name: 'ערוך' }).click();
+  await panel.getByRole('button', { name: 'הסר איש קשר נוסף 2' }).click();
+  await panel.getByRole('button', { name: 'שמור שינויים' }).click();
+  await expect(page.getByText('הספק עודכן')).toBeVisible();
+  await expect(panel.getByRole('group', { name: /איש קשר נוסף/ })).toHaveCount(0);
+  expect(await contactsOf(id)).toEqual([]);
   expect(await primaryOf(id)).toEqual(primary);
 });
 
@@ -181,10 +207,22 @@ test('an existing supplier with no additional contacts opens, edits and saves wi
   await expect(page.getByText('הספק עודכן')).toBeVisible();
   await expect(panel.getByRole('button', { name: 'ערוך' })).toBeVisible();
 
-  expect(await contactsOf(id)).toEqual([]);
-  expect(await primaryOf(id)).toEqual({
+  const oldPrimary: PrimaryRow = {
     contact_person: 'ראשי ישן', phone: '031112222', mobile: '0501112222', email: 'old@example.com',
-  });
+  };
+  expect(await contactsOf(id)).toEqual([]);
+  expect(await primaryOf(id)).toEqual(oldPrimary);
+
+  // …and the edit panel can add the first additional contact.
+  await panel.getByRole('button', { name: 'ערוך' }).click();
+  await panel.getByRole('button', { name: 'הוסף איש קשר נוסף' }).click();
+  await panel.locator('#esup-contact-0-name').fill('חדש מעריכה');
+  await panel.locator('#esup-contact-0-phone').fill('050-4444444');
+  await panel.getByRole('button', { name: 'שמור שינויים' }).click();
+  await expect(page.getByText('הספק עודכן').first()).toBeVisible();
+  await expect(panel.getByRole('group', { name: 'איש קשר נוסף 2' })).toContainText('חדש מעריכה');
+  expect(await contactsOf(id)).toEqual([{ name: 'חדש מעריכה', role: '', phone: '0504444444', email: '' }]);
+  expect(await primaryOf(id)).toEqual(oldPrimary);
 });
 
 test('a viewer sees the contacts but no add/edit button, and the API refuses the write', async ({ browser }) => {

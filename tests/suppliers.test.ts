@@ -195,7 +195,10 @@ describe('supplierContactsChanged — activity log + rewrite only on a real chan
   it('added, removed, edited or reordered → changed', () => {
     expect(supplierContactsChanged([a], [a, b])).toBe(true);
     expect(supplierContactsChanged([a, b], [a])).toBe(true);
+    expect(supplierContactsChanged([a], [{ ...a, name: 'דנה כהן' }])).toBe(true);
     expect(supplierContactsChanged([a], [{ ...a, role: 'מנהל' }])).toBe(true);
+    expect(supplierContactsChanged([a], [{ ...a, phone: '0529999999' }])).toBe(true);
+    expect(supplierContactsChanged([a], [{ ...a, email: 'other@example.com' }])).toBe(true);
     expect(supplierContactsChanged([a, b], [b, a])).toBe(true);
   });
 });
