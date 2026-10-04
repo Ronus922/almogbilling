@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 // An owner who already has one is bounced to the portal itself, mirroring what
 // the middleware does for the staff login.
 //
-// Layout: the reference screens in ref/proof — tenant-portal-login.md (≥901px:
+// Layout: the reference screens in /var/billing-proof — tenant-portal-login.md (≥901px:
 // brand column 46% on the right + form pane) and tenant-login-mobile.md (≤900px:
 // brand hero + white sheet). Both panes are rendered by PortalLoginForm, because
 // on mobile the code step replaces the hero with a top bar, and the step is

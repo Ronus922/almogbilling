@@ -8,7 +8,7 @@ import { resolveChipHolder } from '@/lib/chips/holder';
 
 // Chips-skin table (declared exception — extended from the ref palette; the
 // ref covers only the issue window). Structure follows DESIGN.md §28.9
-// CSS-grid; colors/typography follow ref/proof/whatsapp-broadcast/Chip.md.
+// CSS-grid; colors/typography follow /var/billing-proof/whatsapp-broadcast/Chip.md.
 // THE HOLDER IS THE PRIMARY COLUMN — apartment + role sit beneath the name.
 // מחזיק · מספר צ׳יפ · סוג · סטטוס · הונפק · מנפיק
 const COLS = 'grid-cols-[1.9fr_1.4fr_0.8fr_1.1fr_0.9fr_0.9fr]';

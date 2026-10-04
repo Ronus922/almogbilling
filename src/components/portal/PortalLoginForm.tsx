@@ -18,10 +18,10 @@ import { PORTAL_OTP_RESEND_COOLDOWN_SEC, pointsAtManagementCompany } from '@/lib
 // by the page because the mobile code step swaps the brand hero for a top bar
 // with a back chevron, and which step is showing is client state.
 //
-// Design: ref/proof/tenant-portal-login.md (≥901px), ref/Tenant Portal.html
+// Design: /var/billing-proof/tenant-portal-login.md (≥901px), ref/Tenant Portal.html
 // ≤900 rule between 601 and 900px (one column, a brand strip with the logo
 // only, the desktop field sizes, pane 40px 20px — 28/09/2026) and
-// ref/proof/tenant-login-mobile.md (≤600px, untouched since PR #43). What the references show and this
+// /var/billing-proof/tenant-login-mobile.md (≤600px, untouched since PR #43). What the references show and this
 // screen does NOT: the "אימייל וסיסמה" segmented control and its email mode,
 // the Face ID / "remember me" returning-user screen, the SMS autofill chip, the
 // "בקשת הצטרפות" link — none of them exists in the system (28/09/2026).
