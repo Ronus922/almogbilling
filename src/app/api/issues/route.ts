@@ -6,6 +6,7 @@ import { listIssues, createIssue, getIssueKpis } from '@/lib/db/issues';
 import { supplierExists } from '@/lib/db/suppliers';
 import { createReminder } from '@/lib/db/reminders';
 import { coerceIssueInput } from '@/lib/validation/issues';
+import { jerusalemToday } from '@/lib/issues/board';
 // Generic, entity-agnostic reminders coercion (reused from the tasks module).
 import { coerceReminders, reminderInPast } from '@/lib/validation/tasks';
 import { coerceAssignees } from '@/lib/validation/assignee';
@@ -130,6 +131,7 @@ export async function POST(req: NextRequest) {
       assignees,
       actor.id,
       actor.full_name ?? actor.username,
+      jerusalemToday(),
     );
 
     const userIds = issue.assignees.map((a) => a.user_id).filter((v): v is string => v !== null);

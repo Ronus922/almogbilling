@@ -405,3 +405,12 @@ export const contactSuggestionsResolveSchema = z.discriminatedUnion('action', [
     phone_decisions: phoneEntryDecisionsSchema.optional(),
   }),
 ]);
+
+// PATCH /api/issues/[id]/move — a drop on the issues kanban: the column, and
+// the card it now sits directly above (null = the bottom of the column). The
+// card itself is the [id]; "בוצע" is not a column here — it is a status, and
+// stays the [id] PATCH {status:'closed'}.
+export const issueBoardMoveBodySchema = z.object({
+  column: z.enum(['awaiting', 'today', 'in_progress'], { error: 'invalid_column' }),
+  before_id: z.uuid({ error: 'invalid_before_id' }).nullable(),
+});

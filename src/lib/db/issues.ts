@@ -19,6 +19,8 @@ import {
   listEntityUserIds,
 } from '@/lib/db/entityAssignees';
 import { targetLabelSql } from '@/lib/db/targets';
+import { BOARD_SORT_GAP, initialBoardColumn, planBoardMove, type BoardIssue } from '@/lib/issues/board';
+import type { IssueBoardColumn } from '@/lib/types/issues';
 
 // Handlers live in entity_assignees (migration 047) — the legacy
 // assigned_to_user_id / supplier_id columns are frozen and no longer projected.
@@ -30,7 +32,7 @@ import { targetLabelSql } from '@/lib/db/targets';
 const ISSUE_COLUMNS = `
   id, title, description, location_type, location_text, target_type, target_id, priority, status,
   due_date::text as due_date, due_time::text as due_time,
-  images, videos, resolution_notes, resolved_at::text as resolved_at, is_archived, sort_order,
+  images, videos, resolution_notes, resolved_at::text as resolved_at, is_archived, sort_order, board_column,
   created_by, created_by_name, created_at::text as created_at, updated_at::text as updated_at,
   source, reporter_name, reporter_apartment, reporter_role, reporter_location, reporter_area, ticket_number
 `;
@@ -205,18 +207,30 @@ export async function getIssueReporterPhone(id: string): Promise<string | null> 
   return row?.reporter_phone ?? null;
 }
 
+/** sort_order of a new issue: above every existing one, so it opens at the
+ *  top of whichever kanban column it starts in. */
+export const NEW_ISSUE_SORT_ORDER_SQL =
+  `(select coalesce(min(sort_order), 0) - ${BOARD_SORT_GAP} from public.issues)`;
+
 // ── Create ──────────────────────────────────────────────────────────────────
+// `today` ('YYYY-MM-DD', Asia/Jerusalem) seeds the kanban column by the stage
+// rule; from then on only a drag moves the card (lib/issues/board.ts).
 export async function createIssue(
   data: Partial<IssueWritableFields> & { title: string },
   assignees: AssigneeInput[],
   createdBy: string | null,
   createdByName: string | null,
+  today: string,
 ): Promise<IssueWithMeta> {
   const rec = data as Record<string, unknown>;
 
   const id = await withTransaction(async (client: PoolClient) => {
-    const cols: string[] = ['created_by', 'created_by_name'];
-    const vals: unknown[] = [createdBy, createdByName];
+    const cols: string[] = ['created_by', 'created_by_name', 'board_column'];
+    const vals: unknown[] = [
+      createdBy,
+      createdByName,
+      initialBoardColumn(assignees.length > 0, data.due_date ?? null, today),
+    ];
 
     for (const c of WRITABLE_COLUMNS) {
       if (c in rec && rec[c] !== undefined) {
@@ -233,8 +247,8 @@ export async function createIssue(
 
     const placeholders = vals.map((_, i) => `$${i + 1}`);
     const row = await client.query<{ id: string }>(
-      `insert into public.issues (${cols.join(', ')})
-       values (${placeholders.join(', ')})
+      `insert into public.issues (${cols.join(', ')}, sort_order)
+       values (${placeholders.join(', ')}, ${NEW_ISSUE_SORT_ORDER_SQL})
        returning id`,
       vals,
     );
@@ -302,6 +316,55 @@ export async function updateIssue(
 
   if (!existed) return null;
   return getIssueById(id);
+}
+
+// ── Kanban: a drop ──────────────────────────────────────────────────────────
+export type BoardMoveResult = 'moved' | 'not_found' | 'not_on_board' | 'stale';
+
+/**
+ * Drop an issue into a kanban column, directly above `beforeId` (null = at the
+ * bottom): board_column + sort_order, in one transaction. Never touches the
+ * handlers, the date, the priority or the status. Every card on the board is
+ * locked first, so two drops never renumber a column at the same time, and the
+ * place is planned over the FULL column — the user may be dragging on a
+ * filtered board. 'not_on_board' = archived / resolved / closed; 'stale' =
+ * `beforeId` is no longer in that column.
+ */
+export async function moveIssueOnBoard(
+  id: string,
+  column: IssueBoardColumn,
+  beforeId: string | null,
+  today: string,
+): Promise<BoardMoveResult> {
+  return withTransaction(async (client: PoolClient) => {
+    const found = await client.query(`select 1 from public.issues where id = $1`, [id]);
+    if ((found.rowCount ?? 0) === 0) return 'not_found';
+
+    const board = await client.query<BoardIssue & { id: string }>(
+      `select i.id, i.status, i.is_archived, i.priority, i.due_date::text as due_date,
+              i.due_time::text as due_time, i.created_at::text as created_at,
+              i.sort_order, i.board_column, ${assigneesJsonExpr('issue', 'i')}
+         from public.issues i
+        where i.is_archived = false and i.status in ('open', 'in_progress')
+        order by i.id
+          for update of i`,
+    );
+    if (!board.rows.some((i) => i.id === id)) return 'not_on_board';
+
+    const plan = planBoardMove(board.rows, id, column, beforeId, today);
+    if (!plan) return 'stale';
+    for (const [rowId, sortOrder] of plan) {
+      if (rowId === id) {
+        await client.query(
+          `update public.issues set board_column = $2, sort_order = $3 where id = $1`,
+          [id, column, sortOrder],
+        );
+      } else {
+        await client.query(`update public.issues set sort_order = $2 where id = $1`, [rowId, sortOrder]);
+      }
+    }
+    return 'moved';
+  });
 }
 
 export async function deleteIssue(id: string): Promise<boolean> {

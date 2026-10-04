@@ -3,6 +3,7 @@
 --
 
 
+
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -2517,6 +2518,8 @@ CREATE TABLE public.issues (
     reporter_area text,
     ticket_number integer,
     reporter_role text,
+    board_column text,
+    CONSTRAINT issues_board_column_check CHECK (((board_column IS NULL) OR (board_column = ANY (ARRAY['awaiting'::text, 'today'::text, 'in_progress'::text])))),
     CONSTRAINT issues_location_type_check CHECK ((location_type = ANY (ARRAY['apartment'::text, 'area'::text, 'general'::text]))),
     CONSTRAINT issues_portal_reporter_check CHECK (((source <> 'portal'::text) OR ((reporter_phone IS NOT NULL) AND (reporter_location IS NOT NULL) AND (ticket_number IS NOT NULL) AND ((reporter_apartment IS NULL) OR (btrim(reporter_apartment) <> ''::text)) AND ((reporter_contact_id IS NULL) OR (reporter_apartment IS NOT NULL))))),
     CONSTRAINT issues_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text]))),
@@ -2526,6 +2529,13 @@ CREATE TABLE public.issues (
     CONSTRAINT issues_status_check CHECK ((status = ANY (ARRAY['open'::text, 'in_progress'::text, 'resolved'::text, 'closed'::text]))),
     CONSTRAINT issues_target_type_check CHECK ((target_type = ANY (ARRAY['room'::text, 'area'::text])))
 );
+
+
+--
+-- Name: COLUMN issues.sort_order; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.sort_order IS 'Order inside the issue''s kanban column, ascending (spaced by 1024). A new issue goes above every existing one.';
 
 
 --
@@ -2585,10 +2595,35 @@ COMMENT ON COLUMN public.issues.reporter_role IS 'source=portal: the role the re
 
 
 --
+-- Name: COLUMN issues.board_column; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.board_column IS 'Kanban column on /issues (awaiting · today · in_progress), set at insert from the computed rule and afterwards only by a drag (PATCH /api/issues/[id]/move). NULL = computed live (lib/issues/board.ts). Resolved / closed issues show in "בוצע" whatever this says.';
+
+
+--
 -- Name: CONSTRAINT issues_portal_reporter_check ON issues; Type: COMMENT; Schema: public; Owner: -
 --
 
 COMMENT ON CONSTRAINT issues_portal_reporter_check ON public.issues IS 'Portal rows carry the reporter snapshot. reporter_apartment may be NULL only for an unidentified reporter (reporter_contact_id NULL — a phone whose apartments belong to different people); never ''''.';
+
+
+--
+-- Name: issues_sort_order_backup; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issues_sort_order_backup (
+    issue_id uuid NOT NULL,
+    sort_order integer NOT NULL,
+    backed_up_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE issues_sort_order_backup; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.issues_sort_order_backup IS 'issues.sort_order before the manual kanban (04/10/2026). Rollback source for migration 20261004180139; safe to drop once the board is confirmed.';
 
 
 --
@@ -4161,6 +4196,14 @@ ALTER TABLE ONLY public.issue_comments
 
 ALTER TABLE ONLY public.issues
     ADD CONSTRAINT issues_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issues_sort_order_backup issues_sort_order_backup_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues_sort_order_backup
+    ADD CONSTRAINT issues_sort_order_backup_pkey PRIMARY KEY (issue_id);
 
 
 --
@@ -6568,6 +6611,14 @@ ALTER TABLE ONLY public.issues
 
 
 --
+-- Name: issues_sort_order_backup issues_sort_order_backup_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues_sort_order_backup
+    ADD CONSTRAINT issues_sort_order_backup_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issues(id) ON DELETE CASCADE;
+
+
+--
 -- Name: issues issues_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7060,6 +7111,7 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 
 
+
 --
 -- Dbmate schema migrations
 --
@@ -7176,5 +7228,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261003161749'),
     ('20261003191659'),
     ('20261003202918'),
-    ('20261004112133')
+    ('20261004112133'),
+    ('20261004180139')
 ;

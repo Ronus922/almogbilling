@@ -1,15 +1,18 @@
 import { isCompletedIssueStatus } from '@/lib/constants/issues';
-import type { IssueWithMeta } from '@/lib/types/issues';
+import type { IssueBoardColumn, IssueWithMeta } from '@/lib/types/issues';
 
-// The issues kanban by STAGE OF HANDLING (phase C, 03/10/2026). Four computed
-// columns replace the priority lanes — no new status and no new date column:
-// the column is derived from the handlers (entity_assignees, exposed as
-// `assignees`), the status and issues.due_date. Priority stays a tag, a filter
-// and the first sort key inside a column.
+// The issues kanban by STAGE OF HANDLING (phase C, 03/10/2026), a MANUAL board
+// since 04/10/2026. RTL order, right to left: ממתין לשיוך · לטיפול היום ·
+// בטיפול · בוצע.
 //
-// RTL order, right to left: ממתין לשיוך · לטיפול היום · בטיפול · בוצע.
+// The stage rule (issueBoardColumn) — handlers (entity_assignees, exposed as
+// `assignees`), status and issues.due_date — only seeds a card: it is written
+// to issues.board_column when the issue is created, and from then on only a
+// drag moves the card (boardColumn). Inside a column the order is
+// issues.sort_order; compareBoardIssues breaks ties only, i.e. orders cards
+// nobody has placed yet. A resolved / closed issue is in "בוצע" by its status.
 
-export type IssueBoardColumnKey = 'awaiting' | 'today' | 'in_progress' | 'done';
+export type IssueBoardColumnKey = IssueBoardColumn | 'done';
 
 export interface IssueBoardColumnDef {
   key: IssueBoardColumnKey;
@@ -39,23 +42,36 @@ export function jerusalemToday(now: Date = new Date()): string {
 
 export type BoardIssue = Pick<
   IssueWithMeta,
-  'status' | 'is_archived' | 'assignees' | 'due_date' | 'due_time' | 'priority' | 'created_at'
+  | 'status' | 'is_archived' | 'assignees' | 'due_date' | 'due_time' | 'priority' | 'created_at'
+  | 'sort_order' | 'board_column'
 >;
 
+/** The stage rule for a not-done issue: no handler → ממתין לשיוך (even with a
+ *  date); due today or earlier → לטיפול היום; due later or undated → בטיפול. */
+export function initialBoardColumn(hasHandler: boolean, dueDate: string | null, today: string): IssueBoardColumn {
+  if (!hasHandler) return 'awaiting';
+  if (dueDate && dueDate <= today) return 'today';
+  return 'in_progress';
+}
+
 /**
- * Which column an issue sits in, or null when it is not on the board at all
- * (archived).
- *   ממתין לשיוך — not done, no handler of either kind — even with a date;
- *   לטיפול היום — handled, due today or earlier (earlier = "באיחור");
- *   בטיפול      — handled, due later or with no date;
- *   בוצע        — resolved / closed.
+ * The column the stage rule computes, or null when the issue is not on the
+ * board at all (archived). Resolved / closed → בוצע. This is the seed of a new
+ * card and the definition of the table's "לטיפול היום" filter — the card's
+ * place on the board is boardColumn().
  */
 export function issueBoardColumn(issue: BoardIssue, today: string): IssueBoardColumnKey | null {
   if (issue.is_archived) return null;
   if (isCompletedIssueStatus(issue.status)) return 'done';
-  if (issue.assignees.length === 0) return 'awaiting';
-  if (issue.due_date && issue.due_date <= today) return 'today';
-  return 'in_progress';
+  return initialBoardColumn(issue.assignees.length > 0, issue.due_date, today);
+}
+
+/** Where the card sits on the board: its stored column (placed by a drag, or
+ *  seeded at insert), the stage rule only when none is stored. */
+export function boardColumn(issue: BoardIssue, today: string): IssueBoardColumnKey | null {
+  const computed = issueBoardColumn(issue, today);
+  if (computed === null || computed === 'done') return computed;
+  return issue.board_column ?? computed;
 }
 
 function utcDay(ymd: string): number {
@@ -78,9 +94,10 @@ export function overdueLabel(days: number): string {
 const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, normal: 2 };
 
 /**
- * Order inside a column: urgent → high → normal, then by due date (undated
- * last), then time, then the oldest first. In "לטיפול היום" every overdue card
- * comes before every card due today.
+ * The computed order — the tie-break of sort_order, so the order of cards no
+ * one has placed yet: urgent → high → normal, then by due date (undated last),
+ * then time, then the oldest first. In "לטיפול היום" every overdue card comes
+ * before every card due today.
  */
 export function compareBoardIssues(column: IssueBoardColumnKey, today: string) {
   return (a: BoardIssue, b: BoardIssue): number => {
@@ -104,52 +121,64 @@ export function compareBoardIssues(column: IssueBoardColumnKey, today: string) {
   };
 }
 
-/** The board: every column's cards, sorted. Archived issues are left out. */
+/** The board: every column's cards, top to bottom. Archived issues are left out. */
 export function groupBoard<T extends BoardIssue>(
   issues: T[],
   today: string,
 ): Record<IssueBoardColumnKey, T[]> {
   const out: Record<IssueBoardColumnKey, T[]> = { awaiting: [], today: [], in_progress: [], done: [] };
   for (const i of issues) {
-    const col = issueBoardColumn(i, today);
+    const col = boardColumn(i, today);
     if (col) out[col].push(i);
   }
   for (const key of Object.keys(out) as IssueBoardColumnKey[]) {
-    out[key].sort(compareBoardIssues(key, today));
+    const computed = compareBoardIssues(key, today);
+    out[key].sort((a, b) => a.sort_order - b.sort_order || computed(a, b));
   }
   return out;
 }
 
-/** "ממתין לשיוך" is computed from the handlers — a card cannot be dropped back
- *  into it; removing the handlers in the panel is what puts it there. */
-export function canDropIntoColumn(target: IssueBoardColumnKey): boolean {
-  return target !== 'awaiting';
-}
+/** sort_order spacing: room for many drops between two cards before a column
+ *  has to be renumbered. A new issue goes BOARD_SORT_GAP above the lowest one. */
+export const BOARD_SORT_GAP = 1024;
 
-export type BoardDrop =
-  | { kind: 'noop' }
-  | { kind: 'blocked' }
-  /** Handled already: due_date := today, nothing else. */
-  | { kind: 'set_due_today'; dueDate: string }
-  /** The existing issue panel; `prefillDueDate` for the today column. Closing
-   *  it without saving changes nothing, so the card stays where it was. */
-  | { kind: 'open_panel'; prefillDueDate: string | null }
-  /** Status "closed", exactly as the "בוצע" lane always did. */
-  | { kind: 'complete' };
+/**
+ * The sort_order writes that drop `movedId` into `column`, directly above
+ * `beforeId` (null = at the bottom): issue id → new sort_order, the dragged
+ * card always included (the caller also stores `column` on it). Only the
+ * dragged card is written when its new neighbours leave room; otherwise the
+ * whole column is renumbered, writing just the cards whose value changes.
+ * null when `beforeId` is not a card of that column — a stale board.
+ *
+ * The same plan runs in the browser (the optimistic board) and on the server
+ * (the write, over every card on the board, so a filtered view still lands the
+ * card right above the one it was dropped on).
+ */
+export function planBoardMove<T extends BoardIssue & { id: string }>(
+  issues: T[],
+  movedId: string,
+  column: IssueBoardColumn,
+  beforeId: string | null,
+  today: string,
+): Map<string, number> | null {
+  const moved = issues.find((i) => i.id === movedId);
+  if (!moved) return null;
+  const rest = groupBoard(issues, today)[column].filter((i) => i.id !== movedId);
+  const at = beforeId === null ? rest.length : rest.findIndex((i) => i.id === beforeId);
+  if (at < 0) return null;
 
-/** What dropping `issue` onto `target` does. */
-export function boardDropAction(issue: BoardIssue, target: IssueBoardColumnKey, today: string): BoardDrop {
-  if (issueBoardColumn(issue, today) === target) return { kind: 'noop' };
-  switch (target) {
-    case 'awaiting':
-      return { kind: 'blocked' };
-    case 'today':
-      return issue.assignees.length > 0
-        ? { kind: 'set_due_today', dueDate: today }
-        : { kind: 'open_panel', prefillDueDate: today };
-    case 'in_progress':
-      return { kind: 'open_panel', prefillDueDate: null };
-    case 'done':
-      return { kind: 'complete' };
-  }
+  const prev = rest[at - 1]?.sort_order;
+  const next = rest[at]?.sort_order;
+  // An empty column takes any value — keep the card's own.
+  if (prev === undefined) return new Map([[movedId, next === undefined ? moved.sort_order : next - BOARD_SORT_GAP]]);
+  if (next === undefined) return new Map([[movedId, prev + BOARD_SORT_GAP]]);
+  if (next - prev >= 2) return new Map([[movedId, prev + Math.floor((next - prev) / 2)]]);
+
+  const order = [...rest.slice(0, at), moved, ...rest.slice(at)];
+  const plan = new Map<string, number>();
+  order.forEach((i, n) => {
+    const value = n * BOARD_SORT_GAP;
+    if (i.id === movedId || i.sort_order !== value) plan.set(i.id, value);
+  });
+  return plan;
 }

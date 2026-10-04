@@ -21,14 +21,14 @@ import { IssuesKanban } from '@/components/issues/issues-kanban';
 import { IssueFormPanel } from '@/components/issues/issue-form-panel';
 import { cn } from '@/lib/utils';
 import { urgentFirst } from '@/lib/priority-sort';
-import { boardDropAction, issueBoardColumn, type IssueBoardColumnKey } from '@/lib/issues/board';
+import { issueBoardColumn, planBoardMove } from '@/lib/issues/board';
 import { useJerusalemToday } from '@/lib/hooks/useJerusalemToday';
 import {
   ISSUE_STATUSES, ISSUE_PRIORITIES, issueStatusLabel, issuePriorityLabel,
   ACTIVE_ISSUE_STATUSES, isCompletedIssueStatus,
 } from '@/lib/constants/issues';
 import type {
-  IssueKpis, IssuePriority, IssueSort, IssueStatus, IssueWithMeta,
+  IssueBoardColumn, IssueKpis, IssuePriority, IssueSort, IssueStatus, IssueWithMeta,
 } from '@/lib/types/issues';
 import type { SupplierOption } from '@/lib/types/assignee';
 import type { NotifyUserContact } from '@/lib/notify/selection';
@@ -74,7 +74,9 @@ export function IssuesPageClient({
   // "מדיירים" (portal reports, both views) and "ממתין לשיוך" (no handler —
   // table view only: on the kanban it is a column) — computed filters applied
   // by the server, never statuses. "לטיפול היום" (table view only) is the
-  // board's column of the same name, computed here on the Jerusalem day.
+  // stage rule of the board's column of that name, computed here on the
+  // Jerusalem day. Both are facts (no handler / due by today), not the board's
+  // manual placement.
   const [fromResidents, setFromResidents] = useState(false);
   const [awaiting, setAwaiting] = useState(false);
   const [dueToday, setDueToday] = useState(false);
@@ -83,8 +85,6 @@ export function IssuesPageClient({
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<IssueWithMeta | null>(null);
-  // A kanban drop that opens the panel may come with today's date filled in.
-  const [prefillDueDate, setPrefillDueDate] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<IssueWithMeta | null>(null);
 
   const didMount = useRef(false);
@@ -155,12 +155,10 @@ export function IssuesPageClient({
 
   function openCreate() {
     setEditing(null);
-    setPrefillDueDate(null);
     setFormOpen(true);
   }
-  function openEdit(i: IssueWithMeta, dueDate: string | null = null) {
+  function openEdit(i: IssueWithMeta) {
     setEditing(i);
-    setPrefillDueDate(dueDate);
     setFormOpen(true);
   }
 
@@ -178,38 +176,32 @@ export function IssuesPageClient({
     }
   }
 
-  // A card dropped on another kanban column (lib/issues/board.ts decides what
-  // that means). Nothing is written before the user confirms in the panel, so
-  // closing the panel leaves the card where it was.
-  function handleDropInto(issue: IssueWithMeta, column: IssueBoardColumnKey) {
-    const action = boardDropAction(issue, column, today);
-    switch (action.kind) {
-      case 'set_due_today': void setDueDate(issue, action.dueDate); break;
-      case 'open_panel': openEdit(issue, action.prefillDueDate); break;
-      case 'complete': void handleComplete(issue); break;
-      case 'noop':
-      case 'blocked': break;
-    }
-  }
-
-  // "לטיפול היום" for an issue that already has a handler: today's date and
-  // nothing else. Optimistic, rolled back on failure.
-  async function setDueDate(issue: IssueWithMeta, dueDate: string) {
+  // A kanban drop: the card lands in `column` directly above `beforeId` (null
+  // = the bottom) and stays there — board_column + sort_order, nothing else,
+  // and no panel. Optimistic with the same plan the server runs
+  // (lib/issues/board.ts); on failure the card goes back where it was, with no
+  // toast (Ronen 04/10/2026). Either way the board is reloaded.
+  async function handleMove(issue: IssueWithMeta, column: IssueBoardColumn, beforeId: string | null) {
+    const plan = planBoardMove(issues, issue.id, column, beforeId, today);
+    if (!plan) return;
     const prev = issues;
-    setIssues(issues.map((i) => (i.id === issue.id ? { ...i, due_date: dueDate } : i)));
+    setIssues(issues.map((i) => {
+      const sortOrder = plan.get(i.id);
+      if (sortOrder === undefined) return i;
+      return i.id === issue.id ? { ...i, board_column: column, sort_order: sortOrder } : { ...i, sort_order: sortOrder };
+    }));
     try {
-      const r = await fetch(`/api/issues/${issue.id}`, {
+      const r = await fetch(`/api/issues/${issue.id}/move`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ due_date: dueDate }),
+        body: JSON.stringify({ column, before_id: beforeId }),
       });
-      if (!r.ok) throw new Error('עדכון התאריך נכשל');
-      void fetchIssues();
-    } catch (e) {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    } catch {
       setIssues(prev);
-      toast.error((e as Error).message);
     }
+    void fetchIssues();
   }
 
   // Drop onto the "בוצע" lane → close the issue via the [id] PATCH (reminders are
@@ -412,11 +404,11 @@ export function IssuesPageClient({
         </div>
       </div>
 
-      {/* Board / Table — completed tab is always a table. The board sorts each
-          column itself (lib/issues/board.ts); the table is urgent-first, then
-          the selected sort within each group. */}
+      {/* Board / Table — completed tab is always a table. The board orders each
+          column itself (sort_order, lib/issues/board.ts); the table is
+          urgent-first, then the selected sort within each group. */}
       {tab === 'active' && view === 'kanban' ? (
-        <IssuesKanban issues={shown} today={today} canEdit={canEdit} onSelect={(i) => openEdit(i)} onDropInto={handleDropInto} onDelete={canEdit ? setDeleteTarget : undefined} />
+        <IssuesKanban issues={shown} today={today} canEdit={canEdit} onSelect={(i) => openEdit(i)} onMove={(i, column, beforeId) => void handleMove(i, column, beforeId)} onComplete={(i) => void handleComplete(i)} onDelete={canEdit ? setDeleteTarget : undefined} />
       ) : (
         <IssuesTable issues={urgentFirst(shown)} sort={sort} onSortChange={setSort} onSelect={(i) => openEdit(i)} onDelete={canEdit ? setDeleteTarget : undefined} />
       )}
@@ -424,7 +416,6 @@ export function IssuesPageClient({
       <IssueFormPanel
         open={formOpen}
         issue={editing}
-        prefillDueDate={prefillDueDate}
         canEdit={canEdit}
         canSeeReporterPhone={canSeeReporterPhone}
         assignees={assignees}

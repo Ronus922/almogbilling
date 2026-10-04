@@ -64,7 +64,7 @@ function issue(source: 'portal' | 'staff', assignedUserId: string | null = null)
   return {
     id: ISSUE_ID, title: 'דיווח דייר · לובי', description: 'נורה שרופה', location_type: 'general', location_text: null,
     target_type: null, target_id: null, priority: 'high', status: 'open', due_date: null, due_time: null,
-    images: [], videos: [], resolution_notes: null, resolved_at: null, is_archived: false, sort_order: 0,
+    images: [], videos: [], resolution_notes: null, resolved_at: null, is_archived: false, sort_order: 0, board_column: 'awaiting',
     created_by: null, created_by_name: 'בעלת הדירה', created_at: '2026-10-03', updated_at: '2026-10-03',
     source, reporter_name: source === 'portal' ? 'בעלת הדירה' : null, reporter_apartment: source === 'portal' ? '520' : null,
     reporter_role: source === 'portal' ? 'owner' : null,

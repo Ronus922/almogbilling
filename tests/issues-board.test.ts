@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ISSUE_BOARD_COLUMNS, boardDropAction, canDropIntoColumn, compareBoardIssues, groupBoard,
-  issueBoardColumn, jerusalemToday, overdueDays, overdueLabel, type BoardIssue,
+  BOARD_SORT_GAP, ISSUE_BOARD_COLUMNS, boardColumn, compareBoardIssues, groupBoard, initialBoardColumn,
+  issueBoardColumn, jerusalemToday, overdueDays, overdueLabel, planBoardMove, type BoardIssue,
 } from '@/lib/issues/board';
+import type { IssueBoardColumn } from '@/lib/types/issues';
 import { residentReportLabel } from '@/components/issues/IssueReporter';
 
-// The issues kanban by stage of handling (phase C, 03/10/2026): four computed
-// columns, "today" on the Asia/Jerusalem calendar, priority as the first sort
-// key, and what each drop means.
+// The issues kanban by stage of handling (phase C, 03/10/2026), a manual board
+// since 04/10/2026: the stage rule ("today" on the Asia/Jerusalem calendar)
+// seeds a card's column, a drag is the only thing that moves it, and the order
+// inside a column is sort_order — the computed order only breaks ties.
 
 const TODAY = '2026-10-03';
 const HANDLER = [{ assignee_type: 'user', user_id: 'u1', supplier_id: null, display_name: 'עובד' }] as BoardIssue['assignees'];
@@ -22,11 +24,13 @@ function issue(over: Partial<BoardIssue> & { id?: string } = {}): BoardIssue & {
     due_time: null,
     priority: 'normal',
     created_at: '2026-10-01T08:00:00Z',
+    sort_order: 0,
+    board_column: null,
     ...over,
   };
 }
 
-describe('which column', () => {
+describe('the stage rule (seeds a new card; the table\'s "לטיפול היום")', () => {
   it('no handler → ממתין לשיוך, even when due today (or in progress)', () => {
     expect(issueBoardColumn(issue(), TODAY)).toBe('awaiting');
     expect(issueBoardColumn(issue({ due_date: TODAY }), TODAY)).toBe('awaiting');
@@ -75,10 +79,12 @@ describe('"today" is the Asia/Jerusalem day', () => {
     expect(jerusalemToday(new Date('2026-12-15T22:00:00Z'))).toBe('2026-12-16');
   });
 
-  it('a card due "tomorrow" moves into לטיפול היום when the Jerusalem day turns', () => {
+  it('the stage rule turns at the Jerusalem midnight — a placed card does not', () => {
     const due = issue({ assignees: HANDLER, due_date: '2026-10-03' });
     expect(issueBoardColumn(due, jerusalemToday(new Date('2026-10-02T20:59:00Z')))).toBe('in_progress');
     expect(issueBoardColumn(due, jerusalemToday(new Date('2026-10-02T21:01:00Z')))).toBe('today');
+    const placed = { ...due, board_column: 'in_progress' as const };
+    expect(boardColumn(placed, jerusalemToday(new Date('2026-10-02T21:01:00Z')))).toBe('in_progress');
   });
 });
 
@@ -106,25 +112,113 @@ describe('order inside a column', () => {
   });
 });
 
-describe('drag and drop', () => {
-  const awaiting = issue({ id: 'a' });
-  const handledFuture = issue({ id: 'h', assignees: HANDLER, due_date: '2026-10-10' });
-
-  it('into ממתין לשיוך is refused', () => {
-    expect(canDropIntoColumn('awaiting')).toBe(false);
-    expect(boardDropAction(handledFuture, 'awaiting', TODAY)).toEqual({ kind: 'blocked' });
-    for (const k of ['today', 'in_progress', 'done'] as const) expect(canDropIntoColumn(k)).toBe(true);
+describe('where a card sits — manual placement', () => {
+  it('the stored column wins over the stage rule, whatever the handlers or the date say', () => {
+    expect(boardColumn(issue({ assignees: HANDLER, due_date: TODAY, board_column: 'awaiting' }), TODAY)).toBe('awaiting');
+    expect(boardColumn(issue({ board_column: 'today' }), TODAY)).toBe('today');
+    expect(boardColumn(issue({ assignees: HANDLER, due_date: '2026-09-01', board_column: 'in_progress' }), TODAY)).toBe('in_progress');
   });
 
-  it('into לטיפול היום sets today\'s date — or, with no handler yet, opens the panel with today filled in', () => {
-    expect(boardDropAction(handledFuture, 'today', TODAY)).toEqual({ kind: 'set_due_today', dueDate: TODAY });
-    expect(boardDropAction(awaiting, 'today', TODAY)).toEqual({ kind: 'open_panel', prefillDueDate: TODAY });
+  it('nothing stored → the stage rule, live', () => {
+    expect(boardColumn(issue(), TODAY)).toBe('awaiting');
+    expect(boardColumn(issue({ assignees: HANDLER, due_date: TODAY }), TODAY)).toBe('today');
   });
 
-  it('into בטיפול opens the issue panel; into בוצע closes it; onto its own column does nothing', () => {
-    expect(boardDropAction(awaiting, 'in_progress', TODAY)).toEqual({ kind: 'open_panel', prefillDueDate: null });
-    expect(boardDropAction(handledFuture, 'done', TODAY)).toEqual({ kind: 'complete' });
-    expect(boardDropAction(handledFuture, 'in_progress', TODAY)).toEqual({ kind: 'noop' });
+  it('resolved / closed is in בוצע and archived is off the board, whatever is stored', () => {
+    expect(boardColumn(issue({ status: 'closed', board_column: 'today' }), TODAY)).toBe('done');
+    expect(boardColumn(issue({ is_archived: true, board_column: 'today' }), TODAY)).toBeNull();
+  });
+
+  it('a new issue starts where the stage rule puts it', () => {
+    expect(initialBoardColumn(false, TODAY, TODAY)).toBe('awaiting');
+    expect(initialBoardColumn(true, '2026-10-01', TODAY)).toBe('today');
+    expect(initialBoardColumn(true, '2026-10-09', TODAY)).toBe('in_progress');
+    expect(initialBoardColumn(true, null, TODAY)).toBe('in_progress');
+  });
+
+  it('inside a column sort_order decides; the computed order only breaks a tie', () => {
+    const board = groupBoard([
+      issue({ id: 'urgent-low', priority: 'urgent', board_column: 'in_progress', sort_order: 2048 }),
+      issue({ id: 'normal-top', priority: 'normal', board_column: 'in_progress', sort_order: -1024 }),
+      issue({ id: 'tie-normal', priority: 'normal', board_column: 'in_progress', sort_order: 0 }),
+      issue({ id: 'tie-urgent', priority: 'urgent', board_column: 'in_progress', sort_order: 0 }),
+    ], TODAY);
+    expect(board.in_progress.map((i) => i.id)).toEqual(['normal-top', 'tie-urgent', 'tie-normal', 'urgent-low']);
+  });
+});
+
+describe('a drop — planBoardMove', () => {
+  type Card = BoardIssue & { id: string };
+  const card = (id: string, column: IssueBoardColumn, sortOrder: number): Card =>
+    issue({ id, board_column: column, sort_order: sortOrder });
+  /** The board after the plan is written — what the page shows and the server stores. */
+  function after(cards: Card[], movedId: string, column: IssueBoardColumn, beforeId: string | null) {
+    const plan = planBoardMove(cards, movedId, column, beforeId, TODAY);
+    if (!plan) throw new Error('no plan');
+    const next = cards.map((c) => {
+      const so = plan.get(c.id);
+      if (so === undefined) return c;
+      return c.id === movedId ? { ...c, board_column: column, sort_order: so } : { ...c, sort_order: so };
+    });
+    return { plan, board: groupBoard(next, TODAY) };
+  }
+  const ids = (cards: Card[]) => cards.map((c) => c.id);
+
+  const base = (): Card[] => [
+    card('a1', 'awaiting', 0), card('a2', 'awaiting', BOARD_SORT_GAP),
+    card('t1', 'today', 0), card('t2', 'today', BOARD_SORT_GAP), card('t3', 'today', 2 * BOARD_SORT_GAP),
+    card('p1', 'in_progress', 0), card('p2', 'in_progress', BOARD_SORT_GAP),
+  ];
+
+  it('between two cards of another column: lands right there, and only the dragged card is written', () => {
+    const { plan, board } = after(base(), 'p1', 'awaiting', 'a2');
+    expect(ids(board.awaiting)).toEqual(['a1', 'p1', 'a2']);
+    expect(ids(board.in_progress)).toEqual(['p2']);
+    expect([...plan.keys()]).toEqual(['p1']);
+    expect(plan.get('p1')).toBe(BOARD_SORT_GAP / 2);
+  });
+
+  it('within its own column: up to the top, down to the bottom', () => {
+    expect(ids(after(base(), 't3', 'today', 't1').board.today)).toEqual(['t3', 't1', 't2']);
+    expect(after(base(), 't3', 'today', 't1').plan.get('t3')).toBe(-BOARD_SORT_GAP);
+    expect(ids(after(base(), 't1', 'today', null).board.today)).toEqual(['t2', 't3', 't1']);
+    expect(after(base(), 't1', 'today', null).plan.get('t1')).toBe(3 * BOARD_SORT_GAP);
+  });
+
+  it('into an empty column: the card keeps its own sort_order', () => {
+    const cards = base().filter((c) => c.board_column !== 'in_progress').concat(card('x', 'awaiting', 77));
+    const { plan, board } = after(cards, 'x', 'in_progress', null);
+    expect(ids(board.in_progress)).toEqual(['x']);
+    expect(plan.get('x')).toBe(77);
+  });
+
+  it('no room between the neighbours (never placed: all 0) → the column is renumbered, unchanged cards untouched', () => {
+    const cards = [card('n1', 'today', 0), card('n2', 'today', 0), card('n3', 'today', 0), card('m', 'awaiting', 0)];
+    const before = ids(groupBoard(cards, TODAY).today);
+    const { plan, board } = after(cards, 'm', 'today', before[1]);
+    expect(ids(board.today)).toEqual([before[0], 'm', before[1], before[2]]);
+    expect(plan.has(before[0])).toBe(false); // stays 0
+    expect(plan.get('m')).toBe(BOARD_SORT_GAP);
+  });
+
+  it('a filtered board: the server plans over every card, so the drop still lands right above the card it was dropped on', () => {
+    // The page showed only p1 / p2; "hidden" sits between them on the server.
+    const cards = [card('p1', 'in_progress', 0), card('hidden', 'in_progress', 1), card('p2', 'in_progress', 2), card('m', 'today', 0)];
+    const { board } = after(cards, 'm', 'in_progress', 'p2');
+    expect(ids(board.in_progress)).toEqual(['p1', 'hidden', 'm', 'p2']);
+  });
+
+  it('a stale board — before_id is not in that column (any more) — plans nothing', () => {
+    expect(planBoardMove(base(), 'p1', 'awaiting', 't1', TODAY)).toBeNull();
+    expect(planBoardMove(base(), 'p1', 'awaiting', 'gone', TODAY)).toBeNull();
+    expect(planBoardMove(base(), 'gone', 'awaiting', null, TODAY)).toBeNull();
+  });
+
+  it('never touches the handlers, the date or the priority — only sort_order (and the column, by the caller)', () => {
+    const cards = [issue({ id: 'h', assignees: HANDLER, due_date: TODAY, priority: 'urgent', board_column: 'today' }), card('a1', 'awaiting', 0)];
+    const { board } = after(cards, 'h', 'awaiting', 'a1');
+    const moved = board.awaiting.find((c) => c.id === 'h');
+    expect(moved).toMatchObject({ assignees: HANDLER, due_date: TODAY, priority: 'urgent', board_column: 'awaiting' });
   });
 });
 
