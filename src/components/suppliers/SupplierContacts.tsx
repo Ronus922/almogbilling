@@ -7,15 +7,15 @@ import { formatPhoneDisplay } from '@/lib/phone';
 import type { SupplierContact, SupplierContactInput } from '@/lib/types/suppliers';
 
 // "אנשי קשר נוספים" — the supplier's 2nd, 3rd… contact people (DESIGN.md §28.11).
-// One implementation for the create panel, the edit form and view mode. The
-// primary contact keeps its own fields (איש קשר / טלפון / נייד / אימייל); these
-// cards sit after them, inside the same section grid, each spanning both columns.
+// One implementation for the create panel, the edit form and view mode. A card
+// has three fields — שם · טלפון נייד · אימייל (the one phone IS the mobile). The
+// primary contact keeps its own fields exactly as they are; these cards sit
+// after them, inside the same section grid, each spanning both columns.
 
 /** One editable card. `key` is client-side only (saved rows get new ids on save). */
 export interface SupplierContactRow {
   key: string;
   name: string;
-  role: string;
   phone: string;
   email: string;
 }
@@ -28,7 +28,7 @@ let rowSeq = 0;
 
 export function toContactRows(contacts: readonly SupplierContact[]): SupplierContactRow[] {
   return contacts.map((c) => ({
-    key: `saved-${c.id}`, name: c.name, role: c.role, phone: c.phone, email: c.email,
+    key: `saved-${c.id}`, name: c.name, phone: c.phone, email: c.email,
   }));
 }
 
@@ -52,7 +52,6 @@ export function supplierContactErrors(rows: readonly SupplierContactRow[]): Supp
 export function contactRowsPayload(rows: readonly SupplierContactRow[]): SupplierContactInput[] {
   return rows.map((r) => ({
     name: r.name.trim(),
-    role: r.role.trim(),
     phone: r.phone.trim() ? validatePhone(r.phone).normalized : '',
     email: r.email.trim(),
   }));
@@ -118,7 +117,7 @@ export function SupplierContactsEditor({
 
   function add() {
     rowSeq += 1;
-    onChange([...rows, { key: `new-${rowSeq}`, name: '', role: '', phone: '', email: '' }]);
+    onChange([...rows, { key: `new-${rowSeq}`, name: '', phone: '', email: '' }]);
   }
 
   return (
@@ -142,16 +141,8 @@ export function SupplierContactsEditor({
                 placeholder="שם איש הקשר"
               />
               <SupplierField
-                id={`${id}-role`}
-                label="תפקיד"
-                value={row.role}
-                onChange={(v) => update(row.key, { role: v })}
-                disabled={disabled}
-                placeholder="לדוגמה: הנהלת חשבונות"
-              />
-              <SupplierField
                 id={`${id}-phone`}
-                label="טלפון"
+                label="טלפון נייד"
                 value={row.phone}
                 onChange={(v) => update(row.key, { phone: v })}
                 error={errors.get(row.key)?.phone ?? null}
@@ -200,8 +191,7 @@ export function SupplierContactsView({ contacts }: { contacts: readonly Supplier
         <ContactCard key={c.id} title={cardTitle(i)}>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <ReadonlyField label="שם" value={c.name || null} />
-            <ReadonlyField label="תפקיד" value={c.role || null} />
-            <ReadonlyField label="טלפון" value={formatPhoneDisplay(c.phone)} ltr />
+            <ReadonlyField label="טלפון נייד" value={formatPhoneDisplay(c.phone)} ltr />
             <ReadonlyField label="אימייל" value={c.email || null} ltr accent />
           </div>
         </ContactCard>

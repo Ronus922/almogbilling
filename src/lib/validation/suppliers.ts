@@ -150,7 +150,7 @@ export function supplierContactsChanged(
   if (before.length !== after.length) return true;
   return before.some((b, i) => {
     const a = after[i];
-    return b.name !== a.name || b.role !== a.role || b.phone !== a.phone || b.email !== a.email;
+    return b.name !== a.name || b.phone !== a.phone || b.email !== a.email;
   });
 }
 

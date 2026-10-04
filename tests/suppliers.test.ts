@@ -135,26 +135,32 @@ describe('canDeleteSupplierCategory — delete guard', () => {
 
 // Additional contacts ("הוסף איש קשר נוסף") — the body list of POST/PATCH.
 describe('supplierContactsSchema — additional contacts', () => {
-  const row = { name: 'דנה', role: 'הנהלת חשבונות', phone: '052-1234567', email: 'dana@example.com' };
+  const row = { name: 'דנה', phone: '052-1234567', email: 'dana@example.com' };
 
-  it('keeps name / role / email and cleans the phone like the supplier fields', () => {
+  it('keeps name / email and cleans the phone like the supplier fields', () => {
     const r = supplierContactsSchema.safeParse([row]);
     expect(r.success).toBe(true);
     if (r.success) {
-      expect(r.data).toEqual([
-        { name: 'דנה', role: 'הנהלת חשבונות', phone: '0521234567', email: 'dana@example.com' },
-      ]);
+      expect(r.data).toEqual([{ name: 'דנה', phone: '0521234567', email: 'dana@example.com' }]);
+    }
+  });
+
+  it('has exactly three fields — an unknown key (e.g. an old "role") is dropped', () => {
+    const r = supplierContactsSchema.safeParse([{ ...row, role: 'הנהלת חשבונות' }, { role: 'מנהל' }]);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data).toEqual([{ name: 'דנה', phone: '0521234567', email: 'dana@example.com' }]);
     }
   });
 
   it('trims, defaults missing fields to empty, drops a fully blank row', () => {
     const r = supplierContactsSchema.safeParse([
       { name: '  יוסי  ' },
-      { name: ' ', role: '', phone: '', email: '' },
+      { name: ' ', phone: '', email: '' },
       {},
     ]);
     expect(r.success).toBe(true);
-    if (r.success) expect(r.data).toEqual([{ name: 'יוסי', role: '', phone: '', email: '' }]);
+    if (r.success) expect(r.data).toEqual([{ name: 'יוסי', phone: '', email: '' }]);
   });
 
   it('accepts an empty list (removing every additional contact)', () => {
@@ -184,8 +190,8 @@ describe('supplierContactsSchema — additional contacts', () => {
 });
 
 describe('supplierContactsChanged — activity log + rewrite only on a real change', () => {
-  const a = { name: 'דנה', role: 'הנהלת חשבונות', phone: '0521234567', email: 'dana@example.com' };
-  const b = { name: 'יוסי', role: '', phone: '', email: '' };
+  const a = { name: 'דנה', phone: '0521234567', email: 'dana@example.com' };
+  const b = { name: 'יוסי', phone: '', email: '' };
 
   it('same list (ids ignored) → unchanged', () => {
     expect(supplierContactsChanged([{ ...a, id: 'x', sort_order: 0 } as typeof a], [a])).toBe(false);
@@ -196,7 +202,6 @@ describe('supplierContactsChanged — activity log + rewrite only on a real chan
     expect(supplierContactsChanged([a], [a, b])).toBe(true);
     expect(supplierContactsChanged([a, b], [a])).toBe(true);
     expect(supplierContactsChanged([a], [{ ...a, name: 'דנה כהן' }])).toBe(true);
-    expect(supplierContactsChanged([a], [{ ...a, role: 'מנהל' }])).toBe(true);
     expect(supplierContactsChanged([a], [{ ...a, phone: '0529999999' }])).toBe(true);
     expect(supplierContactsChanged([a], [{ ...a, email: 'other@example.com' }])).toBe(true);
     expect(supplierContactsChanged([a, b], [b, a])).toBe(true);

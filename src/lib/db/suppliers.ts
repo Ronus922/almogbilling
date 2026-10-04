@@ -38,8 +38,8 @@ const SUPPLIER_COLUMNS_S = `
 const ADDITIONAL_CONTACTS_JSON = `
   coalesce((
     select json_agg(json_build_object(
-             'id', sc.id, 'name', sc.name, 'role', sc.role, 'phone', sc.phone,
-             'email', sc.email, 'sort_order', sc.sort_order)
+             'id', sc.id, 'name', sc.name, 'phone', sc.phone, 'email', sc.email,
+             'sort_order', sc.sort_order)
            order by sc.sort_order, sc.created_at)
       from public.supplier_contacts sc
      where sc.supplier_id = suppliers.id
@@ -217,12 +217,12 @@ export async function replaceSupplierContacts(
   const values: string[] = [];
   const params: unknown[] = [supplierId];
   contacts.forEach((c, i) => {
-    params.push(c.name, c.role, c.phone, c.email, i);
+    params.push(c.name, c.phone, c.email, i);
     const n = params.length;
-    values.push(`($1, $${n - 4}, $${n - 3}, $${n - 2}, $${n - 1}, $${n})`);
+    values.push(`($1, $${n - 3}, $${n - 2}, $${n - 1}, $${n})`);
   });
   await client.query(
-    `insert into public.supplier_contacts (supplier_id, name, role, phone, email, sort_order)
+    `insert into public.supplier_contacts (supplier_id, name, phone, email, sort_order)
      values ${values.join(', ')}`,
     params,
   );

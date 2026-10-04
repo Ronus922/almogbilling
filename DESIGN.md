@@ -1501,14 +1501,14 @@ count badge `rounded-full bg-[#eef2f7] text-[#64748b] px-[10px] py-[4px] 12px/60
 toggle 42×24 `rounded-full` (on `bg-[#2563eb]` knob 18 left-[3px] / off `bg-slate-300` knob right-[3px]),
 rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 rounded-[9px] text-[#dc2626] hover:bg-[#fef2f2]` (נעול=`text-[#d4dbe6]` ללא פעולה כשמשויכים ספקים).
 
-### 28.11 אנשי קשר נוספים — כרטיס חוזר בתוך טופס (04/10/2026, דפוס חדש — ממתין לאישור רונן לפי "אם משהו חסר כאן")
+### 28.11 אנשי קשר נוספים — כרטיס חוזר בתוך טופס (04/10/2026, אושר ע״י רונן)
 
 קומפוננטה `SupplierContacts.tsx` (`SupplierContactsEditor` ליצירה/עריכה, `SupplierContactsView` לצפייה).
 **מיקום:** ילדים ישירים של הגריד הקיים של המקטע (`grid-cols-1 sm:grid-cols-2`; ביצירה/עריכה `gap-[14px]`, בצפייה `gap-4`), אחרי שדות איש הקשר הראשי —
 ביצירה/עריכה אחרי "אימייל" ב"פרטי הספק", בצפייה אחרי "אתר" ב"פרטי קשר". כל כרטיס `sm:col-span-2`; ה-gap של הגריד מרווח (בלי margin).
 **כרטיס** = מעטפת §28.6: `space-y-[14px] rounded-[13px] border border-[#eef1f6] bg-[#fafbfd] px-4 py-[14px]`, `role="group"` + `aria-label` = הכותרת.
 כותרת `text-[15px] font-bold text-[#0f172a]` — "איש קשר נוסף N", N מ-2 (הראשי = 1, כמו "בעל דירה נוסף N" בכרטיס הדירה).
-שדות: `SupplierField` (§28.8) בגריד פנימי `grid-cols-1 sm:grid-cols-2 gap-[14px]` — שם · תפקיד · טלפון (`dir=ltr`, tabular) · אימייל (`dir=ltr`);
+שלושה שדות בלבד: `SupplierField` (§28.8) בגריד פנימי `grid-cols-1 sm:grid-cols-2 gap-[14px]` — שם · טלפון נייד (`dir=ltr`, tabular) · אימייל (`dir=ltr`);
 בצפייה `ReadonlyField` ב-`gap-4`, טלפון דרך `formatPhoneDisplay`, אימייל accent. שגיאה מוצגת מיד (לא אחרי blur) — כפתור השמירה disabled כל עוד יש שגיאה.
 **הסרה:** פעולת danger של §28.6 בגודל מגע — `grid h-[44px] w-[44px] place-items-center rounded-[9px] text-[#dc2626] hover:bg-[#fef2f2]`, Trash2 16px, `aria-label="הסר <כותרת>"`. בצפייה אין.
 **הוספה:** שורה `flex justify-start sm:col-span-2` מתחת לכרטיס האחרון (RTL start = מתחת לעמודת "איש קשר"); כפתור

@@ -68,13 +68,13 @@ export interface Supplier {
   deleted_at: Date | null;
 }
 
-/** An additional contact person of a supplier (public.supplier_contacts). The
- *  primary contact stays in Supplier.contact_person / phone / mobile / email. */
+/** An additional contact person of a supplier (public.supplier_contacts) —
+ *  three fields: name, mobile phone and email. The primary contact is not one
+ *  of these rows and keeps its own fields on Supplier. */
 export interface SupplierContact {
   id: string;
   name: string;
-  /** Free-text job title (תפקיד) — not an RBAC role. */
-  role: string;
+  /** The contact's mobile number (panel label "טלפון נייד"). */
   phone: string;
   email: string;
   sort_order: number;
@@ -83,7 +83,6 @@ export interface SupplierContact {
 /** One additional contact as the panel sends it — the list is saved whole. */
 export interface SupplierContactInput {
   name: string;
-  role: string;
   phone: string;
   email: string;
 }

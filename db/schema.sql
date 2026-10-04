@@ -3116,7 +3116,6 @@ CREATE TABLE public.supplier_contacts (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     supplier_id uuid NOT NULL,
     name text DEFAULT ''::text NOT NULL,
-    role text DEFAULT ''::text NOT NULL,
     phone text DEFAULT ''::text NOT NULL,
     email text DEFAULT ''::text NOT NULL,
     sort_order integer DEFAULT 0 NOT NULL,
@@ -3133,10 +3132,10 @@ COMMENT ON TABLE public.supplier_contacts IS 'Additional contact people of a sup
 
 
 --
--- Name: COLUMN supplier_contacts.role; Type: COMMENT; Schema: public; Owner: -
+-- Name: COLUMN supplier_contacts.phone; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.supplier_contacts.role IS 'Free-text job title (תפקיד) — not an RBAC role.';
+COMMENT ON COLUMN public.supplier_contacts.phone IS 'Mobile phone (טלפון נייד), stored as cleanPhoneField returns it.';
 
 
 --

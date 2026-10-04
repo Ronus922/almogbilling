@@ -24,12 +24,12 @@ const VIEW_NAME = `E2E-SUPCON-VIEW-${RUN}`;
 const supplierIds: string[] = [];
 let viewerPermissionId: string | null = null;
 
-interface ContactRow { name: string; role: string; phone: string; email: string }
+interface ContactRow { name: string; phone: string; email: string }
 interface PrimaryRow { contact_person: string; phone: string; mobile: string; email: string }
 
 async function contactsOf(id: string): Promise<ContactRow[]> {
   const r = await pool.query<ContactRow>(
-    `select name, role, phone, email from public.supplier_contacts
+    `select name, phone, email from public.supplier_contacts
       where supplier_id = $1 order by sort_order`,
     [id],
   );
@@ -80,12 +80,17 @@ test('create with two additional contacts → edit one, remove one → reload: s
   await expect(create.getByRole('group', { name: 'איש קשר נוסף 2' })).toBeVisible();
   await expect(create.getByRole('group', { name: 'איש קשר נוסף 3' })).toBeVisible();
 
+  // Exactly three fields per card: שם · טלפון נייד · אימייל.
+  const card = create.getByRole('group', { name: 'איש קשר נוסף 2' });
+  await expect(card.getByRole('textbox')).toHaveCount(3);
+  await expect(card.getByLabel('שם', { exact: true })).toBeVisible();
+  await expect(card.getByLabel('טלפון נייד', { exact: true })).toBeVisible();
+  await expect(card.getByLabel('אימייל', { exact: true })).toBeVisible();
+
   await create.locator('#sup-contact-0-name').fill('דנה E2E');
-  await create.locator('#sup-contact-0-role').fill('הנהלת חשבונות');
   await create.locator('#sup-contact-0-phone').fill('052-2222222');
   await create.locator('#sup-contact-0-email').fill('dana@example.com');
   await create.locator('#sup-contact-1-name').fill('יוסי E2E');
-  await create.locator('#sup-contact-1-role').fill('מנהל עבודה');
   await create.locator('#sup-contact-1-phone').fill('054-3333333');
   await create.locator('#sup-contact-1-email').fill('yossi@example.com');
 
@@ -111,8 +116,8 @@ test('create with two additional contacts → edit one, remove one → reload: s
   };
   expect(await primaryOf(id)).toEqual(primary);
   expect(await contactsOf(id)).toEqual([
-    { name: 'דנה E2E', role: 'הנהלת חשבונות', phone: '0522222222', email: 'dana@example.com' },
-    { name: 'יוסי E2E', role: 'מנהל עבודה', phone: '0543333333', email: 'yossi@example.com' },
+    { name: 'דנה E2E', phone: '0522222222', email: 'dana@example.com' },
+    { name: 'יוסי E2E', phone: '0543333333', email: 'yossi@example.com' },
   ]);
 
   // View mode shows them next to the primary contact.
@@ -120,11 +125,11 @@ test('create with two additional contacts → edit one, remove one → reload: s
   await expect(panel.getByRole('group', { name: 'איש קשר נוסף 2' })).toContainText('דנה E2E');
   await expect(panel.getByRole('group', { name: 'איש קשר נוסף 3' })).toContainText('יוסי E2E');
 
-  // Edit: change Dana's role, remove Yossi, save.
+  // Edit: change Dana's email, remove Yossi, save.
   await panel.getByRole('button', { name: 'ערוך' }).click();
   await expect(panel.locator('#esup-contact-0-name')).toHaveValue('דנה E2E');
   await expect(panel.locator('#esup-contact-1-name')).toHaveValue('יוסי E2E');
-  await panel.locator('#esup-contact-0-role').fill('מנהלת חשבונות');
+  await panel.locator('#esup-contact-0-email').fill('dana.office@example.com');
   await panel.getByRole('button', { name: 'הסר איש קשר נוסף 3' }).click();
   await expect(panel.getByRole('group', { name: 'איש קשר נוסף 3' })).toHaveCount(0);
   await panel.getByRole('button', { name: 'שמור שינויים' }).click();
@@ -133,10 +138,10 @@ test('create with two additional contacts → edit one, remove one → reload: s
   // Before any reload: the open panel shows what the PATCH response returned —
   // and the NEXT edit starts from it (a response without the saved contacts
   // would make that edit send [] and wipe them).
-  await expect(panel.getByRole('group', { name: 'איש קשר נוסף 2' })).toContainText('מנהלת חשבונות');
+  await expect(panel.getByRole('group', { name: 'איש קשר נוסף 2' })).toContainText('dana.office@example.com');
   await expect(panel.getByRole('group', { name: 'איש קשר נוסף 3' })).toHaveCount(0);
   await panel.getByRole('button', { name: 'ערוך' }).click();
-  await expect(panel.locator('#esup-contact-0-role')).toHaveValue('מנהלת חשבונות');
+  await expect(panel.locator('#esup-contact-0-email')).toHaveValue('dana.office@example.com');
   await expect(panel.locator('#esup-contact-1-name')).toHaveCount(0);
   await panel.getByRole('button', { name: 'ביטול' }).click();
 
@@ -145,11 +150,11 @@ test('create with two additional contacts → edit one, remove one → reload: s
   panel = await openSupplier(page, NEW_NAME);
   const dana = panel.getByRole('group', { name: 'איש קשר נוסף 2' });
   await expect(dana).toContainText('דנה E2E');
-  await expect(dana).toContainText('מנהלת חשבונות');
+  await expect(dana).toContainText('dana.office@example.com');
   await expect(panel.getByRole('group', { name: 'איש קשר נוסף 3' })).toHaveCount(0);
   await expect(panel.getByText('יוסי E2E')).toHaveCount(0);
 
-  const saved = [{ name: 'דנה E2E', role: 'מנהלת חשבונות', phone: '0522222222', email: 'dana@example.com' }];
+  const saved = [{ name: 'דנה E2E', phone: '0522222222', email: 'dana.office@example.com' }];
   expect(await contactsOf(id)).toEqual(saved);
   expect(await primaryOf(id)).toEqual(primary);
 
@@ -221,7 +226,7 @@ test('an existing supplier with no additional contacts opens, edits and saves wi
   await panel.getByRole('button', { name: 'שמור שינויים' }).click();
   await expect(page.getByText('הספק עודכן').first()).toBeVisible();
   await expect(panel.getByRole('group', { name: 'איש קשר נוסף 2' })).toContainText('חדש מעריכה');
-  expect(await contactsOf(id)).toEqual([{ name: 'חדש מעריכה', role: '', phone: '0504444444', email: '' }]);
+  expect(await contactsOf(id)).toEqual([{ name: 'חדש מעריכה', phone: '0504444444', email: '' }]);
   expect(await primaryOf(id)).toEqual(oldPrimary);
 });
 
@@ -233,8 +238,8 @@ test('a viewer sees the contacts but no add/edit button, and the API refuses the
   const id = s.rows[0].id;
   supplierIds.push(id);
   await pool.query(
-    `insert into public.supplier_contacts (supplier_id, name, role, sort_order)
-     values ($1, 'נוסף לצפייה', 'מזכירות', 0)`,
+    `insert into public.supplier_contacts (supplier_id, name, phone, sort_order)
+     values ($1, 'נוסף לצפייה', '0526667777', 0)`,
     [id],
   );
   // The seeded e2e-viewer has no rows at all; give it suppliers VIEW only.
@@ -263,7 +268,7 @@ test('a viewer sees the contacts but no add/edit button, and the API refuses the
   await expect(page.getByRole('button', { name: 'הוסף איש קשר נוסף' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^הסר איש קשר נוסף/ })).toHaveCount(0);
 
-  const contacts = [{ name: 'פורץ', role: '', phone: '', email: '' }];
+  const contacts = [{ name: 'פורץ', phone: '', email: '' }];
   const patch = await viewer.request.patch(`/api/suppliers/${id}`, {
     data: { display_name: VIEW_NAME, contact_person: 'ראשי צפייה', additional_contacts: contacts },
   });
@@ -273,7 +278,7 @@ test('a viewer sees the contacts but no add/edit button, and the API refuses the
   });
   expect(post.status()).toBe(403);
 
-  expect(await contactsOf(id)).toEqual([{ name: 'נוסף לצפייה', role: 'מזכירות', phone: '', email: '' }]);
+  expect(await contactsOf(id)).toEqual([{ name: 'נוסף לצפייה', phone: '0526667777', email: '' }]);
   const stray = await pool.query(`select 1 from public.suppliers where display_name = $1`, [`${VIEW_NAME}-POST`]);
   expect(stray.rowCount).toBe(0);
 

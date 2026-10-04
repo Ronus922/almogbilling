@@ -133,14 +133,13 @@ const supplierContactSchema = z
   .object(
     {
       name: supplierContactText,
-      role: supplierContactText,
       phone: supplierContactText,
       email: supplierContactText,
     },
     { error: 'איש קשר נוסף לא תקין' },
   )
   .transform((c, ctx): SupplierContactInput | null => {
-    if (!c.name && !c.role && !c.phone && !c.email) return null;
+    if (!c.name && !c.phone && !c.email) return null;
     let phone = '';
     if (c.phone) {
       const cleaned = cleanPhoneField(c.phone);
@@ -154,7 +153,7 @@ const supplierContactSchema = z
       ctx.addIssue({ code: 'custom', path: ['email'], message: 'כתובת אימייל לא תקינה באיש קשר נוסף' });
       return z.NEVER;
     }
-    return { name: c.name, role: c.role, phone, email: c.email };
+    return { name: c.name, phone, email: c.email };
   });
 
 export const supplierContactsSchema = z
