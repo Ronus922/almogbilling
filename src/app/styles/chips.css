@@ -1,6 +1,6 @@
 /* ─────────────────────────────────────────────────────────────────────
    Chips module skin — DECLARED EXCEPTION (DESIGN.md "מודול צ'יפים").
-   Derived 1:1 from ref/proof/whatsapp-broadcast/Chip.html + Chip.md.
+   Derived 1:1 from /var/billing-proof/whatsapp-broadcast/Chip.html + Chip.md.
 
    SCOPE RULE (binding): every token here lives under `.chips-skin` and
    NEVER overrides the global @theme tokens or `font-num` (which stays

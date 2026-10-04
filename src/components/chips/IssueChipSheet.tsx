@@ -2,7 +2,7 @@
 
 // Multi-person issue window — chips-skin (declared exception). The five
 // multi-holder elements (stacked holder block, separator, "+ הוסף בעל צ׳יפ",
-// taken role, pending tag) derive from ref/proof/Chip2.html; the visual
+// taken role, pending tag) derive from /var/billing-proof/Chip2.html; the visual
 // language (palette/typography/sizes) stays Chip.md. Instruction overrides
 // (approved): role picker stays the rich 2×2 cards (not Chip2's compact row),
 // footer keeps primary-at-start, block-remove is hidden once a block holds

@@ -59,6 +59,7 @@ const safeqlConfig = databaseUrl
 export default defineConfig([
   globalIgnores([
     '.next/**',
+    '.deploy/**',
     'node_modules/**',
     'public/**',
     'work/**',

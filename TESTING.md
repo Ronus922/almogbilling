@@ -101,5 +101,6 @@ npm run check:all     # typecheck + lint + vitest + כל בדיקות האינו
 1. `npm run check:all` — חייב לחזור ירוק.
 2. הרץ את תוכנית הבדיקה הידנית למעלה.
 3. **אדום = לא פורסים.** מתקנים את השורש (אסור להחליש בדיקה כדי שתעבור), ומריצים שוב.
-4. פריסה לפרודקשן היא תמיד `npm run deploy` (build → restart → אימות) — לעולם לא
-   `next build` לבד (דורס את `.next/standalone` בלי restart → ChunkLoadError).
+4. פריסה לפרודקשן היא תמיד `npm run deploy` (build → קידום release → restart → בדיקת
+   עשן → חזרה אוטומטית ל-build הקודם בכשל) — לעולם לא `next build` לבד. שחזור ידני:
+   `npm run deploy:rollback`.

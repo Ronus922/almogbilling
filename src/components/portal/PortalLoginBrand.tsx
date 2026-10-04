@@ -5,14 +5,14 @@ import { cn } from '@/lib/utils';
 //
 // One component, two shapes, every value in px (the root font is 17px, so rem
 // utilities would land 6.25% off the references):
-//   • ≥901px — ref/proof/Tenant Portal (standalone).html `.brand`: the
+//   • ≥901px — /var/billing-proof/Tenant Portal (standalone).html `.brand`: the
 //     right-hand 46% column. Navy→blue gradient + dot grid, logo/name at the
 //     top, headline + paragraph + preview card in the middle, copyright at
 //     the bottom, `justify-content: space-between`.
 //   • 601–900px — the reference's own ≤900 rule (ref/Tenant Portal.html):
 //     one column, the brand reduced to a strip with the logo only (28px 24px),
 //     the headline / copy / preview / footer hidden (28/09/2026).
-//   • ≤600px — ref/proof/Tenant Login Mobile (standalone).html `.hero`: a hero
+//   • ≤600px — /var/billing-proof/Tenant Login Mobile (standalone).html `.hero`: a hero
 //     the white sheet overlaps by 28px. Logo/name, headline, one short line.
 //
 // The preview card (fund balance · collection rate · ten bars) is the
