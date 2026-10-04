@@ -1,4 +1,71 @@
-# npm audit — 05/09/2026 (ענף `infra/hardening`)
+# npm audit — 04/10/2026 (ענף `chore/deps-audit`)
+
+## מדיניות חולשות npm (מ-04/10/2026, החלטת רונן)
+
+1. **critical / high בקוד ריצה** (נכנס ל-build ולשרת) — מתקנים כשיש שדרוג **בלי שבירת תאימות**: patch/minor,
+   או עדכון של תלות עקיפה בתוך הטווחים שהתלויות כבר מצהירות עליהם.
+2. **אסור `npm audit fix --force`**, ואסור שדרוג major של `next`, `react` או ספרייה מרכזית אחרת במסגרת "תיקון חולשות".
+3. **תיקון שמחייב שבירת תאימות** (major, downgrade, Node חדש) — לא נוגעים; מדווחים עם הערכת סיכון ונפתח PR נפרד בהחלטה.
+4. **dev בלבד** — מתקנים רק אם טריוויאלי וללא שבירה; אחרת מדווחים.
+5. **גם `npm audit fix` בלי `--force` לא עובר בלי בדיקה:** ב-04/10 הוא העלה את `shadcn` 4.4.0 → 4.21.1 (בתוך
+   `^4.4.0`), ו-`shadcn/tailwind.css` — שמיובא ב-`globals.css` — הוסיף `@property` גלובליים וכלל `.shimmer` לא
+   משוכב ל-CSS של האפליקציה, ועוד משך ממצא high חדש (`@shadcn/registry`). לכן התיקון נעשה ב-`npm update <חבילה>`
+   ממוקד לכל חבילה פגיעה, וכל שינוי ב-`package-lock.json` נבדק מול הרשימה (אף major).
+
+## סיכום — לפני / אחרי (04/10/2026)
+
+| | critical | high | moderate | low | סה״כ |
+|---|---|---|---|---|---|
+| `npm audit` — לפני | 2 | 23 | 10 | 3 | **38** |
+| `npm audit` — **אחרי** | 1 | 18 | 5 | 0 | **24** |
+| `npm audit --omit=dev` — לפני | 1 | 19 | 7 | 3 | **30** |
+| `npm audit --omit=dev` — **אחרי** | **0** | 14 | 2 | 0 | **16** |
+
+`--omit=dev` לפי ההגדרה של npm כולל את `shadcn` (CLI שיושב ב-`dependencies`), ולכן אינו זהה ל"נטען בשרת".
+
+## מה שודרג
+
+| חבילה | לפני → אחרי | סוג | למה |
+|---|---|---|---|
+| `next` | 16.3.4 → **16.3.8** | patch (נעוץ, `--save-exact`) | **critical** — RCE ב-`next/og` `ImageResponse` ([GHSA-vcvr-r3jv-pc5j](https://github.com/advisories/GHSA-vcvr-r3jv-pc5j), `>=16.2.0 <16.3.6`). אצלנו אין `next/og`/`ImageResponse` — לא היה ניתן לניצול, אבל התיקון patch. |
+| `eslint-config-next` (dev) | 16.3.4 → 16.3.8 | patch | נשאר צמוד ל-`next` (`@next/eslint-plugin-next` נגרר). |
+| `ip-address` | 10.1.0 / 10.2.0 → 10.7.3 | minor (עקיפה) | high — SSRF/סיווג כתובות; דרך `puppeteer-core`→proxy (בשרת, לא בשימוש) ו-`shadcn`. |
+| `brace-expansion` | 1.1.15–5.0.5 → 1.1.21 / 2.1.7 / 5.0.12 | patch (עקיפה, כל העותקים) | high — DoS; עותק אחד בשרת (`exceljs`→`archiver`→`readdir-glob`, `@sentry`→`glob`). |
+| `dompurify` | 3.4.10 → 3.4.16 | patch (עקיפה) | moderate — דרך `jspdf` (לקוח). |
+| `fast-uri`, `hono`, `@hono/node-server`, `qs`, `body-parser`, `express-rate-limit`, `postcss-selector-parser` | patch/minor | עקיפות | דרך ה-CLI של `shadcn` (`@modelcontextprotocol/sdk`) — לא נטענות בשרת. |
+| `browserslist`, `baseline-browser-mapping`, `@babel/core` (+ משפחת `@babel/*`, `caniuse-lite`, `electron-to-chromium`, `node-releases`, `update-browserslist-db`) | patch/minor | עקיפות, build בלבד | high/moderate/low — כלי build. |
+
+אין שינוי ב-`package.json` מלבד `next` ו-`eslint-config-next`. אף חבילה לא עברה major.
+
+## מה נשאר — והערכת סיכון
+
+| חבילה | חומרה | בשרת? | התיקון היחיד | למה לא עכשיו | סיכון בפועל |
+|---|---|---|---|---|---|
+| `nodemailer` 8.0.11 | high (8 advisories) | כן | **10.0.14** (major; 9.x כבר major) | שבירת תאימות — לפי המדיניות | **נמוך.** `sendMail({from,to,subject,html,text})` בלבד: אין `raw`, אין attachments, אין allow-list דומיינים, transport אחד. ה-DoS ב-addressparser דורש רשימת כתובות ענקית ב-`to` — הכתובות שלנו מגיעות מה-DB/ממסכי הצוות עם ולידציית zod, לא מקלט אנונימי. ראה סעיף 2 למטה. |
+| `puppeteer-core` 24.43.1 + `@puppeteer/browsers`, `extract-zip`, `proxy-agent`, `pac-proxy-agent`, `get-uri`, `basic-ftp` | high ×7 | נטענות (ייצוא PDF) | `puppeteer-core@25` (major, **Node ≥ 22** — השרת וה-CI על 20) | שבירת תאימות + תנאי מקדים | **נמוך.** הנתיבים הפגיעים רצים רק בהורדת דפדפן ובפרוקסי להורדה; אנחנו מפעילים את Chrome של המערכת (`CHROME_PATH`) ולא מורידים כלום. `extract-zip` בלי גרסה מתוקנת בכלל. ראה סעיף 4. |
+| `shadcn` 4.4.0 + `ts-morph`, `@ts-morph/common`, `fast-glob`, `micromatch`, `braces` | high ×6 | **לא** (CLI ל-`npx shadcn add`) | `shadcn@4.21` (מתקן את ts-morph בלבד, מוסיף `@shadcn/registry`) / אין גרסה מתוקנת ל-`braces` | משנה את ה-CSS של האפליקציה; לא מוריד את ספירת ה-high | **זניח** — רץ רק כשמפתח מריץ את ה-CLI. |
+| `exceljs` 4.4.0 → `uuid` 8.3.2 | moderate ×2 | כן (ייצוא xlsx) | אין גרסת exceljs מתוקנת; `overrides` ל-uuid 11 = major בתלות עקיפה | שבירת תאימות | **אין** — exceljs קורא רק ל-`uuidv4()`; הנתיב הפגיע (`v3/v5/v6` עם `buf`) לא נקרא. |
+| `vitest` 2.1.9 + `vite`, `vite-node`, `@vitest/mocker`, `esbuild` | **critical** + high + moderate ×3 | **לא** (dev) | `vitest@3.2.6+`/`4.1.11` (major) | dev, לא טריוויאלי | **אין** — ה-critical דורש שרת Vitest UI מאזין (`vitest --ui`); אנחנו מריצים `vitest run` בלבד (pre-push, CI). אין dev server של vite. |
+| `eslint-config-next` / `@next/eslint-plugin-next` → `fast-glob` | high ×2 | לא (lint) | אין (npm מציע downgrade ל-14.2.35) | — | **זניח.** |
+| `knip` 5.88.1 → `fast-glob` | high | לא (dev) | `knip@6` (major) | dev, לא טריוויאלי | **זניח.** |
+
+## איך לשחזר
+
+```bash
+npm audit                          # 24
+npm audit --omit=dev               # 16
+npm audit --json | node -e 'const a=JSON.parse(require("fs").readFileSync(0));for(const [k,v] of Object.entries(a.vulnerabilities))console.log(k,v.severity,v.isDirect?"direct":"transitive",JSON.stringify(v.fixAvailable))'
+```
+
+---
+
+# ריצה קודמת — 05/09/2026 (ענף `infra/hardening`)
+
+> הפירוט למטה הוא ניתוח 05/09/2026. ההחלטות לגבי `nodemailer`, `exceljs`, `puppeteer-core` ושרשרת `vitest` עדיין
+> תקפות (מספרי הגרסאות האחרונות התקדמו: `nodemailer` 10.0.14, `puppeteer-core` 25.12.0, `vitest` 5.0.3).
+> צעד 3 ("`npm audit fix`") בוצע ב-04/10 בצורה ממוקדת (ראה המדיניות למעלה).
+
+## מצב 05/09/2026
 
 ריצה ראשונה: `npm audit --json` ו-`npm audit --omit=dev --json` על `package-lock.json` של `9c592f0`
 (node 20.20.1, npm 10.8.2) — 27 / 22. **עודכן אחרי `f15ad65`** (`next@16.3.4` + `eslint-config-next@16.3.4`,
