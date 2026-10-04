@@ -240,14 +240,17 @@ git log --oneline -5
 
 ## הערות נוספות
 
-- **Postbuild Gotcha → תמיד `npm run deploy`**: `npm run build` לבד
-  דורס את `.next/standalone/` על הדיסק אבל התהליך הרץ ממשיך להחזיק
-  ב-manifests של ה-build הישן בזיכרון → מגיש HTML/RSC עם שמות chunks
-  שכבר לא קיימים → 404 → `ChunkLoadError` → "This page couldn't load".
-  **לכן כל שינוי קוד שמיועד לפרודקשן מסתיים ב-`npm run deploy`**
-  (build → restart → אימות שהשירות `active` ושהתהליך החדש עלה אחרי
-  כתיבת `.next/BUILD_ID`). `npm run build` לבד מותר **רק** לבדיקת
-  קומפילציה — לעולם לא כ-deploy. הסקריפט: `scripts/deploy.sh`.
+- **תמיד `npm run deploy` (פריסה אטומית, מ-04/10/2026)**: ה-build רץ
+  ב-`.next/` בזמן שהתהליך החי רץ מ-`.deploy/releases/<BUILD_ID>`; רק
+  build מוצלח מקודם (`.deploy/current`), אחרי ה-restart רצה בדיקת עשן
+  (דפי הכניסה עם סמן קבוע וה-BUILD_ID החדש, כל ה-chunks שהם מפנים
+  אליהם, `/api/health`), וכשל מחזיר אוטומטית ל-build הקודם. שחזור
+  ידני: `npm run deploy:rollback`. עד 04/10 התהליך רץ ישירות
+  מ-`.next/standalone`, וכל `next build` — גם כזה שנכשל — שלף ממנו את
+  ה-chunks: `ChunkLoadError` → "This page couldn't load" בזמן ש-health
+  ירוק. **לכן כל שינוי קוד שמיועד לפרודקשן מסתיים ב-`npm run deploy`**.
+  `npm run build` לבד מותר **רק** לבדיקת קומפילציה — לעולם לא כ-deploy.
+  הסקריפט: `scripts/deploy.sh`.
   ה-restart ללא סיסמה מורשה דרך `/etc/sudoers.d/billing-deploy`
   (scoped ל-`systemctl restart`/`is-active` של `billing.service` בלבד).
   אם הדחיפה כוללת שינוי קוד שמשפיע על runtime, הזכר למשתמש
