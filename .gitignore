@@ -20,6 +20,10 @@
 /.next/
 /out/
 
+# releases of the atomic deploy (scripts/deploy.sh): the live build, one
+# previous build and the links that pick between them
+/.deploy/
+
 # production
 /build
 

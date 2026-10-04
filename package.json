@@ -9,6 +9,7 @@
     "postbuild": "rm -rf .next/standalone/.next/static .next/standalone/public && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public",
     "start": "next start",
     "deploy": "bash scripts/deploy.sh",
+    "deploy:rollback": "bash scripts/deploy.sh --rollback",
     "prepare": "git config core.hooksPath .husky || true",
     "test": "vitest run",
     "test:db": "vitest run --no-file-parallelism --reporter=default --reporter=json --outputFile.json=.vitest-db-report.json",
