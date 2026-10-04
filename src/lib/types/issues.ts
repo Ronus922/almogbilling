@@ -11,6 +11,9 @@ export type IssueLocationType = 'apartment' | 'area' | 'general';
 /** Who opened the issue (migration 20261003074737): the staff screen, or an
  *  owner through the portal's fault report (/portal/report). */
 export type IssueSource = 'staff' | 'portal';
+/** A kanban column a card can sit in (issues.board_column, 04/10/2026) —
+ *  "בוצע" is not one: a resolved / closed issue is there by its status. */
+export type IssueBoardColumn = 'awaiting' | 'today' | 'in_progress';
 
 export interface Issue {
   id: string;
@@ -37,8 +40,11 @@ export interface Issue {
   resolution_notes: string | null;
   resolved_at: string | null;
   is_archived: boolean;
-  /** Manual kanban order within a status column (migration 050). */
+  /** Order inside the kanban column, ascending (migration 20261004180139). */
   sort_order: number;
+  /** The kanban column, set at insert from the computed rule and afterwards
+   *  only by a drag. null = computed live (lib/issues/board.ts). */
+  board_column: IssueBoardColumn | null;
   created_by: string | null;
   created_by_name: string | null;
   created_at: string;

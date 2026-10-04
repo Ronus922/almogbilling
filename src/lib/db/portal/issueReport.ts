@@ -2,6 +2,7 @@ import 'server-only';
 import { queryOne } from '@/lib/db';
 import { portalIssueTitle, urgencyToPriority, type PortalIssueReport } from '@/lib/portal/issueReport';
 import { resolvePortalIdentity } from '@/lib/db/portal/identity';
+import { NEW_ISSUE_SORT_ORDER_SQL } from '@/lib/db/issues';
 import type { PortalRole } from '@/lib/portal/identity';
 
 // The owners portal's fault report, on the database side. Two rules live here:
@@ -57,9 +58,10 @@ export interface CreatedPortalIssue {
  * Insert the report as one statement — the row appears complete or not at
  * all. `id` is chosen by the caller, because the photos are uploaded under
  * `<issueId>/` BEFORE the row exists (so no half-made issue is ever visible to
- * staff); `images` are those object paths. status 'open', no handler (it lands
- * in "ממתין לשיוך"), created_by NULL (no users row — the reporter is the
- * snapshot), and the call number from its own sequence.
+ * staff); `images` are those object paths. status 'open', no handler — so it
+ * starts in "ממתין לשיוך", at the top (board_column / sort_order) — created_by
+ * NULL (no users row — the reporter is the snapshot), and the call number from
+ * its own sequence.
  */
 export async function insertPortalIssue(args: {
   id: string;
@@ -78,11 +80,13 @@ export async function insertPortalIssue(args: {
        (id, title, description, priority, status, images,
         created_by, created_by_name, source,
         reporter_contact_id, reporter_name, reporter_phone, reporter_apartment, reporter_role,
-        reporter_location, reporter_area, ticket_number)
+        reporter_location, reporter_area, ticket_number,
+        board_column, sort_order)
      values ($1, $2, $3, $4, 'open', $5,
              null, $6, 'portal',
              $7, $6, $8, $9, $12,
-             $10, $11, nextval('public.issues_ticket_number_seq'))
+             $10, $11, nextval('public.issues_ticket_number_seq'),
+             'awaiting', ${NEW_ISSUE_SORT_ORDER_SQL})
      returning id, ticket_number`,
     [
       id, title, report.description, urgencyToPriority(report.urgency), images,

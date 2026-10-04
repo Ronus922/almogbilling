@@ -59,10 +59,6 @@ interface Props {
   open: boolean;
   /** null → create mode; an issue → edit mode. */
   issue: IssueWithMeta | null;
-  /** A kanban drop onto "לטיפול היום" opens the panel with today's date in
-   *  "תאריך יעד" (lib/issues/board.ts). It counts as the starting value, so
-   *  closing the panel without saving discards it silently — the card stays. */
-  prefillDueDate?: string | null;
   canEdit: boolean;
   /** contacts:view (canSeeReporterPhone) — the "נפתח ע״י" block of a portal
    *  report shows the phone only then; the API sends it only then, too. */
@@ -345,7 +341,7 @@ function MediaDropSection({ canAdd, canEdit, busy, imageCount, videoCount, tiles
   );
 }
 
-export function IssueFormPanel({ open, issue, prefillDueDate = null, canEdit, canSeeReporterPhone, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete }: Props) {
+export function IssueFormPanel({ open, issue, canEdit, canSeeReporterPhone, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete }: Props) {
   const isEdit = !!issue;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
@@ -400,8 +396,7 @@ export function IssueFormPanel({ open, issue, prefillDueDate = null, canEdit, ca
 
   useEffect(() => {
     if (open) {
-      const base = issue ? fromIssue(issue) : EMPTY_FORM;
-      const init = prefillDueDate ? { ...base, due_date: prefillDueDate } : base;
+      const init = issue ? fromIssue(issue) : EMPTY_FORM;
       setForm(init);
       setInitial(init);
       setComments([]);
@@ -420,7 +415,7 @@ export function IssueFormPanel({ open, issue, prefillDueDate = null, canEdit, ca
       setSelf(false);
       if (issue) void loadDetail(issue.id);
     }
-  }, [open, issue, prefillDueDate, loadDetail]);
+  }, [open, issue, loadDetail]);
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
