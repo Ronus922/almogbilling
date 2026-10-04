@@ -12,10 +12,12 @@ concurrency:
 env:
   HUSKY: 0
 
+# Runners are pinned, not ubuntu-latest: that label moves to Ubuntu 26 on
+# 19/10/2026. Move both jobs to a new image on purpose, in its own PR.
 jobs:
   check:
     name: check:all
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
       db:
@@ -79,7 +81,7 @@ jobs:
 
   e2e:
     name: e2e (Playwright + Mailpit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       db:
@@ -158,7 +160,7 @@ jobs:
         env:
           CI: 'true'
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
