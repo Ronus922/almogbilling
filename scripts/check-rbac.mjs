@@ -11,6 +11,8 @@
 //       field worker, a future resident) is denied even with matrix rows.
 //     • a portal reporter's phone follows contacts:view (owners' contact
 //       details) — never a field worker's by default.
+//     • a supplier's additional contacts follow suppliers:edit — no module of
+//       their own; a viewer (even with suppliers:view) never manages them.
 //   Run under tsx (imports .ts source). Pure — no DB.
 import { run, fail, ok } from './_check-lib.mjs';
 import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone } from '../src/lib/permissions/check.ts';
@@ -74,4 +76,16 @@ run('check-rbac', async () => {
   t('reporter phone: cleaner (ברירת מחדל) נחסם', canSeeReporterPhone('cleaner', DEFAULT_WORKER) === false);
   t('reporter phone: maintenance (ברירת מחדל) נחסם', canSeeReporterPhone('maintenance', DEFAULT_WORKER) === false);
   t('reporter phone: viewer (ברירת מחדל) נחסם', canSeeReporterPhone('viewer', DEFAULT_VIEWER) === false);
+
+  // Additional supplier contacts ("הוסף איש קשר נוסף", 04/10/2026) — NO new
+  // module: whoever may create/edit a supplier manages its additional contacts,
+  // through the same POST/PATCH (requirePermission('suppliers','edit')) and the
+  // same canEdit gate in the UI. The default matrix must keep that true.
+  const supView = [{ module: 'suppliers', canView: true, canEdit: false }];
+  t('אנשי קשר נוספים: admin רשאי suppliers/edit', hasPermission('admin', [], 'suppliers', 'edit') === true);
+  t('אנשי קשר נוספים: manager (ברירת מחדל) רשאי suppliers/edit', hasPermission('manager', DEFAULT_MANAGER, 'suppliers', 'edit') === true);
+  t('אנשי קשר נוספים: viewer (ברירת מחדל) נחסם suppliers/edit', hasPermission('viewer', DEFAULT_VIEWER, 'suppliers', 'edit') === false);
+  t('אנשי קשר נוספים: viewer עם suppliers/view בלבד נחסם edit', hasPermission('viewer', supView, 'suppliers', 'edit') === false);
+  t('אנשי קשר נוספים: viewer עם suppliers/view רשאי לצפות', hasPermission('viewer', supView, 'suppliers', 'view') === true);
+  t('אנשי קשר נוספים: cleaner (ברירת מחדל) נחסם suppliers/edit', hasPermission('cleaner', DEFAULT_WORKER, 'suppliers', 'edit') === false);
 });

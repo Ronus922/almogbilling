@@ -1,8 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
-import { listSuppliers, createSupplier } from '@/lib/db/suppliers';
+import { withTransaction } from '@/lib/db';
+import { listSuppliers, createSupplier, replaceSupplierContacts } from '@/lib/db/suppliers';
 import { coerceAndValidateSupplier } from '@/lib/validation/suppliers';
+import { supplierContactsSchema } from '@/lib/validation/requests';
 import { writeAudit } from '@/lib/db/audit';
 import type { SupplierStatusFilter } from '@/lib/types/suppliers';
 import { logger } from '@/lib/logger';
@@ -58,13 +60,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
   }
 
-  const result = coerceAndValidateSupplier((body ?? {}) as Record<string, unknown>);
+  const rec = (body ?? {}) as Record<string, unknown>;
+  const result = coerceAndValidateSupplier(rec);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
 
+  // Additional contacts are validated before anything is written — a bad row
+  // never leaves a half-created supplier. Absent key = none.
+  const contacts = supplierContactsSchema.safeParse(rec.additional_contacts ?? []);
+  if (!contacts.success) {
+    const issues = contacts.error.issues;
+    return NextResponse.json(
+      { error: issues[0]?.message ?? 'invalid_additional_contacts', issues },
+      { status: 400 },
+    );
+  }
+
   try {
-    const id = await createSupplier(result.fields, actor.id, actor.full_name ?? actor.username);
+    const id = await withTransaction(async (client) => {
+      const newId = await createSupplier(
+        result.fields, actor.id, actor.full_name ?? actor.username, client,
+      );
+      if (contacts.data.length > 0) await replaceSupplierContacts(client, newId, contacts.data);
+      return newId;
+    });
     await writeAudit({
       actorUserId: actor.id,
       action: 'created',

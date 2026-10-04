@@ -11,7 +11,9 @@ import { CHIP_RESIDENT_ROLES } from '@/lib/constants/chips';
 import { WHATSAPP_ATTACHMENT_LIMITS, WHATSAPP_MESSAGE_MAX_FILES } from '@/lib/constants/whatsappAttachments';
 import { FINANCE_RECEIPT_LIMITS } from '@/lib/constants/finance';
 import { isIsoDate, isMonthKey } from '@/lib/finance/period';
+import { cleanPhoneField } from '@/lib/whatsapp';
 import type { ChipHolderUpdate, ChipResidentRole } from '@/lib/types/chips';
+import type { SupplierContactInput } from '@/lib/types/suppliers';
 
 // POST /api/auth/login
 export const loginBodySchema = z.object({
@@ -118,6 +120,47 @@ const chipHolderUpdateSchema = z
   });
 
 export const chipHolderUpdatesSchema = z.array(chipHolderUpdateSchema).max(50, 'too_many_updates');
+
+// POST /api/suppliers + PATCH /api/suppliers/:id — `additional_contacts`: the
+// supplier's 2nd, 3rd… contact people (the primary one stays in the supplier's
+// own fields). The panel always sends the whole list. Same rules as the
+// supplier's own phone/email: phone cleaned to one canonical local number
+// (cleanPhoneField), email format-checked. A fully blank row is dropped.
+// Messages are Hebrew — the supplier panels toast the error as-is.
+const SUPPLIER_CONTACTS_MAX = 50;
+const supplierContactText = z.string({ error: 'איש קשר נוסף לא תקין' }).trim().default('');
+const supplierContactSchema = z
+  .object(
+    {
+      name: supplierContactText,
+      role: supplierContactText,
+      phone: supplierContactText,
+      email: supplierContactText,
+    },
+    { error: 'איש קשר נוסף לא תקין' },
+  )
+  .transform((c, ctx): SupplierContactInput | null => {
+    if (!c.name && !c.role && !c.phone && !c.email) return null;
+    let phone = '';
+    if (c.phone) {
+      const cleaned = cleanPhoneField(c.phone);
+      if (!cleaned) {
+        ctx.addIssue({ code: 'custom', path: ['phone'], message: 'מספר טלפון לא תקין באיש קשר נוסף' });
+        return z.NEVER;
+      }
+      phone = cleaned;
+    }
+    if (c.email && !EMAIL_RX.test(c.email)) {
+      ctx.addIssue({ code: 'custom', path: ['email'], message: 'כתובת אימייל לא תקינה באיש קשר נוסף' });
+      return z.NEVER;
+    }
+    return { name: c.name, role: c.role, phone, email: c.email };
+  });
+
+export const supplierContactsSchema = z
+  .array(supplierContactSchema, { error: 'רשימת אנשי הקשר הנוספים לא תקינה' })
+  .max(SUPPLIER_CONTACTS_MAX, `ניתן להוסיף עד ${SUPPLIER_CONTACTS_MAX} אנשי קשר נוספים`)
+  .transform((rows) => rows.filter((r): r is SupplierContactInput => r !== null));
 
 // POST /api/whatsapp/campaigns — `attachment_ids`: staged uploads (upload order
 // is the send order). Count is capped here; ownership + total size are checked

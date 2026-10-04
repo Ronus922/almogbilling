@@ -27,6 +27,10 @@ import {
 import { SupplierSection } from './SupplierSection';
 import { SupplierActivity } from './SupplierActivity';
 import { SupplierField, ReadonlyField, FIELD_LABEL } from './SupplierField';
+import {
+  SupplierContactsEditor, SupplierContactsView, toContactRows, supplierContactErrors,
+  contactRowsPayload, type SupplierContactRow,
+} from './SupplierContacts';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
 import { validatePhone } from '@/lib/validation';
@@ -37,7 +41,7 @@ import {
   DOC_TYPES, docTypeLabel, ALLOWED_DOC_TYPES, MAX_DOC_SIZE_BYTES,
 } from '@/lib/constants/suppliers';
 import type {
-  Supplier, SupplierDocument, SupplierWritableFields,
+  Supplier, SupplierDetail, SupplierDocument, SupplierWritableFields, SupplierContactInput,
   SupplierStatus, SupplierPaymentTerms, SupplierDocType, SupplierCategory,
 } from '@/lib/types/suppliers';
 
@@ -85,13 +89,16 @@ export function SupplierDetailPanel({
   supplierId, open, categories, onOpenChange, onChanged, canEdit, canDelete,
 }: Props) {
   const router = useRouter();
-  const [supplier, setSupplier] = useState<Supplier | null>(null);
+  const [supplier, setSupplier] = useState<SupplierDetail | null>(null);
   const [documents, setDocuments] = useState<SupplierDocument[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<FormState | null>(null);
+  // Additional contacts being edited — kept apart from the whole-object form so
+  // the status-change PATCH (built from toForm) never carries them.
+  const [contactRows, setContactRows] = useState<SupplierContactRow[]>([]);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
 
@@ -122,18 +129,19 @@ export function SupplierDetailPanel({
       setError(null);
       setEditing(false);
       setForm(null);
+      setContactRows([]);
       setTouched({});
       return;
     }
     let cancelled = false;
-    setLoading(true); setError(null); setEditing(false); setForm(null); setTouched({});
+    setLoading(true); setError(null); setEditing(false); setForm(null); setContactRows([]); setTouched({});
     Promise.all([
       fetch(`/api/suppliers/${supplierId}`, { credentials: 'include' })
         .then((r) => r.ok ? r.json() : Promise.reject(new Error(`supplier HTTP ${r.status}`))),
       fetch(`/api/suppliers/${supplierId}/documents`, { credentials: 'include' })
         .then((r) => r.ok ? r.json() : Promise.reject(new Error(`documents HTTP ${r.status}`))),
     ])
-      .then(([sup, docs]: [{ supplier: Supplier }, { documents: SupplierDocument[] }]) => {
+      .then(([sup, docs]: [{ supplier: SupplierDetail }, { documents: SupplierDocument[] }]) => {
         if (cancelled) return;
         setSupplier(sup.supplier);
         setDocuments(docs.documents ?? []);
@@ -168,7 +176,11 @@ export function SupplierDetailPanel({
     return touched[key] ? errors[key] ?? null : null;
   }
 
-  const canSaveEdit = !!form && !errors.display_name && !errors.phone && !errors.mobile && !saving;
+  const contactErrors = useMemo(() => supplierContactErrors(contactRows), [contactRows]);
+
+  const canSaveEdit =
+    !!form && !errors.display_name && !errors.phone && !errors.mobile
+    && contactErrors.size === 0 && !saving;
 
   const isDirty = editing; // edit mode is the only unsaved-state surface
 
@@ -192,6 +204,8 @@ export function SupplierDetailPanel({
   function startEdit() {
     if (!supplier) return;
     setForm(toForm(supplier));
+    // `?? []`: a response from a server without the field (deploy/rollback window).
+    setContactRows(toContactRows(supplier.additional_contacts ?? []));
     setTouched({});
     setEditing(true);
   }
@@ -199,11 +213,16 @@ export function SupplierDetailPanel({
   function cancelEdit() {
     setEditing(false);
     setForm(null);
+    setContactRows([]);
     setTouched({});
   }
 
-  // Whole-object PATCH. Used for both edit-save and status changes.
-  async function patchSupplier(fields: SupplierWritableFields, successMsg: string): Promise<boolean> {
+  // Whole-object PATCH. Used for both edit-save and status changes. Only the
+  // edit-save sends additional_contacts; without the key the server leaves them.
+  async function patchSupplier(
+    fields: SupplierWritableFields & { additional_contacts?: SupplierContactInput[] },
+    successMsg: string,
+  ): Promise<boolean> {
     if (!supplierId) return false;
     const r = await fetch(`/api/suppliers/${supplierId}`, {
       method: 'PATCH',
@@ -211,7 +230,7 @@ export function SupplierDetailPanel({
       credentials: 'include',
       body: JSON.stringify(fields),
     });
-    const data = (await r.json().catch(() => ({}))) as { supplier?: Supplier; error?: string };
+    const data = (await r.json().catch(() => ({}))) as { supplier?: SupplierDetail; error?: string };
     if (!r.ok) throw new Error(data.error ?? 'שמירה נכשלה');
     if (data.supplier) setSupplier(data.supplier);
     toast.success(successMsg);
@@ -247,9 +266,13 @@ export function SupplierDetailPanel({
         notes: form.notes.trim(),
         internal_notes: form.internal_notes.trim(),
       };
-      await patchSupplier(payload, 'הספק עודכן');
+      await patchSupplier(
+        { ...payload, additional_contacts: contactRowsPayload(contactRows) },
+        'הספק עודכן',
+      );
       setEditing(false);
       setForm(null);
+      setContactRows([]);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -460,7 +483,7 @@ export function SupplierDetailPanel({
 
                 {/* TAB — פרטים */}
                 <TabsContent value="details" className="mt-5 space-y-4">
-                  {editing && form ? (
+                  {canEdit && editing && form ? (
                     <EditForm
                       form={form}
                       set={set}
@@ -468,6 +491,15 @@ export function SupplierDetailPanel({
                       errFor={errFor}
                       categories={categories}
                       disabled={saving}
+                      additionalContacts={
+                        <SupplierContactsEditor
+                          idPrefix="esup"
+                          rows={contactRows}
+                          onChange={setContactRows}
+                          errors={contactErrors}
+                          disabled={saving}
+                        />
+                      }
                     />
                   ) : (
                     <ViewDetails supplier={supplier} categories={categories} />
@@ -839,7 +871,7 @@ function RenameDocumentDialog({
 /* ---------- View mode ---------- */
 
 interface ViewProps {
-  supplier: Supplier;
+  supplier: SupplierDetail;
   categories: SupplierCategory[];
 }
 
@@ -858,6 +890,7 @@ function ViewDetails({ supplier, categories }: ViewProps) {
           <ReadonlyField label="נייד" value={formatPhoneDisplay(supplier.mobile)} ltr />
           <ReadonlyField label="אימייל" value={supplier.email || null} ltr accent />
           <ReadonlyField label="אתר" value={supplier.website || null} ltr accent />
+          <SupplierContactsView contacts={supplier.additional_contacts ?? []} />
         </div>
       </SupplierSection>
 
@@ -910,9 +943,13 @@ interface EditFormProps {
   errFor: (key: keyof FormState) => string | null;
   categories: SupplierCategory[];
   disabled: boolean;
+  /** The additional-contacts cards + add button, after the primary contact fields. */
+  additionalContacts: React.ReactNode;
 }
 
-function EditForm({ form, set, markTouched, errFor, categories, disabled }: EditFormProps) {
+function EditForm({
+  form, set, markTouched, errFor, categories, disabled, additionalContacts,
+}: EditFormProps) {
   return (
     <>
       {/* Section 1 — פרטי הספק */}
@@ -967,6 +1004,7 @@ function EditForm({ form, set, markTouched, errFor, categories, disabled }: Edit
             value={form.email} onChange={(v) => set('email', v)} disabled={disabled}
             dir="ltr" placeholder="supplier@example.com"
           />
+          {additionalContacts}
         </div>
       </SupplierSection>
 
