@@ -6,7 +6,9 @@ import {
   updateUserReminder,
   softDeleteUserReminder,
 } from '@/lib/db/userReminders';
-import { coerceUserReminderInput } from '@/lib/validation/userReminders';
+import { coerceAttachmentIds, coerceUserReminderInput } from '@/lib/validation/userReminders';
+import { linkAttachments, listReminderAttachments, toAttachmentView } from '@/lib/db/userReminderAttachments';
+import { REMINDER_ATTACHMENT_LIMITS } from '@/lib/constants/reminderAttachments';
 import { writeAudit } from '@/lib/db/audit';
 import { logger } from '@/lib/logger';
 
@@ -18,7 +20,8 @@ interface RouteCtx {
   params: Promise<{ id: string }>;
 }
 
-// GET /api/user-reminders/[id]  (user_reminders:view)
+// GET /api/user-reminders/[id]  (user_reminders:view) — the reminder plus its
+// files (`attachments`, each with its /api/files proxy url).
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
   try {
     await requirePermission('user_reminders', 'view');
@@ -33,10 +36,14 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 
   const reminder = await getUserReminderById(id);
   if (!reminder) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  return NextResponse.json({ reminder });
+  const attachments = (await listReminderAttachments(id)).map(toAttachmentView);
+  return NextResponse.json({ reminder: { ...reminder, attachments } });
 }
 
 // PATCH /api/user-reminders/[id]  (user_reminders:edit)
+// Partial: only the keys sent change. New staged files (attachment_ids) are
+// linked on top of the existing ones; removal goes through
+// DELETE /api/user-reminders/attachments/[attachmentId].
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
@@ -60,6 +67,8 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
   const result = coerceUserReminderInput(bodyRec, 'update');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+  const attachments = coerceAttachmentIds(bodyRec);
+  if (!attachments.ok) return NextResponse.json({ error: attachments.error }, { status: 400 });
 
   // is_archived passthrough (boolean) — allows restore/re-archive via PATCH.
   const patch: Record<string, unknown> = { ...result.fields };
@@ -74,8 +83,16 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     const before = await getUserReminderById(id);
     if (!before) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
+    if (attachments.ids.length > 0) {
+      const existing = await listReminderAttachments(id);
+      if (existing.length + attachments.ids.length > REMINDER_ATTACHMENT_LIMITS.maxFiles) {
+        return NextResponse.json({ error: 'too_many_attachments' }, { status: 400 });
+      }
+    }
+
     const reminder = await updateUserReminder(id, patch);
     if (!reminder) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    const linked = await linkAttachments(id, attachments.ids, actor.id);
 
     await writeAudit({
       actorUserId: actor.id,
@@ -83,9 +100,12 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       entityType: 'reminder',
       entityId: id,
       changes: { before, after: reminder },
+      metadata: linked > 0 ? { attachments_linked: linked } : undefined,
     });
 
-    return NextResponse.json({ reminder });
+    return NextResponse.json({
+      reminder, attachments_linked: linked, attachments_requested: attachments.ids.length,
+    });
   } catch (err) {
     const e = err as { code?: string };
     if (e.code === '23503') {

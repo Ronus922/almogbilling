@@ -100,6 +100,7 @@ export async function listBucket(sc: StorageClient, bucket: BillingBucket): Prom
  *   wa_campaign_attachments.object_key / wa_message_attachments.object_key
  *                                     → whatsapp-attachments (bucket column wins)
  *   fin_documents.object_key          → finance-receipts (bucket column wins)
+ *   user_reminder_attachments.object_key → reminder-attachments (bucket column wins)
  *   chat_messages.media_url           → whichever bucket the URL names
  *
  * `unknownBucketValues` collects any bucket name a row supplied that is NOT one
@@ -173,6 +174,16 @@ export async function collectDbRefs(db: Client): Promise<DbRefCollection> {
   );
   for (const r of finDocs.rows) {
     push(r.bucket, { key: r.object_key, table: 'fin_documents', column: 'object_key', rowId: r.id, bound: r.bound, createdAt: r.created_at });
+  }
+
+  // Reminder attachments: staged (reminder_id NULL) until the reminder is saved
+  // — the same lifecycle as fin_documents.
+  const reminderAtt = await db.query<{ id: string; bucket: string; object_key: string; created_at: Date; bound: boolean }>(
+    `select id, bucket, object_key, created_at, reminder_id is not null as bound
+       from public.user_reminder_attachments`,
+  );
+  for (const r of reminderAtt.rows) {
+    push(r.bucket, { key: r.object_key, table: 'user_reminder_attachments', column: 'object_key', rowId: r.id, bound: r.bound, createdAt: r.created_at });
   }
 
   const media = await db.query<{ id: string; media_url: string; created_at: Date }>(

@@ -5,7 +5,8 @@ import {
   listUserReminders,
   createUserReminder,
 } from '@/lib/db/userReminders';
-import { coerceUserReminderInput } from '@/lib/validation/userReminders';
+import { coerceAttachmentIds, coerceUserReminderInput } from '@/lib/validation/userReminders';
+import { linkAttachments } from '@/lib/db/userReminderAttachments';
 import { writeAudit } from '@/lib/db/audit';
 import type { UserReminderStatus, UserReminderWritableFields } from '@/lib/types/userReminders';
 import { logger } from '@/lib/logger';
@@ -62,6 +63,8 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/user-reminders  (user_reminders:edit)
+// Staged files (attachment_ids, uploaded by this actor through
+// POST /api/user-reminders/attachments) are linked to the new reminder.
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try {
@@ -82,12 +85,15 @@ export async function POST(req: NextRequest) {
 
   const result = coerceUserReminderInput(bodyRec, 'create');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+  const attachments = coerceAttachmentIds(bodyRec);
+  if (!attachments.ok) return NextResponse.json({ error: attachments.error }, { status: 400 });
 
   try {
     const reminder = await createUserReminder(
       result.fields as Partial<UserReminderWritableFields> & { title: string; remind_at: string },
       actor.id,
     );
+    const linked = await linkAttachments(reminder.id, attachments.ids, actor.id);
 
     await writeAudit({
       actorUserId: actor.id,
@@ -95,9 +101,13 @@ export async function POST(req: NextRequest) {
       entityType: 'reminder',
       entityId: reminder.id,
       changes: { after: reminder },
+      metadata: linked > 0 ? { attachments_linked: linked } : undefined,
     });
 
-    return NextResponse.json({ reminder }, { status: 201 });
+    return NextResponse.json(
+      { reminder, attachments_linked: linked, attachments_requested: attachments.ids.length },
+      { status: 201 },
+    );
   } catch (err) {
     const e = err as { code?: string };
     if (e.code === '23503') {

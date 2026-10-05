@@ -12,6 +12,10 @@ import type {
   UserReminderStatus,
   UserReminderWritableFields,
 } from '@/lib/types/userReminders';
+import { REMINDER_ATTACHMENT_LIMITS } from '@/lib/constants/reminderAttachments';
+
+/** The panel's "0 / 1000" counter — also a CHECK on user_reminders.description. */
+export const REMINDER_DESCRIPTION_MAX = 1000;
 
 const STATUSES: readonly UserReminderStatus[] = ['pending', 'done', 'dismissed'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -42,6 +46,16 @@ export function coerceUserReminderInput(
     if (!title) return { ok: false, error: 'title_required' };
     if (title.length > 300) return { ok: false, error: 'title_too_long' };
     fields.title = title;
+  }
+
+  // description — optional free text; blank → NULL. Inner line breaks are kept.
+  if (has(body, 'description')) {
+    if (body.description !== null && typeof body.description !== 'string') {
+      return { ok: false, error: 'invalid_description' };
+    }
+    const d = strOrNull(body.description);
+    if (d && d.length > REMINDER_DESCRIPTION_MAX) return { ok: false, error: 'description_too_long' };
+    fields.description = d;
   }
 
   // remind_at — required on create; full ISO timestamptz.
@@ -86,4 +100,24 @@ export function coerceUserReminderInput(
   }
 
   return { ok: true, fields };
+}
+
+export type AttachmentIdsValidation =
+  | { ok: true; ids: string[] }
+  | { ok: false; error: string };
+
+/**
+ * attachment_ids — staged files (user_reminder_attachments) to link to the
+ * reminder on this save. Optional: absent = none (so a status-only PATCH from
+ * the list keeps working). Distinct UUIDs, at most one reminder's worth.
+ */
+export function coerceAttachmentIds(body: Record<string, unknown>): AttachmentIdsValidation {
+  if (!has(body, 'attachment_ids') || body.attachment_ids == null) return { ok: true, ids: [] };
+  const raw = body.attachment_ids;
+  if (!Array.isArray(raw) || raw.some((v) => typeof v !== 'string' || !UUID_RE.test(v))) {
+    return { ok: false, error: 'invalid_attachment_ids' };
+  }
+  const ids = [...new Set(raw as string[])];
+  if (ids.length > REMINDER_ATTACHMENT_LIMITS.maxFiles) return { ok: false, error: 'too_many_attachments' };
+  return { ok: true, ids };
 }

@@ -52,6 +52,9 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<Actor>> = {
   // An apartment OWNER may also open one through the portal, under the
   // conditions of residentReceiptViewer() below.
   'finance-receipts': () => requirePermission('finance', 'view'),
+  // Reminder attachments — whoever may open the reminders module, exactly like
+  // the reminder itself (GET /api/user-reminders/[id]).
+  'reminder-attachments': () => requirePermission('user_reminders', 'view'),
 };
 
 /**
@@ -172,6 +175,17 @@ async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<
     return row.entry_id
       ? { ...base, fileName: row.original_name, entityType: 'fin_entry', entityId: row.entry_id, documentId: row.id }
       : { ...base, fileName: row.original_name, entityType: 'fin_document', entityId: row.id };
+  }
+  if (bucket === 'reminder-attachments') {
+    const row = await queryOne<{ id: string; reminder_id: string | null; original_name: string }>(
+      `select id, reminder_id, original_name from public.user_reminder_attachments where object_key = $1 limit 1`,
+      [path],
+    );
+    if (!row) return orphan;
+    // Mirrors `attachment_removed`: the reminder is the parent, the file id rides in metadata.
+    return row.reminder_id
+      ? { ...base, fileName: row.original_name, entityType: 'reminder', entityId: row.reminder_id, documentId: row.id }
+      : { ...base, fileName: row.original_name, entityType: 'reminder_attachment', entityId: row.id };
   }
   // issue-attachments: bare paths `<issueId>/<uuid>.<ext>`, no display name — the
   // prefix IS the parent (enforced at upload by buildObjectKey / isPathUnderIssue).

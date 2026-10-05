@@ -3462,6 +3462,46 @@ CREATE TABLE public.user_permissions (
 
 
 --
+-- Name: user_reminder_attachments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_reminder_attachments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    reminder_id uuid,
+    uploaded_by uuid,
+    bucket text DEFAULT 'reminder-attachments'::text NOT NULL,
+    object_key text NOT NULL,
+    original_name text NOT NULL,
+    mime text NOT NULL,
+    size bigint NOT NULL,
+    object_deleted_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT user_reminder_attachments_size_check CHECK ((size > 0))
+);
+
+
+--
+-- Name: TABLE user_reminder_attachments; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.user_reminder_attachments IS 'Files attached to a user_reminders row. reminder_id NULL = uploaded but not yet saved with a reminder (staged by uploaded_by). Same lifecycle as fin_documents.';
+
+
+--
+-- Name: COLUMN user_reminder_attachments.object_key; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.user_reminder_attachments.object_key IS 'Storage key in `bucket` (reminder-attachments, private) — <uuid>.<ext>, ASCII only. The readable name is original_name.';
+
+
+--
+-- Name: COLUMN user_reminder_attachments.object_deleted_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.user_reminder_attachments.object_deleted_at IS 'Stamped by the Storage GC when it removed an abandoned staged object. Non-null = the bytes are gone.';
+
+
+--
 -- Name: user_reminders; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3479,8 +3519,17 @@ CREATE TABLE public.user_reminders (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     category_id uuid,
+    description text,
+    CONSTRAINT user_reminders_description_length CHECK (((description IS NULL) OR (char_length(description) <= 1000))),
     CONSTRAINT user_reminders_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'done'::text, 'dismissed'::text])))
 );
+
+
+--
+-- Name: COLUMN user_reminders.description; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.user_reminders.description IS 'Optional free text under the title (up to 1000 characters). NULL = none.';
 
 
 --
@@ -4540,6 +4589,22 @@ ALTER TABLE ONLY public.user_permissions
 
 ALTER TABLE ONLY public.user_permissions
     ADD CONSTRAINT user_permissions_user_id_module_key UNIQUE (user_id, module);
+
+
+--
+-- Name: user_reminder_attachments user_reminder_attachments_object_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_reminder_attachments
+    ADD CONSTRAINT user_reminder_attachments_object_key_key UNIQUE (object_key);
+
+
+--
+-- Name: user_reminder_attachments user_reminder_attachments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_reminder_attachments
+    ADD CONSTRAINT user_reminder_attachments_pkey PRIMARY KEY (id);
 
 
 --
@@ -5680,6 +5745,20 @@ CREATE INDEX tasks_status_idx ON public.tasks USING btree (status);
 --
 
 CREATE INDEX tasks_status_sort_idx ON public.tasks USING btree (status, sort_order);
+
+
+--
+-- Name: user_reminder_attachments_reminder_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX user_reminder_attachments_reminder_idx ON public.user_reminder_attachments USING btree (reminder_id, created_at);
+
+
+--
+-- Name: user_reminder_attachments_staged_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX user_reminder_attachments_staged_idx ON public.user_reminder_attachments USING btree (uploaded_by, created_at) WHERE (reminder_id IS NULL);
 
 
 --
@@ -6995,6 +7074,22 @@ ALTER TABLE ONLY public.user_permissions
 
 
 --
+-- Name: user_reminder_attachments user_reminder_attachments_reminder_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_reminder_attachments
+    ADD CONSTRAINT user_reminder_attachments_reminder_id_fkey FOREIGN KEY (reminder_id) REFERENCES public.user_reminders(id) ON DELETE CASCADE;
+
+
+--
+-- Name: user_reminder_attachments user_reminder_attachments_uploaded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_reminder_attachments
+    ADD CONSTRAINT user_reminder_attachments_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: user_reminders user_reminders_assigned_to_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7229,5 +7324,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261003191659'),
     ('20261003202918'),
     ('20261004112133'),
-    ('20261004180139')
+    ('20261004180139'),
+    ('20261005083237')
 ;

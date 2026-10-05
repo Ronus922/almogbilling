@@ -11,7 +11,7 @@ import type {
 // (matching the declared `string` types) — pg otherwise returns Date objects,
 // which crash when rendered in JSX. Mirrors the tasks module convention.
 const COLUMNS = `
-  id, title, remind_at::text as remind_at, status,
+  id, title, description, remind_at::text as remind_at, status,
   entity_type, entity_id, assigned_to, created_by, category_id,
   completed_at::text as completed_at, is_archived,
   created_at::text as created_at, updated_at::text as updated_at
@@ -21,6 +21,7 @@ const COLUMNS = `
 // completed_at is derived from status server-side, never client-writable).
 const WRITABLE_COLUMNS: (keyof UserReminderWritableFields)[] = [
   'title',
+  'description',
   'remind_at',
   'status',
   'entity_type',

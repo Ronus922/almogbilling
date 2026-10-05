@@ -116,6 +116,16 @@ export function canonicalMime(ext: string): string | null {
   return EXT_MIME[ext]?.canonical ?? null;
 }
 
+/** Whether a browser-reported MIME is consistent with an allowed extension
+ *  ('' / octet-stream always are — browsers are flaky). Shared with other file
+ *  policies (reminder attachments) so the Office / ZIP-container quirks live in
+ *  one table. */
+export function mimeMatchesExt(ext: string, mime: string): boolean {
+  const m = mime.trim().toLowerCase();
+  if (!m || m === 'application/octet-stream') return true;
+  return EXT_MIME[ext]?.accepted.includes(m) ?? false;
+}
+
 /** `accept` attribute for the file input — every allowed extension. */
 export const WHATSAPP_ATTACHMENT_ACCEPT = Object.keys(EXT_MIME).map((e) => `.${e}`).join(',');
 
