@@ -32,9 +32,15 @@ export const FINANCE_RECEIPTS_BUCKET = 'finance-receipts';
 /** Files attached to a reminder (user_reminder_attachments) — PRIVATE. */
 export const REMINDER_ATTACHMENTS_BUCKET = 'reminder-attachments';
 
+/** The PDF of a decision / protocol (portal_decisions) — PRIVATE. Staff reach
+ *  it through /api/files (portal_decisions:view); an owner reaches it ONLY
+ *  through /api/portal/decisions/[id]/file, which also requires the row to be
+ *  published. Neither path is a signed URL. */
+export const PORTAL_DECISIONS_BUCKET = 'portal-decisions';
+
 export const PRIVATE_BUCKETS = [
   'supplier-documents', 'documents', 'issue-attachments', WHATSAPP_ATTACHMENTS_BUCKET, FINANCE_RECEIPTS_BUCKET,
-  REMINDER_ATTACHMENTS_BUCKET,
+  REMINDER_ATTACHMENTS_BUCKET, PORTAL_DECISIONS_BUCKET,
 ] as const;
 export type PrivateBucket = (typeof PRIVATE_BUCKETS)[number];
 

@@ -101,6 +101,7 @@ export async function listBucket(sc: StorageClient, bucket: BillingBucket): Prom
  *                                     → whatsapp-attachments (bucket column wins)
  *   fin_documents.object_key          → finance-receipts (bucket column wins)
  *   user_reminder_attachments.object_key → reminder-attachments (bucket column wins)
+ *   portal_decisions.object_key       → portal-decisions (bucket column wins)
  *   chat_messages.media_url           → whichever bucket the URL names
  *
  * `unknownBucketValues` collects any bucket name a row supplied that is NOT one
@@ -184,6 +185,16 @@ export async function collectDbRefs(db: Client): Promise<DbRefCollection> {
   );
   for (const r of reminderAtt.rows) {
     push(r.bucket, { key: r.object_key, table: 'user_reminder_attachments', column: 'object_key', rowId: r.id, bound: r.bound, createdAt: r.created_at });
+  }
+
+  // Decisions & protocols: no staged state at all — the row and the object are
+  // written by one request, so every row is `bound` and an object with no row
+  // is a genuine orphan.
+  const decisions = await db.query<{ id: string; bucket: string; object_key: string; created_at: Date }>(
+    `select id, bucket, object_key, created_at from public.portal_decisions`,
+  );
+  for (const r of decisions.rows) {
+    push(r.bucket, { key: r.object_key, table: 'portal_decisions', column: 'object_key', rowId: r.id, bound: true, createdAt: r.created_at });
   }
 
   const media = await db.query<{ id: string; media_url: string; created_at: Date }>(
