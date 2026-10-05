@@ -29,8 +29,12 @@ export const WHATSAPP_ATTACHMENTS_BUCKET = 'whatsapp-attachments';
 /** Receipts/invoices of the finance module (fin_documents) — PRIVATE. */
 export const FINANCE_RECEIPTS_BUCKET = 'finance-receipts';
 
+/** Files attached to a reminder (user_reminder_attachments) — PRIVATE. */
+export const REMINDER_ATTACHMENTS_BUCKET = 'reminder-attachments';
+
 export const PRIVATE_BUCKETS = [
   'supplier-documents', 'documents', 'issue-attachments', WHATSAPP_ATTACHMENTS_BUCKET, FINANCE_RECEIPTS_BUCKET,
+  REMINDER_ATTACHMENTS_BUCKET,
 ] as const;
 export type PrivateBucket = (typeof PRIVATE_BUCKETS)[number];
 

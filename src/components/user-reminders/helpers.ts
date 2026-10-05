@@ -5,6 +5,10 @@ const MESSAGES: Record<string, string> = {
   // reminders
   title_required: 'יש להזין כותרת',
   title_too_long: 'הכותרת ארוכה מדי',
+  invalid_description: 'תיאור לא תקין',
+  description_too_long: 'התיאור ארוך מ-1000 תווים',
+  invalid_attachment_ids: 'קבצים מצורפים לא תקינים',
+  too_many_attachments: 'ניתן לצרף עד 10 קבצים',
   remind_at_required: 'יש לבחור תאריך ושעה',
   invalid_remind_at: 'תאריך לא תקין',
   invalid_status: 'סטטוס לא תקין',

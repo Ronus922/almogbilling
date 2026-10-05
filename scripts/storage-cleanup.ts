@@ -126,11 +126,17 @@ async function markRowsObjectDeleted(db: Client, removedObjects: ClassifiedObjec
                 where id = any($1::uuid[]) and object_deleted_at is null`,
               [ids],
             )
-          : await db.query(
-              `update public.fin_documents set object_deleted_at = now()
-                where id = any($1::uuid[]) and object_deleted_at is null`,
-              [ids],
-            );
+          : table === 'fin_documents'
+            ? await db.query(
+                `update public.fin_documents set object_deleted_at = now()
+                  where id = any($1::uuid[]) and object_deleted_at is null`,
+                [ids],
+              )
+            : await db.query(
+                `update public.user_reminder_attachments set object_deleted_at = now()
+                  where id = any($1::uuid[]) and object_deleted_at is null`,
+                [ids],
+              );
     marked += r.rowCount ?? 0;
   }
   return marked;

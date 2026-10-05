@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Camera, CloudUpload, Loader2, Paperclip, X, AlertCircle, Check } from 'lucide-react';
-import { toast } from 'sonner';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
@@ -18,6 +17,15 @@ import {
   validateBroadcastAttachment,
   validateBroadcastAttachmentSet,
 } from '@/lib/constants/whatsappAttachments';
+import {
+  useStagedUploads, type AttachmentPolicy, type StagedAttachment,
+} from '@/lib/hooks/useStagedUploads';
+
+// The engine (validate → stage with progress → remove) lives in
+// useStagedUploads; these re-exports keep the existing imports working.
+export {
+  isUploading, readyAttachmentIds, type AttachmentPolicy, type StagedAttachment,
+} from '@/lib/hooks/useStagedUploads';
 
 // "קבצים מצורפים" — the shared multi-file picker. Each picked file is validated
 // (type / MIME / size / count / total — the same rules the server enforces),
@@ -35,21 +43,6 @@ import {
 //   • finance     — /api/finance/documents, up to 5, PDF/JPG/PNG only, with a
 //                   camera button on phones (`policy` + `capture`)
 
-/** What may be attached and how it is validated — the WhatsApp policy is the
- *  default; a screen with other rules passes its own (same shape). */
-export interface AttachmentPolicy {
-  /** `accept` attribute of the file input. */
-  accept: string;
-  /** Helper line under the dropzone. */
-  helpText: (maxFiles: number) => string;
-  /** Per-file rule (type / MIME / size) — Hebrew error or null. */
-  validateFile: (file: { name: string; size: number; type: string }) => string | null;
-  /** Set-level rule (count / total) for adding `next` on top of `existing`. */
-  validateSet: (existing: { size: number }[], next: { size: number }[], maxFiles: number) => string | null;
-  /** The MIME to record for a file (canonical for its extension, else the browser's). */
-  mimeOf: (file: { name: string; type: string }) => string;
-}
-
 export const WHATSAPP_ATTACHMENT_POLICY: AttachmentPolicy = {
   accept: WHATSAPP_ATTACHMENT_ACCEPT,
   helpText,
@@ -57,36 +50,6 @@ export const WHATSAPP_ATTACHMENT_POLICY: AttachmentPolicy = {
   validateSet: validateBroadcastAttachmentSet,
   mimeOf: (f) => canonicalMime(attachmentExt(f.name)) ?? f.type,
 };
-
-export type StagedStatus = 'uploading' | 'done' | 'error';
-
-export interface StagedAttachment {
-  /** Local key (not the server id). */
-  localId: string;
-  name: string;
-  size: number;
-  mime: string;
-  status: StagedStatus;
-  /** 0..100 while uploading. */
-  progress: number;
-  /** The staged row id once uploaded (wa_campaign_attachments /
-   *  wa_message_attachments, depending on the screen). */
-  attachmentId?: string;
-  error?: string;
-}
-
-/** Ids of the uploads that finished, in list (= send) order. */
-export function readyAttachmentIds(items: StagedAttachment[]): string[] {
-  return items.filter((i) => i.status === 'done' && i.attachmentId).map((i) => i.attachmentId as string);
-}
-
-export function isUploading(items: StagedAttachment[]): boolean {
-  return items.some((i) => i.status === 'uploading');
-}
-
-function newLocalId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `f-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-}
 
 function helpText(maxFiles: number): string {
   return `${WHATSAPP_ATTACHMENT_TYPES_LABEL} · מסמכים עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.kinds.document.maxBytes)}, תמונות/וידאו/אודיו עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.kinds.image.maxBytes)} · עד ${maxFiles} קבצים, סה״כ עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.maxTotalBytes)}`;
@@ -121,91 +84,7 @@ export function AttachmentPicker({
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cameraRef = useRef<HTMLInputElement | null>(null);
-  const xhrs = useRef(new Map<string, XMLHttpRequest>());
-
-  // Abort whatever is still in flight when the picker goes away.
-  useEffect(() => {
-    const map = xhrs.current;
-    return () => { map.forEach((x) => x.abort()); map.clear(); };
-  }, []);
-
-  function patch(localId: string, changes: Partial<StagedAttachment>) {
-    onChange((prev) => prev.map((i) => (i.localId === localId ? { ...i, ...changes } : i)));
-  }
-
-  function upload(item: StagedAttachment, file: File) {
-    const xhr = new XMLHttpRequest();
-    xhrs.current.set(item.localId, xhr);
-    const fd = new FormData();
-    fd.append('file', file);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) patch(item.localId, { progress: Math.round((e.loaded / e.total) * 100) });
-    };
-    xhr.onload = () => {
-      xhrs.current.delete(item.localId);
-      let body: { id?: string; error?: string } = {};
-      try { body = JSON.parse(xhr.responseText) as { id?: string; error?: string }; } catch { /* non-json */ }
-      if (xhr.status >= 200 && xhr.status < 300 && body.id) {
-        patch(item.localId, { status: 'done', progress: 100, attachmentId: body.id });
-      } else {
-        const msg = body.error || (xhr.status === 413 ? 'הקובץ גדול מדי לשרת' : `העלאה נכשלה (HTTP ${xhr.status})`);
-        patch(item.localId, { status: 'error', error: msg });
-        toast.error(msg);
-      }
-    };
-    xhr.onerror = () => {
-      xhrs.current.delete(item.localId);
-      patch(item.localId, { status: 'error', error: 'העלאה נכשלה — בעיית רשת' });
-      toast.error('העלאת הקובץ נכשלה');
-    };
-    xhr.onabort = () => { xhrs.current.delete(item.localId); };
-    xhr.open('POST', uploadUrl);
-    xhr.withCredentials = true;
-    xhr.send(fd);
-  }
-
-  function addFiles(list: FileList | File[]) {
-    const files = Array.from(list);
-    if (files.length === 0) return;
-    // Every file is judged on its own — its type/MIME/size, then the
-    // broadcast-level rules (count, total) against the files ALREADY attached
-    // plus the ones accepted earlier in this same pick. A selection that only
-    // partly fits therefore adds what fits instead of being dropped whole.
-    const accepted: { size: number }[] = items.filter((i) => i.status !== 'error').map((i) => ({ size: i.size }));
-    let firstError: string | null = null;
-
-    const additions: { item: StagedAttachment; file: File | null }[] = files.map((file) => {
-      const err =
-        policy.validateFile({ name: file.name, size: file.size, type: file.type }) ??
-        policy.validateSet(accepted, [{ size: file.size }], maxFiles);
-      if (!err) accepted.push({ size: file.size });
-      else if (!firstError) firstError = err;
-      const item: StagedAttachment = {
-        localId: newLocalId(),
-        name: file.name,
-        size: file.size,
-        mime: policy.mimeOf({ name: file.name, type: file.type }),
-        status: err ? 'error' : 'uploading',
-        progress: 0,
-        error: err ?? undefined,
-      };
-      return { item, file: err ? null : file };
-    });
-    if (firstError) toast.error(firstError);
-    onChange((prev) => [...prev, ...additions.map((a) => a.item)]);
-    for (const a of additions) if (a.file) upload(a.item, a.file);
-  }
-
-  async function remove(item: StagedAttachment) {
-    xhrs.current.get(item.localId)?.abort();
-    xhrs.current.delete(item.localId);
-    onChange((prev) => prev.filter((i) => i.localId !== item.localId));
-    if (item.attachmentId) {
-      try {
-        await fetch(`${deleteUrl}/${item.attachmentId}`, { method: 'DELETE', credentials: 'include' });
-      } catch { /* best-effort — the staged row is harmless */ }
-    }
-  }
+  const { addFiles, remove } = useStagedUploads({ items, onChange, maxFiles, uploadUrl, deleteUrl, policy });
 
   // Files that count toward the broadcast (a rejected row does not).
   const attachedCount = items.filter((i) => i.status !== 'error').length;

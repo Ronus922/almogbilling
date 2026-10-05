@@ -327,8 +327,11 @@ describe('rowsToMarkDeleted — which attachment rows are stamped after a delete
   });
 
   it('only the staged attachment tables are accepted', () => {
-    expect(STAGED_REF_TABLES).toEqual(['wa_campaign_attachments', 'wa_message_attachments', 'fin_documents']);
+    expect(STAGED_REF_TABLES).toEqual([
+      'wa_campaign_attachments', 'wa_message_attachments', 'fin_documents', 'user_reminder_attachments',
+    ]);
     expect(isStagedRefTable('fin_documents')).toBe(true);
+    expect(isStagedRefTable('user_reminder_attachments')).toBe(true);
     expect(isStagedRefTable('wa_message_attachments')).toBe(true);
     expect(isStagedRefTable('chat_messages')).toBe(false);
   });

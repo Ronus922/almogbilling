@@ -1,6 +1,6 @@
 'use client';
 
-import { Clock, FileDown, Loader2, Printer, Save, Trash2 } from 'lucide-react';
+import { Clock, FileDown, Loader2, Printer, Save, Trash2, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -10,6 +10,8 @@ export interface PanelFooterProps {
   onSave: () => void;
   saveDisabled?: boolean;
   saveLabel?: string;
+  /** Icon of the save button (default: Save) — e.g. Plus on a create panel. */
+  saveIcon?: LucideIcon;
   /** Optional extra classes merged onto the primary save button (e.g. a
    *  gradient CTA). Additive — callers that omit it keep the flat default. */
   saveClassName?: string;
@@ -43,6 +45,7 @@ export function PanelFooter({
   onSave,
   saveDisabled = false,
   saveLabel = 'שמור שינויים',
+  saveIcon: SaveIcon = Save,
   saveClassName,
   saveDisabledReason,
   showPrinter = false,
@@ -133,7 +136,7 @@ export function PanelFooter({
             <Tooltip>
               <TooltipTrigger render={<span className="block" />}>
                 <Button type="button" disabled className="gap-2">
-                  <Save className="h-4 w-4" />
+                  <SaveIcon className="h-4 w-4" />
                   {saveLabel}
                 </Button>
               </TooltipTrigger>
@@ -146,7 +149,7 @@ export function PanelFooter({
               disabled={saveDisabled}
               className={cn('gap-2', saveClassName)}
             >
-              <Save className="h-4 w-4" />
+              <SaveIcon className="h-4 w-4" />
               {saveLabel}
             </Button>
           )}

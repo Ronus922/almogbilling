@@ -7,6 +7,7 @@ export type UserReminderStatus = 'pending' | 'done' | 'dismissed';
 export interface UserReminder {
   id: string;
   title: string;
+  description: string | null; // optional free text, up to 1000 chars
   remind_at: string; // ISO timestamptz
   status: UserReminderStatus;
   entity_type: string | null;
@@ -34,12 +35,30 @@ export interface UserReminderWithNames extends UserReminder {
  *  completed_at is NOT here — it's derived server-side from status. */
 export interface UserReminderWritableFields {
   title: string;
+  description: string | null;
   remind_at: string;
   status: UserReminderStatus;
   entity_type: string | null;
   entity_id: string | null;
   assigned_to: string | null;
   category_id: string | null;
+}
+
+/** A file attached to a reminder, as the panel shows it. `url` is the
+ *  authenticated proxy (/api/files/reminder-attachments/<key>) — never a
+ *  storage URL. */
+export interface UserReminderAttachmentView {
+  id: string;
+  original_name: string;
+  mime: string;
+  size: number;
+  url: string;
+  created_at: string;
+}
+
+/** GET /api/user-reminders/[id] — the reminder plus its files. */
+export interface UserReminderDetail extends UserReminderWithNames {
+  attachments: UserReminderAttachmentView[];
 }
 
 export interface UserReminderListFilters {
