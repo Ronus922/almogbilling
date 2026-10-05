@@ -1299,6 +1299,49 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
   כל chip הוא `<a target="_blank">` ל-proxy המאומת `/api/files/whatsapp-attachments/<key>`. לפני הרשימה
   תג ספירה `Paperclip` + „N קבצים”. מוצג מתחת לשם התפוצה (שורת טבלה / כרטיס מובייל) ומתחת לכותרת הפרטים.
 
+## 26c. תזכורת — תיאור וקבצים מצורפים (פאנל „תזכורת חדשה” / „עריכת תזכורת”, 05/10/2026)
+
+מקור: `ref/Reminder Dialog (standalone).html` (מתוחזק על הדיסק, `ref/` ב-.gitignore). שני השדות
+יושבים ב-Section „פרטי התזכורת”, **מיד מתחת ל„כותרת”** ולפני שורת תאריך/שעה.
+קוד: `components/user-reminders/ReminderFormPanel.tsx` + `ReminderAttachments.tsx`; מנוע ההעלאה
+משותף עם §26b (`lib/hooks/useStagedUploads.ts`) — **מראה אחר, אותו מנוע**.
+
+- **שורת תווית** (לשני השדות): `flex items-baseline justify-between` — התווית הרגילה (§6) ומשמאל
+  `text-xs text-muted-foreground` „רשות”; בקבצים, מרגע שיש קובץ, „רשות” מתחלף במונה `N / 10`
+  (`font-num tabular-nums`).
+- **תיאור:** `Textarea` `min-h-[110px] rounded-[10px] px-3.5 py-2.5 leading-relaxed`, focus מותגי
+  (`focus-visible:border-brand ring-[3px] ring-[rgba(61,90,254,0.12)]`), `maxLength` 1000,
+  placeholder „פרטים נוספים, הקשר, מה צריך לעשות…”. מתחתיו שורת עזר `text-xs text-slate-400`
+  `justify-between`: „יוצג גם למשתמש המשויך” (רק כשיש טקסט) ↔ מונה `N / 1000` (`font-num`).
+- **Dropzone (אופקי — שונה מ-§26b בכוונה, לפי ה-ref):** כפתור מלא-רוחב
+  `flex items-center gap-3.5 rounded-xl border-[1.5px] border-dashed border-brand-border bg-surface-2 p-4`;
+  גרירה מעל = `border-solid border-brand bg-brand-soft`. אייקון `Paperclip` ב-`h-10 w-10 rounded-[10px]
+  bg-brand-soft text-brand`; כותרת `text-sm font-semibold text-slate-700` + `small text-xs text-slate-400`;
+  בקצה pill „בחירת קבצים” (`Plus`, `h-[38px] rounded-[9px] border-brand-border bg-white text-brand-text`)
+  — **span בתוך הכפתור**, לא כפתור מקונן (כל האזור לחיץ ⇒ Touch Target מתקיים).
+  **Mobile:** `flex-wrap` + טקסט `min-w-40 flex-1` + pill `w-full sm:w-auto` — מתחת ל-`sm` ה-pill יורד
+  לשורה משלו ברוחב מלא (אחרת הרמז נדחס לעמודה של ~120px וה-dropzone מגיע ל-220px גובה ב-390px);
+  מ-`sm` ומעלה שורה אחת כמו ב-ref.
+  טקסטים: רשימה ריקה „גררו קבצים לכאן” + „PDF, תמונות, Word, Excel · עד 10 קבצים, 20MB לקובץ”;
+  יש קבצים „הוספת קבצים נוספים” + „גררו לכאן או בחרו מהמחשב”; 10 קבצים = מושבת, „הגעת למקסימום 10 קבצים”.
+- **שורת קובץ:** `flex items-center gap-3 rounded-lg border border-line bg-white p-3` (p-3 = מינימום
+  List Item, גובר על 9/12px של ה-ref). תג סוג `h-9 w-9 rounded-lg font-num text-[10.5px] font-bold`
+  עם הסיומת (PDF / JPG / DOCX): PDF `bg-rose-50 text-rose-700`, תמונה `bg-emerald-50 text-emerald-600`,
+  שאר המסמכים `bg-brand-soft text-brand-text`. שם `text-sm font-semibold text-ink truncate`;
+  מטא `text-xs text-slate-400`: `284 KB · הועלה 18/06`.
+  - **בהעלאה:** פס `h-1 rounded-sm bg-line` עם מילוי `bg-brand` + „מעלה… 62%”; פעולה X „ביטול”.
+  - **נדחה (סוג / גודל):** error state של §6 (`border-red-400 bg-red-50`, גובר על הוורוד הבהיר של
+    ה-ref) + `text-[12px] font-semibold text-red-500` „הקובץ גדול מ-20MB · לא הועלה”; **X בלבד**.
+  - **כשל רשת:** אותה שורה אדומה + `RotateCw` „ניסיון חוזר” לפני ה-X — **רק** בכשל רשת.
+  - **שמור:** `Download` („הורדה”, `<a target="_blank">` ל-proxy `/api/files/reminder-attachments/<key>`)
+    + `Trash2` אדום („מחיקה”, AlertDialog „למחוק את הקובץ?” — מוחק מיד, כמו §26b/finance).
+  - כפתורי הפעולה `h-11 w-11` (Touch Target — גובר על 36px של ה-ref).
+- **צופה (בלי `user_reminders:edit`):** הרשימה עם הורדה בלבד — בלי dropzone ובלי מחיקה; אין קבצים =
+  `text-sm text-muted-foreground` „אין קבצים מצורפים”.
+- **כותרת הפאנל / footer:** תת-כותרת „כותרת, תיאור, קבצים, מועד, סטטוס, קטגוריה ושיוך.”; placeholder
+  הכותרת „למשל: לחזור לדייר בנושא חוב”; כפתור יצירה „יצירת תזכורת” עם `Plus` (`PanelFooter saveIcon`),
+  עריכה „שמור שינויים”; בזמן העלאה „מעלה קבצים…” ומושבת. רמז השיוך: „…כולל התיאור והקבצים.”
+
 ---
 
 ## כפתורים / Buttons — מערכת שטוחה (Flat System)
