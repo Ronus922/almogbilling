@@ -43,6 +43,16 @@ run('check-rbac', async () => {
   t('portal_manage: super_admin רשאי edit', hasPermission('super_admin', [], 'portal_manage', 'edit') === true);
   t('portal_manage: admin רשאי edit', hasPermission('admin', [], 'portal_manage', 'edit') === true);
   t('portal_manage: manager ללא שורה נחסם', hasPermission('manager', [], 'portal_manage', 'view') === false);
+
+  // portal_decisions (/decisions: the PDFs the owners portal publishes) — the
+  // same shape as portal_manage: admin / super_admin, deny-by-default for every
+  // matrix role, including a viewer carrying its whole default matrix.
+  t('portal_decisions: super_admin רשאי edit', hasPermission('super_admin', [], 'portal_decisions', 'edit') === true);
+  t('portal_decisions: admin רשאי edit', hasPermission('admin', [], 'portal_decisions', 'edit') === true);
+  t('portal_decisions: manager ללא שורה נחסם', hasPermission('manager', [], 'portal_decisions', 'view') === false);
+  t('portal_decisions: manager עם המטריצה המלאה נחסם', hasPermission('manager', DEFAULT_MANAGER, 'portal_decisions', 'view') === false);
+  t('portal_decisions: viewer (qa-viewer) נחסם', hasPermission('viewer', DEFAULT_VIEWER, 'portal_decisions', 'view') === false);
+  t('portal_decisions: worker נחסם', hasPermission('cleaner', DEFAULT_WORKER, 'portal_decisions', 'view') === false);
   t('portal_manage: viewer ללא שורה נחסם', hasPermission('viewer', [], 'portal_manage', 'view') === false);
   t('portal_manage: cleaner ללא שורה נחסם', hasPermission('cleaner', [], 'portal_manage', 'view') === false);
 

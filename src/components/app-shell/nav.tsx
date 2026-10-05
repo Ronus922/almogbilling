@@ -5,7 +5,7 @@ import {
   Building2, LayoutDashboard, LayoutGrid, Users, Truck, CheckSquare, AlertTriangle,
   Calendar, FileText, MessageCircle, MessagesSquare, Bell, Sliders,
   MapPin, UserCog, KeyRound, SquareParking, Settings as SettingsIcon, Coins, SlidersHorizontal,
-  ShieldCheck, PhoneOff,
+  ShieldCheck, PhoneOff, Gavel,
   type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -83,12 +83,15 @@ const SECTIONS: MenuSection[] = [
       { label: 'סעיפים והגדרות',    icon: SlidersHorizontal, href: '/finance/settings', module: 'finance' },
     ],
   },
-  // Owners portal ("פורטל בעלי דירות") — the log of every login attempt, and
-  // the phones the containment blocks. The roster itself is managed per
-  // apartment, on the apartment card. `portal_manage` = admin / super_admin.
+  // Owners portal ("פורטל בעלי דירות") — the decisions & protocols the portal
+  // publishes (`portal_decisions`), the log of every login attempt and the
+  // phones the containment blocks (`portal_manage`). The roster itself is
+  // managed per apartment, on the apartment card. Both modules = admin /
+  // super_admin.
   {
     title: 'פורטל בעלי דירות',
     items: [
+      { label: 'החלטות ופרוטוקולים', icon: Gavel, href: '/decisions', module: 'portal_decisions' },
       { label: 'התחברויות לפורטל',  icon: ShieldCheck, href: '/admin/portal-log', module: 'portal_manage' },
       { label: 'טלפונים חסומים',    icon: PhoneOff, href: '/admin/portal-blocked', module: 'portal_manage' },
     ],
