@@ -15,10 +15,18 @@ export const runtime = 'nodejs';
 
 const STATUSES: readonly UserReminderStatus[] = ['pending', 'done', 'dismissed'];
 
-// GET /api/user-reminders?status&assignedTo&entityType&entityId&due  (user_reminders:view)
+// GET /api/user-reminders?status&assignedTo&createdBy&categoryId&entityType&entityId&due  (user_reminders:view)
+// Always the actor's OWN set — the reminders they created or are assigned to
+// (lib/userReminders/access.ts). The identity comes from the session alone: a
+// client-sent `involvingUser` used to pick the user to list for, which let
+// anyone with the module read anyone's reminders by id (06/10/2026); it is
+// ignored now, and the other filters narrow the actor's set only. Sorted by
+// the actor's own drag order (PUT /api/user-reminders/order), the undragged
+// ones after, by remind_at.
 export async function GET(req: NextRequest) {
+  let actor: Actor;
   try {
-    await requirePermission('user_reminders', 'view');
+    actor = await requirePermission('user_reminders', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -39,9 +47,6 @@ export async function GET(req: NextRequest) {
   const createdByRaw = sp.get('createdBy')?.trim();
   const createdBy = createdByRaw && createdByRaw !== 'all' ? createdByRaw : undefined;
 
-  const involvingRaw = sp.get('involvingUser')?.trim();
-  const involvingUser = involvingRaw && involvingRaw !== 'all' ? involvingRaw : undefined;
-
   const categoryRaw = sp.get('categoryId')?.trim();
   const categoryId = categoryRaw && categoryRaw !== 'all' ? categoryRaw : undefined;
 
@@ -53,7 +58,8 @@ export async function GET(req: NextRequest) {
     status,
     assignedTo,
     createdBy,
-    involvingUser,
+    involvingUser: actor.id,
+    orderForUser: actor.id,
     categoryId,
     entityType,
     entityId,

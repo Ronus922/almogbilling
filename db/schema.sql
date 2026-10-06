@@ -3596,6 +3596,31 @@ COMMENT ON COLUMN public.user_reminder_attachments.object_deleted_at IS 'Stamped
 
 
 --
+-- Name: user_reminder_order; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_reminder_order (
+    user_id uuid NOT NULL,
+    reminder_id uuid NOT NULL,
+    "position" integer NOT NULL
+);
+
+
+--
+-- Name: TABLE user_reminder_order; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.user_reminder_order IS 'Where each user placed each reminder in their own list (drag order, 06/10/2026). Per user: one person''s drag never moves another''s list. No row = after every placed one, by remind_at.';
+
+
+--
+-- Name: COLUMN user_reminder_order."position"; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.user_reminder_order."position" IS 'Ascending place in that user''s list; rewritten 0..n-1 for the ids of the tab the user dragged in.';
+
+
+--
 -- Name: user_reminders; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4731,6 +4756,14 @@ ALTER TABLE ONLY public.user_reminder_attachments
 
 ALTER TABLE ONLY public.user_reminder_attachments
     ADD CONSTRAINT user_reminder_attachments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: user_reminder_order user_reminder_order_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_reminder_order
+    ADD CONSTRAINT user_reminder_order_pkey PRIMARY KEY (user_id, reminder_id);
 
 
 --
@@ -5892,6 +5925,13 @@ CREATE INDEX user_reminder_attachments_reminder_idx ON public.user_reminder_atta
 --
 
 CREATE INDEX user_reminder_attachments_staged_idx ON public.user_reminder_attachments USING btree (uploaded_by, created_at) WHERE (reminder_id IS NULL);
+
+
+--
+-- Name: user_reminder_order_user_position_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX user_reminder_order_user_position_idx ON public.user_reminder_order USING btree (user_id, "position");
 
 
 --
@@ -7231,6 +7271,22 @@ ALTER TABLE ONLY public.user_reminder_attachments
 
 
 --
+-- Name: user_reminder_order user_reminder_order_reminder_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_reminder_order
+    ADD CONSTRAINT user_reminder_order_reminder_id_fkey FOREIGN KEY (reminder_id) REFERENCES public.user_reminders(id) ON DELETE CASCADE;
+
+
+--
+-- Name: user_reminder_order user_reminder_order_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_reminder_order
+    ADD CONSTRAINT user_reminder_order_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: user_reminders user_reminders_assigned_to_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7467,5 +7523,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261004180139'),
     ('20261005083237'),
     ('20261005210110'),
-    ('20261006063651')
+    ('20261006063651'),
+    ('20261006160340')
 ;

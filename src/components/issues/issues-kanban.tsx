@@ -33,6 +33,8 @@ import {
   type IssueBoardColumnKey,
 } from '@/lib/issues/board';
 import { useLongPressDrag, type DragPoint } from '@/lib/hooks/useLongPressDrag';
+import { inside, landingAboveIn, scrollParent } from '@/lib/dnd/landing';
+import { DragGrip } from '@/components/dnd/DragGrip';
 import type { IssueBoardColumn, IssueWithMeta } from '@/lib/types/issues';
 import { IssueMoveToMenu } from './IssueMoveToMenu';
 import { RESIDENT_REPORT_ACCENT, ResidentReportStrip } from './IssueReporter';
@@ -75,30 +77,8 @@ interface Carried {
   raf: number;
 }
 
-/** The element that scrolls the board (the app shell's <main>, not window). */
-function scrollParent(el: HTMLElement): HTMLElement {
-  for (let p = el.parentElement; p; p = p.parentElement) {
-    const oy = getComputedStyle(p).overflowY;
-    if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight) return p;
-  }
-  return (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
-}
-
-function inside(r: DOMRect, p: DragPoint): boolean {
-  return p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
-}
-
-/** The card a drop at height `y` lands above inside `column`: the first card
- *  (other than `skipId`, the one being dragged) whose middle is below `y`;
- *  none = the bottom. Mouse and touch share it. */
-function landingAboveIn(column: HTMLElement, y: number, skipId: string | null): string | null {
-  for (const el of column.querySelectorAll<HTMLElement>('[data-issue-id]')) {
-    if (el.dataset.issueId === skipId) continue;
-    const r = el.getBoundingClientRect();
-    if (y < r.top + r.height / 2) return el.dataset.issueId ?? null;
-  }
-  return null;
-}
+/** The cards of the board carry their id here (lib/dnd/landing.ts). */
+const ID_ATTR = 'data-issue-id';
 
 /** '2026-10-05' (+ '14:00') → '05/10 · 14:00'. */
 function dueChipText(date: string, time: string | null): string {
@@ -135,7 +115,7 @@ export function IssuesKanban({ issues, today, canEdit, onSelect, onMove, onCompl
       : grid.querySelector<HTMLElement>(`[data-column="${c.from}"]`);
     if (!column) return inside(grid.getBoundingClientRect(), p) ? undefined : null;
     const key = column.dataset.column as IssueBoardColumnKey;
-    return { column: key, beforeId: key === 'done' ? null : landingAboveIn(column, p.y, c.id) };
+    return { column: key, beforeId: key === 'done' ? null : landingAboveIn(column, p.y, c.id, ID_ATTR) };
   }
 
   /** The carried card follows the finger (vertically only on a phone), the
@@ -244,7 +224,7 @@ export function IssuesKanban({ issues, today, canEdit, onSelect, onMove, onCompl
               if (!canEdit || !dragId) return;
               e.preventDefault();
               e.dataTransfer.dropEffect = 'move';
-              const beforeId = col.key === 'done' ? null : landingAboveIn(e.currentTarget, e.clientY, dragId);
+              const beforeId = col.key === 'done' ? null : landingAboveIn(e.currentTarget, e.clientY, dragId, ID_ATTR);
               setLanding((l) => (l?.column === col.key && l.beforeId === beforeId ? l : { column: col.key, beforeId }));
             }}
             onDragLeave={(e) => {
@@ -253,7 +233,7 @@ export function IssuesKanban({ issues, today, canEdit, onSelect, onMove, onCompl
             }}
             onDrop={(e) => {
               e.preventDefault();
-              if (canEdit && dragId) drop(col.key, col.key === 'done' ? null : landingAboveIn(e.currentTarget, e.clientY, dragId));
+              if (canEdit && dragId) drop(col.key, col.key === 'done' ? null : landingAboveIn(e.currentTarget, e.clientY, dragId, ID_ATTR));
             }}
             className={cn(
               'flex min-h-[440px] flex-col rounded-2xl border bg-slate-100 p-3 transition-colors',
@@ -307,17 +287,7 @@ export function IssuesKanban({ issues, today, canEdit, onSelect, onMove, onCompl
                       here?.beforeId === i.id && 'ring-2 ring-blue-300',
                     )}
                   >
-                    {/* Drag grip — visual affordance only; the whole card stays draggable. */}
-                    <div
-                      className="flex w-[26px] flex-none items-center justify-center border-l border-slate-100 bg-slate-50 transition-colors group-hover:bg-slate-100"
-                      aria-hidden
-                    >
-                      <span className="grid grid-cols-2 gap-[3px]">
-                        {Array.from({ length: 6 }).map((_, d) => (
-                          <span key={d} className="h-1 w-1 rounded-full bg-slate-300 transition-colors group-hover:bg-slate-400" />
-                        ))}
-                      </span>
-                    </div>
+                    <DragGrip />
 
                     <div className="flex min-w-0 flex-1 flex-col">
                       {resident && <ResidentReportStrip issue={i} variant="card" />}

@@ -13,7 +13,7 @@ export interface UserReminder {
   entity_type: string | null;
   entity_id: string | null;
   assigned_to: string | null;
-  created_by: string;
+  created_by: string | null; // NULL once the creator's account is deleted (06/10/2026); created_by_name keeps the name
   category_id: string | null; // FK → reminder_categories, nullable (uncategorized)
   completed_at: string | null; // derived from status; stamped on ->done, cleared when leaving done
   is_archived: boolean;
@@ -29,6 +29,10 @@ export interface UserReminderWithNames extends UserReminder {
   created_by_name: string | null;
   category_name: string | null;
   category_color: string | null;
+  /** Where the listing user placed it in their own list (user_reminder_order);
+   *  null = never dragged → sorts after every placed one, by remind_at. Only
+   *  a list made for a user (`orderForUser`) carries it. */
+  position: number | null;
 }
 
 /** Fields a client may write on create/update. All optional on update.
@@ -66,7 +70,9 @@ export interface UserReminderListFilters {
   assignedTo?: string;
   /** created_by = this user (the "mine" axis). */
   createdBy?: string;
-  /** created_by = this user OR assigned_to = this user (the "involving me" set). */
+  /** created_by = this user OR assigned_to = this user (the "involving me" set).
+   *  Server-side only: the list route always passes the SESSION user here —
+   *  never a client-sent id (lib/userReminders/access.ts). */
   involvingUser?: string;
   categoryId?: string;
   entityType?: string;
@@ -74,4 +80,7 @@ export interface UserReminderListFilters {
   /** Only overdue, still-pending reminders (remind_at < now() AND status='pending'). */
   due?: boolean;
   includeArchived?: boolean;
+  /** Sort by THIS user's own drag order (user_reminder_order), the undragged
+   *  ones after, by remind_at. The reminders page passes the session user. */
+  orderForUser?: string;
 }

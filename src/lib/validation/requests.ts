@@ -427,3 +427,14 @@ export const decisionUpdateBodySchema = z.object({
   decided_at: z.iso.date({ error: 'יש לבחור תאריך החלטה' }),
   published: z.boolean(),
 });
+
+// PUT /api/user-reminders/order — the ids of the tab the user just dragged
+// in, top to bottom. Their positions become 0..n-1 in that user's own order;
+// a duplicate would give one reminder two places, so the list is unique.
+export const reminderOrderBodySchema = z.object({
+  ids: z
+    .array(z.uuid({ error: 'invalid_id' }), { error: 'invalid_ids' })
+    .min(1, { error: 'invalid_ids' })
+    .max(500, { error: 'too_many_ids' })
+    .refine((ids) => new Set(ids).size === ids.length, { error: 'duplicate_ids' }),
+});

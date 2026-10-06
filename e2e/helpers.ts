@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext } from '@playwright/test';
+import { expect, type APIRequestContext, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from '@playwright/test';
 
 // Fixtures from db/seed/e2e.sql
 export const E2E_USER = 'e2e-admin';
@@ -40,4 +40,27 @@ export async function mailpitMessages(request: APIRequestContext): Promise<Mailp
 export async function mailpitClear(request: APIRequestContext): Promise<void> {
   const res = await request.delete(`${MAILPIT_URL}/api/v1/messages`);
   expect(res.ok()).toBeTruthy();
+}
+
+/** The login form, like auth.setup — the only way a session cookie reaches a
+ *  production-mode sandbox. A fresh context (no shared storage state), so a
+ *  second user can act beside the seeded e2e-admin; `options` shape that
+ *  context (a phone, for a touch spec). `ok` is false when the form kept the
+ *  user on /login. */
+export async function loginThroughForm(
+  browser: Browser,
+  username: string,
+  password: string,
+  options: BrowserContextOptions = {},
+): Promise<{ ctx: BrowserContext; page: Page; ok: boolean }> {
+  const ctx = await browser.newContext({ ...options, storageState: { cookies: [], origins: [] } });
+  const page = await ctx.newPage();
+  await page.goto('/login');
+  await page.fill('#username', username);
+  await page.fill('#password', password);
+  await page.locator('button[type="submit"]').click();
+  const ok = await page
+    .waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15_000 })
+    .then(() => true, () => false);
+  return { ctx, page, ok };
 }
