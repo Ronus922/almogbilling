@@ -146,6 +146,18 @@ test.describe('2. full payload scan', () => {
       expect(r.status(), q).toBe(200);
       expect(scan(await r.text(), ['e2e00000-0000-4000-8000-0000000000bb', 'bank_balance']), q).toEqual([]);
     }
+    // The category trend (06/10/2026): published months only, so the hidden
+    // month's line (6,543.21 — rounded it would read 6543) and the month itself
+    // are nowhere in the answer; a fund category is not on that tab → 404.
+    for (const id of ['e2e00000-0000-4000-8000-0000000000c1', 'e2e00000-0000-4000-8000-0000000000c2']) {
+      const q = `/api/portal/finance/categories/${id}/monthly`;
+      const r = await ctx.request.get(q);
+      expect(r.status(), q).toBe(200);
+      const text = await r.text();
+      expect(scan(text, ['6543', 'bank_balance']), q).toEqual([]);
+      expect((JSON.parse(text) as { months: Array<{ month: string }> }).months.map((m) => m.month), q).not.toContain(nowKey());
+    }
+    expect((await ctx.request.get('/api/portal/finance/categories/e2e00000-0000-4000-8000-0000000000c4/monthly')).status()).toBe(404);
     await ctx.close();
   });
 
@@ -178,6 +190,8 @@ test.describe('3. session', () => {
       expect(page.headers().location, `${token} page`).toContain('/portal/login');
       const api = await ctx.request.get('/api/portal/finance/months');
       expect(api.status(), `${token} api`).toBe(401);
+      const trend = await ctx.request.get('/api/portal/finance/categories/e2e00000-0000-4000-8000-0000000000c2/monthly');
+      expect(trend.status(), `${token} trend`).toBe(401);
       await ctx.close();
     }
   });
