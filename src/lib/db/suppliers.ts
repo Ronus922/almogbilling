@@ -339,7 +339,7 @@ export async function listSupplierActivity(
 ): Promise<SupplierActivityEntry[]> {
   const r = await query<SupplierActivityEntry>(
     `select a.id, a.action, a.changes, a.metadata,
-            coalesce(u.full_name, u.username) as actor_name,
+            coalesce(u.full_name, u.username, a.actor_name) as actor_name,
             a.created_at
        from public.audit_log a
        left join public.users u on u.id = a.actor_user_id

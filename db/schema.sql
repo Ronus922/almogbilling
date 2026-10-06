@@ -3,7 +3,6 @@
 --
 
 
-
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -1510,8 +1509,16 @@ CREATE TABLE public.audit_log (
     entity_id text,
     changes jsonb,
     metadata jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    actor_name text
 );
+
+
+--
+-- Name: COLUMN audit_log.actor_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.audit_log.actor_name IS 'Snapshot of the acting user''s name — survives the user''s deletion (actor_user_id goes NULL then).';
 
 
 --
@@ -1727,11 +1734,19 @@ CREATE TABLE public.chat_messages (
     attachment_name text,
     attachment_mime text,
     attachment_size integer,
+    sent_by_name text,
     CONSTRAINT chat_messages_direction_check CHECK ((direction = ANY (ARRAY['sent'::text, 'received'::text]))),
     CONSTRAINT chat_messages_link_status_check CHECK ((link_status = ANY (ARRAY['linked'::text, 'unlinked'::text]))),
     CONSTRAINT chat_messages_message_type_check CHECK ((message_type = ANY (ARRAY['text'::text, 'image'::text, 'document'::text]))),
     CONSTRAINT chat_messages_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'sent'::text, 'delivered'::text, 'read'::text, 'failed'::text])))
 );
+
+
+--
+-- Name: COLUMN chat_messages.sent_by_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chat_messages.sent_by_name IS 'Snapshot of the sending staff user''s name (full_name, else username). Shown once the user is deleted; the live name wins while they exist.';
 
 
 --
@@ -2115,11 +2130,19 @@ CREATE TABLE public.document_folders (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     name text NOT NULL,
     parent_folder_id uuid,
-    created_by uuid NOT NULL,
+    created_by uuid,
     is_archived boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by_name text
 );
+
+
+--
+-- Name: COLUMN document_folders.created_by_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.document_folders.created_by_name IS 'Snapshot of the creating user''s name — survives the user''s deletion.';
 
 
 --
@@ -2135,11 +2158,19 @@ CREATE TABLE public.documents (
     size_bytes bigint,
     entity_type text,
     entity_id text,
-    uploaded_by uuid NOT NULL,
+    uploaded_by uuid,
     is_archived boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    uploaded_by_name text
 );
+
+
+--
+-- Name: COLUMN documents.uploaded_by_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.documents.uploaded_by_name IS 'Snapshot of the uploading user''s name — survives the user''s deletion.';
 
 
 --
@@ -2774,6 +2805,69 @@ CREATE TABLE public.password_reset_tokens (
 
 
 --
+-- Name: portal_decisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.portal_decisions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    title text NOT NULL,
+    summary text,
+    doc_type text NOT NULL,
+    decision_number text,
+    decided_at date NOT NULL,
+    bucket text DEFAULT 'portal-decisions'::text NOT NULL,
+    object_key text NOT NULL,
+    original_filename text NOT NULL,
+    file_size bigint NOT NULL,
+    mime_type text NOT NULL,
+    published boolean DEFAULT true NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT portal_decisions_doc_type_check CHECK ((doc_type = ANY (ARRAY['decision'::text, 'protocol'::text]))),
+    CONSTRAINT portal_decisions_file_size_check CHECK ((file_size > 0)),
+    CONSTRAINT portal_decisions_number_length CHECK (((decision_number IS NULL) OR ((char_length(decision_number) >= 1) AND (char_length(decision_number) <= 40)))),
+    CONSTRAINT portal_decisions_summary_length CHECK (((summary IS NULL) OR (char_length(summary) <= 2000))),
+    CONSTRAINT portal_decisions_title_length CHECK (((char_length(title) >= 1) AND (char_length(title) <= 200)))
+);
+
+
+--
+-- Name: TABLE portal_decisions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.portal_decisions IS 'House-committee decisions and assembly protocols, one PDF each. Managed in the CRM (/decisions); the owners portal reads only published rows.';
+
+
+--
+-- Name: COLUMN portal_decisions.doc_type; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.portal_decisions.doc_type IS 'decision = החלטה (may carry decision_number) · protocol = פרוטוקול (never numbered on screen).';
+
+
+--
+-- Name: COLUMN portal_decisions.decision_number; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.portal_decisions.decision_number IS 'Free-form label of a decision, e.g. "14/2026". NULL for a protocol and for an unnumbered decision.';
+
+
+--
+-- Name: COLUMN portal_decisions.object_key; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.portal_decisions.object_key IS 'Storage key in `bucket` (portal-decisions, private) — <uuid>.pdf, ASCII only. The readable name is original_filename.';
+
+
+--
+-- Name: COLUMN portal_decisions.published; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.portal_decisions.published IS 'false = hidden from the portal entirely, list AND file path. The CRM still lists it.';
+
+
+--
 -- Name: portal_identity_apartments; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2960,7 +3054,7 @@ CREATE TABLE public.reminder_categories (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     name text NOT NULL,
     color text NOT NULL,
-    created_by uuid NOT NULL,
+    created_by uuid,
     display_order integer DEFAULT 0 NOT NULL,
     is_archived boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -3437,7 +3531,7 @@ CREATE TABLE public.user_invites (
     full_name text NOT NULL,
     role text NOT NULL,
     token text NOT NULL,
-    invited_by uuid NOT NULL,
+    invited_by uuid,
     expires_at timestamp with time zone NOT NULL,
     accepted_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -3513,13 +3607,14 @@ CREATE TABLE public.user_reminders (
     entity_type text,
     entity_id text,
     assigned_to uuid,
-    created_by uuid NOT NULL,
+    created_by uuid,
     completed_at timestamp with time zone,
     is_archived boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     category_id uuid,
     description text,
+    created_by_name text,
     CONSTRAINT user_reminders_description_length CHECK (((description IS NULL) OR (char_length(description) <= 1000))),
     CONSTRAINT user_reminders_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'done'::text, 'dismissed'::text])))
 );
@@ -3530,6 +3625,13 @@ CREATE TABLE public.user_reminders (
 --
 
 COMMENT ON COLUMN public.user_reminders.description IS 'Optional free text under the title (up to 1000 characters). NULL = none.';
+
+
+--
+-- Name: COLUMN user_reminders.created_by_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.user_reminders.created_by_name IS 'Snapshot of the creating user''s name — survives the user''s deletion (the assignee sees who wrote the reminder).';
 
 
 --
@@ -3703,10 +3805,18 @@ CREATE TABLE public.wa_campaigns (
     last_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by_name text,
     CONSTRAINT wa_campaigns_rate_per_min_check CHECK (((rate_per_min >= 1) AND (rate_per_min <= 120))),
     CONSTRAINT wa_campaigns_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'queued'::text, 'running'::text, 'paused'::text, 'completed'::text, 'completed_with_errors'::text, 'cancelled'::text, 'failed'::text]))),
     CONSTRAINT wa_campaigns_type_check CHECK ((type = 'broadcast'::text))
 );
+
+
+--
+-- Name: COLUMN wa_campaigns.created_by_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaigns.created_by_name IS 'Snapshot of the creating user''s name — survives the user''s deletion.';
 
 
 --
@@ -4317,6 +4427,22 @@ ALTER TABLE ONLY public.parking_spots
 
 ALTER TABLE ONLY public.password_reset_tokens
     ADD CONSTRAINT password_reset_tokens_pkey PRIMARY KEY (token);
+
+
+--
+-- Name: portal_decisions portal_decisions_object_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_decisions
+    ADD CONSTRAINT portal_decisions_object_key_key UNIQUE (object_key);
+
+
+--
+-- Name: portal_decisions portal_decisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_decisions
+    ADD CONSTRAINT portal_decisions_pkey PRIMARY KEY (id);
 
 
 --
@@ -5486,6 +5612,13 @@ CREATE INDEX parking_spots_owner_type_idx ON public.parking_spots USING btree (o
 --
 
 CREATE INDEX password_reset_tokens_user_idx ON public.password_reset_tokens USING btree (user_id);
+
+
+--
+-- Name: portal_decisions_published_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX portal_decisions_published_idx ON public.portal_decisions USING btree (published, decided_at DESC);
 
 
 --
@@ -6778,6 +6911,14 @@ ALTER TABLE ONLY public.password_reset_tokens
 
 
 --
+-- Name: portal_decisions portal_decisions_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portal_decisions
+    ADD CONSTRAINT portal_decisions_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: portal_identity_apartments portal_identity_apartments_approval_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7206,7 +7347,6 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 
 
-
 --
 -- Dbmate schema migrations
 --
@@ -7325,5 +7465,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261003202918'),
     ('20261004112133'),
     ('20261004180139'),
-    ('20261005083237')
+    ('20261005083237'),
+    ('20261005210110'),
+    ('20261006063651')
 ;

@@ -71,8 +71,9 @@ export async function createCampaign(pool: Pool, input: CreateCampaignInput): Pr
     await client.query('BEGIN');
     const c = await client.query<Campaign>(
       `insert into public.wa_campaigns
-         (type, status, name, body, template_name, audience, instance_id, created_by, rate_per_min, dry_run, client_token)
-       values ('broadcast','queued',$1,$2,$3,$4::jsonb,$5,$6,coalesce($7,12),coalesce($8,false),$9)
+         (type, status, name, body, template_name, audience, instance_id, created_by, rate_per_min, dry_run, client_token, created_by_name)
+       values ('broadcast','queued',$1,$2,$3,$4::jsonb,$5,$6,coalesce($7,12),coalesce($8,false),$9,
+               (select coalesce(u.full_name, u.username) from public.users u where u.id = $6))
        returning ${COLS}`,
       [input.name, input.body, input.templateName ?? null, JSON.stringify(input.audience ?? {}), input.instanceId,
        input.createdBy, input.ratePerMin ?? null, input.dryRun ?? null, input.clientToken ?? null],
@@ -136,7 +137,7 @@ export async function getCampaign(pool: Pool, id: string): Promise<Campaign | nu
 /** Campaign + creator name + delivery-lifecycle counts, for the details header. */
 export async function getCampaignDetail(pool: Pool, id: string): Promise<CampaignDetail | null> {
   const r = await pool.query<CampaignDetail>(
-    `select ${COLS_W}, u.full_name as created_by_name,
+    `select ${COLS_W}, coalesce(u.full_name, w.created_by_name) as created_by_name,
             (select count(*)::int from public.wa_campaign_recipients r
               where r.campaign_id = w.id and r.delivered_at is not null) as delivered_count,
             (select count(*)::int from public.wa_campaign_recipients r
@@ -169,7 +170,7 @@ export async function listCampaigns(
   const total = await pool.query<{ n: number }>(
     `select count(*)::int as n from public.wa_campaigns w where ${whereSql}`, params);
   const rows = await pool.query<CampaignListItem>(
-    `select ${COLS_W}, u.full_name as created_by_name, ${ATTACHMENTS_JSON}
+    `select ${COLS_W}, coalesce(u.full_name, w.created_by_name) as created_by_name, ${ATTACHMENTS_JSON}
        from public.wa_campaigns w
        left join public.users u on u.id = w.created_by
       where ${whereSql}

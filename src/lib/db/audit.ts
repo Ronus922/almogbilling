@@ -37,8 +37,9 @@ export async function writeAudit(input: WriteAuditInput): Promise<void> {
   try {
     await query(
       `insert into public.audit_log
-         (actor_user_id, action, entity_type, entity_id, changes, metadata)
-       values ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
+         (actor_user_id, action, entity_type, entity_id, changes, metadata, actor_name)
+       values ($1, $2, $3, $4, $5::jsonb, $6::jsonb,
+               (select coalesce(u.full_name, u.username) from public.users u where u.id = $1))`,
       [
         input.actorUserId ?? null,
         input.action,

@@ -66,9 +66,10 @@ export async function insertChatMessage(
        (debtor_id, supplier_id, contact_phone, chat_id, external_message_id,
         direction, message_type, link_status, content, status, error_detail, sent_by,
         media_url, broadcast_id, instance_id, created_at,
-        attachment_name, attachment_mime, attachment_size)
+        attachment_name, attachment_mime, attachment_size, sent_by_name)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-             coalesce(to_timestamp($16), now()), $17, $18, $19)
+             coalesce(to_timestamp($16), now()), $17, $18, $19,
+             (select coalesce(u.full_name, u.username) from public.users u where u.id = $12))
      on conflict (external_message_id) do nothing
      returning id`,
     [
@@ -245,7 +246,7 @@ export async function listChatMessagesByDebtor(debtorId: string): Promise<ChatMe
         m.id, m.debtor_id, m.supplier_id, m.contact_phone, m.chat_id, m.external_message_id,
         m.link_status, m.direction, m.message_type, m.content, m.media_url, m.status,
         m.error_detail, m.sent_by, m.attachment_name, m.attachment_mime, m.attachment_size,
-        u.full_name as sent_by_name,
+        coalesce(u.full_name, m.sent_by_name) as sent_by_name,
         s.display_name as supplier_display_name,
         m.broadcast_id, m.read_at, m.created_at
        from public.chat_messages m

@@ -57,7 +57,7 @@ export async function listDocumentFolders(
   const whereSql = where.length ? `where ${where.join(' and ')}` : '';
   const r = await query<DocumentFolderWithMeta>(
     `select ${prefixed(FOLDER_COLUMNS, 'f')},
-            uc.full_name as created_by_name,
+            coalesce(uc.full_name, f.created_by_name) as created_by_name,
             (select count(*)::int from public.document_folders s
                where s.parent_folder_id = f.id and s.is_archived = false) as subfolder_count,
             (select count(*)::int from public.documents d
@@ -74,7 +74,7 @@ export async function listDocumentFolders(
 export async function getDocumentFolderById(id: string): Promise<DocumentFolderWithMeta | null> {
   return queryOne<DocumentFolderWithMeta>(
     `select ${prefixed(FOLDER_COLUMNS, 'f')},
-            uc.full_name as created_by_name,
+            coalesce(uc.full_name, f.created_by_name) as created_by_name,
             (select count(*)::int from public.document_folders s
                where s.parent_folder_id = f.id and s.is_archived = false) as subfolder_count,
             (select count(*)::int from public.documents d
@@ -122,8 +122,8 @@ export async function createDocumentFolder(
   createdBy: string,
 ): Promise<DocumentFolder> {
   const row = await queryOne<DocumentFolder>(
-    `insert into public.document_folders (name, parent_folder_id, created_by)
-     values ($1, $2, $3)
+    `insert into public.document_folders (name, parent_folder_id, created_by, created_by_name)
+     values ($1, $2, $3, (select coalesce(u.full_name, u.username) from public.users u where u.id = $3))
      returning ${FOLDER_COLUMNS}`,
     [fields.name, fields.parent_folder_id ?? null, createdBy],
   );
@@ -194,7 +194,7 @@ export async function listDocuments(filters: DocumentListFilters): Promise<Docum
   const whereSql = where.length ? `where ${where.join(' and ')}` : '';
   const r = await query<DocumentWithMeta>(
     `select ${prefixed(DOC_COLUMNS, 'd')},
-            uu.full_name as uploaded_by_name
+            coalesce(uu.full_name, d.uploaded_by_name) as uploaded_by_name
        from public.documents d
        left join public.users uu on uu.id = d.uploaded_by
        ${whereSql}
@@ -207,7 +207,7 @@ export async function listDocuments(filters: DocumentListFilters): Promise<Docum
 export async function getDocumentById(id: string): Promise<DocumentWithMeta | null> {
   return queryOne<DocumentWithMeta>(
     `select ${prefixed(DOC_COLUMNS, 'd')},
-            uu.full_name as uploaded_by_name
+            coalesce(uu.full_name, d.uploaded_by_name) as uploaded_by_name
        from public.documents d
        left join public.users uu on uu.id = d.uploaded_by
       where d.id = $1
@@ -228,8 +228,8 @@ export async function insertDocument(input: {
 }): Promise<DocumentRow> {
   const row = await queryOne<DocumentRow>(
     `insert into public.documents
-       (file_name, storage_path, mime_type, size_bytes, folder_id, entity_type, entity_id, uploaded_by)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)
+       (file_name, storage_path, mime_type, size_bytes, folder_id, entity_type, entity_id, uploaded_by, uploaded_by_name)
+     values ($1,$2,$3,$4,$5,$6,$7,$8, (select coalesce(u.full_name, u.username) from public.users u where u.id = $8))
      returning ${DOC_COLUMNS}`,
     [
       input.fileName,

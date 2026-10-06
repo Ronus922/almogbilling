@@ -1,11 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requireAdmin, type Actor } from '@/lib/auth/actor';
+import { requireAdmin, requireUserDeleteAccess, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { query, withTransaction } from '@/lib/db';
 import {
   findUserById,
   countActiveSuperAdminsExcluding,
 } from '@/lib/db/users';
+import { countWhatsappInstancesOwnedBy, deleteUserPermanently } from '@/lib/db/userDeletion';
 import { getDefaultPermissions, canManageRole } from '@/lib/permissions/check';
 import { cleanPhoneField } from '@/lib/whatsapp';
 import { hashPassword } from '@/lib/auth/password';
@@ -288,10 +289,19 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   return NextResponse.json({ user: updated });
 }
 
+/**
+ * Permanent deletion ("מחק לצמיתות", 06/10/2026). Until then this handler was
+ * a second "disable" that nothing called. Now: the account goes for good —
+ * sessions, permissions, reset tokens, the row — and everything the user
+ * wrote stays, under their name (deleteUserPermanently). Super admin only
+ * (USER_DELETE_ROLES); never yourself; never the last active super admin;
+ * never the nominal owner of a WhatsApp instance (that FK cascades — the
+ * instance would go with the user). Works on a disabled user too.
+ */
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
-    actor = await requireAdmin();
+    actor = await requireUserDeleteAccess();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -302,47 +312,46 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   const target = await findUserById(id);
   if (!target) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  // Role-scope guard: admin may only disable manager/viewer; never an admin or
-  // super_admin. super_admin passes (last-super-admin guard below still applies).
-  if (!canManageRole(actor.role, target.role)) {
-    return NextResponse.json(
-      { error: 'אין הרשאה לנהל משתמש בתפקיד זה' },
-      { status: 403 },
-    );
-  }
-
   if (target.id === actor.id) {
-    return NextResponse.json({ error: 'אסור להשבית את עצמך' }, { status: 403 });
+    return NextResponse.json({ error: 'אסור למחוק את עצמך' }, { status: 403 });
   }
 
-  if (target.role === 'super_admin') {
+  // The system must never be left without an active super admin. A disabled
+  // super admin is not counted as one, so deleting them needs no other.
+  if (target.role === 'super_admin' && target.is_active) {
     const remaining = await countActiveSuperAdminsExcluding(target.id);
     if (remaining === 0) {
       return NextResponse.json(
-        { error: 'לא ניתן להסיר את הסופר אדמין האחרון — חייב להישאר לפחות סופר אדמין פעיל אחד' },
+        { error: 'לא ניתן למחוק את הסופר אדמין הפעיל האחרון — חייב להישאר לפחות סופר אדמין פעיל אחד' },
         { status: 403 },
       );
     }
   }
 
-  await withTransaction(async (client) => {
-    await client.query(
-      `update public.users set is_active = false where id = $1`,
-      [target.id],
+  if ((await countWhatsappInstancesOwnedBy(target.id)) > 0) {
+    return NextResponse.json(
+      { error: 'לא ניתן למחוק: המשתמש רשום כבעלים הטכני של חיבור ה-WhatsApp, ומחיקתו הייתה מוחקת את החיבור עצמו. יש להעביר את החיבור למשתמש אחר לפני המחיקה.' },
+      { status: 409 },
     );
-    await client.query(
-      `delete from public.sessions where user_id = $1`,
-      [target.id],
-    );
-  });
+  }
+
+  const outcome = await deleteUserPermanently(target);
 
   await writeAudit({
     actorUserId: actor.id,
-    action: 'disabled',
+    action: 'deleted',
     entityType: 'user',
     entityId: target.id,
-    metadata: { email: target.email, role: target.role, actor_role: actor.role },
+    metadata: {
+      username: target.username,
+      email: target.email,
+      full_name: target.full_name,
+      role: target.role,
+      was_active: target.is_active,
+      ...outcome,
+      actor_role: actor.role,
+    },
   });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, ...outcome });
 }

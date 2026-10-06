@@ -7,6 +7,7 @@ import {
   ROLE_DEFAULTS,
   isElevatedRole,
   SUPER_ADMIN_ONLY,
+  USER_DELETE_ROLES,
 } from './constants';
 
 export function hasPermission(
@@ -74,6 +75,17 @@ export function canUseAssistant(role: Role, permissions: ModulePermission[]): bo
     hasPermission(role, permissions, 'dashboard', 'view') ||
     hasPermission(role, permissions, 'contacts', 'view')
   );
+}
+
+/**
+ * May `role` delete a staff user permanently (DELETE /api/users/[id])?
+ * The USER_DELETE_ROLES allowlist and nothing else — the matrix is not
+ * consulted, so no user_permissions row can ever grant it. Who may be
+ * deleted (never yourself, never the last active super admin, never the
+ * nominal owner of the WhatsApp instance) is the route's business.
+ */
+export function canDeleteUsers(role: Role): boolean {
+  return USER_DELETE_ROLES.includes(role);
 }
 
 /**

@@ -83,7 +83,7 @@ export async function listUserReminders(
   const r = await query<UserReminderWithNames>(
     `select ${prefixed('r')},
             ua.full_name as assigned_to_name,
-            uc.full_name as created_by_name,
+            coalesce(uc.full_name, r.created_by_name) as created_by_name,
             cat.name as category_name,
             cat.color as category_color
        from public.user_reminders r
@@ -139,7 +139,7 @@ export async function getUserReminderById(id: string): Promise<UserReminderWithN
   return queryOne<UserReminderWithNames>(
     `select ${prefixed('r')},
             ua.full_name as assigned_to_name,
-            uc.full_name as created_by_name,
+            coalesce(uc.full_name, r.created_by_name) as created_by_name,
             cat.name as category_name,
             cat.color as category_color
        from public.user_reminders r
@@ -175,6 +175,10 @@ export async function createUserReminder(
   }
 
   const placeholders = vals.map((_, i) => `$${i + 1}`);
+  // The creator's name as text beside the id ($1): the assignee keeps seeing
+  // who wrote the reminder after that user is deleted (06/10/2026).
+  cols.push('created_by_name');
+  placeholders.push('(select coalesce(u.full_name, u.username) from public.users u where u.id = $1)');
   const row = await queryOne<UserReminder>(
     `insert into public.user_reminders (${cols.join(', ')})
      values (${placeholders.join(', ')})
