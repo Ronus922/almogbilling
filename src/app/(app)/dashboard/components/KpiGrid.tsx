@@ -34,7 +34,6 @@ export function KpiGrid({ kpis }: { kpis: DashboardKpis }) {
         icon={Mail}
         title="מכתבי התראה"
         value={String(kpis.warningLetterCount)}
-        subtitle="0 מכתבים"
       />
       <KpiCard
         tone="orange"
