@@ -209,6 +209,22 @@ export function niceAxis(max: number): { max: number; step: number } {
   return { max: step * 4, step };
 }
 
+/** The category trend's Y axis (06/10/2026): the smallest nice step
+ *  (1 · 2 · 2.5 · 5 × 10ⁿ, at least 1) that covers the window's maximum in
+ *  at most four steps, and never fewer than three — 4 or 5 gridlines whose top
+ *  sits close above the tallest bar. (niceAxis always draws four steps and can
+ *  put the top at almost twice the maximum: 80K over a 43K bar.) */
+export function trendAxis(max: number): { max: number; step: number } {
+  if (!(max > 0)) return { max: 3, step: 1 };
+  for (let mag = Math.max(1, 10 ** Math.floor(Math.log10(max / 4))); ; mag *= 10) {
+    for (const f of [1, 2, 2.5, 5]) {
+      const step = f * mag;
+      const n = Math.ceil(max / step - 1e-9);
+      if (n <= 4) return { max: step * Math.max(3, n), step };
+    }
+  }
+}
+
 /** Axis label: '0' · '500' · '3.5K' · '120K' · '1.2M'. */
 export function axisLabel(v: number): string {
   if (v === 0) return '0';

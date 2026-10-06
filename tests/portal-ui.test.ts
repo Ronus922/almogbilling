@@ -3,7 +3,7 @@ import {
   accountTotals, apartmentsLabel, axisLabel, categoriesOf, categoryShares, firstName, flatEntries, fmtDateDMY, fmtDelta,
   fmtEntryDate, fmtIls, fmtSigned, initials, monthShort, niceAxis, parseOverviewSpan, parsePortalTab,
   parseTxFilter, pctVsAverage, reportRangeFor, reportRanges, roundShekels, sanitizeCell,
-  signClass, spansYears, sumExact, trendMonthLabel, windowKeys,
+  signClass, spansYears, sumExact, trendAxis, trendMonthLabel, windowKeys,
 } from '@/lib/portal/ui';
 import { AMOUNT_NUM_FMT, buildPortalPeriodWorkbook } from '@/lib/portal/export';
 import {
@@ -168,6 +168,24 @@ describe('overview arithmetic', () => {
     expect(spansYears(['2026-01', '2026-09'])).toBe(false);
     expect(spansYears(['2025-12', '2026-01'])).toBe(true);
     expect(spansYears([])).toBe(false);
+  });
+  it('the trend axis: 4–5 gridlines whose top sits close above the tallest bar', () => {
+    expect(trendAxis(42950)).toEqual({ max: 60000, step: 20000 }); // niceAxis: 80,000
+    expect(trendAxis(16890)).toEqual({ max: 20000, step: 5000 });
+    expect(trendAxis(8821)).toEqual({ max: 10000, step: 2500 });
+    expect(trendAxis(1801)).toEqual({ max: 2000, step: 500 });
+    expect(trendAxis(20000)).toEqual({ max: 20000, step: 5000 });
+    expect(trendAxis(21000)).toEqual({ max: 30000, step: 10000 });
+    expect(trendAxis(1)).toEqual({ max: 3, step: 1 });
+    expect(trendAxis(0)).toEqual({ max: 3, step: 1 });
+    for (const v of [7, 99, 1801, 4001, 10001, 12345, 40001, 99999, 250000, 1234567]) {
+      const a = trendAxis(v);
+      const lines = Math.round(a.max / a.step) + 1;
+      expect(a.max, String(v)).toBeGreaterThanOrEqual(v);
+      expect(lines, String(v)).toBeGreaterThanOrEqual(4);
+      expect(lines, String(v)).toBeLessThanOrEqual(5);
+      expect(a.max - a.step, String(v)).toBeLessThan(v); // never a whole empty step on top
+    }
   });
   it('flatEntries filters by kind and sorts newest first', () => {
     const rows = [

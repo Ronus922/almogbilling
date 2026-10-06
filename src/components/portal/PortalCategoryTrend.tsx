@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import type { FinKind } from '@/lib/constants/finance';
 import type { ResidentCategoryMonth } from '@/lib/types/finance';
-import { axisLabel, fmtIls, monthTitle, niceAxis, spansYears, trendMonthLabel } from '@/lib/portal/ui';
+import { axisLabel, fmtIls, monthTitle, spansYears, trendAxis, trendMonthLabel } from '@/lib/portal/ui';
 
 // What a category row of the transactions tab opens on (06/10/2026): the
 // category's sum in each of the newest published months — up to 12, from
@@ -19,8 +19,8 @@ import { axisLabel, fmtIls, monthTitle, niceAxis, spansYears, trendMonthLabel } 
 // own: the time axis runs inside a dir="ltr" box, oldest on the left and newest
 // on the right; one thin bar per month, rounded at the top only, in the soft
 // tone of its kind (income --green-soft, expense --red-soft), the active bar
-// in the full tone; a Y axis of niceAxis gridlines with compact labels (0 · 5K ·
-// 10K · 20K, Inter); a short Hebrew month under each bar, with two year digits
+// in the full tone; a Y axis of 4–5 trendAxis gridlines, scaled to the window's
+// maximum, with compact labels (0 · 5K · 10K · 20K, Inter); a short Hebrew month under each bar, with two year digits
 // on every label once the window spans two years ("דצמ׳ 25"). Hover (a mouse)
 // or a tap (touch / pen) shows the month's full amount in the portal's .tip.
 // It is measured with a ResizeObserver, so it always fits the card — bars and
@@ -119,7 +119,7 @@ function TrendChart({ months, kind, name }: { months: ResidentCategoryMonth[]; k
   const W = size?.w ?? FALLBACK_W;
   const H = size?.h ?? FALLBACK_H;
   const n = months.length;
-  const axis = niceAxis(Math.max(0, ...months.map((m) => m.total)));
+  const axis = trendAxis(Math.max(0, ...months.map((m) => m.total)));
   const gw = (W - PL) / n;
   const bw = Math.max(4, Math.min(14, gw * 0.42));
   const bottom = H - PB;
