@@ -274,7 +274,45 @@ async function getOpenDebtBalance(): Promise<number> {
   return Number(row?.total ?? 0);
 }
 
-export async function getTabCounts(): Promise<TabCounts> {
+/** The toolbar's two search boxes — owner name and apartment number. Empty =
+ *  no filter. Shared by the tab badges, the rows and the export so the three
+ *  can never disagree about what "the current search" is. */
+export interface DebtorSearch {
+  q?: string;
+  apt?: string;
+}
+
+/** The search predicates of `search`, pushing their params onto `args` (so
+ *  they can follow the tab's own placeholders). Reads the owner name through
+ *  the registry like SELECT_COLUMNS does, hence DEBTORS_CONTACTS_JOIN. */
+function searchWhere(search: DebtorSearch, args: unknown[]): string[] {
+  const where: string[] = [];
+  if (search.q) {
+    args.push(`%${search.q}%`);
+    where.push(`${OWNER_NAME_SQL} ilike $${args.length}`);
+  }
+  if (search.apt) {
+    args.push(`%${search.apt}%`);
+    where.push(`d.apartment_number ilike $${args.length}`);
+  }
+  return where;
+}
+
+/**
+ * One number per tab — the rows that tab would list right now.
+ *
+ * The badges take the SAME search as the table (06/10/2026). Until then they
+ * counted the whole building while the table under them honoured `q` / `apt`,
+ * and the search boxes keep their value across tab clicks on purpose — so a
+ * name typed on "חייבים" followed by a click on "מכתבי התראה" showed a badge
+ * of 9 over a table of 0 (the real report, from the access log:
+ * `/dashboard?q=יעל&tab=warning`). With the search in the counts the badges
+ * also tell at a glance which tab the searched apartment or owner is on, and
+ * with no search they are the plain stage totals, as before.
+ */
+export async function getTabCounts(search: DebtorSearch = {}): Promise<TabCounts> {
+  const args: unknown[] = [STATUS_WARNING, STATUS_LEGAL_CARE, STATUS_LEGAL_PROCEEDING];
+  const where = searchWhere(search, args);
   const row = await queryOne<{
     active: string;
     warning: string;
@@ -293,8 +331,9 @@ export async function getTabCounts(): Promise<TabCounts> {
        count(*) filter (where d.is_archived = false and s.name = $3)::text as legal_proceeding,
        count(*) filter (where d.is_archived = false and d.next_action_date is not null)::text as actions,
        count(*) filter (where d.is_archived = true)::text as archived
-     from ${DEBTORS_JOIN}`,
-    [STATUS_WARNING, STATUS_LEGAL_CARE, STATUS_LEGAL_PROCEEDING],
+     from ${DEBTORS_CONTACTS_JOIN}
+     ${where.length ? `where ${where.join(' and ')}` : ''}`,
+    args,
   );
   return {
     active: Number(row?.active ?? 0),
@@ -433,16 +472,7 @@ export async function listDebtors(params: ListDebtorsParams): Promise<ListDebtor
     args.push(tab.params[i]);
     tabSql = tabSql.replace(`$P${i + 1}`, `$${args.length}`);
   }
-  where.push(tabSql);
-
-  if (params.q) {
-    args.push(`%${params.q}%`);
-    where.push(`${OWNER_NAME_SQL} ilike $${args.length}`);
-  }
-  if (params.apt) {
-    args.push(`%${params.apt}%`);
-    where.push(`d.apartment_number ilike $${args.length}`);
-  }
+  where.push(tabSql, ...searchWhere(params, args));
 
   // Actions tab is always sorted by next-action date ascending (closest first),
   // overriding any URL sort param.
@@ -495,16 +525,7 @@ export async function listAllDebtorsForExport(
     args.push(tab.params[i]);
     tabSql = tabSql.replace(`$P${i + 1}`, `$${args.length}`);
   }
-  where.push(tabSql);
-
-  if (params.q) {
-    args.push(`%${params.q}%`);
-    where.push(`${OWNER_NAME_SQL} ilike $${args.length}`);
-  }
-  if (params.apt) {
-    args.push(`%${params.apt}%`);
-    where.push(`d.apartment_number ilike $${args.length}`);
-  }
+  where.push(tabSql, ...searchWhere(params, args));
 
   const orderBy = params.tab === 'actions'
     ? 'd.next_action_date asc nulls last'

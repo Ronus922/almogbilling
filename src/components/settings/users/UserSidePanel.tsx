@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
-  X, User as UserIcon, Shield, Activity, KeyRound, Power, PowerOff, LogIn, Lock,
+  X, User as UserIcon, Shield, Activity, KeyRound, Power, PowerOff, LogIn, Lock, Trash2,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -24,7 +24,7 @@ import { PermissionMatrix } from './PermissionMatrix';
 import {
   ROLE_STYLES, roleLabel, isMatrixRole, ROLE_VALUES, type ModulePermission, type Role,
 } from '@/lib/permissions/constants';
-import { canManageRole } from '@/lib/permissions/check';
+import { canManageRole, canDeleteUsers } from '@/lib/permissions/check';
 import { validatePhone } from '@/lib/validation';
 import { isValidPassword } from '@/lib/auth/passwordPolicy';
 import { PasswordField, PasswordRequirements } from '@/components/auth/PasswordField';
@@ -64,6 +64,8 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
   const [hasMutated, setHasMutated] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [confirmDisableOpen, setConfirmDisableOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Fetch user + permissions on [open, userId]
   useEffect(() => {
@@ -101,6 +103,10 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
   // on self or on a target outside the actor's scope. The server additionally
   // refuses any change that would leave 0 active super_admins (last-admin guard).
   const actionsDisabled = isSelf || lacksAuthority;
+  // Permanent deletion (06/10/2026): the USER_DELETE_ROLES allowlist — the
+  // super admin alone — and never yourself. The server repeats both checks
+  // and adds the last-active-super-admin and WhatsApp-owner guards.
+  const canDelete = canDeleteUsers(currentUserRole);
   // Roles the actor may assign. admin managing manager/viewer → those two only;
   // otherwise the full list (selector is disabled anyway, but the current role
   // still highlights).
@@ -131,9 +137,10 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
   const isDirty = hasMutated || draftDirty;
 
   // Defensive ESC: panel listens only when no nested AlertDialog is open.
-  useEscapeKey(open && !confirmCloseOpen && !confirmDisableOpen, () => requestClose());
+  useEscapeKey(open && !confirmCloseOpen && !confirmDisableOpen && !confirmDeleteOpen, () => requestClose());
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
   useEscapeKey(confirmDisableOpen, () => setConfirmDisableOpen(false));
+  useEscapeKey(confirmDeleteOpen && !deleting, () => setConfirmDeleteOpen(false));
 
   function requestClose() {
     if (isDirty) setConfirmCloseOpen(true);
@@ -221,6 +228,25 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
       toast.error((e as Error).message);
     } finally {
       setConfirmDisableOpen(false);
+    }
+  }
+
+  async function deleteForever() {
+    if (!user || deleting) return;
+    setDeleting(true);
+    try {
+      const r = await fetch(`/api/users/${user.id}`, { method: 'DELETE', credentials: 'include' });
+      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(data.error ?? 'המחיקה נכשלה');
+      toast.success('המשתמש נמחק לצמיתות');
+      setConfirmDeleteOpen(false);
+      router.refresh();
+      onOpenChange(false);
+    } catch (e) {
+      toast.error((e as Error).message);
+      setConfirmDeleteOpen(false);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -459,6 +485,33 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
                       />
                     </div>
                   </Section>
+
+                  {canDelete && (
+                    <Section title="מחיקה לצמיתות" icon={Trash2} iconTone="rose">
+                      <div className="flex items-center justify-between gap-4 py-2">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-800">
+                            מחיקת החשבון מהמערכת
+                          </div>
+                          <div className="mt-0.5 text-xs text-slate-500">
+                            {isSelf
+                              ? 'אי אפשר למחוק את החשבון שלך.'
+                              : 'בלתי הפיך — בניגוד להשבתה. תוכן שהמשתמש כתב יישאר במערכת עם שמו.'}
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          onClick={() => setConfirmDeleteOpen(true)}
+                          disabled={isSelf || deleting}
+                          className="min-h-11 shrink-0 gap-2"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          מחק לצמיתות
+                        </Button>
+                      </div>
+                    </Section>
+                  )}
                 </TabsContent>
 
                 <TabsContent value="permissions" className="mt-5 space-y-4">
@@ -569,6 +622,30 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
               className="bg-destructive text-white hover:bg-destructive/90"
             >
               השבת
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm permanent deletion */}
+      <AlertDialog open={confirmDeleteOpen} onOpenChange={(v) => { if (!deleting) setConfirmDeleteOpen(v); }}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>למחוק את המשתמש לצמיתות?</AlertDialogTitle>
+            <AlertDialogDescription>
+              הפעולה בלתי הפיכה. החשבון של {user?.full_name || user?.email} יימחק מהמערכת —
+              המשתמש לא יופיע יותר ברשימות ולא יוכל להתחבר. תוכן שהמשתמש כתב בעבר
+              (הערות, הודעות, תקלות, משימות, תזכורות ומסמכים) יישאר במערכת עם שמו לצידו.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>חזור</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void deleteForever()}
+              disabled={deleting}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {deleting ? 'מוחק…' : 'מחק לצמיתות'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

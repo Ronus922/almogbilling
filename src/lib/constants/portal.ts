@@ -159,3 +159,7 @@ export const PORTAL_EVENT_TONE: Record<PortalEventType, 'emerald' | 'rose' | 'am
 
 export const PORTAL_LOCKOUT_REASONS = ['too_many_invalid_codes', 'too_many_code_requests'] as const;
 export type PortalLockoutReason = (typeof PORTAL_LOCKOUT_REASONS)[number];
+
+/** The transactions tab's category trend (06/10/2026): how many of the newest
+ *  published months a category row opens on — fewer when fewer are published. */
+export const PORTAL_CATEGORY_TREND_MONTHS = 12;

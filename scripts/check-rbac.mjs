@@ -15,7 +15,7 @@
 //       their own; a viewer (even with suppliers:view) never manages them.
 //   Run under tsx (imports .ts source). Pure — no DB.
 import { run, fail, ok } from './_check-lib.mjs';
-import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone } from '../src/lib/permissions/check.ts';
+import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone, canDeleteUsers } from '../src/lib/permissions/check.ts';
 import { DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER } from '../src/lib/permissions/constants.ts';
 
 run('check-rbac', async () => {
@@ -98,4 +98,16 @@ run('check-rbac', async () => {
   t('אנשי קשר נוספים: viewer עם suppliers/view בלבד נחסם edit', hasPermission('viewer', supView, 'suppliers', 'edit') === false);
   t('אנשי קשר נוספים: viewer עם suppliers/view רשאי לצפות', hasPermission('viewer', supView, 'suppliers', 'view') === true);
   t('אנשי קשר נוספים: cleaner (ברירת מחדל) נחסם suppliers/edit', hasPermission('cleaner', DEFAULT_WORKER, 'suppliers', 'edit') === false);
+
+  // canDeleteUsers — the permanent deletion of a staff user (06/10/2026) is an
+  // ALLOWLIST of the super admin alone. An admin may disable a manager/viewer
+  // (canManageRole) but never delete anyone, and no matrix row grants it.
+  const usersEdit = [{ module: 'users_management', canView: true, canEdit: true }];
+  t('מחיקת משתמש: super_admin רשאי', canDeleteUsers('super_admin') === true);
+  t('מחיקת משתמש: admin נחסם', canDeleteUsers('admin') === false);
+  t('מחיקת משתמש: manager נחסם', canDeleteUsers('manager') === false);
+  t('מחיקת משתמש: viewer נחסם', canDeleteUsers('viewer') === false);
+  t('מחיקת משתמש: cleaner נחסם', canDeleteUsers('cleaner') === false);
+  t('מחיקת משתמש: maintenance נחסם', canDeleteUsers('maintenance') === false);
+  t('מחיקת משתמש: שורת users_management/edit במטריצה לא מעניקה', hasPermission('manager', usersEdit, 'users_management', 'edit') === true && canDeleteUsers('manager') === false);
 });

@@ -107,6 +107,17 @@ export const SUPER_ADMIN_ONLY: readonly string[] = ['users_management', 'roles_m
 // anything they have today.
 export const ASSISTANT_ROLES: readonly Role[] = ['super_admin', 'admin', 'manager', 'viewer'];
 
+// ── Permanent deletion of a staff user ("מחק לצמיתות", /settings/users) ──────
+// ALLOWLIST: the super admin only (decision 06/10/2026). Disabling a user
+// follows canManageRole (an admin may disable a manager / viewer); deleting the
+// account for good — sessions, permissions, the row itself, with everything
+// the user wrote left behind under their name — is one step above that and
+// stays with the super admin. Allowlist, not a matrix module: a
+// user_permissions row can never grant it. The route guard
+// (requireUserDeleteAccess), the panel's "מחיקה לצמיתות" section and
+// check:rbac all read this one list.
+export const USER_DELETE_ROLES: readonly Role[] = ['super_admin'];
+
 // ── Phone of a resident who reported a fault from the owners portal ──────────
 // A portal report carries the reporter's phone. It is an apartment owner's
 // contact detail, so it follows the permission that already governs those —

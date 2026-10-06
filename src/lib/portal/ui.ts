@@ -209,6 +209,22 @@ export function niceAxis(max: number): { max: number; step: number } {
   return { max: step * 4, step };
 }
 
+/** The category trend's Y axis (06/10/2026): the smallest nice step
+ *  (1 · 2 · 2.5 · 5 × 10ⁿ, at least 1) that covers the window's maximum in
+ *  at most four steps, and never fewer than three — 4 or 5 gridlines whose top
+ *  sits close above the tallest bar. (niceAxis always draws four steps and can
+ *  put the top at almost twice the maximum: 80K over a 43K bar.) */
+export function trendAxis(max: number): { max: number; step: number } {
+  if (!(max > 0)) return { max: 3, step: 1 };
+  for (let mag = Math.max(1, 10 ** Math.floor(Math.log10(max / 4))); ; mag *= 10) {
+    for (const f of [1, 2, 2.5, 5]) {
+      const step = f * mag;
+      const n = Math.ceil(max / step - 1e-9);
+      if (n <= 4) return { max: step * Math.max(3, n), step };
+    }
+  }
+}
+
 /** Axis label: '0' · '500' · '3.5K' · '120K' · '1.2M'. */
 export function axisLabel(v: number): string {
   if (v === 0) return '0';
@@ -232,14 +248,14 @@ export interface CategoryShare {
 
 /** Categories sorted largest first with their share of the total and their
  *  width against the largest — the reference's "לאן הולך הכסף" list. Zero
- *  categories are dropped. */
-export function categoryShares(items: ReadonlyArray<{ name: string; total: number }>): CategoryShare[] {
+ *  categories are dropped. Whatever else an item carries (the transactions
+ *  tab's category id) rides along. */
+export function categoryShares<T extends { name: string; total: number }>(items: readonly T[]): Array<T & CategoryShare> {
   const list = items.filter((c) => c.total > 0).sort((a, b) => b.total - a.total);
   const sum = list.reduce((s, c) => s + c.total, 0);
   const top = list[0]?.total ?? 0;
   return list.map((c) => ({
-    name: c.name,
-    total: c.total,
+    ...c,
     pct: sum > 0 ? Math.round((c.total / sum) * 100) : 0,
     bar: top > 0 ? (c.total / top) * 100 : 0,
   }));
@@ -250,11 +266,29 @@ export function sumOverWindow(byMonth: Record<string, number>, keys: readonly st
   return keys.reduce((s, k) => s + (byMonth[k] ?? 0), 0);
 }
 
-/** The month's lines of one kind grouped by category, largest first. */
-export function categoriesOf(entries: readonly ResidentEntry[], kind: FinKind): CategoryShare[] {
-  const map = new Map<string, number>();
-  for (const e of entries) if (e.kind === kind) map.set(e.category_name, (map.get(e.category_name) ?? 0) + e.amount);
-  return categoryShares([...map.entries()].map(([name, total]) => ({ name, total })));
+/** The period's lines of one kind grouped by category, largest first — keyed
+ *  by the category id, which the row's trend is fetched by (a name is unique
+ *  per kind, so the grouping is the same one the name gave). */
+export function categoriesOf(entries: readonly ResidentEntry[], kind: FinKind): Array<CategoryShare & { id: string }> {
+  const map = new Map<string, { id: string; name: string; total: number }>();
+  for (const e of entries) {
+    if (e.kind !== kind) continue;
+    const c = map.get(e.category_id);
+    if (c) c.total += e.amount;
+    else map.set(e.category_id, { id: e.category_id, name: e.category_name, total: e.amount });
+  }
+  return categoryShares([...map.values()]);
+}
+
+/** A category trend's month label: 'דצמ׳', or 'דצמ׳ 25' when the window
+ *  spans more than one calendar year — so two Januaries never look alike. */
+export function trendMonthLabel(monthKey: string, withYear: boolean): string {
+  return withYear ? `${monthShort(monthKey)} ${monthKey.slice(2, 4)}` : monthShort(monthKey);
+}
+
+/** Whether a window of 'YYYY-MM' keys holds more than one calendar year. */
+export function spansYears(monthKeys: readonly string[]): boolean {
+  return new Set(monthKeys.map((k) => k.slice(0, 4))).size > 1;
 }
 
 /** The reference's category palette, by rank. */

@@ -32,12 +32,17 @@ export function DebtorsToolbar({ totalRows, canExport }: { totalRows: number; ca
   const [busy, setBusy] = useState<Busy>(null);
   const [printRows, setPrintRows] = useState<Debtor[] | null>(null);
 
-  // Debounced sync to URL
+  // Debounced sync to URL — only when the boxes really changed the search.
+  // The effect also fires once on mount; pushing then (300ms after hydration,
+  // with the URL as it was on mount) used to undo whatever navigated in
+  // between — a tab clicked right after the page came up lost its `tab=`
+  // (06/10/2026) — and reset `page` on a deep link for nothing.
   useEffect(() => {
     const t = setTimeout(() => {
       const params = new URLSearchParams(searchParams.toString());
       if (apt) params.set('apt', apt); else params.delete('apt');
       if (q)   params.set('q', q);     else params.delete('q');
+      if (params.toString() === searchParams.toString()) return;
       params.delete('page');
       const qs = params.toString();
       startTransition(() => {

@@ -165,6 +165,32 @@
 .portal-skin .cat .a small { color: var(--ink-soft); font-weight: 500; margin-inline-start: 6px; }
 .portal-skin .cat .bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--field); overflow: hidden; }
 .portal-skin .cat .bar b { display: block; height: 100%; border-radius: 3px; }
+/* The transactions tab's category rows are toggles (06/10/2026): the whole row
+   is a <button> that opens the category's trend. The padding lifts the touch
+   target to 44px; the list's gap shrinks by the same amount (6 + 2 + 6 = the
+   old 14) and its top margin by the first row's 6, so every row sits exactly
+   where it did. The overview's .cats list is not a toggle and keeps the plain
+   rules above. */
+.portal-skin .cats.tgl { gap: 2px; margin-top: 12px; }
+.portal-skin .cat-tg { width: 100%; padding: 6px 0; border: 0; border-radius: 8px; background: none; font: inherit; font-size: 14px; color: inherit; text-align: right; cursor: pointer; grid-template-columns: minmax(0, 1fr) auto auto; -webkit-tap-highlight-color: transparent; }
+.portal-skin .cat-tg:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.portal-skin .cat-tg .chev { display: grid; place-items: center; color: var(--ink-soft); transition: transform .15s; }
+.portal-skin .cat-tg:hover .chev { color: var(--ink-muted); }
+.portal-skin .cat-tg[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.portal-skin .cat-trend { padding: 6px 0 10px; }
+/* the trend itself: a time axis in an LTR box, thin bars rounded at the top in
+   the soft tone of their kind, the active bar in the full tone */
+.portal-skin .trend { position: relative; height: 180px; }
+.portal-skin .trend svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.portal-skin .trend .tcol { cursor: pointer; }
+.portal-skin .trend .b { transition: fill .12s; }
+.portal-skin .trend .b.in { fill: var(--green-soft); }
+.portal-skin .trend .b.out { fill: var(--red-soft); }
+.portal-skin .trend .b.in.on { fill: var(--green); }
+.portal-skin .trend .b.out.on { fill: var(--red); }
+.portal-skin .trend-msg { min-height: 64px; display: grid; place-items: center; text-align: center; font-size: 13px; color: var(--ink-muted); }
+.portal-skin .trend-msg.wait { min-height: 180px; }
+.portal-skin .trend-msg button { min-height: 44px; padding: 0 8px; border: 0; background: none; font: inherit; font-weight: 600; color: var(--brand); cursor: pointer; }
 .portal-skin .pring { display: flex; align-items: center; gap: 20px; margin-top: 18px; }
 .portal-skin .pring svg { flex: none; }
 .portal-skin .pring .t { font-size: 14px; color: var(--ink-muted); line-height: 1.6; }
@@ -274,6 +300,8 @@
   .portal-skin .per, .portal-skin .per .sel, .portal-skin .per .pbtn { width: 100%; }
   .portal-skin .mine .big { font-size: 36px; }
   .portal-skin .chart { height: 200px; }
+  .portal-skin .trend { height: 160px; }
+  .portal-skin .trend-msg.wait { min-height: 160px; }
   .portal-skin .tw { margin: 0; padding: 0; overflow: visible; }
   .portal-skin .tw table { min-width: 0; margin-top: 8px; }
   .portal-skin .tw thead { display: none; }

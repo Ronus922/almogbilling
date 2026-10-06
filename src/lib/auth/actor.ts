@@ -2,7 +2,7 @@ import 'server-only';
 import { query } from '@/lib/db';
 import { getSession, type SessionUser } from './session';
 import { AuthorizationError } from './errors';
-import { hasPermission, canManageRole, canUseAssistant } from '@/lib/permissions/check';
+import { hasPermission, canManageRole, canUseAssistant, canDeleteUsers } from '@/lib/permissions/check';
 import { isMatrixRole } from '@/lib/permissions/constants';
 import type { Action, ModulePermission, Role } from '@/lib/permissions/constants';
 
@@ -64,6 +64,17 @@ export async function requireSuperAdmin(): Promise<Actor> {
   const actor = await requireActor();
   if (actor.role !== 'super_admin') {
     throw new AuthorizationError('דרושה הרשאת סופר אדמין');
+  }
+  return actor;
+}
+
+/** The permanent deletion of a staff user (DELETE /api/users/[id]) — the
+ *  USER_DELETE_ROLES allowlist (super admin only, 06/10/2026). 401 with no
+ *  session, 403 for every other role. */
+export async function requireUserDeleteAccess(): Promise<Actor> {
+  const actor = await requireActor();
+  if (!canDeleteUsers(actor.role)) {
+    throw new AuthorizationError('מחיקת משתמש לצמיתות — לסופר אדמין בלבד');
   }
   return actor;
 }

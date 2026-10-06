@@ -78,7 +78,7 @@ export default async function DashboardPage({
   const [kpis, sync, tabCounts, listing] = await Promise.all([
     getDashboardKpis(),
     loadSyncHealth(),
-    getTabCounts(),
+    getTabCounts({ q, apt }),
     listDebtors({ tab, q, apt, sort, page }),
   ]);
 

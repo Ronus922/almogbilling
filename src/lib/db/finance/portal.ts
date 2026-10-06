@@ -2,12 +2,14 @@ import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import type { FinKind, FinSection } from '@/lib/constants/finance';
 import type {
-  PeriodReport, PeriodReportCategory, PeriodReportMonth, RenovationFundKpis, ResidentBankBalance, ResidentDocument,
-  ResidentEntry, ResidentFundKpis, ResidentMonthData, ResidentMonthSection, ResidentOverview, ResidentPeriodData,
-  ResidentPeriodMonth,
+  PeriodReport, PeriodReportCategory, PeriodReportMonth, RenovationFundKpis, ResidentBankBalance, ResidentCategoryMonth,
+  ResidentDocument, ResidentEntry, ResidentFundKpis, ResidentMonthData, ResidentMonthSection, ResidentOverview,
+  ResidentPeriodData, ResidentPeriodMonth,
 } from '@/lib/types/finance';
+import { PORTAL_CATEGORY_TREND_MONTHS } from '@/lib/constants/portal';
 import { currentMonthKey, monthKeyOf, periodMonthOf, shiftMonthKey } from '@/lib/finance/period';
 import { publishedMonthKeys } from '@/lib/finance/resident';
+import { roundShekels } from '@/lib/portal/ui';
 import { buildProxyUrl, FINANCE_RECEIPTS_BUCKET } from '@/lib/storage/server';
 import { PUBLISHED_JOIN, listFundEntries } from './entries';
 import { getRenovationFundSettings } from './fund-settings';
@@ -30,9 +32,11 @@ export async function getPublishedMonths(): Promise<Array<{ year: number; month:
 
 // The entry id rides along INTERNALLY (to attach receipts) and is dropped by
 // toResidentEntries before anything leaves this module — a resident row never
-// carries an id, so nothing on the portal can address a line.
+// carries an entry id, so nothing on the portal can address a line. The
+// category id does leave (06/10/2026): it is what a category row of the
+// transactions tab asks its trend by, and the reports tab already hands it out.
 const RESIDENT_COLS = `
-  e.id as entry_id, e.kind, c.section, c.name as category_name, e.description, e.amount::float8 as amount,
+  e.id as entry_id, e.kind, c.section, e.category_id, c.name as category_name, e.description, e.amount::float8 as amount,
   e.payment_date::text as payment_date, e.period_month::text as period_month`;
 
 type ResidentRow = ResidentEntry & { entry_id: string };
@@ -197,6 +201,43 @@ export async function getResidentPeriodData(from: string, to: string): Promise<R
     operating,
     ...(closing !== undefined ? { bank_balance: balances.get(closing)!, bank_balance_month: closing } : {}),
   };
+}
+
+/** The transactions tab's category trend (06/10/2026): one OPERATING
+ *  category's sum in each of the newest PORTAL_CATEGORY_TREND_MONTHS published
+ *  months up to the current one, oldest first — whatever period the tab's
+ *  picker is on. A published month without a line of the category is 0; the
+ *  sum is exact (numeric) and rounded to whole shekels once, here, like every
+ *  amount a resident sees. null when there is no such operating category —
+ *  a fund category is not on that tab, so it is "not found" too.
+ *
+ *  Same rule as the rest of this module, and the one this feature exists
+ *  under: the window is made of published rows IN THE SQL, and lines are
+ *  joined to the window only — a month residents do not get is not in the
+ *  answer at all, not even as a 0, whatever the caller does. */
+export async function getResidentCategoryTrend(categoryId: string): Promise<ResidentCategoryMonth[] | null> {
+  const category = await queryOne<{ id: string }>(
+    `select id from public.fin_categories where id = $1 and section = 'operating'`,
+    [categoryId],
+  );
+  if (!category) return null;
+  const r = await query<{ month: string; total: number }>(
+    `with win as (
+       select make_date(s.year, s.month, 1) as month_start
+         from public.finance_month_status s
+        where s.published and make_date(s.year, s.month, 1) <= $2::date
+        order by s.year desc, s.month desc
+        limit $3
+     )
+     select to_char(w.month_start, 'YYYY-MM') as month, coalesce(sum(e.amount), 0)::float8 as total
+       from win w
+       left join public.fin_entries e
+         on e.period_month = w.month_start and e.category_id = $1 and e.deleted_at is null
+      group by w.month_start
+      order by w.month_start`,
+    [categoryId, periodMonthOf(currentMonthKey()), PORTAL_CATEGORY_TREND_MONTHS],
+  );
+  return r.rows.map((m) => ({ month: m.month, total: roundShekels(m.total) }));
 }
 
 /** The newest operating lines a resident may see, newest first — the

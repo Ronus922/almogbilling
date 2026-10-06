@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useId, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import type { FinKind } from '@/lib/constants/finance';
@@ -13,8 +13,9 @@ import {
   type TxFilter,
 } from '@/lib/portal/ui';
 import { PortalBarChart, type ChartPoint } from './PortalBarChart';
+import { PortalCategoryTrend } from './PortalCategoryTrend';
 import { PortalTxTable } from './PortalTxTable';
-import { ArrowDownIcon, ArrowUpIcon, ExportIcon, InfoIcon, ScaleIcon, WalletIcon } from './PortalIcons';
+import { ArrowDownIcon, ArrowUpIcon, ChevronIcon, ExportIcon, InfoIcon, ScaleIcon, WalletIcon } from './PortalIcons';
 import { usePortalHref } from './usePortalHref';
 
 // The transactions tab (#t-tx of the reference) for the selected period — one
@@ -39,6 +40,11 @@ import { usePortalHref } from './usePortalHref';
 // spans more than one month. Every amount is in whole shekels (fmtIls); the
 // KPIs come from the server's exact totals; income green-ink, expense
 // red-ink, the difference by its sign, the bank balance neutral (28/09/2026).
+//
+// Every category row (income and expense) is a toggle (06/10/2026): a click
+// anywhere on it opens the category's trend over the newest published months
+// (PortalCategoryTrend — its own request, NOT the picker's period); the row's
+// amount stays the period's total.
 
 const FILTERS: ReadonlyArray<{ key: TxFilter; label: string }> = [
   { key: 'all', label: 'הכל' },
@@ -46,32 +52,55 @@ const FILTERS: ReadonlyArray<{ key: TxFilter; label: string }> = [
   { key: 'out', label: 'הוצאות' },
 ];
 
-function Cats({ title, kind, items }: { title: string; kind: FinKind; items: ReturnType<typeof categoriesOf> }) {
-  const tone = kind === 'income' ? 'in' : 'out';
+type CatItem = ReturnType<typeof categoriesOf>[number];
+
+function CatRow({ c, color, kind, preview }: { c: CatItem; color: string; kind: FinKind; preview: boolean }) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  return (
+    <div className="cat-it">
+      <button
+        type="button"
+        className="cat cat-tg"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="n"><i style={{ background: color }} /><em title={c.name}>{c.name}</em></span>
+        <span className={`a num ${kind === 'income' ? 'in' : 'out'}`}>{fmtIls(c.total)}<small>{c.pct}%</small></span>
+        <span className="chev" aria-hidden><ChevronIcon /></span>
+        <span className="bar"><b style={{ width: `${c.bar}%`, background: color }} /></span>
+      </button>
+      {open && (
+        <div className="cat-trend" id={panelId}>
+          <PortalCategoryTrend categoryId={c.id} name={c.name} kind={kind} preview={preview} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Cats({ title, kind, items, preview }: { title: string; kind: FinKind; items: CatItem[]; preview: boolean }) {
   return (
     <div className="card c6">
       <h3>{title}</h3>
-      <div className="cats">
+      <div className="cats tgl">
         {items.length === 0 && <p className="note">אין תנועות.</p>}
-        {items.map((c, i) => (
-          <div className="cat" key={c.name}>
-            <span className="n"><i style={{ background: catColor(i) }} /><em title={c.name}>{c.name}</em></span>
-            <span className={`a num ${tone}`}>{fmtIls(c.total)}<small>{c.pct}%</small></span>
-            <div className="bar"><b style={{ width: `${c.bar}%`, background: catColor(i) }} /></div>
-          </div>
-        ))}
+        {items.map((c, i) => <CatRow key={c.id} c={c} color={catColor(i)} kind={kind} preview={preview} />)}
       </div>
     </div>
   );
 }
 
-export function PortalTransactions({ period, publishedMonths, data, filter: initialFilter }: {
+export function PortalTransactions({ period, publishedMonths, data, filter: initialFilter, preview }: {
   /** The selected period — already checked against the published months. */
   period: Period;
   /** 'YYYY-MM', newest first. */
   publishedMonths: string[];
   data: ResidentPeriodData;
   filter: TxFilter;
+  /** The admin preview (/finance?view=resident): no portal session there. */
+  preview: boolean;
 }) {
   const router = useRouter();
   const href = usePortalHref();
@@ -199,8 +228,8 @@ export function PortalTransactions({ period, publishedMonths, data, filter: init
             <PortalTxTable rows={rows} emptyText={filter === 'in' ? `אין הכנסות ב${label}.` : filter === 'out' ? `אין הוצאות ב${label}.` : `אין תנועות ב${label}.`} />
           </div>
 
-          {filter !== 'out' && <Cats title="הכנסות לפי קטגוריה" kind="income" items={categoriesOf(op.income, 'income')} />}
-          {filter !== 'in' && <Cats title="הוצאות לפי קטגוריה" kind="expense" items={categoriesOf(op.expense, 'expense')} />}
+          {filter !== 'out' && <Cats title="הכנסות לפי קטגוריה" kind="income" items={categoriesOf(op.income, 'income')} preview={preview} />}
+          {filter !== 'in' && <Cats title="הוצאות לפי קטגוריה" kind="expense" items={categoriesOf(op.expense, 'expense')} preview={preview} />}
         </div>
       )}
     </section>

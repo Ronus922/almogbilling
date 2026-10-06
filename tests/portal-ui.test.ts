@@ -3,7 +3,7 @@ import {
   accountTotals, apartmentsLabel, axisLabel, categoriesOf, categoryShares, firstName, flatEntries, fmtDateDMY, fmtDelta,
   fmtEntryDate, fmtIls, fmtSigned, initials, monthShort, niceAxis, parseOverviewSpan, parsePortalTab,
   parseTxFilter, pctVsAverage, reportRangeFor, reportRanges, roundShekels, sanitizeCell,
-  signClass, sumExact, windowKeys,
+  signClass, spansYears, sumExact, trendAxis, trendMonthLabel, windowKeys,
 } from '@/lib/portal/ui';
 import { AMOUNT_NUM_FMT, buildPortalPeriodWorkbook } from '@/lib/portal/export';
 import {
@@ -21,7 +21,7 @@ import type { ResidentEntry } from '@/lib/types/finance';
 // arithmetic. No DB, no React.
 
 const entry = (over: Partial<ResidentEntry>): ResidentEntry => ({
-  kind: 'expense', section: 'operating', category_name: 'ניקיון', description: 'x', amount: 100,
+  kind: 'expense', section: 'operating', category_id: 'cat-cleaning', category_name: 'ניקיון', description: 'x', amount: 100,
   payment_date: '2026-09-15', period_month: '2026-09-01', ...over,
 });
 
@@ -144,11 +144,48 @@ describe('overview arithmetic', () => {
     const rows = [
       entry({ category_name: 'ניקיון', amount: 100 }),
       entry({ category_name: 'ניקיון', amount: 50 }),
-      entry({ category_name: 'גינון', amount: 500 }),
-      entry({ kind: 'income', category_name: 'דמי ועד', amount: 9000, payment_date: null }),
+      entry({ category_id: 'cat-garden', category_name: 'גינון', amount: 500 }),
+      entry({ kind: 'income', category_id: 'cat-fees', category_name: 'דמי ועד', amount: 9000, payment_date: null }),
     ];
     expect(categoriesOf(rows, 'expense').map((c) => [c.name, c.total])).toEqual([['גינון', 500], ['ניקיון', 150]]);
     expect(categoriesOf(rows, 'income').map((c) => [c.name, c.total])).toEqual([['דמי ועד', 9000]]);
+  });
+  // The transactions tab's row asks its trend by the category id (06/10/2026),
+  // so the grouping carries it — and an extra field rides through the shares.
+  it('categoriesOf keys a category by its id and hands the id to the row', () => {
+    const rows = [
+      entry({ category_id: 'cat-a', category_name: 'חשמל', amount: 120.4 }),
+      entry({ category_id: 'cat-a', category_name: 'חשמל', amount: 79.6 }),
+      entry({ category_id: 'cat-b', category_name: 'מים', amount: 50 }),
+    ];
+    expect(categoriesOf(rows, 'expense').map((c) => [c.id, c.name, c.total])).toEqual([['cat-a', 'חשמל', 200], ['cat-b', 'מים', 50]]);
+    expect(categoryShares([{ id: 'x', name: 'a', total: 10 }])[0]).toEqual({ id: 'x', name: 'a', total: 10, pct: 100, bar: 100 });
+  });
+  it('the trend labels: a short month, with two year digits once the window spans years', () => {
+    expect(trendMonthLabel('2025-12', false)).toBe('דצמ׳');
+    expect(trendMonthLabel('2025-12', true)).toBe('דצמ׳ 25');
+    expect(trendMonthLabel('2026-01', true)).toBe('ינו׳ 26');
+    expect(spansYears(['2026-01', '2026-09'])).toBe(false);
+    expect(spansYears(['2025-12', '2026-01'])).toBe(true);
+    expect(spansYears([])).toBe(false);
+  });
+  it('the trend axis: 4–5 gridlines whose top sits close above the tallest bar', () => {
+    expect(trendAxis(42950)).toEqual({ max: 60000, step: 20000 }); // niceAxis: 80,000
+    expect(trendAxis(16890)).toEqual({ max: 20000, step: 5000 });
+    expect(trendAxis(8821)).toEqual({ max: 10000, step: 2500 });
+    expect(trendAxis(1801)).toEqual({ max: 2000, step: 500 });
+    expect(trendAxis(20000)).toEqual({ max: 20000, step: 5000 });
+    expect(trendAxis(21000)).toEqual({ max: 30000, step: 10000 });
+    expect(trendAxis(1)).toEqual({ max: 3, step: 1 });
+    expect(trendAxis(0)).toEqual({ max: 3, step: 1 });
+    for (const v of [7, 99, 1801, 4001, 10001, 12345, 40001, 99999, 250000, 1234567]) {
+      const a = trendAxis(v);
+      const lines = Math.round(a.max / a.step) + 1;
+      expect(a.max, String(v)).toBeGreaterThanOrEqual(v);
+      expect(lines, String(v)).toBeGreaterThanOrEqual(4);
+      expect(lines, String(v)).toBeLessThanOrEqual(5);
+      expect(a.max - a.step, String(v)).toBeLessThan(v); // never a whole empty step on top
+    }
   });
   it('flatEntries filters by kind and sorts newest first', () => {
     const rows = [

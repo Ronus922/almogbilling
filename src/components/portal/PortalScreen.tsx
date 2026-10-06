@@ -29,7 +29,8 @@ import { ReportsIcon } from './PortalIcons';
 // Two callers, one screen:
 //   • /portal (the owner): the session decides the identity and the account;
 //   • /finance?view=resident (the admin preview): the staff route decides the
-//     apartment and passes `preview`, which hides the logout button. Nothing
+//     apartment and passes `preview`, which hides the logout button and keeps
+//     the category trend from asking the portal API (no portal session). Nothing
 //     in here reads a cookie, so the same rendering cannot differ by caller.
 //
 // The URL vocabulary — `tab`, `m` (the transactions tab's period, in any of
@@ -79,7 +80,7 @@ export async function PortalScreen({ params, user, accounts, support, preview = 
       const period = nothing ? null : residentPeriodFor(params.m, publishedMonths);
       if (!period) { body = nothingPublished; break; }
       const data = await getResidentPeriodData(period.from, period.to);
-      body = <PortalTransactions key={period.key} period={period} publishedMonths={publishedMonths} data={data} filter={parseTxFilter(params.f)} />;
+      body = <PortalTransactions key={period.key} period={period} publishedMonths={publishedMonths} data={data} filter={parseTxFilter(params.f)} preview={preview} />;
       break;
     }
     case 'rep': {

@@ -171,7 +171,7 @@ export async function listThread(
         m.id, m.debtor_id, m.supplier_id, m.contact_phone, m.chat_id, m.external_message_id,
         m.link_status, m.direction, m.message_type, m.content, m.media_url, m.status,
         m.error_detail, m.sent_by,
-        u.full_name as sent_by_name,
+        coalesce(u.full_name, m.sent_by_name) as sent_by_name,
         s.display_name as supplier_display_name,
         m.broadcast_id, m.read_at, m.created_at
        from public.chat_messages m
