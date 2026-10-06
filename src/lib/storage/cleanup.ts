@@ -23,6 +23,7 @@ export const BILLING_BUCKETS = [
   'whatsapp-media',
   'finance-receipts',
   'reminder-attachments',
+  'portal-decisions',
 ] as const;
 export type BillingBucket = (typeof BILLING_BUCKETS)[number];
 

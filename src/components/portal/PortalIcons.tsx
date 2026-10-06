@@ -86,6 +86,17 @@ export function ChevronIcon(p: IconProps) {
   return <Svg size={16} {...p}><path d="M6 9l6 6 6-6" /></Svg>;
 }
 
+/** The decisions tab's PDF tile and its "פתיחת המסמך" button — the
+ *  reference's PDFIC: a page with a folded corner, no rules inside. */
+export function PdfIcon(p: IconProps) {
+  return <Svg size={20} {...p}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></Svg>;
+}
+
+/** The decisions toolbar's search glyph. */
+export function SearchIcon(p: IconProps) {
+  return <Svg size={17} strokeWidth={2} {...p}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></Svg>;
+}
+
 // ── The fault report (ref/issue-report-form.md · Issue Report Form.html) ──
 
 /** The header's back chevron — points right, toward the start in RTL. */

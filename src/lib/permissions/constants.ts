@@ -87,6 +87,11 @@ export const MODULES: ModuleMeta[] = [
   // `finance`: deny by default for every matrix role (no row = denied), so no
   // user_permissions re-seed is needed and an admin may grant it per user later.
   { key: 'portal_manage',      label: 'פורטל בעלי דירות',   group: 'admin' },
+  // Decisions & protocols ("החלטות ופרוטוקולים", /decisions) — uploading the
+  // PDFs the owners portal publishes. Admin / super_admin only, exactly like
+  // `finance` and `portal_manage`: deny by default for every matrix role (no
+  // row = denied), so no user_permissions re-seed is needed.
+  { key: 'portal_decisions',   label: 'החלטות ופרוטוקולים', group: 'admin' },
 ];
 
 export const SUPER_ADMIN_ONLY: readonly string[] = ['users_management', 'roles_management'];
@@ -152,6 +157,7 @@ export const DEFAULT_MANAGER: ModulePermission[] = [
   noPerm('settings'),
   noPerm('finance'),
   noPerm('portal_manage'),
+  noPerm('portal_decisions'),
 ];
 
 // Viewer defaults — read-only access to the DEBTORS SCREEN (dashboard) ONLY.
@@ -189,6 +195,7 @@ export const DEFAULT_VIEWER: ModulePermission[] = [
   noPerm('settings'),
   noPerm('finance'),
   noPerm('portal_manage'),
+  noPerm('portal_decisions'),
 ];
 
 // Field-worker defaults (cleaner + maintenance) — tasks + issues only, view+edit.
@@ -225,6 +232,7 @@ export const DEFAULT_WORKER: ModulePermission[] = [
   noPerm('settings'),
   noPerm('finance'),
   noPerm('portal_manage'),
+  noPerm('portal_decisions'),
 ];
 
 // ── Role classification ──────────────────────────────────────────────────────

@@ -3,6 +3,8 @@ import {
   getPeriodReport, getPublishedMonths, getResidentFundKpis, getResidentOverview, getResidentPeriodData,
 } from '@/lib/db/finance/portal';
 import { countContacts } from '@/lib/db/contacts';
+import { listPublishedDecisions } from '@/lib/db/portalDecisions';
+import { toDecisionPortalView } from '@/lib/decisionsView';
 import { publishedMonthKeys, residentPeriodFor } from '@/lib/finance/resident';
 import {
   firstName, parseOverviewSpan, parsePortalTab, parseTxFilter, reportRangeFor, reportRanges,
@@ -16,7 +18,8 @@ import { PortalFundView } from './PortalFundView';
 import { PortalAccountView } from './PortalAccount';
 import type { PortalSupport } from './PortalSupportAction';
 import { PortalSoon } from './PortalSoon';
-import { DecisionsIcon, ReportsIcon } from './PortalIcons';
+import { PortalDecisions } from './PortalDecisions';
+import { ReportsIcon } from './PortalIcons';
 
 // The resident's screen, as a server component: picks the tab from the URL,
 // loads ONLY that tab's data — every figure from portal.ts with publishedOnly
@@ -94,9 +97,13 @@ export async function PortalScreen({ params, user, accounts, support, preview = 
     case 'acc':
       body = <PortalAccountView accounts={accounts} support={support} />;
       break;
-    case 'dec':
-      body = <PortalSoon icon={<DecisionsIcon size={28} />} title="החלטות ועד" text="בקרוב תוכלו להצביע על החלטות, לצפות בפרוטוקולים ולאשר את תקציב הבניין — ישירות מכאן." />;
+    case 'dec': {
+      // Published only — the predicate is inside listPublishedDecisions(), the
+      // same discipline the finance tabs follow with portal.ts.
+      const decisions = await listPublishedDecisions();
+      body = <PortalDecisions decisions={decisions.map(toDecisionPortalView)} />;
       break;
+    }
   }
 
   return (

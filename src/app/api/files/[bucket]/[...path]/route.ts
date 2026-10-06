@@ -55,6 +55,12 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<Actor>> = {
   // Reminder attachments — whoever may open the reminders module, exactly like
   // the reminder itself (GET /api/user-reminders/[id]).
   'reminder-attachments': () => requirePermission('user_reminders', 'view'),
+  // Decisions & protocols — the STAFF path, whoever may open /decisions
+  // (admin / super_admin). It serves a hidden row too, which is the point: the
+  // admin checks the PDF before publishing it. An OWNER never arrives here —
+  // their path is /api/portal/decisions/[id]/file, which demands a portal
+  // session AND `published`.
+  'portal-decisions': () => requirePermission('portal_decisions', 'view'),
 };
 
 /**
@@ -186,6 +192,14 @@ async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<
     return row.reminder_id
       ? { ...base, fileName: row.original_name, entityType: 'reminder', entityId: row.reminder_id, documentId: row.id }
       : { ...base, fileName: row.original_name, entityType: 'reminder_attachment', entityId: row.id };
+  }
+  if (bucket === 'portal-decisions') {
+    const row = await queryOne<{ id: string; original_filename: string }>(
+      `select id, original_filename from public.portal_decisions where object_key = $1 limit 1`,
+      [path],
+    );
+    if (!row) return orphan;
+    return { ...base, fileName: row.original_filename, entityType: 'portal_decision', entityId: row.id };
   }
   // issue-attachments: bare paths `<issueId>/<uuid>.<ext>`, no display name — the
   // prefix IS the parent (enforced at upload by buildObjectKey / isPathUnderIssue).

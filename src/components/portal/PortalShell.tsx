@@ -27,7 +27,7 @@ const TABS: ReadonlyArray<{ key: PortalTab; label: string; soon?: boolean }> = [
   { key: 'tx', label: 'הכנסות והוצאות' },
   { key: 'fund', label: 'קרן שיפוצים' },
   { key: 'acc', label: 'החשבון שלי' },
-  { key: 'dec', label: 'החלטות', soon: true },
+  { key: 'dec', label: 'החלטות' },
   { key: 'rep', label: 'דוחות' },
 ];
 
