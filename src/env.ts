@@ -37,6 +37,8 @@ export const env = createEnv({
     INTERNAL_BASE_URL: optionalUrl,
     // Cron/webhook secrets: the routes fail closed (503/401) when unset.
     BILLING_CRON_SECRET: optionalString,
+    // billing-sync.timer → /api/sync/bllink (x-cron-secret). The name is
+    // historical (it was shared with the CRM, torn down 06/10/2026).
     CRM_CRON_SECRET: optionalString,
     // Green API webhookUrlToken — sent back as `Authorization: Bearer` on every
     // notification; the inbound webhook authenticates on it (header, never query).
@@ -59,29 +61,22 @@ export const env = createEnv({
 
     // ── integrations ──────────────────────────────────────────────────────
     ANTHROPIC_API_KEY: optionalString,
-    CRM_SYNC_URL: optionalUrl,
-    CRM_DEBTORS_REST_URL: optionalUrl,
-    CRM_DEBTORS_REST_KEY: optionalString,
     BLLINK_SYNC_MIN_ROWS: numeric,
     BLLINK_SYNC_MIN_FRACTION: numeric,
-    // Newest CRM snapshot the sync will copy, in hours (default 36). Older → stage 'stale', nothing written.
+    // Dashboard banner: Bllink data older than this (hours, default 36) turns it red.
     BLLINK_MAX_SNAPSHOT_AGE_HOURS: numeric,
-    // Where /api/sync/bllink takes the debtors snapshot from (Phase 2, 26/09/2026):
-    // 'billing' = the newest successful scrape in public.bllink_scrapes (the CRM
-    // is then only a witness); unset or anything else = 'crm', the previous path.
-    BLLINK_SOURCE: optionalString,
-    // BLLINK_SOURCE=billing only: the local scrape must be younger than this
-    // (hours) or the sync stops at stage 'stale' and writes nothing. Deliberately
-    // no default — unset = fail closed.
+    // /api/sync/bllink: billing's newest scrape must be younger than this (hours)
+    // or the sync stops at stage 'stale' and writes nothing. Deliberately no
+    // default — unset = fail closed.
     BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS: numeric,
     CHROME_PATH: optionalString,
-    // Bllink shadow scraper (scripts/bllink-scrape.ts, billing-bllink-scrape.timer).
+    // Bllink scraper (scripts/bllink-scrape.ts, billing-bllink-scrape.timer).
     // All optional: the Next app never reads them; the oneshot unit fails loudly
     // on its own when they are missing.
     BLLINK_USER: optionalString,
     BLLINK_PASSWORD: optionalString,
     PLAYWRIGHT_BROWSERS_PATH: optionalString,
-    // WhatsApp recipient (local IL format) for a shadow-scrape failure alert.
+    // WhatsApp recipient (local IL format) for a scrape failure alert.
     BLLINK_ALERT_PHONE: optionalString,
     // The manager's WhatsApp/email for operational alerts. Read by
     // scripts/lib/admin-alert.ts and, since the owners portal, by the app itself

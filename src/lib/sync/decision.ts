@@ -4,37 +4,23 @@
  * the route handler and the dashboard.
  *
  * A sync moves through five stages, each of which can fail on its own:
- *   scrape    → the CRM re-scrapes Bllink (POST CRM_SYNC_URL)
- *   stale     → the snapshot the CRM holds is recent enough to copy
+ *   scrape    → billing's own Bllink scrape, run on demand ("סנכרן עכשיו" only)
+ *   stale     → billing's newest scrape is from today
+ *               (BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS, strict, no default)
  *   guard     → completeness + consistency checks on the snapshot, BEFORE the write
- *   pull      → fetching the snapshot / writing it into public.debtors
+ *   pull      → reading the snapshot / writing it into public.debtors
  *   reconcile → AFTER the write: the sums now in debtors, per category, equal the
  *               report's (reconcile.ts). The only stage that can fail once data
  *               has been written — its message says so.
  * The stage is persisted on sync_runs.error_stage and shown to the user; the
  * HTTP status tells the two families apart (upstream broke vs. data rejected).
  *
- * BLLINK_SOURCE=billing (26/09/2026) changes where the snapshot comes from, not
- * the stages: 'stale' then means billing's own latest scrape is not from today
- * (limit BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS, strict, no default), 'guard' and
- * 'pull' are the same guards and the same write, and the CRM scrape becomes a
- * best-effort WITNESS after the write — never a stage that can fail the run.
+ * Until 26/09/2026 the snapshot came from the CRM (almog), and until its
+ * teardown on 06/10/2026 the CRM was compared after the write as a witness.
+ * Both are gone: billing's own scrape is the only source.
  */
-import { z } from 'zod';
 
 export type SyncStage = 'scrape' | 'stale' | 'guard' | 'pull' | 'reconcile';
-
-/** Where /api/sync/bllink takes the debtors snapshot from. */
-export type BllinkSource = 'crm' | 'billing';
-
-/**
- * BLLINK_SOURCE → 'billing' only when it says exactly that. Missing, empty or
- * anything else = 'crm', i.e. the pre-Phase-2 behaviour — a typo in the env
- * must never switch the source, in either direction, by accident.
- */
-export function resolveBllinkSource(raw: string | null | undefined): BllinkSource {
-  return (raw ?? '').trim() === 'billing' ? 'billing' : 'crm';
-}
 
 /**
  * BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS → hours, or null when unset / not a
@@ -50,7 +36,7 @@ export function localFreshnessLimitHours(raw: string | null | undefined): number
 }
 
 export const SYNC_STAGE_LABELS: Record<SyncStage, string> = {
-  scrape: 'סריקת בלינק ב-CRM',
+  scrape: 'סריקת בלינק',
   stale: 'רעננות הנתון במקור',
   guard: 'בדיקת שלמות הנתון',
   pull: 'משיכה וכתיבה',
@@ -75,59 +61,14 @@ export function stageHttpStatus(stage: SyncStage): 502 | 409 {
   return stage === 'scrape' || stage === 'pull' ? 502 : 409;
 }
 
-// What the CRM's /api/admin/jobs/syncBllinkDebt answers. It returns HTTP 200
-// with ok:true even when the download failed — the truth is in result.*.
-const crmScrapeResponseSchema = z.object({
-  ok: z.boolean().optional(),
-  error: z.string().optional(),
-  result: z
-    .object({
-      downloaded: z.boolean(),
-      parsed: z.number().optional(),
-      errors: z.array(z.string()).default([]),
-    })
-    .optional(),
-});
-
-export type CrmScrapeOutcome = { ok: true; parsed: number } | { ok: false; message: string };
-
-/**
- * Interprets the CRM's scrape response. Anything other than "HTTP 2xx, ok,
- * downloaded === true, no errors" is a scrape failure carrying the CRM's own
- * error text, in full, so the sync_runs row and the banner say what broke.
- */
-export function parseCrmScrapeResponse(status: number, body: unknown): CrmScrapeOutcome {
-  if (status < 200 || status >= 300) {
-    const detail = typeof body === 'object' && body !== null && 'error' in body ? String((body as { error: unknown }).error) : '';
-    return { ok: false, message: `ה-CRM החזיר HTTP ${status}${detail ? ` (${detail})` : ''}` };
-  }
-  const parsed = crmScrapeResponseSchema.safeParse(body);
-  if (!parsed.success) {
-    return { ok: false, message: 'תשובת ה-CRM אינה בפורמט הצפוי (ללא result.downloaded)' };
-  }
-  const data = parsed.data;
-  if (data.ok === false) {
-    return { ok: false, message: `ה-CRM דחה את הבקשה: ${data.error ?? 'ללא פירוט'}` };
-  }
-  if (!data.result) {
-    return { ok: false, message: 'תשובת ה-CRM ללא result — הסריקה לא רצה' };
-  }
-  if (data.result.downloaded !== true || data.result.errors.length > 0) {
-    const errs = data.result.errors.length > 0 ? data.result.errors.join(' | ') : 'downloaded=false ללא פירוט';
-    return { ok: false, message: `הסריקה בבלינק נכשלה: ${errs}` };
-  }
-  return { ok: true, parsed: data.result.parsed ?? 0 };
-}
-
 export type FreshnessOutcome =
   | { fresh: true; ageHours: number }
   | { fresh: false; ageHours: number | null; message: string };
 
 /**
- * The snapshot the CRM holds must have been scraped within `maxAgeHours`.
- * `runMaxAt` is the newest last_import_at in the snapshot (ISO string from
- * PostgREST). A missing timestamp is treated as stale — we never copy data we
- * cannot date.
+ * The snapshot must have been scraped within `maxAgeHours`. `runMaxAt` is when
+ * Bllink was scraped (bllink_scrapes.finished_at, ISO). A missing timestamp is
+ * treated as stale — we never copy data we cannot date.
  */
 export function checkSnapshotFreshness(runMaxAt: string | null, maxAgeHours: number, now: number): FreshnessOutcome {
   if (!runMaxAt) {

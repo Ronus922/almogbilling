@@ -1,10 +1,9 @@
 /**
- * One Bllink report row in the CRM debtor_records naming → the ParsedDebtorRow
- * the import runner writes, the reconciliation report the guards check, and the
- * CompareRow the witness comparison reads. Pure; shared by the CRM pull
- * (bllinkPull.ts) and the local pull (localPull.ts), so BOTH sources of
- * public.debtors are mapped by literally the same code — the switch between
- * them (BLLINK_SOURCE) changes where the rows come from, never what is written.
+ * One Bllink report row in the CRM debtor_records naming (kept by
+ * bllink_scrape_rows) → the ParsedDebtorRow the import runner writes and the
+ * reconciliation report the guards check. Pure. Until the CRM (almog) was torn
+ * down on 06/10/2026 its debtor_records went through this same mapper, which is
+ * why the naming survives.
  *
  * Column mapping (source → billing debtors / ParsedDebtorRow):
  *   apartment_number      →  apartment_number
@@ -24,16 +23,14 @@
 import { cleanPhoneField, splitOwnerTenantPhones } from '@/lib/whatsapp';
 import { splitOwnerTenantNames } from './reportNames';
 import type { ParsedDebtorRow } from '@/lib/excel/parse';
-import { round2, toNum, toText, type CompareRow } from './bllinkCompare';
+import { round2, toNum, toText } from './bllinkCompare';
 
-/** What both sources hand over: the CRM's debtor_records row (PostgREST) and
- *  a public.bllink_scrape_rows row (pg — numerics arrive as strings). */
+/** A public.bllink_scrape_rows row (pg — numerics arrive as strings). */
 export interface SourceDebtorRecord {
   apartment_number: string | null;
   owner_name: string | null;
   phone_primary: string | null;
-  /** Bllink's resident list, per field. All absent from the CRM's
-   *  debtor_records — that source only ever had the export's two cells. */
+  /** Bllink's resident list, per field (null when the scrape could not read it). */
   list_owner_name?: string | null;
   list_owner_phone?: string | null;
   list_owner_email?: string | null;
@@ -98,16 +95,6 @@ export function mapSourceRow(r: SourceDebtorRecord): ParsedDebtorRow | null {
   };
 }
 
-export function toCompareRow(r: SourceDebtorRecord): CompareRow {
-  return {
-    total_debt: round2(toNum(r.total_debt)),
-    monthly_debt: round2(toNum(r.monthly_debt)),
-    special_debt: round2(toNum(r.special_debt)),
-    management_months_raw: toText(r.management_months_raw),
-    notes: toText(r.notes),
-  };
-}
-
 /** Trimmed apartment number → record, LAST occurrence wins (a source can hold
  *  whitespace variants that trim to the same key). Apartment-less rows are dropped. */
 export function dedupeByApartment<T extends { apartment_number: string | null }>(records: readonly T[]): Map<string, T> {
@@ -119,16 +106,9 @@ export function dedupeByApartment<T extends { apartment_number: string | null }>
   return byApt;
 }
 
-export function toCompareMap(records: readonly SourceDebtorRecord[]): Map<string, CompareRow> {
-  const out = new Map<string, CompareRow>();
-  for (const [apt, r] of dedupeByApartment(records)) out.set(apt, toCompareRow(r));
-  return out;
-}
-
 export interface Snapshot {
   rows: ParsedDebtorRow[];
   report: BllinkPullReport;
-  compareRows: Map<string, CompareRow>;
 }
 
 /** Dedupe + map + reconcile a whole snapshot. `at` dates it (the source's scrape time). */
@@ -138,20 +118,17 @@ export function buildSnapshot(
 ): Snapshot {
   const byApt = dedupeByApartment(records);
   const rows: ParsedDebtorRow[] = [];
-  const compareRows = new Map<string, CompareRow>();
   let rawTotal = 0;
   let componentTotal = 0;
-  for (const [apt, r] of byApt) {
+  for (const r of byApt.values()) {
     const mapped = mapSourceRow(r);
     if (!mapped) continue;
     rows.push(mapped);
-    compareRows.set(apt, toCompareRow(r));
     rawTotal += toNum(r.total_debt);
     componentTotal += mapped.total_debt;
   }
   return {
     rows,
-    compareRows,
     report: {
       count: rows.length,
       rawTotal: round2(rawTotal),
