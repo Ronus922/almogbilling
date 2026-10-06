@@ -154,8 +154,9 @@ test.describe('user reminders — who may read, change and delete', () => {
     await expect(card(page, privateId)).toHaveCount(0);
 
     await shared.hover();
-    await expect(shared.getByRole('button', { name: 'מחיקת תזכורת' })).toHaveCount(0);
-    await expect(shared.getByRole('button', { name: 'סמן כהושלם' })).toHaveCount(1);
+    // exact: the card itself is a button whose name includes its actions' labels.
+    await expect(shared.getByRole('button', { name: 'מחיקת תזכורת', exact: true })).toHaveCount(0);
+    await expect(shared.getByRole('button', { name: 'סמן כהושלם', exact: true })).toHaveCount(1);
 
     // The panel: every field disabled but the status; saving needs a status change.
     await shared.click();
@@ -174,7 +175,7 @@ test.describe('user reminders — who may read, change and delete', () => {
     // The card's check: PATCH {status:'done'} and nothing else.
     const write = page.waitForResponse((r) => r.request().method() === 'PATCH' && r.url().includes(`/api/user-reminders/${sharedId}`));
     await shared.hover();
-    await shared.getByRole('button', { name: 'סמן כהושלם' }).click();
+    await shared.getByRole('button', { name: 'סמן כהושלם', exact: true }).click();
     const res = await write;
     expect(res.status()).toBe(200);
     expect(res.request().postDataJSON()).toEqual({ status: 'done' });

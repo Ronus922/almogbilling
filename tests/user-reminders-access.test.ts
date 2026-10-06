@@ -122,11 +122,14 @@ describe('GET /api/user-reminders — the session user\'s own set', () => {
     expect(q!.params).not.toContain(STRANGER.id);
   });
 
-  it('with no parameter at all the set is still bound to the actor', async () => {
+  it('with no parameter at all the set is still bound to the actor — and sorted by the actor\'s own order', async () => {
     as(ASSIGNEE);
     expect((await list()).status).toBe(200);
     const q = h.calls.find((c) => /from public\.user_reminders r/.test(c.sql))!;
-    expect(q.params).toEqual([ASSIGNEE.id]);
+    // $1 = the involvement bound, $2 = the user whose drag order sorts the list: both the actor.
+    expect(q.params).toEqual([ASSIGNEE.id, ASSIGNEE.id]);
+    expect(q.sql).toMatch(/left join public\.user_reminder_order o on o\.reminder_id = r\.id and o\.user_id = \$2/);
+    expect(q.sql).toMatch(/order by o\.position asc nulls last, r\.remind_at asc, r\.id asc/);
   });
 });
 

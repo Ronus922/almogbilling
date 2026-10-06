@@ -6,6 +6,7 @@ import type { UserReminderWithNames } from '@/lib/types/userReminders';
 import {
   reminderStatusLabel, reminderStatusDot, reminderStatusText, UNCATEGORIZED_COLOR,
 } from '@/lib/constants/userReminders';
+import { DragGrip } from '@/components/dnd/DragGrip';
 import { formatRemindAt } from './helpers';
 
 interface Props {
@@ -14,6 +15,8 @@ interface Props {
   canEdit: boolean;
   /** The creator alone deletes (lib/userReminders/access.ts); false hides the bin. */
   canDelete: boolean;
+  /** The card can be dragged (ReminderList): show the grip strip. */
+  grip?: boolean;
   /** True when remind_at is in the past and the reminder is still pending. */
   overdue: boolean;
   onOpen: () => void;
@@ -21,14 +24,13 @@ interface Props {
   onDelete: () => void;
 }
 
-export function ReminderCard({ reminder: r, canEdit, canDelete, overdue, onOpen, onComplete, onDelete }: Props) {
+export function ReminderCard({ reminder: r, canEdit, canDelete, grip = false, overdue, onOpen, onComplete, onDelete }: Props) {
   const stripe = r.category_color ?? UNCATEGORIZED_COLOR;
 
   return (
     <div
       role="button"
       tabIndex={0}
-      data-reminder-id={r.id}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -45,6 +47,10 @@ export function ReminderCard({ reminder: r, canEdit, canDelete, overdue, onOpen,
         className="absolute inset-y-0 start-0 w-1.5"
         style={{ backgroundColor: stripe }}
       />
+
+      {/* Drag grip — flush with the stripe, the card's full height (the
+          negative margins undo the card's padding on that side). */}
+      {grip && <DragGrip className="-my-4 -ms-3.5 self-stretch" />}
 
       {/* Status indicator dot */}
       <span

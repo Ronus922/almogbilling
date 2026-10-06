@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { expect, type APIRequestContext, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from '@playwright/test';
 
 // Fixtures from db/seed/e2e.sql
 export const E2E_USER = 'e2e-admin';
@@ -44,14 +44,16 @@ export async function mailpitClear(request: APIRequestContext): Promise<void> {
 
 /** The login form, like auth.setup — the only way a session cookie reaches a
  *  production-mode sandbox. A fresh context (no shared storage state), so a
- *  second user can act beside the seeded e2e-admin. `ok` is false when the
- *  form kept the user on /login. */
+ *  second user can act beside the seeded e2e-admin; `options` shape that
+ *  context (a phone, for a touch spec). `ok` is false when the form kept the
+ *  user on /login. */
 export async function loginThroughForm(
   browser: Browser,
   username: string,
   password: string,
+  options: BrowserContextOptions = {},
 ): Promise<{ ctx: BrowserContext; page: Page; ok: boolean }> {
-  const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  const ctx = await browser.newContext({ ...options, storageState: { cookies: [], origins: [] } });
   const page = await ctx.newPage();
   await page.goto('/login');
   await page.fill('#username', username);

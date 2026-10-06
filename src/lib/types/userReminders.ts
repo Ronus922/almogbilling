@@ -29,6 +29,10 @@ export interface UserReminderWithNames extends UserReminder {
   created_by_name: string | null;
   category_name: string | null;
   category_color: string | null;
+  /** Where the listing user placed it in their own list (user_reminder_order);
+   *  null = never dragged → sorts after every placed one, by remind_at. Only
+   *  a list made for a user (`orderForUser`) carries it. */
+  position: number | null;
 }
 
 /** Fields a client may write on create/update. All optional on update.
@@ -76,4 +80,7 @@ export interface UserReminderListFilters {
   /** Only overdue, still-pending reminders (remind_at < now() AND status='pending'). */
   due?: boolean;
   includeArchived?: boolean;
+  /** Sort by THIS user's own drag order (user_reminder_order), the undragged
+   *  ones after, by remind_at. The reminders page passes the session user. */
+  orderForUser?: string;
 }

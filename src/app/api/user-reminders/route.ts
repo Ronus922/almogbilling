@@ -20,7 +20,9 @@ const STATUSES: readonly UserReminderStatus[] = ['pending', 'done', 'dismissed']
 // (lib/userReminders/access.ts). The identity comes from the session alone: a
 // client-sent `involvingUser` used to pick the user to list for, which let
 // anyone with the module read anyone's reminders by id (06/10/2026); it is
-// ignored now, and the other filters narrow the actor's set only.
+// ignored now, and the other filters narrow the actor's set only. Sorted by
+// the actor's own drag order (PUT /api/user-reminders/order), the undragged
+// ones after, by remind_at.
 export async function GET(req: NextRequest) {
   let actor: Actor;
   try {
@@ -57,6 +59,7 @@ export async function GET(req: NextRequest) {
     assignedTo,
     createdBy,
     involvingUser: actor.id,
+    orderForUser: actor.id,
     categoryId,
     entityType,
     entityId,

@@ -1,5 +1,6 @@
 import 'server-only';
-import { query, queryOne } from '@/lib/db';
+import type { PoolClient } from 'pg';
+import { query, queryOne, withTransaction } from '@/lib/db';
 import type {
   UserReminder,
   UserReminderListFilters,
@@ -80,21 +81,71 @@ export async function listUserReminders(
   }
 
   const whereSql = where.length ? `where ${where.join(' and ')}` : '';
+
+  // The listing user's own drag order (06/10/2026): their rows of
+  // user_reminder_order first, in position order; the undragged ones after,
+  // by remind_at as always; the id last so equal times are stable.
+  let orderJoin = '';
+  let positionSql = 'null::integer as position';
+  let orderBy = 'r.remind_at asc, r.id asc';
+  if (filters.orderForUser) {
+    vals.push(filters.orderForUser);
+    orderJoin = `left join public.user_reminder_order o on o.reminder_id = r.id and o.user_id = $${vals.length}`;
+    positionSql = 'o.position as position';
+    orderBy = 'o.position asc nulls last, r.remind_at asc, r.id asc';
+  }
+
   const r = await query<UserReminderWithNames>(
     `select ${prefixed('r')},
             ua.full_name as assigned_to_name,
             coalesce(uc.full_name, r.created_by_name) as created_by_name,
             cat.name as category_name,
-            cat.color as category_color
+            cat.color as category_color,
+            ${positionSql}
        from public.user_reminders r
        left join public.users ua on ua.id = r.assigned_to
        left join public.users uc on uc.id = r.created_by
        left join public.reminder_categories cat on cat.id = r.category_id
+       ${orderJoin}
        ${whereSql}
-       order by r.remind_at asc`,
+       order by ${orderBy}`,
     vals,
   );
   return r.rows;
+}
+
+// ── Per-user order ───────────────────────────────────────────────────────────
+export type SetOrderResult = 'ok' | 'not_found' | 'forbidden';
+
+/**
+ * Where `userId` placed these reminders in their own list, top to bottom:
+ * position 0..n-1 for exactly these ids, upserted — rows of ids not in the
+ * list are left as they are, and nobody else's rows are touched (the order is
+ * per user, 06/10/2026). Every id must be a live reminder the user is involved
+ * in (created by them or assigned to them): an unknown or archived id is
+ * 'not_found', someone else's is 'forbidden', and then nothing is written.
+ */
+export async function setUserReminderOrder(userId: string, ids: readonly string[]): Promise<SetOrderResult> {
+  if (ids.length === 0) return 'ok';
+  return withTransaction(async (client: PoolClient) => {
+    const found = await client.query<{ id: string; involved: boolean }>(
+      `select id, (created_by = $1 or assigned_to = $1) as involved
+         from public.user_reminders
+        where id = any($2::uuid[]) and is_archived = false`,
+      [userId, ids],
+    );
+    if (found.rowCount !== ids.length) return 'not_found';
+    if (found.rows.some((r) => !r.involved)) return 'forbidden';
+
+    await client.query(
+      `insert into public.user_reminder_order (user_id, reminder_id, position)
+       select $1, x.id, x.pos
+         from unnest($2::uuid[], $3::integer[]) as x(id, pos)
+       on conflict (user_id, reminder_id) do update set position = excluded.position`,
+      [userId, ids, ids.map((_, i) => i)],
+    );
+    return 'ok';
+  });
 }
 
 /**
@@ -141,7 +192,8 @@ export async function getUserReminderById(id: string): Promise<UserReminderWithN
             ua.full_name as assigned_to_name,
             coalesce(uc.full_name, r.created_by_name) as created_by_name,
             cat.name as category_name,
-            cat.color as category_color
+            cat.color as category_color,
+            null::integer as position
        from public.user_reminders r
        left join public.users ua on ua.id = r.assigned_to
        left join public.users uc on uc.id = r.created_by

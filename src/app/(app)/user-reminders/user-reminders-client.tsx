@@ -14,7 +14,8 @@ import { cn } from '@/lib/utils';
 import type { UserReminderWithNames } from '@/lib/types/userReminders';
 import type { ReminderCategoryWithCount } from '@/lib/types/reminderCategories';
 import { reminderRole } from '@/lib/userReminders/access';
-import { ReminderCard } from '@/components/user-reminders/ReminderCard';
+import { applyOrder, reorderIds } from '@/lib/userReminders/order';
+import { ReminderList } from '@/components/user-reminders/ReminderList';
 import { ReminderFormPanel } from '@/components/user-reminders/ReminderFormPanel';
 import { CategoryFormPanel } from '@/components/user-reminders/CategoryFormPanel';
 import { reminderErrorMessage } from '@/components/user-reminders/helpers';
@@ -32,6 +33,10 @@ const TABS: { key: TabKey; label: string; icon: typeof User }[] = [
   { key: 'open', label: 'פתוחים', icon: Clock },
   { key: 'done', label: 'הושלמו', icon: CircleCheckBig },
 ];
+
+/** The tabs whose order the user drags (06/10/2026). The status tabs show
+ *  the same order but are not dragged — they mix the two. */
+const REORDERABLE: ReadonlySet<TabKey> = new Set<TabKey>(['mine', 'shared']);
 
 interface DeleteTarget {
   kind: 'reminder' | 'category';
@@ -121,10 +126,14 @@ export function UserRemindersClient({
     return counts;
   }, [reminders, tabPredicate]);
 
-  const displayed = useMemo(() => {
-    const base = reminders.filter(tabPredicate(tab));
-    return activeCategoryId ? base.filter((r) => r.category_id === activeCategoryId) : base;
-  }, [reminders, tab, tabPredicate, activeCategoryId]);
+  // The whole tab, in the user's order (the server sorts by their own drag
+  // order, the undragged ones after by remind_at) — and the part of it shown
+  // under the category filter.
+  const tabItems = useMemo(() => reminders.filter(tabPredicate(tab)), [reminders, tab, tabPredicate]);
+  const displayed = useMemo(
+    () => (activeCategoryId ? tabItems.filter((r) => r.category_id === activeCategoryId) : tabItems),
+    [tabItems, activeCategoryId],
+  );
 
   const activeCategory = activeCategoryId
     ? categories.find((c) => c.id === activeCategoryId) ?? null
@@ -146,6 +155,36 @@ export function UserRemindersClient({
   function openEditCategory(c: ReminderCategoryWithCount) {
     setEditingCategory(c);
     setCategoryPanelOpen(true);
+  }
+
+  // A drop on the list: the dragged card lands above `beforeId` (null = below
+  // the last card shown) in THIS user's order. The whole tab is re-placed
+  // 0..n-1 — hidden cards (a category filter) keep their places — shown at
+  // once, and written as the user's own rows (PUT /api/user-reminders/order);
+  // a refused write puts the list back and reloads it.
+  async function handleDrop(dragId: string, beforeId: string | null) {
+    const tabIds = tabItems.map((r) => r.id);
+    const lastVisibleId = displayed.length ? displayed[displayed.length - 1].id : null;
+    const ids = reorderIds(tabIds, dragId, beforeId, lastVisibleId);
+    if (ids.join('\n') === tabIds.join('\n')) return;
+    const previous = reminders;
+    setReminders((list) => applyOrder(list, ids));
+    try {
+      const res = await fetch('/api/user-reminders/order', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(reminderErrorMessage(data.error));
+      }
+    } catch (e) {
+      toast.error(`שמירת הסדר נכשלה: ${(e as Error).message}`);
+      setReminders(previous);
+      await fetchData();
+    }
   }
 
   // Quick "mark as done" from the card hover-action — PATCH status only.
@@ -354,26 +393,27 @@ export function UserRemindersClient({
             </div>
 
             {/* List */}
-            <div className="mt-4 space-y-2">
+            <div className="mt-4">
               {loading ? (
-                Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="h-20 animate-pulse rounded-lg bg-muted/60" />
-                ))
+                <div className="space-y-2">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="h-20 animate-pulse rounded-lg bg-muted/60" />
+                  ))}
+                </div>
               ) : displayed.length === 0 ? (
                 <EmptyReminders canEdit={canEdit} filtered={!!activeCategory} onCreate={openCreateReminder} />
               ) : (
-                displayed.map((r) => (
-                  <ReminderCard
-                    key={r.id}
-                    reminder={r}
-                    canEdit={canEdit}
-                    canDelete={canEdit && roleOf(r) === 'creator'}
-                    overdue={isOverdue(r)}
-                    onOpen={() => openEditReminder(r)}
-                    onComplete={() => void markDone(r)}
-                    onDelete={() => setDeleteTarget({ kind: 'reminder', id: r.id, name: r.title })}
-                  />
-                ))
+                <ReminderList
+                  items={displayed}
+                  canEdit={canEdit}
+                  canReorder={REORDERABLE.has(tab)}
+                  canDelete={(r) => canEdit && roleOf(r) === 'creator'}
+                  overdue={isOverdue}
+                  onOpen={openEditReminder}
+                  onComplete={(r) => void markDone(r)}
+                  onDelete={(r) => setDeleteTarget({ kind: 'reminder', id: r.id, name: r.title })}
+                  onDrop={(dragId, beforeId) => void handleDrop(dragId, beforeId)}
+                />
               )}
             </div>
           </div>
