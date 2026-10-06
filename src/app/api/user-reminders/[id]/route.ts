@@ -9,6 +9,7 @@ import {
 import { coerceAttachmentIds, coerceUserReminderInput } from '@/lib/validation/userReminders';
 import { linkAttachments, listReminderAttachments, toAttachmentView } from '@/lib/db/userReminderAttachments';
 import { REMINDER_ATTACHMENT_LIMITS } from '@/lib/constants/reminderAttachments';
+import { reminderPatchAllowed, reminderRole } from '@/lib/userReminders/access';
 import { writeAudit } from '@/lib/db/audit';
 import { logger } from '@/lib/logger';
 
@@ -21,10 +22,13 @@ interface RouteCtx {
 }
 
 // GET /api/user-reminders/[id]  (user_reminders:view) — the reminder plus its
-// files (`attachments`, each with its /api/files proxy url).
+// files (`attachments`, each with its /api/files proxy url). Only for its
+// creator or its assignee: anyone else gets the SAME 404 as a missing id —
+// never a body, no existence oracle (the issues module's read rule).
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('user_reminders', 'view');
+    actor = await requirePermission('user_reminders', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -35,7 +39,9 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   if (!UUID_RE.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
   const reminder = await getUserReminderById(id);
-  if (!reminder) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!reminder || reminderRole(actor.id, reminder) === 'none') {
+    return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  }
   const attachments = (await listReminderAttachments(id)).map(toAttachmentView);
   return NextResponse.json({ reminder: { ...reminder, attachments } });
 }
@@ -44,6 +50,10 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 // Partial: only the keys sent change. New staged files (attachment_ids) are
 // linked on top of the existing ones; removal goes through
 // DELETE /api/user-reminders/attachments/[attachmentId].
+// The creator changes anything; the assignee only `status` (the card's "סמן
+// כהושלם", the panel's status select) — any other key in their body is 403;
+// anyone else is 403 (lib/userReminders/access.ts, 06/10/2026). The actor is
+// checked before the body is validated, so a stranger learns nothing.
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
@@ -57,6 +67,11 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   const { id } = await ctx.params;
   if (!UUID_RE.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
+  const before = await getUserReminderById(id);
+  if (!before) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const role = reminderRole(actor.id, before);
+  if (role === 'none') return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+
   let body: unknown;
   try {
     body = await req.json();
@@ -64,6 +79,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
   }
   const bodyRec = (body ?? {}) as Record<string, unknown>;
+  if (!reminderPatchAllowed(role, Object.keys(bodyRec))) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  }
 
   const result = coerceUserReminderInput(bodyRec, 'update');
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
@@ -80,9 +98,6 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
 
   try {
-    const before = await getUserReminderById(id);
-    if (!before) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-
     if (attachments.ids.length > 0) {
       const existing = await listReminderAttachments(id);
       if (existing.length + attachments.ids.length > REMINDER_ATTACHMENT_LIMITS.maxFiles) {
@@ -117,6 +132,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 }
 
 // DELETE /api/user-reminders/[id] — soft-delete (is_archived=true)  (user_reminders:edit)
+// The creator alone; the assignee and anyone else get 403.
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
@@ -132,6 +148,9 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
 
   const before = await getUserReminderById(id);
   if (!before) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (reminderRole(actor.id, before) !== 'creator') {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  }
 
   const ok = await softDeleteUserReminder(id);
   if (!ok) return NextResponse.json({ error: 'not_found' }, { status: 404 });

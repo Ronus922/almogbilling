@@ -13,7 +13,7 @@ export interface UserReminder {
   entity_type: string | null;
   entity_id: string | null;
   assigned_to: string | null;
-  created_by: string;
+  created_by: string | null; // NULL once the creator's account is deleted (06/10/2026); created_by_name keeps the name
   category_id: string | null; // FK → reminder_categories, nullable (uncategorized)
   completed_at: string | null; // derived from status; stamped on ->done, cleared when leaving done
   is_archived: boolean;
@@ -66,7 +66,9 @@ export interface UserReminderListFilters {
   assignedTo?: string;
   /** created_by = this user (the "mine" axis). */
   createdBy?: string;
-  /** created_by = this user OR assigned_to = this user (the "involving me" set). */
+  /** created_by = this user OR assigned_to = this user (the "involving me" set).
+   *  Server-side only: the list route always passes the SESSION user here —
+   *  never a client-sent id (lib/userReminders/access.ts). */
   involvingUser?: string;
   categoryId?: string;
   entityType?: string;

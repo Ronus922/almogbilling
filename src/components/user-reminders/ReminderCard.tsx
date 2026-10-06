@@ -10,7 +10,10 @@ import { formatRemindAt } from './helpers';
 
 interface Props {
   reminder: UserReminderWithNames;
+  /** user_reminders:edit — shows "סמן כהושלם" (the creator's and the assignee's one shared write). */
   canEdit: boolean;
+  /** The creator alone deletes (lib/userReminders/access.ts); false hides the bin. */
+  canDelete: boolean;
   /** True when remind_at is in the past and the reminder is still pending. */
   overdue: boolean;
   onOpen: () => void;
@@ -18,13 +21,14 @@ interface Props {
   onDelete: () => void;
 }
 
-export function ReminderCard({ reminder: r, canEdit, overdue, onOpen, onComplete, onDelete }: Props) {
+export function ReminderCard({ reminder: r, canEdit, canDelete, overdue, onOpen, onComplete, onDelete }: Props) {
   const stripe = r.category_color ?? UNCATEGORIZED_COLOR;
 
   return (
     <div
       role="button"
       tabIndex={0}
+      data-reminder-id={r.id}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -98,17 +102,19 @@ export function ReminderCard({ reminder: r, canEdit, overdue, onOpen, onComplete
               <CircleCheck className="h-4 w-4" />
             </button>
           )}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            aria-label="מחיקת תזכורת"
-            className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 opacity-0 transition-all hover:bg-rose-50 hover:text-rose-600 focus-visible:opacity-100 group-hover:opacity-100"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
+          {canDelete && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              aria-label="מחיקת תזכורת"
+              className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 opacity-0 transition-all hover:bg-rose-50 hover:text-rose-600 focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -21,6 +21,7 @@ const MESSAGES: Record<string, string> = {
   invalid_color: 'צבע לא תקין',
   invalid_display_order: 'סדר תצוגה לא תקין',
   // shared
+  forbidden: 'אין הרשאה לפעולה הזו — רק יוצר התזכורת עורך ומוחק אותה',
   invalid_reference: 'הפנייה לא תקינה',
   invalid_json: 'בקשה לא תקינה',
   invalid_boolean: 'ערך לא תקין',

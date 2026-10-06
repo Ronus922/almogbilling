@@ -25,6 +25,7 @@ import type {
   UserReminderAttachmentView, UserReminderDetail, UserReminderStatus, UserReminderWithNames,
 } from '@/lib/types/userReminders';
 import type { ReminderCategoryWithCount } from '@/lib/types/reminderCategories';
+import type { ReminderRole } from '@/lib/userReminders/access';
 import { reminderErrorMessage } from './helpers';
 import { ReminderAttachments } from './ReminderAttachments';
 
@@ -38,6 +39,10 @@ interface Props {
   /** null → create mode; a reminder → edit mode. */
   reminder: UserReminderWithNames | null;
   canEdit: boolean;
+  /** Edit mode: who the current user is to the reminder. The creator edits
+   *  everything; the assignee sees it read-only and changes the status alone
+   *  (the one key PATCH accepts from them). Create mode: 'creator'. */
+  role?: ReminderRole;
   assignees: Assignee[];
   categories: ReminderCategoryWithCount[];
   /** Pre-selected category for a fresh create (the active category filter). */
@@ -75,10 +80,12 @@ function splitRemindAt(iso: string): { date: string; time: string } {
 }
 
 export function ReminderFormPanel({
-  open, reminder, canEdit, assignees, categories, defaultCategoryId = null,
+  open, reminder, canEdit, role = 'creator', assignees, categories, defaultCategoryId = null,
   onOpenChange, onSaved,
 }: Props) {
   const isEdit = !!reminder;
+  // Shared with me, not mine: every field is read-only but the status.
+  const statusOnly = isEdit && role !== 'creator';
 
   function buildInitial(): FormState {
     if (reminder) {
@@ -163,7 +170,9 @@ export function ReminderFormPanel({
     () => JSON.stringify(form) !== JSON.stringify(initial) || staged.length > 0,
     [form, initial, staged.length],
   );
-  const canSubmit = canEdit && !!form.title.trim() && !!form.date && !submitting && !uploading;
+  const canSubmit = statusOnly
+    ? canEdit && !submitting && form.status !== initial.status
+    : canEdit && !!form.title.trim() && !!form.date && !submitting && !uploading;
 
   useEscapeKey(open && !confirmCloseOpen && !fileToRemove, () => requestClose());
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
@@ -215,15 +224,19 @@ export function ReminderFormPanel({
     }
     setSubmitting(true);
     try {
-      const body: Record<string, unknown> = {
-        title: form.title.trim(),
-        description: form.description.trim(),
-        attachment_ids: readyAttachmentIds(staged),
-        remind_at: local.toISOString(),
-        status: form.status,
-        category_id: form.category_id || null,
-        assigned_to: form.assigned_to || null,
-      };
+      // The assignee's PATCH carries the status and nothing else — any other
+      // key would be refused (403).
+      const body: Record<string, unknown> = statusOnly
+        ? { status: form.status }
+        : {
+          title: form.title.trim(),
+          description: form.description.trim(),
+          attachment_ids: readyAttachmentIds(staged),
+          remind_at: local.toISOString(),
+          status: form.status,
+          category_id: form.category_id || null,
+          assigned_to: form.assigned_to || null,
+        };
       const url = isEdit ? `/api/user-reminders/${reminder!.id}` : '/api/user-reminders';
       const method = isEdit ? 'PATCH' : 'POST';
       const res = await fetch(url, {
@@ -251,6 +264,8 @@ export function ReminderFormPanel({
   }
 
   const disabled = submitting || !canEdit;
+  /** Every field but the status: read-only for the assignee. */
+  const fieldDisabled = disabled || statusOnly;
 
   return (
     <>
@@ -268,9 +283,11 @@ export function ReminderFormPanel({
                   {isEdit ? 'עריכת תזכורת' : 'תזכורת חדשה'}
                 </SheetTitle>
                 <p className="mt-1 text-sm text-white/70">
-                  {canEdit
-                    ? 'כותרת, תיאור, קבצים, מועד, סטטוס, קטגוריה ושיוך.'
-                    : 'תצוגה בלבד — אין לך הרשאת עריכה.'}
+                  {!canEdit
+                    ? 'תצוגה בלבד — אין לך הרשאת עריכה.'
+                    : statusOnly
+                      ? 'תזכורת ששותפה איתך — רק היוצר עורך אותה. אפשר לעדכן את הסטטוס.'
+                      : 'כותרת, תיאור, קבצים, מועד, סטטוס, קטגוריה ושיוך.'}
                 </p>
               </div>
               <button
@@ -299,7 +316,7 @@ export function ReminderFormPanel({
                       value={form.title}
                       onChange={(e) => set('title', e.target.value)}
                       onBlur={() => setTitleTouched(true)}
-                      disabled={disabled}
+                      disabled={fieldDisabled}
                       autoFocus={!isEdit}
                       placeholder="למשל: לחזור לדייר בנושא חוב"
                       className={cn('h-10', titleError && 'border-red-400 bg-red-50 focus-visible:ring-red-200')}
@@ -318,7 +335,7 @@ export function ReminderFormPanel({
                       id="rem-description"
                       value={form.description}
                       onChange={(e) => set('description', e.target.value)}
-                      disabled={disabled}
+                      disabled={fieldDisabled}
                       maxLength={REMINDER_DESCRIPTION_MAX}
                       placeholder="פרטים נוספים, הקשר, מה צריך לעשות…"
                       className="min-h-[110px] rounded-[10px] px-3.5 py-2.5 leading-relaxed focus-visible:border-brand focus-visible:ring-[3px] focus-visible:ring-[rgba(61,90,254,0.12)]"
@@ -336,8 +353,8 @@ export function ReminderFormPanel({
                     loading={filesLoading}
                     staged={staged}
                     onStagedChange={setStaged}
-                    canEdit={canEdit}
-                    disabled={disabled || filesLoading}
+                    canEdit={canEdit && !statusOnly}
+                    disabled={fieldDisabled || filesLoading}
                     onRemoveExisting={setFileToRemove}
                   />
 
@@ -351,7 +368,7 @@ export function ReminderFormPanel({
                         type="date"
                         value={form.date}
                         onChange={(e) => set('date', e.target.value)}
-                        disabled={disabled}
+                        disabled={fieldDisabled}
                         onClick={(e) => {
                           const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
                           try { el.showPicker?.(); } catch { /* native fallback */ }
@@ -366,7 +383,7 @@ export function ReminderFormPanel({
                         type="time"
                         value={form.time}
                         onChange={(e) => set('time', e.target.value)}
-                        disabled={disabled}
+                        disabled={fieldDisabled}
                         dir="ltr"
                         className="h-10 cursor-pointer tabular-nums"
                       />
@@ -397,7 +414,7 @@ export function ReminderFormPanel({
                     <Select
                       value={form.category_id || NONE}
                       onValueChange={(v) => { if (v) set('category_id', v === NONE ? '' : v); }}
-                      disabled={disabled}
+                      disabled={fieldDisabled}
                     >
                       <SelectTrigger className="w-full data-[size=default]:h-10">
                         <SelectValue>
@@ -435,7 +452,7 @@ export function ReminderFormPanel({
                     <Select
                       value={form.assigned_to || NONE}
                       onValueChange={(v) => { if (v) set('assigned_to', v === NONE ? '' : v); }}
-                      disabled={disabled}
+                      disabled={fieldDisabled}
                     >
                       <SelectTrigger className="w-full data-[size=default]:h-10">
                         <SelectValue>
@@ -466,7 +483,11 @@ export function ReminderFormPanel({
             onClose={requestClose}
             onSave={handleSubmit}
             saveDisabled={!canSubmit}
-            saveDisabledReason={!canEdit ? 'אין הרשאה — כניסה כצופה' : undefined}
+            saveDisabledReason={
+              !canEdit ? 'אין הרשאה — כניסה כצופה'
+                : statusOnly && form.status === initial.status ? 'רק הסטטוס ניתן לשינוי — שאר השדות של היוצר'
+                  : undefined
+            }
             saveLabel={submitting ? 'שומר…' : uploading ? 'מעלה קבצים…' : isEdit ? 'שמור שינויים' : 'יצירת תזכורת'}
             saveIcon={isEdit ? undefined : Plus}
           />

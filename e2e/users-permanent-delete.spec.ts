@@ -1,6 +1,6 @@
-import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import { Pool } from 'pg';
-import { E2E_DEBTOR_ID } from './helpers';
+import { E2E_DEBTOR_ID, loginThroughForm } from './helpers';
 
 // "מחק לצמיתות" in /settings/users (06/10/2026): the super admin deletes a
 // user for good — the account is gone from the list and the counters, cannot
@@ -28,22 +28,6 @@ let tempCtx: BrowserContext | null = null;
 let tempPage: Page | null = null;
 
 test.describe.configure({ mode: 'serial' });
-
-/** The login form, like auth.setup — the only way a session cookie reaches a
- *  production-mode sandbox. Returns the page on the home screen, or null when
- *  the form kept the user on /login. */
-async function loginThroughForm(browser: Browser, username: string, password: string): Promise<{ ctx: BrowserContext; page: Page; ok: boolean }> {
-  const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] } });
-  const page = await ctx.newPage();
-  await page.goto('/login');
-  await page.fill('#username', username);
-  await page.fill('#password', password);
-  await page.locator('button[type="submit"]').click();
-  const ok = await page
-    .waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15_000 })
-    .then(() => true, () => false);
-  return { ctx, page, ok };
-}
 
 const managerTab = (page: Page) => page.getByRole('button', { name: /^מנהל\s*\d+$/ });
 const tabCount = async (page: Page) => Number((await managerTab(page).innerText()).replace(/\D/g, ''));
@@ -136,7 +120,7 @@ test.describe('permanent deletion of a user', () => {
     const stored = await pool.query<{ author_id: string | null; author_name: string }>(`select author_id, author_name from public.comments where id = $1`, [commentId]);
     expect(stored.rows[0]).toEqual({ author_id: null, author_name: NAME });
 
-    const reminders = (await (await page.request.get(`/api/user-reminders?involvingUser=${adminId}`)).json()) as { items: Array<{ id: string; created_by: string | null; created_by_name: string | null }> };
+    const reminders = (await (await page.request.get('/api/user-reminders')).json()) as { items: Array<{ id: string; created_by: string | null; created_by_name: string | null }> };
     const reminder = reminders.items.find((r) => r.id === reminderId);
     expect(reminder).toBeDefined();
     expect(reminder!.created_by).toBeNull();

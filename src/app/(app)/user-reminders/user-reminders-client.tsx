@@ -13,6 +13,7 @@ import {
 import { cn } from '@/lib/utils';
 import type { UserReminderWithNames } from '@/lib/types/userReminders';
 import type { ReminderCategoryWithCount } from '@/lib/types/reminderCategories';
+import { reminderRole } from '@/lib/userReminders/access';
 import { ReminderCard } from '@/components/user-reminders/ReminderCard';
 import { ReminderFormPanel } from '@/components/user-reminders/ReminderFormPanel';
 import { CategoryFormPanel } from '@/components/user-reminders/CategoryFormPanel';
@@ -63,10 +64,12 @@ export function UserRemindersClient({
   const [deleting, setDeleting] = useState(false);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
+  // The list is the session user's own set (created by me or assigned to me) —
+  // the server decides from the session, the page sends no user id.
   const fetchData = useCallback(async () => {
     try {
       const [rRes, cRes] = await Promise.all([
-        fetch(`/api/user-reminders?involvingUser=${encodeURIComponent(currentUserId)}`, { credentials: 'include' }),
+        fetch('/api/user-reminders', { credentials: 'include' }),
         fetch('/api/reminder-categories', { credentials: 'include' }),
       ]);
       if (!rRes.ok) throw new Error(`HTTP ${rRes.status}`);
@@ -82,11 +85,18 @@ export function UserRemindersClient({
     } finally {
       setLoading(false);
     }
-  }, [currentUserId]);
+  }, []);
 
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  // Who I am to a reminder: its creator (edit, delete, everything) or the one
+  // it is assigned to (the status alone) — the same rule the routes enforce.
+  const roleOf = useCallback(
+    (r: UserReminderWithNames) => reminderRole(currentUserId, r),
+    [currentUserId],
+  );
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const now = Date.now();
@@ -357,6 +367,7 @@ export function UserRemindersClient({
                     key={r.id}
                     reminder={r}
                     canEdit={canEdit}
+                    canDelete={canEdit && roleOf(r) === 'creator'}
                     overdue={isOverdue(r)}
                     onOpen={() => openEditReminder(r)}
                     onComplete={() => void markDone(r)}
@@ -374,6 +385,7 @@ export function UserRemindersClient({
         open={reminderPanelOpen}
         reminder={editingReminder}
         canEdit={canEdit}
+        role={editingReminder ? roleOf(editingReminder) : 'creator'}
         assignees={assignees}
         categories={categories}
         defaultCategoryId={activeCategoryId}
