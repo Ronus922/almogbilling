@@ -1,5 +1,5 @@
-# Daily Bllink sync — asks the CRM to re-scrape Bllink and copies the fresh
-# snapshot into public.debtors via POST /api/sync/bllink (x-cron-secret).
+# Daily Bllink sync — copies billing's own 05:30 scrape (billing-bllink-scrape)
+# into public.debtors via POST /api/sync/bllink (x-cron-secret).
 # Install:
 #   sudo cp deploy/systemd/billing-sync.{service,timer} /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now billing-sync.timer
@@ -10,9 +10,9 @@ After=network.target billing.service
 Wants=billing.service
 # The route records every refusal on sync_runs and turns the dashboard banner
 # red, and run-bllink-sync.sh exits non-zero on it (curl --fail-with-body).
-# With BLLINK_SOURCE=billing a refusal means "billing's own scrape is not from
-# today — nothing was copied" (stage 'stale'); this makes that an email +
-# WhatsApp as well, not only a banner. See deploy/systemd/billing-alert@.service.
+# A refusal at stage 'stale' means "billing's own scrape is not from today —
+# nothing was copied"; this makes that an email + WhatsApp as well, not only a
+# banner. See deploy/systemd/billing-alert@.service.
 OnFailure=billing-alert@%n.service
 
 [Service]
@@ -21,5 +21,5 @@ User=ubuntu
 Group=devops-www
 EnvironmentFile=/etc/billing/billing.env
 ExecStart=/var/www/billing/scripts/run-bllink-sync.sh
-# The CRM scrape (Playwright) takes ~45s; the route waits up to 120s for it.
+# The copy + reconcile takes ~30s (the scrape itself ran at 05:30).
 TimeoutStartSec=6min

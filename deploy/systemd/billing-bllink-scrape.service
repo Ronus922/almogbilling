@@ -1,10 +1,9 @@
-# billing's own Bllink scraper — logs into Bllink, downloads the udnp report,
-# stores the raw snapshot in public.bllink_scrapes(_rows) and compares it with
-# the snapshot the CRM holds. Writes nothing to debtors / sync_runs itself:
-# with BLLINK_SOURCE=billing (Phase 2, 26/09/2026) /api/sync/bllink
-# (billing-sync.timer, 06:00) copies this snapshot into debtors and refuses one
-# that is not from today; with BLLINK_SOURCE=crm the CRM sync stays the writer
-# and this is a shadow, as in Phase 1 (13/09–26/09/2026).
+# billing's own Bllink scraper — logs into Bllink, downloads the udnp report and
+# stores the raw snapshot in public.bllink_scrapes(_rows) (kept 90 days). Writes
+# nothing to debtors / sync_runs itself: /api/sync/bllink (billing-sync.timer,
+# 06:00) copies this snapshot into debtors and refuses one that is not from
+# today. The only source of debtors since the CRM (almog) was torn down on
+# 06/10/2026 — until then each scrape was also compared with the CRM's snapshot.
 # Install:
 #   sudo cp deploy/systemd/billing-bllink-scrape.{service,timer} /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now billing-bllink-scrape.timer
@@ -18,9 +17,8 @@
 # unit's OnFailure= stays quiet.
 # Manual run + log:
 #   sudo systemctl start billing-bllink-scrape.service && journalctl -u billing-bllink-scrape -n 60
-#   npm run bllink:shadow-report
 [Unit]
-Description=ALMOG CRM — Bllink scrape (billing's own snapshot of the debt report) + compare with the CRM (one-shot)
+Description=ALMOG CRM — Bllink scrape (billing's own snapshot of the debt report) (one-shot)
 After=network-online.target
 Wants=network-online.target
 # A scrape that dies silently is the 25/08–11/09/2026 outage again (17 days of
@@ -36,7 +34,7 @@ User=ubuntu
 Group=devops-www
 WorkingDirectory=/var/www/billing
 # Read as root by systemd: BLLINK_USER/BLLINK_PASSWORD, PLAYWRIGHT_BROWSERS_PATH,
-# DATABASE_URL, CRM_DEBTORS_REST_*, BLLINK_SOURCE, SETTINGS_ENC_KEY, BLLINK_ALERT_PHONE.
+# DATABASE_URL, DIRECT_URL, SETTINGS_ENC_KEY, BLLINK_ALERT_PHONE.
 EnvironmentFile=/etc/billing/billing.env
 # Absolute node + local tsx — no PATH/npx dependence under systemd's minimal env
 # (same as deploy/wa-queue-worker.service).

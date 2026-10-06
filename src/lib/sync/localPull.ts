@@ -1,16 +1,15 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import type { ParsedDebtorRow } from '@/lib/excel/parse';
-import type { CompareResult, CompareRow } from './bllinkCompare';
 import { buildSnapshot, type BllinkPullReport, type SourceDebtorRecord } from './bllinkMap';
 
 /**
- * BLLINK_SOURCE=billing: the debtors snapshot comes from billing's OWN scrape of
- * Bllink (scripts/bllink-scrape.ts → public.bllink_scrapes / bllink_scrape_rows,
- * 05:30 Asia/Jerusalem) instead of the CRM's debtor_records. Read-only; the
- * write goes through exactly the same guards + runner as the CRM path
- * (bllinkPull.writeCrmSnapshot → importParsedRows). The rows are stored in the
- * CRM naming, so the shared mapper (bllinkMap.ts) applies unchanged.
+ * The debtors snapshot: billing's OWN scrape of Bllink (scripts/bllink-scrape.ts
+ * → public.bllink_scrapes / bllink_scrape_rows, 05:30 Asia/Jerusalem) — the only
+ * source since the CRM (almog) was torn down on 06/10/2026. Read-only; the write
+ * goes through bllinkPull.writeCrmSnapshot → importParsedRows. The rows are
+ * stored in the CRM's old debtor_records naming, which the mapper (bllinkMap.ts)
+ * still reads.
  */
 
 export interface LocalSnapshot {
@@ -25,7 +24,6 @@ export interface LocalSnapshot {
   tenantListOk: boolean;
   rows: ParsedDebtorRow[];
   report: BllinkPullReport;
-  compareRows: Map<string, CompareRow>;
 }
 
 /** The newest SUCCESSFUL scrape, mapped; null when there is none yet. */
@@ -57,13 +55,4 @@ export async function fetchLocalDebtorRows(): Promise<LocalSnapshot | null> {
     tenantListOk: scrape.tenant_list_ok,
     ...buildSnapshot(r.rows, { minAt: finishedAt, maxAt: finishedAt }),
   };
-}
-
-/** The sync's witness comparison (or its unavailability) goes onto the scrape
- *  row it copied, over the scrape's own preliminary comparison. */
-export async function recordWitnessCompare(scrapeId: string, result: CompareResult): Promise<void> {
-  await query(
-    `update public.bllink_scrapes set compare_summary = $2::jsonb where id = $1`,
-    [scrapeId, JSON.stringify(result)],
-  );
 }

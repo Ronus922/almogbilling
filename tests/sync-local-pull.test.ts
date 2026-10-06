@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// BLLINK_SOURCE=billing reads billing's own newest successful scrape. Mock the
-// DB layer and pin: which scrape is chosen, how the snapshot is dated, and that
-// the rows go through the shared mapper unchanged.
+// The sync reads billing's own newest successful scrape (the only source since
+// the CRM was torn down, 06/10/2026). Mock the DB layer and pin: which scrape is
+// chosen, how the snapshot is dated, and that the rows go through the mapper.
 vi.mock('@/lib/db', () => ({ query: vi.fn(), queryOne: vi.fn() }));
 
 import { query, queryOne } from '@/lib/db';
-import { fetchLocalDebtorRows, recordWitnessCompare } from '@/lib/sync/localPull';
+import { fetchLocalDebtorRows } from '@/lib/sync/localPull';
 
 const mQuery = query as unknown as ReturnType<typeof vi.fn>;
 const mQueryOne = queryOne as unknown as ReturnType<typeof vi.fn>;
@@ -53,17 +53,5 @@ describe('fetchLocalDebtorRows', () => {
       // 2001: nothing from the list at all — straight back to the export.
       { apartment_number: '2001', owner_name: 'ב', tenant_name: null, owner_name_from_list: false, tenant_name_from_list: false, phone_owner: null, phone_tenant: null, owner_email: null, tenant_email: null, total_debt: 1500, management_fees: 1500, monthly_debt: '07/26-09/26', hot_water_debt: 0, details: null },
     ]);
-    expect(snap?.compareRows.get('1035')).toEqual({ total_debt: 261, monthly_debt: 0, special_debt: 261, management_months_raw: null, notes: 'מים חמים' });
-  });
-});
-
-describe('recordWitnessCompare', () => {
-  it('stores the result as jsonb on the scrape row it copied', async () => {
-    mQuery.mockResolvedValue({ rows: [] });
-    const result = { compare: 'unavailable' as const, reason: 'CRM down', local_rows: 224, compared_by: 'sync' as const, compared_at: '2026-09-26T03:00:00Z' };
-    await recordWitnessCompare('scrape-1', result);
-    const [sql, params] = mQuery.mock.calls[0];
-    expect(sql).toMatch(/update public\.bllink_scrapes set compare_summary = \$2::jsonb where id = \$1/);
-    expect(params).toEqual(['scrape-1', JSON.stringify(result)]);
   });
 });

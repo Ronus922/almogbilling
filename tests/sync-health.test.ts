@@ -95,7 +95,7 @@ describe('SyncHealthBanner — the wording every user sees (11/09/2026)', () => 
     expect(out).not.toContain('<details open');
     expect(out).toContain('פרטים טכניים');
     expect(out).toContain('סנכרון אוטומטי');
-    expect(out).toContain('שלב: סריקת בלינק ב-CRM');
+    expect(out).toContain('שלב: סריקת בלינק');
     expect(out).toContain('Download failed');
     expect(out).toContain('dir="auto"');
   });

@@ -13,22 +13,16 @@ import { NextRequest } from 'next/server';
 //   • unit ok, no NEW scrape (the advisory-lock skip) → stage 'scrape', nothing copied
 //   • cron, even with fresh → never scrapes (the timer already did, 05:30)
 //   • no body at all        → exactly the old behaviour (what the timer posts)
-//   • BLLINK_SOURCE=crm     → the flag is ignored, the CRM path is untouched
+//   • no outbound HTTP      → the CRM is gone (06/10/2026); nothing calls it
 const h = vi.hoisted(() => ({
-  source: 'billing' as string,
   snapshotFinishedAt: '' as string,
   unit: { ok: true } as { ok: true } | { ok: false; reason: string },
 }));
 
 vi.mock('@/env', () => ({
   env: {
-    get BLLINK_SOURCE() {
-      return h.source;
-    },
     BLLINK_LOCAL_MAX_SNAPSHOT_AGE_HOURS: '20',
-    BLLINK_MAX_SNAPSHOT_AGE_HOURS: '36',
     CRM_CRON_SECRET: 'cron-secret',
-    CRM_SYNC_URL: 'http://crm.test/api/admin/jobs/syncBllinkDebt',
   },
 }));
 vi.mock('@/lib/auth/actor', () => ({ requirePermission: vi.fn(async () => ({ id: 'actor-1' })) }));
@@ -49,22 +43,13 @@ vi.mock('@/lib/sync/localPull', () => ({
     finishedAt: h.snapshotFinishedAt,
     rows: [],
     report: { count: 0, rawTotal: 0, componentTotal: 0, runMinAt: h.snapshotFinishedAt, runMaxAt: h.snapshotFinishedAt },
-    compareRows: new Map(),
   })),
-  recordWitnessCompare: vi.fn(async () => undefined),
 }));
 vi.mock('@/lib/sync/bllinkPull', () => ({
-  fetchCrmDebtorRows: vi.fn(async () => ({
-    rows: [],
-    report: {
-      count: 0,
-      rawTotal: 0,
-      componentTotal: 0,
-      runMinAt: h.snapshotFinishedAt,
-      runMaxAt: h.snapshotFinishedAt,
-    },
-  })),
   writeCrmSnapshot: vi.fn(async () => 0),
+}));
+vi.mock('@/lib/db/contactSuggestions', () => ({
+  suggestPortalLinks: vi.fn(async () => ({ suggested_link: 0, suggested_unlink: 0, suggested_name: 0, closed: 0 })),
 }));
 vi.mock('@/lib/sync/scrapeUnit', () => ({ runScrapeUnit: vi.fn(async () => h.unit) }));
 vi.mock('@/lib/logger', () => ({
@@ -95,7 +80,6 @@ function post(body?: unknown, headers: Record<string, string> = {}): NextRequest
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.source = 'billing';
   h.unit = { ok: true };
   // The scrape the unit "just made": dated after the request starts.
   h.snapshotFinishedAt = snapshotAgedSeconds(-1);
@@ -160,18 +144,17 @@ describe('POST /api/sync/bllink — fresh scrape', () => {
     expect(mUnit).not.toHaveBeenCalled();
   });
 
-  it('ignores the flag when BLLINK_SOURCE=crm — that path scrapes the CRM already', async () => {
-    h.source = 'crm';
-    // The CRM path asks the CRM to scrape over HTTP; that request is the one
-    // stubbed here, so the assertion is about WHICH scraper ran, not about fetch.
-    const fetchMock = vi.fn(async () => Response.json({ ok: true, result: { downloaded: true, parsed: 0 } }));
+  it('makes no outbound HTTP call — the CRM witness is gone (06/10/2026)', async () => {
+    const fetchMock = vi.fn(async () => Response.json({}));
     vi.stubGlobal('fetch', fetchMock);
     try {
-      const res = await POST(post({ fresh: true }));
+      const res = await POST(post(undefined, { 'x-cron-secret': 'cron-secret' }));
+      const body = await res.json();
       expect(res.status).toBe(200);
-      expect(mUnit).not.toHaveBeenCalled();
-      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(body.ok).toBe(true);
+      expect(body).not.toHaveProperty('witness');
       expect(mWrite).toHaveBeenCalledTimes(1);
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }

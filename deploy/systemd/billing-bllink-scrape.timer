@@ -9,7 +9,8 @@ Description=Run billing-bllink-scrape.service daily at 05:30 Asia/Jerusalem
 # with room for a slow Bllink or a retry, not a 10-minute gap (26/09/2026).
 # Until 26/09/2026 it ran at 06:10, ten minutes AFTER the CRM's own scrape, so
 # the shadow comparison could use the same morning's CRM snapshot; that
-# comparison is now made by the sync itself (the CRM as a witness).
+# comparison then moved to the sync (the CRM as a witness) and ended with the
+# CRM's teardown on 06/10/2026.
 # The host clock is UTC; the timezone suffix keeps the run at 05:30 local
 # through DST changes.
 OnCalendar=*-*-* 05:30:00 Asia/Jerusalem

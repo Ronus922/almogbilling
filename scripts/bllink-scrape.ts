@@ -1,17 +1,16 @@
 // scripts/bllink-scrape.ts — billing's own Bllink scraper.
 //
 // billing logs into Bllink itself, exports the "udnp" building-debt report as
-// Excel (the same Playwright sequence the CRM runs in
-// /var/www/almog-gmail/lib/jobs/bllink-sync.ts), parses it with the app's own
-// parseDebtorsWorkbook, stores the RAW snapshot in public.bllink_scrapes /
-// public.bllink_scrape_rows, and compares it — apartment by apartment — with
-// the snapshot the CRM holds (CRM_DEBTORS_REST_URL, read-only).
+// Excel (the Playwright sequence the CRM (almog) used to run), parses it with
+// the app's own parseDebtorsWorkbook, and stores the RAW snapshot in
+// public.bllink_scrapes / public.bllink_scrape_rows.
 //
-// It writes NOTHING to debtors / contacts / sync_runs / import_runs itself.
-// Who copies the snapshot into debtors depends on BLLINK_SOURCE (Phase 2,
-// 26/09/2026): with `billing`, /api/sync/bllink (billing-sync.timer, 06:00)
-// copies THIS snapshot and refuses anything not from today; with `crm` (the
-// default) the CRM sync stays the writer and this is a shadow, as in Phase 1.
+// It writes NOTHING to debtors / contacts / sync_runs / import_runs itself:
+// /api/sync/bllink (billing-sync.timer, 06:00) copies THIS snapshot and refuses
+// anything not from today. Since the CRM was torn down (06/10/2026) this scrape
+// is the only source of public.debtors; until then each scrape was also compared
+// with the CRM's snapshot (bllink_scrapes.compare_summary — kept on old rows,
+// NULL on new ones).
 //
 // Runs as its own oneshot process (systemd: deploy/systemd/billing-bllink-scrape.service,
 // timer 05:30 Asia/Jerusalem — thirty minutes BEFORE the sync; until 26/09/2026 it
@@ -19,21 +18,15 @@
 //   /usr/bin/node node_modules/tsx/dist/cli.mjs scripts/bllink-scrape.ts
 // Manual run with the production env: sudo systemctl start billing-bllink-scrape.service
 //
-// Env (all from /etc/billing/billing.env): DATABASE_URL, BLLINK_USER, BLLINK_PASSWORD,
-// PLAYWRIGHT_BROWSERS_PATH, CRM_DEBTORS_REST_URL, CRM_DEBTORS_REST_KEY, BLLINK_SOURCE,
-// SETTINGS_ENC_KEY + ADMIN_ALERT_PHONE/BLLINK_ALERT_PHONE (WhatsApp alert on
-// failure, best-effort — scripts/lib/admin-alert.ts).
+// Env (all from /etc/billing/billing.env): DATABASE_URL, DIRECT_URL, BLLINK_USER,
+// BLLINK_PASSWORD, PLAYWRIGHT_BROWSERS_PATH, SETTINGS_ENC_KEY +
+// ADMIN_ALERT_PHONE/BLLINK_ALERT_PHONE (WhatsApp alert on failure, best-effort —
+// scripts/lib/admin-alert.ts).
 //
-// Failure = status 'error' with the stage (login/navigate/download/parse/compare),
+// Failure = status 'error' with the stage (login/navigate/download/parse),
 // a screenshot in /var/log/billing/bllink-scrape-<ts>.png, exit 1 (→ the unit's
 // OnFailure= email + WhatsApp) and the script's own WhatsApp alert. The password
 // is never logged.
-//
-// The compare stage is a WARNING, not a failure, when BLLINK_SOURCE=billing: the
-// CRM is then only a witness, so a CRM that cannot be reached is recorded as
-// `compare: unavailable` on a scrape that stays `success` — no alert. The
-// definitive comparison of the morning is made by the sync at 06:00 (against
-// the CRM's fresh report) and written over this one on the same row.
 import dotenv from 'dotenv';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -44,15 +37,10 @@ import { chromium, type Browser, type Page } from 'playwright';
 import ExcelJS from 'exceljs';
 import { parseDebtorsWorkbook, type ParsedDebtorRow } from '../src/lib/excel/parse';
 import { toArrayBuffer, worksheetToMatrix } from '../src/lib/excel/workbook';
-import {
-  compareSnapshots, isCompareUnavailable, round2, toNum, toText,
-  type CompareResult, type CompareRow,
-} from '../src/lib/sync/bllinkCompare';
-import { toCompareMap } from '../src/lib/sync/bllinkMap';
+import { round2, toText } from '../src/lib/sync/bllinkCompare';
 import {
   EMPTY_CONTACTS, extractTenantContacts, extractTenantPeople, type ApartmentContacts, type ListPerson,
 } from '../src/lib/sync/tenantList';
-import { resolveBllinkSource } from '../src/lib/sync/decision';
 import { resolveScrapeConnection, tryAcquireScrapeLock } from '../src/lib/sync/scrapeLock';
 import { sendAdminAlert } from './lib/admin-alert';
 
@@ -61,7 +49,7 @@ dotenv.config({ path: '.env.local', quiet: true });
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-type Stage = 'login' | 'navigate' | 'download' | 'parse' | 'compare';
+type Stage = 'login' | 'navigate' | 'download' | 'parse';
 
 const TAG = '[bllink:shadow]';
 const REPORT_URL = 'https://app.bllink.co/reports/building-debt/udnp';
@@ -90,16 +78,6 @@ interface ScrapeRow {
   /** Bllink's resident list, raw, per field — null when that read failed. */
   list: ApartmentContacts;
   raw: Record<string, unknown>;
-}
-
-interface CrmDebtorRecord {
-  apartment_number: string | null;
-  total_debt: number | null;
-  monthly_debt: number | null;
-  special_debt: number | null;
-  management_months_raw: string | null;
-  notes: string | null;
-  last_import_at: string | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -183,40 +161,9 @@ async function workbookToScrapeRows(buffer: Buffer): Promise<{ rows: ScrapeRow[]
   return { rows, skipped: parsed.skipped };
 }
 
-// ─── CRM snapshot (read-only) ─────────────────────────────────────────────────
-
-async function fetchCrmSnapshot(): Promise<{ byApt: Map<string, CompareRow>; snapshotAt: string | null }> {
-  const base = requireEnv('CRM_DEBTORS_REST_URL').replace(/\/$/, '');
-  const key = requireEnv('CRM_DEBTORS_REST_KEY');
-  const select = 'apartment_number,total_debt,monthly_debt,special_debt,management_months_raw,notes,last_import_at';
-  const url = `${base}?select=${select}&imported_this_run=eq.true&limit=10000`;
-
-  const res = await fetch(url, { headers: { apikey: key, authorization: `Bearer ${key}` } });
-  if (!res.ok) throw new Error(`CRM debtor_records fetch failed: HTTP ${res.status}`);
-  const data = (await res.json()) as unknown;
-  if (!Array.isArray(data)) throw new Error('CRM debtor_records returned a non-array payload');
-
-  // Same dedupe rule as src/lib/sync/bllinkPull.ts: trimmed apartment, last wins.
-  const byApt = new Map<string, CompareRow>();
-  let snapshotAt: string | null = null;
-  for (const r of data as CrmDebtorRecord[]) {
-    const apt = toText(r.apartment_number);
-    if (!apt) continue;
-    byApt.set(apt, {
-      total_debt: round2(toNum(r.total_debt)),
-      monthly_debt: round2(toNum(r.monthly_debt)),
-      special_debt: round2(toNum(r.special_debt)),
-      management_months_raw: toText(r.management_months_raw),
-      notes: toText(r.notes),
-    });
-    if (r.last_import_at && (snapshotAt === null || r.last_import_at > snapshotAt)) snapshotAt = r.last_import_at;
-  }
-  return { byApt, snapshotAt };
-}
-
 // ─── Bllink (Playwright) ──────────────────────────────────────────────────────
 
-/** The CRM's proven sequence (almog-gmail lib/jobs/bllink-sync.ts, 25/08/2026 selectors). */
+/** The CRM's proven login sequence (25/08/2026 selectors), carried over when billing took the scrape. */
 async function loginIfNeeded(page: Page, user: string, password: string): Promise<void> {
   await page.goto(REPORT_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   if (!page.url().includes('/login')) return;
@@ -375,12 +322,11 @@ async function main(): Promise<number> {
     }
 
     const alert =
-      `⚠️ סורק-הצל של בלינק (billing) נכשל\n` +
+      `⚠️ סורק בלינק (billing) נכשל\n` +
       `שלב: ${failedStage}\n` +
       `שגיאה: ${message.slice(0, 300)}\n` +
       (shot ? `צילום מסך: ${shot}\n` : '') +
-      `ריצה: ${scrapeId}\n` +
-      `הסנכרון הקיים מה-CRM לא הושפע.`;
+      `ריצה: ${scrapeId}`;
     try {
       log((await sendAdminAlert(db, alert)).detail);
     } catch (e) {
@@ -475,51 +421,14 @@ async function main(): Promise<number> {
     }
     log(`parsed ${rows.length} rows (skipped ${skipped}) and stored them`);
 
-    // ── compare with the snapshot the CRM holds ──
-    stage = 'compare';
-    const source = resolveBllinkSource(process.env.BLLINK_SOURCE);
-    let summary: CompareResult;
-    try {
-      const crm = await fetchCrmSnapshot();
-      summary = compareSnapshots(toCompareMap(rows), crm.byApt, {
-        crmSnapshotAt: crm.snapshotAt, parseSkipped: skipped, comparedBy: 'scrape',
-      });
-    } catch (err) {
-      // BLLINK_SOURCE=billing: the CRM is a witness, not the source — record the
-      // absence as a warning and keep the scrape (the data path) a success.
-      // BLLINK_SOURCE=crm: the comparison IS the point of a shadow scrape → fail.
-      if (source !== 'billing') throw err;
-      summary = {
-        compare: 'unavailable', reason: redact(errorText(err), secrets), local_rows: rows.length,
-        compared_by: 'scrape', compared_at: new Date().toISOString(),
-      };
-      log(`compare skipped — CRM unavailable (BLLINK_SOURCE=billing, warning only): ${summary.reason}`);
-    }
-
     await db.query(
       `update public.bllink_scrapes
-          set status = 'success', finished_at = now(), rows_count = $2, xlsx_sha256 = $3,
-              compare_summary = $4::jsonb
+          set status = 'success', finished_at = now(), rows_count = $2, xlsx_sha256 = $3
         where id = $1`,
-      [scrapeId, rows.length, sha256, JSON.stringify(summary)],
+      [scrapeId, rows.length, sha256],
     );
     settled = true;
-
-    if (isCompareUnavailable(summary)) {
-      log(`run=${scrapeId} status=success local=${summary.local_rows} crm=unavailable took=${((Date.now() - t0) / 1000).toFixed(1)}s`);
-    } else {
-      log(
-        `run=${scrapeId} status=success local=${summary.local_rows} crm=${summary.crm_rows} ` +
-          `missing=${summary.missing.length} extra=${summary.extra.length} field_diffs=${summary.diffs.length} ` +
-          `crm_snapshot_at=${summary.crm_snapshot_at ?? '?'} took=${((Date.now() - t0) / 1000).toFixed(1)}s`,
-      );
-      if (summary.missing.length) log(`missing in local (present in CRM): ${summary.missing.join(', ')}`);
-      if (summary.extra.length) log(`extra in local (absent in CRM): ${summary.extra.join(', ')}`);
-      for (const d of summary.diffs.slice(0, 50)) {
-        log(`diff apt=${d.apt} ${d.field}: crm=${JSON.stringify(d.crm)} local=${JSON.stringify(d.local)}`);
-      }
-      if (summary.diffs.length > 50) log(`… ${summary.diffs.length - 50} more field diffs in compare_summary`);
-    }
+    log(`run=${scrapeId} status=success rows=${rows.length} took=${((Date.now() - t0) / 1000).toFixed(1)}s`);
   } catch (err) {
     await fail(err, stage);
   } finally {
