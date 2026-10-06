@@ -219,6 +219,9 @@ export interface ResidentDocument {
 export interface ResidentEntry {
   kind: FinKind;
   section: FinSection;
+  /** The category's id — what the transactions tab's category row asks its
+   *  monthly trend by. A category, never a line: entry ids stay inside portal.ts. */
+  category_id: string;
   category_name: string;
   description: string;
   amount: number;
@@ -319,4 +322,13 @@ export interface ResidentOverview {
   recent: ResidentEntry[];
   /** Absent while the bank-balance switch is off or nothing was entered. */
   bank_balance?: ResidentBankBalance;
+}
+
+/** One column of the transactions tab's category trend: a published month and
+ *  the category's sum in it, in WHOLE shekels (the exact sum, rounded once) —
+ *  0 when the month has no line of that category. */
+export interface ResidentCategoryMonth {
+  /** 'YYYY-MM' */
+  month: string;
+  total: number;
 }
