@@ -35,6 +35,7 @@ import {
 import { useLongPressDrag, type DragPoint } from '@/lib/hooks/useLongPressDrag';
 import { inside, landingAboveIn, scrollParent } from '@/lib/dnd/landing';
 import { DragGrip } from '@/components/dnd/DragGrip';
+import { CreatedByLine } from '@/components/shared/CreatedByLine';
 import type { IssueBoardColumn, IssueWithMeta } from '@/lib/types/issues';
 import { IssueMoveToMenu } from './IssueMoveToMenu';
 import { RESIDENT_REPORT_ACCENT, ResidentReportStrip } from './IssueReporter';
@@ -349,6 +350,8 @@ export function IssuesKanban({ issues, today, canEdit, onSelect, onMove, onCompl
                               <AssigneePills assignees={i.assignees} size="sm" />
                             </div>
                           )}
+                          {/* Who opened it and when (Asia/Jerusalem). */}
+                          <CreatedByLine name={i.created_by_name} createdAt={i.created_at} className="self-stretch" />
                         </div>
                       </div>
                     </div>
