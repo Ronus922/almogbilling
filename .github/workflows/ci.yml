@@ -155,6 +155,11 @@ jobs:
         env:
           NODE_ENV: production
 
+      # The build above has no SENTRY_DSN: the server's Sentry init must still be
+      # in it, reading the DSN at runtime (not folded away as a build constant).
+      - name: Sentry init survives a DSN-less build
+        run: npm run check:sentry-build
+
       - name: Playwright
         run: npm run test:e2e
         env:
