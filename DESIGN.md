@@ -2295,3 +2295,18 @@ Bllink לפי טלפון קודם — "ניתוק" לעולם לא נוצר בג
 - **כלל לקוד חדש:** לא להוסיף ל-`env` שב-`next.config.ts` משתנה שהשרת קורא. `env` מטמיע את הערך גם
   בקוד השרת, ו-build בלי הערך מוחק את הקוד שתלוי בו (כך נעלם בלוק ה-init עד 07/10/2026). השומרים:
   `tests/sentry-runtime.test.ts` ו-`npm run check:sentry-build` (ב-CI, אחרי ה-build).
+
+---
+
+## 40. עדכוני תלויות — Renovate (07/10/2026)
+
+אין כאן רכיב UI. הסעיף קיים כי עדכון של ספריית UI יכול לשנות את המראה גם כשאף שורה בקוד שלנו לא השתנתה,
+וה-CI לא תופס שינוי ויזואלי.
+
+- **מ-07/10/2026 עדכוני התלויות מגיעים כ-PRs של Renovate** (`renovate.json`): פעם בשבוע, ראשון לפנות בוקר
+  (שעון ישראל). PR מקובץ אחד לכל ה-minor/patch, PR נפרד לכל major, רענון lockfile שבועי, תווית `dependencies`.
+  עדכוני אבטחה נפתחים מיד. **אין automerge** — כל PR ממוזג ידנית.
+- **לפני מיזוג PR שנוגע בספריית UI** (`shadcn`, `tailwindcss`, `tw-animate-css`, `tailwind-merge`,
+  `@base-ui/react`, `lucide-react`, `recharts`, `sonner`) — בדיקה ויזואלית מול המסמך הזה. `globals.css`
+  מייבא את `shadcn/tailwind.css`, ושדרוג minor של `shadcn` (4.4.0 → 4.21.1) כבר הוסיף פעם כללי CSS
+  גלובליים ונדחה (04/10/2026).
