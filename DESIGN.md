@@ -2311,3 +2311,23 @@ Bllink לפי טלפון קודם — "ניתוק" לעולם לא נוצר בג
   `@base-ui/react`, `lucide-react`, `recharts`, `sonner`) — בדיקה ויזואלית מול המסמך הזה. `globals.css`
   מייבא את `shadcn/tailwind.css`, ושדרוג minor של `shadcn` (4.4.0 → 4.21.1) כבר הוסיף פעם כללי CSS
   גלובליים ונדחה (04/10/2026).
+
+### מצב תחזוקה שוטפת — הבדיקה הוויזואלית בקבוצת ה-non-major (07/10/2026)
+
+מ-07/10/2026 billing במצב תחזוקה שוטפת: אין פיצ'ר פתוח, ושינויים בקוד מגיעים בעיקר מ-PRs של Renovate (סעיף 40
+למעלה). ה-PR המקובץ של ה-minor/patch נפתח בראשון לפנות בוקר, ובראשון 11/10/2026 הוא צפוי לכלול את
+`shadcn` 4.4.0 → 4.21.x. **לפני מיזוג PR כזה:**
+
+1. **diff של ה-CSS ש-`globals.css` מייבא** (`shadcn/tailwind.css` = `dist/tailwind.css` בחבילה), בתיקיית עבודה
+   מחוץ לריפו: `npm pack shadcn@<ישן> shadcn@<חדש>` ואז `diff` בין שני ה-`package/dist/tailwind.css`. מסווגים כל
+   בלוק עליון: `@utility` / `@custom-variant` / `@theme inline` נכנסים ל-CSS רק כשמחלקה משתמשת בהם; `@property`
+   וכלל לא משוכב (`.x {…}` מחוץ ל-`@utility`) — גלובליים.
+2. **חיפוש בקוד של כל שם מחלקה חדש** (`grep -rn` ב-`src`). שם שכבר בשימוש אצלנו = התנגשות.
+   **המדידה של 07/10/2026 (4.4.0 → 4.21.4):** +542 שורות — 24 `@utility` (`no-scrollbar`, `scroll-fade-*`,
+   `shimmer-*`), 8 `@property` (`--scroll-fade-*`), שני בלוקי `@theme inline` נוספים וכלל לא משוכב אחד
+   (`@media (prefers-reduced-motion) { .shimmer {…} }`). **אף אחד מהשמות לא בשימוש ב-`src`.** הצפי: אין שינוי
+   נראה — אבל זה צפי, לא בדיקה.
+3. **צילומי לפני/אחרי** של build של ענף ה-PR ב-sandbox (לא בתיקיית הפרודקשן) מול הפרודקשן: `/login`,
+   `/dashboard` (KPI + טבלה), פאנל צד (`Sheet`) עם `Field`/`Select`, `/portal`, `/finance?view=resident`.
+   הצילומים רק ב-`/var/billing-proof/renovate-<תאריך>/` (כלל ברזל 13).
+4. **הבדל נראה כלשהו — לא ממזגים.** מדווחים לרונן עם הצילומים; ההחלטה שלו.
