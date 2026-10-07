@@ -5,9 +5,10 @@
 | רכיב | קובץ | התנהגות |
 |---|---|---|
 | Logger יחיד | `src/lib/logger.ts` | pino. `logger.error(err, msg)` → `Sentry.captureException`; `logger.error('msg')` → `Sentry.captureMessage`. לעולם לא זורק. |
-| Sentry server | `sentry.server.config.ts` ← `src/instrumentation.ts` | `init` **רק אם `SENTRY_DSN` מוגדר**; אחרת שום דבר לא מאותחל ולא נשלח. `onRequestError` תופס שגיאות RSC/route לפני הקוד שלנו. |
-| Sentry edge | `sentry.edge.config.ts` | אותו כלל, ל-`src/middleware.ts`. |
-| Sentry client | `src/instrumentation-client.ts` | ה-DSN מגיע מ-`SENTRY_DSN` דרך `env` ב-`next.config.ts` (inline בזמן build). `onRouterTransitionStart` לניווטים. |
+| Sentry server | `sentry.server.config.ts` ← `src/instrumentation.ts` | `init` **רק אם `SENTRY_DSN` מוגדר**; אחרת שום דבר לא מאותחל ולא נשלח. **ה-DSN נקרא בזמן ריצה** (`sentryRuntimeOptions(process.env)` ב-`src/lib/sentry-options.ts`) — `restart` מפעיל או מכבה, בלי build. שורה אחת ב-journal בכל עלייה: `Sentry initialized` (עם `environment` ו-`tracesSampleRate`) או `Sentry disabled (no DSN)`; ה-DSN עצמו לא נרשם. `onRequestError` תופס שגיאות RSC/route לפני הקוד שלנו. |
+| Sentry edge | `sentry.edge.config.ts` | אותו כלל ואותה קריאה בזמן ריצה, ל-`src/middleware.ts` (ה-sandbox של ה-edge מקבל את `process.env` החי). בלי שורת לוג — pino לא רץ ב-edge. |
+| Sentry client | `src/instrumentation-client.ts` | לדפדפן אין `process.env`, ולכן ה-DSN שלו **נקבע בזמן build**: `env` ב-`next.config.ts` מטמיע את `SENTRY_DSN` של סביבת ה-build בשם נפרד, `SENTRY_CLIENT_DSN` (ו-`SENTRY_CLIENT_ENVIRONMENT`), כדי שלא יגיע עותק build-time לקוד השרת. בפרודקשן ה-DSN לא קיים בזמן build, ולכן **Sentry בדפדפן כבוי**. `onRouterTransitionStart` לניווטים. |
+| שומר build | `scripts/check-sentry-build.mjs` (`npm run check:sentry-build`) | ב-CI, אחרי ה-build בלי DSN: שתי שורות הלוג חייבות להופיע בפלט השרת המהודר. אם ה-DSN ייאפה שוב ב-build, התנאי יקופל לקבוע ושורת `Sentry initialized` תיעלם — והבדיקה נכשלת. אחרי deploy: `node scripts/check-sentry-build.mjs .deploy/current/.next/server`. |
 | Error boundary שורש | `src/app/global-error.tsx` | שגיאת render שברחה מכל דף → `captureException` + מסך "משהו השתבש" (RTL). |
 | Sourcemaps | `withSentryConfig` ב-`next.config.ts` | מעלה sourcemaps ב-build **רק** כש-`SENTRY_AUTH_TOKEN` + `SENTRY_ORG` + `SENTRY_PROJECT` קיימים בסביבת ה-build. בלעדיהם — build רגיל. |
 | Health | `GET /api/health` | `200 {status:'ok'}` רק אם `SELECT 1` מול ה-DB עובר; אחרת `503`. ציבורי (בלי session) — מתועד ב-`check:auth`. |
@@ -22,10 +23,12 @@
 `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN` (build בלבד), `LOG_LEVEL` (info בפרודקשן,
 debug בפיתוח), `HEALTHCHECK_REMINDERS_URL`, `HEALTHCHECK_BACKUP_URL`.
 
-**איפה שמים אותם על השרר:** `SENTRY_DSN`/`SENTRY_ENVIRONMENT` גם ב-
-`/etc/billing/billing.env` (runtime של `billing.service` + `run-reminders.sh`)
-**וגם** ב-`/var/www/billing/.env.local` (כדי ש-`npm run deploy` יראה אותם בזמן
-build ויטמיע את ה-DSN בקוד הלקוח). `SENTRY_AUTH_TOKEN`/`ORG`/`PROJECT` — רק ב-
+**איפה שמים אותם על השרת:** `SENTRY_DSN` (ו-`SENTRY_ENVIRONMENT` /
+`SENTRY_TRACES_SAMPLE_RATE` אם צריך) — **רק** ב-`/etc/billing/billing.env`, מקור
+אמת אחד. משם `billing.service` קורא אותם בכל עלייה, ו-`sudo systemctl restart
+billing.service` מספיק כדי להפעיל או לכבות (מ-07/10/2026; קודם ה-DSN נאפה ב-build,
+ו-build בלעדיו הסיר את בלוק ה-init). **לא** ב-`.env.local`: שם הוא היה מגיע רק
+לדפדפן בזמן build, וזו החלטה נפרדת. `SENTRY_AUTH_TOKEN`/`ORG`/`PROJECT` — רק ב-
 `.env.local` (build). `HEALTHCHECK_REMINDERS_URL` — ב-`/etc/billing/billing.env`.
 `HEALTHCHECK_BACKUP_URL` — ב-`/etc/billing/backup.env`.
 
@@ -42,17 +45,19 @@ build ויטמיע את ה-DSN בקוד הלקוח). `SENTRY_AUTH_TOKEN`/`ORG`/`
 
 ## איך מוודאים ש-Sentry מקבל אירועים
 
-1. אחרי מילוי `SENTRY_DSN` ו-`npm run deploy`: `journalctl -u billing.service -n 20`
-   — אין שגיאות init.
-2. **שרת:** קרא ל-route שמחזיר 500 מבוקר, או מ-`node` בתוך `/var/www/billing`:
-   ```bash
-   set -a; source .env.local; set +a
-   node -e "require('@sentry/nextjs').init({dsn:process.env.SENTRY_DSN});require('@sentry/nextjs').captureMessage('billing smoke '+new Date().toISOString());require('@sentry/nextjs').flush(3000).then(()=>console.log('sent'))"
-   ```
-   האירוע צריך להופיע ב-Issues תוך דקה, עם `environment=production`.
-3. **לקוח:** בקונסולת הדפדפן על האתר: `window.Sentry?.captureMessage('client smoke')` —
-   אם `window.Sentry` לא קיים, ה-DSN לא היה בסביבת ה-build (בדוק `.env.local`).
-4. **Sourcemaps:** ב-Issue מהלקוח ה-stack trace מראה שמות קבצים מ-`src/`, לא
+1. אחרי שינוי `SENTRY_DSN` ב-`/etc/billing/billing.env` ו-`sudo systemctl restart
+   billing.service`: `journalctl -u billing.service --since -2min | grep Sentry` —
+   `Sentry initialized` (או `Sentry disabled (no DSN)` כשהוא ריק). זה כל האימות
+   שצריך מצד השירות; אין צורך ב-deploy.
+2. **שרת, אירוע אמיתי:** סקריפט Node חד-פעמי ב-scratchpad שטוען את `@sentry/node`
+   של הפרויקט (`createRequire('/var/www/billing/package.json')`), עם ה-DSN שנקרא
+   מהקובץ למשתנה סביבה (`sudo cat … | grep` — לעולם לא על שורת הפקודה של sudo),
+   `captureException`, ואז `flush(5000)`. עטיפת `makeNodeTransport` מחזירה את קוד
+   ה-HTTP של ה-ingest (200 = נקלט). האירוע צריך להופיע ב-Issues תוך דקה, עם
+   `environment=production`.
+3. **לקוח:** כבוי בפרודקשן (אין DSN בזמן build). `window.Sentry` לא קיים — זה צפוי.
+4. **Sourcemaps:** ב-Issue ה-stack trace מראה שמות קבצים מ-`src/`, לא
    `chunks/xxxx.js`. אם לא — `SENTRY_AUTH_TOKEN` חסר בזמן build.
 5. **Logger:** `logger.error(new Error('smoke'))` בכל route → Issue חדש. הבדיקה
-   `tests/logger.test.ts` מוכיחה את החיווט מול mock.
+   `tests/logger.test.ts` מוכיחה את החיווט מול mock, ו-`tests/sentry-runtime.test.ts`
+   את הקריאה בזמן ריצה (init + שורת הלוג, עם DSN ובלעדיו).

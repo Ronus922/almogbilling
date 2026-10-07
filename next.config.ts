@@ -30,12 +30,16 @@ const nextConfig: NextConfig = {
   // puppeteer-core has dynamic requires that break when webpack-bundled — keep it
   // external so it is required at runtime from node_modules (traced into standalone).
   serverExternalPackages: ["puppeteer-core"],
-  // One variable for every runtime: inline SENTRY_DSN into the client bundle at
-  // build time so instrumentation-client.ts reads the same name the server does.
-  // Empty/unset → Sentry stays off everywhere (see src/instrumentation*.ts).
+  // Browser only: the client bundle has no process.env, so instrumentation-client.ts
+  // gets the build environment's SENTRY_DSN inlined under its OWN names. Never
+  // list SENTRY_DSN / SENTRY_ENVIRONMENT themselves here — `env` inlines into the
+  // server bundles too, and that froze the server's DSN at build time: a build
+  // without it dropped the init block (07/10/2026). The server and edge read
+  // them at runtime instead (src/lib/sentry-options.ts); tests/sentry-runtime.test.ts
+  // fails if they come back. Empty/unset at build → browser Sentry stays off.
   env: {
-    SENTRY_DSN: process.env.SENTRY_DSN ?? "",
-    SENTRY_ENVIRONMENT: process.env.SENTRY_ENVIRONMENT ?? "",
+    SENTRY_CLIENT_DSN: process.env.SENTRY_DSN ?? "",
+    SENTRY_CLIENT_ENVIRONMENT: process.env.SENTRY_ENVIRONMENT ?? "",
   },
   async headers() {
     return [

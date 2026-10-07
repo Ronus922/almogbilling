@@ -25,6 +25,7 @@
     "check:dupes": "node scripts/check-no-duplicate-debtors.mjs",
     "check:wa": "node scripts/check-wa-idempotency.mjs",
     "check:knip": "knip --include files,dependencies",
+    "check:sentry-build": "node scripts/check-sentry-build.mjs",
     "check:all": "npm run typecheck && npm run lint && npm run test && npm run check:secrets && npm run check:auth && npm run check:rbac && npm run check:money && npm run check:phone && npm run check:session && npm run check:dupes && npm run check:wa && npm run check:knip",
     "db:new": "dbmate --env-file .env.local --env DBMATE_DATABASE_URL --migrations-dir db/migrations --schema-file db/schema.sql --no-dump-schema new",
     "db:up": "dbmate --env-file .env.local --env DBMATE_DATABASE_URL --migrations-dir db/migrations --schema-file db/schema.sql --no-dump-schema up",
