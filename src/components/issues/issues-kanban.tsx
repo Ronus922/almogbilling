@@ -35,7 +35,7 @@ import {
 import { useLongPressDrag, type DragPoint } from '@/lib/hooks/useLongPressDrag';
 import { inside, landingAboveIn, scrollParent } from '@/lib/dnd/landing';
 import { DragGrip } from '@/components/dnd/DragGrip';
-import { formatStamp } from '@/lib/dashboard/formatStamp';
+import { CreatedByLine } from '@/components/shared/CreatedByLine';
 import type { IssueBoardColumn, IssueWithMeta } from '@/lib/types/issues';
 import { IssueMoveToMenu } from './IssueMoveToMenu';
 import { RESIDENT_REPORT_ACCENT, ResidentReportStrip } from './IssueReporter';
@@ -258,7 +258,6 @@ export function IssuesKanban({ issues, today, canEdit, onSelect, onMove, onCompl
               {items.map((i) => {
                 const late = col.key === 'today' ? overdueDays(i, today) : 0;
                 const resident = i.source === 'portal';
-                const creator = i.created_by_name?.trim();
                 return (
                   <div
                     key={i.id}
@@ -351,13 +350,8 @@ export function IssuesKanban({ issues, today, canEdit, onSelect, onMove, onCompl
                               <AssigneePills assignees={i.assignees} size="sm" />
                             </div>
                           )}
-                          {/* Who opened it and when (Asia/Jerusalem) — the creator
-                              snapshot of the row; an old row without one shows
-                              the time alone. */}
-                          <p className="self-stretch border-t border-slate-200 pt-2 text-xs text-muted-foreground">
-                            {creator && <>נוצר ע״י {creator} · </>}
-                            <span dir="ltr" className="font-num tabular-nums">{formatStamp(i.created_at, '/')}</span>
-                          </p>
+                          {/* Who opened it and when (Asia/Jerusalem). */}
+                          <CreatedByLine name={i.created_by_name} createdAt={i.created_at} className="self-stretch" />
                         </div>
                       </div>
                     </div>

@@ -7,6 +7,7 @@ import { Wrench, MapPin, Play, Check, AlertTriangle, CircleCheckBig } from 'luci
 import { IssueFormPanel } from './issue-form-panel';
 import { WorkerIssueDetail } from './worker-issue-detail';
 import { IssueSourceLine, reporterWhere } from './IssueReporter';
+import { CreatedByLine } from '@/components/shared/CreatedByLine';
 import { cn } from '@/lib/utils';
 import {
   ISSUE_STATUS_BADGE, ISSUE_PRIORITY_BADGE,
@@ -236,6 +237,9 @@ export function WorkerIssuesView({ issues, userName, roleName, todayLabel, curre
                     {busy ? 'מעדכן…' : 'התחל טיפול'}
                   </button>
                 )}
+
+                {/* Who opened it and when (Asia/Jerusalem) — same footer as the kanban. */}
+                <CreatedByLine name={issue.created_by_name} createdAt={issue.created_at} className="mt-4" />
               </article>
             );
           })}

@@ -15,6 +15,7 @@ import { AssigneePills } from '@/components/assignee/AssigneePills';
 import { TargetCell } from '@/components/targets/TargetCell';
 import { RecurringBadge } from '@/components/recurrence/RecurringBadge';
 import { CadenceStrip, CadenceProgress } from '@/components/recurrence/CadenceStrip';
+import { CreatedByLine } from '@/components/shared/CreatedByLine';
 import {
   TASK_KANBAN_COLUMNS, PRIORITY_BADGE, taskPriorityLabel,
 } from '@/lib/constants/tasks';
@@ -212,6 +213,8 @@ export function TasksKanban({ tasks, canEdit, onSelect, onReorder, onComplete, o
                           <CadenceStrip label={t.recurrence.label} chips={t.recurrence.chips} />
                         </div>
                       )}
+                      {/* Who opened it and when (Asia/Jerusalem) — always the last line. */}
+                      <CreatedByLine name={t.created_by_name} createdAt={t.created_at} className="self-stretch" />
                     </div>
                   </div>
                 </div>
