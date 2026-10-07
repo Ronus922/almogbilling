@@ -545,6 +545,7 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
                           userId={user.id}
                           permissions={permissions}
                           onMutated={handleMatrixMutated}
+                          actorRole={currentUserRole}
                         />
                       </div>
                     </Section>

@@ -13,9 +13,12 @@
 //       details) — never a field worker's by default.
 //     • a supplier's additional contacts follow suppliers:edit — no module of
 //       their own; a viewer (even with suppliers:view) never manages them.
+//     • the users screen opens by ROLE (admin / super_admin), and an admin
+//       may not set the management tier (users / permissions / settings) in
+//       anyone's matrix — finance / portal stay grantable (07/10/2026).
 //   Run under tsx (imports .ts source). Pure — no DB.
 import { run, fail, ok } from './_check-lib.mjs';
-import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone, canDeleteUsers } from '../src/lib/permissions/check.ts';
+import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone, canDeleteUsers, canGrantModule, canOpenUsersScreen } from '../src/lib/permissions/check.ts';
 import { DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER } from '../src/lib/permissions/constants.ts';
 
 run('check-rbac', async () => {
@@ -110,4 +113,21 @@ run('check-rbac', async () => {
   t('מחיקת משתמש: cleaner נחסם', canDeleteUsers('cleaner') === false);
   t('מחיקת משתמש: maintenance נחסם', canDeleteUsers('maintenance') === false);
   t('מחיקת משתמש: שורת users_management/edit במטריצה לא מעניקה', hasPermission('manager', usersEdit, 'users_management', 'edit') === true && canDeleteUsers('manager') === false);
+
+  // The tiered users screen (07/10/2026) — opened by ROLE, never by a matrix
+  // row; the matrix's management tier is the super admin's to set.
+  t('מסך משתמשים: super_admin נכנס', canOpenUsersScreen('super_admin') === true);
+  t('מסך משתמשים: admin נכנס', canOpenUsersScreen('admin') === true);
+  for (const role of ['manager', 'viewer', 'cleaner', 'maintenance']) {
+    t(`מסך משתמשים: ${role} נחסם`, canOpenUsersScreen(role) === false);
+  }
+  for (const mod of ['users_management', 'roles_management', 'settings']) {
+    t(`מטריצה: admin לא מעניק ${mod}`, canGrantModule('admin', mod) === false);
+    t(`מטריצה: super_admin מעניק ${mod}`, canGrantModule('super_admin', mod) === true);
+  }
+  for (const mod of ['finance', 'portal_manage', 'portal_decisions', 'dashboard']) {
+    t(`מטריצה: admin מעניק ${mod}`, canGrantModule('admin', mod) === true);
+  }
+  t('מטריצה: manager לא מעניק כלום', canGrantModule('manager', 'dashboard') === false);
+  t('admin עדיין נחסם users_management בהרשאה עצמה', hasPermission('admin', [], 'users_management', 'view') === false);
 });

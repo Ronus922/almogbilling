@@ -11,6 +11,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { Action, Role } from '@/lib/permissions/constants';
+import { canOpenUsersScreen } from '@/lib/permissions/check';
 
 // Single source of truth for the app navigation — the item config, the role/
 // permission filter, and the link/brand renderers. Consumed by BOTH the desktop
@@ -26,7 +27,8 @@ export interface MenuItem {
   module?: string;
   /** Optional role gate; when present it overrides the module-based `can` check.
    *  Used for /overview, which is role-gated (any non-viewer) rather than tied
-   *  to a permission module. */
+   *  to a permission module, and for the users screen (admin / super_admin by
+   *  role — canOpenUsersScreen, the page's own gate; never via the matrix). */
   visible?: (role: Role) => boolean;
   /** Active only on the exact path (default: the path and everything under it).
    *  For a module's overview item whose sibling lives under the same prefix
@@ -66,7 +68,7 @@ const SECTIONS: MenuSection[] = [
       { label: 'ניהול סטטוס חיובים', icon: Sliders, href: '/statuses', module: 'status_management' },
       { label: 'תבניות ווטסאפ',      icon: MessageCircle, href: '/whatsapp-templates', module: 'whatsapp_templates' },
       { label: 'ניהול אזורים',       icon: MapPin, href: '/areas', module: 'rooms_areas' },
-      { label: 'משתמשים',            icon: UserCog, href: '/settings/users', module: 'users_management' },
+      { label: 'משתמשים',            icon: UserCog, href: '/settings/users', visible: canOpenUsersScreen },
       // Hidden from the nav 2026-06-18 — data import/export. Pages, routes, /import,
       // import_runs and all logic remain intact; restore = uncomment these two lines
       // and re-add the Upload/Download imports. Routes still reachable by URL.

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requireAdmin, type Actor } from '@/lib/auth/actor';
-import { canManageRole } from '@/lib/permissions/check';
+import { canGrantModule, canManageRole } from '@/lib/permissions/check';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { writeAudit } from '@/lib/db/audit';
 import { query } from '@/lib/db';
@@ -91,6 +91,11 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
   const moduleName = typeof body.module === 'string' ? body.module : '';
   if (!VALID_MODULES.has(moduleName)) {
     return NextResponse.json({ error: 'מודול לא תקין' }, { status: 400 });
+  }
+  // The management tier (users / permissions / settings) is decided by role:
+  // an admin neither grants nor revokes it (MATRIX_MANAGEMENT_MODULES).
+  if (!canGrantModule(actor.role, moduleName)) {
+    return NextResponse.json({ error: 'רק סופר אדמין רשאי לשנות הרשאה למודול ניהול' }, { status: 403 });
   }
   const canView = body.can_view === true;
   const canEdit = body.can_edit === true;

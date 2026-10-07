@@ -20,7 +20,7 @@ export interface RoleMeta {
 // debtors screen, a worker edits their own tasks/issues and nothing else.
 export const ROLES: RoleMeta[] = [
   { value: 'super_admin', label: 'סופר אדמין',  description: 'גישה מלאה לכל המערכת',                     level: 4 },
-  { value: 'admin',       label: 'אדמין',       description: 'גישה לכל המודולים פרט לניהול משתמשים',     level: 3 },
+  { value: 'admin',       label: 'אדמין',       description: 'גישה לכל המודולים; מנהל רק משתמשים בתפקידים שמתחתיו', level: 3 },
   { value: 'manager',     label: 'מנהל',        description: 'הרשאות לפי מטריצה — ערוך מודולים תפעוליים', level: 2 },
   { value: 'viewer',      label: 'צופה',        description: 'הרשאות לפי מטריצה — צפייה בלבד',           level: 1 },
   { value: 'cleaner',     label: 'עובד ניקיון', description: 'עובד שטח — משימות ותקלות בלבד',            level: 1 },
@@ -95,6 +95,16 @@ export const MODULES: ModuleMeta[] = [
 ];
 
 export const SUPER_ADMIN_ONLY: readonly string[] = ['users_management', 'roles_management'];
+
+// ── The management tier of the permission matrix (decision 07/10/2026) ──────
+// Users, permissions and settings are decided by ROLE, not handed out per
+// user. An admin may not grant (or revoke) them in a manager's / viewer's
+// matrix — neither in the side panel (PUT /api/users/[id]/permissions) nor
+// with an invite (POST /api/users `permissions`); a super admin may.
+// finance / portal_* stay grantable by an admin (Ronen, 07/10/2026).
+// One predicate, canGrantModule() (check.ts), for the routes and the
+// matrix's locked rows, so the two layers cannot drift apart.
+export const MATRIX_MANAGEMENT_MODULES: readonly string[] = ['users_management', 'roles_management', 'settings'];
 
 // ── Personal assistant ("עוזר אישי", the floating bot) ───────────────────────
 // ALLOWLIST of the staff roles that may use it. The assistant answers with other

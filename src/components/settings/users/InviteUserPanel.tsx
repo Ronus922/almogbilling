@@ -264,6 +264,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
                       value={permissions}
                       onChange={setPermissions}
                       disabled={submitting}
+                      actorRole={currentUserRole}
                     />
                   </div>
                 </Section>
