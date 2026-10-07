@@ -14,7 +14,7 @@ describe('CreatedByLine', () => {
   it('names the creator and stamps the Postgres timestamp in Israel time', () => {
     const h = html('עמאד פראח', '2026-10-04 19:13:24.220808+00');
     expect(h).toContain('נוצר ע״י עמאד פראח · ');
-    expect(h).toContain('<span dir="ltr" class="font-num tabular-nums">04/10/2026 22:13</span>');
+    expect(h).toContain('<span dir="ltr" class="font-num tabular-nums whitespace-nowrap">04/10/2026 22:13</span>');
   });
 
   it('shows the time alone for a row without a creator', () => {

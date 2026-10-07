@@ -45,6 +45,14 @@ describe('the portal decisions tab', () => {
     expect(h).not.toContain('portal-decisions');
   });
 
+  it('the admin preview passes staff URLs — both buttons follow them (07/10/2026)', () => {
+    const staff = '/api/files/portal-decisions/ae9d14e6-6471-4e39-86a4-0e940f5a8e37.pdf';
+    const h = renderToStaticMarkup(createElement(PortalDecisions, { decisions: [row()], staffFileUrls: { 'dec-1': staff } }));
+    expect(h).toContain(`href="${staff}"`);
+    expect(h).toContain(`href="${staff}?download=1"`);
+    expect(h).not.toContain('/api/portal/decisions/');
+  });
+
   it('a protocol gets the green tag and no number', () => {
     const h = html([row({ doc_type: 'protocol', decision_number: '04/2026' })]);
     expect(h).toContain('t-green');

@@ -20,7 +20,9 @@ export function CreatedByLine({
   return (
     <p className={cn('border-t border-slate-200 pt-2 text-xs text-muted-foreground', className)}>
       {creator && <>נוצר ע״י {creator} · </>}
-      <span dir="ltr" className="font-num tabular-nums">{formatStamp(createdAt, '/')}</span>
+      {/* nowrap: in a narrow card the date and the time used to land on two
+          lines ("06/10/2026" … "03:09"); the stamp wraps as one unit. */}
+      <span dir="ltr" className="font-num tabular-nums whitespace-nowrap">{formatStamp(createdAt, '/')}</span>
     </p>
   );
 }

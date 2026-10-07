@@ -57,9 +57,11 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<Actor>> = {
   'reminder-attachments': () => requirePermission('user_reminders', 'view'),
   // Decisions & protocols — the STAFF path, whoever may open /decisions
   // (admin / super_admin). It serves a hidden row too, which is the point: the
-  // admin checks the PDF before publishing it. An OWNER never arrives here —
-  // their path is /api/portal/decisions/[id]/file, which demands a portal
-  // session AND `published`.
+  // admin checks the PDF before publishing it. The admin preview of the portal
+  // (/finance?view=resident) opens its published rows here too — it has no
+  // portal session. An OWNER never arrives here — their path is
+  // /api/portal/decisions/[id]/file, which demands a portal session AND
+  // `published`.
   'portal-decisions': () => requirePermission('portal_decisions', 'view'),
 };
 
@@ -208,11 +210,14 @@ async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<
   return orphan;
 }
 
-/** RFC 5987: ASCII fallback + UTF-8 form so a Hebrew name survives. */
-function contentDisposition(name: string | null): string {
-  if (!name) return 'inline';
+/** RFC 5987: ASCII fallback + UTF-8 form so a Hebrew name survives.
+ *  `download` (the `?download=1` of a "הורדה" button) sends it as an
+ *  attachment; otherwise the browser opens it in place. */
+function contentDisposition(name: string | null, download: boolean): string {
+  const kind = download ? 'attachment' : 'inline';
+  if (!name) return kind;
   const ascii = name.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_') || 'file';
-  return `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+  return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
 export async function GET(req: NextRequest, ctx: RouteCtx) {
@@ -277,7 +282,7 @@ export async function GET(req: NextRequest, ctx: RouteCtx) {
     status: 200,
     headers: {
       'Content-Type': blob.type || 'application/octet-stream',
-      'Content-Disposition': contentDisposition(file.fileName),
+      'Content-Disposition': contentDisposition(file.fileName, req.nextUrl.searchParams.get('download') === '1'),
       'Content-Length': String(blob.size),
       'Cache-Control': 'private, no-store',
     },

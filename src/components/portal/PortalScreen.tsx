@@ -5,6 +5,7 @@ import {
 import { countContacts } from '@/lib/db/contacts';
 import { listPublishedDecisions } from '@/lib/db/portalDecisions';
 import { toDecisionPortalView } from '@/lib/decisionsView';
+import { buildProxyUrl, PORTAL_DECISIONS_BUCKET } from '@/lib/storage/server';
 import { publishedMonthKeys, residentPeriodFor } from '@/lib/finance/resident';
 import {
   firstName, parseOverviewSpan, parsePortalTab, parseTxFilter, reportRangeFor, reportRanges,
@@ -29,8 +30,9 @@ import { ReportsIcon } from './PortalIcons';
 // Two callers, one screen:
 //   • /portal (the owner): the session decides the identity and the account;
 //   • /finance?view=resident (the admin preview): the staff route decides the
-//     apartment and passes `preview`, which hides the logout button and keeps
-//     the category trend from asking the portal API (no portal session). Nothing
+//     apartment and passes `preview`, which hides the logout button, keeps
+//     the category trend from asking the portal API (no portal session) and
+//     sends the decision files through the staff path. Nothing
 //     in here reads a cookie, so the same rendering cannot differ by caller.
 //
 // The URL vocabulary — `tab`, `m` (the transactions tab's period, in any of
@@ -102,7 +104,13 @@ export async function PortalScreen({ params, user, accounts, support, preview = 
       // Published only — the predicate is inside listPublishedDecisions(), the
       // same discipline the finance tabs follow with portal.ts.
       const decisions = await listPublishedDecisions();
-      body = <PortalDecisions decisions={decisions.map(toDecisionPortalView)} />;
+      // The preview has no portal session, so the owners' file route would
+      // answer it 404 (07/10/2026): it opens the same rows through the staff
+      // path (portal_decisions:view, an explicit 403 otherwise).
+      const staffFileUrls = preview
+        ? Object.fromEntries(decisions.map((r) => [r.id, buildProxyUrl(PORTAL_DECISIONS_BUCKET, r.object_key)]))
+        : undefined;
+      body = <PortalDecisions decisions={decisions.map(toDecisionPortalView)} staffFileUrls={staffFileUrls} />;
       break;
     }
   }
