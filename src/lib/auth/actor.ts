@@ -60,14 +60,6 @@ export async function requireAdmin(): Promise<Actor> {
   return actor;
 }
 
-export async function requireSuperAdmin(): Promise<Actor> {
-  const actor = await requireActor();
-  if (actor.role !== 'super_admin') {
-    throw new AuthorizationError('דרושה הרשאת סופר אדמין');
-  }
-  return actor;
-}
-
 /** The permanent deletion of a staff user (DELETE /api/users/[id]) — the
  *  USER_DELETE_ROLES allowlist (super admin only, 06/10/2026). 401 with no
  *  session, 403 for every other role. */

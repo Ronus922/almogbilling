@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requireSuperAdmin, type Actor } from '@/lib/auth/actor';
+import { requireAdmin, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { query, queryOne } from '@/lib/db';
 import {
@@ -8,6 +8,7 @@ import {
   inviteExpiryFromNow,
 } from '@/lib/auth/inviteTokens';
 import { sendUserInviteEmail } from '@/services/email';
+import { canManageRole } from '@/lib/permissions/check';
 import { ROLES, type Role } from '@/lib/permissions/constants';
 import { appUrl } from '@/lib/config';
 import { logger } from '@/lib/logger';
@@ -26,10 +27,15 @@ interface InviteRow {
   accepted_at: string | null;
 }
 
+/**
+ * POST /api/invites/[id]/resend — a fresh token and a new email. super_admin:
+ * any invite; admin: only an invite to a role they may manage (canManageRole,
+ * decision 07/10/2026); anyone else: 403.
+ */
 export async function POST(req: NextRequest, ctx: RouteCtx) {
   let actor: Actor;
   try {
-    actor = await requireSuperAdmin();
+    actor = await requireAdmin();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -46,6 +52,9 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
   );
 
   if (!invite) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!canManageRole(actor.role, invite.role)) {
+    return NextResponse.json({ error: 'אין הרשאה לנהל הזמנה לתפקיד זה' }, { status: 403 });
+  }
   if (invite.accepted_at) {
     return NextResponse.json({ error: 'ההזמנה כבר נוצלה' }, { status: 409 });
   }

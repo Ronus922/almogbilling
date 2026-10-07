@@ -6,6 +6,7 @@ import {
   REPORTER_PHONE_PERMISSION,
   ROLE_DEFAULTS,
   isElevatedRole,
+  MATRIX_MANAGEMENT_MODULES,
   SUPER_ADMIN_ONLY,
   USER_DELETE_ROLES,
 } from './constants';
@@ -39,6 +40,29 @@ export function hasPermission(
 export function canManageRole(actorRole: Role, targetRole: Role): boolean {
   if (actorRole === 'super_admin') return true;
   if (actorRole === 'admin') return !isElevatedRole(targetRole);
+  return false;
+}
+
+/**
+ * May `actorRole` open the users screen (/settings/users) and see it in the
+ * nav? By ROLE — admin and super_admin — never through the matrix: the
+ * `users_management` module stays super-admin-only in hasPermission, so no
+ * user_permissions row opens it (decision 07/10/2026). Who may be touched on
+ * that screen is canManageRole's business.
+ */
+export function canOpenUsersScreen(actorRole: Role): boolean {
+  return isElevatedRole(actorRole);
+}
+
+/**
+ * May `actorRole` set `module` in another user's permission matrix (grant OR
+ * revoke)? super_admin: every module. admin: every module except the
+ * management tier (MATRIX_MANAGEMENT_MODULES — users, permissions, settings).
+ * Nobody else edits a matrix at all.
+ */
+export function canGrantModule(actorRole: Role, module: string): boolean {
+  if (actorRole === 'super_admin') return true;
+  if (actorRole === 'admin') return !MATRIX_MANAGEMENT_MODULES.includes(module);
   return false;
 }
 

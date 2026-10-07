@@ -11,6 +11,7 @@ import { InviteUserPanel } from './InviteUserPanel';
 import { UserSidePanel } from './UserSidePanel';
 import type { UserListRow, InviteListRow } from '@/lib/db/users';
 import type { Role } from '@/lib/permissions/constants';
+import { canManageRole } from '@/lib/permissions/check';
 
 interface Props {
   initialUsers: UserListRow[];
@@ -130,6 +131,7 @@ export function UsersClient({ initialUsers, initialInvites, currentUserId, curre
                 <InviteCard
                   key={inv.id}
                   invite={inv}
+                  canManage={canManageRole(currentUserRole, inv.role)}
                   onResend={onResendInvite}
                   onCancel={onCancelInvite}
                 />

@@ -890,7 +890,7 @@ toast.info('...');
 - **Collapse state**: עצמאי בתוך הסיידבר בלבד (`useState` + `localStorage` key `almog:sidebar-collapsed`, נקרא ב-`useEffect` אחרי mount → SSR-safe, בלי hydration mismatch). הסיידבר מצר/מתרחב והתוכן זורם דרך `flex` — **אין נגיעה ב-AppShell / `<main>`**.
 - **Edge toggle**: כפתור עגול `h-7 w-7` שרוכב על הקצה הפנימי (`absolute top-1/2 left-0 -translate-x-1/2`). אייקון `ChevronRight` יחיד שמסתובב `rotate-180` במצב מכווץ.
 - **Brand block** (ראש הסיידבר): מיכל `flex h-16 shrink-0 items-center gap-3 border-b border-line` (`px-5`; מכווץ → `justify-center px-0`). **גובהו זהה ל-Header (`h-16`) וה-`border-b` תואם**, כך שהקו התחתון שלו והקו התחתון של ה-Header מתיישרים לקו רציף אחד לאורך ראש המסך (ראה §32). תוכן: לוגו-גרדיאנט `grid h-11 w-11 rounded-[13px] bg-gradient-to-br from-brand to-brand-dark text-white` + `Building2`, וכותרת `text-[22px] font-black tracking-tight text-ink` = "ניהול אלמוג". מכווץ → רק הלוגו, ממורכז.
-- **רשימה אחידה** (ללא כותרות-סקשן): כל פריטי הניווט ברשימה שטוחה אחת — עבודה יומיומית + תקשורת קודם, אחריהם הגדרות-המערכת (סטטוסים, תבניות, אזורים, משתמשים). תמיכת הסקשנים נשמרה בקוד (`title` ריק → לא מרונדרת כותרת/קו): כדי לפצל שוב, מוסיפים entry ל-`SECTIONS` עם `title`. כל פריט עם ה-route + module שלו → RBAC 1:1 (פריט לא-מורשה פשוט מוסתר).
+- **רשימה אחידה** (ללא כותרות-סקשן): כל פריטי הניווט ברשימה שטוחה אחת — עבודה יומיומית + תקשורת קודם, אחריהם הגדרות-המערכת (סטטוסים, תבניות, אזורים, משתמשים). תמיכת הסקשנים נשמרה בקוד (`title` ריק → לא מרונדרת כותרת/קו): כדי לפצל שוב, מוסיפים entry ל-`SECTIONS` עם `title`. כל פריט עם ה-route + module שלו → RBAC 1:1 (פריט לא-מורשה פשוט מוסתר). **שני פריטים לפי תפקיד ולא לפי מודול** (`visible`, גובר על בדיקת ה-module): „לוח מחוונים” (`/overview`, כל תפקיד פרט לצופה) ו**„משתמשים”** (`/settings/users`, אדמין + סופר אדמין — `canOpenUsersScreen`, אותו predicate שסוגר את העמוד; 07/10/2026). שורת `users_management` במטריצה **לא** מציגה אותו.
 - **Item**: `group flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-colors`. מכווץ → `justify-center px-0`.
   - **Active**: `bg-gradient-to-l from-brand-dark to-brand text-white shadow-[0_10px_20px_-9px_rgba(61,90,254,0.6)]` (אייקון `text-white`).
   - **Idle**: `text-ink-2 hover:bg-row-hover hover:text-ink` (אייקון `text-ink-3 group-hover:text-brand`).
@@ -1183,7 +1183,7 @@ overengineered — כל מודול מטופל יחידה, וההבחנה בין 
 
 - ב-`PermissionMatrix` יש 2 עמודות בלבד: "צפייה" / "עריכה".
 - כפתורי delete/destructive בתוך מודול נפתחים תחת אותו gate של edit.
-- ה-Sidebar מסונן רק לפי view (מודולים ללא view מוסתרים).
+- ה-Sidebar מסונן לפי view (מודולים ללא view מוסתרים), פרט לפריטים לפי תפקיד (§14: לוח מחוונים, משתמשים).
 
 ### Checkbox vs Switch in the matrix
 
@@ -1198,6 +1198,13 @@ configuration שנקבעת לפני submit / שמירה — ולכן Checkbox.
 - `ModulePermission = { module, canView, canEdit }`
 - `hasPermission(role, perms, module, action)` — super_admin: true תמיד;
   admin: true פרט ל-`SUPER_ADMIN_ONLY`; manager/viewer: לפי המטריצה.
+- `canGrantModule(actorRole, module)` (07/10/2026) — מי רשאי לקבוע מודול במטריצה של
+  משתמש אחר (הענקה **וגם** שלילה): סופר אדמין — הכול; אדמין — הכול פרט ל-
+  `MATRIX_MANAGEMENT_MODULES` (`users_management`, `roles_management`, `settings` —
+  קבוצת הניהול נקבעת לפי תפקיד); כספים ופורטל (`finance`, `portal_*`) נשארים פתוחים
+  לאדמין. נאכף ב-`PUT /api/users/[id]/permissions` וב-`permissions` של
+  `POST /api/users` (403), ובמטריצה עצמה (שורות נעולות).
+- `canOpenUsersScreen(role)` — מסך המשתמשים לפי תפקיד (אדמין + סופר אדמין), לעמוד ולתפריט.
 
 ### Matrix component modes
 
@@ -1208,6 +1215,18 @@ configuration שנקבעת לפני submit / שמירה — ולכן Checkbox.
 - **Controlled** (InviteUserPanel): `value` + `onChange`. הקומפוננטה לא
   מבצעת קריאת API ולא מציגה toast — ה-parent מחזיק state ושולח כשהוא
   מוכן (למשל יחד עם invite creation).
+
+בשני המצבים `actorRole` (חובה) — מי עורך. מודול ש-`canGrantModule(actorRole, …)` שולל
+(לאדמין: משתמשים / הרשאות / הגדרות) מוצג **נעול**: הערך הנוכחי נשמר, שתי תיבות הסימון
+`disabled`, ובתא שם המודול — `flex flex-wrap items-center gap-x-2`, השם ולצידו
+`text-xs font-normal text-slate-500` „סופר אדמין בלבד”. בלי tooltip ובלי צבע חדש.
+
+### כרטיס הזמנה ממתינה — פעולות לפי סמכות (07/10/2026)
+
+אייקוני „שלח שוב” / „בטל הזמנה” ב-`InviteCard` מוצגים רק כש-`canManage`
+(`canManageRole(currentUserRole, invite.role)`): סופר אדמין — כל הזמנה; אדמין — הזמנה למנהל /
+צופה / עובד ניקיון / עובד אחזקה. הזמנה לאדמין או לסופר אדמין מוצגת לאדמין **לקריאה בלבד** —
+אותו כרטיס בלי אייקוני הפעולה (ה-routes עונים 403 בכל מקרה).
 
 ### מחיקת משתמש לצמיתות (`UserSidePanel`, 06/10/2026)
 
@@ -1224,7 +1243,8 @@ configuration שנקבעת לפני submit / שמירה — ולכן Checkbox.
   „מוחק…” בזמן הבקשה). ESC סגור בזמן המחיקה.
 - **אחרי:** toast „המשתמש נמחק לצמיתות”, הפאנל נסגר, `router.refresh()` — הרשימה ומוני טאבי התפקידים
   מתעדכנים מה-props. שגיאת שרת (403/409) מוצגת כ-toast עם הנוסח מהשרת.
-- בטאב „ממתינים” ההסרה לצמיתות היא „בטל הזמנה” הקיים (מוחק את שורת ההזמנה; סופר אדמין בלבד).
+- בטאב „ממתינים” ההסרה לצמיתות היא „בטל הזמנה” הקיים (מוחק את שורת ההזמנה; סופר אדמין — וגם אדמין,
+  להזמנה לתפקיד שבסמכותו, מ-07/10/2026).
 
 ---
 

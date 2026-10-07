@@ -15,6 +15,10 @@ import type { InviteListRow } from '@/lib/db/users';
 
 interface Props {
   invite: InviteListRow;
+  /** May the viewer resend / cancel this invite? canManageRole on the invite's
+   *  role — an admin sees an invite to admin / super_admin read-only, with no
+   *  action icons (the routes answer 403 anyway). */
+  canManage: boolean;
   onResend: (id: string) => Promise<void>;
   onCancel: (id: string) => Promise<void>;
 }
@@ -41,7 +45,7 @@ function daysUntil(iso: string): number {
   return Math.max(0, diffDays);
 }
 
-export function InviteCard({ invite, onResend, onCancel }: Props) {
+export function InviteCard({ invite, canManage, onResend, onCancel }: Props) {
   const [busy, setBusy] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
@@ -113,41 +117,43 @@ export function InviteCard({ invite, onResend, onCancel }: Props) {
           {roleLabel(invite.role)}
         </span>
 
-        {/* Inline action icons */}
-        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  onClick={handleResend}
-                  disabled={busy}
-                  className="p-1.5 rounded text-blue-600 hover:text-blue-700 hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  aria-label="שלח שוב"
-                />
-              }
-            >
-              <RotateCw className={cn('h-4 w-4', busy && 'animate-spin')} />
-            </TooltipTrigger>
-            <TooltipContent>שלח שוב</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  onClick={() => setConfirmCancel(true)}
-                  disabled={busy}
-                  className="p-1.5 rounded text-rose-500 hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  aria-label="בטל הזמנה"
-                />
-              }
-            >
-              <X className="h-4 w-4" />
-            </TooltipTrigger>
-            <TooltipContent>בטל הזמנה</TooltipContent>
-          </Tooltip>
-        </div>
+        {/* Inline action icons — only on an invite the viewer may manage */}
+        {canManage && (
+          <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={handleResend}
+                    disabled={busy}
+                    className="p-1.5 rounded text-blue-600 hover:text-blue-700 hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    aria-label="שלח שוב"
+                  />
+                }
+              >
+                <RotateCw className={cn('h-4 w-4', busy && 'animate-spin')} />
+              </TooltipTrigger>
+              <TooltipContent>שלח שוב</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={() => setConfirmCancel(true)}
+                    disabled={busy}
+                    className="p-1.5 rounded text-rose-500 hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    aria-label="בטל הזמנה"
+                  />
+                }
+              >
+                <X className="h-4 w-4" />
+              </TooltipTrigger>
+              <TooltipContent>בטל הזמנה</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
       </div>
 
       <AlertDialog open={confirmCancel} onOpenChange={(v) => { if (!v) setConfirmCancel(false); }}>

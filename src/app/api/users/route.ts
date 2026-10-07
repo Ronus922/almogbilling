@@ -3,7 +3,7 @@ import {
   requireAdmin,
   type Actor,
 } from '@/lib/auth/actor';
-import { canManageRole, getDefaultPermissions } from '@/lib/permissions/check';
+import { canGrantModule, canManageRole, getDefaultPermissions } from '@/lib/permissions/check';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { writeAudit } from '@/lib/db/audit';
 import { query, withTransaction } from '@/lib/db';
@@ -139,6 +139,12 @@ export async function POST(req: NextRequest) {
   const customPermissions = isMatrixRole(role)
     ? sanitizeCustomPermissions(body.permissions)
     : null;
+  // The same management-tier rule as the side panel's matrix: an admin may not
+  // hand a new user users / permissions / settings (a row left `false` is the
+  // default anyway and passes).
+  if (customPermissions?.some((p) => (p.can_view || p.can_edit) && !canGrantModule(actor.role, p.module))) {
+    return NextResponse.json({ error: 'רק סופר אדמין רשאי להעניק הרשאה למודול ניהול' }, { status: 403 });
+  }
 
   // ── Direct create (password set by admin) ───────────────────────────────
   // When the admin supplies a password, create the user row immediately —

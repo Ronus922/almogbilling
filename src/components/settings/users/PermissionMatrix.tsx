@@ -6,7 +6,8 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
-import { MODULES, type ModulePermission } from '@/lib/permissions/constants';
+import { MODULES, type ModulePermission, type Role } from '@/lib/permissions/constants';
+import { canGrantModule } from '@/lib/permissions/check';
 
 interface Props {
   /**
@@ -26,6 +27,10 @@ interface Props {
   /** Auto-save success callback. Ignored in controlled mode. */
   onMutated?: () => void;
   disabled?: boolean;
+  /** Who is editing. A module the actor may not set (canGrantModule — for an
+   *  admin: the management tier, users / permissions / settings) renders
+   *  locked, with its current value and a "סופר אדמין בלבד" note. */
+  actorRole: Role;
 }
 
 type Field = 'can_view' | 'can_edit';
@@ -37,7 +42,7 @@ function findPerm(perms: ModulePermission[], module: string): ModulePermission {
 }
 
 export function PermissionMatrix({
-  userId, permissions, value, onChange, onMutated, disabled,
+  userId, permissions, value, onChange, onMutated, disabled, actorRole,
 }: Props) {
   const isControlled = value !== undefined && onChange !== undefined;
 
@@ -121,14 +126,22 @@ export function PermissionMatrix({
                   const p = findPerm(current, m.key);
                   const viewBusy = busyKey === `${m.key}:can_view`;
                   const editBusy = busyKey === `${m.key}:can_edit`;
+                  const locked = !canGrantModule(actorRole, m.key);
                   return (
                     <TableRow key={m.key} className="border-b border-slate-100 h-11">
-                      <TableCell className="px-2 py-2 text-sm font-medium text-slate-800 md:px-4">{m.label}</TableCell>
+                      <TableCell className="px-2 py-2 text-sm font-medium text-slate-800 md:px-4">
+                        {locked ? (
+                          <div className="flex flex-wrap items-center gap-x-2">
+                            {m.label}
+                            <span className="text-xs font-normal text-slate-500">סופר אדמין בלבד</span>
+                          </div>
+                        ) : m.label}
+                      </TableCell>
                       <TableCell className="px-2 py-2 text-center md:px-4">
                         <div className="inline-flex">
                           <Checkbox
                             checked={p.canView}
-                            disabled={disabled || viewBusy}
+                            disabled={disabled || locked || viewBusy}
                             onCheckedChange={(v) => toggle(m.key, 'can_view', v === true)}
                             aria-label={`${m.label} — צפייה`}
                           />
@@ -138,7 +151,7 @@ export function PermissionMatrix({
                         <div className="inline-flex">
                           <Checkbox
                             checked={p.canEdit}
-                            disabled={disabled || editBusy}
+                            disabled={disabled || locked || editBusy}
                             onCheckedChange={(v) => toggle(m.key, 'can_edit', v === true)}
                             aria-label={`${m.label} — עריכה`}
                           />
