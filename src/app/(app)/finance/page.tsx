@@ -64,6 +64,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Sear
             email: env.NEXT_PUBLIC_PORTAL_SUPPORT_EMAIL ?? null,
           }}
           preview
+          previewCanOpenDecisionFiles={hasPermission(actor.role, actor.permissions, 'portal_decisions', 'view')}
         />
       </div>
     );
