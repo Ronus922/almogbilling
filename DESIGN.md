@@ -2275,3 +2275,23 @@ Bllink לפי טלפון קודם — "ניתוק" לעולם לא נוצר בג
 - **כרטיס הדירה, "טלפון ← דירות בפורטל":** צ׳יפ תפקיד `rounded-full bg-blue-50 px-2 py-0.5 text-[11px]
   font-medium text-blue-700` ליד השם; המקור לפי תפקיד ("רשומת השוכר", "איש קשר — מפעיל").
 
+
+---
+
+## 39. ניטור שגיאות — Sentry (07/10/2026)
+
+אין כאן רכיב UI חדש. הסעיף קיים כי מסך השגיאה הכללי (`src/app/global-error.tsx`, "משהו השתבש")
+ושגיאות השרת נשענים על Sentry, ומי שנוגע בהם צריך לדעת מה פעיל ואיך מפעילים. פירוט מלא, כולל אימות:
+`docs/monitoring.md`.
+
+- **שרת ו-edge — מופעלים בזמן ריצה.** `SENTRY_DSN` נקרא מ-`/etc/billing/billing.env` בכל עלייה של
+  השירות (`sentryRuntimeOptions(process.env)`, `src/lib/sentry-options.ts`). **`sudo systemctl restart
+  billing.service` מספיק כדי להפעיל או לכבות** — בלי build ובלי deploy. ב-journal מופיעה שורה אחת בכל
+  עלייה: `Sentry initialized` או `Sentry disabled (no DSN)`. ה-DSN עצמו לא נרשם.
+- **דפדפן — נקבע בזמן build, וכבוי בפרודקשן.** לדפדפן אין `process.env`, ולכן `instrumentation-client.ts`
+  קורא את `SENTRY_CLIENT_DSN` שה-`env` של `next.config.ts` מטמיע מסביבת ה-build. ה-DSN נמצא רק ב-
+  `billing.env`, ולכן ה-build לא רואה אותו. המשמעות ל-UI: הטקסט "השגיאה דווחה" במסך השגיאה הכללי לא
+  מגובה היום בדיווח מהדפדפן. הפעלת Sentry בדפדפן היא החלטה נפרדת.
+- **כלל לקוד חדש:** לא להוסיף ל-`env` שב-`next.config.ts` משתנה שהשרת קורא. `env` מטמיע את הערך גם
+  בקוד השרת, ו-build בלי הערך מוחק את הקוד שתלוי בו (כך נעלם בלוק ה-init עד 07/10/2026). השומרים:
+  `tests/sentry-runtime.test.ts` ו-`npm run check:sentry-build` (ב-CI, אחרי ה-build).
