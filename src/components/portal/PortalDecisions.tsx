@@ -25,7 +25,13 @@ import { ChevronIcon, ExportIcon, PdfIcon, SearchIcon } from './PortalIcons';
 // client (a building's decisions are tens of rows, not thousands), so typing
 // filters without a round trip, exactly as the reference does.
 
-export function PortalDecisions({ decisions }: { decisions: DecisionPortalView[] }) {
+export function PortalDecisions({ decisions, staffFileUrls }: {
+  decisions: DecisionPortalView[];
+  /** The admin preview only (/finance?view=resident): decision id → its staff
+   *  path (/api/files/portal-decisions/…). Staff have no portal session, so the
+   *  owners' route would answer them 404. Absent in the portal itself. */
+  staffFileUrls?: Record<string, string>;
+}) {
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -95,6 +101,7 @@ export function PortalDecisions({ decisions }: { decisions: DecisionPortalView[]
             {visible.map(({ d, year, opensYear }) => {
               const open = openId === d.id;
               const isProtocol = d.doc_type === 'protocol';
+              const fileHref = staffFileUrls?.[d.id] ?? `/api/portal/decisions/${d.id}/file`;
               return (
                 <div key={d.id}>
                   {opensYear && <div className="yr num">{year}</div>}
@@ -129,7 +136,7 @@ export function PortalDecisions({ decisions }: { decisions: DecisionPortalView[]
                       <div className="dact">
                         <a
                           className="pbtn pbtn-primary pbtn-sm"
-                          href={`/api/portal/decisions/${d.id}/file`}
+                          href={fileHref}
                           target="_blank"
                           rel="noopener noreferrer"
                         >
@@ -137,7 +144,7 @@ export function PortalDecisions({ decisions }: { decisions: DecisionPortalView[]
                         </a>
                         <a
                           className="pbtn pbtn-secondary pbtn-sm"
-                          href={`/api/portal/decisions/${d.id}/file?download=1`}
+                          href={`${fileHref}?download=1`}
                         >
                           <ExportIcon size={16} />הורדה
                         </a>

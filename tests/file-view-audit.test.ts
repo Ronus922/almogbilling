@@ -266,6 +266,15 @@ describe('GET /api/files/[bucket]/[...path] — wired after the permission check
     expect(res.status).toBe(403);
     expect(h.rows).toHaveLength(0);
   });
+
+  it('opens in place by default; ?download=1 sends an attachment under the same name', async () => {
+    const inline = await filesGET(req(url), ctx);
+    expect(inline.headers.get('content-disposition')).toMatch(/^inline; filename=/);
+    const attached = await filesGET(req(`${url}?download=1`), ctx);
+    expect(attached.status).toBe(200);
+    expect(attached.headers.get('content-disposition')).toMatch(/^attachment; filename=/);
+    expect(attached.headers.get('content-disposition')).toContain(encodeURIComponent('חוזה שירות 2026.pdf'));
+  });
 });
 
 describe('GET /api/documents/[id]/download — the download route logs too', () => {
