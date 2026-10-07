@@ -29,7 +29,9 @@ export function PortalDecisions({ decisions, staffFileUrls }: {
   decisions: DecisionPortalView[];
   /** The admin preview only (/finance?view=resident): decision id → its staff
    *  path (/api/files/portal-decisions/…). Staff have no portal session, so the
-   *  owners' route would answer them 404. Absent in the portal itself. */
+   *  owners' route would answer them 404. Absent in the portal itself; EMPTY
+   *  for a viewer without portal_decisions:view, whose rows then carry a note
+   *  instead of two buttons that would answer 403. */
   staffFileUrls?: Record<string, string>;
 }) {
   const [query, setQuery] = useState('');
@@ -101,7 +103,9 @@ export function PortalDecisions({ decisions, staffFileUrls }: {
             {visible.map(({ d, year, opensYear }) => {
               const open = openId === d.id;
               const isProtocol = d.doc_type === 'protocol';
-              const fileHref = staffFileUrls?.[d.id] ?? `/api/portal/decisions/${d.id}/file`;
+              const fileHref: string | undefined = staffFileUrls
+                ? staffFileUrls[d.id]
+                : `/api/portal/decisions/${d.id}/file`;
               return (
                 <div key={d.id}>
                   {opensYear && <div className="yr num">{year}</div>}
@@ -133,22 +137,26 @@ export function PortalDecisions({ decisions, staffFileUrls }: {
                       {/* No summary → the buttons alone; an empty paragraph
                           would leave the reference's 14.5px line of air. */}
                       {d.summary && <p>{d.summary}</p>}
-                      <div className="dact">
-                        <a
-                          className="pbtn pbtn-primary pbtn-sm"
-                          href={fileHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          <PdfIcon size={16} strokeWidth={2} />פתיחת המסמך
-                        </a>
-                        <a
-                          className="pbtn pbtn-secondary pbtn-sm"
-                          href={`${fileHref}?download=1`}
-                        >
-                          <ExportIcon size={16} />הורדה
-                        </a>
-                      </div>
+                      {fileHref ? (
+                        <div className="dact">
+                          <a
+                            className="pbtn pbtn-primary pbtn-sm"
+                            href={fileHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <PdfIcon size={16} strokeWidth={2} />פתיחת המסמך
+                          </a>
+                          <a
+                            className="pbtn pbtn-secondary pbtn-sm"
+                            href={`${fileHref}?download=1`}
+                          >
+                            <ExportIcon size={16} />הורדה
+                          </a>
+                        </div>
+                      ) : (
+                        <div className="dlock">תצוגה בלבד — פתיחת המסמך והורדתו דורשות הרשאת „החלטות ופרוטוקולים”.</div>
+                      )}
                     </div>
                   </div>
                 </div>

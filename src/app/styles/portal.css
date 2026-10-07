@@ -265,6 +265,9 @@
 .portal-skin .drow.open .dbody { display: block; padding-top: 14px; }
 .portal-skin .dbody p { font-size: 14.5px; color: var(--ink-2); line-height: 1.65; max-width: 640px; text-wrap: pretty; }
 .portal-skin .dact { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+/* the admin preview, for a viewer without portal_decisions:view: this line
+   stands where .dact would — same top gap, the meta line's muted 13px */
+.portal-skin .dlock { margin-top: 14px; font-size: 13px; color: var(--ink-muted); line-height: 1.5; }
 /* the renovation-fund tab keeps its own (finance/*) components inside .wrap */
 .portal-skin .fund-host { font-family: var(--font-heebo), Heebo, sans-serif; }
 

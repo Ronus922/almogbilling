@@ -5,8 +5,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 // (/finance?view=resident&tab=dec) "פתיחת המסמך" and "הורדה" answered
 // {"error":"not_found"}. The buttons pointed at the owners' route, which
 // demands a portal session — staff have none, so it gave them its uniform 404.
-// PortalScreen is where the caller is known, so this renders it whole, both
-// ways: the portal keeps the owners' route; the preview gets the staff path.
+// PortalScreen is where the caller is known, so this renders it whole, every
+// way: the portal keeps the owners' route; the preview gets the staff path —
+// unless the staff viewer lacks portal_decisions:view, in which case the rows
+// carry no buttons and no object key at all (the backlog item closed
+// 07/10/2026: hidden up front instead of a 403 after the click).
 
 const ROWS = [
   {
@@ -44,20 +47,21 @@ vi.mock('next/navigation', () => ({
 
 import { PortalScreen } from '@/components/portal/PortalScreen';
 
-async function render(preview: boolean): Promise<string> {
+async function render(preview: boolean, previewCanOpenDecisionFiles = false): Promise<string> {
   const el = await PortalScreen({
     params: { tab: 'dec' },
     user: { name: null, apartments: [] },
     accounts: [],
     support: { phone: null, email: null },
     preview,
+    previewCanOpenDecisionFiles,
   });
   return renderToStaticMarkup(el);
 }
 
 describe('PortalScreen — where the decision buttons lead', () => {
   it('the admin preview opens and downloads through the staff path, never the owners route', async () => {
-    const h = await render(true);
+    const h = await render(true, true);
     for (const r of ROWS) {
       expect(h).toContain(`href="/api/files/portal-decisions/${r.object_key}"`);
       expect(h).toContain(`href="/api/files/portal-decisions/${r.object_key}?download=1"`);
@@ -73,5 +77,26 @@ describe('PortalScreen — where the decision buttons lead', () => {
       expect(h).not.toContain(r.object_key);
     }
     expect(h).not.toContain('/api/files/');
+    expect(h).not.toContain('dlock');
+  });
+
+  it('a preview viewer without portal_decisions:view gets the rows, a note — and no file path', async () => {
+    const h = await render(true, false);
+    for (const r of ROWS) {
+      expect(h).toContain(r.title);
+      expect(h).not.toContain(r.object_key);
+    }
+    expect(h).not.toContain('/api/files/');
+    expect(h).not.toContain('/api/portal/decisions/');
+    expect(h).not.toContain('פתיחת המסמך</a>');
+    expect(h).not.toContain('class="dact"');
+    expect(h.match(/class="dlock"/g)).toHaveLength(ROWS.length);
+    expect(h).toContain('הרשאת „החלטות ופרוטוקולים”');
+  });
+
+  it('the permission flag means nothing outside the preview — the portal keeps its own route', async () => {
+    const h = await render(false, false);
+    for (const r of ROWS) expect(h).toContain(`href="/api/portal/decisions/${r.id}/file"`);
+    expect(h).not.toContain('dlock');
   });
 });

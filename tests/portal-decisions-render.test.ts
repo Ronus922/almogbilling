@@ -53,6 +53,19 @@ describe('the portal decisions tab', () => {
     expect(h).not.toContain('/api/portal/decisions/');
   });
 
+  it('a preview row without a staff URL renders a note, not two buttons that would answer 403', () => {
+    const h = renderToStaticMarkup(createElement(PortalDecisions, {
+      decisions: [row({ id: 'dec-1' }), row({ id: 'dec-2', summary: null })],
+      staffFileUrls: { 'dec-2': '/api/files/portal-decisions/x.pdf' },
+    }));
+    // dec-1 has no URL → locked; dec-2 has one → the buttons, on that path.
+    expect(h.match(/class="dlock"/g)).toHaveLength(1);
+    expect(h.match(/class="dact"/g)).toHaveLength(1);
+    expect(h).toContain('href="/api/files/portal-decisions/x.pdf?download=1"');
+    // A preview never falls back to the owners' route, which would answer it 404.
+    expect(h).not.toContain('/api/portal/decisions/');
+  });
+
   it('a protocol gets the green tag and no number', () => {
     const h = html([row({ doc_type: 'protocol', decision_number: '04/2026' })]);
     expect(h).toContain('t-green');

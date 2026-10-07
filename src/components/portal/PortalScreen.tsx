@@ -32,7 +32,8 @@ import { ReportsIcon } from './PortalIcons';
 //   • /finance?view=resident (the admin preview): the staff route decides the
 //     apartment and passes `preview`, which hides the logout button, keeps
 //     the category trend from asking the portal API (no portal session) and
-//     sends the decision files through the staff path. Nothing
+//     sends the decision files through the staff path — or, for a viewer
+//     without portal_decisions:view, sends no file path at all. Nothing
 //     in here reads a cookie, so the same rendering cannot differ by caller.
 //
 // The URL vocabulary — `tab`, `m` (the transactions tab's period, in any of
@@ -49,7 +50,9 @@ export interface PortalScreenParams {
   f?: string;
 }
 
-export async function PortalScreen({ params, user, accounts, support, preview = false }: {
+export async function PortalScreen({
+  params, user, accounts, support, preview = false, previewCanOpenDecisionFiles = false,
+}: {
   params: PortalScreenParams;
   user: PortalUser;
   /** The owner's account(s) — the dark card and "החשבון שלי". */
@@ -59,6 +62,11 @@ export async function PortalScreen({ params, user, accounts, support, preview = 
    *  company, so it shows them how. */
   support: PortalSupport;
   preview?: boolean;
+  /** The preview only: the staff viewer holds portal_decisions:view, which the
+   *  staff file path demands. Without it the decision rows render without
+   *  their two buttons instead of buttons that answer 403. Ignored outside
+   *  the preview — the portal's own route has its own guard. */
+  previewCanOpenDecisionFiles?: boolean;
 }) {
   const tab = parsePortalTab(params.tab, params.m);
   const [apartments, publishedRows] = await Promise.all([countContacts(), getPublishedMonths()]);
@@ -106,10 +114,14 @@ export async function PortalScreen({ params, user, accounts, support, preview = 
       const decisions = await listPublishedDecisions();
       // The preview has no portal session, so the owners' file route would
       // answer it 404 (07/10/2026): it opens the same rows through the staff
-      // path (portal_decisions:view, an explicit 403 otherwise).
-      const staffFileUrls = preview
-        ? Object.fromEntries(decisions.map((r) => [r.id, buildProxyUrl(PORTAL_DECISIONS_BUCKET, r.object_key)]))
-        : undefined;
+      // path (portal_decisions:view, an explicit 403 otherwise). A viewer
+      // without that permission gets an EMPTY map — no buttons, and no object
+      // key reaches their browser; the 403 stays behind it as the guard.
+      const staffFileUrls = !preview
+        ? undefined
+        : previewCanOpenDecisionFiles
+          ? Object.fromEntries(decisions.map((r) => [r.id, buildProxyUrl(PORTAL_DECISIONS_BUCKET, r.object_key)]))
+          : {};
       body = <PortalDecisions decisions={decisions.map(toDecisionPortalView)} staffFileUrls={staffFileUrls} />;
       break;
     }
