@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { fileMeta, formatBytes } from '@/components/documents/helpers';
 import {
+  EMAIL_ATTACHMENTS_MAX_TOTAL_BYTES,
   WHATSAPP_ATTACHMENT_ACCEPT,
   WHATSAPP_ATTACHMENT_LIMITS,
   WHATSAPP_ATTACHMENT_TYPES_LABEL,
@@ -51,9 +52,18 @@ export const WHATSAPP_ATTACHMENT_POLICY: AttachmentPolicy = {
   mimeOf: (f) => canonicalMime(attachmentExt(f.name)) ?? f.type,
 };
 
-function helpText(maxFiles: number): string {
-  return `${WHATSAPP_ATTACHMENT_TYPES_LABEL} · מסמכים עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.kinds.document.maxBytes)}, תמונות/וידאו/אודיו עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.kinds.image.maxBytes)} · עד ${maxFiles} קבצים, סה״כ עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.maxTotalBytes)}`;
+function helpText(maxFiles: number, maxTotalBytes: number = WHATSAPP_ATTACHMENT_LIMITS.maxTotalBytes): string {
+  return `${WHATSAPP_ATTACHMENT_TYPES_LABEL} · מסמכים עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.kinds.document.maxBytes)}, תמונות/וידאו/אודיו עד ${formatMb(WHATSAPP_ATTACHMENT_LIMITS.kinds.image.maxBytes)} · עד ${maxFiles} קבצים, סה״כ עד ${formatMb(maxTotalBytes)}`;
 }
+
+/** The email channel of a broadcast: the same files, but one email must hold
+ *  them all — the total is Gmail's 25MB (the server checks it again). */
+export const EMAIL_BROADCAST_ATTACHMENT_POLICY: AttachmentPolicy = {
+  ...WHATSAPP_ATTACHMENT_POLICY,
+  helpText: (maxFiles) => helpText(maxFiles, EMAIL_ATTACHMENTS_MAX_TOTAL_BYTES),
+  validateSet: (existing, next, maxFiles) =>
+    validateBroadcastAttachmentSet(existing, next, maxFiles, EMAIL_ATTACHMENTS_MAX_TOTAL_BYTES),
+};
 
 export function AttachmentPicker({
   items,

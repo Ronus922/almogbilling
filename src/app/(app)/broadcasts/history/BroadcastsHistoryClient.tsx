@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -17,41 +17,50 @@ import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import type { CampaignListItemView, CampaignListPageView, CampaignStatus } from '@/lib/wa-queue/types';
-import { CampaignStatusBadge } from './_components/StatusBadge';
+import type { BroadcastChannel, CampaignListItemView, CampaignListPageView, CampaignStatus } from '@/lib/wa-queue/types';
+import { CampaignStatusBadge, ChannelBadge } from '@/app/(app)/broadcasts/_components/StatusBadge';
 import { AttachmentLinks } from '@/components/whatsapp/AttachmentLinks';
-import { StopBroadcastDialog } from './_components/StopBroadcastDialog';
-import { useStopBroadcast } from './_lib/useStopBroadcast';
-import { usePoll } from './_lib/usePoll';
+import { StopBroadcastDialog } from '@/app/(app)/broadcasts/_components/StopBroadcastDialog';
+import { useStopBroadcast } from '@/app/(app)/broadcasts/_lib/useStopBroadcast';
+import { usePoll } from '@/app/(app)/broadcasts/_lib/usePoll';
 import {
-  STATUS_META, isCancellable, isTerminal, progressPct, processed, audienceLabel,
-} from './_lib/status';
+  STATUS_META, CHANNEL_META, isCancellable, isTerminal, progressPct, processed, audienceLabel,
+} from '@/app/(app)/broadcasts/_lib/status';
 
 const PAGE_SIZE = 20;
 const ALL = '__all__';
 const STATUS_OPTIONS: CampaignStatus[] = [
   'queued', 'running', 'paused', 'completed', 'completed_with_errors', 'cancelled', 'failed',
 ];
+const CHANNEL_OPTIONS: BroadcastChannel[] = ['whatsapp', 'email'];
 
-// Rendered both as the /whatsapp/broadcasts route AND embedded inside the
-// broadcast window's "היסטוריית תפוצות" tab. `embedded` drops the page header;
-// `onOpenDetail`/`onCreate` keep navigation inside the window instead of routing.
+// Rendered both as the /broadcasts/history page (the "תפוצה" category — both
+// channels, with a channel column + filter) AND embedded inside the chat's
+// broadcast window "היסטוריית תפוצות" tab. `embedded` drops the page header;
+// `onOpenDetail`/`onCreate` keep navigation inside the window instead of
+// routing; `channelLock` pins the list to one channel and hides the channel
+// column/filter (the chat's window: WhatsApp only, as it always was).
 export function BroadcastsHistoryClient({
   canEdit,
   embedded = false,
   onOpenDetail,
   onCreate,
+  channelLock,
 }: {
   canEdit: boolean;
   embedded?: boolean;
   onOpenDetail?: (id: string) => void;
   onCreate?: () => void;
+  channelLock?: BroadcastChannel;
 }) {
   const router = useRouter();
-  const openCreate = onCreate ?? (() => router.push('/whatsapp/broadcasts/new'));
+  const openCreate = onCreate ?? (() => router.push('/broadcasts/new'));
   const [qInput, setQInput] = useState('');
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<string>(ALL);
+  const [channelFilter, setChannelFilter] = useState<string>(ALL);
+  const channel = channelLock ?? (channelFilter === ALL ? null : channelFilter);
+  const showChannel = !channelLock;
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [page, setPage] = useState(0);
@@ -65,6 +74,7 @@ export function BroadcastsHistoryClient({
   const fetcher = useCallback(async (): Promise<CampaignListPageView> => {
     const sp = new URLSearchParams();
     if (status !== ALL) sp.set('status', status);
+    if (channel) sp.set('channel', channel);
     if (q) sp.set('q', q);
     if (from) sp.set('from', new Date(from).toISOString());
     if (to) { const d = new Date(to); d.setHours(23, 59, 59, 999); sp.set('to', d.toISOString()); }
@@ -73,13 +83,13 @@ export function BroadcastsHistoryClient({
     const r = await fetch(`/api/whatsapp/campaigns?${sp.toString()}`, { credentials: 'include' });
     if (!r.ok) throw new Error(`טעינת ההיסטוריה נכשלה (HTTP ${r.status})`);
     return (await r.json()) as CampaignListPageView;
-  }, [status, q, from, to, page]);
+  }, [status, channel, q, from, to, page]);
 
   // Poll only while a listed broadcast is still active.
   const { data, loading, error, refetch } = usePoll<CampaignListPageView>(fetcher, {
     intervalMs: 5000,
     shouldContinue: (d) => d.rows.some((c) => !isTerminal(c.status)),
-    deps: [status, q, from, to, page],
+    deps: [status, channel, q, from, to, page],
   });
 
   const stop = useStopBroadcast(() => void refetch());
@@ -87,7 +97,7 @@ export function BroadcastsHistoryClient({
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const hasFilters = status !== ALL || q !== '' || from !== '' || to !== '';
+  const hasFilters = status !== ALL || (showChannel && channelFilter !== ALL) || q !== '' || from !== '' || to !== '';
 
   return (
     <div className="space-y-6">
@@ -100,7 +110,7 @@ export function BroadcastsHistoryClient({
             </span>
             <div>
               <h1 className="text-2xl font-extrabold text-slate-900">היסטוריית תפוצות</h1>
-              <p className="mt-1 text-sm text-muted-foreground">כל תפוצות ה-WhatsApp — סטטוס, התקדמות ופרטי מסירה.</p>
+              <p className="mt-1 text-sm text-muted-foreground">כל התפוצות — וואטסאפ ומייל — סטטוס, התקדמות ופרטי מסירה.</p>
             </div>
           </div>
           {canEdit && (
@@ -130,6 +140,21 @@ export function BroadcastsHistoryClient({
             ))}
           </SelectContent>
         </Select>
+        {showChannel && (
+          <Select value={channelFilter} onValueChange={(v) => { setChannelFilter(v ?? ALL); setPage(0); }}>
+            <SelectTrigger aria-label="סינון לפי ערוץ" className="h-10 w-full lg:w-44 data-[size=default]:h-10">
+              <SelectValue>
+                {(v: string | null) => (!v || v === ALL ? 'כל הערוצים' : CHANNEL_META[v as BroadcastChannel]?.label ?? v)}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>כל הערוצים</SelectItem>
+              {CHANNEL_OPTIONS.map((c) => (
+                <SelectItem key={c} value={c}>{CHANNEL_META[c].label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <div className="flex items-center gap-2">
           <Input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(0); }} className="h-10" aria-label="מתאריך" />
           <span className="text-sm text-slate-400">—</span>
@@ -158,6 +183,7 @@ export function BroadcastsHistoryClient({
               <MobileCard
                 key={c.id}
                 c={c}
+                showChannel={showChannel}
                 canEdit={canEdit}
                 onStop={() => stop.request(c)}
                 onOpen={onOpenDetail ? () => onOpenDetail(c.id) : undefined}
@@ -168,8 +194,8 @@ export function BroadcastsHistoryClient({
           <Table className="hidden roomy:table">
             <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
               <TableRow className="bg-slate-50 hover:bg-slate-50">
-                {['שם התפוצה', 'תאריך יצירה', 'נוצר על ידי', 'קהל יעד', 'תבנית', 'סטטוס', 'התקדמות', 'נשלחו', 'נכשלו', 'בוטלו', 'סך הכול', 'פעולות'].map((h, i) => (
-                  <TableHead key={h} className={cn('h-11 px-3 text-sm font-semibold text-slate-500', i >= 7 && i <= 10 ? 'text-center' : 'text-start', i === 11 && 'text-end')}>{h}</TableHead>
+                {['שם התפוצה', ...(showChannel ? ['ערוץ'] : []), 'תאריך יצירה', 'נוצר על ידי', 'קהל יעד', 'תבנית', 'סטטוס', 'התקדמות', 'נשלחו', 'נכשלו', 'בוטלו', 'סך הכול', 'פעולות'].map((h, i, all) => (
+                  <TableHead key={h} className={cn('h-11 px-3 text-sm font-semibold text-slate-500', ['נשלחו', 'נכשלו', 'בוטלו', 'סך הכול'].includes(h) ? 'text-center' : 'text-start', i === all.length - 1 && 'text-end')}>{h}</TableHead>
                 ))}
               </TableRow>
             </TableHeader>
@@ -178,6 +204,7 @@ export function BroadcastsHistoryClient({
                 <Row
                   key={c.id}
                   c={c}
+                  showChannel={showChannel}
                   canEdit={canEdit}
                   onStop={() => stop.request(c)}
                   onOpen={onOpenDetail ? () => onOpenDetail(c.id) : undefined}
@@ -216,7 +243,7 @@ export function BroadcastsHistoryClient({
 
 /** Mobile counterpart of <Row> — identical data and identical actions, arranged
  *  as a card. Same prop shape on purpose, so the two variants cannot drift. */
-function MobileCard({ c, canEdit, onStop, onOpen }: { c: CampaignListItemView; canEdit: boolean; onStop: () => void; onOpen?: () => void }) {
+function MobileCard({ c, showChannel, canEdit, onStop, onOpen }: { c: CampaignListItemView; showChannel: boolean; canEdit: boolean; onStop: () => void; onOpen?: () => void }) {
   const active = !isTerminal(c.status);
   const pct = progressPct(c);
   return (
@@ -227,6 +254,7 @@ function MobileCard({ c, canEdit, onStop, onOpen }: { c: CampaignListItemView; c
       </div>
 
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-slate-500">
+        {showChannel && <ChannelBadge channel={c.channel} />}
         <span className="tabular-nums">{formatDate(c.created_at)}</span>
         <span>{c.created_by_name ?? '—'}</span>
         <span>{audienceLabel(c.audience)}</span>
@@ -258,7 +286,7 @@ function MobileCard({ c, canEdit, onStop, onOpen }: { c: CampaignListItemView; c
               <Eye className="h-4 w-4" />
             </Button>
           ) : (
-            <Button type="button" variant="ghost" size="icon" render={<Link href={`/whatsapp/broadcasts/${c.id}`} />} aria-label="צפייה בפרטים">
+            <Button type="button" variant="ghost" size="icon" render={<Link href={`/broadcasts/history/${c.id}`} />} aria-label="צפייה בפרטים">
               <Eye className="h-4 w-4" />
             </Button>
           )}
@@ -273,7 +301,7 @@ function MobileCard({ c, canEdit, onStop, onOpen }: { c: CampaignListItemView; c
   );
 }
 
-function Row({ c, canEdit, onStop, onOpen }: { c: CampaignListItemView; canEdit: boolean; onStop: () => void; onOpen?: () => void }) {
+function Row({ c, showChannel, canEdit, onStop, onOpen }: { c: CampaignListItemView; showChannel: boolean; canEdit: boolean; onStop: () => void; onOpen?: () => void }) {
   const active = !isTerminal(c.status);
   const pct = progressPct(c);
   return (
@@ -282,6 +310,9 @@ function Row({ c, canEdit, onStop, onOpen }: { c: CampaignListItemView; canEdit:
         <div className="truncate">{c.name}</div>
         <AttachmentLinks attachments={c.attachments} className="mt-1.5 font-normal" />
       </TableCell>
+      {showChannel && (
+        <TableCell className="px-3 py-3 text-start"><ChannelBadge channel={c.channel} /></TableCell>
+      )}
       <TableCell className="px-3 py-3 text-start text-sm text-slate-600 whitespace-nowrap tabular-nums">{formatDate(c.created_at)}</TableCell>
       <TableCell className="px-3 py-3 text-start text-sm text-slate-600">{c.created_by_name ?? '—'}</TableCell>
       <TableCell className="px-3 py-3 text-start text-sm text-slate-600">{audienceLabel(c.audience)}</TableCell>
@@ -313,7 +344,7 @@ function Row({ c, canEdit, onStop, onOpen }: { c: CampaignListItemView; canEdit:
                   <Eye className="h-4 w-4" />
                 </Button>
               ) : (
-                <Button type="button" variant="ghost" size="icon" render={<Link href={`/whatsapp/broadcasts/${c.id}`} />} aria-label="צפייה בפרטים">
+                <Button type="button" variant="ghost" size="icon" render={<Link href={`/broadcasts/history/${c.id}`} />} aria-label="צפייה בפרטים">
                   <Eye className="h-4 w-4" />
                 </Button>
               )}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isCancellable, isTerminal, progressPct, processed, audienceLabel, STATUS_META,
-} from '@/app/(app)/whatsapp/broadcasts/_lib/status';
+} from '@/app/(app)/broadcasts/_lib/status';
 import type { CampaignStatus } from '@/lib/wa-queue/types';
 
 // The pure UI logic behind the broadcast screens — the same predicates that decide
