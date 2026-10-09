@@ -11,6 +11,10 @@ export type CampaignStatus =
   | 'cancelled'
   | 'failed';
 
+/** How a broadcast is delivered (09/10/2026). A property of the campaign, not a
+ *  separate system — same tables, same worker, same statuses. */
+export type BroadcastChannel = 'whatsapp' | 'email';
+
 export type RecipientStatus =
   | 'pending'
   | 'processing'
@@ -32,9 +36,14 @@ export type ErrorClass =
 export interface Campaign {
   id: string;
   type: 'broadcast';
+  /** 'whatsapp' (Green API) or 'email' (SMTP). Every row before 09/10/2026 is
+   *  'whatsapp' (the column default). */
+  channel: BroadcastChannel;
   status: CampaignStatus;
   name: string;
   body: string;
+  /** Email subject as entered (placeholders unresolved); null for WhatsApp. */
+  subject: string | null;
   /** Snapshot of the chosen template's name (null = free text). Immutable — stays
    *  correct even after the source template is edited or deleted. */
   template_name: string | null;
@@ -71,9 +80,14 @@ export interface Recipient {
   /** Supplier identity (public.suppliers.id) — set only for a supplier recipient. */
   supplier_id: string | null;
   debtor_id: string | null;
+  /** WhatsApp destination; '' on an email recipient (the column is NOT NULL). */
   phone_intl: string;
   chat_id: string;
   payload: string;
+  /** Email channel: the address this recipient was sent to; null for WhatsApp. */
+  email: string | null;
+  /** Email channel: the subject after interpolation; null for WhatsApp. */
+  subject: string | null;
   status: RecipientStatus;
   attempt_count: number;
   max_attempts: number;
@@ -121,8 +135,13 @@ export interface RecipientInput {
   debtorId: string | null;
   /** Supplier identity (public.suppliers.id) — set only for a supplier recipient. */
   supplierId?: string | null;
-  phoneIntl: string;   // '9725XXXXXXXX'
+  /** '9725XXXXXXXX' for WhatsApp; '' for an email recipient. */
+  phoneIntl: string;
   payload: string;     // fully interpolated message
+  /** Email channel only: the recipient's address (normalised, lower-case). */
+  email?: string | null;
+  /** Email channel only: the subject, fully interpolated. */
+  subject?: string | null;
   /** Every apartment consolidated into this recipient (debt-message
    *  broadcasts only, PR ב') — including the representative one. Omitted for
    *  a free-form recipient: no wa_campaign_recipient_apartments rows are
@@ -179,8 +198,11 @@ export interface CampaignDetailView extends CampaignDetail {
 export interface RecipientLogRow {
   id: string;
   status: RecipientStatus;
-  /** Masked local phone, e.g. '050-•••-••34'. */
+  /** Masked local phone, e.g. '050-•••-••34' ('•••' on an email recipient). */
   phone_masked: string;
+  /** Masked address on an email recipient, e.g. 'ro•••@example.com'; null
+   *  on WhatsApp. Like the phone, the raw address never leaves the DB layer. */
+  email_masked: string | null;
   debtor_name: string | null;
   apartment_number: string | null;
   attempt_count: number;
@@ -214,6 +236,7 @@ export interface CampaignListPageView {
 /** Filters accepted by the history list. */
 export interface CampaignListFilters {
   status?: CampaignStatus;
+  channel?: BroadcastChannel;
   /** Case-insensitive substring match on the campaign name. */
   q?: string;
   /** Inclusive ISO date bounds on created_at. */

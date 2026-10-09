@@ -11,6 +11,12 @@ import {
   listCampaignAttachments, listAttachmentsNeedingUpload, recordUploadSuccess, recordUploadFailure,
   asciiLeaf, wireFileName, type AttachmentReader, type CampaignAttachment,
 } from './attachments';
+import {
+  processEmailRecipient, smtpEmailTransport, MockEmailTransport, readEmailRatePerMin,
+  EMAIL_RATE_BUCKET, type EmailTransport,
+} from './email';
+import { createSmtpTransporterCache, resolveSmtpSettings, smtpTransportBase } from '@/lib/email/smtp-core';
+import { raiseSmtpAuthAlert, sqlSmtpAuthAlertDeps } from '@/lib/email/smtp-auth-alert';
 import { logger } from '@/lib/logger';
 import { env } from '@/env';
 
@@ -35,21 +41,39 @@ export interface WorkerOptions {
    *  to Green API once (uploadFile) and for the per-recipient fallback. Injected
    *  by the entrypoint (scripts/wa-queue-worker.ts); tests pass a stub. */
   readAttachment?: AttachmentReader;
+  /** Email channel: the transport for a campaign (tests). Default: dry_run →
+   *  MockEmailTransport, else the SMTP account from app_settings. */
+  makeEmailTransportFor?: (campaign: Campaign) => EmailTransport;
+  /** Email channel: raised on an SMTP auth rejection. Default: the existing
+   *  throttled bell alert to the admins (smtp_last_auth_alert). */
+  onSmtpAuthFailure?: () => Promise<void>;
   log?: (event: string, data?: Record<string, unknown>) => void;
 }
 
-interface CampaignCtx {
-  provider: WaProvider;
-  creds: SendCreds;
-  ratePerMin: number;
-  bucket: string;
-  attachments: CampaignAttachment[];
-}
+type CampaignCtx =
+  | {
+      channel: 'whatsapp';
+      provider: WaProvider;
+      creds: SendCreds;
+      ratePerMin: number;
+      bucket: string;
+      attachments: CampaignAttachment[];
+    }
+  | {
+      channel: 'email';
+      transport: EmailTransport;
+      ratePerMin: number;
+      bucket: string;
+      attachments: CampaignAttachment[];
+    };
 
 export class DeliveryWorker {
   private stopping = false;
   private running = false;
   private readonly o: Required<Pick<WorkerOptions, 'batchSize' | 'leaseSec' | 'idlePollMs'>> & WorkerOptions;
+  /** The real email transport, built on first use (one pooled SMTP connection
+   *  set per worker process, rebuilt when the App Password changes). */
+  private smtp: EmailTransport | null = null;
 
   constructor(opts: WorkerOptions) {
     this.o = { batchSize: 10, leaseSec: 60, idlePollMs: 1000, ...opts };
@@ -102,16 +126,31 @@ export class DeliveryWorker {
       if (!ctx) {
         const campaign = await this.getCampaign(item.campaign_id);
         if (!campaign) { await this.release(item.id); continue; }
-        const { provider, creds } = await this.providerFor(campaign);
         const attachments = await listCampaignAttachments(this.o.pool, campaign.id);
-        ctx = { provider, creds, ratePerMin: campaign.rate_per_min, bucket: campaign.instance_id ?? 'default', attachments };
+        if (campaign.channel === 'email') {
+          ctx = {
+            channel: 'email', transport: this.emailTransportFor(campaign),
+            ratePerMin: await readEmailRatePerMin(this.o.pool), bucket: EMAIL_RATE_BUCKET, attachments,
+          };
+        } else {
+          const { provider, creds } = await this.providerFor(campaign);
+          ctx = { channel: 'whatsapp', provider, creds, ratePerMin: campaign.rate_per_min, bucket: campaign.instance_id ?? 'default', attachments };
+        }
         ctxByCampaign.set(item.campaign_id, ctx);
       }
-      const res = await processRecipient(this.o.pool, ctx.provider, item, ctx.creds, ctx.bucket, ctx.ratePerMin, {
-        backoffBaseSec: this.o.backoffBaseSec,
-        attachments: ctx.attachments,
-        readAttachment: this.o.readAttachment,
-      });
+      const res = ctx.channel === 'email'
+        ? await processEmailRecipient(this.o.pool, ctx.transport, item, ctx.ratePerMin, {
+            backoffBaseSec: this.o.backoffBaseSec,
+            attachments: ctx.attachments,
+            readAttachment: this.o.readAttachment,
+            site: siteOrigin(),
+            onAuthFailure: () => this.smtpAuthFailed(),
+          })
+        : await processRecipient(this.o.pool, ctx.provider, item, ctx.creds, ctx.bucket, ctx.ratePerMin, {
+            backoffBaseSec: this.o.backoffBaseSec,
+            attachments: ctx.attachments,
+            readAttachment: this.o.readAttachment,
+          });
       this.logEvent(`recipient_${res.outcome}`, { recipientId: item.id, campaignId: item.campaign_id, attempt: item.attempt_count });
     }
     for (const [campaignId, ctx] of ctxByCampaign) {
@@ -190,6 +229,26 @@ export class DeliveryWorker {
     return { provider, creds };
   }
 
+  private emailTransportFor(campaign: Campaign): EmailTransport {
+    if (this.o.makeEmailTransportFor) return this.o.makeEmailTransportFor(campaign);
+    if (campaign.dry_run) return new MockEmailTransport();
+    this.smtp ??= smtpEmailTransport(createSmtpTransporterCache(
+      smtpTransportBase(),
+      () => resolveSmtpSettings(this.o.pool, decryptToken),
+      (err) => this.logEvent('smtp_pool_error', { error: String(err) }),
+    ));
+    return this.smtp;
+  }
+
+  private async smtpAuthFailed(): Promise<void> {
+    this.logEvent('smtp_auth_failed');
+    if (this.o.onSmtpAuthFailure) return this.o.onSmtpAuthFailure();
+    await raiseSmtpAuthAlert(sqlSmtpAuthAlertDeps(
+      this.o.pool,
+      (message, ...args) => logger.error({ src: 'wa-worker', args: args.map(String) }, message),
+    ));
+  }
+
   private async getCampaign(id: string): Promise<Campaign | null> {
     const r = await this.o.pool.query<Campaign>(`select * from public.wa_campaigns where id=$1`, [id]);
     return r.rows[0] ?? null;
@@ -224,6 +283,11 @@ function defaultLog(event: string, data?: Record<string, unknown>) {
 }
 
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+
+/** The public origin for the email footer (APP_URL, no trailing slash). */
+function siteOrigin(): string {
+  return (env.APP_URL ?? 'http://localhost:3003').trim().replace(/\/+$/, '');
+}
 
 // Real-provider creds: read the encrypted token from whatsapp_instances and
 // decrypt with SETTINGS_ENC_KEY (mirrors src/lib/crypto/settings-cipher.ts so the

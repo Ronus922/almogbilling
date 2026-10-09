@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import type {
-  Campaign, CampaignStatus, RecipientInput,
+  BroadcastChannel, Campaign, CampaignStatus, RecipientInput,
   CampaignListItem, CampaignDetail, CampaignListPage, CampaignListFilters,
   RecipientLogPage, RecipientLogRow,
 } from './types';
@@ -17,7 +17,7 @@ export class CampaignConflictError extends Error {
 }
 
 const COLS = `
-  id, type, status, name, body, template_name, audience, instance_id, created_by,
+  id, type, channel, status, name, body, subject, template_name, audience, instance_id, created_by,
   total_count, pending_count, processing_count, sent_count, failed_count,
   skipped_count, cancelled_count, rate_per_min, dry_run, client_token,
   scheduled_at, started_at, completed_at, paused_at, cancelled_at, last_error,
@@ -41,8 +41,12 @@ const ATTACHMENTS_JSON = `
   ), '[]'::json) as attachments`;
 
 export interface CreateCampaignInput {
+  /** Default 'whatsapp' — every caller before the email channel. */
+  channel?: BroadcastChannel;
   name: string;
   body: string;
+  /** Email channel: the subject as entered (required there; null for WhatsApp). */
+  subject?: string | null;
   /** Chosen template's name (snapshot); null/undefined = free text. */
   templateName?: string | null;
   audience: unknown;
@@ -71,22 +75,31 @@ export async function createCampaign(pool: Pool, input: CreateCampaignInput): Pr
     await client.query('BEGIN');
     const c = await client.query<Campaign>(
       `insert into public.wa_campaigns
-         (type, status, name, body, template_name, audience, instance_id, created_by, rate_per_min, dry_run, client_token, created_by_name)
+         (type, status, name, body, template_name, audience, instance_id, created_by, rate_per_min, dry_run, client_token, created_by_name,
+          channel, subject)
        values ('broadcast','queued',$1,$2,$3,$4::jsonb,$5,$6,coalesce($7,12),coalesce($8,false),$9,
-               (select coalesce(u.full_name, u.username) from public.users u where u.id = $6))
+               (select coalesce(u.full_name, u.username) from public.users u where u.id = $6),
+               $10,$11)
        returning ${COLS}`,
       [input.name, input.body, input.templateName ?? null, JSON.stringify(input.audience ?? {}), input.instanceId,
-       input.createdBy, input.ratePerMin ?? null, input.dryRun ?? null, input.clientToken ?? null],
+       input.createdBy, input.ratePerMin ?? null, input.dryRun ?? null, input.clientToken ?? null,
+       input.channel ?? 'whatsapp', input.subject ?? null],
     );
     const campaign = c.rows[0];
     for (const r of input.recipients) {
+      // An email recipient keeps the NOT NULL WhatsApp columns empty and is
+      // de-duplicated per address; a WhatsApp recipient is unchanged.
+      const email = r.email ?? null;
       const inserted = await client.query<{ id: string }>(
         `insert into public.wa_campaign_recipients
-           (campaign_id, contact_id, supplier_id, debtor_id, phone_intl, chat_id, payload, idempotency_key)
-         values ($1,$2,$3,$4,$5,$6,$7,$8)
+           (campaign_id, contact_id, supplier_id, debtor_id, phone_intl, chat_id, payload, idempotency_key, email, subject)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          on conflict (idempotency_key) do nothing
          returning id`,
-        [campaign.id, r.contactId, r.supplierId ?? null, r.debtorId, r.phoneIntl, `${r.phoneIntl}@c.us`, r.payload, `${campaign.id}:${r.phoneIntl}`],
+        [campaign.id, r.contactId, r.supplierId ?? null, r.debtorId,
+         email ? '' : r.phoneIntl, email ? '' : `${r.phoneIntl}@c.us`, r.payload,
+         email ? `${campaign.id}:email:${email}` : `${campaign.id}:${r.phoneIntl}`,
+         email, r.subject ?? null],
       );
       // Consolidated (debt-message) recipient — every apartment it covers,
       // for the delete-guard + future reporting. Skipped on a conflict (the
@@ -159,6 +172,7 @@ export async function listCampaigns(
   const where: string[] = ["w.type = 'broadcast'"];
   const params: unknown[] = [];
   if (filters.status) { params.push(filters.status); where.push(`w.status = $${params.length}`); }
+  if (filters.channel) { params.push(filters.channel); where.push(`w.channel = $${params.length}`); }
   if (filters.q) { params.push(`%${filters.q}%`); where.push(`w.name ilike $${params.length}`); }
   if (filters.from) { params.push(filters.from); where.push(`w.created_at >= $${params.length}`); }
   if (filters.to) { params.push(filters.to); where.push(`w.created_at <= $${params.length}`); }
@@ -222,7 +236,13 @@ export async function listRecipients(
          when length(local.n) >= 5
            then substr(local.n,1,3) || '-•••-••' || right(local.n,2)
          else '•••'
-       end                                                 as phone_masked
+       end                                                 as phone_masked,
+       -- Email recipient: the first two characters of the local part, then
+       -- the domain — 'ronen@example.com' → 'ro•••@example.com'.
+       case
+         when r.email is null then null
+         else left(split_part(r.email, '@', 1), 2) || '•••@' || split_part(r.email, '@', 2)
+       end                                                 as email_masked
      from public.wa_campaign_recipients r
      -- resident identity + apartment from contacts (registry) via r.contact_id —
      -- null for a supplier recipient (r.supplier_id set instead, PR ב' multi-

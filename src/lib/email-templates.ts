@@ -3,12 +3,15 @@ import { resetPasswordTemplate } from '@/templates/email/reset-password';
 import { userInviteTemplate } from '@/templates/email/user-invite';
 import { taskNotificationTemplate } from '@/templates/email/task-notification';
 import { legalStatusChangeTemplate } from '@/templates/email/legal-status-change';
+import { broadcastEmailTemplate } from '@/templates/email/broadcast';
+import { appUrl } from '@/lib/config';
 
 export type EmailTemplateName =
   | 'reset-password'
   | 'user-invite'
   | 'task-notification'
-  | 'legal-status-change';
+  | 'legal-status-change'
+  | 'broadcast';
 
 interface RenderArgs {
   'reset-password': { userName: string; resetUrl: string };
@@ -38,6 +41,9 @@ interface RenderArgs {
     signatureHtml: string;
     signatureText: string;
   };
+  /** One email of a broadcast — the delivery worker renders it itself (it
+   *  cannot load this server-only registry); registered for the app side. */
+  broadcast: { subject: string; body: string };
 }
 
 export interface RenderedEmail {
@@ -59,6 +65,8 @@ export function renderTemplate<N extends EmailTemplateName>(
       return taskNotificationTemplate(data as RenderArgs['task-notification']);
     case 'legal-status-change':
       return legalStatusChangeTemplate(data as RenderArgs['legal-status-change']);
+    case 'broadcast':
+      return broadcastEmailTemplate({ ...(data as RenderArgs['broadcast']), site: appUrl() });
     default:
       throw new Error(`Unknown email template: ${String(name)}`);
   }
