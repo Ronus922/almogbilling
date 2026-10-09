@@ -2,12 +2,7 @@ import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import type { PoolClient } from 'pg';
 import type { CreateNotificationInput, Notification } from '@/lib/types/tasks';
-
-const COLUMNS = `
-  id, user_id, type, title, message, is_read, read_at, cleared_at,
-  source_module, source_entity_type, source_entity_id,
-  action_url, priority, dedupe_key, created_at, updated_at
-`;
+import { NOTIFICATION_COLUMNS as COLUMNS, insertNotificationRow } from '@/lib/notifications/core';
 
 type Queryable = Pick<PoolClient, 'query'>;
 
@@ -50,31 +45,7 @@ export async function createNotification(
   input: CreateNotificationInput,
   client?: Queryable,
 ): Promise<Notification | null> {
-  const params = [
-    input.userId,
-    input.type,
-    input.title,
-    input.message ?? null,
-    input.sourceModule ?? null,
-    input.sourceEntityType ?? null,
-    input.sourceEntityId ?? null,
-    input.actionUrl ?? null,
-    input.priority ?? 'normal',
-    input.dedupeKey ?? null,
-  ];
-  const sql = `
-    insert into public.notifications
-      (user_id, type, title, message, source_module, source_entity_type,
-       source_entity_id, action_url, priority, dedupe_key)
-    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-    on conflict (dedupe_key) where dedupe_key is not null do nothing
-    returning ${COLUMNS}
-  `;
-  if (client) {
-    const r = await client.query<Notification>(sql, params);
-    return r.rows[0] ?? null;
-  }
-  return queryOne<Notification>(sql, params);
+  return insertNotificationRow(client ?? { query }, input);
 }
 
 /**
