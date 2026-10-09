@@ -29,6 +29,11 @@ export const GREEN_API_MAX_FILE_BYTES = 100 * MB;
 /** Self-hosted Supabase Storage FILE_SIZE_LIMIT (see header). */
 const STORAGE_MAX_BYTES = 50 * MB;
 
+/** EMAIL channel of a broadcast (09/10/2026): the same files (up to
+ *  maxFiles), but their sum must fit one email — Gmail accepts 25 MB of
+ *  attachments per message. Checked when the broadcast is created. */
+export const EMAIL_ATTACHMENTS_MAX_TOTAL_BYTES = 25 * MB;
+
 /** Files per SINGLE outbound message ("שליחת הודעת WhatsApp" — one recipient).
  *  Lower than a broadcast on purpose: the send is synchronous, in-request. The
  *  type / size rules are identical (WHATSAPP_ATTACHMENT_LIMITS.kinds). */
@@ -175,20 +180,22 @@ export function validateBroadcastAttachment(file: AttachmentCandidate): string |
 /** Validate the message-level rules (count + total size) for adding `next` on
  *  top of `existing`. `maxFiles` lets a screen impose a lower cap than the
  *  broadcast default (the single-recipient sheet passes
- *  WHATSAPP_MESSAGE_MAX_FILES); the total-size rule is shared. Returns a Hebrew
+ *  WHATSAPP_MESSAGE_MAX_FILES); `maxTotalBytes` a lower total (an email
+ *  broadcast passes EMAIL_ATTACHMENTS_MAX_TOTAL_BYTES). Returns a Hebrew
  *  error, or null. */
 export function validateBroadcastAttachmentSet(
   existing: ReadonlyArray<{ size: number }>,
   next: ReadonlyArray<{ size: number }> = [],
   maxFiles: number = WHATSAPP_ATTACHMENT_LIMITS.maxFiles,
+  maxTotalBytes: number = WHATSAPP_ATTACHMENT_LIMITS.maxTotalBytes,
 ): string | null {
   const count = existing.length + next.length;
   if (count > maxFiles) {
     return `ניתן לצרף עד ${maxFiles} קבצים`;
   }
   const total = [...existing, ...next].reduce((s, f) => s + f.size, 0);
-  if (total > WHATSAPP_ATTACHMENT_LIMITS.maxTotalBytes) {
-    return `סך הקבצים המצורפים חורג מ-${formatMb(WHATSAPP_ATTACHMENT_LIMITS.maxTotalBytes)}`;
+  if (total > maxTotalBytes) {
+    return `סך הקבצים המצורפים חורג מ-${formatMb(maxTotalBytes)}`;
   }
   return null;
 }

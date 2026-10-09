@@ -26,7 +26,8 @@ const UNIT_TYPES: readonly ContactUnitType[] = [
 const SYNC_STATUSES: readonly WhatsappProfileSyncStatus[] = [
   'pending', 'synced', 'no_avatar', 'unavailable', 'failed',
 ];
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** The one email shape the app accepts (contacts, contact people, broadcasts). */
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

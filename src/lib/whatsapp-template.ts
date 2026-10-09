@@ -409,3 +409,27 @@ export function interpolateBroadcastTemplate(
     cutApartmentNumbers: cut.map((a) => a.apartment_number),
   };
 }
+
+// ── Email subject (09/10/2026) ──────────────────────────────────────────────
+// The email channel's subject line goes through the SAME interpolation as the
+// body (interpolateTemplate / interpolateBroadcastTemplate) — no second
+// placeholder engine. Its own rules are only those of a header line.
+
+export const EMAIL_SUBJECT_MAX_CHARS = 200;
+
+/** Hebrew error for a subject that cannot be used, or null when it is fine.
+ *  Empty is the caller's call (optional on a template, required to send). A
+ *  repeating block is per-apartment text — it belongs in the body. */
+export function emailSubjectError(subject: string): string | null {
+  if (subject.length > EMAIL_SUBJECT_MAX_CHARS) return `נושא המייל ארוך מדי (עד ${EMAIL_SUBJECT_MAX_CHARS} תווים)`;
+  if (subject.includes(APARTMENTS_BLOCK_OPEN) || subject.includes(APARTMENTS_BLOCK_CLOSE)) {
+    return 'קטע חוזר לפי דירה אינו אפשרי בנושא המייל — רק בתוכן ההודעה';
+  }
+  return null;
+}
+
+/** An interpolated subject as one header line: line breaks and runs of
+ *  whitespace collapse to a single space. */
+export function toSubjectLine(rendered: string): string {
+  return rendered.replace(/\s+/g, ' ').trim();
+}

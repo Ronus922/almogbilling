@@ -3,7 +3,7 @@ import { query, queryOne } from '@/lib/db';
 import type { WhatsAppTemplate } from '@/types/whatsapp';
 
 const SELECT_COLUMNS = `
-  id, name, content, is_active, created_by,
+  id, name, content, subject, is_active, created_by,
   created_at, updated_at
 `;
 
@@ -36,14 +36,14 @@ export async function getTemplateById(id: string): Promise<WhatsAppTemplate | nu
 }
 
 export async function createTemplate(
-  input: { name: string; content: string; is_active: boolean },
+  input: { name: string; content: string; subject: string | null; is_active: boolean },
   createdBy: string,
 ): Promise<WhatsAppTemplate> {
   const row = await queryOne<WhatsAppTemplate>(
-    `insert into public.whatsapp_templates (name, content, is_active, created_by)
-     values ($1, $2, $3, $4)
+    `insert into public.whatsapp_templates (name, content, subject, is_active, created_by)
+     values ($1, $2, $3, $4, $5)
      returning ${SELECT_COLUMNS}`,
-    [input.name, input.content, input.is_active, createdBy],
+    [input.name, input.content, input.subject, input.is_active, createdBy],
   );
   // insert ... returning always yields a row.
   return row as WhatsAppTemplate;
@@ -51,11 +51,11 @@ export async function createTemplate(
 
 export async function updateTemplate(
   id: string,
-  patch: { name?: string; content?: string; is_active?: boolean },
+  patch: { name?: string; content?: string; subject?: string | null; is_active?: boolean },
 ): Promise<WhatsAppTemplate | null> {
   const sets: string[] = [];
   const args: unknown[] = [];
-  for (const key of ['name', 'content', 'is_active'] as const) {
+  for (const key of ['name', 'content', 'subject', 'is_active'] as const) {
     const v = patch[key];
     if (v === undefined) continue;
     args.push(v);

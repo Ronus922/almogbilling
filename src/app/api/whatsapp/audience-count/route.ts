@@ -9,6 +9,7 @@ import {
 import {
   interpolateBroadcastTemplate, isDebtMessageTemplate, resolveConsolidatedName,
 } from '@/lib/whatsapp-template';
+import { countEmailAudience, isEmailDebtMessage } from '@/lib/email-broadcast';
 import type { BroadcastAudienceType, BroadcastRoleSelection } from '@/types/whatsapp';
 
 export const runtime = 'nodejs';
@@ -30,6 +31,11 @@ const ROLE_SELECTIONS: readonly BroadcastRoleSelection[] = ['owners', 'tenants',
 // 400 `error` (no count) when a debt message's audience includes suppliers —
 // mirrors the campaign-creation hard block, so the compose screen can show
 // the same blocking message before the operator even attempts to send.
+//
+// `channel: 'email'` (09/10/2026, selection audience): `count` is the number
+// of email ADDRESSES that will receive, and `missing` lists who in the same
+// audience has no usable address ("X עם אימייל / Y ללא"). `subject` counts
+// toward the debt-message detection, as it does at creation.
 export async function POST(req: NextRequest) {
   try {
     await requirePermission('whatsapp_chat', 'view');
@@ -39,16 +45,18 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
-  let parsed: { type?: unknown; roles?: unknown; body?: unknown; debt_filter?: unknown };
+  let parsed: { type?: unknown; roles?: unknown; body?: unknown; debt_filter?: unknown; channel?: unknown; subject?: unknown };
   try { parsed = await req.json(); } catch { parsed = {}; }
   const messageBody = typeof parsed.body === 'string' ? parsed.body : '';
-  const isDebt = isDebtMessageTemplate(messageBody);
+  const isEmail = parsed.channel === 'email';
+  const subject = isEmail && typeof parsed.subject === 'string' ? parsed.subject : '';
+  const isDebt = isEmail ? isEmailDebtMessage(messageBody, subject) : isDebtMessageTemplate(messageBody);
 
   if (parsed.type === 'selection') {
     const roles = Array.isArray(parsed.roles)
       ? Array.from(new Set(parsed.roles.filter((x): x is BroadcastRoleSelection => (ROLE_SELECTIONS as readonly string[]).includes(x as string))))
       : [];
-    if (roles.length === 0) return NextResponse.json({ count: 0, partial_count: 0 });
+    if (roles.length === 0) return NextResponse.json({ count: 0, partial_count: 0, ...(isEmail ? { missing: [] } : {}) });
 
     if (isDebt && roles.includes('suppliers')) {
       return NextResponse.json({
@@ -60,6 +68,11 @@ export async function POST(req: NextRequest) {
     const parsedFilter = parseBroadcastDebtFilter(parsed.debt_filter);
     if (!parsedFilter.ok) return NextResponse.json({ error: parsedFilter.error }, { status: 400 });
     const debtFilter = parsedFilter.value;
+
+    if (isEmail) {
+      const r = await countEmailAudience({ roles, debtFilter, body: messageBody, subject });
+      return NextResponse.json({ count: r.count, partial_count: r.partialCount, missing: r.missing });
+    }
 
     if (isDebt) {
       const consolidated = await resolveConsolidatedSelectionRecipients(roles, debtFilter);
