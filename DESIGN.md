@@ -891,6 +891,7 @@ toast.info('...');
 - **Edge toggle**: כפתור עגול `h-7 w-7` שרוכב על הקצה הפנימי (`absolute top-1/2 left-0 -translate-x-1/2`). אייקון `ChevronRight` יחיד שמסתובב `rotate-180` במצב מכווץ.
 - **Brand block** (ראש הסיידבר): מיכל `flex h-16 shrink-0 items-center gap-3 border-b border-line` (`px-5`; מכווץ → `justify-center px-0`). **גובהו זהה ל-Header (`h-16`) וה-`border-b` תואם**, כך שהקו התחתון שלו והקו התחתון של ה-Header מתיישרים לקו רציף אחד לאורך ראש המסך (ראה §32). תוכן: לוגו-גרדיאנט `grid h-11 w-11 rounded-[13px] bg-gradient-to-br from-brand to-brand-dark text-white` + `Building2`, וכותרת `text-[22px] font-black tracking-tight text-ink` = "ניהול אלמוג". מכווץ → רק הלוגו, ממורכז.
 - **רשימה אחידה** (ללא כותרות-סקשן): כל פריטי הניווט ברשימה שטוחה אחת — עבודה יומיומית + תקשורת קודם, אחריהם הגדרות-המערכת (סטטוסים, תבניות, אזורים, משתמשים). תמיכת הסקשנים נשמרה בקוד (`title` ריק → לא מרונדרת כותרת/קו): כדי לפצל שוב, מוסיפים entry ל-`SECTIONS` עם `title`. כל פריט עם ה-route + module שלו → RBAC 1:1 (פריט לא-מורשה פשוט מוסתר). **שני פריטים לפי תפקיד ולא לפי מודול** (`visible`, גובר על בדיקת ה-module): „לוח מחוונים” (`/overview`, כל תפקיד פרט לצופה) ו**„משתמשים”** (`/settings/users`, אדמין + סופר אדמין — `canOpenUsersScreen`, אותו predicate שסוגר את העמוד; 07/10/2026). שורת `users_management` במטריצה **לא** מציגה אותו.
+- **קבוצות עם כותרת** (כמו „שקיפות כספית”, „פורטל בעלי דירות”): **„תפוצה”** (09/10/2026) — „תפוצה חדשה” (`/broadcasts/new`) · „תבניות” (`/whatsapp-templates`, עבר מהרשימה הראשית; ה-route לא השתנה) · „היסטוריה” (`/broadcasts/history`, כולל הפירוט `/broadcasts/history/[id]`). פריט יכול לדרוש פעולה אחרת מ-`view` דרך `action` — „תפוצה חדשה” מוצג רק עם `whatsapp_chat:edit`, אותו שער כמו העמוד וה-route.
 - **Item**: `group flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-colors`. מכווץ → `justify-center px-0`.
   - **Active**: `bg-gradient-to-l from-brand-dark to-brand text-white shadow-[0_10px_20px_-9px_rgba(61,90,254,0.6)]` (אייקון `text-white`).
   - **Idle**: `text-ink-2 hover:bg-row-hover hover:text-ink` (אייקון `text-ink-3 group-hover:text-brand`).
@@ -1139,6 +1140,10 @@ toast.info('...');
 - **escape ל-HTML** של כל מחרוזת user-supplied (`userName` וכד') לפני
   הזרקה לתבנית — ראה `escapeHtml()` ב-`reset-password.ts`.
 
+- **מייל של תפוצה** (`src/templates/email/broadcast.ts`, 09/10/2026): הטקסט של המפעיל כמו שהוא — escape מלא,
+  שבירות שורה → `<br>`, בתוך אותה מסגרת (לוגו טקסט, טבלה 600, footer) — בלי פנייה ובלי CTA. התבנית **טהורה**
+  (מקבלת `site` במקום `appUrl()`), כי ה-worker מרנדר אותה מחוץ ל-Next; ה-footer שלה מ-`footer-core.ts`.
+
 ### Plain-text version (חובה)
 
 כל template מחזיר **גם** `text` (גרסת plaintext) ולא רק `html`. סיבה:
@@ -1308,7 +1313,7 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 
 ---
 
-## 26b. קבצים מצורפים לתפוצת WhatsApp (טאב „תפוצה חדשה”)
+## 26b. קבצים מצורפים לתפוצה (טאב „תפוצה חדשה” — בשני הערוצים; במייל סה״כ 25MB, ראה §26e)
 
 מתחת ל„תוכן ההודעה” — **גם בטופס התפוצה וגם במסך „שליחת הודעת WhatsApp” לנמען בודד**
 (`components/whatsapp/AttachmentPicker.tsx`, קומפוננטה אחת משותפת: `maxFiles` ו-`uploadUrl`
@@ -1492,6 +1497,36 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
 `.btn-ghost`. הקובץ מכיל את ה-`:root` vars וה-CSS המלא (verbatim מהמפרט).
 
 ---
+
+## 26e. תפוצה מאוחדת — ערוץ וואטסאפ / מייל (קטגוריית „תפוצה”, 09/10/2026)
+
+ערוץ הוא מאפיין של התפוצה, לא מסך נפרד. **אותם מסכים** (`src/app/(app)/broadcasts/**`) משרתים את שני הערוצים —
+ובחלון „תפוצות” של הצ׳אט הם נעולים לוואטסאפ (`channelLock="whatsapp"`), בלי בורר ובלי עמודת ערוץ: הצ׳אט לא השתנה.
+
+- **בורר ערוץ** (ראש כרטיס „תפוצה חדשה”, מעל „שם התפוצה”): תווית רגילה (§6) „ערוץ” + `role="radiogroup"` עם שני
+  כפתורי pill — `inline-flex h-11 items-center gap-2 rounded-full border px-5 text-sm font-semibold`, אייקון
+  `MessageCircle` / `Mail` `h-4 w-4`. פעיל = `border-emerald-300 bg-emerald-50 text-emerald-700` (כמו pills קהל היעד),
+  לא פעיל = `border-slate-200 bg-white text-slate-600 hover:bg-slate-50`. `h-11` = Touch Target.
+- **רק במייל:**
+  - **„נושא המייל”** (חובה) — Input `h-10` מתחת ל„תבנית”, לפני „תוכן ההודעה”; error state של §6. מתמלא מ-`subject`
+    של התבנית כשבוחרים תבנית. צ׳יפי המשתנים מוסיפים לשדה האחרון שהיה בפוקוס (נושא או תוכן).
+  - **המונה**: `נמענים עם אימייל: X · ללא אימייל: Y` (`text-xs text-slate-500`, X `font-bold text-slate-700`,
+    Y `font-bold text-amber-700`). מתחתיו כפתור טקסט `min-h-11 text-xs font-semibold text-amber-700` עם `ChevronDown`
+    („הצג/הסתר את מי שאין לו אימייל (Y) — לא יקבלו את התפוצה”) שפותח רשימה
+    `max-h-56 overflow-y-auto rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-xs text-amber-900`,
+    שורה לכל אחד: `דירה 1210 · בעלים · שם` / `ספק · שם`. **בוואטסאפ אין מונה כזה** — שם נשאר „נמענים עם טלפון תקין”
+    בלבד (החלטת רונן 21/09: בלי אבחונים במסך הוואטסאפ).
+  - **קבצים**: אותו `AttachmentPicker` עם `EMAIL_BROADCAST_ATTACHMENT_POLICY` (שורת העזר אומרת „סה״כ עד 25MB”);
+    חריגה אחרי מעבר ערוץ = הודעה `text-[12px] font-semibold text-red-500` מתחת לבורר וכפתור השליחה מושבת.
+- **היסטוריה**: עמודת „ערוץ” אחרי „שם התפוצה” + Select „כל הערוצים / וואטסאפ / מייל” בסרגל הכלים (`h-10 lg:w-44`).
+  התג — `ChannelBadge` (`_components/StatusBadge.tsx`, `rounded-full px-2.5 py-0.5 text-xs font-semibold` + אייקון
+  `h-3.5 w-3.5`): וואטסאפ `bg-emerald-50 text-emerald-700`, מייל `bg-blue-50 text-blue-700` (`CHANNEL_META` ב-`_lib/status.ts`).
+  בכרטיס המובייל — התג בשורת המטא.
+- **פירוט**: אותו מסך. התג ליד הכותרת; במייל שורת `נושא: …` מתחת לשורת „נוצר על ידי”, עמודת הכתובת נקראת
+  „אימייל” ומציגה כתובת ממוסכת (`ro•••@example.com`, נבנית ב-SQL — הכתובת המלאה לא יוצאת ל-UI, כמו הטלפון),
+  והמדדים/הטאבים „נמסרו” / „נקראו” לא מוצגים (אין אות כזה ב-SMTP — לא מציגים 0 מזויף).
+- **עורך התבנית** (§26) במסך „תבניות” של הקטגוריה (`showSubject`): שדה „נושא למייל (אופציונלי)” בין „שם התבנית”
+  ל„תוכן”, באותו סגנון שדה מותגי, עם עזר `text-[11.5px] text-ink-3`. בטאב התבניות של הצ׳אט השדה לא מוצג.
 
 ## 27. Combobox (searchable select)
 
