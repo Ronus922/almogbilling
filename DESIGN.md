@@ -312,7 +312,7 @@ size="icon"` עם override של גודל ו-tone, עטופים ב-`Tooltip`, ו�
 </Tooltip>
 ```
 
-- **Excel** = SheetJS (`xlsx`, dependency קיים); כספים כ-numbers אמיתיים (לסיכום באקסל), טלפון כ-string; שם גיליון "חייבים"; קובץ `debtors_YYYY-MM-DD.xlsx`.
+- **Excel** = ExcelJS (`exceljs`; החליף את SheetJS); כספים כ-numbers אמיתיים (לסיכום באקסל), טלפון כ-string; שם גיליון "חייבים"; קובץ `debtors_YYYY-MM-DD.xlsx`. **באקסל בלבד** (לא ב-PDF/הדפסה) שתי עמודות טקסט נוספות, כל אחת מיד אחרי עמודת הסכום שלה: "חודשים שלא שולמו — דמי ניהול" (אחרי "דמי ניהול") ו-"חודשים שלא שולמו — מים חמים" (אחרי "מים חמים") — נגזרות מ-`monthly_debt` ומפריטי "מים חמים" ב-`details` (`src/lib/export/unpaid-months.ts`), תא ריק כשאין; `numFmt '@'` כדי ש-"01-02/26" לא יהפוך לתאריך.
 - **PDF** = `jspdf` + `jspdf-autotable` + **Heebo מוטמע** (`src/lib/pdf-heebo.ts`, base64 subset). jsPDF ללא bidi → היפוך תווי-עברית ידני (מחרוזת שמכילה עברית בלבד) + היפוך סדר העמודות ל-RTL; מספרים/תאריך כ-LTR (התאריך ב-`text()` נפרד כדי לא להתהפך). קובץ `debtors_YYYY-MM-DD.pdf`.
 - **הדפסה** = `@media print` (`app/styles/print.css`) שמסתיר `body > *:not(#debtors-print-root)` ומציג רק קומפוננטת print (portal ל-`document.body`); כותרת "טבלת חייבים" + "סה״כ N רשומות" + תאריך + טבלה נקייה (עמודות §6 ללא "פעולות"), `₪` + `tabular-nums`, A4 landscape.
 - `toast.success('הקובץ יוצא')` / `toast.error` בכל ייצוא.

@@ -1,26 +1,60 @@
 'use client';
 
+import type { Buffer as ExcelBuffer } from 'exceljs';
 import type { Debtor } from '@/lib/db/debtors';
 import { formatPhoneDisplay, getPrimaryPhone } from '@/lib/phone';
+import { unpaidMonthsByType } from './unpaid-months';
 
 // Shared column model for the debtors export/print (Excel / PDF / print view).
-// Order + labels are the section-6 headers, WITHOUT the "פעולות" column.
+// The base entries are the section-6 headers, WITHOUT the "פעולות" column; the
+// two "months" entries exist in the Excel file only.
 
 export interface ExportColumn {
   header: string;
   kind: 'text' | 'number' | 'phone';
+  /** Excel column width (characters). PDF / print ignore it. */
+  width: number;
   get: (d: Debtor) => string | number;
 }
 
+const COL = {
+  apartment:  { header: 'מס׳ דירה',     kind: 'text',   width: 10, get: (d) => d.apartment_number },
+  owner:      { header: 'שם בעל הדירה', kind: 'text',   width: 24, get: (d) => d.owner_name ?? '' },
+  phone:      { header: 'טלפון',        kind: 'phone',  width: 16, get: (d) => formatPhoneDisplay(getPrimaryPhone(d)) ?? '' },
+  total:      { header: 'סה״כ חוב',     kind: 'number', width: 12, get: (d) => d.total_debt },
+  management: { header: 'דמי ניהול',    kind: 'number', width: 12, get: (d) => d.management_fees },
+  hotWater:   { header: 'מים חמים',     kind: 'number', width: 12, get: (d) => d.hot_water_debt },
+  status:     { header: 'מצב משפטי',    kind: 'text',   width: 16, get: (d) => d.legal_status_name ?? '—' },
+  // Excel only (08/10/2026): the months behind the two money columns, derived
+  // from the row's Bllink texts (lib/export/unpaid-months.ts). Text, never a
+  // number/date — "01-02/26" must survive Excel as it is.
+  monthsManagement: {
+    header: 'חודשים שלא שולמו — דמי ניהול', kind: 'text', width: 28,
+    get: (d) => unpaidMonthsByType(d).managementFees,
+  },
+  monthsHotWater: {
+    header: 'חודשים שלא שולמו — מים חמים', kind: 'text', width: 40,
+    get: (d) => unpaidMonthsByType(d).hotWater,
+  },
+} satisfies Record<string, ExportColumn>;
+
+/** PDF + print view: the section-6 table as it always was. */
 export const DEBTOR_EXPORT_COLUMNS: ExportColumn[] = [
-  { header: 'מס׳ דירה', kind: 'text', get: (d) => d.apartment_number },
-  { header: 'שם בעל הדירה', kind: 'text', get: (d) => d.owner_name ?? '' },
-  { header: 'טלפון', kind: 'phone', get: (d) => formatPhoneDisplay(getPrimaryPhone(d)) ?? '' },
-  { header: 'סה״כ חוב', kind: 'number', get: (d) => d.total_debt },
-  { header: 'דמי ניהול', kind: 'number', get: (d) => d.management_fees },
-  { header: 'מים חמים', kind: 'number', get: (d) => d.hot_water_debt },
-  { header: 'מצב משפטי', kind: 'text', get: (d) => d.legal_status_name ?? '—' },
+  COL.apartment, COL.owner, COL.phone, COL.total, COL.management, COL.hotWater, COL.status,
 ];
+
+/** Excel: the same columns, each money column followed by its unpaid months. */
+export const DEBTOR_EXCEL_COLUMNS: ExportColumn[] = [
+  COL.apartment, COL.owner, COL.phone, COL.total,
+  COL.management, COL.monthsManagement,
+  COL.hotWater, COL.monthsHotWater,
+  COL.status,
+];
+
+/** The two Excel-only columns: declared text ('@') so Excel never reads
+ *  "01-02/26" as a date, and a truly BLANK cell (not '') when there is nothing.
+ *  The pre-existing columns are written exactly as before. */
+const MONTHS_COLUMNS = new Set<ExportColumn>([COL.monthsManagement, COL.monthsHotWater]);
 
 const numFmt = new Intl.NumberFormat('he-IL', { maximumFractionDigits: 0 });
 
@@ -37,9 +71,10 @@ export function todayHe(): string {
 }
 
 // ── Excel (ExcelJS — replaced SheetJS/xlsx, closing its unpatched CVEs) ──────
-const EXPORT_COL_WIDTHS = [10, 24, 16, 12, 12, 12, 16];
 
-export async function exportDebtorsExcel(rows: Debtor[]): Promise<void> {
+/** The workbook bytes of the Excel export — pure (no DOM), so a test can build
+ *  the real file and read it back. */
+export async function buildDebtorsWorkbook(rows: Debtor[]): Promise<ExcelBuffer> {
   // Dynamic import keeps ExcelJS out of the main bundle (as the old xlsx import did).
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
@@ -47,20 +82,27 @@ export async function exportDebtorsExcel(rows: Debtor[]): Promise<void> {
   const ws = wb.addWorksheet('חייבים', { views: [{ rightToLeft: true }] });
   // Header row + column ORDER + widths preserved; number columns stay numeric so
   // Excel can SUM the money columns; phone/text stay strings.
-  ws.columns = DEBTOR_EXPORT_COLUMNS.map((c, i) => ({
+  ws.columns = DEBTOR_EXCEL_COLUMNS.map((c) => ({
     header: c.header,
-    width: EXPORT_COL_WIDTHS[i],
+    width: c.width,
+    ...(MONTHS_COLUMNS.has(c) ? { style: { numFmt: '@' } } : {}),
   }));
   for (const d of rows) {
     ws.addRow(
-      DEBTOR_EXPORT_COLUMNS.map((c) => {
+      DEBTOR_EXCEL_COLUMNS.map((c) => {
         const v = c.get(d);
-        return c.kind === 'number' ? Number(v) : String(v);
+        if (c.kind === 'number') return Number(v);
+        if (MONTHS_COLUMNS.has(c) && v === '') return null;
+        return String(v);
       }),
     );
   }
-  const buf = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buf as ArrayBuffer], {
+  return wb.xlsx.writeBuffer();
+}
+
+export async function exportDebtorsExcel(rows: Debtor[]): Promise<void> {
+  const buf = await buildDebtorsWorkbook(rows);
+  const blob = new Blob([buf], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
   const url = URL.createObjectURL(blob);
