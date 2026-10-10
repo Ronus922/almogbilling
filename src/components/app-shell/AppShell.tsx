@@ -21,7 +21,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header />
         <main className="flex-1 overflow-auto overscroll-contain bg-app">
-          <div className="safe-px mx-auto max-w-[1640px] p-[18px] pb-[max(18px,env(safe-area-inset-bottom))] md:p-6">
+          {/* Side padding = max(gutter, safe-area inset), the same pattern as the
+              bottom. NOT `.safe-px`: responsive.css is unlayered, so its
+              `padding-left/right: env(…)` outranked `p-[18px]`/`md:p-6` (both in
+              `@layer utilities`) and left every page with 0px sides from 13/08 to
+              10/10/2026. */}
+          <div className="mx-auto max-w-[1640px] p-[18px] pr-[max(18px,env(safe-area-inset-right))] pb-[max(18px,env(safe-area-inset-bottom))] pl-[max(18px,env(safe-area-inset-left))] md:p-6 md:pr-[max(1.5rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))]">
             {children}
           </div>
         </main>
