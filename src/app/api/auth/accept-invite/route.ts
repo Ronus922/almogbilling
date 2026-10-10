@@ -8,6 +8,7 @@ import { hashInviteToken } from '@/lib/auth/inviteTokens';
 import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { ACCEPT_INVITE_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
 import { MODULES, isMatrixRole, type ModulePermission, type Role } from '@/lib/permissions/constants';
+import { writeAudit } from '@/lib/db/audit';
 import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -19,6 +20,7 @@ interface InviteRow {
   email: string;
   full_name: string;
   role: Role;
+  invited_by: string | null;
   expires_at: Date;
   accepted_at: Date | null;
   custom_permissions: unknown;
@@ -88,10 +90,11 @@ export async function POST(req: Request) {
   const tokenHash = hashInviteToken(token);
 
   let userId: string;
+  let accepted: InviteRow;
   try {
-    userId = await withTransaction(async (client) => {
+    ({ userId, accepted } = await withTransaction(async (client) => {
       const { rows } = await client.query<InviteRow>(
-        `select id, email, full_name, role, expires_at, accepted_at, custom_permissions
+        `select id, email, full_name, role, invited_by, expires_at, accepted_at, custom_permissions
            from public.user_invites
            where token = $1
            for update`,
@@ -147,8 +150,8 @@ export async function POST(req: Request) {
         [invite.id],
       );
 
-      return newUserId;
-    });
+      return { userId: newUserId, accepted: invite };
+    }));
   } catch (err) {
     const msg = (err as Error).message;
     if (msg === 'invalid_or_expired_token') {
@@ -160,6 +163,21 @@ export async function POST(req: Request) {
     logger.error('[accept-invite] failed', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
+
+  // The user row and its role, in the same shape as a direct create
+  // (POST /api/users, method 'password'). The actor is whoever sent the
+  // invite — they chose the role; until 10/10/2026 this step wrote nothing,
+  // so the audit showed an invite but never the account it became.
+  await writeAudit({
+    actorUserId: accepted.invited_by,
+    action: 'created',
+    entityType: 'user',
+    entityId: userId,
+    metadata: {
+      email: accepted.email, full_name: accepted.full_name, role: accepted.role,
+      method: 'invite', invite_id: accepted.id,
+    },
+  });
 
   await createSession(userId, false);
   return NextResponse.json({ ok: true });
