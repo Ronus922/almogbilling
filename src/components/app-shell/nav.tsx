@@ -5,7 +5,7 @@ import {
   Building2, LayoutDashboard, LayoutGrid, Users, Truck, CheckSquare, AlertTriangle,
   Calendar, FileText, MessageCircle, MessagesSquare, Bell, Sliders,
   MapPin, UserCog, KeyRound, SquareParking, Settings as SettingsIcon, Coins, SlidersHorizontal,
-  ShieldCheck, PhoneOff, Gavel,
+  ShieldCheck, PhoneOff, Gavel, Megaphone, MessageSquareText, History,
   type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -25,6 +25,9 @@ export interface MenuItem {
   href?: string;
   icon: LucideIcon;
   module?: string;
+  /** The action the module check needs (default 'view') — e.g. "תפוצה חדשה"
+   *  is for whoever may SEND (whatsapp_chat:edit), like its page and route. */
+  action?: Action;
   /** Optional role gate; when present it overrides the module-based `can` check.
    *  Used for /overview, which is role-gated (any non-viewer) rather than tied
    *  to a permission module, and for the users screen (admin / super_admin by
@@ -66,7 +69,6 @@ const SECTIONS: MenuSection[] = [
       { label: 'תזכורות',            icon: Bell, href: '/user-reminders', module: 'user_reminders' },
       { label: 'יומן',               icon: Calendar, href: '/calendar', module: 'calendar' },
       { label: 'ניהול סטטוס חיובים', icon: Sliders, href: '/statuses', module: 'status_management' },
-      { label: 'תבניות ווטסאפ',      icon: MessageCircle, href: '/whatsapp-templates', module: 'whatsapp_templates' },
       { label: 'ניהול אזורים',       icon: MapPin, href: '/areas', module: 'rooms_areas' },
       { label: 'משתמשים',            icon: UserCog, href: '/settings/users', visible: canOpenUsersScreen },
       // Hidden from the nav 2026-06-18 — data import/export. Pages, routes, /import,
@@ -74,6 +76,21 @@ const SECTIONS: MenuSection[] = [
       // and re-add the Upload/Download imports. Routes still reachable by URL.
       // { label: 'ייבוא נתונים',       icon: Upload, href: '/import', module: 'import' },
       // { label: 'ייצוא נתונים',       icon: Download, module: 'export' },
+    ],
+  },
+  // Broadcasts ("תפוצה", 09/10/2026) — one category for both channels
+  // (WhatsApp / email): compose with a channel selector, the shared templates,
+  // one history. The existing permissions, unchanged: sending and the history
+  // are whatsapp_chat (edit / view) — the same gates as the pages and
+  // /api/whatsapp/campaigns — and the templates screen is whatsapp_templates
+  // (it moved here from the main list; the route did not change). The chat's
+  // own "תפוצות" window stays where it was.
+  {
+    title: 'תפוצה',
+    items: [
+      { label: 'תפוצה חדשה', icon: Megaphone, href: '/broadcasts/new', module: 'whatsapp_chat', action: 'edit' },
+      { label: 'תבניות',     icon: MessageSquareText, href: '/whatsapp-templates', module: 'whatsapp_templates' },
+      { label: 'היסטוריה',   icon: History, href: '/broadcasts/history', module: 'whatsapp_chat' },
     ],
   },
   // Finance transparency ("שקיפות כספית") — its own titled group. Both items
@@ -110,7 +127,7 @@ export function filterNav(
   can: (module: string, action: Action) => boolean,
 ): { sections: MenuSection[]; showSettings: boolean } {
   const isVisible = (it: MenuItem) =>
-    it.visible ? it.visible(role) : it.module ? can(it.module, 'view') : true;
+    it.visible ? it.visible(role) : it.module ? can(it.module, it.action ?? 'view') : true;
   const sections = SECTIONS
     .map((s) => ({ ...s, items: s.items.filter(isVisible) }))
     .filter((s) => s.items.length > 0);

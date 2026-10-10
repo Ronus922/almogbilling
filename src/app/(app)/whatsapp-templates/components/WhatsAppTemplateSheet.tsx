@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import {
   TEMPLATE_PLACEHOLDERS, APARTMENTS_BLOCK_OPEN, APARTMENTS_BLOCK_CLOSE, parseApartmentsBlock,
+  emailSubjectError,
 } from '@/lib/whatsapp-template';
 import type { WhatsAppTemplate } from '@/types/whatsapp';
 
@@ -46,25 +47,32 @@ function isCursorInsideApartmentsBlock(content: string, pos: number): boolean {
 interface FormState {
   name: string;
   content: string;
+  /** Optional email subject ('' = none). */
+  subject: string;
   is_active: boolean;
 }
 
-const EMPTY: FormState = { name: '', content: '', is_active: true };
+const EMPTY: FormState = { name: '', content: '', subject: '', is_active: true };
 
 function fromTemplate(t: WhatsAppTemplate): FormState {
-  return { name: t.name, content: t.content, is_active: t.is_active };
+  return { name: t.name, content: t.content, subject: t.subject ?? '', is_active: t.is_active };
 }
 
+// `showSubject` (the "תפוצה" category's templates screen) adds the optional
+// email subject. The chat's templates tab leaves it off — its form is the one
+// it always had, and a save from there never touches a template's subject.
 export function WhatsAppTemplateSheet({
   open,
   editing,
   onOpenChange,
   onSaved,
+  showSubject = false,
 }: {
   open: boolean;
   editing: WhatsAppTemplate | null;
   onOpenChange: (v: boolean) => void;
   onSaved: () => void | Promise<void>;
+  showSubject?: boolean;
 }) {
   const [values, setValues] = useState<FormState>(EMPTY);
   const [saving, setSaving] = useState(false);
@@ -85,8 +93,10 @@ export function WhatsAppTemplateSheet({
   const isDirty = useMemo(() => (
     values.name !== initial.name ||
     values.content !== initial.content ||
+    values.subject !== initial.subject ||
     values.is_active !== initial.is_active
   ), [values, initial]);
+  const subjectErr = showSubject ? emailSubjectError(values.subject.trim()) : null;
 
   const blockValidation = useMemo(() => parseApartmentsBlock(values.content), [values.content]);
   const hasBlock = blockValidation.ok && blockValidation.block !== null;
@@ -163,6 +173,10 @@ export function WhatsAppTemplateSheet({
       toast.error(block.error ?? 'שגיאה בקטע החוזר');
       return;
     }
+    if (subjectErr) {
+      toast.error(subjectErr);
+      return;
+    }
 
     setSaving(true);
     const url = editing ? `/api/whatsapp/templates/${editing.id}` : '/api/whatsapp/templates';
@@ -172,7 +186,10 @@ export function WhatsAppTemplateSheet({
         method,
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ name, content, is_active: values.is_active }),
+        body: JSON.stringify({
+          name, content, is_active: values.is_active,
+          ...(showSubject ? { subject: values.subject.trim() } : {}),
+        }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(data.error || `שמירה נכשלה (HTTP ${res.status})`);
@@ -205,7 +222,7 @@ export function WhatsAppTemplateSheet({
                   <SheetTitle className="text-xl font-bold text-white">
                     {editing ? 'עריכת תבנית' : 'תבנית חדשה'}
                   </SheetTitle>
-                  <p className="mt-0.5 text-sm text-white/70">תבנית הודעת WhatsApp</p>
+                  <p className="mt-0.5 text-sm text-white/70">{showSubject ? 'תבנית הודעה — וואטסאפ ומייל' : 'תבנית הודעת WhatsApp'}</p>
                 </div>
               </div>
               <button
@@ -238,6 +255,30 @@ export function WhatsAppTemplateSheet({
                       disabled={saving}
                     />
                   </div>
+
+                  {showSubject && (
+                    <div className="space-y-2">
+                      <Label htmlFor="tpl-subject" className="text-[13.5px] font-bold text-ink-2">
+                        נושא למייל <span className="font-normal text-ink-3">(אופציונלי)</span>
+                      </Label>
+                      <Input
+                        id="tpl-subject"
+                        value={values.subject}
+                        onChange={(e) => set('subject', e.target.value)}
+                        placeholder="לדוגמה: תזכורת תשלום — {{name}}"
+                        className={cn(
+                          'h-10 border-[1.5px] bg-white text-sm placeholder:text-ink-ghost focus-visible:ring-4 focus-visible:ring-[rgba(61,90,254,0.12)]',
+                          subjectErr ? 'border-red-400 bg-red-50' : 'border-line focus-visible:border-brand',
+                        )}
+                        disabled={saving}
+                      />
+                      {subjectErr ? (
+                        <p className="text-[12px] font-semibold text-red-600">{subjectErr}</p>
+                      ) : (
+                        <p className="text-[11.5px] text-ink-3">משמש רק כשהתבנית נבחרת לתפוצת מייל. אפשר להשתמש במשתנים, כמו {'{{name}}'}.</p>
+                      )}
+                    </div>
+                  )}
 
                   <div className="space-y-2">
                     <Label htmlFor="tpl-content" className="text-[13.5px] font-bold text-ink-2">

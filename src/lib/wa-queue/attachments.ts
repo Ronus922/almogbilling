@@ -132,14 +132,17 @@ export async function listCampaignAttachments(q: Q, campaignId: string): Promise
   return r.rows;
 }
 
-/** Attachments of RUNNING campaigns whose shared Green API link is missing or
- *  about to expire, and that have not exhausted their upload attempts. */
+/** Attachments of RUNNING WhatsApp campaigns whose shared Green API link is
+ *  missing or about to expire, and that have not exhausted their upload
+ *  attempts. An email broadcast's files never go to Green API — the worker
+ *  reads their bytes and attaches them to each email (wa-queue/email.ts). */
 export async function listAttachmentsNeedingUpload(q: Q): Promise<CampaignAttachment[]> {
   const r = await q.query<CampaignAttachment>(
     `select ${COLS.split(',').map((c) => `a.${c.trim()}`).join(', ')}
        from public.wa_campaign_attachments a
        join public.wa_campaigns c on c.id = a.campaign_id
       where c.status = 'running'
+        and c.channel = 'whatsapp'
         and a.green_api_upload_attempts < $1
         and (a.green_api_url is null
              or a.green_api_url_expires_at is null

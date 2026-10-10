@@ -1,7 +1,10 @@
 import 'server-only';
 import { getTransporter } from './transporter';
 import { notifyAdminsOfSmtpAuthFailure } from './authAlert';
+import { isAuthFailure, isTransientSmtpError } from './smtp-core';
 import { logger } from '@/lib/logger';
+
+export { isAuthFailure };
 
 interface SendArgs {
   to: string;
@@ -13,41 +16,6 @@ interface SendArgs {
 export interface SendResult {
   messageId: string;
   attempts: number;
-}
-
-const TRANSIENT_CODES = new Set([
-  'ETIMEDOUT',
-  'ECONNRESET',
-  'ECONNREFUSED',
-  'ESOCKET',
-  'EDNS',
-  'EHOSTUNREACH',
-]);
-
-interface SmtpError {
-  code?: string;
-  responseCode?: number;
-}
-
-function asSmtpError(err: unknown): SmtpError | null {
-  return err && typeof err === 'object' ? (err as SmtpError) : null;
-}
-
-/** Credentials rejected: nodemailer's EAUTH, or the SMTP 534/535 auth replies. */
-export function isAuthFailure(err: unknown): boolean {
-  const e = asSmtpError(err);
-  if (!e) return false;
-  if (e.code === 'EAUTH') return true;
-  return e.responseCode === 534 || e.responseCode === 535;
-}
-
-function isTransient(err: unknown): boolean {
-  const e = asSmtpError(err);
-  if (!e) return false;
-  if (e.code && TRANSIENT_CODES.has(e.code)) return true;
-  // SMTP 4xx → transient (greylisting, temp throttle); 5xx → permanent.
-  if (typeof e.responseCode === 'number' && e.responseCode >= 400 && e.responseCode < 500) return true;
-  return false;
 }
 
 /**
@@ -75,7 +43,7 @@ export async function sendWithRetry(args: SendArgs): Promise<SendResult> {
         await notifyAdminsOfSmtpAuthFailure();
         throw err;
       }
-      if (attempt > 2 || !isTransient(err)) throw err;
+      if (attempt > 2 || !isTransientSmtpError(err)) throw err;
       await new Promise((r) => setTimeout(r, delays[attempt - 1]));
     }
   }

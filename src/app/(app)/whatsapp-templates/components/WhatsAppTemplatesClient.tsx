@@ -86,9 +86,9 @@ export function WhatsAppTemplatesClient() {
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
-          <h1 className="text-2xl font-extrabold text-slate-900">תבניות WhatsApp</h1>
+          <h1 className="text-2xl font-extrabold text-slate-900">תבניות</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            הודעות מוכנות מראש עם משתנים אישיים לשליחה מהירה לחייבים.
+            הודעות מוכנות מראש עם משתנים אישיים — לתפוצות בוואטסאפ ובמייל ולשליחה מהירה לחייבים.
           </p>
         </div>
         <Button
@@ -154,6 +154,7 @@ export function WhatsAppTemplatesClient() {
                     {t.is_active ? 'פעיל' : 'מושבת'}
                   </span>
                 </div>
+                {t.subject && <p className="mt-1.5 truncate text-[12.5px] font-semibold text-slate-700">נושא: {t.subject}</p>}
                 <p className="mt-1.5 line-clamp-3 text-[12.5px] text-slate-600">{t.content}</p>
                 <div className="mt-2 flex items-center justify-end gap-1 border-t border-slate-100 pt-2">
                   <Button type="button" variant="ghost" size="icon" onClick={() => openEdit(t)} aria-label="עריכה">
@@ -190,8 +191,9 @@ export function WhatsAppTemplatesClient() {
                   className={cn('border-b border-slate-100 hover:bg-slate-50 h-12', !t.is_active && 'opacity-60')}
                 >
                   <TableCell className="px-4 py-3 text-start text-sm font-bold text-slate-900">{t.name}</TableCell>
-                  <TableCell className="px-4 py-3 text-start text-sm text-slate-600 max-w-md truncate">
-                    {t.content}
+                  <TableCell className="px-4 py-3 text-start text-sm text-slate-600 max-w-md">
+                    {t.subject && <div className="truncate font-semibold text-slate-700">נושא: {t.subject}</div>}
+                    <div className="truncate">{t.content}</div>
                   </TableCell>
                   <TableCell className="px-4 py-3 text-center">
                     <span className={cn(
@@ -239,6 +241,7 @@ export function WhatsAppTemplatesClient() {
       <WhatsAppTemplateSheet
         open={formOpen}
         editing={editing}
+        showSubject
         onOpenChange={setFormOpen}
         onSaved={async () => { await refetch(); setFormOpen(false); }}
       />

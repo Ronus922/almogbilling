@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Megaphone, Send, Loader2, Home, UserCheck, Truck, ArrowRight, Eye, CheckCircle2, OctagonX,
+  MessageCircle, Mail, ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -16,18 +17,22 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { TEMPLATE_PLACEHOLDERS } from '@/lib/whatsapp-template';
+import { TEMPLATE_PLACEHOLDERS, emailSubjectError } from '@/lib/whatsapp-template';
 import { isValidMinDebtAmount, MIN_DEBT_AMOUNT_ERROR } from '@/lib/whatsapp-audience-filter';
-import type { Campaign } from '@/lib/wa-queue/types';
-import type { BroadcastDebtFilter, WhatsAppTemplate as Tpl } from '@/types/whatsapp';
-import { CampaignStatusBadge } from '../_components/StatusBadge';
-import { StopBroadcastDialog } from '../_components/StopBroadcastDialog';
+import {
+  EMAIL_ATTACHMENTS_MAX_TOTAL_BYTES, WHATSAPP_ATTACHMENT_LIMITS, validateBroadcastAttachmentSet,
+} from '@/lib/constants/whatsappAttachments';
+import type { BroadcastChannel, Campaign } from '@/lib/wa-queue/types';
+import type { BroadcastDebtFilter, MissingEmailEntry, WhatsAppTemplate as Tpl } from '@/types/whatsapp';
+import { CampaignStatusBadge } from '@/app/(app)/broadcasts/_components/StatusBadge';
+import { StopBroadcastDialog } from '@/app/(app)/broadcasts/_components/StopBroadcastDialog';
 import {
   AttachmentPicker, readyAttachmentIds, isUploading, type StagedAttachment,
+  EMAIL_BROADCAST_ATTACHMENT_POLICY, WHATSAPP_ATTACHMENT_POLICY,
 } from '@/components/whatsapp/AttachmentPicker';
-import { useStopBroadcast } from '../_lib/useStopBroadcast';
-import { usePoll } from '../_lib/usePoll';
-import { isTerminal, isCancellable, progressPct, processed } from '../_lib/status';
+import { useStopBroadcast } from '@/app/(app)/broadcasts/_lib/useStopBroadcast';
+import { usePoll } from '@/app/(app)/broadcasts/_lib/usePoll';
+import { isTerminal, isCancellable, progressPct, processed } from '@/app/(app)/broadcasts/_lib/status';
 
 const FREE_TEXT = '__free__';
 type Role = 'owners' | 'tenants' | 'suppliers';
@@ -37,6 +42,27 @@ const ROLES: { value: Role; label: string; icon: typeof Home }[] = [
   { value: 'suppliers', label: 'ספקים', icon: Truck },
 ];
 const DEFAULT_ROLES: Role[] = ['owners', 'tenants'];
+
+// The channel is a property of the broadcast (09/10/2026): everything below it
+// — audience, template, message, files, send — is the same form for both.
+const CHANNELS: { value: BroadcastChannel; label: string; icon: typeof Home }[] = [
+  { value: 'whatsapp', label: 'וואטסאפ', icon: MessageCircle },
+  { value: 'email', label: 'מייל', icon: Mail },
+];
+
+const MISSING_ROLE_LABEL: Record<MissingEmailEntry['role'], string> = {
+  owner: 'בעלים',
+  tenant: 'שוכר',
+  supplier: 'ספק',
+};
+
+/** One line of the "ללא אימייל" list — where to go and fill the address in. */
+function missingLine(m: MissingEmailEntry): string {
+  const who = m.name ?? 'ללא שם';
+  return m.apartment_number
+    ? `דירה ${m.apartment_number} · ${MISSING_ROLE_LABEL[m.role]} · ${who}`
+    : `${MISSING_ROLE_LABEL[m.role]} · ${who}`;
+}
 
 // "רק מי שחייב" applies to owners/tenants only — hidden entirely once the
 // selection has neither (e.g. "ספקים" alone), since it would filter nothing.
@@ -77,19 +103,29 @@ function newToken(): string {
   return (globalThis.crypto?.randomUUID?.() ?? `t-${Date.now()}-${Math.round(Math.random() * 1e9)}`);
 }
 
-// Rendered both as the /new route page AND embedded inside the broadcast window
-// (Sheet) opened from the Messages screen. `embedded` drops the page header (the
-// window supplies its own); `onOpenDetail`/`onCancel` replace the route <Link>s
-// with in-window navigation so the user never leaves the broadcast window.
+// Rendered both as the /broadcasts/new page (the "תפוצה" category) AND embedded
+// inside the broadcast window (Sheet) opened from the Messages screen.
+// `embedded` drops the page header (the window supplies its own);
+// `onOpenDetail`/`onCancel` replace the route <Link>s with in-window navigation
+// so the user never leaves the broadcast window. `channelLock` fixes the
+// channel and hides the selector — the chat's window stays WhatsApp-only,
+// exactly as it was before the email channel existed.
 export function BroadcastComposeClient({
   embedded = false,
   onOpenDetail,
   onCancel,
+  channelLock,
 }: {
   embedded?: boolean;
   onOpenDetail?: (id: string) => void;
   onCancel?: () => void;
+  channelLock?: BroadcastChannel;
 } = {}) {
+  const [channel, setChannel] = useState<BroadcastChannel>(channelLock ?? 'whatsapp');
+  const isEmail = channel === 'email';
+  const [subject, setSubject] = useState('');
+  const [missing, setMissing] = useState<MissingEmailEntry[]>([]);
+  const [showMissing, setShowMissing] = useState(false);
   const [name, setName] = useState('');
   const [roles, setRoles] = useState<Role[]>(DEFAULT_ROLES);
   const [onlyWithDebt, setOnlyWithDebt] = useState(false);
@@ -106,6 +142,17 @@ export function BroadcastComposeClient({
   const minDebtAmountErr = minDebtAmountError(onlyWithDebt, minDebtAmount);
   const tokenRef = useRef(newToken());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const subjectRef = useRef<HTMLInputElement | null>(null);
+  // Where the variable chips insert: the subject when it was the last field
+  // the operator was in (email only), otherwise the message.
+  const insertTarget = useRef<'subject' | 'body'>('body');
+  const subjectErr = isEmail ? emailSubjectError(subject.trim()) : null;
+  // One email carries every file: on the email channel their total is 25MB.
+  const attachmentsTotalErr = isEmail
+    ? validateBroadcastAttachmentSet(
+      attachments.filter((a) => a.status !== 'error'), [], WHATSAPP_ATTACHMENT_LIMITS.maxFiles, EMAIL_ATTACHMENTS_MAX_TOTAL_BYTES,
+    )
+    : null;
   // Staged uploads that never became part of a broadcast are removed when the
   // compose form goes away (window closed) — best-effort, keepalive so it
   // survives the unmount. Launched ones are already linked (DELETE → 404, harmless).
@@ -140,6 +187,7 @@ export function BroadcastComposeClient({
     let cancelled = false;
     setCount(null);
     setAudienceError(null);
+    setMissing([]);
     if (roles.length === 0) return;
     // An invalid "מעל ₪" already shows its own inline error below the field —
     // no need to round-trip to the server just to get told the same thing.
@@ -152,17 +200,20 @@ export function BroadcastComposeClient({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ type: 'selection', roles, body: content, debt_filter: debtFilter }),
+            body: JSON.stringify({
+              type: 'selection', roles, body: content, debt_filter: debtFilter,
+              ...(channel === 'email' ? { channel, subject } : {}),
+            }),
           });
-          const d = (await r.json().catch(() => ({}))) as { count?: number; partial_count?: number; error?: string };
+          const d = (await r.json().catch(() => ({}))) as { count?: number; partial_count?: number; missing?: MissingEmailEntry[]; error?: string };
           if (cancelled) return;
           if (!r.ok || d.error) { setCount(null); setPartialCount(0); setAudienceError(d.error ?? 'שגיאה בחישוב נמענים'); return; }
-          setCount(d.count ?? 0); setPartialCount(d.partial_count ?? 0);
+          setCount(d.count ?? 0); setPartialCount(d.partial_count ?? 0); setMissing(d.missing ?? []);
         } catch { if (!cancelled) { setCount(null); setPartialCount(0); } }
       })();
     }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [roles, content, onlyWithDebt, minDebtAmount, minDebtAmountErr]);
+  }, [roles, content, onlyWithDebt, minDebtAmount, minDebtAmountErr, channel, subject]);
 
   function toggleRole(role: Role) {
     setRoles((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
@@ -173,10 +224,22 @@ export function BroadcastComposeClient({
     setTemplateId(next);
     if (next === FREE_TEXT) return;
     const tpl = templates.find((t) => t.id === next);
-    if (tpl) setContent(tpl.content);
+    if (tpl) {
+      setContent(tpl.content);
+      // The template's own subject fills the email subject when it has one.
+      if (tpl.subject) setSubject(tpl.subject);
+    }
   }
 
   function insertPlaceholder(token: string) {
+    if (isEmail && insertTarget.current === 'subject') {
+      const input = subjectRef.current;
+      const start = input?.selectionStart ?? subject.length;
+      const end = input?.selectionEnd ?? subject.length;
+      setSubject(subject.slice(0, start) + token + subject.slice(end));
+      requestAnimationFrame(() => { input?.focus(); const pos = start + token.length; input?.setSelectionRange(pos, pos); });
+      return;
+    }
     const el = textareaRef.current;
     if (!el) { setContent((c) => c + token); return; }
     const start = el.selectionStart ?? content.length;
@@ -187,7 +250,8 @@ export function BroadcastComposeClient({
 
   const uploading = isUploading(attachments);
   const canSend = name.trim().length > 0 && content.trim().length > 0 && roles.length > 0
-    && !sending && !uploading && !audienceError && !minDebtAmountErr && (count ?? 0) > 0;
+    && !sending && !uploading && !audienceError && !minDebtAmountErr && (count ?? 0) > 0
+    && (!isEmail || (subject.trim().length > 0 && !subjectErr && !attachmentsTotalErr));
 
   async function handleSend() {
     if (!canSend) return;
@@ -205,6 +269,7 @@ export function BroadcastComposeClient({
           audience: { type: 'selection', roles, ...(debtFilter ? { debt_filter: debtFilter } : {}) },
           client_token: tokenRef.current,
           attachment_ids: readyAttachmentIds(attachments),
+          ...(isEmail ? { channel, subject: subject.trim() } : {}),
         }),
       });
       const data = (await r.json().catch(() => ({}))) as Campaign & { error?: string; partial_detail_count?: number };
@@ -224,6 +289,7 @@ export function BroadcastComposeClient({
   function reset() {
     setLaunched(null);
     setName(''); setContent(''); setTemplateId(FREE_TEXT); setRoles(DEFAULT_ROLES); setAttachments([]);
+    setSubject(''); setShowMissing(false);
     setAudienceError(null);
     setOnlyWithDebt(false); setMinDebtAmount('');
     tokenRef.current = newToken();
@@ -237,7 +303,7 @@ export function BroadcastComposeClient({
       {/* Header — the window supplies its own, so hide it when embedded. */}
       {!embedded && (
         <div className="flex items-center gap-3">
-          <Button type="button" variant="ghost" size="icon" render={<Link href="/whatsapp/broadcasts" />} aria-label="חזרה להיסטוריה">
+          <Button type="button" variant="ghost" size="icon" render={<Link href="/broadcasts/history" />} aria-label="חזרה להיסטוריה">
             <ArrowRight className="h-5 w-5" />
           </Button>
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-600">
@@ -245,12 +311,32 @@ export function BroadcastComposeClient({
           </span>
           <div>
             <h1 className="text-2xl font-extrabold text-slate-900">תפוצה חדשה</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">שליחת הודעה לקבוצת נמענים דרך WhatsApp.</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">שליחת הודעה לקבוצת נמענים — ב-WhatsApp או במייל.</p>
           </div>
         </div>
       )}
 
       <div className="space-y-5 rounded-xl border border-slate-200 bg-white p-5">
+        {/* Channel — hidden where it is fixed (the chat's WhatsApp window). */}
+        {!channelLock && (
+          <div className="space-y-1.5">
+            <Label id="bc-channel-label" className="text-base font-medium text-muted-foreground">ערוץ</Label>
+            <div role="radiogroup" aria-labelledby="bc-channel-label" className="flex flex-wrap gap-2">
+              {CHANNELS.map((c) => {
+                const active = channel === c.value;
+                return (
+                  <button key={c.value} type="button" role="radio" aria-checked={active} disabled={sending}
+                    onClick={() => setChannel(c.value)}
+                    className={cn('inline-flex h-11 items-center gap-2 rounded-full border px-5 text-sm font-semibold transition-colors',
+                      active ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}>
+                    <c.icon className="h-4 w-4" /> {c.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Name */}
         <div className="space-y-1.5">
           <Label htmlFor="bc-name" className="text-base font-medium text-muted-foreground">שם התפוצה<span className="text-red-500">*</span></Label>
@@ -304,7 +390,37 @@ export function BroadcastComposeClient({
             <p className="text-xs font-medium text-red-600">בחרו לפחות קהל יעד אחד.</p>
           ) : audienceError ? (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700">{audienceError}</p>
-          ) : minDebtAmountErr ? null : (
+          ) : minDebtAmountErr ? null : isEmail ? (
+            <>
+              <p className="text-xs text-slate-500">
+                {count === null ? 'מחשב נמענים…' : (
+                  <>
+                    נמענים עם אימייל: <span className="font-bold text-slate-700 tabular-nums">{count}</span>
+                    {' · '}ללא אימייל: <span className="font-bold text-amber-700 tabular-nums">{missing.length}</span>
+                  </>
+                )}
+              </p>
+              {count !== null && missing.length > 0 && (
+                <div className="space-y-1.5">
+                  <button type="button" onClick={() => setShowMissing((v) => !v)} aria-expanded={showMissing}
+                    className="inline-flex min-h-11 items-center gap-1.5 text-xs font-semibold text-amber-700 hover:text-amber-800">
+                    <ChevronDown className={cn('h-4 w-4 transition-transform', showMissing && 'rotate-180')} />
+                    {showMissing ? 'הסתר' : 'הצג'} את מי שאין לו אימייל ({missing.length}) — לא יקבלו את התפוצה
+                  </button>
+                  {showMissing && (
+                    <ul aria-label="נמענים ללא אימייל" className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-xs text-amber-900">
+                      {missing.map((m, i) => <li key={i}>{missingLine(m)}</li>)}
+                    </ul>
+                  )}
+                </div>
+              )}
+              {count !== null && partialCount > 0 && (
+                <p className="text-xs font-medium text-amber-700">
+                  {partialCount} {partialCount === 1 ? 'נמען יקבל' : 'נמענים יקבלו'} פירוט חלקי — רשימת הדירות ארוכה מדי להצגה מלאה.
+                </p>
+              )}
+            </>
+          ) : (
             <>
               <p className="text-xs text-slate-500">
                 {count === null ? 'מחשב נמענים…' : <>נמענים עם טלפון תקין: <span className="font-bold text-slate-700 tabular-nums">{count}</span></>}
@@ -334,6 +450,18 @@ export function BroadcastComposeClient({
           </Select>
         </div>
 
+        {/* Email subject — email only; placeholders resolve per recipient. */}
+        {isEmail && (
+          <div className="space-y-1.5">
+            <Label htmlFor="bc-subject" className="text-base font-medium text-muted-foreground">נושא המייל<span className="text-red-500">*</span></Label>
+            <Input id="bc-subject" ref={subjectRef} value={subject} onChange={(e) => setSubject(e.target.value)}
+              onFocus={() => { insertTarget.current = 'subject'; }}
+              placeholder="לדוגמה: עדכון חשוב לדיירי הבניין" disabled={sending}
+              className={cn('h-10', subjectErr && 'border-red-400 bg-red-50 focus-visible:ring-red-200')} />
+            {subjectErr && <p className="text-[12px] font-semibold text-red-500">⚠️ {subjectErr}</p>}
+          </div>
+        )}
+
         {/* Message + variables */}
         <div className="space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -348,12 +476,18 @@ export function BroadcastComposeClient({
             </div>
           </div>
           <Textarea id="bc-content" ref={textareaRef} value={content} onChange={(e) => setContent(e.target.value)}
+            onFocus={() => { insertTarget.current = 'body'; }}
             placeholder="שלום {{name}}, נותר חוב של {{debt}} בדירה {{apartment}}..." rows={18} className="min-h-48 resize-none" disabled={sending} dir="rtl" />
           <p className="text-xs text-muted-foreground">המשתנים יוחלפו אוטומטית לכל נמען. תוכן ההודעה נשמר כפי שהוא ברגע השליחה.</p>
         </div>
 
-        {/* Attachments — uploaded on pick, linked to the broadcast at send. */}
-        <AttachmentPicker items={attachments} onChange={setAttachments} disabled={sending} />
+        {/* Attachments — uploaded on pick, linked to the broadcast at send. On
+            the email channel they ride in every email, so their total is 25MB. */}
+        <div className="space-y-1.5">
+          <AttachmentPicker items={attachments} onChange={setAttachments} disabled={sending}
+            policy={isEmail ? EMAIL_BROADCAST_ATTACHMENT_POLICY : WHATSAPP_ATTACHMENT_POLICY} />
+          {attachmentsTotalErr && <p className="text-[12px] font-semibold text-red-500">⚠️ {attachmentsTotalErr} — הסירו קבצים כדי לשלוח במייל</p>}
+        </div>
       </div>
 
       {/* Footer actions */}
@@ -361,7 +495,7 @@ export function BroadcastComposeClient({
         {onCancel ? (
           <Button type="button" variant="outline" onClick={onCancel}>ביטול</Button>
         ) : (
-          <Button type="button" variant="outline" render={<Link href="/whatsapp/broadcasts" />}>ביטול</Button>
+          <Button type="button" variant="outline" render={<Link href="/broadcasts/history" />}>ביטול</Button>
         )}
         <Button type="button" onClick={handleSend} disabled={!canSend} variant="approve" className="gap-2">
           {sending || uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -434,7 +568,7 @@ function LaunchedStatus({ initial, onReset, onOpenDetail }: { initial: Campaign;
             <Eye className="h-4 w-4" /> צפייה בלוג
           </Button>
         ) : (
-          <Button type="button" variant="outline" render={<Link href={`/whatsapp/broadcasts/${c.id}`} />} className="gap-2">
+          <Button type="button" variant="outline" render={<Link href={`/broadcasts/history/${c.id}`} />} className="gap-2">
             <Eye className="h-4 w-4" /> צפייה בפרטים
           </Button>
         )}

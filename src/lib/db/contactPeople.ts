@@ -76,7 +76,10 @@ export interface ContactExtraRecipient {
   debtor_id: string | null;
   role: ContactPersonRole;
   name: string | null;
-  phone: string;
+  /** Raw stored phone — always non-empty under `require: 'phone'` (WhatsApp). */
+  phone: string | null;
+  /** Raw stored email — the email channel's address (validated by the caller). */
+  email: string | null;
 }
 
 const RECIPIENT_SELECT = `
@@ -109,20 +112,30 @@ export async function listExtraRecipientsForDebtors(
 }
 
 const CONTACT_RECIPIENT_SELECT = `
-  select c.id as contact_id, d.id as debtor_id, p.role, p.name, p.phone
+  select c.id as contact_id, d.id as debtor_id, p.role, p.name, p.phone, p.email
   from public.contact_people p
   join public.contacts c on c.id = p.contact_id
   left join public.debtors d on d.contact_id = c.id and d.is_archived = false`;
 
+/** Every "מקבל הודעות" extra person of the roles, phone or not — the email
+ *  channel judges the address itself and lists who has none. */
+const CONTACT_PERSON_FILTER = `
+  p.is_primary_contact = true
+  and p.role = any($1::text[])`;
+
 /** Extra recipients across every apartment — active debtor or none. Mirrors
  *  whatsapp-broadcast.ts's CONTACT_FROM: contacts is the base, debt status
- *  never gates inclusion, only the "מקבל הודעות" flag does (RECIPIENT_FILTER). */
+ *  never gates inclusion, only the "מקבל הודעות" flag does (RECIPIENT_FILTER).
+ *  `require: 'phone'` (WhatsApp, the default) keeps only people with a phone;
+ *  `'any'` (the email channel) returns every opted-in person. */
 export async function listExtraRecipientsForAllContacts(
   roles: ContactPersonRole[],
+  require: 'phone' | 'any' = 'phone',
 ): Promise<ContactExtraRecipient[]> {
   if (roles.length === 0) return [];
+  const filter = require === 'phone' ? RECIPIENT_FILTER : CONTACT_PERSON_FILTER;
   const r = await query<ContactExtraRecipient>(
-    `${CONTACT_RECIPIENT_SELECT} where ${RECIPIENT_FILTER}${RECIPIENT_ORDER}`,
+    `${CONTACT_RECIPIENT_SELECT} where ${filter}${RECIPIENT_ORDER}`,
     [roles],
   );
   return r.rows;

@@ -98,14 +98,7 @@ export async function processRecipient(
   // short delay so another tick (or worker) picks it up when capacity frees. One
   // recipient = one unit of the window, however many files ride along.
   if (steps.length > 0 && !(await underRateLimit(pool, bucket, perMin))) {
-    await pool.query(
-      `update public.wa_campaign_recipients
-          set status='pending', worker_id=null, lease_expires_at=null,
-              processing_started_at=null, attempt_count = attempt_count - 1,
-              next_attempt_at = now() + interval '2 seconds'
-        where id=$1`,
-      [item.id],
-    );
+    await releasePaced(pool, item.id);
     return { ...base, outcome: 'paced' };
   }
 
@@ -162,6 +155,20 @@ export async function processRecipient(
   return { ...base, outcome: 'sent' };
 }
 
+/** The rate window is full: hand the lease back and re-queue the item a moment
+ *  later, without counting the attempt — another tick (or worker) picks it up
+ *  when capacity frees. Shared with the email channel. */
+export async function releasePaced(pool: Pool, recipientId: string): Promise<void> {
+  await pool.query(
+    `update public.wa_campaign_recipients
+        set status='pending', worker_id=null, lease_expires_at=null,
+            processing_started_at=null, attempt_count = attempt_count - 1,
+            next_attempt_at = now() + interval '2 seconds'
+      where id=$1`,
+    [recipientId],
+  );
+}
+
 /** One file to one recipient: the shared Green API link when it is usable
  *  (uploadFile once per campaign → sendFileByUrl), else the per-recipient
  *  upload fallback (sendFileByUpload) when the bytes can be read. */
@@ -200,8 +207,9 @@ async function sendAttachment(
   });
 }
 
-/** Retry (backoff) or fail the item, recording WHICH part failed. */
-async function persistFailure(
+/** Retry (backoff) or fail the item, recording WHICH part failed. Shared with
+ *  the email channel (wa-queue/email.ts) — one retry policy for both. */
+export async function persistFailure(
   pool: Pool, item: Recipient, cls: Classified, fileLabel: string | null, backoffBaseSec: number,
 ): Promise<'retry' | 'failed'> {
   const message = (fileLabel ? `קובץ «${fileLabel}»: ${cls.message}` : cls.message).slice(0, 500);

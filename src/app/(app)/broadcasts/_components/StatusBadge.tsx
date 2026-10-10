@@ -1,6 +1,7 @@
+import { Mail, MessageCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { CampaignStatus, RecipientStatus } from '@/lib/wa-queue/types';
-import { STATUS_META, RECIPIENT_STATUS_META } from '../_lib/status';
+import type { BroadcastChannel, CampaignStatus, RecipientStatus } from '@/lib/wa-queue/types';
+import { STATUS_META, RECIPIENT_STATUS_META, CHANNEL_META } from '../_lib/status';
 
 // Consistent status pill for the history table, details header and delivery log —
 // one badge component, driven by the shared STATUS_META so labels/tones never drift.
@@ -19,6 +20,18 @@ export function RecipientStatusBadge({ status, className }: { status: RecipientS
   return (
     <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold', m.cls, className)}>
       <span className={cn('h-1.5 w-1.5 rounded-full', m.dot)} />
+      {m.label}
+    </span>
+  );
+}
+
+/** The broadcast's channel — the history's "ערוץ" column and the details header. */
+export function ChannelBadge({ channel, className }: { channel: BroadcastChannel; className?: string }) {
+  const m = CHANNEL_META[channel];
+  const Icon = channel === 'email' ? Mail : MessageCircle;
+  return (
+    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold', m.cls, className)}>
+      <Icon className="h-3.5 w-3.5" />
       {m.label}
     </span>
   );

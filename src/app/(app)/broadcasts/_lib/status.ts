@@ -3,7 +3,7 @@
 // of truth for Hebrew labels, badge tones, cancellability and progress maths used
 // across the history table, the details view and the stop dialog.
 
-import type { CampaignStatus, RecipientStatus } from '@/lib/wa-queue/types';
+import type { BroadcastChannel, CampaignStatus, RecipientStatus } from '@/lib/wa-queue/types';
 
 export interface StatusMeta {
   label: string;
@@ -35,6 +35,13 @@ export const RECIPIENT_STATUS_META: Record<RecipientStatus, StatusMeta> = {
   failed:     { label: 'נכשל',    cls: 'bg-red-50 text-red-700',        dot: 'bg-red-500' },
   skipped:    { label: 'דולג',    cls: 'bg-slate-100 text-slate-600',   dot: 'bg-slate-400' },
   cancelled:  { label: 'בוטל',    cls: 'bg-red-50 text-red-700',        dot: 'bg-red-500' },
+};
+
+/** The two delivery channels of a broadcast (09/10/2026) — one label + tone
+ *  each, for the history column/filter and the details header. */
+export const CHANNEL_META: Record<BroadcastChannel, StatusMeta> = {
+  whatsapp: { label: 'וואטסאפ', cls: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
+  email:    { label: 'מייל',    cls: 'bg-blue-50 text-blue-700',       dot: 'bg-blue-500' },
 };
 
 const TERMINAL: readonly CampaignStatus[] = ['completed', 'completed_with_errors', 'cancelled', 'failed'];

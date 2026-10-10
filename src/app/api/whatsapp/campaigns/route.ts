@@ -12,14 +12,23 @@ import {
 import {
   interpolateTemplate, interpolateBroadcastTemplate, isDebtMessageTemplate,
   templateUsesApartmentOutsideBlock, resolveConsolidatedName, sortByApartmentNumberAscending,
+  emailSubjectError, recipientDisplayName,
 } from '@/lib/whatsapp-template';
+import { buildEmailCampaignRecipients, isEmailDebtMessage } from '@/lib/email-broadcast';
 import { createCampaign, listCampaigns, startCampaign, CampaignConflictError } from '@/lib/wa-queue/campaigns';
 import { listStagedAttachments } from '@/lib/wa-queue/attachments';
+import { readEmailRatePerMin } from '@/lib/wa-queue/email';
 import { campaignAttachmentIdsSchema } from '@/lib/validation/requests';
-import { validateBroadcastAttachmentSet } from '@/lib/constants/whatsappAttachments';
+import {
+  validateBroadcastAttachmentSet, EMAIL_ATTACHMENTS_MAX_TOTAL_BYTES, WHATSAPP_ATTACHMENT_LIMITS,
+} from '@/lib/constants/whatsappAttachments';
 import { withAttachmentUrls } from './_lib/attachmentUrls';
 import type { BroadcastAudience, BroadcastAudienceType, BroadcastRoleSelection } from '@/types/whatsapp';
-import type { RecipientInput, CampaignStatus, CampaignListFilters, CampaignListPageView } from '@/lib/wa-queue/types';
+import type {
+  BroadcastChannel, RecipientInput, CampaignStatus, CampaignListFilters, CampaignListPageView,
+} from '@/lib/wa-queue/types';
+
+const CHANNELS: readonly BroadcastChannel[] = ['whatsapp', 'email'];
 
 const ROLE_SELECTIONS: readonly BroadcastRoleSelection[] = ['owners', 'tenants', 'suppliers'];
 
@@ -32,15 +41,19 @@ const CAMPAIGN_STATUSES: readonly CampaignStatus[] = [
 ];
 
 // GET /api/whatsapp/campaigns — history page: newest-first, filterable by status /
-// name search / date range, paginated (whatsapp_chat:view). Returns { rows, total }.
+// channel / name search / date range, paginated (whatsapp_chat:view). Returns
+// { rows, total }. Both channels share the one history (09/10/2026).
 export async function GET(req: NextRequest) {
   try { await requirePermission('whatsapp_chat', 'view'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const sp = req.nextUrl.searchParams;
   const statusParam = sp.get('status');
+  const channelParam = sp.get('channel');
   const filters: CampaignListFilters = {
     status: statusParam && (CAMPAIGN_STATUSES as readonly string[]).includes(statusParam)
       ? (statusParam as CampaignStatus) : undefined,
+    channel: channelParam && (CHANNELS as readonly string[]).includes(channelParam)
+      ? (channelParam as BroadcastChannel) : undefined,
     q: sp.get('q')?.trim() || undefined,
     from: sp.get('from') || undefined,
     to: sp.get('to') || undefined,
@@ -79,31 +92,53 @@ function parseAudience(raw: unknown): ParsedAudience {
 // POST /api/whatsapp/campaigns — durably create + enqueue a campaign, returning
 // its id IMMEDIATELY (whatsapp_chat:edit). The worker drains it out of band — the
 // request never holds open for the send. Idempotent on client_token.
+//
+// `channel` (09/10/2026): 'whatsapp' (default — the body is exactly what it was)
+// or 'email', which adds a required `subject` (falls back to the template's),
+// a "selection" audience only, an email address per recipient instead of a
+// phone, and a 25MB total for the files (one email carries them all). Same
+// permission, same audience rules, same placeholders, same queue.
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try { actor = await requirePermission('whatsapp_chat', 'edit'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
 
   let body: { name?: unknown; body?: unknown; template_id?: unknown; audience?: unknown;
-    dry_run?: unknown; rate_per_min?: unknown; client_token?: unknown; start?: unknown; attachment_ids?: unknown };
+    dry_run?: unknown; rate_per_min?: unknown; client_token?: unknown; start?: unknown; attachment_ids?: unknown;
+    channel?: unknown; subject?: unknown };
   try { body = await req.json(); } catch { return NextResponse.json({ error: 'invalid_json' }, { status: 400 }); }
+
+  if (body.channel !== undefined && !(CHANNELS as readonly unknown[]).includes(body.channel)) {
+    return NextResponse.json({ error: 'ערוץ לא תקין' }, { status: 400 });
+  }
+  const channel: BroadcastChannel = body.channel === 'email' ? 'email' : 'whatsapp';
 
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   if (!name) return NextResponse.json({ error: 'שם קמפיין חסר' }, { status: 400 });
 
   let messageBody = typeof body.body === 'string' ? body.body : '';
+  let subject = typeof body.subject === 'string' ? body.subject.trim() : '';
   let templateName: string | null = null;
   if (typeof body.template_id === 'string' && body.template_id) {
     const tpl = await getTemplateById(body.template_id);
     if (!tpl) return NextResponse.json({ error: 'התבנית לא נמצאה' }, { status: 400 });
     templateName = tpl.name;                 // snapshot the name — survives later edit/delete
     if (!messageBody) messageBody = tpl.content;
+    if (channel === 'email' && !subject) subject = (tpl.subject ?? '').trim();
   }
   if (!messageBody.trim()) return NextResponse.json({ error: 'תוכן ההודעה ריק' }, { status: 400 });
+  if (channel === 'email') {
+    if (!subject) return NextResponse.json({ error: 'נושא המייל חסר' }, { status: 400 });
+    const subjectError = emailSubjectError(subject);
+    if (subjectError) return NextResponse.json({ error: subjectError }, { status: 400 });
+  }
 
   const parsedAudience = parseAudience(body.audience);
   if (!parsedAudience.ok) return NextResponse.json({ error: parsedAudience.error }, { status: 400 });
   const audience = parsedAudience.audience;
+  if (channel === 'email' && audience.type !== 'selection') {
+    return NextResponse.json({ error: 'תפוצת מייל נשלחת לקהל לפי בחירה (בעלים / שוכרים / ספקים)' }, { status: 400 });
+  }
 
   // Attachments: staged uploads of THIS actor, in the order given (= send order).
   // Count is zod's job; ownership + broadcast-level total size are checked here.
@@ -117,7 +152,11 @@ export async function POST(req: NextRequest) {
     if (staged.length !== attachmentIds.length) {
       return NextResponse.json({ error: 'קובץ מצורף לא נמצא — הסר אותו וצרף מחדש' }, { status: 400 });
     }
-    const setError = validateBroadcastAttachmentSet(staged.map((a) => ({ size: a.size_bytes })));
+    // One email carries every file, so its total is Gmail's 25MB.
+    const setError = validateBroadcastAttachmentSet(
+      staged.map((a) => ({ size: a.size_bytes })), [], WHATSAPP_ATTACHMENT_LIMITS.maxFiles,
+      channel === 'email' ? EMAIL_ATTACHMENTS_MAX_TOTAL_BYTES : WHATSAPP_ATTACHMENT_LIMITS.maxTotalBytes,
+    );
     if (setError) return NextResponse.json({ error: setError }, { status: 400 });
   }
 
@@ -126,7 +165,8 @@ export async function POST(req: NextRequest) {
   try {
     // dry-run needs no real instance; real sends resolve like chat-send does
     // (own instance, admin falls back to the first connected one).
-    if (!dryRun) instanceId = (await resolveSendCreds(actor, null)).id;
+    // An email broadcast goes out through the SMTP account, not an instance.
+    if (!dryRun && channel === 'whatsapp') instanceId = (await resolveSendCreds(actor, null)).id;
   } catch (err) {
     if (err instanceof InstanceNotConfiguredError) return NextResponse.json({ error: err.message }, { status: 503 });
     throw err;
@@ -138,7 +178,7 @@ export async function POST(req: NextRequest) {
   // neither touched by this branch. A debt message (any of {{debt}},
   // {{monthly}}, {{special}}, {{total_*}}, or a repeating block) is
   // consolidated: one message per phone listing every apartment it covers.
-  const isDebt = isDebtMessageTemplate(messageBody);
+  const isDebt = channel === 'email' ? isEmailDebtMessage(messageBody, subject) : isDebtMessageTemplate(messageBody);
   const isSelection = audience.type === 'selection';
   const selectionIncludesSuppliers = isSelection && (audience.roles ?? []).includes('suppliers');
   // "רק מי שחייב" / "מעל ₪" (Section 4) — owners/tenants only; suppliers are
@@ -158,7 +198,14 @@ export async function POST(req: NextRequest) {
   let recipients: RecipientInput[];
   let partialDetailCount = 0;
 
-  if (isDebt) {
+  if (channel === 'email') {
+    const built = await buildEmailCampaignRecipients({
+      roles: audience.roles ?? [], debtFilter, body: messageBody, subject,
+    });
+    if (!built.ok) return NextResponse.json({ error: built.error }, { status: 400 });
+    recipients = built.recipients;
+    partialDetailCount = built.partialDetailCount;
+  } else if (isDebt) {
     const consolidated = isSelection
       ? await resolveConsolidatedSelectionRecipients(audience.roles ?? [], debtFilter)
       : await resolveConsolidatedBroadcastRecipients(audience);
@@ -189,6 +236,7 @@ export async function POST(req: NextRequest) {
         debtorId: rep.debtorId,
         phoneIntl: r.phoneIntl,
         payload: rendered.text,
+        recipientName: recipientDisplayName(r.rawNames),
         apartments: apartments.map((a) => ({ contactId: a.contactId, debtorId: a.debtorId })),
       };
     });
@@ -198,6 +246,7 @@ export async function POST(req: NextRequest) {
     recipients = resolved.map((r) => r.kind === 'supplier'
       ? {
           contactId: null, debtorId: null, supplierId: r.supplierId, phoneIntl: r.phoneIntl,
+          recipientName: recipientDisplayName([r.name]),
           payload: interpolateTemplate(messageBody, {
             owner_name: r.name, tenant_name: null, apartment_number: null,
             total_debt: null, management_fees: null, hot_water_debt: null,
@@ -205,6 +254,7 @@ export async function POST(req: NextRequest) {
         }
       : {
           contactId: r.contactId, debtorId: r.debtorId, phoneIntl: r.phoneIntl,
+          recipientName: recipientDisplayName([r.name]),
           payload: interpolateTemplate(messageBody, r.debtor),
         });
   } else {
@@ -212,6 +262,7 @@ export async function POST(req: NextRequest) {
     if (resolved.length === 0) return NextResponse.json({ error: 'לא נמצאו נמענים עם מספר תקין' }, { status: 400 });
     recipients = resolved.map((r) => ({
       contactId: r.contactId, debtorId: r.debtorId, phoneIntl: r.phoneIntl,
+      recipientName: recipientDisplayName([r.name]),
       payload: interpolateTemplate(messageBody, r.debtor),
     }));
   }
@@ -219,8 +270,14 @@ export async function POST(req: NextRequest) {
   let campaign;
   try {
     campaign = await createCampaign(getDbPool(), {
+      channel,
+      subject: channel === 'email' ? subject : null,
       name, body: messageBody, templateName, audience, instanceId, createdBy: actor.id, recipients,
-      ratePerMin: typeof body.rate_per_min === 'number' ? body.rate_per_min : undefined,
+      // Email: the pace in force when it was created (the worker reads the
+      // live app_settings value — one bucket for the SMTP account).
+      ratePerMin: channel === 'email'
+        ? await readEmailRatePerMin(getDbPool())
+        : typeof body.rate_per_min === 'number' ? body.rate_per_min : undefined,
       dryRun,
       clientToken: typeof body.client_token === 'string' ? body.client_token : null,
       attachmentIds,

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { updateTemplate, softDeleteTemplate } from '@/lib/db/whatsappTemplates';
+import { emailSubjectError } from '@/lib/whatsapp-template';
 
 export const runtime = 'nodejs';
 
@@ -12,6 +13,7 @@ interface RouteCtx {
 interface PatchBody {
   name?: unknown;
   content?: unknown;
+  subject?: unknown;
   is_active?: unknown;
 }
 
@@ -34,7 +36,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
   }
 
-  const patch: { name?: string; content?: string; is_active?: boolean } = {};
+  const patch: { name?: string; content?: string; subject?: string | null; is_active?: boolean } = {};
 
   if (body.name !== undefined) {
     const name = typeof body.name === 'string' ? body.name.trim() : '';
@@ -49,6 +51,13 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       return NextResponse.json({ error: 'תוכן התבנית חייב להיות באורך 1-4096 תווים' }, { status: 400 });
     }
     patch.content = content;
+  }
+  if (body.subject !== undefined) {
+    // Optional email subject — blank (or null) clears it.
+    const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
+    const subjectError = emailSubjectError(subject);
+    if (subjectError) return NextResponse.json({ error: subjectError }, { status: 400 });
+    patch.subject = subject || null;
   }
   if (body.is_active !== undefined) {
     patch.is_active = body.is_active === true;

@@ -501,6 +501,28 @@ d('resolveSelectionRecipients / resolveConsolidatedSelectionRecipients / resolve
     if (match?.kind === 'supplier') expect(match.supplierId).toBe(supplierId);
   });
 
+  it('every recipient carries the name of the person behind its phone — owner, tenant, additional owner, supplier (the log\'s "נמען")', async () => {
+    const ownerPhone = uniqPhone();
+    const tenantPhone = uniqPhone();
+    const extraPhone = uniqPhone();
+    const supplierPhone = uniqPhone();
+    const contactId = await makeContact({
+      owner_phone: ownerPhone, owner_name: 'בעלים ראשי', tenant_phone: tenantPhone, tenant_name: 'שוכר', tenant_is_primary_contact: true,
+    });
+    await makeExtra(contactId, 'owner', extraPhone, { name: 'בעלים נוסף' });
+    await makeSupplier({ display_name: 'ספק שמות', mobile: supplierPhone });
+
+    const selection = await resolveSelectionRecipients(['owners', 'tenants', 'suppliers']);
+    const nameOf = (phone: string) => selection.find((r) => r.phoneIntl === intl(phone))?.name;
+    expect(nameOf(ownerPhone)).toBe('בעלים ראשי');
+    expect(nameOf(tenantPhone)).toBe('שוכר');
+    expect(nameOf(extraPhone)).toBe('בעלים נוסף');
+    expect(nameOf(supplierPhone)).toBe('ספק שמות');
+    // The legacy single-audience resolver carries it too.
+    const owners = await resolveBroadcastRecipients({ type: 'owners' });
+    expect(owners.find((r) => r.phoneIntl === intl(extraPhone))?.name).toBe('בעלים נוסף');
+  });
+
   it('resolveConsolidatedSelectionRecipients: union of owners+tenants for a debt message, same true-union semantics', async () => {
     const ownerPhone = uniqPhone();
     const tenantPhone = uniqPhone();

@@ -3,8 +3,12 @@ import { query, queryOne } from '@/lib/db';
 import { encrypt, decrypt, type EncryptedBlob } from '@/lib/crypto/settings-cipher';
 import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legalContact';
 import { env } from '@/env';
+import { resolveSmtpSettings, SMTP_SETTINGS_KEY, type SmtpSettings } from '@/lib/email/smtp-core';
+import { claimSmtpAuthAlertSlotWith } from '@/lib/email/smtp-auth-alert';
 
-const SMTP_KEY = 'smtp';
+export type { SmtpSettings };
+
+const SMTP_KEY = SMTP_SETTINGS_KEY;
 const BILLING_KEY = 'billing';
 const LEGAL_CONTACT_KEY = 'legal_contact';
 
@@ -27,12 +31,6 @@ interface SmtpRow {
   passEnc: EncryptedBlob;
 }
 
-export interface SmtpSettings {
-  user: string;
-  pass: string;
-  fromName: string;
-}
-
 export interface SmtpSettingsPublic {
   fromEmail: string;
   fromName: string;
@@ -50,27 +48,10 @@ export class AppSettingsValidationError extends Error {
 /**
  * Resolve SMTP settings: DB row wins, env vars are fallback.
  * Throws if neither yields user+pass — caller treats as fatal.
+ * (The logic lives in email/smtp-core.ts, shared with the delivery worker.)
  */
 export async function getSmtpSettings(): Promise<SmtpSettings> {
-  const row = await queryOne<{ value: SmtpRow }>(
-    `select value from public.app_settings where key = $1 limit 1`,
-    [SMTP_KEY],
-  );
-  if (row) {
-    return {
-      user: row.value.user,
-      pass: decrypt(row.value.passEnc),
-      fromName: row.value.fromName,
-    };
-  }
-
-  const user = env.SMTP_USER;
-  const pass = env.SMTP_PASS;
-  const fromName = env.SMTP_FROM_NAME ?? 'ALMOG CRM';
-  if (!user || !pass) {
-    throw new Error('SMTP not configured: no DB row and SMTP_USER/SMTP_PASS env not set');
-  }
-  return { user, pass, fromName };
+  return resolveSmtpSettings({ query }, decrypt);
 }
 
 /** Public, password-free view for the Settings UI. */
@@ -212,31 +193,8 @@ export async function updateLegalContact(
 
 // ── SMTP auth-failure alert throttle (app_settings key 'smtp_last_auth_alert') ─
 
-const SMTP_LAST_AUTH_ALERT_KEY = 'smtp_last_auth_alert';
-
-/** Minimum gap between two "SMTP authentication rejected" admin alerts. */
-const SMTP_AUTH_ALERT_THROTTLE_HOURS = 6;
-
-/**
- * Claim the right to raise the "SMTP authentication rejected" admin alert.
- * The row's value is { at: <timestamptz> } — when the last alert went out. The
- * upsert rewrites it only when that stamp is older than the throttle window
- * (or the row does not exist yet), and RETURNING says whether it did: one
- * statement, so two sends failing at the same moment cannot both win.
- * Returns the claimed stamp, or null when throttled. updated_by stays NULL —
- * no user did this, the system did.
- */
+/** The atomic 6-hour claim behind the SMTP auth alert — the statement lives in
+ *  email/smtp-auth-alert.ts, shared with the delivery worker. */
 export async function claimSmtpAuthAlertSlot(): Promise<{ at: string } | null> {
-  const row = await queryOne<{ at: string }>(
-    `insert into public.app_settings (key, value, updated_by, updated_at)
-     values ($1, jsonb_build_object('at', now()), null, now())
-     on conflict (key) do update
-       set value = excluded.value,
-           updated_at = now()
-       where coalesce((public.app_settings.value->>'at')::timestamptz, 'epoch'::timestamptz)
-             <= now() - make_interval(hours => $2::int)
-     returning (value->>'at') as at`,
-    [SMTP_LAST_AUTH_ALERT_KEY, SMTP_AUTH_ALERT_THROTTLE_HOURS],
-  );
-  return row ? { at: row.at } : null;
+  return claimSmtpAuthAlertSlotWith({ query });
 }

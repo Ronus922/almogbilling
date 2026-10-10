@@ -4,14 +4,16 @@ import { useEffect, useState } from 'react';
 import { Megaphone, X } from 'lucide-react';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
-import { BroadcastComposeClient } from '@/app/(app)/whatsapp/broadcasts/new/BroadcastComposeClient';
-import { BroadcastsHistoryClient } from '@/app/(app)/whatsapp/broadcasts/BroadcastsHistoryClient';
-import { BroadcastDetailClient } from '@/app/(app)/whatsapp/broadcasts/[id]/BroadcastDetailClient';
+import { BroadcastComposeClient } from '@/app/(app)/broadcasts/new/BroadcastComposeClient';
+import { BroadcastsHistoryClient } from '@/app/(app)/broadcasts/history/BroadcastsHistoryClient';
+import { BroadcastDetailClient } from '@/app/(app)/broadcasts/history/[id]/BroadcastDetailClient';
 
-// The WhatsApp broadcast WINDOW — the single entry point, opened from the button
-// on the Messages screen. It hosts the existing compose form, the scalable history
-// table and the delivery-log view (all reused, unmodified logic) behind two tabs +
-// a nested log view — so create / stop / review never leaves this window.
+// The WhatsApp broadcast WINDOW, opened from the button on the Messages screen.
+// It hosts the compose form, the scalable history table and the delivery-log
+// view behind two tabs + a nested log view — so create / stop / review never
+// leaves this window. The same screens live in the "תפוצה" category
+// (/broadcasts) with a WhatsApp / email channel selector; here they are pinned
+// to WhatsApp (channelLock) so the chat keeps exactly what it had.
 //
 // The compose client stays MOUNTED (visually toggled) the whole time the window is
 // open, so an active-broadcast card survives a hop into the delivery log or the
@@ -80,6 +82,7 @@ export function BroadcastPanel({
           <div className={cn((detailId || tab !== 'compose') && 'hidden')}>
             <BroadcastComposeClient
               embedded
+              channelLock="whatsapp"
               onOpenDetail={(id) => setDetailId(id)}
               onCancel={() => onOpenChange(false)}
             />
@@ -89,6 +92,7 @@ export function BroadcastPanel({
             <BroadcastsHistoryClient
               canEdit={canEdit}
               embedded
+              channelLock="whatsapp"
               onOpenDetail={(id) => setDetailId(id)}
               onCreate={() => setTab('compose')}
             />

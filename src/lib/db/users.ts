@@ -1,5 +1,6 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
+import { selectActiveAdmins } from '@/lib/notifications/core';
 import type { Role } from '@/lib/permissions/constants';
 
 export interface UserListRow {
@@ -73,13 +74,7 @@ export async function listAssignableUsers(): Promise<AssignableUser[]> {
 /** Active super_admin + admin users — recipients of system-wide notifications
  *  (e.g. an inbound WhatsApp message). id + name only. */
 export async function listActiveAdmins(): Promise<{ id: string; name: string }[]> {
-  const r = await query<{ id: string; full_name: string | null; username: string }>(
-    `select id, full_name, username
-       from public.users
-      where is_active = true and role in ('super_admin', 'admin')
-      order by created_at asc`,
-  );
-  return r.rows.map((u) => ({ id: u.id, name: u.full_name ?? u.username }));
+  return selectActiveAdmins({ query });
 }
 
 /** The fan-out recipient profile for a user: address + phone + per-channel

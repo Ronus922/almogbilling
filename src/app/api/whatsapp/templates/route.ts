@@ -7,6 +7,7 @@ import {
   listAllTemplates,
   createTemplate,
 } from '@/lib/db/whatsappTemplates';
+import { emailSubjectError } from '@/lib/whatsapp-template';
 
 export const runtime = 'nodejs';
 
@@ -42,6 +43,7 @@ export async function GET(req: NextRequest) {
 interface PostBody {
   name?: unknown;
   content?: unknown;
+  subject?: unknown;
   is_active?: unknown;
 }
 
@@ -73,7 +75,11 @@ export async function POST(req: NextRequest) {
   if (content.length < 1 || content.length > 4096) {
     return NextResponse.json({ error: 'תוכן התבנית חייב להיות באורך 1-4096 תווים' }, { status: 400 });
   }
+  // Optional email subject — blank = none.
+  const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
+  const subjectError = emailSubjectError(subject);
+  if (subjectError) return NextResponse.json({ error: subjectError }, { status: 400 });
 
-  const tpl = await createTemplate({ name, content, is_active: isActive }, actor.id);
+  const tpl = await createTemplate({ name, content, subject: subject || null, is_active: isActive }, actor.id);
   return NextResponse.json(tpl, { status: 201 });
 }

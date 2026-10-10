@@ -33,6 +33,9 @@ export interface WhatsAppTemplate {
   id: string;
   name: string;
   content: string;
+  /** Optional email subject — used only when the template is picked for an
+   *  email broadcast (09/10/2026). Placeholders allowed, like the content. */
+  subject: string | null;
   is_active: boolean;
   created_by: string | null;
   created_at: string;
@@ -42,7 +45,17 @@ export interface WhatsAppTemplate {
 export interface TemplateInput {
   name: string;
   content: string;
+  subject?: string | null;
   is_active?: boolean;
+}
+
+/** Someone in an email broadcast's audience without a usable address — listed
+ *  before sending ("X עם אימייל / Y ללא"), never sent to. */
+export interface MissingEmailEntry {
+  role: 'owner' | 'tenant' | 'supplier';
+  /** null for a supplier. */
+  apartment_number: string | null;
+  name: string | null;
 }
 
 /** One file of an outbound message, as the history renders it. */

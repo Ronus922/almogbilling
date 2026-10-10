@@ -16,10 +16,13 @@
 //     • the users screen opens by ROLE (admin / super_admin), and an admin
 //       may not set the management tier (users / permissions / settings) in
 //       anyone's matrix — finance / portal stay grantable (07/10/2026).
+//     • broadcasts on BOTH channels (WhatsApp / email, 09/10/2026) ride the
+//       existing whatsapp_chat module — send = edit, history = view — with no
+//       module of their own.
 //   Run under tsx (imports .ts source). Pure — no DB.
 import { run, fail, ok } from './_check-lib.mjs';
 import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone, canDeleteUsers, canGrantModule, canOpenUsersScreen } from '../src/lib/permissions/check.ts';
-import { DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER } from '../src/lib/permissions/constants.ts';
+import { DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER, MODULES } from '../src/lib/permissions/constants.ts';
 
 run('check-rbac', async () => {
   const t = (name, cond) => (cond ? ok(name) : fail(name));
@@ -130,4 +133,15 @@ run('check-rbac', async () => {
   }
   t('מטריצה: manager לא מעניק כלום', canGrantModule('manager', 'dashboard') === false);
   t('admin עדיין נחסם users_management בהרשאה עצמה', hasPermission('admin', [], 'users_management', 'view') === false);
+
+  // Broadcasts — the "תפוצה" category and the email channel (09/10/2026). The
+  // same gates as the pages, the routes and the nav: whatsapp_chat edit/view.
+  t('תפוצה (גם מייל): manager ברירת מחדל שולח', hasPermission('manager', DEFAULT_MANAGER, 'whatsapp_chat', 'edit') === true);
+  const chatViewOnly = [{ module: 'whatsapp_chat', canView: true, canEdit: false }];
+  t('תפוצה: whatsapp_chat/view בלבד רואה היסטוריה ולא שולח',
+    hasPermission('manager', chatViewOnly, 'whatsapp_chat', 'view') === true
+      && hasPermission('manager', chatViewOnly, 'whatsapp_chat', 'edit') === false);
+  t('תפוצה: viewer ברירת מחדל נחסם', hasPermission('viewer', DEFAULT_VIEWER, 'whatsapp_chat', 'view') === false);
+  t('תפוצה: worker נחסם', hasPermission('cleaner', DEFAULT_WORKER, 'whatsapp_chat', 'view') === false);
+  t('תפוצה: אין מודול הרשאה נפרד למייל/לתפוצות', !MODULES.some((m) => /email|broadcast/i.test(m.key)));
 });

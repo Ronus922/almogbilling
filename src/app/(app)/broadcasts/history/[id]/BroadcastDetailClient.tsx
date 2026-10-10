@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  ArrowRight, Megaphone, OctagonX, ChevronLeft, ChevronRight, AlertTriangle,
+  ArrowRight, Megaphone, OctagonX, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -12,14 +12,14 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import type {
-  CampaignDetailView, RecipientLogPage, RecipientStatus,
+  BroadcastChannel, CampaignDetailView, RecipientLogPage, RecipientStatus,
 } from '@/lib/wa-queue/types';
-import { CampaignStatusBadge, RecipientStatusBadge } from '../_components/StatusBadge';
+import { CampaignStatusBadge, ChannelBadge, RecipientStatusBadge } from '@/app/(app)/broadcasts/_components/StatusBadge';
 import { AttachmentLinks } from '@/components/whatsapp/AttachmentLinks';
-import { StopBroadcastDialog } from '../_components/StopBroadcastDialog';
-import { useStopBroadcast } from '../_lib/useStopBroadcast';
-import { usePoll } from '../_lib/usePoll';
-import { isCancellable, isTerminal, progressPct, processed, audienceLabel } from '../_lib/status';
+import { StopBroadcastDialog } from '@/app/(app)/broadcasts/_components/StopBroadcastDialog';
+import { useStopBroadcast } from '@/app/(app)/broadcasts/_lib/useStopBroadcast';
+import { usePoll } from '@/app/(app)/broadcasts/_lib/usePoll';
+import { isCancellable, isTerminal, progressPct, processed, audienceLabel } from '@/app/(app)/broadcasts/_lib/status';
 
 const LOG_PAGE = 50;
 type LogFilter = 'all' | 'pending' | 'sent' | 'delivered' | 'read' | 'failed' | 'cancelled';
@@ -32,10 +32,14 @@ const LOG_TABS: { value: LogFilter; label: string }[] = [
   { value: 'failed', label: 'נכשלו' },
   { value: 'cancelled', label: 'בוטלו' },
 ];
+/** Delivered / read come from the WhatsApp delivery webhook — SMTP has no
+ *  such signal, so an email broadcast shows neither (never a fake 0). */
+const WHATSAPP_ONLY_TABS: readonly LogFilter[] = ['delivered', 'read'];
 
-// Rendered both as the /whatsapp/broadcasts/[id] route AND embedded inside the
-// broadcast window (delivery-log view). `onBack`, when provided, returns to the
-// window's history tab / active card instead of routing to the history page.
+// Rendered both as the /broadcasts/history/[id] page AND embedded inside the
+// chat's broadcast window (delivery-log view). The same screen for both
+// channels. `onBack`, when provided, returns to the window's history tab /
+// active card instead of routing to the history page.
 export function BroadcastDetailClient({ id, canEdit, onBack }: { id: string; canEdit: boolean; onBack?: () => void }) {
   const fetcher = useCallback(async (): Promise<CampaignDetailView> => {
     const r = await fetch(`/api/whatsapp/campaigns/${id}`, { credentials: 'include' });
@@ -60,13 +64,14 @@ export function BroadcastDetailClient({ id, canEdit, onBack }: { id: string; can
           {onBack ? (
             <Button variant="outline" size="sm" onClick={onBack}>חזרה להיסטוריה</Button>
           ) : (
-            <Button variant="outline" size="sm" render={<Link href="/whatsapp/broadcasts" />}>חזרה להיסטוריה</Button>
+            <Button variant="outline" size="sm" render={<Link href="/broadcasts/history" />}>חזרה להיסטוריה</Button>
           )}
         </div>
       </div>
     );
   }
   if (!c) return null;
+  const isEmail = c.channel === 'email';
 
   return (
     <div className="space-y-6">
@@ -78,7 +83,7 @@ export function BroadcastDetailClient({ id, canEdit, onBack }: { id: string; can
               <ArrowRight className="h-5 w-5" />
             </Button>
           ) : (
-            <Button type="button" variant="ghost" size="icon" render={<Link href="/whatsapp/broadcasts" />} aria-label="חזרה">
+            <Button type="button" variant="ghost" size="icon" render={<Link href="/broadcasts/history" />} aria-label="חזרה">
               <ArrowRight className="h-5 w-5" />
             </Button>
           )}
@@ -86,11 +91,15 @@ export function BroadcastDetailClient({ id, canEdit, onBack }: { id: string; can
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-extrabold text-slate-900">{c.name}</h1>
+              <ChannelBadge channel={c.channel} />
               <CampaignStatusBadge status={c.status} />
             </div>
             <p className="mt-0.5 text-sm text-muted-foreground">
               נוצר על ידי {c.created_by_name ?? '—'} · {audienceLabel(c.audience)} · {c.template_name ?? 'כתיבה חופשית'}
             </p>
+            {isEmail && c.subject && (
+              <p className="mt-0.5 text-sm text-slate-600">נושא: <span className="font-semibold text-slate-800">{c.subject}</span></p>
+            )}
             <AttachmentLinks attachments={c.attachments} className="mt-2" />
           </div>
         </div>
@@ -103,11 +112,11 @@ export function BroadcastDetailClient({ id, canEdit, onBack }: { id: string; can
 
       {/* Summary counts + progress */}
       <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+        <div className={cn('grid grid-cols-2 gap-3 sm:grid-cols-4', isEmail ? 'lg:grid-cols-5' : 'lg:grid-cols-7')}>
           <Metric label="סך נמענים" value={c.total_count} tone="text-slate-800" />
           <Metric label="נשלחו" value={c.sent_count} tone="text-emerald-700" />
-          <Metric label="נמסרו" value={c.delivered_count} tone="text-emerald-600" />
-          <Metric label="נקראו" value={c.read_count} tone="text-blue-600" />
+          {!isEmail && <Metric label="נמסרו" value={c.delivered_count} tone="text-emerald-600" />}
+          {!isEmail && <Metric label="נקראו" value={c.read_count} tone="text-blue-600" />}
           <Metric label="נכשלו" value={c.failed_count} tone="text-red-600" />
           <Metric label="בוטלו" value={c.cancelled_count + c.skipped_count} tone="text-slate-600" />
           <Metric label="נותרו" value={c.pending_count + c.processing_count} tone="text-amber-600" />
@@ -128,7 +137,7 @@ export function BroadcastDetailClient({ id, canEdit, onBack }: { id: string; can
       </div>
 
       {/* Delivery log */}
-      <RecipientLog campaignId={id} pollKey={c.updated_at} />
+      <RecipientLog campaignId={id} pollKey={c.updated_at} channel={c.channel} />
 
       <StopBroadcastDialog
         open={stop.target !== null}
@@ -141,7 +150,11 @@ export function BroadcastDetailClient({ id, canEdit, onBack }: { id: string; can
   );
 }
 
-function RecipientLog({ campaignId, pollKey }: { campaignId: string; pollKey: string }) {
+function RecipientLog({ campaignId, pollKey, channel }: { campaignId: string; pollKey: string; channel: BroadcastChannel }) {
+  const isEmail = channel === 'email';
+  const tabs = isEmail ? LOG_TABS.filter((t) => !WHATSAPP_ONLY_TABS.includes(t.value)) : LOG_TABS;
+  // The address the message went to: the masked phone, or the masked email.
+  const address = (r: { phone_masked: string; email_masked: string | null }) => (isEmail ? r.email_masked ?? '—' : r.phone_masked);
   const [filter, setFilter] = useState<LogFilter>('all');
   const [page, setPage] = useState(0);
   const [data, setData] = useState<RecipientLogPage | null>(null);
@@ -178,7 +191,7 @@ function RecipientLog({ campaignId, pollKey }: { campaignId: string; pollKey: st
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-bold text-slate-900">יומן מסירה</h2>
         <div className="inline-flex flex-wrap items-center gap-1 rounded-xl bg-slate-100 p-1">
-          {LOG_TABS.map((t) => (
+          {tabs.map((t) => (
             <button key={t.value} type="button" onClick={() => { setFilter(t.value); setPage(0); }}
               className={cn('rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors',
                 filter === t.value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
@@ -207,7 +220,7 @@ function RecipientLog({ campaignId, pollKey }: { campaignId: string; pollKey: st
                   <DeliveryStatus status={r.status} deliveredAt={r.delivered_at} readAt={r.read_at} />
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12.5px] text-slate-600">
-                  <span dir="ltr" className="tabular-nums">{r.phone_masked}</span>
+                  <span dir="ltr" className="tabular-nums">{address(r)}</span>
                   {r.apartment_number && <span>דירה {r.apartment_number}</span>}
                   {r.sent_at && <span className="tabular-nums">{formatDT(r.sent_at)}</span>}
                   <span className="tabular-nums">ניסיונות {r.attempt_count}</span>
@@ -224,7 +237,7 @@ function RecipientLog({ campaignId, pollKey }: { campaignId: string; pollKey: st
           <Table className="hidden roomy:table">
             <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
               <TableRow className="bg-slate-50 hover:bg-slate-50">
-                {['נמען', 'טלפון', 'דירה', 'סטטוס', 'נשלח בשעה', 'ניסיונות', 'פרטים'].map((h, i) => (
+                {['נמען', isEmail ? 'אימייל' : 'טלפון', 'דירה', 'סטטוס', 'נשלח בשעה', 'ניסיונות', 'פרטים'].map((h, i) => (
                   <TableHead key={h} className={cn('h-11 px-3 text-sm font-semibold text-slate-500', i === 5 ? 'text-center' : 'text-start')}>{h}</TableHead>
                 ))}
               </TableRow>
@@ -236,7 +249,7 @@ function RecipientLog({ campaignId, pollKey }: { campaignId: string; pollKey: st
                   {/* `dir="ltr"` isolates the digits only. Leaving it on the
                       cell would make `text-start` resolve to LEFT and break the
                       column's alignment with its RTL neighbours. */}
-                  <TableCell className="px-3 py-3 text-start text-sm text-slate-600 tabular-nums"><span dir="ltr">{r.phone_masked}</span></TableCell>
+                  <TableCell className="px-3 py-3 text-start text-sm text-slate-600 tabular-nums"><span dir="ltr">{address(r)}</span></TableCell>
                   <TableCell className="px-3 py-3 text-start text-sm text-slate-600">{r.apartment_number ?? '—'}</TableCell>
                   <TableCell className="px-3 py-3 text-start"><DeliveryStatus status={r.status} deliveredAt={r.delivered_at} readAt={r.read_at} /></TableCell>
                   <TableCell className="px-3 py-3 text-start text-sm text-slate-600 whitespace-nowrap tabular-nums">{r.sent_at ? formatDT(r.sent_at) : '—'}</TableCell>

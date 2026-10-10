@@ -3786,6 +3786,9 @@ CREATE TABLE public.wa_campaign_recipients (
     attachments_sent integer DEFAULT 0 NOT NULL,
     contact_id uuid,
     supplier_id uuid,
+    email text,
+    subject text,
+    recipient_name text,
     CONSTRAINT wa_campaign_recipients_contact_or_supplier_check CHECK (((contact_id IS NOT NULL) OR (supplier_id IS NOT NULL))),
     CONSTRAINT wa_campaign_recipients_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'sent'::text, 'failed'::text, 'skipped'::text, 'cancelled'::text])))
 );
@@ -3796,6 +3799,27 @@ CREATE TABLE public.wa_campaign_recipients (
 --
 
 COMMENT ON COLUMN public.wa_campaign_recipients.attachments_sent IS 'How many campaign attachments (in sort_order) were already sent to this recipient; a retry continues from here.';
+
+
+--
+-- Name: COLUMN wa_campaign_recipients.email; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaign_recipients.email IS 'Email broadcast: the address this recipient was sent to (snapshot). NULL for a WhatsApp recipient.';
+
+
+--
+-- Name: COLUMN wa_campaign_recipients.subject; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaign_recipients.subject IS 'Email broadcast: this recipient''s subject after placeholder interpolation (snapshot, like payload). NULL for WhatsApp.';
+
+
+--
+-- Name: COLUMN wa_campaign_recipients.recipient_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaign_recipients.recipient_name IS 'Name of the person this message was addressed to, snapshotted at creation (owner / tenant / additional person / supplier). '''' = the card has no name for them; NULL = created before 10/10/2026 (the log falls back to the apartment''s primary owner).';
 
 
 --
@@ -3831,6 +3855,10 @@ CREATE TABLE public.wa_campaigns (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by_name text,
+    channel text DEFAULT 'whatsapp'::text NOT NULL,
+    subject text,
+    CONSTRAINT wa_campaigns_channel_check CHECK ((channel = ANY (ARRAY['whatsapp'::text, 'email'::text]))),
+    CONSTRAINT wa_campaigns_email_subject_check CHECK (((channel <> 'email'::text) OR (subject IS NOT NULL))),
     CONSTRAINT wa_campaigns_rate_per_min_check CHECK (((rate_per_min >= 1) AND (rate_per_min <= 120))),
     CONSTRAINT wa_campaigns_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'queued'::text, 'running'::text, 'paused'::text, 'completed'::text, 'completed_with_errors'::text, 'cancelled'::text, 'failed'::text]))),
     CONSTRAINT wa_campaigns_type_check CHECK ((type = 'broadcast'::text))
@@ -3842,6 +3870,20 @@ CREATE TABLE public.wa_campaigns (
 --
 
 COMMENT ON COLUMN public.wa_campaigns.created_by_name IS 'Snapshot of the creating user''s name — survives the user''s deletion.';
+
+
+--
+-- Name: COLUMN wa_campaigns.channel; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaigns.channel IS 'Delivery channel: whatsapp (Green API) or email (SMTP from app_settings). The worker branches on it (09/10/2026).';
+
+
+--
+-- Name: COLUMN wa_campaigns.subject; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaigns.subject IS 'Email subject as entered (placeholders unresolved). Required when channel = email; NULL for WhatsApp.';
 
 
 --
@@ -4004,8 +4046,16 @@ CREATE TABLE public.whatsapp_templates (
     is_active boolean DEFAULT true NOT NULL,
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    subject text
 );
+
+
+--
+-- Name: COLUMN whatsapp_templates.subject; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.whatsapp_templates.subject IS 'Optional email subject — fills the subject field when the template is picked for an email broadcast. Ignored by WhatsApp.';
 
 
 --
@@ -7524,5 +7574,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261005083237'),
     ('20261005210110'),
     ('20261006063651'),
-    ('20261006160340')
+    ('20261006160340'),
+    ('20261009210844'),
+    ('20261010074609')
 ;
