@@ -119,10 +119,10 @@ export async function POST(req: NextRequest) {
   }
 
   // Server-side role-scope enforcement (never trust the UI):
-  //   admin       → may invite manager / viewer only
-  //   super_admin → may invite super_admin / admin / manager / viewer
+  //   admin       → may create the roles below it (manager / viewer / cleaner / maintenance)
+  //   super_admin → may create any role
   // canManageRole() returns true for super_admin on any role, and for admin only
-  // on manager/viewer — so an admin inviting admin/super_admin gets 403 here.
+  // on a non-elevated one — so an admin creating admin/super_admin gets 403 here.
   if (!canManageRole(actor.role, role)) {
     return NextResponse.json(
       { error: 'אין הרשאה ליצור משתמש בתפקיד זה' },
