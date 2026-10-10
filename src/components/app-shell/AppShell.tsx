@@ -22,10 +22,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Header />
         <main className="flex-1 overflow-auto overscroll-contain bg-app">
           {/* Side padding = max(gutter, safe-area inset), the same pattern as the
-              bottom. NOT `.safe-px`: responsive.css is unlayered, so its
-              `padding-left/right: env(…)` outranked `p-[18px]`/`md:p-6` (both in
-              `@layer utilities`) and left every page with 0px sides from 13/08 to
-              10/10/2026. */}
+              bottom. The old `.safe-px` (removed 10/10/2026) lived in the
+              unlayered responsive.css, so its `padding-left/right: env(…)`
+              outranked `p-[18px]`/`md:p-6` (both in `@layer utilities`) and left
+              every page with 0px sides from 13/08 to 10/10/2026. */}
           <div className="mx-auto max-w-[1640px] p-[18px] pr-[max(18px,env(safe-area-inset-right))] pb-[max(18px,env(safe-area-inset-bottom))] pl-[max(18px,env(safe-area-inset-left))] md:p-6 md:pr-[max(1.5rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))]">
             {children}
           </div>
