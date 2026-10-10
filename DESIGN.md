@@ -1525,8 +1525,9 @@ render טהור של תוכן ה-textarea — ללא interpolation; `{{var}}` מ
   **מבנה הטבלה (10/10/2026) — נכנסת ב-1440 בלי גלילה אופקית:** `table-fixed` + `<colgroup>` (התבנית של טבלאות
   הכספים, §35) — `COL_PX` ב-`BroadcastsHistoryClient.tsx`: **ערוץ 124 · נוצרה 148 · סטטוס 184 · נשלחו / נכשלו /
   בוטלו / סה״כ 72 כל אחת · פעולות 124**; „שם התפוצה” לוקחת את השאר (מינימום 200), ומתחת לסכום עטיפת ה-`Table`
-  (`overflow-x-auto`) גוללת — **ב-1280 זו גלילה של 56px (1068 מול 1012 זמינים), ולפי רונן (10/10/2026) נשארת כמו
-  שהיא; לא לצמצם עוד.** **אין עמודה שרוב השורות שלה „—”**: קהל + תבנית בשורה משנית מתחת לשם
+  (`overflow-x-auto`) גוללת — **ב-1280 זו גלילה של 107px (1068 מול 961 זמינים; 56px לפני שה-gutter של §32 חזר
+  ב-10/10/2026), ולפי רונן (10/10/2026) נשארת כמו שהיא; לא לצמצם עוד.** מאז החזרת ה-gutter גם 1366 גולל 21px
+  (1068 מול 1047) — גם היא נשארת לפי רונן (10/10/2026); ב-1440 נכנסת (1121 זמינים). **אין עמודה שרוב השורות שלה „—”**: קהל + תבנית בשורה משנית מתחת לשם
   (`mt-0.5 truncate text-xs text-slate-500`, „בעלי נכסים · כתיבה חופשית”), „נוצר על ידי” מתחת לתאריך באותו סגנון,
   ופס ההתקדמות (`Progress h-1.5` + „X מתוך Y · Z%”) מתחת לתג הסטטוס — רק בתפוצה פעילה. תאים `px-4 py-3 text-sm`
   וכותרות `h-11 px-4` (§9); המספרים `dir="ltr" tabular-nums font-bold` בגוון (נשלחו `emerald-700`, נכשלו
@@ -1821,12 +1822,17 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 מקור-אמת: `src/components/app-shell/AppShell.tsx`. השלד הוא **flex ROW מלא-גובה ב-RTL** (ה-`dir="rtl"` הגלובלי מציב את הילד הראשון בצד ימין) — **לא** `flex-col` עם header חוצה למעלה.
 
 ```tsx
-<div className="flex h-screen bg-app">         {/* row, RTL → סיידבר בימין */}
+<div className="h-shell flex bg-app">         {/* row, RTL → סיידבר בימין */}
   <Sidebar />                                  {/* עמודה מלאת-גובה בקצה ימין, brand בראשה */}
-  <div className="flex flex-1 flex-col overflow-hidden">
+  <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
     <Header />                                 {/* בתוך אזור התוכן בלבד */}
-    <main className="flex-1 overflow-auto bg-app">
-      <div className="mx-auto max-w-[1640px] p-[18px] md:p-6">{children}</div>
+    <main className="flex-1 overflow-auto overscroll-contain bg-app">
+      <div className="mx-auto max-w-[1640px] p-[18px]
+                      pr-[max(18px,env(safe-area-inset-right))] pb-[max(18px,env(safe-area-inset-bottom))]
+                      pl-[max(18px,env(safe-area-inset-left))]
+                      md:p-6 md:pr-[max(1.5rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))]">
+        {children}
+      </div>
     </main>
   </div>
 </div>
@@ -1837,6 +1843,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 - **הסיידבר הוא עמודה מלאת-גובה בקצה ימין** — נמתח מ-`top` ל-`bottom` של המסך (הילד הראשון ב-row, `align-items: stretch`). ה-brand block בראשו עולה עד הקצה העליון ממש.
 - **ה-Header יושב רק מעל אזור התוכן** — הוא ילד של עמודת התוכן (`flex-1 flex-col`), ולכן **נעצר בגבול הסיידבר ולא חוצה מעליו**. זו הנקודה הקריטית: header אסור שיהיה אח (sibling) של הסיידבר ברמת ה-row.
 - **יישור הקווים התחתונים**: ה-brand block (§14) וה-Header (§15) חולקים `h-16` + `border-b border-line` → שני הקווים התחתונים מתלכדים לקו רציף אחד לרוחב ראש המסך.
+- **ריפוד התוכן (gutter)**: `18px` מתחת ל-`md`, `md:p-6` (1.5rem = 25.5px — ה-root הוא 17px) מ-`md` ומעלה, בארבעת הצדדים. הצדדים = `max(ה-gutter, env(safe-area-inset-left/right))` בכל רוחב, והתחתית כך מתחת ל-`md` — בטלפון לרוחב התוכן לא נכנס מתחת ל-notch, ובכל מקום אחר הריפוד הוא ה-gutter עצמו. **safe-area כותבים בתוך ה-utility עצמו (`max(…, env(safe-area-inset-*))`), לא במחלקה נפרדת, ולא שמים מחלקה מ-`responsive.css` על אלמנט שיש לו גם utility של padding:** הקובץ לא בתוך layer, ולכן כל כלל שבו גובר על כל utility של Tailwind (סדר ה-layers נקבע לפני ה-specificity). כך `.safe-px` העלים את הריפוד הצדדי בכל הדפים מ-13/08 עד 10/10/2026; הוא וחמש מחלקות ה-`safe-*` האחרות (`safe-pt`/`safe-pb`/`safe-mb`/`safe-pb-3`/`safe-pb-4`, שלא היו בשימוש) נמחקו ב-10/10/2026. שומר רגרסיה: `e2e/app-shell-padding.spec.ts`.
 - **Scroll**: רק `<main>` גולל (`overflow-auto`); הסיידבר וההדר קבועים. עמודת התוכן היא `overflow-hidden` כך שה-`<main>` הוא המשטח הגולל היחיד.
 - **רספונסיביות**: הסיידבר `hidden md:flex` — במובייל הוא מוסתר, אזור התוכן תופס את כל הרוחב, וההדר נמתח על פניו (אין סיידבר לחצות מעליו). התנהגות ה-collapse נשמרת בתוך הסיידבר עצמו (§14).
 - **גבול שינוי**: עורכים כאן את **מבנה ה-wrapper בלבד** — לא את `{children}`, לא את ה-`<main>` הפנימי, ולא את לוגיקת הניווט/ההרשאות.
