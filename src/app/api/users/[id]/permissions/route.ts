@@ -5,7 +5,7 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { writeAudit } from '@/lib/db/audit';
 import { query } from '@/lib/db';
 import { findUserById } from '@/lib/db/users';
-import { MODULES, type ModulePermission } from '@/lib/permissions/constants';
+import { MODULES, isMatrixRole, type ModulePermission } from '@/lib/permissions/constants';
 
 export const runtime = 'nodejs';
 
@@ -74,9 +74,13 @@ export async function PUT(req: NextRequest, ctx: RouteCtx) {
   if (!canManageRole(actor.role, target.role)) {
     return NextResponse.json({ error: 'אין הרשאה לנהל משתמש בתפקיד זה' }, { status: 403 });
   }
-  if (target.role !== 'manager' && target.role !== 'viewer') {
+  // Every matrix role (isMatrixRole — manager, viewer and the field workers),
+  // the same test the panel uses to show the matrix and the invite uses to
+  // store one. A hardcoded manager / viewer pair here answered 400 to every
+  // toggle in a worker's matrix (10/10/2026).
+  if (!isMatrixRole(target.role)) {
     return NextResponse.json(
-      { error: 'מטריצת הרשאות חלה רק על מנהל וצופה' },
+      { error: 'לתפקיד זה אין מטריצת הרשאות — ההרשאות נקבעות לפי התפקיד' },
       { status: 400 },
     );
   }

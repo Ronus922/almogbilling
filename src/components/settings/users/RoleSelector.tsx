@@ -5,7 +5,8 @@ import { ROLES, ROLE_STYLES, type Role } from '@/lib/permissions/constants';
 import { cn } from '@/lib/utils';
 
 interface Props {
-  value: Role;
+  /** null = nothing chosen yet (the create form has no default role). */
+  value: Role | null;
   onChange: (r: Role) => void;
   disabled?: boolean;
   /**
@@ -39,6 +40,7 @@ export function RoleSelector({ value, onChange, disabled, allowedRoles }: Props)
           <button
             key={meta.value}
             type="button"
+            aria-pressed={active}
             onClick={() => onChange(meta.value)}
             disabled={disabled}
             className={cn(

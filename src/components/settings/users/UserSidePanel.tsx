@@ -96,9 +96,19 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
 
   const isSelf = user?.id === currentUserId;
   // Does the acting user have authority over this target's role at all?
-  // admin → only manager/viewer; super_admin → everyone (incl. other super_admins).
+  // admin → only the roles below it; super_admin → everyone (incl. other super_admins).
   const canManageTarget = user ? canManageRole(currentUserRole, user.role) : false;
   const lacksAuthority = !!user && !canManageTarget;
+  // Roles below the editor, for the out-of-scope notice — the same predicate.
+  const manageableLabels = ROLE_VALUES.filter((r) => canManageRole(currentUserRole, r)).map(roleLabel);
+  // Out of scope (an admin opening an admin, a super admin or their own row):
+  // every change would answer 403, so the panel says so up front and the
+  // profile fields are read-only, instead of failing on "שמור שינויים".
+  const scopeNotice = !user || !lacksAuthority
+    ? null
+    : isSelf
+      ? 'זה החשבון שלך. את הפרטים, התפקיד והסטטוס של חשבון אדמין משנה רק סופר אדמין.'
+      : `אין לך הרשאה לנהל משתמש בתפקיד „${roleLabel(user.role)}”. אדמין מנהל רק משתמשים בתפקידים שמתחתיו: ${manageableLabels.join(', ')}. הפרטים מוצגים לקריאה בלבד.`;
   // Lifecycle actions (role change, enable/disable) are blocked only when acting
   // on self or on a target outside the actor's scope. The server additionally
   // refuses any change that would leave 0 active super_admins (last-admin guard).
@@ -107,9 +117,9 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
   // super admin alone — and never yourself. The server repeats both checks
   // and adds the last-active-super-admin and WhatsApp-owner guards.
   const canDelete = canDeleteUsers(currentUserRole);
-  // Roles the actor may assign. admin managing manager/viewer → those two only;
-  // otherwise the full list (selector is disabled anyway, but the current role
-  // still highlights).
+  // Roles the actor may assign: admin → the roles below it, super_admin → all;
+  // out of scope → the full list (the selector is disabled anyway, but the
+  // current role still highlights).
   const editableRoles: readonly Role[] = canManageTarget
     ? ROLE_VALUES.filter((r) => canManageRole(currentUserRole, r))
     : ROLE_VALUES;
@@ -193,9 +203,10 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
         credentials: 'include',
         body: JSON.stringify(body),
       });
-      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      const data = (await r.json().catch(() => ({}))) as { error?: string; user?: { role: Role } };
       if (!r.ok) throw new Error(data.error ?? 'שמירה נכשלה');
-      toast.success('הפרופיל עודכן');
+      // A role change names the role the server saved.
+      toast.success(body.role ? `התפקיד עודכן — ${roleLabel(data.user?.role ?? role)}` : 'הפרופיל עודכן');
       router.refresh();
       onOpenChange(false);
     } catch (e) {
@@ -339,6 +350,11 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
 
           {/* Body */}
           <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5">
+            {scopeNotice && (
+              <div role="note" className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                {scopeNotice}
+              </div>
+            )}
             {error ? (
               <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
                 שגיאה בטעינת הפרטים: {error}
@@ -371,6 +387,7 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
                           id="user-fullname"
                           value={fullName}
                           onChange={(e) => setFullName(e.target.value)}
+                          disabled={lacksAuthority}
                           className="h-10"
                         />
                       </div>
@@ -384,6 +401,7 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
                           id="user-phone"
                           value={phone}
                           onChange={(e) => setPhone(e.target.value)}
+                          disabled={lacksAuthority}
                           dir="ltr"
                           inputMode="tel"
                           placeholder="0501234567"
@@ -538,7 +556,7 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
                       title="מטריצת הרשאות"
                       icon={KeyRound}
                       iconTone="blue"
-                      subtitle="חל רק על מנהל וצופה. שינוי שמור מיד."
+                      subtitle="שינוי נשמר מיד."
                     >
                       <div className="py-2">
                         <PermissionMatrix

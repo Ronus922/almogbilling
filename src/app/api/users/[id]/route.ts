@@ -12,7 +12,7 @@ import { cleanPhoneField } from '@/lib/whatsapp';
 import { hashPassword } from '@/lib/auth/password';
 import { isValidPassword } from '@/lib/auth/passwordPolicy';
 import { writeAudit } from '@/lib/db/audit';
-import { isMatrixRole } from '@/lib/permissions/constants';
+import { ROLE_VALUES, isMatrixRole } from '@/lib/permissions/constants';
 import type { ModulePermission, Role } from '@/lib/permissions/constants';
 
 export const runtime = 'nodejs';
@@ -36,8 +36,6 @@ interface PermissionRow {
   can_view: boolean;
   can_edit: boolean;
 }
-
-const ASSIGNABLE_ROLES: readonly Role[] = ['admin', 'manager', 'viewer', 'super_admin'];
 
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
   try {
@@ -84,8 +82,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   const target = await findUserById(id);
   if (!target) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  // Role-scope guard: an admin may only manage manager/viewer. Touching an admin
-  // or super_admin (role change, disable, profile) → 403. super_admin passes.
+  // Role-scope guard: an admin may only manage the roles below it (manager,
+  // viewer, cleaner, maintenance). Touching an admin or super_admin (role
+  // change, disable, profile) → 403. super_admin passes.
   if (!canManageRole(actor.role, target.role)) {
     return NextResponse.json(
       { error: 'אין הרשאה לנהל משתמש בתפקיד זה' },
@@ -115,10 +114,14 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     nextFullName = v;
   }
 
+  // Any real role is a valid value; WHO may assign it is canManageRole() below.
+  // Until 10/10/2026 this was a hardcoded list from before the field-worker
+  // roles, so every move to cleaner / maintenance answered 400 "תפקיד לא תקין"
+  // while the panel offered both.
   let nextRole: Role = target.role;
   if (wantsRole) {
     const v = body.role;
-    if (typeof v !== 'string' || !(ASSIGNABLE_ROLES as readonly string[]).includes(v)) {
+    if (typeof v !== 'string' || !(ROLE_VALUES as readonly string[]).includes(v)) {
       return NextResponse.json({ error: 'תפקיד לא תקין' }, { status: 400 });
     }
     nextRole = v as Role;
