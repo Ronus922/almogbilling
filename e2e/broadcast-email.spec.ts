@@ -190,6 +190,10 @@ test('email broadcast: template subject, file, missing-address list → Mailpit;
     `select count(*)::int n from public.wa_campaign_recipients r join public.contacts c on c.id = r.contact_id
       where r.campaign_id = $1 and c.apartment_number = $2`, [row.rows[0].id, aptWithout]);
   expect(noMailRow.rows[0].n).toBe(0);
+  // Who it went to, snapshotted on the row (the log's "נמען").
+  const named = await pool.query<{ recipient_name: string | null }>(
+    `select recipient_name from public.wa_campaign_recipients where campaign_id = $1`, [row.rows[0].id]);
+  expect(named.rows).toEqual([{ recipient_name: WITH_EMAIL }]);
 
   // ── History + log ──────────────────────────────────────────────────────
   // A 1440 screen holds the whole table — no horizontal scroll, "נכשלו" and
@@ -211,6 +215,7 @@ test('email broadcast: template subject, file, missing-address list → Mailpit;
   await expect(page.getByRole('columnheader', { name: 'אימייל' })).toBeVisible();
   const logRow = page.getByRole('row').filter({ hasText: 'e2•••@example.com' });
   await expect(logRow).toContainText('נשלח');
+  await expect(logRow).toContainText(WITH_EMAIL);
 });
 
 test('regression: a WhatsApp broadcast from the category still goes out on WhatsApp; the chat window is WhatsApp-only', async ({ page, request }) => {
@@ -232,6 +237,10 @@ test('regression: a WhatsApp broadcast from the category still goes out on Whats
     `select channel, subject from public.wa_campaigns where name = $1`, [WA_CAMPAIGN]);
   expect(row.rows[0]).toEqual({ channel: 'whatsapp', subject: null });
   expect(drain([WA_CAMPAIGN])).toEqual([`${PHONE_INTL}@c.us`]);
+  const waNamed = await pool.query<{ recipient_name: string | null }>(
+    `select r.recipient_name from public.wa_campaign_recipients r
+       join public.wa_campaigns w on w.id = r.campaign_id where w.name = $1`, [WA_CAMPAIGN]);
+  expect(waNamed.rows).toEqual([{ recipient_name: WITH_EMAIL }]);
   const status = await pool.query<{ status: string }>(`select status from public.wa_campaigns where name = $1`, [WA_CAMPAIGN]);
   expect(status.rows[0].status).toBe('completed');
   expect(await mailTo(request, ADDRESS)).toHaveLength(0); // nothing by email

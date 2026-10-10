@@ -12,7 +12,7 @@ import {
 import {
   interpolateTemplate, interpolateBroadcastTemplate, isDebtMessageTemplate,
   templateUsesApartmentOutsideBlock, resolveConsolidatedName, sortByApartmentNumberAscending,
-  emailSubjectError,
+  emailSubjectError, recipientDisplayName,
 } from '@/lib/whatsapp-template';
 import { buildEmailCampaignRecipients, isEmailDebtMessage } from '@/lib/email-broadcast';
 import { createCampaign, listCampaigns, startCampaign, CampaignConflictError } from '@/lib/wa-queue/campaigns';
@@ -236,6 +236,7 @@ export async function POST(req: NextRequest) {
         debtorId: rep.debtorId,
         phoneIntl: r.phoneIntl,
         payload: rendered.text,
+        recipientName: recipientDisplayName(r.rawNames),
         apartments: apartments.map((a) => ({ contactId: a.contactId, debtorId: a.debtorId })),
       };
     });
@@ -245,6 +246,7 @@ export async function POST(req: NextRequest) {
     recipients = resolved.map((r) => r.kind === 'supplier'
       ? {
           contactId: null, debtorId: null, supplierId: r.supplierId, phoneIntl: r.phoneIntl,
+          recipientName: recipientDisplayName([r.name]),
           payload: interpolateTemplate(messageBody, {
             owner_name: r.name, tenant_name: null, apartment_number: null,
             total_debt: null, management_fees: null, hot_water_debt: null,
@@ -252,6 +254,7 @@ export async function POST(req: NextRequest) {
         }
       : {
           contactId: r.contactId, debtorId: r.debtorId, phoneIntl: r.phoneIntl,
+          recipientName: recipientDisplayName([r.name]),
           payload: interpolateTemplate(messageBody, r.debtor),
         });
   } else {
@@ -259,6 +262,7 @@ export async function POST(req: NextRequest) {
     if (resolved.length === 0) return NextResponse.json({ error: 'לא נמצאו נמענים עם מספר תקין' }, { status: 400 });
     recipients = resolved.map((r) => ({
       contactId: r.contactId, debtorId: r.debtorId, phoneIntl: r.phoneIntl,
+      recipientName: recipientDisplayName([r.name]),
       payload: interpolateTemplate(messageBody, r.debtor),
     }));
   }

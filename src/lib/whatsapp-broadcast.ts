@@ -44,6 +44,10 @@ export interface BroadcastRecipient {
   debtorId: string | null;
   /** International digits ("972XXXXXXXXX"). */
   phoneIntl: string;
+  /** The person behind the address — the owner's or tenant's name on the card,
+   *  or an additional person's (contact_people.name); null when the card holds
+   *  none. Snapshotted as wa_campaign_recipients.recipient_name. */
+  name: string | null;
 }
 
 interface ContactRow {
@@ -260,6 +264,8 @@ interface AddressedRecipient {
   contactId: string;
   debtorId: string | null;
   address: string;
+  /** The person behind the address (see BroadcastRecipient.name). */
+  name: string | null;
 }
 
 /** The address an audience row is reached at — owners → the owner's, tenants
@@ -334,7 +340,7 @@ async function collectRecipients(
     if (row.contact_id) byContactId.set(row.contact_id, row);
   }
 
-  const push = (row: ContactRow, address: string) => {
+  const push = (row: ContactRow, address: string, name: string | null | undefined) => {
     // No linked contact (orphaned debtor) — can't form a valid recipient; see
     // the header comment on DEBTOR_COLS.
     if (!row.contact_id) return;
@@ -352,13 +358,14 @@ async function collectRecipients(
       contactId: row.contact_id,
       debtorId: row.debtor_id,
       address,
+      name: name ?? null,
     });
   };
 
   for (const row of rows) {
     if (!passesDebtFilter(row.total_debt, debtFilter)) continue;
     const picked = pickRowAddress(audience, row, enforcePrimary, addr);
-    if (picked) push(row, picked.address);
+    if (picked) push(row, picked.address, picked.name);
   }
 
   // Additional owners/tenants from the apartment card — same debt filter as
@@ -368,19 +375,19 @@ async function collectRecipients(
     const row = byDebtorId.get(extra.debtor_id);
     if (!row || !passesDebtFilter(row.total_debt, debtFilter)) continue;
     const address = addr.extra(extra);
-    if (address) push(row, address);
+    if (address) push(row, address, extra.name);
   }
   for (const extra of extrasByContact) {
     const row = byContactId.get(extra.contact_id);
     if (!row || !passesDebtFilter(row.total_debt, debtFilter)) continue;
     const address = addr.extra(extra);
-    if (address) push(row, address);
+    if (address) push(row, address, extra.name);
   }
   return out;
 }
 
 function asPhoneRecipient(r: AddressedRecipient): BroadcastRecipient {
-  return { debtor: r.debtor, contactId: r.contactId, debtorId: r.debtorId, phoneIntl: r.address };
+  return { debtor: r.debtor, contactId: r.contactId, debtorId: r.debtorId, phoneIntl: r.address, name: r.name };
 }
 
 /** WhatsApp — see collectRecipients. */
@@ -593,11 +600,11 @@ function unionConsolidatedByAddress(lists: ReadonlyArray<ConsolidatedAddressed[]
  *  renders blank/₪0 via the same defensive TemplateDebtor defaults —
  *  unreachable in practice since a debt template can't target suppliers). */
 export type SelectionRecipient =
-  | { kind: 'contact'; contactId: string; debtorId: string | null; debtor: TemplateDebtor; phoneIntl: string }
+  | { kind: 'contact'; contactId: string; debtorId: string | null; debtor: TemplateDebtor; phoneIntl: string; name: string | null }
   | { kind: 'supplier'; supplierId: string; name: string | null; phoneIntl: string };
 
 type AddressedSelection =
-  | { kind: 'contact'; contactId: string; debtorId: string | null; debtor: TemplateDebtor; address: string }
+  | { kind: 'contact'; contactId: string; debtorId: string | null; debtor: TemplateDebtor; address: string; name: string | null }
   | { kind: 'supplier'; supplierId: string; name: string | null; address: string };
 
 /** Free-form path for a multi-select audience — union of collectRecipients
@@ -614,7 +621,7 @@ async function collectSelection(
   if (roles.includes('owners')) lists.push(await collectRecipients({ type: 'owners' }, debtFilter, addr));
   if (roles.includes('tenants')) lists.push(await collectRecipients({ type: 'tenants' }, debtFilter, addr));
   const contacts: AddressedSelection[] = unionByAddress(lists).map((r) => ({
-    kind: 'contact', contactId: r.contactId, debtorId: r.debtorId, debtor: r.debtor, address: r.address,
+    kind: 'contact', contactId: r.contactId, debtorId: r.debtorId, debtor: r.debtor, address: r.address, name: r.name,
   }));
 
   const out: AddressedSelection[] = [...contacts];
@@ -636,7 +643,7 @@ export async function resolveSelectionRecipients(
 ): Promise<SelectionRecipient[]> {
   return (await collectSelection(roles, debtFilter, BY_PHONE)).map((r) => (r.kind === 'supplier'
     ? { kind: 'supplier', supplierId: r.supplierId, name: r.name, phoneIntl: r.address }
-    : { kind: 'contact', contactId: r.contactId, debtorId: r.debtorId, debtor: r.debtor, phoneIntl: r.address }));
+    : { kind: 'contact', contactId: r.contactId, debtorId: r.debtorId, debtor: r.debtor, phoneIntl: r.address, name: r.name }));
 }
 
 /** Debt-message (consolidated) path for a multi-select audience. Suppliers are
@@ -669,7 +676,7 @@ export async function resolveConsolidatedSelectionRecipients(
 // sending — "X עם אימייל / Y ללא").
 
 export type EmailSelectionRecipient =
-  | { kind: 'contact'; contactId: string; debtorId: string | null; debtor: TemplateDebtor; email: string }
+  | { kind: 'contact'; contactId: string; debtorId: string | null; debtor: TemplateDebtor; email: string; name: string | null }
   | { kind: 'supplier'; supplierId: string; name: string | null; email: string };
 
 export interface ConsolidatedEmailRecipient {
@@ -685,7 +692,7 @@ export async function resolveEmailSelectionRecipients(
 ): Promise<EmailSelectionRecipient[]> {
   return (await collectSelection(roles, debtFilter, BY_EMAIL)).map((r) => (r.kind === 'supplier'
     ? { kind: 'supplier', supplierId: r.supplierId, name: r.name, email: r.address }
-    : { kind: 'contact', contactId: r.contactId, debtorId: r.debtorId, debtor: r.debtor, email: r.address }));
+    : { kind: 'contact', contactId: r.contactId, debtorId: r.debtorId, debtor: r.debtor, email: r.address, name: r.name }));
 }
 
 /** Debt-message email broadcast: one email per address, every apartment of it. */

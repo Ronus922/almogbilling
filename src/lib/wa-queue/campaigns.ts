@@ -92,14 +92,15 @@ export async function createCampaign(pool: Pool, input: CreateCampaignInput): Pr
       const email = r.email ?? null;
       const inserted = await client.query<{ id: string }>(
         `insert into public.wa_campaign_recipients
-           (campaign_id, contact_id, supplier_id, debtor_id, phone_intl, chat_id, payload, idempotency_key, email, subject)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           (campaign_id, contact_id, supplier_id, debtor_id, phone_intl, chat_id, payload, idempotency_key, email, subject,
+            recipient_name)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          on conflict (idempotency_key) do nothing
          returning id`,
         [campaign.id, r.contactId, r.supplierId ?? null, r.debtorId,
          email ? '' : r.phoneIntl, email ? '' : `${r.phoneIntl}@c.us`, r.payload,
          email ? `${campaign.id}:email:${email}` : `${campaign.id}:${r.phoneIntl}`,
-         email, r.subject ?? null],
+         email, r.subject ?? null, r.recipientName ?? null],
       );
       // Consolidated (debt-message) recipient — every apartment it covers,
       // for the delete-guard + future reporting. Skipped on a conflict (the
@@ -230,7 +231,13 @@ export async function listRecipients(
     `select
        r.id, r.status, r.attempt_count, r.sent_at, r.delivered_at, r.read_at,
        r.failed_at, r.last_error, r.error_class, r.created_at,
-       coalesce(rc.owner_name, rc.tenant_name, sp.display_name) as debtor_name,
+       -- Who the message went to, as snapshotted at creation ('' = the card
+       -- had no name → null). NULL only on a row from before 10/10/2026: the
+       -- apartment's primary owner, as the log always showed.
+       case
+         when r.recipient_name is not null then nullif(r.recipient_name, '')
+         else coalesce(rc.owner_name, rc.tenant_name, sp.display_name)
+       end                                                 as debtor_name,
        rc.apartment_number,
        case
          when length(local.n) >= 5

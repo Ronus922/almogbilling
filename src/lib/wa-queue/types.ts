@@ -142,6 +142,10 @@ export interface RecipientInput {
   email?: string | null;
   /** Email channel only: the subject, fully interpolated. */
   subject?: string | null;
+  /** Who this message is addressed to — the delivery log's "נמען"
+   *  (recipientDisplayName); '' when the card holds no name. Omitted → NULL,
+   *  which the log reads as "created before 10/10/2026". */
+  recipientName?: string | null;
   /** Every apartment consolidated into this recipient (debt-message
    *  broadcasts only, PR ב') — including the representative one. Omitted for
    *  a free-form recipient: no wa_campaign_recipient_apartments rows are
@@ -203,6 +207,9 @@ export interface RecipientLogRow {
   /** Masked address on an email recipient, e.g. 'ro•••@example.com'; null
    *  on WhatsApp. Like the phone, the raw address never leaves the DB layer. */
   email_masked: string | null;
+  /** The recipient's name as snapshotted at creation (recipient_name); for a
+   *  row created before 10/10/2026, the apartment's primary owner (else
+   *  tenant / supplier) as the log always showed; null when there is none. */
   debtor_name: string | null;
   apartment_number: string | null;
   attempt_count: number;

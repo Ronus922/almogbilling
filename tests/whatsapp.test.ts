@@ -4,7 +4,7 @@ import {
   stripPhoneMarkup, phoneDigitsKey, WhatsAppError,
 } from '@/lib/whatsapp';
 import {
-  interpolateTemplate, formatDebt, resolveConsolidatedName, isDebtMessageTemplate,
+  interpolateTemplate, formatDebt, resolveConsolidatedName, recipientDisplayName, isDebtMessageTemplate,
   parseApartmentsBlock, interpolateBroadcastTemplate, templateUsesApartmentOutsideBlock,
 } from '@/lib/whatsapp-template';
 
@@ -373,6 +373,22 @@ describe('resolveConsolidatedName — {{name}} for a recipient with several apar
   it('no name anywhere → "דייר יקר", same default as the single-apartment case', () => {
     expect(resolveConsolidatedName([null, '', '  '])).toBe('דייר יקר');
     expect(resolveConsolidatedName([])).toBe('דייר יקר');
+  });
+});
+
+describe('recipientDisplayName — the delivery log\'s "נמען" (recipient_name)', () => {
+  it('one person → their (trimmed) name, the same cleaning as {{name}}', () => {
+    expect(recipientDisplayName(['  אסף בן שמואל '])).toBe('אסף בן שמואל');
+    expect(recipientDisplayName(['משה / '])).toBe('משה');
+  });
+
+  it('several distinct names on one address → all of them, never a guess and never hidden', () => {
+    expect(recipientDisplayName(['יעקב בזק', 'יעקב בזק', 'אלה בסנקו', null])).toBe('יעקב בזק / אלה בסנקו');
+  });
+
+  it('no name anywhere → "" (not the "דייר יקר" greeting — this is a label, not a salutation)', () => {
+    expect(recipientDisplayName([null, '', '   '])).toBe('');
+    expect(recipientDisplayName([])).toBe('');
   });
 });
 

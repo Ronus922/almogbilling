@@ -3788,6 +3788,7 @@ CREATE TABLE public.wa_campaign_recipients (
     supplier_id uuid,
     email text,
     subject text,
+    recipient_name text,
     CONSTRAINT wa_campaign_recipients_contact_or_supplier_check CHECK (((contact_id IS NOT NULL) OR (supplier_id IS NOT NULL))),
     CONSTRAINT wa_campaign_recipients_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'sent'::text, 'failed'::text, 'skipped'::text, 'cancelled'::text])))
 );
@@ -3812,6 +3813,13 @@ COMMENT ON COLUMN public.wa_campaign_recipients.email IS 'Email broadcast: the a
 --
 
 COMMENT ON COLUMN public.wa_campaign_recipients.subject IS 'Email broadcast: this recipient''s subject after placeholder interpolation (snapshot, like payload). NULL for WhatsApp.';
+
+
+--
+-- Name: COLUMN wa_campaign_recipients.recipient_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaign_recipients.recipient_name IS 'Name of the person this message was addressed to, snapshotted at creation (owner / tenant / additional person / supplier). '''' = the card has no name for them; NULL = created before 10/10/2026 (the log falls back to the apartment''s primary owner).';
 
 
 --
@@ -7567,5 +7575,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261005210110'),
     ('20261006063651'),
     ('20261006160340'),
-    ('20261009210844')
+    ('20261009210844'),
+    ('20261010074609')
 ;

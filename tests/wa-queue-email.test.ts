@@ -249,6 +249,36 @@ d('wa-queue — email channel', () => {
     expect(was.rows.some((x) => x.id === c.id)).toBe(false);
   });
 
+  it('the delivery log names who it went to: the snapshot on both channels, "" → no name, NULL (an older row) → the primary owner', async () => {
+    const em = await makeEmailCampaign([
+      { contactId, debtorId: null, phoneIntl: '', email: 'aa.name@example.com', subject: 's', payload: 'p', recipientName: 'בעלים נוסף' },
+      { contactId, debtorId: null, phoneIntl: '', email: 'bb.name@example.com', subject: 's', payload: 'p', recipientName: '' },
+      { contactId, debtorId: null, phoneIntl: '', email: 'cc.name@example.com', subject: 's', payload: 'p' },
+    ]);
+    const stored = await pool.query<{ email: string; recipient_name: string | null }>(
+      `select email, recipient_name from public.wa_campaign_recipients where campaign_id = $1 order by email`, [em.id]);
+    expect(stored.rows).toEqual([
+      { email: 'aa.name@example.com', recipient_name: 'בעלים נוסף' },
+      { email: 'bb.name@example.com', recipient_name: '' },
+      { email: 'cc.name@example.com', recipient_name: null },
+    ]);
+    // The contact's primary owner is 'בדיקת מייל' — shown only for the NULL row.
+    const log = await listRecipients(pool, em.id);
+    expect(Object.fromEntries(log.rows.map((r) => [r.email_masked, r.debtor_name]))).toEqual({
+      'aa•••@example.com': 'בעלים נוסף',
+      'bb•••@example.com': null,
+      'cc•••@example.com': 'בדיקת מייל',
+    });
+
+    const wa = await createCampaign(pool, {
+      name: `wa-name-${uniq()}`, body: 'b', audience: {}, instanceId: null, createdBy: null, ratePerMin: 120, dryRun: true,
+      recipients: [{ contactId, debtorId: null, phoneIntl: '972500000177', payload: 'p', recipientName: 'שוכר הדירה' }],
+    });
+    made.campaigns.push(wa.id);
+    expect((await listRecipients(pool, wa.id)).rows.map((r) => r.debtor_name)).toEqual(['שוכר הדירה']);
+    await drain(worker());
+  });
+
   it('email pace: app_settings email_rate_per_min (default 30), out-of-range values fall back', async () => {
     const before = await pool.query<{ value: unknown }>(`select value from public.app_settings where key = 'email_rate_per_min'`);
     try {

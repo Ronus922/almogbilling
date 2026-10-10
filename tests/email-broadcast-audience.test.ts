@@ -60,7 +60,7 @@ async function makeApt(spec: Apt): Promise<{ id: string; apartment: string }> {
   return { id, apartment };
 }
 
-async function makePerson(contactId: string, role: 'owner' | 'tenant', name: string, email: string | null, primary = true) {
+async function makePerson(contactId: string, role: 'owner' | 'tenant', name: string | null, email: string | null, primary = true) {
   const r = await pool.query<{ id: string }>(
     `insert into public.contact_people (contact_id, role, name, email, is_primary_contact, sort_order)
      values ($1, $2, $3, $4, $5, 0) returning id`, [contactId, role, name, email, primary]);
@@ -193,5 +193,40 @@ d('email channel — audience by address', () => {
     expect(est.count).toBe((await resolveEmailSelectionRecipients(['owners'])).length);
     expect(est.missing.some((m) => m.apartment_number === B.apartment && m.name === 'בלי מייל')).toBe(true);
     expect(est.partialCount).toBe(0);
+  });
+
+  // Last on purpose, with its own tag: these fixtures stay out of every
+  // assertion above (they filter on `tag` and on apartments A–D).
+  it('recipient name: the person each address belongs to — owner, tenant, additional person, supplier', async () => {
+    const t2 = `n${RUN}`;
+    const a2 = (local: string) => `${local}.${t2}@example.com`;
+    const ofMine = (email: string | null | undefined) => (email ?? '').endsWith(`.${t2}@example.com`);
+    const E = await makeApt({ owner_name: 'בעלים ה', owner_email: a2('owner.e'), tenant_name: 'שוכר ה', tenant_email: a2('tenant.e'), tenant_primary: true });
+    await makePerson(E.id, 'owner', 'בעלים נוסף ה', a2('extra.e'));
+    await makePerson(E.id, 'tenant', null, a2('nameless.e'));
+    await makeSupplier(`ספק ${t2}`, a2('supplier'));
+
+    const free = await buildEmailCampaignRecipients({ roles: ['owners', 'tenants', 'suppliers'], debtFilter: undefined, body: 'שלום {{name}}', subject: 'נושא' });
+    expect(free.ok).toBe(true);
+    const names = Object.fromEntries((free.ok ? free.recipients : []).filter((r) => ofMine(r.email)).map((r) => [r.email, r.recipientName]));
+    expect(names).toEqual({
+      [a2('owner.e')]: 'בעלים ה',
+      [a2('tenant.e')]: 'שוכר ה',
+      [a2('extra.e')]: 'בעלים נוסף ה',
+      [a2('nameless.e')]: '', // the card has no name — never somebody else's
+      [a2('supplier')]: `ספק ${t2}`,
+    });
+
+    // A debt message consolidated across two apartments whose cards name the
+    // mailbox differently: both names, not a guess.
+    await makeApt({ owner_name: 'משה ו', owner_email: a2('shared'), debt: 10 });
+    await makeApt({ owner_name: 'שרה ו', owner_email: a2('shared'), debt: 20 });
+    const debt = await buildEmailCampaignRecipients({
+      roles: ['owners'], debtFilter: undefined, body: '{{#apartments}}{{debt}}{{/apartments}}', subject: 'נושא',
+    });
+    const shared = debt.ok ? debt.recipients.find((r) => r.email === a2('shared')) : undefined;
+    expect(shared?.recipientName?.split(' / ').sort()).toEqual(['משה ו', 'שרה ו']);
+    const single = debt.ok ? debt.recipients.find((r) => r.email === a2('owner.e')) : undefined;
+    expect(single?.recipientName).toBe('בעלים ה');
   });
 });

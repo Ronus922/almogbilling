@@ -80,6 +80,18 @@ export function resolveConsolidatedName(rawNames: ReadonlyArray<string | null | 
 }
 
 /**
+ * The delivery log's "נמען" for one recipient row — snapshotted as
+ * wa_campaign_recipients.recipient_name when the broadcast is created (both
+ * channels). Unlike {{name}} it is not a greeting, so it never guesses and
+ * never hides: every distinct name the address carries (one for a single
+ * person, several for a consolidated debt message whose apartments list
+ * different names), joined with " / "; '' when the card holds no name at all.
+ */
+export function recipientDisplayName(rawNames: ReadonlyArray<string | null | undefined>): string {
+  return Array.from(new Set(rawNames.map(cleanNameCandidate).filter((n) => n.length > 0))).join(' / ');
+}
+
+/**
  * Replaces `{{placeholder}}` tokens with the debtor's values.
  *   {{name}}    → owner_name || tenant_name (cleaned) | "דייר יקר"
  *   {{debt}}    → formatted total_debt (₪ + thousands)

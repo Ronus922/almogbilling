@@ -5,7 +5,7 @@ import {
 import {
   interpolateTemplate, interpolateBroadcastTemplate, isDebtMessageTemplate,
   templateUsesApartmentOutsideBlock, resolveConsolidatedName, sortByApartmentNumberAscending,
-  toSubjectLine,
+  toSubjectLine, recipientDisplayName,
 } from '@/lib/whatsapp-template';
 import type { RecipientInput } from '@/lib/wa-queue/types';
 import type { BroadcastDebtFilter, BroadcastRoleSelection, MissingEmailEntry } from '@/types/whatsapp';
@@ -71,6 +71,7 @@ export async function buildEmailCampaignRecipients(input: EmailAudienceInput): P
         email: r.email,
         subject: toSubjectLine(interpolateBroadcastTemplate(subject, recipient).text),
         payload: rendered.text,
+        recipientName: recipientDisplayName(r.rawNames),
         apartments: apartments.map((a) => ({ contactId: a.contactId, debtorId: a.debtorId })),
       };
     });
@@ -91,6 +92,7 @@ export async function buildEmailCampaignRecipients(input: EmailAudienceInput): P
       email: r.email,
       subject: toSubjectLine(interpolateTemplate(subject, debtor)),
       payload: interpolateTemplate(body, debtor),
+      recipientName: recipientDisplayName([r.name]),
     };
   });
   return { ok: true, recipients, partialDetailCount: 0 };
