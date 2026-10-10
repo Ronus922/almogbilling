@@ -85,8 +85,13 @@ d('wa-queue — email channel', () => {
       [`99${Date.now() % 10_000_000}`]);
     contactId = c.rows[0].id;
     made.contacts.push(contactId);
-    // The shared rate window must not be throttled by an earlier run.
-    await pool.query(`delete from public.wa_send_log where bucket = $1 and sent_at < now() - interval '10 minutes'`, [EMAIL_RATE_BUCKET]);
+    // The shared rate window must not be throttled by an earlier run. The email
+    // bucket counts the trailing 60s against email_rate_per_min (default 30), so
+    // a run within a minute of the last one was paced and its drains ran dry.
+    // Until 10/10/2026 this deleted only rows older than 10 minutes — already
+    // outside the window. On the throwaway database the bucket holds nothing but
+    // this suite's earlier runs.
+    await pool.query(`delete from public.wa_send_log where bucket = $1`, [EMAIL_RATE_BUCKET]);
   });
 
   afterAll(async () => {
@@ -177,12 +182,14 @@ d('wa-queue — email channel', () => {
 
   it('SMTP auth rejected: the alert is raised, this and every pending recipient fail as auth; "retry failed" re-queues them', async () => {
     let alerts = 0;
-    const bad = new MockEmailTransport({ fail: { 'auth1@example.com': { message: 'smtp: 535', authFailure: true } } });
+    // A 535 is a rejected login, so it answers whichever address goes first. The
+    // three rows are claimed in one batch and the claim's RETURNING has no order
+    // (until 10/10/2026 only auth1 was rejected, and the run failed whenever
+    // another row came back first). One alert and nothing sent prove the breaker
+    // stopped the two rows still waiting in the batch.
+    const rejected = { message: 'smtp: 535', authFailure: true };
+    const bad = new MockEmailTransport({ fail: { 'auth1@example.com': rejected, 'auth2@example.com': rejected, 'auth3@example.com': rejected } });
     const c = await makeEmailCampaign(emailRecips('auth1@example.com', 'auth2@example.com', 'auth3@example.com'));
-    // Order the queue so the rejected address goes first.
-    await pool.query(
-      `update public.wa_campaign_recipients set next_attempt_at = now() - interval '1 minute' where campaign_id = $1 and email = 'auth1@example.com'`,
-      [c.id]);
     await drain(worker({ transport: bad, onAuth: async () => { alerts++; } }));
 
     expect(alerts).toBe(1);
