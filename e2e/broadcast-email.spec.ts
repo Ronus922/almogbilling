@@ -192,12 +192,19 @@ test('email broadcast: template subject, file, missing-address list → Mailpit;
   expect(noMailRow.rows[0].n).toBe(0);
 
   // ── History + log ──────────────────────────────────────────────────────
+  // A 1440 screen holds the whole table — no horizontal scroll, "נכשלו" and
+  // the actions in view (DESIGN.md §9: fixed columns, the name takes the rest).
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/broadcasts/history');
   await page.getByRole('combobox', { name: 'סינון לפי ערוץ' }).click();
   await page.getByRole('option', { name: 'מייל' }).click();
   const histRow = page.getByRole('row').filter({ hasText: EMAIL_CAMPAIGN });
   await expect(histRow).toContainText('מייל');
   await expect(histRow).toContainText('הושלמה');
+  const scrolls = await page.locator('main table').evaluate((t) => t.parentElement!.scrollWidth > t.parentElement!.clientWidth);
+  expect(scrolls).toBe(false);
+  await expect(page.getByRole('columnheader', { name: 'נכשלו' })).toBeInViewport();
+  await expect(histRow.getByRole('link', { name: 'צפייה בפרטים' })).toBeInViewport();
   await histRow.getByRole('link', { name: 'צפייה בפרטים' }).click();
   await expect(page).toHaveURL(new RegExp(`/broadcasts/history/${row.rows[0].id}$`));
   await expect(page.getByText(`נושא: עדכון לדירה {{apartment}}`)).toBeVisible();

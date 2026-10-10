@@ -34,6 +34,32 @@ const STATUS_OPTIONS: CampaignStatus[] = [
 ];
 const CHANNEL_OPTIONS: BroadcastChannel[] = ['whatsapp', 'email'];
 
+// Column widths (px) — `table-fixed` + <colgroup>, the finance tables' pattern
+// (DESIGN.md §9, §35): every column but the name holds its width and the name
+// takes the rest, so at 1440 the whole table — "נכשלו" and the actions
+// included — fits without a horizontal scroll; below the min width the
+// wrapper scrolls instead of crushing the name. The creator sits under the
+// date, the audience/template under the name, and an active broadcast's
+// progress under its status — no column that is "—" on most rows.
+const COL_PX = { channel: 124, created: 148, status: 184, count: 72, actions: 124 } as const;
+const NAME_MIN_PX = 200;
+
+interface Col { label: string; px?: number; align: 'text-start' | 'text-center' | 'text-end' }
+
+function tableColumns(showChannel: boolean): Col[] {
+  return [
+    { label: 'שם התפוצה', align: 'text-start' },
+    ...(showChannel ? [{ label: 'ערוץ', px: COL_PX.channel, align: 'text-start' } as const] : []),
+    { label: 'נוצרה', px: COL_PX.created, align: 'text-start' },
+    { label: 'סטטוס', px: COL_PX.status, align: 'text-start' },
+    { label: 'נשלחו', px: COL_PX.count, align: 'text-center' },
+    { label: 'נכשלו', px: COL_PX.count, align: 'text-center' },
+    { label: 'בוטלו', px: COL_PX.count, align: 'text-center' },
+    { label: 'סה״כ', px: COL_PX.count, align: 'text-center' },
+    { label: 'פעולות', px: COL_PX.actions, align: 'text-end' },
+  ];
+}
+
 // Rendered both as the /broadcasts/history page (the "תפוצה" category — both
 // channels, with a channel column + filter) AND embedded inside the chat's
 // broadcast window "היסטוריית תפוצות" tab. `embedded` drops the page header;
@@ -98,6 +124,7 @@ export function BroadcastsHistoryClient({
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const hasFilters = status !== ALL || (showChannel && channelFilter !== ALL) || q !== '' || from !== '' || to !== '';
+  const columns = tableColumns(showChannel);
 
   return (
     <div className="space-y-6">
@@ -175,9 +202,9 @@ export function BroadcastsHistoryClient({
         <EmptyState hasFilters={hasFilters} canEdit={canEdit} onCreate={openCreate} />
       ) : (
         <div className="rounded-lg border border-slate-200 bg-white overflow-x-auto">
-          {/* מובייל (<md) — כרטיס לכל תפוצה. הטבלה היא 12 עמודות, הרחבה
-              במערכת. הכרטיס נשען על אותם props/handlers כמו <Row>
-              (onOpen / onStop / canEdit) — אין state או לוגיקה נפרדת. */}
+          {/* מובייל (<md) — כרטיס לכל תפוצה. הכרטיס נשען על אותם
+              props/handlers כמו <Row> (onOpen / onStop / canEdit) — אין
+              state או לוגיקה נפרדת. */}
           <ul className="space-y-2 p-3 roomy:hidden">
             {rows.map((c) => (
               <MobileCard
@@ -191,11 +218,14 @@ export function BroadcastsHistoryClient({
             ))}
           </ul>
 
-          <Table className="hidden roomy:table">
+          <Table className="hidden table-fixed roomy:table" style={{ minWidth: columns.reduce((sum, col) => sum + (col.px ?? NAME_MIN_PX), 0) }}>
+            <colgroup>
+              {columns.map((col) => <col key={col.label} style={col.px ? { width: col.px } : undefined} />)}
+            </colgroup>
             <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
               <TableRow className="bg-slate-50 hover:bg-slate-50">
-                {['שם התפוצה', ...(showChannel ? ['ערוץ'] : []), 'תאריך יצירה', 'נוצר על ידי', 'קהל יעד', 'תבנית', 'סטטוס', 'התקדמות', 'נשלחו', 'נכשלו', 'בוטלו', 'סך הכול', 'פעולות'].map((h, i, all) => (
-                  <TableHead key={h} className={cn('h-11 px-3 text-sm font-semibold text-slate-500', ['נשלחו', 'נכשלו', 'בוטלו', 'סך הכול'].includes(h) ? 'text-center' : 'text-start', i === all.length - 1 && 'text-end')}>{h}</TableHead>
+                {columns.map((col) => (
+                  <TableHead key={col.label} className={cn('h-11 px-4 text-sm font-semibold text-slate-500', col.align)}>{col.label}</TableHead>
                 ))}
               </TableRow>
             </TableHeader>
@@ -305,37 +335,38 @@ function Row({ c, showChannel, canEdit, onStop, onOpen }: { c: CampaignListItemV
   const active = !isTerminal(c.status);
   const pct = progressPct(c);
   return (
-    <TableRow className="border-b border-slate-100 hover:bg-slate-50">
-      <TableCell className="px-3 py-3 text-start text-sm font-bold text-slate-900 max-w-[260px]">
-        <div className="truncate">{c.name}</div>
-        <AttachmentLinks attachments={c.attachments} className="mt-1.5 font-normal" />
+    <TableRow className="h-12 border-b border-slate-100 hover:bg-slate-50">
+      <TableCell className="overflow-hidden px-4 py-3 text-start text-sm">
+        <div className="truncate font-bold text-slate-900" title={c.name}>{c.name}</div>
+        <div className="mt-0.5 truncate text-xs text-slate-500">
+          {audienceLabel(c.audience)} · {c.template_name ?? 'כתיבה חופשית'}
+        </div>
+        <AttachmentLinks attachments={c.attachments} className="mt-1.5" />
       </TableCell>
       {showChannel && (
-        <TableCell className="px-3 py-3 text-start"><ChannelBadge channel={c.channel} /></TableCell>
+        <TableCell className="px-4 py-3 text-start"><ChannelBadge channel={c.channel} /></TableCell>
       )}
-      <TableCell className="px-3 py-3 text-start text-sm text-slate-600 whitespace-nowrap tabular-nums">{formatDate(c.created_at)}</TableCell>
-      <TableCell className="px-3 py-3 text-start text-sm text-slate-600">{c.created_by_name ?? '—'}</TableCell>
-      <TableCell className="px-3 py-3 text-start text-sm text-slate-600">{audienceLabel(c.audience)}</TableCell>
-      <TableCell className="px-3 py-3 text-start text-sm text-slate-600 max-w-[140px] truncate">{c.template_name ?? 'כתיבה חופשית'}</TableCell>
-      <TableCell className="px-3 py-3 text-start"><CampaignStatusBadge status={c.status} /></TableCell>
-      <TableCell className="px-3 py-3 min-w-[150px]">
-        {active ? (
-          <div className="space-y-1">
+      <TableCell className="overflow-hidden px-4 py-3 text-start text-sm">
+        <div className="whitespace-nowrap text-slate-600 tabular-nums">{formatDate(c.created_at)}</div>
+        <div className="mt-0.5 truncate text-xs text-slate-500">{c.created_by_name ?? '—'}</div>
+      </TableCell>
+      <TableCell className="px-4 py-3 text-start">
+        <CampaignStatusBadge status={c.status} />
+        {active && (
+          <div className="mt-1.5 space-y-1">
             <Progress value={pct} className="h-1.5" />
             <div className="flex items-center justify-between text-[11px] text-slate-500 tabular-nums">
               <span>{processed(c)} מתוך {c.total_count}</span>
               <span>{pct}%</span>
             </div>
           </div>
-        ) : (
-          <span className="text-xs text-slate-400">—</span>
         )}
       </TableCell>
-      <TableCell className="px-3 py-3 text-center text-sm font-semibold text-emerald-700 tabular-nums">{c.sent_count}</TableCell>
-      <TableCell className="px-3 py-3 text-center text-sm font-semibold text-red-600 tabular-nums">{c.failed_count}</TableCell>
-      <TableCell className="px-3 py-3 text-center text-sm text-slate-600 tabular-nums">{c.cancelled_count + c.skipped_count}</TableCell>
-      <TableCell className="px-3 py-3 text-center text-sm font-semibold text-slate-700 tabular-nums">{c.total_count}</TableCell>
-      <TableCell className="px-3 py-3 text-end">
+      <TableCell dir="ltr" className="px-4 py-3 text-center text-sm font-bold text-emerald-700 tabular-nums">{c.sent_count}</TableCell>
+      <TableCell dir="ltr" className="px-4 py-3 text-center text-sm font-bold text-red-600 tabular-nums">{c.failed_count}</TableCell>
+      <TableCell dir="ltr" className="px-4 py-3 text-center text-sm text-slate-600 tabular-nums">{c.cancelled_count + c.skipped_count}</TableCell>
+      <TableCell dir="ltr" className="px-4 py-3 text-center text-sm font-bold text-slate-700 tabular-nums">{c.total_count}</TableCell>
+      <TableCell className="px-4 py-3 text-end">
         <div dir="ltr" className="flex items-center justify-start gap-1">
           <Tooltip>
             <TooltipTrigger render={<span className="inline-flex" />}>
