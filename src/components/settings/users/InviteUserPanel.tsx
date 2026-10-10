@@ -22,7 +22,6 @@ import { isValidPassword } from '@/lib/auth/passwordPolicy';
 import { roleLabel, isMatrixRole, ROLE_VALUES, type ModulePermission, type Role } from '@/lib/permissions/constants';
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const DEFAULT_ROLE: Role = 'manager';
 
 interface Props {
   open: boolean;
@@ -31,8 +30,8 @@ interface Props {
   currentUserRole: Role;
 }
 
-function defaultsFor(role: Role): ModulePermission[] {
-  return getDefaultPermissions(role) ?? [];
+function defaultsFor(role: Role | null): ModulePermission[] {
+  return role ? getDefaultPermissions(role) ?? [] : [];
 }
 
 // True only when the current matrix diverges from the role's defaults. When it
@@ -58,8 +57,11 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<Role>(DEFAULT_ROLE);
-  const [permissions, setPermissions] = useState<ModulePermission[]>(() => defaultsFor(DEFAULT_ROLE));
+  // No default role: the user is saved in exactly the role picked here. Until
+  // 10/10/2026 the form opened on "מנהל", so a click that did not land sent
+  // manager — how a new maintenance worker became a manager on 09/10.
+  const [role, setRole] = useState<Role | null>(null);
+  const [permissions, setPermissions] = useState<ModulePermission[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
 
@@ -69,8 +71,8 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
       setFullName('');
       setEmail('');
       setPassword('');
-      setRole(DEFAULT_ROLE);
-      setPermissions(defaultsFor(DEFAULT_ROLE));
+      setRole(null);
+      setPermissions([]);
     }
   }, [open]);
 
@@ -80,8 +82,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
   }, [role]);
 
   // Dirty = user typed in any text field. Role/permission tinkering doesn't
-  // count — the role selector has a default, and matrix has defaults; closing
-  // without filling name/email loses no real work.
+  // count — closing without filling name/email loses no real work.
   const dirty = fullName.trim().length > 0 || email.trim().length > 0 || password.length > 0;
 
   const trimmedName = fullName.trim();
@@ -92,6 +93,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
     trimmedName.length >= 2 &&
     trimmedName.length <= 80 &&
     EMAIL_RX.test(trimmedEmail) &&
+    role !== null &&
     !passwordInvalid &&
     !submitting;
 
@@ -111,7 +113,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
   }
 
   async function handleSubmit() {
-    if (!canSubmit) return;
+    if (!canSubmit || role === null) return;
 
     setSubmitting(true);
     try {
@@ -139,9 +141,12 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
         credentials: 'include',
         body: JSON.stringify(body),
       });
-      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      const data = (await r.json().catch(() => ({}))) as { error?: string; role?: Role };
       if (!r.ok) throw new Error(data.error ?? 'יצירת המשתמש נכשלה');
-      toast.success(withPassword ? 'המשתמש נוצר' : 'המשתמש נוצר והוזמן');
+      // The role the server stored, not the one in the form — so the toast
+      // itself is the check that the user was saved as chosen.
+      const saved = data.role ? roleLabel(data.role) : roleLabel(role);
+      toast.success(withPassword ? `המשתמש נוצר — ${saved}` : `המשתמש נוצר והוזמן — ${saved}`);
       router.refresh();
       onOpenChange(false);
     } catch (e) {
@@ -152,7 +157,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
     }
   }
 
-  const matrixVisible = isMatrixRole(role);
+  const matrixVisible = role !== null && isMatrixRole(role);
 
   return (
     <>
@@ -248,10 +253,15 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
                     disabled={submitting}
                     allowedRoles={creatableRoles}
                   />
+                  {role === null && (
+                    <p className="mt-3 text-xs text-slate-500">
+                      בחר תפקיד — אין ברירת מחדל. המשתמש יישמר בדיוק בתפקיד שבחרת.
+                    </p>
+                  )}
                 </div>
               </Section>
 
-              {matrixVisible ? (
+              {role === null ? null : matrixVisible ? (
                 <Section
                   title="הרשאות"
                   icon={KeyRound}

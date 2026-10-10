@@ -203,7 +203,7 @@ export async function POST(req: NextRequest) {
       metadata: { email, full_name, role, actor_role: actor.role, method: 'password' },
     });
 
-    return NextResponse.json({ id: userId }, { status: 201 });
+    return NextResponse.json({ id: userId, role }, { status: 201 });
   }
 
   const rawToken = generateInviteToken();
@@ -245,5 +245,6 @@ export async function POST(req: NextRequest) {
     // Keep the invite — admin can use "resend" later.
   }
 
-  return NextResponse.json({ id: inviteId }, { status: 201 });
+  // `role` = what was stored; the form names it in its toast.
+  return NextResponse.json({ id: inviteId, role }, { status: 201 });
 }
