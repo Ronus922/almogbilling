@@ -8,7 +8,7 @@ import type { TasksWidget as TasksData } from '../data';
 
 export function TasksWidget({ data }: { data: TasksData | null }) {
   return (
-    <OverviewCard icon={ListChecks} tone="violet" title="משימות" count={data?.count} action={{ label: 'הצג הכל', href: '/tasks' }}>
+    <OverviewCard icon={ListChecks} tone="violet" title="משימות" count={data?.count} action={{ label: 'הצג הכל', href: '/work' }}>
       {!data ? (
         <EmptyState message="לא ניתן לטעון משימות" />
       ) : data.items.length === 0 ? (

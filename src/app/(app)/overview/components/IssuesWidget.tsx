@@ -8,7 +8,7 @@ import type { IssuesWidget as IssuesData } from '../data';
 
 export function IssuesWidget({ data }: { data: IssuesData | null }) {
   return (
-    <OverviewCard icon={AlertTriangle} tone="red" title="תקלות" count={data?.count} action={{ label: 'הצג הכל', href: '/issues' }}>
+    <OverviewCard icon={AlertTriangle} tone="red" title="תקלות" count={data?.count} action={{ label: 'הצג הכל', href: '/work' }}>
       {!data ? (
         <EmptyState message="לא ניתן לטעון תקלות" />
       ) : data.items.length === 0 ? (
