@@ -139,7 +139,9 @@ export async function listWorkItems(
     // than 7 days are excluded here — the nightly archive job moves them to
     // the archive tab before that matters in practice, but this keeps the
     // feed correct even if the job is behind.
-    where.push(`archived_at is null and (status_v2 <> 'closed' or closed_at >= now() - interval '7 days')`);
+    // closed_at is text here (cast in the CTE's SELECT, for the RSC boundary)
+    // — cast back to compare against now().
+    where.push(`archived_at is null and (status_v2 <> 'closed' or closed_at::timestamptz >= now() - interval '7 days')`);
   }
 
   if (filters.kind) {
@@ -189,8 +191,8 @@ export async function getWorkItemKpis(actor: WorkItemScopeActor): Promise<WorkIt
      select
        count(*) filter (where priority = 'urgent')::int as urgent,
        count(*) filter (where assignee_user_id is null and assignee_supplier_id is null)::int as unassigned,
-       count(*) filter (where due_date = current_date)::int as due_today,
-       count(*) filter (where due_date < current_date)::int as overdue
+       count(*) filter (where due_date::date = current_date)::int as due_today,
+       count(*) filter (where due_date::date < current_date)::int as overdue
      from combined
      where ${where}`,
     scope.params,
