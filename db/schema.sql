@@ -3,6 +3,7 @@
 --
 
 
+
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -2550,14 +2551,24 @@ CREATE TABLE public.issues (
     ticket_number integer,
     reporter_role text,
     board_column text,
+    status_v2 text DEFAULT 'open'::text NOT NULL,
+    blocked boolean DEFAULT false NOT NULL,
+    blocked_reason text,
+    assignee_user_id uuid,
+    assignee_supplier_id uuid,
+    closed_at timestamp with time zone,
+    archived_at timestamp with time zone,
+    sort_index numeric,
     CONSTRAINT issues_board_column_check CHECK (((board_column IS NULL) OR (board_column = ANY (ARRAY['awaiting'::text, 'today'::text, 'in_progress'::text])))),
     CONSTRAINT issues_location_type_check CHECK ((location_type = ANY (ARRAY['apartment'::text, 'area'::text, 'general'::text]))),
     CONSTRAINT issues_portal_reporter_check CHECK (((source <> 'portal'::text) OR ((reporter_phone IS NOT NULL) AND (reporter_location IS NOT NULL) AND (ticket_number IS NOT NULL) AND ((reporter_apartment IS NULL) OR (btrim(reporter_apartment) <> ''::text)) AND ((reporter_contact_id IS NULL) OR (reporter_apartment IS NOT NULL))))),
+    CONSTRAINT issues_primary_assignee_check CHECK ((NOT ((assignee_user_id IS NOT NULL) AND (assignee_supplier_id IS NOT NULL)))),
     CONSTRAINT issues_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text]))),
     CONSTRAINT issues_reporter_phone_e164_check CHECK (((reporter_phone IS NULL) OR (reporter_phone ~ '^\+[1-9][0-9]{6,14}$'::text))),
     CONSTRAINT issues_reporter_role_check CHECK (((reporter_role IS NULL) OR (reporter_role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text])))),
     CONSTRAINT issues_source_check CHECK ((source = ANY (ARRAY['staff'::text, 'portal'::text]))),
     CONSTRAINT issues_status_check CHECK ((status = ANY (ARRAY['open'::text, 'in_progress'::text, 'resolved'::text, 'closed'::text]))),
+    CONSTRAINT issues_status_v2_check CHECK ((status_v2 = ANY (ARRAY['open'::text, 'in_progress'::text, 'closed'::text]))),
     CONSTRAINT issues_target_type_check CHECK ((target_type = ANY (ARRAY['room'::text, 'area'::text])))
 );
 
@@ -2630,6 +2641,34 @@ COMMENT ON COLUMN public.issues.reporter_role IS 'source=portal: the role the re
 --
 
 COMMENT ON COLUMN public.issues.board_column IS 'Kanban column on /issues (awaiting · today · in_progress), set at insert from the computed rule and afterwards only by a drag (PATCH /api/issues/[id]/move). NULL = computed live (lib/issues/board.ts). Resolved / closed issues show in "בוצע" whatever this says.';
+
+
+--
+-- Name: COLUMN issues.status_v2; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.status_v2 IS 'New source of truth for the unified תקלות/משימות module (11/10/2026). The old `status` + `board_column` stay as-is for the retired kanban; nothing in the new UI reads or writes them.';
+
+
+--
+-- Name: COLUMN issues.assignee_user_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.assignee_user_id IS 'Single primary assignee (employee), unified module (11/10/2026). NOT the frozen legacy `assigned_to_user_id` (pre-047). Kept in sync with entity_assignees by the application — see entity_assignees for the multi-assignee / worker-scoping source of truth.';
+
+
+--
+-- Name: COLUMN issues.assignee_supplier_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.assignee_supplier_id IS 'Single primary assignee (supplier), unified module (11/10/2026). NOT the frozen legacy `supplier_id` (pre-047). See assignee_user_id comment.';
+
+
+--
+-- Name: COLUMN issues.closed_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.issues.closed_at IS 'When this issue reached status_v2=closed (unified module, 11/10/2026). Backfilled from resolved_at when the legacy status was resolved, else updated_at.';
 
 
 --
@@ -3493,9 +3532,24 @@ CREATE TABLE public.tasks (
     is_recurring_instance boolean DEFAULT false NOT NULL,
     parent_task_id uuid,
     occurrence_date date,
+    status_v2 text DEFAULT 'open'::text NOT NULL,
+    blocked boolean DEFAULT false NOT NULL,
+    blocked_reason text,
+    assignee_user_id uuid,
+    assignee_supplier_id uuid,
+    source text DEFAULT 'staff'::text NOT NULL,
+    source_apartment text,
+    source_reporter_name text,
+    closed_at timestamp with time zone,
+    archived_at timestamp with time zone,
+    sort_index numeric,
+    is_recurring_paused boolean DEFAULT false NOT NULL,
+    CONSTRAINT tasks_primary_assignee_check CHECK ((NOT ((assignee_user_id IS NOT NULL) AND (assignee_supplier_id IS NOT NULL)))),
     CONSTRAINT tasks_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text]))),
     CONSTRAINT tasks_related_entity_type_check CHECK ((related_entity_type = ANY (ARRAY['debtor'::text, 'building'::text, 'supplier'::text, 'contact'::text]))),
+    CONSTRAINT tasks_source_check CHECK ((source = ANY (ARRAY['staff'::text, 'tenant'::text]))),
     CONSTRAINT tasks_status_check CHECK ((status = ANY (ARRAY['open'::text, 'in_progress'::text, 'done'::text, 'cancelled'::text]))),
+    CONSTRAINT tasks_status_v2_check CHECK ((status_v2 = ANY (ARRAY['open'::text, 'in_progress'::text, 'closed'::text]))),
     CONSTRAINT tasks_target_type_check CHECK ((target_type = ANY (ARRAY['room'::text, 'area'::text])))
 );
 
@@ -3519,6 +3573,48 @@ COMMENT ON COLUMN public.tasks.parent_task_id IS 'FROZEN (migration 067): instan
 --
 
 COMMENT ON COLUMN public.tasks.occurrence_date IS 'FROZEN (migration 067): superseded by the single-row model — due_date is the current occurrence.';
+
+
+--
+-- Name: COLUMN tasks.status_v2; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.status_v2 IS 'New source of truth for the unified תקלות/משימות module (11/10/2026). The old `status` stays as-is; nothing in the new UI reads or writes it.';
+
+
+--
+-- Name: COLUMN tasks.assignee_user_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.assignee_user_id IS 'Single primary assignee (employee), unified module (11/10/2026). NOT the frozen legacy `assigned_to_user_id` (pre-047). Kept in sync with entity_assignees by the application — see entity_assignees for the multi-assignee / worker-scoping source of truth.';
+
+
+--
+-- Name: COLUMN tasks.assignee_supplier_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.assignee_supplier_id IS 'Single primary assignee (supplier), unified module (11/10/2026). NOT the frozen legacy `supplier_id` (pre-047). See assignee_user_id comment.';
+
+
+--
+-- Name: COLUMN tasks.source; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.source IS 'Who opened the task (unified module, 11/10/2026) — mirrors issues.source''s job, kept as a separate column/vocabulary because tasks has no portal/tenant-reporting write path yet: every row is ''staff'' until one exists.';
+
+
+--
+-- Name: COLUMN tasks.closed_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.closed_at IS 'When this task reached status_v2=closed (unified module, 11/10/2026). Backfilled from completed_at when set, else updated_at.';
+
+
+--
+-- Name: COLUMN tasks.is_recurring_paused; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.is_recurring_paused IS 'Recurring template temporarily paused (unified module, 11/10/2026) — hides it from overdue/urgency highlighting without ending the series (task_recurrences.is_active means ended, not paused).';
 
 
 --
@@ -5579,10 +5675,31 @@ CREATE INDEX issue_comments_issue_id_idx ON public.issue_comments USING btree (i
 
 
 --
+-- Name: issues_archived_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issues_archived_at_idx ON public.issues USING btree (archived_at) WHERE (archived_at IS NOT NULL);
+
+
+--
 -- Name: issues_assigned_to_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX issues_assigned_to_idx ON public.issues USING btree (assigned_to_user_id);
+
+
+--
+-- Name: issues_assignee_supplier_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issues_assignee_supplier_idx ON public.issues USING btree (assignee_supplier_id) WHERE (assignee_supplier_id IS NOT NULL);
+
+
+--
+-- Name: issues_assignee_user_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issues_assignee_user_idx ON public.issues USING btree (assignee_user_id) WHERE (assignee_user_id IS NOT NULL);
 
 
 --
@@ -5600,6 +5717,13 @@ CREATE INDEX issues_priority_idx ON public.issues USING btree (priority);
 
 
 --
+-- Name: issues_sort_index_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issues_sort_index_idx ON public.issues USING btree (sort_index);
+
+
+--
 -- Name: issues_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5611,6 +5735,13 @@ CREATE INDEX issues_status_idx ON public.issues USING btree (status);
 --
 
 CREATE INDEX issues_status_sort_idx ON public.issues USING btree (status, sort_order);
+
+
+--
+-- Name: issues_status_v2_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issues_status_v2_idx ON public.issues USING btree (status_v2) WHERE (NOT is_archived);
 
 
 --
@@ -5901,10 +6032,31 @@ CREATE UNIQUE INDEX task_recurrences_task_uniq ON public.task_recurrences USING 
 
 
 --
+-- Name: tasks_archived_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tasks_archived_at_idx ON public.tasks USING btree (archived_at) WHERE (archived_at IS NOT NULL);
+
+
+--
 -- Name: tasks_assigned_to_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX tasks_assigned_to_idx ON public.tasks USING btree (assigned_to_user_id);
+
+
+--
+-- Name: tasks_assignee_supplier_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tasks_assignee_supplier_idx ON public.tasks USING btree (assignee_supplier_id) WHERE (assignee_supplier_id IS NOT NULL);
+
+
+--
+-- Name: tasks_assignee_user_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tasks_assignee_user_idx ON public.tasks USING btree (assignee_user_id) WHERE (assignee_user_id IS NOT NULL);
 
 
 --
@@ -5943,10 +6095,24 @@ CREATE UNIQUE INDEX tasks_recurrence_single_row_uniq ON public.tasks USING btree
 
 
 --
+-- Name: tasks_recurring_paused_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tasks_recurring_paused_idx ON public.tasks USING btree (is_recurring_paused) WHERE is_recurring_paused;
+
+
+--
 -- Name: tasks_related_entity_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX tasks_related_entity_idx ON public.tasks USING btree (related_entity_type, related_entity_id);
+
+
+--
+-- Name: tasks_sort_index_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tasks_sort_index_idx ON public.tasks USING btree (sort_index);
 
 
 --
@@ -5961,6 +6127,13 @@ CREATE INDEX tasks_status_idx ON public.tasks USING btree (status);
 --
 
 CREATE INDEX tasks_status_sort_idx ON public.tasks USING btree (status, sort_order);
+
+
+--
+-- Name: tasks_status_v2_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tasks_status_v2_idx ON public.tasks USING btree (status_v2) WHERE (NOT is_archived);
 
 
 --
@@ -6897,6 +7070,22 @@ ALTER TABLE ONLY public.issues
 
 
 --
+-- Name: issues issues_assignee_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_assignee_supplier_id_fkey FOREIGN KEY (assignee_supplier_id) REFERENCES public.suppliers(id) ON DELETE SET NULL;
+
+
+--
+-- Name: issues issues_assignee_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issues
+    ADD CONSTRAINT issues_assignee_user_id_fkey FOREIGN KEY (assignee_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: issues issues_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7241,6 +7430,22 @@ ALTER TABLE ONLY public.tasks
 
 
 --
+-- Name: tasks tasks_assignee_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_assignee_supplier_id_fkey FOREIGN KEY (assignee_supplier_id) REFERENCES public.suppliers(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tasks tasks_assignee_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_assignee_user_id_fkey FOREIGN KEY (assignee_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: tasks tasks_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7453,6 +7658,7 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 
 
+
 --
 -- Dbmate schema migrations
 --
@@ -7576,5 +7782,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261006063651'),
     ('20261006160340'),
     ('20261009210844'),
-    ('20261010074609')
+    ('20261010074609'),
+    ('20261011220356')
 ;
