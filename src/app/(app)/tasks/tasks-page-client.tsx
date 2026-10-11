@@ -115,6 +115,21 @@ export function TasksPageClient({
     }
   }, []);
 
+  async function togglePaused(id: string, paused: boolean) {
+    try {
+      const res = await fetch(`/api/tasks/${id}/recurrence`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action: paused ? 'pause' : 'resume' }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      void fetchSeries();
+    } catch (err) {
+      toast.error(`עדכון הסדרה נכשל: ${(err as Error).message}`);
+    }
+  }
+
   // Active / completed partition (client-side — "filter only", no new status).
   const activeTasks = useMemo(() => tasks.filter((t) => !isCompletedTaskStatus(t.status)), [tasks]);
   const completedTasks = useMemo(() => tasks.filter((t) => isCompletedTaskStatus(t.status)), [tasks]);
@@ -401,7 +416,7 @@ export function TasksPageClient({
 
       {/* Board / Table / Series — completed is always a table; recurring is its own list */}
       {tab === 'recurring' ? (
-        <RecurringSeriesList series={series} onSelect={openTaskById} />
+        <RecurringSeriesList series={series} onSelect={openTaskById} onTogglePaused={togglePaused} />
       ) : tab === 'active' && view === 'kanban' ? (
         <TasksKanban tasks={shown} canEdit={canEdit} onSelect={openEdit} onReorder={handleReorder} onComplete={handleComplete} onDelete={canEdit ? setDeleteTarget : undefined} />
       ) : (

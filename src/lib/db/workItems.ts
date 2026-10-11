@@ -278,3 +278,34 @@ export async function reorderWorkItemWithinLane(
     return 'moved';
   });
 }
+
+// ── Archive ──────────────────────────────────────────────────────────────
+/** Restore an archived item (clear archived_at) — the archive tab's one
+ *  mutation. Does not touch status_v2/closed_at: a restored item reappears in
+ *  the active feed still closed, exactly where it was before archiving. */
+export async function restoreWorkItem(kind: WorkItemKind, id: string): Promise<boolean> {
+  const table = TABLE[kind];
+  const r = await query(`update ${table} set archived_at = null where id = $1`, [id]);
+  return (r.rowCount ?? 0) > 0;
+}
+
+/** Nightly archive sweep (unified module, 11/10/2026) — closed_at older than
+ *  30 days -> archived_at = now(), on both tables. Never touches recurring
+ *  templates (is_recurring_template/is_active rows stay in the recurring tab
+ *  forever). Returns the count archived per table, for the cron log. */
+export async function archiveOldClosedWorkItems(): Promise<{ issues: number; tasks: number }> {
+  const issuesR = await query(
+    `update public.issues
+        set archived_at = now()
+      where status_v2 = 'closed' and archived_at is null
+        and closed_at is not null and closed_at < now() - interval '30 days'`,
+  );
+  const tasksR = await query(
+    `update public.tasks
+        set archived_at = now()
+      where status_v2 = 'closed' and archived_at is null
+        and closed_at is not null and closed_at < now() - interval '30 days'
+        and is_recurring_template = false`,
+  );
+  return { issues: issuesR.rowCount ?? 0, tasks: tasksR.rowCount ?? 0 };
+}

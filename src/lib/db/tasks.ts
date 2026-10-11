@@ -272,6 +272,10 @@ export interface RecurringSeries {
   done_count: number;
   expected_count: number;
   period_label: string | null;
+  // ── Unified module (11/10/2026) ───────────────────────────────────────────
+  priority: string;
+  assignee_display_name: string | null;
+  is_recurring_paused: boolean;
 }
 
 export async function listRecurringSeries(): Promise<RecurringSeries[]> {
@@ -280,14 +284,21 @@ export async function listRecurringSeries(): Promise<RecurringSeries[]> {
     recurrence_id: string;
     frequency: RecurrenceFrequency; interval: number; byweekday: number[] | null;
     end_type: RecurrenceRule['endType']; end_date: string | null; end_count: number | null;
+    priority: string;
+    assignee_display_name: string | null;
+    is_recurring_paused: boolean;
   }>(
     `select t.id, t.title, t.due_time::text as due_time,
             r.anchor_date::text as anchor,
             t.recurrence_id,
             r.frequency, r.interval, r.byweekday,
-            r.end_type, r.end_date::text as end_date, r.end_count
+            r.end_type, r.end_date::text as end_date, r.end_count,
+            t.priority, t.is_recurring_paused,
+            coalesce(au.full_name, au.username, asup.display_name) as assignee_display_name
        from public.tasks t
        join public.task_recurrences r on r.id = t.recurrence_id
+       left join public.users au on au.id = t.assignee_user_id
+       left join public.suppliers asup on asup.id = t.assignee_supplier_id
       where t.is_archived = false
         and r.is_active = true`,
   );
@@ -350,6 +361,9 @@ export async function listRecurringSeries(): Promise<RecurringSeries[]> {
       done_count: view?.done_count ?? 0,
       expected_count: view?.expected_count ?? 0,
       period_label: view?.period_label ?? null,
+      priority: row.priority,
+      assignee_display_name: row.assignee_display_name,
+      is_recurring_paused: row.is_recurring_paused,
     };
   });
 

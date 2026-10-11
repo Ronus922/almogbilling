@@ -4,13 +4,19 @@ import { Repeat, CalendarClock } from 'lucide-react';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import { Switch } from '@/components/ui/switch';
 import { CadenceStrip, CadenceProgress } from '@/components/recurrence/CadenceStrip';
+import { PRIORITY_BADGE, taskPriorityLabel } from '@/lib/constants/tasks';
 import type { RecurringSeries } from '@/lib/db/tasks';
+import type { TaskPriority } from '@/lib/types/tasks';
+import { cn } from '@/lib/utils';
 
 interface Props {
   series: RecurringSeries[];
   /** Open the series' template task (click anywhere on the row). */
   onSelect: (id: string) => void;
+  /** Flip is_recurring_paused (unified module, 11/10/2026). */
+  onTogglePaused: (id: string, paused: boolean) => void;
 }
 
 /** 'YYYY-MM-DD' → 'DD/MM/YYYY' (string-only, no Date/TZ pitfalls). */
@@ -25,7 +31,7 @@ function fmtDate(d: string): string {
  * shows the title, the cadence strip (label + day/month chips) and the next
  * occurrence date + time. Click → opens the series task.
  */
-export function RecurringSeriesList({ series, onSelect }: Props) {
+export function RecurringSeriesList({ series, onSelect, onTogglePaused }: Props) {
   if (series.length === 0) {
     return (
       <div className="flex flex-col items-center gap-3 rounded-lg border bg-card p-12 text-center">
@@ -71,6 +77,22 @@ export function RecurringSeriesList({ series, onSelect }: Props) {
                   ? <span dir="ltr">{fmtDate(s.next_occurrence)}{s.due_time ? ` · ${s.due_time}` : ''}</span>
                   : <span className="text-slate-400">אין מופע קרוב</span>}
               </div>
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold', PRIORITY_BADGE[s.priority as TaskPriority])}>
+                    {taskPriorityLabel(s.priority as TaskPriority)}
+                  </span>
+                  <span className="text-[12px] text-slate-500">{s.assignee_display_name ?? 'ללא שיוך'}</span>
+                </div>
+                <span className="pointer-events-auto relative z-10 flex items-center gap-1.5 text-[11px] text-slate-500">
+                  {s.is_recurring_paused ? 'מושהה' : 'פעיל'}
+                  <Switch
+                    checked={!s.is_recurring_paused}
+                    onCheckedChange={(checked) => onTogglePaused(s.id, !checked)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </span>
+              </div>
             </div>
           </li>
         ))}
@@ -81,8 +103,11 @@ export function RecurringSeriesList({ series, onSelect }: Props) {
         <TableHeader className="[&_tr]:border-b [&_tr]:border-slate-200">
           <TableRow className="bg-slate-50 hover:bg-slate-50">
             <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">כותרת</TableHead>
+            <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">עובד/ספק</TableHead>
+            <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">דחיפות</TableHead>
             <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">מחזוריות</TableHead>
             <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">המופע הבא</TableHead>
+            <TableHead className="h-11 px-4 text-start text-sm font-semibold text-slate-500">סטטוס</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -103,6 +128,14 @@ export function RecurringSeriesList({ series, onSelect }: Props) {
                   />
                 </span>
               </TableCell>
+              <TableCell className="px-4 py-3 text-start text-sm text-slate-600">
+                {s.assignee_display_name ?? 'ללא שיוך'}
+              </TableCell>
+              <TableCell className="px-4 py-3 text-start text-sm">
+                <span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold', PRIORITY_BADGE[s.priority as TaskPriority])}>
+                  {taskPriorityLabel(s.priority as TaskPriority)}
+                </span>
+              </TableCell>
               <TableCell className="min-w-[220px] px-4 py-3 text-start text-sm">
                 <CadenceStrip label={s.label} chips={s.chips} />
               </TableCell>
@@ -117,6 +150,15 @@ export function RecurringSeriesList({ series, onSelect }: Props) {
                 ) : (
                   <span className="text-xs text-slate-400">אין מופע קרוב</span>
                 )}
+              </TableCell>
+              <TableCell className="px-4 py-3 text-start text-sm">
+                <span className="flex items-center gap-1.5 text-[12px] text-slate-500" onClick={(e) => e.stopPropagation()}>
+                  {s.is_recurring_paused ? 'מושהה' : 'פעיל'}
+                  <Switch
+                    checked={!s.is_recurring_paused}
+                    onCheckedChange={(checked) => onTogglePaused(s.id, !checked)}
+                  />
+                </span>
               </TableCell>
             </TableRow>
           ))}
