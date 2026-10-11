@@ -129,9 +129,10 @@ describe('field-worker roles — cleaner / maintenance', () => {
   });
 
   // A worker holds no `dashboard` and no overview-widget permission, so landing
-  // them anywhere but /issues yields an empty (or bounced) page.
-  it.each(WORKERS)('%s lands on /issues', (role) => {
-    expect(homePathFor(role)).toBe('/issues');
+  // them anywhere but the unified /work screen (11/10/2026) yields an empty
+  // (or bounced) page.
+  it.each(WORKERS)('%s lands on /work', (role) => {
+    expect(homePathFor(role)).toBe('/work');
   });
 
   it('the existing roles are untouched by the addition', () => {
