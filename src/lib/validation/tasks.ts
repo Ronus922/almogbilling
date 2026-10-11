@@ -128,6 +128,17 @@ export function coerceTaskInput(
     fields.target_id = id;
   }
 
+  // Unified module (11/10/2026) — set manually from the card/panel.
+  if (has(body, 'blocked')) {
+    if (typeof body.blocked !== 'boolean') return { ok: false, error: 'invalid_blocked' };
+    fields.blocked = body.blocked;
+  }
+  if (has(body, 'blocked_reason')) {
+    const r = strOrNull(body.blocked_reason);
+    if (r && r.length > 500) return { ok: false, error: 'blocked_reason_too_long' };
+    fields.blocked_reason = r;
+  }
+
   // Assignees (users + suppliers) are validated separately via coerceAssignees
   // and written to the entity_assignees junction — no longer scalar fields here.
   return { ok: true, fields };
