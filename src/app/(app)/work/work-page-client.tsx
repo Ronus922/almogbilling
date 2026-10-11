@@ -196,6 +196,15 @@ export function WorkPageClient({
     }
   }
 
+  // BlockedToggleDialog already PATCHed the server (PATCH /api/issues|tasks/[id])
+  // directly — this just syncs the local list so the row/card reflects it
+  // without a full refetch.
+  function handleBlockedChange(item: WorkItem, blocked: boolean, reason: string | null) {
+    setItems((curr) => curr.map((i) => (
+      i.id === item.id && i.kind === item.kind ? { ...i, blocked, blocked_reason: reason } : i
+    )));
+  }
+
   async function handleReorder(item: WorkItem, beforeId: string | null) {
     try {
       const res = await fetch(`/api/work-items/${item.kind}/${item.id}/move`, {
@@ -364,6 +373,7 @@ export function WorkPageClient({
                   onAssign={handleAssign}
                   onReorder={handleReorder}
                   onAdvanceStatus={handleAdvanceStatus}
+                  onBlockedChange={handleBlockedChange}
                 />
               </div>
               <div className="lg:hidden">
@@ -377,6 +387,7 @@ export function WorkPageClient({
                   onOpen={openItem}
                   onAssign={handleAssign}
                   onAdvanceStatus={handleAdvanceStatus}
+                  onBlockedChange={handleBlockedChange}
                 />
               </div>
             </>
@@ -391,6 +402,7 @@ export function WorkPageClient({
               onOpen={openItem}
               onAssign={handleAssign}
               onAdvanceStatus={handleAdvanceStatus}
+              onBlockedChange={handleBlockedChange}
             />
           )}
         </>

@@ -76,6 +76,7 @@ export function WorkItemsList({
   onOpen,
   onAssign,
   onAdvanceStatus,
+  onBlockedChange,
 }: {
   items: WorkItem[];
   today: string;
@@ -86,6 +87,7 @@ export function WorkItemsList({
   onOpen: (item: WorkItem) => void;
   onAssign: (item: WorkItem, assignee: { kind: 'user' | 'supplier'; id: string } | null) => void;
   onAdvanceStatus: (item: WorkItem) => void;
+  onBlockedChange: (item: WorkItem, blocked: boolean, reason: string | null) => void;
 }) {
   // Closed never shows in the active list (the board handles "recently closed").
   const active = useMemo(
@@ -142,6 +144,7 @@ export function WorkItemsList({
                     onOpen={() => onOpen(item)}
                     onAssign={(a) => onAssign(item, a)}
                     onAdvanceStatus={() => onAdvanceStatus(item)}
+                    onBlockedChange={(blocked, reason) => onBlockedChange(item, blocked, reason)}
                   />
                 ))}
               </div>

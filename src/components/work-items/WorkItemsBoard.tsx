@@ -13,13 +13,14 @@
 //     the drop is rejected (treated as "no-op") when tiers differ.
 
 import { useMemo, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { AlertOctagon, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { landingAboveIn } from '@/lib/dnd/landing';
 import {
   WORK_PRIORITY_TAG, WORK_PRIORITY_LABEL, WORK_STATUS_DOT, WORK_STATUS_LABEL,
   WORK_NEW_TAG, WORK_BLOCKED_TAG, WORK_RESIDENT_TAG, WORK_KIND_TAG, WORK_KIND_LABEL,
 } from '@/lib/constants/workItems';
+import { BlockedToggleDialog } from './BlockedToggleDialog';
 import type { WorkItem } from '@/lib/types/workItems';
 
 const ID_ATTR = 'data-work-item-id';
@@ -44,6 +45,7 @@ export function WorkItemsBoard({
   onAssign,
   onReorder,
   onAdvanceStatus,
+  onBlockedChange,
 }: {
   items: WorkItem[];
   canEdit: boolean;
@@ -53,8 +55,10 @@ export function WorkItemsBoard({
   onAssign: (item: WorkItem, assignee: { kind: 'user' | 'supplier'; id: string } | null) => void;
   onReorder: (item: WorkItem, beforeId: string | null) => void;
   onAdvanceStatus: (item: WorkItem) => void;
+  onBlockedChange: (item: WorkItem, blocked: boolean, reason: string | null) => void;
 }) {
   const [dragId, setDragId] = useState<string | null>(null);
+  const [blockedDialogItem, setBlockedDialogItem] = useState<WorkItem | null>(null);
   const [landing, setLanding] = useState<{ lane: string; beforeId: string | null } | null>(null);
   const [expandedRecent, setRecentCollapsed] = useState<Set<string>>(new Set());
 
@@ -148,7 +152,16 @@ export function WorkItemsBoard({
           <span className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-bold', WORK_KIND_TAG[item.kind])}>
             {WORK_KIND_LABEL[item.kind]}
           </span>
-          {item.blocked && <span className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-bold', WORK_BLOCKED_TAG)}>תקוע</span>}
+          {item.blocked && (
+            <button
+              type="button"
+              disabled={!canEdit}
+              onClick={(e) => { e.stopPropagation(); setBlockedDialogItem(item); }}
+              className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-bold', WORK_BLOCKED_TAG)}
+            >
+              תקוע
+            </button>
+          )}
           {item.is_from_resident && <span className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-bold', WORK_RESIDENT_TAG)}>דייר</span>}
         </div>
         <h4 className="mt-1 line-clamp-2 text-[13.5px] font-bold text-slate-900">{item.title}</h4>
@@ -156,15 +169,27 @@ export function WorkItemsBoard({
           {item.due_date ? (
             <span dir="ltr" className="text-[11px] tabular-nums text-slate-500">{item.due_date.slice(5)}</span>
           ) : <span />}
-          <button
-            type="button"
-            disabled={!canEdit || item.status_v2 === 'closed'}
-            onClick={(e) => { e.stopPropagation(); onAdvanceStatus(item); }}
-            className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10.5px] font-semibold text-slate-700 disabled:cursor-default"
-          >
-            <span className={cn('h-1.5 w-1.5 rounded-full', WORK_STATUS_DOT[item.status_v2])} />
-            {WORK_STATUS_LABEL[item.status_v2]}
-          </button>
+          <div className="flex items-center gap-1">
+            {canEdit && !item.blocked && (
+              <button
+                type="button"
+                aria-label="סמן כתקוע"
+                onClick={(e) => { e.stopPropagation(); setBlockedDialogItem(item); }}
+                className="grid h-6 w-6 place-items-center rounded-full text-slate-400 hover:bg-red-50 hover:text-red-600"
+              >
+                <AlertOctagon className="h-3.5 w-3.5" />
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={!canEdit || item.status_v2 === 'closed'}
+              onClick={(e) => { e.stopPropagation(); onAdvanceStatus(item); }}
+              className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10.5px] font-semibold text-slate-700 disabled:cursor-default"
+            >
+              <span className={cn('h-1.5 w-1.5 rounded-full', WORK_STATUS_DOT[item.status_v2])} />
+              {WORK_STATUS_LABEL[item.status_v2]}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -263,6 +288,21 @@ export function WorkItemsBoard({
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[repeat(auto-fit,minmax(220px,1fr))]">
         {lanes.map(renderLaneColumn)}
       </div>
+
+      {blockedDialogItem && (
+        <BlockedToggleDialog
+          open
+          onOpenChange={(o) => { if (!o) setBlockedDialogItem(null); }}
+          kind={blockedDialogItem.kind}
+          id={blockedDialogItem.id}
+          currentlyBlocked={blockedDialogItem.blocked}
+          currentReason={blockedDialogItem.blocked_reason}
+          onDone={(blocked, reason) => {
+            onBlockedChange(blockedDialogItem, blocked, reason);
+            setBlockedDialogItem(null);
+          }}
+        />
+      )}
     </div>
   );
 }

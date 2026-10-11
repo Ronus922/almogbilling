@@ -4,7 +4,8 @@
 // Card/row color = priority only (DESIGN.md "שפת צבעים — תקלות ומשימות");
 // status is a chip, never a background.
 
-import { MessageSquare, Paperclip, Repeat, UserPlus } from 'lucide-react';
+import { useState } from 'react';
+import { AlertOctagon, MessageSquare, Paperclip, Repeat, UserPlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   WORK_PRIORITY_TAG, WORK_PRIORITY_LABEL, WORK_STATUS_DOT, WORK_STATUS_LABEL,
@@ -12,6 +13,7 @@ import {
   WORK_KIND_TAG, WORK_KIND_LABEL, WORK_AVATAR,
 } from '@/lib/constants/workItems';
 import { PrimaryAssigneePicker } from './PrimaryAssigneePicker';
+import { BlockedToggleDialog } from './BlockedToggleDialog';
 import type { WorkItem } from '@/lib/types/workItems';
 
 function isOverdue(item: WorkItem, todayStr: string): boolean {
@@ -33,6 +35,7 @@ export function WorkItemRow({
   onOpen,
   onAssign,
   onAdvanceStatus,
+  onBlockedChange,
 }: {
   item: WorkItem;
   today: string;
@@ -42,8 +45,10 @@ export function WorkItemRow({
   onOpen: () => void;
   onAssign: (assignee: { kind: 'user' | 'supplier'; id: string } | null) => void;
   onAdvanceStatus: () => void;
+  onBlockedChange: (blocked: boolean, reason: string | null) => void;
 }) {
   const overdue = isOverdue(item, today);
+  const [blockedDialogOpen, setBlockedDialogOpen] = useState(false);
 
   return (
     <div
@@ -72,9 +77,14 @@ export function WorkItemRow({
             {WORK_KIND_LABEL[item.kind]}
           </span>
           {item.blocked && (
-            <span className={cn('rounded-md px-1.5 py-0.5 text-[10.5px] font-bold', WORK_BLOCKED_TAG)}>
+            <button
+              type="button"
+              disabled={!canEdit}
+              onClick={(e) => { e.stopPropagation(); setBlockedDialogOpen(true); }}
+              className={cn('rounded-md px-1.5 py-0.5 text-[10.5px] font-bold', WORK_BLOCKED_TAG)}
+            >
               תקוע{item.blocked_reason ? ` · ${item.blocked_reason}` : ''}
-            </span>
+            </button>
           )}
           {item.is_from_resident && (
             <span className={cn('rounded-md px-1.5 py-0.5 text-[10.5px] font-bold', WORK_RESIDENT_TAG)}>
@@ -147,6 +157,27 @@ export function WorkItemRow({
         <span className={cn('h-1.5 w-1.5 rounded-full', WORK_STATUS_DOT[item.status_v2])} />
         {WORK_STATUS_LABEL[item.status_v2]}
       </button>
+
+      {canEdit && !item.blocked && (
+        <button
+          type="button"
+          aria-label='סמן כתקוע'
+          onClick={(e) => { e.stopPropagation(); setBlockedDialogOpen(true); }}
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-slate-400 hover:bg-red-50 hover:text-red-600"
+        >
+          <AlertOctagon className="h-4 w-4" />
+        </button>
+      )}
+
+      <BlockedToggleDialog
+        open={blockedDialogOpen}
+        onOpenChange={setBlockedDialogOpen}
+        kind={item.kind}
+        id={item.id}
+        currentlyBlocked={item.blocked}
+        currentReason={item.blocked_reason}
+        onDone={onBlockedChange}
+      />
     </div>
   );
 }
