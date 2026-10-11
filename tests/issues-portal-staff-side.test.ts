@@ -73,6 +73,9 @@ function issue(source: 'portal' | 'staff', assignedUserId: string | null = null)
       ? [{ assignee_type: 'user', user_id: assignedUserId, supplier_id: null, display_name: 'עובד' }] as IssueWithMeta['assignees']
       : [],
     comment_count: 0, linked_task_id: null, target_label: null,
+    status_v2: 'open', blocked: false, blocked_reason: null,
+    assignee_user_id: assignedUserId, assignee_supplier_id: null,
+    closed_at: null, archived_at: null, sort_index: null,
   };
 }
 

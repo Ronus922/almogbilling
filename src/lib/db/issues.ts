@@ -21,6 +21,7 @@ import {
 import { targetLabelSql } from '@/lib/db/targets';
 import { BOARD_SORT_GAP, initialBoardColumn, planBoardMove, type BoardIssue } from '@/lib/issues/board';
 import type { IssueBoardColumn } from '@/lib/types/issues';
+import { issueStatusV2 } from '@/lib/workItems/status';
 
 // Handlers live in entity_assignees (migration 047) — the legacy
 // assigned_to_user_id / supplier_id columns are frozen and no longer projected.
@@ -34,7 +35,9 @@ const ISSUE_COLUMNS = `
   due_date::text as due_date, due_time::text as due_time,
   images, videos, resolution_notes, resolved_at::text as resolved_at, is_archived, sort_order, board_column,
   created_by, created_by_name, created_at::text as created_at, updated_at::text as updated_at,
-  source, reporter_name, reporter_apartment, reporter_role, reporter_location, reporter_area, ticket_number
+  source, reporter_name, reporter_apartment, reporter_role, reporter_location, reporter_area, ticket_number,
+  status_v2, blocked, blocked_reason, assignee_user_id, assignee_supplier_id,
+  closed_at::text as closed_at, archived_at::text as archived_at, sort_index
 `;
 
 // Columns a create/update may set (title + created_by handled explicitly on
@@ -51,6 +54,8 @@ const WRITABLE_COLUMNS: (keyof IssueWritableFields)[] = [
   'resolution_notes',
   'due_date',
   'due_time',
+  'blocked',
+  'blocked_reason',
 ];
 
 const META_SELECT = `
@@ -225,11 +230,13 @@ export async function createIssue(
   const rec = data as Record<string, unknown>;
 
   const id = await withTransaction(async (client: PoolClient) => {
-    const cols: string[] = ['created_by', 'created_by_name', 'board_column'];
+    const status = data.status ?? 'open';
+    const cols: string[] = ['created_by', 'created_by_name', 'board_column', 'status_v2'];
     const vals: unknown[] = [
       createdBy,
       createdByName,
       initialBoardColumn(assignees.length > 0, data.due_date ?? null, today),
+      issueStatusV2(status),
     ];
 
     for (const c of WRITABLE_COLUMNS) {
@@ -239,9 +246,13 @@ export async function createIssue(
       }
     }
 
-    // resolved_at follows status on create.
+    // resolved_at / closed_at follow status on create.
     if (data.status === 'resolved') {
       cols.push('resolved_at');
+      vals.push(new Date().toISOString());
+    }
+    if (issueStatusV2(status) === 'closed') {
+      cols.push('closed_at');
       vals.push(new Date().toISOString());
     }
 
@@ -291,6 +302,14 @@ export async function updateIssue(
     } else {
       set.push(`resolved_at = null`);
     }
+
+    // status_v2 + closed_at mirror the legacy status on every write — see
+    // src/lib/workItems/status.ts — so every pre-existing status-reading
+    // consumer (calendar overlay, reminders) stays correct without change.
+    const v2 = issueStatusV2(data.status);
+    vals.push(v2);
+    set.push(`status_v2 = $${vals.length}`);
+    set.push(v2 === 'closed' ? `closed_at = coalesce(closed_at, now())` : `closed_at = null`);
   }
 
   const existed = await withTransaction(async (client: PoolClient) => {
@@ -314,6 +333,41 @@ export async function updateIssue(
     return exists;
   });
 
+  if (!existed) return null;
+  return getIssueById(id);
+}
+
+// ── Primary assignee (unified module, 11/10/2026) ───────────────────────────
+/**
+ * Set (or clear) the single primary assignee: writes the fast-path scalar
+ * columns AND replaces the item's entity_assignees set with exactly this one
+ * entry (or clears it), so every existing consumer of the junction — worker
+ * row-scoping, notifications-on-assign, the multi-assignee display elsewhere —
+ * stays correct without change. `assignee: null` clears both.
+ */
+export async function setIssuePrimaryAssignee(
+  id: string,
+  assignee: { kind: 'user' | 'supplier'; id: string } | null,
+  actorId: string | null,
+): Promise<IssueWithMeta | null> {
+  const existed = await withTransaction(async (client: PoolClient) => {
+    const r = await client.query<{ id: string }>(
+      `update public.issues
+          set assignee_user_id = $2, assignee_supplier_id = $3
+        where id = $1
+        returning id`,
+      [id, assignee?.kind === 'user' ? assignee.id : null, assignee?.kind === 'supplier' ? assignee.id : null],
+    );
+    if ((r.rowCount ?? 0) === 0) return false;
+    await replaceEntityAssignees(
+      client,
+      'issue',
+      id,
+      assignee ? [{ assignee_type: assignee.kind, id: assignee.id }] : [],
+      actorId,
+    );
+    return true;
+  });
   if (!existed) return null;
   return getIssueById(id);
 }

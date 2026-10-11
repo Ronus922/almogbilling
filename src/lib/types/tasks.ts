@@ -3,6 +3,7 @@
 import type { TargetType } from './targets';
 import type { AssigneeRef } from './assignee';
 import type { CadenceKind, ChipStrip } from '@/lib/recurrence/cadence';
+import type { WorkItemStatusV2 } from './workItems';
 
 // ── Tasks ────────────────────────────────────────────────────────────────
 export type TaskStatus = 'open' | 'in_progress' | 'done' | 'cancelled';
@@ -44,6 +45,28 @@ export interface Task {
   created_by_name: string | null;
   created_at: string;
   updated_at: string;
+  // ── Unified תקלות/משימות module (11/10/2026, additive) ───────────────────
+  /** New source of truth — derived server-side from `status` on every write. */
+  status_v2: WorkItemStatusV2;
+  blocked: boolean;
+  blocked_reason: string | null;
+  /** Single primary assignee (employee) — NOT the frozen legacy
+   *  assigned_to_user_id. Kept in sync with entity_assignees by the app. */
+  assignee_user_id: string | null;
+  /** Single primary assignee (supplier) — NOT the frozen legacy supplier_id. */
+  assignee_supplier_id: string | null;
+  /** Mirrors issues.source's job — always 'staff' until a tenant-task-report
+   *  write path exists. */
+  source: 'staff' | 'tenant';
+  source_apartment: string | null;
+  source_reporter_name: string | null;
+  closed_at: string | null;
+  archived_at: string | null;
+  /** Manual re-order position within a priority tier on the unified board. */
+  sort_index: number | null;
+  /** Template temporarily paused — excluded from overdue/urgency highlighting
+   *  without ending the series. */
+  is_recurring_paused: boolean;
 }
 
 /**
@@ -103,6 +126,9 @@ export interface TaskWritableFields {
   related_entity_id: string | null;
   target_type: TargetType | null;
   target_id: string | null;
+  /** Unified module (11/10/2026) — set manually from the card/panel. */
+  blocked: boolean;
+  blocked_reason: string | null;
 }
 
 export type TaskSort = 'created_desc' | 'due_asc' | 'priority_desc' | 'updated_desc';

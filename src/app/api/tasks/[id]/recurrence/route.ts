@@ -6,6 +6,7 @@ import {
   skipTaskOccurrence,
   detachTaskOccurrence,
 } from '@/lib/recurrence/series';
+import { setTaskRecurrencePaused } from '@/lib/db/tasks';
 import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -14,10 +15,10 @@ interface RouteCtx {
   params: Promise<{ id: string }>;
 }
 
-type RecurrenceAction = 'skip' | 'end' | 'detach';
-const ACTIONS: readonly RecurrenceAction[] = ['skip', 'end', 'detach'];
+type RecurrenceAction = 'skip' | 'end' | 'detach' | 'pause' | 'resume';
+const ACTIONS: readonly RecurrenceAction[] = ['skip', 'end', 'detach', 'pause', 'resume'];
 
-// POST /api/tasks/[id]/recurrence  { action: 'skip' | 'end' | 'detach' }   (tasks:edit)
+// POST /api/tasks/[id]/recurrence  { action: 'skip' | 'end' | 'detach' | 'pause' | 'resume' }   (tasks:edit)
 // Per-occurrence / series operations from the edit drawer. No new permission —
 // reuses the existing tasks:edit layer.
 export async function POST(req: NextRequest, ctx: RouteCtx) {
@@ -64,6 +65,12 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
         if (!result) return NextResponse.json({ error: 'not_applicable' }, { status: 400 });
         // detached_task_id lets the drawer reopen on the standalone copy.
         return NextResponse.json({ ok: true, ...result });
+      }
+      case 'pause':
+      case 'resume': {
+        const ok = await setTaskRecurrencePaused(id, action === 'pause');
+        if (!ok) return NextResponse.json({ error: 'not_applicable' }, { status: 400 });
+        return NextResponse.json({ ok: true });
       }
     }
   } catch (err) {
