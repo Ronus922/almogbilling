@@ -252,7 +252,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     if (recipients.length > 0) {
       void dispatchCreateNotifications({
         title: `תקלה: ${issue.title}`,
-        actionUrl: `/issues?issue=${issue.id}`,
+        actionUrl: `/work?kind=issue&id=${issue.id}`,
         details: {
           description: issue.description,
           targetLabel: issue.target_label,

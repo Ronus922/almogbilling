@@ -230,7 +230,7 @@ export async function POST(req: NextRequest) {
     if (recipients.length > 0) {
       void dispatchCreateNotifications({
         title: `משימה: ${task.title}`,
-        actionUrl: `/tasks?task=${task.id}`,
+        actionUrl: `/work?kind=task&id=${task.id}`,
         details: {
           description: task.description,
           targetLabel: task.target_label,

@@ -1,64 +1,14 @@
 import { redirect } from 'next/navigation';
-import { getCurrentActor } from '@/lib/auth/actor';
-import { hasPermission } from '@/lib/permissions/check';
-import { listTasks, getTaskKpis, listRecurringSeries } from '@/lib/db/tasks';
-import { listAssignableUsers } from '@/lib/db/users';
-import { listSuppliers } from '@/lib/db/suppliers';
-import { TasksPageClient } from './tasks-page-client';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-
-export default async function TasksPage() {
-  const actor = await getCurrentActor();
-  if (!actor) redirect('/login');
-  if (!hasPermission(actor.role, actor.permissions, 'tasks', 'view')) {
-    redirect('/dashboard');
-  }
-
-  const canEdit = hasPermission(actor.role, actor.permissions, 'tasks', 'edit');
-
-  // No pre-generation step: a recurring task is a single row whose due_date is
-  // its current occurrence (migration 067), so listing is a pure read.
-  const [initialTasks, kpis, assigneeRows, supplierRows, initialSeries] = await Promise.all([
-    listTasks({ sort: 'created_desc' }),
-    getTaskKpis(),
-    listAssignableUsers(),
-    listSuppliers({}), // reuse the existing suppliers DB layer for the picker/filter
-    listRecurringSeries(), // for the "מחזוריות" tab (next-occurrence sorted)
-  ]);
-  const assignees = assigneeRows.map((u) => ({
-    id: u.id,
-    name: u.full_name ?? u.username,
-    hasEmail: !!u.email,
-    hasPhone: !!u.notification_phone,
-  }));
-  const suppliers = supplierRows.map((s) => ({
-    id: s.id,
-    display_name: s.display_name,
-    phone: s.phone,
-    mobile: s.mobile,
-    email: s.email,
-  }));
-
-  // Contact-detail availability for "אליי" in the notification matrix.
-  const meRow = assigneeRows.find((u) => u.id === actor.id);
-  const currentUser = {
-    id: actor.id,
-    name: actor.full_name ?? actor.username,
-    hasEmail: meRow ? !!meRow.email : !!actor.email,
-    hasPhone: meRow ? !!meRow.notification_phone : false,
-  };
-
-  return (
-    <TasksPageClient
-      initialTasks={initialTasks}
-      initialKpis={kpis}
-      initialSeries={initialSeries}
-      assignees={assignees}
-      suppliers={suppliers}
-      currentUser={currentUser}
-      canEdit={canEdit}
-    />
-  );
+// Unified תקלות/משימות module (11/10/2026) — /tasks now redirects to /work,
+// preserving the ?task=<id> deep link (used by already-sent notifications,
+// reminders and calendar links). The old screen's code (tasks-page-client.tsx
+// etc.) stays in the repo, unlinked from the nav — see Decisions Log.
+export default async function TasksPageRedirect({
+  searchParams,
+}: {
+  searchParams: Promise<{ task?: string }>;
+}) {
+  const sp = await searchParams;
+  redirect(sp.task ? `/work?kind=task&id=${encodeURIComponent(sp.task)}` : '/work');
 }

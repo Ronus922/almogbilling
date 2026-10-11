@@ -39,7 +39,7 @@ export async function notifyTask(opts: {
   channel?: ReminderChannel;
   extraDetails?: { label: string; value: string }[];
 }): Promise<{ notified: boolean; emailed: boolean }> {
-  const taskUrl = `${appUrl()}/tasks?task=${opts.task.id}`;
+  const taskUrl = `${appUrl()}/work?kind=task&id=${opts.task.id}`;
   const message = opts.heading;
 
   const notification = await insertNotification({
@@ -50,7 +50,7 @@ export async function notifyTask(opts: {
     sourceModule: 'tasks',
     sourceEntityType: 'task',
     sourceEntityId: opts.task.id,
-    actionUrl: `/tasks?task=${opts.task.id}`,
+    actionUrl: `/work?kind=task&id=${opts.task.id}`,
     priority: opts.notificationPriority ?? 'normal',
     dedupeKey: opts.dedupeKey ?? null,
   });
@@ -100,7 +100,7 @@ export async function notifyIssue(opts: {
   channel?: ReminderChannel;
   extraDetails?: { label: string; value: string }[];
 }): Promise<{ notified: boolean; emailed: boolean }> {
-  const issueUrl = `${appUrl()}/issues?issue=${opts.issue.id}`;
+  const issueUrl = `${appUrl()}/work?kind=issue&id=${opts.issue.id}`;
 
   const notification = await insertNotification({
     userId: opts.userId,
@@ -110,7 +110,7 @@ export async function notifyIssue(opts: {
     sourceModule: 'issues',
     sourceEntityType: 'issue',
     sourceEntityId: opts.issue.id,
-    actionUrl: `/issues?issue=${opts.issue.id}`,
+    actionUrl: `/work?kind=issue&id=${opts.issue.id}`,
     priority: opts.notificationPriority ?? 'normal',
     dedupeKey: opts.dedupeKey ?? null,
   });

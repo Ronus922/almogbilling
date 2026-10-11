@@ -8,6 +8,7 @@
 // quick-assign/the board — see Decisions Log 11/10/2026).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   Plus, Search, LayoutGrid, List as ListIcon, AlertTriangle, UserX, CalendarClock, Clock,
@@ -123,16 +124,16 @@ export function WorkPageClient({
 
   useEffect(() => { if (tab === 'recurring' && series.length === 0) void fetchSeries(); }, [tab, series.length, fetchSeries]);
 
-  async function openItem(item: WorkItem) {
+  const openByKindId = useCallback(async (kind: 'issue' | 'task', id: string) => {
     try {
-      if (item.kind === 'issue') {
-        const res = await fetch(`/api/issues/${item.id}`, { credentials: 'include' });
+      if (kind === 'issue') {
+        const res = await fetch(`/api/issues/${id}`, { credentials: 'include' });
         if (!res.ok) throw new Error('פתיחת התקלה נכשלה');
         const data = (await res.json()) as { issue: IssueWithMeta };
         setEditingIssue(data.issue);
         setIssuePanelOpen(true);
       } else {
-        const res = await fetch(`/api/tasks/${item.id}`, { credentials: 'include' });
+        const res = await fetch(`/api/tasks/${id}`, { credentials: 'include' });
         if (!res.ok) throw new Error('פתיחת המשימה נכשלה');
         const data = (await res.json()) as { task: TaskWithAssignee };
         setEditingTask(data.task);
@@ -141,7 +142,24 @@ export function WorkPageClient({
     } catch (err) {
       toast.error((err as Error).message);
     }
+  }, []);
+
+  function openItem(item: WorkItem) {
+    void openByKindId(item.kind, item.id);
   }
+
+  // Deep link: ?kind=issue|task&id=<id> opens the panel for that item —
+  // produced by notifications, reminders, calendar links and the old
+  // /issues?issue=/ /tasks?task= redirects (see their page.tsx).
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const kind = searchParams.get('kind');
+    const id = searchParams.get('id');
+    if ((kind === 'issue' || kind === 'task') && id) {
+      void openByKindId(kind, id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleAssign(item: WorkItem, assignee: { kind: 'user' | 'supplier'; id: string } | null) {
     const prevItems = items;

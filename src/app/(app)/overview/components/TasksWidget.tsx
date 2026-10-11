@@ -20,7 +20,7 @@ export function TasksWidget({ data }: { data: TasksData | null }) {
           const dueTodayOrOverdue = due === 'היום' || due === 'אתמול';
           const meta = [t.target_label, t.assignee].filter(Boolean).join(' · ');
           return (
-            <Link key={t.id} href={`/tasks?task=${t.id}`} className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-row-hover">
+            <Link key={t.id} href={`/work?kind=task&id=${t.id}`} className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-row-hover">
               <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: p.dot }} aria-hidden />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">

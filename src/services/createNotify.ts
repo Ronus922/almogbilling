@@ -69,7 +69,7 @@ export function detailRowsWhatsApp(rows: { label: string; value: string }[]): st
 export interface DispatchCreateNotificationsInput {
   /** Email subject / WhatsApp heading. */
   title: string;
-  /** Relative deep-link, e.g. `/tasks?task=<id>`. Sent ONLY to registered
+  /** Relative deep-link, e.g. `/work?kind=task&id=<id>`. Sent ONLY to registered
    *  users (kind 'user') — it sits behind login, so a supplier gets the full
    *  details in text with no link (public link = separate follow-up slice). */
   actionUrl: string;

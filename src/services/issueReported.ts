@@ -33,7 +33,7 @@ export async function notifyAdminsOfIssueReported(
         sourceModule: 'issues',
         sourceEntityType: 'issue',
         sourceEntityId: issue.id,
-        actionUrl: `/issues?issue=${issue.id}`,
+        actionUrl: `/work?kind=issue&id=${issue.id}`,
         priority: 'high',
         dedupeKey: `issue_reported:${issue.id}:${admin.id}`,
       });
