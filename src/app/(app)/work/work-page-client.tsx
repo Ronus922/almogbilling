@@ -149,8 +149,10 @@ export function WorkPageClient({
   }
 
   // Deep link: ?kind=issue|task&id=<id> opens the panel for that item —
-  // produced by notifications, reminders, calendar links and the old
-  // /issues?issue=/ /tasks?task= redirects (see their page.tsx).
+  // produced by every notification/reminder/calendar-link generator going
+  // forward. /issues and /tasks stay live at their OLD ?issue=/?task= deep
+  // links too (full pages, unlinked from the nav but not redirects — see
+  // their page.tsx — so already-sent links keep working unchanged).
   const searchParams = useSearchParams();
   useEffect(() => {
     const kind = searchParams.get('kind');
