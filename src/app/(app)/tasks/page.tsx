@@ -1,14 +1,24 @@
 import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
-import { listTasks, getTaskKpis, listRecurringSeries } from '@/lib/db/tasks';
+import { isWorkerRole } from '@/lib/permissions/constants';
+import { listTasks, listRecurringSeries } from '@/lib/db/tasks';
 import { listAssignableUsers } from '@/lib/db/users';
 import { listSuppliers } from '@/lib/db/suppliers';
-import { TasksPageClient } from './tasks-page-client';
+import { listWorkItems, getWorkItemKpis } from '@/lib/db/workItems';
+import { WorkerTasksSection } from '@/components/tasks/worker-tasks-section';
+import { WorkEntityScreen } from '@/components/work-items/WorkEntityScreen';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// משימות — the second of two separate screens (12/10/2026, Decisions Log:
+// "עיצוב משותף, ישויות נפרדות" cancels the 11/10/2026 unified /work screen).
+// Same design as /issues (WorkEntityScreen, shared library), own nav item,
+// own data — this route never reads the issues table. Adds a field-worker
+// branch that did not exist on this route before 11/10/2026 (workers had no
+// scoped tasks view until the unified module introduced WorkerTasksSection —
+// preserved here now that /tasks is a real nav destination again).
 export default async function TasksPage() {
   const actor = await getCurrentActor();
   if (!actor) redirect('/login');
@@ -16,16 +26,21 @@ export default async function TasksPage() {
     redirect('/dashboard');
   }
 
+  if (isWorkerRole(actor.role)) {
+    const mine = await listTasks({ assignedTo: actor.id, sort: 'created_desc' });
+    return <WorkerTasksSection tasks={mine} />;
+  }
+
   const canEdit = hasPermission(actor.role, actor.permissions, 'tasks', 'edit');
 
   // No pre-generation step: a recurring task is a single row whose due_date is
   // its current occurrence (migration 067), so listing is a pure read.
-  const [initialTasks, kpis, assigneeRows, supplierRows, initialSeries] = await Promise.all([
-    listTasks({ sort: 'created_desc' }),
-    getTaskKpis(),
+  const [initialItems, kpis, assigneeRows, supplierRows, initialSeries] = await Promise.all([
+    listWorkItems('task', { tab: 'active' }, actor),
+    getWorkItemKpis('task', actor),
     listAssignableUsers(),
-    listSuppliers({}), // reuse the existing suppliers DB layer for the picker/filter
-    listRecurringSeries(), // for the "מחזוריות" tab (next-occurrence sorted)
+    listSuppliers({}),
+    listRecurringSeries(),
   ]);
   const assignees = assigneeRows.map((u) => ({
     id: u.id,
@@ -41,7 +56,6 @@ export default async function TasksPage() {
     email: s.email,
   }));
 
-  // Contact-detail availability for "אליי" in the notification matrix.
   const meRow = assigneeRows.find((u) => u.id === actor.id);
   const currentUser = {
     id: actor.id,
@@ -51,8 +65,9 @@ export default async function TasksPage() {
   };
 
   return (
-    <TasksPageClient
-      initialTasks={initialTasks}
+    <WorkEntityScreen
+      kind="task"
+      initialItems={initialItems}
       initialKpis={kpis}
       initialSeries={initialSeries}
       assignees={assignees}

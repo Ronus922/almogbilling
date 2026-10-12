@@ -4,6 +4,7 @@
 import type { TargetType } from './targets';
 import type { AssigneeRef } from './assignee';
 import type { PortalRole } from '@/lib/portal/identity';
+import type { WorkItemStatusV2 } from './workItems';
 
 export type IssueStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type IssuePriority = 'normal' | 'high' | 'urgent';
@@ -64,6 +65,20 @@ export interface Issue {
   reporter_area: string | null;
   /** The "מספר קריאה" the resident was shown. */
   ticket_number: number | null;
+  // ── Unified תקלות/משימות module (11/10/2026, additive) ───────────────────
+  /** New source of truth — derived server-side from `status` on every write. */
+  status_v2: WorkItemStatusV2;
+  blocked: boolean;
+  blocked_reason: string | null;
+  /** Single primary assignee (employee) — NOT the frozen legacy
+   *  assigned_to_user_id. Kept in sync with entity_assignees by the app. */
+  assignee_user_id: string | null;
+  /** Single primary assignee (supplier) — NOT the frozen legacy supplier_id. */
+  assignee_supplier_id: string | null;
+  closed_at: string | null;
+  archived_at: string | null;
+  /** Manual re-order position within a priority tier on the unified board. */
+  sort_index: number | null;
 }
 
 /** Issue enriched with its assignee set (json-agg over the junction) + comment count + linked task. */
@@ -87,6 +102,9 @@ export interface IssueWritableFields {
   resolution_notes: string | null;
   due_date: string | null; // 'YYYY-MM-DD'
   due_time: string | null; // 'HH:MM'
+  /** Unified module (11/10/2026) — set manually from the card/panel. */
+  blocked: boolean;
+  blocked_reason: string | null;
 }
 
 export type IssueSort = 'created_desc' | 'priority_desc' | 'updated_desc' | 'status_asc';

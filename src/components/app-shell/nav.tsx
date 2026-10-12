@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import {
-  Building2, LayoutDashboard, LayoutGrid, Users, Truck, CheckSquare, AlertTriangle,
+  Building2, LayoutDashboard, LayoutGrid, Users, Truck, ClipboardList, ListChecks,
   Calendar, FileText, MessageCircle, MessagesSquare, Bell, Sliders,
   MapPin, UserCog, KeyRound, SquareParking, Settings as SettingsIcon, Coins, SlidersHorizontal,
   ShieldCheck, PhoneOff, Gavel, Megaphone, MessageSquareText, History,
@@ -28,11 +28,12 @@ export interface MenuItem {
   /** The action the module check needs (default 'view') — e.g. "תפוצה חדשה"
    *  is for whoever may SEND (whatsapp_chat:edit), like its page and route. */
   action?: Action;
-  /** Optional role gate; when present it overrides the module-based `can` check.
-   *  Used for /overview, which is role-gated (any non-viewer) rather than tied
-   *  to a permission module, and for the users screen (admin / super_admin by
-   *  role — canOpenUsersScreen, the page's own gate; never via the matrix). */
-  visible?: (role: Role) => boolean;
+  /** Optional role/permission gate; when present it overrides the module-based
+   *  `can` check. Used for /overview, which is role-gated (any non-viewer)
+   *  rather than tied to a permission module; and for the users screen (admin /
+   *  super_admin by role — canOpenUsersScreen, the page's own gate; never via
+   *  the matrix). */
+  visible?: (role: Role, can: (module: string, action: Action) => boolean) => boolean;
   /** Active only on the exact path (default: the path and everything under it).
    *  For a module's overview item whose sibling lives under the same prefix
    *  (/finance vs /finance/settings) — otherwise both light up together. */
@@ -64,8 +65,12 @@ const SECTIONS: MenuSection[] = [
       { label: 'צ׳יפים',             icon: KeyRound, href: '/chips', module: 'chips' },
       { label: 'חניות ומחסנים',      icon: SquareParking, href: '/parking', module: 'parking' },
       { label: 'מסמכים',             icon: FileText, href: '/documents', module: 'documents' },
-      { label: 'תקלות',              icon: AlertTriangle, href: '/issues', module: 'issues' },
-      { label: 'משימות',             icon: CheckSquare, href: '/tasks', module: 'tasks' },
+      // Two separate screens again (12/10/2026, Decisions Log: "עיצוב משותף,
+      // ישויות נפרדות" cancels the 11/10/2026 unification into one /work nav
+      // item). /work itself is gone — deleted, not hidden; every generator
+      // that used to link there now points at /issues or /tasks directly.
+      { label: 'תקלות',              icon: ClipboardList, href: '/issues', module: 'issues' },
+      { label: 'משימות',             icon: ListChecks, href: '/tasks', module: 'tasks' },
       { label: 'תזכורות',            icon: Bell, href: '/user-reminders', module: 'user_reminders' },
       { label: 'יומן',               icon: Calendar, href: '/calendar', module: 'calendar' },
       { label: 'ניהול סטטוס חיובים', icon: Sliders, href: '/statuses', module: 'status_management' },
@@ -127,7 +132,7 @@ export function filterNav(
   can: (module: string, action: Action) => boolean,
 ): { sections: MenuSection[]; showSettings: boolean } {
   const isVisible = (it: MenuItem) =>
-    it.visible ? it.visible(role) : it.module ? can(it.module, it.action ?? 'view') : true;
+    it.visible ? it.visible(role, can) : it.module ? can(it.module, it.action ?? 'view') : true;
   const sections = SECTIONS
     .map((s) => ({ ...s, items: s.items.filter(isVisible) }))
     .filter((s) => s.items.length > 0);

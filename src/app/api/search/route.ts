@@ -138,7 +138,7 @@ async function searchIssues(pattern: string, scopeUserId: string | null): Promis
     id: i.id,
     title: i.title?.trim() || 'תקלה',
     subtitle: i.location_text?.trim() ?? '',
-    // Existing deep-link: /issues?issue=<id> opens (and fetches) the issue panel.
+    // Deep-link: /issues?issue=<id> opens (and fetches) the issue panel.
     href: `/issues?issue=${i.id}`,
   }));
 }

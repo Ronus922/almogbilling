@@ -129,7 +129,9 @@ describe('field-worker roles — cleaner / maintenance', () => {
   });
 
   // A worker holds no `dashboard` and no overview-widget permission, so landing
-  // them anywhere but /issues yields an empty (or bounced) page.
+  // them anywhere but their own screen yields an empty (or bounced) page.
+  // /work (11/10/2026) is gone; /issues is the pre-11/10/2026 default,
+  // restored 12/10/2026 now that תקלות/משימות are two screens again.
   it.each(WORKERS)('%s lands on /issues', (role) => {
     expect(homePathFor(role)).toBe('/issues');
   });

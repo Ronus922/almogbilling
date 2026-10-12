@@ -7,6 +7,7 @@ import type {
   TaskKpis,
   TaskListFilters,
   TaskRecurrenceView,
+  TaskStatus,
   TaskWithAssignee,
   TaskWritableFields,
 } from '@/lib/types/tasks';
@@ -28,6 +29,7 @@ import {
   cadenceChips, cadenceKind, cadenceLabel, cadenceWindow, expectedPerPeriod,
   type CadenceWindow, type ChipStrip,
 } from '@/lib/recurrence/cadence';
+import { taskStatusV2 } from '@/lib/workItems/status';
 
 // Date/timestamp columns are cast to text so they cross the RSC boundary as
 // strings (matching the declared `string` types) — pg otherwise returns `date`
@@ -42,7 +44,10 @@ const TASK_COLUMNS = `
   completed_at::text as completed_at,
   recurrence_id, is_recurring_template,
   created_by, created_by_name,
-  created_at::text as created_at, updated_at::text as updated_at
+  created_at::text as created_at, updated_at::text as updated_at,
+  status_v2, blocked, blocked_reason, assignee_user_id, assignee_supplier_id,
+  source, source_apartment, source_reporter_name,
+  closed_at::text as closed_at, archived_at::text as archived_at, sort_index, is_recurring_paused
 `;
 
 // Columns a create/update may set (title + created_by handled explicitly on
@@ -60,6 +65,8 @@ const WRITABLE_COLUMNS: (keyof TaskWritableFields)[] = [
   'related_entity_id',
   'target_type',
   'target_id',
+  'blocked',
+  'blocked_reason',
 ];
 
 // ── Recurrence enrichment ───────────────────────────────────────────────────
@@ -265,6 +272,10 @@ export interface RecurringSeries {
   done_count: number;
   expected_count: number;
   period_label: string | null;
+  // ── Unified module (11/10/2026) ───────────────────────────────────────────
+  priority: string;
+  assignee_display_name: string | null;
+  is_recurring_paused: boolean;
 }
 
 export async function listRecurringSeries(): Promise<RecurringSeries[]> {
@@ -273,14 +284,21 @@ export async function listRecurringSeries(): Promise<RecurringSeries[]> {
     recurrence_id: string;
     frequency: RecurrenceFrequency; interval: number; byweekday: number[] | null;
     end_type: RecurrenceRule['endType']; end_date: string | null; end_count: number | null;
+    priority: string;
+    assignee_display_name: string | null;
+    is_recurring_paused: boolean;
   }>(
     `select t.id, t.title, t.due_time::text as due_time,
             r.anchor_date::text as anchor,
             t.recurrence_id,
             r.frequency, r.interval, r.byweekday,
-            r.end_type, r.end_date::text as end_date, r.end_count
+            r.end_type, r.end_date::text as end_date, r.end_count,
+            t.priority, t.is_recurring_paused,
+            coalesce(au.full_name, au.username, asup.display_name) as assignee_display_name
        from public.tasks t
        join public.task_recurrences r on r.id = t.recurrence_id
+       left join public.users au on au.id = t.assignee_user_id
+       left join public.suppliers asup on asup.id = t.assignee_supplier_id
       where t.is_archived = false
         and r.is_active = true`,
   );
@@ -343,6 +361,9 @@ export async function listRecurringSeries(): Promise<RecurringSeries[]> {
       done_count: view?.done_count ?? 0,
       expected_count: view?.expected_count ?? 0,
       period_label: view?.period_label ?? null,
+      priority: row.priority,
+      assignee_display_name: row.assignee_display_name,
+      is_recurring_paused: row.is_recurring_paused,
     };
   });
 
@@ -433,8 +454,8 @@ export async function createTask(
   // Task row + junction rows commit atomically (the assignee no longer rides on
   // the task INSERT).
   const id = await withTransaction(async (client: PoolClient) => {
-    const cols: string[] = ['created_by', 'created_by_name'];
-    const vals: unknown[] = [createdBy, createdByName];
+    const cols: string[] = ['created_by', 'created_by_name', 'status_v2'];
+    const vals: unknown[] = [createdBy, createdByName, taskStatusV2(status as TaskStatus)];
 
     const nextSort = await client.query<{ next: number }>(
       `select coalesce(max(sort_order), -1) + 1 as next from public.tasks where status = $1`,
@@ -450,9 +471,14 @@ export async function createTask(
     cols.push('sort_order');
     vals.push(nextSort.rows[0]?.next ?? 0);
 
-    // completed_at: stamp when created already in 'done' (edge case; default 'open').
+    // completed_at / closed_at: stamp when created already terminal (edge
+    // case; default 'open').
     if (status === 'done') {
       cols.push('completed_at');
+      vals.push(new Date().toISOString());
+    }
+    if (taskStatusV2(status as TaskStatus) === 'closed') {
+      cols.push('closed_at');
       vals.push(new Date().toISOString());
     }
 
@@ -503,6 +529,14 @@ export async function updateTask(
         ? `completed_at = case when status is distinct from 'done' then now() else completed_at end`
         : `completed_at = null`,
     );
+
+    // status_v2 + closed_at mirror the legacy status on every write — see
+    // src/lib/workItems/status.ts — so every pre-existing status-reading
+    // consumer (calendar overlay, task_due_soon, reminders) stays correct.
+    const v2 = taskStatusV2(data.status as TaskStatus);
+    vals.push(v2);
+    set.push(`status_v2 = $${vals.length}`);
+    set.push(v2 === 'closed' ? `closed_at = coalesce(closed_at, now())` : `closed_at = null`);
   }
 
   const existed = await withTransaction(async (client: PoolClient) => {
@@ -551,6 +585,50 @@ export async function getTaskUserAssignees(id: string): Promise<string[] | null>
   const exists = await queryOne<{ id: string }>(`select id from public.tasks where id = $1`, [id]);
   if (!exists) return null;
   return listEntityUserIds('task', id);
+}
+
+// ── Primary assignee (unified module, 11/10/2026) ───────────────────────────
+/** Twin of setIssuePrimaryAssignee — see its comment there. */
+export async function setTaskPrimaryAssignee(
+  id: string,
+  assignee: { kind: 'user' | 'supplier'; id: string } | null,
+  actorId: string | null,
+): Promise<TaskWithAssignee | null> {
+  const existed = await withTransaction(async (client: PoolClient) => {
+    const r = await client.query<{ id: string }>(
+      `update public.tasks
+          set assignee_user_id = $2, assignee_supplier_id = $3
+        where id = $1
+        returning id`,
+      [id, assignee?.kind === 'user' ? assignee.id : null, assignee?.kind === 'supplier' ? assignee.id : null],
+    );
+    if ((r.rowCount ?? 0) === 0) return false;
+    await replaceEntityAssignees(
+      client,
+      'task',
+      id,
+      assignee ? [{ assignee_type: assignee.kind, id: assignee.id }] : [],
+      actorId,
+    );
+    return true;
+  });
+  if (!existed) return null;
+  return getTaskById(id);
+}
+
+/** Pause/resume a recurring template (unified module, 11/10/2026) —
+ *  display-only: it does not touch task_recurrences.is_active (which means
+ *  "the series ended", not "paused") and does not block
+ *  completeRecurringOccurrence from advancing it if someone completes it
+ *  anyway. Only rows with is_recurring_template=true may be toggled. */
+export async function setTaskRecurrencePaused(id: string, paused: boolean): Promise<boolean> {
+  const row = await queryOne<{ id: string }>(
+    `update public.tasks set is_recurring_paused = $2
+      where id = $1 and is_recurring_template = true
+      returning id`,
+    [id, paused],
+  );
+  return row !== null;
 }
 
 // ── Kanban batch reorder ─────────────────────────────────────────────────────
