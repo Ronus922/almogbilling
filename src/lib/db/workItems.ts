@@ -277,7 +277,9 @@ export async function reorderWorkItemWithinLane(
     }
 
     // The lane+tier's current order, same shape as the per-kind list query.
-    const laneR = await client.query<{ id: string; sort_index: number | null }>(
+    // sort_index is `numeric`, which node-postgres returns as a string —
+    // typed here as such rather than lying to TS as `number`.
+    const laneR = await client.query<{ id: string; sort_index: string | null }>(
       `select id, sort_index
          from ${table}
         where id <> $1
@@ -291,8 +293,22 @@ export async function reorderWorkItemWithinLane(
 
     const idx = beforeId === null ? laneR.rows.length : laneR.rows.findIndex((r) => r.id === beforeId);
     if (beforeId !== null && idx === -1) return 'not_found';
-    const prev = idx > 0 ? laneR.rows[idx - 1].sort_index : null;
-    const next = idx < laneR.rows.length ? laneR.rows[idx].sort_index : null;
+    // Nulls sort last (a sibling never explicitly positioned) but carry no
+    // numeric bound of their own — scan past them to the nearest sibling
+    // that actually has a sort_index, in each direction. Using the
+    // immediately-adjacent row's raw (possibly null) value instead
+    // collapses to the "no neighbor" edge case and can land the new value
+    // before an already-positioned earlier sibling.
+    let prev: number | null = null;
+    for (let i = idx - 1; i >= 0; i--) {
+      const v = laneR.rows[i]!.sort_index;
+      if (v !== null) { prev = Number(v); break; }
+    }
+    let next: number | null = null;
+    for (let i = idx; i < laneR.rows.length; i++) {
+      const v = laneR.rows[i]!.sort_index;
+      if (v !== null) { next = Number(v); break; }
+    }
     const newIndex = midpoint(prev, next);
 
     await client.query(`update ${table} set sort_index = $2 where id = $1`, [id, newIndex]);
