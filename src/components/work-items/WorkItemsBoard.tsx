@@ -15,7 +15,7 @@
 //   - a card dragged OUT of "ממתינים לשיבוץ" into a lane → assignment, same
 //     as dropping on the lane's "שיבוץ" button (ref `.ucard`).
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { landingAboveIn } from '@/lib/dnd/landing';
@@ -67,6 +67,28 @@ export function WorkItemsBoard({
   const [landing, setLanding] = useState<{ lane: string; beforeId: string | null } | null>(null);
   const [expandedRecent, setExpandedRecent] = useState<Set<string>>(new Set());
 
+  // The reference (ref/issues-board.html, `.col{height:calc(100vh - 320px)}`)
+  // assumes a fixed ~320px of chrome above the board — true in its own
+  // standalone mockup, but not inside this app's real shell, where the page
+  // header/KPI cards/filter bar/"ממתינים לשיבוץ" strip push that past 500px
+  // and vary with content. A hardcoded 100vh-based height then renders lanes
+  // taller than the actual viewport, with their bottom silently out of reach
+  // (unscrollable within `<main>`'s own scroll, since nothing here clips it) —
+  // caught as a Playwright drop that dispatches but lands on nothing. Measure
+  // the real remaining space instead, so the column always fits what's
+  // actually left below it.
+  const lanesRowRef = useRef<HTMLDivElement>(null);
+  const [laneHeight, setLaneHeight] = useState(340);
+
+  useEffect(() => {
+    const el = lanesRowRef.current;
+    if (!el) return;
+    const update = () => setLaneHeight(Math.max(340, window.innerHeight - el.getBoundingClientRect().top - 12));
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
   const lanes: Lane[] = useMemo(() => {
     const out: Lane[] = employees.map((e) => ({
       key: `user:${e.id}`, label: e.name, color: avatarColorFor(e.id), assignee: { kind: 'user' as const, id: e.id },
@@ -90,7 +112,16 @@ export function WorkItemsBoard({
         if (b.status_v2 === 'closed' && a.status_v2 !== 'closed') return -1;
         const pr = rank(a.priority) - rank(b.priority);
         if (pr !== 0) return pr;
-        if (a.sort_index !== null && b.sort_index !== null && a.sort_index !== b.sort_index) return a.sort_index - b.sort_index;
+        // A real sort_index always outranks a never-positioned (null) sibling
+        // — nulls last, same as the server's own ORDER BY. Comparing only
+        // when BOTH sides are non-null (as this used to) silently drops a
+        // genuine position whenever the other side is still null, falling
+        // through to the due_date/created_at tiebreak instead.
+        if (a.sort_index !== b.sort_index) {
+          if (a.sort_index === null) return 1;
+          if (b.sort_index === null) return -1;
+          return a.sort_index - b.sort_index;
+        }
         if (a.due_date !== b.due_date) return (a.due_date ?? '9999') < (b.due_date ?? '9999') ? -1 : 1;
         return a.created_at < b.created_at ? 1 : -1;
       });
@@ -173,7 +204,7 @@ export function WorkItemsBoard({
           'flex w-[255px] shrink-0 flex-col rounded-2xl bg-[#EEF0F7] transition-colors',
           landing?.lane === lane.key ? 'ring-2 ring-brand/40' : '',
         )}
-        style={{ height: 'calc(100vh - 320px)', minHeight: 340 }}
+        style={{ height: laneHeight, minHeight: 340 }}
       >
         <div className="flex items-center gap-2 px-3 pb-2 pt-[11px]">
           <span
@@ -248,7 +279,7 @@ export function WorkItemsBoard({
         )}
       </div>
 
-      <div className="flex gap-3 overflow-x-auto pb-2.5">
+      <div ref={lanesRowRef} className="flex gap-3 overflow-x-auto pb-2.5">
         {lanes.map(renderLaneColumn)}
       </div>
     </div>
