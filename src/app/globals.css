@@ -8,6 +8,7 @@
 @import "./styles/responsive.css";
 @import "./styles/portal.css";
 @import "./styles/portal-report.css";
+@import "./styles/work-items.css";
 
 @custom-variant dark (&:is(.dark *));
 

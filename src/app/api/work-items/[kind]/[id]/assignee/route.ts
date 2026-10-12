@@ -5,7 +5,8 @@ import { isUuid } from '@/lib/validation/issues';
 import { getIssueById, setIssuePrimaryAssignee } from '@/lib/db/issues';
 import { getTaskById, setTaskPrimaryAssignee } from '@/lib/db/tasks';
 import { supplierExists } from '@/lib/db/suppliers';
-import { actorMayAccessWorkItem } from '@/lib/auth/workItemAccess';
+import { actorMayAccessWorkItemAsync } from '@/lib/auth/workItemAccess';
+import { wasAssignedByActor } from '@/lib/db/entityAssignees';
 import { notifyIssue, notifyTask } from '@/services/notifications';
 import { logger } from '@/lib/logger';
 
@@ -59,8 +60,8 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     if (kind === 'issue') {
       const existing = await getIssueById(id);
       if (!existing) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-      if (!actorMayAccessWorkItem(actor, existing)) {
-        return NextResponse.json({ error: 'not_found' }, { status: 404 });
+      if (!(await actorMayAccessWorkItemAsync(actor, existing, () => wasAssignedByActor('issue', id, actor.id)))) {
+        return NextResponse.json({ error: 'forbidden' }, { status: 403 });
       }
       const updated = await setIssuePrimaryAssignee(id, assignee, actor.id);
       if (!updated) return NextResponse.json({ error: 'not_found' }, { status: 404 });
@@ -81,8 +82,8 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
     const existing = await getTaskById(id);
     if (!existing) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-    if (!actorMayAccessWorkItem(actor, existing)) {
-      return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    if (!(await actorMayAccessWorkItemAsync(actor, existing, () => wasAssignedByActor('task', id, actor.id)))) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
     }
     const updated = await setTaskPrimaryAssignee(id, assignee, actor.id);
     if (!updated) return NextResponse.json({ error: 'not_found' }, { status: 404 });

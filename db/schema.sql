@@ -2187,10 +2187,18 @@ CREATE TABLE public.entity_assignees (
     supplier_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by uuid,
+    assigned_by uuid,
     CONSTRAINT entity_assignees_assignee_type_check CHECK ((assignee_type = ANY (ARRAY['user'::text, 'supplier'::text]))),
     CONSTRAINT entity_assignees_entity_type_check CHECK ((entity_type = ANY (ARRAY['task'::text, 'issue'::text]))),
     CONSTRAINT entity_assignees_one_target CHECK ((((assignee_type = 'user'::text) AND (user_id IS NOT NULL) AND (supplier_id IS NULL)) OR ((assignee_type = 'supplier'::text) AND (supplier_id IS NOT NULL) AND (user_id IS NULL))))
 );
+
+
+--
+-- Name: COLUMN entity_assignees.assigned_by; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.entity_assignees.assigned_by IS 'Actor who performed THIS assignment write (replaceEntityAssignees/copyEntityAssignees) — distinct from created_by, which the same functions also set to the same actor on every replace (delete-and-insert), so created_by does not preserve the original creator across reassignments. Added for the תקלות/משימות split-screens visibility rule (12/10/2026, Decisions Log): admin/manager see an item they assigned, even to someone else. NULL on every row written before this migration — those fall back to created_by/assignee only.';
 
 
 --
@@ -5451,6 +5459,13 @@ CREATE INDEX documents_uploaded_by_idx ON public.documents USING btree (uploaded
 
 
 --
+-- Name: entity_assignees_assigned_by_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX entity_assignees_assigned_by_idx ON public.entity_assignees USING btree (assigned_by) WHERE (assigned_by IS NOT NULL);
+
+
+--
 -- Name: entity_assignees_entity_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6878,6 +6893,14 @@ ALTER TABLE ONLY public.documents
 
 
 --
+-- Name: entity_assignees entity_assignees_assigned_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_assignees
+    ADD CONSTRAINT entity_assignees_assigned_by_fkey FOREIGN KEY (assigned_by) REFERENCES public.users(id);
+
+
+--
 -- Name: entity_assignees entity_assignees_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7783,5 +7806,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261006160340'),
     ('20261009210844'),
     ('20261010074609'),
-    ('20261011220356')
+    ('20261011220356'),
+    ('20261012065306')
 ;

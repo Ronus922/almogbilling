@@ -2,6 +2,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { actorMayAccessIssue, actorMayAccessIssueByUserIds } from '@/lib/auth/issueAccess';
+import { actorMayAccessWorkItemAsync } from '@/lib/auth/workItemAccess';
+import { isWorkerRole } from '@/lib/permissions/constants';
+import { wasAssignedByActor } from '@/lib/db/entityAssignees';
 import { canSeeReporterPhone } from '@/lib/permissions/check';
 import {
   getIssueById,
@@ -56,8 +59,15 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   const issue = await getIssueById(id);
   if (!issue) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   // Field-worker isolation (read): an unassigned worker gets the SAME 404 as a
-  // missing issue — never a body, and no existence oracle.
-  if (!actorMayAccessIssue(actor, issue.assignees)) {
+  // missing issue — never a body, and no existence oracle. Unchanged multi-
+  // assignee check (entity_assignees membership), not the narrower rule below.
+  // Admin/manager/viewer/super_admin (12/10/2026): the same row-level rule the
+  // board/list already applies (workItemAccess) — created_by, primary assignee
+  // or assigned_by — so a direct GET can no longer see more than the board did.
+  const mayAccess = isWorkerRole(actor.role)
+    ? actorMayAccessIssue(actor, issue.assignees)
+    : await actorMayAccessWorkItemAsync(actor, issue, () => wasAssignedByActor('issue', id, actor.id));
+  if (!mayAccess) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 });
   }
 
@@ -153,7 +163,12 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     if (!prev) return NextResponse.json({ error: 'not_found' }, { status: 404 });
     // Field-worker isolation (write): a worker may only mutate an issue they are
     // assigned to. Checked BEFORE any write, against the persisted assignee set.
-    if (!actorMayAccessIssueByUserIds(actor, prev.assignedUserIds)) {
+    // Admin/manager/viewer/super_admin (12/10/2026): the narrower workItemAccess
+    // rule — see the GET handler above.
+    const mayMutate = isWorkerRole(actor.role)
+      ? actorMayAccessIssueByUserIds(actor, prev.assignedUserIds)
+      : await actorMayAccessWorkItemAsync(actor, prev, () => wasAssignedByActor('issue', id, actor.id));
+    if (!mayMutate) {
       return NextResponse.json({ error: 'forbidden' }, { status: 403 });
     }
     // Full previous key set (users + suppliers) → drives the "added set" the
@@ -252,7 +267,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     if (recipients.length > 0) {
       void dispatchCreateNotifications({
         title: `תקלה: ${issue.title}`,
-        actionUrl: `/work?kind=issue&id=${issue.id}`,
+        actionUrl: `/issues?issue=${issue.id}`,
         details: {
           description: issue.description,
           targetLabel: issue.target_label,
@@ -315,8 +330,12 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   const issue = await getIssueById(id);
   if (!issue) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   // Field-worker isolation (write): a worker may only delete an issue assigned
-  // to them.
-  if (!actorMayAccessIssue(actor, issue.assignees)) {
+  // to them. Admin/manager/viewer/super_admin (12/10/2026): the narrower
+  // workItemAccess rule — see the GET handler above.
+  const mayDelete = isWorkerRole(actor.role)
+    ? actorMayAccessIssue(actor, issue.assignees)
+    : await actorMayAccessWorkItemAsync(actor, issue, () => wasAssignedByActor('issue', id, actor.id));
+  if (!mayDelete) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   }
 

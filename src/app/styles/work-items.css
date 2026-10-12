@@ -1,0 +1,44 @@
+/* תקלות/משימות — card/row drag handle + divider (12/10/2026, pixel-exact
+   adoption of ref/issues-board.html: `.card::before`/`::after`,
+   `.lrow::before`/`::after`). A dotted "grip" column + a thin vertical divider,
+   both unreachable with plain Tailwind utilities (radial-gradient background
+   pattern) — kept as two small reusable classes rather than repeating the
+   arbitrary-value declaration at every call site. Rule 1 (dev-discipline):
+   lives inside a Tailwind layer, never loose global CSS. */
+@layer utilities {
+  .wb-handle {
+    cursor: grab;
+  }
+  .wb-handle:active {
+    cursor: grabbing;
+  }
+  .wb-handle::before {
+    content: '';
+    position: absolute;
+    inset-inline-start: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 5px;
+    height: 46px;
+    background-image: radial-gradient(circle, #c9cedb 2px, transparent 2.3px);
+    background-size: 5px 9px;
+    background-position: center top;
+  }
+  .wb-handle::after {
+    content: '';
+    position: absolute;
+    inset-inline-start: 15px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(20, 28, 50, 0.08);
+  }
+  /* Shorter grip for a list row (28px vs. a card's 46px) and the divider sits
+     2px closer in — matches `.lrow::before`/`::after` in the reference. */
+  .wb-handle-row::before {
+    height: 28px;
+  }
+  .wb-handle-row::after {
+    inset-inline-start: 13px;
+  }
+}

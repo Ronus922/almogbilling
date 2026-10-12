@@ -41,19 +41,3 @@ export function taskStatusV2(status: TaskStatus): WorkItemStatusV2 {
  */
 export const ISSUE_CLOSED_STATUS: IssueStatus = 'closed';
 export const TASK_CLOSED_STATUS: TaskStatus = 'done';
-
-/** open -> in_progress -> closed. Clicking the chip on a closed item is a
- *  no-op from the chip itself (reopening is an explicit action elsewhere). */
-export function nextIssueStatusOnChip(current: IssueStatus): IssueStatus | null {
-  const v2 = issueStatusV2(current);
-  if (v2 === 'open') return 'in_progress';
-  if (v2 === 'in_progress') return ISSUE_CLOSED_STATUS;
-  return null;
-}
-
-export function nextTaskStatusOnChip(current: TaskStatus): TaskStatus | null {
-  const v2 = taskStatusV2(current);
-  if (v2 === 'open') return 'in_progress';
-  if (v2 === 'in_progress') return TASK_CLOSED_STATUS;
-  return null;
-}

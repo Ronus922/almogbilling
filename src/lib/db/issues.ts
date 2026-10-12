@@ -435,17 +435,30 @@ export async function deleteIssue(id: string): Promise<boolean> {
 }
 
 /** The set of user-kind assignee ids + status of an issue, or null if it does
- *  not exist — used by PATCH for assignment-change set-diff + status-change notify. */
+ *  not exist — used by PATCH for assignment-change set-diff + status-change notify.
+ *  Also carries created_by/assignee_user_id/assignee_supplier_id (12/10/2026) so
+ *  the same fetch doubles as a `WorkItemRow` for the row-level access check. */
 export async function getIssueAssigneeStatus(
   id: string,
-): Promise<{ assignedUserIds: string[]; status: IssueStatus } | null> {
-  const row = await queryOne<{ status: IssueStatus }>(
-    `select status from public.issues where id = $1`,
+): Promise<{
+  assignedUserIds: string[];
+  status: IssueStatus;
+  created_by: string | null;
+  assignee_user_id: string | null;
+  assignee_supplier_id: string | null;
+} | null> {
+  const row = await queryOne<{
+    status: IssueStatus;
+    created_by: string | null;
+    assignee_user_id: string | null;
+    assignee_supplier_id: string | null;
+  }>(
+    `select status, created_by, assignee_user_id, assignee_supplier_id from public.issues where id = $1`,
     [id],
   );
   if (!row) return null;
   const assignedUserIds = await listEntityUserIds('issue', id);
-  return { assignedUserIds, status: row.status };
+  return { assignedUserIds, ...row };
 }
 
 // ── Images ───────────────────────────────────────────────────────────────────

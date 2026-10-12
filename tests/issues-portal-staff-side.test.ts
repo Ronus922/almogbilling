@@ -38,7 +38,16 @@ vi.mock('@/lib/db/reminders', () => ({
   createReminder: vi.fn(),
   deleteRemindersForEntity: vi.fn(),
 }));
-vi.mock('@/lib/db/entityAssignees', () => ({ listEntityAssigneeKeys: vi.fn(async () => []), listEntityUserIds: vi.fn(async () => []) }));
+// wasAssignedByActor defaults to true: this file's focus is the reporter-
+// phone gate (contacts:view), not the row-level workItemAccess scoping — that
+// has its own dedicated tests below and in tests/workItemAccess.test.ts. true
+// keeps every non-worker actor here past the access gate so the phone-logic
+// assertions exercise what they always meant to.
+vi.mock('@/lib/db/entityAssignees', () => ({
+  listEntityAssigneeKeys: vi.fn(async () => []),
+  listEntityUserIds: vi.fn(async () => []),
+  wasAssignedByActor: vi.fn(async () => true),
+}));
 vi.mock('@/lib/db/notifications', () => ({ deleteNotificationsForEntity: vi.fn() }));
 vi.mock('@/lib/db/suppliers', () => ({ supplierExists: vi.fn(async () => true) }));
 vi.mock('@/lib/db/users', () => ({
@@ -57,6 +66,7 @@ import { GET as getOne } from '@/app/api/issues/[id]/route';
 import { GET as list, POST as create } from '@/app/api/issues/route';
 import { getIssueReporterPhone, listIssues } from '@/lib/db/issues';
 import { createNotification } from '@/services/notifications';
+import { wasAssignedByActor } from '@/lib/db/entityAssignees';
 
 const ISSUE_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -136,6 +146,50 @@ describe('GET /api/issues/[id] — the reporter phone follows contacts:view', ()
     signIn('admin');
     expect((await detail()).body.reporter_phone).toBeNull();
     expect(getIssueReporterPhone).not.toHaveBeenCalled();
+  });
+});
+
+// Row-level scope on GET /api/issues/[id] (12/10/2026, Decisions Log: "עיצוב
+// משותף, ישויות נפרדות", point 6) — admin/manager no longer see an
+// unassigned/not-their-own issue by default; 404 (no existence oracle), same
+// convention as the pre-existing field-worker isolation above. The pure rule
+// itself is pinned in tests/workItemAccess.test.ts; this exercises the actual
+// route wiring (isWorkerRole branch + the async assigned_by fallback).
+describe('GET /api/issues/[id] — the new admin/manager scope (403-shaped, 404 on read)', () => {
+  it('admin: 404 on an issue they neither created, are assigned, nor ever assigned themselves', async () => {
+    vi.mocked(wasAssignedByActor).mockResolvedValue(false);
+    signIn('admin');
+    const { status } = await detail();
+    expect(status).toBe(404);
+    expect(wasAssignedByActor).toHaveBeenCalledWith('issue', ISSUE_ID, 'u-admin');
+  });
+
+  it('admin: 200 when they are the creator, even though unassigned', async () => {
+    h.issue = { ...issue('portal'), created_by: 'u-admin' };
+    vi.mocked(wasAssignedByActor).mockResolvedValue(false);
+    signIn('admin');
+    expect((await detail()).status).toBe(200);
+  });
+
+  it('manager: 200 when they are the primary assignee', async () => {
+    h.issue = issue('portal', 'u-manager');
+    vi.mocked(wasAssignedByActor).mockResolvedValue(false);
+    signIn('manager', DEFAULT_MANAGER, 'u-manager');
+    expect((await detail()).status).toBe(200);
+  });
+
+  it('manager: 200 when they performed the assignment write themselves, even to someone else', async () => {
+    h.issue = issue('portal', 'u-other');
+    vi.mocked(wasAssignedByActor).mockResolvedValue(true);
+    signIn('manager', DEFAULT_MANAGER, 'u-manager');
+    expect((await detail()).status).toBe(200);
+  });
+
+  it('a field worker keeps the OLD multi-assignee rule (never the async assigned_by check)', async () => {
+    h.issue = issue('portal', 'u-cleaner');
+    signIn('cleaner', DEFAULT_WORKER);
+    expect((await detail()).status).toBe(200);
+    expect(wasAssignedByActor).not.toHaveBeenCalled();
   });
 });
 

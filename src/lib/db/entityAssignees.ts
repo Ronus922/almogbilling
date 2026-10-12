@@ -55,13 +55,17 @@ export function assigneeExistsSql(
       and ea.${col} = $${paramIdx})`;
 }
 
-/** Replace the entity's full assignee set (delete-and-insert) inside a transaction. */
+/** Replace the entity's full assignee set (delete-and-insert) inside a transaction.
+ *  `actorId` is written to BOTH `created_by` (unchanged — the existing audit column,
+ *  reset to the latest writer on every replace) AND `assigned_by` (12/10/2026 — a
+ *  dedicated column the תקלות/משימות visibility rule reads: "assigned by me" means
+ *  *this* actor performed the write, regardless of who ends up as the target). */
 export async function replaceEntityAssignees(
   client: PoolClient,
   entityType: EntityType,
   entityId: string,
   assignees: AssigneeInput[],
-  createdBy: string | null,
+  actorId: string | null,
 ): Promise<void> {
   await client.query(
     `delete from public.entity_assignees where entity_type = $1 and entity_id = $2`,
@@ -74,8 +78,8 @@ export async function replaceEntityAssignees(
     seen.add(key);
     await client.query(
       `insert into public.entity_assignees
-         (entity_type, entity_id, assignee_type, user_id, supplier_id, created_by)
-       values ($1, $2, $3, $4, $5, $6)
+         (entity_type, entity_id, assignee_type, user_id, supplier_id, created_by, assigned_by)
+       values ($1, $2, $3, $4, $5, $6, $6)
        on conflict do nothing`,
       [
         entityType,
@@ -83,7 +87,7 @@ export async function replaceEntityAssignees(
         a.assignee_type,
         a.assignee_type === 'user' ? a.id : null,
         a.assignee_type === 'supplier' ? a.id : null,
-        createdBy,
+        actorId,
       ],
     );
   }
@@ -96,17 +100,35 @@ export async function copyEntityAssignees(
   fromId: string,
   toType: EntityType,
   toId: string,
-  createdBy: string | null,
+  actorId: string | null,
 ): Promise<void> {
   await client.query(
     `insert into public.entity_assignees
-       (entity_type, entity_id, assignee_type, user_id, supplier_id, created_by)
-     select $3, $4, assignee_type, user_id, supplier_id, $5
+       (entity_type, entity_id, assignee_type, user_id, supplier_id, created_by, assigned_by)
+     select $3, $4, assignee_type, user_id, supplier_id, $5, $5
        from public.entity_assignees
       where entity_type = $1 and entity_id = $2
      on conflict do nothing`,
-    [fromType, fromId, toType, toId, createdBy],
+    [fromType, fromId, toType, toId, actorId],
   );
+}
+
+/** True when this actor performed at least one assignment write (any target,
+ *  including someone else) on this entity — the "assigned_by me" clause of
+ *  the תקלות/משימות visibility rule (12/10/2026) for a single already-loaded
+ *  row, where `workItemScopeSql`'s inline EXISTS isn't available. */
+export async function wasAssignedByActor(
+  entityType: EntityType,
+  entityId: string,
+  actorId: string,
+): Promise<boolean> {
+  const r = await query(
+    `select 1 from public.entity_assignees
+      where entity_type = $1 and entity_id = $2 and assigned_by = $3
+      limit 1`,
+    [entityType, entityId, actorId],
+  );
+  return (r.rowCount ?? 0) > 0;
 }
 
 /** The user-kind assignee ids for an entity — the targets for in-app bells,

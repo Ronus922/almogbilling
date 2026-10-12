@@ -1,25 +1,25 @@
 import 'server-only';
-import { canManageRole } from '@/lib/permissions/check';
-import { isWorkerRole, ROLE_VALUES, type Role } from '@/lib/permissions/constants';
+import { isWorkerRole, type Role } from '@/lib/permissions/constants';
 
 /**
- * Row-level visibility for the unified תקלות/משימות module (11/10/2026),
- * shared by `issues` and `tasks`. This REPLACES the narrower, issues-only
- * `src/lib/auth/issueAccess.ts` scoping for every route that moves to the new
- * module — see Decisions Log 11/10/2026: the new target model replaces
- * whatever broader visibility existed before, on either table.
+ * Row-level visibility for תקלות (issues) and משימות (tasks) — now two
+ * separate screens (12/10/2026, Decisions Log: "עיצוב משותף, ישויות נפרדות"
+ * cancels the 11/10/2026 unification), sharing this one access module because
+ * the visibility RULE is identical on both, not because the data is.
  *
  * - super_admin: unrestricted.
- * - admin / manager: items whose primary assignee is a user in a role they
- *   `canManageRole` over (admin → manager/viewer/cleaner/maintenance; manager
- *   → none — canManageRole is strictly about MANAGING ACCOUNTS, reused
- *   verbatim here, so a manager's own formula contributes nothing beyond the
- *   next three clauses), PLUS items they are the primary assignee of or
- *   created, PLUS unassigned items, PLUS supplier-assigned items.
- *   This is narrower than today's unrestricted admin/manager access to
- *   issues/tasks — intentional, per the 11/10/2026 decision.
+ * - admin / manager: an item they created, that is assigned to them (primary
+ *   assignee), OR that they assigned to anyone (entity_assignees.assigned_by
+ *   = them) — including someone else. This REPLACES the 11/10/2026 formula
+ *   (which also included every unassigned item, every supplier-assigned item,
+ *   and every item assigned to a role they `canManageRole` over) with a
+ *   narrower one, per owner decision 12/10/2026. Known gap: `assigned_by` is
+ *   NULL on every entity_assignees row written before the 12/10/2026
+ *   migration, so for those historical rows this clause contributes nothing —
+ *   visibility there falls back to created_by ∪ primary-assignee only.
  * - cleaner / maintenance (worker) and viewer: items they are the primary
- *   assignee of, or created. Read-only for viewer (module gate elsewhere).
+ *   assignee of, or created. Unchanged from 11/10/2026. Read-only for viewer
+ *   (module gate elsewhere).
  */
 export interface WorkItemScopeActor {
   role: Role;
@@ -30,12 +30,6 @@ export interface WorkItemRow {
   assignee_user_id: string | null;
   assignee_supplier_id: string | null;
   created_by: string | null;
-}
-
-/** Roles this actor may administer accounts for — reused as the data-scope
- *  "scope by canManageRole" clause. Empty for every role except admin. */
-export function manageableRolesFor(actorRole: Role): Role[] {
-  return ROLE_VALUES.filter((r) => canManageRole(actorRole, r));
 }
 
 /** True when the actor is unrestricted (sees every issue/task). */
@@ -51,18 +45,31 @@ function isSelfScopedActor(actorRole: Role): boolean {
 
 /**
  * In-process access check from an already-loaded row — for routes that
- * fetched the full item (single GET, PATCH, DELETE). No extra query.
+ * fetched the full item (single GET, PATCH, DELETE). Covers every clause
+ * EXCEPT "assigned_by me", which needs a junction-table lookup the caller
+ * does not have from the row alone — see `actorMayAccessWorkItemAsync`.
  */
 export function actorMayAccessWorkItem(actor: WorkItemScopeActor, row: WorkItemRow): boolean {
   if (isUnscopedActor(actor.role)) return true;
   if (row.created_by === actor.id) return true;
   if (row.assignee_user_id === actor.id) return true;
-  if (isSelfScopedActor(actor.role)) return false;
-  // admin / manager clauses: unassigned, supplier-assigned, or assigned to a
-  // role they manage.
-  if (row.assignee_user_id === null && row.assignee_supplier_id === null) return true;
-  if (row.assignee_supplier_id !== null) return true;
-  return false; // the caller resolves the assignee's role async (see below) when this is false
+  return false;
+}
+
+/**
+ * Full access decision, including the "assigned_by me" clause for admin/
+ * manager — needs one query against entity_assignees when the in-process
+ * check above did not already decide it (never for super_admin/worker/viewer,
+ * who are fully decided without it).
+ */
+export async function actorMayAccessWorkItemAsync(
+  actor: WorkItemScopeActor,
+  row: WorkItemRow,
+  actorAssignedThisEntity: () => Promise<boolean>,
+): Promise<boolean> {
+  if (actorMayAccessWorkItem(actor, row)) return true;
+  if (isUnscopedActor(actor.role) || isSelfScopedActor(actor.role)) return false;
+  return actorAssignedThisEntity();
 }
 
 /**
@@ -71,12 +78,16 @@ export function actorMayAccessWorkItem(actor: WorkItemScopeActor, row: WorkItemR
  * for an unrestricted actor (super_admin) — append nothing.
  *
  * `alias` is a fixed identifier (never user input). Assumes `alias.assignee_user_id`,
- * `alias.assignee_supplier_id`, `alias.created_by` exist on the target table.
+ * `alias.assignee_supplier_id` (unused by this function, kept for row-shape
+ * parity with `WorkItemRow`), `alias.created_by` and `alias.id` exist on the
+ * target table/CTE. `entityType` is the fixed literal `'issue'` or `'task'`
+ * (never user input) identifying the row in `entity_assignees`.
  */
 export function workItemScopeSql(
   actor: WorkItemScopeActor,
   alias: string,
   paramOffset: number,
+  entityType: 'issue' | 'task',
 ): { sql: string; params: unknown[] } {
   if (isUnscopedActor(actor.role)) return { sql: '', params: [] };
 
@@ -88,37 +99,17 @@ export function workItemScopeSql(
   }
 
   // admin / manager
-  const manageable = manageableRolesFor(actor.role);
-  const roleParam = paramOffset + 1;
-  const idParam = paramOffset + 2;
+  const idParam = paramOffset + 1;
   return {
     sql: `and (
       ${alias}.created_by = $${idParam}
       or ${alias}.assignee_user_id = $${idParam}
-      or (${alias}.assignee_user_id is null and ${alias}.assignee_supplier_id is null)
-      or ${alias}.assignee_supplier_id is not null
-      or ${alias}.assignee_user_id in (select id from public.users where role = any($${roleParam}::text[]))
+      or exists (
+        select 1 from public.entity_assignees ea
+         where ea.entity_type = '${entityType}' and ea.entity_id = ${alias}.id
+           and ea.assigned_by = $${idParam}
+      )
     )`,
-    params: [manageable, actor.id],
+    params: [actor.id],
   };
 }
-
-/**
- * Async access decision for routes that did NOT load the full row (comments,
- * attachments) — resolves the assignee's role only when needed (admin/manager
- * whose in-process clauses above didn't already decide it).
- */
-export async function actorMayAccessWorkItemAsync(
-  actor: WorkItemScopeActor,
-  row: WorkItemRow,
-  lookupAssigneeRole: (userId: string) => Promise<Role | null>,
-): Promise<boolean> {
-  const quick = actorMayAccessWorkItem(actor, row);
-  if (quick) return true;
-  if (isUnscopedActor(actor.role) || isSelfScopedActor(actor.role)) return quick;
-  if (row.assignee_user_id === null) return quick; // already handled above (unassigned → true)
-  const role = await lookupAssigneeRole(row.assignee_user_id);
-  if (!role) return false;
-  return canManageRole(actor.role, role);
-}
-

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import {
-  Building2, LayoutDashboard, LayoutGrid, Users, Truck, ClipboardList,
+  Building2, LayoutDashboard, LayoutGrid, Users, Truck, ClipboardList, ListChecks,
   Calendar, FileText, MessageCircle, MessagesSquare, Bell, Sliders,
   MapPin, UserCog, KeyRound, SquareParking, Settings as SettingsIcon, Coins, SlidersHorizontal,
   ShieldCheck, PhoneOff, Gavel, Megaphone, MessageSquareText, History,
@@ -30,9 +30,9 @@ export interface MenuItem {
   action?: Action;
   /** Optional role/permission gate; when present it overrides the module-based
    *  `can` check. Used for /overview, which is role-gated (any non-viewer)
-   *  rather than tied to a permission module; for the users screen (admin /
+   *  rather than tied to a permission module; and for the users screen (admin /
    *  super_admin by role — canOpenUsersScreen, the page's own gate; never via
-   *  the matrix); and for "תקלות ומשימות" (visible on EITHER module). */
+   *  the matrix). */
   visible?: (role: Role, can: (module: string, action: Action) => boolean) => boolean;
   /** Active only on the exact path (default: the path and everything under it).
    *  For a module's overview item whose sibling lives under the same prefix
@@ -65,10 +65,12 @@ const SECTIONS: MenuSection[] = [
       { label: 'צ׳יפים',             icon: KeyRound, href: '/chips', module: 'chips' },
       { label: 'חניות ומחסנים',      icon: SquareParking, href: '/parking', module: 'parking' },
       { label: 'מסמכים',             icon: FileText, href: '/documents', module: 'documents' },
-      // Unified module (11/10/2026) — one nav item for both; /issues and
-      // /tasks stay as redirects (preserving old deep links) but no longer
-      // appear in the nav themselves. Visible on EITHER module's `view`.
-      { label: 'תקלות ומשימות',      icon: ClipboardList, href: '/work', visible: (_role, can) => can('issues', 'view') || can('tasks', 'view') },
+      // Two separate screens again (12/10/2026, Decisions Log: "עיצוב משותף,
+      // ישויות נפרדות" cancels the 11/10/2026 unification into one /work nav
+      // item). /work itself is gone — deleted, not hidden; every generator
+      // that used to link there now points at /issues or /tasks directly.
+      { label: 'תקלות',              icon: ClipboardList, href: '/issues', module: 'issues' },
+      { label: 'משימות',             icon: ListChecks, href: '/tasks', module: 'tasks' },
       { label: 'תזכורות',            icon: Bell, href: '/user-reminders', module: 'user_reminders' },
       { label: 'יומן',               icon: Calendar, href: '/calendar', module: 'calendar' },
       { label: 'ניהול סטטוס חיובים', icon: Sliders, href: '/statuses', module: 'status_management' },

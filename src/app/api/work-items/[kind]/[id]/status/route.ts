@@ -4,8 +4,9 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { isUuid } from '@/lib/validation/issues';
 import { getIssueById, updateIssue } from '@/lib/db/issues';
 import { getTaskById, updateTask } from '@/lib/db/tasks';
-import { actorMayAccessWorkItem } from '@/lib/auth/workItemAccess';
-import { nextIssueStatusOnChip, nextTaskStatusOnChip } from '@/lib/workItems/status';
+import { actorMayAccessWorkItemAsync } from '@/lib/auth/workItemAccess';
+import { wasAssignedByActor } from '@/lib/db/entityAssignees';
+import { issueStatusV2, taskStatusV2, ISSUE_CLOSED_STATUS, TASK_CLOSED_STATUS } from '@/lib/workItems/status';
 import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -15,9 +16,11 @@ interface RouteCtx {
 }
 
 // PATCH /api/work-items/[kind]/[id]/status  (no body)
-// Unified module (11/10/2026) — chip-click advance: open -> in_progress ->
-// closed. A closed item does not advance further from here (reopening is an
-// explicit action in the full edit panel). (tasks:edit | issues:edit)
+// "סמן כבוצע" hover action (12/10/2026 reference design — no status chip on
+// the card anymore, so this is a one-step close, not the old open ->
+// in_progress -> closed cycle). A closed item is a no-op from here; reopening
+// or setting "בטיפול" stays an explicit action in the full edit panel.
+// (tasks:edit | issues:edit)
 export async function PATCH(_req: NextRequest, ctx: RouteCtx) {
   const { kind, id } = await ctx.params;
   if (kind !== 'issue' && kind !== 'task') {
@@ -38,23 +41,25 @@ export async function PATCH(_req: NextRequest, ctx: RouteCtx) {
     if (kind === 'issue') {
       const existing = await getIssueById(id);
       if (!existing) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-      if (!actorMayAccessWorkItem(actor, existing)) {
-        return NextResponse.json({ error: 'not_found' }, { status: 404 });
+      if (!(await actorMayAccessWorkItemAsync(actor, existing, () => wasAssignedByActor('issue', id, actor.id)))) {
+        return NextResponse.json({ error: 'forbidden' }, { status: 403 });
       }
-      const next = nextIssueStatusOnChip(existing.status);
-      if (!next) return NextResponse.json({ error: 'already_closed' }, { status: 400 });
-      const updated = await updateIssue(id, { status: next });
+      if (issueStatusV2(existing.status) === 'closed') {
+        return NextResponse.json({ error: 'already_closed' }, { status: 400 });
+      }
+      const updated = await updateIssue(id, { status: ISSUE_CLOSED_STATUS });
       return NextResponse.json({ item: updated });
     }
 
     const existing = await getTaskById(id);
     if (!existing) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-    if (!actorMayAccessWorkItem(actor, existing)) {
-      return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    if (!(await actorMayAccessWorkItemAsync(actor, existing, () => wasAssignedByActor('task', id, actor.id)))) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
     }
-    const next = nextTaskStatusOnChip(existing.status);
-    if (!next) return NextResponse.json({ error: 'already_closed' }, { status: 400 });
-    const updated = await updateTask(id, { status: next });
+    if (taskStatusV2(existing.status) === 'closed') {
+      return NextResponse.json({ error: 'already_closed' }, { status: 400 });
+    }
+    const updated = await updateTask(id, { status: TASK_CLOSED_STATUS });
     return NextResponse.json({ item: updated });
   } catch (err) {
     logger.error('[PATCH /api/work-items/[kind]/[id]/status]', err);

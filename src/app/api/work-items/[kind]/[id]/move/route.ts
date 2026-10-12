@@ -5,7 +5,8 @@ import { isUuid } from '@/lib/validation/issues';
 import { getIssueById } from '@/lib/db/issues';
 import { getTaskById } from '@/lib/db/tasks';
 import { reorderWorkItemWithinLane } from '@/lib/db/workItems';
-import { actorMayAccessWorkItem } from '@/lib/auth/workItemAccess';
+import { actorMayAccessWorkItemAsync } from '@/lib/auth/workItemAccess';
+import { wasAssignedByActor } from '@/lib/db/entityAssignees';
 import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -51,8 +52,8 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
   const existing = kind === 'issue' ? await getIssueById(id) : await getTaskById(id);
   if (!existing) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  if (!actorMayAccessWorkItem(actor, existing)) {
-    return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!(await actorMayAccessWorkItemAsync(actor, existing, () => wasAssignedByActor(kind, id, actor.id)))) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   }
 
   try {

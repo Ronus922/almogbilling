@@ -7,7 +7,8 @@ import {
   updateTask,
   deleteTask,
 } from '@/lib/db/tasks';
-import { listEntityAssigneeKeys } from '@/lib/db/entityAssignees';
+import { listEntityAssigneeKeys, wasAssignedByActor } from '@/lib/db/entityAssignees';
+import { actorMayAccessWorkItemAsync } from '@/lib/auth/workItemAccess';
 import {
   listRemindersForEntity,
   createReminder,
@@ -41,8 +42,9 @@ interface RouteCtx {
 
 // GET /api/tasks/[id] — task + comments + reminders  (tasks:view)
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('tasks', 'view');
+    actor = await requirePermission('tasks', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -52,6 +54,13 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   const { id } = await ctx.params;
   const task = await getTaskById(id);
   if (!task) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  // Row-level scope (12/10/2026): no existence oracle — same 404 as a missing
+  // task, matching the issues GET convention. Unlike issues, there is no prior
+  // worker-specific exception here to preserve — this route never had ANY
+  // row-level check before today, so the new rule applies uniformly to every role.
+  if (!(await actorMayAccessWorkItemAsync(actor, task, () => wasAssignedByActor('task', id, actor.id)))) {
+    return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  }
 
   const [comments, reminders] = await Promise.all([
     listTaskComments(id),
@@ -135,6 +144,10 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   // deciding whether the due date genuinely moved.
   const before = await getTaskById(id);
   if (!before) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  // Row-level scope (12/10/2026) — see the GET handler above.
+  if (!(await actorMayAccessWorkItemAsync(actor, before, () => wasAssignedByActor('task', id, actor.id)))) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  }
 
   // A recurrence rule needs an anchor (the task's due date = series start). If a
   // rule is being set/kept, the EFFECTIVE due date after this save must exist —
@@ -275,7 +288,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     if (recipients.length > 0) {
       void dispatchCreateNotifications({
         title: `משימה: ${task.title}`,
-        actionUrl: `/work?kind=task&id=${task.id}`,
+        actionUrl: `/tasks?task=${task.id}`,
         details: {
           description: task.description,
           targetLabel: task.target_label,
@@ -302,8 +315,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
 
 // DELETE /api/tasks/[id]  (tasks:edit)
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
+  let actor: Actor;
   try {
-    await requirePermission('tasks', 'edit');
+    actor = await requirePermission('tasks', 'edit');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -311,6 +325,13 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
   }
 
   const { id } = await ctx.params;
+  const existing = await getTaskById(id);
+  if (!existing) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  // Row-level scope (12/10/2026) — see the GET handler above. This route never
+  // fetched the row at all before today (deleteTask ran unconditionally).
+  if (!(await actorMayAccessWorkItemAsync(actor, existing, () => wasAssignedByActor('task', id, actor.id)))) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  }
   // task_comments cascade via FK; reminders + notifications use a generic
   // entity_id (no FK), so clean them up explicitly to avoid orphaned rows that
   // keep haunting the bell (deleteTask soft-archives, so this also covers the

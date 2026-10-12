@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
         due_time: t.due_time ? t.due_time.slice(0, 5) : null,
         priority: t.priority,
         status: t.status,
-        action_url: `/work?kind=task&id=${t.id}`,
+        action_url: `/tasks?task=${t.id}`,
         recurring: t.recurring,
       })),
       ...issues.map((i) => ({
@@ -80,7 +80,7 @@ export async function GET(req: NextRequest) {
         due_time: i.due_time ? i.due_time.slice(0, 5) : null,
         priority: i.priority,
         status: i.status,
-        action_url: `/work?kind=issue&id=${i.id}`,
+        action_url: `/issues?issue=${i.id}`,
       })),
       ...reminders.map((r) => ({
         kind: 'reminder' as const,

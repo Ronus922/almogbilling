@@ -1,7 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  issueStatusV2, taskStatusV2, nextIssueStatusOnChip, nextTaskStatusOnChip,
-} from '@/lib/workItems/status';
+import { issueStatusV2, taskStatusV2, ISSUE_CLOSED_STATUS, TASK_CLOSED_STATUS } from '@/lib/workItems/status';
 import type { IssueStatus } from '@/lib/types/issues';
 import type { TaskStatus } from '@/lib/types/tasks';
 
@@ -10,6 +8,12 @@ import type { TaskStatus } from '@/lib/types/tasks';
 // future write re-derives status_v2 from the legacy status the SAME way the
 // migration backfilled it, so the two never drift. Pins every legacy value on
 // both tables.
+//
+// nextIssueStatusOnChip/nextTaskStatusOnChip (the old 3-state open ->
+// in_progress -> closed chip-advance) were removed 12/10/2026: the reference
+// design's card has no status chip to click at all (DESIGN.md §41) — "סמן
+// כבוצע" is a direct, single-step close (ISSUE_CLOSED_STATUS/TASK_CLOSED_
+// STATUS below), never a cycle.
 
 describe('issueStatusV2 — mirrors the migration backfill mapping', () => {
   const cases: [IssueStatus, 'open' | 'in_progress' | 'closed'][] = [
@@ -35,28 +39,13 @@ describe('taskStatusV2 — mirrors the migration backfill mapping', () => {
   });
 });
 
-describe('nextIssueStatusOnChip — open -> in_progress -> closed, no further', () => {
-  it('open advances to in_progress', () => {
-    expect(nextIssueStatusOnChip('open')).toBe('in_progress');
+describe('ISSUE_CLOSED_STATUS / TASK_CLOSED_STATUS — the "סמן כבוצע" terminal value', () => {
+  it('issues close to the terminal "finished" value, not "resolved"', () => {
+    expect(ISSUE_CLOSED_STATUS).toBe('closed');
+    expect(issueStatusV2(ISSUE_CLOSED_STATUS)).toBe('closed');
   });
-  it('in_progress advances to closed (not resolved — chip-click has no notes field)', () => {
-    expect(nextIssueStatusOnChip('in_progress')).toBe('closed');
-  });
-  it('a terminal status (closed or resolved) does not advance from the chip', () => {
-    expect(nextIssueStatusOnChip('closed')).toBeNull();
-    expect(nextIssueStatusOnChip('resolved')).toBeNull();
-  });
-});
-
-describe('nextTaskStatusOnChip — open -> in_progress -> done, no further', () => {
-  it('open advances to in_progress', () => {
-    expect(nextTaskStatusOnChip('open')).toBe('in_progress');
-  });
-  it('in_progress advances to done', () => {
-    expect(nextTaskStatusOnChip('in_progress')).toBe('done');
-  });
-  it('a terminal status (done or cancelled) does not advance from the chip', () => {
-    expect(nextTaskStatusOnChip('done')).toBeNull();
-    expect(nextTaskStatusOnChip('cancelled')).toBeNull();
+  it('tasks close to "done", not "cancelled"', () => {
+    expect(TASK_CLOSED_STATUS).toBe('done');
+    expect(taskStatusV2(TASK_CLOSED_STATUS)).toBe('closed');
   });
 });

@@ -1,8 +1,9 @@
-// Unified "תקלות ומשימות" module (11/10/2026) — shared types for the combined
-// list/board over `issues` + `tasks`. The two tables stay separate (different
-// create/edit panels, different capabilities — images/videos/reporter on
-// issues, recurrence on tasks); this module only normalizes what the unified
-// list/board/KPIs need to render both kinds side by side.
+// תקלות (issues) + משימות (tasks) — two separate screens sharing one design
+// and one row shape (12/10/2026, Decisions Log: "עיצוב משותף, ישויות נפרדות"
+// cancels the 11/10/2026 unification). Each screen's list/board/KPI query
+// touches ONLY its own table (src/lib/db/workItems.ts) — `kind` tags a row
+// with which table it came from and which per-kind API to call for
+// mutations; it is never used to combine issues and tasks in one query.
 
 /** New 3-state source of truth, derived server-side from the legacy `status`
  *  column on every write (see src/lib/workItems/status.ts) — never set
@@ -53,18 +54,19 @@ export interface WorkItem {
   sort_index: number | null;
   /** created in the last 24h and still unassigned — the "חדש" tag. */
   is_new: boolean;
+  /** Full multi-assignee set (entity_assignees), for the avatar stack next to
+   *  the primary assignee — a card/row never duplicates across lanes/rows,
+   *  it shows once (at the primary) with this list alongside it. */
+  assignees: WorkItemPrimaryAssignee[];
 }
 
-export type WorkItemGroupBy = 'status' | 'assignee' | 'priority';
 export type WorkItemViewTab = 'active' | 'recurring' | 'archive';
 
 export interface WorkItemListFilters {
   tab: WorkItemViewTab;
-  kind?: WorkItemKind;
   assigneeUserId?: string | 'unassigned';
   priority?: 'normal' | 'high' | 'urgent';
   search?: string;
-  groupBy?: WorkItemGroupBy;
 }
 
 export interface WorkItemKpis {

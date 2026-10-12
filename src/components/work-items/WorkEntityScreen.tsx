@@ -1,14 +1,17 @@
 'use client';
 
-// Unified "תקלות ומשימות" screen (11/10/2026) — orchestrator: tabs (פעילות |
-// משימות מחזוריות | ארכיון), KPI bar, toolbar (list/board toggle, group-by,
-// filters, search), and the per-kind create/edit panels (reused as-is —
-// IssueFormPanel / TaskFormPanel keep their existing multi-assignee section;
-// the new single-primary assignee is a separate, simpler concept used only by
-// quick-assign/the board — see Decisions Log 11/10/2026).
+// תקלות (issues) ומשימות (tasks) — the per-screen orchestrator (12/10/2026,
+// Decisions Log: "עיצוב משותף, ישויות נפרדות" cancels the 11/10/2026
+// unification into one `/work` screen). One instance of this component is
+// `/issues` (kind="issue"), a second, separate instance is `/tasks`
+// (kind="task") — same design, same component, but each call only ever
+// fetches/mutates its OWN table (src/lib/db/workItems.ts has no cross-table
+// query at all anymore). Kanban is the default view (ref/issues-board.html);
+// the create/edit panel is the single per-kind one (IssueFormPanel OR
+// TaskFormPanel, never both — the 11/10/2026 screen held both at once).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   Plus, Search, LayoutGrid, List as ListIcon, AlertTriangle, UserX, CalendarClock, Clock,
@@ -18,15 +21,19 @@ import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { KpiCard } from '@/components/KpiCard';
 import { IssueFormPanel } from '@/components/issues/issue-form-panel';
 import { TaskFormPanel } from '@/components/tasks/task-form-panel';
 import { RecurringSeriesList } from '@/components/recurrence/RecurringSeriesList';
-import { WorkItemsList } from '@/components/work-items/WorkItemsList';
-import { WorkItemsBoard } from '@/components/work-items/WorkItemsBoard';
-import { WorkItemsArchiveTab } from '@/components/work-items/WorkItemsArchiveTab';
-import { todayInJerusalem } from '@/lib/dates';
-import type { WorkItem, WorkItemGroupBy, WorkItemKpis, WorkItemViewTab } from '@/lib/types/workItems';
+import { WorkItemsBoard } from './WorkItemsBoard';
+import { WorkListTable } from './WorkListTable';
+import { WorkItemsArchiveTab } from './WorkItemsArchiveTab';
+import { BlockedToggleDialog } from './BlockedToggleDialog';
+import type { WorkItem, WorkItemKind, WorkItemKpis, WorkItemViewTab } from '@/lib/types/workItems';
 import type { IssueWithMeta } from '@/lib/types/issues';
 import type { TaskWithAssignee } from '@/lib/types/tasks';
 import type { RecurringSeries } from '@/lib/db/tasks';
@@ -35,63 +42,69 @@ import type { NotifyUserContact } from '@/lib/notify/selection';
 interface Assignee { id: string; name: string; hasEmail?: boolean; hasPhone?: boolean }
 interface SupplierOpt { id: string; display_name: string; phone: string; mobile?: string | null; email?: string | null }
 
-type ViewMode = 'list' | 'board';
+type ViewMode = 'board' | 'list';
 
-const TABS: { key: WorkItemViewTab; label: string }[] = [
-  { key: 'active', label: 'פעילות' },
-  { key: 'recurring', label: 'משימות מחזוריות' },
-  { key: 'archive', label: 'ארכיון' },
-];
+const TITLE: Record<WorkItemKind, string> = { issue: 'תקלות', task: 'משימות' };
+const NEW_LABEL: Record<WorkItemKind, string> = { issue: 'תקלה חדשה', task: 'משימה חדשה' };
+const DELETE_NOUN: Record<WorkItemKind, string> = { issue: 'התקלה', task: 'המשימה' };
+const DEEP_LINK_PARAM: Record<WorkItemKind, string> = { issue: 'issue', task: 'task' };
 
-export function WorkPageClient({
+export function WorkEntityScreen({
+  kind,
   initialItems,
   initialKpis,
+  initialSeries,
   assignees,
   suppliers,
   currentUser,
-  canEditIssues,
-  canEditTasks,
-  canViewIssues,
-  canViewTasks,
+  canEdit,
   canSeeReporterPhone,
 }: {
+  kind: WorkItemKind;
   initialItems: WorkItem[];
   initialKpis: WorkItemKpis;
+  /** Tasks only — the "משימות מחזוריות" tab's rows. */
+  initialSeries?: RecurringSeries[];
   assignees: Assignee[];
   suppliers: SupplierOpt[];
   currentUser: NotifyUserContact;
-  canEditIssues: boolean;
-  canEditTasks: boolean;
-  canViewIssues: boolean;
-  canViewTasks: boolean;
-  canSeeReporterPhone: boolean;
+  canEdit: boolean;
+  /** Issues only — whether the reporter's phone may show in the panel. */
+  canSeeReporterPhone?: boolean;
 }) {
-  const today = todayInJerusalem();
+  const router = useRouter();
+  const tabs: { key: WorkItemViewTab; label: string }[] = useMemo(() => {
+    const t: { key: WorkItemViewTab; label: string }[] = [{ key: 'active', label: 'פעילות' }];
+    if (kind === 'task') t.push({ key: 'recurring', label: 'משימות מחזוריות' });
+    t.push({ key: 'archive', label: 'ארכיון' });
+    return t;
+  }, [kind]);
+
   const [tab, setTab] = useState<WorkItemViewTab>('active');
-  const [view, setView] = useState<ViewMode>('list');
-  const [groupBy, setGroupBy] = useState<WorkItemGroupBy>('status');
+  const [view, setView] = useState<ViewMode>('board');
   const [items, setItems] = useState<WorkItem[]>(initialItems);
   const [kpis, setKpis] = useState<WorkItemKpis>(initialKpis);
   const [archived, setArchived] = useState<WorkItem[]>([]);
-  const [series, setSeries] = useState<RecurringSeries[]>([]);
+  const [series, setSeries] = useState<RecurringSeries[]>(initialSeries ?? []);
 
   const [search, setSearch] = useState('');
-  const [kindFilter, setKindFilter] = useState<'all' | 'issue' | 'task'>('all');
   const [priorityFilter, setPriorityFilter] = useState<'all' | 'normal' | 'high' | 'urgent'>('all');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
 
-  const [issuePanelOpen, setIssuePanelOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [editingIssue, setEditingIssue] = useState<IssueWithMeta | null>(null);
-  const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskWithAssignee | null>(null);
+  const [blockedDialogItem, setBlockedDialogItem] = useState<WorkItem | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const didMount = useRef(false);
 
   const fetchItems = useCallback(async () => {
     try {
       const params = new URLSearchParams();
+      params.set('kind', kind);
       params.set('tab', tab === 'recurring' ? 'active' : tab);
-      if (kindFilter !== 'all') params.set('kind', kindFilter);
       if (priorityFilter !== 'all') params.set('priority', priorityFilter);
       if (assigneeFilter !== 'all') params.set('assigneeUserId', assigneeFilter);
       if (search.trim()) params.set('search', search.trim());
@@ -105,69 +118,63 @@ export function WorkPageClient({
     } catch (err) {
       toast.error(`טעינת הרשימה נכשלה: ${(err as Error).message}`);
     }
-  }, [tab, kindFilter, priorityFilter, assigneeFilter, search]);
+  }, [kind, tab, priorityFilter, assigneeFilter, search]);
 
   const fetchSeries = useCallback(async () => {
+    if (kind !== 'task') return;
     try {
       const res = await fetch('/api/tasks/recurring', { credentials: 'include' });
       if (!res.ok) return;
       const data = (await res.json()) as { series?: RecurringSeries[] };
       setSeries(Array.isArray(data.series) ? data.series : []);
     } catch { /* non-fatal */ }
-  }, []);
+  }, [kind]);
 
   useEffect(() => {
     if (!didMount.current) { didMount.current = true; return; }
     if (tab === 'recurring') { void fetchSeries(); return; }
     void fetchItems();
-  }, [tab, kindFilter, priorityFilter, assigneeFilter, search, fetchItems, fetchSeries]);
+  }, [tab, priorityFilter, assigneeFilter, search, fetchItems, fetchSeries]);
 
-  useEffect(() => { if (tab === 'recurring' && series.length === 0) void fetchSeries(); }, [tab, series.length, fetchSeries]);
-
-  const openByKindId = useCallback(async (kind: 'issue' | 'task', id: string) => {
+  const openById = useCallback(async (id: string) => {
     try {
       if (kind === 'issue') {
         const res = await fetch(`/api/issues/${id}`, { credentials: 'include' });
         if (!res.ok) throw new Error('פתיחת התקלה נכשלה');
         const data = (await res.json()) as { issue: IssueWithMeta };
         setEditingIssue(data.issue);
-        setIssuePanelOpen(true);
       } else {
         const res = await fetch(`/api/tasks/${id}`, { credentials: 'include' });
         if (!res.ok) throw new Error('פתיחת המשימה נכשלה');
         const data = (await res.json()) as { task: TaskWithAssignee };
         setEditingTask(data.task);
-        setTaskPanelOpen(true);
       }
+      setPanelOpen(true);
     } catch (err) {
       toast.error((err as Error).message);
     }
-  }, []);
+  }, [kind]);
 
   function openItem(item: WorkItem) {
-    void openByKindId(item.kind, item.id);
+    void openById(item.id);
   }
 
-  // Deep link: ?kind=issue|task&id=<id> opens the panel for that item —
-  // produced by every notification/reminder/calendar-link generator going
-  // forward. /issues and /tasks stay live at their OLD ?issue=/?task= deep
-  // links too (full pages, unlinked from the nav but not redirects — see
-  // their page.tsx — so already-sent links keep working unchanged).
+  // Deep link: /issues?issue=<id> or /tasks?task=<id> — the SAME param each
+  // screen's legacy full page already answered to before 11/10/2026, so every
+  // previously-sent link (notifications, reminders, calendar, overview,
+  // search) keeps working once its generator points back here (12/10/2026).
   const searchParams = useSearchParams();
   useEffect(() => {
-    const kind = searchParams.get('kind');
-    const id = searchParams.get('id');
-    if ((kind === 'issue' || kind === 'task') && id) {
-      void openByKindId(kind, id);
-    }
+    const id = searchParams.get(DEEP_LINK_PARAM[kind]);
+    if (id) void openById(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleAssign(item: WorkItem, assignee: { kind: 'user' | 'supplier'; id: string } | null) {
     const prevItems = items;
-    setItems((curr) => curr.map((i) => (i.id === item.id && i.kind === item.kind ? { ...i, assignee: assignee ? { kind: assignee.kind, id: assignee.id, display_name: (assignee.kind === 'user' ? assignees.find((a) => a.id === assignee.id)?.name : suppliers.find((s) => s.id === assignee.id)?.display_name) ?? '—' } : null } : i)));
+    setItems((curr) => curr.map((i) => (i.id === item.id ? { ...i, assignee: assignee ? { kind: assignee.kind, id: assignee.id, display_name: (assignee.kind === 'user' ? assignees.find((a) => a.id === assignee.id)?.name : suppliers.find((s) => s.id === assignee.id)?.display_name) ?? '—' } : null } : i)));
     try {
-      const res = await fetch(`/api/work-items/${item.kind}/${item.id}/assignee`, {
+      const res = await fetch(`/api/work-items/${kind}/${item.id}/assignee`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -181,33 +188,25 @@ export function WorkPageClient({
     }
   }
 
-  async function handleAdvanceStatus(item: WorkItem) {
+  async function handleMarkDone(item: WorkItem) {
     const prevItems = items;
     try {
-      const res = await fetch(`/api/work-items/${item.kind}/${item.id}/status`, {
-        method: 'PATCH',
-        credentials: 'include',
-      });
-      if (!res.ok) throw new Error('עדכון הסטטוס נכשל');
-      toast.success('הסטטוס עודכן', { description: 'ניתן לבטל מהודעה זו', action: { label: 'בטל', onClick: () => setItems(prevItems) } });
+      const res = await fetch(`/api/work-items/${kind}/${item.id}/status`, { method: 'PATCH', credentials: 'include' });
+      if (!res.ok) throw new Error('הסימון נכשל');
+      toast.success('סומן כבוצע', { description: 'ניתן לבטל מהודעה זו', action: { label: 'בטל', onClick: () => setItems(prevItems) } });
       void fetchItems();
     } catch (err) {
       toast.error((err as Error).message);
     }
   }
 
-  // BlockedToggleDialog already PATCHed the server (PATCH /api/issues|tasks/[id])
-  // directly — this just syncs the local list so the row/card reflects it
-  // without a full refetch.
   function handleBlockedChange(item: WorkItem, blocked: boolean, reason: string | null) {
-    setItems((curr) => curr.map((i) => (
-      i.id === item.id && i.kind === item.kind ? { ...i, blocked, blocked_reason: reason } : i
-    )));
+    setItems((curr) => curr.map((i) => (i.id === item.id ? { ...i, blocked, blocked_reason: reason } : i)));
   }
 
   async function handleReorder(item: WorkItem, beforeId: string | null) {
     try {
-      const res = await fetch(`/api/work-items/${item.kind}/${item.id}/move`, {
+      const res = await fetch(`/api/work-items/${kind}/${item.id}/move`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -237,7 +236,7 @@ export function WorkPageClient({
 
   async function handleRestore(item: WorkItem) {
     try {
-      const res = await fetch(`/api/work-items/${item.kind}/${item.id}/restore`, { method: 'PATCH', credentials: 'include' });
+      const res = await fetch(`/api/work-items/${kind}/${item.id}/restore`, { method: 'PATCH', credentials: 'include' });
       if (!res.ok) throw new Error('השחזור נכשל');
       toast.success('הפריט שוחזר לרשימה הפעילה');
       void fetchItems();
@@ -246,7 +245,26 @@ export function WorkPageClient({
     }
   }
 
-  const canEditAny = canEditIssues || canEditTasks;
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/${kind === 'issue' ? 'issues' : 'tasks'}/${deleteTarget.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('המחיקה נכשלה');
+      toast.success('נמחק בהצלחה');
+      setDeleteTarget(null);
+      setPanelOpen(false);
+      void fetchItems();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const hasSupplierItems = items.some((i) => i.assignee?.kind === 'supplier');
 
   const kpiCards = useMemo(() => ([
@@ -259,36 +277,31 @@ export function WorkPageClient({
   function applyKpiFilter(key: 'urgent' | 'unassigned' | 'due_today' | 'overdue') {
     if (key === 'urgent') setPriorityFilter('urgent');
     if (key === 'unassigned') setAssigneeFilter('unassigned');
-    // due_today / overdue are date-based — surfaced via sort, not a filter param here.
+  }
+
+  function closePanel() {
+    setPanelOpen(false);
+    router.replace(kind === 'issue' ? '/issues' : '/tasks');
   }
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-extrabold text-ink">תקלות ומשימות</h1>
-        {canEditAny && (
-          <div className="flex items-center gap-2">
-            {canEditIssues && (
-              <Button onClick={() => { setEditingIssue(null); setIssuePanelOpen(true); }} className="gap-1.5">
-                <Plus className="h-4 w-4" /> תקלה חדשה
-              </Button>
-            )}
-            {canEditTasks && (
-              <Button variant="outline" onClick={() => { setEditingTask(null); setTaskPanelOpen(true); }} className="gap-1.5">
-                <Plus className="h-4 w-4" /> משימה חדשה
-              </Button>
-            )}
-          </div>
+        <h1 className="text-xl font-extrabold text-ink">{TITLE[kind]}</h1>
+        {canEdit && (
+          <Button onClick={() => { setEditingIssue(null); setEditingTask(null); setPanelOpen(true); }} className="gap-1.5">
+            <Plus className="h-4 w-4" /> {NEW_LABEL[kind]}
+          </Button>
         )}
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-line pb-3">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             type="button"
             onClick={() => setTab(t.key)}
-            className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${tab === t.key ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${tab === t.key ? 'bg-brand text-white' : 'bg-line-soft text-ink-2 hover:bg-line'}`}
           >
             {t.label}
           </button>
@@ -307,36 +320,16 @@ export function WorkPageClient({
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1 rounded-lg border border-line bg-white p-1">
-              <button type="button" onClick={() => setView('list')} className={`grid h-8 w-8 place-items-center rounded-md ${view === 'list' ? 'bg-blue-600 text-white' : 'text-ink-ghost'}`}>
-                <ListIcon className="h-4 w-4" />
-              </button>
-              <button type="button" onClick={() => setView('board')} className={`hidden h-8 w-8 place-items-center rounded-md lg:grid ${view === 'board' ? 'bg-blue-600 text-white' : 'text-ink-ghost'}`}>
+              <button type="button" onClick={() => setView('board')} className={`hidden h-8 w-8 place-items-center rounded-md lg:grid ${view === 'board' ? 'bg-brand text-white' : 'text-ink-ghost'}`} aria-label="קנבן">
                 <LayoutGrid className="h-4 w-4" />
+              </button>
+              <button type="button" onClick={() => setView('list')} className={`grid h-8 w-8 place-items-center rounded-md ${view === 'list' ? 'bg-brand text-white' : 'text-ink-ghost'}`} aria-label="רשימה">
+                <ListIcon className="h-4 w-4" />
               </button>
             </div>
 
-            {view === 'list' && (
-              <Select value={groupBy} onValueChange={(v) => setGroupBy(v as WorkItemGroupBy)}>
-                <SelectTrigger className="h-10 w-40"><SelectValue>{groupBy === 'status' ? 'קיבוץ: סטטוס' : groupBy === 'assignee' ? 'קיבוץ: עובד' : 'קיבוץ: דחיפות'}</SelectValue></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="status">קיבוץ: סטטוס</SelectItem>
-                  <SelectItem value="assignee">קיבוץ: עובד</SelectItem>
-                  <SelectItem value="priority">קיבוץ: דחיפות</SelectItem>
-                </SelectContent>
-              </Select>
-            )}
-
-            <Select value={kindFilter} onValueChange={(v) => setKindFilter(v as typeof kindFilter)}>
-              <SelectTrigger className="h-10 w-28"><SelectValue>{kindFilter === 'all' ? 'סוג: הכל' : kindFilter === 'issue' ? 'תקלות' : 'משימות'}</SelectValue></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">סוג: הכל</SelectItem>
-                <SelectItem value="issue">תקלות</SelectItem>
-                <SelectItem value="task">משימות</SelectItem>
-              </SelectContent>
-            </Select>
-
             <Select value={priorityFilter} onValueChange={(v) => setPriorityFilter(v as typeof priorityFilter)}>
-              <SelectTrigger className="h-10 w-32"><SelectValue>{priorityFilter === 'all' ? 'דחיפות: הכל' : priorityFilter}</SelectValue></SelectTrigger>
+              <SelectTrigger className="h-10 w-32"><SelectValue>{priorityFilter === 'all' ? 'דחיפות: הכל' : priorityFilter === 'urgent' ? 'דחופה' : priorityFilter === 'high' ? 'גבוהה' : 'רגילה'}</SelectValue></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">דחיפות: הכל</SelectItem>
                 <SelectItem value="urgent">דחופה</SelectItem>
@@ -356,7 +349,7 @@ export function WorkPageClient({
 
             <div className="relative min-w-[180px] flex-1">
               <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-ghost" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="חיפוש…" className="h-10 pr-9" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`חיפוש ${kind === 'issue' ? 'תקלה' : 'משימה'}...`} className="h-10 pr-9" />
             </div>
           </div>
 
@@ -366,92 +359,119 @@ export function WorkPageClient({
               <div className="hidden lg:block">
                 <WorkItemsBoard
                   items={items}
-                  canEdit={canEditAny}
+                  canEdit={canEdit}
                   employees={assignees}
+                  suppliers={suppliers}
                   hasSupplierItems={hasSupplierItems}
                   onOpen={openItem}
                   onAssign={handleAssign}
                   onReorder={handleReorder}
-                  onAdvanceStatus={handleAdvanceStatus}
-                  onBlockedChange={handleBlockedChange}
+                  onMarkDone={handleMarkDone}
+                  onBlockedClick={setBlockedDialogItem}
+                  onDelete={setDeleteTarget}
                 />
               </div>
               <div className="lg:hidden">
-                <WorkItemsList
+                <WorkListTable
+                  kind={kind}
                   items={items}
-                  today={today}
-                  canEdit={canEditAny}
-                  groupBy={groupBy}
+                  canEdit={canEdit}
                   employees={assignees}
                   suppliers={suppliers}
                   onOpen={openItem}
                   onAssign={handleAssign}
-                  onAdvanceStatus={handleAdvanceStatus}
-                  onBlockedChange={handleBlockedChange}
+                  onMarkDone={handleMarkDone}
+                  onBlockedClick={setBlockedDialogItem}
+                  onDelete={setDeleteTarget}
                 />
               </div>
             </>
           ) : (
-            <WorkItemsList
+            <WorkListTable
+              kind={kind}
               items={items}
-              today={today}
-              canEdit={canEditAny}
-              groupBy={groupBy}
+              canEdit={canEdit}
               employees={assignees}
               suppliers={suppliers}
               onOpen={openItem}
               onAssign={handleAssign}
-              onAdvanceStatus={handleAdvanceStatus}
-              onBlockedChange={handleBlockedChange}
+              onMarkDone={handleMarkDone}
+              onBlockedClick={setBlockedDialogItem}
+              onDelete={setDeleteTarget}
             />
           )}
         </>
       )}
 
-      {tab === 'recurring' && (
+      {tab === 'recurring' && kind === 'task' && (
         <div className="space-y-3">
           <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
             כאן מוגדרות המשימות החוזרות. כל משימה מחזורית היא שורה אחת, המוצגת ברשימה הפעילה במועד הפתוח הנוכחי — השלמתה מעבירה אותה אוטומטית למופע הבא.
           </div>
-          <RecurringSeriesList series={series} onSelect={async (id) => {
-            const res = await fetch(`/api/tasks/${id}`, { credentials: 'include' });
-            if (!res.ok) return;
-            const data = (await res.json()) as { task: TaskWithAssignee };
-            setEditingTask(data.task);
-            setTaskPanelOpen(true);
-          }} onTogglePaused={handleTogglePaused} />
+          <RecurringSeriesList series={series} onSelect={(id) => void openById(id)} onTogglePaused={handleTogglePaused} />
         </div>
       )}
 
       {tab === 'archive' && (
-        <WorkItemsArchiveTab items={archived} canEdit={canEditAny} onRestore={handleRestore} onOpen={openItem} />
+        <WorkItemsArchiveTab items={archived} canEdit={canEdit} onRestore={handleRestore} onOpen={openItem} />
       )}
 
-      {canViewIssues && (
+      {kind === 'issue' ? (
         <IssueFormPanel
-          open={issuePanelOpen}
+          open={panelOpen}
           issue={editingIssue}
-          canEdit={canEditIssues}
-          canSeeReporterPhone={canSeeReporterPhone}
+          canEdit={canEdit}
+          canSeeReporterPhone={!!canSeeReporterPhone}
           assignees={assignees}
           suppliers={suppliers}
           currentUser={currentUser}
-          onOpenChange={setIssuePanelOpen}
-          onSaved={() => { setIssuePanelOpen(false); void fetchItems(); }}
+          onOpenChange={(o) => { if (!o) closePanel(); else setPanelOpen(o); }}
+          onSaved={() => { setPanelOpen(false); void fetchItems(); }}
+          onDelete={editingIssue && canEdit ? () => setDeleteTarget({ id: editingIssue.id }) : undefined}
         />
-      )}
-      {canViewTasks && (
+      ) : (
         <TaskFormPanel
-          open={taskPanelOpen}
+          open={panelOpen}
           task={editingTask}
-          canEdit={canEditTasks}
+          canEdit={canEdit}
           assignees={assignees}
           suppliers={suppliers}
           currentUser={currentUser}
-          onOpenChange={setTaskPanelOpen}
-          onSaved={() => { setTaskPanelOpen(false); void fetchItems(); void fetchSeries(); }}
+          onOpenChange={(o) => { if (!o) closePanel(); else setPanelOpen(o); }}
+          onSaved={() => { setPanelOpen(false); void fetchItems(); void fetchSeries(); }}
+          onDelete={editingTask && canEdit ? () => setDeleteTarget({ id: editingTask.id }) : undefined}
         />
       )}
+
+      {blockedDialogItem && (
+        <BlockedToggleDialog
+          open
+          onOpenChange={(o) => { if (!o) setBlockedDialogItem(null); }}
+          kind={blockedDialogItem.kind}
+          id={blockedDialogItem.id}
+          currentlyBlocked={blockedDialogItem.blocked}
+          currentReason={blockedDialogItem.blocked_reason}
+          onDone={(blocked, reason) => {
+            handleBlockedChange(blockedDialogItem, blocked, reason);
+            setBlockedDialogItem(null);
+          }}
+        />
+      )}
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
+        <AlertDialogContent dir="rtl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>למחוק את {DELETE_NOUN[kind]}?</AlertDialogTitle>
+            <AlertDialogDescription>הפעולה בלתי הפיכה.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>ביטול</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void confirmDelete()} disabled={deleting} className="bg-destructive text-white hover:bg-destructive/90">
+              מחק
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

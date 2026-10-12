@@ -1,18 +1,20 @@
 import 'server-only';
 import { query, withTransaction } from '@/lib/db';
 import type { PoolClient } from 'pg';
+import { assigneesJsonExpr, assigneeExistsSql } from '@/lib/db/entityAssignees';
 import type { WorkItem, WorkItemKind, WorkItemKpis, WorkItemListFilters } from '@/lib/types/workItems';
 import { workItemScopeSql, type WorkItemScopeActor } from '@/lib/auth/workItemAccess';
 
 /**
- * Combined, read-only feed over `issues` + `tasks` for the unified
- * תקלות/משימות module (11/10/2026). Mutations stay per-kind — this is the
- * list/board/KPI read path only. `kind` on each row tells the UI which
- * per-kind API to call (PATCH /api/issues/[id] or /api/tasks/[id]) when the
- * actor acts on it.
+ * Per-kind read feed for the תקלות (issues) and משימות (tasks) screens
+ * (12/10/2026 — replaces the 11/10/2026 combined `issues UNION ALL tasks`
+ * CTE: the two screens now share only this query SHAPE and the scope/column
+ * logic, never a query that touches both tables at once — "אפס ערבוב
+ * נתונים", Decisions Log 12/10/2026). Mutations stay per-kind, as before —
+ * this is the list/board/KPI read path only.
  */
-const COMBINED_CTE = `
-  with combined as (
+const ISSUE_CTE = `
+  with scoped as (
     select
       'issue' as kind, i.id, i.title, i.priority, i.status_v2, i.blocked, i.blocked_reason,
       i.due_date::text as due_date,
@@ -25,7 +27,8 @@ const COMBINED_CTE = `
       false as is_recurring, false as is_recurring_paused,
       i.created_by, i.created_by_name, i.created_at::text as created_at, i.updated_at::text as updated_at,
       i.closed_at::text as closed_at, i.archived_at::text as archived_at, i.sort_index,
-      (i.created_at >= now() - interval '24 hours' and i.assignee_user_id is null and i.assignee_supplier_id is null) as is_new
+      (i.created_at >= now() - interval '24 hours' and i.assignee_user_id is null and i.assignee_supplier_id is null) as is_new,
+      ${assigneesJsonExpr('issue', 'i')}
     from public.issues i
     left join public.users au on au.id = i.assignee_user_id
     left join public.suppliers asup on asup.id = i.assignee_supplier_id
@@ -33,7 +36,11 @@ const COMBINED_CTE = `
       select issue_id, count(*)::int as cnt from public.issue_comments group by issue_id
     ) cc on cc.issue_id = i.id
     where i.is_archived = false
-    union all
+  )
+`;
+
+const TASK_CTE = `
+  with scoped as (
     select
       'task' as kind, t.id, t.title, t.priority, t.status_v2, t.blocked, t.blocked_reason,
       t.due_date::text as due_date,
@@ -46,7 +53,8 @@ const COMBINED_CTE = `
       (t.recurrence_id is not null) as is_recurring, t.is_recurring_paused,
       t.created_by, t.created_by_name, t.created_at::text as created_at, t.updated_at::text as updated_at,
       t.closed_at::text as closed_at, t.archived_at::text as archived_at, t.sort_index,
-      (t.created_at >= now() - interval '24 hours' and t.assignee_user_id is null and t.assignee_supplier_id is null) as is_new
+      (t.created_at >= now() - interval '24 hours' and t.assignee_user_id is null and t.assignee_supplier_id is null) as is_new,
+      ${assigneesJsonExpr('task', 't')}
     from public.tasks t
     left join public.users au on au.id = t.assignee_user_id
     left join public.suppliers asup on asup.id = t.assignee_supplier_id
@@ -57,7 +65,11 @@ const COMBINED_CTE = `
   )
 `;
 
-interface CombinedRow {
+function cteFor(kind: WorkItemKind): string {
+  return kind === 'issue' ? ISSUE_CTE : TASK_CTE;
+}
+
+interface ScopedRow {
   kind: 'issue' | 'task';
   id: string;
   title: string;
@@ -85,9 +97,10 @@ interface CombinedRow {
   archived_at: string | null;
   sort_index: number | null;
   is_new: boolean;
+  assignees: { assignee_type: 'user' | 'supplier'; user_id: string | null; supplier_id: string | null; display_name: string | null }[];
 }
 
-function toWorkItem(r: CombinedRow): WorkItem {
+function toWorkItem(r: ScopedRow): WorkItem {
   return {
     kind: r.kind,
     id: r.id,
@@ -118,6 +131,11 @@ function toWorkItem(r: CombinedRow): WorkItem {
     closed_at: r.closed_at,
     sort_index: r.sort_index,
     is_new: r.is_new,
+    assignees: (r.assignees ?? []).map((a) => ({
+      kind: a.assignee_type,
+      id: (a.assignee_type === 'user' ? a.user_id : a.supplier_id) ?? '',
+      display_name: a.display_name ?? '—',
+    })),
   };
 }
 
@@ -125,6 +143,7 @@ const PRIORITY_RANK = `case priority when 'urgent' then 0 when 'high' then 1 els
 const STATUS_RANK = `case status_v2 when 'closed' then 1 else 0 end`;
 
 export async function listWorkItems(
+  kind: WorkItemKind,
   filters: WorkItemListFilters,
   actor: WorkItemScopeActor,
 ): Promise<WorkItem[]> {
@@ -144,10 +163,6 @@ export async function listWorkItems(
     where.push(`archived_at is null and (status_v2 <> 'closed' or closed_at::timestamptz >= now() - interval '7 days')`);
   }
 
-  if (filters.kind) {
-    vals.push(filters.kind);
-    where.push(`kind = $${vals.length}`);
-  }
   if (filters.priority) {
     vals.push(filters.priority);
     where.push(`priority = $${vals.length}`);
@@ -155,15 +170,19 @@ export async function listWorkItems(
   if (filters.assigneeUserId === 'unassigned') {
     where.push('assignee_user_id is null and assignee_supplier_id is null');
   } else if (filters.assigneeUserId) {
+    // Primary assignee OR a multi-assignee membership — "סינון עובד מחזיר את
+    // הכרטיס לכל משויך" (decision 12/10/2026): a card shows once, at its
+    // primary lane, but a filter by employee must still surface it for every
+    // employee it is assigned to, not only the primary one.
     vals.push(filters.assigneeUserId);
-    where.push(`assignee_user_id = $${vals.length}`);
+    where.push(`(assignee_user_id = $${vals.length} or ${assigneeExistsSql(kind, 'scoped', 'user', vals.length)})`);
   }
   if (filters.search) {
     vals.push(`%${filters.search}%`);
     where.push(`title ilike $${vals.length}`);
   }
 
-  const scope = workItemScopeSql(actor, 'combined', vals.length);
+  const scope = workItemScopeSql(actor, 'scoped', vals.length, kind);
   vals.push(...scope.params);
   // workItemScopeSql returns a leading "and" fragment; fold it into the WHERE
   // list as a plain clause (strip the "and " prefix it was written with).
@@ -171,9 +190,9 @@ export async function listWorkItems(
   if (scopeClause) where.push(scopeClause);
 
   const whereSql = where.length ? `where ${where.join(' and ')}` : '';
-  const r = await query<CombinedRow>(
-    `${COMBINED_CTE}
-     select * from combined
+  const r = await query<ScopedRow>(
+    `${cteFor(kind)}
+     select * from scoped
      ${whereSql}
      order by ${STATUS_RANK} asc, ${PRIORITY_RANK} asc, sort_index asc nulls last,
               due_date asc nulls last, created_at desc`,
@@ -182,18 +201,18 @@ export async function listWorkItems(
   return r.rows.map(toWorkItem);
 }
 
-export async function getWorkItemKpis(actor: WorkItemScopeActor): Promise<WorkItemKpis> {
-  const scope = workItemScopeSql(actor, 'combined', 0);
+export async function getWorkItemKpis(kind: WorkItemKind, actor: WorkItemScopeActor): Promise<WorkItemKpis> {
+  const scope = workItemScopeSql(actor, 'scoped', 0, kind);
   const scopeClause = scope.sql ? scope.sql.replace(/^\s*and\s*/i, '') : '';
   const where = [`archived_at is null`, `status_v2 <> 'closed'`, ...(scopeClause ? [scopeClause] : [])].join(' and ');
   const row = await query<{ urgent: number; unassigned: number; due_today: number; overdue: number }>(
-    `${COMBINED_CTE}
+    `${cteFor(kind)}
      select
        count(*) filter (where priority = 'urgent')::int as urgent,
        count(*) filter (where assignee_user_id is null and assignee_supplier_id is null)::int as unassigned,
        count(*) filter (where due_date::date = current_date)::int as due_today,
        count(*) filter (where due_date::date < current_date)::int as overdue
-     from combined
+     from scoped
      where ${where}`,
     scope.params,
   );
@@ -257,7 +276,7 @@ export async function reorderWorkItemWithinLane(
       }
     }
 
-    // The lane+tier's current order, same shape as the unified list query.
+    // The lane+tier's current order, same shape as the per-kind list query.
     const laneR = await client.query<{ id: string; sort_index: number | null }>(
       `select id, sort_index
          from ${table}
@@ -291,9 +310,11 @@ export async function restoreWorkItem(kind: WorkItemKind, id: string): Promise<b
   return (r.rowCount ?? 0) > 0;
 }
 
-/** Nightly archive sweep (unified module, 11/10/2026) — closed_at older than
- *  30 days -> archived_at = now(), on both tables. Never touches recurring
- *  templates (is_recurring_template/is_active rows stay in the recurring tab
+/** Nightly archive sweep — closed_at older than 30 days -> archived_at =
+ *  now(), on both tables (the two independent UPDATEs below never join or
+ *  read across tables, so this stays consistent with "zero data mixing" even
+ *  though one cron run does both screens' housekeeping). Never touches
+ *  recurring templates (is_recurring_template rows stay in the recurring tab
  *  forever). Returns the count archived per table, for the cron log. */
 export async function archiveOldClosedWorkItems(): Promise<{ issues: number; tasks: number }> {
   const issuesR = await query(

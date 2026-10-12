@@ -64,7 +64,7 @@ async function scanTasksDueSoon(): Promise<number> {
         sourceModule: 'tasks',
         sourceEntityType: 'task',
         sourceEntityId: task.id,
-        actionUrl: `/work?kind=task&id=${task.id}`,
+        actionUrl: `/tasks?task=${task.id}`,
         priority: 'high',
         dedupeKey: `task_due_soon:${task.id}:${userId}:${today}`,
       });
@@ -118,7 +118,7 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
         } else {
           title = task.title;
           message = 'תזכורת למשימה';
-          actionUrl = `/work?kind=task&id=${task.id}`;
+          actionUrl = `/tasks?task=${task.id}`;
           priority = task.priority === 'urgent' ? 'urgent' : 'normal';
           // Same uniform rows as the create/assign notifications (createNotify):
           // description / location / due date / assigned-by — absent → dropped.
@@ -141,7 +141,7 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
         } else {
           title = issue.title;
           message = 'תזכורת לתקלה';
-          actionUrl = `/work?kind=issue&id=${issue.id}`;
+          actionUrl = `/issues?issue=${issue.id}`;
           priority = issue.priority === 'urgent' ? 'urgent' : 'normal';
           emailDetails = [
             ...detailRows({
