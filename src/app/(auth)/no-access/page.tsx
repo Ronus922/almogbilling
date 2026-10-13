@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 
 // Landing for an authenticated principal that holds ZERO permissions. Lives in
 // the (auth) group — outside the (app) layout whose zero-access guard points
-// here, and off the middleware matcher — so it can never join a redirect loop.
+// here, and off the proxy matcher — so it can never join a redirect loop.
 export default async function NoAccessPage() {
   const actor = await getCurrentActor();
   if (!actor) redirect('/login');

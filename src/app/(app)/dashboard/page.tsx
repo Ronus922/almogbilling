@@ -52,7 +52,7 @@ export default async function DashboardPage({
   // without it has no business server-rendering debtor data here.
   if (!hasPermission(actor.role, actor.permissions, 'dashboard', 'view')) {
     // Zero-permissions principals go to /no-access — /login would loop them
-    // (middleware bounces authed users back here via `/`).
+    // (the proxy bounces authed users back here via `/`).
     redirect(hasAnyAccess(actor.role, actor.permissions) ? '/login' : '/no-access');
   }
 

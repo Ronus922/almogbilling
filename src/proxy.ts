@@ -4,7 +4,7 @@ import { SESSION_COOKIE } from '@/lib/constants';
 const AUTH_PAGES = ['/login', '/forgot-password'];
 const PROTECTED = ['/dashboard', '/overview'];
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const sid = req.cookies.get(SESSION_COOKIE)?.value;
   const { pathname } = req.nextUrl;
 

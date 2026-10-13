@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/knip@5/schema.jsonc",
   "entry": [
     "src/app/**/{page,layout,route,template,default,error,global-error,loading,not-found,proxy}.{ts,tsx}",
-    "src/middleware.ts",
+    "src/proxy.ts",
     "src/instrumentation.ts",
     "src/instrumentation-client.ts",
     "src/lib/wa-queue/**/*.ts",

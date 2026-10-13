@@ -26,7 +26,7 @@ export default async function ProtectedLayout({
   }
 
   // Authenticated but zero permissions (matrix role with no rows): sending them
-  // to /login loops (middleware bounces authed users back via `/`). /no-access
+  // to /login loops (the proxy bounces authed users back via `/`). /no-access
   // sits outside this layout, so it breaks the cycle.
   if (!hasAnyAccess(actor.role, actor.permissions)) {
     redirect('/no-access');
