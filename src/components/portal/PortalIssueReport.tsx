@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import type { PortalTab } from '@/lib/portal/ui';
 import {
   PORTAL_ISSUE_AREA_MAX, PORTAL_ISSUE_DESCRIPTION_MAX, PORTAL_ISSUE_LOCATION_CHIPS, PORTAL_ISSUE_LOCATION_MAX,
   PORTAL_ISSUE_MAX_IMAGES, PORTAL_IMAGE_MESSAGES, PORTAL_URGENCIES, PORTAL_URGENCY_DEFAULT,
@@ -15,6 +16,7 @@ import { prepareImage } from '@/lib/portal/imagePrep';
 import {
   BackIcon, CameraIcon, CheckIcon, CloseIcon, ErrorIcon, ImageIcon, LayersIcon, PinIcon, PlusIcon, SendIcon, UploadIcon,
 } from './PortalIcons';
+import { PortalMobileDock } from './PortalMobileDock';
 
 // "דיווח על תקלה" — the owner's fault report (ref/issue-report-form.md, states
 // 01–04; the HTML/PNG beside it are the visual reference). Styles: the
@@ -67,6 +69,14 @@ export function PortalIssueReport() {
   const [picking, setPicking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<PortalIssueReceipt | null>(null);
+
+  // The dock's items navigate to /portal's tabs — this screen is its own
+  // route, not mounted inside /portal (no usePortalHref here, unlike the
+  // tabs: there is no admin-preview equivalent of this screen to carry
+  // `view`/`apt` for — DESIGN.md, "לא מוצג בתצוגה המקדימה של האדמין").
+  function goToPortalTab(next: PortalTab, type?: 'decision' | 'protocol') {
+    router.push(`/portal?tab=${next}${type ? `&type=${type}` : ''}`);
+  }
 
   // The photo list is also read after an await (a compression finishing), so
   // it lives in a ref that every change goes through, mirrored to state.
@@ -222,6 +232,7 @@ export function PortalIssueReport() {
             </div>
           </div>
         </div>
+        <PortalMobileDock tab={null} onNavigate={goToPortalTab} preview={false} />
       </div>
     );
   }
@@ -430,6 +441,7 @@ export function PortalIssueReport() {
           </button>
         </footer>
       </div>
+      <PortalMobileDock tab={null} onNavigate={goToPortalTab} preview={false} />
     </div>
   );
 }

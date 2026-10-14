@@ -3,9 +3,11 @@
 import { useMemo, useState } from 'react';
 import {
   decisionTypeTag, decisionYear, formatDecisionDate, formatFileSize, matchesDecisionQuery,
+  type DecisionTypeFilter,
 } from '@/lib/decisions';
 import type { DecisionPortalView } from '@/lib/decisionsView';
 import { ChevronIcon, ExportIcon, PdfIcon, SearchIcon } from './PortalIcons';
+import { usePortalHref } from './usePortalHref';
 
 // The "החלטות" tab (ref/portal/decisions-tab.md + the reference's `dec` tab) —
 // and, since 14/10/2026, the "מאזנים" tab too: the SAME mechanism, a prop
@@ -62,7 +64,13 @@ const COPY: Record<DecisionsKind, {
   },
 };
 
-export function PortalDecisions({ decisions, staffFileUrls, kind = 'decisions' }: {
+const TYPE_CHIPS: ReadonlyArray<{ key: DecisionTypeFilter; label: string }> = [
+  { key: 'all', label: 'הכל' },
+  { key: 'decision', label: 'החלטות' },
+  { key: 'protocol', label: 'פרוטוקולים' },
+];
+
+export function PortalDecisions({ decisions, staffFileUrls, kind = 'decisions', initialType = 'all' }: {
   decisions: DecisionPortalView[];
   /** The admin preview only (/finance?view=resident): decision id → its staff
    *  path (/api/files/portal-decisions/…). Staff have no portal session, so the
@@ -73,16 +81,32 @@ export function PortalDecisions({ decisions, staffFileUrls, kind = 'decisions' }
   /** 'decisions' (default) — the "החלטות" tab. 'balances' — the "מאזנים" tab
    *  added 14/10/2026, replacing the removed "דוחות" tab in the nav. */
   kind?: DecisionsKind;
+  /** The "dec" tab's type chips (round 2, 14/10/2026), parsed server-side from
+   *  `?type=` so the first paint already matches the URL. Ignored for
+   *  'balances' — that tab carries one doc_type, no chips. */
+  initialType?: DecisionTypeFilter;
 }) {
   const copy = COPY[kind];
+  const href = usePortalHref();
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
+  const [type, setType] = useState<DecisionTypeFilter>(initialType);
+
+  // A URL-reflected filter with no round trip — the whole list is already on
+  // the client, so a chip just re-renders locally; the history write (not
+  // router.push) is the same trick PortalTransactions' changeFilter uses for
+  // `?f=` on the tx tab, so a shared/reopened link lands on the same chip.
+  function changeType(next: DecisionTypeFilter) {
+    setType(next);
+    window.history.replaceState(window.history.state, '', href({ tab: 'dec', type: next === 'all' ? null : next }));
+  }
 
   // The visible rows, each already told whether it OPENS a year — worked out
   // here rather than during render, so the list stays a pure function of
-  // (decisions, query) and no counter survives between renders.
+  // (decisions, query, type) and no counter survives between renders.
   const visible = useMemo(() => {
-    const matching = decisions.filter((d) => matchesDecisionQuery(d, query));
+    const byType = kind === 'decisions' && type !== 'all' ? decisions.filter((d) => d.doc_type === type) : decisions;
+    const matching = byType.filter((d) => matchesDecisionQuery(d, query));
     // A row opens a year when the row before it (in the SAME filtered list)
     // belongs to another one — so a search that hides every 2025 row hides the
     // "2025" separator with it.
@@ -90,7 +114,7 @@ export function PortalDecisions({ decisions, staffFileUrls, kind = 'decisions' }
       const year = decisionYear(d.decided_at);
       return { d, year, opensYear: i === 0 || decisionYear(matching[i - 1].decided_at) !== year };
     });
-  }, [decisions, query]);
+  }, [decisions, query, type, kind]);
 
   // Nothing has ever been published — not an empty search result but an empty
   // tab, and it says so instead of offering a search over nothing.
@@ -122,6 +146,15 @@ export function PortalDecisions({ decisions, staffFileUrls, kind = 'decisions' }
       </div>
       <div className="card">
         <div className="dec-tools">
+          {kind === 'decisions' && (
+            <div className="chips" role="group" aria-label="סינון">
+              {TYPE_CHIPS.map((c) => (
+                <button key={c.key} type="button" className={`chipf${type === c.key ? ' on' : ''}`} aria-pressed={type === c.key} onClick={() => changeType(c.key)}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="srch">
             <SearchIcon />
             <input

@@ -21,9 +21,14 @@ import { usePortalHref } from './usePortalHref';
 // switch is a navigation: the page reloads only that tab's data. The other
 // selections (`m`, `n`) are carried along untouched. Links are built by
 // usePortalHref, so the same shell serves /portal and the admin preview
-// mounted on /finance (which carries `view` and `apt`). The "דיווח על תקלה"
-// button at the top of the content opens /portal/report (owners only, not the
-// preview) — the dock's own "פתח תקלה" quick action follows the same gate.
+// mounted on /finance (which carries `view` and `apt`). "דיווח על תקלה" opens
+// /portal/report (owners only, not the preview). Round 2 (14/10/2026, Ronen
+// could not find it on desktop): >600px it is a distinct action item at the
+// left end of the nav row (`.top-report`, never styled like a tab); ≤600px
+// the top-of-content button (`.pir-entry`) steps aside for the dock's own
+// "פתח תקלה" quick action — EXCEPT for a restricted (blocked-phone) user, who
+// has no dock at all (PortalMobileDock is `!restricted`-gated below), so
+// `.pir-entry` stays exactly as it was for them, full width included.
 
 const TABS: ReadonlyArray<{ key: PortalTab; label: string; soon?: boolean }> = [
   { key: 'ov', label: 'סקירה' },
@@ -58,11 +63,16 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
   const [pending, startTransition] = useTransition();
   const [leaving, setLeaving] = useState(false);
 
-  function go(next: PortalTab) {
-    if (next === tab) return;
+  function go(next: PortalTab, type?: 'decision' | 'protocol') {
+    // Same tab, no chip requested: a true no-op (the tab row's own clicks,
+    // and the dock's dec/bal quick actions besides "החלטות"/"פרוטוקולים").
+    // Same tab WITH a chip (round 2, 14/10/2026 — the dock's "החלטות" /
+    // "פרוטוקולים" quick actions): navigate anyway, even from the dec tab
+    // itself, so the chip actually changes.
+    if (next === tab && !type) return;
     // A tab switch keeps the other selections (m, n, f) — they are read back
     // when their tab is opened again.
-    startTransition(() => router.push(href({ tab: next })));
+    startTransition(() => router.push(href({ tab: next, type: type ?? null })));
   }
 
   async function logout() {
@@ -97,20 +107,27 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
             </div>
           </div>
           {!restricted && (
-            <nav className="nav" aria-label="חלקי הפורטל" style={pending ? { opacity: 0.7 } : undefined}>
-              {TABS.map((t) => (
-                <button
-                  key={t.key}
-                  type="button"
-                  className={t.key === tab ? 'on' : undefined}
-                  aria-current={t.key === tab ? 'page' : undefined}
-                  onClick={() => go(t.key)}
-                >
-                  {t.label}
-                  {t.soon && <span className="soon">בקרוב</span>}
-                </button>
-              ))}
-            </nav>
+            <>
+              <nav className="nav" aria-label="חלקי הפורטל" style={pending ? { opacity: 0.7 } : undefined}>
+                {TABS.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    className={t.key === tab ? 'on' : undefined}
+                    aria-current={t.key === tab ? 'page' : undefined}
+                    onClick={() => go(t.key)}
+                  >
+                    {t.label}
+                    {t.soon && <span className="soon">בקרוב</span>}
+                  </button>
+                ))}
+              </nav>
+              {!preview && (
+                <Link href="/portal/report" className="top-report pbtn pbtn-secondary pbtn-sm">
+                  <AlertIcon />דיווח על תקלה
+                </Link>
+              )}
+            </>
           )}
           <div className="me">
             <div className="av" aria-hidden>{user.name ? initials(user.name) : <AccountIcon size={16} />}</div>
@@ -125,13 +142,15 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
       </header>
       {!restricted && <PortalMobileDock tab={tab} onNavigate={go} preview={preview} />}
       <main className="wrap">
-        {/* The fault report (/portal/report) — opens every tab, labelled at
-            every width (full-width on a phone). NOT in the top bar: its one
-            row (building · six tabs · user) has ~114px to spare at 1280 with a
-            short name and none with a real multi-apartment one (DESIGN.md).
-            Not in the admin preview: staff have no portal session. */}
+        {/* The fault report (/portal/report) above the content — ≤600px it is
+            now REDUNDANT with the dock's "פתח תקלה" quick action and hidden
+            (portal-report.css), except for a restricted user: no dock renders
+            for them (below), so their copy stays visible and full-width,
+            exactly as before round 2. >600px it is unchanged — the top-report
+            nav item (above) is an ADDITION, not a replacement, there. Not in
+            the admin preview: staff have no portal session. */}
         {!preview && (
-          <div className="pir-entry">
+          <div className={restricted ? 'pir-entry pir-entry-always' : 'pir-entry'}>
             <Link href="/portal/report" className="pbtn pbtn-primary pbtn-lg">
               <AlertIcon />דיווח על תקלה
             </Link>

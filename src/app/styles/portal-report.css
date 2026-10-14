@@ -149,9 +149,18 @@
 /* A pbtn rendered as a link: keep the button's colours, not the skin's `a`. */
 .portal-skin a.pbtn { text-decoration: none; }
 .portal-skin a.pbtn-primary, .portal-skin a.pbtn-primary:hover { color: #fff; }
-/* End-aligned (left in RTL) above the tab; full width on a phone — the
-   portal's own phone rule for a page action (`.hd > .pbtn` ≤600). */
+/* End-aligned (left in RTL) above the tab. */
 .portal-skin .pir-entry { display: flex; justify-content: flex-end; margin-bottom: 16px; }
 @media (max-width: 600px) {
-  .portal-skin .pir-entry .pbtn { width: 100%; }
+  /* Round 2 (14/10/2026): redundant with the dock's "פתח תקלה" quick action,
+     so it steps aside — EXCEPT for a restricted (blocked-phone) user, who has
+     no dock at all (PortalShell gates PortalMobileDock on `!restricted`); for
+     them it stays exactly as it was, full width included. */
+  .portal-skin .pir-entry { display: none; }
+  .portal-skin .pir-entry.pir-entry-always { display: flex; }
+  .portal-skin .pir-entry.pir-entry-always .pbtn { width: 100%; }
+  /* The report screen's own sticky footer (below) floats above the dock,
+     which now covers this screen too (round 2) — the same 96px the rest of
+     the portal clears with `.wrap`'s padding-bottom. */
+  .portal-skin .pir-foot { bottom: 96px; }
 }

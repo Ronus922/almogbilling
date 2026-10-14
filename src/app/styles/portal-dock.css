@@ -3,7 +3,10 @@
    portal skin (DESIGN.md "פורטל בעלי דירות"). Ported 1:1 from
    ref/mobile-bottom-nav (Mobile Bottom Nav.html + mobile-bottom-nav.md):
    colours, radii, spacing, shadows and every transition are the
-   reference's own px values and curves — no "improvements".
+   reference's own px values and curves — no "improvements" — EXCEPT the
+   touch block at the end of this file (round 2, 14/10/2026): touch
+   magnification and the tap press-bounce are NOT in the reference (which
+   explicitly disables magnify on touch) — see DESIGN.md for the rationale.
 
    SCOPE RULE (binding, same as portal.css): everything here lives under
    `.portal-skin`, and is visible only ≤600px — the portal's OWN mobile
@@ -15,9 +18,10 @@
 .portal-skin .dock-wrap { display: none; }
 @media (max-width: 600px) {
   .portal-skin .dock-wrap { display: block; }
-  /* The top tab row (portal.css `.nav`) gives way to the dock, not both at
-     once. */
-  .portal-skin .nav { display: none; }
+  /* The top tab row and the new "דיווח על תקלה" nav item (portal.css `.nav`,
+     `.top-report`) give way to the dock, not both at once — round 2
+     (14/10/2026) added `.top-report` beside `.nav`, same rule. */
+  .portal-skin .nav, .portal-skin .top-report { display: none; }
   /* Clearance so the floating dock never covers the tab's own content
      (the reference's own number for this — 14/10/2026). */
   .portal-skin .wrap { padding-bottom: 96px; }
@@ -86,3 +90,25 @@
    so it is kept local rather than bent to match (the issue-report form's
    "ערכים בלי מקבילה" precedent, DESIGN.md). */
 .portal-skin .qi.y { background: #FFF3DD; color: #9A6700; }
+
+/* ── touch (round 2, 14/10/2026) — DECLARED DEVIATION from the reference's own
+   MD ("Magnification רק בעכבר — במגע... האנימציה הייתה קופצת"): a phone now
+   gets both the magnify growth (PortalMobileDock's touchstart/touchmove, same
+   lerp loop as the mouse) and a press-bounce the reference never had at all.
+   `touch-action: none` on the dock row keeps a magnify-swipe from also
+   scrolling the page underneath it. ─────────────────────────────────────── */
+.portal-skin .dock { touch-action: none; }
+.portal-skin .qa { touch-action: none; }
+/* Pressed (touchstart, before it is known whether this is a tap or a swipe):
+   a quick snap to .9, no spring — the spring is reserved for the release. */
+.portal-skin .di.tap-press, .portal-skin .fab.tap-press, .portal-skin .qa.tap-press {
+  transition: transform .1s ease;
+  transform: scale(.9);
+}
+/* Released as a confirmed tap: springs back over ~300ms, then the (delayed)
+   navigation fires — never on a swipe, which cancels tap-press with no
+   release class and no navigation. */
+.portal-skin .di.tap-release, .portal-skin .fab.tap-release, .portal-skin .qa.tap-release {
+  transition: transform .3s cubic-bezier(.34, 1.56, .64, 1);
+  transform: scale(1);
+}
