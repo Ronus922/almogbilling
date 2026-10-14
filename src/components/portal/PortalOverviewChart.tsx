@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { axisLabel, balanceAxis, fmtIls, fmtSigned, niceAxis } from '@/lib/portal/ui';
+import { useArmOnView } from '@/lib/portal/useArmOnView';
 
 // The overview's "הכנסות מול הוצאות" card (ref/almog-portal-overview): a
 // hand-drawn SVG, three views behind the card's segmented control — bars,
@@ -19,6 +20,15 @@ import { axisLabel, balanceAxis, fmtIls, fmtSigned, niceAxis } from '@/lib/porta
 // tooltip opens on tap too — `matchMedia('(hover: hover)')` tells a real tap
 // (toggles the tooltip) apart from a mouse click (still navigates to the
 // month via `onPick`, the pre-existing behaviour).
+//
+// Entrance gated on scroll-into-view, not mount (round 4, 14/10/2026):
+// Phase 0 found the chart sits below the fold on a phone (under the balance
+// card and the KPIs), so a mount-triggered animation had already finished by
+// the time it scrolled on screen — read as "the animation doesn't run" on
+// Android, same shape of bug as the dock round-2 one above, different cause.
+// `useArmOnView` (the same mechanism PortalCategoryList already used) gates
+// the first draw-in on intersection; the `key={view}-{span}` remount
+// (PortalOverview.tsx) is still what replays it on a view/period switch.
 
 export type OverviewChartView = 'bars' | 'area' | 'bal';
 
@@ -60,14 +70,18 @@ export function PortalOverviewChart({ months, view, onPick }: {
     return () => ro.disconnect();
   }, []);
 
+  const armed = useArmOnView(box, 0.25);
+
   // Double rAF (the reference's own technique): paint the "entering" state
   // once, then flip `go` on the next frame so the CSS transitions this
   // triggers actually animate instead of jumping straight to their end state.
+  // Gated on `armed` (not mount) — see the file header.
   useEffect(() => {
+    if (!armed) return;
     let raf1 = 0; let raf2 = 0;
     raf1 = requestAnimationFrame(() => { raf2 = requestAnimationFrame(() => setGo(true)); });
     return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
-  }, []);
+  }, [armed]);
 
   const W = size?.w ?? FALLBACK_W;
   const H = size?.h ?? FALLBACK_H;
