@@ -36,27 +36,44 @@
 .portal-skin button { font-family: inherit; }
 .portal-skin .hide { display: none !important; }
 
-/* ── top bar ───────────────────────────────────────────────────────── */
+/* ── top bar (round 3, 14/10/2026 — sliding pill + scroll-aware, 1:1 to
+   ref/almog-portal-overview; see PortalShell.tsx for the full rationale,
+   including why this also fixes the round-2 "button not found" bug) ────── */
 .portal-skin .top { background: #fff; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
-.portal-skin .top-in { max-width: 1280px; margin: 0 auto; padding: 0 32px; height: 68px; display: flex; align-items: center; gap: 20px; }
+.portal-skin .top-in { max-width: 1280px; margin: 0 auto; padding: 0 32px; height: 68px; display: flex; align-items: center; gap: 20px; transition: height .25s; }
+.portal-skin .top.shrink .top-in { height: 54px; }
 .portal-skin .bld { display: flex; align-items: center; gap: 12px; min-width: 0; }
 /* The building name is the one block that gives way: with the mandated long
-   name and six tabs the reference's row does not fit at 1280px, so the tabs
-   and the user block are pinned (the reference let the tab row scroll) and
-   the name ellipsizes (its own text-overflow, which needs a shrinkable box). */
+   name and six tabs the reference's row does not fit at 1280px, so the name
+   ellipsizes (its own text-overflow, which needs a shrinkable box) while the
+   tab row absorbs the rest of the squeeze itself (below) instead of pushing
+   its neighbours off-screen. */
 .portal-skin .bld > div { min-width: 0; }
-.portal-skin .bld .lg { width: 40px; height: 40px; border-radius: 11px; background: var(--brand); display: grid; place-items: center; flex: none; }
+.portal-skin .bld .lg { width: 40px; height: 40px; border-radius: 11px; background: var(--brand); display: grid; place-items: center; flex: none; transition: width .25s, height .25s; }
+.portal-skin .top.shrink .bld .lg { width: 32px; height: 32px; }
 .portal-skin .bld b { display: block; font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.portal-skin .bld span { font-size: 13px; color: var(--ink-muted); }
-.portal-skin .nav { display: flex; flex: none; gap: 4px; margin-inline-start: 24px; overflow-x: auto; scrollbar-width: none; }
+.portal-skin .bld span { font-size: 13px; color: var(--ink-muted); display: block; max-height: 20px; overflow: hidden; transition: opacity .22s, max-height .25s; }
+.portal-skin .top.shrink .bld span { opacity: 0; max-height: 0; }
+/* The tab row genuinely shrinks (flex:1 1 auto + min-width:0, the fix for the
+   round-2 bug: flex:none with no min-width:0 meant its own overflow-x:auto
+   could never engage) and scrolls WITHIN ITSELF when the row is tight, so
+   `.top-report` and `.me` after it always keep their reserved space. The
+   sliding pill is one absolutely-positioned element under the buttons
+   (z-index 0), moved imperatively from PortalShell.tsx — never by React
+   state, so repositioning it never re-renders. */
+.portal-skin .nav { display: flex; position: relative; flex: 1 1 auto; min-width: 0; gap: 4px; margin-inline-start: 24px; overflow-x: auto; scrollbar-width: none; }
 .portal-skin .nav::-webkit-scrollbar { display: none; }
-.portal-skin .nav button { height: 40px; padding: 0 14px; border: 0; background: none; border-radius: 9px; font-size: 15px; font-weight: 600; color: var(--ink-muted); cursor: pointer; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-.portal-skin .nav button:hover { background: var(--field); color: var(--ink); }
-.portal-skin .nav button.on { background: var(--brand-soft); color: var(--brand-ink); }
+.portal-skin .nav .pill { position: absolute; background: var(--brand-soft); border-radius: 9px; z-index: 0; pointer-events: none; transition: left .35s cubic-bezier(.22,1,.36,1), width .35s cubic-bezier(.22,1,.36,1), top .25s, height .25s; }
+.portal-skin .nav button { position: relative; z-index: 1; height: 40px; padding: 0 14px; border: 0; background: none; border-radius: 9px; font-size: 15px; font-weight: 600; color: var(--ink-muted); cursor: pointer; display: flex; align-items: center; gap: 8px; white-space: nowrap; transition: color .2s, height .25s; }
+.portal-skin .nav button:hover { color: var(--ink); }
+.portal-skin .nav button.on { color: var(--brand-ink); }
+.portal-skin .top.shrink .nav button { height: 36px; }
 .portal-skin .soon { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--amber-soft); color: var(--amber-ink); }
 /* "דיווח על תקלה" as a nav-row action (round 2, 14/10/2026) — the existing
    .pbtn-secondary family (bordered, not the tab row's ghost style) so it
-   never reads as a seventh tab; sits between the tabs and the user block.
+   never reads as a seventh tab; sits between the tabs and the user block,
+   OUTSIDE the nav's own scroll lane, so it is never pushed off-screen —
+   visible at every width above 600px, including the collapsed header.
    Hidden ≤600px — the dock's own "פתח תקלה" quick action covers it there. */
 .portal-skin .top-report { flex: none; white-space: nowrap; }
 .portal-skin .me { margin-inline-start: auto; display: flex; flex: none; align-items: center; gap: 12px; }
@@ -92,7 +109,7 @@
 @media (pointer: coarse) { .portal-skin .sel, .portal-skin .chipf { min-height: 44px; } }
 .portal-skin .pgrid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 20px; }
 .portal-skin .card { background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 22px 24px; min-width: 0; }
-.portal-skin .card h3 { font-size: 16px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.portal-skin .card h3 { font-size: 16px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .portal-skin .card h3 small { font-size: 13px; font-weight: 500; color: var(--ink-muted); }
 .portal-skin .c3 { grid-column: span 3; } .portal-skin .c4 { grid-column: span 4; } .portal-skin .c5 { grid-column: span 5; }
 .portal-skin .c6 { grid-column: span 6; } .portal-skin .c7 { grid-column: span 7; } .portal-skin .c8 { grid-column: span 8; }
@@ -146,6 +163,19 @@
 .portal-skin .chart { margin-top: 18px; height: 240px; position: relative; }
 .portal-skin .chart svg { width: 100%; height: 100%; display: block; overflow: visible; }
 .portal-skin .chart .grp { cursor: pointer; }
+/* the overview's own three-view chart (PortalOverviewChart, round 3,
+   14/10/2026) — a SEPARATE box from `.chart` above (shared with the
+   transactions tab's period chart and the category-trend panel, which this
+   redesign does not touch): fixed 280px per the reference, not stretched to
+   a sibling card's height. */
+.portal-skin .ovch { margin-top: 10px; height: 280px; position: relative; }
+.portal-skin .ovch svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.portal-skin .ovch .grp { cursor: pointer; }
+/* the segmented view control (עמודות · מגמה · מאזן חודשי) */
+.portal-skin .seg { display: flex; background: var(--field); border: 1px solid var(--border); border-radius: 10px; padding: 3px; gap: 3px; }
+.portal-skin .seg button { position: relative; height: 32px; padding: 0 13px; border: 0; border-radius: 7px; background: none; font: 600 13.5px var(--font-heebo), Heebo, sans-serif; color: var(--ink-muted); cursor: pointer; }
+.portal-skin .seg button::after { content: ''; position: absolute; inset: -6px; }
+.portal-skin .seg button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(15, 23, 42, .08); }
 .portal-skin .tip { position: absolute; pointer-events: none; background: var(--ink); color: #fff; border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.6; white-space: nowrap; transform: translate(50%, -100%); opacity: 0; transition: opacity .12s; z-index: 2; }
 .portal-skin .tip.on { opacity: 1; }
 .portal-skin .tip .note { color: #FFB4B6; }
@@ -170,6 +200,17 @@
 .portal-skin .cat .a small { color: var(--ink-soft); font-weight: 500; margin-inline-start: 6px; }
 .portal-skin .cat .bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--field); overflow: hidden; }
 .portal-skin .cat .bar b { display: block; height: 100%; border-radius: 3px; }
+/* The overview's own scroll-triggered entrance (PortalCategoryList, round 3,
+   14/10/2026) — scoped to `.ovcats` (not a bare `.cat`/`.bar` rule) so it
+   never touches the transactions tab's `.cats.tgl` rows below, which share
+   the same class names for a styling, not a behaviour, reason. */
+.portal-skin .ovcats .cat { opacity: 0; transform: translateY(8px); }
+.portal-skin .ovcats .cat.go { animation: portal-catin .45s cubic-bezier(.22,1,.36,1) forwards; }
+@keyframes portal-catin { to { opacity: 1; transform: none; } }
+.portal-skin .ovcats .bar b { transition: width .8s cubic-bezier(.22,1,.36,1); }
+.portal-skin .more { position: relative; margin-top: 16px; width: 100%; height: 38px; border: 1.5px solid var(--border); border-radius: 10px; background: #fff; font-size: 14px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
+.portal-skin .more::after { content: ''; position: absolute; inset: -3px; }
+.portal-skin .more:hover { background: var(--field); }
 /* The transactions tab's category rows are toggles (06/10/2026): the whole row
    is a <button> that opens the category's trend. The padding lifts the touch
    target to 44px; the list's gap shrinks by the same amount (6 + 2 + 6 = the
@@ -276,19 +317,18 @@
 /* the renovation-fund tab keeps its own (finance/*) components inside .wrap */
 .portal-skin .fund-host { font-family: var(--font-heebo), Heebo, sans-serif; }
 
-/* ── breakpoints — the reference's max-width cascade 1180 → 900 → 600 ─ */
+/* ── breakpoints — card grid: 1180 → 900 → 600. The top bar itself (round 3,
+   14/10/2026) no longer has its own tiers in between: above 600px it is one
+   row at every width, the tab row shrinking and scrolling within itself
+   (above) instead of wrapping to a second row — the reference's own 760px
+   wrap point is superseded here, per the explicit decision that the
+   portal's existing 600px boundary wins wherever the two would conflict. ─ */
 @media (max-width: 1180px) {
   .portal-skin .c3 { grid-column: span 6; }
   .portal-skin .c4, .portal-skin .c5, .portal-skin .c7, .portal-skin .c8 { grid-column: span 12; }
-  .portal-skin .top-in { flex-wrap: wrap; height: auto; padding-block: 12px; row-gap: 10px; }
-  /* row 1 = building · user: the building block takes what is left (basis 0)
-     instead of pushing the user block onto a row of its own */
-  .portal-skin .bld { flex: 1 1 0; }
-  .portal-skin .nav { order: 3; width: 100%; margin: 0; flex: 0 0 100%; }
 }
 @media (max-width: 900px) {
-  .portal-skin .top-in { padding: 0 16px; flex-wrap: wrap; height: auto; padding-block: 12px; }
-  .portal-skin .nav { order: 3; width: 100%; margin: 0; flex: 0 0 100%; }
+  .portal-skin .top-in { padding: 0 16px; }
   .portal-skin .wrap { padding: 20px 16px 40px; }
 }
 @media (max-width: 600px) {
@@ -308,6 +348,7 @@
   .portal-skin .per, .portal-skin .per .sel, .portal-skin .per .pbtn { width: 100%; }
   .portal-skin .mine .big { font-size: 36px; }
   .portal-skin .chart { height: 200px; }
+  .portal-skin .ovch { height: 230px; }
   .portal-skin .trend { height: 160px; }
   .portal-skin .trend-msg.wait { min-height: 160px; }
   .portal-skin .tw { margin: 0; padding: 0; overflow: visible; }

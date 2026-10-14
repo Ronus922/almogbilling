@@ -39,6 +39,17 @@ import { PortalMobileDock } from './PortalMobileDock';
 //   • the "+" tile opens a short "צילום / גלריה" choice; two inputs, because
 //     on iOS `capture` hides the gallery: one with capture="environment", one
 //     with multiple and no capture. Both reset after every pick.
+//
+// Round 3 (14/10/2026): the mobile dock (PortalMobileDock, round 2) is now
+// mounted ONLY on the sent-receipt screen (state 04), not on the form
+// (01–03) — Phase 0 found that the form's own SCROLLABLE body (`.pir-body`,
+// the image tiles/thumbnails) had no bottom clearance for the floating dock,
+// unlike the sticky submit footer (`.pir-foot`, already elevated above it
+// since round 2), so the dock could sit on top of the image area once
+// scrolled to the bottom. Hiding the dock on the form removes the need for
+// that clearance entirely — `.pir-foot` goes back to flush-bottom
+// (portal-report.css). The back link at the top of the form also gained a
+// visible label ("חזרה", not just the arrow) — it was icon-only before.
 
 type Values = { location: string; area: string; description: string };
 type Photo = { key: string; file: File | null; url: string | null };
@@ -248,7 +259,7 @@ export function PortalIssueReport() {
     <div className="portal-skin">
       <div className="pir">
         <header className="pir-hd">
-          <Link href="/portal" className="pir-icb" aria-label="חזרה לדף הבית"><BackIcon /></Link>
+          <Link href="/portal" className="pir-back"><BackIcon /><span>חזרה</span></Link>
           <div className="pir-tt">
             <h1>דיווח על תקלה</h1>
             <small>פתיחת קריאת שירות</small>
@@ -441,7 +452,6 @@ export function PortalIssueReport() {
           </button>
         </footer>
       </div>
-      <PortalMobileDock tab={null} onNavigate={goToPortalTab} preview={false} />
     </div>
   );
 }

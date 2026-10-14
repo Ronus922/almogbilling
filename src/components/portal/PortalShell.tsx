@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useTransition, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -10,24 +10,47 @@ import { AccountIcon, AlertIcon, BuildingGlyph, LogoutIcon } from './PortalIcons
 import { PortalMobileDock } from './PortalMobileDock';
 import { usePortalHref } from './usePortalHref';
 
-// The portal's chrome (ref/Tenant Portal.html #scrPortal): the sticky top bar
+// The portal's chrome (ref/Tenant Portal.html #scrPortal, and from round 3 —
+// 14/10/2026 — ref/almog-portal-overview's own header): the sticky top bar
 // with the building block, the tab row and the user block, over a 1280px
-// `.wrap`. One row of 68px on the desktop; ≤1180px the tabs drop to their own
-// scrollable row; ≤600px the tab row gives way to the floating mobile dock
+// `.wrap`. ≤600px the tab row gives way to the floating mobile dock
 // (PortalMobileDock, ref/mobile-bottom-nav, 14/10/2026) and the names give way
-// to the avatar (portal.css).
+// to the avatar (portal.css); above 600px there is exactly ONE row behavior —
+// no separate "tablet" stacking — the tab row itself shrinks and scrolls
+// internally instead (below).
+//
+// Round 3 (14/10/2026): sliding pill + scroll-aware header, 1:1 to the new
+// reference. The pill is one absolutely-positioned element inside `.nav`
+// (not a background per button) that slides under the active tab —
+// positioned imperatively via refs (not React state) so moving it never
+// triggers a render, exactly like the reference's own movePill(). It is
+// measured in useLayoutEffect (before paint) so there is no first-frame
+// flash, repositioned on every tab change, on resize, and ~260ms after a
+// scroll crosses the 40px shrink threshold (once the shrink transition has
+// settled — the reference's own margin).
+//
+// This also fixes the bug round 2 shipped (Ronen could not find "דיווח על
+// תקלה" on his own desktop): `.nav` used to be `flex:none` with no
+// `min-width:0`, so its own `overflow-x:auto` could never actually engage —
+// a classic flexbox "min-width:auto" trap. Below the exact width DESIGN.md
+// had measured (1280px, BEFORE this item existed), the un-shrinkable nav
+// simply pushed `.top-report`/`.me` past the visible header with no visible
+// scrollbar. Now `.nav{flex:1 1 auto;min-width:0}` genuinely shrinks and
+// scrolls within its own lane, so the fixed-width items after it (the report
+// button, the user block) always have their space reserved — visible at
+// every width above 600px, including the collapsed header.
 //
 // The active tab lives in the URL (`?tab=`), so a refresh keeps it, and a tab
 // switch is a navigation: the page reloads only that tab's data. The other
 // selections (`m`, `n`) are carried along untouched. Links are built by
 // usePortalHref, so the same shell serves /portal and the admin preview
 // mounted on /finance (which carries `view` and `apt`). "דיווח על תקלה" opens
-// /portal/report (owners only, not the preview). Round 2 (14/10/2026, Ronen
-// could not find it on desktop): >600px it is a distinct action item at the
-// left end of the nav row (`.top-report`, never styled like a tab); ≤600px
-// the top-of-content button (`.pir-entry`) steps aside for the dock's own
-// "פתח תקלה" quick action — EXCEPT for a restricted (blocked-phone) user, who
-// has no dock at all (PortalMobileDock is `!restricted`-gated below), so
+// /portal/report (owners only, not the preview): >600px a distinct action
+// item at the left end of the nav row (`.top-report`, never styled like a
+// tab, outside the nav's own scroll lane so it can never be squeezed out);
+// ≤600px the top-of-content button (`.pir-entry`) steps aside for the dock's
+// own "פתח תקלה" quick action — EXCEPT for a restricted (blocked-phone) user,
+// who has no dock at all (PortalMobileDock is `!restricted`-gated below), so
 // `.pir-entry` stays exactly as it was for them, full width included.
 
 const TABS: ReadonlyArray<{ key: PortalTab; label: string; soon?: boolean }> = [
@@ -62,6 +85,46 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
   const href = usePortalHref();
   const [pending, startTransition] = useTransition();
   const [leaving, setLeaving] = useState(false);
+  const [shrink, setShrink] = useState(false);
+  const navRef = useRef<HTMLElement>(null);
+  const pillRef = useRef<HTMLSpanElement>(null);
+
+  function movePill() {
+    const nav = navRef.current;
+    const pill = pillRef.current;
+    if (!nav || !pill) return;
+    const on = nav.querySelector<HTMLButtonElement>('button.on');
+    if (!on) return;
+    pill.style.left = `${on.offsetLeft}px`;
+    pill.style.top = `${on.offsetTop}px`;
+    pill.style.width = `${on.offsetWidth}px`;
+    pill.style.height = `${on.offsetHeight}px`;
+  }
+
+  // Before paint, so the pill never flashes at (0,0) on the first frame.
+  useLayoutEffect(() => { movePill(); });
+
+  useEffect(() => {
+    let scrollTimer: ReturnType<typeof setTimeout>;
+    let resizeTimer: ReturnType<typeof setTimeout>;
+    const onScroll = () => {
+      setShrink(window.scrollY > 40);
+      clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(movePill, 260);
+    };
+    const onResize = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(movePill, 150);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onResize);
+      clearTimeout(scrollTimer);
+      clearTimeout(resizeTimer);
+    };
+  }, []);
 
   function go(next: PortalTab, type?: 'decision' | 'protocol') {
     // Same tab, no chip requested: a true no-op (the tab row's own clicks,
@@ -97,7 +160,7 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
 
   return (
     <div className="portal-skin">
-      <header className="top">
+      <header className={`top${shrink ? ' shrink' : ''}`}>
         <div className="top-in">
           <div className="bld">
             <div className="lg"><BuildingGlyph /></div>
@@ -108,7 +171,8 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
           </div>
           {!restricted && (
             <>
-              <nav className="nav" aria-label="חלקי הפורטל" style={pending ? { opacity: 0.7 } : undefined}>
+              <nav className="nav" aria-label="חלקי הפורטל" ref={navRef} style={pending ? { opacity: 0.7 } : undefined}>
+                <span className="pill" ref={pillRef} aria-hidden />
                 {TABS.map((t) => (
                   <button
                     key={t.key}
