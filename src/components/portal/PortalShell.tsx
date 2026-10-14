@@ -7,20 +7,23 @@ import { toast } from 'sonner';
 import { apartmentsLabel, initials, type PortalTab } from '@/lib/portal/ui';
 import { rolesLabel, type PortalRole } from '@/lib/portal/identity';
 import { AccountIcon, AlertIcon, BuildingGlyph, LogoutIcon } from './PortalIcons';
+import { PortalMobileDock } from './PortalMobileDock';
 import { usePortalHref } from './usePortalHref';
 
 // The portal's chrome (ref/Tenant Portal.html #scrPortal): the sticky top bar
 // with the building block, the tab row and the user block, over a 1280px
 // `.wrap`. One row of 68px on the desktop; ≤1180px the tabs drop to their own
-// scrollable row; ≤600px the names give way to the avatar (portal.css).
+// scrollable row; ≤600px the tab row gives way to the floating mobile dock
+// (PortalMobileDock, ref/mobile-bottom-nav, 14/10/2026) and the names give way
+// to the avatar (portal.css).
 //
 // The active tab lives in the URL (`?tab=`), so a refresh keeps it, and a tab
 // switch is a navigation: the page reloads only that tab's data. The other
-// selections (`m`, `r`, `n`) are carried along untouched. Links are built by
+// selections (`m`, `n`) are carried along untouched. Links are built by
 // usePortalHref, so the same shell serves /portal and the admin preview
 // mounted on /finance (which carries `view` and `apt`). The "דיווח על תקלה"
 // button at the top of the content opens /portal/report (owners only, not the
-// preview).
+// preview) — the dock's own "פתח תקלה" quick action follows the same gate.
 
 const TABS: ReadonlyArray<{ key: PortalTab; label: string; soon?: boolean }> = [
   { key: 'ov', label: 'סקירה' },
@@ -28,7 +31,7 @@ const TABS: ReadonlyArray<{ key: PortalTab; label: string; soon?: boolean }> = [
   { key: 'fund', label: 'קרן שיפוצים' },
   { key: 'acc', label: 'החשבון שלי' },
   { key: 'dec', label: 'החלטות' },
-  { key: 'rep', label: 'דוחות' },
+  { key: 'bal', label: 'מאזנים' },
 ];
 
 /** Who is signed in — the portal's one identity (lib/portal/identity.ts),
@@ -57,8 +60,8 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
 
   function go(next: PortalTab) {
     if (next === tab) return;
-    // A tab switch keeps the other selections (m, r, n, f) — they are read
-    // back when their tab is opened again.
+    // A tab switch keeps the other selections (m, n, f) — they are read back
+    // when their tab is opened again.
     startTransition(() => router.push(href({ tab: next })));
   }
 
@@ -120,6 +123,7 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
           </div>
         </div>
       </header>
+      {!restricted && <PortalMobileDock tab={tab} onNavigate={go} preview={preview} />}
       <main className="wrap">
         {/* The fault report (/portal/report) — opens every tab, labelled at
             every width (full-width on a phone). NOT in the top bar: its one

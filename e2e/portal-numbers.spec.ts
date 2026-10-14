@@ -98,10 +98,6 @@ test.describe('whole shekels on the screen, agorot in the file', () => {
     await expect(page.locator('#t-ov .kpi .v.out')).toHaveText('₪1,801');
     await expect(page.locator('#t-ov .mine .big')).toHaveText('₪1,240');
     expect(await page.locator('#t-ov').innerText()).not.toMatch(/₪[\d,]*\.\d/);
-    await page.goto('/portal?tab=rep');
-    await expect(page.locator('#t-rep .tot .amt.in').first()).toHaveText('₪8,821');
-    await expect(page.locator('#t-rep .tot .amt.out').first()).toHaveText('₪1,801');
-    expect(await kpisOf(page, '#t-rep')).toEqual(expect.arrayContaining(['הכנסות=₪8,821', 'הוצאות=₪1,801', 'עודף בתקופה=₪7,021']));
     await page.goto('/portal?tab=fund');
     const fund = page.locator('.fund-host');
     await expect(fund.locator('dd', { hasText: '₪5,001' })).toHaveCount(1);
@@ -133,7 +129,7 @@ test.describe('whole shekels on the screen, agorot in the file', () => {
     for (const width of [360, 390, 834]) {
       const ctx = await owner(browser, 'e2e-owner-a1', { width, height: 900 });
       const page = await ctx.newPage();
-      for (const tab of ['ov', 'tx', 'acc', 'fund', 'rep']) {
+      for (const tab of ['ov', 'tx', 'acc', 'fund', 'bal']) {
         await page.goto(`/portal?tab=${tab}${tab === 'tx' ? `&m=${prevKey()}` : ''}`);
         await page.waitForLoadState('networkidle');
         const wrapped = await page.evaluate(() =>
@@ -174,9 +170,6 @@ test.describe('income green, expense red', () => {
     expect(await page.locator('.tip.on').first().evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(TIP_BG);
     expect(await colorOf(page, '.tip.on .in')).toBe(GREEN);
     expect(await colorOf(page, '.tip.on .out')).toBe(RED);
-    await page.goto('/portal?tab=rep');
-    expect(await colorOf(page, '#t-rep .tot .amt.in')).toBe(GREEN_INK);
-    expect(await colorOf(page, '#t-rep .tot .amt.out')).toBe(RED_INK);
     await page.goto('/portal?tab=fund');
     expect(await page.locator('.fund-host dd', { hasText: '₪5,001' }).evaluate((el) => getComputedStyle(el).color)).toBe(GREEN_INK);
     expect(await page.locator('.fund-host dd', { hasText: '₪1,200' }).evaluate((el) => getComputedStyle(el).color)).toBe(RED_INK);

@@ -28,8 +28,9 @@ import type { DecisionAdminView } from '@/lib/decisionsView';
 //     means deleting it and uploading again (the product rule), so the panel
 //     shows the current file as a read-only row instead of a dropzone.
 //
-// "מספר החלטה" exists only while the type is "החלטה": a protocol is never
-// numbered, and the server drops the number if one is sent anyway.
+// "מספר החלטה" exists only while the type is "החלטה": a protocol or a
+// balance is never numbered, and the server drops the number if one is sent
+// anyway.
 
 export interface DecisionPanelProps {
   open: boolean;
@@ -160,7 +161,7 @@ export function DecisionPanel({ open, decision, onOpenChange, onSaved }: Decisio
                 {editing ? 'עריכת מסמך' : 'העלאת מסמך'}
               </SheetTitle>
               <p className="mt-1 truncate text-sm text-white/70">
-                {editing ? decision.title : 'החלטה או פרוטוקול שיוצגו בפורטל הדיירים'}
+                {editing ? decision.title : 'החלטה, פרוטוקול או מאזן שיוצגו בפורטל הדיירים'}
               </p>
             </div>
             <button

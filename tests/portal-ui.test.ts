@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   accountTotals, apartmentsLabel, axisLabel, categoriesOf, categoryShares, firstName, flatEntries, fmtDateDMY, fmtDelta,
   fmtEntryDate, fmtIls, fmtSigned, initials, monthShort, niceAxis, parseOverviewSpan, parsePortalTab,
-  parseTxFilter, pctVsAverage, reportRangeFor, reportRanges, roundShekels, sanitizeCell,
+  parseTxFilter, pctVsAverage, roundShekels, sanitizeCell,
   signClass, spansYears, sumExact, trendAxis, trendMonthLabel, windowKeys,
 } from '@/lib/portal/ui';
 import { AMOUNT_NUM_FMT, buildPortalPeriodWorkbook } from '@/lib/portal/export';
@@ -43,7 +43,7 @@ describe('portal tabs in the URL', () => {
     expect(parsePortalTab(undefined, '2026')).toBe('tx');
     expect(parsePortalTab(undefined, 'garbage')).toBe('ov');
     // an explicit tab still wins over the period
-    expect(parsePortalTab('rep', '2026-Q3')).toBe('rep');
+    expect(parsePortalTab('bal', '2026-Q3')).toBe('bal');
   });
   it('span and filter fall back safely', () => {
     expect(parseOverviewSpan('6')).toBe(6);
@@ -79,7 +79,7 @@ describe("the reference's formats", () => {
   });
 });
 
-describe('selectors — published months only, grouped by year, newest first', () => {
+describe('selectors — published months only', () => {
   const published = ['2025-11', '2026-01', '2026-02', '2026-07'];
 
   // What the ONE-CLICK picker (components/finance/PeriodPicker, residentMode)
@@ -98,17 +98,6 @@ describe('selectors — published months only, grouped by year, newest first', (
     expect(rangeHasPublished('2026-01', '2026-12', set)).toBe(true);  // the year
     expect(rangeHasPublished('2024-01', '2024-12', set)).toBe(false);
     expect(rangeHasPublished('2026-01', '2026-12', new Set())).toBe(false);
-  });
-  it('lists only ranges that hold a published month', () => {
-    const keys = reportRanges(published).map((p) => p.key);
-    expect(keys).toEqual(['2026', '2026-H2', '2026-H1', '2026-Q3', '2026-Q1', '2025', '2025-H2', '2025-Q4']);
-  });
-  it('keeps a requested range in the list, else the newest one, null when nothing is published', () => {
-    const ranges = reportRanges(published);
-    expect(reportRangeFor('2026-Q1', ranges)?.key).toBe('2026-Q1');
-    expect(reportRangeFor('2026-Q2', ranges)?.key).toBe('2026');
-    expect(reportRangeFor('2026-07', ranges)?.key).toBe('2026');
-    expect(reportRangeFor(undefined, [])).toBeNull();
   });
 });
 

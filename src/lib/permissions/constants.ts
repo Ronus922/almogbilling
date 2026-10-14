@@ -87,11 +87,13 @@ export const MODULES: ModuleMeta[] = [
   // `finance`: deny by default for every matrix role (no row = denied), so no
   // user_permissions re-seed is needed and an admin may grant it per user later.
   { key: 'portal_manage',      label: 'פורטל בעלי דירות',   group: 'admin' },
-  // Decisions & protocols ("החלטות ופרוטוקולים", /decisions) — uploading the
-  // PDFs the owners portal publishes. Admin / super_admin only, exactly like
-  // `finance` and `portal_manage`: deny by default for every matrix role (no
-  // row = denied), so no user_permissions re-seed is needed.
-  { key: 'portal_decisions',   label: 'החלטות ופרוטוקולים', group: 'admin' },
+  // Decisions, protocols & balances ("החלטות, פרוטוקולים ומאזנים", /decisions,
+  // extended to balances 14/10/2026) — uploading the PDFs the owners portal
+  // publishes, across its "החלטות" and "מאזנים" tabs. Admin / super_admin
+  // only, exactly like `finance` and `portal_manage`: deny by default for
+  // every matrix role (no row = denied), so no user_permissions re-seed is
+  // needed.
+  { key: 'portal_decisions',   label: 'החלטות, פרוטוקולים ומאזנים', group: 'admin' },
 ];
 
 export const SUPER_ADMIN_ONLY: readonly string[] = ['users_management', 'roles_management'];

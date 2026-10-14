@@ -11,6 +11,7 @@ import { CHIP_RESIDENT_ROLES } from '@/lib/constants/chips';
 import { WHATSAPP_ATTACHMENT_LIMITS, WHATSAPP_MESSAGE_MAX_FILES } from '@/lib/constants/whatsappAttachments';
 import { FINANCE_RECEIPT_LIMITS } from '@/lib/constants/finance';
 import { SUPPLIERS_LANE_ID } from '@/lib/constants/workItems';
+import { DECISION_TYPES } from '@/lib/decisions';
 import { isIsoDate, isMonthKey } from '@/lib/finance/period';
 import { cleanPhoneField } from '@/lib/whatsapp';
 import type { ChipHolderUpdate, ChipResidentRole } from '@/lib/types/chips';
@@ -416,14 +417,14 @@ export const issueBoardMoveBodySchema = z.object({
   before_id: z.uuid({ error: 'invalid_before_id' }).nullable(),
 });
 
-// PATCH /api/decisions/[id] — the metadata of a decision / protocol. The file
-// itself is never replaced (replacing = delete + upload again), so no field
-// here touches the object. `published` is sent by the list's switch too, which
-// is why it is part of the same schema rather than a route of its own.
+// PATCH /api/decisions/[id] — the metadata of a decision / protocol / balance.
+// The file itself is never replaced (replacing = delete + upload again), so no
+// field here touches the object. `published` is sent by the list's switch too,
+// which is why it is part of the same schema rather than a route of its own.
 export const decisionUpdateBodySchema = z.object({
   title: z.string().trim().min(1, { error: 'יש להזין כותרת' }).max(200),
   summary: z.string().trim().max(2000).nullish().transform((v) => (v ? v : null)),
-  doc_type: z.enum(['decision', 'protocol'], { error: 'יש לבחור סוג מסמך' }),
+  doc_type: z.enum(DECISION_TYPES, { error: 'יש לבחור סוג מסמך' }),
   decision_number: z.string().trim().max(40).nullish().transform((v) => (v ? v : null)),
   decided_at: z.iso.date({ error: 'יש לבחור תאריך החלטה' }),
   published: z.boolean(),

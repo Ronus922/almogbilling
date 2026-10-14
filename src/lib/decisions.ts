@@ -18,12 +18,13 @@ export const DECISION_FILE = {
   maxBytes: 50 * MB,
 } as const;
 
-export const DECISION_TYPES = ['decision', 'protocol'] as const;
+export const DECISION_TYPES = ['decision', 'protocol', 'balance'] as const;
 export type DecisionType = (typeof DECISION_TYPES)[number];
 
 export const DECISION_TYPE_LABEL: Record<DecisionType, string> = {
   decision: 'החלטה',
   protocol: 'פרוטוקול',
+  balance: 'מאזן',
 };
 
 export const DECISION_TITLE_MAX = 200;
@@ -35,11 +36,11 @@ export function isDecisionType(v: unknown): v is DecisionType {
 }
 
 /** What the portal and the CRM both show as the row's type tag: a decision
- *  carries its number when it has one ("החלטה 14/2026"), a protocol never
- *  does — decision_number is meaningless for one and the panel hides the
- *  field entirely when the type is "פרוטוקול". */
+ *  carries its number when it has one ("החלטה 14/2026"); a protocol or a
+ *  balance never does — decision_number is meaningless for either, and the
+ *  panel hides the field entirely unless the type is "החלטה". */
 export function decisionTypeTag(docType: DecisionType, decisionNumber: string | null): string {
-  if (docType === 'protocol') return DECISION_TYPE_LABEL.protocol;
+  if (docType !== 'decision') return DECISION_TYPE_LABEL[docType];
   const n = decisionNumber?.trim();
   return n ? `${DECISION_TYPE_LABEL.decision} ${n}` : DECISION_TYPE_LABEL.decision;
 }

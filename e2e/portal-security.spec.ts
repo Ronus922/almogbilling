@@ -70,7 +70,7 @@ function scan(text: string, extra: string[] = []): string[] {
   return [...CANARIES, ...extra].filter((c) => text.includes(c));
 }
 
-const TABS = ['ov', 'tx', 'fund', 'rep', 'acc', 'dec'] as const;
+const TABS = ['ov', 'tx', 'fund', 'bal', 'acc', 'dec'] as const;
 const nowKey = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }).slice(0, 7);
 const prevKey = () => { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 7); };
 
@@ -134,7 +134,7 @@ test.describe('2. full payload scan', () => {
     await setSwitches(browser, { docs: false, bank: false });
     const ctx = await owner(browser, A1);
     for (const tab of TABS) {
-      for (const q of [`/portal?tab=${tab}`, `/portal?tab=${tab}&m=${nowKey()}&r=${nowKey().slice(0, 4)}`]) {
+      for (const q of [`/portal?tab=${tab}`, `/portal?tab=${tab}&m=${nowKey()}`]) {
         const html = await (await ctx.request.get(q)).text();
         expect(scan(html, ['e2e00000-0000-4000-8000-0000000000bb', 'bank_balance', '48,320', '46,180']), `${q} html`).toEqual([]);
         const rsc = await (await ctx.request.get(q, { headers: { RSC: '1' } })).text();
@@ -264,7 +264,7 @@ const hiddenShort = () =>
   ['ינו׳', 'פבר׳', 'מרץ', 'אפר׳', 'מאי', 'יוני', 'יולי', 'אוג׳', 'ספט׳', 'אוק׳', 'נוב׳', 'דצמ׳'][Number(nowKey().slice(5)) - 1];
 
 test.describe('5. unpublished months', () => {
-  test('?m=, ?r=, the report, the export and the chart never show the hidden month', async ({ browser }) => {
+  test('?m=, the export and the chart never show the hidden month', async ({ browser }) => {
     const ctx = await owner(browser, A1);
     const page = await ctx.newPage();
     await page.goto(`/portal?tab=tx&m=${nowKey()}`);
@@ -279,22 +279,23 @@ test.describe('5. unpublished months', () => {
     expect(await grid.getByLabel(`בחר ${labelOf(nowKey())}`, { exact: true }).isDisabled()).toBe(true);
     expect(await grid.getByLabel(`בחר ${labelOf(prevKey())}`, { exact: true }).isDisabled()).toBe(false);
     await page.keyboard.press('Escape');
-    await page.goto(`/portal?tab=rep&r=${nowKey().slice(0, 4)}`);
-    const rep = await page.content();
-    expect(scan(rep)).toEqual([]);
-    expect(rep).toContain('כולל');
     // A link carrying only a period opens the transactions tab on it (the
     // period picker, restored 29/09/2026). The quarter is built around the
     // PUBLISHED month, so it is always one residents may open — it holds the
     // hidden month too whenever the two share a quarter — and either way
-    // nothing of that month may appear in it.
+    // nothing of that month may appear in it. "כולל N מתוך M חודשים" is the
+    // tab's own note for a multi-month period (the removed "דוחות" tab, which
+    // used to carry the same wording for its own quarter view, is gone
+    // 14/10/2026 — replaced in the nav by "מאזנים").
     const q = Math.floor((Number(prevKey().slice(5)) - 1) / 3) + 1;
     const quarter = `${prevKey().slice(0, 4)}-Q${q}`;
     await page.goto(`/portal?m=${quarter}`);
     expect(await page.$eval('.nav button.on', (b) => b.textContent)).toBe('הכנסות והוצאות');
     expect(await page.locator('#t-tx .per button[aria-label="תקופה"]').textContent())
       .toBe(`רבעון ${q} · ${prevKey().slice(0, 4)}`);
-    expect(scan(await page.content())).toEqual([]);
+    const tx = await page.content();
+    expect(scan(tx)).toEqual([]);
+    expect(tx).toContain('כולל');
     expect(await page.$$eval('#t-tx .chart .grp text', (t) => t.map((x) => x.textContent))).not.toContain(hiddenShort());
     await page.goto('/portal?tab=ov');
     const labels = await page.$$eval('.chart .grp text', (t) => t.map((x) => x.textContent));

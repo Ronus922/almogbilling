@@ -1,9 +1,12 @@
 'use client';
 
-// /decisions — the decisions and protocols the owners portal publishes.
-// Every row the table holds, hidden ones included (the portal sees only the
-// published ones), newest decision first. Per row: the type tag, the date, the
-// size, the "מוצג בפורטל" switch, and view / edit / delete.
+// /decisions — the decisions, protocols and balances the owners portal
+// publishes (decisions+protocols in its "דec" tab, balances in "מאזנים",
+// 14/10/2026). One flat table holds all three types, hidden ones included
+// (the portal sees only the published ones), newest decision first — a
+// deliberate design (05/10/2026): no tabs/selector by type, just the inline
+// tag column. Per row: the type tag, the date, the size, the "מוצג בפורטל"
+// switch, and view / edit / delete.
 //
 // The switch writes immediately (PATCH), because that is the one action an
 // admin takes to pull a document off the portal — it should not need a panel
@@ -22,10 +25,12 @@ import type { DecisionAdminView } from '@/lib/decisionsView';
 import { DecisionPanel } from './DecisionPanel';
 
 /** DESIGN §2 tones — the same pairing the portal's row tags use: a decision in
- *  brand-soft, a protocol in green-soft. */
+ *  brand-soft, a protocol in green-soft, a balance in sky (an established
+ *  third tone elsewhere in the app, e.g. EntryGroupTable's "מים חמים"). */
 const TYPE_TONE: Record<DecisionType, string> = {
   decision: 'bg-brand-soft text-brand-dark',
   protocol: 'bg-emerald-50 text-emerald-700',
+  balance: 'bg-sky-50 text-sky-700',
 };
 
 export function DecisionsClient({ initial, canEdit }: { initial: DecisionAdminView[]; canEdit: boolean }) {
@@ -106,9 +111,10 @@ export function DecisionsClient({ initial, canEdit }: { initial: DecisionAdminVi
     <div className="space-y-6">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-2xl font-extrabold text-slate-900">החלטות ופרוטוקולים</h1>
+          <h1 className="text-2xl font-extrabold text-slate-900">החלטות, פרוטוקולים ומאזנים</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            המסמכים שבעלי הדירות רואים בפורטל, בטאב &quot;החלטות&quot;. כל מסמך הוא קובץ PDF אחד.
+            המסמכים שבעלי הדירות רואים בפורטל — החלטה ופרוטוקול בטאב &quot;החלטות&quot;,
+            מאזן בטאב &quot;מאזנים&quot;. כל מסמך הוא קובץ PDF אחד.
             מסמך שהמתג שלו כבוי אינו נגיש לדיירים כלל — לא ברשימה ולא בקובץ.
           </p>
         </div>
@@ -129,7 +135,7 @@ export function DecisionsClient({ initial, canEdit }: { initial: DecisionAdminVi
 
       {rows.length === 0 ? (
         <div className="rounded-lg border bg-card p-12 text-center text-sm text-muted-foreground">
-          עדיין לא הועלו החלטות או פרוטוקולים.
+          עדיין לא הועלו החלטות, פרוטוקולים או מאזנים.
           {canEdit && ' לחצו על "העלאת מסמך" כדי להוסיף את הראשון.'}
         </div>
       ) : (

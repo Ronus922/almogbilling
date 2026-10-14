@@ -1,20 +1,19 @@
 import type { ReactNode } from 'react';
 import {
-  getPeriodReport, getPublishedMonths, getResidentFundKpis, getResidentOverview, getResidentPeriodData,
+  getPublishedMonths, getResidentFundKpis, getResidentOverview, getResidentPeriodData,
 } from '@/lib/db/finance/portal';
 import { countContacts } from '@/lib/db/contacts';
-import { listPublishedDecisions } from '@/lib/db/portalDecisions';
+import { listPublishedBalances, listPublishedDecisions } from '@/lib/db/portalDecisions';
 import { toDecisionPortalView } from '@/lib/decisionsView';
 import { buildProxyUrl, PORTAL_DECISIONS_BUCKET } from '@/lib/storage/server';
 import { publishedMonthKeys, residentPeriodFor } from '@/lib/finance/resident';
 import {
-  firstName, parseOverviewSpan, parsePortalTab, parseTxFilter, reportRangeFor, reportRanges,
+  firstName, parseOverviewSpan, parsePortalTab, parseTxFilter,
 } from '@/lib/portal/ui';
 import type { PortalAccount } from '@/lib/types/portal';
 import { PortalShell, type PortalUser } from './PortalShell';
 import { PortalOverview } from './PortalOverview';
 import { PortalTransactions } from './PortalTransactions';
-import { PortalReports } from './PortalReports';
 import { PortalFundView } from './PortalFundView';
 import { PortalAccountView } from './PortalAccount';
 import type { PortalSupport } from './PortalSupportAction';
@@ -32,20 +31,19 @@ import { ReportsIcon } from './PortalIcons';
 //   • /finance?view=resident (the admin preview): the staff route decides the
 //     apartment and passes `preview`, which hides the logout button, keeps
 //     the category trend from asking the portal API (no portal session) and
-//     sends the decision files through the staff path — or, for a viewer
-//     without portal_decisions:view, sends no file path at all. Nothing
-//     in here reads a cookie, so the same rendering cannot differ by caller.
+//     sends the decision and balance files through the staff path — or, for a
+//     viewer without portal_decisions:view, sends no file path at all.
+//     Nothing in here reads a cookie, so the same rendering cannot differ by
+//     caller.
 //
 // The URL vocabulary — `tab`, `m` (the transactions tab's period, in any of
-// the four grammars of lib/finance/period), `r` (range of the reports tab),
-// `n` (overview span), `f` (transactions filter) — is not trusted:
-// residentPeriodFor() sends a period residents may not open back to the newest
-// published month, and a range not in the reports list to the newest range.
+// the four grammars of lib/finance/period), `n` (overview span), `f`
+// (transactions filter) — is not trusted: residentPeriodFor() sends a period
+// residents may not open back to the newest published month.
 
 export interface PortalScreenParams {
   tab?: string;
   m?: string;
-  r?: string;
   n?: string;
   f?: string;
 }
@@ -93,13 +91,6 @@ export async function PortalScreen({
       body = <PortalTransactions key={period.key} period={period} publishedMonths={publishedMonths} data={data} filter={parseTxFilter(params.f)} preview={preview} />;
       break;
     }
-    case 'rep': {
-      const ranges = reportRanges(publishedMonths);
-      const range = reportRangeFor(params.r, ranges);
-      const report = range ? await getPeriodReport(range.from, range.to, { publishedOnly: true }) : null;
-      body = <PortalReports key={range?.key ?? 'none'} ranges={ranges} range={range} report={report} />;
-      break;
-    }
     case 'fund': {
       const fund = nothing ? null : await getResidentFundKpis();
       body = <PortalFundView fund={fund} />;
@@ -123,6 +114,19 @@ export async function PortalScreen({
           ? Object.fromEntries(decisions.map((r) => [r.id, buildProxyUrl(PORTAL_DECISIONS_BUCKET, r.object_key)]))
           : {};
       body = <PortalDecisions decisions={decisions.map(toDecisionPortalView)} staffFileUrls={staffFileUrls} />;
+      break;
+    }
+    case 'bal': {
+      // Published balances only — listPublishedBalances() carries the same
+      // doc_type/published split listPublishedDecisions() does, just the
+      // other way (14/10/2026: the tab that took over the "דוחות" nav slot).
+      const balances = await listPublishedBalances();
+      const staffFileUrls = !preview
+        ? undefined
+        : previewCanOpenDecisionFiles
+          ? Object.fromEntries(balances.map((r) => [r.id, buildProxyUrl(PORTAL_DECISIONS_BUCKET, r.object_key)]))
+          : {};
+      body = <PortalDecisions decisions={balances.map(toDecisionPortalView)} staffFileUrls={staffFileUrls} kind="balances" />;
       break;
     }
   }
