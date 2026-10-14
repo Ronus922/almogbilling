@@ -34,7 +34,8 @@ import { WorkListTable } from './WorkListTable';
 import { WorkItemsArchiveTab } from './WorkItemsArchiveTab';
 import { BlockedToggleDialog } from './BlockedToggleDialog';
 import { BoardOrderPopover } from './BoardOrderPopover';
-import { defaultBoardLaneOrder } from '@/lib/workItems/boardOrder';
+import { defaultBoardLaneOrder, effectiveBoardLaneIds } from '@/lib/workItems/boardOrder';
+import { SUPPLIERS_LANE_ID } from '@/lib/constants/workItems';
 import type { WorkItem, WorkItemKind, WorkItemKpis, WorkItemViewTab } from '@/lib/types/workItems';
 import type { IssueWithMeta } from '@/lib/types/issues';
 import type { TaskWithAssignee } from '@/lib/types/tasks';
@@ -163,9 +164,10 @@ export function WorkEntityScreen({
     };
   }, [tab, fetchItems, fetchSeries]);
 
-  // "התאמת לוח" (decision 2) — the viewer's saved employee-lane set for this
-  // module, in order. null = never customized: the board falls back to the
-  // default algorithm (decision 3) computed from the current `items` below.
+  // "התאמת לוח" (decision 2) — the viewer's saved lane set for this module
+  // (employee uuids + optionally SUPPLIERS_LANE_ID), in order. null = never
+  // customized: the board falls back to the default algorithm (decision 3)
+  // computed from the current `items` below.
   const [boardOrder, setBoardOrder] = useState<string[] | null>(null);
   useEffect(() => {
     let alive = true;
@@ -195,21 +197,29 @@ export function WorkEntityScreen({
     }
   }
 
-  // Default lane set (decision 3) when the viewer never customized — pure
-  // function, see src/lib/workItems/boardOrder.ts for the algorithm + its test.
+  // Default lane set (decision 3; extended 14/10/2026 to the suppliers lane)
+  // when the viewer never customized — pure function, see
+  // src/lib/workItems/boardOrder.ts for the algorithm + its test.
   const defaultBoardOrder = useMemo(
     () => defaultBoardLaneOrder(items, assignees),
     [items, assignees],
   );
 
-  const boardEmployeeIds = boardOrder !== null
-    ? boardOrder.filter((id) => assignees.some((a) => a.id === id))
-    : defaultBoardOrder;
+  // The effective lane order — employee uuids plus, optionally,
+  // SUPPLIERS_LANE_ID for "ספקים" (14/10/2026, "התאמת לוח — ספקים + בחירה
+  // מפורשת גוברת", decision 1 — explicit selection wins for every lane).
+  // src/lib/workItems/boardOrder.ts for the full rule + its test.
+  const boardLaneIds = effectiveBoardLaneIds(boardOrder, defaultBoardOrder, assignees);
+  // The employee portion only — unrelated to lane visibility, this is also
+  // the assignee-picker roster handed to every card (WorkItemsBoard/
+  // WorkItemCard), so it must stay exactly what it was before suppliers
+  // could appear in boardLaneIds: employee objects, never the sentinel.
   const boardEmployees = useMemo(
-    () => boardEmployeeIds
+    () => boardLaneIds
+      .filter((id) => id !== SUPPLIERS_LANE_ID)
       .map((id) => assignees.find((a) => a.id === id))
       .filter((a): a is Assignee => !!a),
-    [boardEmployeeIds, assignees],
+    [boardLaneIds, assignees],
   );
 
   const openById = useCallback(async (id: string) => {
@@ -341,8 +351,6 @@ export function WorkEntityScreen({
     }
   }
 
-  const hasSupplierItems = items.some((i) => i.assignee?.kind === 'supplier');
-
   const kpiCards = useMemo(() => ([
     { key: 'urgent' as const, title: 'דחופות פעילות', value: kpis.urgentActive, icon: AlertTriangle, tone: 'red' as const },
     { key: 'unassigned' as const, title: 'ללא שיוך', value: kpis.unassigned, icon: UserX, tone: 'purple' as const },
@@ -408,7 +416,7 @@ export function WorkEntityScreen({
               <div className="hidden lg:block">
                 <BoardOrderPopover
                   employees={assignees}
-                  visibleIds={boardEmployeeIds}
+                  visibleIds={boardLaneIds}
                   onChange={(next) => void saveBoardOrder(next)}
                 />
               </div>
@@ -448,7 +456,7 @@ export function WorkEntityScreen({
                   canEdit={canEdit}
                   employees={boardEmployees}
                   suppliers={suppliers}
-                  hasSupplierItems={hasSupplierItems}
+                  laneOrder={boardLaneIds}
                   onOpen={openItem}
                   onAssign={handleAssign}
                   onReorder={handleReorder}

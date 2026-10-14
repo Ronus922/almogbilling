@@ -1,6 +1,6 @@
 'use client';
 
-// "התאמת לוח" (13/10/2026) — which employee lanes the viewer sees on their own
+// "התאמת לוח" (13/10/2026) — which lanes the viewer sees on their own
 // /issues or /tasks board, and in what order. Opens over the toolbar button;
 // every toggle/drag commits immediately (onChange), same auto-save shape as
 // PrimaryAssigneePicker — no separate save/cancel. Desktop-only control for a
@@ -8,8 +8,13 @@
 // here is native HTML5 drag and drop only, same arithmetic as the board's own
 // card drag (landingAboveIn) — no long-press/touch variant needed.
 //
-// "ממתינים לשיבוץ" and "ספקים" are not rows here at all — they are always on
-// and never hideable (decision 2); this list is employee lanes only.
+// "ממתינים לשיבוץ" is not a row here — it is always on and never hideable.
+// "ספקים" IS a row (14/10/2026, "התאמת לוח — ספקים + בחירה מפורשת גוברת"),
+// appended to the roster below as a synthetic entry under SUPPLIERS_LANE_ID —
+// same show/hide checkbox, same drag-to-reorder, same save mechanism as any
+// employee. Previously it was excluded here and driven purely by whether a
+// live item was currently assigned to a supplier, with no way to override
+// that default — the exact bug this fixes.
 
 import { useState } from 'react';
 import { GripVertical, SlidersHorizontal } from 'lucide-react';
@@ -17,8 +22,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import { landingAboveIn } from '@/lib/dnd/landing';
+import { SUPPLIERS_LANE_ID } from '@/lib/constants/workItems';
 
 const ID_ATTR = 'data-board-emp-id';
+const SUPPLIERS_ROW = { id: SUPPLIERS_LANE_ID, name: 'ספקים' };
 
 interface Row {
   id: string;
@@ -31,11 +38,15 @@ export function BoardOrderPopover({
   visibleIds,
   onChange,
 }: {
-  /** The full roster in the viewer's scope — offered whether currently shown or not. */
+  /** The full employee roster in the viewer's scope — offered whether
+   *  currently shown or not. The suppliers row is added automatically below,
+   *  not part of this list. */
   employees: { id: string; name: string }[];
-  /** The current effective lane order (default-computed or already customized). */
+  /** The current effective lane order (default-computed or already
+   *  customized) — may include SUPPLIERS_LANE_ID. */
   visibleIds: string[];
-  /** Fires with the new visible set, in order, on every toggle or drop. */
+  /** Fires with the new visible set, in order, on every toggle or drop. May
+   *  include SUPPLIERS_LANE_ID. */
   onChange: (next: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -45,9 +56,10 @@ export function BoardOrderPopover({
 
   function openPopover(o: boolean) {
     if (o) {
-      const byId = new Map(employees.map((e) => [e.id, e.name]));
+      const roster = [...employees, SUPPLIERS_ROW];
+      const byId = new Map(roster.map((e) => [e.id, e.name]));
       const ordered = visibleIds.filter((id) => byId.has(id));
-      const rest = employees.filter((e) => !ordered.includes(e.id));
+      const rest = roster.filter((e) => !ordered.includes(e.id));
       setRows([
         ...ordered.map((id) => ({ id, name: byId.get(id)!, visible: true })),
         ...rest.map((e) => ({ id: e.id, name: e.name, visible: false })),
@@ -122,9 +134,6 @@ export function BoardOrderPopover({
               <span className="min-w-0 flex-1 truncate text-ink-2">{r.name}</span>
             </div>
           ))}
-          {rows.length === 0 && (
-            <p className="px-2 py-3 text-center text-xs text-ink-ghost">אין עובדים</p>
-          )}
         </div>
       </PopoverContent>
     </Popover>

@@ -13,8 +13,13 @@ import { Pool } from 'pg';
 // new drag handle reaches the same endpoint correctly. Also pins decision 5
 // (full-viewport-height columns, the board's own scroll — not the page's).
 //
-// Every issue and the one throwaway employee this file creates is recorded by
-// id at creation and removed by that exact id (iron rule 12).
+// 14/10/2026, "התאמת לוח — ספקים + בחירה מפורשת גוברת": the suppliers lane
+// is now a normal row in the same popover, pinnable/hideable exactly like an
+// employee lane — see tests at the bottom of this file.
+//
+// Every issue, the one throwaway employee and the one throwaway supplier this
+// file creates are recorded by id at creation and removed by that exact id
+// (iron rule 12).
 
 test.use({ viewport: { width: 1600, height: 1000 } });
 test.describe.configure({ mode: 'serial' });
@@ -24,6 +29,7 @@ pool.on('error', () => undefined);
 const createdIssues: string[] = [];
 let adminId = '';
 let secondId = '';
+let supplierId = '';
 
 const uniq = `e2e-board-order-${Date.now()}`;
 
@@ -41,6 +47,7 @@ test.afterAll(async () => {
   }
   await pool.query(`delete from public.user_work_board_order where user_id = $1 and kind = 'issue'`, [adminId]);
   if (secondId) await pool.query(`delete from public.users where id = $1`, [secondId]);
+  if (supplierId) await pool.query(`delete from public.suppliers where id = $1`, [supplierId]);
   await pool.end();
 });
 
@@ -59,8 +66,26 @@ async function assign(request: APIRequestContext, id: string, userId: string) {
   expect(res.status(), await res.text()).toBe(200);
 }
 
+async function assignSupplier(request: APIRequestContext, id: string, supplier: string) {
+  const res = await request.patch(`/api/work-items/issue/${id}/assignee`, { data: { assignee: { kind: 'supplier', id: supplier } } });
+  expect(res.status(), await res.text()).toBe(200);
+}
+
+async function unassign(request: APIRequestContext, id: string) {
+  const res = await request.patch(`/api/work-items/issue/${id}/assignee`, { data: { assignee: null } });
+  expect(res.status(), await res.text()).toBe(200);
+}
+
 const lane = (page: Page, key: string) => page.locator(`[data-lane="${key}"]`);
 const laneHandle = (page: Page, key: string) => page.locator(`[data-lane-handle="${key}"]`);
+/** The "ספקים" checkbox row inside the open "התאמת לוח" popover
+ *  (BoardOrderPopover, `data-board-emp-id={SUPPLIERS_LANE_ID}`). */
+const suppliersPopoverCheckbox = (page: Page) => page.locator('[data-board-emp-id="suppliers"] [role="checkbox"]');
+
+async function openBoardOrderPopover(page: Page) {
+  await page.getByRole('button', { name: 'התאמת לוח' }).click();
+  await expect(suppliersPopoverCheckbox(page)).toBeVisible();
+}
 /** The board card (WorkItemsBoard) — visible in the default board view. */
 const card = (page: Page, id: string) => page.locator(`[data-work-item-id="${id}"]`);
 /** The list row (WorkListTable, its own attribute — the board and the list
@@ -154,4 +179,76 @@ test('a click on a row (not a drag) still expands it — the drag handle did not
   await expect(listRow(page, x.id)).toBeVisible();
   await listRow(page, x.id).click();
   await expect(page.getByText('אין תיאור.')).toBeVisible();
+});
+
+// 14/10/2026, "התאמת לוח — ספקים + בחירה מפורשת גוברת" — the suppliers lane
+// used to be driven purely by whether a live item was currently assigned to
+// a supplier, with no saved preference able to override that: it vanished
+// the moment its last open item left, and there was no way to pin it back.
+// It is now a normal row in the popover (checkbox + drag, same mechanism as
+// an employee), so an explicit choice overrides the default either way.
+
+test('the suppliers lane is absent by default — no open supplier-assigned item yet, no saved preference', async ({ page }) => {
+  await page.goto('/issues');
+  await expect(lane(page, 'suppliers')).toHaveCount(0);
+});
+
+test('a supplier exists, for the suppliers-lane tests below', async () => {
+  const r = await pool.query<{ id: string }>(
+    `insert into public.suppliers (display_name, contact_person) values ($1, 'לוח התאמה') returning id`,
+    [`ספק לוח ${uniq}`],
+  );
+  supplierId = r.rows[0]!.id;
+});
+
+test('an open supplier-assigned item makes the (uncustomized) suppliers lane appear by default', async ({ page }) => {
+  const s = await newIssue(page.request, 'שיוך ספק');
+  await assignSupplier(page.request, s.id, supplierId);
+
+  await page.goto('/issues');
+  await expect(lane(page, 'suppliers')).toBeVisible();
+  await expect(card(page, s.id)).toBeVisible();
+
+  // Back to unassigned — the default-driven lane disappears again, same as
+  // before this feature existed. This is the baseline the fix below changes.
+  await unassign(page.request, s.id);
+  await page.reload();
+  await expect(lane(page, 'suppliers')).toHaveCount(0);
+});
+
+test('pinning "ספקים" in "התאמת לוח" shows the lane even while empty — the fix', async ({ page }) => {
+  await page.goto('/issues');
+  await expect(lane(page, 'suppliers')).toHaveCount(0);
+
+  await openBoardOrderPopover(page);
+  const write = page.waitForResponse((r) =>
+    r.url().endsWith('/api/work-items/issue/board-preferences') && r.request().method() === 'PUT');
+  await suppliersPopoverCheckbox(page).click();
+  expect((await write).status(), 'the pinned suppliers lane persisted').toBe(200);
+
+  await expect(lane(page, 'suppliers')).toBeVisible();
+  await expect(lane(page, 'suppliers').getByText('אין משימות פתוחות')).toBeVisible();
+
+  await page.reload();
+  await expect(lane(page, 'suppliers')).toBeVisible();
+});
+
+test('unchecking "ספקים" hides the lane even with an open supplier-assigned item in it', async ({ page }) => {
+  const s = await newIssue(page.request, 'שיוך ספק ב');
+  await assignSupplier(page.request, s.id, supplierId);
+
+  await page.goto('/issues');
+  await expect(lane(page, 'suppliers')).toBeVisible(); // still pinned from the previous test, now with an item too
+  await expect(card(page, s.id)).toBeVisible();
+
+  await openBoardOrderPopover(page);
+  const write = page.waitForResponse((r) =>
+    r.url().endsWith('/api/work-items/issue/board-preferences') && r.request().method() === 'PUT');
+  await suppliersPopoverCheckbox(page).click(); // uncheck
+  expect((await write).status()).toBe(200);
+
+  await expect(lane(page, 'suppliers')).toHaveCount(0);
+
+  await page.reload();
+  await expect(lane(page, 'suppliers')).toHaveCount(0);
 });
