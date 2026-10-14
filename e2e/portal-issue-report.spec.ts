@@ -111,7 +111,9 @@ test('an owner reports a fault: errors, chips, photo limits, confirmation — an
   await expect(page.locator('.pir-tk')).toContainText('ללא');
   const body = await page.locator('body').innerText();
   for (const word of ['וואטסאפ', 'WhatsApp', 'מעקב']) expect(body).not.toContain(word);
-  await expect(page.getByRole('button')).toHaveCount(0);
+  // Scoped to the receipt card itself — the mobile dock (a sibling, round 2)
+  // legitimately carries its own buttons on this screen now.
+  await expect(page.locator('.pir').getByRole('button')).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'חזרה לדף הבית' })).toHaveAttribute('href', '/portal');
 
   // The row: the session's owner, the mapped priority, open and waiting for a handler.
