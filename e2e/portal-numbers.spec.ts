@@ -165,7 +165,9 @@ test.describe('income green, expense red', () => {
     expect(await colorOf(page, '#t-ov .cats .a.out')).toBe(RED_INK);
     // the tooltip lines: hover the newest month. The dark ground is asserted
     // too — it is the premise the 4.5:1 of the bright pair was measured on.
-    await page.locator('.chart .grp').last().hover();
+    // The overview's chart is PortalOverviewChart (round 3, 14/10/2026) — a
+    // separate `.ovch` box, not the shared `.chart`/PortalBarChart below.
+    await page.locator('.ovch .grp').last().hover();
     await expect(page.locator('.tip.on')).toBeVisible();
     expect(await page.locator('.tip.on').first().evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(TIP_BG);
     expect(await colorOf(page, '.tip.on .in')).toBe(GREEN);
