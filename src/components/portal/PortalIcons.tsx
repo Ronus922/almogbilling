@@ -148,3 +148,61 @@ export function SendIcon(p: IconProps) {
 export function AlertIcon(p: IconProps) {
   return <Svg size={16} strokeWidth={2} {...p}><path d="M12 4l9 16H3z" /><path d="M12 10v4M12 17v.5" /></Svg>;
 }
+
+// ── Mobile floating dock (ref/mobile-bottom-nav, 14/10/2026) ───────────────
+// 1:1 from Mobile Bottom Nav.html — a different icon set than the rest of the
+// portal (its own reference), so these are kept apart from the glyphs above
+// even where a shape is close to an existing one (e.g. DockAccountIcon vs.
+// AccountIcon): the dock copies ITS reference's paths exactly, not the
+// nearest lookalike already in this file.
+
+export function DockHomeIcon(p: IconProps) {
+  return <Svg strokeWidth={1.9} {...p}><path d="M3 10.5L12 3l9 7.5" /><path d="M5 9.5V21h14V9.5" /></Svg>;
+}
+
+export function DockTrendIcon(p: IconProps) {
+  return <Svg strokeWidth={1.9} {...p}><path d="M7 17l4-6 3 3 4-7" /><path d="M3 3v18h18" /></Svg>;
+}
+
+export function DockFundIcon(p: IconProps) {
+  return (
+    <Svg strokeWidth={1.9} {...p}>
+      <rect x="4" y="3" width="14" height="6" rx="2" />
+      <path d="M18 5h2a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-8v3" />
+      <rect x="10.5" y="14" width="3" height="7" rx="1" />
+    </Svg>
+  );
+}
+
+export function DockAccountIcon(p: IconProps) {
+  return <Svg strokeWidth={1.9} {...p}><circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 5-5.5 8-5.5s6.5 1.5 8 5.5" /></Svg>;
+}
+
+export function DockPlusIcon(p: IconProps) {
+  return <Svg strokeWidth={2.4} {...p}><path d="M12 5v14M5 12h14" /></Svg>;
+}
+
+export function DockWrenchIcon(p: IconProps) {
+  return <Svg strokeWidth={2} {...p}><path d="M14.7 6.3a5 5 0 0 0-6.6 6.6L3 18l3 3 5.1-5.1a5 5 0 0 0 6.6-6.6L14 13l-3-3z" /></Svg>;
+}
+
+export function DockProtocolIcon(p: IconProps) {
+  return (
+    <Svg strokeWidth={2} {...p}>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <path d="M14 3v6h6" />
+      <path d="M8.5 13h7M8.5 17h7" />
+    </Svg>
+  );
+}
+
+export function DockBalanceIcon(p: IconProps) {
+  return (
+    <Svg strokeWidth={2} {...p}>
+      <path d="M12 3v18" />
+      <path d="M5 7h14" />
+      <path d="M5 7l-3 6a3.5 3.5 0 0 0 6 0z" />
+      <path d="M19 7l-3 6a3.5 3.5 0 0 0 6 0z" />
+    </Svg>
+  );
+}

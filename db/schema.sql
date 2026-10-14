@@ -2871,7 +2871,7 @@ CREATE TABLE public.portal_decisions (
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT portal_decisions_doc_type_check CHECK ((doc_type = ANY (ARRAY['decision'::text, 'protocol'::text]))),
+    CONSTRAINT portal_decisions_doc_type_check CHECK ((doc_type = ANY (ARRAY['decision'::text, 'protocol'::text, 'balance'::text]))),
     CONSTRAINT portal_decisions_file_size_check CHECK ((file_size > 0)),
     CONSTRAINT portal_decisions_number_length CHECK (((decision_number IS NULL) OR ((char_length(decision_number) >= 1) AND (char_length(decision_number) <= 40)))),
     CONSTRAINT portal_decisions_summary_length CHECK (((summary IS NULL) OR (char_length(summary) <= 2000))),
@@ -2890,7 +2890,7 @@ COMMENT ON TABLE public.portal_decisions IS 'House-committee decisions and assem
 -- Name: COLUMN portal_decisions.doc_type; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.portal_decisions.doc_type IS 'decision = החלטה (may carry decision_number) · protocol = פרוטוקול (never numbered on screen).';
+COMMENT ON COLUMN public.portal_decisions.doc_type IS 'decision = החלטה (may carry decision_number) · protocol = פרוטוקול · balance = מאזן (neither ever numbered on screen).';
 
 
 --
@@ -7852,5 +7852,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261011220356'),
     ('20261012065306'),
     ('20261013222645'),
-    ('20261014074807')
+    ('20261014074807'),
+    ('20261014122339')
 ;

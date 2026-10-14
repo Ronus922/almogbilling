@@ -7,8 +7,10 @@ import {
 import type { DecisionPortalView } from '@/lib/decisionsView';
 import { ChevronIcon, ExportIcon, PdfIcon, SearchIcon } from './PortalIcons';
 
-// The "החלטות" tab (ref/portal/decisions-tab.md + the reference's `dec` tab):
-// ONE flat list, newest first, cut by year separators, over a toolbar card.
+// The "החלטות" tab (ref/portal/decisions-tab.md + the reference's `dec` tab) —
+// and, since 14/10/2026, the "מאזנים" tab too: the SAME mechanism, a prop
+// away. ONE flat list, newest first, cut by year separators, over a toolbar
+// card.
 //
 // DECLARED EXCEPTION (the task's, 05/10/2026): the reference's category chips
 // — הכל / אסיפות דיירים / תקציב וכספים / תחזוקה ושיפוצים / פרוטוקולים — are
@@ -24,8 +26,43 @@ import { ChevronIcon, ExportIcon, PdfIcon, SearchIcon } from './PortalIcons';
 // The search is live and local: the whole published list is already on the
 // client (a building's decisions are tens of rows, not thousands), so typing
 // filters without a round trip, exactly as the reference does.
+//
+// `kind` picks only the copy and the lock message — never the mechanism: the
+// decisions tab mixes doc_type 'decision'/'protocol' (DESIGN.md's unified
+// list, kept on purpose — 14/10/2026 did not split it), the balances tab
+// carries 'balance' rows alone, and the server (portalDecisions.ts) decides
+// which rows reach which tab, never this component.
+type DecisionsKind = 'decisions' | 'balances';
 
-export function PortalDecisions({ decisions, staffFileUrls }: {
+const COPY: Record<DecisionsKind, {
+  heading: string;
+  subtitle: string;
+  searchPlaceholder: string;
+  emptyTitle: string;
+  emptyText: string;
+  /** The permission name as it reads in the lock message — matches the
+   *  module's current label (lib/permissions/constants.ts) exactly. */
+  lockPermissionLabel: string;
+}> = {
+  decisions: {
+    heading: 'החלטות ופרוטוקולים',
+    subtitle: 'החלטות ועד הבית ופרוטוקולי אסיפות דיירים, להורדה כ-PDF',
+    searchPlaceholder: 'חיפוש החלטה או פרוטוקול…',
+    emptyTitle: 'עדיין לא פורסמו החלטות או פרוטוקולים',
+    emptyText: 'ברגע שוועד הבית יפרסם החלטה או פרוטוקול, הם יופיעו כאן להורדה.',
+    lockPermissionLabel: 'החלטות ופרוטוקולים',
+  },
+  balances: {
+    heading: 'מאזנים',
+    subtitle: 'מאזנים ודוחות כספיים שפורסמו, להורדה כ-PDF',
+    searchPlaceholder: 'חיפוש מאזן…',
+    emptyTitle: 'עדיין לא פורסמו מאזנים',
+    emptyText: 'ברגע שחברת הניהול תפרסם מאזן, הוא יופיע כאן להורדה.',
+    lockPermissionLabel: 'החלטות, פרוטוקולים ומאזנים',
+  },
+};
+
+export function PortalDecisions({ decisions, staffFileUrls, kind = 'decisions' }: {
   decisions: DecisionPortalView[];
   /** The admin preview only (/finance?view=resident): decision id → its staff
    *  path (/api/files/portal-decisions/…). Staff have no portal session, so the
@@ -33,7 +70,11 @@ export function PortalDecisions({ decisions, staffFileUrls }: {
    *  for a viewer without portal_decisions:view, whose rows then carry a note
    *  instead of two buttons that would answer 403. */
   staffFileUrls?: Record<string, string>;
+  /** 'decisions' (default) — the "החלטות" tab. 'balances' — the "מאזנים" tab
+   *  added 14/10/2026, replacing the removed "דוחות" tab in the nav. */
+  kind?: DecisionsKind;
 }) {
+  const copy = COPY[kind];
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -58,14 +99,14 @@ export function PortalDecisions({ decisions, staffFileUrls }: {
       <section>
         <div className="hd">
           <div>
-            <h1>החלטות ופרוטוקולים</h1>
-            <p>החלטות ועד הבית ופרוטוקולי אסיפות דיירים, להורדה כ-PDF</p>
+            <h1>{copy.heading}</h1>
+            <p>{copy.subtitle}</p>
           </div>
         </div>
         <div className="card empty">
           <div className="ic"><PdfIcon size={28} /></div>
-          <h2>עדיין לא פורסמו החלטות או פרוטוקולים</h2>
-          <p>ברגע שוועד הבית יפרסם החלטה או פרוטוקול, הם יופיעו כאן להורדה.</p>
+          <h2>{copy.emptyTitle}</h2>
+          <p>{copy.emptyText}</p>
         </div>
       </section>
     );
@@ -75,8 +116,8 @@ export function PortalDecisions({ decisions, staffFileUrls }: {
     <section>
       <div className="hd">
         <div>
-          <h1>החלטות ופרוטוקולים</h1>
-          <p>החלטות ועד הבית ופרוטוקולי אסיפות דיירים, להורדה כ-PDF</p>
+          <h1>{copy.heading}</h1>
+          <p>{copy.subtitle}</p>
         </div>
       </div>
       <div className="card">
@@ -87,8 +128,8 @@ export function PortalDecisions({ decisions, staffFileUrls }: {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="חיפוש החלטה או פרוטוקול…"
-              aria-label="חיפוש החלטה או פרוטוקול"
+              placeholder={copy.searchPlaceholder}
+              aria-label={copy.searchPlaceholder}
             />
           </div>
         </div>
@@ -102,7 +143,7 @@ export function PortalDecisions({ decisions, staffFileUrls }: {
           <div>
             {visible.map(({ d, year, opensYear }) => {
               const open = openId === d.id;
-              const isProtocol = d.doc_type === 'protocol';
+              const tagClass = d.doc_type === 'decision' ? 'tag' : d.doc_type === 'protocol' ? 'tag t-green' : 'tag t-amber';
               const fileHref: string | undefined = staffFileUrls
                 ? staffFileUrls[d.id]
                 : `/api/portal/decisions/${d.id}/file`;
@@ -121,8 +162,8 @@ export function PortalDecisions({ decisions, staffFileUrls }: {
                         <b>{d.title}</b>
                         <div className="dmeta">
                           <span
-                            className={isProtocol ? 'tag t-green' : 'tag'}
-                            style={isProtocol ? undefined : { background: 'var(--brand-soft)', color: 'var(--brand-ink)' }}
+                            className={tagClass}
+                            style={d.doc_type === 'decision' ? { background: 'var(--brand-soft)', color: 'var(--brand-ink)' } : undefined}
                           >
                             {decisionTypeTag(d.doc_type, d.decision_number)}
                           </span>
@@ -155,7 +196,7 @@ export function PortalDecisions({ decisions, staffFileUrls }: {
                           </a>
                         </div>
                       ) : (
-                        <div className="dlock">תצוגה בלבד — פתיחת המסמך והורדתו דורשות הרשאת „החלטות ופרוטוקולים”.</div>
+                        <div className="dlock">תצוגה בלבד — פתיחת המסמך והורדתו דורשות הרשאת „{copy.lockPermissionLabel}”.</div>
                       )}
                     </div>
                   </div>

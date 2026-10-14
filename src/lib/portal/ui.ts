@@ -2,21 +2,23 @@
 // reference's number / date formats, the URL vocabulary of the tabs and the
 // small arithmetic behind the overview (axis, averages, category shares).
 import { HE_MONTH_NAMES } from '@/lib/constants/calendar';
-import { makePeriod, parsePeriod, shiftMonthKey, type Period } from '@/lib/finance/period';
+import { parsePeriod, shiftMonthKey } from '@/lib/finance/period';
 import type { FinKind } from '@/lib/constants/finance';
 import type { ResidentEntry } from '@/lib/types/finance';
 import type { PortalAccount } from '@/lib/types/portal';
 
 // ── Tabs & URL ────────────────────────────────────────────────────────────────
 
-export const PORTAL_TABS = ['ov', 'tx', 'fund', 'acc', 'dec', 'rep'] as const;
+export const PORTAL_TABS = ['ov', 'tx', 'fund', 'acc', 'dec', 'bal'] as const;
 export type PortalTab = (typeof PORTAL_TABS)[number];
 
 /** `?tab=` → a tab. The old portal's `fund` keeps working; anything else is
  *  the overview. `?m=` is the transactions tab's period in all four of its
  *  grammars (month · quarter · half · year), so a link from before the
  *  six-tab shell — which carried the period alone — opens that tab on that
- *  period, exactly where it used to land. The reports tab has its own `?r=`. */
+ *  period, exactly where it used to land. `rep` ("דוחות") is gone (14/10/2026,
+ *  replaced in the nav by `bal` — "מאזנים"); an old `?tab=rep` link, or any
+ *  other unknown tab, falls through to the overview like it always did. */
 export function parsePortalTab(tab: string | undefined, m: string | undefined): PortalTab {
   if (tab && (PORTAL_TABS as readonly string[]).includes(tab)) return tab as PortalTab;
   if (tab === 'operating') return 'tx';
@@ -136,47 +138,6 @@ export function apartmentsLabel(numbers: readonly string[]): string {
 }
 
 // ── Selectors ────────────────────────────────────────────────────────────────
-
-/** The years that hold a published month, newest first. */
-function publishedYears(publishedKeys: readonly string[]): number[] {
-  return [...new Set(publishedKeys.map((k) => Number(k.slice(0, 4))))].sort((a, b) => b - a);
-}
-
-/** A range is offered only when it holds at least one published month — the
- *  rule behind the reports select. (The transactions tab asks the same question
- *  through rangeHasPublished, inside the one-click picker.) */
-function holdsPublished(published: ReadonlySet<string>): (p: Period) => boolean {
-  return (p) => [...published].some((k) => k >= p.from && k <= p.to);
-}
-
-/** Every quarter, half and year that holds at least one published month —
- *  the reports select. Newest first; inside a year: the year, then halves,
- *  then quarters (all newest first). */
-export function reportRanges(publishedKeys: readonly string[]): Period[] {
-  const has = holdsPublished(new Set(publishedKeys));
-  const out: Period[] = [];
-  for (const y of publishedYears(publishedKeys)) {
-    const candidates: Period[] = [
-      makePeriod('year', y, 1),
-      makePeriod('half', y, 2), makePeriod('half', y, 1),
-      makePeriod('quarter', y, 4), makePeriod('quarter', y, 3), makePeriod('quarter', y, 2), makePeriod('quarter', y, 1),
-    ];
-    for (const p of candidates) if (has(p)) out.push(p);
-  }
-  return out;
-}
-
-/** `?r=` → the report range to show: the requested one when it is in the
- *  list, else the first (newest) one, else null (nothing published). */
-export function reportRangeFor(r: string | undefined, ranges: readonly Period[]): Period | null {
-  if (ranges.length === 0) return null;
-  const requested = r ? parsePeriod(r) : null;
-  if (requested && requested.kind !== 'month') {
-    const hit = ranges.find((p) => p.key === requested.key);
-    if (hit) return hit;
-  }
-  return ranges[0];
-}
 
 // ── Overview arithmetic ──────────────────────────────────────────────────────
 

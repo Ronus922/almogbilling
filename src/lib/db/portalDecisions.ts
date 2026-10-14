@@ -2,12 +2,16 @@ import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import type { DecisionType } from '@/lib/decisions';
 
-// Decisions & protocols (public.portal_decisions). Two readers with two
-// different rights, and the difference is in the SQL, never in a caller:
-//   • listDecisions()        — the CRM: every row, published or not;
-//   • listPublishedDecisions() / findPublishedDecision() — the portal: the
-//     `published` predicate is inside the query, so no portal code path can
-//     forget it (the same discipline as finance/portal.ts).
+// Decisions, protocols & balances (public.portal_decisions, one table, three
+// doc_type values). Two readers with two different rights, and the difference
+// is in the SQL, never in a caller:
+//   • listDecisions()        — the CRM: every row of every type, published or
+//     not (the admin screen is a single flat list, no type selector —
+//     deliberate, 05/10/2026, extended to balances 14/10/2026);
+//   • listPublishedDecisions() / listPublishedBalances() / findPublishedDecision()
+//     — the portal: the `published` predicate (and, for the two tab-specific
+//     lists, the doc_type split) is inside the query, so no portal code path
+//     can forget it (the same discipline as finance/portal.ts).
 
 export interface DecisionRow {
   id: string;
@@ -46,11 +50,23 @@ export async function findDecision(id: string): Promise<DecisionRow | null> {
   return queryOne<DecisionRow>(`select ${COLS} from public.portal_decisions where id = $1`, [id]);
 }
 
-/** The portal list — published only, the predicate is in the SQL. */
+/** The portal's "החלטות" tab — published decisions and protocols, the
+ *  predicate is in the SQL. Balances have their own tab and their own query
+ *  (listPublishedBalances) — excluded here so the two tabs never overlap. */
 export async function listPublishedDecisions(): Promise<DecisionRow[]> {
   const r = await query<DecisionRow>(
     `select ${COLS} from public.portal_decisions
-      where published = true
+      where published = true and doc_type <> 'balance'
+      order by decided_at desc, created_at desc`,
+  );
+  return r.rows;
+}
+
+/** The portal's "מאזנים" tab — published balances only. */
+export async function listPublishedBalances(): Promise<DecisionRow[]> {
+  const r = await query<DecisionRow>(
+    `select ${COLS} from public.portal_decisions
+      where published = true and doc_type = 'balance'
       order by decided_at desc, created_at desc`,
   );
   return r.rows;
