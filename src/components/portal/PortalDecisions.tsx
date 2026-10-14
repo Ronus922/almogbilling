@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import {
   decisionTypeTag, decisionYear, formatDecisionDate, formatFileSize, matchesDecisionQuery,
   type DecisionTypeFilter,
@@ -173,7 +173,7 @@ export function PortalDecisions({ decisions, staffFileUrls, kind = 'decisions', 
             <p style={{ fontSize: 14 }}>נסו מילת חיפוש אחרת או נקו את החיפוש.</p>
           </div>
         ) : (
-          <div>
+          <div className="drows">
             {visible.map(({ d, year, opensYear }) => {
               const open = openId === d.id;
               const tagClass = d.doc_type === 'decision' ? 'tag' : d.doc_type === 'protocol' ? 'tag t-green' : 'tag t-amber';
@@ -181,7 +181,7 @@ export function PortalDecisions({ decisions, staffFileUrls, kind = 'decisions', 
                 ? staffFileUrls[d.id]
                 : `/api/portal/decisions/${d.id}/file`;
               return (
-                <div key={d.id}>
+                <Fragment key={d.id}>
                   {opensYear && <div className="yr num">{year}</div>}
                   <div className={open ? 'drow open' : 'drow'} data-decision={d.id}>
                     <button
@@ -233,7 +233,7 @@ export function PortalDecisions({ decisions, staffFileUrls, kind = 'decisions', 
                       )}
                     </div>
                   </div>
-                </div>
+                </Fragment>
               );
             })}
           </div>

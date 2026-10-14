@@ -2,14 +2,17 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { catColor, fmtIls } from '@/lib/portal/ui';
+import { useArmOnView } from '@/lib/portal/useArmOnView';
 
 // "לאן הולך הכסף" (ref/almog-portal-overview.md): the first 8 categories
 // show immediately, the rest sit behind "הצגת כל N הקטגוריות" — N is
 // whatever the period actually has, never the reference's fixed 19. Rows
-// animate in once, on scroll (IntersectionObserver, threshold 25%, like the
-// reference) — not on `:hover`, so the entrance looks the same on a phone.
-// Expanding re-plays the same animation on just the newly-shown rows (the
-// reference's animCats(xtra) on click).
+// animate in once, on scroll (`useArmOnView`, threshold 25%, like the
+// reference — round 4, 14/10/2026: shared with PortalOverviewChart and the
+// overview's KPI row, rather than each reimplementing the same observer) —
+// not on `:hover`, so the entrance looks the same on a phone. Expanding
+// re-plays the same animation on just the newly-shown rows (the reference's
+// animCats(xtra) on click).
 
 export interface CategoryRow {
   name: string;
@@ -19,20 +22,10 @@ export interface CategoryRow {
 }
 
 export function PortalCategoryList({ cats }: { cats: readonly CategoryRow[] }) {
-  const [armed, setArmed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [extraArmed, setExtraArmed] = useState(false);
   const box = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = box.current;
-    if (!el || cats.length === 0) return;
-    const io = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting) { setArmed(true); io.disconnect(); }
-    }, { threshold: 0.25 });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [cats.length]);
+  const armed = useArmOnView(box, 0.25);
 
   if (cats.length === 0) return <div className="cats ovcats"><p className="note">אין הוצאות בתקופה.</p></div>;
 

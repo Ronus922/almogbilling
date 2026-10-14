@@ -15,6 +15,15 @@
    nav, exactly as before this file existed.
    ───────────────────────────────────────────────────────────────────── */
 
+/* Dock footprint, one variable (round 4, 14/10/2026): the pill's bottom
+   offset (14px) + its own height (54px) + the home-indicator safe area,
+   combined once so every screen that needs clearance above the floating
+   dock — scrollable content's bottom padding, a button that must sit above
+   it — computes from the same number instead of each guessing its own. The
+   dock's own `bottom` derives from it too (and so finally respects the safe
+   area itself, which the flat `bottom:14px` below never did). */
+.portal-skin { --dock-h: calc(14px + 54px + env(safe-area-inset-bottom)); }
+
 .portal-skin .dock-wrap { display: none; }
 @media (max-width: 600px) {
   .portal-skin .dock-wrap { display: block; }
@@ -22,14 +31,21 @@
      `.top-report`) give way to the dock, not both at once — round 2
      (14/10/2026) added `.top-report` beside `.nav`, same rule. */
   .portal-skin .nav, .portal-skin .top-report { display: none; }
-  /* Clearance so the floating dock never covers the tab's own content
-     (the reference's own number for this — 14/10/2026). */
-  .portal-skin .wrap { padding-bottom: 96px; }
+  /* Clearance so the floating dock never covers the tab's own content —
+     the last row of any list included (round 4: dock height + 16px, not an
+     ad hoc number). */
+  .portal-skin .wrap { padding-bottom: calc(var(--dock-h) + 16px); }
+  /* The sent-receipt screen's own CTA (portal-report.css `.pir-done-foot`)
+     is not fixed, but it is the last thing in a min-height:100dvh column
+     with nothing scrollable below it, so it lands exactly where the dock
+     floats unless it reserves room — Phase 0 (round 4) found it had none at
+     all. 12px clear above the dock, like any other button here. */
+  .portal-skin .pir-done-foot { padding-bottom: calc(var(--dock-h) + 12px); }
 }
 
 /* ── the dock itself — a floating pill, kaif-ui style magnification ──── */
 .portal-skin .dock {
-  position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: calc(var(--dock-h) - 54px); left: 50%; transform: translateX(-50%);
   z-index: 20; display: flex; align-items: flex-end; gap: 8px; height: 54px;
   background: rgba(255, 255, 255, .92); backdrop-filter: blur(12px);
   border: 1px solid var(--border); border-radius: 999px; padding: 7px 10px;

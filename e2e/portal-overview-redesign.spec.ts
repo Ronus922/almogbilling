@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { test, expect, type Browser, type BrowserContext } from '@playwright/test';
 import { Pool } from 'pg';
 
@@ -190,6 +191,129 @@ test.describe('"דיווח על תקלה" (/portal/report) — the dock on the f
 
     await expect(page.getByRole('heading', { name: 'הדיווח התקבל' })).toBeVisible();
     await expect(page.locator('.dock-wrap')).toHaveCount(1);
+    // Round 4 (14/10/2026): Phase 0 found "חזרה לדף הבית" had no clearance at
+    // all above the dock that DOES mount here — it landed flush at the
+    // viewport bottom, directly behind the floating pill. The invariant: the
+    // button's own box sits entirely above the dock's top edge, with the
+    // required ≥12px of daylight between them, and is still actually clickable
+    // (not just visually above — Playwright's own actionability check already
+    // covers "nothing else receives the click" for a plain .click()).
+    const button = page.getByRole('link', { name: 'חזרה לדף הבית' });
+    await expect(button).toBeVisible();
+    const buttonBox = (await button.boundingBox())!;
+    const dockBox = (await page.locator('.dock').boundingBox())!;
+    expect(buttonBox.y + buttonBox.height, 'button bottom edge').toBeLessThanOrEqual(dockBox.y);
+    expect(dockBox.y - (buttonBox.y + buttonBox.height), 'clearance above the dock').toBeGreaterThanOrEqual(12);
+    await button.click();
+    await expect(page).toHaveURL(/\/portal(\?|$)/);
+    await ctx.close();
+  });
+});
+
+test.describe('overview chart & KPIs — entrance gated on scroll into view (round 4, 14/10/2026)', () => {
+  test('both stay at their "before" state until the card actually scrolls on screen, then animate once', async ({ browser }) => {
+    const ctx = await owner(browser, 'e2e-owner-a1', { width: 390, height: 844 });
+    const page = await ctx.newPage();
+    await page.goto('/portal?tab=ov');
+
+    // Phase 0 (round 4): on a phone this short, the chart card (not the KPI
+    // row above it, which already fits) starts below the fold — exactly the
+    // condition a mount-triggered animation (the bug) would have already
+    // finished under, unseen. `ratio: 0.25` matches `useArmOnView`'s own
+    // threshold exactly — the chart card already peeks in at the very bottom
+    // of a 390×844 screen (a sliver under 25%), so a plain "any visibility
+    // counts" check would be too fragile here. The trend view's dots (`r`,
+    // 0 → 3.5) are the gated element that is actually absent before `go` —
+    // the line's own points render at their final position regardless (only
+    // the dash-sweep reveal is cosmetic), so the dot radius, not the line, is
+    // the reliable "undrawn vs. drawn" signal.
+    const chart = page.locator('.ovch');
+    await expect(chart).not.toBeInViewport({ ratio: 0.25 });
+    await expect(chart.locator('circle').first()).toHaveAttribute('r', '0');
+
+    await chart.scrollIntoViewIfNeeded();
+    await expect(chart).toBeInViewport({ ratio: 0.25 });
+
+    // Settled: real figures (same ones round 3's KPI test asserts), dots popped in.
+    await expect(page.locator('#t-ov .kpi .v.in')).toHaveText('₪8,821', { timeout: 2000 });
+    await expect(page.locator('#t-ov .kpi .v.out')).toHaveText('₪1,801');
+    await expect(chart.locator('circle').first()).toHaveAttribute('r', '3.5');
+    await ctx.close();
+  });
+
+  test('switching view/period replays the entrance (unchanged from round 3 — remount, not a re-arm)', async ({ browser }) => {
+    const ctx = await owner(browser, 'e2e-owner-a1');
+    const page = await ctx.newPage();
+    await page.goto('/portal?tab=ov');
+    const chart = page.locator('.ovch');
+    await expect(chart).toBeInViewport(); // desktop default viewport: already on screen
+    await expect
+      .poll(async () => Number(await chart.locator('polyline').first().evaluate((el) => (el as SVGPolylineElement).style.strokeDashoffset)))
+      .toBe(0);
+
+    await page.locator('.seg button', { hasText: 'עמודות' }).click();
+    const bar = chart.locator('rect[rx="4"]').first();
+    // A fresh mount (key={view}-{span}) means the bar starts from height 0
+    // again and transitions back up — same armed container, no re-arm needed.
+    const h0 = await bar.evaluate((el) => Number((el as SVGRectElement).getAttribute('height')));
+    await page.waitForTimeout(100);
+    const h1 = await bar.evaluate((el) => Number((el as SVGRectElement).getAttribute('height')));
+    expect(h1).toBeGreaterThanOrEqual(h0);
+    await ctx.close();
+  });
+});
+
+test.describe('document card lists — 12px gap, last row clear of the dock (round 4, 14/10/2026)', () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+  pool.on('error', () => undefined);
+  const uniq = `e2e-round4-${Date.now()}`;
+  const ids: string[] = [];
+
+  test.afterAll(async () => {
+    for (const id of ids) await pool.query(`delete from public.portal_decisions where id = $1`, [id]);
+    await pool.end();
+  });
+
+  test('consecutive rows sit 12px apart and the last one clears the floating dock', async ({ browser }) => {
+    // Phase 0 found `.drow + .drow` was dead CSS (each row lived in its own
+    // untracked wrapper div, never an actual sibling of another `.drow`) — so
+    // rows in the SAME year were flush against each other. Six rows across
+    // two years exercises both: the gap between ordinary rows, and the one
+    // before a year separator.
+    for (let i = 0; i < 6; i++) {
+      const { rows } = await pool.query<{ id: string }>(
+        `insert into public.portal_decisions
+           (title, doc_type, decided_at, object_key, original_filename, file_size, mime_type, published)
+         values ($1, 'decision', $2, $3, 'בדיקה.pdf', 4096, 'application/pdf', true)
+         returning id`,
+        [`${uniq}-${i}`, i < 3 ? '2026-10-05' : '2025-06-01', `${randomUUID()}.pdf`],
+      );
+      ids.push(rows[0].id);
+    }
+
+    const ctx = await owner(browser, 'e2e-owner-a1', { width: 390, height: 844 });
+    const page = await ctx.newPage();
+    await page.goto('/portal?tab=dec');
+    const rows = page.locator('.drow', { hasText: uniq });
+    await expect(rows).toHaveCount(6);
+
+    // The gap WITHIN a year (no `.yr` between two rows): 12px, from the
+    // list's own `gap`, not a per-row margin.
+    const [box0, box1] = await Promise.all([rows.nth(0).boundingBox(), rows.nth(1).boundingBox()]);
+    const gap = box1!.y - (box0!.y + box0!.height);
+    expect(gap, 'gap between consecutive document rows').toBeGreaterThanOrEqual(11);
+    expect(gap, 'gap between consecutive document rows').toBeLessThanOrEqual(13);
+
+    // The last row, scrolled all the way to the bottom of the page, is not
+    // covered by the dock — `.wrap`'s padding-bottom (dock height + 16px) at
+    // work. Scrolled to the literal end (not just "into view somewhere"),
+    // matching what the dock would actually threaten to cover.
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(50);
+    const last = rows.last();
+    const lastBox = (await last.boundingBox())!;
+    const dockBox = (await page.locator('.dock').boundingBox())!;
+    expect(lastBox.y + lastBox.height, 'last row bottom edge').toBeLessThanOrEqual(dockBox.y);
     await ctx.close();
   });
 });

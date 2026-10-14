@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ResidentOverview } from '@/lib/types/finance';
 import type { PortalAccount } from '@/lib/types/portal';
@@ -9,6 +9,7 @@ import {
   accountTotals, apartmentsLabel, categoryShares, fmtDateDMY, fmtDelta, fmtIls, fmtSigned, monthName,
   monthShort, monthTitle, pctVsAverage, roundShekels, sumOverWindow, windowKeys, type OverviewSpan,
 } from '@/lib/portal/ui';
+import { useArmOnView } from '@/lib/portal/useArmOnView';
 import { useCountUp } from '@/lib/portal/useCountUp';
 import { PortalCategoryList } from './PortalCategoryList';
 import { PortalOverviewChart, type OverviewChartMonth, type OverviewChartView } from './PortalOverviewChart';
@@ -111,12 +112,16 @@ export function PortalOverview({ overview, span: initialSpan, greeting, accounts
   // Count-up (ref: count(), 900ms ease-out cubic) — restarts whenever the
   // target itself changes (switching the 12/6 span, or the published month
   // moving on). Pure rAF, no `:hover` dependency, so it runs the same on a
-  // phone (Phase 0, 14/10/2026: the overview had no entrance animations of
-  // its own before this round, so there was no pre-existing Android bug to
-  // fix here — this is new code, built touch-safe from the start).
-  const incomeLive = useCountUp(latest.income);
-  const expenseLive = useCountUp(latest.expense);
-  const bankLive = useCountUp(bank?.value ?? 0);
+  // phone. Gated on `kpiArmed` (round 4, 14/10/2026): Phase 0 found the KPI
+  // row sits above the fold less reliably than assumed — on a short phone
+  // viewport with the balance card above it, the row can still load mostly
+  // off-screen, so the count-up (like the chart below it) only starts once
+  // the row has actually scrolled into view, not at mount.
+  const kpiRef = useRef<HTMLDivElement>(null);
+  const kpiArmed = useArmOnView(kpiRef, 0.25);
+  const incomeLive = useCountUp(latest.income, 900, kpiArmed);
+  const expenseLive = useCountUp(latest.expense, 900, kpiArmed);
+  const bankLive = useCountUp(bank?.value ?? 0, 900, kpiArmed);
 
   return (
     <section id="t-ov">
@@ -136,7 +141,7 @@ export function PortalOverview({ overview, span: initialSpan, greeting, accounts
       <div className="pgrid">
         {showMine && <MyBalanceCard accounts={accounts} onMore={() => router.push(href({ tab: 'acc' }))} />}
 
-        <div className={`kpis ${showMine ? 'c8' : 'c12'}`} data-count={kpiCount}>
+        <div ref={kpiRef} className={`kpis ${showMine ? 'c8' : 'c12'}`} data-count={kpiCount}>
           {bank && (
             <div className="card kpi">
               <span className="kpi-ic" style={{ background: 'var(--brand-soft)', color: 'var(--brand)' }}><WalletIcon /></span>
