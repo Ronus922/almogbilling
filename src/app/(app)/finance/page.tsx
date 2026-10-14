@@ -21,7 +21,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type Param = string | string[] | undefined;
-type SearchParams = Promise<{ m?: Param; tab?: Param; view?: Param; apt?: Param; n?: Param; f?: Param }>;
+type SearchParams = Promise<{ m?: Param; tab?: Param; view?: Param; apt?: Param; n?: Param; f?: Param; type?: Param }>;
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
@@ -56,7 +56,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Sear
       <div>
         <AdminPreviewBar apartments={apartments} selected={apt} />
         <PortalScreen
-          params={{ tab: one(sp.tab), m: one(sp.m), n: one(sp.n), f: one(sp.f) }}
+          params={{ tab: one(sp.tab), m: one(sp.m), n: one(sp.n), f: one(sp.f), type: one(sp.type) }}
           user={{ name: account?.owner_display_name ?? null, apartments: apt ? [{ number: apt, role: 'owner' }] : [] }}
           accounts={account ? [account] : []}
           support={{

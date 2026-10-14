@@ -4,6 +4,7 @@ import {
 } from '@/lib/db/finance/portal';
 import { countContacts } from '@/lib/db/contacts';
 import { listPublishedBalances, listPublishedDecisions } from '@/lib/db/portalDecisions';
+import { parseDecisionTypeFilter } from '@/lib/decisions';
 import { toDecisionPortalView } from '@/lib/decisionsView';
 import { buildProxyUrl, PORTAL_DECISIONS_BUCKET } from '@/lib/storage/server';
 import { publishedMonthKeys, residentPeriodFor } from '@/lib/finance/resident';
@@ -46,6 +47,9 @@ export interface PortalScreenParams {
   m?: string;
   n?: string;
   f?: string;
+  /** The "dec" tab's type chips (round 2, 14/10/2026) — 'decision' | 'protocol',
+   *  else "הכל". Ignored on every other tab. */
+  type?: string;
 }
 
 export async function PortalScreen({
@@ -113,7 +117,20 @@ export async function PortalScreen({
         : previewCanOpenDecisionFiles
           ? Object.fromEntries(decisions.map((r) => [r.id, buildProxyUrl(PORTAL_DECISIONS_BUCKET, r.object_key)]))
           : {};
-      body = <PortalDecisions decisions={decisions.map(toDecisionPortalView)} staffFileUrls={staffFileUrls} />;
+      const initialType = parseDecisionTypeFilter(params.type);
+      body = (
+        // key: a navigation that changes `type` (the dock's "החלטות" /
+        // "פרוטוקולים" quick actions, round 2) must remount this component so
+        // its local filter state re-reads the new initialType — a chip click
+        // itself never remounts (history.replaceState, no router.push; see
+        // PortalDecisions' changeType, same trick as the tx tab's `?f=`).
+        <PortalDecisions
+          key={initialType}
+          decisions={decisions.map(toDecisionPortalView)}
+          staffFileUrls={staffFileUrls}
+          initialType={initialType}
+        />
+      );
       break;
     }
     case 'bal': {

@@ -35,6 +35,14 @@ export function isDecisionType(v: unknown): v is DecisionType {
   return typeof v === 'string' && (DECISION_TYPES as readonly string[]).includes(v);
 }
 
+/** The portal's "dec" tab type chips (14/10/2026, round 2) — "balance" never
+ *  reaches this tab (listPublishedDecisions excludes it), so the filter only
+ *  ever needs to split 'decision' from 'protocol'. */
+export type DecisionTypeFilter = 'all' | 'decision' | 'protocol';
+export function parseDecisionTypeFilter(v: string | undefined): DecisionTypeFilter {
+  return v === 'decision' || v === 'protocol' ? v : 'all';
+}
+
 /** What the portal and the CRM both show as the row's type tag: a decision
  *  carries its number when it has one ("החלטה 14/2026"); a protocol or a
  *  balance never does — decision_number is meaningless for either, and the

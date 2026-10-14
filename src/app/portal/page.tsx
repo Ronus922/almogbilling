@@ -12,7 +12,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type Param = string | string[] | undefined;
-type SearchParams = Promise<{ tab?: Param; m?: Param; n?: Param; f?: Param }>;
+type SearchParams = Promise<{ tab?: Param; m?: Param; n?: Param; f?: Param; type?: Param }>;
 
 const one = (v: Param) => (Array.isArray(v) ? v[0] : v);
 
@@ -54,7 +54,7 @@ export default async function PortalPage({ searchParams }: { searchParams: Searc
 
   return (
     <PortalScreen
-      params={{ tab: one(sp.tab), m: one(sp.m), n: one(sp.n), f: one(sp.f) }}
+      params={{ tab: one(sp.tab), m: one(sp.m), n: one(sp.n), f: one(sp.f), type: one(sp.type) }}
       user={{
         name: identity.name,
         apartments: identity.apartments.map((a) => ({ number: a.apartmentNumber, role: a.role })),

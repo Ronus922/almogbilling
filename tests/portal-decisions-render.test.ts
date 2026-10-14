@@ -84,17 +84,27 @@ describe('the portal decisions tab', () => {
     expect(h).toContain('>2025<');
   });
 
-  it('the toolbar is the search field alone — no category chips', () => {
+  it('the toolbar holds the search field and the type chips — never the reference\'s category chips', () => {
     const h = html([row()]);
     expect(h).toContain('חיפוש החלטה או פרוטוקול');
-    // The chips carried their own class and their own container — neither is
-    // rendered. ("אסיפות דיירים" is NOT asserted against: it legitimately
-    // appears in the page subtitle, "פרוטוקולי אסיפות דיירים".)
-    expect(h).not.toContain('chipf');
-    expect(h).not.toContain('class="chips"');
+    // Round 2 (14/10/2026): "הכל · החלטות · פרוטוקולים" — doc_type chips,
+    // not the reference's topic chips, which stay dropped (05/10/2026).
+    // ("אסיפות דיירים" is NOT asserted against: it legitimately appears in
+    // the page subtitle, "פרוטוקולי אסיפות דיירים".)
+    expect(h).toContain('class="chips"');
+    expect(h.match(/class="chipf( on)?"/g)).toHaveLength(3);
     for (const chip of ['תקציב וכספים', 'תחזוקה ושיפוצים']) {
       expect(h).not.toContain(chip);
     }
+  });
+
+  it('the balances tab carries one doc_type — no chips at all', () => {
+    const h = renderToStaticMarkup(
+      createElement(PortalDecisions, { decisions: [row({ doc_type: 'balance' })], kind: 'balances' }),
+    );
+    expect(h).toContain('חיפוש מאזן');
+    expect(h).not.toContain('chipf');
+    expect(h).not.toContain('class="chips"');
   });
 
   it('a row with no summary renders its buttons and no empty paragraph', () => {
