@@ -48,6 +48,7 @@ test.afterAll(async () => {
     await pool.query(`delete from public.issues where id = $1`, [id]);
   }
   if (secondId) await pool.query(`delete from public.users where id = $1`, [secondId]);
+  await pool.query(`delete from public.user_work_board_order where user_id = $1 and kind = 'issue'`, [adminId]);
   await pool.end();
 });
 
@@ -115,6 +116,14 @@ test('a second employee exists so a cross-lane reassignment has somewhere to go'
   });
   expect(res.status(), await res.text()).toBe(201);
   secondId = ((await res.json()) as { id: string }).id;
+
+  // Decision 3 (13/10/2026): a lane with zero open items is hidden by
+  // default, "accessible through customization" — pin both so the rest of
+  // this file's drag targets exist before either has a single open item.
+  const pin = await page.request.put('/api/work-items/issue/board-preferences', {
+    data: { employeeIds: [adminId, secondId] },
+  });
+  expect(pin.status(), await pin.text()).toBe(200);
 });
 
 test('an unassigned card sits in "ממתינים לשיבוץ"; dragging it into a lane assigns it', async ({ page }) => {

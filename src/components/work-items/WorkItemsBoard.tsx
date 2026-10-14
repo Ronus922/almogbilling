@@ -47,6 +47,7 @@ export function WorkItemsBoard({
   onOpen,
   onAssign,
   onReorder,
+  onReorderLanes,
   onMarkDone,
   onBlockedClick,
   onDelete,
@@ -59,12 +60,19 @@ export function WorkItemsBoard({
   onOpen: (item: WorkItem) => void;
   onAssign: (item: WorkItem, assignee: { kind: 'user' | 'supplier'; id: string } | null) => void;
   onReorder: (item: WorkItem, beforeId: string | null) => void;
+  /** The employee lane headers were dragged into this new order (13/10/2026,
+   *  "התאמת לוח" decision 2) — the full employee id list, in the new display
+   *  order. The caller persists it; "ספקים" is never part of this list, it is
+   *  not a reorderable lane. */
+  onReorderLanes?: (newEmployeeIds: string[]) => void;
   onMarkDone: (item: WorkItem) => void;
   onBlockedClick: (item: WorkItem) => void;
   onDelete: (item: WorkItem) => void;
 }) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [landing, setLanding] = useState<{ lane: string; beforeId: string | null } | null>(null);
+  const [laneDragKey, setLaneDragKey] = useState<string | null>(null);
+  const [laneLanding, setLaneLanding] = useState<string | null>(null);
   const [expandedRecent, setExpandedRecent] = useState<Set<string>>(new Set());
 
   // The reference (ref/issues-board.html, `.col{height:calc(100vh - 320px)}`)
@@ -135,6 +143,41 @@ export function WorkItemsBoard({
     return items.find((i) => i.id === dragId);
   }
 
+  // Lane header drag (13/10/2026, "התאמת לוח" decision 2) — a SEPARATE drag
+  // channel from card drag (own state, own data-transfer type), so dragging a
+  // card over a header never reorders lanes and vice versa. Horizontal, RTL:
+  // the lanes row is a plain flex row under dir="rtl", so DOM order renders
+  // right-to-left — the first lane is the rightmost. "Before" in DOM/array
+  // order therefore sits to the pointer's right, the mirror image of
+  // landingAboveIn's vertical (always top-to-bottom, RTL-independent) rule.
+  function laneLandingBefore(container: HTMLElement, x: number, skipKey: string): string | null {
+    for (const el of container.querySelectorAll<HTMLElement>('[data-lane]')) {
+      const key = el.getAttribute('data-lane');
+      if (!key || key === skipKey || key === 'suppliers') continue;
+      const r = el.getBoundingClientRect();
+      if (x > r.left + r.width / 2) return key;
+    }
+    return null;
+  }
+
+  function dropLane(beforeKey: string | null) {
+    const draggedKey = laneDragKey;
+    setLaneDragKey(null);
+    setLaneLanding(null);
+    if (!draggedKey || !onReorderLanes || draggedKey === beforeKey) return;
+    // Lane keys carry the `user:` prefix (laneKeyFor/the `lanes` useMemo
+    // above) — compare and reorder on the prefixed key, strip it only for
+    // the callback, which deals in raw employee ids.
+    const keys = employees.map((e) => `user:${e.id}`);
+    const from = keys.indexOf(draggedKey);
+    if (from === -1) return;
+    const without = keys.filter((k) => k !== draggedKey);
+    const toIdx = beforeKey ? without.indexOf(beforeKey) : without.length;
+    if (beforeKey && toIdx === -1) return;
+    const newKeys = [...without.slice(0, toIdx), draggedKey, ...without.slice(toIdx)];
+    onReorderLanes(newKeys.map((k) => k.slice('user:'.length)));
+  }
+
   function handleDrop(laneKey: string, laneAssignee: { kind: 'user' | 'supplier'; id: string } | null, beforeId: string | null) {
     const item = dragItem();
     setDragId(null);
@@ -203,10 +246,26 @@ export function WorkItemsBoard({
         className={cn(
           'flex w-[255px] shrink-0 flex-col rounded-2xl bg-[#EEF0F7] transition-colors',
           landing?.lane === lane.key ? 'ring-2 ring-brand/40' : '',
+          laneLanding === lane.key && 'ring-2 ring-brand/60',
+          laneDragKey === lane.key && 'opacity-50',
         )}
         style={{ height: laneHeight, minHeight: 340 }}
       >
-        <div className="flex items-center gap-2 px-3 pb-2 pt-[11px]">
+        <div
+          data-lane-handle={lane.key}
+          className={cn(
+            'flex items-center gap-2 px-3 pb-2 pt-[11px]',
+            canEdit && onReorderLanes && lane.key !== 'suppliers' && 'cursor-grab active:cursor-grabbing',
+          )}
+          draggable={canEdit && !!onReorderLanes && lane.key !== 'suppliers'}
+          onDragStart={(e) => {
+            e.stopPropagation();
+            e.dataTransfer.setData('application/x-work-lane', lane.key);
+            e.dataTransfer.effectAllowed = 'move';
+            setLaneDragKey(lane.key);
+          }}
+          onDragEnd={() => { setLaneDragKey(null); setLaneLanding(null); }}
+        >
           <span
             className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11.5px] font-bold text-white"
             style={{ background: lane.color }}
@@ -279,7 +338,17 @@ export function WorkItemsBoard({
         )}
       </div>
 
-      <div ref={lanesRowRef} className="flex gap-3 overflow-x-auto pb-2.5">
+      <div
+        ref={lanesRowRef}
+        className="flex gap-3 overflow-x-auto pb-2.5"
+        onDragOver={(e) => {
+          if (!laneDragKey) return;
+          e.preventDefault();
+          const beforeKey = laneLandingBefore(e.currentTarget, e.clientX, laneDragKey);
+          setLaneLanding((l) => (l === beforeKey ? l : beforeKey));
+        }}
+        onDrop={(e) => { e.preventDefault(); if (laneDragKey) dropLane(laneLandingBefore(e.currentTarget, e.clientX, laneDragKey)); }}
+      >
         {lanes.map(renderLaneColumn)}
       </div>
     </div>

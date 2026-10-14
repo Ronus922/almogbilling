@@ -107,8 +107,9 @@ npm audit --json | node -e 'const a=JSON.parse(require("fs").readFileSync(0));fo
 **Breaking changes שנוגעים לקוד שלנו — אין פורמליים (minor).** נבדק מול release notes של 16.3.0–16.3.4:
 
 - "Deprecate edge runtime" — אצלנו רק `export const runtime = 'nodejs'` (5 קבצים). לא נוגע.
-- אזהרת deprecation על `middleware.ts` (+ codemod ל-`proxy.ts`) — יש לנו `src/middleware.ts`. ממשיך לעבוד
-  ב-16.x, אזהרה בלבד. הסבה = שינוי שם הקובץ ו-`export function proxy`. לא חוסם.
+- אזהרת deprecation על `middleware.ts` (+ codemod ל-`proxy.ts`) — **הוסבה 13/10/2026** (`npx @next/codemod@canary
+  middleware-to-proxy .`): `src/middleware.ts` → `src/proxy.ts`, `export function middleware` → `export function proxy`,
+  `config`/`matcher` ללא שינוי. אפס שינוי התנהגות — rename בלבד.
 - ניקוי אופציות TypeScript מיושנות (`baseUrl`, `moduleResolution: node`) — `tsconfig.json` שלנו כבר על
   `moduleResolution: bundler` בלי `baseUrl`; TypeScript 5.9.3. לא נוגע.
 - דגלים שהוסרו (`partialFallbacks`, guard של `unstable_io`, prefetch ב-instant config) — לא בשימוש.

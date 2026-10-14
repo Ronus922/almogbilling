@@ -76,6 +76,10 @@ interface Props {
   /** Edit mode + canEdit: shows a delete button in the footer. The caller owns
    *  the confirmation dialog + the actual delete. */
   onDelete?: () => void;
+  /** Bumped by the screen's 15s poll while this panel is open (13/10/2026) —
+   *  re-runs loadDetail (comments only, never the editable form fields) so a
+   *  comment someone else just posted shows up without closing/reopening. */
+  refreshSignal?: number;
 }
 
 interface FormState {
@@ -120,7 +124,7 @@ function fromTask(t: TaskWithAssignee): FormState {
   };
 }
 
-export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete }: Props) {
+export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete, refreshSignal }: Props) {
   const isEdit = !!task;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
@@ -205,6 +209,13 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
       }
     }
   }, [open, task, loadDetail, loadCompletions]);
+
+  // 15s poll tick while open (parent only bumps this when open) — comments
+  // only, never the fields above (would blow away an in-progress edit).
+  useEffect(() => {
+    if (open && task && refreshSignal !== undefined) void loadDetail(task.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal]);
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));

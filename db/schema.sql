@@ -3,7 +3,6 @@
 --
 
 
-
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -3764,6 +3763,33 @@ COMMENT ON COLUMN public.user_reminders.created_by_name IS 'Snapshot of the crea
 
 
 --
+-- Name: user_work_board_order; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_work_board_order (
+    user_id uuid NOT NULL,
+    kind text NOT NULL,
+    employee_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT user_work_board_order_kind_check CHECK ((kind = ANY (ARRAY['issue'::text, 'task'::text])))
+);
+
+
+--
+-- Name: TABLE user_work_board_order; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.user_work_board_order IS 'Per-user, per-module (issue|task) board customization for /issues and /tasks: which employee lanes to show and in what order (13/10/2026). No row = no customization, fall back to the default algorithm.';
+
+
+--
+-- Name: COLUMN user_work_board_order.employee_ids; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.user_work_board_order.employee_ids IS 'The exact lane set, in display order. A stale id (deleted/inactive employee) is dropped at render time, not cleaned up here.';
+
+
+--
 -- Name: users; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4926,6 +4952,14 @@ ALTER TABLE ONLY public.user_reminder_order
 
 ALTER TABLE ONLY public.user_reminders
     ADD CONSTRAINT user_reminders_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: user_work_board_order user_work_board_order_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_work_board_order
+    ADD CONSTRAINT user_work_board_order_pkey PRIMARY KEY (user_id, kind);
 
 
 --
@@ -7589,6 +7623,14 @@ ALTER TABLE ONLY public.user_reminders
 
 
 --
+-- Name: user_work_board_order user_work_board_order_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_work_board_order
+    ADD CONSTRAINT user_work_board_order_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: wa_campaign_attachments wa_campaign_attachments_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7679,7 +7721,6 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 -- PostgreSQL database dump complete
 --
-
 
 
 --
@@ -7807,5 +7848,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261009210844'),
     ('20261010074609'),
     ('20261011220356'),
-    ('20261012065306')
+    ('20261012065306'),
+    ('20261013222645')
 ;

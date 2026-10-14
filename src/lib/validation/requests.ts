@@ -438,3 +438,14 @@ export const reminderOrderBodySchema = z.object({
     .max(500, { error: 'too_many_ids' })
     .refine((ids) => new Set(ids).size === ids.length, { error: 'duplicate_ids' }),
 });
+
+// PUT /api/work-items/[kind]/board-preferences — the exact set of employee
+// lanes the viewer wants shown on their /issues or /tasks board, in order.
+// Empty = show only the always-on "ממתינים לשיבוץ"/"ספקים" sections. A stale
+// id (left the roster) is dropped at render time, not rejected here.
+export const workBoardOrderBodySchema = z.object({
+  employeeIds: z
+    .array(z.uuid({ error: 'invalid_id' }), { error: 'invalid_ids' })
+    .max(200, { error: 'too_many_ids' })
+    .refine((ids) => new Set(ids).size === ids.length, { error: 'duplicate_ids' }),
+});

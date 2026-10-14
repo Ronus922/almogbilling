@@ -1,4 +1,4 @@
-// Sentry — edge runtime (src/middleware.ts). Loaded by src/instrumentation.ts.
+// Sentry — edge runtime (src/proxy.ts). Loaded by src/instrumentation.ts.
 // Same runtime read as the server (the edge sandbox gets the live process.env),
 // so the same restart switches it. No boot log here: pino (src/lib/logger.ts)
 // cannot run on the edge, and the server line already reports the DSN state.

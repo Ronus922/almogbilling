@@ -21,7 +21,7 @@
  * throws and needs no DSN in tests or local dev.
  *
  * Isomorphic: pino's browser build (console) on the client, stdout JSON on the
- * server. Not for the edge runtime — src/middleware.ts must not import it
+ * server. Not for the edge runtime — src/proxy.ts must not import it
  * (pino needs node streams there; it logs nothing today).
  */
 import pino, { type Logger as PinoLogger, type LoggerOptions } from 'pino';

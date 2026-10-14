@@ -33,6 +33,8 @@ import { WorkItemsBoard } from './WorkItemsBoard';
 import { WorkListTable } from './WorkListTable';
 import { WorkItemsArchiveTab } from './WorkItemsArchiveTab';
 import { BlockedToggleDialog } from './BlockedToggleDialog';
+import { BoardOrderPopover } from './BoardOrderPopover';
+import { defaultBoardLaneOrder } from '@/lib/workItems/boardOrder';
 import type { WorkItem, WorkItemKind, WorkItemKpis, WorkItemViewTab } from '@/lib/types/workItems';
 import type { IssueWithMeta } from '@/lib/types/issues';
 import type { TaskWithAssignee } from '@/lib/types/tasks';
@@ -135,6 +137,80 @@ export function WorkEntityScreen({
     if (tab === 'recurring') { void fetchSeries(); return; }
     void fetchItems();
   }, [tab, priorityFilter, assigneeFilter, search, fetchItems, fetchSeries]);
+
+  // Live updates without a manual refresh (13/10/2026, decision 1): poll every
+  // 15s, skipped while the tab is hidden (document.hidden), and also fired
+  // right away on refocus/tab-visible — the same `tick` covers both so a card
+  // created while the viewer was away still shows up within 15s of coming
+  // back. `pollTick` additionally drives the open panel's own comment refresh
+  // (IssueFormPanel/TaskFormPanel's `refreshSignal` — never the editable
+  // fields, see those components).
+  const [pollTick, setPollTick] = useState(0);
+  useEffect(() => {
+    function tick() {
+      if (document.hidden) return;
+      setPollTick((t) => t + 1);
+      if (tab === 'active') void fetchItems();
+      else if (tab === 'recurring') void fetchSeries();
+    }
+    const interval = setInterval(tick, 15_000);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', tick);
+      window.removeEventListener('focus', tick);
+    };
+  }, [tab, fetchItems, fetchSeries]);
+
+  // "התאמת לוח" (decision 2) — the viewer's saved employee-lane set for this
+  // module, in order. null = never customized: the board falls back to the
+  // default algorithm (decision 3) computed from the current `items` below.
+  const [boardOrder, setBoardOrder] = useState<string[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/work-items/${kind}/board-preferences`, { credentials: 'include' });
+        if (!res.ok) return;
+        const data = (await res.json()) as { employeeIds: string[] | null };
+        if (alive) setBoardOrder(data.employeeIds);
+      } catch { /* non-fatal — falls back to the default algorithm */ }
+    })();
+    return () => { alive = false; };
+  }, [kind]);
+
+  async function saveBoardOrder(next: string[]) {
+    setBoardOrder(next);
+    try {
+      const res = await fetch(`/api/work-items/${kind}/board-preferences`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ employeeIds: next }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      toast.error(`שמירת התאמת הלוח נכשלה: ${(err as Error).message}`);
+    }
+  }
+
+  // Default lane set (decision 3) when the viewer never customized — pure
+  // function, see src/lib/workItems/boardOrder.ts for the algorithm + its test.
+  const defaultBoardOrder = useMemo(
+    () => defaultBoardLaneOrder(items, assignees),
+    [items, assignees],
+  );
+
+  const boardEmployeeIds = boardOrder !== null
+    ? boardOrder.filter((id) => assignees.some((a) => a.id === id))
+    : defaultBoardOrder;
+  const boardEmployees = useMemo(
+    () => boardEmployeeIds
+      .map((id) => assignees.find((a) => a.id === id))
+      .filter((a): a is Assignee => !!a),
+    [boardEmployeeIds, assignees],
+  );
 
   const openById = useCallback(async (id: string) => {
     try {
@@ -328,6 +404,16 @@ export function WorkEntityScreen({
               </button>
             </div>
 
+            {view === 'board' && (
+              <div className="hidden lg:block">
+                <BoardOrderPopover
+                  employees={assignees}
+                  visibleIds={boardEmployeeIds}
+                  onChange={(next) => void saveBoardOrder(next)}
+                />
+              </div>
+            )}
+
             <Select value={priorityFilter} onValueChange={(v) => setPriorityFilter(v as typeof priorityFilter)}>
               <SelectTrigger className="h-10 w-32"><SelectValue>{priorityFilter === 'all' ? 'דחיפות: הכל' : priorityFilter === 'urgent' ? 'דחופה' : priorityFilter === 'high' ? 'גבוהה' : 'רגילה'}</SelectValue></SelectTrigger>
               <SelectContent>
@@ -360,12 +446,13 @@ export function WorkEntityScreen({
                 <WorkItemsBoard
                   items={items}
                   canEdit={canEdit}
-                  employees={assignees}
+                  employees={boardEmployees}
                   suppliers={suppliers}
                   hasSupplierItems={hasSupplierItems}
                   onOpen={openItem}
                   onAssign={handleAssign}
                   onReorder={handleReorder}
+                  onReorderLanes={(next) => void saveBoardOrder(next)}
                   onMarkDone={handleMarkDone}
                   onBlockedClick={setBlockedDialogItem}
                   onDelete={setDeleteTarget}
@@ -380,6 +467,7 @@ export function WorkEntityScreen({
                   suppliers={suppliers}
                   onOpen={openItem}
                   onAssign={handleAssign}
+                  onReorder={handleReorder}
                   onMarkDone={handleMarkDone}
                   onBlockedClick={setBlockedDialogItem}
                   onDelete={setDeleteTarget}
@@ -395,6 +483,7 @@ export function WorkEntityScreen({
               suppliers={suppliers}
               onOpen={openItem}
               onAssign={handleAssign}
+              onReorder={handleReorder}
               onMarkDone={handleMarkDone}
               onBlockedClick={setBlockedDialogItem}
               onDelete={setDeleteTarget}
@@ -428,6 +517,7 @@ export function WorkEntityScreen({
           onOpenChange={(o) => { if (!o) closePanel(); else setPanelOpen(o); }}
           onSaved={() => { setPanelOpen(false); void fetchItems(); }}
           onDelete={editingIssue && canEdit ? () => setDeleteTarget({ id: editingIssue.id }) : undefined}
+          refreshSignal={pollTick}
         />
       ) : (
         <TaskFormPanel
@@ -440,6 +530,7 @@ export function WorkEntityScreen({
           onOpenChange={(o) => { if (!o) closePanel(); else setPanelOpen(o); }}
           onSaved={() => { setPanelOpen(false); void fetchItems(); void fetchSeries(); }}
           onDelete={editingTask && canEdit ? () => setDeleteTarget({ id: editingTask.id }) : undefined}
+          refreshSignal={pollTick}
         />
       )}
 
