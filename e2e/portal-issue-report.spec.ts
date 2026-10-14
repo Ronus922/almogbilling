@@ -44,9 +44,12 @@ test('an owner reports a fault: errors, chips, photo limits, confirmation — an
   const ctx = await owner(browser, A2);
   const page = await ctx.newPage();
 
-  // Entry: the top bar of the portal.
+  // Entry: this context is ≤600px (owner(), above) — the mobile dock's own
+  // quick action, not the top-of-content button, which steps aside for it
+  // there (round 2, 14/10/2026).
   await page.goto('/portal');
-  await page.getByRole('link', { name: 'דיווח על תקלה' }).click();
+  await page.locator('.fab').click();
+  await page.getByRole('link', { name: 'פתח תקלה' }).click();
   await expect(page).toHaveURL(/\/portal\/report$/);
   await expect(page.getByRole('heading', { name: 'דיווח על תקלה' })).toBeVisible();
 
