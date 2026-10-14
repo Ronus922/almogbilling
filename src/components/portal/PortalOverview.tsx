@@ -6,21 +6,24 @@ import type { ResidentOverview } from '@/lib/types/finance';
 import type { PortalAccount } from '@/lib/types/portal';
 import { PORTAL_BLOCKS } from '@/lib/portal/blocks';
 import {
-  accountTotals, apartmentsLabel, catColor, categoryShares, fmtDateDMY, fmtDelta, fmtIls, fmtSigned, monthName,
+  accountTotals, apartmentsLabel, categoryShares, fmtDateDMY, fmtDelta, fmtIls, fmtSigned, monthName,
   monthShort, monthTitle, pctVsAverage, roundShekels, sumOverWindow, windowKeys, type OverviewSpan,
 } from '@/lib/portal/ui';
-import { PortalBarChart, type ChartPoint } from './PortalBarChart';
+import { useCountUp } from '@/lib/portal/useCountUp';
+import { PortalCategoryList } from './PortalCategoryList';
+import { PortalOverviewChart, type OverviewChartMonth, type OverviewChartView } from './PortalOverviewChart';
 import { PortalTxTable } from './PortalTxTable';
 import { ArrowDownIcon, ArrowUpIcon, DecisionsIcon, WalletIcon } from './PortalIcons';
 import { usePortalHref } from './usePortalHref';
 
-// The overview tab (#t-ov of the reference): greeting + "updated to <newest
-// published month>", the 12/6-month period select, the KPIs of the newest
-// month, income vs. expenses per month, where the money goes, the five newest
-// lines and the "decisions — coming soon" card. Everything comes from
-// ResidentOverview (published months only); the 6-month view is a slice of the
-// 12-month data set, so the select never leaves the page — it only rewrites
-// `?n=` so a refresh keeps it.
+// The overview tab (ref/almog-portal-overview, round 3 — 14/10/2026):
+// greeting + "updated to <newest published month>", the 12/6-month period
+// select, KPIs with count-up, income-vs-expenses in three animated views
+// (PortalOverviewChart), "לאן הולך הכסף" (PortalCategoryList, 8 + expand),
+// the five newest lines and the "decisions — coming soon" card. Everything
+// comes from ResidentOverview (published months only); the 6-month view is a
+// slice of the 12-month data set, so the select never leaves the page — it
+// only rewrites `?n=` so a refresh keeps it.
 //
 // The reference's blocks come and go with their data (PORTAL_BLOCKS): the dark
 // card needs an account, the cash KPI needs a bank balance (the switch and a
@@ -31,6 +34,13 @@ import { usePortalHref } from './usePortalHref';
 // the income KPI is green-ink, the expense KPI red-ink, the category list
 // red-ink, the tooltip lines by kind; the bank balance and the dark card stay
 // neutral (decision 28/09/2026).
+//
+// Every number on this screen is real (Phase 0, 14/10/2026): the reference's
+// "−3% מהממוצע השנתי" line is `pctVsAverage`, already computed from the
+// window's own months — nothing here is invented. The reference's "החלטות
+// ועד" card is itself a static "בקרוב" placeholder (no data behind it in the
+// reference either), so it stays exactly as it already was — this round does
+// not wire it to the live `dec` tab, which is outside its scope.
 
 /** The dark "היתרה שלך לתשלום" card (the reference's .mine): the owner's
  *  balance due summed over their records (an archived apartment counts like
@@ -77,6 +87,7 @@ export function PortalOverview({ overview, span: initialSpan, greeting, accounts
   const router = useRouter();
   const href = usePortalHref();
   const [span, setSpan] = useState<OverviewSpan>(initialSpan);
+  const [view, setView] = useState<OverviewChartView>('area');
 
   function changeSpan(next: OverviewSpan) {
     setSpan(next);
@@ -89,27 +100,23 @@ export function PortalOverview({ overview, span: initialSpan, greeting, accounts
   const latest = months.find((m) => m.month === overview.latest) ?? { month: overview.latest, income: 0, expense: 0 };
   const expensePct = pctVsAverage(latest.expense, months.map((m) => m.expense));
   const cats = categoryShares(overview.expense_categories.map((c) => ({ name: c.name, total: sumOverWindow(c.by_month, keys) })));
-  const points: ChartPoint[] = months.map((m) => ({
-    key: m.month,
-    label: monthShort(m.month),
-    bars: [
-      { value: m.income, fill: '#3D5AFE' },
-      { value: m.expense, fill: m.expense > m.income ? '#E5484D' : '#FDA4A7' },
-    ],
-    tip: [
-      { label: 'הכנסות', value: fmtIls(m.income), tone: 'in' },
-      { label: 'הוצאות', value: fmtIls(m.expense), tone: 'out' },
-    ],
-    // No month note exists in the finance model (Phase 0, 28/09/2026) — the
-    // line stays conditional so a future note field lights it up.
-    note: null,
-  }));
+  const chartMonths: OverviewChartMonth[] = months.map((m) => ({ key: m.month, label: monthShort(m.month), income: m.income, expense: m.expense }));
 
   const bank = PORTAL_BLOCKS.cashBalance ? overview.bank_balance : undefined;
   const showMine = PORTAL_BLOCKS.myBalance && accounts.length > 0;
   const kpiCount = bank ? 3 : 2;
   const openMonth = (key: string) => router.push(href({ tab: 'tx', m: key }));
   const bankDelta = bank?.previous ? bank.value - bank.previous.value : null;
+
+  // Count-up (ref: count(), 900ms ease-out cubic) — restarts whenever the
+  // target itself changes (switching the 12/6 span, or the published month
+  // moving on). Pure rAF, no `:hover` dependency, so it runs the same on a
+  // phone (Phase 0, 14/10/2026: the overview had no entrance animations of
+  // its own before this round, so there was no pre-existing Android bug to
+  // fix here — this is new code, built touch-safe from the start).
+  const incomeLive = useCountUp(latest.income);
+  const expenseLive = useCountUp(latest.expense);
+  const bankLive = useCountUp(bank?.value ?? 0);
 
   return (
     <section id="t-ov">
@@ -134,7 +141,7 @@ export function PortalOverview({ overview, span: initialSpan, greeting, accounts
             <div className="card kpi">
               <span className="kpi-ic" style={{ background: 'var(--brand-soft)', color: 'var(--brand)' }}><WalletIcon /></span>
               <div className="k">יתרת קופת הבניין · {monthName(bank.month)}</div>
-              <div className="v num">{fmtSigned(bank.value)}</div>
+              <div className="v num">{fmtSigned(bankLive)}</div>
               {bankDelta !== null && (
                 <div className="d">
                   <span className={`num ${bankDelta > 0 ? 'up' : bankDelta < 0 ? 'dn' : ''}`}>{fmtDelta(bankDelta)}</span>
@@ -146,13 +153,13 @@ export function PortalOverview({ overview, span: initialSpan, greeting, accounts
           <div className="card kpi">
             <span className="kpi-ic" style={{ background: 'var(--green-soft)', color: 'var(--green)' }}><ArrowUpIcon /></span>
             <div className="k">הכנסות · {monthName(overview.latest)}</div>
-            <div className="v num in">{fmtIls(latest.income)}</div>
+            <div className="v num in">{fmtIls(incomeLive)}</div>
             {PORTAL_BLOCKS.collectionRate && <div className="d">—</div>}
           </div>
           <div className="card kpi">
             <span className="kpi-ic" style={{ background: 'var(--red-soft)', color: 'var(--red)' }}><ArrowDownIcon /></span>
             <div className="k">הוצאות · {monthName(overview.latest)}</div>
-            <div className="v num out">{fmtIls(latest.expense)}</div>
+            <div className="v num out">{fmtIls(expenseLive)}</div>
             {expensePct !== null && (
               <div className="d">
                 <span className={`num ${expensePct > 0 ? 'dn' : expensePct < 0 ? 'up' : ''}`}>
@@ -167,26 +174,31 @@ export function PortalOverview({ overview, span: initialSpan, greeting, accounts
         <div className="card c8">
           <h3>
             הכנסות מול הוצאות
-            <div className="legend">
-              <span><i style={{ background: 'var(--brand)' }} />הכנסות</span>
-              <span><i style={{ background: '#FDA4A7' }} />הוצאות</span>
-            </div>
+            <span className="seg">
+              <button type="button" className={view === 'bars' ? 'on' : undefined} onClick={() => setView('bars')}>עמודות</button>
+              <button type="button" className={view === 'area' ? 'on' : undefined} onClick={() => setView('area')}>מגמה</button>
+              <button type="button" className={view === 'bal' ? 'on' : undefined} onClick={() => setView('bal')}>מאזן חודשי</button>
+            </span>
           </h3>
-          <PortalBarChart points={points} onPick={openMonth} ariaLabel="הכנסות מול הוצאות לפי חודש" />
+          <div className="legend">
+            {view === 'bal' ? (
+              <>
+                <span><i style={{ background: 'var(--green)' }} />עודף חודשי</span>
+                <span><i style={{ background: 'var(--red)' }} />גירעון חודשי</span>
+              </>
+            ) : (
+              <>
+                <span><i style={{ background: 'var(--brand)' }} />הכנסות</span>
+                <span><i style={{ background: view === 'area' ? '#F27D81' : '#FDA4A7' }} />הוצאות</span>
+              </>
+            )}
+          </div>
+          <PortalOverviewChart key={`${view}-${span}`} months={chartMonths} view={view} onPick={openMonth} />
         </div>
 
         <div className="card c4">
           <h3>לאן הולך הכסף<small><span className="num">{span}</span> חודשים</small></h3>
-          <div className="cats">
-            {cats.length === 0 && <p className="note">אין הוצאות בתקופה.</p>}
-            {cats.map((c, i) => (
-              <div className="cat" key={c.name}>
-                <span className="n"><i style={{ background: catColor(i) }} /><em title={c.name}>{c.name}</em></span>
-                <span className="a num out">{fmtIls(c.total)}<small>{c.pct}%</small></span>
-                <div className="bar"><b style={{ width: `${c.bar}%`, background: catColor(i) }} /></div>
-              </div>
-            ))}
-          </div>
+          <PortalCategoryList cats={cats} />
         </div>
 
         <div className="card c8">

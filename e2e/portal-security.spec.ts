@@ -298,7 +298,8 @@ test.describe('5. unpublished months', () => {
     expect(tx).toContain('כולל');
     expect(await page.$$eval('#t-tx .chart .grp text', (t) => t.map((x) => x.textContent))).not.toContain(hiddenShort());
     await page.goto('/portal?tab=ov');
-    const labels = await page.$$eval('.chart .grp text', (t) => t.map((x) => x.textContent));
+    // PortalOverviewChart (round 3, 14/10/2026) — a separate `.ovch` box.
+    const labels = await page.$$eval('.ovch .grp text', (t) => t.map((x) => x.textContent));
     expect(labels).not.toContain(hiddenShort());
     await ctx.close();
   });

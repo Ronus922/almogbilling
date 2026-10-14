@@ -39,8 +39,10 @@
 /* The reference's 4px top padding sits under a mock status bar; a real page
    has none, so the top padding is 10px (plus the notch inset). */
 .portal-skin .pir-hd { flex: none; display: flex; align-items: center; gap: 6px; padding: max(10px, env(safe-area-inset-top)) 8px 12px; border-bottom: 1px solid var(--border); }
-.portal-skin .pir-icb { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: var(--ink); flex: none; }
-.portal-skin a.pir-icb:hover { color: var(--ink); text-decoration: none; background: var(--field); }
+/* The back link (round 3, 14/10/2026): icon + visible label, not an
+   icon-only button — Ronen asked for a clear way back to the overview. */
+.portal-skin .pir-back { display: inline-flex; align-items: center; gap: 6px; height: 44px; padding: 0 10px; border-radius: 12px; color: var(--ink); font-size: 14.5px; font-weight: 600; flex: none; }
+.portal-skin a.pir-back:hover { color: var(--ink); text-decoration: none; background: var(--field); }
 .portal-skin .pir-tt { flex: 1; min-width: 0; }
 .portal-skin .pir-tt h1 { font-size: 21px; font-weight: 800; line-height: 1.2; }
 .portal-skin .pir-tt small { font-size: 13.5px; color: var(--ink-muted); }
@@ -159,8 +161,9 @@
   .portal-skin .pir-entry { display: none; }
   .portal-skin .pir-entry.pir-entry-always { display: flex; }
   .portal-skin .pir-entry.pir-entry-always .pbtn { width: 100%; }
-  /* The report screen's own sticky footer (below) floats above the dock,
-     which now covers this screen too (round 2) — the same 96px the rest of
-     the portal clears with `.wrap`'s padding-bottom. */
-  .portal-skin .pir-foot { bottom: 96px; }
+  /* Round 3 (14/10/2026): the dock no longer mounts on the FORM step (see
+     PortalIssueReport.tsx) — the scrollable body's image area had no
+     clearance for it and could end up hidden underneath. `.pir-foot` goes
+     back to flush-bottom; the confirmation screen (state 04, where the dock
+     still shows) uses its own non-sticky `.pir-done-foot`, unaffected. */
 }

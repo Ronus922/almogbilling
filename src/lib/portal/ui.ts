@@ -198,6 +198,20 @@ function trimNum(n: number): string {
   return String(Math.round(n * 10) / 10);
 }
 
+/** A symmetric "nice" axis for the overview chart's monthly-balance view:
+ *  two gridlines above zero and two below (step, 2·step — the reference's
+ *  fixed ±120K/±60K), covering the largest absolute monthly surplus/deficit
+ *  in the window. Same rounding as niceAxis, split over 2 steps instead of 4. */
+export function balanceAxis(maxAbs: number): { max: number; step: number } {
+  if (!(maxAbs > 0)) return { max: 2, step: 1 };
+  const raw = maxAbs / 2;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const norm = raw / mag;
+  const nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
+  const step = nice * mag;
+  return { max: step * 2, step };
+}
+
 export interface CategoryShare {
   name: string;
   total: number;

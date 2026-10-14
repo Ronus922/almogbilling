@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   accountTotals, apartmentsLabel, axisLabel, categoriesOf, categoryShares, firstName, flatEntries, fmtDateDMY, fmtDelta,
-  fmtEntryDate, fmtIls, fmtSigned, initials, monthShort, niceAxis, parseOverviewSpan, parsePortalTab,
+  balanceAxis, fmtEntryDate, fmtIls, fmtSigned, initials, monthShort, niceAxis, parseOverviewSpan, parsePortalTab,
   parseTxFilter, pctVsAverage, roundShekels, sanitizeCell,
   signClass, spansYears, sumExact, trendAxis, trendMonthLabel, windowKeys,
 } from '@/lib/portal/ui';
@@ -122,6 +122,13 @@ describe('overview arithmetic', () => {
     expect(axisLabel(100000)).toBe('100K');
     expect(axisLabel(1200000)).toBe('1.2M');
     expect(axisLabel(500)).toBe('500');
+  });
+  it('the overview chart\'s balance axis: symmetric, two steps per side, same cap as niceAxis with a coarser step', () => {
+    expect(balanceAxis(13480)).toEqual({ max: 20000, step: 10000 });
+    expect(balanceAxis(376312)).toEqual({ max: 400000, step: 200000 });
+    expect(balanceAxis(42950)).toEqual({ max: 50000, step: 25000 });
+    expect(balanceAxis(0)).toEqual({ max: 2, step: 1 });
+    expect(balanceAxis(-500)).toEqual({ max: 2, step: 1 });
   });
   it('category shares: largest first, share of total, width against the largest, zeros dropped', () => {
     const s = categoryShares([{ name: 'a', total: 100 }, { name: 'b', total: 300 }, { name: 'c', total: 0 }]);
