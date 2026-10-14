@@ -3,6 +3,7 @@
 --
 
 
+
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -3769,7 +3770,7 @@ COMMENT ON COLUMN public.user_reminders.created_by_name IS 'Snapshot of the crea
 CREATE TABLE public.user_work_board_order (
     user_id uuid NOT NULL,
     kind text NOT NULL,
-    employee_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    employee_ids text[] DEFAULT '{}'::text[] NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT user_work_board_order_kind_check CHECK ((kind = ANY (ARRAY['issue'::text, 'task'::text])))
 );
@@ -3786,7 +3787,7 @@ COMMENT ON TABLE public.user_work_board_order IS 'Per-user, per-module (issue|ta
 -- Name: COLUMN user_work_board_order.employee_ids; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.user_work_board_order.employee_ids IS 'The exact lane set, in display order. A stale id (deleted/inactive employee) is dropped at render time, not cleaned up here.';
+COMMENT ON COLUMN public.user_work_board_order.employee_ids IS 'The exact lane set, in display order. Each element is an employee uuid, or the literal sentinel ''suppliers'' (SUPPLIERS_LANE_ID) for the combined suppliers lane. A stale employee id (deleted/inactive) is dropped at render time, not cleaned up here.';
 
 
 --
@@ -7723,6 +7724,7 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 
 
+
 --
 -- Dbmate schema migrations
 --
@@ -7849,5 +7851,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010074609'),
     ('20261011220356'),
     ('20261012065306'),
-    ('20261013222645')
+    ('20261013222645'),
+    ('20261014074807')
 ;

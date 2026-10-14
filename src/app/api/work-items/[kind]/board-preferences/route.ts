@@ -18,9 +18,11 @@ function parseKind(raw: string): WorkItemKind | null {
 }
 
 // GET /api/work-items/[kind]/board-preferences  (issues|tasks:view)
-// Which employee lanes this viewer has pinned on their own board, in order.
-// null = never customized — the screen falls back to the default algorithm
-// (only employees with an open item in scope, busiest first then alphabetical).
+// Which lanes this viewer has pinned on their own board, in order — employee
+// uuids plus, optionally, the SUPPLIERS_LANE_ID sentinel for "ספקים". null =
+// never customized — the screen falls back to the default algorithm (only
+// employees/suppliers with an open item in scope, busiest first then
+// alphabetical for employees, suppliers last when present).
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
   const { kind: kindRaw } = await ctx.params;
   const kind = parseKind(kindRaw);
@@ -44,7 +46,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   }
 }
 
-// PUT /api/work-items/[kind]/board-preferences  { employeeIds: uuid[] }
+// PUT /api/work-items/[kind]/board-preferences  { employeeIds: (uuid|'suppliers')[] }
 // (issues|tasks:view — a personal display preference, not an edit of any
 // issue/task, so view access is enough; same reasoning as PUT
 // /api/user-reminders/order.) Full replace: exactly this set, in this order.

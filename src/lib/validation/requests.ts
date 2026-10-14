@@ -10,6 +10,7 @@ import { validatePhone } from '@/lib/validation';
 import { CHIP_RESIDENT_ROLES } from '@/lib/constants/chips';
 import { WHATSAPP_ATTACHMENT_LIMITS, WHATSAPP_MESSAGE_MAX_FILES } from '@/lib/constants/whatsappAttachments';
 import { FINANCE_RECEIPT_LIMITS } from '@/lib/constants/finance';
+import { SUPPLIERS_LANE_ID } from '@/lib/constants/workItems';
 import { isIsoDate, isMonthKey } from '@/lib/finance/period';
 import { cleanPhoneField } from '@/lib/whatsapp';
 import type { ChipHolderUpdate, ChipResidentRole } from '@/lib/types/chips';
@@ -439,13 +440,16 @@ export const reminderOrderBodySchema = z.object({
     .refine((ids) => new Set(ids).size === ids.length, { error: 'duplicate_ids' }),
 });
 
-// PUT /api/work-items/[kind]/board-preferences — the exact set of employee
-// lanes the viewer wants shown on their /issues or /tasks board, in order.
-// Empty = show only the always-on "ממתינים לשיבוץ"/"ספקים" sections. A stale
-// id (left the roster) is dropped at render time, not rejected here.
+// PUT /api/work-items/[kind]/board-preferences — the exact set of lanes the
+// viewer wants shown on their /issues or /tasks board, in order. Each element
+// is an employee uuid, or the literal sentinel SUPPLIERS_LANE_ID for the
+// combined "ספקים" lane (14/10/2026 — it is now a normal, pinnable lane like
+// any employee's, see the migration comment on employee_ids). Empty = show
+// only the always-on "ממתינים לשיבוץ" strip. A stale employee id (left the
+// roster) is dropped at render time, not rejected here.
 export const workBoardOrderBodySchema = z.object({
   employeeIds: z
-    .array(z.uuid({ error: 'invalid_id' }), { error: 'invalid_ids' })
+    .array(z.union([z.uuid(), z.literal(SUPPLIERS_LANE_ID)]), { error: 'invalid_ids' })
     .max(200, { error: 'too_many_ids' })
     .refine((ids) => new Set(ids).size === ids.length, { error: 'duplicate_ids' }),
 });

@@ -20,6 +20,7 @@ vi.mock('@/lib/db', () => ({
 }));
 
 const { getWorkBoardOrder, setWorkBoardOrder } = await import('@/lib/db/workBoardOrder');
+const { SUPPLIERS_LANE_ID } = await import('@/lib/constants/workItems');
 
 // Fake-but-valid-shaped uuids — employee_ids carries no FK (the migration's
 // own point: a stale id is dropped at render time, not rejected at write time).
@@ -77,5 +78,18 @@ d('getWorkBoardOrder / setWorkBoardOrder', () => {
         [adminId],
       ),
     ).rejects.toThrow();
+  });
+
+  // 14/10/2026, "התאמת לוח — ספקים + בחירה מפורשת גוברת": employee_ids widened
+  // from uuid[] to text[] so it can also carry the SUPPLIERS_LANE_ID sentinel,
+  // anywhere in the saved order, alongside real employee uuids.
+  it('round-trips the suppliers sentinel mixed with employee ids, in position', async () => {
+    await setWorkBoardOrder(adminId, 'issue', [EMP_B, SUPPLIERS_LANE_ID, EMP_A]);
+    expect(await getWorkBoardOrder(adminId, 'issue')).toEqual([EMP_B, SUPPLIERS_LANE_ID, EMP_A]);
+  });
+
+  it('round-trips a saved order that is the suppliers sentinel alone', async () => {
+    await setWorkBoardOrder(adminId, 'task', [SUPPLIERS_LANE_ID]);
+    expect(await getWorkBoardOrder(adminId, 'task')).toEqual([SUPPLIERS_LANE_ID]);
   });
 });

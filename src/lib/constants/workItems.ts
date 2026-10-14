@@ -51,3 +51,10 @@ export function avatarColorFor(id: string): string {
 
 export const SUPPLIER_LANE_COLOR = '#16A34A';
 export const UNASSIGNED_LANE_COLOR = '#8A92A6';
+
+/** Sentinel lane id for the combined "ספקים" board column — lives alongside
+ *  real employee uuids inside public.user_work_board_order.employee_ids
+ *  (14/10/2026, "התאמת לוח — ספקים + בחירה מפורשת גוברת"), so it can be
+ *  pinned/hidden/reordered through the exact same mechanism as an employee
+ *  lane. Never a valid uuid, so it can never collide with a real id. */
+export const SUPPLIERS_LANE_ID = 'suppliers';

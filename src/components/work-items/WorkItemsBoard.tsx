@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { landingAboveIn } from '@/lib/dnd/landing';
-import { avatarColorFor, SUPPLIER_LANE_COLOR } from '@/lib/constants/workItems';
+import { avatarColorFor, SUPPLIER_LANE_COLOR, SUPPLIERS_LANE_ID } from '@/lib/constants/workItems';
 import { WorkItemCard } from './WorkItemCard';
 import type { WorkItem } from '@/lib/types/workItems';
 
@@ -34,7 +34,7 @@ interface Lane {
 
 function laneKeyFor(item: WorkItem): string {
   if (!item.assignee) return 'unassigned';
-  if (item.assignee.kind === 'supplier') return 'suppliers';
+  if (item.assignee.kind === 'supplier') return SUPPLIERS_LANE_ID;
   return `user:${item.assignee.id}`;
 }
 
@@ -43,7 +43,7 @@ export function WorkItemsBoard({
   canEdit,
   employees,
   suppliers,
-  hasSupplierItems,
+  laneOrder,
   onOpen,
   onAssign,
   onReorder,
@@ -54,17 +54,26 @@ export function WorkItemsBoard({
 }: {
   items: WorkItem[];
   canEdit: boolean;
+  /** The full resolved employee lane roster, in the caller's order — used
+   *  both to render `user:*` lanes (filtered/ordered by `laneOrder` below)
+   *  and, unrelated to lane visibility, as the assignee-picker roster on
+   *  every card. */
   employees: { id: string; name: string }[];
   suppliers: { id: string; display_name: string }[];
-  hasSupplierItems: boolean;
+  /** Which lanes to render and in what order (14/10/2026, "התאמת לוח —
+   *  ספקים + בחירה מפורשת גוברת") — employee ids plus, optionally,
+   *  SUPPLIERS_LANE_ID for the combined "ספקים" lane. Default-computed or
+   *  already customized; the caller (WorkEntityScreen) owns that decision,
+   *  this component only renders the result. */
+  laneOrder: string[];
   onOpen: (item: WorkItem) => void;
   onAssign: (item: WorkItem, assignee: { kind: 'user' | 'supplier'; id: string } | null) => void;
   onReorder: (item: WorkItem, beforeId: string | null) => void;
-  /** The employee lane headers were dragged into this new order (13/10/2026,
-   *  "התאמת לוח" decision 2) — the full employee id list, in the new display
-   *  order. The caller persists it; "ספקים" is never part of this list, it is
-   *  not a reorderable lane. */
-  onReorderLanes?: (newEmployeeIds: string[]) => void;
+  /** A lane header was dragged into this new position (13/10/2026, "התאמת
+   *  לוח" decision 2; extended 14/10/2026 to include the suppliers lane) —
+   *  the full lane id list (employee uuids + optionally SUPPLIERS_LANE_ID),
+   *  in the new display order. The caller persists it as-is. */
+  onReorderLanes?: (newLaneIds: string[]) => void;
   onMarkDone: (item: WorkItem) => void;
   onBlockedClick: (item: WorkItem) => void;
   onDelete: (item: WorkItem) => void;
@@ -98,12 +107,18 @@ export function WorkItemsBoard({
   }, []);
 
   const lanes: Lane[] = useMemo(() => {
-    const out: Lane[] = employees.map((e) => ({
-      key: `user:${e.id}`, label: e.name, color: avatarColorFor(e.id), assignee: { kind: 'user' as const, id: e.id },
-    }));
-    if (hasSupplierItems) out.push({ key: 'suppliers', label: 'ספקים', color: SUPPLIER_LANE_COLOR, assignee: null });
+    const byId = new Map(employees.map((e) => [e.id, e]));
+    const out: Lane[] = [];
+    for (const id of laneOrder) {
+      if (id === SUPPLIERS_LANE_ID) {
+        out.push({ key: SUPPLIERS_LANE_ID, label: 'ספקים', color: SUPPLIER_LANE_COLOR, assignee: null });
+        continue;
+      }
+      const e = byId.get(id);
+      if (e) out.push({ key: `user:${e.id}`, label: e.name, color: avatarColorFor(e.id), assignee: { kind: 'user' as const, id: e.id } });
+    }
     return out;
-  }, [employees, hasSupplierItems]);
+  }, [employees, laneOrder]);
 
   const byLane = useMemo(() => {
     const m = new Map<string, WorkItem[]>();
@@ -153,7 +168,7 @@ export function WorkItemsBoard({
   function laneLandingBefore(container: HTMLElement, x: number, skipKey: string): string | null {
     for (const el of container.querySelectorAll<HTMLElement>('[data-lane]')) {
       const key = el.getAttribute('data-lane');
-      if (!key || key === skipKey || key === 'suppliers') continue;
+      if (!key || key === skipKey) continue;
       const r = el.getBoundingClientRect();
       if (x > r.left + r.width / 2) return key;
     }
@@ -166,16 +181,18 @@ export function WorkItemsBoard({
     setLaneLanding(null);
     if (!draggedKey || !onReorderLanes || draggedKey === beforeKey) return;
     // Lane keys carry the `user:` prefix (laneKeyFor/the `lanes` useMemo
-    // above) — compare and reorder on the prefixed key, strip it only for
-    // the callback, which deals in raw employee ids.
-    const keys = employees.map((e) => `user:${e.id}`);
+    // above), except the suppliers sentinel, which has none — reorder on the
+    // prefixed/raw keys as rendered, strip only the `user:` prefix for the
+    // callback, which deals in raw lane ids (employee uuids + optionally
+    // SUPPLIERS_LANE_ID).
+    const keys = lanes.map((l) => l.key);
     const from = keys.indexOf(draggedKey);
     if (from === -1) return;
     const without = keys.filter((k) => k !== draggedKey);
     const toIdx = beforeKey ? without.indexOf(beforeKey) : without.length;
     if (beforeKey && toIdx === -1) return;
     const newKeys = [...without.slice(0, toIdx), draggedKey, ...without.slice(toIdx)];
-    onReorderLanes(newKeys.map((k) => k.slice('user:'.length)));
+    onReorderLanes(newKeys.map((k) => (k === SUPPLIERS_LANE_ID ? k : k.slice('user:'.length))));
   }
 
   function handleDrop(laneKey: string, laneAssignee: { kind: 'user' | 'supplier'; id: string } | null, beforeId: string | null) {
@@ -255,9 +272,9 @@ export function WorkItemsBoard({
           data-lane-handle={lane.key}
           className={cn(
             'flex items-center gap-2 px-3 pb-2 pt-[11px]',
-            canEdit && onReorderLanes && lane.key !== 'suppliers' && 'cursor-grab active:cursor-grabbing',
+            canEdit && onReorderLanes && 'cursor-grab active:cursor-grabbing',
           )}
-          draggable={canEdit && !!onReorderLanes && lane.key !== 'suppliers'}
+          draggable={canEdit && !!onReorderLanes}
           onDragStart={(e) => {
             e.stopPropagation();
             e.dataTransfer.setData('application/x-work-lane', lane.key);
