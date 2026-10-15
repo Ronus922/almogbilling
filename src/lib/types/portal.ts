@@ -31,6 +31,10 @@ export interface OwnerPhone {
   blocked: boolean;
 }
 
+/** Which transport carries the OTP — SMS once a provider is configured,
+ *  WhatsApp as the always-live fallback (lib/portal/otpChannel.ts). */
+export type OtpChannel = 'sms' | 'whatsapp';
+
 /** How a person is connected to one apartment of an approved identity. */
 export type IdentityRelation = 'personal' | 'company_authorized' | 'family';
 

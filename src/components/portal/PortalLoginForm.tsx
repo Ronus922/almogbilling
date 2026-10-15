@@ -12,6 +12,7 @@ import { PortalWarnNotice } from '@/components/portal/PortalWarnNotice';
 import { BTN, BTN_SEC } from './portalButtons';
 import { joinRequestSubject } from '@/lib/portal/support';
 import { PORTAL_OTP_RESEND_COOLDOWN_SEC, pointsAtManagementCompany } from '@/lib/constants/portal';
+import type { OtpChannel } from '@/lib/types/portal';
 
 // /portal/login — the whole screen: brand side + form pane, two steps on one
 // page (phone → code). The screen is owned by this client component rather than
@@ -45,6 +46,7 @@ type Step = 'phone' | 'code';
 interface ApiResponse {
   ok?: boolean;
   sent?: boolean;
+  channel?: OtpChannel;
   locked?: boolean;
   lockedUntil?: string | null;
   notRegistered?: boolean;
@@ -143,6 +145,9 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
   const [prefixEditing, setPrefixEditing] = useState(false);
   // Exactly the string the request carried — the verify step sends the same one.
   const [sentPhone, setSentPhone] = useState('');
+  // Which transport the last successful send actually used — the server
+  // decides (resolveDefaultChannel), this only mirrors its answer.
+  const [channel, setChannel] = useState<OtpChannel>('whatsapp');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [phoneInvalid, setPhoneInvalid] = useState(false);
@@ -168,14 +173,22 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
     return () => clearInterval(t);
   }, [cooldown]);
 
-  /** The one code-request call: step 1's submit and step 2's resend. */
-  async function requestCode(): Promise<OtpRequestOutcome> {
+  /**
+   * The one code-request call: step 1's submit and step 2's resend.
+   * `requestedChannel` is omitted for both of those (the server picks its own
+   * default) and set to 'whatsapp' only by the code step's "שלח בוואטסאפ
+   * במקום" — the one case where the resident asks for a specific channel.
+   */
+  async function requestCode(requestedChannel?: OtpChannel): Promise<OtpRequestOutcome> {
     const outgoing = composePhone(prefix, phone);
-    const { status, data } = await post('/api/portal/otp/request', { phone: outgoing });
+    const body: { phone: string; channel?: OtpChannel } = { phone: outgoing };
+    if (requestedChannel) body.channel = requestedChannel;
+    const { status, data } = await post('/api/portal/otp/request', body);
     if (data.sent) {
       setSentPhone(outgoing);
+      if (data.channel) setChannel(data.channel);
       setCooldown(PORTAL_OTP_RESEND_COOLDOWN_SEC);
-      return { sent: true };
+      return { sent: true, channel: data.channel };
     }
     if (typeof data.retryAfterSec === 'number' && data.retryAfterSec > 0) setCooldown(data.retryAfterSec);
     return {
@@ -269,7 +282,7 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
         >
               <h1 className="text-[24px] font-extrabold leading-[normal] text-[#0F172A] min-[601px]:text-[32px]">כניסת בעלי דירות</h1>
               <p className="mt-[6px] text-[15px] leading-[1.5] text-[#64748B] min-[601px]:mt-[8px] min-[601px]:leading-[1.55]">
-                נשלח אליך קוד חד-פעמי בוואטסאפ למספר הטלפון הרשום בוועד הבית.
+                נשלח אליך קוד חד-פעמי למספר הטלפון הרשום בוועד הבית.
               </p>
 
               <div className="mt-[20px] flex flex-col gap-[8px] min-[601px]:mt-[24px]">
@@ -404,6 +417,7 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
             sentPhone={sentPhone}
             phoneDisplay={formatPhoneForDisplay(prefix, phone)}
             initialCooldown={cooldown}
+            initialChannel={channel}
             support={support}
             onBack={backToPhone}
             onNotRegistered={notRegisteredFromCodeStep}

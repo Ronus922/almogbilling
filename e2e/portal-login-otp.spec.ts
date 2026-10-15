@@ -30,12 +30,17 @@ const GALIT = { e164: '+972503333333', local: '050-333-3333', typed: '0503333333
 // single run simply gets no second code.
 const YOSSI = { e164: '+972501111112', local: '050-111-1112', typed: '0501111112' };
 const RUTI = { e164: '+972502222223', local: '050-222-2223', typed: '0502222223' };
+const MAYA = { e164: '+972503333334', local: '050-333-3334', typed: '0503333334' };
+const ASAF = { e164: '+972504444445', local: '050-444-4445', typed: '0504444445' };
 const NOT_AN_OWNER = '0509999999';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
 pool.on('error', () => undefined);
 
-const PHONES = [DANA.e164, DAVID.e164, BENNY.e164, GALIT.e164, YOSSI.e164, RUTI.e164, '+972509999999'];
+const PHONES = [
+  DANA.e164, DAVID.e164, BENNY.e164, GALIT.e164, YOSSI.e164, RUTI.e164, MAYA.e164, ASAF.e164,
+  '+972509999999',
+];
 
 /**
  * The SEEDED portal sessions (db/seed/e2e.sql: e2e-owner-a1 and friends),
@@ -155,6 +160,36 @@ test.describe('portal login — the whole flow', () => {
       dt.setData('text', c);
       el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
     }, code);
+    await page.waitForURL('**/portal');
+  });
+
+  test('pasting the WHOLE WhatsApp message (not just the bare code) still fills and verifies', async ({ page }) => {
+    // 15/10/2026: extractOtpCode must pull the one 6-digit run out of real
+    // surrounding text (the validity line sits right next to the code), not
+    // just handle a clean copy of the digits alone.
+    await requestCode(page, MAYA.typed);
+    const code = await codeFor(MAYA.e164);
+    const wholeMessage = [
+      'קוד הכניסה שלך לפורטל בעלי הדירות:',
+      `\`${code}\``,
+      '',
+      'הקוד תקף ל-5 דקות.',
+      'אם לא ביקשת קוד — התעלם מההודעה ופנה לחברת הניהול.',
+    ].join('\n');
+    await boxes(page).first().evaluate((el, text) => {
+      const dt = new DataTransfer();
+      dt.setData('text', text);
+      el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    }, wholeMessage);
+    await page.waitForURL('**/portal');
+  });
+
+  test('"הדבק קוד" reads the clipboard itself and verifies', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await requestCode(page, ASAF.typed);
+    const code = await codeFor(ASAF.e164);
+    await page.evaluate((c) => navigator.clipboard.writeText(`הקוד שלך: ${c}`), code);
+    await page.getByRole('button', { name: 'הדבק קוד' }).click();
     await page.waitForURL('**/portal');
   });
 
@@ -310,7 +345,7 @@ test.describe('the OTP states that decide whether someone gets in', () => {
     await page.waitForURL('**/portal');
   });
 
-  test('09: once the timer runs out the resend card appears — WhatsApp only, no SMS', async ({ page }) => {
+  test('09: once the timer runs out the resend card appears — WhatsApp only, no redundant fallback button', async ({ page }) => {
     // The clock is faked before anything loads, so the screen's own interval is
     // the one being fast-forwarded — 45 real seconds is longer than the test
     // timeout and waiting for them would prove nothing extra.
@@ -325,8 +360,11 @@ test.describe('the OTP states that decide whether someone gets in', () => {
     await page.clock.runFor('00:50');
     await expect(page.getByText('לא קיבלת את הקוד?')).toBeVisible();
     await expect(page.getByRole('button', { name: 'שלח שוב בוואטסאפ' })).toBeVisible();
-    // There is no SMS channel in this system — the reference's second button
-    // is deliberately not built.
+    // 15/10/2026: no SMS provider is configured in this stack, so the server
+    // keeps defaulting to WhatsApp (otpChannel.ts#resolveDefaultChannel) —
+    // and "שלח בוואטסאפ במקום" must NOT appear next to it: it would offer
+    // the one channel already in use.
     await expect(page.getByText('SMS')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'שלח בוואטסאפ במקום' })).toHaveCount(0);
   });
 });

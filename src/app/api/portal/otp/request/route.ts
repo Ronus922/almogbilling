@@ -4,6 +4,7 @@ import { portalOtpRequestBodySchema } from '@/lib/validation/requests';
 import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { toPortalE164 } from '@/lib/portal/phone';
 import { sendPortalCode, alertManagerAboutLockout } from '@/lib/portal/send';
+import { resolveDefaultChannel } from '@/lib/portal/otpChannel';
 import { findPortalRegistration } from '@/lib/db/portal/identity';
 import { issueCode, resendCooldownRemaining } from '@/lib/db/portal/otp';
 import { activeLockout, createLockout, lockoutMinutesRemaining } from '@/lib/db/portal/lockouts';
@@ -139,17 +140,21 @@ export async function POST(req: Request) {
   }
 
   const { code } = await issueCode(phoneE164, ip);
+  // Omitted by the client = our own default (SMS once configured, else
+  // WhatsApp); "שלח בוואטסאפ במקום" sends 'whatsapp' explicitly. A resident
+  // can only ever land on a channel this route would pick on its own.
+  const channel = body.data.channel ?? resolveDefaultChannel();
   await logPortalEvent({
     phoneE164, eventType: 'code_requested',
-    apartmentNumbers: active.apartmentNumbers, ip, userAgent,
+    apartmentNumbers: active.apartmentNumbers, ip, userAgent, details: { channel },
   });
 
-  const sent = await sendPortalCode(phoneE164, code);
+  const sent = await sendPortalCode(phoneE164, code, channel);
   if (!sent.ok) {
     await logPortalEvent({
       phoneE164, eventType: 'send_failed',
       apartmentNumbers: active.apartmentNumbers, ip, userAgent,
-      details: { error: sent.error },
+      details: { error: sent.error, channel },
     });
     return NextResponse.json(
       { ok: false, message: 'שליחת הקוד נכשלה. נסה שוב בעוד רגע, או פנה לחברת הניהול.' },
@@ -159,7 +164,7 @@ export async function POST(req: Request) {
 
   await logPortalEvent({
     phoneE164, eventType: 'code_sent',
-    apartmentNumbers: active.apartmentNumbers, ip, userAgent,
+    apartmentNumbers: active.apartmentNumbers, ip, userAgent, details: { channel },
   });
-  return NextResponse.json({ ok: true, sent: true });
+  return NextResponse.json({ ok: true, sent: true, channel });
 }
