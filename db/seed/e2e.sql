@@ -79,11 +79,16 @@ select v.a, v.o, v.rt, v.n, v.p from (values
 on conflict (apartment_number) do update
   set resident_type = excluded.resident_type, tenant_name = excluded.tenant_name, tenant_phone = excluded.tenant_phone;
 
--- The second owner of A and of B: an extra owner on the card.
+-- The second owner of A, B, C and D: an extra owner on the card. C's and D's
+-- (מאיה / אסף) exist so e2e/portal-login-otp.spec.ts's SMS-channel tests
+-- (15/10/2026) get phones of their own too — GALIT and DAVID's own numbers
+-- are already spent on other tests in that file.
 insert into public.contact_people (contact_id, role, name, phone, sort_order)
 select c.id, 'owner', v.n, v.p, 0
   from (values ('E2E-A', 'יוסי E2E', '+972501111112'),
-               ('E2E-B', 'רותי E2E', '+972502222223')) v(a, n, p)
+               ('E2E-B', 'רותי E2E', '+972502222223'),
+               ('E2E-C', 'מאיה E2E', '+972503333334'),
+               ('E2E-D', 'אסף E2E', '+972504444445')) v(a, n, p)
   join public.contacts c on c.apartment_number = v.a
  where not exists (select 1 from public.contact_people x
                     where x.contact_id = c.id and x.role = 'owner' and x.phone = v.p);
@@ -104,12 +109,14 @@ select v.a, v.n, v.p, v.act from (values
   ('E2E-A', 'יוסי E2E', '+972501111112', true),
   ('E2E-A', 'CANARY-DISABLED', '+972505555555', false),
   ('E2E-B', 'בני E2E', '+972502222222', true),
-  -- A second owner on B, so e2e/portal-login-otp.spec.ts can give every test a
-  -- phone of its own: the 45-second resend cooldown means a number that has
-  -- just been sent a code cannot be sent another inside one run.
+  -- A second owner on B/C/D, so e2e/portal-login-otp.spec.ts can give every
+  -- test a phone of its own: the 45-second resend cooldown means a number
+  -- that has just been sent a code cannot be sent another inside one run.
   ('E2E-B', 'רותי E2E', '+972502222223', true),
   ('E2E-C', 'גלית E2E', '+972503333333', true),
-  ('E2E-D', 'דוד E2E', '+972504444444', true)
+  ('E2E-C', 'מאיה E2E', '+972503333334', true),
+  ('E2E-D', 'דוד E2E', '+972504444444', true),
+  ('E2E-D', 'אסף E2E', '+972504444445', true)
 ) v(a, n, p, act)
 on conflict (apartment_number, phone_e164) do nothing;
 

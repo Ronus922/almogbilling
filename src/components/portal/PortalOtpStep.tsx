@@ -5,12 +5,14 @@ import {
   type ClipboardEvent, type FormEvent, type KeyboardEvent,
 } from 'react';
 import {
-  CircleAlert, CircleCheck, Info, LoaderCircle, Lock, RefreshCw, TriangleAlert, WifiOff,
+  CircleAlert, CircleCheck, ClipboardPaste, Info, LoaderCircle, Lock, RefreshCw, TriangleAlert, WifiOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PortalSupportAction, type PortalSupport } from '@/components/portal/PortalSupportAction';
 import { formatLock, PortalOtpOverlay, type PortalOtpOverlayKind } from '@/components/portal/PortalOtpOverlay';
 import { BTN, BTN_DIS, BTN_GHOST, BTN_OK, BTN_ON, BTN_SEC, LINK } from './portalButtons';
+import { extractOtpCode } from '@/lib/portal/otpCode';
+import type { OtpChannel } from '@/lib/types/portal';
 import {
   PORTAL_OTP_DIGITS, PORTAL_OTP_RESEND_COOLDOWN_SEC, PORTAL_OTP_TTL_MINUTES,
   portalLastAttemptMessage,
@@ -21,13 +23,24 @@ import {
 // here; which one shows is derived from `phase`, the server's answer and the
 // two timers, never set by hand.
 //
-// Three DECLARED departures from the reference, all of them Ronen's:
+// Two DECLARED departures from the reference, both Ronen's:
 //   • Five wrong attempts before a lockout, not three (the reference's 3 is a
 //     design-doc value; the system's ceiling is PORTAL_OTP_MAX_ATTEMPTS).
-//   • NO SMS. There is no SMS channel in this system, so state 09's
-//     "שלח ב-SMS במקום" is not built and the card offers WhatsApp alone.
 //   • State 16's "שליחת בקשת הצטרפות" is not built either — no such flow
 //     exists — so the sheet offers "הזנת מספר אחר", which does.
+//
+// CHANNELS (15/10/2026, "SMS ראשי, וואטסאפ גיבוי"): `channel` is whichever
+// transport the last successful send actually used — SMS once a provider is
+// configured (lib/portal/otpChannel.ts), WhatsApp until then and always as
+// the explicit "שלח בוואטסאפ במקום" fallback. That button only appears when
+// the current channel is NOT already WhatsApp — offering someone the one
+// channel already in use would be a button that does nothing.
+//
+// CODE INPUT: a pasted or OS-autofilled (one-time-code autocomplete, WebOTP)
+// string is never trusted digit-for-digit — extractOtpCode() pulls the one
+// run of exactly six consecutive digits out of it, so the validity line's
+// "5 דקות" or the WebOTP trailer's domain can sit right next to the code in
+// the same message without corrupting what gets typed into the boxes.
 //
 // THE BUG THIS SCREEN FIXES (29/09/2026): the previous boxes kept their digits
 // after a wrong code and auto-submitted on every keystroke of the correction,
@@ -49,12 +62,17 @@ interface Msg { tone: Tone; text: string; box?: boolean; icon?: 'wifi' }
 
 export interface OtpRequestOutcome {
   sent: boolean;
+  channel?: OtpChannel;
   locked?: boolean;
   lockedUntil?: string | null;
   notRegistered?: boolean;
   message?: string;
   retryAfterSec?: number;
 }
+
+/** "שלחנו קוד... ב-X למספר" / "קוד חדש נשלח ב-X" — the one place either
+ *  channel's name is spelled out, so the two can never drift apart. */
+const CHANNEL_LABEL: Record<OtpChannel, string> = { sms: 'ב-SMS', whatsapp: 'בוואטסאפ' };
 
 const TONE_TEXT: Record<Tone, string> = {
   err: 'text-[#B03A3E]',
@@ -102,13 +120,15 @@ function useCountdown(initial: number): [number, (n: number) => void] {
 
 
 export function PortalOtpStep({
-  sentPhone, phoneDisplay, initialCooldown, support, onBack, onNotRegistered, onRequestCode,
+  sentPhone, phoneDisplay, initialCooldown, initialChannel, support, onBack, onNotRegistered, onRequestCode,
 }: {
   /** Exactly the string the request carried — the verify sends the same one. */
   sentPhone: string;
   /** 052-418-7730 — display only. */
   phoneDisplay: string;
   initialCooldown: number;
+  /** Which channel the code that brought us here actually went out on. */
+  initialChannel: OtpChannel;
   /** NEXT_PUBLIC_PORTAL_SUPPORT_PHONE / _EMAIL, resolved on the server. With
    *  neither set the "פנייה לחברת הניהול" action is not drawn at all, rather
    *  than drawing a button that reaches nobody. */
@@ -120,8 +140,9 @@ export function PortalOtpStep({
    *  two things to keep in step. */
   onNotRegistered: () => void;
   /** Asks the server for another code. Owned by the parent because the phone
-   *  step uses the very same call for the first send. */
-  onRequestCode: () => Promise<OtpRequestOutcome>;
+   *  step uses the very same call for the first send. An explicit `channel`
+   *  is "שלח בוואטסאפ במקום"; omitted is a same-channel resend. */
+  onRequestCode: (channel?: OtpChannel) => Promise<OtpRequestOutcome>;
 }) {
   const [digits, setDigits] = useState<string[]>(() => BOXES.map(() => ''));
   const [rawPhase, setPhase] = useState<Phase>('idle');
@@ -130,6 +151,7 @@ export function PortalOtpStep({
   const [toast, setToast] = useState<string | null>(null);
   const [shake, setShake] = useState(false);
   const [resending, setResending] = useState(false);
+  const [channel, setChannel] = useState<OtpChannel>(initialChannel);
   const [cooldown, setCooldown] = useCountdown(initialCooldown);
   const [lockLeft, setLockLeft] = useCountdown(0);
   // The lock lifts by itself the moment its countdown runs out — derived, so
@@ -143,6 +165,11 @@ export function PortalOtpStep({
    *  code is never sent twice. State, not a ref: the primary button's enabled
    *  state is derived from it. */
   const [lastSubmitted, setLastSubmitted] = useState<string | null>(null);
+  /** Always the current touch()+fillFrom() pair (see the effect with no
+   *  dependency list below), so the WebOTP subscription — which subscribes
+   *  exactly ONCE, on mount — can still act on today's digits/phase whenever
+   *  Android actually hands it a code, not whatever existed at mount. */
+  const autoFillRef = useRef<(value: string) => void>(() => {});
 
   const code = digits.join('');
   const complete = digits.every((d) => d !== '');
@@ -162,6 +189,38 @@ export function PortalOtpStep({
     const t = setTimeout(() => setShake(false), 800);
     return () => clearTimeout(t);
   }, [shake]);
+
+  useEffect(() => {
+    autoFillRef.current = (value: string) => {
+      if (inert) return;
+      const base = touch();
+      fillFrom(0, value, base);
+    };
+  });
+
+  // WebOTP API: Android Chrome reads the SMS itself and hands the code to
+  // the page — no clipboard, no tap. Subscribes once; silently does nothing
+  // where unsupported (desktop, iOS, any browser without OTPCredential) or
+  // when the permission prompt is dismissed. Aborted on unmount (leaving step
+  // 2, e.g. "שינוי מספר") so a stale listener can never fill digits on a
+  // screen the resident isn't looking at anymore.
+  useEffect(() => {
+    // Not in TypeScript's DOM lib (an experimental API) — read through
+    // `unknown` rather than widen CredentialRequestOptions/Credential.
+    if (typeof window === 'undefined' || !('OTPCredential' in window) || !navigator.credentials) return undefined;
+    const controller = new AbortController();
+    const get = navigator.credentials.get as (opts: unknown) => Promise<unknown>;
+    get({ otp: { transport: ['sms'] }, signal: controller.signal })
+      .then((cred) => {
+        const raw = cred && typeof cred === 'object' && 'code' in cred
+          ? String((cred as { code: unknown }).code)
+          : '';
+        const found = extractOtpCode(raw);
+        if (found) autoFillRef.current(found);
+      })
+      .catch(() => { /* unsupported, denied, or aborted — nothing to do */ });
+    return () => controller.abort();
+  }, []);
 
   function reset() {
     setDigits(BOXES.map(() => ''));
@@ -320,29 +379,51 @@ export function PortalOtpStep({
     }
   }
 
+  /** Any pasted text, not just a bare code — extractOtpCode pulls the one
+   *  run of six consecutive digits out of it. No clean run → nothing is
+   *  prevented, so the browser's own paste still lands in this one box. */
   function handlePaste(i: number, ev: ClipboardEvent<HTMLInputElement>) {
     if (inert) return;
-    const pasted = ev.clipboardData.getData('text').replace(/\D+/g, '');
-    if (!pasted) return;
+    const found = extractOtpCode(ev.clipboardData.getData('text'));
+    if (!found) return;
     ev.preventDefault();
     const base = touch();
-    fillFrom(pasted.length >= PORTAL_OTP_DIGITS ? 0 : i, pasted.slice(0, PORTAL_OTP_DIGITS), base);
+    fillFrom(0, found, base);
+  }
+
+  /** "הדבק קוד" — a user gesture (the click itself) rather than relying on a
+   *  paste event into a box, which some mobile browsers restrict. Silent on
+   *  any failure (denied permission, empty/insecure clipboard, unsupported
+   *  API): the boxes stay exactly as they were and a direct paste into a box
+   *  still works. */
+  async function pasteFromClipboard() {
+    if (inert) return;
+    try {
+      const text = await navigator.clipboard.readText();
+      const found = extractOtpCode(text);
+      if (!found) return;
+      const base = touch();
+      fillFrom(0, found, base);
+    } catch { /* no permission, no clipboard API, or nothing useful on it */ }
   }
 
   /** 09 → 10. A new code cancels the previous one server-side, which is also
-   *  what resets the attempt counter — the boxes start empty again. */
-  async function resend() {
+   *  what resets the attempt counter — the boxes start empty again.
+   *  `requestedChannel` set only by "שלח בוואטסאפ במקום"; a plain resend asks
+   *  for the same channel again by leaving it unset. */
+  async function resend(requestedChannel?: OtpChannel) {
     if (resending || cooldown > 0 || phase === 'locked') return;
     setResending(true);
     setMsg(null);
     setOverlay(null);
     try {
-      const out = await onRequestCode();
+      const out = await onRequestCode(requestedChannel);
       if (out.sent) {
         reset();
         setPhase('idle');
         setCooldown(PORTAL_OTP_RESEND_COOLDOWN_SEC);
-        setToast('קוד חדש נשלח בוואטסאפ');
+        if (out.channel) setChannel(out.channel);
+        setToast(`קוד חדש נשלח ${CHANNEL_LABEL[out.channel ?? channel]}`);
         boxRefs.current[0]?.focus();
         return;
       }
@@ -407,11 +488,17 @@ export function PortalOtpStep({
 
       <form onSubmit={onSubmitForm} noValidate className="flex w-full flex-1 flex-col min-[601px]:max-w-[400px] min-[601px]:flex-none">
         <h1 className="text-[28px] font-extrabold leading-[normal] text-[#0F172A] min-[601px]:text-[32px]">הזנת קוד</h1>
-        <p className="mt-[10px] text-[15.5px] leading-[1.55] text-[#64748B]">שלחנו קוד בן {PORTAL_OTP_DIGITS} ספרות בוואטסאפ למספר</p>
+        <p className="mt-[10px] text-[15.5px] leading-[1.55] text-[#64748B]">שלחנו קוד בן {PORTAL_OTP_DIGITS} ספרות {CHANNEL_LABEL[channel]} למספר</p>
         <div className="mt-[6px] flex items-center gap-[8px]">
-          <span aria-hidden className="grid size-[22px] shrink-0 place-items-center rounded-full bg-[#25D366]">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="#fff" aria-hidden><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.4A10 10 0 1 0 12 2Zm5.3 14.2c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .1-1.7-.1a12 12 0 0 1-5.6-4.9c-.4-.7-.9-1.6-.9-2.4 0-.9.5-1.4.7-1.6.2-.2.4-.3.6-.3h.5c.2 0 .4 0 .5.4l.7 1.7c.1.2 0 .4-.1.5l-.3.4c-.1.2-.3.3-.1.6.2.3.7 1.2 1.5 1.9 1 .9 1.8 1.1 2 1.2.3.1.4.1.6-.1l.8-.9c.2-.2.3-.2.6-.1l1.6.8c.3.1.4.2.5.3v.9Z"/></svg>
-          </span>
+          {channel === 'whatsapp' ? (
+            <span aria-hidden className="grid size-[22px] shrink-0 place-items-center rounded-full bg-[#25D366]">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="#fff" aria-hidden><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.4A10 10 0 1 0 12 2Zm5.3 14.2c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .1-1.7-.1a12 12 0 0 1-5.6-4.9c-.4-.7-.9-1.6-.9-2.4 0-.9.5-1.4.7-1.6.2-.2.4-.3.6-.3h.5c.2 0 .4 0 .5.4l.7 1.7c.1.2 0 .4-.1.5l-.3.4c-.1.2-.3.3-.1.6.2.3.7 1.2 1.5 1.9 1 .9 1.8 1.1 2 1.2.3.1.4.1.6-.1l.8-.9c.2-.2.3-.2.6-.1l1.6.8c.3.1.4.2.5.3v.9Z"/></svg>
+            </span>
+          ) : (
+            <span aria-hidden className="grid size-[22px] shrink-0 place-items-center rounded-full bg-[#64748B]">
+              <Info className="size-[13px] text-white" strokeWidth={2.4} />
+            </span>
+          )}
           <b dir="ltr" className="font-num text-[17px] font-bold text-[#0F172A]">{phoneDisplay}</b>
         </div>
         <p className="mt-[4px] text-[13.5px] text-[#94A3B8]">הקוד תקף ל-{PORTAL_OTP_TTL_MINUTES} דקות</p>
@@ -449,6 +536,19 @@ export function PortalOtpStep({
           ))}
         </div>
 
+        {/* A user-gesture clipboard read — some mobile browsers restrict
+            programmatic reads outside one, so this is the reliable path
+            next to a direct paste into any box. */}
+        <button
+          type="button"
+          onClick={() => void pasteFromClipboard()}
+          disabled={inert}
+          className="mt-[12px] flex h-[44px] w-fit items-center gap-[8px] rounded-[10px] px-[12px] text-[14px] font-semibold text-[#2B3FB8] transition-colors hover:bg-brand-soft disabled:opacity-50"
+        >
+          <ClipboardPaste className="size-[16px]" strokeWidth={2} aria-hidden />
+          הדבק קוד
+        </button>
+
         {msg && (
           <div
             role={msg.tone === 'err' ? 'alert' : 'status'}
@@ -484,12 +584,17 @@ export function PortalOtpStep({
           </div>
         )}
 
-        {/* 09 — the timer has run out: the resend card replaces it. No SMS. */}
+        {/* 09 — the timer has run out: the resend card replaces it. A second,
+            "שלח בוואטסאפ במקום" button only when the current channel is NOT
+            already WhatsApp — it would otherwise offer the channel already
+            in use. */}
         {phase !== 'locked' && phase !== 'expired' && cooldown === 0 && (
           <div className="mt-[22px] flex flex-col gap-[10px] rounded-[16px] border-[1.5px] border-[#E2E8F0] p-[16px]">
             <div className="text-[15px] font-bold text-[#0F172A]">
               לא קיבלת את הקוד?
-              <small className="mt-[2px] block text-[13.5px] font-medium text-[#64748B]">בדקו שוואטסאפ מחובר לאינטרנט</small>
+              <small className="mt-[2px] block text-[13.5px] font-medium text-[#64748B]">
+                {channel === 'whatsapp' ? 'בדקו שוואטסאפ מחובר לאינטרנט' : 'בדקו את תיבת ההודעות (SMS)'}
+              </small>
             </div>
             <button
               type="button"
@@ -498,8 +603,18 @@ export function PortalOtpStep({
               className="flex h-[46px] items-center justify-center gap-[8px] rounded-[12px] border-[1.5px] border-brand bg-brand-soft text-[15px] font-semibold text-[#2B3FB8] transition-colors hover:brightness-[0.97] disabled:opacity-60"
             >
               {resending ? <LoaderCircle className="size-[18px] animate-spin" aria-hidden /> : <RefreshCw className="size-[18px]" aria-hidden />}
-              שלח שוב בוואטסאפ
+              שלח שוב {CHANNEL_LABEL[channel]}
             </button>
+            {channel !== 'whatsapp' && (
+              <button
+                type="button"
+                onClick={() => void resend('whatsapp')}
+                disabled={resending || busy}
+                className="flex h-[44px] items-center justify-center gap-[8px] rounded-[12px] text-[14.5px] font-semibold text-[#64748B] transition-colors hover:bg-[#F5F7FB] disabled:opacity-60"
+              >
+                שלח בוואטסאפ במקום
+              </button>
+            )}
           </div>
         )}
 

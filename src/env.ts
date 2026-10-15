@@ -85,6 +85,15 @@ export const env = createEnv({
     ADMIN_ALERT_PHONE: optionalString,
     ADMIN_ALERT_EMAIL: optionalString,
 
+    // Owners-portal OTP, SMS channel (docs/sms-provider.md). Unset (either
+    // one) = isSmsConfigured() is false and every code keeps going out over
+    // WhatsApp exactly as before — this is not wired to a real provider yet.
+    SMS_PROVIDER: optionalString,
+    SMS_API_KEY: optionalString,
+    // Sender name/number shown on the SMS — provider-specific length limit
+    // (≤11 chars for 019sms; see docs/sms-provider.md).
+    SMS_SENDER: optionalString,
+
     // ── monitoring (all optional; unset = off) ────────────────────────────
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).optional(),
     SENTRY_DSN: optionalUrl,

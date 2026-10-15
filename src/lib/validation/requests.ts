@@ -308,6 +308,11 @@ export const portalOtpRequestBodySchema = z.object({
     .trim()
     .min(8, 'מספר טלפון לא תקין')
     .max(20, 'מספר טלפון לא תקין'),
+  // Omitted = the server's own default (SMS once configured, else WhatsApp —
+  // otpChannel.ts#resolveDefaultChannel). Explicit 'whatsapp' is "שלח
+  // בוואטסאפ במקום"; a resident can never ASK for a channel this route
+  // would not otherwise have picked, only fall back to the one still live.
+  channel: z.enum(['sms', 'whatsapp']).optional(),
 });
 
 // POST /api/portal/otp/verify
