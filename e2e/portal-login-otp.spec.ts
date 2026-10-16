@@ -16,6 +16,14 @@ import { Pool } from 'pg';
 // correction, so one honest retype spent four of the five attempts and the
 // resident was locked out "after two tries". "a correction costs ONE attempt"
 // below is that bug, pinned.
+//
+// THE SECOND REGRESSION THIS FILE GUARDS (17/10/2026): the code field used to
+// be six separate `maxLength={2}` boxes. Any route that injects the whole
+// six-digit string at once into whichever single box happens to be focused —
+// Android's own "use code" keyboard suggestion, iOS's QuickType chip — got
+// silently truncated by that one box's maxLength, so autofill looked like it
+// did nothing at all. There is now exactly one real field; "an OS-level
+// autofill-style injection… fills the field" below is that bug, pinned.
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
@@ -63,6 +71,20 @@ async function resetPhones() {
   await fetch(`${STUB}/__reset`, { method: 'POST' });
 }
 
+/** Backdates a phone's newest code past the 45-second resend cooldown, so a
+ *  SECOND `requestCode` for a phone already used earlier in this file does
+ *  not get rejected with "נסה שוב בעוד X שניות" — without needing yet another
+ *  seeded owner. Safe only because this file runs with workers: 1 and
+ *  fullyParallel: false (playwright.config.ts): one phone, used twice, never
+ *  in two tests running at once. */
+async function forceResendReady(e164: string) {
+  await pool.query(
+    `update public.portal_otp_codes set created_at = now() - interval '1 minute'
+      where id = (select id from public.portal_otp_codes where phone_e164 = $1 order by created_at desc limit 1)`,
+    [e164],
+  );
+}
+
 test.beforeAll(async () => {
   const seeded = await pool.query<{ id: string }>(
     `select id from public.portal_sessions where phone_e164 = any($1::text[])`, [PHONES]);
@@ -83,7 +105,10 @@ async function codeFor(e164: string): Promise<string> {
   return m[1]!;
 }
 
-const boxes = (page: Page) => page.getByLabel(/^ספרה \d+ מתוך 6$/);
+/** The one real field (17/10/2026 — one `<input>`, not six boxes). The six
+ *  cells still rendered behind it are decoration (`aria-hidden`, `data-testid
+ *  "otp-cell"`) and carry no accessible name of their own. */
+const codeField = (page: Page) => page.getByLabel('קוד בן 6 ספרות');
 
 /**
  * `n` distinct six-digit codes, none of them the real one. They have to differ
@@ -100,11 +125,11 @@ function wrongCodes(real: string, n: number): string[] {
   return out;
 }
 
-/** Types a code the way a person does — one digit per box. */
+/** Types a code into the one field the way a person does — one keystroke at
+ *  a time, so the auto-submit-on-the-sixth-digit path is exercised for real
+ *  typing, not just a single programmatic `.fill()`. */
 async function typeCode(page: Page, code: string) {
-  for (const [i, ch] of [...code].entries()) {
-    await boxes(page).nth(i).fill(ch);
-  }
+  await codeField(page).pressSequentially(code);
 }
 
 /** Types a number on step 1 and presses "שלח קוד אימות". */
@@ -131,12 +156,12 @@ test.describe('portal login — the whole flow', () => {
     await expect(page.getByRole('heading', { name: 'הזנת קוד' })).toBeVisible();
     await expect(page.getByText(DANA.local)).toBeVisible();
     await expect(page.getByText('הקוד תקף ל-5 דקות')).toBeVisible();
-    await expect(boxes(page)).toHaveCount(6);
+    await expect(page.getByTestId('otp-cell')).toHaveCount(6);
     await expect(page.getByText('שליחה חוזרת בעוד')).toBeVisible();
     // 01 — the button is disabled until six digits are in.
     await expect(page.getByRole('button', { name: 'כניסה לפורטל' })).toBeDisabled();
-    // The first box offers the OS the one-time code.
-    await expect(boxes(page).first()).toHaveAttribute('autocomplete', 'one-time-code');
+    // The field offers the OS the one-time code.
+    await expect(codeField(page)).toHaveAttribute('autocomplete', 'one-time-code');
 
     const code = await codeFor(DANA.e164);
     await typeCode(page, code);
@@ -149,13 +174,13 @@ test.describe('portal login — the whole flow', () => {
     await expect(page.locator('#t-acc')).toContainText('E2E-A');
   });
 
-  test('a whole code pasted into any box fills the row and verifies itself', async ({ page }) => {
+  test('a whole code pasted into the field fills it and verifies itself', async ({ page }) => {
     await requestCode(page, BENNY.typed);
     const code = await codeFor(BENNY.e164);
-    await boxes(page).nth(2).click();
+    await codeField(page).click();
     // The paste event itself, which is what the component listens for —
     // clipboard permissions differ too much between environments to rely on.
-    await boxes(page).nth(2).evaluate((el, c) => {
+    await codeField(page).evaluate((el, c) => {
       const dt = new DataTransfer();
       dt.setData('text', c);
       el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
@@ -176,7 +201,7 @@ test.describe('portal login — the whole flow', () => {
       'הקוד תקף ל-5 דקות.',
       'אם לא ביקשת קוד — התעלם מההודעה ופנה לחברת הניהול.',
     ].join('\n');
-    await boxes(page).first().evaluate((el, text) => {
+    await codeField(page).evaluate((el, text) => {
       const dt = new DataTransfer();
       dt.setData('text', text);
       el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
@@ -190,6 +215,40 @@ test.describe('portal login — the whole flow', () => {
     const code = await codeFor(ASAF.e164);
     await page.evaluate((c) => navigator.clipboard.writeText(`הקוד שלך: ${c}`), code);
     await page.getByRole('button', { name: 'הדבק קוד' }).click();
+    await page.waitForURL('**/portal');
+  });
+
+  test('"הדבק קוד" errors visibly on an empty clipboard, then a raw autofill-style injection still verifies', async ({ page, context }) => {
+    // Reuses DANA's phone (already used once, above) — forceResendReady
+    // sidesteps the 45-second cooldown instead of needing a ninth seeded
+    // owner just for this.
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await forceResendReady(DANA.e164);
+    await requestCode(page, DANA.typed);
+    const code = await codeFor(DANA.e164);
+
+    // 17/10/2026: this used to fail completely silently (a bare `catch {}`),
+    // indistinguishable from the button doing nothing — the exact bug report
+    // that led to this rewrite. In SMS nobody copies anything, so an
+    // empty/irrelevant clipboard is the common case, not an edge case.
+    await page.evaluate(() => navigator.clipboard.writeText('שלום, מה קורה?'));
+    await page.getByRole('button', { name: 'הדבק קוד' }).click();
+    // Not getByRole('alert') — Next's own (empty) route announcer carries the
+    // same role, making that locator ambiguous (strict-mode violation).
+    await expect(page.getByText('לא נמצא קוד בן 6 ספרות בלוח ההעתקה')).toBeVisible();
+    await expect(codeField(page)).toHaveValue('');
+
+    // Simulates Android's own "use code" keyboard suggestion / iOS's
+    // QuickType chip: the whole six-digit string lands via a native value
+    // set + a plain `input` event — never a `paste` event, never six
+    // separate keystrokes. Before 17/10/2026 (six `maxLength={2}` boxes)
+    // this would have been truncated to one or two digits in whichever box
+    // happened to be focused.
+    await codeField(page).evaluate((el: HTMLInputElement, c: string) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(el, c);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, code);
     await page.waitForURL('**/portal');
   });
 
@@ -254,10 +313,10 @@ test.describe('the OTP states that decide whether someone gets in', () => {
       [GALIT.e164]);
     expect(after1.rows[0]!.attempts).toBe(1);
 
-    // 07 — the first touch clears the row and the line goes neutral.
-    await boxes(page).nth(3).click();
+    // 07 — the first touch clears the field and the line goes neutral.
+    await codeField(page).click();
     await expect(page.getByRole('status')).toContainText('הזינו את הקוד מחדש');
-    for (const i of [0, 1, 2, 3, 4, 5]) await expect(boxes(page).nth(i)).toHaveValue('');
+    await expect(codeField(page)).toHaveValue('');
 
     // Retyping the whole code is ONE attempt — not one per keystroke.
     await typeCode(page, wrong2);
@@ -268,7 +327,7 @@ test.describe('the OTP states that decide whether someone gets in', () => {
     expect(after2.rows[0]!.attempts).toBe(2);
 
     // And the right code still works afterwards.
-    await boxes(page).nth(0).click();
+    await codeField(page).click();
     await typeCode(page, code);
     await page.waitForURL('**/portal');
   });
@@ -280,7 +339,7 @@ test.describe('the OTP states that decide whether someone gets in', () => {
 
     // Four wrong codes: the fourth leaves one attempt, which is the warning.
     for (let n = 1; n <= 4; n += 1) {
-      await boxes(page).nth(0).click();
+      await codeField(page).click();
       await typeCode(page, wrong[n - 1]!);
       if (n < 4) {
         await expect(page.getByText(`הקוד שגוי. נותרו ${5 - n} ניסיונות.`)).toBeVisible();
@@ -297,7 +356,7 @@ test.describe('the OTP states that decide whether someone gets in', () => {
 
     // The fifth locks: the sheet of state 14, and it does not close on the
     // backdrop.
-    await boxes(page).nth(0).click();
+    await codeField(page).click();
     await typeCode(page, wrong[4]!);
     const sheet = page.getByRole('dialog', { name: 'הכניסה נחסמה זמנית' });
     await expect(sheet).toBeVisible();
@@ -316,7 +375,7 @@ test.describe('the OTP states that decide whether someone gets in', () => {
     await expect(page.getByRole('heading', { name: 'כניסת בעלי דירות' })).toBeVisible();
   });
 
-  test('11: an expired code locks the boxes and the action becomes "שלח קוד חדש"', async ({ page }) => {
+  test('11: an expired code locks the field and the action becomes "שלח קוד חדש"', async ({ page }) => {
     await requestCode(page, YOSSI.typed);
     const code = await codeFor(YOSSI.e164);
     // Age the live code past its TTL — and past the 45-second resend cooldown,
@@ -329,7 +388,7 @@ test.describe('the OTP states that decide whether someone gets in', () => {
 
     await typeCode(page, code);
     await expect(page.getByRole('status')).toContainText('תוקף הקוד פג. שלחו קוד חדש כדי להמשיך.');
-    await expect(boxes(page).first()).toBeDisabled();
+    await expect(codeField(page)).toBeDisabled();
     await expect(page.getByRole('button', { name: 'שלח קוד חדש' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'כניסה לפורטל' })).toHaveCount(0);
 
@@ -340,7 +399,7 @@ test.describe('the OTP states that decide whether someone gets in', () => {
     expect(fresh).not.toBe(code);
     await typeCode(page, code);          // the OLD code
     await expect(page.getByText(/^הקוד שגוי\./)).toBeVisible();
-    await boxes(page).nth(0).click();
+    await codeField(page).click();
     await typeCode(page, fresh);         // the new one
     await page.waitForURL('**/portal');
   });
