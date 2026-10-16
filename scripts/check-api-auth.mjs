@@ -41,6 +41,9 @@ const PUBLIC = new Set([
   'src/app/api/portal/otp/request/route.ts',
   'src/app/api/portal/otp/verify/route.ts',
   'src/app/api/portal/logout/route.ts',
+  // A fire-and-forget beacon from step 2, same pre-auth reach as the two
+  // above — no phone, no code, just a WebOTP lifecycle label.
+  'src/app/api/portal/otp/webotp-diag/route.ts',
 ]);
 
 run('check-api-auth', async () => {

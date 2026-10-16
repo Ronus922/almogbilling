@@ -328,6 +328,13 @@ export const portalOtpVerifyBodySchema = z.object({
     .regex(/^\d{6}$/, 'הקוד חייב להכיל 6 ספרות'),
 });
 
+// POST /api/portal/otp/webotp-diag — a fire-and-forget beacon, no PII (see
+// the route for why this exists instead of a client-side Sentry breadcrumb).
+export const portalOtpWebotpDiagBodySchema = z.object({
+  event: z.enum(['start', 'resolve', 'reject']),
+  reason: z.string().trim().max(100).optional(),
+});
+
 // PATCH /api/apartments/[apartment]/owner-phones — DETACH, the only write the
 // admin screen has (decision 5 of the 03/10/2026 audit): a phone reaches the
 // portal through the apartment's owner record and nothing else, so there is no
