@@ -149,7 +149,7 @@ export async function POST(req: Request) {
     apartmentNumbers: active.apartmentNumbers, ip, userAgent, details: { channel },
   });
 
-  const sent = await sendPortalCode(phoneE164, code, channel);
+  const sent = await sendPortalCode(phoneE164, code, channel, req.headers.get('host'));
   if (!sent.ok) {
     await logPortalEvent({
       phoneE164, eventType: 'send_failed',

@@ -94,9 +94,18 @@
 הקוד בשורה משלו, ושורה אחרונה **בדיוק** בפורמט ש-Chrome's WebOTP API מצפה
 לו: `@<domain> #<code>` — ה-`domain` חייב להיות זהה ל-origin שממנו הדפדפן
 קורא ל-`navigator.credentials.get()`, אחרת אין אוטופיל, בלי שגיאה גלויה.
-נגזר אוטומטית מ-`APP_URL` (`src/lib/portal/otpChannel.ts#webOtpDomain`) —
-לא ערך קבוע בקוד — כדי שהוא תמיד יתאים לכתובת שבה הפורטל באמת מוגש.
-בפרודקשן זה `almog-haifa.co.il` (אומת חי ב-16/10/2026 — השורה האחרונה
-בהודעת ה-SMS האמיתית תאמה בדיוק). אין staging נפרד לפרויקט הזה (הוחלט
-16/10/2026 לדלג עליו) — `billing.bios.co.il` הוא הדומיין הנוסף שה-APP_URL
-עשוי להצביע עליו, אם ישמש אי-פעם.
+
+**17/10/2026, סבב 3:** `domain` נגזר מה-`Host` **האמיתי** של בקשת
+`POST /api/portal/otp/request` (`src/lib/portal/otpChannel.ts#webOtpDomain`,
+מקבל `requestHost` מ-`req.headers.get('host')` ב-`route.ts`), מאומת מול
+allowlist (`almog-haifa.co.il`, `billing.bios.co.il`) — host לא מוכר/חסר
+נופל ל-hostname של `APP_URL`, לעולם לא ערך header לא-מאומת. זה תיקון לשני
+באגים שנמצאו באותו סבב: (1) `navigator.credentials.get` נקרא מנותק
+מ-`navigator.credentials` (bind), ו-(2) עד אז ה-`domain` היה *תמיד* קבוע
+מ-`APP_URL` בלי קשר לבקשה בפועל — נכון היום זה לא יוצר חוסר-התאמה בפועל,
+כי `billing.bios.co.il` כבר מפנה 301 לכל נתיב **כולל** `/portal` (ראה
+ALMOG_BILLING_BRIEF.md סעיף 2) ו-`/api/portal/otp/request` נגיש רק דרך
+`almog-haifa.co.il` — אבל ה-env-בלבד הייתה נכונה "במקרה", לא במבנה. בפרודקשן
+זה עדיין בפועל `almog-haifa.co.il` (אומת חי ב-16/10/2026). אין staging נפרד
+לפרויקט הזה (הוחלט 16/10/2026 לדלג עליו) — `billing.bios.co.il` נשאר
+ב-allowlist ליתר ביטחון, אם ה-routing ב-nginx אי-פעם ישתנה.
