@@ -5,7 +5,7 @@ import {
   type ChangeEvent, type ClipboardEvent, type FormEvent,
 } from 'react';
 import {
-  CircleAlert, CircleCheck, ClipboardPaste, Info, LoaderCircle, Lock, RefreshCw, TriangleAlert, WifiOff,
+  CircleAlert, CircleCheck, Info, LoaderCircle, Lock, RefreshCw, TriangleAlert, WifiOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PortalSupportAction, type PortalSupport } from '@/components/portal/PortalSupportAction';
@@ -58,6 +58,21 @@ import {
 // There is now exactly one real `<input autoComplete="one-time-code"
 // maxLength={PORTAL_OTP_DIGITS}>`; the six boxes below it are `aria-hidden`
 // decoration driven by the same `digits` state. Nothing left to truncate it.
+//
+// UX STANDARD, NOT A SECOND BUG (17/10/2026, round 2): a real on-device test
+// (Android Chrome, SMS in the foreground, nothing touched) showed neither
+// Chrome's WebOTP bottom sheet nor a keyboard "use code" chip ever appearing.
+// Reading the subscription below found no lifecycle bug — the effect has an
+// empty dependency array, subscribes exactly once on mount, is never
+// focus-gated, and the parent never remounts this component (no `key`). The
+// honest answer is that nothing in THIS file explains the silence; reportWebOtp
+// below (and the route behind it) exists so the next occurrence leaves a real
+// trail in the server's Sentry instead of another "nothing happened" report.
+// Two things WERE real and are fixed here: the "הדבק קוד" button — a second,
+// redundant paste path with its own silent-failure history — is gone; a
+// native long-press-paste on the field still works (onPaste, unchanged).
+// And the real input's `focus:ring-4` drew one frame around all six boxes
+// together, not the clean per-box look of every other OTP screen — removed.
 
 const BOXES = Array.from({ length: PORTAL_OTP_DIGITS }, (_, i) => i);
 
@@ -114,6 +129,19 @@ function formatCountdown(sec: number): string {
 function secondsUntil(iso: string | null | undefined): number {
   if (!iso) return 0;
   return Math.max(0, Math.round((new Date(iso).getTime() - Date.now()) / 1000));
+}
+
+/** Fire-and-forget beacon for the WebOTP effect below — see
+ *  src/app/api/portal/otp/webotp-diag/route.ts for why this goes to the
+ *  server instead of a (silently inert) client-side Sentry breadcrumb. Never
+ *  awaited, never retried, never shown to the resident. */
+function reportWebOtp(event: 'start' | 'resolve' | 'reject', reason?: string): void {
+  void fetch('/api/portal/otp/webotp-diag', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    keepalive: true,
+    body: JSON.stringify(reason ? { event, reason } : { event }),
+  }).catch(() => { /* best-effort only */ });
 }
 
 /** A ticking number of seconds that never goes below zero. One interval per
@@ -229,15 +257,22 @@ export function PortalOtpStep({
     if (typeof window === 'undefined' || !('OTPCredential' in window) || !navigator.credentials) return undefined;
     const controller = new AbortController();
     const get = navigator.credentials.get as (opts: unknown) => Promise<unknown>;
+    reportWebOtp('start');
     get({ otp: { transport: ['sms'] }, signal: controller.signal })
       .then((cred) => {
         const raw = cred && typeof cred === 'object' && 'code' in cred
           ? String((cred as { code: unknown }).code)
           : '';
         const found = extractOtpCode(raw);
+        reportWebOtp('resolve', found ? undefined : 'no_code_in_credential');
         if (found) autoFillRef.current(found);
       })
-      .catch(() => { /* unsupported, denied, or aborted — nothing to do */ });
+      .catch((err: unknown) => {
+        // unsupported, denied, or aborted — AbortError is the normal shape of
+        // leaving this screen; see reportWebOtp/the route for why only a
+        // non-Abort reason is treated as an actual failure.
+        reportWebOtp('reject', err instanceof DOMException ? err.name : String(err));
+      });
     return () => controller.abort();
   }, []);
 
@@ -326,9 +361,9 @@ export function PortalOtpStep({
   }
 
   /** Replaces the whole code at once. Every entry route — typing, a native
-   *  paste event, the "הדבק קוד" button, WebOTP — ends up here with the FULL
-   *  current string, never a per-position merge (see the ONE FIELD, NOT SIX
-   *  comment at the top of the file for why that matters). */
+   *  paste event, WebOTP — ends up here with the FULL current string, never
+   *  a per-position merge (see the ONE FIELD, NOT SIX comment at the top of
+   *  the file for why that matters). */
   function setCode(raw: string) {
     const digitsOnly = raw.replace(/\D+/g, '').slice(0, PORTAL_OTP_DIGITS);
     const next = BOXES.map((i) => digitsOnly[i] ?? '');
@@ -370,32 +405,6 @@ export function PortalOtpStep({
     ev.preventDefault();
     touch();
     setCode(found);
-  }
-
-  /** "הדבק קוד" — a user gesture (the click itself) rather than relying on a
-   *  paste event into the field, which some mobile browsers restrict. Unlike
-   *  before 17/10/2026, every failure is now a visible line under the field:
-   *  a silent catch here was indistinguishable from the button doing nothing
-   *  at all, which is exactly the bug report that led to this rewrite. */
-  async function pasteFromClipboard() {
-    if (inert) return;
-    try {
-      const text = await navigator.clipboard.readText();
-      const found = extractOtpCode(text);
-      if (!found) {
-        setMsg({
-          tone: 'err',
-          text: `לא נמצא קוד בן ${PORTAL_OTP_DIGITS} ספרות בלוח ההעתקה. העתיקו את הקוד מה-SMS ונסו שוב.`,
-        });
-        return;
-      }
-      touch();
-      setCode(found);
-    } catch {
-      setMsg({ tone: 'err', text: 'אין גישה ללוח ההעתקה. הדביקו את הקוד ישירות לשדה, או הקלידו אותו.' });
-    } finally {
-      inputRef.current?.focus();
-    }
   }
 
   /** 09 → 10. A new code cancels the previous one server-side, which is also
@@ -536,25 +545,9 @@ export function PortalOtpStep({
             // above just selected — re-select here so "tap, then retype"
             // still replaces the stale wrong code instead of appending to it.
             onClick={(ev) => { touch(); ev.currentTarget.select(); }}
-            className={cn(
-              'absolute inset-0 h-[58px] w-full min-w-0 rounded-[12px] border-none bg-transparent px-[4px] text-left font-num text-[26px] font-bold text-transparent caret-[#0F172A] outline-none min-[601px]:h-[56px] min-[601px]:text-[22px]',
-              !inert && 'focus:ring-4 focus:ring-[rgba(61,90,254,0.12)]',
-            )}
+            className="absolute inset-0 h-[58px] w-full min-w-0 rounded-[12px] border-none bg-transparent px-[4px] text-left font-num text-[26px] font-bold text-transparent caret-[#0F172A] outline-none min-[601px]:h-[56px] min-[601px]:text-[22px]"
           />
         </div>
-
-        {/* A user-gesture clipboard read — some mobile browsers restrict
-            programmatic reads outside one, so this is the reliable path
-            next to a direct paste into the field. */}
-        <button
-          type="button"
-          onClick={() => void pasteFromClipboard()}
-          disabled={inert}
-          className="mt-[12px] flex h-[44px] w-fit items-center gap-[8px] rounded-[10px] px-[12px] text-[14px] font-semibold text-[#2B3FB8] transition-colors hover:bg-brand-soft disabled:opacity-50"
-        >
-          <ClipboardPaste className="size-[16px]" strokeWidth={2} aria-hidden />
-          הדבק קוד
-        </button>
 
         {msg && (
           <div
