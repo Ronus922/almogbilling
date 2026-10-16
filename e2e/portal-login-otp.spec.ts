@@ -171,7 +171,7 @@ test.describe('portal login — the whole flow', () => {
     const code = await codeFor(MAYA.e164);
     const wholeMessage = [
       'קוד הכניסה שלך לפורטל בעלי הדירות:',
-      `\`${code}\``,
+      `*${code}*`,
       '',
       'הקוד תקף ל-5 דקות.',
       'אם לא ביקשת קוד — התעלם מההודעה ופנה לחברת הניהול.',

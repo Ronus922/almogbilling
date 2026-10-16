@@ -32,13 +32,14 @@ function smsMessage(code: string): string {
   ].join('\n');
 }
 
-/** WhatsApp body: the code on its own line, wrapped in backticks so WhatsApp
- *  itself renders it monospace — easier to long-press-select cleanly than a
- *  code sitting mid-sentence. */
+/** WhatsApp body: the code on its own line, wrapped in asterisks so WhatsApp
+ *  renders it bold (16/10/2026 — monospace shrank the digits in WhatsApp's
+ *  renderer for no benefit; bold keeps them full-size and still stands out
+ *  from the surrounding sentence). */
 function whatsappMessage(code: string): string {
   return [
     'קוד הכניסה שלך לפורטל בעלי הדירות:',
-    `\`${code}\``,
+    `*${code}*`,
     '',
     `הקוד תקף ל-${PORTAL_OTP_TTL_MINUTES} דקות.`,
     'אם לא ביקשת קוד — התעלם מההודעה ופנה לחברת הניהול.',
