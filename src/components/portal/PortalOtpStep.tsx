@@ -256,9 +256,16 @@ export function PortalOtpStep({
     // `unknown` rather than widen CredentialRequestOptions/Credential.
     if (typeof window === 'undefined' || !('OTPCredential' in window) || !navigator.credentials) return undefined;
     const controller = new AbortController();
-    const get = navigator.credentials.get as (opts: unknown) => Promise<unknown>;
     reportWebOtp('start');
-    get({ otp: { transport: ['sms'] }, signal: controller.signal })
+    // Cast the call expression itself, not a variable holding `.get` — tearing
+    // the method off `navigator.credentials` (as a bare `const get = …`) drops
+    // its `this` binding and throws "Illegal invocation" at call time, which
+    // silently killed every WebOTP attempt until 17/10/2026, round 3. Calling
+    // through the member access keeps `this` bound to `navigator.credentials`.
+    (navigator.credentials.get as (opts: unknown) => Promise<unknown>)({
+      otp: { transport: ['sms'] },
+      signal: controller.signal,
+    })
       .then((cred) => {
         const raw = cred && typeof cred === 'object' && 'code' in cred
           ? String((cred as { code: unknown }).code)

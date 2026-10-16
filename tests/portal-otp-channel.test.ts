@@ -56,8 +56,33 @@ describe('otpChannel — dormant until all four SMS env vars exist', () => {
   });
 });
 
-describe('webOtpDomain — derived from APP_URL, never a second hardcoded value', () => {
-  it('matches the hostname of wherever the app is actually configured to serve from', () => {
+describe('webOtpDomain — derived from the request Host, allowlisted, APP_URL as fallback (17/10/2026, round 3)', () => {
+  it('with no host (e.g. existing callers/tests): falls back to APP_URL\'s hostname', () => {
     expect(webOtpDomain()).toBe('almog-haifa.co.il');
+  });
+
+  it('with a missing/empty Host header: falls back to APP_URL\'s hostname', () => {
+    expect(webOtpDomain(null)).toBe('almog-haifa.co.il');
+    expect(webOtpDomain(undefined)).toBe('almog-haifa.co.il');
+  });
+
+  it('the primary domain, as the Host header actually sends it: passes through', () => {
+    expect(webOtpDomain('almog-haifa.co.il')).toBe('almog-haifa.co.il');
+  });
+
+  it('the former domain, still allowlisted: passes through, not forced to the fallback', () => {
+    expect(webOtpDomain('billing.bios.co.il')).toBe('billing.bios.co.il');
+  });
+
+  it('a Host header with a port suffix: compares the hostname only', () => {
+    expect(webOtpDomain('billing.bios.co.il:443')).toBe('billing.bios.co.il');
+  });
+
+  it('is case-insensitive against the allowlist', () => {
+    expect(webOtpDomain('ALMOG-HAIFA.CO.IL')).toBe('almog-haifa.co.il');
+  });
+
+  it('an unrecognized host (spoofed or unexpected) never passes through as-is: falls back to APP_URL', () => {
+    expect(webOtpDomain('evil.example.com')).toBe('almog-haifa.co.il');
   });
 });

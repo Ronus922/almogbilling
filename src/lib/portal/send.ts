@@ -20,15 +20,17 @@ import { PORTAL_OTP_TTL_MINUTES, portalLockoutAlertMessage } from '@/lib/constan
 /** SMS body: the code on its own line, and a LAST line in the exact shape
  *  Chrome's WebOTP API requires (`@<domain> #<code>`) so Android can fill it
  *  in without the resident touching the clipboard at all. That line must stay
- *  the final one, verbatim — anything after it and the browser stops matching. */
-function smsMessage(code: string): string {
+ *  the final one, verbatim — anything after it and the browser stops matching.
+ *  `requestHost` is the `Host` header of the request that triggered this send
+ *  (see webOtpDomain) — not a second, separately-maintained config value. */
+function smsMessage(code: string, requestHost: string | null): string {
   return [
     'קוד הכניסה שלך לפורטל בעלי הדירות:',
     code,
     '',
     `הקוד תקף ל-${PORTAL_OTP_TTL_MINUTES} דקות.`,
     '',
-    `@${webOtpDomain()} #${code}`,
+    `@${webOtpDomain(requestHost)} #${code}`,
   ].join('\n');
 }
 
@@ -69,8 +71,8 @@ async function sendViaWhatsApp(phoneE164: string, code: string): Promise<SendRes
   }
 }
 
-async function sendViaSms(phoneE164: string, code: string): Promise<SendResult> {
-  const res = await sendSms(phoneE164, smsMessage(code));
+async function sendViaSms(phoneE164: string, code: string, requestHost: string | null): Promise<SendResult> {
+  const res = await sendSms(phoneE164, smsMessage(code, requestHost));
   if (res.ok) return { ok: true, channel: 'sms' };
   // No silent cross-channel fallback: the resident sees the failure and, if
   // they want, presses "שלח בוואטסאפ במקום" themselves — switching channel
@@ -83,10 +85,18 @@ async function sendViaSms(phoneE164: string, code: string): Promise<SendResult> 
 /**
  * Sends the code over `channel`. The digits are passed in and used once —
  * they are never logged, not even on failure (the error carries the
- * transport's own message only).
+ * transport's own message only). `requestHost` is the `Host` header of the
+ * incoming OTP request, threaded through to the SMS WebOTP binding line
+ * (webOtpDomain) — optional because WhatsApp doesn't need it and existing
+ * callers/tests may omit it.
  */
-export async function sendPortalCode(phoneE164: string, code: string, channel: OtpChannel): Promise<SendResult> {
-  return channel === 'sms' ? sendViaSms(phoneE164, code) : sendViaWhatsApp(phoneE164, code);
+export async function sendPortalCode(
+  phoneE164: string,
+  code: string,
+  channel: OtpChannel,
+  requestHost?: string | null,
+): Promise<SendResult> {
+  return channel === 'sms' ? sendViaSms(phoneE164, code, requestHost ?? null) : sendViaWhatsApp(phoneE164, code);
 }
 
 /**

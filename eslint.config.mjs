@@ -51,6 +51,14 @@ const safeqlConfig = databaseUrl
               plugins: [{ package: './scripts/lint/safeql-pg-plugin.ts' }],
             }).rules['@ts-safeql/check-sql'][1],
           ],
+          // Needs the same type-aware parsing SafeQL turns on above (hence
+          // scoped to this same, DATABASE_URL-gated block). Added 17/10/2026,
+          // round 3: `navigator.credentials.get` was torn off into a bare
+          // variable and called detached from `navigator.credentials`, which
+          // throws "Illegal invocation" at runtime — this rule flags exactly
+          // that pattern (a method reference used outside of a call on its
+          // owning object).
+          '@typescript-eslint/unbound-method': 'error',
         },
       },
     ]

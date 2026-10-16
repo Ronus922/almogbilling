@@ -69,4 +69,18 @@ describe('sendPortalCode — message shape + channel dispatch (no auto-fallback)
     expect(res).toEqual({ ok: false, error: 'no_whatsapp_instance', channel: 'whatsapp' });
     expect(h.sendWhatsAppMessage).not.toHaveBeenCalled();
   });
+
+  it('sms: an allowlisted request Host (the former domain) binds the WebOTP line to IT, not APP_URL', async () => {
+    h.sendSms.mockResolvedValue({ ok: true });
+    await sendPortalCode(PHONE, CODE, 'sms', 'billing.bios.co.il');
+    const [, text] = h.sendSms.mock.calls[0] as [string, string];
+    expect(text.split('\n').at(-1)).toBe(`@billing.bios.co.il #${CODE}`);
+  });
+
+  it('sms: an unrecognized request Host falls back to APP_URL\'s domain, not the raw header', async () => {
+    h.sendSms.mockResolvedValue({ ok: true });
+    await sendPortalCode(PHONE, CODE, 'sms', 'evil.example.com');
+    const [, text] = h.sendSms.mock.calls[0] as [string, string];
+    expect(text.split('\n').at(-1)).toBe(`@almog-haifa.co.il #${CODE}`);
+  });
 });

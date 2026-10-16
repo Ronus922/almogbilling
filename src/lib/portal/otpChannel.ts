@@ -23,15 +23,25 @@ export function resolveDefaultChannel(): OtpChannel {
   return isSmsConfigured() ? 'sms' : 'whatsapp';
 }
 
+// Hostnames the portal is known to actually be reachable under. nginx
+// currently 301s everything on billing.bios.co.il except /api/health and
+// /api/webhooks/greenapi to almog-haifa.co.il (see the server block comment
+// in sites-available/billing), so in practice the OTP request route only
+// ever sees the primary domain — this allowlist exists so the derivation
+// below stays correct if that routing ever changes, rather than relying on
+// nginx policy as the only thing keeping the two in sync.
+const WEBOTP_DOMAIN_ALLOWLIST = ['almog-haifa.co.il', 'billing.bios.co.il'];
+
 /**
  * The origin WebOTP's domain-binding line (`@<domain> #<code>`) must match
  * EXACTLY — Chrome compares it to the page's own origin and silently does
- * not autofill on any mismatch. Derived from APP_URL rather than a second,
- * separately-maintained config value, so staging and production each bind to
- * wherever they actually serve the portal from, and a future domain move
- * (billing.bios.co.il → almog-haifa.co.il, already done for the main app)
- * updates this for free.
+ * not autofill on any mismatch. Derived from the ACTUAL request `Host` the
+ * caller is serving (17/10/2026, round 3) rather than always the configured
+ * APP_URL, and validated against an allowlist — an unrecognized or missing
+ * host falls back to APP_URL's own hostname, never an unchecked header value.
  */
-export function webOtpDomain(): string {
-  return new URL(env.APP_URL).hostname;
+export function webOtpDomain(requestHost?: string | null): string {
+  const fallback = new URL(env.APP_URL).hostname;
+  const hostname = requestHost?.split(':')[0]?.toLowerCase();
+  return hostname && WEBOTP_DOMAIN_ALLOWLIST.includes(hostname) ? hostname : fallback;
 }
