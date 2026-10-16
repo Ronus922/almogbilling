@@ -29,7 +29,7 @@ const { resolvePortalIdentity, findPortalRegistration } = await import('@/lib/db
 const { getPortalMyAccount } = await import('@/lib/db/portal/account');
 const { resolvePortalReporter, insertPortalIssue } = await import('@/lib/db/portal/issueReport');
 const {
-  approveIdentity, checkPhoneEntry, endIdentity, registrationsOf, IdentityDecisionError, PhoneEntryConflictError,
+  approveIdentity, checkPhoneEntry, endIdentity, renameIdentity, registrationsOf, IdentityDecisionError, PhoneEntryConflictError,
 } = await import('@/lib/db/portal/identityApprovals');
 const { listBlockedPortalPhones } = await import('@/lib/db/portal/blockedPhones');
 const { listSuggestionsForApartment, resolveSuggestions, suggestPortalLinks, getOwnerReplacementPreview } =
@@ -41,6 +41,7 @@ const A = {
   same1: '990711', same2: '990712',
   diff1: '990721', diff2: '990722', diff3: '990723',
   nameless1: '990731', nameless2: '990732',
+  rename1: '990781', rename2: '990782',
   entry1: '990741', entry2: '990742', entry3: '990743', entry4: '990744',
   bl: '990751', sale: '990752',
   det: '990761',
@@ -49,7 +50,7 @@ const A = {
 const APTS = Object.values(A);
 const P = {
   own: '0527700001', ten: '0527700002', opr: '0527700003', hid: '0527700004', opf: '0527700005',
-  same: '0527700011', diff: '0527700021', nameless: '0527700031',
+  same: '0527700011', diff: '0527700021', nameless: '0527700031', rename: '0527700081',
   entryNo: '0527700041', entryYes: '0527700042', entryMgr: '0527700043',
   blKept: '0527700051', blGone: '0527700052', blNew: '0527700053', saleOld: '0527700054', saleNew: '0527700055',
   det: '0527700061', rep: '0527700071',
@@ -227,6 +228,45 @@ d('portal roles + identity (03/10/2026)', () => {
       phoneE164: phone, displayName: 'שם קיים', names: ['', 'שם קיים'], actorId: adminId, source: 'blocked_screen',
       apartments: [{ apartment_number: A.nameless1, relation: 'personal' }, { apartment_number: A.nameless2, relation: 'personal' }],
     }))).rejects.toBeInstanceOf(IdentityDecisionError);
+  });
+
+  it('"ערוך שם" changes display_name only, logs before/after, and refuses an empty name or a non-approved id', async () => {
+    await card(A.rename1, { owner_name: 'חברה לרישום בדיקה', owner_phone: P.rename });
+    await card(A.rename2, { owner_name: 'מישהו', resident_type: 'tenant', tenant_name: 'שם רישום בדיקה', tenant_phone: P.rename });
+    const phone = e164(P.rename);
+    const approvalId = await inTx((c) => approveIdentity(c, {
+      phoneE164: phone, displayName: 'שם ישן', names: ['חברה לרישום בדיקה', 'שם רישום בדיקה'], actorId: adminId, source: 'blocked_screen',
+      apartments: [{ apartment_number: A.rename1, relation: 'company_authorized' }, { apartment_number: A.rename2, relation: 'personal' }],
+    }));
+
+    // success — display_name alone changes, trimmed/collapsed, everywhere the portal reads it
+    expect(await inTx((c) => renameIdentity(c, { id: approvalId, displayName: '  שם   חדש  ', actorId: adminId }))).toBe(true);
+    const row = (await pool.query<{ display_name: string; names: string[] }>(
+      `select display_name, names from public.portal_identity_approvals where id = $1`, [approvalId])).rows[0];
+    expect(row).toMatchObject({ display_name: 'שם חדש', names: ['חברה לרישום בדיקה', 'שם רישום בדיקה'] });
+    expect((await resolvePortalIdentity(phone))?.name).toBe('שם חדש');
+
+    // audit before/after
+    const audit = (await pool.query<{ previous: string; next: string }>(
+      `select metadata->>'previous_display_name' as previous, metadata->>'new_display_name' as next
+         from public.audit_log where action = 'portal_identity_display_name_changed' and entity_id = $1`, [phone])).rows;
+    expect(audit).toEqual([{ previous: 'שם ישן', next: 'שם חדש' }]);
+
+    // the same name again is a no-op — true, but no second audit row
+    expect(await inTx((c) => renameIdentity(c, { id: approvalId, displayName: 'שם חדש', actorId: adminId }))).toBe(true);
+    expect((await pool.query(
+      `select 1 from public.audit_log where action = 'portal_identity_display_name_changed' and entity_id = $1`, [phone])).rowCount).toBe(1);
+
+    // an empty (or whitespace-only) name is refused before anything is written
+    await expect(inTx((c) => renameIdentity(c, { id: approvalId, displayName: '   ', actorId: adminId })))
+      .rejects.toBeInstanceOf(IdentityDecisionError);
+
+    // an id that is not an 'approved' row (revoked) is refused — false, not an error
+    expect(await inTx((c) => endIdentity(c, { id: approvalId, action: 'revoke', actorId: adminId }))).toBe(true);
+    expect(await inTx((c) => renameIdentity(c, { id: approvalId, displayName: 'לא רלוונטי', actorId: adminId }))).toBe(false);
+
+    // a nonexistent id is refused the same way
+    expect(await inTx((c) => renameIdentity(c, { id: randomUUID(), displayName: 'גם זה לא', actorId: adminId }))).toBe(false);
   });
 
   // ── 3. the entry warning ───────────────────────────────────────────────

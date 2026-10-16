@@ -384,6 +384,11 @@ export const portalIdentityActionSchema = z.discriminatedUnion('action', [
     apartments: identityApartmentsSchema,
   }),
   z.object({ action: z.enum(['revoke', 'reject']), id: z.uuid() }),
+  z.object({
+    action: z.literal('rename'),
+    id: z.uuid(),
+    display_name: z.string().trim().min(1, { error: 'missing_display_name' }).max(120),
+  }),
 ]);
 
 // The answers to "אותו אדם?" (body key `phone_decisions` of every write under

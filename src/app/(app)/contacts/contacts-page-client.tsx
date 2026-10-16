@@ -14,6 +14,7 @@ import { ContactsTable } from '@/components/contacts/contacts-table';
 import { ContactFormPanel } from '@/components/contacts/contact-form-panel';
 import { ContactImportPanel } from '@/components/contacts/contact-import-panel';
 import { ContactSuggestionsPanel } from '@/components/contacts/contact-suggestions-panel';
+import { PortalIdentitiesSection } from '@/components/portal/PortalIdentitiesSection';
 
 /** Registry coverage quick-filter: whole list / no person at all / needs review. */
 type QuickFilter = 'all' | 'no_contact' | 'needs_review';
@@ -29,17 +30,26 @@ function hasNoContactPerson(c: Contact): boolean {
 
 export function ContactsPageClient({
   initialContacts,
+  canViewContacts,
   canEdit,
   canViewParking,
   canEditParking,
   pendingSuggestions,
+  canManagePortalIdentities,
+  canEditPortalIdentities,
 }: {
   initialContacts: Contact[];
+  /** False for a portal_manage-only visitor — the registry block below hides
+   *  entirely; only the "זהויות פורטל" section renders. */
+  canViewContacts: boolean;
   canEdit: boolean;
   canViewParking: boolean;
   canEditParking: boolean;
   /** Open Bllink proposals. Zero hides the button entirely. */
   pendingSuggestions: number;
+  /** "זהויות פורטל" section visibility (module `portal_manage`, independent of `contacts`). */
+  canManagePortalIdentities: boolean;
+  canEditPortalIdentities: boolean;
 }) {
   const [contacts, setContacts] = useState<Contact[]>(initialContacts);
   const [search, setSearch] = useState('');
@@ -177,134 +187,146 @@ export function ContactsPageClient({
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-baseline gap-3">
-          <h1 className="text-2xl font-extrabold text-slate-900">רשימת דיירים</h1>
-          <span className="text-sm text-muted-foreground tabular-nums">{contacts.length} דירות במערכת</span>
-        </div>
+      {canViewContacts && (
+        <>
+          {/* Header */}
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-baseline gap-3">
+              <h1 className="text-2xl font-extrabold text-slate-900">רשימת דיירים</h1>
+              <span className="text-sm text-muted-foreground tabular-nums">{contacts.length} דירות במערכת</span>
+            </div>
 
-        <div className="flex items-center gap-2">
-          {/* The Bllink queue. Only drawn when something is actually waiting —
-              an empty queue is not news. */}
-          {suggestionCount > 0 && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void openSuggestions()}
-              className="gap-2 border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:text-amber-800"
-            >
-              <RefreshCcwDot className="h-4 w-4" />
-              {suggestionCount} הצעות מבלינק
-            </Button>
-          )}
-          {canEdit && (
-            <Button type="button" onClick={() => setShowImport(true)}
-              className="gap-2">
-              <Upload className="h-4 w-4" /> ייבוא Excel
-            </Button>
-          )}
-          <Button type="button" variant="outline" onClick={exportCsv} className="gap-2">
-            <Download className="h-4 w-4" /> ייצוא CSV
-          </Button>
-          {canEdit && (
-            <Button type="button" onClick={openCreate} className="gap-2">
-              <Plus className="h-4 w-4" /> דייר חדש
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <div className="space-y-3 rounded-lg border bg-card p-4">
-        {/* Registry coverage summary — each count filters the table (client-side) */}
-        <div className="flex flex-wrap items-center gap-2">
-          <SummaryChip
-            active={quickFilter === 'all'}
-            onClick={() => setQuickFilter('all')}
-            label={`${summary.total} דירות במרשם`}
-          />
-          <span className="text-slate-300">·</span>
-          <SummaryChip
-            active={quickFilter === 'no_contact'}
-            onClick={() => setQuickFilter((f) => (f === 'no_contact' ? 'all' : 'no_contact'))}
-            label={`${summary.noContact} ללא איש קשר`}
-            title="שם וטלפון ריקים בכל שלושת התפקידים (בעלים / שוכר / מפעיל)"
-          />
-          <span className="text-slate-300">·</span>
-          <SummaryChip
-            active={quickFilter === 'needs_review'}
-            onClick={() => setQuickFilter((f) => (f === 'needs_review' ? 'all' : 'needs_review'))}
-            label={`${summary.needsReview} דורשות בדיקה`}
-            title="דירות שנוצרו אוטומטית מייבוא/סנכרון וטרם נבדקו"
-          />
-        </div>
-
-        {/* Search */}
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 start-3" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="חיפוש לפי דירה, שם, טלפון..."
-            className="h-10 ps-9"
-          />
-        </div>
-
-        {/* Tag filters */}
-        {allTags.length > 0 && (
-          <div className="flex gap-1.5 overflow-x-auto pb-1">
-            {allTags.map((tag) => {
-              const active = selectedTags.includes(tag);
-              return (
-                <button
-                  key={tag}
+            <div className="flex items-center gap-2">
+              {/* The Bllink queue. Only drawn when something is actually waiting —
+                  an empty queue is not news. */}
+              {suggestionCount > 0 && (
+                <Button
                   type="button"
-                  onClick={() => toggleTag(tag)}
-                  className={cn(
-                    'inline-flex shrink-0 items-center rounded-full px-3 py-0.5 text-xs font-medium transition-colors',
-                    active
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
-                  )}
+                  variant="outline"
+                  onClick={() => void openSuggestions()}
+                  className="gap-2 border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:text-amber-800"
                 >
-                  {tag}
-                </button>
-              );
-            })}
+                  <RefreshCcwDot className="h-4 w-4" />
+                  {suggestionCount} הצעות מבלינק
+                </Button>
+              )}
+              {canEdit && (
+                <Button type="button" onClick={() => setShowImport(true)}
+                  className="gap-2">
+                  <Upload className="h-4 w-4" /> ייבוא Excel
+                </Button>
+              )}
+              <Button type="button" variant="outline" onClick={exportCsv} className="gap-2">
+                <Download className="h-4 w-4" /> ייצוא CSV
+              </Button>
+              {canEdit && (
+                <Button type="button" onClick={openCreate} className="gap-2">
+                  <Plus className="h-4 w-4" /> דייר חדש
+                </Button>
+              )}
+            </div>
           </div>
-        )}
 
-        <ContactsTable rows={visibleContacts} loading={loading} canEdit={canEdit} onRowClick={openEdit} />
-      </div>
+          <div className="space-y-3 rounded-lg border bg-card p-4">
+            {/* Registry coverage summary — each count filters the table (client-side) */}
+            <div className="flex flex-wrap items-center gap-2">
+              <SummaryChip
+                active={quickFilter === 'all'}
+                onClick={() => setQuickFilter('all')}
+                label={`${summary.total} דירות במרשם`}
+              />
+              <span className="text-slate-300">·</span>
+              <SummaryChip
+                active={quickFilter === 'no_contact'}
+                onClick={() => setQuickFilter((f) => (f === 'no_contact' ? 'all' : 'no_contact'))}
+                label={`${summary.noContact} ללא איש קשר`}
+                title="שם וטלפון ריקים בכל שלושת התפקידים (בעלים / שוכר / מפעיל)"
+              />
+              <span className="text-slate-300">·</span>
+              <SummaryChip
+                active={quickFilter === 'needs_review'}
+                onClick={() => setQuickFilter((f) => (f === 'needs_review' ? 'all' : 'needs_review'))}
+                label={`${summary.needsReview} דורשות בדיקה`}
+                title="דירות שנוצרו אוטומטית מייבוא/סנכרון וטרם נבדקו"
+              />
+            </div>
 
-      <ContactSuggestionsPanel
-        open={showSuggestions}
-        items={suggestions}
-        canEdit={canEdit}
-        onOpenChange={setShowSuggestions}
-        onChanged={(items) => {
-          setSuggestions(items);
-          setSuggestionCount(items.length);
-          // An approval wrote into contacts — reload so the table shows it.
-          void fetchContacts();
-        }}
-      />
+            {/* Search */}
+            <div className="relative">
+              <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 start-3" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="חיפוש לפי דירה, שם, טלפון..."
+                className="h-10 ps-9"
+              />
+            </div>
 
-      <ContactImportPanel
-        open={showImport}
-        onOpenChange={setShowImport}
-        onImported={fetchContacts}
-      />
+            {/* Tag filters */}
+            {allTags.length > 0 && (
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
+                {allTags.map((tag) => {
+                  const active = selectedTags.includes(tag);
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => toggleTag(tag)}
+                      className={cn(
+                        'inline-flex shrink-0 items-center rounded-full px-3 py-0.5 text-xs font-medium transition-colors',
+                        active
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+                      )}
+                    >
+                      {tag}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
-      <ContactFormPanel
-        open={formOpen}
-        contact={editingContact}
-        canEdit={canEdit}
-        canViewParking={canViewParking}
-        canEditParking={canEditParking}
-        onOpenChange={(o) => { setFormOpen(o); if (!o) setEditingContact(null); }}
-        onSaved={fetchContacts}
-      />
+            <ContactsTable rows={visibleContacts} loading={loading} canEdit={canEdit} onRowClick={openEdit} />
+          </div>
+        </>
+      )}
+
+      {canManagePortalIdentities && (
+        <PortalIdentitiesSection canEdit={canEditPortalIdentities} />
+      )}
+
+      {canViewContacts && (
+        <>
+          <ContactSuggestionsPanel
+            open={showSuggestions}
+            items={suggestions}
+            canEdit={canEdit}
+            onOpenChange={setShowSuggestions}
+            onChanged={(items) => {
+              setSuggestions(items);
+              setSuggestionCount(items.length);
+              // An approval wrote into contacts — reload so the table shows it.
+              void fetchContacts();
+            }}
+          />
+
+          <ContactImportPanel
+            open={showImport}
+            onOpenChange={setShowImport}
+            onImported={fetchContacts}
+          />
+
+          <ContactFormPanel
+            open={formOpen}
+            contact={editingContact}
+            canEdit={canEdit}
+            canViewParking={canViewParking}
+            canEditParking={canEditParking}
+            onOpenChange={(o) => { setFormOpen(o); if (!o) setEditingContact(null); }}
+            onSaved={fetchContacts}
+          />
+        </>
+      )}
     </div>
   );
 }

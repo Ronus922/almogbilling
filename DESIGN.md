@@ -2364,18 +2364,25 @@ Bllink לפי טלפון קודם — "ניתוק" לעולם לא נוצר בג
 - **"החשבון שלי" — תגית תפקיד:** `.tag.t-gray` הקיימת (`data-role`), ליד "דירה N" בכותרת כל בלוק
   (`.acc-block > h2` — `flex items-center gap 10px`), ובדירה יחידה — בסוף שורת המשנה (`.acc-sub`, flex
   עם gap 8px).
-- **"טלפונים חסומים" (`/admin/portal-blocked`):** כרטיס לכל טלפון (§9b), ובראשו צ׳יפ סיווג
+- **"זהויות פורטל" (סקשן ב-`/contacts`, `PortalIdentitiesSection` — עבר מ-`/admin/portal-blocked`
+  העצמאי, 16/10/2026: מקום אחד, אותו מודול `portal_manage`; הנתיב הישן מפנה ל-`/contacts`)**:
+  מוצג רק למי שמחזיק `portal_manage`, בכרטיס `rounded-lg border bg-card p-6` נפרד מתחת לכרטיס
+  המרשם הרגיל, עם כותרת `h2` — כרטיס לכל טלפון (§9b), ובראשו צ׳יפ סיווג
   `rounded-full px-2.5 py-0.5 text-xs font-medium` בטונים של §2: שמות ללא קשר `bg-rose-50 text-rose-700`
   (ממוין ראשון) · חסר שם `bg-amber-50 text-amber-700` · משפחה `bg-violet-50 text-violet-700` · חברה + איש
   קשר `bg-blue-50 text-blue-700` · כתיב שונה `bg-emerald-50 text-emerald-700`. בקשה ממתינה — צ׳יפ
   `bg-slate-100 text-slate-600`. פעולות (`h-11 px-4`): "אדם אחד" (ראשי, `UserCheck`; מושבת עם `title` כשיש
   רשומה בלי שם), "דחה בקשה" (outline), ובכל שיוך "נתק" (`DetachLinkButton`) ו"השלם שם" (קישור
-  `buttonVariants({variant:'outline'})` ל-`/contacts?apt=N`). מתחת — "זהויות מאושרות" (`BadgeCheck`
-  `text-emerald-600`) עם "בטל אישור" ו-`AlertDialog` הרסני.
+  `buttonVariants({variant:'outline'})` ל-`/contacts?apt=N`). מתחת — "זהויות מאושרות" (`h3` עם `BadgeCheck`
+  `text-emerald-600`) עם "ערוך שם" (outline, `Pencil`) ליד "בטל אישור" ו-`AlertDialog` הרסני.
 - **"אדם אחד" — `IdentityApprovalPanel`:** Sheet תקני (§12 — יצירת רשומה). Section "שם תצוגה" (`Input h-10`,
   **ריק בפתיחה**; השמות שברשומות כצ׳יפים לבחירה `min-h-11 rounded-lg border px-4 py-2`) ו-Section "הקשר לכל
   דירה" — שורה לכל דירה עם `Select` (`h-10`, placeholder "בחר קשר…", ללא ברירת מחדל): אישי / מורשה של
   חברה / קרוב משפחה. "אשר — אדם אחד" מושבת עד שהכול נבחר.
+- **"ערוך שם" — `EditIdentityNameDialog`:** `Dialog` תקני (§12 — עריכת שדה בודד, אותו דפוס כמו
+  `EditPhoneDialog`), שדה `Input h-10` יחיד עם ערך הפתיחה הקיים. שומר רק `display_name`; `names`,
+  הדירות וה-relation שלהן אינם נוגעים. אודיט `portal_identity_display_name_changed` עם שם קודם
+  וחדש (לפני/אחרי).
 - **אזהרת הזנה — `PhoneEntryDialog`:** `AlertDialog` (§12 — אישור), כותרת "הטלפון הזה רשום אצל <שם>
   בדירה <מספר>. אותו אדם?", ושלוש פעולות בלי ברירת מחדל: "ביטול" (`AlertDialogCancel`) · "לא, אדם אחר"
   (outline) · "כן, אותו אדם" (ראשי). לבעל `portal_manage` "כן" פותח את `IdentityApprovalPanel` מעל כרטיס

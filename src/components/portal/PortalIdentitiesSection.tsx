@@ -1,8 +1,10 @@
 'use client';
 
-// /admin/portal-blocked — the phones the portal blocks (lib/portal/identity.ts):
-// a phone whose apartments carry different names sees no financial data until
-// the names agree or someone approves that it is ONE person. Per phone:
+// "זהויות פורטל" — a section on /contacts (moved from the standalone
+// /admin/portal-blocked, 16/10/2026: one place instead of two, same RBAC
+// module). The phones the portal blocks (lib/portal/identity.ts): a phone
+// whose apartments carry different names sees no financial data until the
+// names agree or someone approves that it is ONE person. Per phone:
 //   • the classifier's suggestion (lib/portal/blockedClassify.ts) — a
 //     suggestion, never a decision; "שמות ללא קשר" (a suspected typing
 //     mistake) sorts first;
@@ -12,12 +14,13 @@
 //   • "נתק" on every link;
 //   • a waiting request from the apartment card ("אותו אדם?" without
 //     portal_manage) — approved with "אדם אחד" or turned down.
-// Below, the identities in force, each revocable. Every decision is logged.
+// Below, the identities in force, each revocable and renameable. Every
+// decision is logged.
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { BadgeCheck, PhoneOff, UserCheck, XCircle } from 'lucide-react';
+import { BadgeCheck, PhoneOff, Pencil, UserCheck, XCircle } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -33,6 +36,7 @@ import {
 } from '@/lib/types/portal';
 import { DetachLinkButton } from './DetachLinkButton';
 import { IdentityApprovalPanel, type IdentityApprovalValue } from './IdentityApprovalPanel';
+import { EditIdentityNameDialog } from './EditIdentityNameDialog';
 
 /** DESIGN §2 tones: the suspected mistake in rose, a missing name in amber,
  *  the likely-one-person kinds in calm tones. */
@@ -46,12 +50,13 @@ const CATEGORY_TONE: Record<BlockedPhoneCategory, string> = {
 
 type EndTarget = { id: string; action: 'revoke' | 'reject'; label: string };
 
-export function AdminPortalBlockedClient({ canEdit }: { canEdit: boolean }) {
+export function PortalIdentitiesSection({ canEdit }: { canEdit: boolean }) {
   const [phones, setPhones] = useState<BlockedPortalPhone[] | null>(null);
   const [approved, setApproved] = useState<ApprovedPortalIdentity[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState<BlockedPortalPhone | null>(null);
   const [ending, setEnding] = useState<EndTarget | null>(null);
+  const [renaming, setRenaming] = useState<ApprovedPortalIdentity | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -106,11 +111,17 @@ export function AdminPortalBlockedClient({ canEdit }: { canEdit: boolean }) {
     if (ok) setEnding(null);
   }
 
+  async function rename(displayName: string) {
+    if (!renaming) return;
+    const ok = await post({ action: 'rename', id: renaming.id, display_name: displayName }, 'שם התצוגה עודכן');
+    if (ok) setRenaming(null);
+  }
+
   return (
-    <div className="space-y-6">
+    <section className="space-y-6 rounded-lg border bg-card p-6">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-2xl font-extrabold text-slate-900">טלפונים חסומים</h1>
+          <h2 className="text-xl font-extrabold text-slate-900">זהויות פורטל</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             טלפון שרשום בכמה דירות תחת שמות שונים לא רואה נתונים כספיים בפורטל. אם זה אדם אחד —
             אשרו &quot;אדם אחד&quot;; אם שיוך שגוי — נתקו אותו; רשומה בלי שם — השלימו את השם בכרטיס הדירה.
@@ -228,10 +239,10 @@ export function AdminPortalBlockedClient({ canEdit }: { canEdit: boolean }) {
 
       {approved.length > 0 && (
         <section className="space-y-3">
-          <h2 className="flex items-center gap-2 text-lg font-bold text-slate-900">
+          <h3 className="flex items-center gap-2 text-lg font-bold text-slate-900">
             <BadgeCheck className="h-5 w-5 text-emerald-600" aria-hidden />
             זהויות מאושרות
-          </h2>
+          </h3>
           <ul className="space-y-3">
             {approved.map((a) => (
               <li key={a.id} data-approved-phone={a.phone_e164} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white p-4 shadow-soft-xs">
@@ -248,12 +259,21 @@ export function AdminPortalBlockedClient({ canEdit }: { canEdit: boolean }) {
                   </p>
                 </div>
                 {canEdit && (
-                  <Button
-                    type="button" variant="outline" className="h-11 px-4" disabled={busy}
-                    onClick={() => setEnding({ id: a.id, action: 'revoke', label: a.display_name })}
-                  >
-                    בטל אישור
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button" variant="outline" className="h-11 gap-1.5 px-4" disabled={busy}
+                      onClick={() => setRenaming(a)}
+                    >
+                      <Pencil className="h-4 w-4" aria-hidden />
+                      ערוך שם
+                    </Button>
+                    <Button
+                      type="button" variant="outline" className="h-11 px-4" disabled={busy}
+                      onClick={() => setEnding({ id: a.id, action: 'revoke', label: a.display_name })}
+                    >
+                      בטל אישור
+                    </Button>
+                  </div>
                 )}
               </li>
             ))}
@@ -271,6 +291,15 @@ export function AdminPortalBlockedClient({ canEdit }: { canEdit: boolean }) {
           onSubmit={(v) => void approve(v)}
         />
       )}
+
+      <EditIdentityNameDialog
+        open={!!renaming}
+        phoneLabel={renaming ? rosterPhoneDisplay(renaming.phone_e164) : ''}
+        initialValue={renaming?.display_name ?? ''}
+        busy={busy}
+        onOpenChange={(o) => { if (!o) setRenaming(null); }}
+        onSave={(v) => void rename(v)}
+      />
 
       <AlertDialog open={!!ending} onOpenChange={(o) => { if (!o && !busy) setEnding(null); }}>
         <AlertDialogContent dir="rtl">
@@ -296,6 +325,6 @@ export function AdminPortalBlockedClient({ canEdit }: { canEdit: boolean }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </section>
   );
 }

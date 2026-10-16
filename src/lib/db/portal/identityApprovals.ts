@@ -319,3 +319,27 @@ export async function endIdentity(client: PoolClient, args: {
   });
   return true;
 }
+
+/** Rename an identity already in force — display_name only; names, apartments
+ *  and status are untouched. false = no approved row with that id. */
+export async function renameIdentity(client: PoolClient, args: {
+  id: string;
+  displayName: string;
+  actorId: string;
+}): Promise<boolean> {
+  const display = args.displayName.trim().replace(/\s+/g, ' ');
+  if (!display) throw new IdentityDecisionError('חסר שם תצוגה');
+  const before = await client.query<{ phone_e164: string; display_name: string }>(
+    `select phone_e164, display_name from public.portal_identity_approvals
+      where id = $1 and status = 'approved' for update`,
+    [args.id],
+  );
+  const row = before.rows[0];
+  if (!row) return false;
+  if (row.display_name === display) return true;
+  await client.query(`update public.portal_identity_approvals set display_name = $2 where id = $1`, [args.id, display]);
+  await audit(client, args.actorId, 'portal_identity_display_name_changed', row.phone_e164, {
+    approval_id: args.id, previous_display_name: row.display_name, new_display_name: display,
+  });
+  return true;
+}

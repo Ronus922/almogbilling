@@ -117,7 +117,9 @@ const SECTIONS: MenuSection[] = [
     items: [
       { label: 'החלטות ופרוטוקולים', icon: Gavel, href: '/decisions', module: 'portal_decisions' },
       { label: 'התחברויות לפורטל',  icon: ShieldCheck, href: '/admin/portal-log', module: 'portal_manage' },
-      { label: 'טלפונים חסומים',    icon: PhoneOff, href: '/admin/portal-blocked', module: 'portal_manage' },
+      // href points at /contacts (16/10/2026: the identities section moved
+      // there) — own label and own module gate, same href as "רשימת דיירים".
+      { label: 'טלפונים חסומים',    icon: PhoneOff, href: '/contacts', module: 'portal_manage' },
     ],
   },
 ];

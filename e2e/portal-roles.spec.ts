@@ -92,6 +92,62 @@ test('a blocked phone shows on "טלפונים חסומים" with its classifica
   await ctx.close();
 });
 
+test('"ערוך שם" on an approved identity updates the display name in place', async ({ browser }) => {
+  const phone = '+972508888881';
+  const apts = ['E2E-RN1', 'E2E-RN2'];
+  const cleanupRename = async () => {
+    await pool.query(`delete from public.portal_identity_approvals where phone_e164 = $1`, [phone]);
+    await pool.query(`delete from public.contacts where apartment_number = any($1::text[])`, [apts]);
+  };
+  await cleanupRename();
+  await pool.query(
+    `insert into public.contacts (apartment_number, owner_name, owner_phone, source) values
+       ('E2E-RN1', 'חברה לרישום בדיקה', $1, 'manual'),
+       ('E2E-RN2', 'שם רישום בדיקה', $1, 'manual')`,
+    [phone],
+  );
+  const approval = await pool.query<{ id: string }>(
+    `insert into public.portal_identity_approvals
+       (phone_e164, status, display_name, names, request_source, requested_by, decided_by, decided_at)
+     select $1, 'approved', 'שם ישן E2E', array['חברה לרישום בדיקה', 'שם רישום בדיקה'], 'blocked_screen', id, id, now()
+       from public.users where email = 'e2e-admin@billing.local'
+     returning id`,
+    [phone],
+  );
+  const approvalId = approval.rows[0]!.id;
+  await pool.query(
+    `insert into public.portal_identity_apartments (approval_id, apartment_number, relation) values
+       ($1, 'E2E-RN1', 'company_authorized'), ($1, 'E2E-RN2', 'personal')`,
+    [approvalId],
+  );
+
+  try {
+    const ctx = await browser.newContext({ storageState: STORAGE_STATE });
+    const page = await ctx.newPage();
+    await page.goto('/contacts');
+    const row = page.locator(`[data-approved-phone="${phone}"]`);
+    await expect(row).toContainText('שם ישן E2E');
+    await row.getByRole('button', { name: 'ערוך שם' }).click();
+    const dialog = page.getByRole('dialog').filter({ hasText: 'עריכת שם תצוגה' });
+    await expect(dialog).toBeVisible();
+    await dialog.locator('#identity-name-input').fill('שם מעודכן E2E');
+    await dialog.getByRole('button', { name: 'שמור' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(row).toContainText('שם מעודכן E2E');
+    await expect(row).not.toContainText('שם ישן E2E');
+    await ctx.close();
+
+    const saved = await pool.query<{ display_name: string }>(
+      `select display_name from public.portal_identity_approvals where id = $1`, [approvalId]);
+    expect(saved.rows[0]?.display_name).toBe('שם מעודכן E2E');
+    const audit = await pool.query(
+      `select 1 from public.audit_log where action = 'portal_identity_display_name_changed' and entity_id = $1`, [phone]);
+    expect(audit.rowCount).toBe(1);
+  } finally {
+    await cleanupRename();
+  }
+});
+
 test('the apartment card asks "אותו אדם?" — cancel saves nothing, "no" saves and flags', async ({ browser }) => {
   const ctx = await browser.newContext({ storageState: STORAGE_STATE });
   const page = await ctx.newPage();
