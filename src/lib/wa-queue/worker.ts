@@ -15,6 +15,8 @@ import {
   processEmailRecipient, smtpEmailTransport, MockEmailTransport, readEmailRatePerMin,
   EMAIL_RATE_BUCKET, type EmailTransport,
 } from './email';
+import { processSmsRecipient, readSmsRatePerMin, SMS_RATE_BUCKET, type SmsCreds } from './sms';
+import { makeSmsProvider, type SmsProvider } from './smsProvider';
 import { createSmtpTransporterCache, resolveSmtpSettings, smtpTransportBase } from '@/lib/email/smtp-core';
 import { raiseSmtpAuthAlert, sqlSmtpAuthAlertDeps } from '@/lib/email/smtp-auth-alert';
 import { logger } from '@/lib/logger';
@@ -47,6 +49,12 @@ export interface WorkerOptions {
   /** Email channel: raised on an SMTP auth rejection. Default: the existing
    *  throttled bell alert to the admins (smtp_last_auth_alert). */
   onSmtpAuthFailure?: () => Promise<void>;
+  /** SMS channel: the 019 provider (tests). Default: dry_run → mock, else the
+   *  real 019sms HTTP adapter. */
+  makeSmsProviderFor?: (campaign: Campaign) => SmsProvider;
+  /** SMS channel: the 019 account (tests). Default: SMS_USERNAME/SMS_API_KEY/
+   *  SMS_SENDER from @/env — one account for the whole server, not per-campaign. */
+  resolveSmsCreds?: () => SmsCreds;
   log?: (event: string, data?: Record<string, unknown>) => void;
 }
 
@@ -65,6 +73,18 @@ type CampaignCtx =
       ratePerMin: number;
       bucket: string;
       attachments: CampaignAttachment[];
+    }
+  | {
+      channel: 'sms';
+      smsProvider: SmsProvider;
+      smsCreds: SmsCreds;
+      smsRatePerMin: number;
+      // Fallback transport — 019 cannot reach every number and can fail for
+      // reasons WhatsApp does not share (sender-ID verification, credit).
+      waProvider: WaProvider;
+      waCreds: SendCreds;
+      waBucket: string;
+      attachments: CampaignAttachment[]; // always [] — the SMS channel carries none
     };
 
 export class DeliveryWorker {
@@ -132,6 +152,18 @@ export class DeliveryWorker {
             channel: 'email', transport: this.emailTransportFor(campaign),
             ratePerMin: await readEmailRatePerMin(this.o.pool), bucket: EMAIL_RATE_BUCKET, attachments,
           };
+        } else if (campaign.channel === 'sms') {
+          // Fallback needs real WhatsApp creds too — resolved the same way a
+          // 'whatsapp' campaign would (campaign.instance_id, set at creation).
+          const { provider: waProvider, creds: waCreds } = await this.providerFor(campaign);
+          ctx = {
+            channel: 'sms',
+            smsProvider: this.smsProviderFor(campaign),
+            smsCreds: this.smsCredsFor(),
+            smsRatePerMin: await readSmsRatePerMin(this.o.pool),
+            waProvider, waCreds, waBucket: campaign.instance_id ?? 'default',
+            attachments,
+          };
         } else {
           const { provider, creds } = await this.providerFor(campaign);
           ctx = { channel: 'whatsapp', provider, creds, ratePerMin: campaign.rate_per_min, bucket: campaign.instance_id ?? 'default', attachments };
@@ -146,17 +178,27 @@ export class DeliveryWorker {
             site: siteOrigin(),
             onAuthFailure: () => this.smtpAuthFailed(),
           })
-        : await processRecipient(this.o.pool, ctx.provider, item, ctx.creds, ctx.bucket, ctx.ratePerMin, {
-            backoffBaseSec: this.o.backoffBaseSec,
-            attachments: ctx.attachments,
-            readAttachment: this.o.readAttachment,
-          });
+        : ctx.channel === 'sms'
+          ? await processSmsRecipient(
+              this.o.pool, ctx.smsProvider, ctx.smsCreds, ctx.waProvider, ctx.waCreds, ctx.waBucket,
+              item, ctx.smsRatePerMin, { backoffBaseSec: this.o.backoffBaseSec },
+            )
+          : await processRecipient(this.o.pool, ctx.provider, item, ctx.creds, ctx.bucket, ctx.ratePerMin, {
+              backoffBaseSec: this.o.backoffBaseSec,
+              attachments: ctx.attachments,
+              readAttachment: this.o.readAttachment,
+            });
       this.logEvent(`recipient_${res.outcome}`, { recipientId: item.id, campaignId: item.campaign_id, attempt: item.attempt_count });
     }
     for (const [campaignId, ctx] of ctxByCampaign) {
       await reconcile(this.o.pool, campaignId);
       // Keep the rate window table small: rows older than the window are useless.
-      await pruneSendLog(this.o.pool, ctx.bucket);
+      if (ctx.channel === 'sms') {
+        await pruneSendLog(this.o.pool, SMS_RATE_BUCKET);
+        await pruneSendLog(this.o.pool, ctx.waBucket);
+      } else {
+        await pruneSendLog(this.o.pool, ctx.bucket);
+      }
     }
     return true;
   }
@@ -227,6 +269,18 @@ export class DeliveryWorker {
     const provider = this.o.makeProviderFor?.(campaign) ?? makeProvider({ dryRun: campaign.dry_run });
     const creds = campaign.dry_run ? { instanceId: 'dry', token: 'dry' } : await this.credsFor(campaign);
     return { provider, creds };
+  }
+
+  private smsProviderFor(campaign: Campaign): SmsProvider {
+    return this.o.makeSmsProviderFor?.(campaign) ?? makeSmsProvider({ dryRun: campaign.dry_run });
+  }
+
+  /** One 019 account for the whole server (not per-campaign, unlike WhatsApp's
+   *  per-instance creds) — env vars read once per tick, same as APP_URL/
+   *  SETTINGS_ENC_KEY above. */
+  private smsCredsFor(): SmsCreds {
+    if (this.o.resolveSmsCreds) return this.o.resolveSmsCreds();
+    return { username: env.SMS_USERNAME ?? '', token: env.SMS_API_KEY ?? '', source: env.SMS_SENDER ?? '' };
   }
 
   private emailTransportFor(campaign: Campaign): EmailTransport {

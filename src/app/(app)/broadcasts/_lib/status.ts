@@ -37,11 +37,13 @@ export const RECIPIENT_STATUS_META: Record<RecipientStatus, StatusMeta> = {
   cancelled:  { label: 'בוטל',    cls: 'bg-red-50 text-red-700',        dot: 'bg-red-500' },
 };
 
-/** The two delivery channels of a broadcast (09/10/2026) — one label + tone
- *  each, for the history column/filter and the details header. */
+/** The three delivery channels of a broadcast (09/10/2026, sms added
+ *  16/10/2026) — one label + tone each, for the history column/filter and
+ *  the details header. */
 export const CHANNEL_META: Record<BroadcastChannel, StatusMeta> = {
   whatsapp: { label: 'וואטסאפ', cls: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
   email:    { label: 'מייל',    cls: 'bg-blue-50 text-blue-700',       dot: 'bg-blue-500' },
+  sms:      { label: 'SMS',     cls: 'bg-violet-50 text-violet-700',   dot: 'bg-violet-500' },
 };
 
 const TERMINAL: readonly CampaignStatus[] = ['completed', 'completed_with_errors', 'cancelled', 'failed'];

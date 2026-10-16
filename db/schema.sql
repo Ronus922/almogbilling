@@ -3920,7 +3920,9 @@ CREATE TABLE public.wa_campaign_recipients (
     email text,
     subject text,
     recipient_name text,
+    sent_channel text,
     CONSTRAINT wa_campaign_recipients_contact_or_supplier_check CHECK (((contact_id IS NOT NULL) OR (supplier_id IS NOT NULL))),
+    CONSTRAINT wa_campaign_recipients_sent_channel_check CHECK (((sent_channel IS NULL) OR (sent_channel = ANY (ARRAY['whatsapp'::text, 'email'::text, 'sms'::text])))),
     CONSTRAINT wa_campaign_recipients_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'sent'::text, 'failed'::text, 'skipped'::text, 'cancelled'::text])))
 );
 
@@ -3951,6 +3953,13 @@ COMMENT ON COLUMN public.wa_campaign_recipients.subject IS 'Email broadcast: thi
 --
 
 COMMENT ON COLUMN public.wa_campaign_recipients.recipient_name IS 'Name of the person this message was addressed to, snapshotted at creation (owner / tenant / additional person / supplier). '''' = the card has no name for them; NULL = created before 10/10/2026 (the log falls back to the apartment''s primary owner).';
+
+
+--
+-- Name: COLUMN wa_campaign_recipients.sent_channel; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaign_recipients.sent_channel IS 'Channel that actually carried this message. NULL until sent. Equals the campaign''s channel, EXCEPT an sms campaign that fell back to whatsapp per-recipient (send failure or no valid Israeli mobile) — then ''whatsapp''.';
 
 
 --
@@ -3988,7 +3997,7 @@ CREATE TABLE public.wa_campaigns (
     created_by_name text,
     channel text DEFAULT 'whatsapp'::text NOT NULL,
     subject text,
-    CONSTRAINT wa_campaigns_channel_check CHECK ((channel = ANY (ARRAY['whatsapp'::text, 'email'::text]))),
+    CONSTRAINT wa_campaigns_channel_check CHECK ((channel = ANY (ARRAY['whatsapp'::text, 'email'::text, 'sms'::text]))),
     CONSTRAINT wa_campaigns_email_subject_check CHECK (((channel <> 'email'::text) OR (subject IS NOT NULL))),
     CONSTRAINT wa_campaigns_rate_per_min_check CHECK (((rate_per_min >= 1) AND (rate_per_min <= 120))),
     CONSTRAINT wa_campaigns_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'queued'::text, 'running'::text, 'paused'::text, 'completed'::text, 'completed_with_errors'::text, 'cancelled'::text, 'failed'::text]))),
@@ -7853,5 +7862,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261012065306'),
     ('20261013222645'),
     ('20261014074807'),
-    ('20261014122339')
+    ('20261014122339'),
+    ('20261016163824')
 ;
