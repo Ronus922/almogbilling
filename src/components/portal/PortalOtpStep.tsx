@@ -2,7 +2,7 @@
 
 import {
   useEffect, useRef, useState,
-  type ClipboardEvent, type FormEvent, type KeyboardEvent,
+  type ChangeEvent, type ClipboardEvent, type FormEvent,
 } from 'react';
 import {
   CircleAlert, CircleCheck, ClipboardPaste, Info, LoaderCircle, Lock, RefreshCw, TriangleAlert, WifiOff,
@@ -49,6 +49,15 @@ import {
 // do instead — "הקשה על ספרה כלשהי מרוקנת את התאים" — and that is now what
 // happens: after a wrong code the next touch clears every box, and a verify is
 // only ever sent for a code the resident actually completed.
+//
+// ONE FIELD, NOT SIX (17/10/2026): the boxes used to be six real
+// `maxLength={2}` inputs. Any mechanism that tries to inject all six digits
+// into whichever single box happens to be focused — Android's own "use code"
+// keyboard suggestion, iOS's QuickType chip — gets silently truncated by that
+// box's own maxLength before React ever sees more than one or two digits.
+// There is now exactly one real `<input autoComplete="one-time-code"
+// maxLength={PORTAL_OTP_DIGITS}>`; the six boxes below it are `aria-hidden`
+// decoration driven by the same `digits` state. Nothing left to truncate it.
 
 const BOXES = Array.from({ length: PORTAL_OTP_DIGITS }, (_, i) => i);
 
@@ -157,7 +166,7 @@ export function PortalOtpStep({
   // The lock lifts by itself the moment its countdown runs out — derived, so
   // no effect has to notice and no state can be left stale.
   const phase: Phase = rawPhase === 'locked' && lockLeft <= 0 ? 'idle' : rawPhase;
-  const boxRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   /** Set by a wrong code: the next touch on any box wipes the row (state 06 →
    *  07). This is the whole reason one retype no longer costs four attempts. */
   const clearOnNextTouch = useRef(false);
@@ -165,7 +174,7 @@ export function PortalOtpStep({
    *  code is never sent twice. State, not a ref: the primary button's enabled
    *  state is derived from it. */
   const [lastSubmitted, setLastSubmitted] = useState<string | null>(null);
-  /** Always the current touch()+fillFrom() pair (see the effect with no
+  /** Always the current touch()+setCode() pair (see the effect with no
    *  dependency list below), so the WebOTP subscription — which subscribes
    *  exactly ONCE, on mount — can still act on today's digits/phase whenever
    *  Android actually hands it a code, not whatever existed at mount. */
@@ -176,7 +185,7 @@ export function PortalOtpStep({
   const busy = phase === 'verifying';
   const inert = busy || phase === 'success' || phase === 'expired' || phase === 'locked';
 
-  useEffect(() => { boxRefs.current[0]?.focus(); }, []);
+  useEffect(() => { inputRef.current?.focus(); }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -190,11 +199,21 @@ export function PortalOtpStep({
     return () => clearTimeout(t);
   }, [shake]);
 
+  // A wrong code selects the stale digits the instant the error appears, not
+  // only on the next focus event — the field never actually lost focus, so a
+  // real browser fires no `focus` event for "keep typing right where you
+  // are". Selected text means the very next keystroke REPLACES it natively,
+  // before React ever sees the value, instead of appending a 7th character
+  // that setCode would then truncate right back down to the wrong code.
+  useEffect(() => {
+    if (phase === 'error') inputRef.current?.select();
+  }, [phase]);
+
   useEffect(() => {
     autoFillRef.current = (value: string) => {
       if (inert) return;
-      const base = touch();
-      fillFrom(0, value, base);
+      touch();
+      setCode(value);
     };
   });
 
@@ -306,105 +325,77 @@ export function PortalOtpStep({
       : { tone: 'err', text: data.message ?? 'הקוד שגוי. נסו שוב.' });
   }
 
-  /** Writes `insert` from `start`, moves focus past the last digit written and
-   *  submits once all six are in — but only for a code that differs from the
-   *  one already sent. */
-  function fillFrom(start: number, insert: string, base: readonly string[]) {
-    const next = [...base];
-    let k = start;
-    for (const ch of insert) {
-      if (k >= PORTAL_OTP_DIGITS) break;
-      next[k] = ch;
-      k += 1;
-    }
+  /** Replaces the whole code at once. Every entry route — typing, a native
+   *  paste event, the "הדבק קוד" button, WebOTP — ends up here with the FULL
+   *  current string, never a per-position merge (see the ONE FIELD, NOT SIX
+   *  comment at the top of the file for why that matters). */
+  function setCode(raw: string) {
+    const digitsOnly = raw.replace(/\D+/g, '').slice(0, PORTAL_OTP_DIGITS);
+    const next = BOXES.map((i) => digitsOnly[i] ?? '');
     setDigits(next);
-    boxRefs.current[Math.min(k, PORTAL_OTP_DIGITS - 1)]?.focus();
-    const joined = next.join('');
-    if (next.every((d) => d !== '') && joined !== lastSubmitted) {
-      void submit(joined);
+    if (digitsOnly.length === PORTAL_OTP_DIGITS && digitsOnly !== lastSubmitted) {
+      void submit(digitsOnly);
     }
   }
 
-  /** 06 → 07. The first touch after a wrong code empties every box and turns
+  /** 06 → 07. The first touch after a wrong code empties the field and turns
    *  the red line into a neutral "type it again · N attempts left", exactly as
-   *  the reference describes. Returns the row to write into. */
-  function touch(): readonly string[] {
-    if (!clearOnNextTouch.current) return digits;
+   *  the reference describes. */
+  function touch() {
+    if (!clearOnNextTouch.current) return;
     clearOnNextTouch.current = false;
-    const cleared = BOXES.map(() => '');
     setPhase('idle');
     setShake(false);
     setMsg((m) => (m && m.tone === 'err'
       ? { tone: 'info', text: m.text.replace(/^הקוד שגוי\. /, 'הזינו את הקוד מחדש · ').replace(/\.$/, '') }
       : m));
-    setDigits(cleared);
-    boxRefs.current[0]?.focus();
-    return cleared;
+    setDigits(BOXES.map(() => ''));
   }
 
-  function handleChange(i: number, value: string) {
+  function handleInputChange(ev: ChangeEvent<HTMLInputElement>) {
     if (inert) return;
-    const base = touch();
-    const wasCleared = base !== digits;
-    const typed = value.replace(/\D+/g, '');
-    if (!typed) {
-      const next = [...base];
-      next[i] = '';
-      setDigits(next);
-      return;
-    }
-    let insert = typed;
-    const existing = base[i];
-    if (!wasCleared && existing && typed.length === 2) {
-      insert = typed.startsWith(existing) ? typed.slice(1) : typed.slice(0, 1);
-    }
-    fillFrom(wasCleared ? 0 : i, insert, base);
+    touch();
+    setCode(ev.target.value);
   }
 
-  function handleKeyDown(i: number, ev: KeyboardEvent<HTMLInputElement>) {
-    if (inert) return;
-    if (ev.key === 'Backspace' && !digits[i] && i > 0) {
-      ev.preventDefault();
-      const base = touch();
-      const next = [...base];
-      next[i - 1] = '';
-      setDigits(next);
-      boxRefs.current[i - 1]?.focus();
-    } else if (ev.key === 'ArrowLeft' && i > 0) {
-      ev.preventDefault();
-      boxRefs.current[i - 1]?.focus();
-    } else if (ev.key === 'ArrowRight' && i < PORTAL_OTP_DIGITS - 1) {
-      ev.preventDefault();
-      boxRefs.current[i + 1]?.focus();
-    }
-  }
-
-  /** Any pasted text, not just a bare code — extractOtpCode pulls the one
-   *  run of six consecutive digits out of it. No clean run → nothing is
-   *  prevented, so the browser's own paste still lands in this one box. */
-  function handlePaste(i: number, ev: ClipboardEvent<HTMLInputElement>) {
+  /** Any pasted text, not just a bare code — extractOtpCode pulls the one run
+   *  of six consecutive digits out of it (the validity line and the WebOTP
+   *  trailer both carry other digits right next to the code). No clean run →
+   *  nothing is prevented, so the browser's own paste still lands in the
+   *  field and the normal change path takes it from there. */
+  function handlePaste(ev: ClipboardEvent<HTMLInputElement>) {
     if (inert) return;
     const found = extractOtpCode(ev.clipboardData.getData('text'));
     if (!found) return;
     ev.preventDefault();
-    const base = touch();
-    fillFrom(0, found, base);
+    touch();
+    setCode(found);
   }
 
   /** "הדבק קוד" — a user gesture (the click itself) rather than relying on a
-   *  paste event into a box, which some mobile browsers restrict. Silent on
-   *  any failure (denied permission, empty/insecure clipboard, unsupported
-   *  API): the boxes stay exactly as they were and a direct paste into a box
-   *  still works. */
+   *  paste event into the field, which some mobile browsers restrict. Unlike
+   *  before 17/10/2026, every failure is now a visible line under the field:
+   *  a silent catch here was indistinguishable from the button doing nothing
+   *  at all, which is exactly the bug report that led to this rewrite. */
   async function pasteFromClipboard() {
     if (inert) return;
     try {
       const text = await navigator.clipboard.readText();
       const found = extractOtpCode(text);
-      if (!found) return;
-      const base = touch();
-      fillFrom(0, found, base);
-    } catch { /* no permission, no clipboard API, or nothing useful on it */ }
+      if (!found) {
+        setMsg({
+          tone: 'err',
+          text: `לא נמצא קוד בן ${PORTAL_OTP_DIGITS} ספרות בלוח ההעתקה. העתיקו את הקוד מה-SMS ונסו שוב.`,
+        });
+        return;
+      }
+      touch();
+      setCode(found);
+    } catch {
+      setMsg({ tone: 'err', text: 'אין גישה ללוח ההעתקה. הדביקו את הקוד ישירות לשדה, או הקלידו אותו.' });
+    } finally {
+      inputRef.current?.focus();
+    }
   }
 
   /** 09 → 10. A new code cancels the previous one server-side, which is also
@@ -424,7 +415,7 @@ export function PortalOtpStep({
         setCooldown(PORTAL_OTP_RESEND_COOLDOWN_SEC);
         if (out.channel) setChannel(out.channel);
         setToast(`קוד חדש נשלח ${CHANNEL_LABEL[out.channel ?? channel]}`);
-        boxRefs.current[0]?.focus();
+        inputRef.current?.focus();
         return;
       }
       if (out.locked) { enterLock(out.lockedUntil); return; }
@@ -505,40 +496,56 @@ export function PortalOtpStep({
 
         <div
           dir="ltr"
-          className={cn('mt-[26px] flex justify-between gap-[8px]', shake && 'motion-safe:animate-[portal-otp-shake_0.4s_ease-in-out_2]')}
+          className={cn('relative mt-[26px]', shake && 'motion-safe:animate-[portal-otp-shake_0.4s_ease-in-out_2]')}
         >
-          {BOXES.map((i) => (
-            <input
-              key={i}
-              ref={(el) => { boxRefs.current[i] = el; }}
-              type="text"
-              inputMode="numeric"
-              pattern="\d*"
-              maxLength={2}
-              autoComplete={i === 0 ? 'one-time-code' : 'off'}
-              aria-label={`ספרה ${i + 1} מתוך ${PORTAL_OTP_DIGITS}`}
-              value={digits[i] ?? ''}
-              readOnly={inert}
-              disabled={phase === 'expired' || phase === 'locked'}
-              onChange={(ev) => handleChange(i, ev.target.value)}
-              onKeyDown={(ev) => handleKeyDown(i, ev)}
-              onPaste={(ev) => handlePaste(i, ev)}
-              onFocus={(ev) => { touch(); ev.currentTarget.select(); }}
-              className={cn(
-                'h-[58px] w-full min-w-0 rounded-[12px] border-[1.5px] text-center font-num text-[26px] font-bold outline-none transition-[border-color,background-color,box-shadow,opacity] duration-150 min-[601px]:h-[56px] min-[601px]:rounded-[11px] min-[601px]:text-[22px]',
-                boxTone ?? (digits[i]
-                  ? 'border-[#CBD5E1] bg-white text-[#0F172A]'
-                  : 'border-[#E2E8F0] bg-[#F5F7FB] text-[#0F172A]'),
-                busy && 'opacity-55',
-                !inert && 'focus:border-brand focus:bg-white focus:ring-4 focus:ring-[rgba(61,90,254,0.12)]',
-              )}
-            />
-          ))}
+          {/* Decoration only — one real field sits on top of this and owns
+              every keystroke, paste and autofill. See ONE FIELD, NOT SIX. */}
+          <div aria-hidden className="pointer-events-none flex justify-between gap-[8px]">
+            {BOXES.map((i) => (
+              <div
+                key={i}
+                data-testid="otp-cell"
+                className={cn(
+                  'flex h-[58px] w-full min-w-0 items-center justify-center rounded-[12px] border-[1.5px] font-num text-[26px] font-bold transition-[border-color,background-color,box-shadow,opacity] duration-150 min-[601px]:h-[56px] min-[601px]:rounded-[11px] min-[601px]:text-[22px]',
+                  boxTone ?? (digits[i]
+                    ? 'border-[#CBD5E1] bg-white text-[#0F172A]'
+                    : 'border-[#E2E8F0] bg-[#F5F7FB] text-[#0F172A]'),
+                  busy && 'opacity-55',
+                )}
+              >
+                {digits[i] ?? ''}
+              </div>
+            ))}
+          </div>
+          <input
+            ref={inputRef}
+            type="text"
+            inputMode="numeric"
+            pattern="\d*"
+            autoComplete="one-time-code"
+            maxLength={PORTAL_OTP_DIGITS}
+            aria-label={`קוד בן ${PORTAL_OTP_DIGITS} ספרות`}
+            value={code}
+            readOnly={inert}
+            disabled={phase === 'expired' || phase === 'locked'}
+            onChange={handleInputChange}
+            onPaste={handlePaste}
+            onFocus={(ev) => { touch(); ev.currentTarget.select(); }}
+            // A click on an already-focused field fires no `focus` event, and
+            // a plain click also collapses whatever the error-state effect
+            // above just selected — re-select here so "tap, then retype"
+            // still replaces the stale wrong code instead of appending to it.
+            onClick={(ev) => { touch(); ev.currentTarget.select(); }}
+            className={cn(
+              'absolute inset-0 h-[58px] w-full min-w-0 rounded-[12px] border-none bg-transparent px-[4px] text-left font-num text-[26px] font-bold text-transparent caret-[#0F172A] outline-none min-[601px]:h-[56px] min-[601px]:text-[22px]',
+              !inert && 'focus:ring-4 focus:ring-[rgba(61,90,254,0.12)]',
+            )}
+          />
         </div>
 
         {/* A user-gesture clipboard read — some mobile browsers restrict
             programmatic reads outside one, so this is the reliable path
-            next to a direct paste into any box. */}
+            next to a direct paste into the field. */}
         <button
           type="button"
           onClick={() => void pasteFromClipboard()}
