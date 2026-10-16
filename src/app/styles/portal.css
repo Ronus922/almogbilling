@@ -267,10 +267,6 @@
 .portal-skin .tw tr.sub:hover td { background: #fff; }
 
 /* ── misc blocks ───────────────────────────────────────────────────── */
-.portal-skin .fut { display: flex; gap: 16px; align-items: flex-start; }
-.portal-skin .fut .ic { width: 44px; height: 44px; border-radius: 12px; background: var(--brand-soft); color: var(--brand); display: grid; place-items: center; flex: none; }
-.portal-skin .fut h4 { font-size: 15px; font-weight: 700; display: flex; gap: 8px; align-items: center; }
-.portal-skin .fut p { font-size: 14px; color: var(--ink-muted); margin-top: 4px; line-height: 1.55; }
 .portal-skin .chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .portal-skin .chipf { height: 34px; padding: 0 14px; border-radius: 9px; border: 1.5px solid var(--border); background: #fff; font-size: 14px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
 .portal-skin .chipf.on { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-ink); }
@@ -280,7 +276,6 @@
 .portal-skin .empty p { color: var(--ink-muted); margin: 8px auto 0; max-width: 420px; line-height: 1.6; }
 .portal-skin .note { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); }
 .portal-skin .note svg { color: var(--ink-soft); flex: none; }
-.portal-skin .col { display: flex; flex-direction: column; gap: 20px; }
 
 /* ── "החלטות" tab (ref/portal/decisions-tab.md + the reference's `dec` tab) ─
    DECLARED EXCEPTION of the exception: the reference's category chips

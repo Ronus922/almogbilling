@@ -14,17 +14,17 @@ import { useCountUp } from '@/lib/portal/useCountUp';
 import { PortalCategoryList } from './PortalCategoryList';
 import { PortalOverviewChart, type OverviewChartMonth, type OverviewChartView } from './PortalOverviewChart';
 import { PortalTxTable } from './PortalTxTable';
-import { ArrowDownIcon, ArrowUpIcon, DecisionsIcon, WalletIcon } from './PortalIcons';
+import { ArrowDownIcon, ArrowUpIcon, WalletIcon } from './PortalIcons';
 import { usePortalHref } from './usePortalHref';
 
 // The overview tab (ref/almog-portal-overview, round 3 — 14/10/2026):
 // greeting + "updated to <newest published month>", the 12/6-month period
 // select, KPIs with count-up, income-vs-expenses in three animated views
 // (PortalOverviewChart), "לאן הולך הכסף" (PortalCategoryList, 8 + expand),
-// the five newest lines and the "decisions — coming soon" card. Everything
-// comes from ResidentOverview (published months only); the 6-month view is a
-// slice of the 12-month data set, so the select never leaves the page — it
-// only rewrites `?n=` so a refresh keeps it.
+// and the five newest lines. Everything comes from ResidentOverview
+// (published months only); the 6-month view is a slice of the 12-month data
+// set, so the select never leaves the page — it only rewrites `?n=` so a
+// refresh keeps it.
 //
 // The reference's blocks come and go with their data (PORTAL_BLOCKS): the dark
 // card needs an account, the cash KPI needs a bank balance (the switch and a
@@ -38,10 +38,10 @@ import { usePortalHref } from './usePortalHref';
 //
 // Every number on this screen is real (Phase 0, 14/10/2026): the reference's
 // "−3% מהממוצע השנתי" line is `pctVsAverage`, already computed from the
-// window's own months — nothing here is invented. The reference's "החלטות
-// ועד" card is itself a static "בקרוב" placeholder (no data behind it in the
-// reference either), so it stays exactly as it already was — this round does
-// not wire it to the live `dec` tab, which is outside its scope.
+// window's own months — nothing here is invented. The reference's static
+// "החלטות ועד — בקרוב" placeholder card was removed outright (16/10/2026,
+// Ronen) rather than kept as dead weight — it carried no data and was never
+// wired to the live `dec` tab.
 
 /** The dark "היתרה שלך לתשלום" card (the reference's .mine): the owner's
  *  balance due summed over their records (an archived apartment counts like
@@ -214,20 +214,9 @@ export function PortalOverview({ overview, span: initialSpan, greeting, accounts
           <PortalTxTable rows={overview.recent} emptyText="אין תנועות עדיין." />
         </div>
 
-        <div className="c4 col">
-          {PORTAL_BLOCKS.collectionRate && (
-            <div className="card"><h3>שיעור גבייה · {monthName(overview.latest)}</h3></div>
-          )}
-          <div className="card">
-            <div className="fut">
-              <div className="ic"><DecisionsIcon /></div>
-              <div>
-                <h4>החלטות ועד <span className="soon">בקרוב</span></h4>
-                <p>הצבעות דיירים, פרוטוקולים ואישור תקציב — ישירות מהפורטל.</p>
-              </div>
-            </div>
-          </div>
-        </div>
+        {PORTAL_BLOCKS.collectionRate && (
+          <div className="card c4"><h3>שיעור גבייה · {monthName(overview.latest)}</h3></div>
+        )}
       </div>
     </section>
   );
