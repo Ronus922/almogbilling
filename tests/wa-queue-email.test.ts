@@ -304,12 +304,12 @@ d('wa-queue — email channel', () => {
     expect(await readEmailRatePerMin(pool)).toBe(before.rows[0] ? Number(before.rows[0].value) : 30);
   });
 
-  it('the schema refuses an email broadcast without a subject', async () => {
+  it('the schema refuses an email broadcast without a subject, and any channel outside whatsapp/email/sms', async () => {
     await expect(pool.query(
       `insert into public.wa_campaigns (name, body, channel) values ('x', 'y', 'email')`,
     )).rejects.toThrow(/wa_campaigns_email_subject_check/);
     await expect(pool.query(
-      `insert into public.wa_campaigns (name, body, channel, subject) values ('x', 'y', 'sms', 's')`,
+      `insert into public.wa_campaigns (name, body, channel, subject) values ('x', 'y', 'fax', 's')`,
     )).rejects.toThrow(/wa_campaigns_channel_check/);
   });
 });

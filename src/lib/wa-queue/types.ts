@@ -11,9 +11,10 @@ export type CampaignStatus =
   | 'cancelled'
   | 'failed';
 
-/** How a broadcast is delivered (09/10/2026). A property of the campaign, not a
- *  separate system — same tables, same worker, same statuses. */
-export type BroadcastChannel = 'whatsapp' | 'email';
+/** How a broadcast is delivered (09/10/2026, sms added 16/10/2026). A property
+ *  of the campaign, not a separate system — same tables, same worker, same
+ *  statuses. */
+export type BroadcastChannel = 'whatsapp' | 'email' | 'sms';
 
 export type RecipientStatus =
   | 'pending'
@@ -108,6 +109,10 @@ export interface Recipient {
   /** Campaign attachments (in sort_order) already delivered to this recipient;
    *  a retry continues from here. */
   attachments_sent: number;
+  /** The channel that actually carried this message — null until sent. Equals
+   *  the campaign's channel, except an 'sms' campaign that fell back to
+   *  'whatsapp' per-recipient (send failure or no valid Israeli mobile). */
+  sent_channel: BroadcastChannel | null;
   last_error: string | null;
   error_class: ErrorClass | null;
   idempotency_key: string;
@@ -207,6 +212,10 @@ export interface RecipientLogRow {
   /** Masked address on an email recipient, e.g. 'ro•••@example.com'; null
    *  on WhatsApp. Like the phone, the raw address never leaves the DB layer. */
   email_masked: string | null;
+  /** The channel that actually carried this message — null until sent. Only
+   *  ever differs from the campaign's own channel for an 'sms' campaign that
+   *  fell back to 'whatsapp' for this recipient. */
+  sent_channel: BroadcastChannel | null;
   /** The recipient's name as snapshotted at creation (recipient_name); for a
    *  row created before 10/10/2026, the apartment's primary owner (else
    *  tenant / supplier) as the log always showed; null when there is none. */

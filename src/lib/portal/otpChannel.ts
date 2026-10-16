@@ -5,20 +5,18 @@ import type { OtpChannel } from '@/lib/types/portal';
 export type { OtpChannel };
 
 // Which transport carries the owner's OTP (15/10/2026, "SMS ראשי, וואטסאפ
-// גיבוי"): SMS is meant to be primary, WhatsApp (Green API — the only live
-// channel until now) is the explicit, resident-triggered fallback button.
+// גיבוי"): SMS is the primary channel once configured, WhatsApp (Green API —
+// the only live channel until now) is the explicit, resident-triggered
+// fallback button.
 //
-// Nothing here goes live on its own. SMS_PROVIDER has no concrete adapter
-// wired yet (src/lib/portal/sms.ts) — Ronen is still choosing a provider and
-// no account exists (docs/sms-provider.md). Until BOTH env vars below are
-// set, isSmsConfigured() is false, resolveDefaultChannel() keeps returning
-// 'whatsapp' exactly as before this change, and "שלח בוואטסאפ במקום" simply
-// never renders (it would offer the channel already in use). The switch to
-// SMS as the default is therefore a pure config flip for whenever that day
-// comes — no code here needs to change.
+// 019sms (src/lib/portal/sms.ts) is the wired provider. Until all four env
+// vars below are set, isSmsConfigured() is false, resolveDefaultChannel()
+// keeps returning 'whatsapp' exactly as before this existed, and "שלח
+// בוואטסאפ במקום" simply never renders (it would offer the channel already
+// in use).
 
 export function isSmsConfigured(): boolean {
-  return Boolean(env.SMS_PROVIDER && env.SMS_API_KEY);
+  return Boolean(env.SMS_PROVIDER && env.SMS_USERNAME && env.SMS_API_KEY && env.SMS_SENDER);
 }
 
 export function resolveDefaultChannel(): OtpChannel {

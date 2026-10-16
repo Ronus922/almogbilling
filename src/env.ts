@@ -85,13 +85,20 @@ export const env = createEnv({
     ADMIN_ALERT_PHONE: optionalString,
     ADMIN_ALERT_EMAIL: optionalString,
 
-    // Owners-portal OTP, SMS channel (docs/sms-provider.md). Unset (either
-    // one) = isSmsConfigured() is false and every code keeps going out over
-    // WhatsApp exactly as before — this is not wired to a real provider yet.
+    // Owners-portal OTP, SMS channel (docs/sms-provider.md). Unset (any one
+    // of the four) = isSmsConfigured() is false and every code keeps going
+    // out over WhatsApp exactly as before.
     SMS_PROVIDER: optionalString,
+    // 019sms account username — sent in the request body (`user.username`),
+    // separate from the bearer token below (019 validates both).
+    SMS_USERNAME: optionalString,
+    // 019sms API token, created once in their panel (Settings → API Token
+    // Management). Sent as `Authorization: Bearer <token>`.
     SMS_API_KEY: optionalString,
-    // Sender name/number shown on the SMS — provider-specific length limit
-    // (≤11 chars for 019sms; see docs/sms-provider.md).
+    // Sender name/number shown on the SMS (019's `source` field) — ≤11 chars,
+    // digits/English letters only, no '+'. Must be verified in 019's panel
+    // (Settings → text sender name) before real sends succeed, or every send
+    // fails with their error 515 ("Unverified source").
     SMS_SENDER: optionalString,
 
     // ── monitoring (all optional; unset = off) ────────────────────────────

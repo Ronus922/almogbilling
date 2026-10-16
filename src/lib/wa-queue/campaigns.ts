@@ -230,7 +230,7 @@ export async function listRecipients(
   const rows = await pool.query<RecipientLogRow>(
     `select
        r.id, r.status, r.attempt_count, r.sent_at, r.delivered_at, r.read_at,
-       r.failed_at, r.last_error, r.error_class, r.created_at,
+       r.failed_at, r.last_error, r.error_class, r.created_at, r.sent_channel,
        -- Who the message went to, as snapshotted at creation ('' = the card
        -- had no name → null). NULL only on a row from before 10/10/2026: the
        -- apartment's primary owner, as the log always showed.

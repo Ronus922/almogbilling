@@ -18,6 +18,7 @@ import { buildEmailCampaignRecipients, isEmailDebtMessage } from '@/lib/email-br
 import { createCampaign, listCampaigns, startCampaign, CampaignConflictError } from '@/lib/wa-queue/campaigns';
 import { listStagedAttachments } from '@/lib/wa-queue/attachments';
 import { readEmailRatePerMin } from '@/lib/wa-queue/email';
+import { readSmsRatePerMin } from '@/lib/wa-queue/sms';
 import { campaignAttachmentIdsSchema } from '@/lib/validation/requests';
 import {
   validateBroadcastAttachmentSet, EMAIL_ATTACHMENTS_MAX_TOTAL_BYTES, WHATSAPP_ATTACHMENT_LIMITS,
@@ -28,7 +29,7 @@ import type {
   BroadcastChannel, RecipientInput, CampaignStatus, CampaignListFilters, CampaignListPageView,
 } from '@/lib/wa-queue/types';
 
-const CHANNELS: readonly BroadcastChannel[] = ['whatsapp', 'email'];
+const CHANNELS: readonly BroadcastChannel[] = ['whatsapp', 'email', 'sms'];
 
 const ROLE_SELECTIONS: readonly BroadcastRoleSelection[] = ['owners', 'tenants', 'suppliers'];
 
@@ -111,7 +112,8 @@ export async function POST(req: NextRequest) {
   if (body.channel !== undefined && !(CHANNELS as readonly unknown[]).includes(body.channel)) {
     return NextResponse.json({ error: 'ערוץ לא תקין' }, { status: 400 });
   }
-  const channel: BroadcastChannel = body.channel === 'email' ? 'email' : 'whatsapp';
+  const channel: BroadcastChannel =
+    body.channel === 'email' ? 'email' : body.channel === 'sms' ? 'sms' : 'whatsapp';
 
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   if (!name) return NextResponse.json({ error: 'שם קמפיין חסר' }, { status: 400 });
@@ -147,6 +149,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: idsParsed.error.issues[0]?.message ?? 'קבצים מצורפים לא תקינים', issues: idsParsed.error.issues }, { status: 400 });
   }
   const attachmentIds = Array.from(new Set(idsParsed.data));
+  // 019 is text-only — no attachment of any size rides on the SMS channel.
+  if (channel === 'sms' && attachmentIds.length > 0) {
+    return NextResponse.json({ error: 'תפוצת SMS אינה תומכת בקבצים מצורפים' }, { status: 400 });
+  }
   if (attachmentIds.length > 0) {
     const staged = await listStagedAttachments(getDbPool(), attachmentIds, actor.id);
     if (staged.length !== attachmentIds.length) {
@@ -166,7 +172,10 @@ export async function POST(req: NextRequest) {
     // dry-run needs no real instance; real sends resolve like chat-send does
     // (own instance, admin falls back to the first connected one).
     // An email broadcast goes out through the SMTP account, not an instance.
-    if (!dryRun && channel === 'whatsapp') instanceId = (await resolveSendCreds(actor, null)).id;
+    // SMS needs one too — not to send the SMS itself, but because the
+    // worker's per-recipient WhatsApp fallback (019 failure, or no valid
+    // Israeli mobile) needs real creds the same way a 'whatsapp' campaign does.
+    if (!dryRun && (channel === 'whatsapp' || channel === 'sms')) instanceId = (await resolveSendCreds(actor, null)).id;
   } catch (err) {
     if (err instanceof InstanceNotConfiguredError) return NextResponse.json({ error: err.message }, { status: 503 });
     throw err;
@@ -273,11 +282,13 @@ export async function POST(req: NextRequest) {
       channel,
       subject: channel === 'email' ? subject : null,
       name, body: messageBody, templateName, audience, instanceId, createdBy: actor.id, recipients,
-      // Email: the pace in force when it was created (the worker reads the
-      // live app_settings value — one bucket for the SMTP account).
+      // Email/SMS: the pace in force when it was created (the worker re-reads
+      // the live app_settings value at send time — one shared bucket each).
       ratePerMin: channel === 'email'
         ? await readEmailRatePerMin(getDbPool())
-        : typeof body.rate_per_min === 'number' ? body.rate_per_min : undefined,
+        : channel === 'sms'
+          ? await readSmsRatePerMin(getDbPool())
+          : typeof body.rate_per_min === 'number' ? body.rate_per_min : undefined,
       dryRun,
       clientToken: typeof body.client_token === 'string' ? body.client_token : null,
       attachmentIds,

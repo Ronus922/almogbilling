@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Megaphone, Send, Loader2, Home, UserCheck, Truck, ArrowRight, Eye, CheckCircle2, OctagonX,
-  MessageCircle, Mail, ChevronDown,
+  MessageCircle, Mail, Smartphone, ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -43,11 +43,15 @@ const ROLES: { value: Role; label: string; icon: typeof Home }[] = [
 ];
 const DEFAULT_ROLES: Role[] = ['owners', 'tenants'];
 
-// The channel is a property of the broadcast (09/10/2026): everything below it
-// — audience, template, message, files, send — is the same form for both.
+// The channel is a property of the broadcast (09/10/2026, sms added
+// 16/10/2026): everything below it — audience, template, message, send — is
+// the same form for all three. Files are the one thing that differs: SMS
+// (019) carries none at all, so its section below is replaced by an
+// explanation instead of the picker.
 const CHANNELS: { value: BroadcastChannel; label: string; icon: typeof Home }[] = [
   { value: 'whatsapp', label: 'וואטסאפ', icon: MessageCircle },
   { value: 'email', label: 'מייל', icon: Mail },
+  { value: 'sms', label: 'SMS', icon: Smartphone },
 ];
 
 const MISSING_ROLE_LABEL: Record<MissingEmailEntry['role'], string> = {
@@ -123,6 +127,7 @@ export function BroadcastComposeClient({
 } = {}) {
   const [channel, setChannel] = useState<BroadcastChannel>(channelLock ?? 'whatsapp');
   const isEmail = channel === 'email';
+  const isSms = channel === 'sms';
   const [subject, setSubject] = useState('');
   const [missing, setMissing] = useState<MissingEmailEntry[]>([]);
   const [showMissing, setShowMissing] = useState(false);
@@ -158,6 +163,24 @@ export function BroadcastComposeClient({
   // survives the unmount. Launched ones are already linked (DELETE → 404, harmless).
   const stagedRef = useRef<StagedAttachment[]>([]);
   useEffect(() => { stagedRef.current = attachments; }, [attachments]);
+
+  // SMS carries no attachments at all — switching to it from WhatsApp/email
+  // with files already staged drops (and un-stages) them right there in the
+  // click handler, instead of leaving a stale, invisible selection the
+  // operator can no longer see or remove (the picker below is hidden on this
+  // channel). The server rejects attachment_ids on 'sms' too (defence in
+  // depth), but this keeps the two channels' states honest.
+  function selectChannel(value: BroadcastChannel) {
+    setChannel(value);
+    if (value !== 'sms' || attachments.length === 0) return;
+    for (const a of attachments) {
+      if (a.attachmentId) {
+        void fetch(`/api/whatsapp/campaigns/attachments/${a.attachmentId}`, { method: 'DELETE', credentials: 'include' }).catch(() => {});
+      }
+    }
+    setAttachments([]);
+    toast.info('קבצים מצורפים הוסרו — תפוצת SMS אינה תומכת בהם');
+  }
   useEffect(() => () => {
     for (const a of stagedRef.current) {
       if (a.attachmentId) {
@@ -311,7 +334,7 @@ export function BroadcastComposeClient({
           </span>
           <div>
             <h1 className="text-2xl font-extrabold text-slate-900">תפוצה חדשה</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">שליחת הודעה לקבוצת נמענים — ב-WhatsApp או במייל.</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">שליחת הודעה לקבוצת נמענים — ב-WhatsApp, במייל או ב-SMS.</p>
           </div>
         </div>
       )}
@@ -326,7 +349,7 @@ export function BroadcastComposeClient({
                 const active = channel === c.value;
                 return (
                   <button key={c.value} type="button" role="radio" aria-checked={active} disabled={sending}
-                    onClick={() => setChannel(c.value)}
+                    onClick={() => selectChannel(c.value)}
                     className={cn('inline-flex h-11 items-center gap-2 rounded-full border px-5 text-sm font-semibold transition-colors',
                       active ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}>
                     <c.icon className="h-4 w-4" /> {c.label}
@@ -482,12 +505,19 @@ export function BroadcastComposeClient({
         </div>
 
         {/* Attachments — uploaded on pick, linked to the broadcast at send. On
-            the email channel they ride in every email, so their total is 25MB. */}
-        <div className="space-y-1.5">
-          <AttachmentPicker items={attachments} onChange={setAttachments} disabled={sending}
-            policy={isEmail ? EMAIL_BROADCAST_ATTACHMENT_POLICY : WHATSAPP_ATTACHMENT_POLICY} />
-          {attachmentsTotalErr && <p className="text-[12px] font-semibold text-red-500">⚠️ {attachmentsTotalErr} — הסירו קבצים כדי לשלוח במייל</p>}
-        </div>
+            the email channel they ride in every email, so their total is 25MB.
+            SMS (019) is text-only: no picker, a visible explanation instead. */}
+        {isSms ? (
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
+            תפוצת SMS אינה תומכת בקבצים מצורפים — הודעת טקסט בלבד.
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            <AttachmentPicker items={attachments} onChange={setAttachments} disabled={sending}
+              policy={isEmail ? EMAIL_BROADCAST_ATTACHMENT_POLICY : WHATSAPP_ATTACHMENT_POLICY} />
+            {attachmentsTotalErr && <p className="text-[12px] font-semibold text-red-500">⚠️ {attachmentsTotalErr} — הסירו קבצים כדי לשלוח במייל</p>}
+          </div>
+        )}
       </div>
 
       {/* Footer actions */}
