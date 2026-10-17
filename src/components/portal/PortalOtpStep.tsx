@@ -73,6 +73,20 @@ import {
 // native long-press-paste on the field still works (onPaste, unchanged).
 // And the real input's `focus:ring-4` drew one frame around all six boxes
 // together, not the clean per-box look of every other OTP screen — removed.
+//
+// ROUND 3 (17/10/2026, "ליטוש מסך הקוד"): `text-transparent` only hides the
+// GLYPHS, not a selection. `onFocus`/`onClick`/the error-state effect all
+// call `.select()` on the real input, and autofill (one-time-code, WebOTP)
+// selects what it just inserted too — a browser's own default `::selection`
+// then painted its own background+text colour over whatever digits were
+// selected, visible right where the real input sits (over the first boxes,
+// left-aligned LTR). The caret was the same story: `caret-[#0F172A]` drew a
+// real, dark, visible caret mid-digit-entry — the six decorative boxes have
+// none, so this was the one place a position leaked. Both are now
+// `transparent` (`caret-transparent` here; `::selection` + Chrome's
+// `-webkit-autofill` background/text override in portal.css, under the
+// `.otp-real` class this input carries — not expressible as a Tailwind
+// utility, and the login screen is outside `.portal-skin`'s scope).
 
 const BOXES = Array.from({ length: PORTAL_OTP_DIGITS }, (_, i) => i);
 
@@ -552,7 +566,7 @@ export function PortalOtpStep({
             // above just selected — re-select here so "tap, then retype"
             // still replaces the stale wrong code instead of appending to it.
             onClick={(ev) => { touch(); ev.currentTarget.select(); }}
-            className="absolute inset-0 h-[58px] w-full min-w-0 rounded-[12px] border-none bg-transparent px-[4px] text-left font-num text-[26px] font-bold text-transparent caret-[#0F172A] outline-none min-[601px]:h-[56px] min-[601px]:text-[22px]"
+            className="otp-real absolute inset-0 h-[58px] w-full min-w-0 rounded-[12px] border-none bg-transparent px-[4px] text-left font-num text-[26px] font-bold text-transparent caret-transparent outline-none min-[601px]:h-[56px] min-[601px]:text-[22px]"
           />
         </div>
 

@@ -3,7 +3,6 @@
 --
 
 
-
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -3014,7 +3013,7 @@ CREATE TABLE public.portal_login_events (
     user_agent text,
     details jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT portal_login_events_event_type_check CHECK ((event_type = ANY (ARRAY['code_requested'::text, 'code_sent'::text, 'send_failed'::text, 'code_invalid'::text, 'code_expired'::text, 'login_success'::text, 'phone_not_found'::text, 'phone_inactive'::text, 'locked_out'::text, 'unlocked_manually'::text, 'session_revoked'::text])))
+    CONSTRAINT portal_login_events_event_type_check CHECK ((event_type = ANY (ARRAY['code_requested'::text, 'code_sent'::text, 'send_failed'::text, 'code_invalid'::text, 'code_expired'::text, 'login_success'::text, 'phone_not_found'::text, 'phone_inactive'::text, 'locked_out'::text, 'unlocked_manually'::text, 'session_revoked'::text, 'send_capped'::text])))
 );
 
 
@@ -7743,7 +7742,6 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 
 
-
 --
 -- Dbmate schema migrations
 --
@@ -7874,5 +7872,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261014074807'),
     ('20261014122339'),
     ('20261016163824'),
-    ('20261017090427')
+    ('20261017090427'),
+    ('20261017163621')
 ;

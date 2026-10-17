@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   PORTAL_LOCKOUT_ALERT_TIER, PORTAL_LOCKOUT_TIER_MINUTES, PORTAL_NOT_OWNER_MESSAGE,
-  PORTAL_OTP_MAX_ATTEMPTS, PORTAL_OTP_MAX_PER_IP, PORTAL_OTP_MAX_REQUESTS_PER_WINDOW,
-  PORTAL_OTP_RESEND_COOLDOWN_SEC, PORTAL_OTP_TTL_MINUTES,
+  PORTAL_OTP_DAY_WINDOW_SEC, PORTAL_OTP_HOUR_WINDOW_SEC,
+  PORTAL_OTP_MAX_ATTEMPTS, PORTAL_OTP_MAX_PER_DAY, PORTAL_OTP_MAX_PER_HOUR,
+  PORTAL_OTP_MAX_PER_IP, PORTAL_OTP_MAX_REQUESTS_PER_WINDOW,
+  PORTAL_OTP_RESEND_COOLDOWN_SEC, PORTAL_OTP_TOO_MANY_MESSAGE, PORTAL_OTP_TTL_MINUTES,
   PORTAL_SESSION_LIFETIME_HOURS, PORTAL_VERIFY_MAX_PER_IP,
   portalLastAttemptMessage, portalLockedMessage, portalLockoutAlertMessage, portalWrongCodeMessage,
 } from '@/lib/constants/portal';
@@ -110,9 +112,9 @@ describe('session lifetime', () => {
 });
 
 describe('the per-IP verify ceiling', () => {
-  it('is derived from the honest flow, not picked — 20 codes × 5 guesses', () => {
+  it('is derived from the honest flow, not picked — 30 codes × 5 guesses', () => {
     expect(PORTAL_VERIFY_MAX_PER_IP).toBe(PORTAL_OTP_MAX_PER_IP * PORTAL_OTP_MAX_ATTEMPTS);
-    expect(PORTAL_VERIFY_MAX_PER_IP).toBe(100);
+    expect(PORTAL_VERIFY_MAX_PER_IP).toBe(150);
   });
 
   it('is never TIGHTER than what a legitimate caller can need', () => {
@@ -121,5 +123,30 @@ describe('the per-IP verify ceiling', () => {
     expect(PORTAL_VERIFY_MAX_PER_IP).toBeGreaterThanOrEqual(
       PORTAL_OTP_MAX_PER_IP * PORTAL_OTP_MAX_ATTEMPTS,
     );
+  });
+});
+
+// Round 4 (17/10/2026, "הגנת שליחות"): cumulative per-phone ceilings on top of
+// the 15-minute window above — a flat 429, never a lockout. 30, not 20, on the
+// per-IP ceiling (same section): the hourly/daily ceilings now bound one
+// PHONE, so the IP ceiling only has to stay wide enough for a shared IP.
+describe('the cumulative per-phone send ceilings', () => {
+  it('is 5 an hour and 10 a day, both well inside the 15-minute window’s own reach', () => {
+    expect(PORTAL_OTP_MAX_PER_HOUR).toBe(5);
+    expect(PORTAL_OTP_HOUR_WINDOW_SEC).toBe(3600);
+    expect(PORTAL_OTP_MAX_PER_DAY).toBe(10);
+    expect(PORTAL_OTP_DAY_WINDOW_SEC).toBe(86400);
+    // the day ceiling is never tighter than the hour one — a phone that is
+    // still allowed its 5th send this hour must not already be out for the day
+    expect(PORTAL_OTP_MAX_PER_DAY).toBeGreaterThanOrEqual(PORTAL_OTP_MAX_PER_HOUR);
+  });
+
+  it('30/hour per IP — raised from 20 the same round, to stay wide for a shared IP', () => {
+    expect(PORTAL_OTP_MAX_PER_IP).toBe(30);
+  });
+
+  it('never says whether the number is registered', () => {
+    expect(PORTAL_OTP_TOO_MANY_MESSAGE).toContain('נשלחו יותר מדי קודים');
+    expect(PORTAL_OTP_TOO_MANY_MESSAGE).not.toContain('רשום');
   });
 });

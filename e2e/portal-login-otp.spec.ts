@@ -47,13 +47,14 @@ const YOSSI = { e164: '+972501111112', local: '050-111-1112', typed: '0501111112
 const RUTI = { e164: '+972502222223', local: '050-222-2223', typed: '0502222223' };
 const MAYA = { e164: '+972503333334', local: '050-333-3334', typed: '0503333334' };
 const ASAF = { e164: '+972504444445', local: '050-444-4445', typed: '0504444445' };
+const NOA = { e164: '+972501111113', local: '050-111-1113', typed: '0501111113' };
 const NOT_AN_OWNER = '0509999999';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
 pool.on('error', () => undefined);
 
 const PHONES = [
-  DANA.e164, DAVID.e164, BENNY.e164, GALIT.e164, YOSSI.e164, RUTI.e164, MAYA.e164, ASAF.e164,
+  DANA.e164, DAVID.e164, BENNY.e164, GALIT.e164, YOSSI.e164, RUTI.e164, MAYA.e164, ASAF.e164, NOA.e164,
   '+972509999999',
 ];
 
@@ -221,6 +222,54 @@ test.describe('portal login — the whole flow', () => {
       el.dispatchEvent(new Event('input', { bubbles: true }));
     }, code);
     await page.waitForURL('**/portal');
+  });
+
+  // THE THIRD BUG THIS FILE GUARDS (17/10/2026, "ליטוש מסך הקוד"): the real
+  // field was `text-transparent` only. Autofill selects what it just
+  // inserted (so does onFocus/onClick, on every touch), and a browser's own
+  // default `::selection` ignored that `color` and painted a real
+  // background + text over the selected digits. The injected string here
+  // does not have to be the real code — this is a RENDERING test, not a
+  // login one — so a wrong six digits (never auto-submitted a second time,
+  // see wrongCodes()) buys a stable moment to read both the boxes and the
+  // field's computed styles before anything navigates away.
+  test('an injected code never shows through the real field, even with its text selected — the six boxes are the only visible copy', async ({ page }) => {
+    await requestCode(page, NOA.typed);
+    const real = await codeFor(NOA.e164);
+    const injected = wrongCodes(real, 1)[0]!;
+    await codeField(page).evaluate((el: HTMLInputElement, c: string) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(el, c);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, injected);
+
+    // the six decorative boxes show the real injected digits…
+    const cells = page.getByTestId('otp-cell');
+    await expect(cells).toHaveCount(6);
+    await expect(async () => {
+      expect((await cells.allTextContents()).join('')).toBe(injected);
+    }).toPass();
+
+    // …while the one real field underneath stays invisible even once its
+    // text is SELECTED (`.select()` — what autofill does the instant it
+    // lands a code, and what onFocus/onClick already do here on every
+    // touch): colour, caret and ::selection all resolve to transparent.
+    const styles = await codeField(page).evaluate((el: HTMLInputElement) => {
+      el.select();
+      const base = getComputedStyle(el);
+      const sel = getComputedStyle(el, '::selection');
+      return {
+        selectedAll: el.selectionStart === 0 && el.selectionEnd === el.value.length && el.value.length === 6,
+        color: base.color,
+        caretColor: base.caretColor,
+        selectionColor: sel.color,
+        selectionBackground: sel.backgroundColor,
+      };
+    });
+    expect(styles.selectedAll).toBe(true);
+    for (const v of [styles.color, styles.caretColor, styles.selectionColor, styles.selectionBackground]) {
+      expect(v).toBe('rgba(0, 0, 0, 0)');
+    }
   });
 
   test('16: an unregistered number gets an INLINE message with the details — no window, field still live', async ({ page }) => {
