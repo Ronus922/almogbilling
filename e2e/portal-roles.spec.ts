@@ -8,6 +8,11 @@ import { test, expect, type Browser, type BrowserContext } from '@playwright/tes
 // and no more approval step; see tests/portal-roles-identity.test.ts and
 // tests/portal-ownership.test.ts for the DB-level coverage of "several
 // apartments under different names never withhold access".
+//
+// The header assertion below was rewritten the same day ("כותרת הפורטל —
+// ברכה בלבד"): the header greets by first name alone ("שלום, {first name}")
+// and no longer repeats the apartment/role line — that still shows in
+// "החשבון שלי" (#t-acc), asserted on its own below.
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
@@ -25,9 +30,8 @@ for (const r of [
     const ctx = await resident(browser, r.token);
     const page = await ctx.newPage();
     await page.goto('/portal?tab=acc');
-    // the header: the same name the identity gives everywhere, the role beside the apartment
-    await expect(page.locator('.me .nm')).toContainText(r.name);
-    await expect(page.locator('.me .nm')).toContainText(`דירה ${r.apt} · ${r.role}`);
+    // the header: a one-line greeting by first name only, no apartment/role
+    await expect(page.locator('.me .nm')).toHaveText(`שלום, ${r.name.split(' ')[0]}`);
     const acc = page.locator('#t-acc');
     await expect(acc.locator(`[data-role]`)).toHaveText(r.role);
     await expect(acc).toContainText(r.debt);

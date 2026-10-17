@@ -50,7 +50,7 @@ import { PortalScreen } from '@/components/portal/PortalScreen';
 async function render(preview: boolean, previewCanOpenDecisionFiles = false): Promise<string> {
   const el = await PortalScreen({
     params: { tab: 'dec' },
-    user: { name: null, apartments: [] },
+    user: { name: null },
     accounts: [],
     support: { phone: null, email: null },
     preview,

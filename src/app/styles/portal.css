@@ -78,8 +78,13 @@
 .portal-skin .top-report { flex: none; white-space: nowrap; }
 .portal-skin .me { margin-inline-start: auto; display: flex; flex: none; align-items: center; gap: 12px; }
 .portal-skin .av { width: 38px; height: 38px; border-radius: 50%; background: #E8ECFF; color: var(--brand-ink); display: grid; place-items: center; font-weight: 700; font-size: 14px; flex: none; }
-.portal-skin .me .nm { font-size: 14px; font-weight: 600; line-height: 1.2; white-space: nowrap; }
-.portal-skin .me .nm span { display: block; font-size: 12.5px; font-weight: 500; color: var(--ink-muted); }
+/* One line only (17/10/2026 — "שלום, {first name}" replaced the full name +
+   apartment/role line, which used to grow unbounded with apartment count).
+   white-space:nowrap already keeps it one line; overflow+ellipsis+max-width
+   is the fallback for the one thing left that can still be long — an
+   unusually long first name — so it is never the greeting that pushes the
+   building name or the tab row off-screen. */
+.portal-skin .me .nm { font-size: 14px; font-weight: 600; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
 
 /* ── buttons (reference .pbtn family) ──────────────────────────────── */
 .portal-skin .pbtn { height: 44px; padding: 0 18px; border-radius: 11px; font: 600 15px var(--font-heebo), Heebo, sans-serif; display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; border: 1.5px solid transparent; transition: background .15s, border-color .15s; white-space: nowrap; }

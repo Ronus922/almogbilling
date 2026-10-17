@@ -99,8 +99,14 @@ test.describe('1. isolation between apartments (IDOR)', () => {
       expect(r.status(), url).toBe(200);
       const html = await r.text();
       // (the raw query string is echoed in the router state — the rendered
-      // account is what must be A's, and B's / C's figures must be absent)
-      expect(html, url).toContain('דירה E2E-A');
+      // account is what must be A's, and B's / C's figures must be absent).
+      // Only the acc tab names an apartment at all (17/10/2026: the header's
+      // own apartment line, which used to make this true on every tab, is
+      // gone — "החשבון שלי" is now the one place the number appears); the
+      // overview tab shows the building's own figures for any resident, with
+      // no apartment number anywhere, A's included, so B's absence below is
+      // what actually proves the isolation there.
+      if (url.includes('tab=acc')) expect(html, url).toContain('דירה E2E-A');
       expect(html, url).not.toContain('דירה E2E-B');
       expect(html, url).not.toContain('דירה E2E-C');
       expect(html, url).not.toContain('₪300');

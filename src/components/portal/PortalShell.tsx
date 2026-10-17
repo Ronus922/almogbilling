@@ -4,8 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useTransition, type React
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { apartmentsLabel, initials, type PortalTab } from '@/lib/portal/ui';
-import { rolesLabel, type PortalRole } from '@/lib/portal/identity';
+import { firstName, initials, isCompanyName, type PortalTab } from '@/lib/portal/ui';
 import { AccountIcon, AlertIcon, BuildingGlyph, LogoutIcon } from './PortalIcons';
 import { PortalMobileDock } from './PortalMobileDock';
 import { usePortalHref } from './usePortalHref';
@@ -63,10 +62,13 @@ const TABS: ReadonlyArray<{ key: PortalTab; label: string; soon?: boolean }> = [
 ];
 
 /** Who is signed in — the portal's one identity (lib/portal/identity.ts),
- *  never worked out here. A blocked phone: no name, no apartment. */
+ *  never worked out here. A blocked phone: no name. The apartment/role list
+ *  used to live here too (the header's second line, 27/09–17/10/2026) — it
+ *  is gone from the header (below) and was never needed anywhere else: the
+ *  identity's own apartments already drive "החשבון שלי" (PortalAccountView,
+ *  getPortalMyAccount) independently of this type. */
 export interface PortalUser {
   name: string | null;
-  apartments: { number: string; role: PortalRole }[];
 }
 
 export function PortalShell({ tab, apartments, user, preview = false, restricted = false, children }: {
@@ -150,13 +152,18 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
     }
   }
 
-  // No name (a blocked phone, or a record that carries none) → the plain
-  // greeting "שלום" — never "בעל/ת דירה", which would claim a role, and never
-  // the name of any record. No apartment (a blocked phone) → no second line.
-  const nm = user.name ?? 'שלום';
-  const sub = user.apartments.length > 0
-    ? `${apartmentsLabel(user.apartments.map((a) => a.number))} · ${rolesLabel(user.apartments.map((a) => a.role))}`
-    : null;
+  // The identity block (17/10/2026): one line, "שלום, {first name}" — never
+  // the full name and never the apartment/role list, which used to grow with
+  // every apartment the signed-in phone holds and, for anyone with many, push
+  // the building name and the tab row off-screen. That list is not lost —
+  // it is "החשבון שלי" (PortalAccountView), one block per apartment with its
+  // own role tag, exactly like before. No name, an empty name, or a company
+  // record (isCompanyName — "חברת…" / "…בע"מ") → "שלום" alone: never a
+  // company's first word standing in for a person's, and never a claimed
+  // role. `.nm`'s own overflow:hidden + ellipsis (portal.css) covers the one
+  // remaining way this could overflow — an unusually long first name.
+  const greetingName = user.name && !isCompanyName(user.name) ? firstName(user.name) : null;
+  const nm = greetingName ? `שלום, ${greetingName}` : 'שלום';
 
   return (
     <div className="portal-skin">
@@ -195,7 +202,7 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
           )}
           <div className="me">
             <div className="av" aria-hidden>{user.name ? initials(user.name) : <AccountIcon size={16} />}</div>
-            <div className="nm">{nm}{sub && <span>{sub}</span>}</div>
+            <div className="nm">{nm}</div>
             {!preview && (
               <button type="button" className="pbtn pbtn-ghost pbtn-sm" onClick={logout} disabled={leaving} title="התנתקות" aria-label="התנתקות">
                 <LogoutIcon />

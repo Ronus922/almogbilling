@@ -121,6 +121,15 @@ export function firstName(name: string | null): string | null {
   return first || null;
 }
 
+/** A record that names a company/legal entity rather than a person, rather
+ *  than taking its first WORD as if it were a person's — starts with
+ *  "חברת", or carries the "בע"מ" ending in any of its common spellings
+ *  (straight quote, gershayim, or none at all). Used by the portal header's
+ *  "שלום, {name}" greeting (17/10/2026). */
+export function isCompanyName(name: string): boolean {
+  return name.startsWith('חברת') || ['בע"מ', 'בע״מ', 'בעמ'].some((marker) => name.includes(marker));
+}
+
 /** "דנה לוי" → "ד״ל" (the reference avatar); one word → its first letter;
  *  no name → "ב״ד" (בעל דירה). */
 export function initials(name: string | null): string {
