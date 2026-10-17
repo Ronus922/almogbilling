@@ -196,19 +196,24 @@ commit;
 -- no longer push the building name or the tab row off-screen — the one way
 -- left is a very long NAME. One owner with a deliberately long single name,
 -- to pin the ellipsis/max-width invariant on `.me .nm`.
+-- +972505551234, NOT +972509999999: that number is NOT_AN_OWNER in
+-- e2e/portal-login-otp.spec.ts (0509999999), reserved there as a phone that
+-- must stay unregistered — registering it here made that test's "unknown
+-- number" assertion fail, since the number was a real owner once this
+-- fixture ran (caught via a clean-main vs. this-branch full-suite diff).
 begin;
 
 insert into public.contacts (apartment_number, owner_name, owner_phone)
-values ('E2E-LONGNAME', 'אברהמינוביץ׳יצחקיאדה E2E', '+972509999999')
+values ('E2E-LONGNAME', 'אברהמינוביץ׳יצחקיאדה E2E', '+972505551234')
 on conflict (apartment_number) do update
   set owner_name = excluded.owner_name, owner_phone = excluded.owner_phone;
 
 insert into public.apartment_owner_phones (apartment_number, owner_name, phone_e164, is_active)
-values ('E2E-LONGNAME', 'אברהמינוביץ׳יצחקיאדה E2E', '+972509999999', true)
+values ('E2E-LONGNAME', 'אברהמינוביץ׳יצחקיאדה E2E', '+972505551234', true)
 on conflict (apartment_number, phone_e164) do nothing;
 
 insert into public.portal_sessions (token_hash, phone_e164, expires_at, revoked_at)
-select encode(digest('e2e-owner-longname', 'sha256'), 'hex'), '+972509999999', now() + interval '12 hours', null::timestamptz
+select encode(digest('e2e-owner-longname', 'sha256'), 'hex'), '+972505551234', now() + interval '12 hours', null::timestamptz
 where not exists (select 1 from public.portal_sessions s where s.token_hash = encode(digest('e2e-owner-longname', 'sha256'), 'hex'));
 
 commit;
