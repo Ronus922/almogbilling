@@ -147,20 +147,23 @@
 .portal-skin .pir-tk .u-h { color: var(--red-ink); }
 .portal-skin .pir-done-foot { width: 100%; margin-top: auto; padding: 12px 0 max(14px, env(safe-area-inset-bottom)); }
 
-/* ── the door in (PortalShell, top of every tab) ───────────────────── */
+/* ── the door in (PortalShell, restricted users only) ────────────────
+   Round 4 (17/10/2026, "ניקוי כפול דיווח על תקלה"): PortalShell now renders
+   this ONLY for a restricted (blocked-phone) user — their one way in, since
+   they have neither `.top-report` nor the dock (PortalShell gates
+   PortalMobileDock on `!restricted`). A normal owner used to get this too, on
+   every tab at every width, duplicating `.top-report`; that render path is
+   gone outright rather than hidden, so the old `pir-entry-always` modifier
+   (a sometimes-hidden `.pir-entry` needed a way to say "except me") no
+   longer has anything to contrast with and is gone too — one render path,
+   one class, the rules below applying to it directly. */
 /* A pbtn rendered as a link: keep the button's colours, not the skin's `a`. */
 .portal-skin a.pbtn { text-decoration: none; }
 .portal-skin a.pbtn-primary, .portal-skin a.pbtn-primary:hover { color: #fff; }
 /* End-aligned (left in RTL) above the tab. */
 .portal-skin .pir-entry { display: flex; justify-content: flex-end; margin-bottom: 16px; }
 @media (max-width: 600px) {
-  /* Round 2 (14/10/2026): redundant with the dock's "פתח תקלה" quick action,
-     so it steps aside — EXCEPT for a restricted (blocked-phone) user, who has
-     no dock at all (PortalShell gates PortalMobileDock on `!restricted`); for
-     them it stays exactly as it was, full width included. */
-  .portal-skin .pir-entry { display: none; }
-  .portal-skin .pir-entry.pir-entry-always { display: flex; }
-  .portal-skin .pir-entry.pir-entry-always .pbtn { width: 100%; }
+  .portal-skin .pir-entry .pbtn { width: 100%; }
   /* Round 3 (14/10/2026): the dock no longer mounts on the FORM step (see
      PortalIssueReport.tsx) — the scrollable body's image area had no
      clearance for it and could end up hidden underneath. `.pir-foot` goes

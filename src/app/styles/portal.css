@@ -52,8 +52,6 @@
 .portal-skin .bld .lg { width: 40px; height: 40px; border-radius: 11px; background: var(--brand); display: grid; place-items: center; flex: none; transition: width .25s, height .25s; }
 .portal-skin .top.shrink .bld .lg { width: 32px; height: 32px; }
 .portal-skin .bld b { display: block; font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.portal-skin .bld span { font-size: 13px; color: var(--ink-muted); display: block; max-height: 20px; overflow: hidden; transition: opacity .22s, max-height .25s; }
-.portal-skin .top.shrink .bld span { opacity: 0; max-height: 0; }
 /* The tab row genuinely shrinks (flex:1 1 auto + min-width:0, the fix for the
    round-2 bug: flex:none with no min-width:0 meant its own overflow-x:auto
    could never engage) and scrolls WITHIN ITSELF when the row is tight, so
@@ -360,7 +358,6 @@
   .portal-skin .kpi .v { font-size: 24px; }
   .portal-skin .kpi .d { font-size: 12.5px; }
   .portal-skin .me .nm { display: none; }
-  .portal-skin .bld span { display: none; }
   .portal-skin .hd h1 { font-size: 24px; }
   .portal-skin .hd { margin-bottom: 18px; }
   .portal-skin .per, .portal-skin .per .sel, .portal-skin .per .pbtn { width: 100%; }

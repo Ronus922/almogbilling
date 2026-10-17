@@ -3,7 +3,6 @@ import { env } from '@/env';
 import { getPortalSession } from '@/lib/portal/session';
 import { resolvePortalIdentity } from '@/lib/db/portal/identity';
 import { getPortalMyAccount } from '@/lib/db/portal/account';
-import { countContacts } from '@/lib/db/contacts';
 import { PortalScreen } from '@/components/portal/PortalScreen';
 import { PortalShell } from '@/components/portal/PortalShell';
 import { PortalAccountReview } from '@/components/portal/PortalAccountReview';
@@ -42,7 +41,7 @@ export default async function PortalPage({ searchParams }: { searchParams: Searc
 
   if (!identity) {
     return (
-      <PortalShell tab="ov" apartments={await countContacts()} user={{ name: null }} restricted>
+      <PortalShell tab="ov" user={{ name: null }} restricted>
         <PortalAccountReview support={support} />
       </PortalShell>
     );
