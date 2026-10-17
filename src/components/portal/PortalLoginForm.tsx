@@ -183,7 +183,7 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
     const outgoing = composePhone(prefix, phone);
     const body: { phone: string; channel?: OtpChannel } = { phone: outgoing };
     if (requestedChannel) body.channel = requestedChannel;
-    const { status, data } = await post('/api/portal/otp/request', body);
+    const { data } = await post('/api/portal/otp/request', body);
     if (data.sent) {
       setSentPhone(outgoing);
       if (data.channel) setChannel(data.channel);
@@ -193,7 +193,14 @@ export function PortalLoginForm({ support = { phone: null, email: null } }: {
     if (typeof data.retryAfterSec === 'number' && data.retryAfterSec > 0) setCooldown(data.retryAfterSec);
     return {
       sent: false,
-      locked: data.locked === true || status === 429,
+      // The server's OWN flag, never "any 429" — a 429 also covers the IP
+      // ceiling, the resend cooldown and the hour/day send caps (round 4,
+      // 17/10/2026), none of which are a lockout. Treating every 429 as one
+      // used to send the code step into enterLock(null) — `secondsUntil`
+      // reads a missing `lockedUntil` as 0, which the derived `phase` then
+      // reads right back as "not actually locked", so the resident saw a
+      // one-frame flicker instead of the plain message these cases carry.
+      locked: data.locked === true,
       lockedUntil: data.lockedUntil ?? null,
       notRegistered: data.notRegistered === true,
       message: data.message ?? data.error,

@@ -90,6 +90,34 @@ test.describe('header — sliding pill, scroll-aware, "דיווח על תקלה"
     await ctx.close();
   });
 
+  // 17/10/2026 ("ניקוי כפול דיווח על תקלה"): a second, blue "דיווח על תקלה"
+  // button used to open on every tab, above the content — the header's own
+  // `.top-report` already covers it, at every width above 600px (including
+  // tablet, asserted just above). The apartment count under the building name
+  // ("290 דירות · ועד הבית", clipped at some widths to a bare "290" — the
+  // `.bld span` line this pins the absence of) is gone the same way, not just
+  // relabelled. ≤600px (390 here) is untouched: `.top-report`/`.nav` were
+  // already dock-replaced there (portal-dock.css), and so was the blue button
+  // for a normal (non-restricted) owner (portal-report.css, round 2) — a
+  // restricted (blocked-phone) user still gets it, covered separately by
+  // PortalIssueReport's own restricted-screen fixture, not this one.
+  test('exactly one "דיווח על תקלה" (desktop: the header\'s) and no apartment-count line under the building name', async ({ browser }) => {
+    const ctx = await owner(browser, 'e2e-owner-a1');
+    const page = await ctx.newPage();
+
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto('/portal?tab=ov');
+    await expect(page.getByRole('link', { name: 'דיווח על תקלה' })).toHaveCount(1);
+    await expect(page.locator('.bld b')).toBeVisible();
+    await expect(page.locator('.bld span')).toHaveCount(0);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/portal?tab=ov');
+    await expect(page.getByRole('link', { name: 'דיווח על תקלה' })).toHaveCount(0);
+    await expect(page.locator('.bld span')).toHaveCount(0);
+    await ctx.close();
+  });
+
   // 17/10/2026 ("כותרת הפורטל — ברכה בלבד"): the header used to grow a second
   // line — the full name + every apartment/role the phone holds — which for
   // anyone with many apartments pushed the building name and the tab row off

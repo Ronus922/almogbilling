@@ -51,10 +51,35 @@ export function portalWrongCodeMessage(attemptsLeft: number): string {
   return `הקוד שגוי. נותרו ${attemptsLeft} ניסיונות.`;
 }
 
+/**
+ * Per-phone CUMULATIVE ceilings (round 4, 17/10/2026, "הגנת שליחות"), on top
+ * of the 15-minute window above: that window resets every 15 minutes, so a
+ * slow, evenly-paced drip of requests (at most 2 ever land in the same
+ * 15-minute slice) could average several an hour without ever tripping it.
+ * These two close that gap with a flat 429 — never a lockout, since the
+ * window above already owns escalating lockouts for an actual flood. Counted
+ * on the SAME bucket regardless of channel: the key is the phone alone, so
+ * SMS and the "שלח בוואטסאפ במקום" button spend from one shared ceiling and
+ * switching between them buys no extra sends.
+ */
+export const PORTAL_OTP_MAX_PER_HOUR = 5;
+export const PORTAL_OTP_HOUR_WINDOW_SEC = 60 * 60;
+export const PORTAL_OTP_MAX_PER_DAY = 10;
+export const PORTAL_OTP_DAY_WINDOW_SEC = 24 * 60 * 60;
+
+/** "נשלחו יותר מדי קודים למספר זה — נסו שוב מאוחר יותר." Deliberately generic
+ *  — unlike PORTAL_NOT_OWNER_MESSAGE, it never says whether the number is
+ *  even registered, and it never names which of the two ceilings tripped. */
+export const PORTAL_OTP_TOO_MANY_MESSAGE = 'נשלחו יותר מדי קודים למספר זה — נסו שוב מאוחר יותר.';
+
 /** Per-IP ceiling on code requests (a plain 429 — an IP is never locked out).
  *  An IP is shared: a whole building behind one NAT, or a household. Locking it
- *  would let one abuser shut everyone else out, so it only ever throttles. */
-export const PORTAL_OTP_MAX_PER_IP = 20;
+ *  would let one abuser shut everyone else out, so it only ever throttles.
+ *  30, not 20 (round 4, 17/10/2026) — the hourly/daily ceilings above are now
+ *  what actually bounds one PHONE; this one only has to stay wide enough that
+ *  a shared IP (several apartments' phones behind one NAT) is never cut off
+ *  while every one of them is still well inside its own ceiling. */
+export const PORTAL_OTP_MAX_PER_IP = 30;
 export const PORTAL_OTP_IP_WINDOW_SEC = 60 * 60;
 
 /** Per-IP ceiling on VERIFY attempts, derived rather than picked: an IP may ask
@@ -123,6 +148,7 @@ export const PORTAL_EVENT_TYPES = [
   'locked_out',
   'unlocked_manually',
   'session_revoked',
+  'send_capped',
 ] as const;
 
 export type PortalEventType = (typeof PORTAL_EVENT_TYPES)[number];
@@ -140,6 +166,7 @@ export const PORTAL_EVENT_LABEL: Record<PortalEventType, string> = {
   locked_out:        'נחסם',
   unlocked_manually: 'שוחרר ידנית',
   session_revoked:   'יציאה',
+  send_capped:       'חריגה ממכסת קודים',
 };
 
 /** Tone per event for the log badge (DESIGN.md §10 tone families). */
@@ -155,6 +182,7 @@ export const PORTAL_EVENT_TONE: Record<PortalEventType, 'emerald' | 'rose' | 'am
   locked_out:        'rose',
   unlocked_manually: 'emerald',
   session_revoked:   'slate',
+  send_capped:       'rose',
 };
 
 export const PORTAL_LOCKOUT_REASONS = ['too_many_invalid_codes', 'too_many_code_requests'] as const;

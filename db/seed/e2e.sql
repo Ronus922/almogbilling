@@ -82,10 +82,15 @@ on conflict (apartment_number) do update
 -- The second owner of A, B, C and D: an extra owner on the card. C's and D's
 -- (מאיה / אסף) exist so e2e/portal-login-otp.spec.ts's SMS-channel tests
 -- (15/10/2026) get phones of their own too — GALIT and DAVID's own numbers
--- are already spent on other tests in that file.
+-- are already spent on other tests in that file. A's THIRD (נועה, 17/10/2026)
+-- exists for the same file's OTP visual test. A row in `contact_people` is
+-- what keeps a direct `apartment_owner_phones` insert active (below) — the
+-- roster sync (20261003095149) deactivates any roster row with no backing
+-- owner record, "no inference from names, no partial match".
 insert into public.contact_people (contact_id, role, name, phone, sort_order)
 select c.id, 'owner', v.n, v.p, 0
   from (values ('E2E-A', 'יוסי E2E', '+972501111112'),
+               ('E2E-A', 'נועה E2E', '+972501111113'),
                ('E2E-B', 'רותי E2E', '+972502222223'),
                ('E2E-C', 'מאיה E2E', '+972503333334'),
                ('E2E-D', 'אסף E2E', '+972504444445')) v(a, n, p)
@@ -107,6 +112,10 @@ insert into public.apartment_owner_phones (apartment_number, owner_name, phone_e
 select v.a, v.n, v.p, v.act from (values
   ('E2E-A', 'דנה E2E', '+972501111111', true),
   ('E2E-A', 'יוסי E2E', '+972501111112', true),
+  -- A third owner on A (17/10/2026), same reason as the second: the OTP
+  -- visual (injection + selection) test in portal-login-otp.spec.ts needs a
+  -- phone of its own too.
+  ('E2E-A', 'נועה E2E', '+972501111113', true),
   ('E2E-A', 'CANARY-DISABLED', '+972505555555', false),
   ('E2E-B', 'בני E2E', '+972502222222', true),
   -- A second owner on B/C/D, so e2e/portal-login-otp.spec.ts can give every
