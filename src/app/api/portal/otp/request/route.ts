@@ -11,8 +11,10 @@ import { activeLockout, createLockout, lockoutMinutesRemaining } from '@/lib/db/
 import { logPortalEvent } from '@/lib/db/portal/events';
 import {
   PORTAL_LOCKOUT_ALERT_TIER, PORTAL_NOT_OWNER_MESSAGE,
-  PORTAL_OTP_IP_WINDOW_SEC, PORTAL_OTP_MAX_PER_IP,
-  PORTAL_OTP_MAX_REQUESTS_PER_WINDOW, PORTAL_OTP_REQUEST_WINDOW_SEC,
+  PORTAL_OTP_DAY_WINDOW_SEC, PORTAL_OTP_HOUR_WINDOW_SEC,
+  PORTAL_OTP_IP_WINDOW_SEC, PORTAL_OTP_MAX_PER_DAY, PORTAL_OTP_MAX_PER_HOUR,
+  PORTAL_OTP_MAX_PER_IP, PORTAL_OTP_MAX_REQUESTS_PER_WINDOW,
+  PORTAL_OTP_REQUEST_WINDOW_SEC, PORTAL_OTP_TOO_MANY_MESSAGE,
   portalLockedMessage,
 } from '@/lib/constants/portal';
 
@@ -26,23 +28,28 @@ export const runtime = 'nodejs';
 // of guessing. The response NEVER carries apartment details, a name, or the code.
 //
 // Order of checks (each one is a gate for the next):
-//   lockout → IP ceiling → 60-second cooldown → ROSTER → per-phone window
+//   lockout → IP ceiling → resend cooldown → ROSTER → per-phone window →
+//   per-phone hour/day ceilings
 //
 // The roster moved AHEAD of the per-phone window on 29/09/2026. It used to sit
 // last, so a number that is not an owner still spent a window slot on every
 // tap — and the sixth tap locked it out for 30 minutes although no code had
 // ever been sent to it. That is exactly what happened to apartment 1233 on
 // 29/09 08:02–08:06 UTC: five `phone_not_found`, then `locked_out`
-// (`too_many_code_requests`). The 60-second cooldown could not slow it down
-// either, because that cooldown is measured on the newest portal_otp_codes row
-// and an unregistered phone never gets one.
+// (`too_many_code_requests`). The resend cooldown could not slow it down
+// either, because it is measured on the newest portal_otp_codes row and an
+// unregistered phone never gets one.
 //
 // Nothing is leaked by the new order: this endpoint already tells the caller
 // outright that a number is not registered (a deliberate product decision —
 // the owner should ring the management company, not guess). Enumeration is
 // bounded by the per-IP ceiling above, which is what that ceiling is for. The
 // per-phone window keeps its real job: stopping a REAL owner's phone from
-// being flooded with WhatsApp codes.
+// being flooded with WhatsApp codes. The hour/day ceilings (round 4,
+// 17/10/2026, "הגנת שליחות") sit after it for the same reason — only a phone
+// that already cleared the roster check can spend against them — and exist
+// to catch a slow drip the 15-minute window alone cannot see (its own
+// comment on PORTAL_OTP_MAX_PER_HOUR explains why).
 
 export async function POST(req: Request) {
   const body = await parseJsonBody(req, portalOtpRequestBodySchema);
@@ -136,6 +143,42 @@ export async function POST(req: Request) {
         message: portalLockedMessage(lockoutMinutesRemaining(lockout)),
       },
       { status: 429 },
+    );
+  }
+
+  // Cumulative per-phone ceilings — a flat 429, never a lockout (see
+  // PORTAL_OTP_MAX_PER_HOUR's own comment). Two SEPARATE buckets, checked in
+  // sequence and short-circuited on the first miss: checkRateLimit only
+  // records a hit when it allows the call, so stopping at the hour ceiling
+  // means a request already blocked there never also spends a slot off the
+  // day ceiling.
+  const hourLimit = await checkRateLimit(`portal:otp:phone:hour:${phoneE164}`, {
+    max: PORTAL_OTP_MAX_PER_HOUR,
+    windowSec: PORTAL_OTP_HOUR_WINDOW_SEC,
+  });
+  if (!hourLimit.allowed) {
+    await logPortalEvent({
+      phoneE164, eventType: 'send_capped', ip, userAgent,
+      apartmentNumbers: active.apartmentNumbers, details: { scope: 'hour' },
+    });
+    return NextResponse.json(
+      { ok: false, message: PORTAL_OTP_TOO_MANY_MESSAGE },
+      { status: 429, headers: { 'Retry-After': String(hourLimit.retryAfterSec) } },
+    );
+  }
+
+  const dayLimit = await checkRateLimit(`portal:otp:phone:day:${phoneE164}`, {
+    max: PORTAL_OTP_MAX_PER_DAY,
+    windowSec: PORTAL_OTP_DAY_WINDOW_SEC,
+  });
+  if (!dayLimit.allowed) {
+    await logPortalEvent({
+      phoneE164, eventType: 'send_capped', ip, userAgent,
+      apartmentNumbers: active.apartmentNumbers, details: { scope: 'day' },
+    });
+    return NextResponse.json(
+      { ok: false, message: PORTAL_OTP_TOO_MANY_MESSAGE },
+      { status: 429, headers: { 'Retry-After': String(dayLimit.retryAfterSec) } },
     );
   }
 

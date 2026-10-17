@@ -52,8 +52,6 @@
 .portal-skin .bld .lg { width: 40px; height: 40px; border-radius: 11px; background: var(--brand); display: grid; place-items: center; flex: none; transition: width .25s, height .25s; }
 .portal-skin .top.shrink .bld .lg { width: 32px; height: 32px; }
 .portal-skin .bld b { display: block; font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.portal-skin .bld span { font-size: 13px; color: var(--ink-muted); display: block; max-height: 20px; overflow: hidden; transition: opacity .22s, max-height .25s; }
-.portal-skin .top.shrink .bld span { opacity: 0; max-height: 0; }
 /* The tab row genuinely shrinks (flex:1 1 auto + min-width:0, the fix for the
    round-2 bug: flex:none with no min-width:0 meant its own overflow-x:auto
    could never engage) and scrolls WITHIN ITSELF when the row is tight, so
@@ -360,7 +358,6 @@
   .portal-skin .kpi .v { font-size: 24px; }
   .portal-skin .kpi .d { font-size: 12.5px; }
   .portal-skin .me .nm { display: none; }
-  .portal-skin .bld span { display: none; }
   .portal-skin .hd h1 { font-size: 24px; }
   .portal-skin .hd { margin-bottom: 18px; }
   .portal-skin .per, .portal-skin .per .sel, .portal-skin .per .pbtn { width: 100%; }
@@ -412,4 +409,26 @@
 @keyframes portal-otp-shake {
   25% { transform: translateX(-4px); }
   75% { transform: translateX(4px); }
+}
+
+/* The real input (PortalOtpStep.tsx, `.otp-real`) is `text-transparent` so
+   its glyphs never show — the six decorative boxes are the only meant-to-be-
+   seen copy. Two things that utility alone does NOT cover (17/10/2026, "ליטוש
+   מסך הקוד"): a SELECTED character ignores an element's own `color` and
+   falls back to the browser's own default `::selection` (visible background
+   + text), and Chrome's autofill UA style paints its own background and
+   `-webkit-text-fill-color` over the field regardless of `color`/`background`
+   — both reveal the code. Neither is a Tailwind utility (no single selector
+   covers `::selection` + `:-webkit-autofill` together), and NOT under
+   `.portal-skin` — the login screen is outside that scope (see the file
+   header). The `-webkit-autofill` transition delay is the standard trick:
+   Chrome's own highlight is itself a transition, so deferring it long enough
+   never lets it start. */
+.otp-real::selection { background: transparent; color: transparent; }
+.otp-real:-webkit-autofill,
+.otp-real:-webkit-autofill:hover,
+.otp-real:-webkit-autofill:focus {
+  -webkit-text-fill-color: transparent;
+  -webkit-box-shadow: 0 0 0 1000px transparent inset;
+  transition: background-color 0s 600000s, color 0s 600000s;
 }

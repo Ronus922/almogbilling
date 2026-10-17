@@ -44,13 +44,16 @@ import { usePortalHref } from './usePortalHref';
 // selections (`m`, `n`) are carried along untouched. Links are built by
 // usePortalHref, so the same shell serves /portal and the admin preview
 // mounted on /finance (which carries `view` and `apt`). "דיווח על תקלה" opens
-// /portal/report (owners only, not the preview): >600px a distinct action
-// item at the left end of the nav row (`.top-report`, never styled like a
-// tab, outside the nav's own scroll lane so it can never be squeezed out);
-// ≤600px the top-of-content button (`.pir-entry`) steps aside for the dock's
-// own "פתח תקלה" quick action — EXCEPT for a restricted (blocked-phone) user,
-// who has no dock at all (PortalMobileDock is `!restricted`-gated below), so
-// `.pir-entry` stays exactly as it was for them, full width included.
+// /portal/report (owners only, not the preview): the one entry point is
+// `.top-report`, the nav row's own action item (never styled like a tab,
+// outside the nav's own scroll lane so it can never be squeezed out) — and on
+// mobile the dock's "פתח תקלה" quick action. `.pir-entry`, the top-of-content
+// button this used to duplicate on every tab at every width above 600px, is
+// now rendered ONLY for a restricted (blocked-phone) user: they have neither
+// `.top-report` (gated `!restricted` below) nor the dock (PortalMobileDock is
+// also `!restricted`-gated), so for them it is the sole way in, full width
+// included — never a duplicate, because nothing else exists for them to
+// duplicate.
 
 const TABS: ReadonlyArray<{ key: PortalTab; label: string; soon?: boolean }> = [
   { key: 'ov', label: 'סקירה' },
@@ -71,10 +74,8 @@ export interface PortalUser {
   name: string | null;
 }
 
-export function PortalShell({ tab, apartments, user, preview = false, restricted = false, children }: {
+export function PortalShell({ tab, user, preview = false, restricted = false, children }: {
   tab: PortalTab;
-  /** How many apartments the building has (contacts). */
-  apartments: number;
   user: PortalUser;
   /** The admin preview (/finance?view=resident): read-only, no logout. */
   preview?: boolean;
@@ -173,7 +174,6 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
             <div className="lg"><BuildingGlyph /></div>
             <div>
               <b>בניין אלמוג, חיפה</b>
-              <span><span className="num">{apartments}</span> דירות · ועד הבית</span>
             </div>
           </div>
           {!restricted && (
@@ -213,15 +213,16 @@ export function PortalShell({ tab, apartments, user, preview = false, restricted
       </header>
       {!restricted && <PortalMobileDock tab={tab} onNavigate={go} preview={preview} />}
       <main className="wrap">
-        {/* The fault report (/portal/report) above the content — ≤600px it is
-            now REDUNDANT with the dock's "פתח תקלה" quick action and hidden
-            (portal-report.css), except for a restricted user: no dock renders
-            for them (below), so their copy stays visible and full-width,
-            exactly as before round 2. >600px it is unchanged — the top-report
-            nav item (above) is an ADDITION, not a replacement, there. Not in
-            the admin preview: staff have no portal session. */}
-        {!preview && (
-          <div className={restricted ? 'pir-entry pir-entry-always' : 'pir-entry'}>
+        {/* RESTRICTED ONLY (17/10/2026, "ניקוי כפול דיווח על תקלה"): a
+            restricted user has neither `.top-report` nor the dock (both
+            `!restricted`-gated), so this is their sole way in, at every
+            width. A normal owner now has `.top-report` in the header at every
+            width — this used to ALSO render for them, a second "דיווח על
+            תקלה" duplicating it on every tab; removed outright rather than
+            CSS-hidden, since nothing renders under it to hide. Not in the
+            admin preview: staff have no portal session. */}
+        {!preview && restricted && (
+          <div className="pir-entry">
             <Link href="/portal/report" className="pbtn pbtn-primary pbtn-lg">
               <AlertIcon />דיווח על תקלה
             </Link>

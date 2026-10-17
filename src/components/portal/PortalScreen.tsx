@@ -2,7 +2,6 @@ import type { ReactNode } from 'react';
 import {
   getPublishedMonths, getResidentFundKpis, getResidentOverview, getResidentPeriodData,
 } from '@/lib/db/finance/portal';
-import { countContacts } from '@/lib/db/contacts';
 import { listPublishedBalances, listPublishedDecisions } from '@/lib/db/portalDecisions';
 import { parseDecisionTypeFilter } from '@/lib/decisions';
 import { toDecisionPortalView } from '@/lib/decisionsView';
@@ -71,7 +70,7 @@ export async function PortalScreen({
   previewCanOpenDecisionFiles?: boolean;
 }) {
   const tab = parsePortalTab(params.tab, params.m);
-  const [apartments, publishedRows] = await Promise.all([countContacts(), getPublishedMonths()]);
+  const publishedRows = await getPublishedMonths();
   const publishedMonths = publishedMonthKeys(publishedRows);
   const nothing = publishedMonths.length === 0;
 
@@ -149,7 +148,7 @@ export async function PortalScreen({
   }
 
   return (
-    <PortalShell tab={tab} apartments={apartments} user={user} preview={preview}>
+    <PortalShell tab={tab} user={user} preview={preview}>
       {body}
     </PortalShell>
   );
