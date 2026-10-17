@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   accountTotals, apartmentsLabel, axisLabel, categoriesOf, categoryShares, firstName, flatEntries, fmtDateDMY, fmtDelta,
-  balanceAxis, fmtEntryDate, fmtIls, fmtSigned, initials, monthShort, niceAxis, parseOverviewSpan, parsePortalTab,
+  balanceAxis, fmtEntryDate, fmtIls, fmtSigned, initials, isCompanyName, monthShort, niceAxis, parseOverviewSpan, parsePortalTab,
   parseTxFilter, pctVsAverage, roundShekels, sanitizeCell,
   signClass, spansYears, sumExact, trendAxis, trendMonthLabel, windowKeys,
 } from '@/lib/portal/ui';
@@ -76,6 +76,13 @@ describe("the reference's formats", () => {
     expect(initials(null)).toBe('ב״ד');
     expect(apartmentsLabel(['7'])).toBe('דירה 7');
     expect(apartmentsLabel(['1210', '520'])).toBe('דירות 1210, 520');
+  });
+  it('a company record never contributes a first-name word to the header greeting', () => {
+    expect(isCompanyName('חברת אלמוג בע"מ')).toBe(true);
+    expect(isCompanyName('אלמוג ניהול בע״מ')).toBe(true);
+    expect(isCompanyName('אלמוג ניהול בעמ')).toBe(true);
+    expect(isCompanyName('חברת הניהול')).toBe(true);
+    expect(isCompanyName('דנה לוי')).toBe(false);
   });
 });
 

@@ -89,6 +89,34 @@ test.describe('header — sliding pill, scroll-aware, "דיווח על תקלה"
     await expect(page.locator('.top-report')).toBeVisible();
     await ctx.close();
   });
+
+  // 17/10/2026 ("כותרת הפורטל — ברכה בלבד"): the header used to grow a second
+  // line — the full name + every apartment/role the phone holds — which for
+  // anyone with many apartments pushed the building name and the tab row off
+  // the visible header (the bug this change fixes). The greeting is now one
+  // line, independent of apartment count; the only thing left that can still
+  // be long is the name itself, so this pins THAT invariant instead, on
+  // db/seed/e2e.sql's deliberately long-named fixture.
+  test('a very long single name stays one line (ellipsis) and never pushes the building name or tabs off-screen', async ({ browser }) => {
+    const ctx = await owner(browser, 'e2e-owner-longname');
+    const page = await ctx.newPage();
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto('/portal?tab=ov');
+    const nm = page.locator('.me .nm');
+    const nmBox = await nm.boundingBox();
+    expect(nmBox, 'no box').not.toBeNull();
+    // one line, not wrapped to two: the box stays within a single line's height
+    expect(nmBox!.height).toBeLessThan(24);
+    // ellipsis, not an overflowing box wider than its own CSS max-width
+    const maxWidth = await nm.evaluate((el) => parseFloat(getComputedStyle(el).maxWidth));
+    expect(nmBox!.width).toBeLessThanOrEqual(maxWidth + 1);
+    // the neighbours the old sub-line used to push out stay fully visible
+    await expect(page.locator('.bld b')).toBeVisible();
+    await expect(page.locator('.nav button', { hasText: 'סקירה' })).toBeVisible();
+    const meBox = await page.locator('.me').boundingBox();
+    expect(meBox!.x + meBox!.width).toBeLessThanOrEqual(1366);
+    await ctx.close();
+  });
 });
 
 test.describe('overview chart — three views, touch tooltip, no `:hover` dependency', () => {

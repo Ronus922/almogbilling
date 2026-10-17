@@ -42,7 +42,7 @@ export default async function PortalPage({ searchParams }: { searchParams: Searc
 
   if (!identity) {
     return (
-      <PortalShell tab="ov" apartments={await countContacts()} user={{ name: null, apartments: [] }} restricted>
+      <PortalShell tab="ov" apartments={await countContacts()} user={{ name: null }} restricted>
         <PortalAccountReview support={support} />
       </PortalShell>
     );
@@ -54,10 +54,7 @@ export default async function PortalPage({ searchParams }: { searchParams: Searc
   return (
     <PortalScreen
       params={{ tab: one(sp.tab), m: one(sp.m), n: one(sp.n), f: one(sp.f), type: one(sp.type) }}
-      user={{
-        name: identity.name,
-        apartments: identity.apartments.map((a) => ({ number: a.apartmentNumber, role: a.role })),
-      }}
+      user={{ name: identity.name }}
       accounts={accounts}
       support={support}
     />
