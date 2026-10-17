@@ -5,7 +5,7 @@ import {
   Building2, LayoutDashboard, LayoutGrid, Users, Truck, ClipboardList, ListChecks,
   Calendar, FileText, MessageCircle, MessagesSquare, Bell, Sliders,
   MapPin, UserCog, KeyRound, SquareParking, Settings as SettingsIcon, Coins, SlidersHorizontal,
-  ShieldCheck, PhoneOff, Gavel, Megaphone, MessageSquareText, History,
+  ShieldCheck, Gavel, Megaphone, MessageSquareText, History,
   type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -108,18 +108,16 @@ const SECTIONS: MenuSection[] = [
     ],
   },
   // Owners portal ("פורטל בעלי דירות") — the decisions & protocols the portal
-  // publishes (`portal_decisions`), the log of every login attempt and the
-  // phones the containment blocks (`portal_manage`). The roster itself is
-  // managed per apartment, on the apartment card. Both modules = admin /
-  // super_admin.
+  // publishes (`portal_decisions`) and the log of every login attempt
+  // (`portal_manage`). Blocked-phone identities live in /contacts now
+  // (16/10/2026) — no separate nav entry; `/admin/portal-blocked` itself
+  // still redirects there for anyone linking directly to the old path.
+  // Both modules = admin / super_admin.
   {
     title: 'פורטל בעלי דירות',
     items: [
       { label: 'החלטות ופרוטוקולים', icon: Gavel, href: '/decisions', module: 'portal_decisions' },
       { label: 'התחברויות לפורטל',  icon: ShieldCheck, href: '/admin/portal-log', module: 'portal_manage' },
-      // href points at /contacts (16/10/2026: the identities section moved
-      // there) — own label and own module gate, same href as "רשימת דיירים".
-      { label: 'טלפונים חסומים',    icon: PhoneOff, href: '/contacts', module: 'portal_manage' },
     ],
   },
 ];
