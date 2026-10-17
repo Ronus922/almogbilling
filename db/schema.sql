@@ -211,6 +211,7 @@ declare
   v_n integer;
   v_mode text;
   v_bulk boolean;
+  v_same_phone_group boolean;
   v_ids uuid[] := p_ids;
   v_link record;
   v_contact public.contacts%rowtype;
@@ -221,7 +222,16 @@ begin
   end if;
   v_mode := case p_action when 'approve_rename' then 'rename'
                           when 'approve_replace' then 'replace' end;
-  v_bulk := p_action = 'approve' and cardinality(p_ids) > 1;
+
+  -- One phone's own several apartments, on the same access field: not a
+  -- bundle of unrelated decisions, so the bulk-never-touches-access guard
+  -- below does not apply to it.
+  select count(distinct s.field) = 1 and count(distinct s.phone_e164) = 1
+         and bool_and(s.field in ('portal_link', 'portal_unlink')) and bool_and(s.phone_e164 is not null)
+    into v_same_phone_group
+    from public.contact_sync_suggestions s
+   where s.id = any(p_ids);
+  v_bulk := p_action = 'approve' and cardinality(p_ids) > 1 and not coalesce(v_same_phone_group, false);
 
   -- A replacement brings the new owner's phone along (one decision).
   if v_mode = 'replace' then
@@ -7863,5 +7873,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013222645'),
     ('20261014074807'),
     ('20261014122339'),
-    ('20261016163824')
+    ('20261016163824'),
+    ('20261017090427')
 ;

@@ -86,21 +86,23 @@ d('portal fault report — the real SQL', () => {
     expect(r).toEqual({ rosterId: id520, apartmentNumber: '520', role: 'owner', name: 'בעל שתי דירות', phoneE164: PHONE_TWO_APTS });
   });
 
-  it('containment: a phone with apartments of two different people reports as "לא מזוהה", no apartment, no roster link', async () => {
+  it('a phone with apartments of two different people still reports normally — under the lowest apartment number (17/10/2026, "פישוט גישת פורטל")', async () => {
     await apartment('1210');
     await apartment('520');
     await roster('1210', PHONE_TWO_APTS, 'רונן בדיקה');
-    await roster('520', PHONE_TWO_APTS, 'טלי בדיקה');
+    const id520 = await roster('520', PHONE_TWO_APTS, 'טלי בדיקה');
 
     const reporter = await resolvePortalReporter(PHONE_TWO_APTS);
-    expect(reporter).toEqual({ rosterId: null, apartmentNumber: null, role: null, name: 'לא מזוהה', phoneE164: PHONE_TWO_APTS });
+    expect(reporter).toEqual({ rosterId: id520, apartmentNumber: '520', role: 'owner', name: 'טלי בדיקה', phoneE164: PHONE_TWO_APTS });
     const created = await insertPortalIssue({ id: randomUUID(), report, reporter: reporter!, images: [] });
     const row = (await tx.query(
       `select reporter_contact_id, reporter_name, created_by_name, reporter_phone, reporter_apartment from public.issues where id = $1`,
       [created.id],
     )).rows[0];
-    // NULL — allowed only because there is no roster link (migration 20261003095150)
-    expect(row).toEqual({ reporter_contact_id: null, reporter_name: 'לא מזוהה', created_by_name: 'לא מזוהה', reporter_phone: PHONE_TWO_APTS, reporter_apartment: null });
+    expect(row).toEqual({
+      reporter_contact_id: id520, reporter_name: 'טלי בדיקה', created_by_name: 'טלי בדיקה',
+      reporter_phone: PHONE_TWO_APTS, reporter_apartment: '520',
+    });
   });
 
   it('the reporter is the PERSON who signed in: the name on the record that carries the phone, not the apartment owner', async () => {

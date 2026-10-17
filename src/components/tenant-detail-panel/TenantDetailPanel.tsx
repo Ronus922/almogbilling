@@ -34,8 +34,6 @@ import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { PanelTabs, type PanelTabKey } from './PanelTabs';
 import { EditPhoneDialog, type PhoneField } from './EditPhoneDialog';
-import { usePhoneEntryWarning } from '@/components/contacts/PhoneEntryDialog';
-import type { PhoneEntryDecision } from '@/lib/types/portal';
 import { cleanPhoneField } from '@/lib/whatsapp';
 import {
   WhatsAppSendForm, type WhatsAppRecipient, type WhatsAppSendFormHandle,
@@ -81,10 +79,6 @@ export function TenantDetailPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editField, setEditField] = useState<PhoneField | null>(null);
-  // The apartment card's entry warning, on the phone edit here too: a phone
-  // another apartment carries under another name → "אותו אדם?".
-  const [phoneResending, setPhoneResending] = useState(false);
-  const phoneWarning = usePhoneEntryWarning(phoneResending);
   const [nextActionDraft, setNextActionDraft] = useState<NextActionDraft>({ description: '', date: '' });
   const [saving, setSaving] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
@@ -163,7 +157,7 @@ export function TenantDetailPanel({
   // dirty guard), so the panel stands down.
   useEscapeKey(open && view === 'details' && !confirmCloseOpen && editField === null, () => requestClose());
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
-  useEscapeKey(editField !== null && !phoneWarning.open, () => setEditField(null));
+  useEscapeKey(editField !== null, () => setEditField(null));
 
   // Close request — intercepts X / overlay / ESC / footer "סגור".
   // If anything was touched, show a confirm dialog before discarding.
@@ -184,14 +178,9 @@ export function TenantDetailPanel({
     onOpenChange(false);
   }
 
-  /** true = saved. false = not saved yet: the entry warning is asking
-   *  "אותו אדם?", and the answers send the same edit again. */
-  async function handleSavePhone(
-    field: PhoneField, value: string | null, phoneDecisions?: PhoneEntryDecision[],
-  ): Promise<boolean> {
+  async function handleSavePhone(field: PhoneField, value: string | null): Promise<void> {
     if (!debtorId) throw new Error('no_debtor');
     const patch: PhonesUpdate = { [field]: value };
-    if (phoneDecisions) patch.phone_decisions = phoneDecisions;
     const res = await fetch(`/api/debtors/${debtorId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -199,42 +188,25 @@ export function TenantDetailPanel({
       body: JSON.stringify(patch),
     });
     const j = await res.json().catch(() => ({})) as { tenant?: Tenant; error?: string };
-    if (phoneWarning.ask(res.status, j, (decisions) => { void resendPhone(field, value, decisions); })) return false;
     if (!res.ok || !j.tenant) throw new Error(j.error || `HTTP ${res.status}`);
     setTenant(j.tenant);
     setHasMutated(true);
     toast.success('הטלפון עודכן');
     router.refresh();
-    return true;
-  }
-
-  /** The same edit, with the answers to "אותו אדם?". */
-  async function resendPhone(field: PhoneField, value: string | null, decisions: PhoneEntryDecision[]) {
-    setPhoneResending(true);
-    try {
-      if (await handleSavePhone(field, value, decisions)) setEditField(null);
-    } catch (err) {
-      toast.error(`שמירת הטלפון נכשלה: ${(err as Error).message}`);
-    } finally {
-      setPhoneResending(false);
-    }
   }
 
   /** Approve or reject one Bllink suggestion straight from the card. Approving
    *  writes the value exactly as the queue does — and an owner phone reaches
    *  the portal roster through the same trigger. */
-  async function resolveSuggestion(id: string, action: SuggestionAction, phoneDecisions?: PhoneEntryDecision[]) {
+  async function resolveSuggestion(id: string, action: SuggestionAction) {
     if (!tenant) return;
     try {
       const res = await fetch('/api/contacts/suggestions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ action, ids: [id], ...(phoneDecisions ? { phone_decisions: phoneDecisions } : {}) }),
+        body: JSON.stringify({ action, ids: [id] }),
       });
-      // The approval writes to the card — the same "אותו אדם?" as editing it.
-      const body: unknown = await res.json().catch(() => ({}));
-      if (phoneWarning.ask(res.status, body, (d) => { void resolveSuggestion(id, action, d); })) return;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       // The approved value landed in contacts, so BOTH the card's decorations
@@ -649,9 +621,7 @@ export function TenantDetailPanel({
         initialValue={editField === 'phone_tenant' ? tenant?.phone_tenant ?? null : tenant?.phone_owner ?? null}
         onOpenChange={(o) => { if (!o) setEditField(null); }}
         onSave={(field, value) => handleSavePhone(field, value)}
-        holdEscape={phoneWarning.open}
       />
-      {phoneWarning.dialog}
     </>
   );
 }

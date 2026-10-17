@@ -1,9 +1,6 @@
 import 'server-only';
 import type { PoolClient } from 'pg';
 import { query, queryOne, withTransaction } from '@/lib/db';
-import {
-  findPhoneEntryConflicts, PhoneEntryConflictError, registrationsOf,
-} from '@/lib/db/portal/identityApprovals';
 import type {
   Contact,
   ContactListFilters,
@@ -258,13 +255,6 @@ export interface UpsertContactOpts {
    * clobber a column it never meant to write.
    */
   allowedFields?: string[];
-  /**
-   * The apartment card's entry warning, for a write nobody can be asked about
-   * (a file import): a phone — or a name over one — that another apartment
-   * carries under another name refuses the whole row (PhoneEntryConflictError,
-   * rolled back); the question is then asked on the card ("אותו אדם?").
-   */
-  refusePhoneConflicts?: boolean;
 }
 
 /**
@@ -668,13 +658,7 @@ export async function upsertContactAndLinkDebtor(
   opts: UpsertContactOpts = {},
 ): Promise<UpsertContactResult & { debtorLinked: number }> {
   return withTransaction(async (client) => {
-    const apartment = normalizeApartmentNumber(data.apartment_number ?? '');
-    const before = opts.refusePhoneConflicts ? await registrationsOf(client, apartment) : [];
     const result = await _upsertContactByApartment(client, data, opts);
-    if (opts.refusePhoneConflicts) {
-      const conflicts = await findPhoneEntryConflicts(client, result.contact.apartment_number, before);
-      if (conflicts.length > 0) throw new PhoneEntryConflictError(conflicts);
-    }
     const debtorLinked = await _linkDebtorToContact(client, data.apartment_number, result.contact.id);
     return { ...result, debtorLinked };
   });

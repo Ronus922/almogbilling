@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_MANAGER, type ModulePermission, type Role } from '@/lib/permissions/constants';
 
 // The portal roster's admin surface — "טלפון ← דירות בפורטל" on the apartment
-// card and /admin/portal-blocked — through the REAL staff guard chain
-// (requirePermission → getCurrentActor → session + user_permissions).
+// card — through the REAL staff guard chain (requirePermission →
+// getCurrentActor → session + user_permissions).
 //
 // Decision 5 of the 03/10/2026 audit: a phone reaches the portal through the
 // apartment's owner record and NOTHING else. So the admin can look and detach,
@@ -29,10 +29,6 @@ vi.mock('@/lib/db', () => ({
   queryOne: vi.fn(async (sql: string) =>
     sql.includes('from public.contacts') ? { n: 1 } : h.stillActive),
 }));
-vi.mock('@/lib/db/portal/blockedPhones', () => ({
-  listBlockedPortalPhones: vi.fn(async () => []),
-  listApprovedIdentities: vi.fn(async () => []),
-}));
 vi.mock('@/lib/db/portal/ownerPhones', () => ({
   listOwnerPhones: vi.fn(async () => []),
   detachOwnerPhone: vi.fn(async (apartment: string, id: string) => ({
@@ -44,9 +40,7 @@ vi.mock('@/lib/db/portal/events', () => ({ logPortalEvent: vi.fn(async () => und
 vi.mock('@/lib/db/audit', () => ({ writeAudit: vi.fn(async () => undefined) }));
 
 const route = await import('@/app/api/apartments/[apartment]/owner-phones/route');
-const blocked = await import('@/app/api/admin/portal-blocked/route');
 const { detachOwnerPhone } = await import('@/lib/db/portal/ownerPhones');
-const { listBlockedPortalPhones } = await import('@/lib/db/portal/blockedPhones');
 const { writeAudit } = await import('@/lib/db/audit');
 const { revokePortalSessionsForPhone } = await import('@/lib/db/portal/sessions');
 const { ownerPhoneDetachBodySchema } = await import('@/lib/validation/requests');
@@ -121,17 +115,5 @@ describe('detach', () => {
     expect((await patch({ id: ROW_ID, is_active: false })).status).toBe(403);
     expect(detachOwnerPhone).not.toHaveBeenCalled();
     expect(writeAudit).not.toHaveBeenCalled();
-  });
-});
-
-describe('/api/admin/portal-blocked', () => {
-  it('admin reads it; a default manager gets 403; nobody signed in gets 401', async () => {
-    signIn('admin');
-    expect((await blocked.GET()).status).toBe(200);
-    signIn('manager', DEFAULT_MANAGER);
-    expect((await blocked.GET()).status).toBe(403);
-    h.session = null;
-    expect((await blocked.GET()).status).toBe(401);
-    expect(listBlockedPortalPhones).toHaveBeenCalledTimes(1);
   });
 });

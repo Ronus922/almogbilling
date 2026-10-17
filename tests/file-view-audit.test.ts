@@ -30,8 +30,9 @@ const h = vi.hoisted(() => ({
   actor: null as null | { id: string; username: string; email: string; full_name: string | null; role: string },
   /** The owners-portal branch of finance-receipts (28/09/2026). */
   portalSession: null as null | { id: string; phoneE164: string },
-  /** The session phone's apartments belong to different people (containment 03/10/2026). */
-  mixedOwners: false,
+  /** The session's phone no longer resolves to any identity (e.g. its last
+   *  roster row disappeared between the session check and this read). */
+  noIdentity: false,
   receipt: null as null | { entry_id: string; document_id: string; original_name: string },
   finDoc: null as null | { id: string; entry_id: string | null; original_name: string },
 }));
@@ -87,13 +88,12 @@ vi.mock('@/lib/portal/session', () => ({
 vi.mock('@/lib/db/finance/portal', () => ({
   findResidentReceipt: vi.fn(async () => h.receipt),
 }));
-// The portal's one identity (lib/db/portal/identity.ts): ok for one person,
-// blocked when the names differ — the files route reads nothing else.
+// The portal's one identity (lib/db/portal/identity.ts): the files route
+// reads nothing else. null = no active link at all.
 vi.mock('@/lib/db/portal/identity', () => ({
-  resolvePortalIdentity: vi.fn(async () => (h.mixedOwners
-    ? { status: 'blocked', name: null, apartments: [], canSeeBuildingFinance: false, approvalId: null,
-        reporter: { rosterId: null, apartmentNumber: null, role: null, name: 'לא מזוהה' } }
-    : { status: 'ok', name: 'דנה לוי', canSeeBuildingFinance: true, approvalId: null,
+  resolvePortalIdentity: vi.fn(async () => (h.noIdentity
+    ? null
+    : { name: 'דנה לוי', canSeeBuildingFinance: true,
         apartments: [
           { apartmentNumber: '7', role: 'owner', rosterId: 'r7', canSeeDebt: true },
           { apartmentNumber: '12', role: 'owner', rosterId: 'r12', canSeeDebt: true },
@@ -153,7 +153,7 @@ beforeEach(() => {
   h.supplierDoc = { id: 'doc-1', supplier_id: 'sup-1', file_name: 'חוזה שירות 2026.pdf' };
   h.actor = ronen;
   h.portalSession = null;
-  h.mixedOwners = false;
+  h.noIdentity = false;
   h.receipt = null;
   h.finDoc = null;
 });
@@ -353,9 +353,9 @@ describe('GET /api/files/finance-receipts — the portal branch', () => {
     expect(h.rows[0].metadata).toMatchObject({ actor_kind: 'portal_owner', portal_phone: owner.phoneE164, document_id: 'd-1', ip: '9.9.9.9' });
   });
 
-  it('a mixed-owners phone (apartments of different people) → the staff verdict, nothing logged, nothing served', async () => {
+  it('a portal session whose phone no longer resolves to any identity → the staff verdict, nothing logged, nothing served', async () => {
     h.portalSession = owner;
-    h.mixedOwners = true;
+    h.noIdentity = true;
     h.receipt = { entry_id: 'e-1', document_id: 'd-1', original_name: 'קבלה.pdf' };
     const res = await filesGET(req(`http://x/api/files/finance-receipts/${RECEIPT}`), ctx);
     expect(res.status).toBe(403);

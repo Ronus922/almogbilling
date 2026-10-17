@@ -4,11 +4,11 @@ import { Pool, type PoolClient } from 'pg';
 import { requireSeededAdmin } from './db-fixtures';
 import { extractTenantPeople } from '@/lib/sync/tenantList';
 
-// The portal by ROLE, one identity, identity approval, the entry warning and
-// Bllink's people (03/10/2026) — against a throwaway database
-// (WA_TEST_DATABASE_URL), through the real SQL and the real data layer.
-// Fixtures are made here and removed by their exact apartments / ids
-// (iron rule 12); the phones below exist nowhere else.
+// The portal by ROLE, one identity (no approval gate since 17/10/2026,
+// "פישוט גישת פורטל"), and Bllink's people (03/10/2026) — against a
+// throwaway database (WA_TEST_DATABASE_URL), through the real SQL and the
+// real data layer. Fixtures are made here and removed by their exact
+// apartments / ids (iron rule 12); the phones below exist nowhere else.
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
 const d = describe.skipIf(!TEST_URL);
 
@@ -28,10 +28,6 @@ vi.mock('@/lib/db', () => ({
 const { resolvePortalIdentity, findPortalRegistration } = await import('@/lib/db/portal/identity');
 const { getPortalMyAccount } = await import('@/lib/db/portal/account');
 const { resolvePortalReporter, insertPortalIssue } = await import('@/lib/db/portal/issueReport');
-const {
-  approveIdentity, checkPhoneEntry, endIdentity, renameIdentity, registrationsOf, IdentityDecisionError, PhoneEntryConflictError,
-} = await import('@/lib/db/portal/identityApprovals');
-const { listBlockedPortalPhones } = await import('@/lib/db/portal/blockedPhones');
 const { listSuggestionsForApartment, resolveSuggestions, suggestPortalLinks, getOwnerReplacementPreview } =
   await import('@/lib/db/contactSuggestions');
 
@@ -41,8 +37,6 @@ const A = {
   same1: '990711', same2: '990712',
   diff1: '990721', diff2: '990722', diff3: '990723',
   nameless1: '990731', nameless2: '990732',
-  rename1: '990781', rename2: '990782',
-  entry1: '990741', entry2: '990742', entry3: '990743', entry4: '990744',
   bl: '990751', sale: '990752',
   det: '990761',
   repOwn: '990772', repRent: '990771',
@@ -50,13 +44,11 @@ const A = {
 const APTS = Object.values(A);
 const P = {
   own: '0527700001', ten: '0527700002', opr: '0527700003', hid: '0527700004', opf: '0527700005',
-  same: '0527700011', diff: '0527700021', nameless: '0527700031', rename: '0527700081',
-  entryNo: '0527700041', entryYes: '0527700042', entryMgr: '0527700043',
+  same: '0527700011', diff: '0527700021', nameless: '0527700031',
   blKept: '0527700051', blGone: '0527700052', blNew: '0527700053', saleOld: '0527700054', saleNew: '0527700055',
   det: '0527700061', rep: '0527700071',
 };
 const e164 = (local: string) => `+972${local.slice(1)}`;
-const PHONES = Object.values(P).map(e164);
 
 const made = { issues: [] as string[], scrapes: [] as string[] };
 let adminId = '';
@@ -75,22 +67,14 @@ async function link(apt: string, phone: string) {
       where apartment_number = $1 and phone_e164 = $2`, [apt, e164(phone)]);
   return r.rows[0] ?? null;
 }
-async function inTx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
-  const c = await pool.connect();
-  try { await c.query('BEGIN'); const r = await fn(c); await c.query('COMMIT'); return r; }
-  catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); }
-}
 async function cleanup() {
   for (const id of made.issues) await pool.query(`delete from public.issues where id = $1`, [id]);
   for (const id of made.scrapes) await pool.query(`delete from public.bllink_scrapes where id = $1`, [id]);
-  // Approvals and flags of THIS file's phones only (they exist nowhere else).
-  await pool.query(`delete from public.portal_identity_approvals where phone_e164 = any($1::text[])`, [PHONES]);
-  await pool.query(`delete from public.portal_phone_entry_flags where phone_e164 = any($1::text[])`, [PHONES]);
   // roster, contact_people and suggestions cascade from contacts
   await pool.query(`delete from public.contacts where apartment_number = any($1::text[])`, [APTS]);
 }
 
-d('portal roles + identity (03/10/2026)', () => {
+d('portal roles + identity (03/10/2026; simplified 17/10/2026)', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: TEST_URL, max: 4 });
     pool.on('error', () => undefined);
@@ -139,7 +123,7 @@ d('portal roles + identity (03/10/2026)', () => {
   it('a tenant and an operator see the apartment debt and report faults, with their role on the issue', async () => {
     for (const [apt, phone, role] of [[A.ten, P.ten, 'tenant'], [A.opr, P.opr, 'operator']] as const) {
       const id = await resolvePortalIdentity(e164(phone));
-      expect(id).toMatchObject({ status: 'ok', canSeeBuildingFinance: true });
+      expect(id).toMatchObject({ canSeeBuildingFinance: true });
       expect(id?.apartments).toEqual([expect.objectContaining({ apartmentNumber: apt, role, canSeeDebt: true })]);
       const acc = await getPortalMyAccount({ id: 's', phoneE164: e164(phone) });
       expect(acc).toEqual([expect.objectContaining({ apartment_number: apt, role, total_debt: 0 })]);
@@ -157,12 +141,12 @@ d('portal roles + identity (03/10/2026)', () => {
     }
   });
 
-  // ── 2. one identity, the blocking rule ─────────────────────────────────
-  it('owner in one apartment and tenant in another under the same name → one person, not blocked', async () => {
+  // ── 2. one identity, no blocking (simplified 17/10/2026) ───────────────
+  it('owner in one apartment and tenant in another under the same name → one person', async () => {
     await card(A.same1, { owner_name: 'דנה  לוי', owner_phone: P.same });
     await card(A.same2, { owner_name: 'מישהו', resident_type: 'tenant', tenant_name: 'דנה לוי', tenant_phone: P.same });
     const id = await resolvePortalIdentity(e164(P.same));
-    expect(id).toMatchObject({ status: 'ok', name: 'דנה לוי' });
+    expect(id).toMatchObject({ name: 'דנה לוי' });
     expect(id?.apartments.map((a) => a.role)).toEqual(['owner', 'tenant']);
   });
 
@@ -181,155 +165,36 @@ d('portal roles + identity (03/10/2026)', () => {
     expect(row.rows[0]).toEqual({ reporter_role: 'owner', reporter_apartment: A.repOwn });
   });
 
-  it('different names → blocked everywhere; approved → one name everywhere; a name added later → blocked again', async () => {
+  it('several apartments under DIFFERENT names never withhold access (17/10/2026, "פישוט גישת פורטל")', async () => {
     await card(A.diff1, { owner_name: 'ס.נ נדל״ן', owner_phone: P.diff });
     await card(A.diff2, { owner_name: 'מישהו', resident_type: 'operator', tenant_name: 'סוניה', tenant_phone: P.diff });
     const phone = e164(P.diff);
 
-    // blocked: no name in any of the places, no figure, an unidentified reporter
-    expect(await resolvePortalIdentity(phone)).toMatchObject({ status: 'blocked', name: null, apartments: [] });
-    expect(await getPortalMyAccount({ id: 's', phoneE164: phone })).toEqual([]);
-    expect(await resolvePortalReporter(phone)).toMatchObject({ name: 'לא מזוהה', apartmentNumber: null, role: null, rosterId: null });
-    const listed = (await listBlockedPortalPhones()).find((p) => p.phone_e164 === phone);
-    expect(listed).toMatchObject({ category: 'company_contact', pending: null, flagged: false });
+    const id = await resolvePortalIdentity(phone);
+    expect(id).toMatchObject({ canSeeBuildingFinance: true });
+    expect(id?.apartments.map((a) => a.apartmentNumber).sort()).toEqual([A.diff1, A.diff2].sort());
+    // The greeting name is cosmetic: the first apartment (by number) that
+    // carries one — it never decides WHICH apartments are visible.
+    expect(id?.name).toBe('ס.נ נדל״ן');
+    expect((await getPortalMyAccount({ id: 's', phoneE164: phone })).map((a) => a.apartment_number).sort())
+      .toEqual([A.diff1, A.diff2].sort());
 
-    // "אדם אחד" — logged
-    const approvalId = await inTx((c) => approveIdentity(c, {
-      phoneE164: phone, displayName: 'סוניה', names: ['ס.נ נדל״ן', 'סוניה'], actorId: adminId, source: 'blocked_screen',
-      apartments: [{ apartment_number: A.diff1, relation: 'company_authorized' }, { apartment_number: A.diff2, relation: 'personal' }],
-    }));
-    const ok = await resolvePortalIdentity(phone);
-    expect(ok).toMatchObject({ status: 'ok', name: 'סוניה', approvalId });
-    expect((await resolvePortalReporter(phone))?.name).toBe('סוניה');
-    expect((await getPortalMyAccount({ id: 's', phoneE164: phone })).map((a) => a.owner_display_name)).toEqual(['סוניה', 'סוניה']);
-    expect((await listBlockedPortalPhones()).some((p) => p.phone_e164 === phone)).toBe(false);
-    const audit = await pool.query(
-      `select 1 from public.audit_log where action = 'portal_identity_approved' and entity_id = $1`, [phone]);
-    expect(audit.rowCount).toBeGreaterThan(0);
-
-    // a third apartment under a name the approval never saw
+    // a third apartment under yet another name — still never withholds access
     await card(A.diff3, { owner_name: 'אדם אחר לגמרי', owner_phone: P.diff });
-    expect((await resolvePortalIdentity(phone))?.status).toBe('blocked');
-
-    // revoking also blocks (once the third apartment is gone, the approval alone decided)
-    await pool.query(`delete from public.contacts where apartment_number = $1`, [A.diff3]);
-    expect((await resolvePortalIdentity(phone))?.status).toBe('ok');
-    expect(await inTx((c) => endIdentity(c, { id: approvalId, action: 'revoke', actorId: adminId }))).toBe(true);
-    expect((await resolvePortalIdentity(phone))?.status).toBe('blocked');
+    const id2 = await resolvePortalIdentity(phone);
+    expect(id2?.apartments.map((a) => a.apartmentNumber).sort()).toEqual([A.diff1, A.diff2, A.diff3].sort());
   });
 
-  it('a nameless record among several apartments is blocked, and cannot be approved away', async () => {
+  it('a nameless record among several apartments still opens all of them, named from the one that has it', async () => {
     await card(A.nameless1, { owner_name: null, owner_phone: P.nameless });
     await card(A.nameless2, { owner_name: 'שם קיים', owner_phone: P.nameless });
     const phone = e164(P.nameless);
-    expect((await resolvePortalIdentity(phone))?.status).toBe('blocked');
-    expect((await listBlockedPortalPhones()).find((p) => p.phone_e164 === phone)?.category).toBe('missing_name');
-    await expect(inTx((c) => approveIdentity(c, {
-      phoneE164: phone, displayName: 'שם קיים', names: ['', 'שם קיים'], actorId: adminId, source: 'blocked_screen',
-      apartments: [{ apartment_number: A.nameless1, relation: 'personal' }, { apartment_number: A.nameless2, relation: 'personal' }],
-    }))).rejects.toBeInstanceOf(IdentityDecisionError);
+    const id = await resolvePortalIdentity(phone);
+    expect(id?.apartments.map((a) => a.apartmentNumber).sort()).toEqual([A.nameless1, A.nameless2].sort());
+    expect(id?.name).toBe('שם קיים');
   });
 
-  it('"ערוך שם" changes display_name only, logs before/after, and refuses an empty name or a non-approved id', async () => {
-    await card(A.rename1, { owner_name: 'חברה לרישום בדיקה', owner_phone: P.rename });
-    await card(A.rename2, { owner_name: 'מישהו', resident_type: 'tenant', tenant_name: 'שם רישום בדיקה', tenant_phone: P.rename });
-    const phone = e164(P.rename);
-    const approvalId = await inTx((c) => approveIdentity(c, {
-      phoneE164: phone, displayName: 'שם ישן', names: ['חברה לרישום בדיקה', 'שם רישום בדיקה'], actorId: adminId, source: 'blocked_screen',
-      apartments: [{ apartment_number: A.rename1, relation: 'company_authorized' }, { apartment_number: A.rename2, relation: 'personal' }],
-    }));
-
-    // success — display_name alone changes, trimmed/collapsed, everywhere the portal reads it
-    expect(await inTx((c) => renameIdentity(c, { id: approvalId, displayName: '  שם   חדש  ', actorId: adminId }))).toBe(true);
-    const row = (await pool.query<{ display_name: string; names: string[] }>(
-      `select display_name, names from public.portal_identity_approvals where id = $1`, [approvalId])).rows[0];
-    expect(row).toMatchObject({ display_name: 'שם חדש', names: ['חברה לרישום בדיקה', 'שם רישום בדיקה'] });
-    expect((await resolvePortalIdentity(phone))?.name).toBe('שם חדש');
-
-    // audit before/after
-    const audit = (await pool.query<{ previous: string; next: string }>(
-      `select metadata->>'previous_display_name' as previous, metadata->>'new_display_name' as next
-         from public.audit_log where action = 'portal_identity_display_name_changed' and entity_id = $1`, [phone])).rows;
-    expect(audit).toEqual([{ previous: 'שם ישן', next: 'שם חדש' }]);
-
-    // the same name again is a no-op — true, but no second audit row
-    expect(await inTx((c) => renameIdentity(c, { id: approvalId, displayName: 'שם חדש', actorId: adminId }))).toBe(true);
-    expect((await pool.query(
-      `select 1 from public.audit_log where action = 'portal_identity_display_name_changed' and entity_id = $1`, [phone])).rowCount).toBe(1);
-
-    // an empty (or whitespace-only) name is refused before anything is written
-    await expect(inTx((c) => renameIdentity(c, { id: approvalId, displayName: '   ', actorId: adminId })))
-      .rejects.toBeInstanceOf(IdentityDecisionError);
-
-    // an id that is not an 'approved' row (revoked) is refused — false, not an error
-    expect(await inTx((c) => endIdentity(c, { id: approvalId, action: 'revoke', actorId: adminId }))).toBe(true);
-    expect(await inTx((c) => renameIdentity(c, { id: approvalId, displayName: 'לא רלוונטי', actorId: adminId }))).toBe(false);
-
-    // a nonexistent id is refused the same way
-    expect(await inTx((c) => renameIdentity(c, { id: randomUUID(), displayName: 'גם זה לא', actorId: adminId }))).toBe(false);
-  });
-
-  // ── 3. the entry warning ───────────────────────────────────────────────
-  async function typePhone(apt: string, phone: string, name: string, decision?: 'same' | 'different', canManagePortal = false) {
-    return inTx(async (c) => {
-      const before = await registrationsOf(c, apt);
-      await c.query(`update public.contacts set owner_name = $2, owner_phone = $3 where apartment_number = $1`, [apt, name, phone]);
-      await checkPhoneEntry(c, {
-        apartment: apt, before,
-        actor: { id: adminId, canManagePortal },
-        decisions: decision ? [{
-          phone_e164: e164(phone), decision,
-          identity: canManagePortal ? {
-            display_name: 'רונן משולם',
-            apartments: [{ apartment_number: apt, relation: 'personal' }, { apartment_number: A.entry1, relation: 'personal' }],
-          } : undefined,
-        }] : undefined,
-      });
-    });
-  }
-
-  it('entry warning: an unanswered conflict saves NOTHING; "no" saves, blocks and flags a typing mistake', async () => {
-    await card(A.entry1, { owner_name: 'רונן משולם', owner_phone: P.entryNo });
-    await card(A.entry2, { owner_name: null });
-    const err = await typePhone(A.entry2, P.entryNo, 'אלי אברג׳יל').catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(PhoneEntryConflictError);
-    expect((err as InstanceType<typeof PhoneEntryConflictError>).conflicts[0]).toMatchObject({
-      apartment_number: A.entry2, entered_name: 'אלי אברג׳יל', others: [{ apartment_number: A.entry1, name: 'רונן משולם' }],
-    });
-    expect(await link(A.entry2, P.entryNo)).toBeNull();   // rolled back
-
-    await typePhone(A.entry2, P.entryNo, 'אלי אברג׳יל', 'different');
-    expect((await link(A.entry2, P.entryNo))?.is_active).toBe(true);
-    expect((await resolvePortalIdentity(e164(P.entryNo)))?.status).toBe('blocked');
-    const all = await listBlockedPortalPhones();
-    expect(all.find((p) => p.phone_e164 === e164(P.entryNo))).toMatchObject({ flagged: true, category: 'unrelated' });
-    // "שמות ללא קשר" first on the screen — before the nameless phone of the test above
-    const order = all.map((p) => p.phone_e164);
-    expect(order.indexOf(e164(P.entryNo))).toBeLessThan(order.indexOf(e164(P.nameless)));
-    const audit = await pool.query(`select actor_user_id from public.audit_log
-      where action = 'portal_phone_entry_flagged' and entity_id = $1`, [e164(P.entryNo)]);
-    expect(audit.rows[0]?.actor_user_id).toBe(adminId);
-  });
-
-  it('entry warning: "yes" without portal_manage → a PENDING request and the phone stays blocked', async () => {
-    await pool.query(`update public.contacts set owner_phone = $2 where apartment_number = $1`, [A.entry1, P.entryYes]);
-    await card(A.entry3, { owner_name: null });
-    await typePhone(A.entry3, P.entryYes, 'רוני משולם', 'same', false);
-    expect((await resolvePortalIdentity(e164(P.entryYes)))?.status).toBe('blocked');
-    const listed = (await listBlockedPortalPhones()).find((p) => p.phone_e164 === e164(P.entryYes));
-    expect(listed?.pending).not.toBeNull();
-  });
-
-  it('entry warning: "yes" with portal_manage → approved there and then, one name', async () => {
-    await pool.query(`update public.contacts set owner_phone = $2 where apartment_number = $1`, [A.entry1, P.entryMgr]);
-    await card(A.entry4, { owner_name: null });
-    await typePhone(A.entry4, P.entryMgr, 'רונן  משולם בע״מ', 'same', true);
-    expect(await resolvePortalIdentity(e164(P.entryMgr))).toMatchObject({ status: 'ok', name: 'רונן משולם' });
-    expect((await resolvePortalIdentity(e164(P.entryMgr)))?.apartments.map((a) => a.apartmentNumber))
-      .toEqual([A.entry1, A.entry4].sort());
-  });
-
-  // ── 4. the detaches of 03/10/2026 hold in their role ───────────────────
+  // ── 3. the detaches of 03/10/2026 hold in their role ───────────────────
   it('a detach holds while the record keeps the phone in that role — and lapses when the role is fixed', async () => {
     await card(A.det, { owner_name: 'בעלים רשום', owner_phone: P.det });
     const row = await link(A.det, P.det);
@@ -349,7 +214,7 @@ d('portal roles + identity (03/10/2026)', () => {
     expect(released.rows.map((r) => r.reason)).toContain('role_changed');
   });
 
-  // ── 5. Bllink ──────────────────────────────────────────────────────────
+  // ── 4. Bllink ──────────────────────────────────────────────────────────
   it('Bllink: a phone listed as inactive → "ניתוק" (reason); a new one → "שיוך" with the role; nothing applied by itself', async () => {
     await card(A.bl, { owner_name: 'נשאר', owner_phone: P.blKept });
     await pool.query(`insert into public.contact_people (contact_id, role, name, phone)
@@ -383,13 +248,41 @@ d('portal roles + identity (03/10/2026)', () => {
     expect((await link(A.bl, P.blGone))?.is_active).toBe(true);
     expect(await link(A.bl, P.blNew)).toBeNull();
 
-    // "אשר הכל" never approves an access suggestion
+    // these are two DIFFERENT phones on two DIFFERENT fields — "אשר הכל" (and
+    // any bulk approve) never approves an access suggestion for an unrelated
+    // bundle; only a SAME-phone, SAME-field group resolves together.
     expect(await resolveSuggestions([linkS.id, unlinkS.id], 'approve', adminId)).toBe(0);
     // one by one: unlink detaches, link writes the person onto the card (role tenant)
     expect(await resolveSuggestions([unlinkS.id], 'approve', adminId)).toBe(1);
     expect(await link(A.bl, P.blGone)).toMatchObject({ is_active: false });
     expect(await resolveSuggestions([linkS.id], 'approve', adminId)).toBe(1);
     expect(await link(A.bl, P.blNew)).toMatchObject({ is_active: true, role: 'tenant' });
+  });
+
+  it('Bllink: one phone on SEVERAL apartments (same field) resolves as ONE group, not row by row', async () => {
+    const group1 = '990791';
+    const group2 = '990792';
+    const groupPhone = '0527700091';
+    await card(group1, { owner_name: 'בעלים 1' });
+    await card(group2, { owner_name: 'בעלים 2' });
+    await pool.query(
+      `insert into public.contact_sync_suggestions
+         (apartment_number, field, current_value, proposed_value, source, phone_e164, person_role, person_name)
+       values
+         ($1, 'portal_link', null, $3, 'bllink', $3, 'owner', 'כרמל אפרטמנטס'),
+         ($2, 'portal_link', null, $3, 'bllink', $3, 'owner', 'כרמל אפרטמנטס')`,
+      [group1, group2, e164(groupPhone)],
+    );
+    const ids = (await pool.query<{ id: string }>(
+      `select id from public.contact_sync_suggestions where apartment_number = any($1::text[]) and field = 'portal_link'`,
+      [[group1, group2]],
+    )).rows.map((r) => r.id);
+    expect(ids).toHaveLength(2);
+    // one call, every id — resolves BOTH apartments at once, not blocked as a bulk.
+    expect(await resolveSuggestions(ids, 'approve', adminId)).toBe(2);
+    expect(await listSuggestionsForApartment(group1)).toHaveLength(0);
+    expect(await listSuggestionsForApartment(group2)).toHaveLength(0);
+    await pool.query(`delete from public.contacts where apartment_number = any($1::text[])`, [[group1, group2]]);
   });
 
   it('Bllink owner name: "תיקון שם" detaches nothing; "החלפת בעלים" detaches exactly what its dialog showed', async () => {

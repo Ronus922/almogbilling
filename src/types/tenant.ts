@@ -1,5 +1,4 @@
 import type { ContactFieldState } from '@/lib/types/contactSuggestions';
-import type { PhoneEntryDecision } from '@/lib/types/portal';
 // Shared contract for Slice 3 (TenantDetailPanel).
 // Consumed by both UI components and backend API routes / DB helpers.
 //
@@ -68,8 +67,6 @@ export interface TenantNote {
 export interface PhonesUpdate {
   phone_owner?: string | null;
   phone_tenant?: string | null;
-  /** The answers to "אותו אדם?" when the first try came back 409 phone_conflict. */
-  phone_decisions?: PhoneEntryDecision[];
 }
 
 export interface NextActionUpdate {

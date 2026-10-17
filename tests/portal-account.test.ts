@@ -162,18 +162,24 @@ d('owners portal — my account, bank balance, one-time codes', () => {
     expect(acc[1]).toMatchObject({ total_debt: 300, hot_water_debt: 300, monthly_debt: null });
   });
 
-  it('containment: apartments of two different people on one phone → no account at all; one person → every apartment', async () => {
-    expect(await getPortalMyAccount({ id: 's', phoneE164: phone.mixed })).toEqual([]);
-    expect(await getPortalMyAccount({ id: 's', phoneE164: phone.unnamed })).toEqual([]);
-    // the portal's one identity says why: blocked, no name, no apartment
-    expect(await resolvePortalIdentity(phone.mixed)).toMatchObject({ status: 'blocked', name: null, apartments: [] });
-    expect((await resolvePortalIdentity(phone.unnamed))?.status).toBe('blocked');
+  it('several apartments under different names (or a nameless one) never withhold access — the name is cosmetic only (17/10/2026, "פישוט גישת פורטל")', async () => {
+    const mixed = await getPortalMyAccount({ id: 's', phoneE164: phone.mixed });
+    expect(mixed.map((a) => a.apartment_number)).toEqual([apt.a, apt.b]);
+    expect(mixed.map((a) => a.total_debt)).toEqual([1240, 300]);
+    // the greeting name is the first apartment (by number) with one — it
+    // never decides which apartments are visible.
+    expect(mixed.map((a) => a.owner_display_name)).toEqual(['אדם ראשון', 'אדם ראשון']);
+    expect(await resolvePortalIdentity(phone.mixed)).toMatchObject({ name: 'אדם ראשון' });
+
+    const unnamed = await getPortalMyAccount({ id: 's', phoneE164: phone.unnamed });
+    expect(unnamed.map((a) => a.apartment_number)).toEqual([apt.a, apt.b]);
+    expect(unnamed.map((a) => a.owner_display_name)).toEqual(['נעם', 'נעם']);
 
     const spaced = await getPortalMyAccount({ id: 's', phoneE164: phone.spaced });
     expect(spaced.map((a) => a.apartment_number)).toEqual([apt.a, apt.b]);
     expect(spaced.map((a) => a.total_debt)).toEqual([1240, 300]);
-    expect(await resolvePortalIdentity(phone.spaced)).toMatchObject({ status: 'ok', name: 'משה כהן' });
-    expect(await resolvePortalIdentity(phone.ab)).toMatchObject({ status: 'ok', name: 'רב-דירתי' });
+    expect(await resolvePortalIdentity(phone.spaced)).toMatchObject({ name: 'משה כהן' });
+    expect(await resolvePortalIdentity(phone.ab)).toMatchObject({ name: 'רב-דירתי' });
   });
 
   it('no debtors row → 0; an archived row → its exact figures like any other, no status; a phone that owns nothing → []', async () => {

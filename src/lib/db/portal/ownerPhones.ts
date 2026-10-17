@@ -1,7 +1,7 @@
 import 'server-only';
 import { query, queryOne } from '@/lib/db';
-import { decidePortalIdentity, type PortalRole } from '@/lib/portal/identity';
-import { approvalsFor, LINK_NAME_SQL, SOURCE_NAME_SQL } from '@/lib/db/portal/identity';
+import type { PortalRole } from '@/lib/portal/identity';
+import { SOURCE_NAME_SQL } from '@/lib/db/portal/identity';
 import type { OwnerPhone, OwnerPhoneSource } from '@/lib/types/portal';
 
 // The portal roster (apartment_owner_phones): which phone may sign in for which
@@ -47,38 +47,26 @@ export async function listOwnerPhones(apartmentNumber: string): Promise<OwnerPho
   );
   if (r.rows.length === 0) return [];
 
-  // Everything the same phones open — one query for the whole card — and
-  // whether each phone is one person (lib/portal/identity.ts).
+  // Every OTHER apartment the same phones open — one query for the whole card.
   const phones = [...new Set(r.rows.map((x) => x.phone_e164))];
-  const [links, approvals] = await Promise.all([
-    query<{ id: string; phone_e164: string; apartment_number: string; owner_name: string | null; role: PortalRole }>(
-      `select r.id, r.phone_e164, r.apartment_number, ${LINK_NAME_SQL('r')} as owner_name, r.role
-         from public.apartment_owner_phones r
-        where r.phone_e164 = any($1::text[]) and r.is_active
-        order by ${APT_ORDER_SQL('r.apartment_number')}`,
-      [phones],
-    ),
-    approvalsFor(phones),
-  ]);
-  const byPhone = new Map<string, typeof links.rows>();
+  const links = await query<{ phone_e164: string; apartment_number: string }>(
+    `select r.phone_e164, r.apartment_number
+       from public.apartment_owner_phones r
+      where r.phone_e164 = any($1::text[]) and r.is_active
+      order by ${APT_ORDER_SQL('r.apartment_number')}`,
+    [phones],
+  );
+  const byPhone = new Map<string, string[]>();
   for (const l of links.rows) {
     const list = byPhone.get(l.phone_e164) ?? [];
-    list.push(l);
+    list.push(l.apartment_number);
     byPhone.set(l.phone_e164, list);
   }
 
-  return r.rows.map((x) => {
-    const active = byPhone.get(x.phone_e164) ?? [];
-    const identity = decidePortalIdentity(
-      active.map((l) => ({ rosterId: l.id, apartmentNumber: l.apartment_number, role: l.role, name: l.owner_name })),
-      approvals.get(x.phone_e164) ?? null,
-    );
-    return {
-      ...x,
-      other_apartments: active.map((l) => l.apartment_number).filter((a) => a !== x.apartment_number),
-      blocked: identity?.status === 'blocked',
-    };
-  });
+  return r.rows.map((x) => ({
+    ...x,
+    other_apartments: (byPhone.get(x.phone_e164) ?? []).filter((a) => a !== x.apartment_number),
+  }));
 }
 
 /**

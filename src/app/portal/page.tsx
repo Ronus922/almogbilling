@@ -26,11 +26,10 @@ const one = (v: Param) => (Array.isArray(v) ? v[0] : v);
 //     request can point either at another apartment;
 //   • the ONLY finance source is portal.ts with publishedOnly = true (inside
 //     PortalScreen). No admin query runs on this page at all;
-//   • a BLOCKED phone — several names and no approved identity, or a
-//     nameless record among several apartments — gets NONE of it: no tab, no
-//     figure, no name (the header says "שלום"), no apartment; only the "we are
-//     updating your account" notice with the management company's details,
-//     and the fault report button.
+//   • no active roster link (in practice never reached — the session guard
+//     above already requires one) gets NONE of it: no tab, no figure, no
+//     name, no apartment; only the "we are updating your account" notice
+//     with the management company's details, and the fault report button.
 export default async function PortalPage({ searchParams }: { searchParams: SearchParams }) {
   const session = await getPortalSession();
   if (!session) redirect('/portal/login');
@@ -41,7 +40,7 @@ export default async function PortalPage({ searchParams }: { searchParams: Searc
   };
   const identity = await resolvePortalIdentity(session.phoneE164);
 
-  if (!identity || identity.status !== 'ok') {
+  if (!identity) {
     return (
       <PortalShell tab="ov" apartments={await countContacts()} user={{ name: null, apartments: [] }} restricted>
         <PortalAccountReview support={support} />

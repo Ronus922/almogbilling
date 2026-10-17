@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Containment (03/10/2026): a phone whose apartments belong to different
-// people gets NO financial data from the portal API. Exercised through the
-// REAL guard chain — requirePortalFinanceAccess → requirePortalSession →
+// Access (03/10/2026, "פורטל לפי תפקיד"; simplified 17/10/2026, "פישוט גישת
+// פורטל"): every ACTIVE roster link opens the portal and its finance data,
+// whatever the names on the other apartments of the same phone say — there
+// is no more "contained" phone and no more approval gate. Exercised through
+// the REAL guard chain — requirePortalFinanceAccess → requirePortalSession →
 // getPortalSession → the cookie → findPortalSession → isActiveOwner — and the
 // REAL identity (resolvePortalIdentity, getPortalMyAccount) over a mocked
 // query(): only the cookie store, the session row and the SQL results are
@@ -65,10 +67,10 @@ vi.mock('@/lib/db/finance/portal', () => ({
 import { GET as monthsGET } from '@/app/api/portal/finance/months/route';
 import { GET as periodGET } from '@/app/api/portal/finance/period/route';
 import { getPortalMyAccount } from '@/lib/db/portal/account';
+import { resolvePortalIdentity } from '@/lib/db/portal/identity';
 import { getPeriodReport, getPublishedMonths, getResidentFundKpis, getResidentMonthData } from '@/lib/db/finance/portal';
-import { PORTAL_ACCOUNT_REVIEW_MESSAGE } from '@/lib/portal/ownership';
 
-const MIXED: RosterRow[] = [
+const DIFFERENT_NAMES: RosterRow[] = [
   { apartment_number: '1210', owner_name: 'רונן משולם' },
   { apartment_number: '1237', owner_name: "אלי אברג'יל" },
   { apartment_number: '520', owner_name: 'טלי אראל' },
@@ -84,42 +86,65 @@ beforeEach(() => {
   h.debtSql = 0;
 });
 
-describe('portal finance API — a phone with apartments of two different people', () => {
-  beforeEach(() => { h.roster = MIXED; });
+describe('portal finance API — one phone, several apartments, DIFFERENT names (never withheld since 17/10/2026)', () => {
+  beforeEach(() => { h.roster = DIFFERENT_NAMES; });
 
-  it('GET /api/portal/finance/months → 403 with the notice, no month read', async () => {
+  it('GET /api/portal/finance/months → 200, every month read normally', async () => {
     const res = await monthsGET();
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body).toEqual({ error: PORTAL_ACCOUNT_REVIEW_MESSAGE });
-    expect(getPublishedMonths).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ months: ['2026-08'] });
+    expect(getPublishedMonths).toHaveBeenCalled();
   });
 
-  it('GET /api/portal/finance/period (both tabs) → 403, no figure read, no canary in the body', async () => {
-    for (const tab of ['operating', 'fund']) {
-      const res = await periodGET(new Request(`http://x/api/portal/finance/period?tab=${tab}&m=2026-08`));
-      expect(res.status).toBe(403);
-      expect(await res.text()).not.toContain('CANARY');
-    }
-    for (const fn of [getPublishedMonths, getResidentMonthData, getPeriodReport, getResidentFundKpis]) {
-      expect(fn).not.toHaveBeenCalled();
-    }
+  it('GET /api/portal/finance/period (both tabs) → 200, with the canary figures', async () => {
+    const res1 = await periodGET(new Request(`http://x/api/portal/finance/period?tab=operating&m=2026-08`));
+    expect(res1.status).toBe(200);
+    expect(await res1.text()).toContain('CANARY-MONTH');
+    expect(getResidentMonthData).toHaveBeenCalled();
+
+    const res2 = await periodGET(new Request(`http://x/api/portal/finance/period?tab=fund&m=2026-08`));
+    expect(res2.status).toBe(200);
+    expect(await res2.text()).toContain('CANARY-FUND');
+    expect(getResidentFundKpis).toHaveBeenCalled();
   });
 
-  it('getPortalMyAccount → [] and the debtors table is never read', async () => {
-    expect(await getPortalMyAccount({ id: 's1', phoneE164: PHONE })).toEqual([]);
-    expect(h.debtSql).toBe(0);
+  it('GET /api/portal/finance/period?tab=operating&m=2026-Q3 (a period report) → 200, with the canary figure', async () => {
+    const res = await periodGET(new Request('http://x/api/portal/finance/period?tab=operating&m=2026-Q3'));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('CANARY-REPORT');
+    expect(getPeriodReport).toHaveBeenCalled();
   });
 
-  it('a nameless second apartment is treated the same way', async () => {
+  it('getPortalMyAccount → one account per apartment, named from the first one (by number) that carries one', async () => {
+    const acc = await getPortalMyAccount({ id: 's1', phoneE164: PHONE });
+    expect(acc.map((a) => a.apartment_number)).toEqual(['520', '1210', '1237']);
+    expect(acc.every((a) => a.total_debt === 4321)).toBe(true);
+    expect(h.debtSql).toBeGreaterThan(0);
+    expect(acc.every((a) => a.owner_display_name === 'טלי אראל')).toBe(true);
+    expect(await resolvePortalIdentity(PHONE)).toMatchObject({ name: 'טלי אראל' });
+  });
+
+  it('a nameless apartment among them is treated the same way — every apartment still opens', async () => {
     h.roster = [{ apartment_number: '1323', owner_name: null }, { apartment_number: '1324', owner_name: 'שפייזר אייל' }];
-    expect((await monthsGET()).status).toBe(403);
-    expect(await getPortalMyAccount({ id: 's1', phoneE164: PHONE })).toEqual([]);
+    expect((await monthsGET()).status).toBe(200);
+    const acc = await getPortalMyAccount({ id: 's1', phoneE164: PHONE });
+    expect(acc.map((a) => a.apartment_number)).toEqual(['1323', '1324']);
   });
 
   it('no session → 401 before any roster check', async () => {
     h.cookie = null;
     expect((await monthsGET()).status).toBe(401);
+  });
+
+  it('no active roster link at all → the session itself is revoked (401), no figure read', async () => {
+    // isActiveOwner (the session guard) finds nothing first, so this never
+    // reaches the identity check at all — requirePortalSession() already
+    // throws 401 before requirePortalFinanceAccess() gets a phone to resolve.
+    h.roster = [];
+    const res = await monthsGET();
+    expect(res.status).toBe(401);
+    expect(getPublishedMonths).not.toHaveBeenCalled();
+    expect(await getPortalMyAccount({ id: 's1', phoneE164: PHONE })).toEqual([]);
   });
 });
 
@@ -141,7 +166,7 @@ describe('portal finance API — several apartments of ONE person', () => {
     expect(acc.every((a) => a.total_debt === 4321)).toBe(true);
   });
 
-  it('a single apartment is never blocked', async () => {
+  it('a single apartment opens exactly the same way', async () => {
     h.roster = [{ apartment_number: '520', owner_name: 'טלי אראל' }];
     expect((await monthsGET()).status).toBe(200);
     expect(await getPortalMyAccount({ id: 's1', phoneE164: PHONE })).toHaveLength(1);

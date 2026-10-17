@@ -1,15 +1,15 @@
 import 'server-only';
 import { query } from '@/lib/db';
 import {
-  decidePortalIdentity, type IdentityApproval, type IdentityLink, type PortalIdentity, type PortalRole,
+  decidePortalIdentity, type IdentityLink, type PortalIdentity, type PortalRole,
 } from '@/lib/portal/identity';
 
 // The server side of the portal's ONE identity decision (lib/portal/identity.ts).
 // Everything the portal says about a verified phone — the name in the header
-// and on a fault, the apartments and the role in each, what may be seen, and
-// whether the phone is blocked — is read through resolvePortalIdentity(). No
-// page, route or helper of the portal works a name or a permission out on its
-// own (03/10/2026, "זהות אחידה").
+// and on a fault, the apartments and the role in each, what may be seen — is
+// read through resolvePortalIdentity(). No page, route or helper of the
+// portal works a name or a permission out on its own (03/10/2026, "זהות
+// אחידה"; simplified 17/10/2026 — no more approval gate).
 
 /** The name on the record that carries a link's phone, read LIVE — the field
  *  beside the phone (owner / tenant / operator) or the contact_people row.
@@ -29,36 +29,19 @@ export const SOURCE_NAME_SQL = (r: string) => `case ${r}.source_table
  *  direct write must not decide who a phone is. */
 export const LINK_NAME_SQL = (r: string) => `coalesce(${SOURCE_NAME_SQL(r)}, nullif(btrim(${r}.owner_name), ''))`;
 
-/** The approval in force for each phone (status 'approved'), by phone. */
-export async function approvalsFor(phones: readonly string[]): Promise<Map<string, IdentityApproval>> {
-  const out = new Map<string, IdentityApproval>();
-  if (phones.length === 0) return out;
-  const r = await query<{ id: string; phone_e164: string; display_name: string; names: string[] }>(
-    `select id, phone_e164, display_name, names
-       from public.portal_identity_approvals
-      where phone_e164 = any($1::text[]) and status = 'approved'`,
-    [phones],
-  );
-  for (const a of r.rows) out.set(a.phone_e164, { id: a.id, displayName: a.display_name, names: a.names });
-  return out;
-}
-
-/** The phone's ACTIVE links and its approved identity, decided. null = the
- *  phone opens nothing (the session guard revokes such a session). */
+/** The phone's ACTIVE links, decided. null = the phone opens nothing (the
+ *  session guard revokes such a session). */
 export async function resolvePortalIdentity(phoneE164: string): Promise<PortalIdentity | null> {
-  const [links, approvals] = await Promise.all([
-    query<{ id: string; apartment_number: string; role: PortalRole; owner_name: string | null }>(
-      `select r.id, r.apartment_number, r.role, ${LINK_NAME_SQL('r')} as owner_name
-         from public.apartment_owner_phones r
-        where r.phone_e164 = $1 and r.is_active`,
-      [phoneE164],
-    ),
-    approvalsFor([phoneE164]),
-  ]);
+  const links = await query<{ id: string; apartment_number: string; role: PortalRole; owner_name: string | null }>(
+    `select r.id, r.apartment_number, r.role, ${LINK_NAME_SQL('r')} as owner_name
+       from public.apartment_owner_phones r
+      where r.phone_e164 = $1 and r.is_active`,
+    [phoneE164],
+  );
   const rows: IdentityLink[] = links.rows.map((r) => ({
     rosterId: r.id, apartmentNumber: r.apartment_number, role: r.role, name: r.owner_name,
   }));
-  return decidePortalIdentity(rows, approvals.get(phoneE164) ?? null);
+  return decidePortalIdentity(rows);
 }
 
 /**
