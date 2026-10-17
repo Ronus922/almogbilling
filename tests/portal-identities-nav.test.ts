@@ -5,9 +5,9 @@ import { DEFAULT_MANAGER } from '@/lib/permissions/constants';
 
 // "טלפונים חסומים" (16/10/2026) lost its own nav entry once the blocked-phone
 // identities section moved into /contacts — a separate menu item pointing at
-// the same href as "רשימת דיירים" was a pure duplicate. /admin/portal-blocked
-// itself still redirects to /contacts (unchanged, covered by
-// e2e/portal-roles.spec.ts), only the menu link is gone.
+// the same href as "רשימת דיירים" was a pure duplicate. The whole mechanism
+// (and /admin/portal-blocked itself) was removed outright on 17/10/2026,
+// "פישוט גישת פורטל" — this file only still checks that the nav stayed clean.
 
 const section = (role: 'admin' | 'super_admin' | 'manager') =>
   filterNav(role, (m, a) => (role === 'manager' ? hasPermission(role, DEFAULT_MANAGER, m, a) : true))

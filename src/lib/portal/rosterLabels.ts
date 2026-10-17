@@ -4,7 +4,7 @@ import { formatPhoneDisplay } from '@/lib/phone';
 import { e164ToLocal } from '@/lib/portal/phone';
 
 // Display words for the portal roster's provenance and detach reasons —
-// shared by the apartment card's "טלפון ← דירות בפורטל" and /admin/portal-blocked.
+// used by the apartment card's "טלפון ← דירות בפורטל" tab.
 
 /** Which record carries the phone, in the role it gives it (migrations
  *  20261003095149 + 20261003161745): the card's own field, or an extra person. */

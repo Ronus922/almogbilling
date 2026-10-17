@@ -109,10 +109,10 @@ const SECTIONS: MenuSection[] = [
   },
   // Owners portal ("פורטל בעלי דירות") — the decisions & protocols the portal
   // publishes (`portal_decisions`) and the log of every login attempt
-  // (`portal_manage`). Blocked-phone identities live in /contacts now
-  // (16/10/2026) — no separate nav entry; `/admin/portal-blocked` itself
-  // still redirects there for anyone linking directly to the old path.
-  // Both modules = admin / super_admin.
+  // (`portal_manage`). The identity-approval screen (formerly
+  // /admin/portal-blocked, moved into /contacts on 16/10/2026) was removed
+  // outright on 17/10/2026 — every owner/tenant/operator link opens the
+  // portal with no approval step. Both modules = admin / super_admin.
   {
     title: 'פורטל בעלי דירות',
     items: [

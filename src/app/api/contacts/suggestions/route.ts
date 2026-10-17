@@ -1,12 +1,10 @@
 import { NextResponse } from 'next/server';
-import { requirePermission, type Actor } from '@/lib/auth/actor';
+import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { contactSuggestionsResolveSchema } from '@/lib/validation/requests';
-import { listPendingSuggestions, resolveSuggestions, suggestionApartments } from '@/lib/db/contactSuggestions';
-import { withTransaction } from '@/lib/db';
+import { listPendingSuggestions, resolveSuggestions } from '@/lib/db/contactSuggestions';
 import { logger } from '@/lib/logger';
-import { phoneEntryErrorResponse, withPhoneEntryCheck } from '@/lib/http/phoneEntry';
 
 export const runtime = 'nodejs';
 
@@ -31,17 +29,16 @@ export async function GET() {
 
 // POST /api/contacts/suggestions — contacts:edit. { action, ids }
 //   approve / reject — several ids allowed; approving several resolves only
-//     what does not change portal access (the SQL enforces it);
+//     what does not change portal access, UNLESS every id names the SAME
+//     phone on the same field (portal_link/portal_unlink) — one phone's
+//     several apartments is one decision, not an unrelated batch (the SQL
+//     enforces both rules — contact_suggestion_resolve);
 //   approve_rename / approve_replace — ONE owner-name suggestion: "תיקון שם"
 //     or "החלפת בעלים" (its dialog reads ./replacement first).
-// An approval writes to the apartment card, so it runs under the card's entry
-// warning (lib/http/phoneEntry.ts): a phone — or a name over a phone — that
-// another apartment carries under another name → 409 phone_conflict, nothing
-// resolved; the screen asks "אותו אדם?" and resends with phone_decisions.
 export async function POST(req: Request) {
-  let actor: Actor;
+  let actorId: string;
   try {
-    actor = await requirePermission('contacts', 'edit');
+    actorId = (await requirePermission('contacts', 'edit')).id;
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -54,21 +51,11 @@ export async function POST(req: Request) {
   // Resolving is idempotent: an id someone else already decided — or that
   // closed itself because the value arrived by another route — simply is not
   // counted, so a double click cannot write a value twice.
-  const { ids, action, phone_decisions: decisions } = body.data;
+  const { ids, action } = body.data;
   let resolved: number;
   try {
-    resolved = action === 'reject'
-      ? await resolveSuggestions(ids, action, actor.id)
-      : await withTransaction(async (client) => {
-        const apartments = await suggestionApartments(client, ids);
-        return withPhoneEntryCheck(client, { apartments, decisions, actor }, async () => ({
-          result: await resolveSuggestions(ids, action, actor.id, client),
-          apartments,
-        }));
-      });
+    resolved = await resolveSuggestions(ids, action, actorId);
   } catch (err) {
-    const warn = phoneEntryErrorResponse(err, actor);
-    if (warn) return warn;
     logger.error('[POST /api/contacts/suggestions]', err);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }

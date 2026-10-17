@@ -18,11 +18,7 @@ interface Props {
   field: PhoneField;
   initialValue: string | null;
   onOpenChange: (open: boolean) => void;
-  /** true = saved, close. false = not saved yet (the entry warning is asking
-   *  "אותו אדם?" over this dialog) — stay open with the value typed. */
-  onSave: (field: PhoneField, value: string | null) => Promise<boolean>;
-  /** Another dialog is up over this one — Escape is its, not ours. */
-  holdEscape?: boolean;
+  onSave: (field: PhoneField, value: string | null) => Promise<void>;
 }
 
 const LABELS: Record<PhoneField, string> = {
@@ -30,7 +26,7 @@ const LABELS: Record<PhoneField, string> = {
   phone_tenant: 'טלפון שוכר',
 };
 
-export function EditPhoneDialog({ open, field, initialValue, onOpenChange, onSave, holdEscape = false }: Props) {
+export function EditPhoneDialog({ open, field, initialValue, onOpenChange, onSave }: Props) {
   const [value, setValue] = useState<string>(initialValue ?? '');
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -43,7 +39,7 @@ export function EditPhoneDialog({ open, field, initialValue, onOpenChange, onSav
     }
   }, [open, initialValue]);
 
-  useEscapeKey(open && !saving && !holdEscape, () => onOpenChange(false));
+  useEscapeKey(open && !saving, () => onOpenChange(false));
 
   const trimmed = value.trim();
   const willClear = trimmed === '';
@@ -61,7 +57,8 @@ export function EditPhoneDialog({ open, field, initialValue, onOpenChange, onSav
     setSaving(true);
     setSubmitError(null);
     try {
-      if (await onSave(field, willClear ? null : validation.normalized)) onOpenChange(false);
+      await onSave(field, willClear ? null : validation.normalized);
+      onOpenChange(false);
     } catch (err) {
       setSubmitError((err as Error).message || 'שמירה נכשלה');
     } finally {

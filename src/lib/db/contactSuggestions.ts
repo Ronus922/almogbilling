@@ -1,5 +1,4 @@
 import 'server-only';
-import type { PoolClient } from 'pg';
 import { query, queryOne } from '@/lib/db';
 import type {
   CardSuggestionField, ContactFieldSources, ContactFieldState, ContactSuggestion, OwnerReplacementPreview,
@@ -70,9 +69,10 @@ export async function countPendingSuggestions(): Promise<number> {
  * Approve or reject by id. Approving writes the value through
  * public.contacts — the very column the apartment card writes — so the portal
  * roster follows at COMMIT. The rules (all in contact_suggestion_resolve):
- * several ids approve only what does not change portal access; an owner-name
- * change needs 'approve_rename' or 'approve_replace'; every decision is
- * logged.
+ * several ids approve only what does not change portal access, unless they
+ * all name the same phone+field (one phone's several apartments, resolved
+ * together — 17/10/2026); an owner-name change needs 'approve_rename' or
+ * 'approve_replace'; every decision is logged.
  *
  * Returns how many rows this call actually resolved: an id that was already
  * decided (or closed itself in the meantime) counts zero, which makes a double
@@ -82,26 +82,13 @@ export async function resolveSuggestions(
   ids: string[],
   action: 'approve' | 'reject' | 'approve_rename' | 'approve_replace',
   actorId: string | null,
-  /** Run inside the caller's transaction (the entry warning — see
-   *  POST /api/contacts/suggestions). */
-  client?: PoolClient,
 ): Promise<number> {
   if (ids.length === 0) return 0;
-  const sql = `select public.contact_suggestion_resolve($1::uuid[], $2, $3::uuid) as n`;
-  const row = client
-    ? (await client.query<{ n: number }>(sql, [ids, action, actorId])).rows[0]
-    : await queryOne<{ n: number }>(sql, [ids, action, actorId]);
-  return row?.n ?? 0;
-}
-
-/** The apartments of these open suggestions — what an approval may write to. */
-export async function suggestionApartments(client: PoolClient, ids: string[]): Promise<string[]> {
-  const r = await client.query<{ apartment_number: string }>(
-    `select distinct apartment_number from public.contact_sync_suggestions
-      where id = any($1::uuid[]) and status = 'pending'`,
-    [ids],
+  const row = await queryOne<{ n: number }>(
+    `select public.contact_suggestion_resolve($1::uuid[], $2, $3::uuid) as n`,
+    [ids, action, actorId],
   );
-  return r.rows.map((x) => x.apartment_number);
+  return row?.n ?? 0;
 }
 
 /** "החלפת בעלים" for one owner-name suggestion: which phones it detaches

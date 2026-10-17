@@ -102,18 +102,18 @@ export async function requirePortalSession(): Promise<PortalSession> {
 
 /**
  * The guard of every /api/portal/* endpoint that serves FINANCIAL data: a live
- * session (requirePortalSession) whose phone is ONE person by the portal's
- * identity (lib/portal/identity.ts — not blocked). A blocked phone gets 403
- * with the "we are updating your account" message and no figure at all.
- * Returns the identity, so the caller never works one out on its own.
+ * session (requirePortalSession) whose phone still resolves to an identity
+ * (lib/portal/identity.ts) — in practice always true once the session guard
+ * above found an active roster row. Returns the identity, so the caller never
+ * works one out on its own.
  */
 export async function requirePortalFinanceAccess(): Promise<{
   session: PortalSession;
-  identity: Extract<PortalIdentity, { status: 'ok' }>;
+  identity: PortalIdentity;
 }> {
   const session = await requirePortalSession();
   const identity = await resolvePortalIdentity(session.phoneE164);
-  if (!identity || identity.status !== 'ok') {
+  if (!identity) {
     throw new AuthorizationError(PORTAL_ACCOUNT_REVIEW_MESSAGE, 403);
   }
   return { session, identity };

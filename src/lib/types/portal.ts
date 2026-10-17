@@ -1,7 +1,6 @@
 // Owners-portal types shared by the server layer, the routes and the UI.
 import type { PortalEventType, PortalLockoutReason } from '@/lib/constants/portal';
 import type { PortalRole } from '@/lib/portal/identity';
-import type { BlockedPhoneCategory } from '@/lib/portal/blockedClassify';
 
 /** Which owner record carries a roster phone (migration 20261003095149). */
 export type OwnerPhoneSource = 'contacts' | 'contact_people';
@@ -26,76 +25,11 @@ export interface OwnerPhone {
   detach_reason: string | null;
   /** The phone's OTHER active apartments, numeric order. */
   other_apartments: string[];
-  /** The phone is BLOCKED (lib/portal/identity.ts) — the portal shows it no
-   *  financial data until the names agree or an identity is approved. */
-  blocked: boolean;
 }
 
 /** Which transport carries the OTP — SMS once a provider is configured,
  *  WhatsApp as the always-live fallback (lib/portal/otpChannel.ts). */
 export type OtpChannel = 'sms' | 'whatsapp';
-
-/** How a person is connected to one apartment of an approved identity. */
-export type IdentityRelation = 'personal' | 'company_authorized' | 'family';
-
-export const IDENTITY_RELATION_LABEL: Record<IdentityRelation, string> = {
-  personal: 'אישי',
-  company_authorized: 'מורשה של חברה',
-  family: 'קרוב משפחה',
-};
-
-/** One phone the portal blocks (lib/portal/identity.ts), as the
- *  "טלפונים חסומים" screen shows it. */
-export interface BlockedPortalPhone {
-  phone_e164: string;
-  /** The classifier's suggestion (lib/portal/blockedClassify.ts) — never a decision. */
-  category: BlockedPhoneCategory;
-  links: {
-    id: string;
-    apartment_number: string;
-    owner_name: string | null;
-    role: PortalRole;
-    source_table: OwnerPhoneSource | null;
-  }[];
-  /** A "same person" request waiting for portal_manage (from the apartment card). */
-  pending: { id: string; requested_by_name: string | null; requested_at: string } | null;
-  /** Someone answered "a different person" when the phone was typed in. */
-  flagged: boolean;
-}
-
-/** An identity in force — on the same screen, so it can be revoked. */
-export interface ApprovedPortalIdentity {
-  id: string;
-  phone_e164: string;
-  display_name: string;
-  names: string[];
-  apartments: { apartment_number: string; relation: IdentityRelation }[];
-  decided_by_name: string | null;
-  decided_at: string;
-}
-
-/** The entry warning: a phone typed onto an apartment card that another
- *  apartment already carries under another name. */
-export interface PhoneEntryConflict {
-  phone_e164: string;
-  apartment_number: string;
-  /** The name the card gives the phone (null = none typed). */
-  entered_name: string | null;
-  role: PortalRole;
-  /** Where else the phone is registered, lowest apartment first. */
-  others: { apartment_number: string; name: string | null; role: PortalRole }[];
-}
-
-/** The answer to one conflict. `identity` is required for "same" from a user
- *  with portal_manage (the approval is made there and then). */
-export interface PhoneEntryDecision {
-  phone_e164: string;
-  decision: 'same' | 'different';
-  identity?: {
-    display_name: string;
-    apartments: { apartment_number: string; relation: IdentityRelation }[];
-  };
-}
 
 export interface PortalLockout {
   id: string;

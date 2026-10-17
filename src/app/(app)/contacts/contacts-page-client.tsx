@@ -14,7 +14,6 @@ import { ContactsTable } from '@/components/contacts/contacts-table';
 import { ContactFormPanel } from '@/components/contacts/contact-form-panel';
 import { ContactImportPanel } from '@/components/contacts/contact-import-panel';
 import { ContactSuggestionsPanel } from '@/components/contacts/contact-suggestions-panel';
-import { PortalIdentitiesSection } from '@/components/portal/PortalIdentitiesSection';
 
 /** Registry coverage quick-filter: whole list / no person at all / needs review. */
 type QuickFilter = 'all' | 'no_contact' | 'needs_review';
@@ -35,21 +34,14 @@ export function ContactsPageClient({
   canViewParking,
   canEditParking,
   pendingSuggestions,
-  canManagePortalIdentities,
-  canEditPortalIdentities,
 }: {
   initialContacts: Contact[];
-  /** False for a portal_manage-only visitor — the registry block below hides
-   *  entirely; only the "זהויות פורטל" section renders. */
   canViewContacts: boolean;
   canEdit: boolean;
   canViewParking: boolean;
   canEditParking: boolean;
   /** Open Bllink proposals. Zero hides the button entirely. */
   pendingSuggestions: number;
-  /** "זהויות פורטל" section visibility (module `portal_manage`, independent of `contacts`). */
-  canManagePortalIdentities: boolean;
-  canEditPortalIdentities: boolean;
 }) {
   const [contacts, setContacts] = useState<Contact[]>(initialContacts);
   const [search, setSearch] = useState('');
@@ -67,9 +59,9 @@ export function ContactsPageClient({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  // Deep link: ?apt=X opens that apartment's card (the "השלם שם" link of
-  // /admin/portal-blocked) — as the INITIAL state, so nothing re-renders for
-  // it. The param is stripped right after, so a refresh does not reopen it.
+  // Deep link: ?apt=X opens that apartment's card — as the INITIAL state, so
+  // nothing re-renders for it. The param is stripped right after, so a
+  // refresh does not reopen it.
   const [deepLinked] = useState<Contact | null>(
     () => initialContacts.find((x) => x.apartment_number === searchParams.get('apt')) ?? null,
   );
@@ -289,10 +281,6 @@ export function ContactsPageClient({
             <ContactsTable rows={visibleContacts} loading={loading} canEdit={canEdit} onRowClick={openEdit} />
           </div>
         </>
-      )}
-
-      {canManagePortalIdentities && (
-        <PortalIdentitiesSection canEdit={canEditPortalIdentities} />
       )}
 
       {canViewContacts && (

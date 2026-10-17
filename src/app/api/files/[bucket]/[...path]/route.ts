@@ -81,10 +81,9 @@ async function residentReceiptViewer(objectPath: string): Promise<PortalFileView
   if (!session) return null;
   const receipt = await findResidentReceipt(objectPath);
   if (!receipt) return null;
-  // Who the phone is — the portal's one identity (lib/portal/identity.ts). A
-  // blocked phone gets no financial document either; the staff verdict stands.
+  // Who the phone is — the portal's one identity (lib/portal/identity.ts).
   const identity = await resolvePortalIdentity(session.phoneE164);
-  if (!identity || identity.status !== 'ok') return null;
+  if (!identity) return null;
   return {
     kind: 'portal_owner',
     phoneE164: session.phoneE164,

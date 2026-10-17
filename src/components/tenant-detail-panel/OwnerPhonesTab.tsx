@@ -10,7 +10,7 @@
 // reason.
 
 import { useCallback, useEffect, useState } from 'react';
-import { Smartphone, TriangleAlert } from 'lucide-react';
+import { Smartphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { OwnerPhone } from '@/lib/types/portal';
 import { ownerPhoneOffLabel, rosterPhoneDisplay, rosterSourceLabel } from '@/lib/portal/rosterLabels';
@@ -107,12 +107,6 @@ export function OwnerPhonesTab({ apartmentNumber, canEdit }: {
                   <p className="text-xs text-slate-500">
                     הטלפון פותח גם את דירות{' '}
                     <span className="font-num font-semibold text-slate-700">{row.other_apartments.join(' · ')}</span>
-                  </p>
-                )}
-                {row.is_active && row.blocked && (
-                  <p className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700">
-                    <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    חסום לנתונים כספיים: הדירות של הטלפון רשומות על שמות שונים (או בלי שם) ואין אישור &quot;אדם אחד&quot;
                   </p>
                 )}
               </div>

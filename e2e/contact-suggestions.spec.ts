@@ -97,3 +97,53 @@ test('the queue: a conflict is offered, approving writes it, rejecting keeps our
       where apartment_number = $1 and status = 'pending'`, [REJECT_APT]);
   expect(still.rows[0]!.n).toBe('0');
 });
+
+// One phone on several apartments (a management company, a multi-unit
+// landlord) resolves as ONE group, one click — not row by row
+// (17/10/2026, "פישוט גישת פורטל").
+const GROUP_APT1 = '990201';
+const GROUP_APT2 = '990202';
+const GROUP_APTS = [GROUP_APT1, GROUP_APT2];
+const GROUP_PHONE = '+972501234567';
+
+test.describe('one phone, several apartments — grouped', () => {
+  test.beforeAll(async () => {
+    await pool.query(`delete from public.contacts where apartment_number = any($1::text[])`, [GROUP_APTS]);
+    await pool.query(
+      `insert into public.contacts (apartment_number, owner_name, source) values ($1, 'בעלים 1', 'manual'), ($2, 'בעלים 2', 'manual')`,
+      [GROUP_APT1, GROUP_APT2],
+    );
+    await pool.query(
+      `insert into public.contact_sync_suggestions
+         (apartment_number, field, current_value, proposed_value, source, phone_e164, person_role, person_name)
+       values
+         ($1, 'portal_link', null, $3, 'bllink', $3, 'owner', 'כרמל אפרטמנטס'),
+         ($2, 'portal_link', null, $3, 'bllink', $3, 'owner', 'כרמל אפרטמנטס')`,
+      [GROUP_APT1, GROUP_APT2, GROUP_PHONE],
+    );
+  });
+  test.afterAll(async () => {
+    await pool.query(`delete from public.contacts where apartment_number = any($1::text[])`, [GROUP_APTS]);
+  });
+
+  test('one "שייך לכל הדירות" click closes both apartments at once, permanently', async ({ page }) => {
+    await page.goto('/contacts');
+    await page.getByRole('button', { name: /הצעות מבלינק/ }).click();
+    const panel = page.getByRole('dialog');
+    const group = panel.locator(`[data-suggestion-group="portal_link:${GROUP_PHONE}"]`);
+    await expect(group).toBeVisible();
+    await expect(group).toContainText('כרמל אפרטמנטס');
+    await expect(group).toContainText(`דירה ${GROUP_APT1}`);
+    await expect(group).toContainText(`דירה ${GROUP_APT2}`);
+
+    await group.getByRole('button', { name: /שייך לכל הדירות/ }).click();
+    await expect(group).toHaveCount(0);
+
+    // Both apartments are gone from the queue at once — resolved in the
+    // database, not just hidden client-side.
+    const left = await pool.query<{ n: string }>(
+      `select count(*)::text as n from public.contact_sync_suggestions
+        where apartment_number = any($1::text[]) and status = 'pending'`, [GROUP_APTS]);
+    expect(left.rows[0]!.n).toBe('0');
+  });
+});

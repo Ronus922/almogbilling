@@ -97,11 +97,10 @@ async function debtRowsFor(apartments: string[]): Promise<Map<string, DebtRow>> 
 /** The signed-in person's account(s): one per apartment the session's phone
  *  is registered in, in apartment order, for each role that sees the debt.
  *  Empty when the phone opens nothing (the session guard would already have
- *  revoked it) — and empty for a BLOCKED phone (lib/portal/identity.ts): its
- *  apartments are not shown to be its own, so no debt row is even read. */
+ *  revoked it). */
 export async function getPortalMyAccount(session: PortalSession): Promise<PortalAccount[]> {
   const identity = await resolvePortalIdentity(session.phoneE164);
-  if (!identity || identity.status !== 'ok') return [];
+  if (!identity) return [];
   const visible = identity.apartments.filter((a) => a.canSeeDebt);
   const [rows, syncedAt] = await Promise.all([
     debtRowsFor(visible.map((a) => a.apartmentNumber)),
