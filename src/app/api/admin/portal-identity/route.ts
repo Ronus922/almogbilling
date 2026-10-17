@@ -5,7 +5,7 @@ import { parseJsonBody } from '@/lib/http/body';
 import { portalIdentityActionSchema } from '@/lib/validation/requests';
 import { withTransaction } from '@/lib/db';
 import { identityNameKey, type PortalRole } from '@/lib/portal/identity';
-import { approveIdentity, endIdentity, IdentityDecisionError } from '@/lib/db/portal/identityApprovals';
+import { approveIdentity, endIdentity, renameIdentity, IdentityDecisionError } from '@/lib/db/portal/identityApprovals';
 import { LINK_NAME_SQL } from '@/lib/db/portal/identity';
 
 export const runtime = 'nodejs';
@@ -19,6 +19,8 @@ export const runtime = 'nodejs';
 //     no name refuses (400): the name is completed on the apartment card.
 //   • revoke — end an approval in force: the phone is blocked again at once.
 //   • reject — turn a waiting request (from the apartment card) down.
+//   • rename — change display_name on an approval already in force; names,
+//     apartments and status untouched.
 // Every decision is an audit_log row (lib/db/portal/identityApprovals.ts).
 export async function POST(req: Request) {
   let actorId: string;
@@ -59,6 +61,13 @@ export async function POST(req: Request) {
         });
       });
       return NextResponse.json({ ok: true, id });
+    }
+    if (b.action === 'rename') {
+      const done = await withTransaction(
+        (client) => renameIdentity(client, { id: b.id, displayName: b.display_name, actorId }),
+      );
+      if (!done) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+      return NextResponse.json({ ok: true });
     }
     const done = await withTransaction((client) => endIdentity(client, { id: b.id, action: b.action, actorId }));
     if (!done) return NextResponse.json({ error: 'not_found' }, { status: 404 });
