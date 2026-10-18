@@ -85,8 +85,8 @@ export interface ReadyFile {
 export async function ensureAttachmentLinks(
   attachments: MessageAttachment[],
   creds: InstanceCreds,
-): Promise<{ ready: ReadyFile[]; failed: MessageAttachment[] }> {
-  const settled = await Promise.all(attachments.map(async (row): Promise<ReadyFile | MessageAttachment> => {
+): Promise<{ ready: ReadyFile[]; failed: MessageAttachment[]; failedDetail: string | null }> {
+  const settled = await Promise.all(attachments.map(async (row): Promise<ReadyFile | { row: MessageAttachment; detail: string }> => {
     if (hasUsableUrl(row) && row.green_api_url) return { row, urlFile: row.green_api_url };
     try {
       const blob = await getObjectStream(row.bucket, row.object_key);
@@ -96,6 +96,7 @@ export async function ensureAttachmentLinks(
         instanceId: creds.greenInstanceId,
         token: creds.token,
         apiUrl: creds.apiUrl,
+        mediaUrl: creds.mediaUrl,
         bytes,
         mimeType: row.mime_type,
         // Green reads the type from the extension; the key is ASCII, and webp
@@ -109,17 +110,19 @@ export async function ensureAttachmentLinks(
       const detail = err instanceof WhatsAppError ? err.message : (err as Error).message;
       logger.error('[whatsapp/send] attachment upload failed', { attachmentId: row.id, detail });
       await recordMessageAttachmentError(row.id, detail).catch(() => { /* best-effort */ });
-      return row;
+      return { row, detail };
     }
   }));
 
   const ready: ReadyFile[] = [];
   const failed: MessageAttachment[] = [];
+  let failedDetail: string | null = null;
   for (const r of settled) {
-    if ('urlFile' in r) ready.push(r);
-    else failed.push(r);
+    if ('urlFile' in r) { ready.push(r); continue; }
+    failed.push(r.row);
+    failedDetail ??= r.detail;
   }
-  return { ready, failed };
+  return { ready, failed, failedDetail };
 }
 
 export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<SendAndRecordResult> {
@@ -133,15 +136,17 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
 
   // Push every file to Green API first (in parallel). Files that fail here are
   // reported by name; the rest of the message still goes out.
-  const { ready, failed } = attachments.length
+  const { ready, failed, failedDetail } = attachments.length
     ? await ensureAttachmentLinks(attachments, creds)
-    : { ready: [] as ReadyFile[], failed: [] as MessageAttachment[] };
+    : { ready: [] as ReadyFile[], failed: [] as MessageAttachment[], failedDetail: null as string | null };
   const failedNames = failed.map((f) => f.original_name);
 
   // Everything that was attached failed to upload and there is nothing to say:
-  // refuse rather than send an empty message.
+  // refuse rather than send an empty message. The real upstream detail (Green's
+  // status, or the network error) travels with it instead of a flat generic string.
   if (attachments.length > 0 && ready.length === 0 && finalMessage.trim().length === 0) {
-    return { ok: false, error: 'העלאת הקבצים נכשלה, ההודעה לא נשלחה', failedAttachments: failedNames };
+    const error = failedDetail ? `העלאת הקבצים נכשלה: ${failedDetail}` : 'העלאת הקבצים נכשלה, ההודעה לא נשלחה';
+    return { ok: false, error, failedAttachments: failedNames };
   }
 
   const steps = planMessageSends(finalMessage, ready.length);

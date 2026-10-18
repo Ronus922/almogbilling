@@ -105,4 +105,15 @@ describe('Green API media host', () => {
       expect(greenMediaHost(host)).toBe(mediaBaseFor(host));
     }
   });
+
+  it('an explicit media_url override agrees between the two copies too', () => {
+    for (const [api, media] of [
+      ['https://7107.api.greenapi.com', 'https://7107.api.greenapi.com'],
+      ['https://api.green-api.com', 'https://custom.media.example.com/'],
+      ['https://7103.api.greenapi.com', ''],
+      [undefined, null],
+    ] as const) {
+      expect(greenMediaHost(api, media)).toBe(mediaBaseFor(api, media));
+    }
+  });
 });

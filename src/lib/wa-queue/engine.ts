@@ -63,7 +63,7 @@ export interface ProcessResult {
 
 /** Sending credentials for the real provider (ignored by the mock). Resolved by
  *  the worker per campaign from its instance_id. */
-export interface SendCreds { instanceId: string; token: string; apiUrl?: string }
+export interface SendCreds { instanceId: string; token: string; apiUrl?: string; mediaUrl?: string | null }
 
 export interface ProcessOpts {
   backoffBaseSec?: number;
@@ -202,7 +202,7 @@ async function sendAttachment(
     return { ok: false, status: 413, message: 'file exceeds the Green API 100MB limit' };
   }
   return provider.sendFileByUpload({
-    ...common, bytes, mimeType: file.mime_type,
+    ...common, mediaUrl: creds.mediaUrl, bytes, mimeType: file.mime_type,
     fileName: wireFileName(asciiLeaf(file.object_key)), displayName: wireFileName(file.original_name), ...captionArg,
   });
 }

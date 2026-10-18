@@ -36,6 +36,7 @@ interface WhatsAppInstance {
   display_name: string;
   green_instance_id: string;
   api_url: string;
+  media_url: string | null;
   state: InstanceState;
   state_checked_at: string | null;
   created_at: string;
@@ -261,6 +262,7 @@ interface FormState {
   green_instance_id: string;
   token: string;
   api_url: string;
+  media_url: string;
 }
 
 const DEFAULT_FORM: FormState = {
@@ -269,6 +271,7 @@ const DEFAULT_FORM: FormState = {
   green_instance_id: '',
   token: '',
   api_url: 'https://api.green-api.com',
+  media_url: '',
 };
 
 function UpsertPanel({ mode, instance, users, open, onOpenChange, onDone }: UpsertPanelProps) {
@@ -288,6 +291,7 @@ function UpsertPanel({ mode, instance, users, open, onOpenChange, onDone }: Upse
         green_instance_id: instance.green_instance_id,
         token: '',
         api_url: instance.api_url,
+        media_url: instance.media_url ?? '',
       });
     } else {
       setForm(DEFAULT_FORM);
@@ -315,6 +319,7 @@ function UpsertPanel({ mode, instance, users, open, onOpenChange, onDone }: Upse
         if (form.display_name !== orig.display_name) body.display_name = form.display_name;
         if (form.green_instance_id !== orig.green_instance_id) body.green_instance_id = form.green_instance_id;
         if (form.api_url !== orig.api_url) body.api_url = form.api_url;
+        if (form.media_url !== (orig.media_url ?? '')) body.media_url = form.media_url;
         if (form.token.trim()) body.token = form.token;
       } else {
         body = {
@@ -323,6 +328,7 @@ function UpsertPanel({ mode, instance, users, open, onOpenChange, onDone }: Upse
           green_instance_id: form.green_instance_id,
           token: form.token,
           api_url: form.api_url,
+          media_url: form.media_url,
         };
       }
 
@@ -392,7 +398,7 @@ function UpsertPanel({ mode, instance, users, open, onOpenChange, onDone }: Upse
           <div className="space-y-5">
             {/* Info note */}
             <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-              את ה-idInstance, ה-apiTokenInstance וכתובת ה-API יוצרים ידנית בקונסולת Green API (console.green-api.com) — צור Instance חדש לעובד והעתק את הפרטים לכאן.
+              את ה-idInstance, ה-apiTokenInstance וכתובת ה-API יוצרים ידנית בקונסולת Green API (console.green-api.com) — צור Instance חדש לעובד והעתק את הפרטים לכאן. כתובת המדיה (להעלאת קבצים) נגזרת אוטומטית מכתובת ה-API; חלק מה-hosts הייעודיים אין להם כתובת מדיה נפרדת ויש למלא אותה ידנית אם העלאת קבצים נכשלת.
             </div>
 
             {/* Employee (create only) */}
@@ -496,6 +502,25 @@ function UpsertPanel({ mode, instance, users, open, onOpenChange, onDone }: Upse
                 disabled={saving}
                 required
               />
+            </div>
+
+            {/* Media URL (optional override) */}
+            <div className="space-y-1.5">
+              <Label htmlFor="wa-media-url" className="text-base font-medium text-muted-foreground">
+                כתובת מדיה (אופציונלי)
+              </Label>
+              <Input
+                id="wa-media-url"
+                value={form.media_url}
+                onChange={(e) => setField('media_url', e.target.value)}
+                placeholder="ריק = נגזר אוטומטית מכתובת ה-API"
+                className="h-10"
+                dir="ltr"
+                disabled={saving}
+              />
+              <p className="text-xs text-muted-foreground">
+                למילוי רק אם העלאת קבצים נכשלת עם כתובת ה-API הייעודית — בחלק מה-hosts כתובת המדיה זהה לכתובת ה-API עצמה.
+              </p>
             </div>
 
             {/* Inline error */}

@@ -19,13 +19,20 @@ function baseFor(args: { apiUrl?: string | null }): string {
   return v || GREEN_API_BASE;
 }
 
-/** The instance's MEDIA host, where uploadFile lives: api.green-api.com →
- *  media.green-api.com, 7103.api.greenapi.com → 7103.media.greenapi.com.
+/** The instance's MEDIA host, where uploadFile lives. Some dedicated/regional
+ *  Green hosts (observed 18/10/2026: `7107.api.greenapi.com`) do NOT have a
+ *  matching `media.` subdomain at all — uploadFile lives on the SAME host as
+ *  the API. `args.mediaUrl`, when set, is therefore the authority and is used
+ *  as-is; only when it is absent do we fall back to the legacy derivation
+ *  (api.green-api.com → media.green-api.com, 7103.api.greenapi.com →
+ *  7103.media.greenapi.com), which is still correct for the universal host.
  *  Deliberately a local copy of wa-queue/provider.ts's mediaBaseFor: that module
  *  is kept import-free so the standalone worker can load it, and this one is
  *  reachable from client components, so neither may import the other. A unit
  *  test asserts the two stay identical. */
-function mediaFor(args: { apiUrl?: string | null }): string {
+function mediaFor(args: { apiUrl?: string | null; mediaUrl?: string | null }): string {
+  const explicit = (args.mediaUrl ?? '').trim().replace(/\/+$/, '');
+  if (explicit) return explicit;
   const base = baseFor(args);
   const swapped = base.replace(/(\/\/|\.)api\./i, '$1media.');
   return swapped !== base ? swapped : GREEN_MEDIA_BASE;
@@ -685,6 +692,8 @@ interface UploadFileArgs {
   instanceId: string;
   token: string;
   apiUrl?: string;
+  /** Explicit media host override — see mediaFor(). */
+  mediaUrl?: string | null;
   bytes: Buffer;
   /** Canonical MIME of the file (Content-Type of the raw body). */
   mimeType: string;
@@ -704,8 +713,8 @@ const UPLOAD_TIMEOUT_MS = 120_000;
  *   raw body, Content-Type = the file's MIME, GA-Filename = the file name
  * The media host is derived from the instance's API host (api. → media.).
  */
-export function greenMediaHost(apiUrl?: string | null): string {
-  return mediaFor({ apiUrl });
+export function greenMediaHost(apiUrl?: string | null, mediaUrl?: string | null): string {
+  return mediaFor({ apiUrl, mediaUrl });
 }
 
 export async function uploadWhatsAppFile(args: UploadFileArgs): Promise<{ urlFile: string }> {

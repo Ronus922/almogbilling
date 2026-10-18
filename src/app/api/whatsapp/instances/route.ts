@@ -59,6 +59,7 @@ interface PostBody {
   green_instance_id?: unknown;
   token?: unknown;
   api_url?: unknown;
+  media_url?: unknown;
 }
 
 // POST /api/whatsapp/instances — create an instance for an employee (admin), then
@@ -87,12 +88,13 @@ export async function POST(req: NextRequest) {
   const greenInstanceId = typeof body.green_instance_id === 'string' ? body.green_instance_id : '';
   const token = typeof body.token === 'string' ? body.token : '';
   const apiUrl = typeof body.api_url === 'string' ? body.api_url : null;
+  const mediaUrl = typeof body.media_url === 'string' ? body.media_url : null;
 
   if (!userId) return NextResponse.json({ error: 'יש לבחור עובד' }, { status: 400 });
 
   let instance;
   try {
-    instance = await createInstance({ userId, displayName, greenInstanceId, token, apiUrl });
+    instance = await createInstance({ userId, displayName, greenInstanceId, token, apiUrl, mediaUrl });
   } catch (err) {
     if (err instanceof InstanceValidationError) {
       return NextResponse.json({ error: err.message }, { status: 400 });

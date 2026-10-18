@@ -78,6 +78,20 @@ describe('Green API hosts', () => {
     expect(mediaBaseFor('https://custom.example.com')).toBe('https://media.green-api.com');
     expect(mediaBaseFor(undefined)).toBe('https://media.green-api.com');
   });
+
+  it('an explicit mediaUrl overrides the derivation entirely (18/10/2026: some dedicated hosts have no media. subdomain)', () => {
+    // The real case: 7107.api.greenapi.com has no media host — uploadFile lives
+    // on the api host itself, so the instance's media_url is set to that.
+    expect(mediaBaseFor('https://7107.api.greenapi.com', 'https://7107.api.greenapi.com'))
+      .toBe('https://7107.api.greenapi.com');
+    // A trailing slash on the override is stripped, same as the api host.
+    expect(mediaBaseFor('https://api.green-api.com', 'https://custom.media.example.com/'))
+      .toBe('https://custom.media.example.com');
+    // Blank/whitespace-only override is treated as unset — fallback derivation applies.
+    expect(mediaBaseFor('https://7103.api.greenapi.com', '')).toBe('https://7103.media.greenapi.com');
+    expect(mediaBaseFor('https://7103.api.greenapi.com', '   ')).toBe('https://7103.media.greenapi.com');
+    expect(mediaBaseFor('https://7103.api.greenapi.com', null)).toBe('https://7103.media.greenapi.com');
+  });
 });
 
 describe('MockProvider file methods', () => {
