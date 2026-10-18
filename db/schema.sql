@@ -1746,6 +1746,7 @@ CREATE TABLE public.chat_messages (
     attachment_mime text,
     attachment_size integer,
     sent_by_name text,
+    recipient_name text,
     CONSTRAINT chat_messages_direction_check CHECK ((direction = ANY (ARRAY['sent'::text, 'received'::text]))),
     CONSTRAINT chat_messages_link_status_check CHECK ((link_status = ANY (ARRAY['linked'::text, 'unlinked'::text]))),
     CONSTRAINT chat_messages_message_type_check CHECK ((message_type = ANY (ARRAY['text'::text, 'image'::text, 'document'::text]))),
@@ -1758,6 +1759,13 @@ CREATE TABLE public.chat_messages (
 --
 
 COMMENT ON COLUMN public.chat_messages.sent_by_name IS 'Snapshot of the sending staff user''s name (full_name, else username). Shown once the user is deleted; the live name wins while they exist.';
+
+
+--
+-- Name: COLUMN chat_messages.recipient_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chat_messages.recipient_name IS 'Label of who an OUTBOUND message was addressed to, snapshotted at send time (e.g. "בעלים" / "שוכר/ת" / "בעלים נוסף · <name>") -- lets one debtor''s history show which of several phones a given message went to, for the multi-recipient single-send feature (18/10/2026). Null for inbound rows and for outbound rows sent before this column existed. Mirrors wa_campaign_recipients.recipient_name.';
 
 
 --
@@ -7884,5 +7892,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016163824'),
     ('20261017090427'),
     ('20261017163621'),
-    ('20261018081443')
+    ('20261018081443'),
+    ('20261018122800')
 ;

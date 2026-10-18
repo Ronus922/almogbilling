@@ -7,6 +7,8 @@
 //   PATCH  /api/whatsapp/templates/[id]         body: Partial<TemplateInput>
 //   DELETE /api/whatsapp/templates/[id]         (soft delete → is_active=false)
 //   POST   /api/whatsapp/send                   body: SendWhatsAppInput → { ok, idMessage }
+//                                                 (single `phone`) or { ok, results, sent_count,
+//                                                 failed_count } (multi `recipients`, 18/10/2026)
 //   POST   /api/whatsapp/send-bulk              body: BulkSendInput → NDJSON stream of
 //                                                 BulkSendProgress… + BulkSendSummary
 //   GET    /api/whatsapp/messages?debtor_id=…   → ChatMessage[]        (chronological)
@@ -100,6 +102,13 @@ export interface ChatMessage {
   error_detail: string | null;
   sent_by: string | null;
   sent_by_name: string | null;
+  /** Label of who this OUTBOUND message was addressed to (e.g. "בעלים" /
+   *  "שוכר/ת" / "בעלים נוסף · <name>"), snapshotted at send time by the
+   *  multi-recipient single-send path (18/10/2026). Optional: absent on
+   *  synthetic/optimistic rows built in code (same convention as
+   *  attachment_name below); null on inbound rows and on outbound rows sent
+   *  before this column existed; always present (possibly null) on DB rows. */
+  recipient_name?: string | null;
   /** Joined supplier display name when supplier_id is set, else null. */
   supplier_display_name: string | null;
   broadcast_id: string | null;
@@ -123,9 +132,18 @@ export interface SendWhatsAppInput {
   debtor_id: string;
   message: string;
   template_id?: string | null;
-  /** Selected recipient number (international form). Re-validated server-side
-   *  against the debtor's parsed candidates. Omitted → first valid candidate. */
+  /** LEGACY single-recipient form, still fully supported: the one selected
+   *  number (international form). Re-validated server-side against the
+   *  debtor's candidates. Omitted → first valid candidate. Ignored when
+   *  `recipients` is present. */
   phone?: string | null;
+  /** NEW (18/10/2026) multi-recipient form: one or more selected numbers
+   *  (international form), each re-validated server-side against the same
+   *  candidate set `phone` uses (debtor's own numbers + "additional"
+   *  owners/tenants). The same message + attachments go out to every one of
+   *  them, each recorded as its own chat_messages row. Takes priority over
+   *  `phone` when both are present. */
+  recipients?: string[];
 }
 
 export interface GreenApiSettingsPublic {

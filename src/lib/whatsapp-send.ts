@@ -65,6 +65,11 @@ export interface SendAndRecordArgs {
   creds: InstanceCreds;
   /** Staged wa_message_attachments rows, in send order. Empty = text only. */
   attachments?: MessageAttachment[];
+  /** Label of who `phoneIntl` is, for the history row (e.g. "בעלים" / "שוכר/ת")
+   *  — set by the multi-recipient single-send path (18/10/2026) so one
+   *  debtor's history can tell several phones apart. Omitted everywhere else
+   *  (chat, legacy single-phone send), same as before this existed. */
+  recipientName?: string | null;
 }
 
 function isPrivateBucket(b: string): b is PrivateBucket {
@@ -126,7 +131,7 @@ export async function ensureAttachmentLinks(
 }
 
 export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<SendAndRecordResult> {
-  const { debtor, phoneIntl, rawMessage, templateId, actor, creds } = args;
+  const { debtor, phoneIntl, rawMessage, templateId, actor, creds, recipientName } = args;
   const attachments = args.attachments ?? [];
 
   // Interpolate on the server with authoritative debtor data — the single source
@@ -220,6 +225,7 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
         errorDetail: detail,
         sentBy: actor.id,
         instanceId: creds.id,
+        recipientName: recipientName ?? null,
       });
       // Keep the files with the row so the resend can send them again.
       if (failedId && attachments.length) {
@@ -258,6 +264,7 @@ export async function sendAndRecordWhatsApp(args: SendAndRecordArgs): Promise<Se
         errorDetail: null,
         sentBy: actor.id,
         instanceId: creds.id,
+        recipientName: recipientName ?? null,
       });
 
       // Every attachment of this message — delivered or not — belongs to the row.

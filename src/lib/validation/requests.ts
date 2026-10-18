@@ -14,6 +14,7 @@ import { SUPPLIERS_LANE_ID } from '@/lib/constants/workItems';
 import { DECISION_TYPES } from '@/lib/decisions';
 import { isIsoDate, isMonthKey } from '@/lib/finance/period';
 import { cleanPhoneField } from '@/lib/whatsapp';
+import { WHATSAPP_SEND_MAX_RECIPIENTS } from '@/lib/whatsapp-recipients';
 import type { ChipHolderUpdate, ChipResidentRole } from '@/lib/types/chips';
 import type { SupplierContactInput } from '@/lib/types/suppliers';
 
@@ -174,6 +175,17 @@ export const messageAttachmentIdsSchema = z
   .max(WHATSAPP_MESSAGE_MAX_FILES, `ניתן לצרף עד ${WHATSAPP_MESSAGE_MAX_FILES} קבצים להודעה`)
   .optional()
   .default([]);
+
+// POST /api/whatsapp/send — `recipients`: the NEW multi-recipient form
+// (18/10/2026), one or more raw phone strings from the checkbox picker. Each
+// is re-normalised and re-validated against the debtor's own candidate set in
+// the route (not here — that needs a DB lookup); this schema only bounds the
+// shape and count. Absent/empty → the route falls back to the legacy single
+// `phone` field, unchanged.
+export const whatsappSendRecipientsSchema = z
+  .array(z.string().min(1, 'מספר טלפון ריק'))
+  .max(WHATSAPP_SEND_MAX_RECIPIENTS, `ניתן לבחור עד ${WHATSAPP_SEND_MAX_RECIPIENTS} נמענים`)
+  .optional();
 
 export const campaignAttachmentIdsSchema = z
   .array(z.uuid({ error: 'מזהה קובץ מצורף לא תקין' }))

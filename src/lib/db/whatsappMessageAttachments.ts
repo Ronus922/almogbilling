@@ -1,5 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { getDbPool } from '@/lib/db';
+import { WHATSAPP_ATTACHMENT_LIMITS } from '@/lib/constants/whatsappAttachments';
+import { cloneWhatsAppAttachment } from '@/lib/storage/whatsappAttachmentStorage';
 
 // Attachments of ONE outbound WhatsApp message (wa_message_attachments) — the
 // single-recipient "שליחת הודעת WhatsApp" sheet. Same shape and lifecycle as the
@@ -87,6 +89,37 @@ export async function deleteStagedMessageAttachment(id: string, uploadedBy: stri
     [id, uploadedBy],
   );
   return r.rows[0] ?? null;
+}
+
+/** Clone one already-uploaded attachment into a FRESH, unclaimed staged row —
+ *  for a multi-recipient send, where every recipient gets its own
+ *  wa_message_attachments row (message_id is one-shot, see linkMessageAttachments
+ *  below). object_key is UNIQUE and the file-serving proxy looks a row up BY
+ *  it, so the new row cannot point at the SAME object — its bytes are
+ *  duplicated under a fresh key (cloneWhatsAppAttachment). The Green API link
+ *  itself is NOT re-fetched: the caller already has it (the physical upload to
+ *  Green happens once per file, no matter how many recipients it goes to) and
+ *  passes it straight in. */
+export async function cloneStagedMessageAttachment(
+  source: MessageAttachment,
+  uploadedBy: string,
+  greenApiUrl: string,
+): Promise<MessageAttachment> {
+  const { objectKey, sizeBytes } = await cloneWhatsAppAttachment(
+    source.object_key, source.original_name, source.mime_type,
+  );
+  const r = await getDbPool().query<MessageAttachment>(
+    `insert into public.wa_message_attachments
+       (uploaded_by, bucket, object_key, original_name, mime_type, size_bytes,
+        green_api_url, green_api_url_expires_at)
+     values ($1, $2, $3, $4, $5, $6, $7, now() + ($8 || ' days')::interval)
+     returning ${COLS}`,
+    [
+      uploadedBy, source.bucket, objectKey, source.original_name, source.mime_type,
+      sizeBytes, greenApiUrl, String(WHATSAPP_ATTACHMENT_LIMITS.greenApiUrlLifetimeDays),
+    ],
+  );
+  return r.rows[0];
 }
 
 /** Link staged attachments to the message row, in the given order. Returns how

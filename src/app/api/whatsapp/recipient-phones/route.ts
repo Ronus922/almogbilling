@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listExtraRecipientsForDebtors } from '@/lib/db/contactPeople';
+import { extraRecipientLabel } from '@/lib/whatsapp-recipients';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,9 +32,6 @@ export async function GET(req: NextRequest) {
   }
 
   const rows = await listExtraRecipientsForDebtors([debtorId], ['owner', 'tenant']);
-  const phones = rows.map((r) => {
-    const role = r.role === 'owner' ? 'בעלים נוסף' : 'שוכר נוסף';
-    return { phone: r.phone, label: r.name ? `${role} · ${r.name}` : role };
-  });
+  const phones = rows.map((r) => ({ phone: r.phone, label: extraRecipientLabel(r.role, r.name) }));
   return NextResponse.json({ phones });
 }
