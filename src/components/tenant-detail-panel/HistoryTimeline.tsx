@@ -370,7 +370,10 @@ function WhatsAppTimelineRow({ msg, tenantName }: { msg: ChatMessage; tenantName
   const files = msg.attachments ?? [];
 
   const sender = inbound ? (tenantName || msg.contact_phone) : (msg.sent_by_name || 'מערכת');
-  const recipient = inbound ? 'המשרד' : (tenantName || msg.contact_phone);
+  // recipient_name (18/10/2026): set by the multi-recipient single-send path so
+  // a debtor with several phones shows WHICH one each message went to (e.g.
+  // "בעלים" vs "שוכר/ת"), instead of the same generic tenantName for all of them.
+  const recipient = inbound ? 'המשרד' : (msg.recipient_name || tenantName || msg.contact_phone);
 
   return (
     <li className="relative flex items-start gap-3">

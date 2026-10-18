@@ -20,7 +20,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { formatPhoneDisplay } from '@/lib/phone';
-import { parsePhoneCandidates, cleanPhoneField, type PhoneCandidate } from '@/lib/whatsapp';
+import { parsePhoneCandidates, type PhoneCandidate } from '@/lib/whatsapp';
+import {
+  buildPrimaryRecipientCandidates, mergeRecipientCandidates,
+} from '@/lib/whatsapp-recipients';
 import {
   interpolateTemplate, formatDebt, TEMPLATE_PLACEHOLDERS,
 } from '@/lib/whatsapp-template';
@@ -103,16 +106,30 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
     // once per recipient and appended to the picker below the primary numbers.
     const [extraCandidates, setExtraCandidates] = useState<PhoneCandidate[]>([]);
     const candidates = useMemo(
-      () => mergeCandidates(buildRecipientCandidates(recipient), extraCandidates),
+      () => mergeRecipientCandidates(buildPrimaryRecipientCandidates(recipient), extraCandidates),
       [recipient, extraCandidates],
     );
-    const [selectedPhone, setSelectedPhone] = useState<string | null>(
-      () => candidates[0]?.phone ?? null,
+    // Multi-recipient (18/10/2026): checkboxes, not radio — several numbers can
+    // be picked and the same message + attachments go out to every one of
+    // them. Default: the primary (first) candidate is checked; at least one
+    // must stay checked to send.
+    const [selectedPhones, setSelectedPhones] = useState<Set<string>>(
+      () => new Set(candidates[0] ? [candidates[0].phone] : []),
     );
+    function toggleRecipient(phone: string, checked: boolean) {
+      setSelectedPhones((prev) => {
+        const next = new Set(prev);
+        if (checked) next.add(phone); else next.delete(phone);
+        return next;
+      });
+    }
 
     const recipientName = recipient.owner_name || recipient.tenant_name || 'ללא שם';
-    const selectedCandidate = candidates.find((c) => c.phone === selectedPhone) ?? null;
-    const phoneDisplay = selectedCandidate ? formatPhoneDisplay(selectedCandidate.phone) : null;
+    const selectedCandidates = useMemo(
+      () => candidates.filter((c) => selectedPhones.has(c.phone)),
+      [candidates, selectedPhones],
+    );
+    const phoneDisplay = selectedCandidates.length === 1 ? formatPhoneDisplay(selectedCandidates[0].phone) : null;
     const noValidPhone = candidates.length === 0;
 
     // Load active templates once on mount.
@@ -145,8 +162,10 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
           const data = (await r.json()) as { phones?: { phone: string; label: string }[] };
           const parsed: PhoneCandidate[] = [];
           for (const p of data.phones ?? []) {
-            const clean = cleanPhoneField(p.phone);
-            if (clean) parsed.push({ phone: clean, label: p.label });
+            // International form, same as buildPrimaryRecipientCandidates — the
+            // merged list must agree on one format for dedup and for the wire.
+            const intl = parsePhoneCandidates(p.phone)[0]?.phone ?? null;
+            if (intl) parsed.push({ phone: intl, label: p.label });
           }
           if (!cancelled) setExtraCandidates(parsed);
         } catch {
@@ -166,7 +185,7 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
     const readyIds = readyAttachmentIds(attachments);
     const isDirty = content.trim().length > 0 || attachments.length > 0;
     const canSend =
-      (content.trim().length > 0 || readyIds.length > 0) && !sending && !uploading && selectedPhone !== null;
+      (content.trim().length > 0 || readyIds.length > 0) && !sending && !uploading && selectedPhones.size > 0;
 
     function requestClose() {
       if (sending) return;
@@ -209,11 +228,13 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
     }
 
     async function handleSend() {
-      if (!canSend || !selectedPhone) return;
+      if (!canSend || selectedPhones.size === 0) return;
       setSending(true);
       try {
         const tplId = templateId === FREE_TEXT ? null : templateId;
         // The files were uploaded as they were picked; only their ids travel here.
+        // `recipients`: one or more checked numbers — the server sends the same
+        // message + attachments to each and records one history row per phone.
         const res = await fetch('/api/whatsapp/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -222,18 +243,18 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
             debtor_id: recipient.id,
             message: content.trim(),
             template_id: tplId,
-            phone: selectedPhone,
+            recipients: Array.from(selectedPhones),
             attachment_ids: readyIds,
           }),
         });
         const data = (await res.json().catch(() => ({}))) as {
-          error?: string; warning?: string; failed_attachments?: string[];
+          error?: string; failed_attachments?: string[]; sent_count?: number; failed_count?: number;
         };
         if (!res.ok) {
           // Real failure — the form stays open so the text can be edited and sent
-          // again. The files, however, are now tied to the failed message row (so
-          // it can be resent from the history), so the composer must let them go:
-          // re-posting their ids would only be refused.
+          // again. The files, however, are now tied to the failed message row(s)
+          // (so they can be resent from the history), so the composer must let
+          // them go: re-posting their ids would only be refused.
           if (readyIds.length > 0) {
             setAttachments([]);
             throw new Error(
@@ -242,12 +263,19 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
           }
           throw new Error(data.error || `שליחה נכשלה (HTTP ${res.status})`);
         }
-        // 207: the message went out, these files did not.
-        if (data.failed_attachments?.length) {
+        const sentCount = data.sent_count ?? 1;
+        const failedCount = data.failed_count ?? 0;
+        if (failedCount > 0) {
+          // 207: some recipients got the message, some did not — each failed
+          // one stays resendable from the history, same as a single-recipient
+          // failure.
+          toast.warning(`${sentCount} נמענים קיבלו את ההודעה, ${failedCount} נכשלו — ניתן לשלוח שוב מההיסטוריה`);
+        } else if (data.failed_attachments?.length) {
           toast.warning(`ההודעה נשלחה, אך הקבצים הבאים לא נשלחו: ${data.failed_attachments.join(', ')}`);
-        } else if (data.warning) toast.warning(data.warning);
-        else toast.success('ההודעה נשלחה בוואטסאפ');
-        // Sent files belong to the message now — nothing left to clean up.
+        } else {
+          toast.success(sentCount > 1 ? `ההודעה נשלחה ל-${sentCount} נמענים בוואטסאפ` : 'ההודעה נשלחה בוואטסאפ');
+        }
+        // Sent files belong to the message(s) now — nothing left to clean up.
         setAttachments([]);
         onSent?.();
         onClose();
@@ -269,9 +297,13 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
             <InfoCell
               icon={Phone}
               label="טלפון"
-              value={phoneDisplay ?? '—'}
-              ltr
-              tone={phoneDisplay ? undefined : 'muted'}
+              value={
+                selectedCandidates.length > 1
+                  ? `${selectedCandidates.length} נמענים`
+                  : phoneDisplay ?? '—'
+              }
+              ltr={selectedCandidates.length <= 1}
+              tone={selectedCandidates.length === 0 ? 'muted' : undefined}
             />
             <InfoCell
               icon={Wallet}
@@ -291,9 +323,9 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
           ) : candidates.length > 1 ? (
             <div className="space-y-1.5">
               <Label className="text-base font-medium text-muted-foreground">בחירת נמען</Label>
-              <div role="radiogroup" className="space-y-2">
+              <div role="group" aria-label="בחירת נמען" className="space-y-2">
                 {candidates.map((c) => {
-                  const checked = c.phone === selectedPhone;
+                  const checked = selectedPhones.has(c.phone);
                   return (
                     <label
                       key={c.phone}
@@ -302,13 +334,12 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
                       }`}
                     >
                       <input
-                        type="radio"
-                        name="wa-recipient"
-                        value={c.phone}
+                        type="checkbox"
+                        aria-label={c.label ? `${formatPhoneDisplay(c.phone) ?? c.phone} · ${c.label}` : formatPhoneDisplay(c.phone) ?? c.phone}
                         checked={checked}
-                        onChange={() => setSelectedPhone(c.phone)}
+                        onChange={(e) => toggleRecipient(c.phone, e.target.checked)}
                         disabled={sending}
-                        className="h-4 w-4 accent-emerald-600"
+                        className="h-4 w-4 rounded accent-emerald-600"
                       />
                       <span className="text-sm font-bold text-slate-900 tabular-nums" dir="ltr">
                         {formatPhoneDisplay(c.phone)}
@@ -322,10 +353,13 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
                   );
                 })}
               </div>
+              {selectedPhones.size === 0 && (
+                <p className="text-xs font-medium text-red-600">יש לבחור לפחות נמען אחד</p>
+              )}
             </div>
-          ) : selectedCandidate?.label ? (
+          ) : selectedCandidates[0]?.label ? (
             <p className="text-xs text-slate-500">
-              נשלח אל <span className="font-semibold text-slate-700">{selectedCandidate.label}</span>
+              נשלח אל <span className="font-semibold text-slate-700">{selectedCandidates[0].label}</span>
               {' · '}
               <span dir="ltr" className="tabular-nums">{phoneDisplay}</span>
             </p>
@@ -428,7 +462,13 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
               className="gap-2"
             >
               {sending || uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              {sending ? 'שולח…' : uploading ? 'מעלה קבצים…' : 'שלח הודעה'}
+              {sending
+                ? 'שולח…'
+                : uploading
+                ? 'מעלה קבצים…'
+                : selectedPhones.size > 1
+                ? `שלח הודעה (${selectedPhones.size} נמענים)`
+                : 'שלח הודעה'}
             </Button>
           </div>
         </footer>
@@ -456,32 +496,6 @@ export const WhatsAppSendForm = forwardRef<WhatsAppSendFormHandle, Props>(
     );
   },
 );
-
-// Build recipient candidates from the clean phone fields: phone_owner → "בעלים",
-// phone_tenant → "שוכר/ת". Labels derive from the field, not the string. If both
-// fields are empty/invalid (legacy compound value still lurking), fall back to
-// parsePhoneCandidates over the combined raw fields.
-/** Append the apartment-card extras, dropping numbers already in the picker. */
-function mergeCandidates(primary: PhoneCandidate[], extra: PhoneCandidate[]): PhoneCandidate[] {
-  const seen = new Set(primary.map((c) => c.phone));
-  const out = [...primary];
-  for (const c of extra) {
-    if (seen.has(c.phone)) continue;
-    seen.add(c.phone);
-    out.push(c);
-  }
-  return out;
-}
-
-function buildRecipientCandidates(r: WhatsAppRecipient): PhoneCandidate[] {
-  const owner = cleanPhoneField(r.phone_owner);
-  const tenant = cleanPhoneField(r.phone_tenant);
-  const primary: PhoneCandidate[] = [];
-  if (owner) primary.push({ phone: owner, label: 'בעלים' });
-  if (tenant && tenant !== owner) primary.push({ phone: tenant, label: 'שוכר/ת' });
-  if (primary.length > 0) return primary;
-  return parsePhoneCandidates(`${r.phone_owner ?? ''} ${r.phone_tenant ?? ''}`);
-}
 
 function InfoCell({
   icon: Icon, label, value, ltr, tone,
