@@ -18,6 +18,7 @@ interface PatchBody {
   green_instance_id?: unknown;
   token?: unknown;
   api_url?: unknown;
+  media_url?: unknown;
 }
 
 // PATCH /api/whatsapp/instances/[id] — edit an instance (admin).
@@ -44,6 +45,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       greenInstanceId: typeof body.green_instance_id === 'string' ? body.green_instance_id : undefined,
       token: typeof body.token === 'string' ? body.token : undefined,
       apiUrl: typeof body.api_url === 'string' ? body.api_url : undefined,
+      mediaUrl: typeof body.media_url === 'string' ? body.media_url : undefined,
     });
     if (!updated) return NextResponse.json({ error: 'החיבור לא נמצא' }, { status: 404 });
     return NextResponse.json(updated);

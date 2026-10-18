@@ -3,6 +3,7 @@
 --
 
 
+
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -4173,6 +4174,7 @@ CREATE TABLE public.whatsapp_instances (
     state_checked_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    media_url text,
     CONSTRAINT whatsapp_instances_state_check CHECK ((state = ANY (ARRAY['notAuthorized'::text, 'authorized'::text, 'blocked'::text, 'starting'::text, 'yellowCard'::text, 'sleepMode'::text])))
 );
 
@@ -4182,6 +4184,13 @@ CREATE TABLE public.whatsapp_instances (
 --
 
 COMMENT ON COLUMN public.whatsapp_instances.user_id IS 'Nominal technical owner: webhook routing + legacy instance association ONLY. NOT an authorization boundary — never use it to decide who may view chats, send messages, pull messages, or run campaigns. Access is controlled exclusively by the whatsapp_chat permission; the instance is shared between all authorized users. Tech debt: rename to webhook_owner_user_id.';
+
+
+--
+-- Name: COLUMN whatsapp_instances.media_url; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.whatsapp_instances.media_url IS 'Explicit Green API media-host override (uploadFile/sendFileByUpload). Null = derive from api_url (api. -> media.). Some dedicated/regional Green hosts have no media. subdomain at all and need this set explicitly (observed 18/10/2026: 7107.api.greenapi.com has no media host; uploadFile lives on the api host itself).';
 
 
 --
@@ -7742,6 +7751,7 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 
 
+
 --
 -- Dbmate schema migrations
 --
@@ -7873,5 +7883,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261014122339'),
     ('20261016163824'),
     ('20261017090427'),
-    ('20261017163621')
+    ('20261017163621'),
+    ('20261018081443')
 ;

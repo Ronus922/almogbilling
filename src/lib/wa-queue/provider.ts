@@ -9,8 +9,12 @@
 //   sendFileByUrl    JSON  {chatId, urlFile, fileName, caption?}   → {{apiUrl}}
 //   uploadFile       raw bytes + Content-Type (+ GA-Filename)      → {{mediaUrl}}  → {urlFile}, valid 15 days
 //   sendFileByUpload multipart {chatId, file, fileName, caption?}  → {{mediaUrl}}  → {idMessage}
-// mediaUrl is the instance's media host: api.green-api.com → media.green-api.com,
-// 7103.api.greenapi.com → 7103.media.greenapi.com (see mediaBaseFor).
+// mediaUrl is the instance's media host: by default api.green-api.com →
+// media.green-api.com, 7103.api.greenapi.com → 7103.media.greenapi.com (see
+// mediaBaseFor) — but some dedicated/regional hosts have no `media.` subdomain
+// at all and serve uploadFile/sendFileByUpload on the SAME host as the API
+// (observed 18/10/2026: 7107.api.greenapi.com). UploadFileInput.mediaUrl, when
+// set, overrides the derivation.
 
 export interface SendInput {
   instanceId: string;
@@ -36,6 +40,8 @@ export interface UploadFileInput {
   instanceId: string;
   token: string;
   apiUrl?: string;
+  /** Explicit media host override — see mediaBaseFor(). */
+  mediaUrl?: string | null;
   bytes: Buffer;
   mimeType: string;
   /** ASCII name with extension for the GA-Filename header (the object key leaf). */
@@ -74,10 +80,15 @@ export function apiBaseFor(apiUrl?: string | null): string {
   return v || DEFAULT_API;
 }
 
-/** The media host that pairs with an API host (Green API "using hosts" page):
- *  the `api.` label becomes `media.`; unknown shapes fall back to the universal
- *  media host. */
-export function mediaBaseFor(apiUrl?: string | null): string {
+/** The media host that pairs with an API host. `mediaUrl`, when set, is the
+ *  authority (some dedicated hosts have no `media.` subdomain and serve
+ *  uploads on the API host itself — see the header comment). Otherwise falls
+ *  back to the legacy derivation (Green API "using hosts" page): the `api.`
+ *  label becomes `media.`; unknown shapes fall back to the universal media
+ *  host. */
+export function mediaBaseFor(apiUrl?: string | null, mediaUrl?: string | null): string {
+  const explicit = (mediaUrl ?? '').trim().replace(/\/+$/, '');
+  if (explicit) return explicit;
   const base = apiBaseFor(apiUrl);
   const swapped = base.replace(/(\/\/|\.)api\./i, '$1media.');
   return swapped !== base ? swapped : DEFAULT_MEDIA;
@@ -139,7 +150,7 @@ export class GreenApiProvider implements WaProvider {
   }
 
   async uploadFile(input: UploadFileInput): Promise<UploadResult> {
-    const url = `${mediaBaseFor(input.apiUrl)}/waInstance${input.instanceId}/uploadFile/${input.token}`;
+    const url = `${mediaBaseFor(input.apiUrl, input.mediaUrl)}/waInstance${input.instanceId}/uploadFile/${input.token}`;
     const r = await call(url, {
       method: 'POST',
       headers: { 'Content-Type': input.mimeType, 'GA-Filename': input.fileName },
@@ -150,7 +161,7 @@ export class GreenApiProvider implements WaProvider {
   }
 
   async sendFileByUpload(input: FileByUploadInput): Promise<SendResult> {
-    const url = `${mediaBaseFor(input.apiUrl)}/waInstance${input.instanceId}/sendFileByUpload/${input.token}`;
+    const url = `${mediaBaseFor(input.apiUrl, input.mediaUrl)}/waInstance${input.instanceId}/sendFileByUpload/${input.token}`;
     const form = new FormData();
     form.append('chatId', input.chatId);
     form.append('file', new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }), input.fileName);

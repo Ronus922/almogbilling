@@ -70,10 +70,10 @@ export async function POST(_req: NextRequest, ctx: RouteCtx) {
     let idMessage: string | null = null;
 
     if (files.length > 0) {
-      const { ready, failed } = await ensureAttachmentLinks(files, creds);
+      const { ready, failed, failedDetail } = await ensureAttachmentLinks(files, creds);
       failedNames.push(...failed.map((f) => f.original_name));
       if (ready.length === 0 && !(msg.content ?? '').trim()) {
-        throw new WhatsAppError('העלאת הקבצים נכשלה');
+        throw new WhatsAppError(failedDetail ? `העלאת הקבצים נכשלה: ${failedDetail}` : 'העלאת הקבצים נכשלה');
       }
       for (const step of planMessageSends(msg.content ?? '', ready.length)) {
         if (step.kind === 'text') {

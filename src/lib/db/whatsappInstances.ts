@@ -39,6 +39,11 @@ export interface WhatsAppInstance {
   display_name: string;
   green_instance_id: string;
   api_url: string;
+  /** Explicit media-host override (uploadFile/sendFileByUpload) — null = derive
+   *  from api_url (see src/lib/whatsapp.ts mediaFor). Some dedicated/regional
+   *  Green hosts have no `media.` subdomain at all and need this set to the
+   *  api_url itself (observed 18/10/2026: 7107.api.greenapi.com). */
+  media_url: string | null;
   state: InstanceState;
   state_checked_at: string | null;
   created_at: string;
@@ -55,6 +60,8 @@ export interface InstanceCreds {
   greenInstanceId: string;
   token: string;
   apiUrl: string;
+  /** Explicit media-host override — see WhatsAppInstance.media_url. */
+  mediaUrl: string | null;
 }
 
 export class InstanceNotConfiguredError extends Error {
@@ -79,6 +86,7 @@ interface InstanceRow {
   green_instance_id: string;
   green_token_enc: EncryptedBlob;
   api_url: string;
+  media_url: string | null;
   state: InstanceState;
   state_checked_at: string | null;
   created_at: string;
@@ -89,7 +97,7 @@ interface InstanceRow {
 // i.user_id is selected for DISPLAY (owner label, edit form) only — callers must
 // never branch on it for access control. See the module header.
 const PUBLIC_COLS = `
-  i.id, i.user_id, i.display_name, i.green_instance_id, i.api_url, i.state,
+  i.id, i.user_id, i.display_name, i.green_instance_id, i.api_url, i.media_url, i.state,
   i.state_checked_at, i.created_at,
   u.full_name as owner_name, u.username as owner_username`;
 
@@ -100,6 +108,7 @@ function toPublic(r: Omit<InstanceRow, 'green_token_enc'>): WhatsAppInstance {
     display_name: r.display_name,
     green_instance_id: r.green_instance_id,
     api_url: r.api_url,
+    media_url: r.media_url,
     state: r.state,
     state_checked_at: r.state_checked_at,
     created_at: r.created_at,
@@ -112,17 +121,18 @@ function toPublic(r: Omit<InstanceRow, 'green_token_enc'>): WhatsAppInstance {
 // Credential resolution (decrypted) — never leaves the server.
 // ─────────────────────────────────────────────────────────────────────
 
-function credsFromRow(r: { id: string; green_instance_id: string; green_token_enc: EncryptedBlob; api_url: string }): InstanceCreds {
+function credsFromRow(r: { id: string; green_instance_id: string; green_token_enc: EncryptedBlob; api_url: string; media_url: string | null }): InstanceCreds {
   return {
     id: r.id,
     greenInstanceId: r.green_instance_id,
     token: decrypt(r.green_token_enc),
     apiUrl: r.api_url,
+    mediaUrl: r.media_url,
   };
 }
 
-type CredsRow = { id: string; green_instance_id: string; green_token_enc: EncryptedBlob; api_url: string };
-const CREDS_COLS = 'id, green_instance_id, green_token_enc, api_url';
+type CredsRow = { id: string; green_instance_id: string; green_token_enc: EncryptedBlob; api_url: string; media_url: string | null };
+const CREDS_COLS = 'id, green_instance_id, green_token_enc, api_url, media_url';
 
 /** Acting user's own instance credentials, or null. The user_id match is a
  *  PREFERENCE (use your own number if you have one), never a permission check —
@@ -178,8 +188,8 @@ export async function getDefaultSendCreds(): Promise<InstanceCreds | null> {
 /** Resolve credentials for a specific instance id (admin sending via a chosen
  *  instance, webhook registration, QR polling). Returns null if absent. */
 export async function getInstanceCredsById(instanceId: string): Promise<InstanceCreds | null> {
-  const row = await queryOne<{ id: string; green_instance_id: string; green_token_enc: EncryptedBlob; api_url: string }>(
-    `select id, green_instance_id, green_token_enc, api_url
+  const row = await queryOne<CredsRow>(
+    `select ${CREDS_COLS}
        from public.whatsapp_instances where id = $1 limit 1`,
     [instanceId],
   );
@@ -286,12 +296,21 @@ function cleanApiUrl(raw: string | undefined | null): string {
   return v;
 }
 
+/** Empty = no override (fallback derivation from api_url, see mediaFor()). */
+function cleanMediaUrl(raw: string | undefined | null): string | null {
+  const v = (raw ?? '').trim().replace(/\/+$/, '');
+  if (!v) return null;
+  if (!/^https?:\/\//i.test(v)) throw new InstanceValidationError('כתובת מדיה לא תקינה');
+  return v;
+}
+
 export interface CreateInstanceArgs {
   userId: string;
   displayName: string;
   greenInstanceId: string;
   token: string;
   apiUrl?: string | null;
+  mediaUrl?: string | null;
 }
 
 export async function createInstance(args: CreateInstanceArgs): Promise<WhatsAppInstance> {
@@ -300,6 +319,7 @@ export async function createInstance(args: CreateInstanceArgs): Promise<WhatsApp
   if (!args.token.trim()) throw new InstanceValidationError('Token חסר');
   const greenInstanceId = cleanInstanceId(args.greenInstanceId);
   const apiUrl = cleanApiUrl(args.apiUrl);
+  const mediaUrl = cleanMediaUrl(args.mediaUrl);
   const tokenEnc = encrypt(args.token.trim());
 
   // Reject duplicate ownership / instance id with a friendly message instead of a
@@ -317,10 +337,10 @@ export async function createInstance(args: CreateInstanceArgs): Promise<WhatsApp
 
   const inserted = await queryOne<{ id: string }>(
     `insert into public.whatsapp_instances
-       (user_id, display_name, green_instance_id, green_token_enc, api_url, state)
-     values ($1, $2, $3, $4::jsonb, $5, 'notAuthorized')
+       (user_id, display_name, green_instance_id, green_token_enc, api_url, media_url, state)
+     values ($1, $2, $3, $4::jsonb, $5, $6, 'notAuthorized')
      returning id`,
-    [args.userId, displayName, greenInstanceId, JSON.stringify(tokenEnc), apiUrl],
+    [args.userId, displayName, greenInstanceId, JSON.stringify(tokenEnc), apiUrl, mediaUrl],
   );
   const row = await getInstancePublicById(inserted!.id);
   return row!;
@@ -331,6 +351,7 @@ export interface UpdateInstanceArgs {
   greenInstanceId?: string;
   token?: string;
   apiUrl?: string | null;
+  mediaUrl?: string | null;
 }
 
 export async function updateInstance(id: string, args: UpdateInstanceArgs): Promise<WhatsAppInstance | null> {
@@ -354,6 +375,9 @@ export async function updateInstance(id: string, args: UpdateInstanceArgs): Prom
   }
   if (args.apiUrl !== undefined) {
     sets.push(`api_url = $${n++}`); params.push(cleanApiUrl(args.apiUrl));
+  }
+  if (args.mediaUrl !== undefined) {
+    sets.push(`media_url = $${n++}`); params.push(cleanMediaUrl(args.mediaUrl));
   }
   if (args.token !== undefined && args.token.trim()) {
     sets.push(`green_token_enc = $${n++}::jsonb`); params.push(JSON.stringify(encrypt(args.token.trim())));

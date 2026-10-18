@@ -242,7 +242,7 @@ export class DeliveryWorker {
           // The mock never reads bytes (dry-run / tests); the real provider needs them.
           const bytes = provider.kind === 'mock' ? Buffer.alloc(0) : await this.readBytes(a);
           const res = await provider.uploadFile({
-            instanceId: creds.instanceId, token: creds.token, apiUrl: creds.apiUrl,
+            instanceId: creds.instanceId, token: creds.token, apiUrl: creds.apiUrl, mediaUrl: creds.mediaUrl,
             bytes, mimeType: a.mime_type, fileName: wireFileName(asciiLeaf(a.object_key)),
           });
           if (res.ok) {
@@ -347,14 +347,17 @@ function siteOrigin(): string {
 // decrypt with SETTINGS_ENC_KEY (mirrors src/lib/crypto/settings-cipher.ts so the
 // worker needs no Next 'server-only' import). Only used for non-dry-run sends.
 async function resolveInstanceCreds(pool: Pool, instanceId: string | null): Promise<SendCreds> {
-  const r = await pool.query<{ green_instance_id: string; green_token_enc: { iv: string; ct: string; tag: string }; api_url: string }>(
-    `select green_instance_id, green_token_enc, api_url from public.whatsapp_instances
+  const r = await pool.query<{ green_instance_id: string; green_token_enc: { iv: string; ct: string; tag: string }; api_url: string; media_url: string | null }>(
+    `select green_instance_id, green_token_enc, api_url, media_url from public.whatsapp_instances
       where ($1::uuid is null and true) or id=$1 order by (state='authorized') desc, created_at asc limit 1`,
     [instanceId],
   );
   const row = r.rows[0];
   if (!row) throw new Error('no whatsapp instance configured for send');
-  return { instanceId: row.green_instance_id, token: decryptToken(row.green_token_enc), apiUrl: row.api_url };
+  return {
+    instanceId: row.green_instance_id, token: decryptToken(row.green_token_enc),
+    apiUrl: row.api_url, mediaUrl: row.media_url,
+  };
 }
 
 function decryptToken(blob: { iv: string; ct: string; tag: string }): string {
