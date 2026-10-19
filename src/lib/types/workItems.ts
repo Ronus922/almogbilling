@@ -75,3 +75,8 @@ export interface WorkItemKpis {
   dueToday: number;
   overdue: number;
 }
+
+/** The kanban lane whose "+" opened the create form (19/10/2026): a user lane
+ *  pre-fills + locks that employee; the combined suppliers lane pre-selects the
+ *  supplier kind with the supplier choice left open. */
+export type BoardLaneTarget = { kind: 'user'; id: string } | { kind: 'supplier' };

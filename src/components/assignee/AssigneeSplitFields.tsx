@@ -217,6 +217,7 @@ export function AssigneeSplitFields({
   onChange,
   knownNames,
   disabled = false,
+  lockedKinds = [],
 }: {
   users: AssigneeOption[];
   suppliers: SupplierOption[];
@@ -224,6 +225,9 @@ export function AssigneeSplitFields({
   onChange: (next: AssigneeInput[]) => void;
   knownNames?: Record<string, string>;
   disabled?: boolean;
+  /** Kinds whose picker is read-only (19/10/2026 — the kanban lane "+" opens
+   *  the create form with the lane's handler pre-filled and locked). */
+  lockedKinds?: AssigneeKind[];
 }) {
   const userOptions = useMemo<KindOption[]>(
     () => users.map((u) => ({ id: u.id, name: u.name })),
@@ -243,7 +247,7 @@ export function AssigneeSplitFields({
         value={value}
         onChange={onChange}
         knownNames={knownNames}
-        disabled={disabled}
+        disabled={disabled || lockedKinds.includes('user')}
       />
       <AssigneeKindSelect
         kind="supplier"
@@ -251,7 +255,7 @@ export function AssigneeSplitFields({
         value={value}
         onChange={onChange}
         knownNames={knownNames}
-        disabled={disabled}
+        disabled={disabled || lockedKinds.includes('supplier')}
       />
     </div>
   );

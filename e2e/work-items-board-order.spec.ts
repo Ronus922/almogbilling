@@ -11,7 +11,7 @@ import { Pool } from 'pg';
 // covers that endpoint's semantics (cross-lane reassign, cross-tier rejection)
 // against the board; this file does not re-prove them, only that the LIST's
 // new drag handle reaches the same endpoint correctly. Also pins decision 5
-// (full-viewport-height columns, the board's own scroll — not the page's).
+// (columns scroll inside the board; since 19/10/2026 the board is a fixed 80vh, ref/Kanva-issue).
 //
 // 14/10/2026, "התאמת לוח — ספקים + בחירה מפורשת גוברת": the suppliers lane
 // is now a normal row in the same popover, pinnable/hideable exactly like an
@@ -137,11 +137,14 @@ test('dragging a lane header reorders the columns and persists across reload', a
   expect(await laneOrder(page)).toEqual(after);
 });
 
-test('the board fills the viewport — the page itself does not scroll in board view', async ({ page }) => {
+test('the board is a fixed 80vh (19/10/2026, supersedes "fills the viewport") — columns scroll inside, never the page chrome', async ({ page }) => {
   await page.goto('/issues');
   await expect(lane(page, `user:${adminId}`)).toBeVisible();
-  const overflow = await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
-  expect(overflow, 'no vertical page scroll with the board open').toBeLessThanOrEqual(1);
+  const { boardHeight, vh } = await page.evaluate(() => ({
+    boardHeight: (document.querySelector('[data-board-lanes]') as HTMLElement).getBoundingClientRect().height,
+    vh: window.innerHeight,
+  }));
+  expect(Math.abs(boardHeight - vh * 0.8), 'board height = 80vh').toBeLessThanOrEqual(1);
 });
 
 test('the list view’s row handle drags within the same lane and persists (same endpoint as the board)', async ({ page }) => {

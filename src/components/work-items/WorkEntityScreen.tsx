@@ -36,7 +36,7 @@ import { BlockedToggleDialog } from './BlockedToggleDialog';
 import { BoardOrderPopover } from './BoardOrderPopover';
 import { defaultBoardLaneOrder, effectiveBoardLaneIds } from '@/lib/workItems/boardOrder';
 import { SUPPLIERS_LANE_ID } from '@/lib/constants/workItems';
-import type { WorkItem, WorkItemKind, WorkItemKpis, WorkItemViewTab } from '@/lib/types/workItems';
+import type { BoardLaneTarget, WorkItem, WorkItemKind, WorkItemKpis, WorkItemViewTab } from '@/lib/types/workItems';
 import type { IssueWithMeta } from '@/lib/types/issues';
 import type { TaskWithAssignee } from '@/lib/types/tasks';
 import type { RecurringSeries } from '@/lib/db/tasks';
@@ -49,6 +49,7 @@ type ViewMode = 'board' | 'list';
 
 const TITLE: Record<WorkItemKind, string> = { issue: 'תקלות', task: 'משימות' };
 const NEW_LABEL: Record<WorkItemKind, string> = { issue: 'תקלה חדשה', task: 'משימה חדשה' };
+const ITEM_NOUN: Record<WorkItemKind, string> = { issue: 'תקלה', task: 'משימה' };
 const DELETE_NOUN: Record<WorkItemKind, string> = { issue: 'התקלה', task: 'המשימה' };
 const DEEP_LINK_PARAM: Record<WorkItemKind, string> = { issue: 'issue', task: 'task' };
 
@@ -95,6 +96,8 @@ export function WorkEntityScreen({
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
 
   const [panelOpen, setPanelOpen] = useState(false);
+  // Set only while the create form was opened from a lane's "+" (19/10/2026).
+  const [laneTarget, setLaneTarget] = useState<BoardLaneTarget | null>(null);
   const [editingIssue, setEditingIssue] = useState<IssueWithMeta | null>(null);
   const [editingTask, setEditingTask] = useState<TaskWithAssignee | null>(null);
   const [blockedDialogItem, setBlockedDialogItem] = useState<WorkItem | null>(null);
@@ -241,7 +244,15 @@ export function WorkEntityScreen({
     }
   }, [kind]);
 
+  function openCreate(target: BoardLaneTarget | null) {
+    setEditingIssue(null);
+    setEditingTask(null);
+    setLaneTarget(target);
+    setPanelOpen(true);
+  }
+
   function openItem(item: WorkItem) {
+    setLaneTarget(null);
     void openById(item.id);
   }
 
@@ -258,6 +269,11 @@ export function WorkEntityScreen({
 
   async function handleAssign(item: WorkItem, assignee: { kind: 'user' | 'supplier'; id: string } | null) {
     const prevItems = items;
+    const prevKpis = kpis;
+    // "ללא שיוך" KPI follows the move at once (the strip counters derive from
+    // `items`); the next poll/refetch replaces it with the server's number.
+    const delta = (assignee ? 0 : 1) - (item.assignee ? 0 : 1);
+    if (delta !== 0) setKpis((k) => ({ ...k, unassigned: Math.max(0, k.unassigned + delta) }));
     setItems((curr) => curr.map((i) => (i.id === item.id ? { ...i, assignee: assignee ? { kind: assignee.kind, id: assignee.id, display_name: (assignee.kind === 'user' ? assignees.find((a) => a.id === assignee.id)?.name : suppliers.find((s) => s.id === assignee.id)?.display_name) ?? '—' } : null } : i)));
     try {
       const res = await fetch(`/api/work-items/${kind}/${item.id}/assignee`, {
@@ -270,6 +286,7 @@ export function WorkEntityScreen({
       toast.success(assignee ? 'שויך בהצלחה' : 'השיוך בוטל');
     } catch (err) {
       setItems(prevItems);
+      setKpis(prevKpis);
       toast.error((err as Error).message);
     }
   }
@@ -373,7 +390,7 @@ export function WorkEntityScreen({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-extrabold text-ink">{TITLE[kind]}</h1>
         {canEdit && (
-          <Button onClick={() => { setEditingIssue(null); setEditingTask(null); setPanelOpen(true); }} className="gap-1.5">
+          <Button onClick={() => openCreate(null)} className="gap-1.5">
             <Plus className="h-4 w-4" /> {NEW_LABEL[kind]}
           </Button>
         )}
@@ -457,8 +474,10 @@ export function WorkEntityScreen({
                   employees={boardEmployees}
                   suppliers={suppliers}
                   laneOrder={boardLaneIds}
+                  noun={ITEM_NOUN[kind]}
                   onOpen={openItem}
                   onAssign={handleAssign}
+                  onAddToLane={openCreate}
                   onReorder={handleReorder}
                   onReorderLanes={(next) => void saveBoardOrder(next)}
                   onMarkDone={handleMarkDone}
@@ -522,6 +541,7 @@ export function WorkEntityScreen({
           assignees={assignees}
           suppliers={suppliers}
           currentUser={currentUser}
+          laneTarget={laneTarget}
           onOpenChange={(o) => { if (!o) closePanel(); else setPanelOpen(o); }}
           onSaved={() => { setPanelOpen(false); void fetchItems(); }}
           onDelete={editingIssue && canEdit ? () => setDeleteTarget({ id: editingIssue.id }) : undefined}
@@ -535,6 +555,7 @@ export function WorkEntityScreen({
           assignees={assignees}
           suppliers={suppliers}
           currentUser={currentUser}
+          laneTarget={laneTarget}
           onOpenChange={(o) => { if (!o) closePanel(); else setPanelOpen(o); }}
           onSaved={() => { setPanelOpen(false); void fetchItems(); void fetchSeries(); }}
           onDelete={editingTask && canEdit ? () => setDeleteTarget({ id: editingTask.id }) : undefined}

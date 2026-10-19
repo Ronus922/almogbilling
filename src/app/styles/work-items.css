@@ -41,4 +41,18 @@
   .wb-handle-row::after {
     inset-inline-start: 13px;
   }
+  /* Kanban column body scrollbar (ref/Kanva-issue `.cbody`): 8px, rounded
+     #D9DDEA thumb. The page itself never scrolls for the board — the board is
+     a fixed 80vh and each column scrolls inside. */
+  .wb-cbody::-webkit-scrollbar {
+    width: 8px;
+  }
+  .wb-cbody::-webkit-scrollbar-thumb {
+    background: #d9ddea;
+    border-radius: 999px;
+  }
+  .wb-cbody {
+    scrollbar-width: thin;
+    scrollbar-color: #d9ddea transparent;
+  }
 }

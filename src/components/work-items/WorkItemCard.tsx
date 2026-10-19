@@ -80,20 +80,24 @@ export function WorkItemCard({
       >
         <h4 className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-ink">{item.title}</h4>
         {canEdit ? (
-          <PrimaryAssigneePicker
-            value={item.assignee}
-            employees={employees}
-            suppliers={suppliers}
-            onChange={onAssign}
-            trigger={
-              <span
-                onClick={(e) => e.stopPropagation()}
-                className="inline-flex shrink-0 cursor-pointer items-center rounded-lg border border-brand-border bg-brand-soft px-3 py-1.5 text-[12.5px] font-bold text-brand-text transition-colors hover:bg-[#DDE3FF]"
-              >
-                שיבוץ
-              </span>
-            }
-          />
+          // stopPropagation lives on a wrapper OUTSIDE the picker: on the
+          // trigger's own child it swallowed the click before the popover
+          // trigger (its parent) ever saw it, so "שיבוץ" opened nothing.
+          // It still keeps the card's own onClick (open panel) from firing for
+          // clicks on the button and inside the portaled menu.
+          <span onClick={(e) => e.stopPropagation()} className="inline-flex shrink-0">
+            <PrimaryAssigneePicker
+              value={item.assignee}
+              employees={employees}
+              suppliers={suppliers}
+              onChange={onAssign}
+              trigger={
+                <span className="inline-flex shrink-0 cursor-pointer items-center rounded-lg border border-brand-border bg-brand-soft px-3 py-1.5 text-[12.5px] font-bold text-brand-text transition-colors hover:bg-[#DDE3FF]">
+                  שיבוץ
+                </span>
+              }
+            />
+          </span>
         ) : null}
       </div>
     );

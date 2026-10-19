@@ -15,13 +15,13 @@
 //   - a card dragged OUT of "ממתינים לשיבוץ" into a lane → assignment, same
 //     as dropping on the lane's "שיבוץ" button (ref `.ucard`).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ChevronDown, Plus, UserPlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { landingAboveIn } from '@/lib/dnd/landing';
 import { avatarColorFor, SUPPLIER_LANE_COLOR, SUPPLIERS_LANE_ID } from '@/lib/constants/workItems';
 import { WorkItemCard } from './WorkItemCard';
-import type { WorkItem } from '@/lib/types/workItems';
+import type { BoardLaneTarget, WorkItem } from '@/lib/types/workItems';
 
 const ID_ATTR = 'data-work-item-id';
 
@@ -44,8 +44,10 @@ export function WorkItemsBoard({
   employees,
   suppliers,
   laneOrder,
+  noun,
   onOpen,
   onAssign,
+  onAddToLane,
   onReorder,
   onReorderLanes,
   onMarkDone,
@@ -66,8 +68,12 @@ export function WorkItemsBoard({
    *  already customized; the caller (WorkEntityScreen) owns that decision,
    *  this component only renders the result. */
   laneOrder: string[];
+  /** "משימה" / "תקלה" — the lane "+" tooltip ("הוסף {noun} ל{שם}"). */
+  noun: string;
   onOpen: (item: WorkItem) => void;
   onAssign: (item: WorkItem, assignee: { kind: 'user' | 'supplier'; id: string } | null) => void;
+  /** Lane header "+" (19/10/2026) — open the create form for this lane. */
+  onAddToLane: (target: BoardLaneTarget) => void;
   onReorder: (item: WorkItem, beforeId: string | null) => void;
   /** A lane header was dragged into this new position (13/10/2026, "התאמת
    *  לוח" decision 2; extended 14/10/2026 to include the suppliers lane) —
@@ -83,28 +89,6 @@ export function WorkItemsBoard({
   const [laneDragKey, setLaneDragKey] = useState<string | null>(null);
   const [laneLanding, setLaneLanding] = useState<string | null>(null);
   const [expandedRecent, setExpandedRecent] = useState<Set<string>>(new Set());
-
-  // The reference (ref/issues-board.html, `.col{height:calc(100vh - 320px)}`)
-  // assumes a fixed ~320px of chrome above the board — true in its own
-  // standalone mockup, but not inside this app's real shell, where the page
-  // header/KPI cards/filter bar/"ממתינים לשיבוץ" strip push that past 500px
-  // and vary with content. A hardcoded 100vh-based height then renders lanes
-  // taller than the actual viewport, with their bottom silently out of reach
-  // (unscrollable within `<main>`'s own scroll, since nothing here clips it) —
-  // caught as a Playwright drop that dispatches but lands on nothing. Measure
-  // the real remaining space instead, so the column always fits what's
-  // actually left below it.
-  const lanesRowRef = useRef<HTMLDivElement>(null);
-  const [laneHeight, setLaneHeight] = useState(340);
-
-  useEffect(() => {
-    const el = lanesRowRef.current;
-    if (!el) return;
-    const update = () => setLaneHeight(Math.max(340, window.innerHeight - el.getBoundingClientRect().top - 12));
-    update();
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
-  }, []);
 
   const lanes: Lane[] = useMemo(() => {
     const byId = new Map(employees.map((e) => [e.id, e]));
@@ -153,6 +137,7 @@ export function WorkItemsBoard({
   }, [items]);
 
   const unassigned = byLane.get('unassigned') ?? [];
+  const urgentUnassigned = unassigned.filter((i) => i.priority === 'urgent').length;
 
   function dragItem(): WorkItem | undefined {
     return items.find((i) => i.id === dragId);
@@ -261,12 +246,11 @@ export function WorkItemsBoard({
           handleDrop(lane.key, lane.assignee, beforeId);
         }}
         className={cn(
-          'flex w-[255px] shrink-0 flex-col rounded-2xl bg-[#EEF0F7] transition-colors',
+          'flex min-h-[340px] w-[255px] shrink-0 flex-col rounded-[14px] bg-[#EEF0F7] transition-colors',
           landing?.lane === lane.key ? 'ring-2 ring-brand/40' : '',
           laneLanding === lane.key && 'ring-2 ring-brand/60',
           laneDragKey === lane.key && 'opacity-50',
         )}
-        style={{ height: laneHeight, minHeight: 340 }}
       >
         <div
           data-lane-handle={lane.key}
@@ -290,11 +274,27 @@ export function WorkItemsBoard({
             {lane.label.slice(0, 2)}
           </span>
           <h3 className="min-w-0 flex-1 truncate text-[13.5px] font-bold text-ink">{lane.label}</h3>
-          <span className="rounded-full border border-line bg-white px-1.5 text-[12px] font-num font-semibold text-ink-3">
+          {canEdit && (
+            <button
+              type="button"
+              data-add-lane={lane.key}
+              title={`הוסף ${noun} ל${lane.label}`}
+              aria-label={`הוסף ${noun} ל${lane.label}`}
+              draggable={false}
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddToLane(lane.assignee ? { kind: 'user', id: lane.assignee.id } : { kind: 'supplier' });
+              }}
+              className="grid h-[26px] w-[26px] shrink-0 cursor-pointer place-items-center rounded-[7px] text-ink-ghost transition-[background-color,color,box-shadow] duration-150 hover:bg-white hover:text-brand hover:shadow-[0_1px_3px_rgba(20,28,50,0.08)]"
+            >
+              <Plus className="h-[15px] w-[15px]" strokeWidth={2.2} />
+            </button>
+          )}
+          <span className="rounded-full border border-line bg-white px-2 py-0.5 text-[12px] font-num font-semibold text-ink-3">
             {open.length}
           </span>
         </div>
-        <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
+        <div className="wb-cbody flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
           {open.length === 0 && <p className="py-6 text-center text-[12.5px] text-ink-ghost">אין משימות פתוחות</p>}
           {open.map((i) => renderCard(i))}
         </div>
@@ -321,43 +321,44 @@ export function WorkItemsBoard({
 
   return (
     <div className="flex flex-col gap-3">
-      {/* "ממתינים לשיבוץ" — full-width dashed strip, ref `.unassigned`/`.ucard`. */}
-      <div
-        data-lane="unassigned"
-        onDragOver={(e) => {
-          if (!canEdit || !dragId) return;
-          e.preventDefault();
-          setLanding((l) => (l?.lane === 'unassigned' ? l : { lane: 'unassigned', beforeId: null }));
-        }}
-        onDrop={(e) => { e.preventDefault(); if (canEdit && dragId) handleDrop('unassigned', null, null); }}
-        className={cn(
-          'flex flex-wrap items-center gap-3.5 rounded-2xl border-[1.5px] border-dashed p-3.5 transition-colors',
-          landing?.lane === 'unassigned' ? 'border-brand/50 bg-brand-soft/60' : 'border-[#FBE4B5] bg-[#FFFDF6]',
-        )}
-      >
-        <div className="flex shrink-0 items-center gap-2 text-[14px] font-bold text-[#945700]">
-          ממתינים לשיבוץ
-          <span className="rounded-full border border-[#FBE4B5] bg-[#FFF6E6] px-2 py-0.5 text-[12px] font-num font-bold">
-            {unassigned.length}
-          </span>
-          {unassigned.some((i) => i.priority === 'urgent') && (
-            <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[12px] font-num font-bold text-rose-700">
-              {unassigned.filter((i) => i.priority === 'urgent').length} דחופות
-            </span>
+      {/* "ממתינים לשיבוץ" — block strip, title row (.uh) above a full-width card
+          row (.ucards); not rendered at all when empty (19/10/2026,
+          ref/Kanva-issue) and back as soon as an unassigned item exists. */}
+      {unassigned.length > 0 && (
+        <div
+          data-lane="unassigned"
+          onDragOver={(e) => {
+            if (!canEdit || !dragId) return;
+            e.preventDefault();
+            setLanding((l) => (l?.lane === 'unassigned' ? l : { lane: 'unassigned', beforeId: null }));
+          }}
+          onDrop={(e) => { e.preventDefault(); if (canEdit && dragId) handleDrop('unassigned', null, null); }}
+          className={cn(
+            'block rounded-[14px] border-[1.5px] border-dashed px-4 pb-3.5 pt-3 transition-colors',
+            landing?.lane === 'unassigned' ? 'border-brand/50 bg-brand-soft/60' : 'border-[#FBE4B5] bg-[#FFFDF6]',
           )}
-        </div>
-        {unassigned.length === 0 ? (
-          <p className="text-[12.5px] text-[#945700]/60">אין פריטים ללא שיוך</p>
-        ) : (
-          <div className="flex min-w-0 flex-1 flex-wrap gap-2">
+        >
+          <div className="mb-2.5 flex items-center gap-[9px] text-[14px] font-bold text-[#945700]">
+            <UserPlus className="h-4 w-4 shrink-0" />
+            <span>ממתינים לשיבוץ</span>
+            <span data-unassigned-count className="rounded-full border border-[#FBE4B5] bg-white px-2 py-0.5 text-[12px] font-num font-bold">
+              {unassigned.length}
+            </span>
+            {urgentUnassigned > 0 && (
+              <span data-unassigned-urgent className="whitespace-nowrap rounded-full border border-[#F8D2D3] bg-[#FEEFEF] px-[9px] py-0.5 text-[12px] font-bold text-[#B01B20]">
+                {urgentUnassigned} דחופות
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-[9px]">
             {unassigned.map((i) => renderCard(i, 'ucard'))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div
-        ref={lanesRowRef}
-        className="flex gap-3 overflow-x-auto pb-2.5"
+        data-board-lanes
+        className="flex h-[80vh] flex-none items-stretch gap-3 overflow-x-auto pb-2.5"
         onDragOver={(e) => {
           if (!laneDragKey) return;
           e.preventDefault();
