@@ -24,7 +24,7 @@ import { Pool } from 'pg';
 // Every issue AND the one throwaway employee this file creates is recorded
 // by id at creation and removed by that exact id (iron rule 12).
 
-test.use({ viewport: { width: 1600, height: 1800 } });
+test.use({ viewport: { width: 1600, height: 1000 } });
 test.describe.configure({ mode: 'serial' });
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
@@ -52,10 +52,11 @@ test.afterAll(async () => {
   await pool.end();
 });
 
-/** A staff issue through the real route — always created with NO primary
- *  assignee (the create form never sets assignee_user_id, only the multi-
- *  assignee junction — Decisions Log 12/10/2026, point 2's known gap), so
- *  every fixture starts in "ממתינים לשיבוץ" regardless of `priority`. */
+/** A staff issue through the real route, created with `assignees: []`, so
+ *  every fixture starts in "ממתינים לשיבוץ" regardless of `priority`. (Since
+ *  19/10/2026 a create with exactly ONE assignee also sets the primary and
+ *  lands in that column — the old "known gap" is closed; that path is pinned
+ *  in e2e/kanban-board-update.spec.ts. These DnD fixtures want the strip.) */
 async function newIssue(request: APIRequestContext, title: string, priority: 'normal' | 'high' | 'urgent' = 'normal') {
   const res = await request.post('/api/issues', {
     data: { title: `E2E קנבן · ${title}`, priority, due_date: null, assignees: [] },
@@ -97,9 +98,15 @@ async function dragTo(
   if ('aboveCard' in target) {
     await card(page, id).dragTo(card(page, target.aboveCard), { targetPosition: { x: 60, y: 4 } });
   } else {
+    // The lane is a fixed 80vh (19/10/2026), so its bottom can be below the
+    // fold: aim at the empty area just above whichever is nearer, the lane's
+    // bottom edge or the viewport's.
+    await lane(page, target.emptyLane).scrollIntoViewIfNeeded();
     const box = await lane(page, target.emptyLane).boundingBox();
     if (!box) throw new Error(`lane ${target.emptyLane} is not on screen`);
-    await card(page, id).dragTo(lane(page, target.emptyLane), { targetPosition: { x: 40, y: box.height - 10 } });
+    const viewportH = page.viewportSize()?.height ?? 900;
+    const y = Math.max(10, Math.min(box.height - 10, viewportH - box.y - 10));
+    await card(page, id).dragTo(lane(page, target.emptyLane), { targetPosition: { x: 40, y } });
   }
   if (expectWrite) expect((await write).status(), 'the drop persisted').toBe(200);
   await expect(page.getByRole('dialog')).toHaveCount(0);

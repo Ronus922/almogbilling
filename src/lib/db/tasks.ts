@@ -16,6 +16,7 @@ import {
   assigneesJsonExpr,
   assigneeExistsSql,
   replaceEntityAssignees,
+  setPrimaryOnCreate,
   listEntityUserIds,
 } from '@/lib/db/entityAssignees';
 import { listCompletionDatesInRange } from '@/lib/db/taskCompletions';
@@ -492,6 +493,7 @@ export async function createTask(
     const newId = row.rows[0]?.id;
     if (!newId) throw new Error('failed_to_create_task');
     await replaceEntityAssignees(client, 'task', newId, assignees, createdBy);
+    await setPrimaryOnCreate(client, 'tasks', newId, assignees);
     return newId;
   });
 

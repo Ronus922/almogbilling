@@ -33,7 +33,8 @@ import type {
   Issue, IssueComment, IssueImage, IssuePriority, IssueStatus, IssueWithMeta,
 } from '@/lib/types/issues';
 import type { TargetType } from '@/lib/types/targets';
-import type { AssigneeInput, SupplierOption } from '@/lib/types/assignee';
+import type { AssigneeInput, AssigneeKind, SupplierOption } from '@/lib/types/assignee';
+import type { BoardLaneTarget } from '@/lib/types/workItems';
 import { TargetField } from '@/components/targets/TargetField';
 import { AssigneeSplitFields } from '@/components/assignee/AssigneeSplitFields';
 import {
@@ -67,6 +68,8 @@ interface Props {
   suppliers: SupplierOption[];
   currentUser: NotifyUserContact;
   onOpenChange: (o: boolean) => void;
+  /** Create only — the kanban lane whose "+" opened the form; the handler is pre-filled and locked. */
+  laneTarget?: BoardLaneTarget | null;
   onSaved: () => void;
   /** Edit mode + canEdit: shows a delete button in the footer. The caller owns
    *  the confirmation dialog + the actual delete. */
@@ -346,7 +349,12 @@ function MediaDropSection({ canAdd, canEdit, busy, imageCount, videoCount, tiles
   );
 }
 
-export function IssueFormPanel({ open, issue, canEdit, canSeeReporterPhone, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete, refreshSignal }: Props) {
+export function IssueFormPanel({ open, issue, canEdit, canSeeReporterPhone, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete, refreshSignal, laneTarget }: Props) {
+  // Create-from-lane ("+" in a kanban column header): the lane's handler is
+  // pre-filled and locked; a suppliers lane locks only the employee picker.
+  const laneKind = !issue ? laneTarget?.kind : undefined;
+  const laneId = laneTarget?.kind === 'user' ? laneTarget.id : null;
+  const lockedKinds: AssigneeKind[] = laneKind === 'user' ? ['user', 'supplier'] : laneKind === 'supplier' ? ['user'] : [];
   const isEdit = !!issue;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
@@ -401,7 +409,7 @@ export function IssueFormPanel({ open, issue, canEdit, canSeeReporterPhone, assi
 
   useEffect(() => {
     if (open) {
-      const init = issue ? fromIssue(issue) : EMPTY_FORM;
+      const init = issue ? fromIssue(issue) : { ...EMPTY_FORM, assignees: laneKind === 'user' && laneId ? [{ assignee_type: 'user' as const, id: laneId }] : [] };
       setForm(init);
       setInitial(init);
       setComments([]);
@@ -420,7 +428,7 @@ export function IssueFormPanel({ open, issue, canEdit, canSeeReporterPhone, assi
       setSelf(false);
       if (issue) void loadDetail(issue.id);
     }
-  }, [open, issue, loadDetail]);
+  }, [open, issue, laneKind, laneId, loadDetail]);
 
   // 15s poll tick while open (parent only bumps this when open) — comments et
   // al. only, never the fields above (would blow away an in-progress edit).
@@ -926,6 +934,7 @@ export function IssueFormPanel({ open, issue, canEdit, canSeeReporterPhone, assi
                   onChange={(next) => set('assignees', next)}
                   knownNames={knownNames}
                   disabled={disabled}
+                  lockedKinds={lockedKinds}
                 />
               </Section>
 

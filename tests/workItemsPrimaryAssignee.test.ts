@@ -101,6 +101,35 @@ d('setIssuePrimaryAssignee / setTaskPrimaryAssignee — scalar + junction in syn
     expect(junction.rowCount).toBe(0);
   });
 
+  // 19/10/2026 — create with exactly ONE assignee also sets the primary (the
+  // kanban lane key); several or none leave the item in "ממתינים לשיבוץ".
+  it('createIssue with one user assignee sets assignee_user_id and keeps the single junction row', async () => {
+    const issue = await createIssue({ title: 'DB-TEST create one user' }, [{ assignee_type: 'user', id: adminId }], adminId, 'בדיקה', '2026-01-01');
+    expect(issue.assignee_user_id).toBe(adminId);
+    expect(issue.assignee_supplier_id).toBeNull();
+    expect(issue.assignees).toHaveLength(1);
+  });
+
+  it('createTask with one supplier assignee sets assignee_supplier_id', async () => {
+    const task = await createTask({ title: 'DB-TEST create one supplier' }, [{ assignee_type: 'supplier', id: supplierId }], adminId, 'בדיקה');
+    expect(task.assignee_supplier_id).toBe(supplierId);
+    expect(task.assignee_user_id).toBeNull();
+  });
+
+  it('createIssue/createTask with several assignees or none leave the primary empty', async () => {
+    const two = await createIssue(
+      { title: 'DB-TEST create two' },
+      [{ assignee_type: 'user', id: adminId }, { assignee_type: 'supplier', id: supplierId }],
+      adminId, 'בדיקה', '2026-01-01',
+    );
+    expect(two.assignee_user_id).toBeNull();
+    expect(two.assignee_supplier_id).toBeNull();
+    expect(two.assignees).toHaveLength(2);
+    const none = await createTask({ title: 'DB-TEST create none' }, [], adminId, 'בדיקה');
+    expect(none.assignee_user_id).toBeNull();
+    expect(none.assignee_supplier_id).toBeNull();
+  });
+
   it('a non-existent id returns null without throwing', async () => {
     expect(await setIssuePrimaryAssignee('00000000-0000-4000-8000-000000000000', null, adminId)).toBeNull();
   });

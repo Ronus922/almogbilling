@@ -28,7 +28,8 @@ import type {
   TaskWithAssignee,
 } from '@/lib/types/tasks';
 import type { TargetType } from '@/lib/types/targets';
-import type { AssigneeInput, SupplierOption } from '@/lib/types/assignee';
+import type { AssigneeInput, AssigneeKind, SupplierOption } from '@/lib/types/assignee';
+import type { BoardLaneTarget } from '@/lib/types/workItems';
 import { TargetField } from '@/components/targets/TargetField';
 import { AssigneeSplitFields } from '@/components/assignee/AssigneeSplitFields';
 import {
@@ -72,6 +73,8 @@ interface Props {
   suppliers: SupplierOption[];
   currentUser: NotifyUserContact;
   onOpenChange: (o: boolean) => void;
+  /** Create only — the kanban lane whose "+" opened the form; the handler is pre-filled and locked. */
+  laneTarget?: BoardLaneTarget | null;
   onSaved: () => void;
   /** Edit mode + canEdit: shows a delete button in the footer. The caller owns
    *  the confirmation dialog + the actual delete. */
@@ -124,7 +127,12 @@ function fromTask(t: TaskWithAssignee): FormState {
   };
 }
 
-export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete, refreshSignal }: Props) {
+export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, currentUser, onOpenChange, onSaved, onDelete, refreshSignal, laneTarget }: Props) {
+  // Create-from-lane ("+" in a kanban column header): the lane's handler is
+  // pre-filled and locked; a suppliers lane locks only the employee picker.
+  const laneKind = !task ? laneTarget?.kind : undefined;
+  const laneId = laneTarget?.kind === 'user' ? laneTarget.id : null;
+  const lockedKinds: AssigneeKind[] = laneKind === 'user' ? ['user', 'supplier'] : laneKind === 'supplier' ? ['user'] : [];
   const isEdit = !!task;
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [initial, setInitial] = useState<FormState>(EMPTY_FORM);
@@ -187,7 +195,7 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
 
   useEffect(() => {
     if (open) {
-      const init = task ? fromTask(task) : EMPTY_FORM;
+      const init = task ? fromTask(task) : { ...EMPTY_FORM, assignees: laneKind === 'user' && laneId ? [{ assignee_type: 'user' as const, id: laneId }] : [] };
       setForm(init);
       setInitial(init);
       setComments([]);
@@ -208,7 +216,7 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
         if (task.recurrence) void loadCompletions(task.id);
       }
     }
-  }, [open, task, loadDetail, loadCompletions]);
+  }, [open, task, laneKind, laneId, loadDetail, loadCompletions]);
 
   // 15s poll tick while open (parent only bumps this when open) — comments
   // only, never the fields above (would blow away an in-progress edit).
@@ -641,6 +649,7 @@ export function TaskFormPanel({ open, task, canEdit, assignees, suppliers, curre
                   onChange={(next) => set('assignees', next)}
                   knownNames={knownNames}
                   disabled={disabled}
+                  lockedKinds={lockedKinds}
                 />
               </Section>
 

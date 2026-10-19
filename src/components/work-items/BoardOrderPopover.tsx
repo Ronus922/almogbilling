@@ -8,7 +8,7 @@
 // here is native HTML5 drag and drop only, same arithmetic as the board's own
 // card drag (landingAboveIn) — no long-press/touch variant needed.
 //
-// "ממתינים לשיבוץ" is not a row here — it is always on and never hideable.
+// "ממתינים לשיבוץ" is not a row here — it is not a lane; since 19/10/2026 it shows only while something is unassigned.
 // "ספקים" IS a row (14/10/2026, "התאמת לוח — ספקים + בחירה מפורשת גוברת"),
 // appended to the roster below as a synthetic entry under SUPPLIERS_LANE_ID —
 // same show/hide checkbox, same drag-to-reorder, same save mechanism as any

@@ -60,6 +60,28 @@ export function assigneeExistsSql(
  *  reset to the latest writer on every replace) AND `assigned_by` (12/10/2026 — a
  *  dedicated column the תקלות/משימות visibility rule reads: "assigned by me" means
  *  *this* actor performed the write, regardless of who ends up as the target). */
+/**
+ * On create, a SINGLE assignee (user or supplier) is also the item's primary
+ * assignee — the scalar `assignee_user_id`/`assignee_supplier_id` columns that
+ * decide the kanban lane (19/10/2026; closes the 12/10/2026 "known gap").
+ * Several assignees or none → untouched: the item waits in "ממתינים לשיבוץ".
+ * Runs in the creating transaction and writes no junction row, so it sends
+ * no notification of its own.
+ */
+export async function setPrimaryOnCreate(
+  client: PoolClient,
+  table: 'issues' | 'tasks',
+  id: string,
+  assignees: AssigneeInput[],
+): Promise<void> {
+  if (assignees.length !== 1) return;
+  const [a] = assignees;
+  await client.query(
+    `update public.${table} set assignee_user_id = $2, assignee_supplier_id = $3 where id = $1`,
+    [id, a.assignee_type === 'user' ? a.id : null, a.assignee_type === 'supplier' ? a.id : null],
+  );
+}
+
 export async function replaceEntityAssignees(
   client: PoolClient,
   entityType: EntityType,
