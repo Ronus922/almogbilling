@@ -15,6 +15,7 @@ import {
   assigneesJsonExpr,
   assigneeExistsSql,
   replaceEntityAssignees,
+  setPrimaryOnCreate,
   copyEntityAssignees,
   listEntityUserIds,
 } from '@/lib/db/entityAssignees';
@@ -266,6 +267,7 @@ export async function createIssue(
     const newId = row.rows[0]?.id;
     if (!newId) throw new Error('failed_to_create_issue');
     await replaceEntityAssignees(client, 'issue', newId, assignees, createdBy);
+    await setPrimaryOnCreate(client, 'issues', newId, assignees);
     return newId;
   });
 
