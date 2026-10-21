@@ -1,0 +1,119 @@
+import { NextResponse, type NextRequest } from 'next/server';
+import { requirePermission, type Actor } from '@/lib/auth/actor';
+import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { parseJsonBody } from '@/lib/http/body';
+import { writeAudit } from '@/lib/db/audit';
+import {
+  findDocument, getSupplierBrief, listDispatches, listDocumentFiles, listLines, listQuotes, listRecipients,
+  softDeleteDocument, updateDocument,
+} from '@/lib/db/purchasing';
+import { updateDocumentBodySchema } from '@/lib/validation/purchasing';
+import { buildProxyUrl, PURCHASING_FILES_BUCKET } from '@/lib/storage/server';
+import { quoteLink } from '@/lib/purchasing/service';
+import { removePurchasingObjects } from '@/lib/storage/purchasingStorage';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+interface Ctx { params: Promise<{ id: string }> }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const withUrl = <T extends { object_key: string }>(f: T) => ({ ...f, url: buildProxyUrl(PURCHASING_FILES_BUCKET, f.object_key) });
+
+// GET /api/purchasing/documents/[id] — the document with everything the panel
+// shows: lines, files, dispatch log and, for a request, the recipients (with
+// their personal links) and the quotes received.
+export async function GET(_req: NextRequest, ctx: Ctx) {
+  try { await requirePermission('purchasing', 'view'); }
+  catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
+  const { id } = await ctx.params;
+  if (!UUID.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const doc = await findDocument(id);
+  if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+  const [lines, files, dispatches] = await Promise.all([listLines(id), listDocumentFiles(id), listDispatches(id)]);
+  const out: Record<string, unknown> = {
+    document: doc,
+    lines,
+    files: files.map(withUrl),
+    dispatches,
+    supplier: doc.supplier_id ? await getSupplierBrief(doc.supplier_id) : null,
+  };
+  if (doc.doc_type === 'rfq') {
+    const [recipients, quotes] = await Promise.all([listRecipients(id), listQuotes(id)]);
+    out.recipients = recipients.map((r) => ({ ...r, link: quoteLink(r.token) }));
+    out.quotes = quotes.map((q) => ({ ...q, files: q.files.map(withUrl) }));
+  }
+  return NextResponse.json(out);
+}
+
+// PATCH /api/purchasing/documents/[id] — notes, title, supplier (po), due date
+// (rfq) and, while allowed, the lines. The number, the date and the VAT rate
+// are never editable. A request's lines are locked once it was sent: suppliers
+// have priced exactly those lines.
+export async function PATCH(req: NextRequest, ctx: Ctx) {
+  let actor: Actor;
+  try { actor = await requirePermission('purchasing', 'edit'); }
+  catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
+  const { id } = await ctx.params;
+  if (!UUID.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const body = await parseJsonBody(req, updateDocumentBodySchema);
+  if (!body.ok) return body.response;
+  const doc = await findDocument(id);
+  if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+  let lines = body.data.lines;
+  if (doc.doc_type === 'rfq') {
+    if (lines && (await listRecipients(id)).length > 0) {
+      return NextResponse.json({ error: 'לא ניתן לשנות שורות אחרי ששלחו את הבקשה לספקים' }, { status: 409 });
+    }
+    if (lines && lines.some((l) => l.unit_price !== null)) {
+      return NextResponse.json({ error: 'בקשה להצעת מחיר אינה כוללת מחירים' }, { status: 400 });
+    }
+    if (!body.data.due_date) return NextResponse.json({ error: 'תאריך יעד הוא שדה חובה' }, { status: 400 });
+    if (body.data.title.trim() === '') return NextResponse.json({ error: 'יש להזין כותרת' }, { status: 400 });
+  } else {
+    if (lines && lines.some((l) => l.unit_price === null)) {
+      return NextResponse.json({ error: 'יש להזין מחיר בכל שורה' }, { status: 400 });
+    }
+    if (body.data.supplier_id && !(await getSupplierBrief(body.data.supplier_id))) {
+      return NextResponse.json({ error: 'הספק לא נמצא' }, { status: 400 });
+    }
+  }
+  lines = lines ?? undefined;
+
+  await updateDocument(id, {
+    title: body.data.title,
+    supplier_id: doc.doc_type === 'po' ? body.data.supplier_id : null,
+    notes: body.data.notes,
+    due_date: doc.doc_type === 'rfq' ? body.data.due_date : null,
+    lines,
+  });
+  await writeAudit({
+    actorUserId: actor.id, action: 'updated', entityType: 'purchasing_document', entityId: id,
+    changes: { before: { title: doc.title, notes: doc.notes }, after: { title: body.data.title, notes: body.data.notes, lines_replaced: !!lines } },
+  });
+  return NextResponse.json({ ok: true });
+}
+
+// DELETE /api/purchasing/documents/[id] — soft delete; the number is never reissued.
+export async function DELETE(_req: NextRequest, ctx: Ctx) {
+  let actor: Actor;
+  try { actor = await requirePermission('purchasing', 'edit'); }
+  catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
+  const { id } = await ctx.params;
+  if (!UUID.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const doc = await findDocument(id);
+  if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  // A request the suppliers can still see must not vanish under them silently:
+  // it is closed (soft-deleted → every link answers 404) only on purpose.
+  const files = await listDocumentFiles(id);
+  if (!(await softDeleteDocument(id))) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  await removePurchasingObjects(files.map((f) => f.object_key));
+  await writeAudit({
+    actorUserId: actor.id, action: 'deleted', entityType: 'purchasing_document', entityId: id,
+    changes: { before: { doc_type: doc.doc_type, number: doc.number } },
+  });
+  return NextResponse.json({ ok: true });
+}
