@@ -44,6 +44,12 @@ const PUBLIC = new Set([
   // A fire-and-forget beacon from step 2, same pre-auth reach as the two
   // above — no phone, no code, just a WebOTP lifecycle label.
   'src/app/api/portal/otp/webotp-diag/route.ts',
+  // Purchasing: the personal link of ONE supplier on ONE request (21/10/2026).
+  // Token-gated (32 random bytes, scoped to (request, supplier)), rate-limited
+  // per IP and per token (src/lib/purchasing/publicGate.ts), no session.
+  'src/app/api/public/quote/[token]/route.ts',
+  'src/app/api/public/quote/[token]/files/route.ts',
+  'src/app/api/public/quote/[token]/files/[fileId]/route.ts',
 ]);
 
 run('check-api-auth', async () => {

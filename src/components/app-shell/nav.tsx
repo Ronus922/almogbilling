@@ -5,7 +5,7 @@ import {
   Building2, LayoutDashboard, LayoutGrid, Users, Truck, ClipboardList, ListChecks,
   Calendar, FileText, MessageCircle, MessagesSquare, Bell, Sliders,
   MapPin, UserCog, KeyRound, SquareParking, Settings as SettingsIcon, Coins, SlidersHorizontal,
-  ShieldCheck, Gavel, Megaphone, MessageSquareText, History,
+  ShieldCheck, Gavel, Megaphone, MessageSquareText, History, ShoppingCart,
   type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -105,6 +105,15 @@ const SECTIONS: MenuSection[] = [
     items: [
       { label: 'סקירה חודשית',      icon: Coins, href: '/finance', module: 'finance', exact: true },
       { label: 'סעיפים והגדרות',    icon: SlidersHorizontal, href: '/finance/settings', module: 'finance' },
+    ],
+  },
+  // Purchasing ("רכש", 21/10/2026) — requests for quotation + purchase orders.
+  // Module `purchasing` = super admin only by default, so the group is absent
+  // for everyone else (a section with no permitted items hides itself).
+  {
+    title: 'רכש',
+    items: [
+      { label: 'בקשות והזמנות', icon: ShoppingCart, href: '/purchasing', module: 'purchasing' },
     ],
   },
   // Owners portal ("פורטל בעלי דירות") — the decisions & protocols the portal

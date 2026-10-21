@@ -3112,6 +3112,186 @@ COMMENT ON TABLE public.portal_sessions IS 'Sessions of the owners portal — de
 
 
 --
+-- Name: purchasing_dispatches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.purchasing_dispatches (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    document_id uuid NOT NULL,
+    supplier_id uuid NOT NULL,
+    channel text NOT NULL,
+    status text NOT NULL,
+    error text,
+    sent_by uuid,
+    sent_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT purchasing_dispatches_channel_check CHECK ((channel = ANY (ARRAY['email'::text, 'whatsapp'::text]))),
+    CONSTRAINT purchasing_dispatches_status_check CHECK ((status = ANY (ARRAY['sent'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: purchasing_documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.purchasing_documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    doc_type text NOT NULL,
+    number integer NOT NULL,
+    doc_date date NOT NULL,
+    title text DEFAULT ''::text NOT NULL,
+    supplier_id uuid,
+    notes text DEFAULT ''::text NOT NULL,
+    due_date date,
+    vat_rate numeric(5,2) NOT NULL,
+    source_rfq_id uuid,
+    winner_supplier_id uuid,
+    winner_chosen_by uuid,
+    winner_chosen_at timestamp with time zone,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT purchasing_documents_doc_type_check CHECK ((doc_type = ANY (ARRAY['rfq'::text, 'po'::text]))),
+    CONSTRAINT purchasing_documents_notes_length CHECK ((char_length(notes) <= 4000)),
+    CONSTRAINT purchasing_documents_number_check CHECK ((number > 0)),
+    CONSTRAINT purchasing_documents_po_has_supplier CHECK (((doc_type <> 'po'::text) OR (supplier_id IS NOT NULL))),
+    CONSTRAINT purchasing_documents_rfq_has_due CHECK (((doc_type <> 'rfq'::text) OR (due_date IS NOT NULL))),
+    CONSTRAINT purchasing_documents_title_length CHECK ((char_length(title) <= 200)),
+    CONSTRAINT purchasing_documents_vat_rate_check CHECK (((vat_rate >= (0)::numeric) AND (vat_rate <= (100)::numeric))),
+    CONSTRAINT purchasing_documents_winner_only_rfq CHECK (((winner_supplier_id IS NULL) OR (doc_type = 'rfq'::text)))
+);
+
+
+--
+-- Name: TABLE purchasing_documents; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.purchasing_documents IS 'Purchasing: request for quotation (rfq) and purchase order (po). Separate number series per doc_type (purchasing_sequences).';
+
+
+--
+-- Name: COLUMN purchasing_documents.vat_rate; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.purchasing_documents.vat_rate IS 'VAT percent stamped when the document was issued — later changes of the company setting do not touch it.';
+
+
+--
+-- Name: purchasing_files; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.purchasing_files (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    document_id uuid,
+    quote_id uuid,
+    bucket text DEFAULT 'purchasing-files'::text NOT NULL,
+    object_key text NOT NULL,
+    original_filename text NOT NULL,
+    mime_type text NOT NULL,
+    file_size bigint NOT NULL,
+    uploaded_via text NOT NULL,
+    uploaded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT purchasing_files_file_size_check CHECK ((file_size > 0)),
+    CONSTRAINT purchasing_files_one_owner CHECK (((document_id IS NULL) <> (quote_id IS NULL))),
+    CONSTRAINT purchasing_files_uploaded_via_check CHECK ((uploaded_via = ANY (ARRAY['staff'::text, 'supplier'::text])))
+);
+
+
+--
+-- Name: purchasing_lines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.purchasing_lines (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    document_id uuid NOT NULL,
+    sort_order integer NOT NULL,
+    description text NOT NULL,
+    quantity numeric(12,3) NOT NULL,
+    unit_price numeric(12,2),
+    CONSTRAINT purchasing_lines_description_check CHECK (((char_length(description) >= 1) AND (char_length(description) <= 500))),
+    CONSTRAINT purchasing_lines_quantity_check CHECK ((quantity > (0)::numeric)),
+    CONSTRAINT purchasing_lines_unit_price_check CHECK (((unit_price IS NULL) OR (unit_price >= (0)::numeric)))
+);
+
+
+--
+-- Name: purchasing_quote_lines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.purchasing_quote_lines (
+    quote_id uuid NOT NULL,
+    line_id uuid NOT NULL,
+    unit_price numeric(12,2) NOT NULL,
+    CONSTRAINT purchasing_quote_lines_unit_price_check CHECK ((unit_price >= (0)::numeric))
+);
+
+
+--
+-- Name: purchasing_quotes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.purchasing_quotes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    rfq_id uuid NOT NULL,
+    supplier_id uuid NOT NULL,
+    source text NOT NULL,
+    total_amount numeric(12,2),
+    valid_until date,
+    notes text DEFAULT ''::text NOT NULL,
+    submitted_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by uuid,
+    CONSTRAINT purchasing_quotes_notes_check CHECK ((char_length(notes) <= 2000)),
+    CONSTRAINT purchasing_quotes_source_check CHECK ((source = ANY (ARRAY['portal'::text, 'manual'::text]))),
+    CONSTRAINT purchasing_quotes_total_amount_check CHECK (((total_amount IS NULL) OR (total_amount >= (0)::numeric)))
+);
+
+
+--
+-- Name: COLUMN purchasing_quotes.total_amount; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.purchasing_quotes.total_amount IS 'Offer total BEFORE VAT, for an offer without per-line prices (e.g. a file received by e-mail). Ignored when every request line has a price.';
+
+
+--
+-- Name: purchasing_rfq_recipients; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.purchasing_rfq_recipients (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    rfq_id uuid NOT NULL,
+    supplier_id uuid NOT NULL,
+    token text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    first_viewed_at timestamp with time zone,
+    last_viewed_at timestamp with time zone,
+    CONSTRAINT purchasing_rfq_recipients_token_check CHECK ((char_length(token) >= 32))
+);
+
+
+--
+-- Name: COLUMN purchasing_rfq_recipients.token; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.purchasing_rfq_recipients.token IS 'Personal public link token of one supplier for one request: unguessable, scoped to (rfq, supplier). Public route /quote/<token>.';
+
+
+--
+-- Name: purchasing_sequences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.purchasing_sequences (
+    doc_type text NOT NULL,
+    last_number integer NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT purchasing_sequences_doc_type_check CHECK ((doc_type = ANY (ARRAY['rfq'::text, 'po'::text]))),
+    CONSTRAINT purchasing_sequences_last_number_check CHECK ((last_number >= 0))
+);
+
+
+--
 -- Name: reminder_categories; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4751,6 +4931,102 @@ ALTER TABLE ONLY public.portal_sessions
 
 
 --
+-- Name: purchasing_dispatches purchasing_dispatches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_dispatches
+    ADD CONSTRAINT purchasing_dispatches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchasing_documents purchasing_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_documents
+    ADD CONSTRAINT purchasing_documents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchasing_files purchasing_files_object_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_files
+    ADD CONSTRAINT purchasing_files_object_key_key UNIQUE (object_key);
+
+
+--
+-- Name: purchasing_files purchasing_files_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_files
+    ADD CONSTRAINT purchasing_files_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchasing_lines purchasing_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_lines
+    ADD CONSTRAINT purchasing_lines_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchasing_quote_lines purchasing_quote_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_quote_lines
+    ADD CONSTRAINT purchasing_quote_lines_pkey PRIMARY KEY (quote_id, line_id);
+
+
+--
+-- Name: purchasing_quotes purchasing_quotes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_quotes
+    ADD CONSTRAINT purchasing_quotes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchasing_quotes purchasing_quotes_rfq_id_supplier_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_quotes
+    ADD CONSTRAINT purchasing_quotes_rfq_id_supplier_id_key UNIQUE (rfq_id, supplier_id);
+
+
+--
+-- Name: purchasing_rfq_recipients purchasing_rfq_recipients_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_rfq_recipients
+    ADD CONSTRAINT purchasing_rfq_recipients_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchasing_rfq_recipients purchasing_rfq_recipients_rfq_id_supplier_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_rfq_recipients
+    ADD CONSTRAINT purchasing_rfq_recipients_rfq_id_supplier_id_key UNIQUE (rfq_id, supplier_id);
+
+
+--
+-- Name: purchasing_rfq_recipients purchasing_rfq_recipients_token_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_rfq_recipients
+    ADD CONSTRAINT purchasing_rfq_recipients_token_key UNIQUE (token);
+
+
+--
+-- Name: purchasing_sequences purchasing_sequences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_sequences
+    ADD CONSTRAINT purchasing_sequences_pkey PRIMARY KEY (doc_type);
+
+
+--
 -- Name: reminder_categories reminder_categories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5974,6 +6250,69 @@ CREATE INDEX portal_phone_entry_flags_open ON public.portal_phone_entry_flags US
 --
 
 CREATE INDEX portal_sessions_phone_idx ON public.portal_sessions USING btree (phone_e164);
+
+
+--
+-- Name: purchasing_dispatches_document_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX purchasing_dispatches_document_idx ON public.purchasing_dispatches USING btree (document_id, sent_at DESC);
+
+
+--
+-- Name: purchasing_documents_list_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX purchasing_documents_list_idx ON public.purchasing_documents USING btree (doc_type, doc_date DESC, number DESC) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: purchasing_documents_number_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX purchasing_documents_number_uidx ON public.purchasing_documents USING btree (doc_type, number);
+
+
+--
+-- Name: purchasing_documents_source_rfq_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX purchasing_documents_source_rfq_idx ON public.purchasing_documents USING btree (source_rfq_id) WHERE (source_rfq_id IS NOT NULL);
+
+
+--
+-- Name: purchasing_documents_supplier_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX purchasing_documents_supplier_idx ON public.purchasing_documents USING btree (supplier_id) WHERE (supplier_id IS NOT NULL);
+
+
+--
+-- Name: purchasing_files_document_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX purchasing_files_document_idx ON public.purchasing_files USING btree (document_id) WHERE (document_id IS NOT NULL);
+
+
+--
+-- Name: purchasing_files_quote_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX purchasing_files_quote_idx ON public.purchasing_files USING btree (quote_id) WHERE (quote_id IS NOT NULL);
+
+
+--
+-- Name: purchasing_lines_description_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX purchasing_lines_description_idx ON public.purchasing_lines USING btree (description);
+
+
+--
+-- Name: purchasing_lines_document_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX purchasing_lines_document_idx ON public.purchasing_lines USING btree (document_id, sort_order);
 
 
 --
@@ -7347,6 +7686,158 @@ ALTER TABLE ONLY public.portal_phone_entry_flags
 
 
 --
+-- Name: purchasing_dispatches purchasing_dispatches_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_dispatches
+    ADD CONSTRAINT purchasing_dispatches_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.purchasing_documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: purchasing_dispatches purchasing_dispatches_sent_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_dispatches
+    ADD CONSTRAINT purchasing_dispatches_sent_by_fkey FOREIGN KEY (sent_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: purchasing_dispatches purchasing_dispatches_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_dispatches
+    ADD CONSTRAINT purchasing_dispatches_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: purchasing_documents purchasing_documents_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_documents
+    ADD CONSTRAINT purchasing_documents_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: purchasing_documents purchasing_documents_source_rfq_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_documents
+    ADD CONSTRAINT purchasing_documents_source_rfq_id_fkey FOREIGN KEY (source_rfq_id) REFERENCES public.purchasing_documents(id) ON DELETE SET NULL;
+
+
+--
+-- Name: purchasing_documents purchasing_documents_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_documents
+    ADD CONSTRAINT purchasing_documents_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: purchasing_documents purchasing_documents_winner_chosen_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_documents
+    ADD CONSTRAINT purchasing_documents_winner_chosen_by_fkey FOREIGN KEY (winner_chosen_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: purchasing_documents purchasing_documents_winner_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_documents
+    ADD CONSTRAINT purchasing_documents_winner_supplier_id_fkey FOREIGN KEY (winner_supplier_id) REFERENCES public.suppliers(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: purchasing_files purchasing_files_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_files
+    ADD CONSTRAINT purchasing_files_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.purchasing_documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: purchasing_files purchasing_files_quote_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_files
+    ADD CONSTRAINT purchasing_files_quote_id_fkey FOREIGN KEY (quote_id) REFERENCES public.purchasing_quotes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: purchasing_files purchasing_files_uploaded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_files
+    ADD CONSTRAINT purchasing_files_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: purchasing_lines purchasing_lines_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_lines
+    ADD CONSTRAINT purchasing_lines_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.purchasing_documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: purchasing_quote_lines purchasing_quote_lines_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_quote_lines
+    ADD CONSTRAINT purchasing_quote_lines_line_id_fkey FOREIGN KEY (line_id) REFERENCES public.purchasing_lines(id) ON DELETE CASCADE;
+
+
+--
+-- Name: purchasing_quote_lines purchasing_quote_lines_quote_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_quote_lines
+    ADD CONSTRAINT purchasing_quote_lines_quote_id_fkey FOREIGN KEY (quote_id) REFERENCES public.purchasing_quotes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: purchasing_quotes purchasing_quotes_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_quotes
+    ADD CONSTRAINT purchasing_quotes_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: purchasing_quotes purchasing_quotes_rfq_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_quotes
+    ADD CONSTRAINT purchasing_quotes_rfq_id_fkey FOREIGN KEY (rfq_id) REFERENCES public.purchasing_documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: purchasing_quotes purchasing_quotes_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_quotes
+    ADD CONSTRAINT purchasing_quotes_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: purchasing_rfq_recipients purchasing_rfq_recipients_rfq_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_rfq_recipients
+    ADD CONSTRAINT purchasing_rfq_recipients_rfq_id_fkey FOREIGN KEY (rfq_id) REFERENCES public.purchasing_documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: purchasing_rfq_recipients purchasing_rfq_recipients_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.purchasing_rfq_recipients
+    ADD CONSTRAINT purchasing_rfq_recipients_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: reminder_categories reminder_categories_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7893,5 +8384,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261017090427'),
     ('20261017163621'),
     ('20261018081443'),
-    ('20261018122800')
+    ('20261018122800'),
+    ('20261021102307')
 ;

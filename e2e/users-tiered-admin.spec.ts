@@ -80,6 +80,21 @@ test.describe('tiered users management — as an admin', () => {
     await expect(adminPage.getByRole('button', { name: new RegExp(MANAGER_NAME) })).toBeVisible();
   });
 
+  test('purchasing ("רכש") is closed to an admin: no nav item, the page bounces, the routes answer 403', async () => {
+    const page = adminPage!;
+    await page.goto('/dashboard');
+    await expect(page.locator('a[href="/purchasing"]')).toHaveCount(0);
+    await page.goto('/purchasing');
+    await expect(page).not.toHaveURL(/\/purchasing/);
+    for (const url of ['/api/purchasing/documents?type=rfq', '/api/purchasing/company', '/api/purchasing/suppliers']) {
+      expect((await page.request.get(url)).status(), url).toBe(403);
+    }
+    // The file proxy too: not even a well-formed key opens the bucket.
+    expect((await page.request.get('/api/files/purchasing-files/00000000-0000-4000-8000-000000000001.pdf')).status()).toBe(403);
+    // Back on the users screen for the next test.
+    await page.goto('/settings/users');
+  });
+
   test('a manager\'s matrix: the management tier is locked, finance is not — and the route agrees', async () => {
     const page = adminPage!;
     await page.getByRole('button', { name: new RegExp(MANAGER_NAME) }).click();
@@ -87,16 +102,18 @@ test.describe('tiered users management — as an admin', () => {
     await expect(panel).toBeVisible();
     await panel.getByRole('tab', { name: /תפקיד והרשאות/ }).click();
 
-    for (const label of ['ניהול משתמשים', 'הרשאות', 'הגדרות']) {
+    // … and purchasing (21/10/2026): only a super admin grants it.
+    for (const label of ['ניהול משתמשים', 'הרשאות', 'הגדרות', 'רכש']) {
       await expect(panel.getByRole('checkbox', { name: `${label} — צפייה`, exact: true })).toHaveAttribute('aria-disabled', 'true');
       await expect(panel.getByRole('checkbox', { name: `${label} — עריכה`, exact: true })).toHaveAttribute('aria-disabled', 'true');
     }
-    await expect(panel.getByText('סופר אדמין בלבד')).toHaveCount(3);
+    await expect(panel.getByText('סופר אדמין בלבד')).toHaveCount(4);
     await expect(panel.getByRole('checkbox', { name: 'שקיפות כספית — צפייה', exact: true })).not.toHaveAttribute('aria-disabled', 'true');
 
     const put = (module: string, can_view: boolean) =>
       page.request.put(`/api/users/${managerId}/permissions`, { data: { module, can_view, can_edit: false } });
     expect((await put('settings', true)).status()).toBe(403);
+    expect((await put('purchasing', true)).status()).toBe(403);
     expect((await put('users_management', true)).status()).toBe(403);
     expect((await put('finance', true)).status()).toBe(200);
     expect((await put('finance', false)).status()).toBe(200);

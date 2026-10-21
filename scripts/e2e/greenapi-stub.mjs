@@ -7,6 +7,8 @@
 // handed in memory, where a spec can fetch it:
 //
 //   POST /waInstance<id>/sendMessage/<token>   → { idMessage }
+//   POST /waInstance<id>/uploadFile/<token>    → { urlFile }          (purchasing PDF, 21/10/2026)
+//   POST /waInstance<id>/sendFileByUrl/<token> → { idMessage }        (recorded with its fileName / caption)
 //   GET  /__messages?chatId=…                  → every message for that chat
 //   POST /__reset                              → forget everything
 //
@@ -15,7 +17,7 @@
 import { createServer } from 'node:http';
 
 const PORT = Number(process.env.E2E_GREENAPI_PORT ?? 3110);
-/** @type {Array<{ chatId: string, message: string, at: string }>} */
+/** @type {Array<{ chatId: string, message: string, at: string, fileName?: string, urlFile?: string }>} */
 const sent = [];
 let n = 0;
 
@@ -49,6 +51,23 @@ createServer(async (req, res) => {
   if (req.method === 'POST' && /^\/waInstance[^/]+\/sendMessage\/[^/]+$/.test(url.pathname)) {
     const body = await readBody(req);
     sent.push({ chatId: String(body.chatId ?? ''), message: String(body.message ?? ''), at: new Date().toISOString() });
+    n += 1;
+    return json(res, 200, { idMessage: `stub-${n}` });
+  }
+
+  // The PDF of a purchasing document: pushed to Green's storage, then sent by URL.
+  if (req.method === 'POST' && /^\/waInstance[^/]+\/uploadFile\/[^/]+$/.test(url.pathname)) {
+    await new Promise((resolve) => { req.on('end', resolve); req.resume(); }); // drain the raw bytes
+    n += 1;
+    return json(res, 200, { urlFile: `http://127.0.0.1:${PORT}/files/stub-${n}.pdf` });
+  }
+
+  if (req.method === 'POST' && /^\/waInstance[^/]+\/sendFileByUrl\/[^/]+$/.test(url.pathname)) {
+    const body = await readBody(req);
+    sent.push({
+      chatId: String(body.chatId ?? ''), message: String(body.caption ?? ''), at: new Date().toISOString(),
+      fileName: String(body.fileName ?? ''), urlFile: String(body.urlFile ?? ''),
+    });
     n += 1;
     return json(res, 200, { idMessage: `stub-${n}` });
   }

@@ -6,11 +6,19 @@ import { logger } from '@/lib/logger';
 
 export { isAuthFailure };
 
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType: string;
+}
+
 interface SendArgs {
   to: string;
   subject: string;
   html: string;
   text: string;
+  /** Real attachments (bytes), never links — e.g. the purchasing PDF. */
+  attachments?: EmailAttachment[];
 }
 
 export interface SendResult {

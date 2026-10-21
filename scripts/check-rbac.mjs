@@ -16,6 +16,9 @@
 //     • the users screen opens by ROLE (admin / super_admin), and an admin
 //       may not set the management tier (users / permissions / settings) in
 //       anyone's matrix — finance / portal stay grantable (07/10/2026).
+//     • purchasing ("רכש", 21/10/2026) is SUPER ADMIN ONLY: an admin is denied
+//       too (it is in SUPER_ADMIN_ONLY), a matrix role is denied without a row,
+//       and an admin may not grant it (MATRIX_MANAGEMENT_MODULES).
 //     • broadcasts on BOTH channels (WhatsApp / email, 09/10/2026) ride the
 //       existing whatsapp_chat module — send = edit, history = view — with no
 //       module of their own.
@@ -58,6 +61,18 @@ run('check-rbac', async () => {
   t('portal_decisions: manager ללא שורה נחסם', hasPermission('manager', [], 'portal_decisions', 'view') === false);
   t('portal_decisions: manager עם המטריצה המלאה נחסם', hasPermission('manager', DEFAULT_MANAGER, 'portal_decisions', 'view') === false);
   t('portal_decisions: viewer (qa-viewer) נחסם', hasPermission('viewer', DEFAULT_VIEWER, 'portal_decisions', 'view') === false);
+
+  // purchasing — super admin only by default, in every layer.
+  t('purchasing: super_admin רשאי edit', hasPermission('super_admin', [], 'purchasing', 'edit') === true);
+  t('purchasing: admin נחסם view', hasPermission('admin', [], 'purchasing', 'view') === false);
+  t('purchasing: admin נחסם edit', hasPermission('admin', [], 'purchasing', 'edit') === false);
+  t('purchasing: manager ללא שורה נחסם', hasPermission('manager', [], 'purchasing', 'view') === false);
+  t('purchasing: manager עם המטריצה המלאה נחסם', hasPermission('manager', DEFAULT_MANAGER, 'purchasing', 'view') === false);
+  t('purchasing: viewer נחסם', hasPermission('viewer', DEFAULT_VIEWER, 'purchasing', 'view') === false);
+  t('purchasing: עובד שטח נחסם', hasPermission('cleaner', DEFAULT_WORKER, 'purchasing', 'view') === false);
+  t('purchasing: אדמין לא יכול להעניק אותו במטריצה', canGrantModule('admin', 'purchasing') === false);
+  t('purchasing: סופר אדמין יכול להעניק אותו במטריצה', canGrantModule('super_admin', 'purchasing') === true);
+  t('purchasing: רשום ב-MODULES', MODULES.some((m) => m.key === 'purchasing'));
   t('portal_decisions: worker נחסם', hasPermission('cleaner', DEFAULT_WORKER, 'portal_decisions', 'view') === false);
   t('portal_manage: viewer ללא שורה נחסם', hasPermission('viewer', [], 'portal_manage', 'view') === false);
   t('portal_manage: cleaner ללא שורה נחסם', hasPermission('cleaner', [], 'portal_manage', 'view') === false);
