@@ -63,6 +63,9 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<Actor>> = {
   // /api/portal/decisions/[id]/file, which demands a portal session AND
   // `published`.
   'portal-decisions': () => requirePermission('portal_decisions', 'view'),
+  // Purchasing — documents' attachments, supplier quote files, the letterhead's
+  // logo and signature. Super admin only by default (module `purchasing`).
+  'purchasing-files': () => requirePermission('purchasing', 'view'),
 };
 
 /**
@@ -201,6 +204,18 @@ async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<
     );
     if (!row) return orphan;
     return { ...base, fileName: row.original_filename, entityType: 'portal_decision', entityId: row.id };
+  }
+  if (bucket === 'purchasing-files') {
+    const row = await queryOne<{ id: string; original_filename: string; document_id: string | null; quote_id: string | null }>(
+      `select id, original_filename, document_id, quote_id from public.purchasing_files where object_key = $1 limit 1`,
+      [path],
+    );
+    // The letterhead images live in app_settings, not in purchasing_files: an
+    // unclaimed key is still served (and logged as a bare file), like any orphan.
+    if (!row) return orphan;
+    return row.document_id
+      ? { ...base, fileName: row.original_filename, entityType: 'purchasing_document', entityId: row.document_id, documentId: row.id }
+      : { ...base, fileName: row.original_filename, entityType: 'purchasing_quote', entityId: row.quote_id as string, documentId: row.id };
   }
   // issue-attachments: bare paths `<issueId>/<uuid>.<ext>`, no display name — the
   // prefix IS the parent (enforced at upload by buildObjectKey / isPathUnderIssue).

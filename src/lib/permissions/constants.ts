@@ -94,9 +94,15 @@ export const MODULES: ModuleMeta[] = [
   // every matrix role (no row = denied), so no user_permissions re-seed is
   // needed.
   { key: 'portal_decisions',   label: 'החלטות, פרוטוקולים ומאזנים', group: 'admin' },
+  // Purchasing ("רכש", 21/10/2026) — requests for quotation and purchase
+  // orders. SUPER ADMIN ONLY by decision: it is in SUPER_ADMIN_ONLY below, so
+  // even an admin is denied; a matrix role is denied too (no row = denied) and
+  // only a super admin may grant it, per user. No re-seed migration is needed
+  // for the same reason as `finance`: absence of a row IS the default.
+  { key: 'purchasing',         label: 'רכש',                group: 'admin' },
 ];
 
-export const SUPER_ADMIN_ONLY: readonly string[] = ['users_management', 'roles_management'];
+export const SUPER_ADMIN_ONLY: readonly string[] = ['users_management', 'roles_management', 'purchasing'];
 
 // ── The management tier of the permission matrix (decision 07/10/2026) ──────
 // Users, permissions and settings are decided by ROLE, not handed out per
@@ -106,7 +112,7 @@ export const SUPER_ADMIN_ONLY: readonly string[] = ['users_management', 'roles_m
 // finance / portal_* stay grantable by an admin (Ronen, 07/10/2026).
 // One predicate, canGrantModule() (check.ts), for the routes and the
 // matrix's locked rows, so the two layers cannot drift apart.
-export const MATRIX_MANAGEMENT_MODULES: readonly string[] = ['users_management', 'roles_management', 'settings'];
+export const MATRIX_MANAGEMENT_MODULES: readonly string[] = ['users_management', 'roles_management', 'settings', 'purchasing'];
 
 // ── Personal assistant ("עוזר אישי", the floating bot) ───────────────────────
 // ALLOWLIST of the staff roles that may use it. The assistant answers with other
@@ -181,6 +187,7 @@ export const DEFAULT_MANAGER: ModulePermission[] = [
   noPerm('finance'),
   noPerm('portal_manage'),
   noPerm('portal_decisions'),
+  noPerm('purchasing'),
 ];
 
 // Viewer defaults — read-only access to the DEBTORS SCREEN (dashboard) ONLY.
@@ -219,6 +226,7 @@ export const DEFAULT_VIEWER: ModulePermission[] = [
   noPerm('finance'),
   noPerm('portal_manage'),
   noPerm('portal_decisions'),
+  noPerm('purchasing'),
 ];
 
 // Field-worker defaults (cleaner + maintenance) — tasks + issues only, view+edit.
@@ -256,6 +264,7 @@ export const DEFAULT_WORKER: ModulePermission[] = [
   noPerm('finance'),
   noPerm('portal_manage'),
   noPerm('portal_decisions'),
+  noPerm('purchasing'),
 ];
 
 // ── Role classification ──────────────────────────────────────────────────────
