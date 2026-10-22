@@ -1,23 +1,30 @@
 'use client';
 
-// The read view of one document (DESIGN §12 — a side panel): its details,
-// lines and totals, files, the send log and — for a request — the suppliers,
-// quotes, comparison and winner. Actions: PDF (view / download), send, edit,
-// delete. Everything is fetched from /api/purchasing/documents/[id] on open.
+// The read view of one document (DESIGN §12 — a side panel). The header carries
+// the actions (delete on the right; PDF · print · edit · send on the left, send
+// last); under it, tabs: "מסמך" (details, lines, totals, files and — for a
+// request — the suppliers), "השוואת הצעות" (request only: comparison + winner)
+// and "יומן שליחות". Everything is fetched from /api/purchasing/documents/[id].
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Download, Eye, FileText, Hash, History, ListChecks, Loader2, Paperclip, Pencil, Send, Trash2, X } from 'lucide-react';
+import { Award, Download, Eye, FileText, Hash, History, ListChecks, Loader2, Paperclip, Pencil, Printer, Send, Trash2, X } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { Section } from '@/components/side-panel/Section';
 import { formatFileSize } from '@/lib/decisions';
+import { printPdf } from '@/lib/purchasing/printPdf';
 import {
   computeTotals, docHeading, formatDocDate, formatIls, formatQty, formatStampIL, formatVatRate, isRfqOpen, lineTotal,
 } from '@/lib/purchasing/model';
 import { QuotesSection } from './QuotesSection';
 import { SendSheet } from './SendSheet';
 import type { DocumentDetail, PoPrefill, SupplierBrief } from './types';
+
+type PanelTab = 'document' | 'compare' | 'log';
+
+const HEADER_BTN = 'inline-flex h-11 items-center gap-2 rounded-lg border px-4 text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50';
+const HEADER_GHOST = `${HEADER_BTN} border-white/25 bg-white/5 text-white hover:border-white/50 hover:bg-white/15`;
 
 interface Props {
   documentId: string | null;
@@ -37,6 +44,11 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
   const [loading, setLoading] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  // Keyed by document: every document opens on its own first tab.
+  const [picked, setPicked] = useState<{ id: string | null; tab: PanelTab }>({ id: null, tab: 'document' });
+  const tab: PanelTab = picked.id === documentId ? picked.tab : 'document';
+  const setTab = (t: PanelTab) => setPicked({ id: documentId, tab: t });
 
   const load = useCallback(async (id: string) => {
     try {
@@ -74,11 +86,30 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
     }
   }
 
+  async function print() {
+    if (!doc) return;
+    setPrinting(true);
+    try {
+      await printPdf(pdfUrl);
+    } catch {
+      toast.error('ההדפסה נכשלה');
+    } finally {
+      setPrinting(false);
+    }
+  }
+
   const doc = detail?.document;
   const isRfq = doc?.doc_type === 'rfq';
   const priced = !!detail && (!isRfq || detail.lines.some((l) => l.unit_price !== null));
   const totals = detail && doc && priced ? computeTotals(detail.lines, doc.vat_rate) : null;
   const pdfUrl = doc ? `/api/purchasing/documents/${doc.id}/pdf` : '';
+  // A draft has no number and no PDF — the PDF actions stay on screen, disabled.
+  const isDraft = doc?.status === 'draft';
+  const tabs: Array<{ key: PanelTab; label: string; icon: typeof Hash }> = [
+    { key: 'document', label: 'מסמך', icon: FileText },
+    ...(isRfq ? [{ key: 'compare' as const, label: 'השוואת הצעות', icon: Award }] : []),
+    { key: 'log', label: 'יומן שליחות', icon: History },
+  ];
 
   return (
     <>
@@ -106,6 +137,75 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
                 <X className="h-5 w-5" />
               </button>
             </div>
+
+            {detail && doc && (
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2" data-doc-actions>
+                {/* RTL: the first child sits on the right. */}
+                <div className="flex items-center gap-2">
+                  {canEdit && (
+                    <button
+                      type="button" disabled={deleting} onClick={remove} data-action="delete"
+                      className={`${HEADER_BTN} border-rose-300/50 bg-rose-500/15 text-rose-100 hover:border-rose-300 hover:bg-rose-500/30`}
+                    >
+                      <Trash2 className="h-4 w-4" /> מחיקה
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2" data-actions-left>
+                  <a
+                    href={isDraft ? undefined : pdfUrl} target="_blank" rel="noopener noreferrer"
+                    aria-disabled={isDraft || undefined} data-action="view-pdf" className={HEADER_GHOST}
+                  >
+                    <Eye className="h-4 w-4" /> צפייה ב-PDF
+                  </a>
+                  <a
+                    href={isDraft ? undefined : `${pdfUrl}?download=1`}
+                    aria-disabled={isDraft || undefined} data-action="download-pdf" className={HEADER_GHOST}
+                  >
+                    <Download className="h-4 w-4" /> הורדת PDF
+                  </a>
+                  <button
+                    type="button" disabled={isDraft || printing} onClick={print} data-action="print" className={HEADER_GHOST}
+                  >
+                    {printing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Printer className="h-4 w-4" aria-hidden />} הדפס
+                  </button>
+                  {canEdit && (
+                    <button type="button" onClick={() => onEdit(detail)} data-action="edit" className={HEADER_GHOST}>
+                      <Pencil className="h-4 w-4" /> עריכה
+                    </button>
+                  )}
+                  {canEdit && (
+                    <button
+                      type="button" onClick={() => setSendOpen(true)} disabled={isDraft} data-action="send"
+                      className={`${HEADER_BTN} border-white bg-white text-blue-950 hover:bg-white/90`}
+                    >
+                      <Send className="h-4 w-4" /> שליחה
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {detail && doc && (
+              <div role="tablist" aria-label="חלקי המסמך" className="-mb-2 mt-1 flex gap-1 overflow-x-auto" data-doc-tabs>
+                {tabs.map((t) => {
+                  const active = tab === t.key;
+                  return (
+                    <button
+                      key={t.key} type="button" role="tab" aria-selected={active} data-doc-tab={t.key}
+                      onClick={() => setTab(t.key)}
+                      className={cn(
+                        'inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-4 py-2 text-sm font-semibold transition-colors',
+                        active ? 'border-white text-white' : 'border-transparent text-white/60 hover:text-white',
+                      )}
+                    >
+                      <t.icon className="h-4 w-4" aria-hidden />
+                      {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </SheetHeader>
 
           <div className="flex-1 space-y-5 overflow-y-auto bg-slate-50/60 p-5">
@@ -115,17 +215,8 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
 
             {detail && doc && (
               <>
-                <div className="flex flex-wrap gap-2" data-pdf-actions>
-                  <a href={pdfUrl} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink-2 hover:bg-slate-50">
-                    <Eye className="h-4 w-4" /> צפייה ב-PDF
-                  </a>
-                  <a href={`${pdfUrl}?download=1`}
-                    className="inline-flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink-2 hover:bg-slate-50">
-                    <Download className="h-4 w-4" /> הורדת PDF
-                  </a>
-                </div>
-
+                {tab === 'document' && (
+                <>
                 <Section title="פרטי המסמך" icon={Hash} iconTone="blue">
                   <dl className="grid gap-x-6 gap-y-3 py-2 text-sm sm:grid-cols-2" data-doc-details>
                     <div><dt className="text-ink-3">מספר</dt><dd className="font-semibold tabular-nums text-ink">{doc.number}</dd></div>
@@ -209,12 +300,26 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
 
                 {isRfq && (
                   <QuotesSection
-                    detail={detail} canEdit={canEdit} onChanged={reload}
+                    part="recipients" detail={detail} canEdit={canEdit} onChanged={reload}
+                    onCreatePo={(p) => { onClose(); onCreatePo(p); }}
+                  />
+                )}
+                </>
+                )}
+
+                {tab === 'compare' && isRfq && (
+                  <QuotesSection
+                    part="comparison" detail={detail} canEdit={canEdit} onChanged={reload}
                     onCreatePo={(p) => { onClose(); onCreatePo(p); }}
                   />
                 )}
 
-                {detail.dispatches.length > 0 && (
+                {tab === 'log' && (
+                  detail.dispatches.length === 0 ? (
+                    <p className="rounded-lg border border-line bg-white p-4 text-center text-sm text-ink-3" data-dispatches-empty>
+                      המסמך טרם נשלח.
+                    </p>
+                  ) : (
                   <Section title="יומן שליחות" icon={History} iconTone="slate">
                     <ul className="space-y-2 py-2" data-dispatches>
                       {detail.dispatches.map((d) => (
@@ -230,22 +335,12 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
                       ))}
                     </ul>
                   </Section>
+                  )
                 )}
               </>
             )}
           </div>
 
-          {detail && doc && canEdit && (
-            <footer className="flex-none border-t border-slate-200 bg-white px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-              <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:items-center">
-                <Button type="button" onClick={() => setSendOpen(true)} className="h-11 gap-2"><Send className="h-4 w-4" /> שליחה</Button>
-                <Button type="button" variant="outline" onClick={() => onEdit(detail)} className="h-11 gap-2"><Pencil className="h-4 w-4" /> עריכה</Button>
-                <Button type="button" variant="outline" disabled={deleting} onClick={remove} className="h-11 gap-2 text-rose-600 hover:bg-rose-50 sm:ms-auto">
-                  <Trash2 className="h-4 w-4" /> מחיקה
-                </Button>
-              </div>
-            </footer>
-          )}
         </SheetContent>
       </Sheet>
 

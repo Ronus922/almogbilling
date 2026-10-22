@@ -377,6 +377,7 @@ test('send the request by e-mail (PDF attached) and WhatsApp (message with the p
 
   // The log of the send is on the document.
   await page.keyboard.press('Escape');
+  await page.locator('[data-doc-tab="log"]').click();
   await expect(page.locator('[data-dispatches] li')).toHaveCount(6);
 });
 
@@ -483,6 +484,7 @@ test('the comparison, the winner — and a purchase order from it (no "quote out
   await expect(page.getByRole('button', { name: 'הזנת הצעה' })).toHaveCount(0);
 
   // Comparison: A (3×10 + 10×4 = 70) vs B (77). Cheapest = A.
+  await page.locator('[data-doc-tab="compare"]').click();
   const cmp = page.locator('[data-comparison]');
   await expect(cmp).toContainText('₪70.00');
   await expect(cmp).toContainText('₪77.00');
@@ -526,6 +528,100 @@ test('the comparison, the winner — and a purchase order from it (no "quote out
   expect(po.rows[0]).toMatchObject({ vat: 18, source_rfq_id: rfq, supplier_id: made.suppliers[0] });
 });
 
+test('the document panel: actions in the header (delete right; PDF · print · edit · send left, send last), three tabs, print opens the print dialog', async ({ page }) => {
+  // Count print dialogs: the PDF is printed from a hidden frame, so the frame's
+  // window.print is what must fire (headless Chromium has no real dialog).
+  await page.addInitScript(() => {
+    const w = window as unknown as { __prints: number };
+    w.__prints = 0;
+    const orig = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow')!;
+    Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+      get() {
+        const real = orig.get!.call(this) as Window | null;
+        if (!real) return real;
+        return new Proxy(real, {
+          get(t, k) {
+            if (k === 'print') return () => { w.__prints += 1; };
+            const v = Reflect.get(t, k);
+            return typeof v === 'function' ? v.bind(t) : v;
+          },
+        });
+      },
+    });
+  });
+  await page.goto('/purchasing');
+  await page.locator(`tr[data-number="${START_RFQ}"]`).click();
+  const panel = page.getByRole('dialog').filter({ has: page.locator('[data-doc-actions]') });
+  await expect(panel.locator('[data-doc-details]')).toBeVisible();
+
+  // Order on screen (RTL → larger x = further right): delete is rightmost, send is leftmost.
+  const xs = async (action: string) => {
+    const box = await panel.locator(`[data-action="${action}"]`).boundingBox();
+    expect(box, action).not.toBeNull();
+    return box!.x;
+  };
+  const [del, view, dl, print, edit, send] = await Promise.all(['delete', 'view-pdf', 'download-pdf', 'print', 'edit', 'send'].map(xs));
+  expect(del).toBeGreaterThan(view);
+  expect(view).toBeGreaterThan(dl);
+  expect(dl).toBeGreaterThan(print);
+  expect(print).toBeGreaterThan(edit);
+  expect(edit).toBeGreaterThan(send);
+  // The footer is gone — nothing but the header acts on the document.
+  await expect(panel.locator('footer')).toHaveCount(0);
+
+  // Print: no download, no new tab, the print dialog is requested once.
+  const pagesBefore = page.context().pages().length;
+  await panel.locator('[data-action="print"]').click();
+  // (headless Chromium has no inline PDF viewer, so the frame never reports `load` — the helper prints after 2.5s)
+  await expect(page.getByText('ההדפסה נכשלה')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __prints: number }).__prints), { timeout: 10_000 }).toBe(1);
+  expect(page.context().pages().length).toBe(pagesBefore);
+
+  // Tabs: document (default) · comparison (request only) · send log.
+  await expect(panel.locator('[data-doc-tab]')).toHaveText([/מסמך/, /השוואת הצעות/, /יומן שליחות/]);
+  await expect(panel.locator('[data-doc-tab="document"]')).toHaveAttribute('aria-selected', 'true');
+  await expect(panel.locator('[data-doc-details]')).toBeVisible();
+  await expect(panel.locator('[data-comparison]')).toHaveCount(0);
+  await panel.locator('[data-doc-tab="compare"]').click();
+  await expect(panel.locator('[data-comparison]')).toBeVisible();
+  await expect(panel.locator('[data-doc-details]')).toHaveCount(0);
+  // The winner (chosen in the comparison test, from this same tab) and the shortcut to the order live here.
+  await expect(panel.locator('[data-winner]')).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'פתח הזמנת רכש' })).toBeVisible();
+  await panel.locator('[data-doc-tab="log"]').click();
+  await expect(panel.locator('[data-dispatches]')).toBeVisible();
+  await expect(panel.locator('[data-comparison]')).toHaveCount(0);
+
+  // A purchase order has no comparison tab.
+  await page.keyboard.press('Escape');
+  await page.locator('[data-tab="po"]').click();
+  await page.locator('tbody tr[data-number]').first().click();
+  const po = page.getByRole('dialog').filter({ has: page.locator('[data-doc-actions]') });
+  await expect(po.locator('[data-doc-tab]')).toHaveText([/מסמך/, /יומן שליחות/]);
+});
+
+test('phone width: the tabs stay on one row and the actions fit the header', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/purchasing');
+  await page.locator(`tr[data-number="${START_RFQ}"]`).click();
+  const panel = page.getByRole('dialog').filter({ has: page.locator('[data-doc-actions]') });
+  const tabs = panel.locator('[data-doc-tab]');
+  await expect(tabs).toHaveCount(3);
+  const ys = await tabs.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().y)));
+  expect(new Set(ys).size).toBe(1);
+  for (const a of ['delete', 'print', 'edit', 'send']) {
+    const box = await panel.locator(`[data-action="${a}"]`).boundingBox();
+    expect(box!.height, a).toBeGreaterThanOrEqual(44);
+  }
+  // The panel itself never scrolls sideways (the list's own table, behind it, is a separate scroller).
+  expect(await panel.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  // (after the slide-in has settled)
+  await expect.poll(async () => {
+    const b = await panel.locator('[data-doc-actions]').boundingBox();
+    return b ? Math.round(b.x) >= 0 && Math.round(b.x + b.width) <= 390 : false;
+  }).toBe(true);
+});
+
 test('a direct purchase order, the VAT stamped at issue, and the PDF', async ({ page, request }) => {
   await page.goto('/purchasing?tab=po');
   await page.getByRole('button', { name: 'הזמנה חדשה' }).click();
@@ -565,6 +661,7 @@ test('the typed supplier wins: the order opens with ITS details, is issued and s
   await mailpitClear(request);
   await page.goto('/purchasing');
   await page.locator(`tr[data-number="${START_RFQ}"]`).click();
+  await page.locator('[data-doc-tab="compare"]').click();
   const cmp = page.locator('[data-comparison]');
   // A is the current winner; columns are A, the typed supplier, B (submission order).
   await cmp.locator('tr', { hasText: 'הצעה זוכה' }).locator('td').nth(2).getByRole('button', { name: 'בחר כזוכה' }).click();
