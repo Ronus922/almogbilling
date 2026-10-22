@@ -13,7 +13,7 @@ import { readPurchasingObject } from '@/lib/storage/purchasingStorage';
 import {
   normalizePhone, sendWhatsAppFileByUrl, sendWhatsAppMessage, uploadWhatsAppFile, WhatsAppError,
 } from '@/lib/whatsapp';
-import { DOC_LABEL, docHeading, formatDocDate, type CompanySettings, type DocType } from './model';
+import { DOC_LABEL, docHeading, formatDocDate, MANUAL_PARTY, type CompanySettings, type DocType } from './model';
 import { renderDocumentPdf, type PdfInput, type PdfSupplier } from './pdf';
 
 // Purchasing — the server-side orchestration of the two outputs of a document:
@@ -22,16 +22,27 @@ import { renderDocumentPdf, type PdfInput, type PdfSupplier } from './pdf';
 // channels (sendWithRetry / the Green API helpers) and records every attempt in
 // purchasing_dispatches; it never throws for a single recipient's failure.
 
+/** A document that has its running number (never a draft). */
+export type IssuedDocument = DocumentRow & { number: number };
+
 export interface BuiltPdf {
   bytes: Buffer;
   filename: string;
-  doc: DocumentRow;
+  doc: IssuedDocument;
   company: CompanySettings;
+}
+
+/** A draft has no number: it cannot be turned into a PDF or sent. */
+export class DraftDocumentError extends Error {
+  constructor() {
+    super('draft_document');
+    this.name = 'DraftDocumentError';
+  }
 }
 
 /** The ASCII-safe download name; the Hebrew label rides in Content-Disposition
  *  filename* (see the route). */
-export function pdfDownloadName(doc: Pick<DocumentRow, 'doc_type' | 'number'>): string {
+export function pdfDownloadName(doc: { doc_type: DocType; number: number }): string {
   return `${DOC_LABEL[doc.doc_type]} ${doc.number}.pdf`;
 }
 
@@ -56,8 +67,10 @@ async function loadImage(key: string | null): Promise<Uint8Array | null> {
 /** Renders a document's PDF. `supplier` personalises the "לכבוד" block (a
  *  request is sent per supplier; a PO has its own supplier). */
 export async function buildDocumentPdf(documentId: string, supplier?: SupplierBrief | null): Promise<BuiltPdf | null> {
-  const doc = await findDocument(documentId);
-  if (!doc) return null;
+  const found = await findDocument(documentId);
+  if (!found) return null;
+  if (found.status !== 'issued' || found.number === null) throw new DraftDocumentError();
+  const doc: IssuedDocument = { ...found, number: found.number };
   const company = await getCompany();
   if (!company) throw new CompanyMissingError();
   const lines = await listLines(documentId);
@@ -124,6 +137,7 @@ export function quoteLink(token: string): string {
 export type Channel = 'email' | 'whatsapp';
 
 export interface DispatchResult {
+  /** uuid, or MANUAL_PARTY for the hand-typed supplier. */
   supplier_id: string;
   supplier_name: string;
   channel: Channel;
@@ -131,7 +145,7 @@ export interface DispatchResult {
   error?: string;
 }
 
-function messageBody(doc: DocumentRow, company: CompanySettings, link: string | null): string {
+function messageBody(doc: IssuedDocument, company: CompanySettings, link: string | null): string {
   const heading = docHeading(doc.doc_type, doc.number);
   if (doc.doc_type === 'rfq') {
     return [
@@ -162,10 +176,24 @@ function messageBody(doc: DocumentRow, company: CompanySettings, link: string | 
   ].filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n');
 }
 
+/** Where a document goes: a listed supplier or the document's hand-typed one —
+ *  both are reached through the e-mail / phone they have. */
+interface Target {
+  /** uuid, or MANUAL_PARTY. */
+  key: string;
+  supplier_id: string | null;
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  /** The listed supplier (personalises the PDF), null for the hand-typed one. */
+  brief: SupplierBrief | null;
+}
+
 async function sendEmail(
-  doc: DocumentRow, company: CompanySettings, supplier: SupplierBrief, pdf: BuiltPdf, link: string | null,
+  doc: IssuedDocument, company: CompanySettings, supplier: Pick<Target, 'email'>, pdf: BuiltPdf, link: string | null,
 ): Promise<void> {
-  if (!supplier.email.trim()) throw new Error('לספק אין כתובת מייל');
+  if (!supplier.email.trim()) throw new Error('אין כתובת מייל לספק — אי אפשר לשלוח במייל');
   const rendered = renderTemplate('broadcast', {
     subject: `${docHeading(doc.doc_type, doc.number)} — ${company.name}`,
     body: messageBody(doc, company, link),
@@ -180,9 +208,12 @@ async function sendEmail(
 }
 
 async function sendWhatsApp(
-  actor: Actor, doc: DocumentRow, company: CompanySettings, supplier: SupplierBrief, pdf: BuiltPdf, link: string | null,
+  actor: Actor, doc: IssuedDocument, company: CompanySettings, supplier: Pick<Target, 'phone'>, pdf: BuiltPdf, link: string | null,
 ): Promise<void> {
-  const phone = normalizePhone(supplier.mobile || supplier.phone);
+  if (!supplier.phone.trim()) throw new Error('אין מספר טלפון לספק — אי אפשר לשלוח ב-WhatsApp');
+  let phone: ReturnType<typeof normalizePhone>;
+  try { phone = normalizePhone(supplier.phone); }
+  catch { throw new Error('מספר הטלפון של הספק אינו תקין ל-WhatsApp'); }
   const creds = await resolveSendCreds(actor, null);
   await sendWhatsAppMessage({
     instanceId: creds.greenInstanceId,
@@ -213,40 +244,65 @@ async function sendWhatsApp(
   });
 }
 
-/** Sends the document to each supplier over the chosen channels. A request
- *  gets each supplier's personal link (created on first send, reused after). */
+/** The targets behind the keys the screen sent: listed suppliers by uuid, and
+ *  MANUAL_PARTY → the document's own hand-typed supplier (details on the
+ *  document). Unknown / deleted listed suppliers are skipped. */
+async function resolveTargets(doc: DocumentRow, keys: string[]): Promise<Target[]> {
+  const out: Target[] = [];
+  const listedIds = keys.filter((k) => k !== MANUAL_PARTY);
+  for (const s of await listSupplierBriefs(listedIds)) {
+    out.push({ key: s.id, supplier_id: s.id, name: s.name, email: s.email, phone: s.mobile || s.phone, address: s.address, brief: s });
+  }
+  if (keys.includes(MANUAL_PARTY) && doc.supplier_id === null && doc.supplier_name) {
+    out.push({
+      key: MANUAL_PARTY, supplier_id: null, name: doc.supplier_name, email: doc.supplier_email ?? '',
+      phone: doc.supplier_phone ?? '', address: doc.supplier_address ?? '', brief: null,
+    });
+  }
+  return out;
+}
+
+/** Sends the document to each target over the chosen channels. A request gets
+ *  each target's personal link (created on first send, reused after; for the
+ *  hand-typed supplier the recipient row carries its details). A missing e-mail
+ *  / phone fails only that channel of that target, with a plain message. */
 export async function sendDocument(
   actor: Actor,
   documentId: string,
-  supplierIds: string[],
+  keys: string[],
   channels: { email: boolean; whatsapp: boolean },
 ): Promise<DispatchResult[]> {
   const first = await buildDocumentPdf(documentId);
   if (!first) return [];
   const { doc, company } = first;
-  const suppliers = await listSupplierBriefs(supplierIds);
+  const targets = await resolveTargets(doc, keys);
   const results: DispatchResult[] = [];
 
-  for (const supplier of suppliers) {
-    // One PDF per supplier: the "לכבוד" block carries their name.
-    const pdf = (await buildDocumentPdf(documentId, supplier)) ?? first;
-    const link = doc.doc_type === 'rfq' ? quoteLink((await ensureRecipient(documentId, supplier.id)).token) : null;
+  for (const t of targets) {
+    // One PDF per target: the "לכבוד" block carries its name.
+    const pdf = (await buildDocumentPdf(documentId, t.brief)) ?? first;
+    const link = doc.doc_type === 'rfq'
+      ? quoteLink((await ensureRecipient(
+          documentId, t.supplier_id,
+          t.supplier_id ? null : { name: t.name, phone: t.phone || null, email: t.email || null, address: t.address || null },
+        )).token)
+      : null;
 
     for (const channel of ['email', 'whatsapp'] as const) {
       if (!channels[channel]) continue;
       let error: string | undefined;
       try {
-        if (channel === 'email') await sendEmail(doc, company, supplier, pdf, link);
-        else await sendWhatsApp(actor, doc, company, supplier, pdf, link);
+        if (channel === 'email') await sendEmail(doc, company, t, pdf, link);
+        else await sendWhatsApp(actor, doc, company, t, pdf, link);
       } catch (err) {
         error = err instanceof WhatsAppError || err instanceof Error ? err.message : 'שגיאה לא ידועה';
-        logger.error(`[purchasing] ${channel} send failed`, { documentId, supplierId: supplier.id, error });
+        logger.error(`[purchasing] ${channel} send failed`, { documentId, supplier: t.key, error });
       }
       await logDispatch({
-        document_id: documentId, supplier_id: supplier.id, channel,
+        document_id: documentId, supplier_id: t.supplier_id, supplier_name: t.name, channel,
         status: error ? 'failed' : 'sent', error: error ?? null, sent_by: actor.id,
       }).catch((e) => logger.error('[purchasing] dispatch log failed', e));
-      results.push({ supplier_id: supplier.id, supplier_name: supplier.name, channel, ok: !error, error });
+      results.push({ supplier_id: t.key, supplier_name: t.name, channel, ok: !error, error });
     }
   }
   return results;

@@ -7,7 +7,8 @@
 // the document. Every create / edit is a side panel (DESIGN §12).
 
 import { useCallback, useMemo, useState } from 'react';
-import { ClipboardList, Plus, Settings, ShoppingCart } from 'lucide-react';
+import { ClipboardList, Plus, Settings, ShoppingCart, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { formatDocDate, formatIls, isRfqOpen, round2, type DocType } from '@/lib/purchasing/model';
@@ -60,6 +61,30 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
   function switchTab(t: DocType) {
     setTab(t);
     window.history.replaceState(null, '', `/purchasing?tab=${t}`);
+  }
+
+  /** A draft opens straight in the form (from any device — it lives on the server). */
+  async function openDraft(id: string) {
+    try {
+      const res = await fetch(`/api/purchasing/documents/${id}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('load failed');
+      const d: DocumentDetail = await res.json();
+      setForm({ open: true, type: d.document.doc_type, detail: d, prefill: null });
+    } catch {
+      toast.error('טעינת הטיוטה נכשלה');
+    }
+  }
+
+  async function removeDraft(id: string) {
+    if (!window.confirm('למחוק את הטיוטה?')) return;
+    try {
+      const res = await fetch(`/api/purchasing/documents/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('delete failed');
+      toast.success('הטיוטה נמחקה');
+      void reload();
+    } catch {
+      toast.error('המחיקה נכשלה');
+    }
   }
 
   function startNew(type: DocType, prefill: PoPrefill | null = null) {
@@ -135,7 +160,7 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-line bg-white shadow-soft-xs">
-          <table className="w-full min-w-[800px] border-collapse text-sm" data-list={tab}>
+          <table className="w-full min-w-[840px] border-collapse text-sm" data-list={tab}>
             <thead>
               <tr className="border-b border-line bg-slate-50/80 text-start">
                 <th className="px-4 py-3 text-start font-semibold text-ink-2">מספר</th>
@@ -151,6 +176,7 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
                 ) : (
                   <th className="px-4 py-3 text-start font-semibold text-ink-2">סה״כ לתשלום</th>
                 )}
+                <th className="w-14 px-2 py-3"><span className="sr-only">פעולות</span></th>
               </tr>
             </thead>
             <tbody>
@@ -160,15 +186,22 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
                   <tr
                     key={d.id}
                     data-doc={d.id}
-                    data-number={d.number}
+                    data-number={d.number ?? undefined}
+                    data-draft={d.status === 'draft' ? '' : undefined}
                     tabIndex={0}
-                    onClick={() => setDetailId(d.id)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailId(d.id); } }}
+                    onClick={() => (d.status === 'draft' ? void openDraft(d.id) : setDetailId(d.id))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (d.status === 'draft') void openDraft(d.id); else setDetailId(d.id); }
+                    }}
                     className="cursor-pointer border-b border-line transition-colors last:border-0 hover:bg-row-hover focus-visible:bg-row-hover focus-visible:outline-none"
                   >
-                    <td className="px-4 py-3 font-bold tabular-nums text-ink">{d.number}</td>
+                    <td className="px-4 py-3 font-bold tabular-nums text-ink">
+                      {d.status === 'draft' ? (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-800">טיוטה</span>
+                      ) : d.number}
+                    </td>
                     <td className="px-4 py-3 tabular-nums text-ink-2">{formatDocDate(d.doc_date)}</td>
-                    <td className="px-4 py-3 font-semibold text-ink">{d.supplier_name}</td>
+                    <td className="px-4 py-3 font-semibold text-ink">{d.supplier_name ?? '—'}</td>
                     <td className="px-4 py-3 text-ink-2">{d.title || '—'}</td>
                     {tab === 'rfq' ? (
                       <>
@@ -184,6 +217,18 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
                     ) : (
                       <td className="px-4 py-3 font-semibold tabular-nums text-ink" dir="ltr">{formatIls(d.subtotal + vat)}</td>
                     )}
+                    <td className="px-2 py-1 text-end">
+                      {canEdit && d.status === 'draft' && (
+                        <button
+                          type="button" aria-label="מחיקת הטיוטה" title="מחיקת הטיוטה" data-delete-draft
+                          onClick={(e) => { e.stopPropagation(); void removeDraft(d.id); }}
+                          onKeyDown={(e) => e.stopPropagation()}
+                          className="grid h-11 w-11 place-items-center rounded-lg text-ink-3 hover:bg-rose-50 hover:text-rose-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -219,9 +264,11 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
         suppliers={suppliers}
         onOpenChange={(o) => setForm((f) => ({ ...f, open: o }))}
         onNeedCompany={() => { setForm((f) => ({ ...f, open: false })); setPendingType(form.type); setWizard(true); setCompanyOpen(true); }}
-        onSaved={(id) => {
+        onSaved={(id, issued) => {
           void reload();
           setTab(form.type);
+          // A saved draft only refreshes the list; an issued document opens its panel.
+          if (!issued) return;
           setRefreshKey((k) => k + 1);
           setDetailId(id);
         }}

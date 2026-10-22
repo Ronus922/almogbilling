@@ -33,9 +33,11 @@ export interface LinePayload {
 export function draftsToPayload(
   drafts: readonly LineDraft[],
   priceRequired: boolean,
+  /** A DRAFT may have no rows at all. */
+  allowEmpty = false,
 ): { ok: true; lines: LinePayload[] } | { ok: false; error: string; key?: string } {
   const used = drafts.filter((d) => d.description.trim() || d.unit_price.trim());
-  if (used.length === 0) return { ok: false, error: 'יש להוסיף לפחות שורה אחת' };
+  if (used.length === 0 && !allowEmpty) return { ok: false, error: 'יש להוסיף לפחות שורה אחת' };
   const lines: LinePayload[] = [];
   for (const d of used) {
     const description = d.description.trim();
