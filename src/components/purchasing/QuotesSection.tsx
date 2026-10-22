@@ -7,7 +7,7 @@
 
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Award, Copy, ExternalLink, FileText, Plus, ShoppingCart, Trash2 } from 'lucide-react';
+import { Award, Copy, ExternalLink, FileText, ShoppingCart, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Section } from '@/components/side-panel/Section';
 import { cn } from '@/lib/utils';
@@ -21,11 +21,10 @@ interface Props {
   detail: DocumentDetail;
   canEdit: boolean;
   onChanged: () => void;
-  onAddManual: (supplierId: string | null) => void;
   onCreatePo: (prefill: PoPrefill) => void;
 }
 
-export function QuotesSection({ detail, canEdit, onChanged, onAddManual, onCreatePo }: Props) {
+export function QuotesSection({ detail, canEdit, onChanged, onCreatePo }: Props) {
   const doc = detail.document;
   const quotes = useMemo(() => detail.quotes ?? [], [detail.quotes]);
   const recipients = detail.recipients ?? [];
@@ -110,18 +109,11 @@ export function QuotesSection({ detail, canEdit, onChanged, onAddManual, onCreat
 
   return (
     <>
-      <Section
-        title="ספקים והצעות" icon={ShoppingCart} iconTone="blue"
-        headerSlot={canEdit ? (
-          <Button type="button" variant="outline" onClick={() => onAddManual(null)} className="h-11 gap-2">
-            <Plus className="h-4 w-4" /> הצעה מחוץ למערכת
-          </Button>
-        ) : undefined}
-      >
+      <Section title="ספקים והצעות" icon={ShoppingCart} iconTone="blue">
         <div className="space-y-2 py-2" data-recipients>
           {supplierRows.length === 0 && (
             <p className="rounded-lg border border-line bg-white p-4 text-center text-sm text-ink-3">
-              הבקשה טרם נשלחה לספקים. לחצו על &quot;שליחה&quot; כדי לשלוח, או הוסיפו הצעה שהתקבלה מבחוץ.
+              הבקשה טרם נשלחה לספקים. לחצו על &quot;שליחה&quot; כדי לשלוח.
             </p>
           )}
           {supplierRows.map((r) => (
@@ -130,7 +122,7 @@ export function QuotesSection({ detail, canEdit, onChanged, onAddManual, onCreat
                 <span className="text-sm font-semibold text-ink">{r.name}</span>
                 {r.quote ? (
                   <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
-                    {r.quote.source === 'portal' ? 'הוגשה בקישור' : 'הוזנה ידנית'} · {formatStampIL(r.quote.updated_at)}
+                    הוגשה בקישור · {formatStampIL(r.quote.updated_at)}
                   </span>
                 ) : r.viewed ? (
                   <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700">נפתח {formatStampIL(r.viewed)}</span>
@@ -154,11 +146,6 @@ export function QuotesSection({ detail, canEdit, onChanged, onAddManual, onCreat
                         <ExternalLink className="h-4 w-4" />
                       </a>
                     </>
-                  )}
-                  {canEdit && (
-                    <button type="button" onClick={() => onAddManual(r.supplier_id)} className="inline-flex h-11 items-center rounded-lg px-3 text-sm font-semibold text-ink-2 hover:bg-slate-100">
-                      {r.quote ? 'עריכת הצעה' : 'הזנת הצעה'}
-                    </button>
                   )}
                   {canEdit && r.quote && (
                     <button type="button" disabled={busy} onClick={() => removeQuote(r.quote!)} aria-label={`מחיקת ההצעה של ${r.name}`}

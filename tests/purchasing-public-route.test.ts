@@ -95,7 +95,7 @@ d('public supplier link', () => {
     }
     [supA, supB] = made.suppliers;
     const created = await db.createDocument({
-      doc_type: 'rfq', doc_date: '2026-10-21', title: 'בקשה ציבורית', supplier_id: null, notes: 'הערה לספק', due_date: '2099-01-01',
+      doc_type: 'rfq', doc_date: '2026-10-21', title: 'בקשה ציבורית', supplier_id: null, supplier_name: 'ספק ידני', supplier_phone: null, supplier_email: null, supplier_address: null, notes: 'הערה לספק', due_date: '2099-01-01',
       vat_rate: 18, source_rfq_id: null, start_number: 900,
       lines: [{ description: 'שורה 1', quantity: 2, unit_price: null }, { description: 'שורה 2', quantity: 5, unit_price: null }],
     }, admin);

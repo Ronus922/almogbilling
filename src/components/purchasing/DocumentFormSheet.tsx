@@ -1,30 +1,33 @@
 'use client';
 
 // CREATE / EDIT of a request for quotation or a purchase order — one Sheet
-// (DESIGN §12), the two documents differ only in a few fields:
-//   rfq: title · due date · lines (description + quantity) · notes · files
-//   po : supplier · subject · lines (+ unit price, totals with VAT) · notes
-// The number is allocated by the server on save (atomic, never editable); the
-// first document of a series asks "from which number to start". The date is
-// today, fixed at issue. The VAT rate shown is the company's current rate — the
-// server stamps it on the document at that moment.
+// (DESIGN §12) and ONE form for both documents, in this order only:
+//   heading "<document> מספר N" (the number it would get right now)
+//   תאריך מסמך * · ספק * (+ phone / e-mail / address of a hand-typed supplier)
+//   תיאור · תאריך יעד להגשה (request only)
+//   פירוטים (פירוט · כמות · מחיר · סה״כ) + the three-row summary
+//   הערות
+//   תצוגה מקדימה · הפק את המסמך · שמור טיוטה · ביטול
+// The number is allocated atomically by the server on issue; if the one shown
+// was taken meanwhile the document gets the next and the user is told. The
+// first document of a series asks where to start, inside the heading. A draft
+// lives in this browser only (localStorage) — it never takes a number.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { FileText, Hash, ListChecks, Paperclip, Save, Send, StickyNote, Trash2, Truck, UploadCloud, X } from 'lucide-react';
+import { Eye, FilePlus2, Loader2, Save, StickyNote, X, ListChecks, Hash } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Combobox } from '@/components/ui/combobox';
 import { Section } from '@/components/side-panel/Section';
 import { Field } from '@/components/side-panel/Field';
-import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
-import { formatFileSize } from '@/lib/decisions';
-import { DOC_LABEL, formatDocDate, PURCHASING_LIMITS, todayIsrael, type DocType } from '@/lib/purchasing/model';
-import { PURCHASING_FILE_ACCEPT, PURCHASING_FILE_TYPES_LABEL, validatePurchasingFile } from '@/lib/purchasing/files';
+import { DOC_LABEL, PURCHASING_LIMITS, todayIsrael, type DocType } from '@/lib/purchasing/model';
 import { LinesEditor } from './LinesEditor';
+import { SupplierField } from './SupplierField';
 import { draftsToPayload, emptyLine, newLineKey, type LineDraft } from './lines';
 import type { DocumentDetail, PoPrefill, SequenceState, SupplierBrief } from './types';
 
@@ -43,10 +46,56 @@ interface Props {
   onSaved: (id: string) => void;
 }
 
+interface FormState {
+  docDate: string;
+  supplierText: string;
+  supplierId: string | null;
+  phone: string;
+  email: string;
+  address: string;
+  title: string;
+  dueDate: string;
+  notes: string;
+  lines: LineDraft[];
+}
+
 const plusDays = (iso: string, days: number) => {
   const d = new Date(`${iso}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+};
+
+const draftKey = (type: DocType) => `purchasing-draft:${type}`;
+
+function readDraft(type: DocType): Omit<FormState, 'docDate'> | null {
+  try {
+    const raw = window.localStorage.getItem(draftKey(type));
+    return raw ? (JSON.parse(raw) as Omit<FormState, 'docDate'>) : null;
+  } catch { return null; }
+}
+function writeDraft(type: DocType, v: Omit<FormState, 'docDate'> | null): boolean {
+  try {
+    if (v) window.localStorage.setItem(draftKey(type), JSON.stringify(v));
+    else window.localStorage.removeItem(draftKey(type));
+    return true;
+  } catch { return false; }
+}
+
+const linesFromRows = (rows: Array<{ description: string; quantity: number; unit_price: number | null }>): LineDraft[] =>
+  rows.length
+    ? rows.map((l) => ({
+        key: newLineKey(), description: l.description, quantity: String(l.quantity),
+        unit_price: l.unit_price === null ? '' : String(l.unit_price),
+      }))
+    : [emptyLine()];
+
+const dateInputClass = (invalid: boolean) => cn(
+  'flex h-10 w-full cursor-pointer rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm',
+  invalid && 'border-red-400 bg-red-50 focus-visible:ring-red-200',
+);
+const openPicker = (e: React.MouseEvent<HTMLInputElement>) => {
+  const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+  try { el.showPicker?.(); } catch { /* fallback to the native icon */ }
 };
 
 export function DocumentFormSheet({
@@ -56,122 +105,175 @@ export function DocumentFormSheet({
   const isRfq = type === 'rfq';
   const today = todayIsrael();
 
+  const [docDate, setDocDate] = useState(today);
+  const [supplierText, setSupplierText] = useState('');
+  const [supplierId, setSupplierId] = useState<string | null>(null);
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [address, setAddress] = useState('');
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState('');
-  const [supplierId, setSupplierId] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [startNumber, setStartNumber] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
-  const [staged, setStaged] = useState<File[]>([]);
-  const [existing, setExisting] = useState(detail?.files ?? []);
+  const [liveSeq, setLiveSeq] = useState<SequenceState>(sequences);
   const [touched, setTouched] = useState(false);
   const [lineError, setLineError] = useState<{ key?: string; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [previewing, setPreviewing] = useState(false);
 
   // Seed on open: an edit from the document, a PO from a winning quote's
-  // prefill, otherwise empty defaults (due date two weeks out).
+  // prefill, otherwise a saved draft or empty defaults (due date two weeks out).
   useEffect(() => {
     if (!open) return;
     setTouched(false);
     setLineError(null);
-    setStaged([]);
     setStartNumber('');
+    setLiveSeq(sequences);
+    const manual = (d: DocumentDetail['document']) => ({
+      phone: d.supplier_id ? '' : d.supplier_phone ?? '',
+      email: d.supplier_id ? '' : d.supplier_email ?? '',
+      address: d.supplier_id ? '' : d.supplier_address ?? '',
+    });
     if (detail) {
-      setTitle(detail.document.title);
-      setDueDate(detail.document.due_date ?? '');
-      setSupplierId(detail.document.supplier_id);
-      setNotes(detail.document.notes);
-      setExisting(detail.files);
-      setLines(detail.lines.length
-        ? detail.lines.map((l) => ({
-            key: newLineKey(), description: l.description, quantity: String(l.quantity),
-            unit_price: l.unit_price === null ? '' : String(l.unit_price),
-          }))
-        : [emptyLine()]);
+      const d = detail.document;
+      setDocDate(d.doc_date);
+      setSupplierText(d.supplier_name ?? '');
+      setSupplierId(d.supplier_id);
+      setPhone(manual(d).phone);
+      setEmail(manual(d).email);
+      setAddress(manual(d).address);
+      setTitle(d.title);
+      setDueDate(d.due_date ?? '');
+      setNotes(d.notes);
+      setLines(linesFromRows(detail.lines));
     } else if (prefill) {
+      const s = suppliers.find((x) => x.id === prefill.supplier_id);
+      setDocDate(today);
+      setSupplierText(s?.name ?? '');
+      setSupplierId(prefill.supplier_id);
+      setPhone(''); setEmail(''); setAddress('');
       setTitle(prefill.title);
       setDueDate('');
-      setSupplierId(prefill.supplier_id);
       setNotes('');
-      setExisting([]);
-      setLines(prefill.lines.map((l) => ({
-        key: newLineKey(), description: l.description, quantity: String(l.quantity),
-        unit_price: l.unit_price === null ? '' : String(l.unit_price),
-      })));
+      setLines(linesFromRows(prefill.lines));
     } else {
-      setTitle('');
-      setDueDate(plusDays(today, 14));
-      setSupplierId(null);
-      setNotes('');
-      setExisting([]);
-      setLines([emptyLine()]);
+      const draft = readDraft(type);
+      setDocDate(today);
+      if (draft) {
+        setSupplierText(draft.supplierText ?? '');
+        setSupplierId(draft.supplierId ?? null);
+        setPhone(draft.phone ?? ''); setEmail(draft.email ?? ''); setAddress(draft.address ?? '');
+        setTitle(draft.title ?? '');
+        setDueDate(draft.dueDate || plusDays(today, 14));
+        setNotes(draft.notes ?? '');
+        setLines(draft.lines?.length ? draft.lines : [emptyLine()]);
+        toast.info('שוחזרה טיוטה שנשמרה בדפדפן הזה');
+      } else {
+        setSupplierText(''); setSupplierId(null);
+        setPhone(''); setEmail(''); setAddress('');
+        setTitle('');
+        setDueDate(plusDays(today, 14));
+        setNotes('');
+        setLines([emptyLine()]);
+      }
     }
-  }, [open, detail, prefill, today]);
+    // The number shown in the heading is the one the server would give NOW.
+    if (!detail) {
+      fetch('/api/purchasing/company', { credentials: 'include' })
+        .then((r) => r.json())
+        .then((b) => { if (b.sequences) setLiveSeq(b.sequences); })
+        .catch(() => undefined);
+    }
+  }, [open, detail, prefill, today, type, suppliers, sequences]);
 
-  const needsStart = !editing && sequences[type] === null;
+  const needsStart = !editing && liveSeq[type] === null;
   const startValue = Number(startNumber);
+  const nextNumber = editing ? detail?.document.number : needsStart ? (Number.isInteger(startValue) && startValue >= 1 ? startValue : null) : (liveSeq[type] ?? 0) + 1;
   const errors = {
-    title: touched && isRfq && !title.trim() ? 'יש להזין כותרת' : null,
+    date: touched && !docDate ? 'יש לבחור תאריך מסמך' : null,
+    supplier: touched && !supplierText.trim() ? 'יש לבחור ספק או להקליד שם ספק' : null,
     due: touched && isRfq && !dueDate ? 'יש לבחור תאריך יעד' : null,
-    supplier: touched && !isRfq && !supplierId ? 'יש לבחור ספק' : null,
     start: touched && needsStart && (!Number.isInteger(startValue) || startValue < 1) ? 'יש להזין מספר שלם מ-1 ומעלה' : null,
+    email: touched && !supplierId && email.trim() && !/^\S+@\S+\.\S+$/.test(email.trim()) ? 'כתובת מייל לא תקינה' : null,
   };
   const linesLocked = isRfq && editing && (detail?.recipients?.length ?? 0) > 0;
+  const busy = saving || previewing;
 
   useEscapeKey(open, () => requestClose());
-  function requestClose() { if (!saving) onOpenChange(false); }
+  function requestClose() { if (!busy) onOpenChange(false); }
 
-  function stageFiles(list: FileList | null) {
-    if (!list) return;
-    const next = [...staged];
-    for (const f of Array.from(list)) {
-      const err = validatePurchasingFile({ name: f.name, size: f.size, type: f.type }, PURCHASING_LIMITS.staffFileBytes);
-      if (err) { toast.error(`${f.name}: ${err}`); continue; }
-      if (existing.length + next.length >= PURCHASING_LIMITS.staffFilesMax) {
-        toast.error(`אפשר לצרף עד ${PURCHASING_LIMITS.staffFilesMax} קבצים`);
-        break;
-      }
-      next.push(f);
-    }
-    setStaged(next);
+  /** The API body of the form, or null (with the problems shown) when invalid. */
+  function buildBody(): Record<string, unknown> | null {
+    setTouched(true);
+    setLineError(null);
+    if (!docDate || !supplierText.trim() || (isRfq && !dueDate)) return null;
+    if (needsStart && (!Number.isInteger(startValue) || startValue < 1)) return null;
+    if (!supplierId && email.trim() && !/^\S+@\S+\.\S+$/.test(email.trim())) return null;
+    const payload = draftsToPayload(lines, !isRfq);
+    if (!payload.ok) { setLineError({ key: payload.key, message: payload.error }); return null; }
+
+    // A name typed exactly like a listed supplier is that supplier.
+    const typed = supplierText.trim();
+    const linked = supplierId ?? suppliers.find((s) => s.name.trim().toLowerCase() === typed.toLowerCase())?.id ?? null;
+    return {
+      doc_date: docDate,
+      title: title.trim(),
+      notes: notes.trim(),
+      supplier_id: linked,
+      supplier_name: linked ? '' : typed,
+      supplier_phone: linked ? '' : phone.trim(),
+      supplier_email: linked ? '' : email.trim(),
+      supplier_address: linked ? '' : address.trim(),
+      ...(isRfq ? { due_date: dueDate } : {}),
+      lines: payload.lines,
+    };
   }
 
-  async function uploadStaged(documentId: string): Promise<number> {
-    let failed = 0;
-    for (const f of staged) {
-      const fd = new FormData();
-      fd.append('file', f);
-      try {
-        const res = await fetch(`/api/purchasing/documents/${documentId}/files`, { method: 'POST', body: fd });
-        if (!res.ok) failed++;
-      } catch { failed++; }
-    }
-    return failed;
-  }
-
-  async function removeExisting(fileId: string) {
-    if (!window.confirm('להסיר את הקובץ?')) return;
+  async function preview() {
+    const base = buildBody();
+    if (!base) return;
+    // Opened synchronously so the popup blocker lets it through; filled below.
+    const win = window.open('', '_blank');
+    setPreviewing(true);
     try {
-      const res = await fetch(`/api/purchasing/files/${fileId}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('delete failed');
-      setExisting((e) => e.filter((f) => f.id !== fileId));
+      const qs = editing && detail ? `?number=${detail.document.number}` : '';
+      const res = await fetch(`/api/purchasing/preview${qs}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ doc_type: type, start_number: needsStart ? startValue : null, ...base }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        win?.close();
+        if (body.error === 'company_missing') { onNeedCompany(); return; }
+        toast.error(typeof body.error === 'string' ? body.error : 'התצוגה המקדימה נכשלה');
+        return;
+      }
+      const url = URL.createObjectURL(await res.blob());
+      if (win) win.location.href = url;
+      else window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 5 * 60 * 1000);
     } catch {
-      toast.error('ההסרה נכשלה');
+      win?.close();
+      toast.error('התצוגה המקדימה נכשלה');
+    } finally {
+      setPreviewing(false);
     }
+  }
+
+  function saveDraft() {
+    const ok = writeDraft(type, {
+      supplierText, supplierId, phone, email, address, title, dueDate, notes, lines,
+    });
+    if (!ok) { toast.error('הדפדפן לא מאפשר לשמור טיוטה'); return; }
+    toast.success('הטיוטה נשמרה בדפדפן הזה');
+    onOpenChange(false);
   }
 
   async function save() {
-    setTouched(true);
-    setLineError(null);
-    if (errors.title || errors.due || errors.supplier || errors.start) return;
-    if (isRfq && (!title.trim() || !dueDate)) return;
-    if (!isRfq && !supplierId) return;
-    if (needsStart && (!Number.isInteger(startValue) || startValue < 1)) return;
-
-    const payload = draftsToPayload(lines, !isRfq);
-    if (!payload.ok) { setLineError({ key: payload.key, message: payload.error }); return; }
-
+    const base = buildBody();
+    if (!base) return;
     setSaving(true);
     try {
       let res: Response;
@@ -179,22 +281,15 @@ export function DocumentFormSheet({
         res = await fetch(`/api/purchasing/documents/${detail.document.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: title.trim(), supplier_id: isRfq ? null : supplierId, notes: notes.trim(),
-            due_date: isRfq ? dueDate : null,
-            ...(linesLocked ? {} : { lines: payload.lines }),
-          }),
+          body: JSON.stringify({ ...base, due_date: isRfq ? dueDate : null, ...(linesLocked ? { lines: undefined } : {}) }),
         });
       } else {
         res = await fetch('/api/purchasing/documents', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            doc_type: type, doc_date: today, title: title.trim(), notes: notes.trim(),
-            start_number: needsStart ? startValue : null, lines: payload.lines,
-            ...(isRfq
-              ? { due_date: dueDate }
-              : { supplier_id: supplierId, source_rfq_id: prefill?.source_rfq_id ?? null }),
+            doc_type: type, start_number: needsStart ? startValue : null, ...base,
+            ...(isRfq ? {} : { source_rfq_id: prefill?.source_rfq_id ?? null }),
           }),
         });
       }
@@ -206,9 +301,12 @@ export function DocumentFormSheet({
         return;
       }
       const id: string = editing && detail ? detail.document.id : body.id;
-      const failedFiles = await uploadStaged(id);
-      if (failedFiles) toast.error(`${failedFiles} קבצים לא הועלו — אפשר להוסיף אותם מחדש מהמסמך`);
-      toast.success(editing ? 'המסמך עודכן' : `${DOC_LABEL[type]} מספר ${body.number} הופקה`);
+      if (!editing) writeDraft(type, null);
+      if (!editing && nextNumber !== null && body.number !== nextNumber) {
+        toast.info(`המספר ${nextNumber} נתפס בינתיים — המסמך הופק כמספר ${body.number}`);
+      } else {
+        toast.success(editing ? 'המסמך עודכן' : `${DOC_LABEL[type]} מספר ${body.number} הופקה`);
+      }
       onOpenChange(false);
       onSaved(id);
     } catch {
@@ -217,10 +315,6 @@ export function DocumentFormSheet({
       setSaving(false);
     }
   }
-
-  const heading = editing
-    ? `${DOC_LABEL[type]} מספר ${detail?.document.number}`
-    : prefill ? 'הזמנת רכש מהצעה זוכה' : `${DOC_LABEL[type]} חדשה`;
 
   return (
     <Sheet open={open} onOpenChange={(o) => { if (!o) requestClose(); else onOpenChange(o); }}>
@@ -233,17 +327,31 @@ export function DocumentFormSheet({
         <SheetHeader className="flex-none gap-2 bg-gradient-to-bl from-slate-900 via-blue-950 to-blue-900 px-6 py-6 text-white">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1">
-              <SheetTitle className="text-2xl font-bold text-white">{heading}</SheetTitle>
+              <SheetTitle className="flex flex-wrap items-center gap-x-2 gap-y-2 text-2xl font-bold text-white" data-form-heading>
+                <span>{DOC_LABEL[type]} מספר</span>
+                {needsStart ? (
+                  <Input
+                    id="doc-start" value={startNumber} dir="ltr" inputMode="numeric" disabled={busy}
+                    onChange={(e) => setStartNumber(e.target.value)} aria-label="מאיזה מספר להתחיל"
+                    aria-invalid={errors.start ? true : undefined} placeholder="מספר התחלתי"
+                    className="h-10 w-40 border-white/30 bg-white/10 text-center text-lg font-bold tabular-nums text-white placeholder:text-white/50"
+                  />
+                ) : (
+                  <span className="tabular-nums" data-doc-number>{nextNumber}</span>
+                )}
+              </SheetTitle>
               <p className="mt-1 truncate text-sm text-white/70">
-                {isRfq ? 'שורות ללא מחירים — הספקים ממלאים מחיר ליחידה בקישור האישי שלהם' : 'שורות עם מחירים, סיכומים ומע״מ'}
-                {prefill ? ` · מבקשה מספר ${prefill.source_rfq_number}` : ''}
+                {[
+                  needsStart ? (errors.start ?? `זה ${DOC_LABEL[type]} הראשונה — מכאן המספר רץ אוטומטית`) : '',
+                  prefill ? `מבקשה מספר ${prefill.source_rfq_number}` : '',
+                ].filter(Boolean).join(' · ')}
               </p>
             </div>
             <button
               type="button"
               onClick={requestClose}
               aria-label="סגור"
-              disabled={saving}
+              disabled={busy}
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-white/25 bg-white/5 text-white transition-colors hover:border-white/50 hover:bg-white/15 disabled:opacity-60"
             >
               <X className="h-5 w-5" />
@@ -254,79 +362,58 @@ export function DocumentFormSheet({
         <div className="flex-1 space-y-5 overflow-y-auto bg-slate-50/60 p-5">
           <Section title="פרטי המסמך" icon={Hash} iconTone="blue">
             <div className="grid gap-4 py-2 sm:grid-cols-2">
-              {/* Number — never editable; the first of a series asks where to start. */}
-              {needsStart ? (
-                <Field
-                  id="doc-start" label="מאיזה מספר להתחיל" required value={startNumber}
-                  onChange={setStartNumber} error={errors.start} dir="ltr" inputMode="numeric" tabularNums disabled={saving}
-                  hint={`זה ${DOC_LABEL[type]} הראשונה — משם המספר רץ אוטומטית ואי אפשר לערוך אותו.`}
-                />
-              ) : (
-                <div className="space-y-2">
-                  <Label className="text-base font-medium text-muted-foreground">מספר</Label>
-                  <div className="flex h-10 items-center rounded-md border border-line bg-slate-100 px-3 text-sm tabular-nums text-ink-2" data-doc-number>
-                    {editing ? detail?.document.number : `יוקצה בשמירה (${(sequences[type] ?? 0) + 1})`}
-                  </div>
-                </div>
-              )}
               <div className="space-y-2">
-                <Label className="text-base font-medium text-muted-foreground">תאריך</Label>
-                <div className="flex h-10 items-center rounded-md border border-line bg-slate-100 px-3 text-sm tabular-nums text-ink-2">
-                  {formatDocDate(editing ? detail?.document.doc_date : today)}
-                </div>
+                <Label htmlFor="doc-date" className="text-base font-medium text-muted-foreground">
+                  תאריך מסמך<span className="text-red-500"> *</span>
+                </Label>
+                <input
+                  id="doc-date" type="date" value={docDate} onChange={(e) => setDocDate(e.target.value)}
+                  onClick={openPicker} disabled={busy} aria-invalid={errors.date ? true : undefined}
+                  className={dateInputClass(!!errors.date)}
+                />
+                {errors.date && <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {errors.date}</p>}
               </div>
 
-              {isRfq ? (
+              {isRfq && (
+                <div className="space-y-2">
+                  <Label htmlFor="doc-due" className="text-base font-medium text-muted-foreground">
+                    תאריך יעד להגשה<span className="text-red-500"> *</span>
+                  </Label>
+                  <input
+                    id="doc-due" type="date" value={dueDate} min={editing ? undefined : today}
+                    onChange={(e) => setDueDate(e.target.value)} onClick={openPicker} disabled={busy}
+                    aria-invalid={errors.due ? true : undefined} className={dateInputClass(!!errors.due)}
+                  />
+                  {errors.due
+                    ? <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {errors.due}</p>
+                    : <p className="text-[12px] text-slate-500">עד תאריך זה הספק יכול להגיש ולתקן הצעה; אחריו הקישור נעול לקריאה.</p>}
+                </div>
+              )}
+
+              <div className="sm:col-span-2">
+                <SupplierField
+                  id="doc-supplier" text={supplierText} supplierId={supplierId} suppliers={suppliers}
+                  onChange={(n) => { setSupplierText(n.text); setSupplierId(n.supplierId); }}
+                  error={errors.supplier} disabled={busy}
+                />
+              </div>
+              {!supplierId && supplierText.trim() && (
                 <>
+                  <Field id="doc-supplier-phone" label="טלפון" value={phone} onChange={setPhone} dir="ltr" inputMode="tel" disabled={busy} />
+                  <Field id="doc-supplier-email" label="מייל" value={email} onChange={setEmail} dir="ltr" type="email" error={errors.email} disabled={busy} />
                   <div className="sm:col-span-2">
-                    <Field id="doc-title" label="כותרת" required value={title} onChange={(v) => setTitle(v.slice(0, PURCHASING_LIMITS.titleMax))}
-                      error={errors.title} placeholder="למשל: חידוש צבע בחדרי המדרגות" disabled={saving} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="doc-due" className="text-base font-medium text-muted-foreground">
-                      תאריך יעד להגשה<span className="text-red-500"> *</span>
-                    </Label>
-                    <input
-                      id="doc-due" type="date" value={dueDate} min={editing ? undefined : today}
-                      onChange={(e) => setDueDate(e.target.value)}
-                      onClick={(e) => {
-                        const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-                        try { el.showPicker?.(); } catch { /* fallback to the native icon */ }
-                      }}
-                      disabled={saving}
-                      aria-invalid={errors.due ? true : undefined}
-                      className={cn(
-                        'flex h-10 w-full cursor-pointer rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm',
-                        errors.due && 'border-red-400 bg-red-50 focus-visible:ring-red-200',
-                      )}
-                    />
-                    {errors.due && <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {errors.due}</p>}
-                    <p className="text-[12px] text-slate-500">עד תאריך זה הספק יכול להגיש ולתקן הצעה; אחריו הקישור נעול לקריאה.</p>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label htmlFor="doc-supplier" className="text-base font-medium text-muted-foreground">
-                      ספק<span className="text-red-500"> *</span>
-                    </Label>
-                    <Combobox
-                      id="doc-supplier" value={supplierId} onChange={setSupplierId} disabled={saving}
-                      placeholder="בחירת ספק" searchPlaceholder="חיפוש ספק…"
-                      options={suppliers.map((s) => ({ value: s.id, label: s.name, keywords: `${s.email} ${s.phone} ${s.mobile}` }))}
-                    />
-                    {errors.supplier && <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {errors.supplier}</p>}
-                  </div>
-                  <div className="sm:col-span-2">
-                    <Field id="doc-title" label="נושא" value={title} onChange={(v) => setTitle(v.slice(0, PURCHASING_LIMITS.titleMax))}
-                      placeholder="למשל: חומרי ניקוי לחודש נובמבר" hint="אופציונלי — מופיע מתחת לכותרת ה-PDF." disabled={saving} />
+                    <Field id="doc-supplier-address" label="כתובת" value={address} onChange={setAddress} disabled={busy} />
                   </div>
                 </>
               )}
+
+              <div className="sm:col-span-2">
+                <Field id="doc-title" label="תיאור" value={title} onChange={(v) => setTitle(v.slice(0, PURCHASING_LIMITS.titleMax))} disabled={busy} />
+              </div>
             </div>
           </Section>
 
-          <Section title="שורות" icon={ListChecks} iconTone="emerald">
+          <Section title="פירוטים" icon={ListChecks} iconTone="emerald">
             <div className="space-y-3 py-2">
               {linesLocked && (
                 <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -334,8 +421,8 @@ export function DocumentFormSheet({
                 </p>
               )}
               <LinesEditor
-                lines={lines} onChange={setLines} withPrices={!isRfq} vatRate={vatRate}
-                disabled={saving || linesLocked} errorKey={lineError?.key ?? null}
+                lines={lines} onChange={setLines} vatRate={vatRate}
+                disabled={busy || linesLocked} errorKey={lineError?.key ?? null}
               />
               {lineError && <p className="text-[12px] font-semibold text-red-500 text-start">⚠️ {lineError.message}</p>}
             </div>
@@ -344,68 +431,37 @@ export function DocumentFormSheet({
           <Section title="הערות" icon={StickyNote} iconTone="amber">
             <div className="space-y-2 py-2">
               <Textarea
-                id="doc-notes" value={notes} rows={4} disabled={saving}
+                id="doc-notes" value={notes} rows={4} disabled={busy}
                 onChange={(e) => setNotes(e.target.value.slice(0, PURCHASING_LIMITS.notesMax))}
-                placeholder="תנאי אספקה, הבהרות לספק…"
               />
-              <p className="text-[12px] text-slate-500">מופיע ב-PDF. אופציונלי.</p>
+              <p className="text-[12px] text-slate-500">מודפס בתחתית המסמך.</p>
             </div>
           </Section>
-
-          {isRfq && (
-            <Section title="קבצים מצורפים" icon={Paperclip} iconTone="violet">
-              <div className="space-y-3 py-2">
-                {existing.map((f) => (
-                  <div key={f.id} className="flex items-center gap-3 rounded-lg border border-line bg-white p-3">
-                    <FileText className="h-4 w-4 shrink-0 text-rose-600" aria-hidden />
-                    <a href={f.url} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate text-sm font-semibold text-ink hover:underline">
-                      {f.original_filename}
-                    </a>
-                    <span className="text-xs tabular-nums text-ink-3">{formatFileSize(f.file_size)}</span>
-                    <button type="button" onClick={() => removeExisting(f.id)} aria-label={`הסרת ${f.original_filename}`}
-                      className="grid h-11 w-11 place-items-center rounded-lg text-ink-3 hover:bg-rose-50 hover:text-rose-600">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))}
-                {staged.map((f, i) => (
-                  <div key={`${f.name}-${i}`} className="flex items-center gap-3 rounded-lg border border-dashed border-line-strong bg-white p-3">
-                    <FileText className="h-4 w-4 shrink-0 text-ink-3" aria-hidden />
-                    <span className="min-w-0 flex-1 truncate text-sm text-ink">{f.name}</span>
-                    <span className="text-xs tabular-nums text-ink-3">{formatFileSize(f.size)}</span>
-                    <button type="button" onClick={() => setStaged((s) => s.filter((_, j) => j !== i))} aria-label={`הסרת ${f.name}`}
-                      className="grid h-11 w-11 place-items-center rounded-lg text-ink-3 hover:bg-slate-100">
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button" onClick={() => fileInput.current?.click()} disabled={saving}
-                  className="flex w-full flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-line-strong bg-surface-2 px-6 py-5 text-center transition-colors hover:border-brand hover:bg-brand-soft/40"
-                >
-                  <UploadCloud className="h-5 w-5 text-brand" aria-hidden />
-                  <span className="text-sm font-semibold text-ink">הוספת קובץ</span>
-                  <span className="text-xs text-ink-3">{PURCHASING_FILE_TYPES_LABEL} · עד {PURCHASING_LIMITS.staffFilesMax} קבצים, 20MB לקובץ</span>
-                </button>
-                <input
-                  ref={fileInput} type="file" multiple hidden accept={PURCHASING_FILE_ACCEPT}
-                  onChange={(e) => { stageFiles(e.target.files); e.target.value = ''; }}
-                />
-                <p className="text-[12px] text-slate-500">הספקים רואים וקוראים את הקבצים האלה בקישור האישי שלהם.</p>
-              </div>
-            </Section>
-          )}
-
-          {!isRfq && <div className="flex items-center gap-2 text-xs text-ink-3"><Truck className="h-3.5 w-3.5" aria-hidden />ה-PDF והשליחה לספק זמינים מיד אחרי ההפקה.</div>}
         </div>
 
-        <PanelFooter
-          onClose={requestClose}
-          onSave={save}
-          saveDisabled={saving}
-          saveLabel={saving ? 'שומר…' : editing ? 'שמור שינויים' : 'הפק מסמך'}
-          saveIcon={editing ? Save : Send}
-        />
+        <footer className="flex-none border-t border-slate-200 bg-white px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" onClick={requestClose} disabled={busy} className="h-11 flex-1 sm:flex-none">
+                ביטול
+              </Button>
+              {!editing && (
+                <Button type="button" variant="outline" onClick={saveDraft} disabled={busy} className="h-11 flex-1 gap-2 sm:flex-none">
+                  <Save className="h-4 w-4" /> שמור טיוטה
+                </Button>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" onClick={preview} disabled={busy} className="h-11 flex-1 gap-2 sm:flex-none">
+                {previewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />} תצוגה מקדימה
+              </Button>
+              <Button type="button" onClick={save} disabled={busy} className="h-11 flex-1 gap-2 sm:flex-none">
+                <FilePlus2 className="h-4 w-4" />
+                {saving ? 'שומר…' : editing ? 'שמור שינויים' : 'הפק את המסמך'}
+              </Button>
+            </div>
+          </div>
+        </footer>
       </SheetContent>
     </Sheet>
   );

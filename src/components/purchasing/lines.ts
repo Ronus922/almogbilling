@@ -32,7 +32,7 @@ export interface LinePayload {
  *  description, no price) are dropped, so the trailing empty row is harmless. */
 export function draftsToPayload(
   drafts: readonly LineDraft[],
-  withPrices: boolean,
+  priceRequired: boolean,
 ): { ok: true; lines: LinePayload[] } | { ok: false; error: string; key?: string } {
   const used = drafts.filter((d) => d.description.trim() || d.unit_price.trim());
   if (used.length === 0) return { ok: false, error: 'יש להוסיף לפחות שורה אחת' };
@@ -43,10 +43,11 @@ export function draftsToPayload(
     if (description.length > PURCHASING_LIMITS.descriptionMax) return { ok: false, error: 'הפירוט ארוך מדי', key: d.key };
     const quantity = parseNumber(d.quantity);
     if (quantity === null || quantity <= 0) return { ok: false, error: 'כמות חייבת להיות גדולה מ-0', key: d.key };
+    // The price is required in a purchase order, optional in a request (blank = none).
     let unit_price: number | null = null;
-    if (withPrices) {
+    if (priceRequired || d.unit_price.trim()) {
       unit_price = parseNumber(d.unit_price);
-      if (unit_price === null || unit_price < 0) return { ok: false, error: 'יש להזין מחיר בכל שורה', key: d.key };
+      if (unit_price === null || unit_price < 0) return { ok: false, error: priceRequired ? 'יש להזין מחיר בכל שורה' : 'המחיר אינו תקין', key: d.key };
     }
     lines.push({ description, quantity, unit_price });
   }

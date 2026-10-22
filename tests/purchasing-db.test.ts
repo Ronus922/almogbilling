@@ -50,7 +50,8 @@ let before: Array<{ doc_type: string; last_number: number }> = [];
 
 const lines = (n = 2) => Array.from({ length: n }, (_, i) => ({ description: `פריט בדיקה ${i + 1}`, quantity: i + 1, unit_price: null }));
 const rfqInput = (over: Partial<Parameters<typeof db.createDocument>[0]> = {}) => ({
-  doc_type: 'rfq' as const, doc_date: '2026-10-21', title: 'בדיקה', supplier_id: null, notes: '', due_date: '2099-01-01',
+  doc_type: 'rfq' as const, doc_date: '2026-10-21', title: 'בדיקה', supplier_id: null, supplier_name: 'ספק ידני לבדיקה',
+  supplier_phone: null, supplier_email: null, supplier_address: null, notes: '', due_date: '2099-01-01',
   vat_rate: 18, source_rfq_id: null, start_number: null, lines: lines(), ...over,
 });
 
@@ -211,6 +212,64 @@ d('purchasing db', () => {
     const hits = await db.suggestDescriptions('ייחודי לבד');
     expect(hits[0]).toBe('נוזל רצפות ייחודי לבדיקה');
     expect(await db.suggestDescriptions('%')).toBeInstanceOf(Array);
+  });
+
+  describe('the supplier of a document (list or typed by hand)', () => {
+    it('keeps a hand-typed supplier on the document only, and never adds it to suppliers', async () => {
+      const before = (await pool.query(`select count(*)::int as n from public.suppliers`)).rows[0].n;
+      const rfq = await create({
+        supplier_name: 'ספק שלא ברשימה', supplier_phone: '050-1234567', supplier_email: 'x@example.com', supplier_address: 'רחוב הבדיקה 1',
+      });
+      const row = await db.findDocument(rfq.id);
+      expect(row?.supplier_id).toBeNull();
+      expect(row?.supplier_name).toBe('ספק שלא ברשימה');
+      expect(row?.supplier_phone).toBe('050-1234567');
+      expect(row?.supplier_email).toBe('x@example.com');
+      expect(row?.supplier_address).toBe('רחוב הבדיקה 1');
+      expect((await pool.query(`select count(*)::int as n from public.suppliers`)).rows[0].n).toBe(before);
+    });
+
+    it('a purchase order may carry a typed supplier; a list supplier reads its live name', async () => {
+      const typed = await create({
+        doc_type: 'po', due_date: null, supplier_name: 'ספק ידני להזמנה',
+        lines: [{ description: 'חומר', quantity: 1, unit_price: 5 }],
+      });
+      expect((await db.findDocument(typed.id))?.supplier_name).toBe('ספק ידני להזמנה');
+      const listed = await create({
+        doc_type: 'po', due_date: null, supplier_id: made.suppliers[0], supplier_name: null,
+        lines: [{ description: 'חומר', quantity: 1, unit_price: 5 }],
+      });
+      const row = await db.findDocument(listed.id);
+      expect(row?.supplier_id).toBe(made.suppliers[0]);
+      expect(row?.supplier_name).toBe('ספק בדיקה א׳');
+    });
+
+    it('refuses a document with no supplier at all', async () => {
+      await expect(db.createDocument(rfqInput({ supplier_id: null, supplier_name: null, start_number: 1 }), admin)).rejects.toThrow();
+    });
+
+    it('the description is optional, and a request line may carry an optional price', async () => {
+      const rfq = await create({ title: '', lines: [{ description: 'עם מחיר', quantity: 2, unit_price: 12.5 }, { description: 'בלי', quantity: 1, unit_price: null }] });
+      const row = await db.findDocument(rfq.id);
+      expect(row?.title).toBe('');
+      const ls = await db.listLines(rfq.id);
+      expect(ls.map((l) => l.unit_price)).toEqual([12.5, null]);
+      const stored = await pool.query(`select title from public.purchasing_documents where id = $1`, [rfq.id]);
+      expect(stored.rows[0].title).toBeNull();
+    });
+
+    it('an edit switches between a list supplier and a typed one', async () => {
+      const rfq = await create({ supplier_id: made.suppliers[0], supplier_name: null });
+      await db.updateDocument(rfq.id, {
+        doc_date: '2026-10-22', title: 'חדש', supplier_id: null, supplier_name: 'ספק אחר', supplier_phone: null,
+        supplier_email: null, supplier_address: null, notes: 'n', due_date: null,
+      });
+      const row = await db.findDocument(rfq.id);
+      expect(row?.supplier_id).toBeNull();
+      expect(row?.supplier_name).toBe('ספק אחר');
+      expect(row?.doc_date).toBe('2026-10-22');
+      expect(row?.due_date).toBe('2099-01-01');
+    });
   });
 
   it('a file belongs to exactly one owner', async () => {

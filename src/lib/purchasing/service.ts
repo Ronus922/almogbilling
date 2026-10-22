@@ -13,8 +13,8 @@ import { readPurchasingObject } from '@/lib/storage/purchasingStorage';
 import {
   normalizePhone, sendWhatsAppFileByUrl, sendWhatsAppMessage, uploadWhatsAppFile, WhatsAppError,
 } from '@/lib/whatsapp';
-import { DOC_LABEL, docHeading, formatDocDate, type CompanySettings } from './model';
-import { renderDocumentPdf } from './pdf';
+import { DOC_LABEL, docHeading, formatDocDate, type CompanySettings, type DocType } from './model';
+import { renderDocumentPdf, type PdfInput, type PdfSupplier } from './pdf';
 
 // Purchasing — the server-side orchestration of the two outputs of a document:
 // its PDF, and its delivery to suppliers (e-mail with the PDF attached, and /
@@ -61,7 +61,13 @@ export async function buildDocumentPdf(documentId: string, supplier?: SupplierBr
   const company = await getCompany();
   if (!company) throw new CompanyMissingError();
   const lines = await listLines(documentId);
-  const to = supplier ?? (doc.supplier_id ? await getSupplierBrief(doc.supplier_id) : null);
+  const listed = supplier ?? (doc.supplier_id ? await getSupplierBrief(doc.supplier_id) : null);
+  // A supplier typed by hand has no row in `suppliers`: its details ride on the document.
+  const to: PdfSupplier | null = listed
+    ? { name: listed.name, address: listed.address, phone: listed.mobile || listed.phone }
+    : doc.supplier_name
+      ? { name: doc.supplier_name, address: doc.supplier_address ?? '', phone: doc.supplier_phone ?? '' }
+      : null;
   const bytes = renderDocumentPdf({
     kind: doc.doc_type,
     number: doc.number,
@@ -73,10 +79,41 @@ export async function buildDocumentPdf(documentId: string, supplier?: SupplierBr
     company,
     logo: await loadImage(company.logo_key),
     signature: await loadImage(company.signature_key),
-    supplier: to ? { name: to.name, address: to.address, phone: to.mobile || to.phone } : null,
+    supplier: to,
     lines: lines.map((l) => ({ description: l.description, quantity: l.quantity, unit_price: l.unit_price })),
   });
   return { bytes, filename: pdfDownloadName(doc), doc, company };
+}
+
+export interface PreviewInput {
+  doc_type: DocType;
+  doc_date: string;
+  title: string;
+  notes: string;
+  due_date: string | null;
+  supplier: PdfSupplier | null;
+  lines: PdfInput['lines'];
+}
+
+/** The PDF of a form that is not saved yet — same renderer, the number the
+ *  document would get right now. Nothing is written. */
+export async function buildPreviewPdf(input: PreviewInput, number: number): Promise<Buffer> {
+  const company = await getCompany();
+  if (!company) throw new CompanyMissingError();
+  return renderDocumentPdf({
+    kind: input.doc_type,
+    number,
+    date: input.doc_date,
+    title: input.title,
+    notes: input.notes,
+    dueDate: input.due_date,
+    vatRate: company.vat_rate,
+    company,
+    logo: await loadImage(company.logo_key),
+    signature: await loadImage(company.signature_key),
+    supplier: input.supplier,
+    lines: input.lines,
+  });
 }
 
 /** The personal public link of a supplier on a request. */
@@ -100,7 +137,7 @@ function messageBody(doc: DocumentRow, company: CompanySettings, link: string | 
     return [
       'שלום רב,',
       '',
-      `${company.name} מבקשת הצעת מחיר: ${doc.title}.`,
+      doc.title ? `${company.name} מבקשת הצעת מחיר: ${doc.title}.` : `${company.name} מבקשת הצעת מחיר.`,
       `מצורף קובץ ${heading} עם פירוט הפריטים.`,
       '',
       'להגשת ההצעה (מחיר ליחידה לכל שורה) נא להיכנס לקישור האישי:',

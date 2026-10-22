@@ -4,10 +4,11 @@ import { MAILPIT_URL, mailpitClear, saveSmtpSettings } from './helpers';
 
 // Purchasing ("רכש", 21/10/2026), driven as the seeded super admin through the
 // real screens, end to end:
-//   wizard (company letterhead, once) → first request asks "from which number"
-//   → running numbers → send by e-mail (PDF attached, Mailpit) and WhatsApp
-//   (message + file, the Green stand-in) → the supplier's PUBLIC link: submit,
-//   amend, locked after the due date → a quote received outside the system →
+//   wizard (company letterhead, once) → the ONE form (Invoice Maven sample): the
+//   heading carries the next number, supplier from the list or typed, optional
+//   description / prices, three-row summary, draft + preview → send by e-mail
+//   (PDF attached, Mailpit) and WhatsApp (message + file, the Green stand-in)
+//   → the supplier's PUBLIC link: submit, amend, locked after the due date →
 //   comparison + cheapest flag + winner → purchase order from the winner
 //   (prefilled, totals with the VAT stamped at issue) → a direct purchase order
 //   → the PDF.
@@ -29,6 +30,7 @@ const MOBILE_A = `05${RUN.slice(0, 8).padEnd(8, '1')}`;
 const MOBILE_B = `05${RUN.slice(0, 8).padEnd(8, '2')}`;
 const CHAT_A = `972${MOBILE_A.slice(1)}@c.us`;
 const RFQ_TITLE = `חידוש צבע ${RUN}`;
+const TYPED_SUPPLIER = `ספק חופשי ${RUN}`;
 const START_RFQ = 500;
 const START_PO = 70;
 
@@ -69,7 +71,7 @@ test.afterAll(async () => {
     // them to THIS run's fixtures: its suppliers, or the RUN tag in a title.
     const mine = await pool.query<{ id: string }>(
       `select id from public.purchasing_documents
-        where id = any($1::uuid[]) or supplier_id = any($2::uuid[]) or title like $3`,
+        where id = any($1::uuid[]) or supplier_id = any($2::uuid[]) or title like $3 or supplier_name like $3`,
       [made.docs, made.suppliers, `%${RUN}%`],
     );
     const ids = mine.rows.map((r) => r.id);
@@ -134,41 +136,132 @@ test('nav, wizard and the first request: the letterhead once, then "from which n
   await page.getByRole('button', { name: 'שמור והמשך' }).click();
 
   // …and it continues to the request the user asked for. The series is empty,
-  // so it asks where to start; the date is today and not editable.
-  await expect(sheet(page).getByText('בקשה להצעת מחיר חדשה')).toBeVisible();
+  // so the heading itself asks where to start.
+  await expect(page.locator('[data-form-heading]')).toContainText('בקשה להצעת מחיר מספר');
   await expect(page.locator('#doc-start')).toBeVisible();
   await expect(sheet(page).getByText('זה בקשה להצעת מחיר הראשונה')).toBeVisible();
 
+  // The form is exactly the sample's — no file upload, no extras.
+  const form = sheet(page);
+  for (const gone of ['קבצים מצורפים', 'הוספת קובץ', 'הצעה מחוץ למערכת', 'מטבע', 'הנחה', 'עיגול', 'תגיות', 'פרטי בנק']) {
+    await expect(form.getByText(gone)).toHaveCount(0);
+  }
+  await expect(form.locator('input[type="file"]')).toHaveCount(0);
+  await expect(form.getByLabel('תאריך מסמך')).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
+  await expect(page.locator('[data-line="0"] input[inputmode="decimal"]').first()).toHaveValue('1'); // quantity defaults to 1
+  await expect(form.locator('[data-totals] dt')).toHaveText(['סה״כ לפני מע״מ', 'מע״מ 18%', 'סה״כ לתשלום']);
+
+  // A supplier is required (from the list, or typed).
   await page.locator('#doc-start').fill(String(START_RFQ));
-  await page.locator('#doc-title').fill(RFQ_TITLE);
   await fillLine(page, 0, 'צבע אקרילי לבן', '3');
-  await page.getByRole('button', { name: 'הוספת שורה' }).click();
+  await form.getByRole('button', { name: 'הפק את המסמך' }).click();
+  await expect(form.getByText('יש לבחור ספק או להקליד שם ספק')).toBeVisible();
+
+  // A supplier typed by hand: its phone / e-mail / address appear and stay on the document.
+  await page.locator('#doc-supplier').fill(TYPED_SUPPLIER);
+  await page.locator('#doc-supplier-phone').fill('050-7654321');
+  await page.locator('#doc-supplier-email').fill(`typed-${RUN}@example.com`);
+  await page.locator('#doc-supplier-address').fill('רחוב הבדיקה 1, חיפה');
+  await page.locator('#doc-title').fill(RFQ_TITLE);
+  await page.getByRole('button', { name: 'הוסף', exact: true }).click();
   await fillLine(page, 1, 'רולר צביעה', '10');
-  await page.getByRole('button', { name: 'הפק מסמך' }).click();
+  await form.getByRole('button', { name: 'הפק את המסמך' }).click();
 
   await expect(page.getByRole('heading', { name: `בקשה להצעת מחיר מספר ${START_RFQ}` })).toBeVisible();
-  await docId('rfq', START_RFQ);
+  const first = await docId('rfq', START_RFQ);
+  const typed = await pool.query(
+    `select supplier_id, supplier_name, supplier_phone, supplier_email, supplier_address from public.purchasing_documents where id = $1`, [first],
+  );
+  expect(typed.rows[0]).toMatchObject({
+    supplier_id: null, supplier_name: TYPED_SUPPLIER, supplier_phone: '050-7654321', supplier_address: 'רחוב הבדיקה 1, חיפה',
+  });
+  // Never added to the suppliers list.
+  expect((await pool.query(`select 1 from public.suppliers where display_name = $1 or company_name = $1`, [TYPED_SUPPLIER])).rowCount).toBe(0);
 
   // The company is saved: a second visit does not ask again.
   const co = await pool.query(`select value from public.app_settings where key = 'purchasing_company'`);
   expect(co.rows[0].value.vat_rate).toBe(18);
 });
 
-test('the number runs on by itself, is not editable, and "פירוט" completes from earlier lines', async ({ page }) => {
+test('the heading shows the next number, "פירוט" completes, a price is optional, a taken number moves on', async ({ page, request }) => {
   await page.goto('/purchasing');
   await page.getByRole('button', { name: 'בקשה חדשה' }).click();
   await expect(page.locator('#doc-start')).toHaveCount(0); // the series already runs
-  await expect(page.locator('[data-doc-number]')).toHaveText(`יוקצה בשמירה (${START_RFQ + 1})`);
+  await expect(page.locator('[data-doc-number]')).toHaveText(String(START_RFQ + 1));
+  await expect(page.getByText('יוקצה בשמירה')).toHaveCount(0);
+  const form = sheet(page);
 
-  await page.locator('#doc-title').fill(`בקשה שנייה ${RUN}`);
+  // The supplier field searches the list.
+  await page.locator('#doc-supplier').fill(SUP_B.slice(0, 7));
+  await page.getByRole('option', { name: SUP_B }).click();
+  await expect(page.locator('#doc-supplier')).toHaveValue(SUP_B);
+  await expect(page.locator('#doc-supplier-phone')).toHaveCount(0); // a listed supplier has no hand-typed details
+
   const desc = page.locator('[data-line="0"]').getByPlaceholder('פירוט');
   await desc.fill('צבע אקר');
   await page.getByRole('option', { name: 'צבע אקרילי לבן' }).click();
   await expect(desc).toHaveValue('צבע אקרילי לבן');
-  await page.locator('[data-line="0"] input[inputmode="decimal"]').first().fill('1');
-  await page.getByRole('button', { name: 'הפק מסמך' }).click();
-  await expect(page.getByRole('heading', { name: `בקשה להצעת מחיר מספר ${START_RFQ + 1}` })).toBeVisible();
+  // The price is optional in a request; filled, the summary follows (18% VAT).
+  await page.locator('[data-line="0"] input[inputmode="decimal"]').nth(1).fill('20');
+  await expect(form.locator('[data-totals]')).toContainText('₪20.00');
+  await expect(form.locator('[data-totals]')).toContainText('₪3.60');
+  await expect(form.locator('[data-totals]')).toContainText('₪23.60');
+
+  // The preview is a real PDF and saves nothing.
+  const before = await pool.query(`select count(*)::int as n from public.purchasing_documents`);
+  const [previewRes] = await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/purchasing/preview')),
+    form.getByRole('button', { name: 'תצוגה מקדימה' }).click(),
+  ]);
+  expect(previewRes.status()).toBe(200);
+  expect(previewRes.headers()['content-type']).toBe('application/pdf');
+  expect((await pool.query(`select count(*)::int as n from public.purchasing_documents`)).rows[0].n).toBe(before.rows[0].n);
+
+  // Somebody else takes the number shown while this form is open.
+  const taken = await request.post('/api/purchasing/documents', {
+    data: {
+      doc_type: 'rfq', doc_date: '2026-10-22', title: `תפוס ${RUN}`, supplier_name: TYPED_SUPPLIER, due_date: '2099-01-01',
+      lines: [{ description: 'שורה', quantity: 1, unit_price: null }],
+    },
+  });
+  expect(taken.status()).toBe(201);
   await docId('rfq', START_RFQ + 1);
+
+  await page.locator('#doc-title').fill(`בקשה שנייה ${RUN}`);
+  await form.getByRole('button', { name: 'הפק את המסמך' }).click();
+  await expect(page.getByText(`המספר ${START_RFQ + 1} נתפס בינתיים — המסמך הופק כמספר ${START_RFQ + 2}`)).toBeVisible();
+  await expect(page.getByRole('heading', { name: `בקשה להצעת מחיר מספר ${START_RFQ + 2}` })).toBeVisible();
+  await docId('rfq', START_RFQ + 2);
+});
+
+test('a draft stays in this browser, takes no number, and is gone once the document is issued', async ({ page }) => {
+  await page.goto('/purchasing');
+  await page.getByRole('button', { name: 'בקשה חדשה' }).click();
+  const form = sheet(page);
+  const seqBefore = await pool.query(`select last_number from public.purchasing_sequences where doc_type = 'rfq'`);
+  await page.locator('#doc-supplier').fill(`ספק טיוטה ${RUN}`);
+  await page.locator('#doc-title').fill(`טיוטה ${RUN}`);
+  await fillLine(page, 0, 'פריט בטיוטה', '4');
+  await form.getByRole('button', { name: 'שמור טיוטה' }).click();
+  await expect(page.getByText('הטיוטה נשמרה')).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect((await pool.query(`select last_number from public.purchasing_sequences where doc_type = 'rfq'`)).rows[0].last_number)
+    .toBe(seqBefore.rows[0].last_number);
+
+  await page.reload();
+  await page.getByRole('button', { name: 'בקשה חדשה' }).click();
+  await expect(page.locator('#doc-supplier')).toHaveValue(`ספק טיוטה ${RUN}`);
+  await expect(page.locator('#doc-title')).toHaveValue(`טיוטה ${RUN}`);
+  await expect(page.locator('[data-line="0"]').getByPlaceholder('פירוט')).toHaveValue('פריט בטיוטה');
+
+  await sheet(page).getByRole('button', { name: 'הפק את המסמך' }).click();
+  await expect(page.getByRole('heading', { name: /בקשה להצעת מחיר מספר \d+/ }).first()).toBeVisible();
+  const n = (await pool.query(`select number from public.purchasing_documents where title = $1`, [`טיוטה ${RUN}`])).rows[0].number;
+  await docId('rfq', n);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'בקשה חדשה' }).click();
+  await expect(page.locator('#doc-supplier')).toHaveValue(''); // the draft was cleared by the issue
+  await page.keyboard.press('Escape');
 });
 
 test('send the request by e-mail (PDF attached) and WhatsApp (message with the personal link + the PDF)', async ({ page, request }) => {
@@ -272,31 +365,37 @@ test('the supplier\'s public link: submit, amend, then locked after the due date
   await pool.query(`update public.purchasing_documents set due_date = '2099-01-01' where id = $1`, [rfq]);
 });
 
-test('a quote received outside the system, the comparison, the winner — and a purchase order from it', async ({ page }) => {
+test('the comparison, the winner — and a purchase order from it (no "quote outside the system")', async ({ page, browser }) => {
+  const rfq = await docId('rfq', START_RFQ);
+  // Supplier B answers through ITS OWN link: 3×9 + 10×5 = 77.
+  const recB = await pool.query<{ token: string }>(
+    `select token from public.purchasing_rfq_recipients where rfq_id = $1 and supplier_id = $2`, [rfq, made.suppliers[1]],
+  );
+  const ls = await pool.query<{ id: string }>(`select id from public.purchasing_lines where document_id = $1 order by sort_order`, [rfq]);
+  const anon = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  const sent = await anon.request.put(`/api/public/quote/${recB.rows[0].token}`, {
+    data: { prices: { [ls.rows[0].id]: 9, [ls.rows[1].id]: 5 } },
+  });
+  expect(sent.status()).toBe(200);
+  await anon.close();
+
   await page.goto('/purchasing');
   await page.locator(`tr[data-number="${START_RFQ}"]`).click();
   await expect(page.getByRole('heading', { name: `בקשה להצעת מחיר מספר ${START_RFQ}` })).toBeVisible();
+  // The "quote received outside the system" flow is gone.
+  await expect(page.getByRole('button', { name: 'הצעה מחוץ למערכת' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'הזנת הצעה' })).toHaveCount(0);
 
-  // Supplier B's offer arrived by e-mail: keyed in as a lump sum, no lines.
-  await page.getByRole('button', { name: 'הזנת הצעה' }).last().click();
-  const manual = sheet(page);
-  await expect(manual.getByText('הצעה שהתקבלה מחוץ למערכת')).toBeVisible();
-  await manual.locator('#mq-total').fill('400');
-  await manual.getByRole('button', { name: 'שמור הצעה' }).click();
-  await expect(page.locator(`[data-recipient="${made.suppliers[1]}"]`)).toContainText('הוזנה ידנית');
-
-  // Comparison: A (lines: 3×10 + 10×4 = 70) vs B (lump sum 400). Cheapest = A.
+  // Comparison: A (3×10 + 10×4 = 70) vs B (77). Cheapest = A.
   const cmp = page.locator('[data-comparison]');
   await expect(cmp).toContainText('₪70.00');
-  await expect(cmp).toContainText('₪400.00');
-  await expect(cmp).toContainText('סכום כולל, ללא שורות');
+  await expect(cmp).toContainText('₪77.00');
   await expect(cmp.getByText('הזול ביותר')).toHaveCount(1);
   await expect(cmp.locator('td.bg-emerald-100')).toContainText('₪70.00');
 
   // Pick the winner → recorded with who and when.
   await cmp.getByRole('button', { name: 'בחר כזוכה' }).first().click();
   await expect(page.locator('[data-winner]')).toContainText(SUP_A);
-  const rfq = await docId('rfq', START_RFQ);
   const row = await pool.query(`select winner_supplier_id, winner_chosen_by, winner_chosen_at from public.purchasing_documents where id = $1`, [rfq]);
   expect(row.rows[0].winner_supplier_id).toBe(made.suppliers[0]);
   expect(row.rows[0].winner_chosen_by).not.toBeNull();
@@ -307,8 +406,9 @@ test('a quote received outside the system, the comparison, the winner — and a 
   // (the tab sits behind the open panel, outside the accessibility tree)
   await expect(page.locator('[data-tab="po"]')).toHaveAttribute('aria-selected', 'true');
   const form = sheet(page);
-  await expect(form.getByText('הזמנת רכש מהצעה זוכה')).toBeVisible();
-  await expect(form.locator('#doc-supplier')).toContainText(SUP_A);
+  await expect(form.locator('[data-form-heading]')).toContainText('הזמנת רכש מספר');
+  await expect(form.getByText(`מבקשה מספר ${START_RFQ}`)).toBeVisible();
+  await expect(form.locator('#doc-supplier')).toHaveValue(SUP_A);
   await expect(page.locator('[data-line="0"] input[inputmode="decimal"]').nth(1)).toHaveValue('10');
   await expect(page.locator('[data-line="1"] input[inputmode="decimal"]').nth(1)).toHaveValue('4');
   // The first purchase order: it asks where to start.
@@ -317,7 +417,7 @@ test('a quote received outside the system, the comparison, the winner — and a 
   await expect(form.locator('[data-totals]')).toContainText('₪70.00');
   await expect(form.locator('[data-totals]')).toContainText('₪12.60');
   await expect(form.locator('[data-totals]')).toContainText('₪82.60');
-  await form.getByRole('button', { name: 'הפק מסמך' }).click();
+  await form.getByRole('button', { name: 'הפק את המסמך' }).click();
 
   await expect(page.getByRole('heading', { name: `הזמנת רכש מספר ${START_PO}` })).toBeVisible();
   const detail = page.getByRole('dialog').filter({ has: page.locator('[data-doc-details]') });
@@ -332,13 +432,13 @@ test('a direct purchase order, the VAT stamped at issue, and the PDF', async ({ 
   await page.goto('/purchasing?tab=po');
   await page.getByRole('button', { name: 'הזמנה חדשה' }).click();
   const form = sheet(page);
-  await expect(page.locator('[data-doc-number]')).toHaveText(`יוקצה בשמירה (${START_PO + 1})`);
-  await form.locator('#doc-supplier').click();
-  await page.getByText(SUP_B).last().click();
+  await expect(page.locator('[data-doc-number]')).toHaveText(String(START_PO + 1));
+  await form.locator('#doc-supplier').fill(SUP_B.slice(0, 7));
+  await page.getByRole('option', { name: SUP_B }).click();
   await form.locator('#doc-title').fill('חומרי ניקוי');
   await fillLine(page, 0, 'נוזל רצפות', '2', '25');
   await expect(form.locator('[data-totals]')).toContainText('₪59.00'); // 50 + 9 VAT
-  await form.getByRole('button', { name: 'הפק מסמך' }).click();
+  await form.getByRole('button', { name: 'הפק את המסמך' }).click();
   await expect(page.getByRole('heading', { name: `הזמנת רכש מספר ${START_PO + 1}` })).toBeVisible();
   const id = await docId('po', START_PO + 1);
 

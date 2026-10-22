@@ -135,12 +135,13 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-line bg-white shadow-soft-xs">
-          <table className="w-full min-w-[720px] border-collapse text-sm" data-list={tab}>
+          <table className="w-full min-w-[800px] border-collapse text-sm" data-list={tab}>
             <thead>
               <tr className="border-b border-line bg-slate-50/80 text-start">
                 <th className="px-4 py-3 text-start font-semibold text-ink-2">מספר</th>
                 <th className="px-4 py-3 text-start font-semibold text-ink-2">תאריך</th>
-                <th className="px-4 py-3 text-start font-semibold text-ink-2">{tab === 'rfq' ? 'כותרת' : 'ספק'}</th>
+                <th className="px-4 py-3 text-start font-semibold text-ink-2">ספק</th>
+                <th className="px-4 py-3 text-start font-semibold text-ink-2">תיאור</th>
                 {tab === 'rfq' ? (
                   <>
                     <th className="px-4 py-3 text-start font-semibold text-ink-2">יעד להגשה</th>
@@ -148,10 +149,7 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
                     <th className="px-4 py-3 text-start font-semibold text-ink-2">זוכה</th>
                   </>
                 ) : (
-                  <>
-                    <th className="px-4 py-3 text-start font-semibold text-ink-2">נושא</th>
-                    <th className="px-4 py-3 text-start font-semibold text-ink-2">סה״כ לתשלום</th>
-                  </>
+                  <th className="px-4 py-3 text-start font-semibold text-ink-2">סה״כ לתשלום</th>
                 )}
               </tr>
             </thead>
@@ -170,7 +168,8 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
                   >
                     <td className="px-4 py-3 font-bold tabular-nums text-ink">{d.number}</td>
                     <td className="px-4 py-3 tabular-nums text-ink-2">{formatDocDate(d.doc_date)}</td>
-                    <td className="px-4 py-3 font-semibold text-ink">{tab === 'rfq' ? d.title : d.supplier_name}</td>
+                    <td className="px-4 py-3 font-semibold text-ink">{d.supplier_name}</td>
+                    <td className="px-4 py-3 text-ink-2">{d.title || '—'}</td>
                     {tab === 'rfq' ? (
                       <>
                         <td className="px-4 py-3 tabular-nums text-ink-2">
@@ -183,10 +182,7 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
                         <td className="px-4 py-3 text-ink-2">{d.winner_supplier_name ?? '—'}</td>
                       </>
                     ) : (
-                      <>
-                        <td className="px-4 py-3 text-ink-2">{d.title || '—'}</td>
-                        <td className="px-4 py-3 font-semibold tabular-nums text-ink" dir="ltr">{formatIls(d.subtotal + vat)}</td>
-                      </>
+                      <td className="px-4 py-3 font-semibold tabular-nums text-ink" dir="ltr">{formatIls(d.subtotal + vat)}</td>
                     )}
                   </tr>
                 );

@@ -17,8 +17,8 @@ import {
 //   ───────── rule
 //   right "לכבוד:" supplier name, address, phone       left  date
 //   right title "הזמנת רכש מספר N"                      left  "מקור"
-//   table  פירוט · כמות · מחיר · סה״כ  (alternating rows)   (RFQ: no prices)
-//   totals סה״כ / מע״מ X% / סה״כ לתשלום (bold)           (PO only)
+//   table  פירוט · כמות · מחיר · סה״כ  (alternating rows)   (RFQ: only if a price was entered)
+//   totals סה״כ לפני מע״מ / מע״מ X% / סה״כ לתשלום (bold)  (when prices are shown)
 //   "חתימה:" + the scanned signature
 //
 // jsPDF paints left-to-right with no bidi, so every string is wrapped on its
@@ -120,7 +120,8 @@ export function renderDocumentPdf(input: PdfInput): Buffer {
     // — otherwise it reverses the digits and Latin runs a second time.
     doc.text(toVisual(text), x, y, { align: o.align ?? 'right', isInputVisual: true, isOutputVisual: true });
   };
-  const withPrices = input.kind === 'po';
+  // A purchase order always carries prices; a request only when a price was filled in.
+  const withPrices = input.kind === 'po' || input.lines.some((l) => l.unit_price !== null);
 
   // ── Letterhead ────────────────────────────────────────────────────────────
   let y = 18;
@@ -221,7 +222,7 @@ export function renderDocumentPdf(input: PdfInput): Buffer {
     put(formatQty(line.quantity), mid(1), base, { size: 10, align: 'center' });
     if (withPrices) {
       put(line.unit_price === null ? '' : formatIls(line.unit_price), mid(2), base, { size: 10, align: 'center' });
-      put(formatIls(lineTotal(line)), mid(3), base, { size: 10, align: 'center' });
+      put(line.unit_price === null ? '' : formatIls(lineTotal(line)), mid(3), base, { size: 10, align: 'center' });
     }
     y += rowH;
   });
@@ -229,7 +230,7 @@ export function renderDocumentPdf(input: PdfInput): Buffer {
   doc.line(LEFT, y, RIGHT, y);
   y += 6;
 
-  // ── Totals (purchase order only) ──────────────────────────────────────────
+  // ── Totals (when the table shows prices) ──────────────────────────────────────────
   if (withPrices) {
     const t = computeTotals(input.lines, input.vatRate);
     if (y + 28 > PAGE_H - 30) { doc.addPage(); y = 18; }
@@ -240,7 +241,7 @@ export function renderDocumentPdf(input: PdfInput): Buffer {
       put(value, bx + PAD, y, { size: o.size ?? 10.5, bold: o.bold, align: 'left' });
       y += 6.5;
     };
-    row('סה״כ', formatIls(t.subtotal));
+    row('סה״כ לפני מע״מ', formatIls(t.subtotal));
     row(`מע״מ ${formatVatRate(input.vatRate)}`, formatIls(t.vat));
     doc.setDrawColor(...INK);
     doc.setLineWidth(0.3);
