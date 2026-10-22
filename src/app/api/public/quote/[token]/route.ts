@@ -80,7 +80,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   }
 
   await upsertQuote({
-    rfq_id: found.rfq.id, supplier_id: found.recipient.supplier_id, source: 'portal',
+    rfq_id: found.rfq.id, supplier_id: found.recipient.supplier_id, party: found.recipient.party, source: 'portal',
     total_amount: null, valid_until: body.data.valid_until, notes: body.data.notes,
     prices: body.data.prices, actor_id: null,
   });

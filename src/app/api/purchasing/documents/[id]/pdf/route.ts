@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getSupplierBrief } from '@/lib/db/purchasing';
-import { buildDocumentPdf, CompanyMissingError } from '@/lib/purchasing/service';
+import { buildDocumentPdf, CompanyMissingError, DraftDocumentError } from '@/lib/purchasing/service';
 import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -37,6 +37,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       },
     });
   } catch (err) {
+    if (err instanceof DraftDocumentError) return NextResponse.json({ error: 'לטיוטה אין PDF — יש להפיק את המסמך' }, { status: 409 });
     if (err instanceof CompanyMissingError) return NextResponse.json({ error: 'company_missing' }, { status: 409 });
     logger.error('[GET /api/purchasing/documents/pdf] failed', err);
     return NextResponse.json({ error: 'יצירת ה-PDF נכשלה' }, { status: 500 });

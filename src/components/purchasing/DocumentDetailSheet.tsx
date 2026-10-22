@@ -59,7 +59,7 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
   async function remove() {
     if (!detail) return;
     const d = detail.document;
-    if (!window.confirm(`למחוק את ${docHeading(d.doc_type, d.number)}? המספר לא ישוחזר ולא ייעשה בו שימוש שוב.`)) return;
+    if (!window.confirm(`למחוק את ${docHeading(d.doc_type, d.number ?? 0)}? המספר לא ישוחזר ולא ייעשה בו שימוש שוב.`)) return;
     setDeleting(true);
     try {
       const res = await fetch(`/api/purchasing/documents/${d.id}`, { method: 'DELETE' });
@@ -93,7 +93,7 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
                 <SheetTitle className="text-2xl font-bold text-white">
-                  {doc ? docHeading(doc.doc_type, doc.number) : 'טוען…'}
+                  {doc ? docHeading(doc.doc_type, doc.number ?? 0) : 'טוען…'}
                 </SheetTitle>
                 <p className="mt-1 truncate text-sm text-white/70">
                   {doc ? [doc.title, doc.supplier_name].filter(Boolean).join(' · ') : ''}

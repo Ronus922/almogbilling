@@ -17,6 +17,12 @@ export function docHeading(type: DocType, number: number): string {
 
 export const DEFAULT_VAT_RATE = 18;
 
+/** The key of a party in the API and the screens: a listed supplier's uuid, or
+ *  this literal for the ONE hand-typed supplier of a document (it has no row in
+ *  `suppliers`; its details ride on the document / recipient / quote). */
+export const MANUAL_PARTY = 'manual';
+export const partyKey = (p: { supplier_id: string | null }): string => p.supplier_id ?? MANUAL_PARTY;
+
 export const PURCHASING_LIMITS = {
   maxLines: 500,
   descriptionMax: 500,

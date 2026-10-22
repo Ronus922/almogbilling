@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PURCHASING_LIMITS as L } from '@/lib/purchasing/model';
+import { MANUAL_PARTY, PURCHASING_LIMITS as L } from '@/lib/purchasing/model';
 
 // Request-body schemas of the purchasing routes (zod — the project rule: every
 // route parses its body through parseJsonBody). Hebrew messages: the screens
@@ -103,6 +103,21 @@ export const createBodySchema = z.discriminatedUnion('doc_type', [
   }),
 ]).refine(hasSupplier, { message: SUPPLIER_REQUIRED, path: ['supplier_name'] });
 
+// A DRAFT (saved without a number, POST/PATCH ?mode=draft) is deliberately
+// lenient — it is a work in progress: no supplier / due date / lines required,
+// prices optional in both documents. It only has to hold SOMETHING. Issuing it
+// (PATCH ?mode=issue) goes through createBodySchema, the strict one.
+export const draftBodySchema = z.object({
+  doc_type: z.enum(['rfq', 'po']),
+  ...formShape,
+  due_date: isoDate.nullable().default(null),
+  source_rfq_id: uuid.nullable().default(null),
+  lines: z.array(lineSchema).max(L.maxLines, 'יותר מדי שורות').default([]),
+}).refine((b) => hasSupplier(b) || b.title !== '' || b.lines.length > 0, {
+  message: 'אין מה לשמור בטיוטה — מלאו ספק, תיאור או שורה',
+  path: ['supplier_name'],
+});
+
 export const updateDocumentBodySchema = z.object({
   ...formShape,
   due_date: isoDate.nullable().default(null),
@@ -110,7 +125,8 @@ export const updateDocumentBodySchema = z.object({
 }).refine(hasSupplier, { message: SUPPLIER_REQUIRED, path: ['supplier_name'] });
 
 export const sendBodySchema = z.object({
-  supplier_ids: z.array(uuid).min(1, 'יש לבחור ספק אחד לפחות').max(L.maxRecipients, 'יותר מדי ספקים'),
+  // A listed supplier's uuid, or 'manual' for the document's hand-typed supplier.
+  supplier_ids: z.array(z.union([uuid, z.literal(MANUAL_PARTY)])).min(1, 'יש לבחור ספק אחד לפחות').max(L.maxRecipients, 'יותר מדי ספקים'),
   email: z.boolean().default(false),
   whatsapp: z.boolean().default(false),
 }).refine((b) => b.email || b.whatsapp, { message: 'יש לבחור מייל ו/או WhatsApp' });
@@ -121,4 +137,5 @@ export const publicQuoteBodySchema = z.object({
   prices: z.record(uuid, money('המחיר')),
 });
 
-export const winnerBodySchema = z.object({ supplier_id: uuid.nullable() });
+// supplier_id: a listed supplier's uuid, 'manual' (the hand-typed supplier), or null = clear.
+export const winnerBodySchema = z.object({ supplier_id: z.union([uuid, z.literal(MANUAL_PARTY)]).nullable() });

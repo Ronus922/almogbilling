@@ -26,7 +26,9 @@ export interface SequenceState { rfq: number | null; po: number | null }
 
 /** A purchase order opened from a winning quote: the screen pre-fills these. */
 export interface PoPrefill {
-  supplier_id: string;
+  /** null = the winner is the request's hand-typed supplier (`manual` carries its details). */
+  supplier_id: string | null;
+  manual: { name: string; phone: string; email: string; address: string } | null;
   source_rfq_id: string;
   source_rfq_number: number;
   title: string;

@@ -13,7 +13,7 @@ import { Section } from '@/components/side-panel/Section';
 import { cn } from '@/lib/utils';
 import {
   buildComparison, cheapestLineIndex, computeTotals, formatDocDate, formatIls, formatQty, formatStampIL,
-  formatVatRate, quoteTotal, type CompareLine,
+  formatVatRate, MANUAL_PARTY, partyKey, quoteTotal, type CompareLine,
 } from '@/lib/purchasing/model';
 import type { DocumentDetail, PoPrefill, QuoteView } from './types';
 
@@ -33,7 +33,7 @@ export function QuotesSection({ detail, canEdit, onChanged, onCreatePo }: Props)
   const lines: CompareLine[] = detail.lines.map((l) => ({ id: l.id, description: l.description, quantity: l.quantity }));
   const cols = useMemo(
     () => buildComparison(lines, quotes.map((q) => ({
-      supplier_id: q.supplier_id, supplier_name: q.supplier_name, prices: q.prices, total_amount: q.total_amount,
+      supplier_id: partyKey(q), supplier_name: q.supplier_name, prices: q.prices, total_amount: q.total_amount,
     }))),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `lines` is derived from detail.lines
     [detail.lines, quotes],
@@ -47,6 +47,9 @@ export function QuotesSection({ detail, canEdit, onChanged, onCreatePo }: Props)
       toast.error('ההעתקה נכשלה');
     }
   }
+
+  // A party is a listed supplier's uuid, or MANUAL_PARTY for the request's hand-typed supplier.
+  const winnerKey = doc.winner_chosen_at ? (doc.winner_manual ? MANUAL_PARTY : doc.winner_supplier_id) : null;
 
   async function pickWinner(supplierId: string | null) {
     setBusy(true);
@@ -70,7 +73,7 @@ export function QuotesSection({ detail, canEdit, onChanged, onCreatePo }: Props)
     if (!window.confirm(`למחוק את ההצעה של ${q.supplier_name}?`)) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/purchasing/documents/${doc.id}/quotes?supplier_id=${q.supplier_id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/purchasing/documents/${doc.id}/quotes?supplier_id=${partyKey(q)}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('delete failed');
       onChanged();
     } catch {
@@ -81,13 +84,16 @@ export function QuotesSection({ detail, canEdit, onChanged, onCreatePo }: Props)
   }
 
   function openPo() {
-    const winner = quotes.find((q) => q.supplier_id === doc.winner_supplier_id);
+    const winner = quotes.find((q) => partyKey(q) === winnerKey);
     if (!winner) return;
     const hasLines = detail.lines.every((l) => winner.prices[l.id] !== undefined);
     onCreatePo({
       supplier_id: winner.supplier_id,
+      manual: winner.supplier_id
+        ? null
+        : { name: winner.supplier_name, phone: doc.supplier_phone ?? '', email: doc.supplier_email ?? '', address: doc.supplier_address ?? '' },
       source_rfq_id: doc.id,
-      source_rfq_number: doc.number,
+      source_rfq_number: doc.number ?? 0,
       title: doc.title,
       lines: detail.lines.map((l) => ({
         description: l.description, quantity: l.quantity, unit_price: hasLines ? winner.prices[l.id]! : null,
@@ -97,15 +103,15 @@ export function QuotesSection({ detail, canEdit, onChanged, onCreatePo }: Props)
 
   const supplierRows = [
     ...recipients.map((r) => ({
-      supplier_id: r.supplier_id, name: r.supplier_name, link: r.link,
-      viewed: r.last_viewed_at, quote: quotes.find((q) => q.supplier_id === r.supplier_id) ?? null,
+      supplier_id: partyKey(r), name: r.supplier_name, link: r.link,
+      viewed: r.last_viewed_at, quote: quotes.find((q) => partyKey(q) === partyKey(r)) ?? null,
     })),
     ...quotes
-      .filter((q) => !recipients.some((r) => r.supplier_id === q.supplier_id))
-      .map((q) => ({ supplier_id: q.supplier_id, name: q.supplier_name, link: null as string | null, viewed: null as string | null, quote: q })),
+      .filter((q) => !recipients.some((r) => partyKey(r) === partyKey(q)))
+      .map((q) => ({ supplier_id: partyKey(q), name: q.supplier_name, link: null as string | null, viewed: null as string | null, quote: q })),
   ];
 
-  const winnerQuote = quotes.find((q) => q.supplier_id === doc.winner_supplier_id);
+  const winnerQuote = quotes.find((q) => partyKey(q) === winnerKey);
 
   return (
     <>
@@ -129,7 +135,7 @@ export function QuotesSection({ detail, canEdit, onChanged, onCreatePo }: Props)
                 ) : (
                   <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">טרם נפתח</span>
                 )}
-                {doc.winner_supplier_id === r.supplier_id && (
+                {winnerKey === r.supplier_id && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold text-violet-700">
                     <Award className="h-3 w-3" aria-hidden /> זוכה
                   </span>
@@ -235,7 +241,7 @@ export function QuotesSection({ detail, canEdit, onChanged, onCreatePo }: Props)
                       <td className="px-4 py-3 text-ink-2">הצעה זוכה</td>
                       {cols.map((c) => (
                         <td key={c.supplier_id} className="px-4 py-3">
-                          {doc.winner_supplier_id === c.supplier_id ? (
+                          {winnerKey === c.supplier_id ? (
                             <button type="button" disabled={busy} onClick={() => pickWinner(null)}
                               className="inline-flex h-11 items-center gap-1 rounded-lg bg-violet-100 px-3 text-sm font-bold text-violet-700 hover:bg-violet-200 disabled:opacity-50">
                               <Award className="h-4 w-4" aria-hidden /> זוכה · ביטול

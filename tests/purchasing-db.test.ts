@@ -42,7 +42,7 @@ vi.mock('@/lib/db', () => ({
 }));
 
 const db = await import('@/lib/db/purchasing');
-const { buildComparison } = await import('@/lib/purchasing/model');
+const { buildComparison, MANUAL_PARTY } = await import('@/lib/purchasing/model');
 
 const made = { docs: [] as string[], suppliers: [] as string[] };
 let admin = '';
@@ -50,7 +50,7 @@ let before: Array<{ doc_type: string; last_number: number }> = [];
 
 const lines = (n = 2) => Array.from({ length: n }, (_, i) => ({ description: `פריט בדיקה ${i + 1}`, quantity: i + 1, unit_price: null }));
 const rfqInput = (over: Partial<Parameters<typeof db.createDocument>[0]> = {}) => ({
-  doc_type: 'rfq' as const, doc_date: '2026-10-21', title: 'בדיקה', supplier_id: null, supplier_name: 'ספק ידני לבדיקה',
+  doc_type: 'rfq' as const, status: 'issued' as 'draft' | 'issued', doc_date: '2026-10-21', title: 'בדיקה', supplier_id: null, supplier_name: 'ספק ידני לבדיקה',
   supplier_phone: null, supplier_email: null, supplier_address: null, notes: '', due_date: '2099-01-01',
   vat_rate: 18, source_rfq_id: null, start_number: null, lines: lines(), ...over,
 });
@@ -110,7 +110,7 @@ d('purchasing db', () => {
   it('never hands the same number to parallel saves', async () => {
     const results = await Promise.all(Array.from({ length: 8 }, () => db.createDocument(rfqInput(), admin)));
     for (const r of results) made.docs.push(r.id);
-    const numbers = results.map((r) => r.number).sort((a, b) => a - b);
+    const numbers = results.map((r) => r.number as number).sort((a, b) => a - b);
     expect(numbers).toEqual([102, 103, 104, 105, 106, 107, 108, 109]);
   });
 
@@ -269,6 +269,160 @@ d('purchasing db', () => {
       expect(row?.supplier_name).toBe('ספק אחר');
       expect(row?.doc_date).toBe('2026-10-22');
       expect(row?.due_date).toBe('2099-01-01');
+    });
+  });
+
+  describe('drafts on the server', () => {
+    const upd = (over: Partial<Parameters<typeof db.updateDocument>[1]> = {}) => ({
+      doc_date: '2026-10-22', title: 'טיוטה', supplier_id: null, supplier_name: 'ספק טיוטה', supplier_phone: null,
+      supplier_email: null, supplier_address: null, notes: '', due_date: '2099-01-01', ...over,
+    });
+
+    it('a draft takes no number, shows in the list first, and leaves the series untouched', async () => {
+      const seq = await db.getSequenceState();
+      const dr = await create({ status: 'draft', supplier_name: null, title: 'טיוטה בלי ספק', due_date: null, lines: [] });
+      expect(dr.number).toBeNull();
+      expect(await db.getSequenceState()).toEqual(seq);
+      const row = await db.findDocument(dr.id);
+      expect(row).toMatchObject({ status: 'draft', number: null, supplier_name: null });
+      const list = await db.listDocuments('rfq');
+      expect(list[0].id).toBe(dr.id); // drafts first
+      expect(list.filter((d2) => d2.status === 'draft').every((d2) => d2.number === null)).toBe(true);
+    });
+
+    it('is edited in place, then issued: the number is allocated only now, atomically with the update', async () => {
+      const dr = await create({ status: 'draft', title: 'לפני הפקה', lines: lines(1) });
+      const seq = (await db.getSequenceState()).rfq as number;
+      await db.updateDocument(dr.id, upd({ title: 'עודכן', lines: [{ description: 'שורה חדשה', quantity: 2, unit_price: null }] }));
+      expect((await db.findDocument(dr.id))?.status).toBe('draft');
+      expect((await db.getSequenceState()).rfq).toBe(seq);
+
+      const done = await db.updateDocument(dr.id, upd({ title: 'הופק', issue: { start_number: null, vat_rate: 17 } }));
+      expect(done?.number).toBe(seq + 1);
+      const row = await db.findDocument(dr.id);
+      expect(row).toMatchObject({ status: 'issued', number: seq + 1, vat_rate: 17, title: 'הופק' });
+      expect((await db.listLines(dr.id)).map((l) => l.description)).toEqual(['שורה חדשה']);
+      // …and it cannot be issued twice (no second number is burnt).
+      await expect(db.updateDocument(dr.id, upd({ issue: { start_number: null, vat_rate: 17 } }))).rejects.toBeInstanceOf(db.NotADraftError);
+      expect((await db.getSequenceState()).rfq).toBe(seq + 1);
+    });
+
+    it('the first document of a series asks for a start number when a draft is issued', async () => {
+      await pool.query(`delete from public.purchasing_sequences where doc_type = 'po'`);
+      const dr = await create({
+        status: 'draft', doc_type: 'po', due_date: null, lines: [{ description: 'חומר', quantity: 1, unit_price: 3 }],
+      });
+      await expect(db.updateDocument(dr.id, upd({ due_date: null, issue: { start_number: null, vat_rate: 18 } })))
+        .rejects.toBeInstanceOf(db.StartNumberRequiredError);
+      expect((await db.findDocument(dr.id))?.status).toBe('draft'); // rolled back
+      const done = await db.updateDocument(dr.id, upd({ due_date: null, issue: { start_number: 41, vat_rate: 18 } }));
+      expect(done?.number).toBe(41);
+    });
+
+    it('a draft is deleted for good; an issued document is only soft-deleted', async () => {
+      const dr = await create({ status: 'draft' });
+      const seq = await db.getSequenceState();
+      expect(await db.softDeleteDocument(dr.id)).toBe(false); // not for drafts
+      expect(await db.deleteDraft(dr.id)).toBe(true);
+      expect((await pool.query(`select 1 from public.purchasing_documents where id = $1`, [dr.id])).rowCount).toBe(0);
+      expect(await db.getSequenceState()).toEqual(seq);
+      const issued = await create();
+      expect(await db.deleteDraft(issued.id)).toBe(false);
+    });
+
+    it('a draft has no public link: its token (if any) resolves to nothing', async () => {
+      const dr = await create({ status: 'draft' });
+      const r = await db.ensureRecipient(dr.id, made.suppliers[0]);
+      expect(await db.findPublicContext(r.token)).toBeNull();
+    });
+  });
+
+  describe('a hand-typed supplier is a party like any other (no row in suppliers)', () => {
+    const manual = { name: 'ספק ידני לינק', phone: '050-1112233', email: 'manual@example.com', address: 'רחוב 1' };
+
+    it('has one stable personal link per request, details refreshed on a re-send', async () => {
+      const suppliersBefore = (await pool.query(`select count(*)::int as n from public.suppliers`)).rows[0].n;
+      const rfq = await create();
+      const r1 = await db.ensureRecipient(rfq.id, null, manual);
+      expect(r1).toMatchObject({ supplier_id: null, supplier_name: 'ספק ידני לינק' });
+      const r2 = await db.ensureRecipient(rfq.id, null, { ...manual, name: 'שם מעודכן' });
+      expect(r2.token).toBe(r1.token);
+      expect(r2.supplier_name).toBe('שם מעודכן');
+      expect((await db.listRecipients(rfq.id))).toHaveLength(1);
+      // a listed supplier next to it is a separate recipient
+      await db.ensureRecipient(rfq.id, made.suppliers[0]);
+      expect((await db.listRecipients(rfq.id))).toHaveLength(2);
+
+      const ctx = await db.findPublicContext(r1.token);
+      expect(ctx?.recipient).toMatchObject({ supplier_id: null, supplier_name: 'שם מעודכן' });
+      expect(ctx?.recipient.party?.email).toBe('manual@example.com');
+      expect((await pool.query(`select count(*)::int as n from public.suppliers`)).rows[0].n).toBe(suppliersBefore);
+    });
+
+    it('submits a quote through its link, is compared, wins and carries the choice to the order', async () => {
+      const rfq = await create();
+      const ls = await db.listLines(rfq.id);
+      const rec = await db.ensureRecipient(rfq.id, null, manual);
+      const ctx = await db.findPublicContext(rec.token);
+      const qid = await db.upsertQuote({
+        rfq_id: rfq.id, supplier_id: null, party: ctx?.recipient.party, source: 'portal', total_amount: null,
+        valid_until: null, notes: '', prices: { [ls[0].id]: 5, [ls[1].id]: 6 }, actor_id: null,
+      });
+      // amended through the same link: still ONE manual quote
+      expect(await db.upsertQuote({
+        rfq_id: rfq.id, supplier_id: null, party: ctx?.recipient.party, source: 'portal', total_amount: null,
+        valid_until: null, notes: 'תיקון', prices: { [ls[0].id]: 4, [ls[1].id]: 6 }, actor_id: null,
+      })).toBe(qid);
+      await db.upsertQuote({
+        rfq_id: rfq.id, supplier_id: made.suppliers[0], source: 'portal', total_amount: null, valid_until: null, notes: '',
+        prices: { [ls[0].id]: 9, [ls[1].id]: 9 }, actor_id: null,
+      });
+      const quotes = await db.listQuotes(rfq.id);
+      expect(quotes).toHaveLength(2);
+      const m = quotes.find((q) => q.supplier_id === null)!;
+      expect(m).toMatchObject({ supplier_name: 'ספק ידני לינק', notes: 'תיקון' });
+      expect((await db.findQuote(rfq.id, null))?.id).toBe(qid);
+
+      const cols = buildComparison(ls.map((l) => ({ id: l.id, description: l.description, quantity: l.quantity })), db.toCompareQuotes(quotes));
+      expect(cols.find((c) => c.supplier_id === MANUAL_PARTY)).toMatchObject({ supplier_name: 'ספק ידני לינק', cheapest: true });
+
+      await db.setWinner(rfq.id, MANUAL_PARTY, admin);
+      let doc = await db.findDocument(rfq.id);
+      expect(doc).toMatchObject({ winner_manual: true, winner_supplier_id: null, winner_supplier_name: 'ספק ידני לבדיקה' });
+      expect(doc?.winner_chosen_at).not.toBeNull();
+      // switching to a listed winner, then deleting the manual quote keeps that winner
+      await db.setWinner(rfq.id, made.suppliers[0], admin);
+      doc = await db.findDocument(rfq.id);
+      expect(doc).toMatchObject({ winner_manual: false, winner_supplier_id: made.suppliers[0] });
+      await db.deleteQuote(rfq.id, null);
+      expect((await db.findDocument(rfq.id))?.winner_supplier_id).toBe(made.suppliers[0]);
+      // deleting the manual WINNER's quote clears the choice
+      await db.upsertQuote({
+        rfq_id: rfq.id, supplier_id: null, party: manual, source: 'portal', total_amount: null, valid_until: null, notes: '',
+        prices: { [ls[0].id]: 1, [ls[1].id]: 1 }, actor_id: null,
+      });
+      await db.setWinner(rfq.id, MANUAL_PARTY, admin);
+      await db.deleteQuote(rfq.id, null);
+      expect(await db.findDocument(rfq.id)).toMatchObject({ winner_manual: false, winner_chosen_at: null });
+    });
+
+    it('is logged in the dispatch list under its own name', async () => {
+      const rfq = await create();
+      await db.logDispatch({ document_id: rfq.id, supplier_id: null, supplier_name: 'ספק ידני לינק', channel: 'email', status: 'failed', error: 'אין מייל', sent_by: admin });
+      const list = await db.listDispatches(rfq.id);
+      expect(list[0]).toMatchObject({ supplier_id: null, supplier_name: 'ספק ידני לינק', status: 'failed' });
+    });
+
+    it('the schema refuses a nameless hand-typed recipient and a second manual one', async () => {
+      const rfq = await create();
+      await expect(pool.query(
+        `insert into public.purchasing_rfq_recipients (rfq_id, supplier_id, token) values ($1, null, $2)`, [rfq.id, 'x'.repeat(43)],
+      )).rejects.toThrow();
+      await db.ensureRecipient(rfq.id, null, manual);
+      await expect(pool.query(
+        `insert into public.purchasing_rfq_recipients (rfq_id, supplier_id, token, supplier_name) values ($1, null, $2, 'עוד')`,
+        [rfq.id, 'y'.repeat(43)],
+      )).rejects.toThrow();
     });
   });
 

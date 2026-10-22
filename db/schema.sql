@@ -3117,13 +3117,15 @@ COMMENT ON TABLE public.portal_sessions IS 'Sessions of the owners portal — de
 CREATE TABLE public.purchasing_dispatches (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     document_id uuid NOT NULL,
-    supplier_id uuid NOT NULL,
+    supplier_id uuid,
     channel text NOT NULL,
     status text NOT NULL,
     error text,
     sent_by uuid,
     sent_at timestamp with time zone DEFAULT now() NOT NULL,
+    supplier_name text,
     CONSTRAINT purchasing_dispatches_channel_check CHECK ((channel = ANY (ARRAY['email'::text, 'whatsapp'::text]))),
+    CONSTRAINT purchasing_dispatches_has_supplier CHECK (((supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL))),
     CONSTRAINT purchasing_dispatches_status_check CHECK ((status = ANY (ARRAY['sent'::text, 'failed'::text])))
 );
 
@@ -3135,7 +3137,7 @@ CREATE TABLE public.purchasing_dispatches (
 CREATE TABLE public.purchasing_documents (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     doc_type text NOT NULL,
-    number integer NOT NULL,
+    number integer,
     doc_date date NOT NULL,
     title text,
     supplier_id uuid,
@@ -3154,10 +3156,13 @@ CREATE TABLE public.purchasing_documents (
     supplier_phone text,
     supplier_email text,
     supplier_address text,
+    status text DEFAULT 'issued'::text NOT NULL,
     CONSTRAINT purchasing_documents_doc_type_check CHECK ((doc_type = ANY (ARRAY['rfq'::text, 'po'::text]))),
+    CONSTRAINT purchasing_documents_issued_has_number CHECK (((status = 'draft'::text) OR (number IS NOT NULL))),
     CONSTRAINT purchasing_documents_notes_length CHECK ((char_length(notes) <= 4000)),
     CONSTRAINT purchasing_documents_number_check CHECK ((number > 0)),
-    CONSTRAINT purchasing_documents_rfq_has_due CHECK (((doc_type <> 'rfq'::text) OR (due_date IS NOT NULL))),
+    CONSTRAINT purchasing_documents_rfq_has_due CHECK (((status = 'draft'::text) OR (doc_type <> 'rfq'::text) OR (due_date IS NOT NULL))),
+    CONSTRAINT purchasing_documents_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'issued'::text]))),
     CONSTRAINT purchasing_documents_supplier_text_length CHECK (((char_length(COALESCE(supplier_name, ''::text)) <= 200) AND (char_length(COALESCE(supplier_phone, ''::text)) <= 40) AND (char_length(COALESCE(supplier_email, ''::text)) <= 200) AND (char_length(COALESCE(supplier_address, ''::text)) <= 300))),
     CONSTRAINT purchasing_documents_title_length CHECK ((char_length(title) <= 200)),
     CONSTRAINT purchasing_documents_vat_rate_check CHECK (((vat_rate >= (0)::numeric) AND (vat_rate <= (100)::numeric))),
@@ -3184,6 +3189,13 @@ COMMENT ON COLUMN public.purchasing_documents.vat_rate IS 'VAT percent stamped w
 --
 
 COMMENT ON COLUMN public.purchasing_documents.supplier_name IS 'Supplier typed by hand (not in public.suppliers). Used only when supplier_id is null.';
+
+
+--
+-- Name: COLUMN purchasing_documents.status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.purchasing_documents.status IS 'draft = saved from the form without a number (editable from any device, never sent, no PDF); issued = has its running number.';
 
 
 --
@@ -3244,7 +3256,7 @@ CREATE TABLE public.purchasing_quote_lines (
 CREATE TABLE public.purchasing_quotes (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     rfq_id uuid NOT NULL,
-    supplier_id uuid NOT NULL,
+    supplier_id uuid,
     source text NOT NULL,
     total_amount numeric(12,2),
     valid_until date,
@@ -3252,6 +3264,11 @@ CREATE TABLE public.purchasing_quotes (
     submitted_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by uuid,
+    supplier_name text,
+    supplier_phone text,
+    supplier_email text,
+    supplier_address text,
+    CONSTRAINT purchasing_quotes_has_supplier CHECK (((supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL))),
     CONSTRAINT purchasing_quotes_notes_check CHECK ((char_length(notes) <= 2000)),
     CONSTRAINT purchasing_quotes_source_check CHECK ((source = ANY (ARRAY['portal'::text, 'manual'::text]))),
     CONSTRAINT purchasing_quotes_total_amount_check CHECK (((total_amount IS NULL) OR (total_amount >= (0)::numeric)))
@@ -3272,11 +3289,16 @@ COMMENT ON COLUMN public.purchasing_quotes.total_amount IS 'Offer total BEFORE V
 CREATE TABLE public.purchasing_rfq_recipients (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     rfq_id uuid NOT NULL,
-    supplier_id uuid NOT NULL,
+    supplier_id uuid,
     token text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     first_viewed_at timestamp with time zone,
     last_viewed_at timestamp with time zone,
+    supplier_name text,
+    supplier_phone text,
+    supplier_email text,
+    supplier_address text,
+    CONSTRAINT purchasing_rfq_recipients_has_supplier CHECK (((supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL))),
     CONSTRAINT purchasing_rfq_recipients_token_check CHECK ((char_length(token) >= 32))
 );
 
@@ -4953,7 +4975,7 @@ ALTER TABLE ONLY public.purchasing_dispatches
 --
 
 ALTER TABLE public.purchasing_documents
-    ADD CONSTRAINT purchasing_documents_has_supplier CHECK (((supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL))) NOT VALID;
+    ADD CONSTRAINT purchasing_documents_has_supplier CHECK (((status = 'draft'::text) OR (supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL))) NOT VALID;
 
 
 --
@@ -6331,6 +6353,20 @@ CREATE INDEX purchasing_lines_description_idx ON public.purchasing_lines USING b
 --
 
 CREATE INDEX purchasing_lines_document_idx ON public.purchasing_lines USING btree (document_id, sort_order);
+
+
+--
+-- Name: purchasing_quotes_manual_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX purchasing_quotes_manual_uidx ON public.purchasing_quotes USING btree (rfq_id) WHERE (supplier_id IS NULL);
+
+
+--
+-- Name: purchasing_rfq_recipients_manual_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX purchasing_rfq_recipients_manual_uidx ON public.purchasing_rfq_recipients USING btree (rfq_id) WHERE (supplier_id IS NULL);
 
 
 --
@@ -8403,5 +8439,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018081443'),
     ('20261018122800'),
     ('20261021102307'),
-    ('20261022090000')
+    ('20261022090000'),
+    ('20261022150000')
 ;

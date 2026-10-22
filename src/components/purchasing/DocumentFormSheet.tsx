@@ -10,8 +10,9 @@
 //   תצוגה מקדימה · הפק את המסמך · שמור טיוטה · ביטול
 // The number is allocated atomically by the server on issue; if the one shown
 // was taken meanwhile the document gets the next and the user is told. The
-// first document of a series asks where to start, inside the heading. A draft
-// lives in this browser only (localStorage) — it never takes a number.
+// first document of a series asks where to start, inside the heading. A DRAFT
+// is saved on the server (any device sees it), takes no number, and is opened
+// from the list back into this same form; issuing it allocates the number.
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -34,7 +35,7 @@ import type { DocumentDetail, PoPrefill, SequenceState, SupplierBrief } from './
 interface Props {
   open: boolean;
   type: DocType;
-  /** null = create. */
+  /** null = create. An issued document = edit; a draft = continue the draft. */
   detail: DocumentDetail | null;
   prefill: PoPrefill | null;
   vatRate: number;
@@ -43,7 +44,8 @@ interface Props {
   onOpenChange: (o: boolean) => void;
   /** The company letterhead is missing: ask for it first. */
   onNeedCompany: () => void;
-  onSaved: (id: string) => void;
+  /** `issued` false = a draft was saved (the list refreshes; no detail panel). */
+  onSaved: (id: string, issued: boolean) => void;
 }
 
 interface FormState {
@@ -65,22 +67,6 @@ const plusDays = (iso: string, days: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-const draftKey = (type: DocType) => `purchasing-draft:${type}`;
-
-function readDraft(type: DocType): Omit<FormState, 'docDate'> | null {
-  try {
-    const raw = window.localStorage.getItem(draftKey(type));
-    return raw ? (JSON.parse(raw) as Omit<FormState, 'docDate'>) : null;
-  } catch { return null; }
-}
-function writeDraft(type: DocType, v: Omit<FormState, 'docDate'> | null): boolean {
-  try {
-    if (v) window.localStorage.setItem(draftKey(type), JSON.stringify(v));
-    else window.localStorage.removeItem(draftKey(type));
-    return true;
-  } catch { return false; }
-}
-
 const linesFromRows = (rows: Array<{ description: string; quantity: number; unit_price: number | null }>): LineDraft[] =>
   rows.length
     ? rows.map((l) => ({
@@ -101,7 +87,9 @@ const openPicker = (e: React.MouseEvent<HTMLInputElement>) => {
 export function DocumentFormSheet({
   open, type, detail, prefill, vatRate, sequences, suppliers, onOpenChange, onNeedCompany, onSaved,
 }: Props) {
-  const editing = detail !== null;
+  const draft = detail?.document.status === 'draft' ? detail.document : null;
+  /** Editing an ISSUED document (its number is fixed); a draft behaves like a new one. */
+  const editing = detail !== null && draft === null;
   const isRfq = type === 'rfq';
   const today = todayIsrael();
 
@@ -144,48 +132,36 @@ export function DocumentFormSheet({
       setEmail(manual(d).email);
       setAddress(manual(d).address);
       setTitle(d.title);
-      setDueDate(d.due_date ?? '');
+      setDueDate(d.due_date ?? (d.doc_type === 'rfq' ? plusDays(today, 14) : ''));
       setNotes(d.notes);
       setLines(linesFromRows(detail.lines));
     } else if (prefill) {
       const s = suppliers.find((x) => x.id === prefill.supplier_id);
       setDocDate(today);
-      setSupplierText(s?.name ?? '');
+      setSupplierText(prefill.manual?.name ?? s?.name ?? '');
       setSupplierId(prefill.supplier_id);
-      setPhone(''); setEmail(''); setAddress('');
+      setPhone(prefill.manual?.phone ?? ''); setEmail(prefill.manual?.email ?? ''); setAddress(prefill.manual?.address ?? '');
       setTitle(prefill.title);
       setDueDate('');
       setNotes('');
       setLines(linesFromRows(prefill.lines));
     } else {
-      const draft = readDraft(type);
       setDocDate(today);
-      if (draft) {
-        setSupplierText(draft.supplierText ?? '');
-        setSupplierId(draft.supplierId ?? null);
-        setPhone(draft.phone ?? ''); setEmail(draft.email ?? ''); setAddress(draft.address ?? '');
-        setTitle(draft.title ?? '');
-        setDueDate(draft.dueDate || plusDays(today, 14));
-        setNotes(draft.notes ?? '');
-        setLines(draft.lines?.length ? draft.lines : [emptyLine()]);
-        toast.info('שוחזרה טיוטה שנשמרה בדפדפן הזה');
-      } else {
-        setSupplierText(''); setSupplierId(null);
-        setPhone(''); setEmail(''); setAddress('');
-        setTitle('');
-        setDueDate(plusDays(today, 14));
-        setNotes('');
-        setLines([emptyLine()]);
-      }
+      setSupplierText(''); setSupplierId(null);
+      setPhone(''); setEmail(''); setAddress('');
+      setTitle('');
+      setDueDate(plusDays(today, 14));
+      setNotes('');
+      setLines([emptyLine()]);
     }
     // The number shown in the heading is the one the server would give NOW.
-    if (!detail) {
+    if (!detail || detail.document.status === 'draft') {
       fetch('/api/purchasing/company', { credentials: 'include' })
         .then((r) => r.json())
         .then((b) => { if (b.sequences) setLiveSeq(b.sequences); })
         .catch(() => undefined);
     }
-  }, [open, detail, prefill, today, type, suppliers, sequences]);
+  }, [open, detail, prefill, today, suppliers, sequences]);
 
   const needsStart = !editing && liveSeq[type] === null;
   const startValue = Number(startNumber);
@@ -213,18 +189,11 @@ export function DocumentFormSheet({
     const payload = draftsToPayload(lines, !isRfq);
     if (!payload.ok) { setLineError({ key: payload.key, message: payload.error }); return null; }
 
-    // A name typed exactly like a listed supplier is that supplier.
-    const typed = supplierText.trim();
-    const linked = supplierId ?? suppliers.find((s) => s.name.trim().toLowerCase() === typed.toLowerCase())?.id ?? null;
     return {
       doc_date: docDate,
       title: title.trim(),
       notes: notes.trim(),
-      supplier_id: linked,
-      supplier_name: linked ? '' : typed,
-      supplier_phone: linked ? '' : phone.trim(),
-      supplier_email: linked ? '' : email.trim(),
-      supplier_address: linked ? '' : address.trim(),
+      ...supplierBody(),
       ...(isRfq ? { due_date: dueDate } : {}),
       lines: payload.lines,
     };
@@ -262,13 +231,54 @@ export function DocumentFormSheet({
     }
   }
 
-  function saveDraft() {
-    const ok = writeDraft(type, {
-      supplierText, supplierId, phone, email, address, title, dueDate, notes, lines,
-    });
-    if (!ok) { toast.error('הדפדפן לא מאפשר לשמור טיוטה'); return; }
-    toast.success('הטיוטה נשמרה בדפדפן הזה');
-    onOpenChange(false);
+  /** The supplier columns of the form: a name typed exactly like a listed
+   *  supplier IS that supplier. */
+  function supplierBody() {
+    const typed = supplierText.trim();
+    const linked = supplierId ?? (typed ? suppliers.find((s) => s.name.trim().toLowerCase() === typed.toLowerCase())?.id : null) ?? null;
+    return {
+      supplier_id: linked,
+      supplier_name: linked ? '' : typed,
+      supplier_phone: linked ? '' : phone.trim(),
+      supplier_email: linked ? '' : email.trim(),
+      supplier_address: linked ? '' : address.trim(),
+    };
+  }
+
+  /** Saves the form as a DRAFT on the server: lenient (nothing is required but
+   *  something to save), no number is taken. */
+  async function saveDraft() {
+    setLineError(null);
+    const payload = draftsToPayload(lines, false, true);
+    if (!payload.ok) { setLineError({ key: payload.key, message: payload.error }); return; }
+    if (!supplierText.trim() && !title.trim() && payload.lines.length === 0) {
+      toast.error('אין מה לשמור בטיוטה — מלאו ספק, תיאור או שורה');
+      return;
+    }
+    setSaving(true);
+    try {
+      const body = {
+        doc_type: type, doc_date: docDate || today, title: title.trim(), notes: notes.trim(),
+        ...supplierBody(), due_date: isRfq ? dueDate || null : null, lines: payload.lines,
+        ...(isRfq ? {} : { source_rfq_id: prefill?.source_rfq_id ?? null }),
+      };
+      const res = draft
+        ? await fetch(`/api/purchasing/documents/${draft.id}?mode=draft`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          })
+        : await fetch('/api/purchasing/documents?mode=draft', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(typeof out.error === 'string' ? out.error : 'שמירת הטיוטה נכשלה'); return; }
+      toast.success('הטיוטה נשמרה');
+      onOpenChange(false);
+      onSaved(draft ? draft.id : out.id, false);
+    } catch {
+      toast.error('שמירת הטיוטה נכשלה');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function save() {
@@ -282,6 +292,13 @@ export function DocumentFormSheet({
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...base, due_date: isRfq ? dueDate : null, ...(linesLocked ? { lines: undefined } : {}) }),
+        });
+      } else if (draft) {
+        // Issuing a draft: the running number is allocated now.
+        res = await fetch(`/api/purchasing/documents/${draft.id}?mode=issue`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ doc_type: type, start_number: needsStart ? startValue : null, ...base }),
         });
       } else {
         res = await fetch('/api/purchasing/documents', {
@@ -300,15 +317,14 @@ export function DocumentFormSheet({
         toast.error(typeof body.error === 'string' ? body.error : 'השמירה נכשלה');
         return;
       }
-      const id: string = editing && detail ? detail.document.id : body.id;
-      if (!editing) writeDraft(type, null);
+      const id: string = detail ? detail.document.id : body.id;
       if (!editing && nextNumber !== null && body.number !== nextNumber) {
         toast.info(`המספר ${nextNumber} נתפס בינתיים — המסמך הופק כמספר ${body.number}`);
       } else {
         toast.success(editing ? 'המסמך עודכן' : `${DOC_LABEL[type]} מספר ${body.number} הופקה`);
       }
       onOpenChange(false);
-      onSaved(id);
+      onSaved(id, true);
     } catch {
       toast.error('השמירה נכשלה');
     } finally {
@@ -343,6 +359,7 @@ export function DocumentFormSheet({
               <p className="mt-1 truncate text-sm text-white/70">
                 {[
                   needsStart ? (errors.start ?? `זה ${DOC_LABEL[type]} הראשונה — מכאן המספר רץ אוטומטית`) : '',
+                  draft ? 'טיוטה שמורה — המספר יוקצה בהפקה' : '',
                   prefill ? `מבקשה מספר ${prefill.source_rfq_number}` : '',
                 ].filter(Boolean).join(' · ')}
               </p>
