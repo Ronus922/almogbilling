@@ -56,48 +56,64 @@ const startNumber = z
   .nullable()
   .default(null);
 
-export const createRfqBodySchema = z.object({
-  doc_date: isoDate,
-  title: z.string().trim().min(1, 'יש להזין כותרת').max(L.titleMax, 'הכותרת ארוכה מדי'),
-  due_date: isoDate,
-  notes: z.string().trim().max(L.notesMax, 'ההערות ארוכות מדי').default(''),
-  start_number: startNumber,
-  lines: lines.refine((ls) => ls.every((l) => l.unit_price === null), 'בקשה להצעת מחיר אינה כוללת מחירים'),
-});
+// The supplier of a document: one from the list (supplier_id), or a name typed
+// by hand with optional phone / e-mail / address that live on the document only.
+const optionalText = (max: number, msg: string) =>
+  z.string().trim().max(max, msg).default('').transform((v) => (v === '' ? null : v));
 
-export const createPoBodySchema = z.object({
+const supplierShape = {
+  supplier_id: uuid.nullable().default(null),
+  supplier_name: optionalText(200, 'שם הספק ארוך מדי'),
+  supplier_phone: optionalText(40, 'הטלפון ארוך מדי'),
+  supplier_email: z
+    .string().trim().max(200, 'המייל ארוך מדי').default('')
+    .refine((v) => v === '' || z.string().email().safeParse(v).success, 'כתובת מייל לא תקינה')
+    .transform((v) => (v === '' ? null : v)),
+  supplier_address: optionalText(300, 'הכתובת ארוכה מדי'),
+};
+
+const hasSupplier = (b: { supplier_id: string | null; supplier_name: string | null }) =>
+  b.supplier_id !== null || b.supplier_name !== null;
+const SUPPLIER_REQUIRED = 'יש לבחור ספק או להקליד שם ספק';
+
+// The ONE form of both documents: date · supplier · description · (rfq: due
+// date) · lines · notes. A request's lines may carry a price (optional), a
+// purchase order's must.
+const formShape = {
   doc_date: isoDate,
-  title: z.string().trim().max(L.titleMax, 'הכותרת ארוכה מדי').default(''),
-  supplier_id: uuid,
+  title: z.string().trim().max(L.titleMax, 'התיאור ארוך מדי').default(''),
   notes: z.string().trim().max(L.notesMax, 'ההערות ארוכות מדי').default(''),
-  source_rfq_id: uuid.nullable().default(null),
-  start_number: startNumber,
-  lines: lines.refine((ls) => ls.every((l) => l.unit_price !== null), 'יש להזין מחיר בכל שורה'),
-});
+  ...supplierShape,
+};
+
+export const createBodySchema = z.discriminatedUnion('doc_type', [
+  z.object({
+    doc_type: z.literal('rfq'),
+    ...formShape,
+    due_date: isoDate,
+    start_number: startNumber,
+    lines,
+  }),
+  z.object({
+    doc_type: z.literal('po'),
+    ...formShape,
+    source_rfq_id: uuid.nullable().default(null),
+    start_number: startNumber,
+    lines: lines.refine((ls) => ls.every((l) => l.unit_price !== null), 'יש להזין מחיר בכל שורה'),
+  }),
+]).refine(hasSupplier, { message: SUPPLIER_REQUIRED, path: ['supplier_name'] });
 
 export const updateDocumentBodySchema = z.object({
-  title: z.string().trim().max(L.titleMax, 'הכותרת ארוכה מדי'),
-  supplier_id: uuid.nullable().default(null),
-  notes: z.string().trim().max(L.notesMax, 'ההערות ארוכות מדי').default(''),
+  ...formShape,
   due_date: isoDate.nullable().default(null),
   lines: lines.optional(),
-});
+}).refine(hasSupplier, { message: SUPPLIER_REQUIRED, path: ['supplier_name'] });
 
 export const sendBodySchema = z.object({
   supplier_ids: z.array(uuid).min(1, 'יש לבחור ספק אחד לפחות').max(L.maxRecipients, 'יותר מדי ספקים'),
   email: z.boolean().default(false),
   whatsapp: z.boolean().default(false),
 }).refine((b) => b.email || b.whatsapp, { message: 'יש לבחור מייל ו/או WhatsApp' });
-
-export const manualQuoteBodySchema = z.object({
-  supplier_id: uuid,
-  total_amount: money('הסכום').nullable().default(null),
-  valid_until: isoDate.nullable().default(null),
-  notes: z.string().trim().max(L.quoteNotesMax, 'ההערות ארוכות מדי').default(''),
-  prices: z.record(uuid, money('המחיר')).default({}),
-}).refine((b) => b.total_amount !== null || Object.keys(b.prices).length > 0, {
-  message: 'יש להזין סכום כולל או מחירים לפי שורות',
-});
 
 export const publicQuoteBodySchema = z.object({
   valid_until: isoDate.nullable().default(null),

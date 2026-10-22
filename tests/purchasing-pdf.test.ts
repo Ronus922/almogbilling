@@ -34,6 +34,16 @@ describe('renderDocumentPdf', () => {
     }
   });
 
+  it('prints a request with optional prices, a typed supplier and no description', () => {
+    const rfq = renderDocumentPdf({
+      ...base, kind: 'rfq', number: 10002, title: '', dueDate: '2026-11-01',
+      supplier: { name: 'ספק שלא ברשימה', address: '', phone: '' },
+      lines: [{ description: 'עם מחיר', quantity: 2, unit_price: 10 }, { description: 'בלי מחיר', quantity: 1, unit_price: null }],
+    });
+    expect(rfq.subarray(0, 5).toString()).toBe('%PDF-');
+    if (process.env.PDF_OUT_DIR) writeFileSync(`${process.env.PDF_OUT_DIR}/rfq-priced.pdf`, rfq);
+  });
+
   it('survives a long list over several pages and a missing logo', () => {
     const lines = Array.from({ length: 80 }, (_, i) => ({ description: `פריט מספר ${i + 1}`, quantity: i + 1, unit_price: 10 }));
     const pdf = renderDocumentPdf({ ...base, logo: null, signature: null, lines });

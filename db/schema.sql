@@ -3,7 +3,6 @@
 --
 
 
-
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -3138,7 +3137,7 @@ CREATE TABLE public.purchasing_documents (
     doc_type text NOT NULL,
     number integer NOT NULL,
     doc_date date NOT NULL,
-    title text DEFAULT ''::text NOT NULL,
+    title text,
     supplier_id uuid,
     notes text DEFAULT ''::text NOT NULL,
     due_date date,
@@ -3151,11 +3150,15 @@ CREATE TABLE public.purchasing_documents (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     deleted_at timestamp with time zone,
+    supplier_name text,
+    supplier_phone text,
+    supplier_email text,
+    supplier_address text,
     CONSTRAINT purchasing_documents_doc_type_check CHECK ((doc_type = ANY (ARRAY['rfq'::text, 'po'::text]))),
     CONSTRAINT purchasing_documents_notes_length CHECK ((char_length(notes) <= 4000)),
     CONSTRAINT purchasing_documents_number_check CHECK ((number > 0)),
-    CONSTRAINT purchasing_documents_po_has_supplier CHECK (((doc_type <> 'po'::text) OR (supplier_id IS NOT NULL))),
     CONSTRAINT purchasing_documents_rfq_has_due CHECK (((doc_type <> 'rfq'::text) OR (due_date IS NOT NULL))),
+    CONSTRAINT purchasing_documents_supplier_text_length CHECK (((char_length(COALESCE(supplier_name, ''::text)) <= 200) AND (char_length(COALESCE(supplier_phone, ''::text)) <= 40) AND (char_length(COALESCE(supplier_email, ''::text)) <= 200) AND (char_length(COALESCE(supplier_address, ''::text)) <= 300))),
     CONSTRAINT purchasing_documents_title_length CHECK ((char_length(title) <= 200)),
     CONSTRAINT purchasing_documents_vat_rate_check CHECK (((vat_rate >= (0)::numeric) AND (vat_rate <= (100)::numeric))),
     CONSTRAINT purchasing_documents_winner_only_rfq CHECK (((winner_supplier_id IS NULL) OR (doc_type = 'rfq'::text)))
@@ -3174,6 +3177,13 @@ COMMENT ON TABLE public.purchasing_documents IS 'Purchasing: request for quotati
 --
 
 COMMENT ON COLUMN public.purchasing_documents.vat_rate IS 'VAT percent stamped when the document was issued — later changes of the company setting do not touch it.';
+
+
+--
+-- Name: COLUMN purchasing_documents.supplier_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.purchasing_documents.supplier_name IS 'Supplier typed by hand (not in public.suppliers). Used only when supplier_id is null.';
 
 
 --
@@ -4936,6 +4946,14 @@ ALTER TABLE ONLY public.portal_sessions
 
 ALTER TABLE ONLY public.purchasing_dispatches
     ADD CONSTRAINT purchasing_dispatches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchasing_documents purchasing_documents_has_supplier; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.purchasing_documents
+    ADD CONSTRAINT purchasing_documents_has_supplier CHECK (((supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL))) NOT VALID;
 
 
 --
@@ -8250,7 +8268,6 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 
 
-
 --
 -- Dbmate schema migrations
 --
@@ -8385,5 +8402,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261017163621'),
     ('20261018081443'),
     ('20261018122800'),
-    ('20261021102307')
+    ('20261021102307'),
+    ('20261022090000')
 ;

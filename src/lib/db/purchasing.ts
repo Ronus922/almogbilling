@@ -160,7 +160,12 @@ export interface DocumentRow {
   doc_date: string;
   title: string;
   supplier_id: string | null;
+  /** The list supplier's name, or the one typed by hand. */
   supplier_name: string | null;
+  /** Hand-typed supplier details (supplier_id null); kept on the document only. */
+  supplier_phone: string | null;
+  supplier_email: string | null;
+  supplier_address: string | null;
   notes: string;
   due_date: string | null;
   vat_rate: number;
@@ -176,8 +181,9 @@ export interface DocumentRow {
 }
 
 const DOC_COLS = `
-  d.id, d.doc_type, d.number, d.doc_date::text as doc_date, d.title, d.supplier_id,
-  coalesce(nullif(sp.company_name, ''), sp.display_name) as supplier_name,
+  d.id, d.doc_type, d.number, d.doc_date::text as doc_date, coalesce(d.title, '') as title, d.supplier_id,
+  coalesce(nullif(sp.company_name, ''), sp.display_name, nullif(d.supplier_name, '')) as supplier_name,
+  d.supplier_phone, d.supplier_email, d.supplier_address,
   d.notes, d.due_date::text as due_date, d.vat_rate::float8 as vat_rate,
   d.source_rfq_id, src.number as source_rfq_number,
   d.winner_supplier_id,
@@ -259,11 +265,19 @@ async function insertLines(client: PoolClient, documentId: string, lines: readon
   }
 }
 
-export interface CreateDocumentInput {
+/** The document's supplier: a list supplier (id) or one typed by hand. */
+export interface SupplierFields {
+  supplier_id: string | null;
+  supplier_name: string | null;
+  supplier_phone: string | null;
+  supplier_email: string | null;
+  supplier_address: string | null;
+}
+
+export interface CreateDocumentInput extends SupplierFields {
   doc_type: DocType;
   doc_date: string;
   title: string;
-  supplier_id: string | null;
   notes: string;
   due_date: string | null;
   vat_rate: number;
@@ -282,10 +296,12 @@ export async function createDocument(
     const number = await allocateNumber(client, input.doc_type, input.start_number);
     const ins = await client.query<{ id: string }>(
       `insert into public.purchasing_documents
-         (doc_type, number, doc_date, title, supplier_id, notes, due_date, vat_rate, source_rfq_id, created_by)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
+         (doc_type, number, doc_date, title, supplier_id, supplier_name, supplier_phone, supplier_email,
+          supplier_address, notes, due_date, vat_rate, source_rfq_id, created_by)
+       values ($1, $2, $3, nullif($4, ''), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) returning id`,
       [
-        input.doc_type, number, input.doc_date, input.title, input.supplier_id, input.notes,
+        input.doc_type, number, input.doc_date, input.title, input.supplier_id, input.supplier_name,
+        input.supplier_phone, input.supplier_email, input.supplier_address, input.notes,
         input.due_date, input.vat_rate, input.source_rfq_id, actorId,
       ],
     );
@@ -295,9 +311,9 @@ export async function createDocument(
   });
 }
 
-export interface UpdateDocumentInput {
+export interface UpdateDocumentInput extends SupplierFields {
+  doc_date: string;
   title: string;
-  supplier_id: string | null;
   notes: string;
   due_date: string | null;
   /** undefined = leave the lines alone (an RFQ whose lines are locked). */
@@ -308,10 +324,14 @@ export async function updateDocument(id: string, input: UpdateDocumentInput): Pr
   await withTransaction(async (client) => {
     await client.query(
       `update public.purchasing_documents
-          set title = $2, supplier_id = coalesce($3, supplier_id), notes = $4,
-              due_date = coalesce($5, due_date), updated_at = now()
+          set doc_date = $2, title = nullif($3, ''), supplier_id = $4, supplier_name = $5, supplier_phone = $6,
+              supplier_email = $7, supplier_address = $8, notes = $9,
+              due_date = coalesce($10, due_date), updated_at = now()
         where id = $1 and deleted_at is null`,
-      [id, input.title, input.supplier_id, input.notes, input.due_date],
+      [
+        id, input.doc_date, input.title, input.supplier_id, input.supplier_name, input.supplier_phone,
+        input.supplier_email, input.supplier_address, input.notes, input.due_date,
+      ],
     );
     if (input.lines) {
       await client.query(`delete from public.purchasing_lines where document_id = $1`, [id]);
@@ -415,7 +435,7 @@ export async function findPublicContext(token: string): Promise<PublicQuoteConte
   }>(
     `select rr.id, rr.rfq_id, rr.supplier_id,
             coalesce(nullif(s.company_name, ''), s.display_name) as supplier_name,
-            d.number, d.title, d.doc_date::text as doc_date, d.due_date::text as due_date,
+            d.number, coalesce(d.title, '') as title, d.doc_date::text as doc_date, d.due_date::text as due_date,
             d.notes, d.vat_rate::float8 as vat_rate
        from public.purchasing_rfq_recipients rr
        join public.purchasing_documents d on d.id = rr.rfq_id and d.deleted_at is null and d.doc_type = 'rfq'

@@ -159,7 +159,7 @@ export function SupplierQuoteForm({ token }: { token: string }) {
       <header className="space-y-1">
         <p className="text-sm font-semibold text-ink-3">{view.company_name}</p>
         <h1 className="text-2xl font-extrabold text-ink" data-quote-heading>{docHeading('rfq', view.rfq.number)}</h1>
-        <p className="text-base font-semibold text-ink-2">{view.rfq.title}</p>
+        {view.rfq.title && <p className="text-base font-semibold text-ink-2">{view.rfq.title}</p>}
         <p className="text-sm text-ink-3">שלום {view.supplier_name} · תאריך הבקשה {formatDocDate(view.rfq.doc_date)}</p>
       </header>
 

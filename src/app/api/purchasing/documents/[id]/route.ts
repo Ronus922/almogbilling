@@ -10,6 +10,7 @@ import {
 import { updateDocumentBodySchema } from '@/lib/validation/purchasing';
 import { buildProxyUrl, PURCHASING_FILES_BUCKET } from '@/lib/storage/server';
 import { quoteLink } from '@/lib/purchasing/service';
+import { supplierFieldsOf } from '@/lib/purchasing/supplier';
 import { removePurchasingObjects } from '@/lib/storage/purchasingStorage';
 
 export const runtime = 'nodejs';
@@ -48,9 +49,9 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
   return NextResponse.json(out);
 }
 
-// PATCH /api/purchasing/documents/[id] — notes, title, supplier (po), due date
-// (rfq) and, while allowed, the lines. The number, the date and the VAT rate
-// are never editable. A request's lines are locked once it was sent: suppliers
+// PATCH /api/purchasing/documents/[id] — the form's fields (date, supplier,
+// description, due date, notes) and, while allowed, the lines. The number and
+// the VAT rate are never editable. A request's lines are locked once it was sent: suppliers
 // have priced exactly those lines.
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   let actor: Actor;
@@ -63,29 +64,23 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   const doc = await findDocument(id);
   if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  let lines = body.data.lines;
+  const lines = body.data.lines;
   if (doc.doc_type === 'rfq') {
     if (lines && (await listRecipients(id)).length > 0) {
       return NextResponse.json({ error: 'לא ניתן לשנות שורות אחרי ששלחו את הבקשה לספקים' }, { status: 409 });
     }
-    if (lines && lines.some((l) => l.unit_price !== null)) {
-      return NextResponse.json({ error: 'בקשה להצעת מחיר אינה כוללת מחירים' }, { status: 400 });
-    }
     if (!body.data.due_date) return NextResponse.json({ error: 'תאריך יעד הוא שדה חובה' }, { status: 400 });
-    if (body.data.title.trim() === '') return NextResponse.json({ error: 'יש להזין כותרת' }, { status: 400 });
-  } else {
-    if (lines && lines.some((l) => l.unit_price === null)) {
-      return NextResponse.json({ error: 'יש להזין מחיר בכל שורה' }, { status: 400 });
-    }
-    if (body.data.supplier_id && !(await getSupplierBrief(body.data.supplier_id))) {
-      return NextResponse.json({ error: 'הספק לא נמצא' }, { status: 400 });
-    }
+  } else if (lines && lines.some((l) => l.unit_price === null)) {
+    return NextResponse.json({ error: 'יש להזין מחיר בכל שורה' }, { status: 400 });
   }
-  lines = lines ?? undefined;
+  if (body.data.supplier_id && !(await getSupplierBrief(body.data.supplier_id))) {
+    return NextResponse.json({ error: 'הספק לא נמצא' }, { status: 400 });
+  }
 
   await updateDocument(id, {
+    doc_date: body.data.doc_date,
     title: body.data.title,
-    supplier_id: doc.doc_type === 'po' ? body.data.supplier_id : null,
+    ...supplierFieldsOf(body.data),
     notes: body.data.notes,
     due_date: doc.doc_type === 'rfq' ? body.data.due_date : null,
     lines,

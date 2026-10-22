@@ -1,9 +1,10 @@
 'use client';
 
-// The lines table shared by both documents: פירוט · כמות · מחיר ליחידה · סה״כ
-// (no SKU, no cap on the number of rows). The price columns exist only for a
-// purchase order; a request for quotation carries description + quantity.
-// "פירוט" completes itself from descriptions entered before.
+// The lines table shared by both documents: פירוט · כמות · מחיר · סה״כ · מחיקה
+// (no SKU, no cap on the number of rows), then the three-row summary box.
+// The price is optional in a request for quotation and required in a purchase
+// order (checked on save). "פירוט" completes itself from descriptions entered
+// before.
 
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
@@ -17,7 +18,6 @@ import { draftTotals, emptyLine, parseNumber, type LineDraft } from './lines';
 interface Props {
   lines: LineDraft[];
   onChange: (next: LineDraft[]) => void;
-  withPrices: boolean;
   vatRate: number;
   disabled?: boolean;
   /** Key of a row to flag (the first invalid one after a failed save). */
@@ -82,7 +82,7 @@ function DescriptionInput({
   );
 }
 
-export function LinesEditor({ lines, onChange, withPrices, vatRate, disabled, errorKey }: Props) {
+export function LinesEditor({ lines, onChange, vatRate, disabled, errorKey }: Props) {
   const set = (key: string, patch: Partial<LineDraft>) =>
     onChange(lines.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   const remove = (key: string) => {
@@ -92,17 +92,15 @@ export function LinesEditor({ lines, onChange, withPrices, vatRate, disabled, er
   const totals = draftTotals(lines, vatRate);
 
   // md+: description | qty | price | total | delete ; phone: one card per line.
-  const grid = withPrices
-    ? 'md:grid-cols-[minmax(0,1fr)_96px_128px_128px_44px]'
-    : 'md:grid-cols-[minmax(0,1fr)_120px_44px]';
+  const grid = 'md:grid-cols-[minmax(0,1fr)_96px_128px_128px_44px]';
 
   return (
     <div className="space-y-3">
       <div className={cn('hidden gap-3 px-1 text-sm font-semibold text-ink-3 md:grid', grid)} aria-hidden>
         <span>פירוט</span>
         <span>כמות</span>
-        {withPrices && <span>מחיר ליחידה</span>}
-        {withPrices && <span>סה״כ</span>}
+        <span>מחיר</span>
+        <span>סה״כ</span>
         <span />
       </div>
 
@@ -136,26 +134,22 @@ export function LinesEditor({ lines, onChange, withPrices, vatRate, disabled, er
                 className="h-10 tabular-nums"
               />
             </div>
-            {withPrices && (
-              <div className="space-y-1">
-                <Label htmlFor={`line-price-${l.key}`} className="text-sm text-ink-3 md:sr-only">מחיר ליחידה</Label>
-                <Input
-                  id={`line-price-${l.key}`}
-                  value={l.unit_price}
-                  inputMode="decimal"
-                  dir="ltr"
-                  disabled={disabled}
-                  placeholder="0.00"
-                  onChange={(e) => set(l.key, { unit_price: e.target.value })}
-                  className="h-10 tabular-nums"
-                />
-              </div>
-            )}
-            {withPrices && (
-              <div className="flex h-10 items-center text-sm font-semibold tabular-nums text-ink" dir="ltr">
-                <span className="me-auto md:me-0">{formatIls(total)}</span>
-              </div>
-            )}
+            <div className="space-y-1">
+              <Label htmlFor={`line-price-${l.key}`} className="text-sm text-ink-3 md:sr-only">מחיר</Label>
+              <Input
+                id={`line-price-${l.key}`}
+                value={l.unit_price}
+                inputMode="decimal"
+                dir="ltr"
+                disabled={disabled}
+                placeholder="0.00"
+                onChange={(e) => set(l.key, { unit_price: e.target.value })}
+                className="h-10 tabular-nums"
+              />
+            </div>
+            <div className="flex h-10 items-center text-sm font-semibold tabular-nums text-ink" dir="ltr" data-line-total>
+              <span className="me-auto md:me-0">{formatIls(total)}</span>
+            </div>
             <div className="flex justify-end md:block">
               <button
                 type="button"
@@ -180,25 +174,23 @@ export function LinesEditor({ lines, onChange, withPrices, vatRate, disabled, er
         className="h-11 gap-2"
       >
         <Plus className="h-4 w-4" />
-        הוספת שורה
+        הוסף
       </Button>
 
-      {withPrices && (
-        <dl className="ms-auto w-full max-w-xs space-y-2 rounded-lg border border-line bg-white p-4 text-sm" data-totals>
-          <div className="flex items-center justify-between gap-4">
-            <dt className="text-ink-2">סה״כ</dt>
-            <dd className="font-semibold tabular-nums" dir="ltr">{formatIls(totals.subtotal)}</dd>
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <dt className="text-ink-2">מע״מ {formatVatRate(vatRate)}</dt>
-            <dd className="font-semibold tabular-nums" dir="ltr">{formatIls(totals.vat)}</dd>
-          </div>
-          <div className="flex items-center justify-between gap-4 border-t border-line pt-2 text-base">
-            <dt className="font-bold text-ink">סה״כ לתשלום</dt>
-            <dd className="font-bold tabular-nums text-ink" dir="ltr">{formatIls(totals.total)}</dd>
-          </div>
-        </dl>
-      )}
+      <dl className="ms-auto w-full max-w-xs space-y-2 rounded-lg border border-line bg-white p-4 text-sm" data-totals>
+        <div className="flex items-center justify-between gap-4">
+          <dt className="text-ink-2">סה״כ לפני מע״מ</dt>
+          <dd className="font-semibold tabular-nums" dir="ltr">{formatIls(totals.subtotal)}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <dt className="text-ink-2">מע״מ {formatVatRate(vatRate)}</dt>
+          <dd className="font-semibold tabular-nums" dir="ltr">{formatIls(totals.vat)}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-4 border-t border-line pt-2 text-base">
+          <dt className="font-bold text-ink">סה״כ לתשלום</dt>
+          <dd className="font-bold tabular-nums text-ink" dir="ltr">{formatIls(totals.total)}</dd>
+        </div>
+      </dl>
     </div>
   );
 }

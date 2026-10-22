@@ -16,7 +16,6 @@ import {
   computeTotals, docHeading, formatDocDate, formatIls, formatQty, formatStampIL, formatVatRate, isRfqOpen, lineTotal,
 } from '@/lib/purchasing/model';
 import { QuotesSection } from './QuotesSection';
-import { ManualQuoteSheet } from './ManualQuoteSheet';
 import { SendSheet } from './SendSheet';
 import type { DocumentDetail, PoPrefill, SupplierBrief } from './types';
 
@@ -37,7 +36,6 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
-  const [manual, setManual] = useState<{ open: boolean; supplierId: string | null }>({ open: false, supplierId: null });
   const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async (id: string) => {
@@ -78,14 +76,15 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
 
   const doc = detail?.document;
   const isRfq = doc?.doc_type === 'rfq';
-  const totals = detail && doc && !isRfq ? computeTotals(detail.lines, doc.vat_rate) : null;
+  const priced = !!detail && (!isRfq || detail.lines.some((l) => l.unit_price !== null));
+  const totals = detail && doc && priced ? computeTotals(detail.lines, doc.vat_rate) : null;
   const pdfUrl = doc ? `/api/purchasing/documents/${doc.id}/pdf` : '';
 
   return (
     <>
-      {/* While a child sheet (send / manual quote) is open, Escape and the backdrop
+      {/* While a child sheet (send) is open, Escape and the backdrop
           belong to IT — closing both at once would drop the user out of the document. */}
-      <Sheet open={!!documentId} onOpenChange={(o) => { if (!o && !sendOpen && !manual.open) onClose(); }}>
+      <Sheet open={!!documentId} onOpenChange={(o) => { if (!o && !sendOpen) onClose(); }}>
         <SheetContent
           side="left" dir="rtl" showCloseButton={false}
           className="w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-white"
@@ -131,7 +130,14 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
                   <dl className="grid gap-x-6 gap-y-3 py-2 text-sm sm:grid-cols-2" data-doc-details>
                     <div><dt className="text-ink-3">מספר</dt><dd className="font-semibold tabular-nums text-ink">{doc.number}</dd></div>
                     <div><dt className="text-ink-3">תאריך</dt><dd className="font-semibold tabular-nums text-ink">{formatDocDate(doc.doc_date)}</dd></div>
-                    {isRfq ? (
+                    <div><dt className="text-ink-3">ספק</dt><dd className="font-semibold text-ink">{doc.supplier_name}</dd></div>
+                    {!doc.supplier_id && (doc.supplier_phone || doc.supplier_email || doc.supplier_address) && (
+                      <div>
+                        <dt className="text-ink-3">פרטי הספק</dt>
+                        <dd className="text-ink">{[doc.supplier_phone, doc.supplier_email, doc.supplier_address].filter(Boolean).join(' · ')}</dd>
+                      </div>
+                    )}
+                    {isRfq && (
                       <div>
                         <dt className="text-ink-3">תאריך יעד להגשה</dt>
                         <dd className="font-semibold tabular-nums text-ink">
@@ -141,10 +147,8 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
                           </span>
                         </dd>
                       </div>
-                    ) : (
-                      <div><dt className="text-ink-3">ספק</dt><dd className="font-semibold text-ink">{doc.supplier_name}</dd></div>
                     )}
-                    {doc.title && <div><dt className="text-ink-3">{isRfq ? 'כותרת' : 'נושא'}</dt><dd className="font-semibold text-ink">{doc.title}</dd></div>}
+                    {doc.title && <div><dt className="text-ink-3">תיאור</dt><dd className="font-semibold text-ink">{doc.title}</dd></div>}
                     {doc.source_rfq_id && (
                       <div><dt className="text-ink-3">נפתחה מבקשה</dt><dd className="font-semibold tabular-nums text-ink">מספר {doc.source_rfq_number}</dd></div>
                     )}
@@ -161,8 +165,8 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
                           <tr className="border-b border-line bg-slate-50/80">
                             <th className="px-4 py-3 text-start font-semibold text-ink-2">פירוט</th>
                             <th className="px-4 py-3 text-start font-semibold text-ink-2">כמות</th>
-                            {!isRfq && <th className="px-4 py-3 text-start font-semibold text-ink-2">מחיר</th>}
-                            {!isRfq && <th className="px-4 py-3 text-start font-semibold text-ink-2">סה״כ</th>}
+                            {priced && <th className="px-4 py-3 text-start font-semibold text-ink-2">מחיר</th>}
+                            {priced && <th className="px-4 py-3 text-start font-semibold text-ink-2">סה״כ</th>}
                           </tr>
                         </thead>
                         <tbody>
@@ -170,8 +174,8 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
                             <tr key={l.id} className={`border-b border-line last:border-0 ${i % 2 ? 'bg-slate-50/60' : ''}`}>
                               <td className="px-4 py-3 text-ink">{l.description}</td>
                               <td className="px-4 py-3 tabular-nums text-ink-2">{formatQty(l.quantity)}</td>
-                              {!isRfq && <td className="px-4 py-3 tabular-nums text-ink-2" dir="ltr">{formatIls(l.unit_price ?? 0)}</td>}
-                              {!isRfq && <td className="px-4 py-3 font-semibold tabular-nums text-ink" dir="ltr">{formatIls(lineTotal(l))}</td>}
+                              {priced && <td className="px-4 py-3 tabular-nums text-ink-2" dir="ltr">{l.unit_price === null ? '' : formatIls(l.unit_price)}</td>}
+                              {priced && <td className="px-4 py-3 font-semibold tabular-nums text-ink" dir="ltr">{l.unit_price === null ? '' : formatIls(lineTotal(l))}</td>}
                             </tr>
                           ))}
                         </tbody>
@@ -179,7 +183,7 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
                     </div>
                     {totals && (
                       <dl className="ms-auto w-full max-w-xs space-y-2 rounded-lg border border-line bg-white p-4 text-sm" data-totals>
-                        <div className="flex justify-between gap-4"><dt className="text-ink-2">סה״כ</dt><dd className="font-semibold tabular-nums" dir="ltr">{formatIls(totals.subtotal)}</dd></div>
+                        <div className="flex justify-between gap-4"><dt className="text-ink-2">סה״כ לפני מע״מ</dt><dd className="font-semibold tabular-nums" dir="ltr">{formatIls(totals.subtotal)}</dd></div>
                         <div className="flex justify-between gap-4"><dt className="text-ink-2">מע״מ {formatVatRate(doc.vat_rate)}</dt><dd className="font-semibold tabular-nums" dir="ltr">{formatIls(totals.vat)}</dd></div>
                         <div className="flex justify-between gap-4 border-t border-line pt-2 text-base"><dt className="font-bold text-ink">סה״כ לתשלום</dt><dd className="font-bold tabular-nums" dir="ltr">{formatIls(totals.total)}</dd></div>
                       </dl>
@@ -206,7 +210,6 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
                 {isRfq && (
                   <QuotesSection
                     detail={detail} canEdit={canEdit} onChanged={reload}
-                    onAddManual={(supplierId) => setManual({ open: true, supplierId })}
                     onCreatePo={(p) => { onClose(); onCreatePo(p); }}
                   />
                 )}
@@ -249,12 +252,6 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
       {detail && (
         <>
           <SendSheet open={sendOpen} detail={detail} suppliers={suppliers} onOpenChange={setSendOpen} onSent={reload} />
-          {isRfq && (
-            <ManualQuoteSheet
-              open={manual.open} detail={detail} suppliers={suppliers} supplierId={manual.supplierId}
-              onOpenChange={(o) => setManual((m) => ({ ...m, open: o }))} onSaved={reload}
-            />
-          )}
         </>
       )}
     </>
