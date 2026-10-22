@@ -22,9 +22,11 @@ interface Props {
   canEdit: boolean;
   onChanged: () => void;
   onCreatePo: (prefill: PoPrefill) => void;
+  /** Which half the panel's tab shows: the suppliers (document tab) or the comparison (its own tab). */
+  part: 'recipients' | 'comparison';
 }
 
-export function QuotesSection({ detail, canEdit, onChanged, onCreatePo }: Props) {
+export function QuotesSection({ detail, canEdit, onChanged, onCreatePo, part }: Props) {
   const doc = detail.document;
   const quotes = useMemo(() => detail.quotes ?? [], [detail.quotes]);
   const recipients = detail.recipients ?? [];
@@ -115,6 +117,7 @@ export function QuotesSection({ detail, canEdit, onChanged, onCreatePo }: Props)
 
   return (
     <>
+      {part === 'recipients' && (
       <Section title="ספקים והצעות" icon={ShoppingCart} iconTone="blue">
         <div className="space-y-2 py-2" data-recipients>
           {supplierRows.length === 0 && (
@@ -176,8 +179,15 @@ export function QuotesSection({ detail, canEdit, onChanged, onCreatePo }: Props)
           ))}
         </div>
       </Section>
+      )}
 
-      {cols.length > 0 && (
+      {part === 'comparison' && cols.length === 0 && (
+        <p className="rounded-lg border border-line bg-white p-4 text-center text-sm text-ink-3" data-comparison-empty>
+          עדיין לא התקבלו הצעות להשוואה.
+        </p>
+      )}
+
+      {part === 'comparison' && cols.length > 0 && (
         <Section title="השוואת הצעות" icon={Award} iconTone="violet">
           <div className="space-y-4 py-2">
             <div className="overflow-x-auto rounded-xl border border-line bg-white" data-comparison>
