@@ -47,9 +47,14 @@ fail() { printf '%s [restic-push] ERROR: %s\n' "$(date '+%F %T')" "$*" >&2; }
 # pg-backup.sh already pinged the healthcheck GREEN for the local dumps by the
 # time this script runs, so a failure here would otherwise leave the check
 # happily green with nothing off-site. Turn it red.
+#
+# Under /usr/local/bin/backup-retry.sh (BACKUP_RETRY_WRAPPED=1) the ping is NOT
+# sent here: the wrapper retries for hours, and a red check per failed attempt is
+# noise. It sends the success ping itself, and /fail once, only if no attempt has
+# succeeded by 12:00.
 on_error() {
   fail "aborted at line $1"
-  if [[ -n "${HEALTHCHECK_BACKUP_URL:-}" ]]; then
+  if [[ -n "${HEALTHCHECK_BACKUP_URL:-}" && "${BACKUP_RETRY_WRAPPED:-0}" != 1 ]]; then
     curl -fsS -m 10 --retry 3 -o /dev/null "${HEALTHCHECK_BACKUP_URL}/fail" \
       || log "healthcheck ping/fail failed (non-fatal)"
   fi
@@ -67,10 +72,28 @@ if [[ -z "${RESTIC_PASSWORD:-}" && -z "${RESTIC_PASSWORD_FILE:-}" ]]; then
 fi
 [[ -d "$BACKUP_DIR" ]] || { fail "BACKUP_DIR ${BACKUP_DIR} does not exist"; exit 1; }
 
-# First run: initialise the repository if it is not one yet.
-if ! restic cat config >/dev/null 2>&1; then
-  log "repository not initialised — running restic init"
-  restic init
+# The repository must already exist. A failed `restic cat config` is NOT proof that
+# it does not: restic 0.16 prints "Is there a repository at the following location?"
+# for ANY failure to read the config object (timeout, DNS, 401, ...) and has no
+# distinct exit code for a missing repo (exit 10 arrives in 0.17). On 2026-10-23 an
+# outbound outage was read as "not initialised" and the script went for `restic init`
+# on a live repository.
+# So: fail closed. `restic init` runs only when the operator opts in for a genuinely
+# new repository (RESTIC_ALLOW_INIT=1) AND the error names a missing object AND shows
+# no network/auth symptom.
+cfg_rc=0
+cfg_err="$(restic cat config 2>&1 >/dev/null)" || cfg_rc=$?
+if (( cfg_rc != 0 )); then
+  if [[ "${RESTIC_ALLOW_INIT:-0}" == 1 ]] \
+     && grep -qiE 'no such file|does not exist|not found|nosuchkey' <<<"$cfg_err" \
+     && ! grep -qiE 'timeout|timed out|deadline|dial |no such host|connection|unauthori[sz]ed|forbidden|expired|\b40[13]\b|temporar|unreachable' <<<"$cfg_err"; then
+    log "repository does not exist and RESTIC_ALLOW_INIT=1 — running restic init"
+    restic init
+  else
+    fail "repository unreachable or not initialised (restic rc=${cfg_rc}) — refusing to run restic init"
+    fail "restic said: $(head -n 1 <<<"$cfg_err")"
+    exit 1
+  fi
 fi
 
 HOST="$(hostname -s)"
