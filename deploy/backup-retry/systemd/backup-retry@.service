@@ -1,0 +1,20 @@
+# Off-site backup with retry/back-off, one instance per job (restic-push, rentbook-backup,
+# guesthub). Started by backup-catchup.service when a job has no success today; the
+# nightly units run the same wrapper directly (see their backup-retry.conf drop-ins).
+# Job definitions: /etc/backup-retry/jobs.d/<job>.conf. Logic: /usr/local/bin/backup-retry.sh.
+#
+# No OnFailure= here on purpose: a catch-up window that ends without a success is reported
+# by the nightly unit's existing OnFailure= and, at 12:00, by the healthchecks /fail ping.
+[Unit]
+Description=Off-site backup with retry/back-off (%i)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/backup-retry.sh run %i
+Nice=10
+IOSchedulingClass=idle
+# 4 h window + the backup itself
+TimeoutStartSec=5h

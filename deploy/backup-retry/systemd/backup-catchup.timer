@@ -1,0 +1,12 @@
+[Unit]
+Description=Hourly catch-up of off-site backups, 04:00–12:00 (host time, UTC)
+
+[Timer]
+# 04:00, 05:00 ... 12:00. The 12:00 run is also the cut-off for the healthchecks /fail ping.
+OnCalendar=*-*-* 04..12:00:00
+# Not persistent: a catch-up that was missed while the host was down must not fire at 13:00.
+Persistent=false
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
