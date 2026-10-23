@@ -42,3 +42,9 @@ ExecStart=/usr/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/
 # The script enforces its own 180s budget and records the failure; this is the backstop.
 TimeoutStartSec=5min
 Nice=5
+# The script saves a screenshot of a failed run to /var/log/billing (LOG_DIR in
+# scripts/bllink-scrape.ts). /var/log is root-owned and this unit runs as ubuntu, so the
+# mkdir died with EACCES (23/10/2026) and the screenshot of the failed login was lost.
+# systemd creates the directory on every start, owned by User=/Group=, 0750.
+LogsDirectory=billing
+LogsDirectoryMode=0750
