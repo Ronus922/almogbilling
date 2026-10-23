@@ -1,0 +1,9 @@
+# Start every off-site backup job that has no success recorded today.
+# Fired hourly 04:00–12:00 by backup-catchup.timer; logic in /usr/local/bin/backup-catchup.sh.
+[Unit]
+Description=Catch-up of off-site backups that have not succeeded today
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/backup-catchup.sh
