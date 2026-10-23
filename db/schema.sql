@@ -4975,7 +4975,7 @@ ALTER TABLE ONLY public.purchasing_dispatches
 --
 
 ALTER TABLE public.purchasing_documents
-    ADD CONSTRAINT purchasing_documents_has_supplier CHECK (((status = 'draft'::text) OR (supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL))) NOT VALID;
+    ADD CONSTRAINT purchasing_documents_has_supplier CHECK (((deleted_at IS NOT NULL) OR ((status = 'draft'::text) OR (supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL)))) NOT VALID;
 
 
 --
@@ -8440,5 +8440,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018122800'),
     ('20261021102307'),
     ('20261022090000'),
-    ('20261022150000')
+    ('20261022150000'),
+    ('20261023161953')
 ;

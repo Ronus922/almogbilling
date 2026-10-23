@@ -248,6 +248,37 @@ d('purchasing db', () => {
       await expect(db.createDocument(rfqInput({ supplier_id: null, supplier_name: null, start_number: 1 }), admin)).rejects.toThrow();
     });
 
+    it('soft-deletes a legacy issued document that has no supplier, yet still refuses to issue a new one without', async () => {
+      const doc = await create();
+      // Reproduce the legacy row: issued, no supplier, written before the NOT VALID
+      // constraint existed. The constraint is dropped and re-added verbatim.
+      const def = (await pool.query<{ d: string }>(
+        `select pg_get_constraintdef(oid) as d from pg_constraint where conname = 'purchasing_documents_has_supplier'`,
+      )).rows[0].d;
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query(`alter table public.purchasing_documents drop constraint purchasing_documents_has_supplier`);
+        await c.query(`update public.purchasing_documents set supplier_id = null, supplier_name = null where id = $1`, [doc.id]);
+        await c.query(`alter table public.purchasing_documents add constraint purchasing_documents_has_supplier ${def}`);
+        await c.query('COMMIT');
+      } catch (e) {
+        await c.query('ROLLBACK');
+        throw e;
+      } finally {
+        c.release();
+      }
+      expect(await db.softDeleteDocument(doc.id)).toBe(true);
+      expect((await pool.query(`select deleted_at from public.purchasing_documents where id = $1`, [doc.id])).rows[0].deleted_at).not.toBeNull();
+
+      const draft = await create({ status: 'draft', supplier_name: null });
+      await expect(db.updateDocument(draft.id, {
+        doc_date: '2026-10-21', title: 'x', supplier_id: null, supplier_name: null, supplier_phone: null, supplier_email: null,
+        supplier_address: null, notes: '', due_date: '2099-01-01', lines: undefined,
+        issue: { start_number: 1, vat_rate: 18 },
+      })).rejects.toThrow();
+    });
+
     it('the description is optional, and a request line may carry an optional price', async () => {
       const rfq = await create({ title: '', lines: [{ description: 'עם מחיר', quantity: 2, unit_price: 12.5 }, { description: 'בלי', quantity: 1, unit_price: null }] });
       const row = await db.findDocument(rfq.id);
