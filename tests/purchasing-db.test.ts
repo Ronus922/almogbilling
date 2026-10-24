@@ -41,7 +41,13 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
+const notices: Array<Record<string, unknown>> = [];
+vi.mock('@/services/notifications', () => ({
+  createNotification: vi.fn(async (input: Record<string, unknown>) => { notices.push(input); }),
+}));
+
 const db = await import('@/lib/db/purchasing');
+const notify = await import('@/lib/purchasing/notify');
 const { buildComparison, MANUAL_PARTY } = await import('@/lib/purchasing/model');
 
 const made = { docs: [] as string[], suppliers: [] as string[] };
@@ -470,5 +476,104 @@ d('purchasing db', () => {
     expect((await db.listDocumentFiles(rfq.id)).map((f) => f.id)).toEqual([row.id]);
     await db.deleteFileRow(row.id);
     expect(await db.listDocumentFiles(rfq.id)).toHaveLength(0);
+  });
+
+  describe('new quotes and the notices to the creator', () => {
+    const quote = (rfq_id: string, supplier_id: string, source: 'portal' | 'manual') =>
+      db.upsertQuote({ rfq_id, supplier_id, source, total_amount: source === 'manual' ? 100 : null, valid_until: null, notes: '', prices: {}, actor_id: null });
+    const tick = () => new Promise((r) => setTimeout(r, 25));
+    const listed = async (id: string) => (await db.listDocuments('rfq')).find((d) => d.id === id)!;
+
+    it('a portal quote is new until the request is opened; a staff-entered one never is', async () => {
+      const [a, b] = made.suppliers;
+      const rfq = await create({ title: 'נושא חדשות' });
+      await db.ensureRecipient(rfq.id, a);
+      await db.ensureRecipient(rfq.id, b);
+      expect((await listed(rfq.id)).unseen_quote_count).toBe(0);
+      const baseline = await db.countRfqsWithUnseenQuotes();
+
+      await quote(rfq.id, b, 'manual');
+      expect((await listed(rfq.id)).unseen_quote_count).toBe(0);
+      expect(await db.countRfqsWithUnseenQuotes()).toBe(baseline);
+
+      await quote(rfq.id, a, 'portal');
+      expect((await listed(rfq.id)).unseen_quote_count).toBe(1);
+      expect(await db.countRfqsWithUnseenQuotes()).toBe(baseline + 1);
+
+      await db.markQuotesSeen(rfq.id);
+      expect((await listed(rfq.id)).unseen_quote_count).toBe(0);
+      expect(await db.countRfqsWithUnseenQuotes()).toBe(baseline);
+
+      // An amendment is news again.
+      await tick();
+      await quote(rfq.id, a, 'portal');
+      expect((await listed(rfq.id)).unseen_quote_count).toBe(1);
+      expect(await db.countRfqsWithUnseenQuotes()).toBe(baseline + 1);
+      await db.markQuotesSeen(rfq.id);
+      expect(await db.countRfqsWithUnseenQuotes()).toBe(baseline);
+    });
+
+    it('a draft and a purchase order never count', async () => {
+      const baseline = await db.countRfqsWithUnseenQuotes();
+      const po = await create({ doc_type: 'po', due_date: null, title: 'הזמנה' });
+      await db.markQuotesSeen(po.id); // a no-op for a purchase order, not an error
+      expect(await db.countRfqsWithUnseenQuotes()).toBe(baseline);
+    });
+
+    it('counts how many recipients answered', async () => {
+      const [a, b] = made.suppliers;
+      const rfq = await create();
+      await db.ensureRecipient(rfq.id, a);
+      await db.ensureRecipient(rfq.id, b);
+      expect(await db.getRfqAnswerStats(rfq.id)).toEqual({ recipients: 2, answered: 0 });
+      await quote(rfq.id, a, 'portal');
+      expect(await db.getRfqAnswerStats(rfq.id)).toEqual({ recipients: 2, answered: 1 });
+    });
+
+    it('notifies the creator of every submission, the tally once everyone answered, and an amendment too', async () => {
+      const [a, b] = made.suppliers;
+      const rfq = await create({ title: 'צביעה' });
+      await db.ensureRecipient(rfq.id, a);
+      await db.ensureRecipient(rfq.id, b);
+      const mine = () => notices.filter((n) => n.sourceEntityId === rfq.id);
+
+      const qa = await quote(rfq.id, a, 'portal');
+      await notify.notifyQuoteSubmitted({ rfqId: rfq.id, quoteId: qa, quoteStamp: new Date().toISOString(), supplierName: 'ספק בדיקה א׳', isUpdate: false });
+      expect(mine().map((n) => n.type)).toEqual(['purchasing_quote_received']);
+      expect(mine()[0]).toMatchObject({ userId: admin, actionUrl: `/purchasing?tab=rfq&open=${rfq.id}` });
+      expect(String(mine()[0].message)).toContain('ספק בדיקה א׳');
+      expect(String(mine()[0].message)).toContain('צביעה');
+
+      const qb = await quote(rfq.id, b, 'portal');
+      await notify.notifyQuoteSubmitted({ rfqId: rfq.id, quoteId: qb, quoteStamp: new Date().toISOString(), supplierName: 'ספק בדיקה ב׳', isUpdate: false });
+      expect(mine().map((n) => n.type)).toEqual(['purchasing_quote_received', 'purchasing_quote_received', 'purchasing_quotes_complete']);
+      expect(String(mine()[2].message)).toContain('התקבלו 2 מתוך 2');
+
+      await notify.notifyQuoteSubmitted({ rfqId: rfq.id, quoteId: qa, quoteStamp: new Date().toISOString(), supplierName: 'ספק בדיקה א׳', isUpdate: true });
+      expect(mine()).toHaveLength(4);
+      expect(mine()[3]).toMatchObject({ type: 'purchasing_quote_received', title: 'הצעת מחיר עודכנה' });
+    });
+
+    it('announces a passed due date once, with the tally, and only for a request that was sent', async () => {
+      const [a, b] = made.suppliers;
+      const late = await create({ due_date: '2020-01-01', title: 'באיחור' });
+      await db.ensureRecipient(late.id, a);
+      await db.ensureRecipient(late.id, b);
+      await quote(late.id, a, 'portal');
+      const unsent = await create({ due_date: '2020-01-01' });
+      const open = await create({ due_date: '2099-01-01' });
+      await db.ensureRecipient(open.id, a);
+      const mine = (id: string) => notices.filter((n) => n.sourceEntityId === id);
+
+      expect(await notify.notifyDueDatesPassed()).toBeGreaterThanOrEqual(1);
+      expect(mine(late.id)).toHaveLength(1);
+      expect(mine(late.id)[0]).toMatchObject({ type: 'purchasing_rfq_closed', userId: admin });
+      expect(String(mine(late.id)[0].message)).toContain('התקבלו 1 מתוך 2');
+      expect(mine(unsent.id)).toHaveLength(0);
+      expect(mine(open.id)).toHaveLength(0);
+
+      await notify.notifyDueDatesPassed();
+      expect(mine(late.id)).toHaveLength(1); // never twice
+    });
   });
 });

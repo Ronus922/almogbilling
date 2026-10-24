@@ -39,6 +39,10 @@ vi.mock('@/lib/storage/purchasingStorage', () => ({
   removePurchasingObjects: vi.fn(async (keys: string[]) => { keys.forEach((k) => store.delete(k)); }),
   readPurchasingObject: vi.fn(async (key: string) => store.get(key) ?? null),
 }));
+const notices: Array<Record<string, unknown>> = [];
+vi.mock('@/services/notifications', () => ({
+  createNotification: vi.fn(async (input: Record<string, unknown>) => { notices.push(input); }),
+}));
 vi.mock('@/lib/logger', () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 
 const db = await import('@/lib/db/purchasing');
@@ -218,5 +222,27 @@ d('public supplier link', () => {
     }
     expect(blocked).toBeGreaterThanOrEqual(5);
     await pool.query(`delete from public.auth_rate_limits where bucket = $1`, [`pq:ip:${attacker}`]);
+  });
+
+  it('tells the creator of the request when a supplier submits, and marks the link opened', async () => {
+    const r = await pool.query<{ id: string }>(`insert into public.suppliers (display_name) values ('ספק ציבורי ג׳') returning id`);
+    made.suppliers.push(r.rows[0].id);
+    const { token } = await db.ensureRecipient(rfqId, r.rows[0].id);
+    notices.length = 0;
+    await pool.query(`update public.purchasing_documents set due_date = '2099-01-01' where id = $1`, [rfqId]); // an earlier test closed it
+    expect((await route.GET(req(`/api/public/quote/${token}`), ctxOf(token))).status).toBe(200);
+    expect((await pool.query(`select first_viewed_at from public.purchasing_rfq_recipients where token = $1`, [token])).rows[0].first_viewed_at).not.toBeNull();
+
+    expect((await put(token, { prices: { [lineIds[0]]: 7, [lineIds[1]]: 3 } })).status).toBe(200);
+    await vi.waitFor(() => expect(notices.filter((n) => n.type === 'purchasing_quote_received')).toHaveLength(1));
+    expect(notices[0]).toMatchObject({ sourceEntityId: rfqId, actionUrl: `/purchasing?tab=rfq&open=${rfqId}` });
+    expect(String(notices[0].message)).toContain('ספק ציבורי ג׳');
+    expect(String(notices[0].message)).toContain('הגיש הצעת מחיר');
+
+    // An amendment is announced as an update.
+    await new Promise((res) => setTimeout(res, 1100));
+    expect((await put(token, { prices: { [lineIds[0]]: 8, [lineIds[1]]: 3 } })).status).toBe(200);
+    await vi.waitFor(() => expect(notices.filter((n) => n.type === 'purchasing_quote_received')).toHaveLength(2));
+    expect(String(notices[1].message)).toContain('עדכן את הצעת המחיר');
   });
 });

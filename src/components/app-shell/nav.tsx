@@ -139,11 +139,19 @@ export const SETTINGS_ITEM: MenuItem = { label: 'הגדרות', icon: SettingsIc
 export function filterNav(
   role: Role,
   can: (module: string, action: Action) => boolean,
+  /** Live counts by item href — the badge shows only where a real source gave one. */
+  counts: Record<string, number> = {},
 ): { sections: MenuSection[]; showSettings: boolean } {
   const isVisible = (it: MenuItem) =>
     it.visible ? it.visible(role, can) : it.module ? can(it.module, it.action ?? 'view') : true;
   const sections = SECTIONS
-    .map((s) => ({ ...s, items: s.items.filter(isVisible) }))
+    .map((s) => ({
+      ...s,
+      items: s.items.filter(isVisible).map((it) => {
+        const count = it.href ? counts[it.href] : undefined;
+        return count ? { ...it, badge: { count, tone: 'warn' as const } } : it;
+      }),
+    }))
     .filter((s) => s.items.length > 0);
   return { sections, showSettings: isVisible(SETTINGS_ITEM) };
 }

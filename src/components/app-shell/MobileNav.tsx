@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Menu, LogOut } from 'lucide-react';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useAuth, usePermissions } from '@/lib/auth/context';
+import { usePurchasingUnseen } from '@/components/purchasing/unseen';
 import { filterNav, NavBrand, Section, NavLink, FooterButton, SETTINGS_ITEM } from './nav';
 
 // Mobile-only navigation. The desktop Sidebar is `hidden md:flex`, so on phones
@@ -18,7 +19,8 @@ export function MobileNav() {
   const { can, role } = usePermissions();
   const { signOut } = useAuth();
 
-  const { sections, showSettings } = filterNav(role, can);
+  const unseenQuotes = usePurchasingUnseen(open && can('purchasing', 'view'));
+  const { sections, showSettings } = filterNav(role, can, { '/purchasing': unseenQuotes });
   const close = () => setOpen(false);
 
   return (

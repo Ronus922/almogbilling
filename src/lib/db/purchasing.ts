@@ -212,7 +212,17 @@ export interface DocumentListItem extends DocumentRow {
   subtotal: number;
   recipient_count: number;
   quote_count: number;
+  /** Portal quotes that arrived (or were amended) after the request was last opened. */
+  unseen_quote_count: number;
 }
+
+/** A portal quote is "new" while it is later than the request's `quotes_seen_at`
+ *  stamp. Staff-entered (`manual`) quotes never count: they are not news to
+ *  whoever typed them. */
+const UNSEEN_QUOTES_SQL = `
+  select count(*)::int from public.purchasing_quotes q
+   where q.rfq_id = d.id and q.source = 'portal'
+     and greatest(q.submitted_at, q.updated_at) > coalesce(d.quotes_seen_at, '-infinity'::timestamptz)`;
 
 export async function listDocuments(type: DocType): Promise<DocumentListItem[]> {
   const r = await query<DocumentListItem>(
@@ -221,7 +231,8 @@ export async function listDocuments(type: DocType): Promise<DocumentListItem[]> 
        coalesce((select sum(round(l.quantity * coalesce(l.unit_price, 0), 2))
                    from public.purchasing_lines l where l.document_id = d.id), 0)::float8 as subtotal,
        (select count(*)::int from public.purchasing_rfq_recipients rr where rr.rfq_id = d.id) as recipient_count,
-       (select count(*)::int from public.purchasing_quotes q where q.rfq_id = d.id) as quote_count
+       (select count(*)::int from public.purchasing_quotes q where q.rfq_id = d.id) as quote_count,
+       (${UNSEEN_QUOTES_SQL}) as unseen_quote_count
      ${DOC_JOINS}
      where d.doc_type = $1 and d.deleted_at is null
      order by (d.status = 'draft') desc, d.doc_date desc, d.number desc nulls first, d.created_at desc`,
@@ -395,6 +406,63 @@ export async function softDeleteDocument(id: string): Promise<boolean> {
     [id],
   );
   return (r.rowCount ?? 0) > 0;
+}
+
+/** Opening a request counts as seeing its quotes: stamps the document. Only
+ *  touches a request that actually has something new, so a plain re-open does
+ *  not rewrite the row. */
+export async function markQuotesSeen(rfqId: string): Promise<void> {
+  await query(
+    `update public.purchasing_documents d set quotes_seen_at = now()
+      where d.id = $1 and d.doc_type = 'rfq' and d.deleted_at is null
+        and (${UNSEEN_QUOTES_SQL}) > 0`,
+    [rfqId],
+  );
+}
+
+/** The number on the menu: requests that hold at least one new portal quote. */
+export async function countRfqsWithUnseenQuotes(): Promise<number> {
+  const r = await queryOne<{ n: number }>(
+    `select count(*)::int as n from public.purchasing_documents d
+      where d.doc_type = 'rfq' and d.status = 'issued' and d.deleted_at is null
+        and (${UNSEEN_QUOTES_SQL}) > 0`,
+  );
+  return r?.n ?? 0;
+}
+
+export interface RfqAnswerStats {
+  recipients: number;
+  /** Recipients that have a quote on the request. */
+  answered: number;
+}
+
+export async function getRfqAnswerStats(rfqId: string): Promise<RfqAnswerStats> {
+  const r = await queryOne<RfqAnswerStats>(
+    `select count(*)::int as recipients,
+            (count(*) filter (where exists (
+               select 1 from public.purchasing_quotes q
+                where q.rfq_id = rr.rfq_id and q.supplier_id is not distinct from rr.supplier_id)))::int as answered
+       from public.purchasing_rfq_recipients rr where rr.rfq_id = $1`,
+    [rfqId],
+  );
+  return r ?? { recipients: 0, answered: 0 };
+}
+
+export interface RfqNoticeRow { id: string; number: number; title: string; created_by: string | null }
+
+/** Claims, once, the requests whose due date has passed (Israel date `today`)
+ *  and that were sent to at least one supplier: the stamp is written in the same
+ *  statement that returns them, so two overlapping runs can never both notify. */
+export async function claimDueNotices(today: string): Promise<RfqNoticeRow[]> {
+  const r = await query<RfqNoticeRow>(
+    `update public.purchasing_documents d set due_notice_sent_at = now()
+      where d.doc_type = 'rfq' and d.status = 'issued' and d.deleted_at is null
+        and d.due_notice_sent_at is null and d.due_date < $1::date
+        and exists (select 1 from public.purchasing_rfq_recipients rr where rr.rfq_id = d.id)
+      returning d.id, d.number, coalesce(d.title, '') as title, d.created_by`,
+    [today],
+  );
+  return r.rows;
 }
 
 /** Previously entered descriptions, most used first — the "פירוט" autocomplete. */

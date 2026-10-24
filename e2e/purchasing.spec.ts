@@ -159,6 +159,8 @@ test('nav, wizard and the first request: the letterhead once, then "from which n
   await fillLine(page, 0, 'צבע אקרילי לבן', '3');
   await form.getByRole('button', { name: 'הפק את המסמך' }).click();
   await expect(form.getByText('יש לבחור ספק או להקליד שם ספק')).toBeVisible();
+  // …and so is the subject of a request (a purchase order's description stays optional).
+  await expect(form.getByText('יש להזין נושא לבקשה')).toBeVisible();
 
   // A supplier typed by hand: its phone / e-mail / address appear and stay on the document.
   await page.locator('#doc-supplier').fill(TYPED_SUPPLIER);
@@ -180,6 +182,14 @@ test('nav, wizard and the first request: the letterhead once, then "from which n
   });
   // Never added to the suppliers list.
   expect((await pool.query(`select 1 from public.suppliers where display_name = $1 or company_name = $1`, [TYPED_SUPPLIER])).rowCount).toBe(0);
+
+  // The requests list is told apart by SUBJECT: it has the column, and no supplier column
+  // (a request goes to several suppliers — they live inside the request).
+  await page.goto('/purchasing?tab=rfq');
+  const rfqHead = page.locator('table[data-list="rfq"] th');
+  await expect(rfqHead.filter({ hasText: 'נושא' })).toHaveCount(1);
+  await expect(rfqHead.filter({ hasText: 'ספק' })).toHaveCount(0);
+  await expect(page.locator(`tr[data-number="${START_RFQ}"]`)).toContainText(RFQ_TITLE);
 
   // The company is saved: a second visit does not ask again.
   const co = await pool.query(`select value from public.app_settings where key = 'purchasing_company'`);
@@ -210,6 +220,9 @@ test('the heading shows the next number, "פירוט" completes, a price is opti
   await expect(form.locator('[data-totals]')).toContainText('₪3.60');
   await expect(form.locator('[data-totals]')).toContainText('₪23.60');
 
+  // A request needs its subject — the preview too.
+  await page.locator('#doc-title').fill(`בקשה שנייה ${RUN}`);
+
   // The preview is a real PDF and saves nothing.
   const before = await pool.query(`select count(*)::int as n from public.purchasing_documents`);
   const [previewRes] = await Promise.all([
@@ -230,7 +243,6 @@ test('the heading shows the next number, "פירוט" completes, a price is opti
   expect(taken.status()).toBe(201);
   await docId('rfq', START_RFQ + 1);
 
-  await page.locator('#doc-title').fill(`בקשה שנייה ${RUN}`);
   await form.getByRole('button', { name: 'הפק את המסמך' }).click();
   await expect(page.getByText(`המספר ${START_RFQ + 1} נתפס בינתיים — המסמך הופק כמספר ${START_RFQ + 2}`)).toBeVisible();
   await expect(page.getByRole('heading', { name: `בקשה להצעת מחיר מספר ${START_RFQ + 2}` })).toBeVisible();
@@ -718,7 +730,7 @@ test('a channel the typed supplier has no detail for is blocked with a plain mes
   made.docs.push(id);
 
   await page.goto('/purchasing');
-  await page.locator('tr', { hasText: NAME }).click();
+  await page.locator('tr', { hasText: `חסום ${RUN}` }).click();
   await page.getByRole('button', { name: 'שליחה' }).click();
   const sendSheet = sheet(page);
   await sendSheet.getByRole('checkbox', { name: NAME }).click();
@@ -754,4 +766,33 @@ test('the module is closed to anyone who is not a super admin and to anonymous c
   // The proxy for its files: unauthenticated is 401, never the bytes.
   expect((await anon.request.get('/api/files/purchasing-files/00000000-0000-4000-8000-000000000001.pdf')).status()).toBe(401);
   await anon.close();
+});
+
+test('a request needs its subject; one that predates the rule stays editable while its subject stays empty', async ({ request }) => {
+  const NAME = `ספק נושא ${RUN}`;
+  const lines = [{ description: 'שורה', quantity: 1, unit_price: null }];
+
+  // Creating a request without a subject is refused, and nothing is written.
+  const none = await request.post('/api/purchasing/documents', {
+    data: { doc_type: 'rfq', doc_date: '2026-10-22', supplier_name: NAME, due_date: '2099-01-01', lines },
+  });
+  expect(none.status()).toBe(400);
+  expect((await pool.query(`select 1 from public.purchasing_documents where supplier_name = $1`, [NAME])).rowCount).toBe(0);
+
+  // A request issued before the rule: no subject. Editing it without one is accepted…
+  const legacy = await pool.query<{ id: string }>(
+    `insert into public.purchasing_documents (doc_type, number, status, doc_date, supplier_name, due_date, vat_rate)
+     values ('rfq', 777001, 'issued', '2026-10-22', $1, '2099-01-01', 18) returning id`,
+    [NAME],
+  );
+  const id = legacy.rows[0].id;
+  made.docs.push(id);
+  const body = { doc_date: '2026-10-22', supplier_name: NAME, due_date: '2099-01-01', notes: '' };
+  expect((await request.patch(`/api/purchasing/documents/${id}`, { data: { ...body, title: '' } })).status()).toBe(200);
+
+  // …giving it a subject is fine, and from then on the subject cannot be emptied.
+  expect((await request.patch(`/api/purchasing/documents/${id}`, { data: { ...body, title: `נושא ${RUN}` } })).status()).toBe(200);
+  const emptied = await request.patch(`/api/purchasing/documents/${id}`, { data: { ...body, title: '' } });
+  expect(emptied.status()).toBe(400);
+  expect((await emptied.json()).error).toBe('יש להזין נושא לבקשה');
 });

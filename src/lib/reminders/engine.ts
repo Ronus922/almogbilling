@@ -17,6 +17,7 @@ import { getSignature, signatureWhatsApp } from '@/lib/notify/signature';
 import { appUrl } from '@/lib/config';
 import { todayInJerusalem, addDaysToIsoDate } from '@/lib/dates';
 import { logger } from '@/lib/logger';
+import { notifyDueDatesPassed } from '@/lib/purchasing/notify';
 
 export interface ReminderRunResult {
   due: number;
@@ -28,6 +29,8 @@ export interface ReminderRunResult {
   failed: number;
   /** task_due_soon notifications fanned out this run (deduped per task/user/day). */
   dueSoon: number;
+  /** Purchasing "due date passed" notices sent this run (once per request). */
+  purchasingDue: number;
 }
 
 /**
@@ -93,6 +96,7 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
     whatsapped: 0,
     failed: 0,
     dueSoon: 0,
+    purchasingDue: 0,
   };
 
   for (const reminder of due) {
@@ -317,6 +321,10 @@ export async function runReminders(limit = 200): Promise<ReminderRunResult> {
   } catch (err) {
     logger.error('[runReminders] task_due_soon scan failed', err);
   }
+
+  // Purchasing: a request whose due date passed is announced once to its creator.
+  // notifyDueDatesPassed never throws; it is independent of the loops above.
+  result.purchasingDue = await notifyDueDatesPassed();
 
   return result;
 }

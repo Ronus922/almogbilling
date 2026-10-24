@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { LogOut, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth, usePermissions } from '@/lib/auth/context';
+import { usePurchasingUnseen } from '@/components/purchasing/unseen';
 import { filterNav, NavBrand, Section, NavLink, FooterButton, SETTINGS_ITEM } from './nav';
 
 const STORAGE_KEY = 'almog:sidebar-collapsed';
@@ -32,7 +33,8 @@ export function Sidebar() {
   }
 
   // Shared filter — identical item set on desktop (here) and the mobile drawer.
-  const { sections, showSettings } = filterNav(role, can);
+  const unseenQuotes = usePurchasingUnseen(can('purchasing', 'view'));
+  const { sections, showSettings } = filterNav(role, can, { '/purchasing': unseenQuotes });
 
   return (
     <aside

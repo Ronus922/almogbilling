@@ -75,6 +75,7 @@ const supplierShape = {
 const hasSupplier = (b: { supplier_id: string | null; supplier_name: string | null }) =>
   b.supplier_id !== null || b.supplier_name !== null;
 const SUPPLIER_REQUIRED = 'יש לבחור ספק או להקליד שם ספק';
+export const RFQ_TITLE_REQUIRED = 'יש להזין נושא לבקשה';
 
 // The ONE form of both documents: date · supplier · description · (rfq: due
 // date) · lines · notes. A request's lines may carry a price (optional), a
@@ -90,6 +91,8 @@ export const createBodySchema = z.discriminatedUnion('doc_type', [
   z.object({
     doc_type: z.literal('rfq'),
     ...formShape,
+    // A request is told apart in the list by its subject: required (a purchase order's is not).
+    title: formShape.title.refine((t) => t !== '', RFQ_TITLE_REQUIRED),
     due_date: isoDate,
     start_number: startNumber,
     lines,
@@ -116,7 +119,7 @@ export const draftBodySchema = z.object({
 }).refine((b) => hasSupplier(b) || b.title !== '' || b.lines.length > 0, {
   message: 'אין מה לשמור בטיוטה — מלאו ספק, תיאור או שורה',
   path: ['supplier_name'],
-});
+}).refine((b) => b.doc_type !== 'rfq' || b.title !== '', { message: RFQ_TITLE_REQUIRED, path: ['title'] });
 
 export const updateDocumentBodySchema = z.object({
   ...formShape,
