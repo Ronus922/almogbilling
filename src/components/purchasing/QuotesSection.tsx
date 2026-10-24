@@ -106,11 +106,12 @@ export function QuotesSection({ detail, canEdit, onChanged, onCreatePo, part }: 
   const supplierRows = [
     ...recipients.map((r) => ({
       supplier_id: partyKey(r), name: r.supplier_name, link: r.link,
-      viewed: r.last_viewed_at, quote: quotes.find((q) => partyKey(q) === partyKey(r)) ?? null,
+      sent: r.created_at as string | null, viewed: r.first_viewed_at,
+      quote: quotes.find((q) => partyKey(q) === partyKey(r)) ?? null,
     })),
     ...quotes
       .filter((q) => !recipients.some((r) => partyKey(r) === partyKey(q)))
-      .map((q) => ({ supplier_id: partyKey(q), name: q.supplier_name, link: null as string | null, viewed: null as string | null, quote: q })),
+      .map((q) => ({ supplier_id: partyKey(q), name: q.supplier_name, link: null as string | null, sent: null as string | null, viewed: null as string | null, quote: q })),
   ];
 
   const winnerQuote = quotes.find((q) => partyKey(q) === winnerKey);
@@ -129,15 +130,22 @@ export function QuotesSection({ detail, canEdit, onChanged, onCreatePo, part }: 
             <div key={r.supplier_id} className="rounded-lg border border-line bg-white p-3" data-recipient={r.supplier_id}>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="text-sm font-semibold text-ink">{r.name}</span>
-                {r.quote ? (
-                  <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
-                    הוגשה בקישור · {formatStampIL(r.quote.updated_at)}
-                  </span>
-                ) : r.viewed ? (
-                  <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700">נפתח {formatStampIL(r.viewed)}</span>
-                ) : (
-                  <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">טרם נפתח</span>
-                )}
+                {/* The three steps of a recipient, each with its time: sent → opened → submitted. */}
+                <span className="flex flex-wrap items-center gap-1.5" data-recipient-status>
+                  {r.sent && (
+                    <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">נשלח {formatStampIL(r.sent)}</span>
+                  )}
+                  {r.viewed ? (
+                    <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700">נצפה {formatStampIL(r.viewed)}</span>
+                  ) : r.sent ? (
+                    <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">טרם נצפה</span>
+                  ) : null}
+                  {r.quote && (
+                    <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+                      הגיש {formatStampIL(r.quote.updated_at)}
+                    </span>
+                  )}
+                </span>
                 {winnerKey === r.supplier_id && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold text-violet-700">
                     <Award className="h-3 w-3" aria-hidden /> זוכה

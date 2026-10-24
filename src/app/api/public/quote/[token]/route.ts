@@ -7,6 +7,7 @@ import { publicQuoteBodySchema } from '@/lib/validation/purchasing';
 import { PUBLIC_HEADERS, publicReadGate, publicWriteGate } from '@/lib/purchasing/publicGate';
 import { isRfqOpen, PURCHASING_LIMITS } from '@/lib/purchasing/model';
 import { logger } from '@/lib/logger';
+import { notifyQuoteSubmitted } from '@/lib/purchasing/notify';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -79,12 +80,20 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ error: 'יש להזין מחיר ליחידה בכל שורה' }, { status: 400, headers: PUBLIC_HEADERS });
   }
 
-  await upsertQuote({
+  const quoteId = await upsertQuote({
     rfq_id: found.rfq.id, supplier_id: found.recipient.supplier_id, party: found.recipient.party, source: 'portal',
     total_amount: null, valid_until: body.data.valid_until, notes: body.data.notes,
     prices: body.data.prices, actor_id: null,
   });
+  // The creator of the request hears about it (bell + e-mail). Fire and forget:
+  // the supplier's answer never waits for, or fails on, a notice.
   const fresh = await findPublicContext(token);
+  if (fresh?.quote) {
+    void notifyQuoteSubmitted({
+      rfqId: found.rfq.id, quoteId, quoteStamp: fresh.quote.updated_at, isUpdate: found.quote !== null,
+      supplierName: found.recipient.supplier_name,
+    });
+  }
   const company = await getCompany();
   return NextResponse.json(view(fresh ?? found, company?.name ?? ''), { headers: PUBLIC_HEADERS });
 }

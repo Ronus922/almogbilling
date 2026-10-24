@@ -6,12 +6,13 @@
 // company details yet, opens the one-time wizard first and then continues to
 // the document. Every create / edit is a side panel (DESIGN §12).
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ClipboardList, Plus, Settings, ShoppingCart, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { formatDocDate, formatIls, isRfqOpen, round2, type DocType } from '@/lib/purchasing/model';
+import { PURCHASING_SEEN_EVENT } from './unseen';
 import { CompanySheet, type CompanyState } from './CompanySheet';
 import { DocumentFormSheet } from './DocumentFormSheet';
 import { DocumentDetailSheet } from './DocumentDetailSheet';
@@ -25,6 +26,8 @@ interface Props {
   suppliers: SupplierBrief[];
   canEdit: boolean;
   initialTab: DocType;
+  /** A request to open on arrival (the link inside a notification). */
+  initialOpenId: string | null;
 }
 
 const TABS: Array<{ type: DocType; label: string; icon: typeof ClipboardList }> = [
@@ -32,9 +35,13 @@ const TABS: Array<{ type: DocType; label: string; icon: typeof ClipboardList }> 
   { type: 'po', label: 'הזמנות רכש', icon: ShoppingCart },
 ];
 
-export function PurchasingClient({ initialRfq, initialPo, company: initialCompany, sequences: initialSeq, suppliers, canEdit, initialTab }: Props) {
+export function PurchasingClient({ initialRfq, initialPo, company: initialCompany, sequences: initialSeq, suppliers, canEdit, initialTab, initialOpenId }: Props) {
   const [tab, setTab] = useState<DocType>(initialTab);
-  const [lists, setLists] = useState<Record<DocType, DocumentListItem[]>>({ rfq: initialRfq, po: initialPo });
+  const [lists, setLists] = useState<Record<DocType, DocumentListItem[]>>({
+    // A request opened on arrival (a notification link) starts with its marker already cleared.
+    rfq: initialOpenId ? initialRfq.map((d) => (d.id === initialOpenId ? { ...d, unseen_quote_count: 0 } : d)) : initialRfq,
+    po: initialPo,
+  });
   const [company, setCompany] = useState<CompanyState>(initialCompany);
   const [sequences, setSequences] = useState<SequenceState>(initialSeq);
   const [companyOpen, setCompanyOpen] = useState(false);
@@ -43,7 +50,7 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
   const [form, setForm] = useState<{ open: boolean; type: DocType; detail: DocumentDetail | null; prefill: PoPrefill | null }>(
     { open: false, type: 'rfq', detail: null, prefill: null },
   );
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(initialOpenId);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const reload = useCallback(async () => {
@@ -98,6 +105,23 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
   }
 
   const rows = useMemo(() => lists[tab], [lists, tab]);
+
+  // Opening a request is what marks its quotes as seen (the GET stamps the
+  // document): the row's marker is cleared at once (openDetail), and the menu
+  // badge recounts a moment later, once the stamp is certainly written.
+  function openDetail(id: string) {
+    setLists((prev) => ({
+      ...prev,
+      rfq: prev.rfq.map((d) => (d.id === id && d.unseen_quote_count > 0 ? { ...d, unseen_quote_count: 0 } : d)),
+    }));
+    setDetailId(id);
+  }
+
+  useEffect(() => {
+    if (!detailId) return;
+    const t = window.setTimeout(() => window.dispatchEvent(new Event(PURCHASING_SEEN_EVENT)), 1200);
+    return () => window.clearTimeout(t);
+  }, [detailId]);
 
   return (
     <div className="space-y-6">
@@ -165,8 +189,8 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
               <tr className="border-b border-line bg-slate-50/80 text-start">
                 <th className="px-4 py-3 text-start font-semibold text-ink-2">מספר</th>
                 <th className="px-4 py-3 text-start font-semibold text-ink-2">תאריך</th>
-                <th className="px-4 py-3 text-start font-semibold text-ink-2">ספק</th>
-                <th className="px-4 py-3 text-start font-semibold text-ink-2">תיאור</th>
+                {tab === 'po' && <th className="px-4 py-3 text-start font-semibold text-ink-2">ספק</th>}
+                <th className="px-4 py-3 text-start font-semibold text-ink-2">{tab === 'rfq' ? 'נושא' : 'תיאור'}</th>
                 {tab === 'rfq' ? (
                   <>
                     <th className="px-4 py-3 text-start font-semibold text-ink-2">יעד להגשה</th>
@@ -189,11 +213,15 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
                     data-number={d.number ?? undefined}
                     data-draft={d.status === 'draft' ? '' : undefined}
                     tabIndex={0}
-                    onClick={() => (d.status === 'draft' ? void openDraft(d.id) : setDetailId(d.id))}
+                    onClick={() => (d.status === 'draft' ? void openDraft(d.id) : openDetail(d.id))}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (d.status === 'draft') void openDraft(d.id); else setDetailId(d.id); }
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (d.status === 'draft') void openDraft(d.id); else openDetail(d.id); }
                     }}
-                    className="cursor-pointer border-b border-line transition-colors last:border-0 hover:bg-row-hover focus-visible:bg-row-hover focus-visible:outline-none"
+                    data-new-quotes={d.unseen_quote_count > 0 ? d.unseen_quote_count : undefined}
+                    className={cn(
+                      'cursor-pointer border-b border-line transition-colors last:border-0 hover:bg-row-hover focus-visible:bg-row-hover focus-visible:outline-none',
+                      d.unseen_quote_count > 0 && 'bg-blue-50/60',
+                    )}
                   >
                     <td className="px-4 py-3 font-bold tabular-nums text-ink">
                       {d.status === 'draft' ? (
@@ -201,8 +229,15 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
                       ) : d.number}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-ink-2">{formatDocDate(d.doc_date)}</td>
-                    <td className="px-4 py-3 font-semibold text-ink">{d.supplier_name ?? '—'}</td>
-                    <td className="px-4 py-3 text-ink-2">{d.title || '—'}</td>
+                    {tab === 'po' && <td className="px-4 py-3 font-semibold text-ink">{d.supplier_name ?? '—'}</td>}
+                    <td className="px-4 py-3 text-ink-2">
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        <span className={cn(d.unseen_quote_count > 0 && 'font-semibold text-ink')}>{d.title || '—'}</span>
+                        {d.unseen_quote_count > 0 && (
+                          <span data-new-quote-tag className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-bold text-blue-700">הצעה חדשה</span>
+                        )}
+                      </span>
+                    </td>
                     {tab === 'rfq' ? (
                       <>
                         <td className="px-4 py-3 tabular-nums text-ink-2">

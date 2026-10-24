@@ -7,7 +7,7 @@
 // runtime — do NOT add 'server-only'.
 
 import {
-  MessageCircle, Scale, Calendar, CheckCircle2, Clock, AlertTriangle, Bell, KeyRound, MailWarning,
+  MessageCircle, Scale, Calendar, CheckCircle2, Clock, AlertTriangle, Bell, KeyRound, MailWarning, ShoppingCart,
   type LucideIcon,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
@@ -26,10 +26,13 @@ export type NotificationType =
   | 'system_announcement'
   | 'chip_issued'
   | 'chip_deactivated_lost'
-  | 'smtp_auth_failed';
+  | 'smtp_auth_failed'
+  | 'purchasing_quote_received'
+  | 'purchasing_quotes_complete'
+  | 'purchasing_rfq_closed';
 
 export type SourceModule =
-  'tasks' | 'calendar' | 'whatsapp' | 'issues' | 'internal_chat' | 'legal' | 'chips' | 'system';
+  'tasks' | 'calendar' | 'whatsapp' | 'issues' | 'internal_chat' | 'legal' | 'chips' | 'system' | 'purchasing';
 export type Channel = 'inapp' | 'email' | 'whatsapp';
 export type Priority = 'low' | 'normal' | 'high' | 'urgent';
 
@@ -72,6 +75,11 @@ export const NOTIFICATION_REGISTRY: Record<NotificationType, NotificationRegistr
   // sole producer, notifyAdminsOfSmtpAuthFailure (src/lib/email/authAlert.ts),
   // inserts the bell row directly and never enters the fan-out.
   smtp_auth_failed:          { icon: MailWarning,   tone: 'danger',  sourceModule: 'system',        defaultPriority: 'urgent', channels: ['inapp'] },
+  // Purchasing: the creator of a request hears about its quotes — bell + e-mail
+  // (the recipient's own notify_email opt-in applies). Never WhatsApp.
+  purchasing_quote_received:  { icon: ShoppingCart, tone: 'info',    sourceModule: 'purchasing',    defaultPriority: 'normal', channels: ['inapp', 'email'] },
+  purchasing_quotes_complete: { icon: ShoppingCart, tone: 'info',    sourceModule: 'purchasing',    defaultPriority: 'normal', channels: ['inapp', 'email'] },
+  purchasing_rfq_closed:      { icon: Clock,        tone: 'warning', sourceModule: 'purchasing',    defaultPriority: 'normal', channels: ['inapp', 'email'] },
 };
 
 // ── Hebrew labels ───────────────────────────────────────────────────────────
@@ -93,11 +101,14 @@ const NOTIFICATION_TYPE_LABEL: Record<NotificationType, string> = {
   chip_issued: 'צ׳יפ הונפק',
   chip_deactivated_lost: 'צ׳יפ אבד או נגנב',
   smtp_auth_failed: 'כישלון אימות SMTP',
+  purchasing_quote_received: 'התקבלה הצעת מחיר',
+  purchasing_quotes_complete: 'כל הספקים הגישו הצעה',
+  purchasing_rfq_closed: 'עבר יעד ההגשה',
 };
 
 export const SOURCE_MODULE_LABEL: Record<SourceModule, string> = {
   tasks: 'משימות', calendar: 'יומן', whatsapp: 'וואטסאפ', issues: 'תקלות',
-  internal_chat: 'צ׳אט פנימי', legal: 'משפטי', chips: 'צ׳יפים', system: 'מערכת',
+  internal_chat: 'צ׳אט פנימי', legal: 'משפטי', chips: 'צ׳יפים', system: 'מערכת', purchasing: 'רכש',
 };
 
 /** Default in-app title used when an emitter doesn't supply one (title is NOT
@@ -116,6 +127,9 @@ export const DEFAULT_TITLE: Record<NotificationType, string> = {
   chip_issued: 'צ׳יפ חדש הונפק',
   chip_deactivated_lost: 'צ׳יפ הושבת — אבד או נגנב',
   smtp_auth_failed: 'שליחת מייל נכשלה',
+  purchasing_quote_received: 'התקבלה הצעת מחיר',
+  purchasing_quotes_complete: 'כל הספקים הגישו הצעה',
+  purchasing_rfq_closed: 'עבר יעד ההגשה',
 };
 
 // ── UI token maps (DESIGN.md §2 tones / §10 pills) ───────────────────────────

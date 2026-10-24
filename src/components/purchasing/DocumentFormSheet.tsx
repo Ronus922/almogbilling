@@ -166,7 +166,11 @@ export function DocumentFormSheet({
   const needsStart = !editing && liveSeq[type] === null;
   const startValue = Number(startNumber);
   const nextNumber = editing ? detail?.document.number : needsStart ? (Number.isInteger(startValue) && startValue >= 1 ? startValue : null) : (liveSeq[type] ?? 0) + 1;
+  // A request needs its subject — except an issued one that never had it (it
+  // predates the rule and stays editable while its subject stays empty).
+  const titleRequired = isRfq && !(editing && (detail?.document.title ?? '') === '');
   const errors = {
+    title: touched && titleRequired && !title.trim() ? 'יש להזין נושא לבקשה' : null,
     date: touched && !docDate ? 'יש לבחור תאריך מסמך' : null,
     supplier: touched && !supplierText.trim() ? 'יש לבחור ספק או להקליד שם ספק' : null,
     due: touched && isRfq && !dueDate ? 'יש לבחור תאריך יעד' : null,
@@ -183,7 +187,7 @@ export function DocumentFormSheet({
   function buildBody(): Record<string, unknown> | null {
     setTouched(true);
     setLineError(null);
-    if (!docDate || !supplierText.trim() || (isRfq && !dueDate)) return null;
+    if (!docDate || !supplierText.trim() || (isRfq && !dueDate) || (titleRequired && !title.trim())) return null;
     if (needsStart && (!Number.isInteger(startValue) || startValue < 1)) return null;
     if (!supplierId && email.trim() && !/^\S+@\S+\.\S+$/.test(email.trim())) return null;
     const payload = draftsToPayload(lines, !isRfq);
@@ -249,6 +253,7 @@ export function DocumentFormSheet({
    *  something to save), no number is taken. */
   async function saveDraft() {
     setLineError(null);
+    if (titleRequired && !title.trim()) { setTouched(true); return; }
     const payload = draftsToPayload(lines, false, true);
     if (!payload.ok) { setLineError({ key: payload.key, message: payload.error }); return; }
     if (!supplierText.trim() && !title.trim() && payload.lines.length === 0) {
@@ -425,7 +430,10 @@ export function DocumentFormSheet({
               )}
 
               <div className="sm:col-span-2">
-                <Field id="doc-title" label="תיאור" value={title} onChange={(v) => setTitle(v.slice(0, PURCHASING_LIMITS.titleMax))} disabled={busy} />
+                <Field
+                  id="doc-title" label={isRfq ? 'נושא' : 'תיאור'} required={titleRequired} value={title}
+                  onChange={(v) => setTitle(v.slice(0, PURCHASING_LIMITS.titleMax))} error={errors.title} disabled={busy}
+                />
               </div>
             </div>
           </Section>

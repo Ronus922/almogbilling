@@ -3157,6 +3157,8 @@ CREATE TABLE public.purchasing_documents (
     supplier_email text,
     supplier_address text,
     status text DEFAULT 'issued'::text NOT NULL,
+    quotes_seen_at timestamp with time zone,
+    due_notice_sent_at timestamp with time zone,
     CONSTRAINT purchasing_documents_doc_type_check CHECK ((doc_type = ANY (ARRAY['rfq'::text, 'po'::text]))),
     CONSTRAINT purchasing_documents_issued_has_number CHECK (((status = 'draft'::text) OR (number IS NOT NULL))),
     CONSTRAINT purchasing_documents_notes_length CHECK ((char_length(notes) <= 4000)),
@@ -8441,5 +8443,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021102307'),
     ('20261022090000'),
     ('20261022150000'),
-    ('20261023161953')
+    ('20261023161953'),
+    ('20261024085525')
 ;

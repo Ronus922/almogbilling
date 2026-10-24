@@ -5,6 +5,7 @@ import { homePathFor } from '@/lib/auth/home';
 import { hasPermission } from '@/lib/permissions/check';
 import { getCollectionVsDebt } from '@/lib/db/debtors';
 import { getChatUnreadSummary } from '@/lib/db/internalChat';
+import { countRfqsWithUnseenQuotes } from '@/lib/db/purchasing';
 import { KpiCard } from '@/components/KpiCard';
 import {
   PERIODS,
@@ -27,6 +28,7 @@ import { IssuesWidget } from './components/IssuesWidget';
 import { RemindersWidget } from './components/RemindersWidget';
 import { ChatWidget } from './components/ChatWidget';
 import { WhatsappWidget } from './components/WhatsappWidget';
+import { PurchasingQuotesCard } from './components/PurchasingQuotesCard';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -56,7 +58,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Sea
   // Each widget loads independently; a failure (or a query its own guard would
   // reject) resolves to null and the widget renders its own empty state — one
   // widget never blanks the page.
-  const [collection, calendar, tasks, issues, reminders, chat, whatsapp] = await Promise.all([
+  const [collection, calendar, tasks, issues, reminders, chat, whatsapp, newQuotes] = await Promise.all([
     can('dashboard') ? safe(() => getCollectionVsDebt(monthsForPeriod(period))) : Promise.resolve(null),
     can('calendar') ? safe(() => loadCalendarMonth(cal, actor.id, canReminders)) : Promise.resolve(null),
     can('tasks') ? safe(() => loadTasks()) : Promise.resolve(null),
@@ -64,6 +66,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Sea
     canReminders ? safe(() => loadReminders(actor.id)) : Promise.resolve(null),
     can('internal_chat') ? safe(() => getChatUnreadSummary(actor.id, 5)) : Promise.resolve(null),
     can('whatsapp_chat') ? safe(() => loadWhatsapp()) : Promise.resolve(null),
+    can('purchasing') ? safe(() => countRfqsWithUnseenQuotes()) : Promise.resolve(null),
   ]);
 
   const dateLabel = new Date().toLocaleDateString('he-IL', {
@@ -125,6 +128,9 @@ export default async function OverviewPage({ searchParams }: { searchParams: Sea
           <KpiCard tone="green" icon={Percent} title="שיעור גבייה ממוצע" value={pct(k.avgCollectionRate)} subtitle={deltaLabel} />
         </div>
       )}
+
+      {/* ── new purchasing quotes (only when there are some, and for purchasing viewers) ── */}
+      {newQuotes != null && newQuotes > 0 && <PurchasingQuotesCard count={newQuotes} />}
 
       {/* ── hero chart: collection vs debt ── */}
       {collection ? (

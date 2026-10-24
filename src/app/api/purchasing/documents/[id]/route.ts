@@ -5,9 +5,9 @@ import { parseJsonBody } from '@/lib/http/body';
 import { writeAudit } from '@/lib/db/audit';
 import {
   deleteDraft, findDocument, getCompany, getSupplierBrief, listDispatches, listDocumentFiles, listLines, listQuotes,
-  listRecipients, NotADraftError, softDeleteDocument, StartNumberRequiredError, updateDocument,
+  listRecipients, markQuotesSeen, NotADraftError, softDeleteDocument, StartNumberRequiredError, updateDocument,
 } from '@/lib/db/purchasing';
-import { createBodySchema, draftBodySchema, updateDocumentBodySchema } from '@/lib/validation/purchasing';
+import { createBodySchema, draftBodySchema, RFQ_TITLE_REQUIRED, updateDocumentBodySchema } from '@/lib/validation/purchasing';
 import { companyIsComplete, todayIsrael } from '@/lib/purchasing/model';
 import { logger } from '@/lib/logger';
 import { buildProxyUrl, PURCHASING_FILES_BUCKET } from '@/lib/storage/server';
@@ -34,6 +34,11 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
   if (!UUID.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   const doc = await findDocument(id);
   if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+  // Opening a request is what makes its quotes "seen" (one stamp per request).
+  if (doc.doc_type === 'rfq' && doc.status === 'issued') {
+    await markQuotesSeen(id).catch((e) => logger.error('[GET purchasing document] seen stamp failed', e));
+  }
 
   const [lines, files, dispatches] = await Promise.all([listLines(id), listDocumentFiles(id), listDispatches(id)]);
   const out: Record<string, unknown> = {
@@ -129,6 +134,11 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   const body = await parseJsonBody(req, updateDocumentBodySchema);
   if (!body.ok) return body.response;
   const lines = body.data.lines;
+  // A request needs its subject — except one that never had it (the rule came
+  // later): it may still be edited as long as the stored subject stays empty.
+  if (doc.doc_type === 'rfq' && body.data.title === '' && doc.title !== '') {
+    return NextResponse.json({ error: RFQ_TITLE_REQUIRED }, { status: 400 });
+  }
   if (doc.doc_type === 'rfq') {
     if (lines && (await listRecipients(id)).length > 0) {
       return NextResponse.json({ error: 'לא ניתן לשנות שורות אחרי ששלחו את הבקשה לספקים' }, { status: 409 });

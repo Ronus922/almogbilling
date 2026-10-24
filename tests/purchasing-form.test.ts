@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createBodySchema, updateDocumentBodySchema } from '@/lib/validation/purchasing';
+import { createBodySchema, draftBodySchema, updateDocumentBodySchema } from '@/lib/validation/purchasing';
 import { draftsToPayload, emptyLine, type LineDraft } from '@/components/purchasing/lines';
 import { supplierFieldsOf } from '@/lib/purchasing/supplier';
 
@@ -9,7 +9,7 @@ import { supplierFieldsOf } from '@/lib/purchasing/supplier';
 
 const SUP = '11111111-1111-4111-8111-111111111111';
 const rfq = (over: Record<string, unknown> = {}) => ({
-  doc_type: 'rfq', doc_date: '2026-10-22', due_date: '2026-11-05', supplier_name: 'ספק ידני',
+  doc_type: 'rfq', doc_date: '2026-10-22', due_date: '2026-11-05', supplier_name: 'ספק ידני', title: 'צביעת חדר מדרגות',
   lines: [{ description: 'צבע', quantity: 1, unit_price: null }], ...over,
 });
 const po = (over: Record<string, unknown> = {}) => ({
@@ -26,11 +26,23 @@ describe('createBodySchema', () => {
     expect(createBodySchema.safeParse(po({ supplier_id: null, supplier_name: 'ספק ידני' })).success).toBe(true);
   });
 
-  it('the description is optional and normalised', () => {
-    const r = createBodySchema.safeParse(rfq());
-    expect(r.success && r.data.title).toBe('');
+  it('a request needs its subject; a purchase order\'s description is optional; both are normalised', () => {
+    for (const title of [undefined, '', '   ']) {
+      const r = createBodySchema.safeParse(rfq({ title }));
+      expect(r.success).toBe(false);
+      if (!r.success) expect(r.error.issues.map((i) => i.path.join('.'))).toContain('title');
+    }
+    const p = createBodySchema.safeParse(po());
+    expect(p.success && p.data.title).toBe('');
     const t = createBodySchema.safeParse(rfq({ title: '  צביעה  ' }));
     expect(t.success && t.data.title).toBe('צביעה');
+  });
+
+  it('a draft of a request needs its subject too; a draft of an order does not', () => {
+    const base = { doc_date: '2026-10-22', supplier_name: 'ספק ידני', lines: [] };
+    expect(draftBodySchema.safeParse({ ...base, doc_type: 'rfq' }).success).toBe(false);
+    expect(draftBodySchema.safeParse({ ...base, doc_type: 'rfq', title: 'צבע' }).success).toBe(true);
+    expect(draftBodySchema.safeParse({ ...base, doc_type: 'po' }).success).toBe(true);
   });
 
   it('a request needs a due date, and its prices are optional', () => {
