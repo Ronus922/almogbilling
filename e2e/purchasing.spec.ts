@@ -730,7 +730,7 @@ test('a channel the typed supplier has no detail for is blocked with a plain mes
   made.docs.push(id);
 
   await page.goto('/purchasing');
-  await page.locator('tr', { hasText: NAME }).click();
+  await page.locator('tr', { hasText: `חסום ${RUN}` }).click();
   await page.getByRole('button', { name: 'שליחה' }).click();
   const sendSheet = sheet(page);
   await sendSheet.getByRole('checkbox', { name: NAME }).click();
