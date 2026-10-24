@@ -16,15 +16,17 @@
 //     • the users screen opens by ROLE (admin / super_admin), and an admin
 //       may not set the management tier (users / permissions / settings) in
 //       anyone's matrix — finance / portal stay grantable (07/10/2026).
-//     • purchasing ("רכש", 21/10/2026) is SUPER ADMIN ONLY: an admin is denied
-//       too (it is in SUPER_ADMIN_ONLY), a matrix role is denied without a row,
-//       and an admin may not grant it (MATRIX_MANAGEMENT_MODULES).
+//     • purchasing ("רכש", opened 24/10/2026) has two keys — purchasing_requests
+//       and purchasing_orders — with a view / edit level each: admin and
+//       super_admin pass both, a matrix role gets only its rows (no row ⇒
+//       denied), an admin may grant them, and the module's settings are by role.
 //     • broadcasts on BOTH channels (WhatsApp / email, 09/10/2026) ride the
 //       existing whatsapp_chat module — send = edit, history = view — with no
 //       module of their own.
 //   Run under tsx (imports .ts source). Pure — no DB.
 import { run, fail, ok } from './_check-lib.mjs';
 import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone, canDeleteUsers, canGrantModule, canOpenUsersScreen } from '../src/lib/permissions/check.ts';
+import { canPurchasingSettings } from '../src/lib/purchasing/access.ts';
 import { DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER, MODULES } from '../src/lib/permissions/constants.ts';
 
 run('check-rbac', async () => {
@@ -62,17 +64,28 @@ run('check-rbac', async () => {
   t('portal_decisions: manager עם המטריצה המלאה נחסם', hasPermission('manager', DEFAULT_MANAGER, 'portal_decisions', 'view') === false);
   t('portal_decisions: viewer (qa-viewer) נחסם', hasPermission('viewer', DEFAULT_VIEWER, 'portal_decisions', 'view') === false);
 
-  // purchasing — super admin only by default, in every layer.
-  t('purchasing: super_admin רשאי edit', hasPermission('super_admin', [], 'purchasing', 'edit') === true);
-  t('purchasing: admin נחסם view', hasPermission('admin', [], 'purchasing', 'view') === false);
-  t('purchasing: admin נחסם edit', hasPermission('admin', [], 'purchasing', 'edit') === false);
-  t('purchasing: manager ללא שורה נחסם', hasPermission('manager', [], 'purchasing', 'view') === false);
-  t('purchasing: manager עם המטריצה המלאה נחסם', hasPermission('manager', DEFAULT_MANAGER, 'purchasing', 'view') === false);
-  t('purchasing: viewer נחסם', hasPermission('viewer', DEFAULT_VIEWER, 'purchasing', 'view') === false);
-  t('purchasing: עובד שטח נחסם', hasPermission('cleaner', DEFAULT_WORKER, 'purchasing', 'view') === false);
-  t('purchasing: אדמין לא יכול להעניק אותו במטריצה', canGrantModule('admin', 'purchasing') === false);
-  t('purchasing: סופר אדמין יכול להעניק אותו במטריצה', canGrantModule('super_admin', 'purchasing') === true);
-  t('purchasing: רשום ב-MODULES', MODULES.some((m) => m.key === 'purchasing'));
+  // purchasing — two keys (requests / orders), a view / edit level each. Admin
+  // and super_admin pass both; a matrix role is denied without a row and gets
+  // exactly what its row says, per key; an admin may grant them (not a
+  // management-tier module); the settings are by role (canPurchasingSettings).
+  for (const key of ['purchasing_requests', 'purchasing_orders']) {
+    t(`${key}: super_admin רשאי edit`, hasPermission('super_admin', [], key, 'edit') === true);
+    t(`${key}: admin רשאי view`, hasPermission('admin', [], key, 'view') === true);
+    t(`${key}: admin רשאי edit`, hasPermission('admin', [], key, 'edit') === true);
+    t(`${key}: manager ללא שורה נחסם`, hasPermission('manager', [], key, 'view') === false);
+    t(`${key}: manager עם המטריצה המלאה נחסם`, hasPermission('manager', DEFAULT_MANAGER, key, 'view') === false);
+    t(`${key}: viewer נחסם`, hasPermission('viewer', DEFAULT_VIEWER, key, 'view') === false);
+    t(`${key}: עובד שטח נחסם`, hasPermission('cleaner', DEFAULT_WORKER, key, 'view') === false);
+    t(`${key}: אדמין יכול להעניק אותו במטריצה`, canGrantModule('admin', key) === true);
+    t(`${key}: סופר אדמין יכול להעניק אותו במטריצה`, canGrantModule('super_admin', key) === true);
+    t(`${key}: רשום ב-MODULES`, MODULES.some((m) => m.key === key));
+  }
+  t('purchasing: המפתח הישן הוסר מ-MODULES', !MODULES.some((m) => m.key === 'purchasing'));
+  const mgrRequests = [{ module: 'purchasing_requests', canView: true, canEdit: true }];
+  t('purchasing: מנהל עם עריכת בקשות — עורך בקשות', hasPermission('manager', mgrRequests, 'purchasing_requests', 'edit') === true);
+  t('purchasing: מנהל עם עריכת בקשות — לא רואה הזמנות', hasPermission('manager', mgrRequests, 'purchasing_orders', 'view') === false);
+  t('purchasing: מנהל עם צפייה בלבד — לא עורך', hasPermission('manager', [{ module: 'purchasing_orders', canView: true, canEdit: false }], 'purchasing_orders', 'edit') === false);
+  t('purchasing: הגדרות — אדמין וסופר אדמין בלבד', canPurchasingSettings('admin') && canPurchasingSettings('super_admin') && !canPurchasingSettings('manager') && !canPurchasingSettings('viewer'));
   t('portal_decisions: worker נחסם', hasPermission('cleaner', DEFAULT_WORKER, 'portal_decisions', 'view') === false);
   t('portal_manage: viewer ללא שורה נחסם', hasPermission('viewer', [], 'portal_manage', 'view') === false);
   t('portal_manage: cleaner ללא שורה נחסם', hasPermission('cleaner', [], 'portal_manage', 'view') === false);

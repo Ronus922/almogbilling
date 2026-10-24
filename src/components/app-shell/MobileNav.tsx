@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Menu, LogOut } from 'lucide-react';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useAuth, usePermissions } from '@/lib/auth/context';
+import { PURCHASING_MODULES } from '@/lib/purchasing/access';
 import { usePurchasingUnseen } from '@/components/purchasing/unseen';
 import { filterNav, NavBrand, Section, NavLink, FooterButton, SETTINGS_ITEM } from './nav';
 
@@ -19,7 +20,7 @@ export function MobileNav() {
   const { can, role } = usePermissions();
   const { signOut } = useAuth();
 
-  const unseenQuotes = usePurchasingUnseen(open && can('purchasing', 'view'));
+  const unseenQuotes = usePurchasingUnseen(open && PURCHASING_MODULES.some((m) => can(m, 'view')));
   const { sections, showSettings } = filterNav(role, can, { '/purchasing': unseenQuotes });
   const close = () => setOpen(false);
 

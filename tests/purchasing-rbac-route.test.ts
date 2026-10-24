@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { DEFAULT_MANAGER, DEFAULT_VIEWER, type ModulePermission, type Role } from '@/lib/permissions/constants';
+import { DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER, type ModulePermission, type Role } from '@/lib/permissions/constants';
 
-// Purchasing is SUPER ADMIN ONLY by default, in all three layers. This locks
-// the route layer through the REAL guard chain (requirePermission →
-// getCurrentActor → session + user_permissions rows): every staff route of the
-// module answers 401 with no session and 403 to an admin, to a manager holding
-// the whole default matrix and to a viewer — and only a super admin gets in.
+// Purchasing has two matrix keys — purchasing_requests and purchasing_orders —
+// with a view / edit level each (24/10/2026). This locks the route layer through
+// the REAL guard chain (requirePurchasing* → getCurrentActor → session +
+// user_permissions rows): every staff route answers 401 with no session and 403
+// to a manager holding the whole default matrix, to a viewer and to a field
+// worker; an admin gets in on both keys; a per-user grant opens exactly its key
+// at exactly its level; the letterhead settings are admin and up.
 
 const h = vi.hoisted(() => ({
   session: null as null | { sid: string; user: { id: string; username: string; email: string; full_name: string | null; role: string } },
@@ -74,16 +76,20 @@ function signIn(role: Role, rows: ModulePermission[] = []) {
   h.permRows = rows.map((p) => ({ module: p.module, can_view: p.canView, can_edit: p.canEdit }));
 }
 
-describe('purchasing is super admin only', () => {
+describe('purchasing permissions', () => {
   beforeEach(() => { h.session = null; h.permRows = []; });
+
+  const body = (doc_type: 'rfq' | 'po') => JSON.stringify({
+    doc_type, doc_date: '2026-10-24', title: 'נושא', supplier_name: 'ספק', due_date: '2099-01-01',
+    lines: [{ description: 'שורה', quantity: 1, unit_price: 5 }],
+  });
+  const post = (doc_type: 'rfq' | 'po') =>
+    documents.POST(new NextRequest('http://localhost/x', { method: 'POST', body: body(doc_type), headers: { 'content-type': 'application/json' } }));
+  const list = (type: 'rfq' | 'po') => documents.GET(r('GET', `/x?type=${type}`));
+  const grant = (module: string, canView: boolean, canEdit: boolean): ModulePermission[] => [{ module, canView, canEdit }];
 
   it.each(calls)('%s → 401 without a session', async (_n, call) => {
     expect((await call()).status).toBe(401);
-  });
-
-  it.each(calls)('%s → 403 for an admin', async (_n, call) => {
-    signIn('admin');
-    expect((await call()).status).toBe(403);
   });
 
   it.each(calls)('%s → 403 for a manager with the full default matrix', async (_n, call) => {
@@ -96,18 +102,71 @@ describe('purchasing is super admin only', () => {
     expect((await call()).status).toBe(403);
   });
 
-  it('a super admin passes the guard (and is only stopped later by the missing body / object)', async () => {
-    signIn('super_admin');
-    expect((await suppliers.GET()).status).not.toBe(401);
-    expect((await suppliers.GET()).status).not.toBe(403);
-    const res = await proxy.GET(r('GET'), { params: Promise.resolve({ bucket: 'purchasing-files', path: [`${ID}.pdf`] }) });
-    expect(res.status).toBe(404); // guard passed; the (mocked) object does not exist
+  it.each(calls)('%s → 403 for a field worker', async (_n, call) => {
+    signIn('cleaner', DEFAULT_WORKER);
+    expect((await call()).status).toBe(403);
   });
 
-  it('a manager holding an explicit purchasing row is let in — a super admin may grant it per user', async () => {
-    signIn('manager', [{ module: 'purchasing', canView: true, canEdit: false }]);
-    expect((await suppliers.GET()).status).not.toBe(403);
-    // …but view-only cannot write.
-    expect((await documents.POST(r('POST'))).status).toBe(403);
+  it('an admin and a super admin pass the guards on both keys', async () => {
+    for (const role of ['admin', 'super_admin'] as const) {
+      signIn(role);
+      expect((await suppliers.GET()).status).not.toBe(403);
+      expect((await list('rfq')).status).toBe(200);
+      expect((await list('po')).status).toBe(200);
+      expect((await post('po')).status).not.toBe(403);
+      expect((await post('rfq')).status).not.toBe(403);
+      expect((await company.PUT(r('PUT'))).status).not.toBe(403); // settings: admin and up
+      const res = await proxy.GET(r('GET'), { params: Promise.resolve({ bucket: 'purchasing-files', path: [`${ID}.pdf`] }) });
+      expect(res.status).toBe(404); // guard passed; the (mocked) object does not exist
+    }
+  });
+
+  it('a request-only grant reads and writes requests, and is refused on orders', async () => {
+    signIn('manager', grant('purchasing_requests', true, true));
+    expect((await list('rfq')).status).toBe(200);
+    expect((await list('po')).status).toBe(403);
+    expect((await post('rfq')).status).not.toBe(403);
+    expect((await post('po')).status).toBe(403);
+    expect((await suppliers.GET()).status).not.toBe(403); // shared helpers: any purchasing view
+    expect((await company.GET()).status).not.toBe(403);
+  });
+
+  it('an order-only grant is the mirror image', async () => {
+    signIn('manager', grant('purchasing_orders', true, true));
+    expect((await list('po')).status).toBe(200);
+    expect((await list('rfq')).status).toBe(403);
+    expect((await post('po')).status).not.toBe(403);
+    expect((await post('rfq')).status).toBe(403);
+    // Quotes and the winner belong to requests only.
+    expect((await winner.PUT(r('PUT'), ctx)).status).toBe(403);
+    expect((await quotes.DELETE(r('DELETE', `/x?supplier_id=${ID}`), ctx)).status).toBe(403);
+  });
+
+  it('view-only reads but never writes', async () => {
+    signIn('manager', grant('purchasing_requests', true, false));
+    expect((await list('rfq')).status).toBe(200);
+    expect((await post('rfq')).status).toBe(403);
+    expect((await documentById.PATCH(r('PATCH'), ctx)).status).toBe(403);
+    expect((await documentById.DELETE(r('DELETE'), ctx)).status).toBe(403);
+    expect((await send.POST(r('POST'), ctx)).status).toBe(403);
+    expect((await winner.PUT(r('PUT'), ctx)).status).toBe(403);
+    expect((await preview.POST(r('POST'))).status).toBe(403);
+    expect((await fileById.DELETE(r('DELETE'), ctx)).status).toBe(403);
+  });
+
+  it('the letterhead settings are admin and up — no grant opens them', async () => {
+    signIn('manager', [
+      ...grant('purchasing_requests', true, true), ...grant('purchasing_orders', true, true),
+    ]);
+    expect((await company.PUT(r('PUT'))).status).toBe(403);
+    expect((await companyImage.POST(r('POST'))).status).toBe(403);
+    expect((await companyImage.DELETE(r('DELETE', '/x?kind=logo'))).status).toBe(403);
+    expect((await company.GET()).status).not.toBe(403); // reading it (the form needs the numbering) is any purchasing view
+  });
+
+  it('the old single key opens nothing', async () => {
+    signIn('manager', grant('purchasing', true, true));
+    expect((await list('rfq')).status).toBe(403);
+    expect((await suppliers.GET()).status).toBe(403);
   });
 });

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, type Actor } from '@/lib/auth/actor';
+import { type Actor } from '@/lib/auth/actor';
+import { requirePurchasingType } from '@/lib/auth/purchasingGuard';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { writeAudit } from '@/lib/db/audit';
@@ -17,7 +18,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // no approval flow: the system only records who chose, and when.
 export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   let actor: Actor;
-  try { actor = await requirePermission('purchasing', 'edit'); }
+  try { actor = await requirePurchasingType('rfq', 'edit'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const { id } = await ctx.params;
   if (!UUID.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });

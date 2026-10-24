@@ -29,6 +29,8 @@ const HEADER_GHOST = `${HEADER_BTN} border-white/25 bg-white/5 text-white hover:
 interface Props {
   documentId: string | null;
   canEdit: boolean;
+  /** May turn a winning quote into a purchase order (edit level on the ORDERS key). */
+  canCreatePo: boolean;
   suppliers: SupplierBrief[];
   /** Bumped by the parent after any save so an open panel re-reads. */
   refreshKey: number;
@@ -39,7 +41,7 @@ interface Props {
   onChanged: () => void;
 }
 
-export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey, onClose, onEdit, onCreatePo, onChanged }: Props) {
+export function DocumentDetailSheet({ documentId, canEdit, canCreatePo, suppliers, refreshKey, onClose, onEdit, onCreatePo, onChanged }: Props) {
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
@@ -300,7 +302,7 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
 
                 {isRfq && (
                   <QuotesSection
-                    part="recipients" detail={detail} canEdit={canEdit} onChanged={reload}
+                    part="recipients" detail={detail} canEdit={canEdit} canCreatePo={canCreatePo} onChanged={reload}
                     onCreatePo={(p) => { onClose(); onCreatePo(p); }}
                   />
                 )}
@@ -309,7 +311,7 @@ export function DocumentDetailSheet({ documentId, canEdit, suppliers, refreshKey
 
                 {tab === 'compare' && isRfq && (
                   <QuotesSection
-                    part="comparison" detail={detail} canEdit={canEdit} onChanged={reload}
+                    part="comparison" detail={detail} canEdit={canEdit} canCreatePo={canCreatePo} onChanged={reload}
                     onCreatePo={(p) => { onClose(); onCreatePo(p); }}
                   />
                 )}

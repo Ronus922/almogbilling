@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { denyPurchasingType, requirePurchasingAny } from '@/lib/auth/purchasingGuard';
+import type { Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { getSequenceState, getSupplierBrief } from '@/lib/db/purchasing';
@@ -15,11 +16,14 @@ export const dynamic = 'force-dynamic';
 // to a PDF with the number the document would get right now. Saves nothing and
 // allocates no number.
 export async function POST(req: NextRequest) {
-  try { await requirePermission('purchasing', 'edit'); }
+  let actor: Actor;
+  try { actor = await requirePurchasingAny('edit'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const body = await parseJsonBody(req, createBodySchema);
   if (!body.ok) return body.response;
   const b = body.data;
+  const denied = denyPurchasingType(actor, b.doc_type, 'edit');
+  if (denied) return denied;
 
   let supplier: PdfSupplier | null = null;
   if (b.supplier_id) {

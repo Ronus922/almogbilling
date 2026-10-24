@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, type Actor } from '@/lib/auth/actor';
+import { type Actor } from '@/lib/auth/actor';
+import { denyPurchasingType, requirePurchasingAny } from '@/lib/auth/purchasingGuard';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { writeAudit } from '@/lib/db/audit';
@@ -17,10 +18,13 @@ export const dynamic = 'force-dynamic';
 // GET /api/purchasing/documents?type=rfq|po — issued documents and drafts
 // (drafts first, `number` null).
 export async function GET(req: NextRequest) {
-  try { await requirePermission('purchasing', 'view'); }
+  let actor: Actor;
+  try { actor = await requirePurchasingAny('view'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const type = req.nextUrl.searchParams.get('type');
   if (!DOC_TYPES.includes(type as DocType)) return NextResponse.json({ error: 'סוג מסמך לא תקין' }, { status: 400 });
+  const denied = denyPurchasingType(actor, type as DocType, 'view');
+  if (denied) return denied;
   return NextResponse.json({ documents: await listDocuments(type as DocType) });
 }
 
@@ -31,12 +35,15 @@ export async function GET(req: NextRequest) {
 // validation is lenient, and the company letterhead is not required yet.
 export async function POST(req: NextRequest) {
   let actor: Actor;
-  try { actor = await requirePermission('purchasing', 'edit'); }
+  try { actor = await requirePurchasingAny('edit'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const isDraft = req.nextUrl.searchParams.get('mode') === 'draft';
   const parsed = isDraft ? await parseJsonBody(req, draftBodySchema) : await parseJsonBody(req, createBodySchema);
   if (!parsed.ok) return parsed.response;
   const b = parsed.data;
+  // The coarse guard above only proved SOME purchasing edit right: this document's own key decides.
+  const denied = denyPurchasingType(actor, b.doc_type, 'edit');
+  if (denied) return denied;
   const startNumber = 'start_number' in b ? b.start_number : null;
 
   const company = await getCompany();

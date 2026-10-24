@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, type Actor } from '@/lib/auth/actor';
+import { type Actor } from '@/lib/auth/actor';
+import { denyPurchasingType, requirePurchasingAny } from '@/lib/auth/purchasingGuard';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { writeAudit } from '@/lib/db/audit';
@@ -28,12 +29,15 @@ const withUrl = <T extends { object_key: string }>(f: T) => ({ ...f, url: buildP
 // shows: lines, files, dispatch log and, for a request, the recipients (with
 // their personal links) and the quotes received.
 export async function GET(_req: NextRequest, ctx: Ctx) {
-  try { await requirePermission('purchasing', 'view'); }
+  let actor: Actor;
+  try { actor = await requirePurchasingAny('view'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const { id } = await ctx.params;
   if (!UUID.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   const doc = await findDocument(id);
   if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const denied = denyPurchasingType(actor, doc.doc_type, 'view');
+  if (denied) return denied;
 
   // Opening a request is what makes its quotes "seen" (one stamp per request).
   if (doc.doc_type === 'rfq' && doc.status === 'issued') {
@@ -66,13 +70,15 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 //                 running number is allocated now, the company VAT is stamped
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   let actor: Actor;
-  try { actor = await requirePermission('purchasing', 'edit'); }
+  try { actor = await requirePurchasingAny('edit'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const { id } = await ctx.params;
   if (!UUID.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   const mode = req.nextUrl.searchParams.get('mode');
   const doc = await findDocument(id);
   if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const denied = denyPurchasingType(actor, doc.doc_type, 'edit');
+  if (denied) return denied;
   const isDraft = doc.status === 'draft';
   if (mode === 'draft' || mode === 'issue') {
     if (!isDraft) return NextResponse.json({ error: 'המסמך כבר הופק' }, { status: 409 });
@@ -170,12 +176,14 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
 // (its number is never reissued); a DRAFT never had a number and is removed for good.
 export async function DELETE(_req: NextRequest, ctx: Ctx) {
   let actor: Actor;
-  try { actor = await requirePermission('purchasing', 'edit'); }
+  try { actor = await requirePurchasingAny('edit'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const { id } = await ctx.params;
   if (!UUID.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   const doc = await findDocument(id);
   if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const denied = denyPurchasingType(actor, doc.doc_type, 'edit');
+  if (denied) return denied;
   // A request the suppliers can still see must not vanish under them silently:
   // it is closed (soft-deleted → every link answers 404) only on purpose.
   const files = await listDocumentFiles(id);

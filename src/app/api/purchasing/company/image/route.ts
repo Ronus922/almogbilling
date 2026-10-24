@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, type Actor } from '@/lib/auth/actor';
+import { type Actor } from '@/lib/auth/actor';
+import { requirePurchasingSettings } from '@/lib/auth/purchasingGuard';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getCompany, saveCompany } from '@/lib/db/purchasing';
 import { removePurchasingObjects, uploadPurchasingObject } from '@/lib/storage/purchasingStorage';
@@ -17,7 +18,7 @@ const parseKind = (v: unknown): Kind | null => (v === 'logo' || v === 'signature
 // Replaces the previous image (its object is removed after the new one is saved).
 export async function POST(req: NextRequest) {
   let actor: Actor;
-  try { actor = await requirePermission('purchasing', 'edit'); }
+  try { actor = await requirePurchasingSettings(); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
 
   let form: FormData;
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
 // DELETE /api/purchasing/company/image?kind=logo|signature
 export async function DELETE(req: NextRequest) {
   let actor: Actor;
-  try { actor = await requirePermission('purchasing', 'edit'); }
+  try { actor = await requirePurchasingSettings(); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const kind = parseKind(req.nextUrl.searchParams.get('kind'));
   if (!kind) return NextResponse.json({ error: 'סוג תמונה לא תקין' }, { status: 400 });

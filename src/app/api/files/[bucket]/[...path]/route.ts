@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, requireAnyPermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
+import { requirePurchasingAny } from '@/lib/auth/purchasingGuard';
 import { AuthorizationError } from '@/lib/auth/errors';
 import { queryOne } from '@/lib/db';
 import { findResidentReceipt } from '@/lib/db/finance/portal';
@@ -65,7 +66,7 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<Actor>> = {
   'portal-decisions': () => requirePermission('portal_decisions', 'view'),
   // Purchasing — documents' attachments, supplier quote files, the letterhead's
   // logo and signature. Super admin only by default (module `purchasing`).
-  'purchasing-files': () => requirePermission('purchasing', 'view'),
+  'purchasing-files': () => requirePurchasingAny('view'),
 };
 
 /**

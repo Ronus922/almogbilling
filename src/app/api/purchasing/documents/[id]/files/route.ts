@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, type Actor } from '@/lib/auth/actor';
+import { type Actor } from '@/lib/auth/actor';
+import { denyPurchasingType, requirePurchasingAny } from '@/lib/auth/purchasingGuard';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { countFiles, findDocument, insertFile } from '@/lib/db/purchasing';
 import { removePurchasingObjects, uploadPurchasingObject } from '@/lib/storage/purchasingStorage';
@@ -17,11 +18,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // of the document (e.g. a drawing the suppliers should see with the request).
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   let actor: Actor;
-  try { actor = await requirePermission('purchasing', 'edit'); }
+  try { actor = await requirePurchasingAny('edit'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const { id } = await ctx.params;
   if (!UUID.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  if (!(await findDocument(id))) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const doc = await findDocument(id);
+  if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const denied = denyPurchasingType(actor, doc.doc_type, 'edit');
+  if (denied) return denied;
 
   let form: FormData;
   try { form = await req.formData(); }

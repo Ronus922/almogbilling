@@ -24,7 +24,10 @@ interface Props {
   company: CompanyState;
   sequences: SequenceState;
   suppliers: SupplierBrief[];
-  canEdit: boolean;
+  /** View / edit level per document type — each has its own permission key. */
+  access: Record<DocType, { view: boolean; edit: boolean }>;
+  /** Letterhead and numbering: admin and up. */
+  canSettings: boolean;
   initialTab: DocType;
   /** A request to open on arrival (the link inside a notification). */
   initialOpenId: string | null;
@@ -35,8 +38,10 @@ const TABS: Array<{ type: DocType; label: string; icon: typeof ClipboardList }> 
   { type: 'po', label: 'הזמנות רכש', icon: ShoppingCart },
 ];
 
-export function PurchasingClient({ initialRfq, initialPo, company: initialCompany, sequences: initialSeq, suppliers, canEdit, initialTab, initialOpenId }: Props) {
+export function PurchasingClient({ initialRfq, initialPo, company: initialCompany, sequences: initialSeq, suppliers, access, canSettings, initialTab, initialOpenId }: Props) {
   const [tab, setTab] = useState<DocType>(initialTab);
+  const canEdit = access[tab].edit;
+  const tabs = TABS.filter((t) => access[t.type].view);
   const [lists, setLists] = useState<Record<DocType, DocumentListItem[]>>({
     // A request opened on arrival (a notification link) starts with its marker already cleared.
     rfq: initialOpenId ? initialRfq.map((d) => (d.id === initialOpenId ? { ...d, unseen_quote_count: 0 } : d)) : initialRfq,
@@ -96,6 +101,10 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
 
   function startNew(type: DocType, prefill: PoPrefill | null = null) {
     if (!company.complete) {
+      if (!canSettings) {
+        toast.error('נייר המכתבים של החברה טרם הוגדר — יש לבקש ממנהל להגדיר אותו ברכש');
+        return;
+      }
       setPendingType(type);
       setWizard(true);
       setCompanyOpen(true);
@@ -133,7 +142,7 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
-          {canEdit && (
+          {canSettings && (
             <button
               type="button"
               onClick={() => { setWizard(false); setCompanyOpen(true); }}
@@ -154,7 +163,7 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
       </header>
 
       <div role="tablist" aria-label="סוג מסמך" className="flex flex-wrap gap-2 border-b border-line">
-        {TABS.map((t) => {
+        {tabs.map((t) => {
           const active = tab === t.type;
           return (
             <button
@@ -298,7 +307,11 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
         sequences={sequences}
         suppliers={suppliers}
         onOpenChange={(o) => setForm((f) => ({ ...f, open: o }))}
-        onNeedCompany={() => { setForm((f) => ({ ...f, open: false })); setPendingType(form.type); setWizard(true); setCompanyOpen(true); }}
+        onNeedCompany={() => {
+          setForm((f) => ({ ...f, open: false }));
+          if (!canSettings) { toast.error('נייר המכתבים של החברה טרם הוגדר — יש לבקש ממנהל להגדיר אותו ברכש'); return; }
+          setPendingType(form.type); setWizard(true); setCompanyOpen(true);
+        }}
         onSaved={(id, issued) => {
           void reload();
           setTab(form.type);
@@ -312,6 +325,7 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
       <DocumentDetailSheet
         documentId={detailId}
         canEdit={canEdit}
+        canCreatePo={access.po.edit}
         suppliers={suppliers}
         refreshKey={refreshKey}
         onClose={() => setDetailId(null)}
