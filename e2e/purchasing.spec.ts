@@ -220,6 +220,9 @@ test('the heading shows the next number, "פירוט" completes, a price is opti
   await expect(form.locator('[data-totals]')).toContainText('₪3.60');
   await expect(form.locator('[data-totals]')).toContainText('₪23.60');
 
+  // A request needs its subject — the preview too.
+  await page.locator('#doc-title').fill(`בקשה שנייה ${RUN}`);
+
   // The preview is a real PDF and saves nothing.
   const before = await pool.query(`select count(*)::int as n from public.purchasing_documents`);
   const [previewRes] = await Promise.all([
@@ -240,7 +243,6 @@ test('the heading shows the next number, "פירוט" completes, a price is opti
   expect(taken.status()).toBe(201);
   await docId('rfq', START_RFQ + 1);
 
-  await page.locator('#doc-title').fill(`בקשה שנייה ${RUN}`);
   await form.getByRole('button', { name: 'הפק את המסמך' }).click();
   await expect(page.getByText(`המספר ${START_RFQ + 1} נתפס בינתיים — המסמך הופק כמספר ${START_RFQ + 2}`)).toBeVisible();
   await expect(page.getByRole('heading', { name: `בקשה להצעת מחיר מספר ${START_RFQ + 2}` })).toBeVisible();
