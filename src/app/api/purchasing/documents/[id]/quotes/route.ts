@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, type Actor } from '@/lib/auth/actor';
+import { type Actor } from '@/lib/auth/actor';
+import { requirePurchasingType } from '@/lib/auth/purchasingGuard';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { writeAudit } from '@/lib/db/audit';
 import { deleteQuote } from '@/lib/db/purchasing';
@@ -15,7 +16,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // (and its files); if it was the winner, the choice is cleared with it.
 export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   let actor: Actor;
-  try { actor = await requirePermission('purchasing', 'edit'); }
+  try { actor = await requirePurchasingType('rfq', 'edit'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const { id } = await ctx.params;
   const party = req.nextUrl.searchParams.get('supplier_id') ?? '';

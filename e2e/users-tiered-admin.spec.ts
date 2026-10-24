@@ -6,7 +6,7 @@ import { loginThroughForm } from './helpers';
 //   • "משתמשים" is in the admin's nav (by role) and opens /settings/users;
 //   • in a manager's matrix the management tier (users / permissions /
 //     settings) is locked — "סופר אדמין בלבד", disabled — and the route
-//     answers 403; finance stays grantable;
+//     answers 403; finance and the two purchasing keys stay grantable;
 //   • an invite to a viewer carries "שלח שוב" / "בטל הזמנה", an invite to an
 //     admin carries neither, and the routes agree (200 / 403);
 //   • the admin cannot touch the super admin.
@@ -80,17 +80,18 @@ test.describe('tiered users management — as an admin', () => {
     await expect(adminPage.getByRole('button', { name: new RegExp(MANAGER_NAME) })).toBeVisible();
   });
 
-  test('purchasing ("רכש") is closed to an admin: no nav item, the page bounces, the routes answer 403', async () => {
+  test('purchasing ("רכש") is open to an admin: nav item, the page, the routes, the file proxy (24/10/2026)', async () => {
     const page = adminPage!;
     await page.goto('/dashboard');
-    await expect(page.locator('a[href="/purchasing"]')).toHaveCount(0);
+    await expect(page.locator('a[href="/purchasing"]')).toHaveCount(1);
     await page.goto('/purchasing');
-    await expect(page).not.toHaveURL(/\/purchasing/);
-    for (const url of ['/api/purchasing/documents?type=rfq', '/api/purchasing/company', '/api/purchasing/suppliers']) {
-      expect((await page.request.get(url)).status(), url).toBe(403);
+    await expect(page).toHaveURL(/\/purchasing/);
+    await expect(page.getByRole('heading', { name: 'רכש' })).toBeVisible();
+    for (const url of ['/api/purchasing/documents?type=rfq', '/api/purchasing/documents?type=po', '/api/purchasing/company', '/api/purchasing/suppliers']) {
+      expect((await page.request.get(url)).status(), url).toBe(200);
     }
-    // The file proxy too: not even a well-formed key opens the bucket.
-    expect((await page.request.get('/api/files/purchasing-files/00000000-0000-4000-8000-000000000001.pdf')).status()).toBe(403);
+    // The file proxy: the guard passes (whatever the storage then answers for a key that does not exist).
+    expect((await page.request.get('/api/files/purchasing-files/00000000-0000-4000-8000-000000000001.pdf')).status()).not.toBe(403);
     // Back on the users screen for the next test.
     await page.goto('/settings/users');
   });
@@ -102,18 +103,25 @@ test.describe('tiered users management — as an admin', () => {
     await expect(panel).toBeVisible();
     await panel.getByRole('tab', { name: /תפקיד והרשאות/ }).click();
 
-    // … and purchasing (21/10/2026): only a super admin grants it.
-    for (const label of ['ניהול משתמשים', 'הרשאות', 'הגדרות', 'רכש']) {
+    for (const label of ['ניהול משתמשים', 'הרשאות', 'הגדרות']) {
       await expect(panel.getByRole('checkbox', { name: `${label} — צפייה`, exact: true })).toHaveAttribute('aria-disabled', 'true');
       await expect(panel.getByRole('checkbox', { name: `${label} — עריכה`, exact: true })).toHaveAttribute('aria-disabled', 'true');
     }
-    await expect(panel.getByText('סופר אדמין בלבד')).toHaveCount(4);
+    await expect(panel.getByText('סופר אדמין בלבד')).toHaveCount(3);
+    // Purchasing (24/10/2026): two keys, each with its own view / edit, grantable by an admin.
+    for (const label of ['בקשות להצעות מחיר', 'הזמנות רכש']) {
+      await expect(panel.getByRole('checkbox', { name: `${label} — צפייה`, exact: true })).not.toHaveAttribute('aria-disabled', 'true');
+      await expect(panel.getByRole('checkbox', { name: `${label} — עריכה`, exact: true })).not.toHaveAttribute('aria-disabled', 'true');
+    }
     await expect(panel.getByRole('checkbox', { name: 'שקיפות כספית — צפייה', exact: true })).not.toHaveAttribute('aria-disabled', 'true');
 
     const put = (module: string, can_view: boolean) =>
       page.request.put(`/api/users/${managerId}/permissions`, { data: { module, can_view, can_edit: false } });
     expect((await put('settings', true)).status()).toBe(403);
-    expect((await put('purchasing', true)).status()).toBe(403);
+    expect((await put('purchasing_requests', true)).status()).toBe(200);
+    expect((await put('purchasing_requests', false)).status()).toBe(200);
+    expect((await put('purchasing_orders', true)).status()).toBe(200);
+    expect((await put('purchasing_orders', false)).status()).toBe(200);
     expect((await put('users_management', true)).status()).toBe(403);
     expect((await put('finance', true)).status()).toBe(200);
     expect((await put('finance', false)).status()).toBe(200);

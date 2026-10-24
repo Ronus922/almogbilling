@@ -6,6 +6,7 @@ import { hasPermission } from '@/lib/permissions/check';
 import { getCollectionVsDebt } from '@/lib/db/debtors';
 import { getChatUnreadSummary } from '@/lib/db/internalChat';
 import { countRfqsWithUnseenQuotes } from '@/lib/db/purchasing';
+import { canAnyPurchasing } from '@/lib/purchasing/access';
 import { KpiCard } from '@/components/KpiCard';
 import {
   PERIODS,
@@ -66,7 +67,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Sea
     canReminders ? safe(() => loadReminders(actor.id)) : Promise.resolve(null),
     can('internal_chat') ? safe(() => getChatUnreadSummary(actor.id, 5)) : Promise.resolve(null),
     can('whatsapp_chat') ? safe(() => loadWhatsapp()) : Promise.resolve(null),
-    can('purchasing') ? safe(() => countRfqsWithUnseenQuotes()) : Promise.resolve(null),
+    canAnyPurchasing(actor) ? safe(() => countRfqsWithUnseenQuotes()) : Promise.resolve(null),
   ]);
 
   const dateLabel = new Date().toLocaleDateString('he-IL', {

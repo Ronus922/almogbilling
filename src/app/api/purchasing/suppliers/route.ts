@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { requirePurchasingAny } from '@/lib/auth/purchasingGuard';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listPickableSuppliers } from '@/lib/db/purchasing';
 
@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
 // not on the suppliers module: the purchasing user needs the picker, not the
 // suppliers screen.
 export async function GET() {
-  try { await requirePermission('purchasing', 'view'); }
+  try { await requirePurchasingAny('view'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   return NextResponse.json({ suppliers: await listPickableSuppliers() });
 }

@@ -1,5 +1,6 @@
 'use client';
 
+import { PURCHASING_MODULES } from '@/lib/purchasing/access';
 import Link from 'next/link';
 import {
   Building2, LayoutDashboard, LayoutGrid, Users, Truck, ClipboardList, ListChecks,
@@ -108,12 +109,17 @@ const SECTIONS: MenuSection[] = [
     ],
   },
   // Purchasing ("רכש", 21/10/2026) — requests for quotation + purchase orders.
-  // Module `purchasing` = super admin only by default, so the group is absent
-  // for everyone else (a section with no permitted items hides itself).
+  // Keys `purchasing_requests` / `purchasing_orders`: admins by role, everyone
+  // else by a per-user grant — so the group is absent for whoever holds neither
+  // (a section with no permitted items hides itself).
   {
     title: 'רכש',
     items: [
-      { label: 'בקשות והזמנות', icon: ShoppingCart, href: '/purchasing', module: 'purchasing' },
+      // The group shows for ANY purchasing permission (requests or orders, view or more).
+      {
+        label: 'בקשות והזמנות', icon: ShoppingCart, href: '/purchasing',
+        visible: (_role, can) => PURCHASING_MODULES.some((m) => can(m, 'view')),
+      },
     ],
   },
   // Owners portal ("פורטל בעלי דירות") — the decisions & protocols the portal

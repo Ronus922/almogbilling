@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission } from '@/lib/auth/actor';
+import { denyPurchasingType, requirePurchasingAny } from '@/lib/auth/purchasingGuard';
+import type { Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { getSupplierBrief } from '@/lib/db/purchasing';
 import { buildDocumentPdf, CompanyMissingError, DraftDocumentError } from '@/lib/purchasing/service';
@@ -14,7 +15,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // The letterhead PDF of a request (no prices) or a purchase order. For a request
 // `supplier_id` personalises the "לכבוד" block; without it the copy is generic.
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  try { await requirePermission('purchasing', 'view'); }
+  let actor: Actor;
+  try { actor = await requirePurchasingAny('view'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const { id } = await ctx.params;
   if (!UUID.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
@@ -25,6 +27,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const supplier = supplierId ? await getSupplierBrief(supplierId) : null;
     const pdf = await buildDocumentPdf(id, supplier);
     if (!pdf) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    const denied = denyPurchasingType(actor, pdf.doc.doc_type, 'view');
+    if (denied) return denied;
     const kind = req.nextUrl.searchParams.get('download') === '1' ? 'attachment' : 'inline';
     const ascii = `${pdf.doc.doc_type}-${pdf.doc.number}.pdf`;
     return new NextResponse(new Uint8Array(pdf.bytes), {

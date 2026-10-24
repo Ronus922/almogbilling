@@ -20,13 +20,14 @@ import type { DocumentDetail, PoPrefill, QuoteView } from './types';
 interface Props {
   detail: DocumentDetail;
   canEdit: boolean;
+  canCreatePo: boolean;
   onChanged: () => void;
   onCreatePo: (prefill: PoPrefill) => void;
   /** Which half the panel's tab shows: the suppliers (document tab) or the comparison (its own tab). */
   part: 'recipients' | 'comparison';
 }
 
-export function QuotesSection({ detail, canEdit, onChanged, onCreatePo, part }: Props) {
+export function QuotesSection({ detail, canEdit, canCreatePo, onChanged, onCreatePo, part }: Props) {
   const doc = detail.document;
   const quotes = useMemo(() => detail.quotes ?? [], [detail.quotes]);
   const recipients = detail.recipients ?? [];
@@ -290,7 +291,7 @@ export function QuotesSection({ detail, canEdit, onChanged, onCreatePo, part }: 
                     winnerQuote,
                   ).lumpSum ? ' · ההצעה היא סכום כולל — את מחירי השורות יש להזין בהזמנה.' : ''}
                 </span>
-                {canEdit && (
+                {canEdit && canCreatePo && (
                   <Button type="button" onClick={openPo} className="h-11 gap-2">
                     <ShoppingCart className="h-4 w-4" /> פתח הזמנת רכש
                   </Button>

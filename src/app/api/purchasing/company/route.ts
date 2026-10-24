@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, type Actor } from '@/lib/auth/actor';
+import { type Actor } from '@/lib/auth/actor';
+import { requirePurchasingAny, requirePurchasingSettings } from '@/lib/auth/purchasingGuard';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { getCompany, getSequenceState, saveCompany } from '@/lib/db/purchasing';
@@ -15,7 +16,7 @@ export const dynamic = 'force-dynamic';
 // complete enough to issue a document (the wizard shows until they are), and
 // the last issued number of each series (null = "ask where to start").
 export async function GET() {
-  try { await requirePermission('purchasing', 'view'); }
+  try { await requirePurchasingAny('view'); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const company = await getCompany();
   const view = company ?? EMPTY_COMPANY;
@@ -32,7 +33,7 @@ export async function GET() {
 // the signature have their own route (multipart); their keys are preserved.
 export async function PUT(req: NextRequest) {
   let actor: Actor;
-  try { actor = await requirePermission('purchasing', 'edit'); }
+  try { actor = await requirePurchasingSettings(); }
   catch (err) { const r = authErrorResponse(err); if (r) return r; throw err; }
   const body = await parseJsonBody(req, companyBodySchema);
   if (!body.ok) return body.response;

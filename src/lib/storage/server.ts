@@ -39,7 +39,7 @@ export const REMINDER_ATTACHMENTS_BUCKET = 'reminder-attachments';
 export const PORTAL_DECISIONS_BUCKET = 'portal-decisions';
 
 /** Purchasing (פרטי נייר המכתבים, קבצים מצורפים למסמכים ולהצעות) — PRIVATE.
- *  Staff reach it through /api/files (purchasing:view); a supplier reaches ONLY
+ *  Staff reach it through /api/files (any purchasing view); a supplier reaches ONLY
  *  the files of their own request through /api/public/quote/<token>/…, never
  *  this proxy. Deliberately NOT in the Storage GC's BILLING_BUCKETS. */
 export const PURCHASING_FILES_BUCKET = 'purchasing-files';

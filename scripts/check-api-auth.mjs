@@ -21,7 +21,7 @@ import { join } from 'node:path';
 //     guard of the portal's financial endpoints.
 //   requireUserDeleteAccess = the USER_DELETE_ROLES allowlist (super admin only)
 //     of the permanent user deletion, DELETE /api/users/[id] (06/10/2026).
-const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|AssistantAccess|CanManageRole|DriveConnector|PortalSession|PortalFinanceAccess|UserDeleteAccess)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREENAPI_WEBHOOK_TOKEN/;
+const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|AssistantAccess|CanManageRole|DriveConnector|PortalSession|PortalFinanceAccess|UserDeleteAccess|PurchasingAny|PurchasingType|PurchasingSettings)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREENAPI_WEBHOOK_TOKEN/;
 
 // Routes that are legitimately public (pre-auth flows + health + public media).
 // Keep tiny and justified — each is unauthenticated BY DESIGN.
