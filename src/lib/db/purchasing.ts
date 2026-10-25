@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { query, queryOne, withTransaction } from '@/lib/db';
 import {
-  DEFAULT_VAT_RATE, EMPTY_COMPANY, MANUAL_PARTY, partyKey, quoteTotal,
+  DEFAULT_VAT_RATE, EMPTY_COMPANY, partyKey, quoteTotal,
   type CompanySettings, type DocType,
 } from '@/lib/purchasing/model';
 
@@ -170,12 +170,17 @@ export interface DocumentRow {
   supplier_address: string | null;
   notes: string;
   due_date: string | null;
+  /** A request's "send by" ticks on its form (kept on a draft; the send happens on issue). */
+  send_email: boolean;
+  send_whatsapp: boolean;
   vat_rate: number;
   source_rfq_id: string | null;
   source_rfq_number: number | null;
   winner_supplier_id: string | null;
   /** The winner is the document's hand-typed supplier (no supplier_id). */
   winner_manual: boolean;
+  /** The winner's key when it is a hand-typed supplier of the request. */
+  winner_manual_key: string | null;
   winner_supplier_name: string | null;
   winner_chosen_at: string | null;
   winner_chosen_by_name: string | null;
@@ -188,13 +193,19 @@ const DOC_COLS = `
   d.id, d.doc_type, d.number, d.status, d.doc_date::text as doc_date, coalesce(d.title, '') as title, d.supplier_id,
   coalesce(nullif(sp.company_name, ''), sp.display_name, nullif(d.supplier_name, '')) as supplier_name,
   d.supplier_phone, d.supplier_email, d.supplier_address,
-  d.notes, d.due_date::text as due_date, d.vat_rate::float8 as vat_rate,
+  d.notes, d.due_date::text as due_date, d.send_email, d.send_whatsapp, d.vat_rate::float8 as vat_rate,
   d.source_rfq_id, src.number as source_rfq_number,
   d.winner_supplier_id,
   (d.winner_chosen_at is not null and d.winner_supplier_id is null) as winner_manual,
+  d.winner_manual_key,
   coalesce(
     nullif(ws.company_name, ''), ws.display_name,
-    case when d.winner_chosen_at is not null and d.winner_supplier_id is null then nullif(d.supplier_name, '') end
+    case when d.winner_chosen_at is not null and d.winner_supplier_id is null then
+      coalesce(
+        (select nullif(wq.supplier_name, '') from public.purchasing_quotes wq
+          where wq.rfq_id = d.id and wq.manual_key = d.winner_manual_key limit 1),
+        nullif(d.supplier_name, ''))
+    end
   ) as winner_supplier_name,
   d.winner_chosen_at,
   wu.full_name as winner_chosen_by_name,
@@ -293,6 +304,16 @@ export interface SupplierFields {
   supplier_address: string | null;
 }
 
+/** One supplier of a request, as the form sends it. */
+export interface RecipientInput {
+  /** A listed supplier, or null for a hand-typed one (then `key` identifies it). */
+  supplier_id: string | null;
+  key: string | null;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+}
+
 export interface CreateDocumentInput extends SupplierFields {
   doc_type: DocType;
   /** A draft takes no number; an issued document allocates the next one. */
@@ -305,6 +326,43 @@ export interface CreateDocumentInput extends SupplierFields {
   source_rfq_id: string | null;
   start_number: number | null;
   lines: LineInput[];
+  /** A request's suppliers and "send by" ticks. */
+  recipients?: RecipientInput[];
+  send_email?: boolean;
+  send_whatsapp?: boolean;
+}
+
+/** Makes the recipients of a request exactly `parties`: new ones get their
+ *  personal token, hand-typed ones keep it while their details are refreshed,
+ *  the ones left out are removed. Only for a draft / the moment of issue — an
+ *  issued request's suppliers (and the quotes behind them) are not edited. */
+async function syncRecipients(client: PoolClient, rfqId: string, parties: readonly RecipientInput[]): Promise<void> {
+  const keep = parties.map((p) => p.supplier_id ?? p.key);
+  await client.query(
+    `delete from public.purchasing_rfq_recipients rr
+      where rr.rfq_id = $1 and coalesce(rr.supplier_id::text, rr.manual_key) <> all($2::text[])`,
+    [rfqId, keep],
+  );
+  for (const p of parties) {
+    const token = randomBytes(32).toString('base64url');
+    if (p.supplier_id) {
+      await client.query(
+        `insert into public.purchasing_rfq_recipients (rfq_id, supplier_id, token)
+         values ($1, $2, $3) on conflict (rfq_id, supplier_id) do nothing`,
+        [rfqId, p.supplier_id, token],
+      );
+    } else {
+      await client.query(
+        `insert into public.purchasing_rfq_recipients
+           (rfq_id, supplier_id, manual_key, token, supplier_name, supplier_phone, supplier_email)
+         values ($1, null, $2, $3, $4, $5, $6)
+         on conflict (rfq_id, manual_key) where manual_key is not null do update
+           set supplier_name = excluded.supplier_name, supplier_phone = excluded.supplier_phone,
+               supplier_email = excluded.supplier_email`,
+        [rfqId, p.key, token, p.name, p.phone, p.email],
+      );
+    }
+  }
 }
 
 /** Issues a document: allocates its number, writes it and its lines in ONE
@@ -318,16 +376,18 @@ export async function createDocument(
     const ins = await client.query<{ id: string }>(
       `insert into public.purchasing_documents
          (doc_type, number, status, doc_date, title, supplier_id, supplier_name, supplier_phone, supplier_email,
-          supplier_address, notes, due_date, vat_rate, source_rfq_id, created_by)
-       values ($1, $2, $15, $3, nullif($4, ''), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) returning id`,
+          supplier_address, notes, due_date, vat_rate, source_rfq_id, created_by, send_email, send_whatsapp)
+       values ($1, $2, $15, $3, nullif($4, ''), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $16, $17) returning id`,
       [
         input.doc_type, number, input.doc_date, input.title, input.supplier_id, input.supplier_name,
         input.supplier_phone, input.supplier_email, input.supplier_address, input.notes,
         input.due_date, input.vat_rate, input.source_rfq_id, actorId, input.status,
+        input.send_email ?? false, input.send_whatsapp ?? false,
       ],
     );
     const id = ins.rows[0].id;
     await insertLines(client, id, input.lines);
+    if (input.recipients) await syncRecipients(client, id, input.recipients);
     return { id, number };
   });
 }
@@ -339,6 +399,10 @@ export interface UpdateDocumentInput extends SupplierFields {
   due_date: string | null;
   /** undefined = leave the lines alone (an RFQ whose lines are locked). */
   lines?: LineInput[];
+  /** undefined = leave the suppliers / ticks alone (editing an issued request). */
+  recipients?: RecipientInput[];
+  send_email?: boolean;
+  send_whatsapp?: boolean;
   /** Turns a DRAFT into an issued document: allocates its number and stamps the
    *  company VAT rate, in the same transaction as the update. */
   issue?: { start_number: number | null; vat_rate: number };
@@ -373,13 +437,20 @@ export async function updateDocument(id: string, input: UpdateDocumentInput): Pr
           set doc_date = $2, title = nullif($3, ''), supplier_id = $4, supplier_name = $5, supplier_phone = $6,
               supplier_email = $7, supplier_address = $8, notes = $9,
               due_date = coalesce($10, due_date), number = $11, status = $12,
-              vat_rate = coalesce($13::numeric, vat_rate), updated_at = now()
+              vat_rate = coalesce($13::numeric, vat_rate),
+              send_email = coalesce($14::boolean, send_email), send_whatsapp = coalesce($15::boolean, send_whatsapp),
+              updated_at = now()
         where id = $1 and deleted_at is null`,
       [
         id, input.doc_date, input.title, input.supplier_id, input.supplier_name, input.supplier_phone,
         input.supplier_email, input.supplier_address, input.notes, input.due_date, number, status, vat,
+        input.send_email ?? null, input.send_whatsapp ?? null,
       ],
     );
+    if (input.recipients) {
+      if (status !== 'draft' && !input.issue) throw new Error('recipients are only synced on a draft or at issue');
+      await syncRecipients(client, id, input.recipients);
+    }
     if (input.lines) {
       await client.query(`delete from public.purchasing_lines where document_id = $1`, [id]);
       await insertLines(client, id, input.lines);
@@ -441,7 +512,8 @@ export async function getRfqAnswerStats(rfqId: string): Promise<RfqAnswerStats> 
     `select count(*)::int as recipients,
             (count(*) filter (where exists (
                select 1 from public.purchasing_quotes q
-                where q.rfq_id = rr.rfq_id and q.supplier_id is not distinct from rr.supplier_id)))::int as answered
+                where q.rfq_id = rr.rfq_id and q.supplier_id is not distinct from rr.supplier_id
+                 and q.manual_key is not distinct from rr.manual_key)))::int as answered
        from public.purchasing_rfq_recipients rr where rr.rfq_id = $1`,
     [rfqId],
   );
@@ -481,6 +553,17 @@ export async function suggestDescriptions(q: string, limit = 8): Promise<string[
   return r.rows.map((x) => x.description);
 }
 
+/** A request's lines are locked once suppliers may have priced them: something
+ *  was sent to a supplier, or a quote exists. */
+export async function isRfqLocked(rfqId: string): Promise<boolean> {
+  const r = await queryOne<{ locked: boolean }>(
+    `select (exists (select 1 from public.purchasing_dispatches x where x.document_id = $1 and x.status = 'sent')
+          or exists (select 1 from public.purchasing_quotes q where q.rfq_id = $1)) as locked`,
+    [rfqId],
+  );
+  return r?.locked ?? false;
+}
+
 // ── Recipients of a request (the personal links) ────────────────────────────
 
 export interface RecipientRow {
@@ -489,14 +572,23 @@ export interface RecipientRow {
   /** null = the document's hand-typed supplier. */
   supplier_id: string | null;
   supplier_name: string;
+  /** The hand-typed supplier's key (supplier_id null), else null. */
+  manual_key: string | null;
+  /** A hand-typed supplier's own details (a listed one's are read from `suppliers`). */
+  supplier_phone: string | null;
+  supplier_email: string | null;
   token: string;
   created_at: string;
+  /** When the request was first sent to it (a successful dispatch), else null. */
+  sent_at: string | null;
   first_viewed_at: string | null;
   last_viewed_at: string | null;
 }
 
 /** A hand-typed supplier's details, copied onto its recipient / quote rows. */
 export interface ManualParty {
+  /** Identifies it within the request. */
+  key: string;
   name: string;
   phone: string | null;
   email: string | null;
@@ -506,7 +598,13 @@ export interface ManualParty {
 const REC_COLS = `
   rr.id, rr.rfq_id, rr.supplier_id,
   coalesce(nullif(s.company_name, ''), s.display_name, nullif(rr.supplier_name, '')) as supplier_name,
-  rr.token, rr.created_at, rr.first_viewed_at, rr.last_viewed_at`;
+  rr.manual_key, rr.supplier_phone, rr.supplier_email,
+  rr.token, rr.created_at,
+  (select min(x.sent_at) from public.purchasing_dispatches x
+    where x.document_id = rr.rfq_id and x.status = 'sent'
+      and x.supplier_id is not distinct from rr.supplier_id
+      and x.manual_key is not distinct from rr.manual_key) as sent_at,
+  rr.first_viewed_at, rr.last_viewed_at`;
 
 export async function listRecipients(rfqId: string): Promise<RecipientRow[]> {
   const r = await query<RecipientRow>(
@@ -518,10 +616,10 @@ export async function listRecipients(rfqId: string): Promise<RecipientRow[]> {
   return r.rows;
 }
 
-/** One link per (request, supplier): re-sending reuses the same token, so a
- *  reminder never breaks the link the supplier already has. `supplierId` null
- *  is the document's hand-typed supplier (`manual` carries its details; a
- *  re-send refreshes them, the token stays). */
+/** One link per (request, supplier): asking again returns the same token, so a
+ *  reminder never breaks the link the supplier already has. `supplierId` null is
+ *  a hand-typed supplier (`manual` carries its key and details; its details are
+ *  refreshed, the token stays). */
 export async function ensureRecipient(
   rfqId: string, supplierId: string | null, manual: ManualParty | null = null,
 ): Promise<RecipientRow> {
@@ -536,19 +634,20 @@ export async function ensureRecipient(
     if (!manual) throw new Error('manual party details are required');
     await query(
       `insert into public.purchasing_rfq_recipients
-         (rfq_id, supplier_id, token, supplier_name, supplier_phone, supplier_email, supplier_address)
-       values ($1, null, $2, $3, $4, $5, $6)
-       on conflict (rfq_id) where supplier_id is null do update
+         (rfq_id, supplier_id, manual_key, token, supplier_name, supplier_phone, supplier_email, supplier_address)
+       values ($1, null, $2, $3, $4, $5, $6, $7)
+       on conflict (rfq_id, manual_key) where manual_key is not null do update
          set supplier_name = excluded.supplier_name, supplier_phone = excluded.supplier_phone,
              supplier_email = excluded.supplier_email, supplier_address = excluded.supplier_address`,
-      [rfqId, token, manual.name, manual.phone, manual.email, manual.address],
+      [rfqId, manual.key, token, manual.name, manual.phone, manual.email, manual.address],
     );
   }
   const r = await queryOne<RecipientRow>(
     `select ${REC_COLS} from public.purchasing_rfq_recipients rr
        left join public.suppliers s on s.id = rr.supplier_id
-      where rr.rfq_id = $1 and rr.supplier_id is not distinct from $2::uuid`,
-    [rfqId, supplierId],
+      where rr.rfq_id = $1 and rr.supplier_id is not distinct from $2::uuid
+        and rr.manual_key is not distinct from $3::text`,
+    [rfqId, supplierId, manual?.key ?? null],
   );
   return r as RecipientRow;
 }
@@ -571,11 +670,11 @@ export interface PublicQuoteContext {
 export async function findPublicContext(token: string): Promise<PublicQuoteContext | null> {
   if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) return null;
   const rec = await queryOne<{
-    id: string; rfq_id: string; supplier_id: string | null; supplier_name: string;
+    id: string; rfq_id: string; supplier_id: string | null; manual_key: string | null; supplier_name: string;
     supplier_phone: string | null; supplier_email: string | null; supplier_address: string | null;
     number: number; title: string; doc_date: string; due_date: string; notes: string; vat_rate: number;
   }>(
-    `select rr.id, rr.rfq_id, rr.supplier_id,
+    `select rr.id, rr.rfq_id, rr.supplier_id, rr.manual_key,
             coalesce(nullif(s.company_name, ''), s.display_name, nullif(rr.supplier_name, '')) as supplier_name,
             rr.supplier_phone, rr.supplier_email, rr.supplier_address,
             d.number, coalesce(d.title, '') as title, d.doc_date::text as doc_date, d.due_date::text as due_date,
@@ -591,13 +690,13 @@ export async function findPublicContext(token: string): Promise<PublicQuoteConte
   const lines = (await listLines(rec.rfq_id)).map((l) => ({
     id: l.id, sort_order: l.sort_order, description: l.description, quantity: l.quantity,
   }));
-  const quote = await findQuote(rec.rfq_id, rec.supplier_id);
+  const quote = await findQuote(rec.rfq_id, rec.supplier_id ?? rec.manual_key ?? '');
   return {
     recipient: {
       id: rec.id, rfq_id: rec.rfq_id, supplier_id: rec.supplier_id, supplier_name: rec.supplier_name,
-      party: rec.supplier_id
+      party: rec.supplier_id || !rec.manual_key
         ? null
-        : { name: rec.supplier_name, phone: rec.supplier_phone, email: rec.supplier_email, address: rec.supplier_address },
+        : { key: rec.manual_key, name: rec.supplier_name, phone: rec.supplier_phone, email: rec.supplier_email, address: rec.supplier_address },
     },
     rfq: {
       id: rec.rfq_id, number: rec.number, title: rec.title, doc_date: rec.doc_date,
@@ -623,9 +722,14 @@ export async function markRecipientViewed(recipientId: string): Promise<void> {
 export interface QuoteRow {
   id: string;
   rfq_id: string;
-  /** null = the document's hand-typed supplier. */
+  /** null = a hand-typed supplier of the request (then `manual_key`). */
   supplier_id: string | null;
+  manual_key: string | null;
   supplier_name: string;
+  /** A hand-typed supplier's own details. */
+  supplier_phone: string | null;
+  supplier_email: string | null;
+  supplier_address: string | null;
   source: 'portal' | 'manual';
   total_amount: number | null;
   valid_until: string | null;
@@ -640,8 +744,9 @@ export interface QuoteRow {
 type QuoteBase = Omit<QuoteRow, 'prices' | 'files'>;
 
 const QUOTE_COLS = `
-  q.id, q.rfq_id, q.supplier_id,
+  q.id, q.rfq_id, q.supplier_id, q.manual_key,
   coalesce(nullif(s.company_name, ''), s.display_name, nullif(q.supplier_name, '')) as supplier_name,
+  q.supplier_phone, q.supplier_email, q.supplier_address,
   q.source, q.total_amount::float8 as total_amount, q.valid_until::text as valid_until,
   q.notes, q.submitted_at, q.updated_at`;
 
@@ -676,19 +781,27 @@ export async function listQuotes(rfqId: string): Promise<QuoteRow[]> {
   return hydrateQuotes(r.rows);
 }
 
-export async function findQuote(rfqId: string, supplierId: string | null): Promise<QuoteRow | null> {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `party`: a listed supplier's uuid, or a hand-typed supplier's key. */
+const splitParty = (party: string): { supplierId: string | null; manualKey: string | null } =>
+  UUID_RE.test(party) ? { supplierId: party, manualKey: null } : { supplierId: null, manualKey: party };
+
+export async function findQuote(rfqId: string, party: string): Promise<QuoteRow | null> {
+  const { supplierId, manualKey } = splitParty(party);
   const r = await query<QuoteBase>(
     `select ${QUOTE_COLS} from public.purchasing_quotes q
        left join public.suppliers s on s.id = q.supplier_id
-      where q.rfq_id = $1 and q.supplier_id is not distinct from $2::uuid`,
-    [rfqId, supplierId],
+      where q.rfq_id = $1 and q.supplier_id is not distinct from $2::uuid
+        and q.manual_key is not distinct from $3::text`,
+    [rfqId, supplierId, manualKey],
   );
   return (await hydrateQuotes(r.rows))[0] ?? null;
 }
 
 export interface UpsertQuoteInput {
   rfq_id: string;
-  /** null = the hand-typed supplier; `party` then carries its details. */
+  /** null = a hand-typed supplier; `party` then carries its key and details. */
   supplier_id: string | null;
   party?: ManualParty | null;
   source: 'portal' | 'manual';
@@ -720,15 +833,15 @@ export async function upsertQuote(input: UpsertQuoteInput): Promise<string> {
       : await client.query<{ id: string }>(
           `insert into public.purchasing_quotes
              (rfq_id, supplier_id, source, total_amount, valid_until, notes, created_by,
-              supplier_name, supplier_phone, supplier_email, supplier_address)
-           values ($1, null, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-           on conflict (rfq_id) where supplier_id is null do update
+              manual_key, supplier_name, supplier_phone, supplier_email, supplier_address)
+           values ($1, null, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           on conflict (rfq_id, manual_key) where manual_key is not null do update
              set source = excluded.source, total_amount = excluded.total_amount,
                  valid_until = excluded.valid_until, notes = excluded.notes,
                  updated_at = now()
            returning id`,
           [
-            input.rfq_id, ...common, input.party?.name ?? null, input.party?.phone ?? null,
+            input.rfq_id, ...common, input.party?.key ?? null, input.party?.name ?? null, input.party?.phone ?? null,
             input.party?.email ?? null, input.party?.address ?? null,
           ],
         );
@@ -744,33 +857,36 @@ export async function upsertQuote(input: UpsertQuoteInput): Promise<string> {
   });
 }
 
-export async function deleteQuote(rfqId: string, supplierId: string | null): Promise<FileRow[]> {
-  const q = await findQuote(rfqId, supplierId);
+export async function deleteQuote(rfqId: string, party: string): Promise<FileRow[]> {
+  const q = await findQuote(rfqId, party);
   if (!q) return [];
+  const { supplierId, manualKey } = splitParty(party);
   await query(`delete from public.purchasing_quotes where id = $1`, [q.id]);
   // If the deleted offer was the winner, the choice goes with it.
   await query(
     `update public.purchasing_documents
-        set winner_supplier_id = null, winner_chosen_by = null, winner_chosen_at = null, updated_at = now()
-      where id = $1 and winner_chosen_at is not null and winner_supplier_id is not distinct from $2::uuid`,
-    [rfqId, supplierId],
+        set winner_supplier_id = null, winner_manual_key = null, winner_chosen_by = null, winner_chosen_at = null,
+            updated_at = now()
+      where id = $1 and winner_chosen_at is not null and winner_supplier_id is not distinct from $2::uuid
+        and winner_manual_key is not distinct from $3::text`,
+    [rfqId, supplierId, manualKey],
   );
   return q.files;
 }
 
-/** `party`: a listed supplier's uuid, MANUAL_PARTY for the document's hand-typed
- *  supplier (stored as winner_supplier_id null + winner_chosen_at set), or null
+/** `party`: a listed supplier's uuid, a hand-typed supplier's key (stored as
+ *  winner_supplier_id null + winner_manual_key + winner_chosen_at set), or null
  *  to clear the choice. */
 export async function setWinner(rfqId: string, party: string | null, userId: string): Promise<void> {
-  const manual = party === MANUAL_PARTY;
+  const { supplierId, manualKey } = party === null ? { supplierId: null, manualKey: null } : splitParty(party);
   await query(
     `update public.purchasing_documents
-        set winner_supplier_id = $2::uuid,
+        set winner_supplier_id = $2::uuid, winner_manual_key = $5::text,
             winner_chosen_by = case when $4 then null else $3::uuid end,
             winner_chosen_at = case when $4 then null else now() end,
             updated_at = now()
       where id = $1 and doc_type = 'rfq' and deleted_at is null`,
-    [rfqId, manual ? null : party, userId, party === null],
+    [rfqId, supplierId, userId, party === null, manualKey],
   );
 }
 
@@ -857,13 +973,13 @@ export interface DispatchRow {
 }
 
 export async function logDispatch(input: {
-  document_id: string; supplier_id: string | null; supplier_name: string | null; channel: 'email' | 'whatsapp';
+  document_id: string; supplier_id: string | null; manual_key?: string | null; supplier_name: string | null; channel: 'email' | 'whatsapp';
   status: 'sent' | 'failed'; error: string | null; sent_by: string;
 }): Promise<void> {
   await query(
-    `insert into public.purchasing_dispatches (document_id, supplier_id, supplier_name, channel, status, error, sent_by)
-     values ($1, $2, $3, $4, $5, $6, $7)`,
-    [input.document_id, input.supplier_id, input.supplier_id ? null : input.supplier_name, input.channel, input.status, input.error, input.sent_by],
+    `insert into public.purchasing_dispatches (document_id, supplier_id, manual_key, supplier_name, channel, status, error, sent_by)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [input.document_id, input.supplier_id, input.manual_key ?? null, input.supplier_id ? null : input.supplier_name, input.channel, input.status, input.error, input.sent_by],
   );
 }
 

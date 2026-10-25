@@ -17,11 +17,20 @@ export function docHeading(type: DocType, number: number): string {
 
 export const DEFAULT_VAT_RATE = 18;
 
-/** The key of a party in the API and the screens: a listed supplier's uuid, or
- *  this literal for the ONE hand-typed supplier of a document (it has no row in
- *  `suppliers`; its details ride on the document / recipient / quote). */
+/** The key of the hand-typed supplier of a PURCHASE ORDER (it has no row in
+ *  `suppliers`; its details ride on the document). */
 export const MANUAL_PARTY = 'manual';
-export const partyKey = (p: { supplier_id: string | null }): string => p.supplier_id ?? MANUAL_PARTY;
+
+/** A hand-typed supplier of a REQUEST is told apart by a key made on the form
+ *  ("m" + 6-24 lowercase letters / digits): one request may carry any number of
+ *  them, none has a row in `suppliers`. */
+export const MANUAL_KEY_RE = /^m[a-z0-9]{6,24}$/;
+export const isManualKey = (k: string): boolean => MANUAL_KEY_RE.test(k);
+
+/** The key of a party of a request in the API and the screens: a listed
+ *  supplier's uuid, or its manual key. */
+export const partyKey = (p: { supplier_id: string | null; manual_key?: string | null }): string =>
+  p.supplier_id ?? p.manual_key ?? MANUAL_PARTY;
 
 export const PURCHASING_LIMITS = {
   maxLines: 500,

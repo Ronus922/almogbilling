@@ -13,7 +13,7 @@ import { Section } from '@/components/side-panel/Section';
 import { cn } from '@/lib/utils';
 import {
   buildComparison, cheapestLineIndex, computeTotals, formatDocDate, formatIls, formatQty, formatStampIL,
-  formatVatRate, MANUAL_PARTY, partyKey, quoteTotal, type CompareLine,
+  formatVatRate, partyKey, quoteTotal, type CompareLine,
 } from '@/lib/purchasing/model';
 import type { DocumentDetail, PoPrefill, QuoteView } from './types';
 
@@ -51,8 +51,8 @@ export function QuotesSection({ detail, canEdit, canCreatePo, onChanged, onCreat
     }
   }
 
-  // A party is a listed supplier's uuid, or MANUAL_PARTY for the request's hand-typed supplier.
-  const winnerKey = doc.winner_chosen_at ? (doc.winner_manual ? MANUAL_PARTY : doc.winner_supplier_id) : null;
+  // A party is a listed supplier's uuid, or the key of a hand-typed supplier of the request.
+  const winnerKey = doc.winner_chosen_at ? (doc.winner_manual ? doc.winner_manual_key : doc.winner_supplier_id) : null;
 
   async function pickWinner(supplierId: string | null) {
     setBusy(true);
@@ -94,7 +94,7 @@ export function QuotesSection({ detail, canEdit, canCreatePo, onChanged, onCreat
       supplier_id: winner.supplier_id,
       manual: winner.supplier_id
         ? null
-        : { name: winner.supplier_name, phone: doc.supplier_phone ?? '', email: doc.supplier_email ?? '', address: doc.supplier_address ?? '' },
+        : { name: winner.supplier_name, phone: winner.supplier_phone ?? '', email: winner.supplier_email ?? '', address: winner.supplier_address ?? '' },
       source_rfq_id: doc.id,
       source_rfq_number: doc.number ?? 0,
       title: doc.title,
@@ -107,7 +107,7 @@ export function QuotesSection({ detail, canEdit, canCreatePo, onChanged, onCreat
   const supplierRows = [
     ...recipients.map((r) => ({
       supplier_id: partyKey(r), name: r.supplier_name, link: r.link,
-      sent: r.created_at as string | null, viewed: r.first_viewed_at,
+      sent: r.sent_at, viewed: r.first_viewed_at,
       quote: quotes.find((q) => partyKey(q) === partyKey(r)) ?? null,
     })),
     ...quotes
@@ -124,7 +124,7 @@ export function QuotesSection({ detail, canEdit, canCreatePo, onChanged, onCreat
         <div className="space-y-2 py-2" data-recipients>
           {supplierRows.length === 0 && (
             <p className="rounded-lg border border-line bg-white p-4 text-center text-sm text-ink-3">
-              הבקשה טרם נשלחה לספקים. לחצו על &quot;שליחה&quot; כדי לשלוח.
+              לבקשה זו לא נבחרו ספקים.
             </p>
           )}
           {supplierRows.map((r) => (

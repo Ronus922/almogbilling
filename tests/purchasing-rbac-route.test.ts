@@ -80,7 +80,7 @@ describe('purchasing permissions', () => {
   beforeEach(() => { h.session = null; h.permRows = []; });
 
   const body = (doc_type: 'rfq' | 'po') => JSON.stringify({
-    doc_type, doc_date: '2026-10-24', title: 'נושא', supplier_name: 'ספק', due_date: '2099-01-01',
+    doc_type, doc_date: '2026-10-24', title: 'נושא', supplier_name: 'ספק', recipients: [{ key: 'mrbac00001', name: 'ספק' }], due_date: '2099-01-01',
     lines: [{ description: 'שורה', quantity: 1, unit_price: 5 }],
   });
   const post = (doc_type: 'rfq' | 'po') =>

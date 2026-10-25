@@ -9,7 +9,8 @@ import { supplierFieldsOf } from '@/lib/purchasing/supplier';
 
 const SUP = '11111111-1111-4111-8111-111111111111';
 const rfq = (over: Record<string, unknown> = {}) => ({
-  doc_type: 'rfq', doc_date: '2026-10-22', due_date: '2026-11-05', supplier_name: 'ספק ידני', title: 'צביעת חדר מדרגות',
+  doc_type: 'rfq', doc_date: '2026-10-22', due_date: '2026-11-05', title: 'צביעת חדר מדרגות',
+  recipients: [{ key: 'mabc123456', name: 'ספק ידני' }],
   lines: [{ description: 'צבע', quantity: 1, unit_price: null }], ...over,
 });
 const po = (over: Record<string, unknown> = {}) => ({
@@ -18,12 +19,35 @@ const po = (over: Record<string, unknown> = {}) => ({
 });
 
 describe('createBodySchema', () => {
-  it('needs a supplier — from the list or typed — for both documents', () => {
-    expect(createBodySchema.safeParse(rfq({ supplier_name: '   ' })).success).toBe(false);
+  it('an order needs a supplier — from the list or typed', () => {
     expect(createBodySchema.safeParse(po({ supplier_id: null })).success).toBe(false);
-    expect(createBodySchema.safeParse(rfq()).success).toBe(true);
-    expect(createBodySchema.safeParse(rfq({ supplier_name: undefined, supplier_id: SUP })).success).toBe(true);
     expect(createBodySchema.safeParse(po({ supplier_id: null, supplier_name: 'ספק ידני' })).success).toBe(true);
+  });
+
+  it('a request needs at least one supplier among its recipients (any number, listed or typed)', () => {
+    expect(createBodySchema.safeParse(rfq({ recipients: [] })).success).toBe(false);
+    expect(createBodySchema.safeParse(rfq({ recipients: undefined })).success).toBe(false);
+    expect(createBodySchema.safeParse(rfq()).success).toBe(true);
+    const three = createBodySchema.safeParse(rfq({
+      recipients: [{ supplier_id: SUP }, { key: 'mabc123456', name: 'ראשון' }, { key: 'mxyz987654', name: 'שני', phone: '050-1', email: 'a@b.co' }],
+    }));
+    expect(three.success && three.data.doc_type === 'rfq' && three.data.recipients).toHaveLength(3);
+  });
+
+  it('a recipient is listed OR typed, a typed one has a name and a valid key, no duplicates', () => {
+    expect(createBodySchema.safeParse(rfq({ recipients: [{ supplier_id: SUP, key: 'mabc123456' }] })).success).toBe(false);
+    expect(createBodySchema.safeParse(rfq({ recipients: [{}] })).success).toBe(false);
+    expect(createBodySchema.safeParse(rfq({ recipients: [{ key: 'mabc123456', name: '  ' }] })).success).toBe(false);
+    expect(createBodySchema.safeParse(rfq({ recipients: [{ key: 'manual', name: 'ספק' }] })).success).toBe(false);
+    expect(createBodySchema.safeParse(rfq({ recipients: [{ supplier_id: SUP }, { supplier_id: SUP }] })).success).toBe(false);
+    expect(createBodySchema.safeParse(rfq({ recipients: [{ key: 'mabc123456', name: 'ספק', email: 'not-an-email' }] })).success).toBe(false);
+  });
+
+  it('the "send by" ticks default to none', () => {
+    const r = createBodySchema.safeParse(rfq());
+    expect(r.success && r.data.doc_type === 'rfq' && [r.data.send_email, r.data.send_whatsapp]).toEqual([false, false]);
+    const both = createBodySchema.safeParse(rfq({ send_email: true, send_whatsapp: true }));
+    expect(both.success && both.data.doc_type === 'rfq' && [both.data.send_email, both.data.send_whatsapp]).toEqual([true, true]);
   });
 
   it('a request needs its subject; a purchase order\'s description is optional; both are normalised', () => {
@@ -45,6 +69,17 @@ describe('createBodySchema', () => {
     expect(draftBodySchema.safeParse({ ...base, doc_type: 'po' }).success).toBe(true);
   });
 
+  it('a draft of a request keeps its suppliers and ticks, and may have none yet', () => {
+    const d = draftBodySchema.safeParse({
+      doc_date: '2026-10-22', doc_type: 'rfq', title: 'צבע', send_email: true,
+      recipients: [{ supplier_id: SUP }, { key: 'mabc123456', name: 'ספק' }],
+    });
+    expect(d.success && [d.data.recipients.length, d.data.send_email, d.data.send_whatsapp]).toEqual([2, true, false]);
+    expect(draftBodySchema.safeParse({ doc_date: '2026-10-22', doc_type: 'rfq', title: 'צבע' }).success).toBe(true);
+    // suppliers alone are enough to save
+    expect(draftBodySchema.safeParse({ doc_date: '2026-10-22', doc_type: 'po', recipients: [] }).success).toBe(false);
+  });
+
   it('a request needs a due date, and its prices are optional', () => {
     expect(createBodySchema.safeParse(rfq({ due_date: undefined })).success).toBe(false);
     expect(createBodySchema.safeParse(rfq({ lines: [{ description: 'א', quantity: 1, unit_price: 4.5 }] })).success).toBe(true);
@@ -54,11 +89,11 @@ describe('createBodySchema', () => {
     expect(createBodySchema.safeParse(po({ lines: [{ description: 'א', quantity: 1, unit_price: null }] })).success).toBe(false);
   });
 
-  it('typed-supplier details are optional; a bad e-mail is refused', () => {
-    const ok = createBodySchema.safeParse(rfq({ supplier_phone: '050-1', supplier_address: 'חיפה' }));
-    expect(ok.success && ok.data.supplier_email).toBeNull();
-    expect(createBodySchema.safeParse(rfq({ supplier_email: 'not-an-email' })).success).toBe(false);
-    expect(createBodySchema.safeParse(rfq({ supplier_email: 'a@b.co' })).success).toBe(true);
+  it('typed-supplier details of an order are optional; a bad e-mail is refused', () => {
+    const ok = createBodySchema.safeParse(po({ supplier_id: null, supplier_name: 'ספק', supplier_phone: '050-1', supplier_address: 'חיפה' }));
+    expect(ok.success && ok.data.doc_type === 'po' && ok.data.supplier_email).toBeNull();
+    expect(createBodySchema.safeParse(po({ supplier_id: null, supplier_name: 'ספק', supplier_email: 'not-an-email' })).success).toBe(false);
+    expect(createBodySchema.safeParse(po({ supplier_id: null, supplier_name: 'ספק', supplier_email: 'a@b.co' })).success).toBe(true);
   });
 
   it('drops fields that are not on the form', () => {
@@ -69,9 +104,10 @@ describe('createBodySchema', () => {
 });
 
 describe('updateDocumentBodySchema', () => {
-  it('carries the same form fields', () => {
+  it('carries the same form fields (the supplier of an order is checked by the route)', () => {
     expect(updateDocumentBodySchema.safeParse({ doc_date: '2026-10-22', supplier_name: 'ספק' }).success).toBe(true);
-    expect(updateDocumentBodySchema.safeParse({ doc_date: '2026-10-22' }).success).toBe(false);
+    expect(updateDocumentBodySchema.safeParse({ doc_date: '2026-10-22' }).success).toBe(true);
+    expect(updateDocumentBodySchema.safeParse({}).success).toBe(false);
   });
 });
 

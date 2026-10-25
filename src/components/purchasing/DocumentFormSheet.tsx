@@ -5,6 +5,8 @@
 //   heading "<document> מספר N" (the number it would get right now)
 //   תאריך מסמך * · ספק * (+ phone / e-mail / address of a hand-typed supplier)
 //   תיאור · תאריך יעד להגשה (request only)
+//   A REQUEST picks any number of suppliers here (chips) and ticks how to send it
+//   (e-mail / WhatsApp, none by default); issuing sends in the same step.
 //   פירוטים (פירוט · כמות · מחיר · סה״כ) + the three-row summary
 //   הערות
 //   תצוגה מקדימה · הפק את המסמך · שמור טיוטה · ביטול
@@ -26,9 +28,12 @@ import { Section } from '@/components/side-panel/Section';
 import { Field } from '@/components/side-panel/Field';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { cn } from '@/lib/utils';
-import { DOC_LABEL, PURCHASING_LIMITS, todayIsrael, type DocType } from '@/lib/purchasing/model';
+import { DOC_LABEL, docHeading, PURCHASING_LIMITS, todayIsrael, type DocType } from '@/lib/purchasing/model';
 import { LinesEditor } from './LinesEditor';
 import { SupplierField } from './SupplierField';
+import { RecipientsField } from './RecipientsField';
+import { IssueResultsSheet, type IssuedInfo, type IssueResult } from './IssueResultsSheet';
+import { EMAIL_RE, partiesOfDetail, recipientsPayload, type PartyDraft } from './recipients';
 import { draftsToPayload, emptyLine, newLineKey, type LineDraft } from './lines';
 import type { DocumentDetail, PoPrefill, SequenceState, SupplierBrief } from './types';
 
@@ -99,6 +104,10 @@ export function DocumentFormSheet({
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
+  const [parties, setParties] = useState<PartyDraft[]>([]);
+  const [sendEmail, setSendEmail] = useState(false);
+  const [sendWhatsapp, setSendWhatsapp] = useState(false);
+  const [issued, setIssued] = useState<IssuedInfo | null>(null);
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [notes, setNotes] = useState('');
@@ -135,6 +144,10 @@ export function DocumentFormSheet({
       setDueDate(d.due_date ?? (d.doc_type === 'rfq' ? plusDays(today, 14) : ''));
       setNotes(d.notes);
       setLines(linesFromRows(detail.lines));
+      setParties(d.doc_type === 'rfq' ? partiesOfDetail(detail) : []);
+      // The ticks belong to a draft; an issued request has already been sent (or not).
+      setSendEmail(d.status === 'draft' && d.send_email);
+      setSendWhatsapp(d.status === 'draft' && d.send_whatsapp);
     } else if (prefill) {
       const s = suppliers.find((x) => x.id === prefill.supplier_id);
       setDocDate(today);
@@ -145,6 +158,7 @@ export function DocumentFormSheet({
       setDueDate('');
       setNotes('');
       setLines(linesFromRows(prefill.lines));
+      setParties([]); setSendEmail(false); setSendWhatsapp(false);
     } else {
       setDocDate(today);
       setSupplierText(''); setSupplierId(null);
@@ -153,6 +167,7 @@ export function DocumentFormSheet({
       setDueDate(plusDays(today, 14));
       setNotes('');
       setLines([emptyLine()]);
+      setParties([]); setSendEmail(false); setSendWhatsapp(false);
     }
     // The number shown in the heading is the one the server would give NOW.
     if (!detail || detail.document.status === 'draft') {
@@ -172,24 +187,29 @@ export function DocumentFormSheet({
   const errors = {
     title: touched && titleRequired && !title.trim() ? 'יש להזין נושא לבקשה' : null,
     date: touched && !docDate ? 'יש לבחור תאריך מסמך' : null,
-    supplier: touched && !supplierText.trim() ? 'יש לבחור ספק או להקליד שם ספק' : null,
+    supplier: touched && !isRfq && !supplierText.trim() ? 'יש לבחור ספק או להקליד שם ספק' : null,
+    suppliers: touched && isRfq && !editing && parties.length === 0 ? 'יש לבחור ספק אחד לפחות' : null,
     due: touched && isRfq && !dueDate ? 'יש לבחור תאריך יעד' : null,
     start: touched && needsStart && (!Number.isInteger(startValue) || startValue < 1) ? 'יש להזין מספר שלם מ-1 ומעלה' : null,
-    email: touched && !supplierId && email.trim() && !/^\S+@\S+\.\S+$/.test(email.trim()) ? 'כתובת מייל לא תקינה' : null,
+    email: touched && !isRfq && !supplierId && email.trim() && !EMAIL_RE.test(email.trim()) ? 'כתובת מייל לא תקינה' : null,
   };
-  const linesLocked = isRfq && editing && (detail?.recipients?.length ?? 0) > 0;
+  const partyEmailBad = isRfq && !editing && parties.some((p) => !p.supplierId && p.email.trim() && !EMAIL_RE.test(p.email.trim()));
+  const linesLocked = isRfq && editing && !!detail?.lines_locked;
   const busy = saving || previewing;
 
-  useEscapeKey(open, () => requestClose());
-  function requestClose() { if (!busy) onOpenChange(false); }
+  // The results screen of an issued request sits on top of this sheet and owns Escape.
+  useEscapeKey(open && !issued, () => requestClose());
+  function requestClose() { if (!busy && !issued) onOpenChange(false); }
 
   /** The API body of the form, or null (with the problems shown) when invalid. */
   function buildBody(): Record<string, unknown> | null {
     setTouched(true);
     setLineError(null);
-    if (!docDate || !supplierText.trim() || (isRfq && !dueDate) || (titleRequired && !title.trim())) return null;
+    if (!docDate || (!isRfq && !supplierText.trim()) || (isRfq && !dueDate) || (titleRequired && !title.trim())) return null;
+    if (isRfq && parties.length === 0) return null;
     if (needsStart && (!Number.isInteger(startValue) || startValue < 1)) return null;
-    if (!supplierId && email.trim() && !/^\S+@\S+\.\S+$/.test(email.trim())) return null;
+    if (!isRfq && !supplierId && email.trim() && !EMAIL_RE.test(email.trim())) return null;
+    if (partyEmailBad) return null;
     const payload = draftsToPayload(lines, !isRfq);
     if (!payload.ok) { setLineError({ key: payload.key, message: payload.error }); return null; }
 
@@ -197,7 +217,7 @@ export function DocumentFormSheet({
       doc_date: docDate,
       title: title.trim(),
       notes: notes.trim(),
-      ...supplierBody(),
+      ...(isRfq ? requestBody() : supplierBody()),
       ...(isRfq ? { due_date: dueDate } : {}),
       lines: payload.lines,
     };
@@ -235,6 +255,11 @@ export function DocumentFormSheet({
     }
   }
 
+  /** A request's suppliers (any number) and its "send by" ticks. */
+  function requestBody() {
+    return { recipients: recipientsPayload(parties), send_email: sendEmail, send_whatsapp: sendWhatsapp };
+  }
+
   /** The supplier columns of the form: a name typed exactly like a listed
    *  supplier IS that supplier. */
   function supplierBody() {
@@ -256,7 +281,8 @@ export function DocumentFormSheet({
     if (titleRequired && !title.trim()) { setTouched(true); return; }
     const payload = draftsToPayload(lines, false, true);
     if (!payload.ok) { setLineError({ key: payload.key, message: payload.error }); return; }
-    if (!supplierText.trim() && !title.trim() && payload.lines.length === 0) {
+    if (partyEmailBad) { setTouched(true); return; }
+    if (!supplierText.trim() && parties.length === 0 && !title.trim() && payload.lines.length === 0) {
       toast.error('אין מה לשמור בטיוטה — מלאו ספק, תיאור או שורה');
       return;
     }
@@ -264,7 +290,7 @@ export function DocumentFormSheet({
     try {
       const body = {
         doc_type: type, doc_date: docDate || today, title: title.trim(), notes: notes.trim(),
-        ...supplierBody(), due_date: isRfq ? dueDate || null : null, lines: payload.lines,
+        ...(isRfq ? requestBody() : supplierBody()), due_date: isRfq ? dueDate || null : null, lines: payload.lines,
         ...(isRfq ? {} : { source_rfq_id: prefill?.source_rfq_id ?? null }),
       };
       const res = draft
@@ -284,6 +310,41 @@ export function DocumentFormSheet({
     } finally {
       setSaving(false);
     }
+  }
+
+  /** After a request was issued: send it over the ticked channels, then show the
+   *  outcome (or, with nothing ticked, the per-supplier PDF / print list). */
+  async function finishRequest(id: string, number: number) {
+    const sending = sendEmail || sendWhatsapp;
+    let results: IssueResult[] | null = null;
+    let sendError: string | null = null;
+    if (sending) {
+      try {
+        const res = await fetch(`/api/purchasing/documents/${id}/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ supplier_ids: parties.map((p) => p.key), email: sendEmail, whatsapp: sendWhatsapp }),
+        });
+        const out = await res.json().catch(() => ({}));
+        if (Array.isArray(out.results)) results = out.results as IssueResult[];
+        else sendError = typeof out.error === 'string' ? out.error : 'השליחה נכשלה';
+      } catch {
+        sendError = 'השליחה נכשלה';
+      }
+    }
+    setIssued({
+      id, heading: docHeading('rfq', number), results, sendError,
+      parties: parties.map((p) => ({ key: p.key, name: p.name })),
+    });
+    // The list behind the form already shows the new request.
+    onSaved(id, false);
+  }
+
+  function closeResults() {
+    const info = issued;
+    setIssued(null);
+    onOpenChange(false);
+    if (info) onSaved(info.id, true);
   }
 
   async function save() {
@@ -328,6 +389,11 @@ export function DocumentFormSheet({
       } else {
         toast.success(editing ? 'המסמך עודכן' : `${DOC_LABEL[type]} מספר ${body.number} הופקה`);
       }
+      // A request is sent in the same step (the ticks), then its outcome is shown.
+      if (isRfq && !editing) {
+        await finishRequest(id, body.number ?? nextNumber ?? 0);
+        return;
+      }
       onOpenChange(false);
       onSaved(id, true);
     } catch {
@@ -338,6 +404,7 @@ export function DocumentFormSheet({
   }
 
   return (
+    <>
     <Sheet open={open} onOpenChange={(o) => { if (!o) requestClose(); else onOpenChange(o); }}>
       <SheetContent
         side="left"
@@ -412,14 +479,25 @@ export function DocumentFormSheet({
                 </div>
               )}
 
-              <div className="sm:col-span-2">
-                <SupplierField
-                  id="doc-supplier" text={supplierText} supplierId={supplierId} suppliers={suppliers}
-                  onChange={(n) => { setSupplierText(n.text); setSupplierId(n.supplierId); }}
-                  error={errors.supplier} disabled={busy}
-                />
-              </div>
-              {!supplierId && supplierText.trim() && (
+              {isRfq ? (
+                <div className="sm:col-span-2">
+                  <RecipientsField
+                    parties={parties} onParties={setParties} suppliers={suppliers}
+                    sendEmail={sendEmail} sendWhatsapp={sendWhatsapp}
+                    onSendEmail={setSendEmail} onSendWhatsapp={setSendWhatsapp}
+                    readOnly={editing} error={errors.suppliers} touched={touched} disabled={busy}
+                  />
+                </div>
+              ) : (
+                <div className="sm:col-span-2">
+                  <SupplierField
+                    id="doc-supplier" text={supplierText} supplierId={supplierId} suppliers={suppliers}
+                    onChange={(n) => { setSupplierText(n.text); setSupplierId(n.supplierId); }}
+                    error={errors.supplier} disabled={busy}
+                  />
+                </div>
+              )}
+              {!isRfq && !supplierId && supplierText.trim() && (
                 <>
                   <Field id="doc-supplier-phone" label="טלפון" value={phone} onChange={setPhone} dir="ltr" inputMode="tel" disabled={busy} />
                   <Field id="doc-supplier-email" label="מייל" value={email} onChange={setEmail} dir="ltr" type="email" error={errors.email} disabled={busy} />
@@ -489,5 +567,7 @@ export function DocumentFormSheet({
         </footer>
       </SheetContent>
     </Sheet>
+    <IssueResultsSheet info={issued} onClose={closeResults} />
+    </>
   );
 }

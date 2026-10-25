@@ -3,7 +3,7 @@ import { denyPurchasingType, requirePurchasingAny } from '@/lib/auth/purchasingG
 import type { Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
-import { getSequenceState, getSupplierBrief } from '@/lib/db/purchasing';
+import { getSequenceState, getSupplierBrief, listSupplierBriefs } from '@/lib/db/purchasing';
 import { createBodySchema } from '@/lib/validation/purchasing';
 import { buildPreviewPdf, CompanyMissingError } from '@/lib/purchasing/service';
 import type { PdfSupplier } from '@/lib/purchasing/pdf';
@@ -26,7 +26,11 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
 
   let supplier: PdfSupplier | null = null;
-  if (b.supplier_id) {
+  // A request has several suppliers: its preview carries no addressee.
+  if (b.doc_type === 'rfq') {
+    const ids = b.recipients.flatMap((r) => (r.supplier_id ? [r.supplier_id] : []));
+    if ((await listSupplierBriefs(ids)).length !== ids.length) return NextResponse.json({ error: 'אחד הספקים לא נמצא' }, { status: 400 });
+  } else if (b.supplier_id) {
     const s = await getSupplierBrief(b.supplier_id);
     if (!s) return NextResponse.json({ error: 'הספק לא נמצא' }, { status: 400 });
     supplier = { name: s.name, address: s.address, phone: s.mobile || s.phone };
