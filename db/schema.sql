@@ -3251,6 +3251,8 @@ CREATE TABLE public.purchasing_quote_lines (
     quote_id uuid NOT NULL,
     line_id uuid NOT NULL,
     unit_price numeric(12,2) NOT NULL,
+    entered_unit_price numeric(12,2) NOT NULL,
+    CONSTRAINT purchasing_quote_lines_entered_unit_price_check CHECK ((entered_unit_price >= (0)::numeric)),
     CONSTRAINT purchasing_quote_lines_unit_price_check CHECK ((unit_price >= (0)::numeric))
 );
 
@@ -3275,9 +3277,11 @@ CREATE TABLE public.purchasing_quotes (
     supplier_email text,
     supplier_address text,
     manual_key text,
+    price_mode text DEFAULT 'excl'::text NOT NULL,
     CONSTRAINT purchasing_quotes_has_supplier CHECK (((supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL))),
     CONSTRAINT purchasing_quotes_key_xor CHECK (((supplier_id IS NULL) = (manual_key IS NOT NULL))),
     CONSTRAINT purchasing_quotes_notes_check CHECK ((char_length(notes) <= 2000)),
+    CONSTRAINT purchasing_quotes_price_mode_check CHECK ((price_mode = ANY (ARRAY['excl'::text, 'incl'::text]))),
     CONSTRAINT purchasing_quotes_source_check CHECK ((source = ANY (ARRAY['portal'::text, 'manual'::text]))),
     CONSTRAINT purchasing_quotes_total_amount_check CHECK (((total_amount IS NULL) OR (total_amount >= (0)::numeric)))
 );
@@ -8453,5 +8457,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022150000'),
     ('20261023161953'),
     ('20261024085525'),
-    ('20261025120000')
+    ('20261025120000'),
+    ('20261025210248')
 ;

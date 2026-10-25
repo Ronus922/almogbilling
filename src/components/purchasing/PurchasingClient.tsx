@@ -7,7 +7,7 @@
 // the document. Every create / edit is a side panel (DESIGN §12).
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ClipboardList, Plus, Settings, ShoppingCart, Trash2 } from 'lucide-react';
+import { ClipboardList, Plus, Settings, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -16,6 +16,7 @@ import { PURCHASING_SEEN_EVENT } from './unseen';
 import { CompanySheet, type CompanyState } from './CompanySheet';
 import { DocumentFormSheet } from './DocumentFormSheet';
 import { DocumentDetailSheet } from './DocumentDetailSheet';
+import { RowActions } from './RowActions';
 import type { DocumentDetail, DocumentListItem, PoPrefill, SequenceState, SupplierBrief } from './types';
 
 interface Props {
@@ -56,6 +57,10 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
     { open: false, type: 'rfq', detail: null, prefill: null },
   );
   const [detailId, setDetailId] = useState<string | null>(initialOpenId);
+  // The send icon opens the window on its suppliers card (a PO: straight into the send panel).
+  const [detailIntent, setDetailIntent] = useState<'suppliers' | null>(null);
+  // A single click only selects the row; a double-click (or Enter) opens it.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const reload = useCallback(async () => {
@@ -118,12 +123,18 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
   // Opening a request is what marks its quotes as seen (the GET stamps the
   // document): the row's marker is cleared at once (openDetail), and the menu
   // badge recounts a moment later, once the stamp is certainly written.
-  function openDetail(id: string) {
+  function openDetail(id: string, intent: 'suppliers' | null = null) {
     setLists((prev) => ({
       ...prev,
       rfq: prev.rfq.map((d) => (d.id === id && d.unseen_quote_count > 0 ? { ...d, unseen_quote_count: 0 } : d)),
     }));
+    setDetailIntent(intent);
     setDetailId(id);
+  }
+
+  function openRow(d: DocumentListItem) {
+    if (d.status === 'draft') void openDraft(d.id);
+    else openDetail(d.id);
   }
 
   useEffect(() => {
@@ -193,7 +204,7 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-line bg-white shadow-soft-xs">
-          <table className="w-full min-w-[840px] border-collapse text-sm" data-list={tab}>
+          <table className="w-full min-w-[980px] border-collapse text-sm" data-list={tab}>
             <thead>
               <tr className="border-b border-line bg-slate-50/80 text-start">
                 <th className="px-4 py-3 text-start font-semibold text-ink-2">מספר</th>
@@ -209,7 +220,7 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
                 ) : (
                   <th className="px-4 py-3 text-start font-semibold text-ink-2">סה״כ לתשלום</th>
                 )}
-                <th className="w-14 px-2 py-3"><span className="sr-only">פעולות</span></th>
+                <th className="px-2 py-3"><span className="sr-only">פעולות</span></th>
               </tr>
             </thead>
             <tbody>
@@ -222,14 +233,18 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
                     data-number={d.number ?? undefined}
                     data-draft={d.status === 'draft' ? '' : undefined}
                     tabIndex={0}
-                    onClick={() => (d.status === 'draft' ? void openDraft(d.id) : openDetail(d.id))}
+                    aria-selected={selectedId === d.id}
+                    onClick={() => setSelectedId(d.id)}
+                    onDoubleClick={() => openRow(d)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (d.status === 'draft') void openDraft(d.id); else openDetail(d.id); }
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRow(d); }
                     }}
                     data-new-quotes={d.unseen_quote_count > 0 ? d.unseen_quote_count : undefined}
                     className={cn(
                       'cursor-pointer border-b border-line transition-colors last:border-0 hover:bg-row-hover focus-visible:bg-row-hover focus-visible:outline-none',
                       d.unseen_quote_count > 0 && 'bg-blue-50/60',
+                      selectedId === d.id && 'bg-row-hover',
                     )}
                   >
                     <td className="px-4 py-3 font-bold tabular-nums text-ink">
@@ -261,17 +276,8 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
                     ) : (
                       <td className="px-4 py-3 font-semibold tabular-nums text-ink" dir="ltr">{formatIls(d.subtotal + vat)}</td>
                     )}
-                    <td className="px-2 py-1 text-end">
-                      {canEdit && d.status === 'draft' && (
-                        <button
-                          type="button" aria-label="מחיקת הטיוטה" title="מחיקת הטיוטה" data-delete-draft
-                          onClick={(e) => { e.stopPropagation(); void removeDraft(d.id); }}
-                          onKeyDown={(e) => e.stopPropagation()}
-                          className="grid h-11 w-11 place-items-center rounded-lg text-ink-3 hover:bg-rose-50 hover:text-rose-600"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
+                    <td className="px-2 py-1">
+                      <RowActions doc={d} canEdit={canEdit} onSend={(id) => openDetail(id, 'suppliers')} onDeleteDraft={(id) => void removeDraft(id)} />
                     </td>
                   </tr>
                 );
@@ -312,13 +318,11 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
           if (!canSettings) { toast.error('נייר המכתבים של החברה טרם הוגדר — יש לבקש ממנהל להגדיר אותו ברכש'); return; }
           setPendingType(form.type); setWizard(true); setCompanyOpen(true);
         }}
-        onSaved={(id, issued) => {
+        onSaved={() => {
           void reload();
           setTab(form.type);
-          // A saved draft only refreshes the list; an issued document opens its panel.
-          if (!issued) return;
+          // The form closes and the user is back on the table: nothing opens on top of another window.
           setRefreshKey((k) => k + 1);
-          setDetailId(id);
         }}
       />
 
@@ -328,8 +332,9 @@ export function PurchasingClient({ initialRfq, initialPo, company: initialCompan
         canCreatePo={access.po.edit}
         suppliers={suppliers}
         refreshKey={refreshKey}
-        onClose={() => setDetailId(null)}
-        onEdit={(d) => { setDetailId(null); setForm({ open: true, type: d.document.doc_type, detail: d, prefill: null }); }}
+        intent={detailIntent}
+        onClose={() => { setDetailId(null); setDetailIntent(null); }}
+        onEdit={(d) => { setDetailId(null); setDetailIntent(null); setForm({ open: true, type: d.document.doc_type, detail: d, prefill: null }); }}
         onCreatePo={(p) => { switchTab('po'); startNew('po', p); }}
         onChanged={() => void reload()}
       />

@@ -167,6 +167,28 @@ d('purchasing db', () => {
   });
 
   describe('quotes, comparison and the winner', () => {
+    it('keeps the price mode and the typed prices beside the normalised ones', async () => {
+      const rfq = await create();
+      const ls = await db.listLines(rfq.id);
+      const id = await db.upsertQuote({
+        rfq_id: rfq.id, supplier_id: made.suppliers[0], source: 'portal', total_amount: null, valid_until: null, notes: '',
+        prices: { [ls[0].id]: 100, [ls[1].id]: 50 }, price_mode: 'incl', entered_prices: { [ls[0].id]: 118, [ls[1].id]: 59 }, actor_id: null,
+      });
+      let q = (await db.listQuotes(rfq.id)).find((x) => x.id === id)!;
+      expect(q.price_mode).toBe('incl');
+      expect(q.prices).toEqual({ [ls[0].id]: 100, [ls[1].id]: 50 });
+      expect(q.entered_prices).toEqual({ [ls[0].id]: 118, [ls[1].id]: 59 });
+      // A later upsert without a mode (staff entry) is before VAT, typed = stored.
+      await db.upsertQuote({
+        rfq_id: rfq.id, supplier_id: made.suppliers[0], source: 'manual', total_amount: null, valid_until: null, notes: '',
+        prices: { [ls[0].id]: 7, [ls[1].id]: 9 }, actor_id: admin,
+      });
+      q = (await db.listQuotes(rfq.id)).find((x) => x.id === id)!;
+      expect(q.price_mode).toBe('excl');
+      expect(q.entered_prices).toEqual(q.prices);
+      await expect(pool.query(`update public.purchasing_quotes set price_mode = 'gross' where id = $1`, [id])).rejects.toThrow();
+    });
+
     it('keeps one quote per supplier, replaces its prices, and compares with a lump sum', async () => {
       const rfq = await create();
       const ls = await db.listLines(rfq.id);

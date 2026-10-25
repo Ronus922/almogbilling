@@ -49,6 +49,7 @@ const PUBLIC = new Set([
   // per IP and per token (src/lib/purchasing/publicGate.ts), no session.
   'src/app/api/public/quote/[token]/route.ts',
   'src/app/api/public/quote/[token]/files/route.ts',
+  'src/app/api/public/quote/[token]/logo/route.ts',
   'src/app/api/public/quote/[token]/files/[fileId]/route.ts',
 ]);
 

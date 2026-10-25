@@ -80,6 +80,58 @@ export function computeTotals(lines: readonly PricedLine[], vatRate: number): To
   return { subtotal, vat, total: round2(subtotal + vat) };
 }
 
+// ── Supplier quote: prices before / including VAT ──────────────────────────
+
+export const PRICE_MODES = ['excl', 'incl'] as const;
+export type PriceMode = (typeof PRICE_MODES)[number];
+
+/** One unit price as the supplier typed it → the price BEFORE VAT that the
+ *  comparison, the purchase order and the PDF read. `incl`: entered / (1 + rate%),
+ *  rounded to the agora per UNIT (so a stored price is always a 2-decimal value). */
+export function normalizeUnitPrice(entered: number, mode: PriceMode, vatRate: number): number {
+  return mode === 'incl' ? round2(entered / (1 + vatRate / 100)) : round2(entered);
+}
+
+export interface QuoteSummary {
+  /** Before VAT. */
+  subtotal: number;
+  vat: number;
+  /** Payable, including VAT. */
+  total: number;
+}
+
+/** The totals box of the supplier page. THE rounding rule, one place:
+ *   excl: subtotal = Σ round2(qty × entered); vat = round2(subtotal × rate); total = subtotal + vat.
+ *   incl: total    = Σ round2(qty × entered)           (what the supplier sees and asks for);
+ *         subtotal = Σ round2(qty × normalizeUnitPrice) (what the stored prices add up to);
+ *         vat      = total − subtotal                   (so before + VAT = total, always). */
+export function summarizeQuote(
+  lines: ReadonlyArray<{ quantity: number; entered: number | null }>,
+  mode: PriceMode,
+  vatRate: number,
+): QuoteSummary {
+  if (mode === 'excl') {
+    const subtotal = round2(lines.reduce((s, l) => s + lineTotal({ quantity: l.quantity, unit_price: l.entered }), 0));
+    const vat = round2((subtotal * vatRate) / 100);
+    return { subtotal, vat, total: round2(subtotal + vat) };
+  }
+  const total = round2(lines.reduce((s, l) => s + lineTotal({ quantity: l.quantity, unit_price: l.entered }), 0));
+  const subtotal = round2(
+    lines.reduce(
+      (s, l) => s + lineTotal({ quantity: l.quantity, unit_price: l.entered === null ? null : normalizeUnitPrice(l.entered, 'incl', vatRate) }),
+      0,
+    ),
+  );
+  return { subtotal, vat: round2(total - subtotal), total };
+}
+
+/** YYYY-MM-DD plus whole days, without a timezone round-trip. */
+export function plusDays(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + days));
+  return t.toISOString().slice(0, 10);
+}
+
 const ILS = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** ₪1,250.00 — the money format of the documents (DESIGN: ₪ prefix, 2 decimals). */
@@ -113,6 +165,18 @@ export function formatStampIL(ts: string | Date | null | undefined): string {
   const d = typeof ts === 'string' ? new Date(ts) : ts;
   if (Number.isNaN(d.getTime())) return '';
   return STAMP.format(d).replace(',', '');
+}
+
+const STAMP_SHORT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+});
+
+/** A timestamp as "25/10 22:19" in Israel time — the pills of the suppliers card. */
+export function formatStampShortIL(ts: string | Date | null | undefined): string {
+  if (!ts) return '';
+  const d = typeof ts === 'string' ? new Date(ts) : ts;
+  if (Number.isNaN(d.getTime())) return '';
+  return STAMP_SHORT.format(d).replace(',', '');
 }
 
 /** Today in Israel as YYYY-MM-DD (the server runs in UTC). */
@@ -198,6 +262,24 @@ export function cheapestLineIndex(cols: readonly CompareColumn[], lineIdx: numbe
   if (nums.length < 2) return [];
   const min = Math.min(...nums);
   return vals.flatMap((v, i) => (v === min ? [i] : []));
+}
+
+/** The VAT and the payable total of an offer's subtotal (before VAT) at `vatRate` percent. */
+export function withVat(subtotal: number, vatRate: number): { vat: number; total: number } {
+  const vat = round2((subtotal * vatRate) / 100);
+  return { vat, total: round2(subtotal + vat) };
+}
+
+/** The offers a comparison is built from: the columns of a request's submitted quotes, always on
+ *  the prices BEFORE VAT (`prices` is normalised on save, whatever the supplier typed). */
+export function comparisonOf(
+  lines: ReadonlyArray<{ id: string; description: string; quantity: number }>,
+  quotes: ReadonlyArray<{ supplier_id: string | null; manual_key?: string | null; supplier_name: string; prices: Record<string, number>; total_amount: number | null }>,
+): CompareColumn[] {
+  return buildComparison(
+    lines.map((l) => ({ id: l.id, description: l.description, quantity: l.quantity })),
+    quotes.map((q) => ({ supplier_id: partyKey(q), supplier_name: q.supplier_name, prices: q.prices, total_amount: q.total_amount })),
+  );
 }
 
 // ── Files ───────────────────────────────────────────────────────────────────

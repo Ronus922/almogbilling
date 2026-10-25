@@ -91,6 +91,20 @@ export function LinesEditor({ lines, onChange, vatRate, disabled, errorKey }: Pr
   };
   const totals = draftTotals(lines, vatRate);
 
+  // "הוסף" adds a row and moves the focus to its פירוט input (once the row is rendered).
+  const pendingFocus = useRef<string | null>(null);
+  useEffect(() => {
+    const key = pendingFocus.current;
+    if (!key) return;
+    const el = document.getElementById(`line-desc-${key}`);
+    if (el) { pendingFocus.current = null; el.focus(); }
+  }, [lines]);
+  const add = () => {
+    const row = emptyLine();
+    pendingFocus.current = row.key;
+    onChange([...lines, row]);
+  };
+
   // md+: description | qty | price | total | delete ; phone: one card per line.
   const grid = 'md:grid-cols-[minmax(0,1fr)_96px_128px_128px_44px]';
 
@@ -166,18 +180,20 @@ export function LinesEditor({ lines, onChange, vatRate, disabled, errorKey }: Pr
         );
       })}
 
-      <Button
-        type="button"
-        variant="outline"
-        disabled={disabled}
-        onClick={() => onChange([...lines, emptyLine()])}
-        className="h-11 gap-2"
-      >
-        <Plus className="h-4 w-4" />
-        הוסף
-      </Button>
+      <div className="flex justify-start">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled}
+          onClick={add}
+          className="h-11 gap-2 border-blue-200 bg-blue-50 px-4 text-blue-700 hover:bg-blue-100 hover:text-blue-800"
+        >
+          <Plus className="h-4 w-4" />
+          הוסף
+        </Button>
+      </div>
 
-      <dl className="ms-auto w-full max-w-xs space-y-2 rounded-lg border border-line bg-white p-4 text-sm" data-totals>
+      <dl className="ms-auto w-full max-w-xs space-y-2 rounded-lg border border-line bg-slate-50/60 p-4 text-sm" data-totals>
         <div className="flex items-center justify-between gap-4">
           <dt className="text-ink-2">סה״כ לפני מע״מ</dt>
           <dd className="font-semibold tabular-nums" dir="ltr">{formatIls(totals.subtotal)}</dd>

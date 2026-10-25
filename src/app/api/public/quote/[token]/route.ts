@@ -5,7 +5,7 @@ import {
 } from '@/lib/db/purchasing';
 import { publicQuoteBodySchema } from '@/lib/validation/purchasing';
 import { PUBLIC_HEADERS, publicReadGate, publicWriteGate } from '@/lib/purchasing/publicGate';
-import { isRfqOpen, PURCHASING_LIMITS } from '@/lib/purchasing/model';
+import { isRfqOpen, normalizeUnitPrice, PURCHASING_LIMITS } from '@/lib/purchasing/model';
 import { logger } from '@/lib/logger';
 import { notifyQuoteSubmitted } from '@/lib/purchasing/notify';
 
@@ -21,21 +21,25 @@ interface Ctx { params: Promise<{ token: string }> }
 
 const notFound = () => NextResponse.json({ error: 'not_found' }, { status: 404, headers: PUBLIC_HEADERS });
 
-function view(ctx: PublicQuoteContext, companyName: string) {
+function view(ctx: PublicQuoteContext, companyName: string, hasLogo: boolean) {
   return {
     company_name: companyName,
     supplier_name: ctx.recipient.supplier_name,
     rfq: {
       number: ctx.rfq.number, title: ctx.rfq.title, doc_date: ctx.rfq.doc_date, due_date: ctx.rfq.due_date,
-      notes: ctx.rfq.notes,
+      notes: ctx.rfq.notes, vat_rate: ctx.rfq.vat_rate,
+      requester: ctx.requester,
     },
+    has_logo: hasLogo,
     open: isRfqOpen(ctx.rfq.due_date),
     lines: ctx.lines,
     rfq_files: ctx.rfq_files.map((f) => ({ id: f.id, name: f.original_filename, size: f.file_size })),
     quote: ctx.quote && {
       valid_until: ctx.quote.valid_until,
       notes: ctx.quote.notes,
-      prices: ctx.quote.prices,
+      // The page redisplays what the supplier TYPED and where the toggle was.
+      price_mode: ctx.quote.price_mode,
+      prices: ctx.quote.entered_prices,
       submitted_at: ctx.quote.submitted_at,
       updated_at: ctx.quote.updated_at,
       files: ctx.quote.files.map((f) => ({ id: f.id, name: f.original_filename, size: f.file_size, mine: f.uploaded_via === 'supplier' })),
@@ -52,7 +56,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   if (!found) return notFound();
   await markRecipientViewed(found.recipient.id).catch((e) => logger.error('[public quote] view stamp failed', e));
   const company = await getCompany();
-  return NextResponse.json(view(found, company?.name ?? ''), { headers: PUBLIC_HEADERS });
+  return NextResponse.json(view(found, company?.name ?? '', !!company?.logo_key), { headers: PUBLIC_HEADERS });
 }
 
 // PUT — submit or amend the quote (a unit price for EVERY line, an optional
@@ -83,7 +87,12 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   const quoteId = await upsertQuote({
     rfq_id: found.rfq.id, supplier_id: found.recipient.supplier_id, party: found.recipient.party, source: 'portal',
     total_amount: null, valid_until: body.data.valid_until, notes: body.data.notes,
-    prices: body.data.prices, actor_id: null,
+    // The client sends what the supplier typed; the stored prices are ALWAYS
+    // before VAT and computed here, from the request's own VAT rate.
+    prices: Object.fromEntries(
+      Object.entries(body.data.prices).map(([id, p]) => [id, normalizeUnitPrice(p, body.data.price_mode, found.rfq.vat_rate)]),
+    ),
+    price_mode: body.data.price_mode, entered_prices: body.data.prices, actor_id: null,
   });
   // The creator of the request hears about it (bell + e-mail). Fire and forget:
   // the supplier's answer never waits for, or fails on, a notice.
@@ -95,5 +104,5 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     });
   }
   const company = await getCompany();
-  return NextResponse.json(view(fresh ?? found, company?.name ?? ''), { headers: PUBLIC_HEADERS });
+  return NextResponse.json(view(fresh ?? found, company?.name ?? '', !!company?.logo_key), { headers: PUBLIC_HEADERS });
 }

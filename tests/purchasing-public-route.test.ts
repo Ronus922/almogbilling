@@ -49,6 +49,7 @@ const db = await import('@/lib/db/purchasing');
 const route = await import('@/app/api/public/quote/[token]/route');
 const filesRoute = await import('@/app/api/public/quote/[token]/files/route');
 const fileRoute = await import('@/app/api/public/quote/[token]/files/[fileId]/route');
+const logoRoute = await import('@/app/api/public/quote/[token]/logo/route');
 
 const made = { docs: [] as string[], suppliers: [] as string[], buckets: [] as string[] };
 let admin = '';
@@ -244,5 +245,97 @@ d('public supplier link', () => {
     expect((await put(token, { prices: { [lineIds[0]]: 8, [lineIds[1]]: 3 } })).status).toBe(200);
     await vi.waitFor(() => expect(notices.filter((n) => n.type === 'purchasing_quote_received')).toHaveLength(2));
     expect(String(notices[1].message)).toContain('עדכן את הצעת המחיר');
+  });
+
+  describe('prices typed including VAT, requester, logo', () => {
+    let token = '';
+
+    beforeAll(async () => {
+      const r = await pool.query<{ id: string }>(`insert into public.suppliers (display_name) values ('ספק מע״מ') returning id`);
+      made.suppliers.push(r.rows[0].id);
+      token = (await db.ensureRecipient(rfqId, r.rows[0].id)).token;
+      await pool.query(`update public.purchasing_documents set due_date = '2099-01-01' where id = $1`, [rfqId]);
+    });
+
+    it('stores prices normalised before VAT in incl mode, and returns what was typed', async () => {
+      // 118 incl. 18% → 100.00; 59 → 50.00; 11.8 → 10.00 (rounded per unit).
+      const res = await put(token, { price_mode: 'incl', prices: { [lineIds[0]]: 118, [lineIds[1]]: 59 } });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.quote.price_mode).toBe('incl');
+      expect(body.quote.prices).toEqual({ [lineIds[0]]: 118, [lineIds[1]]: 59 });
+      expect(body.rfq.vat_rate).toBe(18);
+      const stored = (await db.listQuotes(rfqId)).find((q) => q.supplier_name === 'ספק מע״מ')!;
+      expect(stored.price_mode).toBe('incl');
+      expect(stored.prices).toEqual({ [lineIds[0]]: 100, [lineIds[1]]: 50 });
+      expect(stored.entered_prices).toEqual({ [lineIds[0]]: 118, [lineIds[1]]: 59 });
+      // The same supplier flips back to before-VAT: stored = typed.
+      const back = await put(token, { price_mode: 'excl', prices: { [lineIds[0]]: 100, [lineIds[1]]: 50 } });
+      expect((await back.json()).quote.price_mode).toBe('excl');
+      const again = (await db.listQuotes(rfqId)).find((q) => q.supplier_name === 'ספק מע״מ')!;
+      expect(again.prices).toEqual({ [lineIds[0]]: 100, [lineIds[1]]: 50 });
+    });
+
+    it('rounds an incl price per unit and defaults to excl when no mode is sent', async () => {
+      await put(token, { price_mode: 'incl', prices: { [lineIds[0]]: 10, [lineIds[1]]: 1 } });
+      let q = (await db.listQuotes(rfqId)).find((x) => x.supplier_name === 'ספק מע״מ')!;
+      expect(q.prices).toEqual({ [lineIds[0]]: 8.47, [lineIds[1]]: 0.85 });
+      await put(token, { prices: { [lineIds[0]]: 10, [lineIds[1]]: 1 } });
+      q = (await db.listQuotes(rfqId)).find((x) => x.supplier_name === 'ספק מע״מ')!;
+      expect(q.price_mode).toBe('excl');
+      expect(q.prices).toEqual({ [lineIds[0]]: 10, [lineIds[1]]: 1 });
+    });
+
+    it('ignores a normalised value sent by the client and refuses a bad mode', async () => {
+      const res = await put(token, {
+        price_mode: 'incl', prices: { [lineIds[0]]: 118, [lineIds[1]]: 59 },
+        normalized_prices: { [lineIds[0]]: 1, [lineIds[1]]: 1 }, normalised: { [lineIds[0]]: 1 },
+      });
+      expect(res.status).toBe(200);
+      const q = (await db.listQuotes(rfqId)).find((x) => x.supplier_name === 'ספק מע״מ')!;
+      expect(q.prices).toEqual({ [lineIds[0]]: 100, [lineIds[1]]: 50 });
+      expect((await put(token, { price_mode: 'gross', prices: { [lineIds[0]]: 1, [lineIds[1]]: 1 } })).status).toBe(400);
+    });
+
+    it('a closed link still refuses a VAT-inclusive submission', async () => {
+      await pool.query(`update public.purchasing_documents set due_date = '2000-01-01' where id = $1`, [rfqId]);
+      const closed = await put(token, { price_mode: 'incl', prices: { [lineIds[0]]: 1, [lineIds[1]]: 1 } });
+      expect(closed.status).toBe(403);
+      await pool.query(`update public.purchasing_documents set due_date = '2099-01-01' where id = $1`, [rfqId]);
+    });
+
+    it('exposes the requester (name, phone, e-mail) and nothing else about the user', async () => {
+      const u = (await pool.query<{ full_name: string | null; email: string; notification_phone: string | null }>(
+        `select full_name, email, notification_phone from public.users where id = $1`, [admin])).rows[0];
+      const body = await (await route.GET(req(`/api/public/quote/${token}`), ctxOf(token))).json();
+      expect(body.rfq.requester).toEqual({ name: u.full_name?.trim() ?? '', phone: u.notification_phone?.trim() ?? '', email: u.email });
+      expect(JSON.stringify(body)).not.toContain(admin);
+      expect(JSON.stringify(body)).not.toContain('password');
+    });
+
+    it('serves the letterhead logo to a valid token only; 404 without a logo or with a bad token', async () => {
+      const original = (await pool.query<{ value: Record<string, unknown> }>(`select value from public.app_settings where key = 'purchasing_company'`)).rows[0]?.value ?? {};
+      const logo = (t: string) => logoRoute.GET(req(`/api/public/quote/${t}/logo`), ctxOf(t));
+      try {
+        await pool.query(`update public.app_settings set value = $1::jsonb where key = 'purchasing_company'`, [JSON.stringify({ ...original, logo_key: null })]);
+        expect((await logo(token)).status).toBe(404);
+        expect((await (await route.GET(req(`/api/public/quote/${token}`), ctxOf(token))).json()).has_logo).toBe(false);
+
+        const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 7)]);
+        store.set('letterhead-logo.png', png);
+        await pool.query(`update public.app_settings set value = $1::jsonb where key = 'purchasing_company'`, [JSON.stringify({ ...original, logo_key: 'letterhead-logo.png' })]);
+        const ok = await logo(token);
+        expect(ok.status).toBe(200);
+        expect(ok.headers.get('content-type')).toBe('image/png');
+        expect(ok.headers.get('cache-control')).toContain('no-store');
+        expect(Buffer.from(await ok.arrayBuffer()).equals(png)).toBe(true);
+        expect((await (await route.GET(req(`/api/public/quote/${token}`), ctxOf(token))).json()).has_logo).toBe(true);
+
+        for (const t of ['x'.repeat(43), 'short']) expect((await logo(t)).status).toBe(404);
+      } finally {
+        store.delete('letterhead-logo.png');
+        await pool.query(`update public.app_settings set value = $1::jsonb where key = 'purchasing_company'`, [JSON.stringify(original)]);
+      }
+    });
   });
 });
