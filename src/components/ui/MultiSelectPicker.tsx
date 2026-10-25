@@ -42,6 +42,7 @@ export function MultiSelectPicker({
   const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLDivElement>(null);
 
   const typed = query.trim();
   const filtered = useMemo(() => {
@@ -58,7 +59,10 @@ export function MultiSelectPicker({
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); }
+      // Escape closes only the picker and hands the focus back to its field: a focused
+      // element that simply vanishes makes an enclosing dialog's focus trap move focus
+      // on its own, a moment later — onto whatever the user has just clicked into.
+      if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); triggerRef.current?.focus(); }
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey, true);
@@ -92,6 +96,7 @@ export function MultiSelectPicker({
   return (
     <div dir="rtl" ref={rootRef} className={cn('relative w-full', className)}>
       <div
+        ref={triggerRef}
         id={id}
         role="button"
         tabIndex={disabled ? -1 : 0}

@@ -122,10 +122,15 @@ async function fillLine(page: Page, index: number, description: string, quantity
   if (price !== undefined) await row.locator('input[inputmode="decimal"]').nth(1).fill(price);
 }
 
+/** Opens the supplier picker by its empty padding — a click in the middle of the field can land on a chip's X. */
+async function openPicker(page: Page) {
+  await sheet(page).locator('#doc-suppliers').click({ position: { x: 6, y: 6 } });
+}
+
 /** Adds a supplier from the list to the request's chips (the picker stays open). */
 async function addListedSupplier(page: Page, name: string) {
   const search = page.getByPlaceholder('חיפוש ספק או הקלדת שם');
-  if (!(await search.isVisible())) await sheet(page).locator('#doc-suppliers').click();
+  if (!(await search.isVisible())) await openPicker(page);
   await search.fill(name);
   await page.getByRole('option', { name }).click();
 }
@@ -133,7 +138,7 @@ async function addListedSupplier(page: Page, name: string) {
 /** Adds a name that is NOT in the list as a chip of its own. */
 async function addTypedSupplier(page: Page, name: string) {
   const search = page.getByPlaceholder('חיפוש ספק או הקלדת שם');
-  if (!(await search.isVisible())) await sheet(page).locator('#doc-suppliers').click();
+  if (!(await search.isVisible())) await openPicker(page);
   await search.fill(name);
   await page.locator('[data-picker-create]').click();
 }
@@ -275,7 +280,7 @@ test('the heading shows the next number, "פירוט" completes, a price is opti
   const form = sheet(page);
 
   // The supplier field searches the list; a listed supplier has no hand-typed details.
-  await sheet(page).locator('#doc-suppliers').click();
+  await openPicker(page);
   await page.getByPlaceholder('חיפוש ספק או הקלדת שם').fill(SUP_B.slice(0, 7));
   await page.getByRole('option', { name: SUP_B }).click();
   await closePicker(page);
@@ -482,7 +487,7 @@ test('the supplier field: chips with an X, any number of suppliers, a typed name
   await expect(form.locator('[data-chip]')).toHaveCount(0);
 
   // The search lists the suppliers; a name that exists offers no "add as typed".
-  await form.locator('#doc-suppliers').click();
+  await openPicker(page);
   const search = page.getByPlaceholder('חיפוש ספק או הקלדת שם');
   await search.fill(SUP_A);
   await expect(page.getByRole('option', { name: SUP_A })).toBeVisible();
