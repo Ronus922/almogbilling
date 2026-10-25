@@ -129,7 +129,7 @@ export function DocumentDetailSheet({ documentId, canEdit, canCreatePo, supplier
                   {doc ? docHeading(doc.doc_type, doc.number ?? 0) : 'טוען…'}
                 </SheetTitle>
                 <p className="mt-1 truncate text-sm text-white/70">
-                  {doc ? [doc.title, doc.supplier_name].filter(Boolean).join(' · ') : ''}
+                  {doc ? [doc.title, isRfq ? null : doc.supplier_name].filter(Boolean).join(' · ') : ''}
                 </p>
               </div>
               <button
@@ -176,7 +176,7 @@ export function DocumentDetailSheet({ documentId, canEdit, canCreatePo, supplier
                       <Pencil className="h-4 w-4" /> עריכה
                     </button>
                   )}
-                  {canEdit && (
+                  {canEdit && !isRfq && (
                     <button
                       type="button" onClick={() => setSendOpen(true)} disabled={isDraft} data-action="send"
                       className={`${HEADER_BTN} border-white bg-white text-blue-950 hover:bg-white/90`}
@@ -223,7 +223,7 @@ export function DocumentDetailSheet({ documentId, canEdit, canCreatePo, supplier
                   <dl className="grid gap-x-6 gap-y-3 py-2 text-sm sm:grid-cols-2" data-doc-details>
                     <div><dt className="text-ink-3">מספר</dt><dd className="font-semibold tabular-nums text-ink">{doc.number}</dd></div>
                     <div><dt className="text-ink-3">תאריך</dt><dd className="font-semibold tabular-nums text-ink">{formatDocDate(doc.doc_date)}</dd></div>
-                    <div><dt className="text-ink-3">ספק</dt><dd className="font-semibold text-ink">{doc.supplier_name}</dd></div>
+                    {doc.supplier_name && <div><dt className="text-ink-3">ספק</dt><dd className="font-semibold text-ink">{doc.supplier_name}</dd></div>}
                     {!doc.supplier_id && (doc.supplier_phone || doc.supplier_email || doc.supplier_address) && (
                       <div>
                         <dt className="text-ink-3">פרטי הספק</dt>
@@ -346,7 +346,7 @@ export function DocumentDetailSheet({ documentId, canEdit, canCreatePo, supplier
         </SheetContent>
       </Sheet>
 
-      {detail && (
+      {detail && !isRfq && (
         <>
           <SendSheet open={sendOpen} detail={detail} suppliers={suppliers} onOpenChange={setSendOpen} onSent={reload} />
         </>

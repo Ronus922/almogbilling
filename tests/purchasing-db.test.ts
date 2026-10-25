@@ -48,7 +48,7 @@ vi.mock('@/services/notifications', () => ({
 
 const db = await import('@/lib/db/purchasing');
 const notify = await import('@/lib/purchasing/notify');
-const { buildComparison, MANUAL_PARTY } = await import('@/lib/purchasing/model');
+const { buildComparison } = await import('@/lib/purchasing/model');
 
 const made = { docs: [] as string[], suppliers: [] as string[] };
 let admin = '';
@@ -250,12 +250,12 @@ d('purchasing db', () => {
       expect(row?.supplier_name).toBe('ספק בדיקה א׳');
     });
 
-    it('refuses a document with no supplier at all', async () => {
-      await expect(db.createDocument(rfqInput({ supplier_id: null, supplier_name: null, start_number: 1 }), admin)).rejects.toThrow();
+    it('refuses an order with no supplier at all', async () => {
+      await expect(db.createDocument(rfqInput({ doc_type: 'po', supplier_id: null, supplier_name: null, start_number: 1 }), admin)).rejects.toThrow();
     });
 
     it('soft-deletes a legacy issued document that has no supplier, yet still refuses to issue a new one without', async () => {
-      const doc = await create();
+      const doc = await create({ doc_type: 'po', start_number: 700 });
       // Reproduce the legacy row: issued, no supplier, written before the NOT VALID
       // constraint existed. The constraint is dropped and re-added verbatim.
       const def = (await pool.query<{ d: string }>(
@@ -277,7 +277,7 @@ d('purchasing db', () => {
       expect(await db.softDeleteDocument(doc.id)).toBe(true);
       expect((await pool.query(`select deleted_at from public.purchasing_documents where id = $1`, [doc.id])).rows[0].deleted_at).not.toBeNull();
 
-      const draft = await create({ status: 'draft', supplier_name: null });
+      const draft = await create({ doc_type: 'po', status: 'draft', supplier_name: null });
       await expect(db.updateDocument(draft.id, {
         doc_date: '2026-10-21', title: 'x', supplier_id: null, supplier_name: null, supplier_phone: null, supplier_email: null,
         supplier_address: null, notes: '', due_date: '2099-01-01', lines: undefined,
@@ -375,7 +375,7 @@ d('purchasing db', () => {
   });
 
   describe('a hand-typed supplier is a party like any other (no row in suppliers)', () => {
-    const manual = { name: 'ספק ידני לינק', phone: '050-1112233', email: 'manual@example.com', address: 'רחוב 1' };
+    const manual = { key: 'mtest00001', name: 'ספק ידני לינק', phone: '050-1112233', email: 'manual@example.com', address: 'רחוב 1' };
 
     it('has one stable personal link per request, details refreshed on a re-send', async () => {
       const suppliersBefore = (await pool.query(`select count(*)::int as n from public.suppliers`)).rows[0].n;
@@ -418,28 +418,28 @@ d('purchasing db', () => {
       expect(quotes).toHaveLength(2);
       const m = quotes.find((q) => q.supplier_id === null)!;
       expect(m).toMatchObject({ supplier_name: 'ספק ידני לינק', notes: 'תיקון' });
-      expect((await db.findQuote(rfq.id, null))?.id).toBe(qid);
+      expect((await db.findQuote(rfq.id, manual.key))?.id).toBe(qid);
 
       const cols = buildComparison(ls.map((l) => ({ id: l.id, description: l.description, quantity: l.quantity })), db.toCompareQuotes(quotes));
-      expect(cols.find((c) => c.supplier_id === MANUAL_PARTY)).toMatchObject({ supplier_name: 'ספק ידני לינק', cheapest: true });
+      expect(cols.find((c) => c.supplier_id === manual.key)).toMatchObject({ supplier_name: 'ספק ידני לינק', cheapest: true });
 
-      await db.setWinner(rfq.id, MANUAL_PARTY, admin);
+      await db.setWinner(rfq.id, manual.key, admin);
       let doc = await db.findDocument(rfq.id);
-      expect(doc).toMatchObject({ winner_manual: true, winner_supplier_id: null, winner_supplier_name: 'ספק ידני לבדיקה' });
+      expect(doc).toMatchObject({ winner_manual: true, winner_supplier_id: null, winner_manual_key: manual.key, winner_supplier_name: 'ספק ידני לינק' });
       expect(doc?.winner_chosen_at).not.toBeNull();
       // switching to a listed winner, then deleting the manual quote keeps that winner
       await db.setWinner(rfq.id, made.suppliers[0], admin);
       doc = await db.findDocument(rfq.id);
       expect(doc).toMatchObject({ winner_manual: false, winner_supplier_id: made.suppliers[0] });
-      await db.deleteQuote(rfq.id, null);
+      await db.deleteQuote(rfq.id, manual.key);
       expect((await db.findDocument(rfq.id))?.winner_supplier_id).toBe(made.suppliers[0]);
       // deleting the manual WINNER's quote clears the choice
       await db.upsertQuote({
         rfq_id: rfq.id, supplier_id: null, party: manual, source: 'portal', total_amount: null, valid_until: null, notes: '',
         prices: { [ls[0].id]: 1, [ls[1].id]: 1 }, actor_id: null,
       });
-      await db.setWinner(rfq.id, MANUAL_PARTY, admin);
-      await db.deleteQuote(rfq.id, null);
+      await db.setWinner(rfq.id, manual.key, admin);
+      await db.deleteQuote(rfq.id, manual.key);
       expect(await db.findDocument(rfq.id)).toMatchObject({ winner_manual: false, winner_chosen_at: null });
     });
 
@@ -450,16 +450,56 @@ d('purchasing db', () => {
       expect(list[0]).toMatchObject({ supplier_id: null, supplier_name: 'ספק ידני לינק', status: 'failed' });
     });
 
-    it('the schema refuses a nameless hand-typed recipient and a second manual one', async () => {
+    it('the schema refuses a nameless / keyless hand-typed recipient and a repeated key', async () => {
       const rfq = await create();
       await expect(pool.query(
         `insert into public.purchasing_rfq_recipients (rfq_id, supplier_id, token) values ($1, null, $2)`, [rfq.id, 'x'.repeat(43)],
       )).rejects.toThrow();
+      await expect(pool.query(
+        `insert into public.purchasing_rfq_recipients (rfq_id, supplier_id, token, supplier_name) values ($1, null, $2, 'ללא מפתח')`,
+        [rfq.id, 'w'.repeat(43)],
+      )).rejects.toThrow();
       await db.ensureRecipient(rfq.id, null, manual);
       await expect(pool.query(
-        `insert into public.purchasing_rfq_recipients (rfq_id, supplier_id, token, supplier_name) values ($1, null, $2, 'עוד')`,
-        [rfq.id, 'y'.repeat(43)],
+        `insert into public.purchasing_rfq_recipients (rfq_id, supplier_id, manual_key, token, supplier_name) values ($1, null, $2, $3, 'עוד')`,
+        [rfq.id, manual.key, 'y'.repeat(43)],
       )).rejects.toThrow();
+    });
+
+    it('a request carries as many hand-typed suppliers as it likes, each with its own link, quote and win', async () => {
+      const rfq = await create();
+      const ls = await db.listLines(rfq.id);
+      const a = { key: 'mmulti0001', name: 'ראשון', phone: '050-1', email: 'a@example.com', address: '' };
+      const b = { key: 'mmulti0002', name: 'שני', phone: '050-2', email: 'b@example.com', address: '' };
+      const ra = await db.ensureRecipient(rfq.id, null, a);
+      const rb = await db.ensureRecipient(rfq.id, null, b);
+      expect(ra.token).not.toBe(rb.token);
+      expect((await db.listRecipients(rfq.id)).map((r) => r.supplier_name).sort()).toEqual(['ראשון', 'שני']);
+      const ctxB = await db.findPublicContext(rb.token);
+      expect(ctxB?.recipient.party).toMatchObject({ key: b.key, name: 'שני', email: 'b@example.com' });
+
+      for (const [who, price] of [[a, 5], [b, 3]] as const) {
+        await db.upsertQuote({
+          rfq_id: rfq.id, supplier_id: null, party: who, source: 'portal', total_amount: null, valid_until: null, notes: '',
+          prices: { [ls[0].id]: price, [ls[1].id]: price }, actor_id: null,
+        });
+      }
+      const quotes = await db.listQuotes(rfq.id);
+      expect(quotes.map((q) => q.manual_key).sort()).toEqual([a.key, b.key]);
+      // the comparison has a column per typed supplier and the cheaper one is flagged
+      const cols = buildComparison(ls.map((l) => ({ id: l.id, description: l.description, quantity: l.quantity })), db.toCompareQuotes(quotes));
+      expect(cols.map((c) => c.supplier_id).sort()).toEqual([a.key, b.key]);
+      expect(cols.find((c) => c.cheapest)?.supplier_id).toBe(b.key);
+
+      await db.setWinner(rfq.id, b.key, admin);
+      expect(await db.findDocument(rfq.id)).toMatchObject({ winner_manual: true, winner_manual_key: b.key, winner_supplier_name: 'שני' });
+      // removing the OTHER typed supplier's quote leaves the winner alone, removing the winner's clears it
+      await db.deleteQuote(rfq.id, a.key);
+      expect((await db.findDocument(rfq.id))?.winner_manual_key).toBe(b.key);
+      await db.deleteQuote(rfq.id, b.key);
+      expect(await db.findDocument(rfq.id)).toMatchObject({ winner_manual: false, winner_manual_key: null, winner_chosen_at: null });
+      const stats = await db.getRfqAnswerStats(rfq.id);
+      expect(stats).toEqual({ recipients: 2, answered: 0 });
     });
   });
 
@@ -476,6 +516,88 @@ d('purchasing db', () => {
     expect((await db.listDocumentFiles(rfq.id)).map((f) => f.id)).toEqual([row.id]);
     await db.deleteFileRow(row.id);
     expect(await db.listDocumentFiles(rfq.id)).toHaveLength(0);
+  });
+
+  describe('the suppliers and "send by" ticks chosen on a request\'s form', () => {
+    const typedA = { supplier_id: null, key: 'mform00001', name: 'מוקלד א', phone: '050-1', email: 'a@example.com' };
+    const typedB = { supplier_id: null, key: 'mform00002', name: 'מוקלד ב', phone: null, email: null };
+    const requestInput = (over: Partial<Parameters<typeof db.createDocument>[0]> = {}) =>
+      rfqInput({ supplier_name: null, ...over });
+
+    it('a draft keeps its suppliers (listed + typed) and its ticks; none of it enters suppliers', async () => {
+      const suppliersBefore = (await pool.query(`select count(*)::int as n from public.suppliers`)).rows[0].n;
+      const dr = await create(requestInput({
+        status: 'draft', recipients: [{ supplier_id: made.suppliers[0], key: null, name: null, phone: null, email: null }, typedA],
+        send_email: true, send_whatsapp: false,
+      }));
+      const doc = await db.findDocument(dr.id);
+      expect(doc).toMatchObject({ status: 'draft', send_email: true, send_whatsapp: false, supplier_id: null, supplier_name: null });
+      const recs = await db.listRecipients(dr.id);
+      expect(recs.map((r) => r.supplier_name).sort()).toEqual(['מוקלד א', 'ספק בדיקה א׳']);
+      expect(recs.find((r) => r.manual_key === typedA.key)).toMatchObject({ supplier_phone: '050-1', supplier_email: 'a@example.com', sent_at: null });
+      expect((await pool.query(`select count(*)::int as n from public.suppliers`)).rows[0].n).toBe(suppliersBefore);
+    });
+
+    it('saving the draft again makes the suppliers exactly the new set, keeping the links of those that stay', async () => {
+      const dr = await create(requestInput({ status: 'draft', recipients: [typedA, typedB] }));
+      const tokenA = (await db.listRecipients(dr.id)).find((r) => r.manual_key === typedA.key)!.token;
+      const form = (over: Partial<Parameters<typeof db.updateDocument>[1]> = {}) => ({
+        doc_date: '2026-10-21', title: 'בדיקה', notes: '', due_date: '2099-01-01', supplier_id: null, supplier_name: null,
+        supplier_phone: null, supplier_email: null, supplier_address: null, ...over,
+      });
+      await db.updateDocument(dr.id, form({
+        recipients: [{ ...typedA, name: 'מוקלד א (תוקן)' }, { supplier_id: made.suppliers[1], key: null, name: null, phone: null, email: null }],
+        send_whatsapp: true,
+      }));
+      const recs = await db.listRecipients(dr.id);
+      expect(recs.map((r) => r.supplier_name).sort()).toEqual(['מוקלד א (תוקן)', 'ספק בדיקה ב׳']);
+      expect(recs.find((r) => r.manual_key === typedA.key)?.token).toBe(tokenA);
+      expect(await db.findDocument(dr.id)).toMatchObject({ send_email: false, send_whatsapp: true });
+    });
+
+    it('issuing the draft keeps its suppliers and ticks; an issued request\'s suppliers are not rewritten', async () => {
+      const dr = await create(requestInput({ status: 'draft', recipients: [typedA], send_email: true }));
+      const issued = await db.updateDocument(dr.id, {
+        doc_date: '2026-10-21', title: 'בדיקה', notes: '', due_date: '2099-01-01', supplier_id: null, supplier_name: null,
+        supplier_phone: null, supplier_email: null, supplier_address: null, recipients: [typedA, typedB],
+        issue: { start_number: 500, vat_rate: 18 },
+      });
+      expect(issued?.number).not.toBeNull();
+      expect((await db.listRecipients(dr.id))).toHaveLength(2);
+      expect(await db.findDocument(dr.id)).toMatchObject({ status: 'issued', send_email: true });
+      await expect(db.updateDocument(dr.id, {
+        doc_date: '2026-10-21', title: 'בדיקה', notes: '', due_date: '2099-01-01', supplier_id: null, supplier_name: null,
+        supplier_phone: null, supplier_email: null, supplier_address: null, recipients: [typedA],
+      })).rejects.toThrow();
+      expect((await db.listRecipients(dr.id))).toHaveLength(2);
+    });
+
+    it('a request needs no supplier of its own (its suppliers are its recipients), an order still does', async () => {
+      const rfq = await create(requestInput({ recipients: [typedA] }));
+      expect(await db.findDocument(rfq.id)).toMatchObject({ status: 'issued', supplier_id: null, supplier_name: null });
+      await expect(db.createDocument({ ...rfqInput({ supplier_name: null }), doc_type: 'po', start_number: 900, lines: [{ description: 'א', quantity: 1, unit_price: 1 }] }, admin))
+        .rejects.toThrow();
+    });
+
+    it('"sent" follows the dispatch log, and the lines lock once something was sent or a quote exists', async () => {
+      const rfq = await create(requestInput({ recipients: [typedA, typedB] }));
+      expect(await db.isRfqLocked(rfq.id)).toBe(false);
+      await db.logDispatch({ document_id: rfq.id, supplier_id: null, manual_key: typedA.key, supplier_name: 'מוקלד א', channel: 'email', status: 'failed', error: 'x', sent_by: admin });
+      expect(await db.isRfqLocked(rfq.id)).toBe(false);
+      await db.logDispatch({ document_id: rfq.id, supplier_id: null, manual_key: typedA.key, supplier_name: 'מוקלד א', channel: 'whatsapp', status: 'sent', error: null, sent_by: admin });
+      const recs = await db.listRecipients(rfq.id);
+      expect(recs.find((r) => r.manual_key === typedA.key)?.sent_at).not.toBeNull();
+      expect(recs.find((r) => r.manual_key === typedB.key)?.sent_at).toBeNull();
+      expect(await db.isRfqLocked(rfq.id)).toBe(true);
+
+      const other = await create(requestInput({ recipients: [typedA] }));
+      expect(await db.isRfqLocked(other.id)).toBe(false);
+      await db.upsertQuote({
+        rfq_id: other.id, supplier_id: null, party: { key: typedA.key, name: 'מוקלד א', phone: null, email: null, address: null },
+        source: 'manual', total_amount: 10, valid_until: null, notes: '', prices: {}, actor_id: null,
+      });
+      expect(await db.isRfqLocked(other.id)).toBe(true);
+    });
   });
 
   describe('new quotes and the notices to the creator', () => {

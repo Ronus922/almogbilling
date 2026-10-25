@@ -1,5 +1,10 @@
 import type { SupplierFields } from '@/lib/db/purchasing';
 
+/** A request has no document-level supplier: its suppliers are its recipients. */
+export const NO_SUPPLIER: SupplierFields = {
+  supplier_id: null, supplier_name: null, supplier_phone: null, supplier_email: null, supplier_address: null,
+};
+
 /** The supplier columns of a document from a validated form body: a supplier
  *  picked from the list carries only its id (its details are read live from
  *  `suppliers`); a hand-typed one carries the name + optional details, which

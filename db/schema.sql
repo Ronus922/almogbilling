@@ -3124,6 +3124,7 @@ CREATE TABLE public.purchasing_dispatches (
     sent_by uuid,
     sent_at timestamp with time zone DEFAULT now() NOT NULL,
     supplier_name text,
+    manual_key text,
     CONSTRAINT purchasing_dispatches_channel_check CHECK ((channel = ANY (ARRAY['email'::text, 'whatsapp'::text]))),
     CONSTRAINT purchasing_dispatches_has_supplier CHECK (((supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL))),
     CONSTRAINT purchasing_dispatches_status_check CHECK ((status = ANY (ARRAY['sent'::text, 'failed'::text])))
@@ -3159,6 +3160,9 @@ CREATE TABLE public.purchasing_documents (
     status text DEFAULT 'issued'::text NOT NULL,
     quotes_seen_at timestamp with time zone,
     due_notice_sent_at timestamp with time zone,
+    send_email boolean DEFAULT false NOT NULL,
+    send_whatsapp boolean DEFAULT false NOT NULL,
+    winner_manual_key text,
     CONSTRAINT purchasing_documents_doc_type_check CHECK ((doc_type = ANY (ARRAY['rfq'::text, 'po'::text]))),
     CONSTRAINT purchasing_documents_issued_has_number CHECK (((status = 'draft'::text) OR (number IS NOT NULL))),
     CONSTRAINT purchasing_documents_notes_length CHECK ((char_length(notes) <= 4000)),
@@ -3270,7 +3274,9 @@ CREATE TABLE public.purchasing_quotes (
     supplier_phone text,
     supplier_email text,
     supplier_address text,
+    manual_key text,
     CONSTRAINT purchasing_quotes_has_supplier CHECK (((supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL))),
+    CONSTRAINT purchasing_quotes_key_xor CHECK (((supplier_id IS NULL) = (manual_key IS NOT NULL))),
     CONSTRAINT purchasing_quotes_notes_check CHECK ((char_length(notes) <= 2000)),
     CONSTRAINT purchasing_quotes_source_check CHECK ((source = ANY (ARRAY['portal'::text, 'manual'::text]))),
     CONSTRAINT purchasing_quotes_total_amount_check CHECK (((total_amount IS NULL) OR (total_amount >= (0)::numeric)))
@@ -3300,7 +3306,9 @@ CREATE TABLE public.purchasing_rfq_recipients (
     supplier_phone text,
     supplier_email text,
     supplier_address text,
+    manual_key text,
     CONSTRAINT purchasing_rfq_recipients_has_supplier CHECK (((supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL))),
+    CONSTRAINT purchasing_rfq_recipients_key_xor CHECK (((supplier_id IS NULL) = (manual_key IS NOT NULL))),
     CONSTRAINT purchasing_rfq_recipients_token_check CHECK ((char_length(token) >= 32))
 );
 
@@ -4977,7 +4985,7 @@ ALTER TABLE ONLY public.purchasing_dispatches
 --
 
 ALTER TABLE public.purchasing_documents
-    ADD CONSTRAINT purchasing_documents_has_supplier CHECK (((deleted_at IS NOT NULL) OR ((status = 'draft'::text) OR (supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL)))) NOT VALID;
+    ADD CONSTRAINT purchasing_documents_has_supplier CHECK (((deleted_at IS NOT NULL) OR (status = 'draft'::text) OR (doc_type = 'rfq'::text) OR (supplier_id IS NOT NULL) OR (NULLIF(btrim(COALESCE(supplier_name, ''::text)), ''::text) IS NOT NULL))) NOT VALID;
 
 
 --
@@ -6361,14 +6369,14 @@ CREATE INDEX purchasing_lines_document_idx ON public.purchasing_lines USING btre
 -- Name: purchasing_quotes_manual_uidx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX purchasing_quotes_manual_uidx ON public.purchasing_quotes USING btree (rfq_id) WHERE (supplier_id IS NULL);
+CREATE UNIQUE INDEX purchasing_quotes_manual_uidx ON public.purchasing_quotes USING btree (rfq_id, manual_key) WHERE (manual_key IS NOT NULL);
 
 
 --
 -- Name: purchasing_rfq_recipients_manual_uidx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX purchasing_rfq_recipients_manual_uidx ON public.purchasing_rfq_recipients USING btree (rfq_id) WHERE (supplier_id IS NULL);
+CREATE UNIQUE INDEX purchasing_rfq_recipients_manual_uidx ON public.purchasing_rfq_recipients USING btree (rfq_id, manual_key) WHERE (manual_key IS NOT NULL);
 
 
 --
@@ -8444,5 +8452,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022090000'),
     ('20261022150000'),
     ('20261023161953'),
-    ('20261024085525')
+    ('20261024085525'),
+    ('20261025120000')
 ;

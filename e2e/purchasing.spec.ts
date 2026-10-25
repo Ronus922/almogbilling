@@ -15,6 +15,10 @@ import { MAILPIT_URL, mailpitClear, saveSmtpSettings } from './helpers';
 //   another session). A HAND-TYPED supplier gets the same treatment as a listed
 //   one: send (e-mail + WhatsApp), personal link, comparison, winner, order, and
 //   a channel without a detail is blocked with a plain message.
+// A REQUEST picks its suppliers on its own form (a multi-select with chips, any
+// number, a typed name allowed) and ticks how to send it (e-mail / WhatsApp, none
+// by default); issuing sends in the same step, or — nothing ticked — lists the
+// suppliers with a PDF to download / print for each. There is no separate send step.
 // Storage is unreachable in CI, so nothing here uploads a file (the file rules
 // are locked by tests/purchasing-public-route.test.ts and
 // tests/purchasing-rbac-route.test.ts).
@@ -118,7 +122,55 @@ async function fillLine(page: Page, index: number, description: string, quantity
   if (price !== undefined) await row.locator('input[inputmode="decimal"]').nth(1).fill(price);
 }
 
-test('nav, wizard and the first request: the letterhead once, then "from which number"', async ({ page }) => {
+/** Adds a supplier from the list to the request's chips (the picker stays open). */
+async function addListedSupplier(page: Page, name: string) {
+  const search = page.getByPlaceholder('חיפוש ספק או הקלדת שם');
+  if (!(await search.isVisible())) await sheet(page).locator('#doc-suppliers').click();
+  await search.fill(name);
+  await page.getByRole('option', { name }).click();
+}
+
+/** Adds a name that is NOT in the list as a chip of its own. */
+async function addTypedSupplier(page: Page, name: string) {
+  const search = page.getByPlaceholder('חיפוש ספק או הקלדת שם');
+  if (!(await search.isVisible())) await sheet(page).locator('#doc-suppliers').click();
+  await search.fill(name);
+  await page.locator('[data-picker-create]').click();
+}
+
+/** Closes the picker (Escape closes only the picker, not the sheet). */
+async function closePicker(page: Page) {
+  await page.keyboard.press('Escape');
+  await expect(page.getByPlaceholder('חיפוש ספק או הקלדת שם')).toHaveCount(0);
+}
+
+/** A fresh request with the suppliers and ticks given, up to the issue click. */
+async function fillRequest(
+  page: Page, opts: { title: string; listed?: string[]; typed?: Array<{ name: string; phone?: string; email?: string }>; email?: boolean; whatsapp?: boolean },
+) {
+  await page.goto('/purchasing');
+  await page.getByRole('button', { name: 'בקשה חדשה' }).click();
+  const form = sheet(page);
+  for (const n of opts.listed ?? []) await addListedSupplier(page, n);
+  for (const t of opts.typed ?? []) await addTypedSupplier(page, t.name);
+  await closePicker(page);
+  for (const t of opts.typed ?? []) {
+    const card = form.locator('[data-typed-supplier]', { hasText: t.name });
+    if (t.phone) await card.locator('input[inputmode="tel"]').fill(t.phone);
+    if (t.email) await card.locator('input[type="email"]').fill(t.email);
+  }
+  if (opts.email) await form.getByRole('checkbox', { name: 'מייל' }).click();
+  if (opts.whatsapp) await form.getByRole('checkbox', { name: 'וואטסאפ' }).click();
+  await form.locator('#doc-title').fill(opts.title);
+  await fillLine(page, 0, 'פריט בדיקה', '2');
+  return form;
+}
+
+test('nav, wizard and the first request: the letterhead once, then "from which number"', async ({ page, request }) => {
+  await saveSmtpSettings(request);
+  await mailpitClear(request);
+  await request.post(`${GREEN}/__reset`);
+
   await page.goto('/purchasing');
   await expect(page.getByRole('heading', { name: 'רכש' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'בקשות והזמנות' })).toBeVisible();
@@ -154,31 +206,49 @@ test('nav, wizard and the first request: the letterhead once, then "from which n
   await expect(page.locator('[data-line="0"] input[inputmode="decimal"]').first()).toHaveValue('1'); // quantity defaults to 1
   await expect(form.locator('[data-totals] dt')).toHaveText(['סה״כ לפני מע״מ', 'מע״מ 18%', 'סה״כ לתשלום']);
 
-  // A supplier is required (from the list, or typed).
+  // At least one supplier is required — and so is the subject of a request
+  // (a purchase order's description stays optional). Nothing is ticked by default.
   await page.locator('#doc-start').fill(String(START_RFQ));
   await fillLine(page, 0, 'צבע אקרילי לבן', '3');
+  await expect(form.getByRole('checkbox', { name: 'מייל' })).not.toBeChecked();
+  await expect(form.getByRole('checkbox', { name: 'וואטסאפ' })).not.toBeChecked();
   await form.getByRole('button', { name: 'הפק את המסמך' }).click();
-  await expect(form.getByText('יש לבחור ספק או להקליד שם ספק')).toBeVisible();
-  // …and so is the subject of a request (a purchase order's description stays optional).
+  await expect(form.getByText('יש לבחור ספק אחד לפחות')).toBeVisible();
   await expect(form.getByText('יש להזין נושא לבקשה')).toBeVisible();
 
-  // A supplier typed by hand: its phone / e-mail / address appear and stay on the document.
-  await page.locator('#doc-supplier').fill(TYPED_SUPPLIER);
-  await page.locator('#doc-supplier-phone').fill('050-7654321');
-  await page.locator('#doc-supplier-email').fill(`typed-${RUN}@example.com`);
-  await page.locator('#doc-supplier-address').fill('רחוב הבדיקה 1, חיפה');
+  // Three suppliers: two from the list and one typed by hand (its phone / e-mail
+  // are entered under the field), then both channels ticked.
+  await addListedSupplier(page, SUP_A);
+  await addListedSupplier(page, SUP_B);
+  await addTypedSupplier(page, TYPED_SUPPLIER);
+  await closePicker(page);
+  await expect(form.locator('[data-chip]')).toHaveCount(3);
+  const typedCard = form.locator('[data-typed-supplier]');
+  await expect(typedCard).toHaveCount(1); // only the typed supplier asks for details
+  await typedCard.locator('input[inputmode="tel"]').fill('050-7654321');
+  await typedCard.locator('input[type="email"]').fill(`typed-${RUN}@example.com`);
+  await form.getByRole('checkbox', { name: 'מייל' }).click();
+  await form.getByRole('checkbox', { name: 'וואטסאפ' }).click();
   await page.locator('#doc-title').fill(RFQ_TITLE);
   await page.getByRole('button', { name: 'הוסף', exact: true }).click();
   await fillLine(page, 1, 'רולר צביעה', '10');
   await form.getByRole('button', { name: 'הפק את המסמך' }).click();
 
+  // Issued AND sent in the same step: the outcome per supplier and channel (3 × 2).
+  const results = page.locator('[data-issue-results] li');
+  await expect(results).toHaveCount(6);
+  await expect(page.locator('[data-issue-results] li svg.text-rose-600, [data-issue-results] li svg.text-amber-600')).toHaveCount(0);
+  await page.locator('[data-action="issue-done"]').click();
   await expect(page.getByRole('heading', { name: `בקשה להצעת מחיר מספר ${START_RFQ}` })).toBeVisible();
   const first = await docId('rfq', START_RFQ);
-  const typed = await pool.query(
-    `select supplier_id, supplier_name, supplier_phone, supplier_email, supplier_address from public.purchasing_documents where id = $1`, [first],
-  );
-  expect(typed.rows[0]).toMatchObject({
-    supplier_id: null, supplier_name: TYPED_SUPPLIER, supplier_phone: '050-7654321', supplier_address: 'רחוב הבדיקה 1, חיפה',
+  // The request has no supplier of its own — its suppliers are its recipients; the ticks are kept.
+  const doc = await pool.query(`select supplier_id, supplier_name, send_email, send_whatsapp from public.purchasing_documents where id = $1`, [first]);
+  expect(doc.rows[0]).toMatchObject({ supplier_id: null, supplier_name: null, send_email: true, send_whatsapp: true });
+  const recs = await pool.query(`select supplier_id, manual_key, supplier_name, supplier_phone, supplier_email from public.purchasing_rfq_recipients where rfq_id = $1`, [first]);
+  expect(recs.rows).toHaveLength(3);
+  expect(recs.rows.filter((r) => r.supplier_id !== null).map((r) => r.supplier_id).sort()).toEqual([...made.suppliers].sort());
+  expect(recs.rows.find((r) => r.supplier_id === null)).toMatchObject({
+    supplier_name: TYPED_SUPPLIER, supplier_phone: '050-7654321', supplier_email: `typed-${RUN}@example.com`,
   });
   // Never added to the suppliers list.
   expect((await pool.query(`select 1 from public.suppliers where display_name = $1 or company_name = $1`, [TYPED_SUPPLIER])).rowCount).toBe(0);
@@ -204,11 +274,13 @@ test('the heading shows the next number, "פירוט" completes, a price is opti
   await expect(page.getByText('יוקצה בשמירה')).toHaveCount(0);
   const form = sheet(page);
 
-  // The supplier field searches the list.
-  await page.locator('#doc-supplier').fill(SUP_B.slice(0, 7));
+  // The supplier field searches the list; a listed supplier has no hand-typed details.
+  await sheet(page).locator('#doc-suppliers').click();
+  await page.getByPlaceholder('חיפוש ספק או הקלדת שם').fill(SUP_B.slice(0, 7));
   await page.getByRole('option', { name: SUP_B }).click();
-  await expect(page.locator('#doc-supplier')).toHaveValue(SUP_B);
-  await expect(page.locator('#doc-supplier-phone')).toHaveCount(0); // a listed supplier has no hand-typed details
+  await closePicker(page);
+  await expect(sheet(page).locator(`[data-chip]`)).toHaveText([new RegExp(SUP_B)]);
+  await expect(sheet(page).locator('[data-typed-supplier]')).toHaveCount(0);
 
   const desc = page.locator('[data-line="0"]').getByPlaceholder('פירוט');
   await desc.fill('צבע אקר');
@@ -236,7 +308,7 @@ test('the heading shows the next number, "פירוט" completes, a price is opti
   // Somebody else takes the number shown while this form is open.
   const taken = await request.post('/api/purchasing/documents', {
     data: {
-      doc_type: 'rfq', doc_date: '2026-10-22', title: `תפוס ${RUN}`, supplier_name: TYPED_SUPPLIER, due_date: '2099-01-01',
+      doc_type: 'rfq', doc_date: '2026-10-22', title: `תפוס ${RUN}`, recipients: [{ key: 'mtaken0001', name: TYPED_SUPPLIER }], due_date: '2099-01-01',
       lines: [{ description: 'שורה', quantity: 1, unit_price: null }],
     },
   });
@@ -245,6 +317,9 @@ test('the heading shows the next number, "פירוט" completes, a price is opti
 
   await form.getByRole('button', { name: 'הפק את המסמך' }).click();
   await expect(page.getByText(`המספר ${START_RFQ + 1} נתפס בינתיים — המסמך הופק כמספר ${START_RFQ + 2}`)).toBeVisible();
+  // Nothing ticked: issued without sending — the suppliers are listed with a PDF each.
+  await expect(page.locator('[data-issue-pdf-list] li')).toHaveCount(1);
+  await page.locator('[data-action="issue-done"]').click();
   await expect(page.getByRole('heading', { name: `בקשה להצעת מחיר מספר ${START_RFQ + 2}` })).toBeVisible();
   await docId('rfq', START_RFQ + 2);
 });
@@ -256,7 +331,11 @@ test('a draft is saved on the server with no number, opens from another session,
   const seqNow = async () => (await pool.query(`select last_number from public.purchasing_sequences where doc_type = 'rfq'`)).rows[0].last_number as number;
   const seqBefore = await seqNow();
   const DRAFT_TITLE = `טיוטה ${RUN}`;
-  await page.locator('#doc-supplier').fill(`ספק טיוטה ${RUN}`);
+  await addListedSupplier(page, SUP_A);
+  await addTypedSupplier(page, `ספק טיוטה ${RUN}`);
+  await closePicker(page);
+  await form.locator('[data-typed-supplier] input[inputmode="tel"]').fill('050-1112233');
+  await form.getByRole('checkbox', { name: 'מייל' }).click();
   await page.locator('#doc-title').fill(DRAFT_TITLE);
   await fillLine(page, 0, 'פריט בטיוטה', '4');
   await form.getByRole('button', { name: 'שמור טיוטה' }).click();
@@ -268,6 +347,12 @@ test('a draft is saved on the server with no number, opens from another session,
   expect(row.rows[0]).toMatchObject({ status: 'draft', number: null });
   const draftId: string = row.rows[0].id;
   made.docs.push(draftId);
+  // The draft keeps the chosen suppliers and the ticks.
+  const draftRecs = await pool.query(`select supplier_id, supplier_name, supplier_phone from public.purchasing_rfq_recipients where rfq_id = $1`, [draftId]);
+  expect(draftRecs.rows).toHaveLength(2);
+  expect(draftRecs.rows.find((r) => r.supplier_id === null)).toMatchObject({ supplier_name: `ספק טיוטה ${RUN}`, supplier_phone: '050-1112233' });
+  expect((await pool.query(`select send_email, send_whatsapp from public.purchasing_documents where id = $1`, [draftId])).rows[0])
+    .toMatchObject({ send_email: true, send_whatsapp: false });
   expect(await seqNow()).toBe(seqBefore);
   // In the list of the same tab: a "טיוטה" tag instead of a number.
   const draftRow = page.locator('tr[data-draft]', { hasText: DRAFT_TITLE });
@@ -280,7 +365,10 @@ test('a draft is saved on the server with no number, opens from another session,
   const p2 = await other.newPage();
   await p2.goto('/purchasing');
   await p2.locator('tr[data-draft]', { hasText: DRAFT_TITLE }).click();
-  await expect(p2.locator('#doc-supplier')).toHaveValue(`ספק טיוטה ${RUN}`);
+  await expect(p2.locator('[data-chip]')).toHaveText([new RegExp(`ספק טיוטה ${RUN}`), new RegExp(SUP_A)], { timeout: 10_000 });
+  await expect(p2.locator('[data-typed-supplier] input[inputmode="tel"]')).toHaveValue('050-1112233');
+  await expect(sheet(p2).getByRole('checkbox', { name: 'מייל' })).toBeChecked();
+  await expect(sheet(p2).getByRole('checkbox', { name: 'וואטסאפ' })).not.toBeChecked();
   await expect(p2.locator('#doc-title')).toHaveValue(DRAFT_TITLE);
   await expect(p2.locator('[data-line="0"]').getByPlaceholder('פירוט')).toHaveValue('פריט בטיוטה');
   await expect(p2.locator('[data-doc-number]')).toHaveText(String(seqBefore + 1)); // the number it WOULD get
@@ -293,7 +381,7 @@ test('a draft is saved on the server with no number, opens from another session,
     .toMatchObject({ title: `${DRAFT_TITLE} ב`, number: null });
 
   // A draft cannot be sent and has no PDF; the preview still works.
-  const send = await other.request.post(`/api/purchasing/documents/${draftId}/send`, { data: { supplier_ids: ['manual'], email: true, whatsapp: false } });
+  const send = await other.request.post(`/api/purchasing/documents/${draftId}/send`, { data: { supplier_ids: [made.suppliers[0]], email: true, whatsapp: false } });
   expect(send.status()).toBe(409);
   expect((await other.request.get(`/api/purchasing/documents/${draftId}/pdf`)).status()).toBe(409);
   await p2.locator('tr[data-draft]', { hasText: `${DRAFT_TITLE} ב` }).click();
@@ -303,8 +391,12 @@ test('a draft is saved on the server with no number, opens from another session,
   ]);
   expect(pv.status()).toBe(200);
 
-  // Issue it: the running number is allocated NOW.
+  // Issue it (the e-mail tick is switched off first, so nothing is sent from this test):
+  // the running number is allocated NOW, and the two suppliers are listed with a PDF each.
+  await sheet(p2).getByRole('checkbox', { name: 'מייל' }).click();
   await sheet(p2).getByRole('button', { name: 'הפק את המסמך' }).click();
+  await expect(p2.locator('[data-issue-pdf-list] li')).toHaveCount(2);
+  await p2.locator('[data-action="issue-done"]').click();
   await expect(p2.getByRole('heading', { name: `בקשה להצעת מחיר מספר ${seqBefore + 1}` })).toBeVisible();
   expect((await pool.query(`select status, number from public.purchasing_documents where id = $1`, [draftId])).rows[0])
     .toMatchObject({ status: 'issued', number: seqBefore + 1 });
@@ -329,27 +421,13 @@ test('a draft is saved on the server with no number, opens from another session,
   expect((await pool.query(`select last_number from public.purchasing_sequences where doc_type = 'po'`)).rows[0]?.last_number ?? null).toBe(poSeq);
 });
 
-test('send the request by e-mail (PDF attached) and WhatsApp (message with the personal link + the PDF)', async ({ page, request }) => {
-  await saveSmtpSettings(request);
-  await mailpitClear(request);
-  await request.post(`${GREEN}/__reset`);
-
+test('what issuing the first request sent: e-mail (PDF attached) and WhatsApp (message with the personal link + the PDF)', async ({ page, request }) => {
   await page.goto('/purchasing');
   await page.locator(`tr[data-number="${START_RFQ}"]`).click();
   await expect(page.getByRole('heading', { name: `בקשה להצעת מחיר מספר ${START_RFQ}` })).toBeVisible();
-  await page.getByRole('button', { name: 'שליחה' }).click();
-
-  const send = sheet(page);
-  await expect(send.getByText('שליחה לספקים')).toBeVisible();
-  await send.getByRole('checkbox', { name: SUP_A }).click();
-  await send.getByRole('checkbox', { name: SUP_B }).click();
-  // The request's hand-typed supplier is a row of its own (e-mail + phone from the document).
-  await expect(send.locator('[data-send-row="manual"]')).toContainText('ספק שהוקלד');
-  await send.getByRole('checkbox', { name: TYPED_SUPPLIER }).click();
-  await send.getByRole('checkbox', { name: 'WhatsApp' }).click();
-  await send.getByRole('button', { name: 'שלח', exact: true }).click();
-  await expect(send.locator('[data-send-results] li')).toHaveCount(6);
-  await expect(send.locator('[data-send-results] li svg.text-rose-600')).toHaveCount(0);
+  // There is no send step after the issue any more: it all happened on the form.
+  await expect(page.locator('[data-action="send"]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'שליחה' })).toHaveCount(0);
 
   // Mailpit: one mail per supplier, the PDF really attached.
   await expect.poll(async () => (await (await request.get(`${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`e2e-${RUN}`)}`)).json()).messages_count, { timeout: 20_000 }).toBe(2);
@@ -378,6 +456,8 @@ test('send the request by e-mail (PDF attached) and WhatsApp (message with the p
   const rec = await pool.query(`select supplier_id, supplier_name, supplier_phone, supplier_email from public.purchasing_rfq_recipients where rfq_id = $1 and supplier_id is null`, [await docId('rfq', START_RFQ)]);
   expect(rec.rows).toHaveLength(1);
   expect(rec.rows[0]).toMatchObject({ supplier_name: TYPED_SUPPLIER, supplier_phone: '050-7654321', supplier_email: `typed-${RUN}@example.com` });
+  // Every supplier shows when it was sent to, in the document's supplier list.
+  await expect(page.locator('[data-recipient-status]').filter({ hasText: 'נשלח' })).toHaveCount(3);
   expect((await pool.query(`select 1 from public.suppliers where display_name = $1 or company_name = $1`, [TYPED_SUPPLIER])).rowCount).toBe(0);
 
   // The Green stand-in: the message with the link, then the PDF as a file.
@@ -388,9 +468,167 @@ test('send the request by e-mail (PDF attached) and WhatsApp (message with the p
   expect(wa.messages.some((m) => m.fileName?.endsWith('.pdf'))).toBe(true);
 
   // The log of the send is on the document.
-  await page.keyboard.press('Escape');
   await page.locator('[data-doc-tab="log"]').click();
   await expect(page.locator('[data-dispatches] li')).toHaveCount(6);
+});
+
+test('the supplier field: chips with an X, any number of suppliers, a typed name is a chip of its own and stays out of the suppliers list', async ({ page }) => {
+  const NAME_1 = `מוקלד ראשון ${RUN}`;
+  const NAME_2 = `מוקלד שני ${RUN}`;
+  const suppliersBefore = (await pool.query(`select count(*)::int as n from public.suppliers`)).rows[0].n;
+  await page.goto('/purchasing');
+  await page.getByRole('button', { name: 'בקשה חדשה' }).click();
+  const form = sheet(page);
+  await expect(form.locator('[data-chip]')).toHaveCount(0);
+
+  // The search lists the suppliers; a name that exists offers no "add as typed".
+  await form.locator('#doc-suppliers').click();
+  const search = page.getByPlaceholder('חיפוש ספק או הקלדת שם');
+  await search.fill(SUP_A);
+  await expect(page.getByRole('option', { name: SUP_A })).toBeVisible();
+  await expect(page.locator('[data-picker-create]')).toHaveCount(0);
+  // A name that is not there offers it as a typed supplier.
+  await search.fill(NAME_1);
+  await expect(page.locator('[data-picker-create]')).toContainText(NAME_1);
+
+  // Three suppliers in the field, like the recipients of a mail: name + X.
+  await addListedSupplier(page, SUP_A);
+  await addListedSupplier(page, SUP_B);
+  await addTypedSupplier(page, NAME_1);
+  await closePicker(page);
+  await expect(form.locator('[data-chip]')).toHaveCount(3);
+  for (const n of [SUP_A, SUP_B, NAME_1]) await expect(form.getByRole('button', { name: `הסר את ${n}`, exact: true })).toBeVisible();
+  await expect(form.locator('[data-typed-supplier]')).toHaveCount(1);
+
+  // X removes one chip without opening the list.
+  await form.getByRole('button', { name: `הסר את ${SUP_B}`, exact: true }).click();
+  await expect(form.locator('[data-chip]')).toHaveCount(2);
+  await expect(form.getByPlaceholder('חיפוש ספק או הקלדת שם')).toHaveCount(0);
+  await expect(form.locator('[data-chip]', { hasText: SUP_B })).toHaveCount(0);
+
+  // More than one typed supplier, each with its own details.
+  await addTypedSupplier(page, NAME_2);
+  await closePicker(page);
+  await expect(form.locator('[data-chip]')).toHaveCount(3);
+  await expect(form.locator('[data-typed-supplier]')).toHaveCount(2);
+  await form.locator('[data-typed-supplier]', { hasText: NAME_2 }).locator('input[type="email"]').fill('not-an-email');
+  await form.getByRole('button', { name: 'הפק את המסמך' }).click();
+  await expect(form.getByText('כתובת מייל לא תקינה')).toBeVisible();
+  // Removing the typed supplier removes its details card.
+  await form.getByRole('button', { name: `הסר את ${NAME_2}`, exact: true }).click();
+  await expect(form.locator('[data-typed-supplier]')).toHaveCount(1);
+
+  // The chip's typed name never enters the suppliers list.
+  expect((await pool.query(`select count(*)::int as n from public.suppliers`)).rows[0].n).toBe(suppliersBefore);
+  await form.getByRole('button', { name: 'ביטול' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('issue by e-mail only: every supplier gets its own mail with its personal link; no WhatsApp', async ({ page, request }) => {
+  await mailpitClear(request);
+  await request.post(`${GREEN}/__reset`);
+  const form = await fillRequest(page, { title: `רק מייל ${RUN}`, listed: [SUP_A, SUP_B], email: true });
+  await form.getByRole('button', { name: 'הפק את המסמך' }).click();
+  const results = page.locator('[data-issue-results] li');
+  await expect(results).toHaveCount(2);
+  await expect(results.filter({ hasText: 'מייל' })).toHaveCount(2);
+  await expect(page.locator('[data-issue-results] li svg.text-rose-600, [data-issue-results] li svg.text-amber-600')).toHaveCount(0);
+  const id = (await pool.query<{ id: string }>(`select id from public.purchasing_documents where title = $1`, [`רק מייל ${RUN}`])).rows[0].id;
+  made.docs.push(id);
+  await expect.poll(async () => (await (await request.get(`${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`e2e-${RUN}`)}`)).json()).messages_count, { timeout: 20_000 }).toBe(2);
+  const wa = (await (await request.get(`${GREEN}/__messages?chatId=${encodeURIComponent(CHAT_A)}`)).json()) as { messages: unknown[] };
+  expect(wa.messages).toHaveLength(0);
+  expect((await pool.query(`select channel, status from public.purchasing_dispatches where document_id = $1`, [id])).rows)
+    .toEqual([{ channel: 'email', status: 'sent' }, { channel: 'email', status: 'sent' }]);
+  await page.locator('[data-action="issue-done"]').click();
+});
+
+test('issue by WhatsApp only: message with the personal link + the PDF as a file; no e-mail', async ({ page, request }) => {
+  await mailpitClear(request);
+  await request.post(`${GREEN}/__reset`);
+  const form = await fillRequest(page, {
+    title: `רק וואטסאפ ${RUN}`, listed: [SUP_A], typed: [{ name: `מוקלד וואטסאפ ${RUN}`, phone: '050-7771122' }], whatsapp: true,
+  });
+  await form.getByRole('button', { name: 'הפק את המסמך' }).click();
+  const results = page.locator('[data-issue-results] li');
+  await expect(results).toHaveCount(2);
+  await expect(results.filter({ hasText: 'וואטסאפ' })).toHaveCount(2);
+  await expect(page.locator('[data-issue-results] li svg.text-rose-600, [data-issue-results] li svg.text-amber-600')).toHaveCount(0);
+  const id = (await pool.query<{ id: string }>(`select id from public.purchasing_documents where title = $1`, [`רק וואטסאפ ${RUN}`])).rows[0].id;
+  made.docs.push(id);
+  for (const chat of [CHAT_A, '972507771122@c.us']) {
+    const wa = (await (await request.get(`${GREEN}/__messages?chatId=${encodeURIComponent(chat)}`)).json()) as {
+      messages: Array<{ message: string; fileName?: string }>;
+    };
+    expect(wa.messages.some((m) => /\/quote\/[A-Za-z0-9_-]{43}/.test(m.message)), chat).toBe(true);
+    expect(wa.messages.some((m) => m.fileName?.endsWith('.pdf')), chat).toBe(true);
+  }
+  expect((await (await request.get(`${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`e2e-${RUN}`)}`)).json()).messages_count).toBe(0);
+  expect((await pool.query(`select distinct channel from public.purchasing_dispatches where document_id = $1`, [id])).rows).toEqual([{ channel: 'whatsapp' }]);
+  await page.locator('[data-action="issue-done"]').click();
+});
+
+test('issue with nothing ticked: no sending; each supplier has its own PDF to download and print', async ({ page, request }) => {
+  await mailpitClear(request);
+  await request.post(`${GREEN}/__reset`);
+  // Count print dialogs (the PDF is printed from a hidden frame, headless has no real dialog).
+  await page.addInitScript(() => {
+    const w = window as unknown as { __prints: number };
+    w.__prints = 0;
+    const orig = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow')!;
+    Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+      get() {
+        const real = orig.get!.call(this) as Window | null;
+        if (!real) return real;
+        return new Proxy(real, {
+          get(t, k) {
+            if (k === 'print') return () => { w.__prints += 1; };
+            const v = Reflect.get(t, k);
+            return typeof v === 'function' ? v.bind(t) : v;
+          },
+        });
+      },
+    });
+  });
+  const TYPED = `מוקלד ללא שליחה ${RUN}`;
+  const form = await fillRequest(page, { title: `ללא שליחה ${RUN}`, listed: [SUP_A, SUP_B], typed: [{ name: TYPED }] });
+  await form.getByRole('button', { name: 'הפק את המסמך' }).click();
+
+  const rows = page.locator('[data-issue-pdf-list] li');
+  await expect(rows).toHaveCount(3);
+  await expect(page.locator('[data-issue-results]')).toHaveCount(0);
+  const id = (await pool.query<{ id: string }>(`select id from public.purchasing_documents where title = $1`, [`ללא שליחה ${RUN}`])).rows[0].id;
+  made.docs.push(id);
+
+  // Each supplier: "הורד PDF" and "הדפס"; the PDF is a real one, addressed to THAT supplier.
+  const bodies: string[] = [];
+  for (const name of [SUP_A, SUP_B, TYPED]) {
+    const row = rows.filter({ hasText: name });
+    await expect(row.locator('[data-action="supplier-download"]')).toBeVisible();
+    await expect(row.locator('[data-action="supplier-print"]')).toBeVisible();
+    const href = await row.locator('[data-action="supplier-download"]').getAttribute('href');
+    const res = await request.get(href!);
+    expect(res.status()).toBe(200);
+    expect(res.headers()['content-type']).toBe('application/pdf');
+    expect(res.headers()['content-disposition']).toContain('attachment');
+    const bytes = await res.body();
+    expect(bytes.subarray(0, 5).toString()).toBe('%PDF-');
+    bodies.push(bytes.toString('base64'));
+  }
+  expect(new Set(bodies).size).toBe(3); // three different addressees
+  // A key that is not one of the request's suppliers has no PDF.
+  expect((await request.get(`/api/purchasing/documents/${id}/pdf?party=mzzzzzzzz`)).status()).toBe(404);
+
+  await rows.filter({ hasText: SUP_A }).locator('[data-action="supplier-print"]').click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __prints: number }).__prints), { timeout: 10_000 }).toBe(1);
+
+  // Nothing was sent anywhere.
+  expect((await pool.query(`select 1 from public.purchasing_dispatches where document_id = $1`, [id])).rowCount).toBe(0);
+  expect((await (await request.get(`${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`e2e-${RUN}`)}`)).json()).messages_count).toBe(0);
+  expect(((await (await request.get(`${GREEN}/__messages?chatId=${encodeURIComponent(CHAT_A)}`)).json()) as { messages: unknown[] }).messages).toHaveLength(0);
+  await page.locator('[data-action="issue-done"]').click();
+  // The request opens on its panel afterwards, with its three suppliers.
+  await expect(page.locator('[data-recipient]')).toHaveCount(3);
 });
 
 test('the supplier\'s public link: submit, amend, then locked after the due date', async ({ browser }) => {
@@ -540,7 +778,7 @@ test('the comparison, the winner — and a purchase order from it (no "quote out
   expect(po.rows[0]).toMatchObject({ vat: 18, source_rfq_id: rfq, supplier_id: made.suppliers[0] });
 });
 
-test('the document panel: actions in the header (delete right; PDF · print · edit · send left, send last), three tabs, print opens the print dialog', async ({ page }) => {
+test('the document panel: actions in the header (delete right; PDF · print · edit left), three tabs, print opens the print dialog; a request has no send button', async ({ page }) => {
   // Count print dialogs: the PDF is printed from a hidden frame, so the frame's
   // window.print is what must fire (headless Chromium has no real dialog).
   await page.addInitScript(() => {
@@ -572,12 +810,13 @@ test('the document panel: actions in the header (delete right; PDF · print · e
     expect(box, action).not.toBeNull();
     return box!.x;
   };
-  const [del, view, dl, print, edit, send] = await Promise.all(['delete', 'view-pdf', 'download-pdf', 'print', 'edit', 'send'].map(xs));
+  const [del, view, dl, print, edit] = await Promise.all(['delete', 'view-pdf', 'download-pdf', 'print', 'edit'].map(xs));
   expect(del).toBeGreaterThan(view);
   expect(view).toBeGreaterThan(dl);
   expect(dl).toBeGreaterThan(print);
   expect(print).toBeGreaterThan(edit);
-  expect(edit).toBeGreaterThan(send);
+  // A request is sent from its form, not from here (an order still has "שליחה").
+  await expect(panel.locator('[data-action="send"]')).toHaveCount(0);
   // The footer is gone — nothing but the header acts on the document.
   await expect(panel.locator('footer')).toHaveCount(0);
 
@@ -610,6 +849,7 @@ test('the document panel: actions in the header (delete right; PDF · print · e
   await page.locator('tbody tr[data-number]').first().click();
   const po = page.getByRole('dialog').filter({ has: page.locator('[data-doc-actions]') });
   await expect(po.locator('[data-doc-tab]')).toHaveText([/מסמך/, /יומן שליחות/]);
+  await expect(po.locator('[data-action="send"]')).toHaveCount(1);
 });
 
 test('phone width: the tabs stay on one row and the actions fit the header', async ({ page }) => {
@@ -621,7 +861,7 @@ test('phone width: the tabs stay on one row and the actions fit the header', asy
   await expect(tabs).toHaveCount(3);
   const ys = await tabs.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().y)));
   expect(new Set(ys).size).toBe(1);
-  for (const a of ['delete', 'print', 'edit', 'send']) {
+  for (const a of ['delete', 'print', 'edit']) {
     const box = await panel.locator(`[data-action="${a}"]`).boundingBox();
     expect(box!.height, a).toBeGreaterThanOrEqual(44);
   }
@@ -689,7 +929,6 @@ test('the typed supplier wins: the order opens with ITS details, is issued and s
   await expect(form.locator('#doc-supplier')).toHaveValue(TYPED_SUPPLIER);
   await expect(form.locator('#doc-supplier-phone')).toHaveValue('050-7654321');
   await expect(form.locator('#doc-supplier-email')).toHaveValue(`typed-${RUN}@example.com`);
-  await expect(form.locator('#doc-supplier-address')).toHaveValue('רחוב הבדיקה 1, חיפה');
   await expect(page.locator('[data-line="0"] input[inputmode="decimal"]').nth(1)).toHaveValue('11');
   await form.getByRole('button', { name: 'הפק את המסמך' }).click();
   await expect(page.getByRole('heading', { name: `הזמנת רכש מספר ${START_PO + 2}` })).toBeVisible();
@@ -698,6 +937,8 @@ test('the typed supplier wins: the order opens with ITS details, is issued and s
   expect(po.rows[0]).toMatchObject({
     supplier_id: null, supplier_name: TYPED_SUPPLIER, supplier_phone: '050-7654321', supplier_email: `typed-${RUN}@example.com`, source_rfq_id: rfq,
   });
+  // The request records WHICH typed supplier won.
+  expect((await pool.query(`select winner_manual_key from public.purchasing_documents where id = $1`, [rfq])).rows[0].winner_manual_key).toMatch(/^m[a-z0-9]{6,24}$/);
 
   // The order goes to ITS supplier only — the typed one, by the e-mail on the document.
   await page.getByRole('button', { name: 'שליחה' }).click();
@@ -717,45 +958,42 @@ test('the typed supplier wins: the order opens with ITS details, is issued and s
   expect((await pool.query(`select 1 from public.suppliers where display_name = $1 or company_name = $1`, [TYPED_SUPPLIER])).rowCount).toBe(0);
 });
 
-test('a channel the typed supplier has no detail for is blocked with a plain message — never a server error', async ({ page, request }) => {
+test('a supplier without the e-mail / phone for a ticked channel: a warning by its chip before issuing, never a block; skipped when sending', async ({ page, request }) => {
   const NAME = `ספק חסום ${RUN}`;
-  const made1 = await request.post('/api/purchasing/documents', {
-    data: {
-      doc_type: 'rfq', doc_date: '2026-10-22', title: `חסום ${RUN}`, supplier_name: NAME, due_date: '2099-01-01',
-      lines: [{ description: 'שורה', quantity: 1, unit_price: null }],
-    },
-  });
-  expect(made1.status()).toBe(201);
-  const id = (await made1.json()).id as string;
-  made.docs.push(id);
+  await mailpitClear(request);
+  const form = await fillRequest(page, { title: `חסום ${RUN}`, typed: [{ name: NAME }] });
+  const chip = form.locator('[data-chip]', { hasText: NAME });
+  await expect(chip.locator('[data-chip-warn]')).toHaveCount(0); // nothing ticked, nothing missing
+  await form.getByRole('checkbox', { name: 'מייל' }).click();
+  await expect(chip.locator('[data-chip-warn]')).toContainText('אין מייל');
+  await form.getByRole('checkbox', { name: 'וואטסאפ' }).click();
+  await expect(chip.locator('[data-chip-warn]')).toContainText('אין מייל וטלפון');
+  // Giving it a phone clears that part of the warning.
+  await form.locator('[data-typed-supplier] input[inputmode="tel"]').fill('050-9998877');
+  await expect(chip.locator('[data-chip-warn]')).toContainText('אין מייל');
+  await expect(chip.locator('[data-chip-warn]')).not.toContainText('טלפון');
+  await form.locator('[data-typed-supplier] input[inputmode="tel"]').fill('');
 
-  await page.goto('/purchasing');
-  await page.locator('tr', { hasText: `חסום ${RUN}` }).click();
-  await page.getByRole('button', { name: 'שליחה' }).click();
-  const sendSheet = sheet(page);
-  await sendSheet.getByRole('checkbox', { name: NAME }).click();
-  // E-mail is on by default and the document has no e-mail.
-  await expect(sendSheet.locator('[data-send-blocked]')).toContainText('אין מייל');
-  await expect(sendSheet.getByRole('button', { name: 'שלח', exact: true })).toBeDisabled();
-  await sendSheet.getByRole('checkbox', { name: 'WhatsApp' }).click();
-  await expect(sendSheet.locator('[data-send-blocked]')).toContainText('טלפון ל-WhatsApp');
-  await sendSheet.getByRole('checkbox', { name: 'מייל', exact: true }).click(); // e-mail off, WhatsApp still blocked
-  await expect(sendSheet.locator('[data-send-blocked]')).toContainText('טלפון ל-WhatsApp');
-  await expect(sendSheet.locator('[data-send-blocked]')).not.toContainText('מייל');
+  // Not blocked: the request is issued; the supplier is skipped on both channels, no dispatch is logged.
+  await form.getByRole('button', { name: 'הפק את המסמך' }).click();
+  const results = page.locator('[data-issue-results] li');
+  await expect(results).toHaveCount(2);
+  await expect(results.filter({ hasText: 'דולג' })).toHaveCount(2);
+  await expect(page.locator('[data-issue-results]')).toContainText('אין כתובת מייל לספק');
+  await expect(page.locator('[data-issue-results]')).toContainText('אין מספר טלפון לספק');
+  const doc = await pool.query<{ id: string }>(`select id from public.purchasing_documents where title = $1`, [`חסום ${RUN}`]);
+  expect(doc.rows).toHaveLength(1);
+  made.docs.push(doc.rows[0].id);
+  expect((await pool.query(`select 1 from public.purchasing_dispatches where document_id = $1`, [doc.rows[0].id])).rowCount).toBe(0);
+  await page.locator('[data-action="issue-done"]').click();
 
-  // The API answers plainly too: per-channel results with the reason, not a 500.
-  const res = await request.post(`/api/purchasing/documents/${id}/send`, { data: { supplier_ids: ['manual'], email: true, whatsapp: true } });
-  expect(res.status()).toBeLessThan(500);
-  const out = (await res.json()) as { results: Array<{ channel: string; ok: boolean; error?: string }> };
-  expect(out.results.every((r) => !r.ok)).toBe(true);
-  expect(out.results.find((r) => r.channel === 'email')?.error).toContain('אין כתובת מייל');
-  expect(out.results.find((r) => r.channel === 'whatsapp')?.error).toContain('אין מספר טלפון');
-  // 'manual' for a document whose supplier IS listed is refused.
-  const listed = await pool.query<{ id: string }>(`select id from public.purchasing_documents where supplier_id = $1 limit 1`, [made.suppliers[0]]);
-  if (listed.rows[0]) {
-    const bad = await request.post(`/api/purchasing/documents/${listed.rows[0].id}/send`, { data: { supplier_ids: ['manual'], email: true, whatsapp: false } });
-    expect(bad.status()).toBe(400);
-  }
+  // The API: a key that is not one of the request's suppliers is refused; skips are counted, not failed.
+  const bad = await request.post(`/api/purchasing/documents/${doc.rows[0].id}/send`, { data: { supplier_ids: [made.suppliers[0]], email: true, whatsapp: false } });
+  expect(bad.status()).toBe(400);
+  const key = (await pool.query<{ manual_key: string }>(`select manual_key from public.purchasing_rfq_recipients where rfq_id = $1`, [doc.rows[0].id])).rows[0].manual_key;
+  const ok = await request.post(`/api/purchasing/documents/${doc.rows[0].id}/send`, { data: { supplier_ids: [key], email: true, whatsapp: true } });
+  expect(ok.status()).toBe(200);
+  expect(await ok.json()).toMatchObject({ sent_count: 0, failed_count: 0, skipped_count: 2 });
 });
 
 test('the module is closed to anyone who is not a super admin and to anonymous callers', async ({ browser }) => {
@@ -774,10 +1012,10 @@ test('a request needs its subject; one that predates the rule stays editable whi
 
   // Creating a request without a subject is refused, and nothing is written.
   const none = await request.post('/api/purchasing/documents', {
-    data: { doc_type: 'rfq', doc_date: '2026-10-22', supplier_name: NAME, due_date: '2099-01-01', lines },
+    data: { doc_type: 'rfq', doc_date: '2026-10-22', recipients: [{ key: 'mnone00001', name: NAME }], due_date: '2099-01-01', lines },
   });
   expect(none.status()).toBe(400);
-  expect((await pool.query(`select 1 from public.purchasing_documents where supplier_name = $1`, [NAME])).rowCount).toBe(0);
+  expect((await pool.query(`select 1 from public.purchasing_rfq_recipients where supplier_name = $1`, [NAME])).rowCount).toBe(0);
 
   // A request issued before the rule: no subject. Editing it without one is accepted…
   const legacy = await pool.query<{ id: string }>(

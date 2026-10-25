@@ -20,6 +20,8 @@ export interface DocumentDetail {
   supplier: SupplierBrief | null;
   recipients?: RecipientView[];
   quotes?: QuoteView[];
+  /** A request whose lines may no longer change (something was sent, or a quote exists). */
+  lines_locked?: boolean;
 }
 
 export interface SequenceState { rfq: number | null; po: number | null }

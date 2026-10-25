@@ -5,15 +5,19 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { writeAudit } from '@/lib/db/audit';
 import {
-  deleteDraft, findDocument, getCompany, getSupplierBrief, listDispatches, listDocumentFiles, listLines, listQuotes,
-  listRecipients, markQuotesSeen, NotADraftError, softDeleteDocument, StartNumberRequiredError, updateDocument,
+  deleteDraft, findDocument, getCompany, getSupplierBrief, isRfqLocked, listDispatches, listDocumentFiles, listLines,
+  listQuotes, listRecipients, listSupplierBriefs, markQuotesSeen, NotADraftError, softDeleteDocument,
+  StartNumberRequiredError, updateDocument,
 } from '@/lib/db/purchasing';
-import { createBodySchema, draftBodySchema, RFQ_TITLE_REQUIRED, updateDocumentBodySchema } from '@/lib/validation/purchasing';
+import {
+  bodyHasSupplier, createBodySchema, draftBodySchema, RFQ_TITLE_REQUIRED, SUPPLIER_REQUIRED_MESSAGE,
+  updateDocumentBodySchema,
+} from '@/lib/validation/purchasing';
 import { companyIsComplete, todayIsrael } from '@/lib/purchasing/model';
 import { logger } from '@/lib/logger';
 import { buildProxyUrl, PURCHASING_FILES_BUCKET } from '@/lib/storage/server';
 import { quoteLink } from '@/lib/purchasing/service';
-import { supplierFieldsOf } from '@/lib/purchasing/supplier';
+import { NO_SUPPLIER, supplierFieldsOf } from '@/lib/purchasing/supplier';
 import { removePurchasingObjects } from '@/lib/storage/purchasingStorage';
 
 export const runtime = 'nodejs';
@@ -22,6 +26,11 @@ export const dynamic = 'force-dynamic';
 interface Ctx { params: Promise<{ id: string }> }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const recipientsExist = async (rs: ReadonlyArray<{ supplier_id: string | null }>) => {
+  const ids = rs.flatMap((r) => (r.supplier_id ? [r.supplier_id] : []));
+  return (await listSupplierBriefs(ids)).length === ids.length;
+};
 
 const withUrl = <T extends { object_key: string }>(f: T) => ({ ...f, url: buildProxyUrl(PURCHASING_FILES_BUCKET, f.object_key) });
 
@@ -55,6 +64,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
   if (doc.doc_type === 'rfq') {
     const [recipients, quotes] = await Promise.all([listRecipients(id), listQuotes(id)]);
     out.recipients = recipients.map((r) => ({ ...r, link: quoteLink(r.token) }));
+    out.lines_locked = await isRfqLocked(id);
     out.quotes = quotes.map((q) => ({ ...q, files: q.files.map(withUrl) }));
   }
   return NextResponse.json(out);
@@ -90,12 +100,19 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     const body = await parseJsonBody(req, draftBodySchema);
     if (!body.ok) return body.response;
     if (body.data.doc_type !== doc.doc_type) return NextResponse.json({ error: 'סוג המסמך אינו תואם' }, { status: 400 });
-    if (body.data.supplier_id && !(await getSupplierBrief(body.data.supplier_id))) {
+    if (doc.doc_type === 'po' && body.data.supplier_id && !(await getSupplierBrief(body.data.supplier_id))) {
       return NextResponse.json({ error: 'הספק לא נמצא' }, { status: 400 });
     }
+    if (doc.doc_type === 'rfq' && !(await recipientsExist(body.data.recipients))) {
+      return NextResponse.json({ error: 'אחד הספקים לא נמצא' }, { status: 400 });
+    }
     await updateDocument(id, {
-      doc_date: body.data.doc_date, title: body.data.title, ...supplierFieldsOf(body.data),
+      doc_date: body.data.doc_date, title: body.data.title,
+      ...(doc.doc_type === 'rfq' ? NO_SUPPLIER : supplierFieldsOf(body.data)),
       notes: body.data.notes, due_date: doc.doc_type === 'rfq' ? body.data.due_date : null, lines: body.data.lines,
+      ...(doc.doc_type === 'rfq'
+        ? { recipients: body.data.recipients, send_email: body.data.send_email, send_whatsapp: body.data.send_whatsapp }
+        : {}),
     });
     await writeAudit({
       actorUserId: actor.id, action: 'updated', entityType: 'purchasing_document', entityId: id,
@@ -114,13 +131,17 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     if (b.doc_type === 'rfq' && b.due_date < todayIsrael()) {
       return NextResponse.json({ error: 'תאריך היעד להגשה כבר עבר' }, { status: 400 });
     }
-    if (b.supplier_id && !(await getSupplierBrief(b.supplier_id))) {
+    if (b.doc_type === 'po' && b.supplier_id && !(await getSupplierBrief(b.supplier_id))) {
       return NextResponse.json({ error: 'הספק לא נמצא' }, { status: 400 });
+    }
+    if (b.doc_type === 'rfq' && !(await recipientsExist(b.recipients))) {
+      return NextResponse.json({ error: 'אחד הספקים לא נמצא' }, { status: 400 });
     }
     try {
       const done = await updateDocument(id, {
-        doc_date: b.doc_date, title: b.title, ...supplierFieldsOf(b), notes: b.notes,
+        doc_date: b.doc_date, title: b.title, ...(b.doc_type === 'rfq' ? NO_SUPPLIER : supplierFieldsOf(b)), notes: b.notes,
         due_date: b.doc_type === 'rfq' ? b.due_date : null, lines: b.lines,
+        ...(b.doc_type === 'rfq' ? { recipients: b.recipients, send_email: b.send_email, send_whatsapp: b.send_whatsapp } : {}),
         issue: { start_number: b.start_number, vat_rate: company.vat_rate },
       });
       if (!done) return NextResponse.json({ error: 'not_found' }, { status: 404 });
@@ -146,21 +167,27 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ error: RFQ_TITLE_REQUIRED }, { status: 400 });
   }
   if (doc.doc_type === 'rfq') {
-    if (lines && (await listRecipients(id)).length > 0) {
+    if (lines && (await isRfqLocked(id))) {
       return NextResponse.json({ error: 'לא ניתן לשנות שורות אחרי ששלחו את הבקשה לספקים' }, { status: 409 });
     }
     if (!body.data.due_date) return NextResponse.json({ error: 'תאריך יעד הוא שדה חובה' }, { status: 400 });
   } else if (lines && lines.some((l) => l.unit_price === null)) {
     return NextResponse.json({ error: 'יש להזין מחיר בכל שורה' }, { status: 400 });
   }
-  if (body.data.supplier_id && !(await getSupplierBrief(body.data.supplier_id))) {
-    return NextResponse.json({ error: 'הספק לא נמצא' }, { status: 400 });
+  if (doc.doc_type === 'po') {
+    if (!bodyHasSupplier(body.data)) return NextResponse.json({ error: SUPPLIER_REQUIRED_MESSAGE }, { status: 400 });
+    if (body.data.supplier_id && !(await getSupplierBrief(body.data.supplier_id))) {
+      return NextResponse.json({ error: 'הספק לא נמצא' }, { status: 400 });
+    }
   }
 
   await updateDocument(id, {
     doc_date: body.data.doc_date,
     title: body.data.title,
-    ...supplierFieldsOf(body.data),
+    // A request's supplier columns stay as they are (its suppliers are its recipients).
+    ...(doc.doc_type === 'rfq'
+      ? { supplier_id: doc.supplier_id, supplier_name: doc.supplier_id ? null : doc.supplier_name, supplier_phone: doc.supplier_phone, supplier_email: doc.supplier_email, supplier_address: doc.supplier_address }
+      : supplierFieldsOf(body.data)),
     notes: body.data.notes,
     due_date: doc.doc_type === 'rfq' ? body.data.due_date : null,
     lines,
