@@ -166,7 +166,14 @@ export const sendBodySchema = z.object({
   whatsapp: z.boolean().default(false),
 }).refine((b) => b.email || b.whatsapp, { message: 'יש לבחור מייל ו/או WhatsApp' });
 
+// Adding suppliers to an ISSUED, still-open request (POST .../recipients): same item shape as create's recipients.
+export const addRecipientsBodySchema = z.object({
+  recipients: recipientsSchema.refine((rs) => rs.length > 0, 'יש לבחור ספק אחד לפחות'),
+});
+
 export const publicQuoteBodySchema = z.object({
+  // How `prices` were typed. The server normalises (never the client).
+  price_mode: z.enum(['excl', 'incl']).default('excl'),
   valid_until: isoDate.nullable().default(null),
   notes: z.string().trim().max(L.quoteNotesMax, 'ההערות ארוכות מדי').default(''),
   prices: z.record(uuid, money('המחיר')),

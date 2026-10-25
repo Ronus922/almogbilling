@@ -33,6 +33,7 @@ const documents = await import('@/app/api/purchasing/documents/route');
 const documentById = await import('@/app/api/purchasing/documents/[id]/route');
 const pdf = await import('@/app/api/purchasing/documents/[id]/pdf/route');
 const send = await import('@/app/api/purchasing/documents/[id]/send/route');
+const recipientsRoute = await import('@/app/api/purchasing/documents/[id]/recipients/route');
 const docFiles = await import('@/app/api/purchasing/documents/[id]/files/route');
 const quotes = await import('@/app/api/purchasing/documents/[id]/quotes/route');
 const preview = await import('@/app/api/purchasing/preview/route');
@@ -59,6 +60,7 @@ const calls: Call[] = [
   ['DELETE document', () => documentById.DELETE(r('DELETE'), ctx)],
   ['GET pdf', () => pdf.GET(r('GET'), ctx)],
   ['POST send', () => send.POST(r('POST'), ctx)],
+  ['POST recipients', () => recipientsRoute.POST(r('POST'), ctx)],
   ['POST document files', () => docFiles.POST(r('POST'), ctx)],
   ['POST preview', () => preview.POST(r('POST'))],
   ['DELETE quotes', () => quotes.DELETE(r('DELETE', `/x?supplier_id=${ID}`), ctx)],
@@ -127,6 +129,7 @@ describe('purchasing permissions', () => {
     expect((await list('po')).status).toBe(403);
     expect((await post('rfq')).status).not.toBe(403);
     expect((await post('po')).status).toBe(403);
+    expect((await recipientsRoute.POST(r('POST'), ctx)).status).not.toBe(403);
     expect((await suppliers.GET()).status).not.toBe(403); // shared helpers: any purchasing view
     expect((await company.GET()).status).not.toBe(403);
   });
@@ -140,6 +143,7 @@ describe('purchasing permissions', () => {
     // Quotes and the winner belong to requests only.
     expect((await winner.PUT(r('PUT'), ctx)).status).toBe(403);
     expect((await quotes.DELETE(r('DELETE', `/x?supplier_id=${ID}`), ctx)).status).toBe(403);
+    expect((await recipientsRoute.POST(r('POST'), ctx)).status).toBe(403);
   });
 
   it('view-only reads but never writes', async () => {
@@ -149,6 +153,7 @@ describe('purchasing permissions', () => {
     expect((await documentById.PATCH(r('PATCH'), ctx)).status).toBe(403);
     expect((await documentById.DELETE(r('DELETE'), ctx)).status).toBe(403);
     expect((await send.POST(r('POST'), ctx)).status).toBe(403);
+    expect((await recipientsRoute.POST(r('POST'), ctx)).status).toBe(403);
     expect((await winner.PUT(r('PUT'), ctx)).status).toBe(403);
     expect((await preview.POST(r('POST'))).status).toBe(403);
     expect((await fileById.DELETE(r('DELETE'), ctx)).status).toBe(403);

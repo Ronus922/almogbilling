@@ -18,7 +18,7 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Eye, FilePlus2, Loader2, Save, StickyNote, X, ListChecks, Hash } from 'lucide-react';
+import { Eye, FileDown, FileText, Loader2, Save, X, ListChecks, Hash } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,7 +32,7 @@ import { DOC_LABEL, docHeading, PURCHASING_LIMITS, todayIsrael, type DocType } f
 import { LinesEditor } from './LinesEditor';
 import { SupplierField } from './SupplierField';
 import { RecipientsField } from './RecipientsField';
-import { IssueResultsSheet, type IssuedInfo, type IssueResult } from './IssueResultsSheet';
+import { buildIssueSummary, type IssueResult } from './issueSummary';
 import { EMAIL_RE, partiesOfDetail, recipientsPayload, type PartyDraft } from './recipients';
 import { draftsToPayload, emptyLine, newLineKey, type LineDraft } from './lines';
 import type { DocumentDetail, PoPrefill, SequenceState, SupplierBrief } from './types';
@@ -107,7 +107,6 @@ export function DocumentFormSheet({
   const [parties, setParties] = useState<PartyDraft[]>([]);
   const [sendEmail, setSendEmail] = useState(false);
   const [sendWhatsapp, setSendWhatsapp] = useState(false);
-  const [issued, setIssued] = useState<IssuedInfo | null>(null);
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [notes, setNotes] = useState('');
@@ -197,9 +196,8 @@ export function DocumentFormSheet({
   const linesLocked = isRfq && editing && !!detail?.lines_locked;
   const busy = saving || previewing;
 
-  // The results screen of an issued request sits on top of this sheet and owns Escape.
-  useEscapeKey(open && !issued, () => requestClose());
-  function requestClose() { if (!busy && !issued) onOpenChange(false); }
+  useEscapeKey(open, () => requestClose());
+  function requestClose() { if (!busy) onOpenChange(false); }
 
   /** The API body of the form, or null (with the problems shown) when invalid. */
   function buildBody(): Record<string, unknown> | null {
@@ -312,9 +310,9 @@ export function DocumentFormSheet({
     }
   }
 
-  /** After a request was issued: send it over the ticked channels, then show the
-   *  outcome (or, with nothing ticked, the per-supplier PDF / print list). */
-  async function finishRequest(id: string, number: number) {
+  /** After a request was issued: send it over the ticked channels, then ONE toast
+   *  summarises the outcome. The caller closes the sheet. */
+  async function finishRequest(number: number, id: string, note: string | null) {
     const sending = sendEmail || sendWhatsapp;
     let results: IssueResult[] | null = null;
     let sendError: string | null = null;
@@ -332,19 +330,8 @@ export function DocumentFormSheet({
         sendError = 'השליחה נכשלה';
       }
     }
-    setIssued({
-      id, heading: docHeading('rfq', number), results, sendError,
-      parties: parties.map((p) => ({ key: p.key, name: p.name })),
-    });
-    // The list behind the form already shows the new request.
-    onSaved(id, false);
-  }
-
-  function closeResults() {
-    const info = issued;
-    setIssued(null);
-    onOpenChange(false);
-    if (info) onSaved(info.id, true);
+    const summary = buildIssueSummary({ heading: docHeading('rfq', number), sending, results, sendError, note });
+    toast[summary.level](summary.message);
   }
 
   async function save() {
@@ -384,18 +371,19 @@ export function DocumentFormSheet({
         return;
       }
       const id: string = detail ? detail.document.id : body.id;
-      if (!editing && nextNumber !== null && body.number !== nextNumber) {
+      const taken = !editing && nextNumber !== null && body.number !== nextNumber;
+      const takenNote = taken ? `המספר ${nextNumber} נתפס בינתיים` : null;
+      if (isRfq && !editing) {
+        // A request is sent in the same step (the ticks); one toast tells the outcome.
+        await finishRequest(body.number ?? nextNumber ?? 0, id, takenNote);
+      } else if (taken) {
         toast.info(`המספר ${nextNumber} נתפס בינתיים — המסמך הופק כמספר ${body.number}`);
       } else {
         toast.success(editing ? 'המסמך עודכן' : `${DOC_LABEL[type]} מספר ${body.number} הופקה`);
       }
-      // A request is sent in the same step (the ticks), then its outcome is shown.
-      if (isRfq && !editing) {
-        await finishRequest(id, body.number ?? nextNumber ?? 0);
-        return;
-      }
+      // Back to the table: the parent only refreshes its list, nothing opens on top.
       onOpenChange(false);
-      onSaved(id, true);
+      onSaved(id, false);
     } catch {
       toast.error('השמירה נכשלה');
     } finally {
@@ -404,7 +392,6 @@ export function DocumentFormSheet({
   }
 
   return (
-    <>
     <Sheet open={open} onOpenChange={(o) => { if (!o) requestClose(); else onOpenChange(o); }}>
       <SheetContent
         side="left"
@@ -433,6 +420,7 @@ export function DocumentFormSheet({
                   needsStart ? (errors.start ?? `זה ${DOC_LABEL[type]} הראשונה — מכאן המספר רץ אוטומטית`) : '',
                   draft ? 'טיוטה שמורה — המספר יוקצה בהפקה' : '',
                   prefill ? `מבקשה מספר ${prefill.source_rfq_number}` : '',
+                  !detail && !prefill && !needsStart ? 'מסמך חדש · טרם הופק' : '',
                 ].filter(Boolean).join(' · ')}
               </p>
             </div>
@@ -450,7 +438,7 @@ export function DocumentFormSheet({
 
         <div className="flex-1 space-y-5 overflow-y-auto bg-slate-50/60 p-5">
           <Section title="פרטי המסמך" icon={Hash} iconTone="blue">
-            <div className="grid gap-4 py-2 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 py-2 min-[420px]:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="doc-date" className="text-base font-medium text-muted-foreground">
                   תאריך מסמך<span className="text-red-500"> *</span>
@@ -479,8 +467,18 @@ export function DocumentFormSheet({
                 </div>
               )}
 
+              {isRfq && (
+                <div className="min-[420px]:col-span-2">
+                  <Field
+                    id="doc-title" label="נושא" required={titleRequired} value={title}
+                    placeholder="למשל: עבודות צבע בחדר מדרגות — בניין אלמוג"
+                    onChange={(v) => setTitle(v.slice(0, PURCHASING_LIMITS.titleMax))} error={errors.title} disabled={busy}
+                  />
+                </div>
+              )}
+
               {isRfq ? (
-                <div className="sm:col-span-2">
+                <div className="min-[420px]:col-span-2">
                   <RecipientsField
                     parties={parties} onParties={setParties} suppliers={suppliers}
                     sendEmail={sendEmail} sendWhatsapp={sendWhatsapp}
@@ -489,7 +487,7 @@ export function DocumentFormSheet({
                   />
                 </div>
               ) : (
-                <div className="sm:col-span-2">
+                <div className="min-[420px]:col-span-2">
                   <SupplierField
                     id="doc-supplier" text={supplierText} supplierId={supplierId} suppliers={suppliers}
                     onChange={(n) => { setSupplierText(n.text); setSupplierId(n.supplierId); }}
@@ -501,18 +499,20 @@ export function DocumentFormSheet({
                 <>
                   <Field id="doc-supplier-phone" label="טלפון" value={phone} onChange={setPhone} dir="ltr" inputMode="tel" disabled={busy} />
                   <Field id="doc-supplier-email" label="מייל" value={email} onChange={setEmail} dir="ltr" type="email" error={errors.email} disabled={busy} />
-                  <div className="sm:col-span-2">
+                  <div className="min-[420px]:col-span-2">
                     <Field id="doc-supplier-address" label="כתובת" value={address} onChange={setAddress} disabled={busy} />
                   </div>
                 </>
               )}
 
-              <div className="sm:col-span-2">
-                <Field
-                  id="doc-title" label={isRfq ? 'נושא' : 'תיאור'} required={titleRequired} value={title}
-                  onChange={(v) => setTitle(v.slice(0, PURCHASING_LIMITS.titleMax))} error={errors.title} disabled={busy}
-                />
-              </div>
+              {!isRfq && (
+                <div className="min-[420px]:col-span-2">
+                  <Field
+                    id="doc-title" label="תיאור" value={title}
+                    onChange={(v) => setTitle(v.slice(0, PURCHASING_LIMITS.titleMax))} error={errors.title} disabled={busy}
+                  />
+                </div>
+              )}
             </div>
           </Section>
 
@@ -531,13 +531,13 @@ export function DocumentFormSheet({
             </div>
           </Section>
 
-          <Section title="הערות" icon={StickyNote} iconTone="amber">
+          <Section title="הערות" icon={FileText} iconTone="amber">
             <div className="space-y-2 py-2">
               <Textarea
                 id="doc-notes" value={notes} rows={4} disabled={busy}
+                placeholder="הערות שיופיעו על גבי המסמך (לא חובה)"
                 onChange={(e) => setNotes(e.target.value.slice(0, PURCHASING_LIMITS.notesMax))}
               />
-              <p className="text-[12px] text-slate-500">מודפס בתחתית המסמך.</p>
             </div>
           </Section>
         </div>
@@ -545,7 +545,7 @@ export function DocumentFormSheet({
         <footer className="flex-none border-t border-slate-200 bg-white px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" variant="outline" onClick={requestClose} disabled={busy} className="h-11 flex-1 sm:flex-none">
+              <Button type="button" variant="ghost" onClick={requestClose} disabled={busy} className="h-11 flex-1 sm:flex-none">
                 ביטול
               </Button>
               {!editing && (
@@ -559,7 +559,7 @@ export function DocumentFormSheet({
                 {previewing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />} תצוגה מקדימה
               </Button>
               <Button type="button" onClick={save} disabled={busy} className="h-11 flex-1 gap-2 sm:flex-none">
-                <FilePlus2 className="h-4 w-4" />
+                <FileDown className="h-4 w-4" />
                 {saving ? 'שומר…' : editing ? 'שמור שינויים' : 'הפק את המסמך'}
               </Button>
             </div>
@@ -567,7 +567,5 @@ export function DocumentFormSheet({
         </footer>
       </SheetContent>
     </Sheet>
-    <IssueResultsSheet info={issued} onClose={closeResults} />
-    </>
   );
 }

@@ -4,7 +4,7 @@ import type { PoolClient } from 'pg';
 import { query, queryOne, withTransaction } from '@/lib/db';
 import {
   DEFAULT_VAT_RATE, EMPTY_COMPANY, partyKey, quoteTotal,
-  type CompanySettings, type DocType,
+  type CompanySettings, type DocType, type PriceMode,
 } from '@/lib/purchasing/model';
 
 // Purchasing ("רכש") persistence — requests for quotation and purchase orders.
@@ -225,6 +225,8 @@ export interface DocumentListItem extends DocumentRow {
   quote_count: number;
   /** Portal quotes that arrived (or were amended) after the request was last opened. */
   unseen_quote_count: number;
+  /** An RFQ's recipients (party key = supplier uuid, or the hand-typed supplier's manual key); a PO has none. */
+  parties: Array<{ key: string; name: string }>;
 }
 
 /** A portal quote is "new" while it is later than the request's `quotes_seen_at`
@@ -243,7 +245,14 @@ export async function listDocuments(type: DocType): Promise<DocumentListItem[]> 
                    from public.purchasing_lines l where l.document_id = d.id), 0)::float8 as subtotal,
        (select count(*)::int from public.purchasing_rfq_recipients rr where rr.rfq_id = d.id) as recipient_count,
        (select count(*)::int from public.purchasing_quotes q where q.rfq_id = d.id) as quote_count,
-       (${UNSEEN_QUOTES_SQL}) as unseen_quote_count
+       (${UNSEEN_QUOTES_SQL}) as unseen_quote_count,
+       (select coalesce(json_agg(json_build_object(
+                 'key', coalesce(rr.supplier_id::text, rr.manual_key),
+                 'name', coalesce(nullif(ps.company_name, ''), ps.display_name, nullif(rr.supplier_name, ''), '')
+               ) order by rr.created_at, rr.id), '[]'::json)
+          from public.purchasing_rfq_recipients rr
+          left join public.suppliers ps on ps.id = rr.supplier_id
+         where rr.rfq_id = d.id) as parties
      ${DOC_JOINS}
      where d.doc_type = $1 and d.deleted_at is null
      order by (d.status = 'draft') desc, d.doc_date desc, d.number desc nulls first, d.created_at desc`,
@@ -658,6 +667,8 @@ export interface PublicQuoteContext {
     id: string; number: number; title: string; doc_date: string; due_date: string;
     notes: string; vat_rate: number;
   };
+  /** The user who created the request — the only user detail the public page shows. */
+  requester: { name: string; phone: string; email: string };
   lines: Array<{ id: string; sort_order: number; description: string; quantity: number }>;
   quote: QuoteRow | null;
   /** The request's own attachments (staff-side), for the supplier to download. */
@@ -673,15 +684,20 @@ export async function findPublicContext(token: string): Promise<PublicQuoteConte
     id: string; rfq_id: string; supplier_id: string | null; manual_key: string | null; supplier_name: string;
     supplier_phone: string | null; supplier_email: string | null; supplier_address: string | null;
     number: number; title: string; doc_date: string; due_date: string; notes: string; vat_rate: number;
+    requester_name: string; requester_phone: string; requester_email: string;
   }>(
     `select rr.id, rr.rfq_id, rr.supplier_id, rr.manual_key,
             coalesce(nullif(s.company_name, ''), s.display_name, nullif(rr.supplier_name, '')) as supplier_name,
             rr.supplier_phone, rr.supplier_email, rr.supplier_address,
             d.number, coalesce(d.title, '') as title, d.doc_date::text as doc_date, d.due_date::text as due_date,
-            d.notes, d.vat_rate::float8 as vat_rate
+            d.notes, d.vat_rate::float8 as vat_rate,
+            coalesce(nullif(btrim(u.full_name), ''), '') as requester_name,
+            coalesce(nullif(btrim(u.notification_phone), ''), '') as requester_phone,
+            coalesce(u.email, '') as requester_email
        from public.purchasing_rfq_recipients rr
        join public.purchasing_documents d on d.id = rr.rfq_id and d.deleted_at is null and d.doc_type = 'rfq'
                                           and d.status = 'issued'
+       left join public.users u on u.id = d.created_by
        left join public.suppliers s on s.id = rr.supplier_id
       where rr.token = $1`,
     [token],
@@ -702,6 +718,7 @@ export async function findPublicContext(token: string): Promise<PublicQuoteConte
       id: rec.rfq_id, number: rec.number, title: rec.title, doc_date: rec.doc_date,
       due_date: rec.due_date, notes: rec.notes, vat_rate: rec.vat_rate,
     },
+    requester: { name: rec.requester_name, phone: rec.requester_phone, email: rec.requester_email },
     lines,
     quote,
     rfq_files: await listDocumentFiles(rec.rfq_id),
@@ -736,25 +753,29 @@ export interface QuoteRow {
   notes: string;
   submitted_at: string;
   updated_at: string;
-  /** line id → unit price. */
+  /** How the supplier typed his prices (portal quotes; a manual quote is always 'excl'). */
+  price_mode: PriceMode;
+  /** line id → unit price BEFORE VAT (normalised) — what every reader of a quote uses. */
   prices: Record<string, number>;
+  /** line id → the unit price exactly as the supplier typed it (the public page shows it back). */
+  entered_prices: Record<string, number>;
   files: FileRow[];
 }
 
-type QuoteBase = Omit<QuoteRow, 'prices' | 'files'>;
+type QuoteBase = Omit<QuoteRow, 'prices' | 'entered_prices' | 'files'>;
 
 const QUOTE_COLS = `
   q.id, q.rfq_id, q.supplier_id, q.manual_key,
   coalesce(nullif(s.company_name, ''), s.display_name, nullif(q.supplier_name, '')) as supplier_name,
   q.supplier_phone, q.supplier_email, q.supplier_address,
   q.source, q.total_amount::float8 as total_amount, q.valid_until::text as valid_until,
-  q.notes, q.submitted_at, q.updated_at`;
+  q.notes, q.submitted_at, q.updated_at, q.price_mode`;
 
 async function hydrateQuotes(bases: QuoteBase[]): Promise<QuoteRow[]> {
   if (bases.length === 0) return [];
   const ids = bases.map((b) => b.id);
-  const prices = await query<{ quote_id: string; line_id: string; unit_price: number }>(
-    `select quote_id, line_id, unit_price::float8 as unit_price
+  const prices = await query<{ quote_id: string; line_id: string; unit_price: number; entered_unit_price: number }>(
+    `select quote_id, line_id, unit_price::float8 as unit_price, entered_unit_price::float8 as entered_unit_price
        from public.purchasing_quote_lines where quote_id = any($1::uuid[])`,
     [ids],
   );
@@ -767,6 +788,7 @@ async function hydrateQuotes(bases: QuoteBase[]): Promise<QuoteRow[]> {
   return bases.map((b) => ({
     ...b,
     prices: Object.fromEntries(prices.rows.filter((p) => p.quote_id === b.id).map((p) => [p.line_id, p.unit_price])),
+    entered_prices: Object.fromEntries(prices.rows.filter((p) => p.quote_id === b.id).map((p) => [p.line_id, p.entered_unit_price])),
     files: files.rows.filter((f) => f.quote_id === b.id),
   }));
 }
@@ -808,8 +830,12 @@ export interface UpsertQuoteInput {
   total_amount: number | null;
   valid_until: string | null;
   notes: string;
-  /** line id → unit price; the caller has verified every id belongs to the RFQ. */
+  /** line id → unit price BEFORE VAT; the caller has verified every id belongs to the RFQ. */
   prices: Record<string, number>;
+  /** 'incl' only for a portal quote the supplier typed with VAT; default 'excl'. */
+  price_mode?: PriceMode;
+  /** line id → the price as typed; default = `prices`. */
+  entered_prices?: Record<string, number>;
   actor_id: string | null;
 }
 
@@ -817,28 +843,28 @@ export interface UpsertQuoteInput {
  *  set is replaced wholesale (the form always sends the full set). */
 export async function upsertQuote(input: UpsertQuoteInput): Promise<string> {
   return withTransaction(async (client) => {
-    const common = [input.source, input.total_amount, input.valid_until, input.notes, input.actor_id];
+    const common = [input.source, input.total_amount, input.valid_until, input.notes, input.actor_id, input.price_mode ?? 'excl'];
     const q = input.supplier_id
       ? await client.query<{ id: string }>(
           `insert into public.purchasing_quotes
-             (rfq_id, supplier_id, source, total_amount, valid_until, notes, created_by)
-           values ($1, $2, $3, $4, $5, $6, $7)
+             (rfq_id, supplier_id, source, total_amount, valid_until, notes, created_by, price_mode)
+           values ($1, $2, $3, $4, $5, $6, $7, $8)
            on conflict (rfq_id, supplier_id) do update
              set source = excluded.source, total_amount = excluded.total_amount,
                  valid_until = excluded.valid_until, notes = excluded.notes,
-                 updated_at = now()
+                 price_mode = excluded.price_mode, updated_at = now()
            returning id`,
           [input.rfq_id, input.supplier_id, ...common],
         )
       : await client.query<{ id: string }>(
           `insert into public.purchasing_quotes
-             (rfq_id, supplier_id, source, total_amount, valid_until, notes, created_by,
+             (rfq_id, supplier_id, source, total_amount, valid_until, notes, created_by, price_mode,
               manual_key, supplier_name, supplier_phone, supplier_email, supplier_address)
-           values ($1, null, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           values ($1, null, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            on conflict (rfq_id, manual_key) where manual_key is not null do update
              set source = excluded.source, total_amount = excluded.total_amount,
                  valid_until = excluded.valid_until, notes = excluded.notes,
-                 updated_at = now()
+                 price_mode = excluded.price_mode, updated_at = now()
            returning id`,
           [
             input.rfq_id, ...common, input.party?.key ?? null, input.party?.name ?? null, input.party?.phone ?? null,
@@ -849,8 +875,8 @@ export async function upsertQuote(input: UpsertQuoteInput): Promise<string> {
     await client.query(`delete from public.purchasing_quote_lines where quote_id = $1`, [id]);
     for (const [lineId, price] of Object.entries(input.prices)) {
       await client.query(
-        `insert into public.purchasing_quote_lines (quote_id, line_id, unit_price) values ($1, $2, $3)`,
-        [id, lineId, price],
+        `insert into public.purchasing_quote_lines (quote_id, line_id, unit_price, entered_unit_price) values ($1, $2, $3, $4)`,
+        [id, lineId, price, input.entered_prices?.[lineId] ?? price],
       );
     }
     return id;

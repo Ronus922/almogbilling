@@ -127,19 +127,17 @@ export function RecipientsField({
 
       <div className="space-y-2" data-send-by>
         <Label className="text-base font-medium text-muted-foreground">לשלוח ב:</Label>
-        <CheckRow checked={sendEmail} onToggle={() => onSendEmail(!sendEmail)} disabled={disabled} name="מייל">
-          <Mail className="h-4 w-4 text-ink-3" aria-hidden />
-          <span className="text-sm font-semibold text-ink">מייל</span>
-          <span className="text-xs text-ink-3">ה-PDF והקישור האישי מצורפים להודעה</span>
+        <CheckRow checked={sendEmail} onToggle={() => onSendEmail(!sendEmail)} disabled={disabled} name="מייל" className="min-h-12 flex-wrap">
+          <Mail className="h-5 w-5 text-slate-500" aria-hidden />
+          <span className="text-sm font-bold text-ink">מייל</span>
+          <span className="text-sm text-slate-500">ה-PDF והקישור האישי מצורפים להודעה</span>
         </CheckRow>
-        <CheckRow checked={sendWhatsapp} onToggle={() => onSendWhatsapp(!sendWhatsapp)} disabled={disabled} name="וואטסאפ">
-          <MessageCircle className="h-4 w-4 text-ink-3" aria-hidden />
-          <span className="text-sm font-semibold text-ink">וואטסאפ</span>
-          <span className="text-xs text-ink-3">הודעה עם הקישור האישי + ה-PDF כקובץ</span>
+        <CheckRow checked={sendWhatsapp} onToggle={() => onSendWhatsapp(!sendWhatsapp)} disabled={disabled} name="וואטסאפ" className="min-h-12 flex-wrap">
+          <MessageCircle className="h-5 w-5 text-slate-500" aria-hidden />
+          <span className="text-sm font-bold text-ink">וואטסאפ</span>
+          <span className="text-sm text-slate-500">הודעה עם הקישור האישי + ה-PDF כקובץ</span>
         </CheckRow>
-        {!sendEmail && !sendWhatsapp && (
-          <p className="text-[12px] text-slate-500">ללא סימון — המסמך יופק בלי שליחה, ותוצג רשימת הספקים עם הורדה והדפסה של PDF לכל ספק.</p>
-        )}
+        <p className="text-[12px] text-slate-500">ללא סימון — המסמך יופק בלי שליחה. אפשר להוריד או להדפיס PDF לכל ספק מהטבלה</p>
       </div>
     </div>
   );
