@@ -20,7 +20,7 @@ import { MAILPIT_URL, mailpitClear, saveSmtpSettings } from './helpers';
 // Storage is unreachable in CI, so nothing here uploads a file (the file rules are locked by
 // tests/purchasing-public-route.test.ts and tests/purchasing-rbac-route.test.ts).
 //
-// Screenshots of the key screens go to /var/billing-proof/rfq-v2/ (outside the repo).
+// With E2E_PROOF_DIR=/var/billing-proof/rfq-v2 the key screens are saved there (outside the repo).
 // Fixtures are removed by the exact ids recorded here (CLAUDE.md iron rule 12); the company
 // setting and the two number series are restored to what they were.
 
@@ -29,7 +29,8 @@ pool.on('error', () => undefined);
 
 const RUN = Date.now().toString().slice(-7);
 const GREEN = `http://127.0.0.1:${process.env.E2E_GREENAPI_PORT ?? '3110'}`;
-const PROOF = '/var/billing-proof/rfq-v2';
+// Only when E2E_PROOF_DIR is set (never in CI): the screenshots are a local review aid.
+const PROOF = process.env.E2E_PROOF_DIR ?? '';
 const SUP_A = `ספק א׳ ${RUN}`;
 const SUP_B = `ספק ב׳ ${RUN}`;
 const MOBILE_A = `05${RUN.slice(0, 8).padEnd(8, '1')}`;
@@ -62,7 +63,7 @@ let instanceMedia: { id: string; media_url: string | null } | null = null;
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => {
-  fs.mkdirSync(PROOF, { recursive: true });
+  if (PROOF) fs.mkdirSync(PROOF, { recursive: true });
   const co = await pool.query(`select value from public.app_settings where key = 'purchasing_company'`);
   hadCompany = co.rowCount === 1;
   priorCompany = co.rows[0]?.value ?? null;
@@ -135,7 +136,7 @@ async function docIdByTitle(title: string): Promise<string> {
 
 const sheet = (page: Page) => page.getByRole('dialog').last();
 const toastOf = (page: Page, text: string) => page.locator('[data-sonner-toast]').filter({ hasText: text }).first();
-const shot = (page: Page, name: string) => page.screenshot({ path: `${PROOF}/${name}.png`, fullPage: true });
+const shot = async (page: Page, name: string) => { if (PROOF) await page.screenshot({ path: `${PROOF}/${name}.png`, fullPage: true }); };
 
 /** R1: after issuing / saving a draft the form is gone, no other window took its place, the table shows. */
 async function expectBackOnTable(page: Page) {
