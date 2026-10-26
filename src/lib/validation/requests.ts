@@ -32,6 +32,19 @@ export const legalStatusBodySchema = z.object({
     .nullable(),
 });
 
+// PUT /api/debtors/legal-status/bulk — one status for many apartments. The id
+// list is de-duplicated here, so the route (and its row-count assertions)
+// work on distinct apartments. The cap is far above the building (~290).
+export const BULK_LEGAL_STATUS_MAX_DEBTORS = 500;
+export const legalStatusBulkBodySchema = z.object({
+  debtor_ids: z
+    .array(z.uuid({ error: 'invalid_debtor_id' }), { error: 'missing_debtor_ids' })
+    .min(1, { error: 'missing_debtor_ids' })
+    .max(BULK_LEGAL_STATUS_MAX_DEBTORS, { error: 'too_many_debtors' })
+    .transform((ids) => [...new Set(ids)]),
+  status_id: z.uuid({ error: (iss) => (iss.input === undefined ? 'missing_status_id' : 'invalid_status_id') }),
+});
+
 // PUT /api/settings/smtp
 const GMAIL_RX = /^[^\s@]+@gmail\.com$/i;
 export const smtpSettingsBodySchema = z.object({

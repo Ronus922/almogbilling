@@ -708,6 +708,124 @@ export async function updateDebtorLegalStatus(
   });
 }
 
+export interface BulkLegalStatusChange {
+  debtor_id: string;
+  apartment_number: string;
+  owner_name: string | null;
+  old_status_name: string | null;
+}
+
+export interface BulkLegalStatusResult {
+  new: { id: string; name: string; color: string; notification_emails: string[] | null };
+  /** Apartments whose status actually changed, in apartment-number order. */
+  changed: BulkLegalStatusChange[];
+  /** Apartments already on the target status: untouched — no history row, no mail line. */
+  skipped: number;
+}
+
+/** Thrown (message `debtor_not_found`) when any requested apartment does not exist. */
+export class DebtorsNotFoundError extends Error {
+  constructor(readonly missingIds: string[]) {
+    super('debtor_not_found');
+  }
+}
+
+const apartmentOrder = new Intl.Collator('he', { numeric: true });
+
+/**
+ * One legal status for many apartments — all or nothing. Per apartment it does
+ * exactly what updateDebtorLegalStatus does (legal_status_id, source MANUAL,
+ * updated_at/by/by_name on `debtors`, plus its own `legal_status_history` row
+ * with the old/new snapshot), in ONE transaction: every row is locked first, a
+ * missing apartment or an inactive status aborts before any write, and the two
+ * writes assert their row counts, so a partial change rolls back whole. An
+ * apartment already on the target status is skipped (no "X → X" row).
+ */
+export async function bulkUpdateDebtorLegalStatus(
+  debtorIds: readonly string[],
+  newStatusId: string,
+  user: { id: string; name: string },
+): Promise<BulkLegalStatusResult> {
+  return withTransaction(async (client) => {
+    const sRes = await client.query<{ name: string; color: string; notification_emails: string[] | null }>(
+      `select name, color, notification_emails
+         from public.statuses
+         where id = $1 and is_active = true`,
+      [newStatusId],
+    );
+    const status = sRes.rows[0];
+    if (!status) throw new Error('status_not_found');
+
+    // Locked in id order, so two overlapping bulk updates cannot deadlock.
+    const found = await client.query<{
+      id: string;
+      apartment_number: string;
+      owner_name: string | null;
+      old_id: string | null;
+      old_name: string | null;
+    }>(
+      `select d.id, d.apartment_number,
+              ${OWNER_NAME_SQL} as owner_name,
+              d.legal_status_id as old_id,
+              s.name            as old_name
+         from ${DEBTORS_CONTACTS_JOIN}
+         where d.id = any($1::uuid[])
+         order by d.id
+         for update of d`,
+      [debtorIds],
+    );
+    if (found.rows.length !== debtorIds.length) {
+      const have = new Set(found.rows.map((r) => r.id));
+      throw new DebtorsNotFoundError(debtorIds.filter((id) => !have.has(id)));
+    }
+
+    const changing = found.rows.filter((r) => r.old_id !== newStatusId);
+    if (changing.length > 0) {
+      const ids = changing.map((r) => r.id);
+      const history = await client.query(
+        `insert into public.legal_status_history
+           (debtor_id, apartment_number,
+            old_status_id, old_status_name,
+            new_status_id, new_status_name,
+            changed_by, changed_by_name, source)
+         select d.id, d.apartment_number,
+                d.legal_status_id, s.name,
+                $2::uuid, $3::text,
+                $4::uuid, $5::text, 'MANUAL'
+           from ${DEBTORS_JOIN}
+           where d.id = any($1::uuid[])`,
+        [ids, newStatusId, status.name, user.id, user.name],
+      );
+      if (history.rowCount !== ids.length) throw new Error('bulk_history_mismatch');
+
+      const updated = await client.query(
+        `update public.debtors
+            set legal_status_id               = $2,
+                legal_status_source           = 'MANUAL',
+                legal_status_updated_at       = now(),
+                legal_status_updated_by       = $3,
+                legal_status_updated_by_name  = $4
+          where id = any($1::uuid[])`,
+        [ids, newStatusId, user.id, user.name],
+      );
+      if (updated.rowCount !== ids.length) throw new Error('bulk_update_mismatch');
+    }
+
+    return {
+      new: { id: newStatusId, ...status },
+      changed: changing
+        .map((r) => ({
+          debtor_id: r.id,
+          apartment_number: r.apartment_number,
+          owner_name: r.owner_name,
+          old_status_name: r.old_name,
+        }))
+        .sort((a, b) => apartmentOrder.compare(a.apartment_number, b.apartment_number)),
+      skipped: found.rows.length - changing.length,
+    };
+  });
+}
+
 // Archive / restore now live in the archive route (transactional, with event
 // logging via logDebtorEvent). See src/app/api/debtors/[id]/archive/route.ts.
 

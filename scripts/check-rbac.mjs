@@ -20,12 +20,15 @@
 //       and purchasing_orders — with a view / edit level each: admin and
 //       super_admin pass both, a matrix role gets only its rows (no row ⇒
 //       denied), an admin may grant them, and the module's settings are by role.
+//     • the bulk legal-status change (debtors table checkbox bar) is by ROLE —
+//       admin and super_admin only — and never through the matrix: a manager
+//       keeps status_management:edit (one apartment) but is refused the batch.
 //     • broadcasts on BOTH channels (WhatsApp / email, 09/10/2026) ride the
 //       existing whatsapp_chat module — send = edit, history = view — with no
 //       module of their own.
 //   Run under tsx (imports .ts source). Pure — no DB.
 import { run, fail, ok } from './_check-lib.mjs';
-import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone, canDeleteUsers, canGrantModule, canOpenUsersScreen } from '../src/lib/permissions/check.ts';
+import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone, canDeleteUsers, canGrantModule, canOpenUsersScreen, canBulkChangeLegalStatus } from '../src/lib/permissions/check.ts';
 import { canPurchasingSettings } from '../src/lib/purchasing/access.ts';
 import { DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER, MODULES } from '../src/lib/permissions/constants.ts';
 
@@ -161,6 +164,17 @@ run('check-rbac', async () => {
   }
   t('מטריצה: manager לא מעניק כלום', canGrantModule('manager', 'dashboard') === false);
   t('admin עדיין נחסם users_management בהרשאה עצמה', hasPermission('admin', [], 'users_management', 'view') === false);
+
+  // Bulk legal-status change (the debtors table's checkbox bar) — by ROLE, never
+  // the matrix, and deliberately narrower than status_management:edit: a manager
+  // holds that row (DEFAULT_MANAGER) and still changes ONE apartment's status,
+  // but a row in anyone's matrix can never open the batch.
+  t('סטטוס מרוכז: super_admin רשאי', canBulkChangeLegalStatus('super_admin') === true);
+  t('סטטוס מרוכז: admin רשאי', canBulkChangeLegalStatus('admin') === true);
+  for (const role of ['manager', 'viewer', 'cleaner', 'maintenance']) {
+    t(`סטטוס מרוכז: ${role} נחסם`, canBulkChangeLegalStatus(role) === false);
+  }
+  t('סטטוס מרוכז: מנהל עם status_management/edit עדיין נחסם מהבאלק', hasPermission('manager', DEFAULT_MANAGER, 'status_management', 'edit') === true && canBulkChangeLegalStatus('manager') === false);
 
   // Broadcasts — the "תפוצה" category and the email channel (09/10/2026). The
   // same gates as the pages, the routes and the nav: whatsapp_chat edit/view.

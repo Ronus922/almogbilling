@@ -113,6 +113,18 @@ export function canDeleteUsers(role: Role): boolean {
 }
 
 /**
+ * May `role` change the legal status of many apartments in one action
+ * (PUT /api/debtors/legal-status/bulk, the debtors table's checkbox bar)? By
+ * ROLE — admin and super_admin — never through the matrix: it is deliberately
+ * narrower than `status_management:edit`, which a manager holds and which still
+ * lets them change ONE apartment's status. The route's guard is requireAdmin()
+ * (the same two roles); the dashboard page passes this predicate to the table.
+ */
+export function canBulkChangeLegalStatus(role: Role): boolean {
+  return isElevatedRole(role);
+}
+
+/**
  * May this actor see the phone of a resident who reported a fault from the
  * owners portal? The tenants-list permission (REPORTER_PHONE_PERMISSION,
  * contacts:view) — the one that already governs owners' contact details. Used

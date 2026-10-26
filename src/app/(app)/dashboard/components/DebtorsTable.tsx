@@ -7,8 +7,10 @@ import { todayInJerusalem } from '@/lib/dates';
 import { toast } from 'sonner';
 import {
   ArrowUp, ArrowDown, Archive, ArchiveRestore, MessageSquare, MessageCircle,
-  ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Send, X,
+  ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Send,
 } from 'lucide-react';
+import { DebtorsSelectionBar } from './DebtorsSelectionBar';
+import { BulkLegalStatusControls } from './BulkLegalStatusControls';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -74,6 +76,7 @@ export function DebtorsTable({
   canChangeStatus,
   canArchive,
   canSendWhatsapp,
+  canBulkStatus,
   canViewChips,
   canEditChips,
   canViewPortal,
@@ -87,6 +90,8 @@ export function DebtorsTable({
   canChangeStatus: boolean;
   canArchive: boolean;
   canSendWhatsapp: boolean;
+  /** Admin / super admin: the bulk legal-status action (PUT /api/debtors/legal-status/bulk). */
+  canBulkStatus: boolean;
   canViewChips: boolean;
   canEditChips: boolean;
   canViewPortal: boolean;
@@ -109,11 +114,18 @@ export function DebtorsTable({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
 
-  // Selection is per-page: navigating / re-sorting / changing tab clears it so we
-  // never bulk-send to rows that scrolled out of view.
+  // The checkbox column serves both bulk actions: WhatsApp (whatsapp:edit) and
+  // the legal status (admin). Whoever has neither sees no checkboxes.
+  const showSelection = canSendWhatsapp || canBulkStatus;
+
+  // Selection is per-page: navigating / re-sorting / changing tab or search
+  // clears it so we never bulk-act on rows that scrolled out of view or that
+  // the new filter no longer lists.
+  const searchQ = searchParams.get('q');
+  const searchApt = searchParams.get('apt');
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [page, currentSort, currentTab]);
+  }, [page, currentSort, currentTab, searchQ, searchApt]);
 
   const pageIds = rows.map((d) => d.id);
   const selectedOnPage = pageIds.filter((id) => selectedIds.has(id));
@@ -133,9 +145,13 @@ export function DebtorsTable({
     setSelectedIds(() => (checked ? new Set(pageIds) : new Set()));
   }
 
-  const bulkRecipients: WhatsAppRecipient[] = rows
-    .filter((d) => selectedIds.has(d.id))
-    .map(toRecipient);
+  // The rows the user sees ticked — what every bulk action is applied to.
+  const selectedRows = rows.filter((d) => selectedIds.has(d.id));
+  const bulkRecipients: WhatsAppRecipient[] = selectedRows.map(toRecipient);
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
 
   useEscapeKey(markDone !== null && !marking, () => setMarkDone(null));
   useEscapeKey(archiveTarget !== null && !archiving, () => setArchiveTarget(null));
@@ -263,33 +279,17 @@ export function DebtorsTable({
 
   return (
     <div className="space-y-3">
-      {canSendWhatsapp && selectedIds.size > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-2.5">
-          <span className="text-sm font-semibold text-emerald-900">
-            {selectedIds.size} נבחרו
-          </span>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="approve"
-              onClick={() => setBulkOpen(true)}
-              className="gap-2"
-            >
-              <Send className="h-4 w-4" />
-              שליחת WhatsApp
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => setSelectedIds(new Set())}
-              className="gap-1.5 text-slate-600 hover:text-slate-800"
-            >
-              <X className="h-4 w-4" />
-              נקה בחירה
-            </Button>
-          </div>
+      {/* Mobile has no table header to carry the select-all box, so the cards
+          get the same box in a row of their own. */}
+      {showSelection && (
+        <div className="flex min-h-11 items-center gap-3 rounded-xl border border-line bg-surface-2 px-3 py-2 text-sm font-semibold text-ink-2 roomy:hidden">
+          <Checkbox
+            checked={allSelected}
+            indeterminate={someSelected}
+            onCheckedChange={(v) => toggleAll(v === true)}
+            aria-label="בחר הכל"
+          />
+          <span>בחר הכל ({rows.length})</span>
         </div>
       )}
       {/* Mobile (<md) — one card per debtor. The desktop table is ten columns
@@ -329,7 +329,7 @@ export function DebtorsTable({
                   `pointer-events: none` child re-targets its nearest painted
                   ancestor, which is this wrapper (z-10), not the button (z-0). */}
               <div className="pointer-events-none relative z-10 flex items-start gap-3">
-                {canSendWhatsapp && (
+                {showSelection && (
                   /* No `hit-44` here: the Checkbox primitive already grows its
                      own 44px hit box (`after:-inset-3.5`) targeting itself. A
                      wrapper-level ::after would paint above it and swallow the
@@ -434,7 +434,7 @@ export function DebtorsTable({
         <Table>
           <TableHeader className="[&_tr]:border-b [&_tr]:border-line">
             <TableRow className="bg-surface-2 hover:bg-surface-2">
-              {canSendWhatsapp && (
+              {showSelection && (
                 <TableHead className="h-11 w-10 px-4 text-center">
                   <Checkbox
                     checked={allSelected}
@@ -480,7 +480,7 @@ export function DebtorsTable({
                     selectedIds.has(d.id) && 'bg-emerald-50/40 hover:bg-emerald-50/60',
                   )}
                 >
-                  {canSendWhatsapp && (
+                  {showSelection && (
                     <TableCell className="w-10 px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                       <Checkbox
                         checked={selectedIds.has(d.id)}
@@ -589,6 +589,23 @@ export function DebtorsTable({
             </Link>
           </div>
         </div>
+      )}
+
+      {showSelection && selectedRows.length > 0 && (
+        <DebtorsSelectionBar count={selectedRows.length} onClear={clearSelection}>
+          {canBulkStatus && (
+            <BulkLegalStatusControls
+              rows={selectedRows}
+              onDone={() => { clearSelection(); router.refresh(); }}
+            />
+          )}
+          {canSendWhatsapp && (
+            <Button type="button" variant="approve" onClick={() => setBulkOpen(true)} className="w-full gap-2 sm:w-auto">
+              <Send className="h-4 w-4" />
+              שליחת WhatsApp
+            </Button>
+          )}
+        </DebtorsSelectionBar>
       )}
 
       <TenantDetailPanel
