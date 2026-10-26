@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
-import { hasAnyAccess, hasPermission } from '@/lib/permissions/check';
+import { canBulkChangeLegalStatus, hasAnyAccess, hasPermission } from '@/lib/permissions/check';
 import {
   getDashboardKpis,
   getTabCounts,
@@ -62,6 +62,9 @@ export default async function DashboardPage({
   const canSendWhatsapp = hasPermission(actor.role, actor.permissions, 'whatsapp', 'edit');
   const canSync = hasPermission(actor.role, actor.permissions, 'import', 'edit');
   const canChangeStatus = hasPermission(actor.role, actor.permissions, 'status_management', 'edit');
+  // Many apartments' legal status at once — admin / super_admin by ROLE (not the
+  // matrix): a manager still changes one apartment's status, never a batch.
+  const canBulkStatus = canBulkChangeLegalStatus(actor.role);
   const canViewChips = hasPermission(actor.role, actor.permissions, 'chips', 'view');
   const canEditChips = hasPermission(actor.role, actor.permissions, 'chips', 'edit');
   // Owners portal ("פורטל בעלי דירות") — the roster + login-log tabs of the
@@ -109,6 +112,7 @@ export default async function DashboardPage({
           canChangeStatus={canChangeStatus}
           canArchive={canArchive}
           canSendWhatsapp={canSendWhatsapp}
+          canBulkStatus={canBulkStatus}
           canViewChips={canViewChips}
           canEditChips={canEditChips}
           canViewPortal={canViewPortal}

@@ -3,6 +3,7 @@ import { resetPasswordTemplate } from '@/templates/email/reset-password';
 import { userInviteTemplate } from '@/templates/email/user-invite';
 import { taskNotificationTemplate } from '@/templates/email/task-notification';
 import { legalStatusChangeTemplate } from '@/templates/email/legal-status-change';
+import { legalStatusBulkChangeTemplate } from '@/templates/email/legal-status-bulk-change';
 import { broadcastEmailTemplate } from '@/templates/email/broadcast';
 import { appUrl } from '@/lib/config';
 
@@ -11,6 +12,7 @@ export type EmailTemplateName =
   | 'user-invite'
   | 'task-notification'
   | 'legal-status-change'
+  | 'legal-status-bulk-change'
   | 'broadcast';
 
 interface RenderArgs {
@@ -41,6 +43,14 @@ interface RenderArgs {
     signatureHtml: string;
     signatureText: string;
   };
+  'legal-status-bulk-change': {
+    newStatusName: string;
+    changes: { apartmentNumber: string; ownerName: string | null; oldStatusName: string | null }[];
+    changedByName: string;
+    changedAt: string;
+    signatureHtml: string;
+    signatureText: string;
+  };
   /** One email of a broadcast — the delivery worker renders it itself (it
    *  cannot load this server-only registry); registered for the app side. */
   broadcast: { subject: string; body: string };
@@ -65,6 +75,8 @@ export function renderTemplate<N extends EmailTemplateName>(
       return taskNotificationTemplate(data as RenderArgs['task-notification']);
     case 'legal-status-change':
       return legalStatusChangeTemplate(data as RenderArgs['legal-status-change']);
+    case 'legal-status-bulk-change':
+      return legalStatusBulkChangeTemplate(data as RenderArgs['legal-status-bulk-change']);
     case 'broadcast':
       return broadcastEmailTemplate({ ...(data as RenderArgs['broadcast']), site: appUrl() });
     default:

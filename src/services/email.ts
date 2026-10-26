@@ -135,31 +135,76 @@ export async function sendStatusChangeNotification(
   if (args.recipients.length === 0) return { sent: 0, failed: 0 };
 
   const sig = await getSignature();
-  const changedAt = new Date().toLocaleString('he-IL', {
-    timeZone: 'Asia/Jerusalem',
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
   const { subject, html, text } = renderTemplate('legal-status-change', {
     apartmentNumber: args.apartment_number,
     ownerName: args.owner_name,
     oldStatusName: args.old_status_name,
     newStatusName: args.new_status_name,
     changedByName: args.changed_by_name,
-    changedAt,
+    changedAt: statusChangedAtLabel(),
     signatureHtml: signatureHtml(sig),
     signatureText: signaturePlainLines(sig),
   });
+  return sendStatusMailToEach(args.recipients, { subject, html, text }, 'sendStatusChangeNotification');
+}
 
+export interface BulkStatusChangeEmailArgs {
+  new_status_name: string;
+  /** One entry per apartment whose status changed, in display order. */
+  changes: { apartment_number: string; owner_name: string | null; old_status_name: string | null }[];
+  changed_by_name: string;
+  recipients: string[];
+}
+
+/**
+ * The bulk counterpart of sendStatusChangeNotification: ONE email for the
+ * whole bulk change (every apartment with old ← new), not one per apartment.
+ * Same recipient list rule, same contract — a failing address is logged and
+ * skipped, nothing is thrown, the status change is already committed.
+ */
+export async function sendBulkStatusChangeNotification(
+  args: BulkStatusChangeEmailArgs,
+): Promise<{ sent: number; failed: number }> {
+  if (args.recipients.length === 0 || args.changes.length === 0) return { sent: 0, failed: 0 };
+
+  const sig = await getSignature();
+  const { subject, html, text } = renderTemplate('legal-status-bulk-change', {
+    newStatusName: args.new_status_name,
+    changes: args.changes.map((c) => ({
+      apartmentNumber: c.apartment_number,
+      ownerName: c.owner_name,
+      oldStatusName: c.old_status_name,
+    })),
+    changedByName: args.changed_by_name,
+    changedAt: statusChangedAtLabel(),
+    signatureHtml: signatureHtml(sig),
+    signatureText: signaturePlainLines(sig),
+  });
+  return sendStatusMailToEach(args.recipients, { subject, html, text }, 'sendBulkStatusChangeNotification');
+}
+
+function statusChangedAtLabel(): string {
+  return new Date().toLocaleString('he-IL', {
+    timeZone: 'Asia/Jerusalem',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
+async function sendStatusMailToEach(
+  recipients: readonly string[],
+  mail: { subject: string; html: string; text: string },
+  logTag: string,
+): Promise<{ sent: number; failed: number }> {
   let sent = 0;
   let failed = 0;
-  for (const to of args.recipients) {
+  for (const to of recipients) {
     try {
-      await sendWithRetry({ to, subject, html, text });
+      await sendWithRetry({ to, ...mail });
       sent++;
     } catch (err) {
       failed++;
-      logger.error('[sendStatusChangeNotification] failed for', to, err);
+      logger.error(`[${logTag}] failed for`, to, err);
     }
   }
   return { sent, failed };
