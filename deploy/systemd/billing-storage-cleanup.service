@@ -59,7 +59,8 @@ EnvironmentFile=/etc/billing/billing.env
 ExecStartPre=+/var/www/billing/scripts/backup/assert-storage-snapshot.sh
 # Absolute node + local tsx — no PATH/npx dependence under systemd's minimal env
 # (same as deploy/systemd/billing-bllink-scrape.service).
-ExecStart=/usr/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/storage-cleanup.ts
+# Node 22: billing's own binary (/opt/node22). The shared /usr/bin/node is Node 20 and serves other projects.
+ExecStart=/opt/node22/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/storage-cleanup.ts
 # ~1s for today's 117 objects; the ceiling is for a corpus orders of magnitude
 # larger, and a timeout under --apply would kill the run mid-delete.
 TimeoutStartSec=30min

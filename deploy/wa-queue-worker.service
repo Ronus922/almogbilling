@@ -18,7 +18,8 @@ User=ubuntu
 WorkingDirectory=/var/www/billing
 EnvironmentFile=/etc/billing/billing.env
 # Absolute node + local tsx — no PATH/npx dependence under systemd's minimal env.
-ExecStart=/usr/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/wa-queue-worker.ts
+# Node 22: billing's own binary (/opt/node22). The shared /usr/bin/node is Node 20 and serves other projects.
+ExecStart=/opt/node22/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/wa-queue-worker.ts
 Restart=always
 RestartSec=5
 # Give the graceful-shutdown window room before SIGKILL.

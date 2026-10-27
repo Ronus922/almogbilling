@@ -38,7 +38,8 @@ WorkingDirectory=/var/www/billing
 EnvironmentFile=/etc/billing/billing.env
 # Absolute node + local tsx — no PATH/npx dependence under systemd's minimal env
 # (same as deploy/wa-queue-worker.service).
-ExecStart=/usr/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/bllink-scrape.ts
+# Node 22: billing's own binary (/opt/node22). The shared /usr/bin/node is Node 20 and serves other projects.
+ExecStart=/opt/node22/bin/node /var/www/billing/node_modules/tsx/dist/cli.mjs /var/www/billing/scripts/bllink-scrape.ts
 # The script enforces its own 180s budget and records the failure; this is the backstop.
 TimeoutStartSec=5min
 Nice=5
