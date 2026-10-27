@@ -10,6 +10,7 @@
 @import "./styles/portal-report.css";
 @import "./styles/portal-dock.css";
 @import "./styles/work-items.css";
+@import "./styles/date-range-picker.css";
 
 @custom-variant dark (&:is(.dark *));
 
