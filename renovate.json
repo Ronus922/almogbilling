@@ -19,6 +19,11 @@
       "description": "Open the weekly lock file refresh before majors, so a backlog of majors under the 3-PR cap never starves it",
       "matchUpdateTypes": ["lockFileMaintenance"],
       "prPriority": 1
+    },
+    {
+      "description": "tailwindcss and @tailwindcss/postcss get their own group, kept out of group:allNonMajor: they need a visual check, and an artifact failure on their native optional packages (EALLOWREMOTE on @tailwindcss/oxide-wasm32-wasi, PR #91) must not leave the whole non-major group without a lockfile",
+      "matchPackageNames": ["tailwindcss", "@tailwindcss/postcss"],
+      "groupName": "tailwindcss"
     }
   ]
 }
