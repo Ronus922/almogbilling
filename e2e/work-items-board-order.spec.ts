@@ -98,6 +98,28 @@ async function laneOrder(page: Page): Promise<string[]> {
     .evaluateAll((els) => els.map((e) => e.getAttribute('data-lane') ?? ''));
 }
 
+// Two things still happen AFTER the first paint of /issues: React hydrates (a click
+// or a drag before that does nothing — the server-rendered DOM has no handlers), and
+// an effect GETs /board-preferences and re-renders the lanes, so until it lands the
+// board shows the DEFAULT order. The GET is itself an effect, so seeing its response
+// proves the page is hydrated; the order it sets is then polled by whoever asserts on
+// it. (Found 26/10/2026: the isolated runs failed 2 of 5 without a retry, in the one
+// shot read after the reload and in the click on "התאמת לוח".)
+const preferencesLoaded = (page: Page) => page.waitForResponse((r) =>
+  r.url().endsWith('/api/work-items/issue/board-preferences') && r.request().method() === 'GET');
+
+async function gotoBoard(page: Page) {
+  const loaded = preferencesLoaded(page);
+  await page.goto('/issues');
+  await loaded;
+}
+
+async function reloadBoard(page: Page) {
+  const loaded = preferencesLoaded(page);
+  await page.reload();
+  await loaded;
+}
+
 test('a second employee exists so there are two lanes to reorder', async ({ page }) => {
   const res = await page.request.post('/api/users', {
     data: { email: `${uniq}@billing.local`, full_name: `עובד לוח ${uniq}`, role: 'manager', password: 'E2e-Temp0rary!' },
@@ -112,7 +134,7 @@ test('dragging a lane header reorders the columns and persists across reload', a
   await assign(page.request, a.id, adminId);
   await assign(page.request, b.id, secondId);
 
-  await page.goto('/issues');
+  await gotoBoard(page);
   await expect(card(page, a.id)).toBeVisible();
   // Both have exactly 1 open item, so the default (decision 3) is a tie,
   // broken alphabetically — not re-asserted here (own unit test,
@@ -132,9 +154,10 @@ test('dragging a lane header reorders the columns and persists across reload', a
   expect((await write).status(), 'the new column order persisted').toBe(200);
   await expect.poll(() => laneOrder(page)).toEqual(after);
 
-  await page.reload();
+  await reloadBoard(page);
   await expect(card(page, a.id)).toBeVisible();
-  expect(await laneOrder(page)).toEqual(after);
+  // Polled, not read once: the lanes show the default order until the saved one lands.
+  await expect.poll(() => laneOrder(page)).toEqual(after);
 });
 
 test('the board is a fixed 80vh (19/10/2026, supersedes "fills the viewport") — columns scroll inside, never the page chrome', async ({ page }) => {
@@ -153,7 +176,7 @@ test('the list view’s row handle drags within the same lane and persists (same
   await assign(page.request, a.id, adminId);
   await assign(page.request, b.id, adminId);
 
-  await page.goto('/issues');
+  await gotoBoard(page);
   await page.getByRole('button', { name: 'רשימה', exact: true }).click();
   await expect(listRow(page, a.id)).toBeVisible();
   const mineOf = (ids: (string | null)[]) => ids.filter((id): id is string => id === a.id || id === b.id);
@@ -169,15 +192,15 @@ test('the list view’s row handle drags within the same lane and persists (same
   await expect.poll(async () => mineOf(await page.locator('[data-work-row-id]').evaluateAll((els) => els.map((e) => e.getAttribute('data-work-row-id')))))
     .toEqual([a.id, b.id]);
 
-  await page.reload();
+  await reloadBoard(page);
   await page.getByRole('button', { name: 'רשימה', exact: true }).click();
-  const order = mineOf(await page.locator('[data-work-row-id]').evaluateAll((els) => els.map((e) => e.getAttribute('data-work-row-id'))));
-  expect(order).toEqual([a.id, b.id]);
+  await expect.poll(async () => mineOf(await page.locator('[data-work-row-id]').evaluateAll((els) => els.map((e) => e.getAttribute('data-work-row-id')))))
+    .toEqual([a.id, b.id]);
 });
 
 test('a click on a row (not a drag) still expands it — the drag handle did not eat clicks', async ({ page }) => {
   const x = await newIssue(page.request, 'לחיצה ברשימה');
-  await page.goto('/issues');
+  await gotoBoard(page);
   await page.getByRole('button', { name: 'רשימה', exact: true }).click();
   await expect(listRow(page, x.id)).toBeVisible();
   await listRow(page, x.id).click();
@@ -220,7 +243,7 @@ test('an open supplier-assigned item makes the (uncustomized) suppliers lane app
 });
 
 test('pinning "ספקים" in "התאמת לוח" shows the lane even while empty — the fix', async ({ page }) => {
-  await page.goto('/issues');
+  await gotoBoard(page);
   await expect(lane(page, 'suppliers')).toHaveCount(0);
 
   await openBoardOrderPopover(page);
@@ -232,7 +255,7 @@ test('pinning "ספקים" in "התאמת לוח" shows the lane even while empt
   await expect(lane(page, 'suppliers')).toBeVisible();
   await expect(lane(page, 'suppliers').getByText('אין משימות פתוחות')).toBeVisible();
 
-  await page.reload();
+  await reloadBoard(page);
   await expect(lane(page, 'suppliers')).toBeVisible();
 });
 
@@ -240,7 +263,7 @@ test('unchecking "ספקים" hides the lane even with an open supplier-assigned
   const s = await newIssue(page.request, 'שיוך ספק ב');
   await assignSupplier(page.request, s.id, supplierId);
 
-  await page.goto('/issues');
+  await gotoBoard(page);
   await expect(lane(page, 'suppliers')).toBeVisible(); // still pinned from the previous test, now with an item too
   await expect(card(page, s.id)).toBeVisible();
 
@@ -252,6 +275,6 @@ test('unchecking "ספקים" hides the lane even with an open supplier-assigned
 
   await expect(lane(page, 'suppliers')).toHaveCount(0);
 
-  await page.reload();
+  await reloadBoard(page);
   await expect(lane(page, 'suppliers')).toHaveCount(0);
 });

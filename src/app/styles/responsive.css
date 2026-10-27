@@ -138,3 +138,17 @@
 body:has([data-install-banner]) [data-agent-fab] {
   display: none;
 }
+
+/* -- Selection bar vs. the install banner ---------------------------------
+   On a phone (<md) the debtors table's selection bar is also fixed to the bottom
+   edge at z-40 — the same strip as the banner. The bar is what the user is working
+   with, so the banner steps aside while it is on screen and returns when the
+   selection is cleared (the FAB, parked by the banner, comes back with it).
+   Inside a layer on purpose: global CSS outside `@layer` outranks every utility. */
+@layer utilities {
+  @media (max-width: 767.98px) {
+    body:has([data-selection-bar]) [data-install-banner] {
+      display: none;
+    }
+  }
+}
