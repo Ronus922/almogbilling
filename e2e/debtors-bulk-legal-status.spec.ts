@@ -228,6 +228,7 @@ test.describe('bulk legal status — the bar is a sticky one and keeps clear of 
     made.debtors.push(...r.rows.map((x) => x.id));
 
     await page.goto('/dashboard?apt=9903');
+    const fabAtRest = (await page.locator('button[aria-label="עוזר אישי"]').first().boundingBox())!;
     await tick(page.getByRole('checkbox', { name: 'בחר הכל' }));
     await expect(bar(page)).toContainText('נבחרו 50 דירות'); // one page, not the 55
 
@@ -245,6 +246,9 @@ test.describe('bulk legal status — the bar is a sticky one and keeps clear of 
     expect(await bar(page).evaluate((el) => getComputedStyle(el).position)).toBe('sticky');
 
     await expectClearOfAssistantButton(page);
+    // From `md` the bar leaves its own room (pl-14), so the button does not move — only
+    // on a phone, where the bar is full width, does it ride up (see below).
+    expect((await page.locator('button[aria-label="עוזר אישי"]').first().boundingBox())!.y).toBe(fabAtRest.y);
   });
 });
 
@@ -319,6 +323,40 @@ test.describe('bulk legal status — on a phone', () => {
     await expect(bar(page)).toHaveCount(0);
     await expect(banner).toBeVisible();
     await page.evaluate(() => document.getElementById('fake-install-banner')?.remove());
+  });
+
+  // The bar is full width now, so the assistant's round button (fixed bottom-left)
+  // would sit on its controls — a real phone showed it half over "שליחת WhatsApp".
+  // It rides above the bar instead, and drops back to its place when the bar goes.
+  test('the assistant button rides above the bar — and so does its panel — instead of covering it', async ({ page }) => {
+    await page.goto('/dashboard?apt=9902');
+    const selectAll = page.getByRole('checkbox', { name: 'בחר הכל' });
+    await expect(selectAll).toBeVisible();
+    const fab = page.locator('button[aria-label="עוזר אישי"]').first();
+    const atRest = (await fab.boundingBox())!;
+    const gapAboveBar = async (el: Locator) => {
+      const e = (await el.boundingBox())!;
+      const b = (await bar(page).boundingBox())!;
+      return Math.round(b.y - (e.y + e.height));
+    };
+
+    await tick(selectAll);
+    await expect(bar(page)).toContainText('נבחרו 3 דירות');
+    await expect.poll(() => gapAboveBar(fab), { message: 'the button is above the bar' }).toBeGreaterThanOrEqual(0);
+    await expectClearOfAssistantButton(page);
+
+    // Its chat panel is anchored above the button, so it clears the bar too.
+    await fab.click();
+    const panel = page.getByRole('dialog', { name: 'עוזר אישי' });
+    await expect(panel).toBeVisible();
+    await expect.poll(() => gapAboveBar(panel), { message: 'the panel is above the bar' }).toBeGreaterThanOrEqual(0);
+    expect((await panel.boundingBox())!.y, 'the panel stays on screen').toBeGreaterThanOrEqual(0);
+    await fab.click(); // the button toggles the panel closed
+    await expect(panel).toHaveCount(0);
+
+    await bar(page).getByRole('button', { name: 'נקה בחירה' }).click();
+    await expect(bar(page)).toHaveCount(0);
+    await expect.poll(async () => (await fab.boundingBox())!.y, { message: 'the button is back in its place' }).toBe(atRest.y);
   });
 
   test('the cards get a select-all row, and the bar is reachable with 44px controls', async ({ page }) => {

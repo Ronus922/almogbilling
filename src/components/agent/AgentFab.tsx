@@ -254,7 +254,11 @@ function AssistantWidget() {
         title="עוזר אישי"
         aria-expanded={open}
         // The safe-area bottom margin lifts the fixed button clear of the iOS home indicator.
-        className="fixed bottom-6 left-6 z-50 mb-[env(safe-area-inset-bottom)] grid h-14 w-14 place-items-center rounded-full bg-brand text-white shadow-lg shadow-brand/30 transition-colors hover:bg-brand-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+        // On a phone the debtors table's selection bar is fixed to the bottom edge and
+        // publishes its height as --selection-bar-h: the button rides above it instead
+        // of covering the bar's actions (0px when there is no bar; from `md` the bar is
+        // sticky inside the table and leaves its own room, so nothing moves).
+        className="fixed bottom-[calc(1.5rem+var(--selection-bar-h,0px))] left-6 z-50 mb-[env(safe-area-inset-bottom)] grid md:bottom-6 h-14 w-14 place-items-center rounded-full bg-brand text-white shadow-lg shadow-brand/30 transition-colors hover:bg-brand-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
       >
         {open ? <X className="h-6 w-6" /> : <Bot className="h-6 w-6" />}
       </button>
@@ -266,7 +270,9 @@ function AssistantWidget() {
           dir="rtl"
           // Sized in dvw, not vw, so the card never counts a classic scrollbar into
           // its width; the safe-area bottom margin keeps it above the home indicator.
-          className="fixed bottom-24 left-6 z-40 mb-[env(safe-area-inset-bottom)] flex h-[640px] max-h-[calc(100dvh-9rem)] w-[calc(100dvw-3rem)] flex-col overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-[0_30px_70px_-25px_rgba(15,23,42,0.4),0_8px_24px_-12px_rgba(15,23,42,0.2)] sm:w-[400px]"
+          // Anchored above the FAB, so it rides above the phone selection bar with it
+          // (--selection-bar-h is unset, i.e. 0px, whenever there is no bar).
+          className="fixed bottom-[calc(6rem+var(--selection-bar-h,0px))] left-6 z-40 mb-[env(safe-area-inset-bottom)] flex h-[640px] max-h-[calc(100dvh-9rem-var(--selection-bar-h,0px))] w-[calc(100dvw-3rem)] flex-col md:bottom-24 md:max-h-[calc(100dvh-9rem)] overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-[0_30px_70px_-25px_rgba(15,23,42,0.4),0_8px_24px_-12px_rgba(15,23,42,0.2)] sm:w-[400px]"
         >
           {/* Header */}
           <div className="flex flex-none items-center gap-3 border-b border-[#eef1f6] bg-gradient-to-b from-[#fbfcfe] to-white px-[18px] py-4">
