@@ -64,6 +64,25 @@ async function expectClearOfAssistantButton(page: Page) {
   }
 }
 
+/**
+ * A box that has stopped moving. Right after a state change the layout is still
+ * settling for a moment (the bar mounts, the page re-flows, the scroll position
+ * adjusts), and a single `boundingBox()` read can land in the middle of it — the
+ * measurement is taken only once two consecutive reads agree.
+ */
+async function settledBox(locator: Locator) {
+  let previous = '';
+  let box = null as Awaited<ReturnType<Locator['boundingBox']>>; // assigned in the poll callback
+  await expect.poll(async () => {
+    box = await locator.boundingBox();
+    const now = JSON.stringify(box);
+    const settled = box !== null && now === previous;
+    previous = now;
+    return settled;
+  }, { message: 'the layout settles' }).toBe(true);
+  return box!;
+}
+
 async function pickStatus(page: Page, name: string) {
   await bar(page).getByRole('combobox').click();
   await page.getByRole('option', { name }).click();
@@ -365,15 +384,15 @@ test.describe('bulk legal status — on a phone', () => {
     await tick(page.getByRole('checkbox', { name: 'בחר הכל' }));
     await expect(bar(page)).toContainText('נבחרו 3 דירות');
 
-    const box = (await bar(page).boundingBox())!;
+    const box = await settledBox(bar(page));
     expect(box.y + box.height).toBeLessThanOrEqual(844);
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(390);
     for (const name of ['עדכן סטטוס', 'נקה בחירה']) {
-      const b = (await bar(page).getByRole('button', { name }).boundingBox())!;
+      const b = await settledBox(bar(page).getByRole('button', { name }));
       expect(b.height, name).toBeGreaterThanOrEqual(44);
     }
-    expect((await bar(page).getByRole('combobox').boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    expect((await settledBox(bar(page).getByRole('combobox'))).height).toBeGreaterThanOrEqual(44);
     await expectClearOfAssistantButton(page);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true); // no horizontal scroll
   });
