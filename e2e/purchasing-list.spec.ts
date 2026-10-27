@@ -62,7 +62,8 @@ async function insertQuotes(rfq: string, source: 'portal' | 'manual', rs: Recipi
 
 const R = (n: string, key: string): Recipient => ({ key: `m${RUN}${key}`, name: n });
 
-test.describe.configure({ mode: 'serial' });
+// Tests run in file order (one worker). They are deliberately NOT a serial group: a failure in one must not
+// hide the others, and a retry gets a fresh worker — beforeAll re-seeds, the old afterAll already cleaned up.
 
 test.beforeAll(async () => {
   // A: both suppliers answered through the portal (nobody opened them → unseen), one is the winner.
@@ -159,7 +160,7 @@ test('the purchase orders tab: its own columns, the order total and the same row
 test('search and date range filter both tabs; the counters keep the totals; clearing brings everything back', async ({ page }) => {
   await page.goto('/purchasing?tab=rfq');
   const counter = page.locator('[data-tab="rfq"]');
-  const total = await counter.innerText();
+  const total = (await counter.textContent()) ?? '';
   const search = page.getByPlaceholder('חיפוש לפי ספק, נושא או מספר בקשה...');
   const only = async (visible: string[]) => {
     for (const id of [ID.a, ID.b, ID.c, ID.draft]) {
@@ -179,7 +180,7 @@ test('search and date range filter both tabs; the counters keep the totals; clea
   await search.fill(`אין-כזה-${RUN}`);
   await expect(page.locator('[data-empty]')).toContainText('לא נמצאו מסמכים התואמים');
   await expect(counter).toHaveText(total);
-  await page.getByRole('button', { name: 'נקה חיפוש' }).click();
+  await page.locator('[data-list-filters]').getByRole('button', { name: 'נקה חיפוש' }).click();
   await expect(search).toHaveValue('');
   await only([ID.a, ID.b, ID.c, ID.draft]);
 
@@ -263,7 +264,7 @@ for (const width of [360, 390]) {
         expect(geometry.htmlX, `${tab}: the page is not shifted`).toBe(0);
 
         // The content is visible: header, both tabs, the filter row (broken into rows), the card.
-        await expect(page.locator('h1')).toBeInViewport();
+        await expect(page.getByRole('heading', { name: 'רכש', level: 1, exact: true })).toBeInViewport();
         await expect(page.getByRole('button', { name: tab === 'rfq' ? 'בקשה חדשה' : 'הזמנה חדשה' })).toBeInViewport();
         const inside = async (sel: string) => page.locator(sel).first().evaluate((el, w) => {
           const r = el.getBoundingClientRect();
