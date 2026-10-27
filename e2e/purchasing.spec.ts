@@ -163,6 +163,8 @@ async function openDoc(page: Page, row: string) {
 }
 const byNumber = (n: number) => `tr[data-number="${n}"]`;
 const byId = (id: string) => `tr[data-doc="${id}"]`;
+/** The row's trash icon only asks: the delete happens on "מחק" in the confirmation (AlertDialog). */
+const confirmDeletion = (page: Page) => page.getByRole('alertdialog').locator('[data-delete-confirm]').click();
 
 /** Counts print dialogs (the PDF is printed from a hidden frame; headless has no real dialog). */
 async function installPrintCounter(page: Page) {
@@ -556,8 +558,8 @@ test('a draft is saved on the server with no number, opens from another session,
   await page.goto('/purchasing?tab=po');
   const poRow = page.locator('tr[data-draft]', { hasText: `טיוטת הזמנה ${RUN}` });
   await expect(poRow).toBeVisible();
-  page.once('dialog', (d) => d.accept());
   await poRow.locator('[data-delete-draft]').click();
+  await confirmDeletion(page);
   await expect(poRow).toHaveCount(0);
   expect((await pool.query(`select 1 from public.purchasing_documents where id = $1`, [poId])).rowCount).toBe(0);
   expect((await pool.query(`select last_number from public.purchasing_sequences where doc_type = 'po'`)).rows[0]?.last_number ?? null).toBe(poSeq);
@@ -1086,8 +1088,8 @@ test('a direct purchase order, the VAT stamped at issue, a draft that closes the
   const draftId = await docIdByTitle(`טיוטת הזמנה ממסך ${RUN}`);
   expect((await pool.query(`select status, number from public.purchasing_documents where id = $1`, [draftId])).rows[0]).toMatchObject({ status: 'draft', number: null });
   expect((await pool.query(`select last_number from public.purchasing_sequences where doc_type = 'po'`)).rows[0].last_number).toBe(poSeq);
-  page.once('dialog', (d) => d.accept());
   await draftRow.locator('[data-delete-draft]').click();
+  await confirmDeletion(page);
   await expect(draftRow).toHaveCount(0);
 
   // Changing the company VAT later does not touch an issued document.
