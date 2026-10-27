@@ -36,7 +36,7 @@ function OffersPill({ doc }: { doc: DocumentListItem }) {
   return (
     <span
       data-offers data-tone={tone}
-      className={cn('inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold tabular-nums', PILL_TONE[tone])}
+      className={cn('inline-flex items-center whitespace-nowrap rounded-full border px-3 py-1 text-sm font-semibold tabular-nums', PILL_TONE[tone])}
     >
       {received} מתוך {asked}
     </span>
@@ -105,7 +105,7 @@ export function DocumentsTable({ tab, rows, selectedId, canEdit, onSelect, onOpe
     // layout viewport grows to the table's width and the whole page slides out of sight (the white
     // screen of /purchasing, 27/10/2026). With it the table scrolls inside the card, nothing else moves.
     <div className="relative overflow-x-auto rounded-xl border border-line bg-white shadow-soft-xs" data-table-scroll>
-      <table className={cn('w-full border-collapse text-sm', rfq ? 'min-w-[980px]' : 'min-w-[840px]')} data-list={tab}>
+      <table className={cn('w-full border-collapse text-sm', rfq ? 'min-w-[920px]' : 'min-w-[840px]')} data-list={tab}>
         <thead>
           <tr className="border-b border-line bg-slate-50">
             <th className={TH}>מספר</th>

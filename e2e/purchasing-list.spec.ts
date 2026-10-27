@@ -29,6 +29,7 @@ const ALL_IDS = Object.values(ID);
 
 const TITLE = { a: `ציוד חשמל ${RUN}`, b: `משאבת סחרור ${RUN}`, c: `אחזקת גינון ${RUN}`, draft: `טיוטת צביעה ${RUN}`, po: `חוזה שירות ${RUN}` };
 const row = (page: Page, id: string) => page.locator(`tr[data-doc="${id}"]`);
+const offersOf = (ids: string[]) => ids.map((id) => `tr[data-doc="${id}"] [data-offers]`).join(', ');
 const toastOf = (page: Page, text: string) => page.locator('[data-sonner-toast]').filter({ hasText: text }).first();
 const confirmDeletion = (page: Page) => page.getByRole('alertdialog').locator('[data-delete-confirm]').click();
 
@@ -136,6 +137,16 @@ test('requests tab: header, counters, columns, order, offers pill, winner, unsee
   await expect(row(page, ID.c).locator('[data-offers]')).toHaveAttribute('data-tone', 'some');
   await expect(row(page, ID.c).locator('[data-new-quote-tag]')).toHaveCount(0);
   await expect(row(page, ID.c)).toContainText('נסגרה');
+
+  // Every pill is one line at the default desktop width (1280, sidebar open): the dot beside a pill used to
+  // squeeze it into two lines ("2 מתוך" / "2"), so a squeezed pill is taller than the one that fits.
+  const heights = await page.locator(offersOf([ID.a, ID.b, ID.c])).evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+  expect(heights).toHaveLength(3);
+  expect(new Set(heights).size, `pill heights ${heights.join(', ')}`).toBe(1);
+
+  // ...and at that width the requests table fits its card: no sideways scroll on an ordinary laptop screen.
+  const card = await page.locator('[data-table-scroll]').evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+  expect(card.scroll, 'the table fits the card at the default desktop width').toBeLessThanOrEqual(card.client);
 
   await expect(row(page, ID.draft).locator('td').first()).toHaveText('טיוטה');
 
