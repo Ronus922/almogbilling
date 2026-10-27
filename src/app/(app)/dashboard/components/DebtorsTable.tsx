@@ -278,7 +278,11 @@ export function DebtorsTable({
   }
 
   return (
-    <div className="space-y-3">
+    // `pb-[var(--selection-bar-h)]` (phone only): the selection bar is fixed to the
+    // bottom of the screen there, so the list leaves its height free and the last
+    // card + the pager are never hidden behind it. The variable exists only while
+    // the bar does, so the padding is 0 otherwise.
+    <div className="space-y-3 pb-[var(--selection-bar-h,0px)] md:pb-0">
       {/* Mobile has no table header to carry the select-all box, so the cards
           get the same box in a row of their own. */}
       {showSelection && (

@@ -283,6 +283,11 @@ d('wa-queue — email channel', () => {
     });
     made.campaigns.push(wa.id);
     expect((await listRecipients(pool, wa.id)).rows.map((r) => r.debtor_name)).toEqual(['שוכר הדירה']);
+    // Start it, as the routing test above does: a campaign that is created but never
+    // started is `queued`, which `claimBatch` never claims — its recipient would stay
+    // `pending` for ever, and drain() counts every campaign in `made`, so it would spin
+    // all 200 ticks (≈3.5s of a 5s test timeout) waiting for a row nobody will take.
+    await startCampaign(pool, wa.id);
     await drain(worker());
   });
 
