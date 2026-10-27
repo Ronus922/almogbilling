@@ -2549,7 +2549,7 @@ inline), `src/app/styles/work-items.css`, `src/components/work-items/*`.
   **שורת סינון** (`ListFilters`, בשני הטאבים, המצב משותף ביניהם): חיפוש לפי ספק / נושא / מספר (§6 "Clearable
   search input") + טווח תאריכי המסמך — כפתור "מתאריך — עד תאריך" שפותח Popover עם שני `Input type=date` (§6,
   `showPicker()`) ו"נקה טווח". **טבלה** (`DocumentsTable`): כרטיס `relative overflow-x-auto rounded-xl border-line`
-  (`min-w-[980px]` בקשה, `min-w-[840px]` הזמנה), כותרות `bg-slate-50 text-sm font-semibold text-slate-500`, תאים
+  (`min-w-[920px]` בקשה, `min-w-[840px]` הזמנה — ב-1280 עם סיידבר פתוח הכרטיס לא גולל; pill ההצעות `whitespace-nowrap`), כותרות `bg-slate-50 text-sm font-semibold text-slate-500`, תאים
   `px-4 py-5`; מיון: טיוטות ראשונות, אחריהן מספר יורד. **בקשה:** מספר · תאריך (`dir="ltr"`) · נושא (שורה שנייה:
   הספקים הנמענים, מופרדים ב-" · ") · יעד להגשה (+ pill "נסגרה") · הצעות · זוכה (או "—") · פעולות. **pill ההצעות**
   "X מתוך Y" — Y = הספקים שנשלח אליהם (לא פחות מ-X): `emerald` כשכולם הגישו (Y>0), `slate` כשאין אף הצעה, `amber`
