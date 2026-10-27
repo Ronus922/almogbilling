@@ -15,7 +15,7 @@
 // Runs as its own oneshot process (systemd: deploy/systemd/billing-bllink-scrape.service,
 // timer 05:30 Asia/Jerusalem — thirty minutes BEFORE the sync; until 26/09/2026 it
 // was 06:10, ten minutes after the CRM's run):
-//   /usr/bin/node node_modules/tsx/dist/cli.mjs scripts/bllink-scrape.ts
+//   /opt/node22/bin/node node_modules/tsx/dist/cli.mjs scripts/bllink-scrape.ts
 // Manual run with the production env: sudo systemctl start billing-bllink-scrape.service
 //
 // Env (all from /etc/billing/billing.env): DATABASE_URL, DIRECT_URL, BLLINK_USER,

@@ -54,6 +54,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 
+# billing's own Node: /opt/node22 is a dedicated Node 22 (the shared /usr/bin/node is Node 20 and other projects on
+# this server depend on it). The build runs on the Node that serves it, so build and runtime agree.
+NODE22_BIN="${NODE22_BIN:-/opt/node22/bin}"
+if [[ -x "$NODE22_BIN/node" ]]; then export PATH="$NODE22_BIN:$PATH"; fi
+
 DEPLOY_DIR="$PROJECT_ROOT/.deploy"
 RELEASES_DIR="$DEPLOY_DIR/releases"
 CURRENT_LINK="$DEPLOY_DIR/current"
@@ -388,6 +393,7 @@ if [[ -z "$TEST_RESTART_CMD" ]]; then
   printf '  %-12s %s\n' "Service:" "${SERVICE} ${GREEN}active${RESET} (PID $("$SYSTEMCTL" show "$SERVICE" -p MainPID --value))"
 fi
 printf '  %-12s %s\n' "BUILD_ID:" "${NEW_ID}  (.deploy/current)"
+printf '  %-12s %s\n' "Node (build):" "$(node -v)"
 printf '  %-12s %s\n' "Previous:" "${CURRENT_ID}  (npm run deploy:rollback)"
 echo
 ok "${BOLD}Deploy complete — production is serving ${NEW_ID}.${RESET}"
