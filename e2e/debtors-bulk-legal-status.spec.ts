@@ -251,6 +251,76 @@ test.describe('bulk legal status — the bar is a sticky one and keeps clear of 
 test.describe('bulk legal status — on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
+  // The regression this pins (26–27/10/2026): the bar was `sticky` inside the table's
+  // box, and a sticky element cannot leave its parent — with the select-all row near
+  // the bottom of the screen the (≈250px tall, one control per row) bar was clamped to
+  // the table's top edge and sat BELOW the fold (top 812, bottom 1052 on a 844 screen,
+  // exactly what CI measured). On a phone it is `fixed`: flush with the bottom edge
+  // wherever the table is, and the list leaves room for it.
+  test('the bar is fixed to the bottom edge wherever the table is, and the last card clears it', async ({ page }) => {
+    await page.goto('/dashboard?apt=9902');
+    const selectAll = page.getByRole('checkbox', { name: 'בחר הכל' });
+    await expect(selectAll).toBeVisible();
+    const { width: vw, height: vh } = page.viewportSize()!;
+    const main = page.locator('main');
+    const flushWithBottomEdge = async () => {
+      const b = (await bar(page).boundingBox())!;
+      return { x: b.x, right: b.x + b.width, gap: vh - (b.y + b.height) };
+    };
+
+    // 1) ticking from every place the select-all row can be: nearly off the bottom
+    //    of the screen (the failing one), mid-screen, and at the top.
+    for (const top of [vh - 24, Math.round(vh / 2), 8]) {
+      await selectAll.evaluate((el, target) => {
+        const m = document.querySelector('main')!;
+        m.scrollTop += el.getBoundingClientRect().top - target;
+      }, top);
+      await tick(selectAll);
+      await expect(bar(page)).toContainText('נבחרו 3 דירות');
+      await expect.poll(flushWithBottomEdge, { message: `bar flush with the bottom edge (row at ${top}px)` })
+        .toEqual({ x: 0, right: vw, gap: 0 });
+      await bar(page).getByRole('button', { name: 'נקה בחירה' }).click();
+      await expect(bar(page)).toHaveCount(0);
+    }
+
+    // 2) with the bar up, scrolled to the very top of the page (the table far below,
+    //    off screen) and to the very end — it is on screen both times, and at the
+    //    end the last card sits above it instead of behind it.
+    await tick(selectAll);
+    await expect(bar(page)).toContainText('נבחרו 3 דירות');
+    await main.evaluate((m) => { m.scrollTop = 0; });
+    await expect.poll(flushWithBottomEdge, { message: 'bar still on screen at the top of the page' })
+      .toEqual({ x: 0, right: vw, gap: 0 });
+    await main.evaluate((m) => { m.scrollTop = m.scrollHeight; });
+    const lastCard = page.locator('li').filter({ has: page.getByRole('checkbox', { name: /^בחר דירה / }) }).last();
+    await expect.poll(async () => {
+      const card = (await lastCard.boundingBox())!;
+      const b = (await bar(page).boundingBox())!;
+      return Math.round(b.y - (card.y + card.height)); // gap between the last card and the bar
+    }, { message: 'the last card clears the bar at the end of the page' }).toBeGreaterThanOrEqual(0);
+  });
+
+  // The PWA install banner is fixed to the same strip (z-40). Standing in for it is
+  // enough: the rule keys on the `data-install-banner` attribute, as the FAB's does.
+  test('the install banner steps aside while the bar is up, and comes back after', async ({ page }) => {
+    await page.goto('/dashboard?apt=9902');
+    await expect(page.getByRole('checkbox', { name: 'בחר הכל' })).toBeVisible();
+    await page.evaluate(() => {
+      document.body.insertAdjacentHTML('beforeend', '<div id="fake-install-banner" data-install-banner="">התקנה</div>');
+    });
+    const banner = page.locator('#fake-install-banner');
+    await expect(banner).toBeVisible();
+
+    await tick(page.getByRole('checkbox', { name: 'בחר הכל' }));
+    await expect(bar(page)).toContainText('נבחרו 3 דירות');
+    await expect(banner).toBeHidden();
+
+    await bar(page).getByRole('button', { name: 'נקה בחירה' }).click();
+    await expect(bar(page)).toHaveCount(0);
+    await expect(banner).toBeVisible();
+    await page.evaluate(() => document.getElementById('fake-install-banner')?.remove());
+  });
+
   test('the cards get a select-all row, and the bar is reachable with 44px controls', async ({ page }) => {
     await page.goto('/dashboard?apt=9902');
     await expect(page.getByRole('checkbox', { name: 'בחר הכל' })).toBeVisible();
