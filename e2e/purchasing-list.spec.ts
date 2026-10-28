@@ -14,10 +14,10 @@ import { Pool } from 'pg';
 // every check is relative to the viewport the test itself chose.
 //
 // The date range is the datePicker skill's DateRangePicker (DESIGN §6 "Date Input", the declared exception):
-// a popover on a desktop, a bottom sheet on a phone. Its days are `button[data-key="YYYY-MM-DD"]`. The picker
-// opens on TODAY's month, which moves every day, and the fixtures below are dated in March 2026 — so the
-// desktop tests step back with its arrow until the day they need is on screen (the phone sheet has no
-// arrows: it lists the months from the current one forward, so the phone test uses a fixture of this month).
+// a two-month popover on a desktop, the same popover with the months stacked on a phone (layout="stacked": the
+// default Bottom Sheet lists the months from the current one forward and has no way back). Its days are
+// `button[data-key="YYYY-MM-DD"]`. The picker opens on TODAY's month, which moves every day, and the fixtures
+// below are dated in March 2026 — so every test steps back with the arrow until the day it needs is on screen.
 //
 // Fixtures are inserted with explicit ids and removed by exactly those ids (CLAUDE.md iron rule 12).
 
@@ -126,7 +126,7 @@ test.beforeAll(async () => {
   await insertDoc(ID.draft, { type: 'rfq', number: null, date: '2026-03-25', title: TITLE.draft, due: '2026-04-25', status: 'draft' });
   await insertDoc(ID.po, { type: 'po', number: NUM + 1, date: '2026-03-15', title: TITLE.po, supplier: SUP.po });
   await pool.query(`insert into public.purchasing_lines (document_id, sort_order, description, quantity, unit_price) values ($1, 0, 'שירות חודשי', 12, 1250)`, [ID.po]);
-  // Dated this month: the phone picker can only reach the current month onward, so its test filters on this one.
+  // Dated this month: the phone test's second range (the picker opens on this month, no arrow tap) filters on it.
   await insertDoc(ID.cur, { type: 'rfq', number: NUM + 4, date: `${THIS_MONTH}-10`, title: TITLE.cur, due: `${THIS_MONTH}-20` });
 });
 
@@ -400,15 +400,16 @@ for (const width of [360, 390]) {
     }
   });
 
-  test(`phone ${width}: the date picker is a sheet inside the screen; a range filters both tabs and the X clears it`, async ({ browser }) => {
+  test(`phone ${width}: the date picker opens inside the screen and reaches months before this one; a past range filters both tabs and the X clears it`, async ({ browser }) => {
     const height = 844;
     const ctx = await browser.newContext({
       storageState: 'e2e/.auth/state.json', viewport: { width, height }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, locale: 'he-IL',
     });
     const page = await ctx.newPage();
-    // The sheet lists the months from the current one forward; this month's fixture is `cur`, dated the 10th.
-    const from = `${THIS_MONTH}-01`;
-    const to = `${THIS_MONTH}-28`;
+    // March 2026 is months before the clock of any machine that runs this, and 28/03 is a Saturday: the last
+    // column of the grid, the one a calendar that is wider than its box cuts off.
+    const from = '2026-03-01';
+    const to = '2026-03-28';
     const label = `${asDocDate(from)} — ${asDocDate(to)}`;
     const noSidewaysScroll = async (where: string) => {
       expect(await page.evaluate(() => window.innerWidth), `${where}: layout viewport`).toBe(width);
@@ -419,44 +420,76 @@ for (const width of [360, 390]) {
       expect(g.scroll, `${where}: page scrollWidth`).toBeLessThanOrEqual(g.client);
       expect(g.htmlX, `${where}: the page is not shifted`).toBe(0);
     };
+    // Phone: no hover and no scroll to a month, only the arrow — tap it until `day` is on screen.
+    const revealByTap = async (day: string) => {
+      const previous = picker(page).getByRole('button', { name: 'חודש קודם' });
+      for (let i = 0; i < 120 && (await dayIn(page, day).count()) === 0; i++) await previous.tap();
+      await expect(dayIn(page, day)).toBeVisible();
+    };
     try {
       await page.goto('/purchasing?tab=rfq');
       await expect(page.locator('table[data-list="rfq"]')).toBeVisible();
       await expect(rangeButton(page)).toBeVisible();
       await rangeButton(page).tap();
 
-      // The sheet is inside the screen on every side, the page behind it does not move and does not scroll sideways.
-      const sheet = page.locator('.drp-sheet');
-      await expect(sheet).toBeVisible();
-      const box = (await sheet.boundingBox())!;
-      expect(box.x, 'sheet left edge').toBeGreaterThanOrEqual(0);
-      expect(box.y, 'sheet top edge').toBeGreaterThanOrEqual(0);
-      expect(box.x + box.width, 'sheet right edge').toBeLessThanOrEqual(width);
-      expect(box.y + box.height, 'sheet bottom edge').toBeLessThanOrEqual(height);
-      await noSidewaysScroll('sheet open');
-      expect(await page.evaluate(() => document.body.style.overflow), 'the page behind the sheet is locked').toBe('hidden');
+      // The popover with the arrows (layout="stacked"), not the Bottom Sheet that can only go forward.
+      const pop = page.locator('.drp-pop');
+      await expect(pop).toBeVisible();
+      await expect(page.locator('.drp-sheet')).toHaveCount(0);
+      const box = (await pop.boundingBox())!;
+      expect(box.x, 'picker left edge').toBeGreaterThanOrEqual(0);
+      expect(box.y, 'picker top edge').toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width, 'picker right edge').toBeLessThanOrEqual(width);
+      expect(box.y + box.height, 'picker bottom edge').toBeLessThanOrEqual(height);
+      await noSidewaysScroll('picker open');
       await expect(closePicker(page)).toBeDisabled();
 
-      // Pick a range (start, then end), close.
+      // Both month arrows are real touch targets.
+      for (const name of ['חודש קודם', 'חודש הבא']) {
+        const arrow = (await picker(page).getByRole('button', { name }).boundingBox())!;
+        expect(arrow.width, `${name}: width`).toBeGreaterThanOrEqual(44);
+        expect(arrow.height, `${name}: height`).toBeGreaterThanOrEqual(44);
+      }
+
+      // The calendar fits its box: no day is cut off at an edge, and the second month lines up with the first.
+      const fit = await pop.locator('.drp-cal').evaluate((cal) => {
+        const c = cal.getBoundingClientRect();
+        const days = Array.from(cal.querySelectorAll<HTMLElement>('.drp-d'));
+        return {
+          overflow: cal.scrollWidth - cal.clientWidth,
+          cutDays: days.filter((d) => { const r = d.getBoundingClientRect(); return r.left < c.left - 0.5 || r.right > c.right + 0.5; }).length,
+          monthLefts: Array.from(cal.querySelectorAll<HTMLElement>('.drp-mo')).map((m) => Math.round(m.getBoundingClientRect().left)),
+        };
+      });
+      expect(fit.overflow, 'the calendar is not wider than its box').toBeLessThanOrEqual(0);
+      expect(fit.cutDays, 'no day is cut off at the left or right edge').toBe(0);
+      expect(new Set(fit.monthLefts).size, 'the months line up').toBe(1);
+
+      // The way back: step to March with the arrow, pick a range that ends on a Saturday, close.
+      await revealByTap(from);
       await dayIn(page, from).tap();
       await expect(closePicker(page)).toBeDisabled();
       await dayIn(page, to).tap();
       await expect(closePicker(page)).toBeEnabled();
       await noSidewaysScroll('range picked');
+      // With both dates in, the summary box still sits inside the picker, and the footer says what "סגור" does.
+      const picked = (await pop.boundingBox())!;
+      const summary = (await pop.locator('.drp-ft').boundingBox())!;
+      expect(summary.x, 'summary left edge').toBeGreaterThanOrEqual(picked.x);
+      expect(summary.x + summary.width, 'summary right edge').toBeLessThanOrEqual(picked.x + picked.width);
+      await expect(pop.locator('.drp-foot-h')).toContainText('לחצו סגור כדי לסנן');
       await closePicker(page).tap();
-      await expect(sheet).toHaveCount(0);
-      expect(await page.evaluate(() => document.body.style.overflow), 'the page is released again').toBe('');
-      await noSidewaysScroll('sheet closed');
+      await expect(pop).toHaveCount(0);
+      await noSidewaysScroll('picker closed');
 
-      // The button shows the range; this month's request is the only one left; the March ones are gone.
+      // The button shows the range; March's request is on the table, this month's and February's are gone.
       await expect(rangeButton(page)).toContainText(label);
-      await expect(row(page, ID.cur)).toBeVisible();
-      for (const id of [ID.a, ID.c]) await expect(row(page, id)).toHaveCount(0);
-      // The other tab is filtered by the same range (its fixture is from March).
+      await expect(row(page, ID.a)).toBeVisible();
+      for (const id of [ID.c, ID.cur]) await expect(row(page, id)).toHaveCount(0);
+      // The other tab is filtered by the same range (its fixture is from 15/03).
       await page.locator('[data-tab="po"]').tap();
       await expect(rangeButton(page)).toContainText(label);
-      await expect(page.locator('[data-empty]')).toBeVisible();
-      await expect(row(page, ID.po)).toHaveCount(0);
+      await expect(row(page, ID.po)).toBeVisible();
 
       // The X is a real touch target, inside the screen, and brings everything back.
       const clear = page.locator('[data-filter-range-clear]');
@@ -471,6 +504,20 @@ for (const width of [360, 390]) {
       await page.locator('[data-tab="rfq"]').tap();
       for (const id of [ID.cur, ID.a, ID.c]) await expect(row(page, id)).toBeVisible();
       await noSidewaysScroll('after clearing');
+
+      // It still opens on this month, with no arrow tap: this month's request is one range away.
+      const thisFrom = `${THIS_MONTH}-01`;
+      const thisTo = `${THIS_MONTH}-28`;
+      await rangeButton(page).tap();
+      await expect(dayIn(page, thisFrom)).toBeVisible();
+      await dayIn(page, thisFrom).tap();
+      await dayIn(page, thisTo).tap();
+      await closePicker(page).tap();
+      await expect(pop).toHaveCount(0);
+      await expect(rangeButton(page)).toContainText(`${asDocDate(thisFrom)} — ${asDocDate(thisTo)}`);
+      await expect(row(page, ID.cur)).toBeVisible();
+      for (const id of [ID.a, ID.c]) await expect(row(page, id)).toHaveCount(0);
+      await noSidewaysScroll('after the second range');
     } finally {
       await ctx.close();
     }
