@@ -713,4 +713,47 @@
   --drp-range: #ecefff;
   --drp-font: var(--font-sans), system-ui, sans-serif;
 }
+
+/* ---- הפרויקט (לא חלק מהסקיל): טלפון — layout="stacked" של ListFilters (28/10/2026) ----
+   בטלפון ListFilters מעביר layout="stacked" (פופאובר עם חיצים, ולכן אפשר לחזור לחודשים שלפני החודש הנוכחי —
+   ה-Bottom Sheet לא מאפשר). ברירת המחדל של ה-stacked נבנתה לדסקטופ צר ושוברת בטלפון: ריפוד הלוח (22px) + שבעת
+   הימים (7×44) לא נכנסים ב-360 וב-390, ו-overflow-x:hidden חותך את העמודה השמאלית; החודש השני מוסט (margin+padding+קו
+   הפרדה של "חודש שני בשורה"); חצי הניווט 36px (כלל ברזל 6: מגע ≥44px); תיבת הסיכום (מתאריך · לילות · עד תאריך) רחבה
+   מהפופאובר ב-360 וגולשת אל הקצה; ו-100vh גדול מהחלון הנראה כשסרגל הכתובות מוצג. הסף הוא MOBILE_QUERY של הרכיב
+   (767px), והדריסה חלה על הפופאובר של הפרויקט בלבד (.app-drp). דסקטופ לא משתנה. */
+@media (max-width: 767px) {
+  .drp-root.drp-pop.app-drp {
+    max-height: calc(100dvh - 32px);
+  }
+  .drp-root.drp-pop.app-drp .drp-cal {
+    padding: 12px 6px 14px;
+  }
+  .drp-root.drp-pop.app-drp .drp-mo,
+  .drp-root.drp-pop.app-drp .drp-mo + .drp-mo {
+    margin-inline-start: 0;
+    padding-inline: 0;
+    border-inline-start: 0;
+  }
+  .drp-root.drp-pop.app-drp .drp-pop-h {
+    padding: 14px 12px;
+  }
+  .drp-root.drp-pop.app-drp .drp-ft {
+    flex: 1 1 100%;
+    margin-inline-start: 0;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .drp-root.drp-pop.app-drp .drp-ft-v {
+    font-size: 15px;
+  }
+  .drp-root.drp-pop.app-drp .drp-mo-h {
+    height: 44px;
+  }
+  .drp-root.drp-pop.app-drp .drp-nav-b,
+  .drp-root.drp-pop.app-drp .drp-nav-sp {
+    width: 44px;
+    height: 44px;
+  }
+}
 }

@@ -7,10 +7,17 @@
 // is a whole range or nothing, and it changes only on the picker's "סגור": Esc, X, a click outside or the
 // trigger again leave the filter as it was, so a half-picked range never filters the table. The clear
 // button sits beside the trigger because the picker has no room for one.
+//
+// On a phone the picker is the component's documented layout="stacked" (a popover with the two months one
+// above the other and the previous/next arrows), not its default Bottom Sheet: the sheet lists the months
+// from the current one forward only, so it could never reach a document dated before this month. The phone
+// is decided by the component's own breakpoint (MOBILE_QUERY), so the two never disagree.
 
 import { useMemo, useRef, useState } from 'react';
 import { Calendar, Search, X } from 'lucide-react';
 import { DateRangePicker, type DateRange } from '@/components/date-range-picker';
+import { MOBILE_QUERY } from '@/components/date-range-picker/DateRangePicker';
+import { useMediaQuery } from '@/components/date-range-picker/hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatDocDate } from '@/lib/purchasing/model';
@@ -24,6 +31,10 @@ interface Props {
 
 const NO_RANGE: DateRange = { start: null, end: null };
 
+// The picker's own footer line is written for a booking form ("…לשמירה לחצו שמור שינויים"); this is a list
+// filter, and the button that applies it is "סגור". Phone only, so the desktop picker stays as it shipped.
+const PHONE_HINT = { done: 'לחצו סגור כדי לסנן את הרשימה', pending: 'לחצו על תאריך היציאה כדי לסיים את הבחירה' };
+
 function rangeLabel(from: string, to: string): string {
   return `${from ? formatDocDate(from) : 'מתאריך'} — ${to ? formatDocDate(to) : 'עד תאריך'}`;
 }
@@ -33,6 +44,7 @@ export function ListFilters({ filter, onChange }: Props) {
   // While the picker is open it edits a draft; the filter itself moves only on "סגור".
   const [draft, setDraft] = useState<DateRange>(NO_RANGE);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const phone = useMediaQuery(MOBILE_QUERY);
   const ranged = filter.from !== '' || filter.to !== '';
   const applied = useMemo<DateRange>(
     () => ({ start: filter.from || null, end: filter.to || null }),
@@ -93,7 +105,8 @@ export function ListFilters({ filter, onChange }: Props) {
       <DateRangePicker
         value={open ? draft : applied}
         onChange={setDraft}
-        open={open} anchorRef={triggerRef} hideTrigger className="app-drp"
+        open={open} anchorRef={triggerRef} hideTrigger className="app-drp" layout={phone ? 'stacked' : 'auto'}
+        footerHint={phone ? PHONE_HINT : undefined}
         onCommit={(r) => {
           onChange({ ...filter, from: r.start ?? '', to: r.end ?? '' });
           setOpen(false);
