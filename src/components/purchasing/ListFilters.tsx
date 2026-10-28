@@ -2,14 +2,17 @@
 
 // The filter row between the tabs and the table, the same in both tabs: a wide search (supplier,
 // subject or number — DESIGN §6 "Clearable search input") and a document-date range. The range is one
-// button that reads "מתאריך — עד תאריך" and opens a small popover with two date inputs (DESIGN §6
-// "Date Input": a click anywhere on the field opens the picker).
+// button that reads "מתאריך — עד תאריך" and opens the datePicker skill's DateRangePicker (DESIGN §6
+// "Date Input", the declared exception for this screen). The picker has no half-open range, so the filter
+// is a whole range or nothing, and it changes only on the picker's "סגור": Esc, X, a click outside or the
+// trigger again leave the filter as it was, so a half-picked range never filters the table. The clear
+// button sits beside the trigger because the picker has no room for one.
 
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Calendar, Search, X } from 'lucide-react';
+import { DateRangePicker, type DateRange } from '@/components/date-range-picker';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { formatDocDate } from '@/lib/purchasing/model';
 import { cn } from '@/lib/utils';
 import { EMPTY_FILTER, type ListFilter } from './listView';
@@ -19,33 +22,27 @@ interface Props {
   onChange: (next: ListFilter) => void;
 }
 
-const openPicker = (e: React.MouseEvent<HTMLInputElement>) => {
-  const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-  try { el.showPicker?.(); } catch { /* the native icon still opens it */ }
-};
+const NO_RANGE: DateRange = { start: null, end: null };
 
 function rangeLabel(from: string, to: string): string {
   return `${from ? formatDocDate(from) : 'מתאריך'} — ${to ? formatDocDate(to) : 'עד תאריך'}`;
 }
 
-function DateField({ id, label, value, min, max, onChange }: {
-  id: string; label: string; value: string; min?: string; max?: string; onChange: (v: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id} className="text-sm font-medium text-muted-foreground">{label}</Label>
-      <Input
-        id={id} type="date" value={value} min={min} max={max}
-        onChange={(e) => onChange(e.target.value)} onClick={openPicker}
-        className="h-10 cursor-pointer"
-      />
-    </div>
-  );
-}
-
 export function ListFilters({ filter, onChange }: Props) {
   const [open, setOpen] = useState(false);
+  // While the picker is open it edits a draft; the filter itself moves only on "סגור".
+  const [draft, setDraft] = useState<DateRange>(NO_RANGE);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const ranged = filter.from !== '' || filter.to !== '';
+  const applied = useMemo<DateRange>(
+    () => ({ start: filter.from || null, end: filter.to || null }),
+    [filter.from, filter.to],
+  );
+
+  const toggle = () => {
+    if (!open) setDraft(applied);
+    setOpen(!open);
+  };
 
   return (
     <div className="flex flex-col gap-3 md:flex-row md:items-center" data-list-filters>
@@ -68,38 +65,41 @@ export function ListFilters({ filter, onChange }: Props) {
         )}
       </div>
 
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger
+      <div className="flex items-center gap-2">
+        <button
+          ref={triggerRef} type="button" onClick={toggle}
           data-filter-range data-ranged={ranged ? '' : undefined}
-          aria-label="סינון לפי טווח תאריכים"
+          aria-label="סינון לפי טווח תאריכים" aria-haspopup="dialog" aria-expanded={open}
           className={cn(
-            'inline-flex h-11 w-full items-center justify-between gap-3 rounded-xl border border-line bg-white px-3 text-sm font-medium transition-colors hover:bg-row-hover md:w-64',
+            'inline-flex h-11 min-w-0 flex-1 items-center justify-between gap-3 rounded-xl border border-line bg-white px-3 text-sm font-medium transition-colors hover:bg-row-hover md:w-64 md:flex-none',
             ranged ? 'text-ink' : 'text-ink-2',
           )}
         >
           <span className="tabular-nums">{rangeLabel(filter.from, filter.to)}</span>
           <Calendar aria-hidden className="h-4 w-4 shrink-0 text-ink-3" />
-        </PopoverTrigger>
-        <PopoverContent align="end" className="flex w-72 max-w-[calc(100vw-1rem)] flex-col gap-3 p-4" data-filter-range-panel>
-          <DateField
-            id="purchasing-from" label="מתאריך" value={filter.from} max={filter.to || undefined}
-            onChange={(from) => onChange({ ...filter, from })}
-          />
-          <DateField
-            id="purchasing-to" label="עד תאריך" value={filter.to} min={filter.from || undefined}
-            onChange={(to) => onChange({ ...filter, to })}
-          />
-          {ranged && (
-            <button
-              type="button" data-filter-range-clear
-              onClick={() => onChange({ ...filter, from: EMPTY_FILTER.from, to: EMPTY_FILTER.to })}
-              className="inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold text-ink-2 hover:bg-row-hover hover:text-ink"
-            >
-              נקה טווח
-            </button>
-          )}
-        </PopoverContent>
-      </Popover>
+        </button>
+        {ranged && (
+          <Button
+            type="button" variant="outline" size="icon" data-filter-range-clear
+            onClick={() => onChange({ ...filter, from: EMPTY_FILTER.from, to: EMPTY_FILTER.to })}
+            aria-label="נקה טווח תאריכים" title="נקה טווח"
+            className="h-11 w-11 shrink-0 rounded-xl"
+          >
+            <X className="h-4 w-4" aria-hidden />
+          </Button>
+        )}
+      </div>
+
+      <DateRangePicker
+        value={open ? draft : applied}
+        onChange={setDraft}
+        open={open} anchorRef={triggerRef} hideTrigger className="app-drp"
+        onCommit={(r) => {
+          onChange({ ...filter, from: r.start ?? '', to: r.end ?? '' });
+          setOpen(false);
+        }}
+        onCancel={() => setOpen(false)}
+      />
     </div>
   );
 }

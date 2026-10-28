@@ -1,0 +1,716 @@
+/*
+ * date-range-picker.css — עיצוב <DateRangePicker />.
+ * מקור האמת: ref/reference/extracted-source.md (CSS של הדמו), עם קידומת drp- למניעת התנגשויות.
+ * צבעים: טבלת הטוקנים בלבד. #CED6E4 (טבעת "היום" / hover לשדה) ו-#D3D9E5 (ידית ה-Sheet)
+ * מגיעים ישירות ממפרט הפיקסלים ("הוראות לקלוד קוד").
+ *
+ * עותק הפרויקט של הסקיל datePicker: ה-CSS יושב כאן (כלל ברזל 7 — globals.css מכיל רק @import) ו-import
+ * ה-CSS הוסר מ-DateRangePicker.tsx, כמו ש-README של הרכיב מורה. כולו בתוך @layer components (dev-discipline 1):
+ * CSS גלובלי מחוץ ל-layer גובר על כל utility. אין שינוי בכללים עצמם. דריסת הצבעים של הפרויקט: app-drp
+ * (בסוף הקובץ), דרך className של הרכיב.
+ */
+
+@layer components {
+.drp-root {
+  /* z-index: הפופאובר, הרקע וה-Sheet קוראים var(--drp-z, 100000). המארח מכוונן ב-:root { --drp-z: ... } */
+  --drp-primary: #2540C8;
+  --drp-primary-hover: #1C2E9A;
+  --drp-primary-disabled: #C7CEE8;
+  /* מילוי מתחת לטקסט לבן: יום נבחר, "סגור". ברירת מחדל = primary; מארח מכהה אותו כשה-primary שלו לא עובר AA (4.5:1) על לבן */
+  --drp-primary-strong: var(--drp-primary);
+  /* טבעת הפוקוס של השדה/שדה הלילות, וצל היום הנבחר והכפתור הראשי — גוונים של primary */
+  --drp-primary-ring: rgba(37, 64, 200, 0.12);
+  --drp-primary-shadow: rgba(37, 64, 200, 0.2);
+  --drp-range: #EEF1FD;
+  --drp-day-hover: #E4E9FA;
+  --drp-ink: #1B2233;
+  /* מספרי הימים בלוח. ברירת מחדל = ink; מארח יכול להפריד אותם מצבע הטקסט הכללי */
+  --drp-day-ink: var(--drp-ink);
+  --drp-muted: #6B7385;
+  --drp-faint: #9AA1B4;
+  --drp-disabled: #C2C8D6;
+  --drp-line: #E7EAF1;
+  --drp-divider: #EEF0F5;
+  --drp-field: #EFF2FB;
+  --drp-app-bg: #F1F3F8;
+  --drp-backdrop-color: rgba(23, 30, 54, 0.38);
+  --drp-ring: #CED6E4;
+  --drp-grab: #D3D9E5;
+  --drp-btn-text: #2C3446;
+  --drp-sec-hover: #F6F8FB;
+  --drp-font: var(--font-assistant, 'Assistant'), 'Assistant', system-ui, sans-serif;
+
+  font-family: var(--drp-font);
+  color: var(--drp-ink);
+  direction: rtl;
+  text-align: right;
+  -webkit-font-smoothing: antialiased;
+  box-sizing: border-box;
+}
+.drp-root *,
+.drp-root *::before,
+.drp-root *::after {
+  box-sizing: border-box;
+}
+
+/* ---- אייקונים ומספרים ---- */
+.drp-mi {
+  /* SVG inline (Icon.tsx) — גודל לפי font-size, צבע currentColor */
+  font-size: 20px;
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  flex: none;
+}
+.drp-num {
+  direction: ltr;
+  unicode-bidi: embed;
+}
+
+/* ---- שורה עליונה: שדה + סטפר ---- */
+.drp-top {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.drp-field {
+  flex: 1;
+  min-width: 280px;
+  height: 52px;
+  border: 1.5px solid var(--drp-line);
+  border-radius: 13px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 15px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--drp-ink);
+  text-align: right;
+}
+.drp-field:hover {
+  border-color: var(--drp-ring);
+}
+.drp-field.drp-on {
+  border-color: var(--drp-primary);
+  box-shadow: 0 0 0 3px var(--drp-primary-ring);
+}
+.drp-field:focus-visible {
+  outline: 2px solid var(--drp-primary);
+  outline-offset: 2px;
+}
+.drp-field .drp-mi {
+  color: var(--drp-primary);
+}
+.drp-field-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.drp-field .drp-chev {
+  margin-inline-start: auto;
+  color: var(--drp-muted);
+}
+
+.drp-stepw {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+.drp-step {
+  direction: ltr;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--drp-field);
+  border-radius: 13px;
+  padding: 4px;
+}
+.drp-step-btn {
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--drp-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: inherit;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+}
+.drp-step-btn:hover {
+  background: var(--drp-range);
+}
+.drp-step-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: #fff;
+}
+.drp-step-btn:focus-visible {
+  outline: 2px solid var(--drp-primary);
+  outline-offset: 1px;
+}
+.drp-step-v {
+  min-width: 48px;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 800;
+}
+/* שדה הלילות: נראה בדיוק כמו הטקסט (בלי מסגרת, בלי רקע, בלי spinner); בפוקוס טבעת rgba(37,64,200,.12) ב-radius 10px */
+.drp-step-in {
+  height: 44px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  line-height: normal;
+  outline: none;
+  border-radius: 10px;
+  box-shadow: none;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.drp-step-in::-webkit-outer-spin-button,
+.drp-step-in::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.drp-step-in:focus {
+  box-shadow: 0 0 0 3px var(--drp-primary-ring);
+}
+.drp-step-in:read-only {
+  cursor: default;
+}
+.drp-step-sheet .drp-step-in {
+  height: 38px;
+}
+.drp-hint {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--drp-faint);
+}
+/* הסטפר בתוך ה-Sheet */
+.drp-step.drp-step-sheet {
+  height: auto;
+  gap: 2px;
+  border-radius: 12px;
+  padding: 3px;
+  flex: none;
+}
+.drp-step-sheet .drp-step-btn {
+  width: 38px;
+  height: 38px;
+}
+.drp-step-sheet .drp-step-v {
+  min-width: 30px;
+  font-size: 15px;
+}
+
+/* ---- פופאובר דסקטופ ---- */
+.drp-pop {
+  position: fixed;
+  z-index: var(--drp-z, 100000);
+  border: 1px solid var(--drp-line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(16, 24, 40, 0.08);
+  /* לעולם לא גבוה מהחלון: כשאין מקום, הלוח (.drp-cal) גולל בפנים והכותרת והפוטר נשארים קבועים */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
+  overflow: hidden;
+}
+.drp-pop:focus {
+  outline: none;
+}
+.drp-pop-h {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 22px;
+  flex-wrap: wrap;
+}
+.drp-moon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--drp-app-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.drp-moon .drp-mi {
+  font-size: 24px;
+  color: var(--drp-ink);
+}
+.drp-sum-t {
+  font-size: 21px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.drp-sum-s {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--drp-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+}
+.drp-ft {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  border: 1.5px solid var(--drp-line);
+  border-radius: 13px;
+  padding: 10px 18px;
+}
+.drp-ft-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.drp-ft-l {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--drp-muted);
+}
+.drp-ft-v {
+  font-size: 17px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.drp-ft-v.drp-dim {
+  color: var(--drp-disabled);
+}
+.drp-ft-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--drp-range);
+  color: var(--drp-primary);
+  border-radius: 999px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.drp-ft-chip .drp-mi {
+  font-size: 16px;
+}
+
+.drp-cal {
+  border-top: 1px solid var(--drp-divider);
+  border-bottom: 1px solid var(--drp-divider);
+  padding: 18px 22px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.drp-mo {
+  flex: 1 1 300px;
+  min-width: 0;
+  padding: 0 4px;
+}
+.drp-mo + .drp-mo {
+  border-inline-start: 1px solid var(--drp-divider);
+  margin-inline-start: 18px;
+  padding-inline-start: 22px;
+}
+/* layout="stacked": הפופאובר צר מ-664px ו-flex-wrap מוריד את החודש השני מתחת לראשון,
+   בדיוק כמו בגיבוי של הדמו (date-picker-fallback-stacked.png). אין CSS נוסף. */
+.drp-mo-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  margin-bottom: 8px;
+}
+.drp-mo-t {
+  font-size: 17px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.drp-nav-b {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--drp-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: inherit;
+}
+.drp-nav-b:hover {
+  background: var(--drp-app-bg);
+  color: var(--drp-ink);
+}
+.drp-nav-b:focus-visible {
+  outline: 2px solid var(--drp-primary);
+  outline-offset: 1px;
+}
+.drp-nav-sp {
+  width: 36px;
+  height: 36px;
+}
+.drp-wd {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 4px;
+}
+.drp-wd span {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--drp-faint);
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---- הלוח (משותף) ---- */
+.drp-grid {
+  display: flex;
+  flex-direction: column;
+  row-gap: 6px;
+}
+.drp-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+.drp-cell {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* הפס נצבע על התא, לא על הכפתור */
+.drp-cell.drp-in {
+  background: var(--drp-range);
+}
+.drp-cell.drp-bs {
+  background: linear-gradient(to right, var(--drp-range) 50%, transparent 50%);
+}
+.drp-cell.drp-be {
+  background: linear-gradient(to left, var(--drp-range) 50%, transparent 50%);
+}
+.drp-cell.drp-bs.drp-be {
+  background: transparent;
+}
+.drp-d {
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--drp-day-ink);
+  cursor: pointer;
+  direction: ltr;
+  padding: 0;
+}
+.drp-d:not([aria-disabled='true']):hover {
+  background: var(--drp-day-hover);
+}
+.drp-d:focus-visible {
+  outline: 2px solid var(--drp-primary);
+  outline-offset: 1px;
+}
+.drp-d.drp-today {
+  box-shadow: inset 0 0 0 1.5px var(--drp-ring);
+}
+.drp-d.drp-prev {
+  box-shadow: inset 0 0 0 1.5px var(--drp-primary);
+  color: var(--drp-primary);
+  font-weight: 700;
+}
+.drp-d[aria-disabled='true'] {
+  color: var(--drp-disabled);
+  cursor: default;
+  background: transparent;
+  text-decoration: line-through;
+  box-shadow: none;
+}
+.drp-d.drp-sel,
+.drp-d.drp-sel:hover,
+.drp-d.drp-sel[aria-disabled='true'] {
+  background: var(--drp-primary-strong);
+  color: #fff;
+  font-weight: 800;
+  text-decoration: none;
+  box-shadow: 0 4px 12px var(--drp-primary-shadow);
+}
+
+/* ---- פוטר דסקטופ ---- */
+.drp-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 22px;
+  flex-wrap: wrap;
+}
+.drp-foot-h {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--drp-muted);
+}
+.drp-btn {
+  height: 44px;
+  padding: 0 24px;
+  border: none;
+  border-radius: 12px;
+  background: var(--drp-primary-strong);
+  color: #fff;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 12px var(--drp-primary-shadow);
+}
+.drp-btn:hover {
+  background: var(--drp-primary-hover);
+}
+.drp-btn:disabled {
+  background: var(--drp-primary-disabled);
+  box-shadow: none;
+  cursor: default;
+}
+.drp-btn-t {
+  height: 44px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--drp-btn-text);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-inline-start: auto;
+}
+.drp-btn-t:hover {
+  background: var(--drp-app-bg);
+}
+.drp-btn-sec {
+  height: 44px;
+  border: 1.5px solid var(--drp-line);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--drp-btn-text);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.drp-btn-sec:hover {
+  background: var(--drp-sec-hover);
+}
+.drp-btn:focus-visible,
+.drp-btn-t:focus-visible,
+.drp-btn-sec:focus-visible,
+.drp-sh-x:focus-visible,
+.drp-m-more:focus-visible {
+  outline: 2px solid var(--drp-primary);
+  outline-offset: 2px;
+}
+
+/* ---- מובייל: Bottom Sheet ---- */
+.drp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--drp-z, 100000);
+  background: var(--drp-backdrop-color);
+}
+.drp-sheet {
+  position: fixed;
+  right: 0;
+  left: 0;
+  bottom: 0;
+  top: 48px;
+  z-index: calc(var(--drp-z, 100000) + 1);
+  background: #fff;
+  border-radius: 22px 22px 0 0;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 -10px 30px rgba(16, 24, 40, 0.15);
+}
+.drp-sheet:focus {
+  outline: none;
+}
+.drp-sh-head {
+  flex: none;
+  touch-action: pan-y;
+}
+.drp-grab {
+  width: 40px;
+  height: 5px;
+  border-radius: 99px;
+  background: var(--drp-grab);
+  margin: 8px auto 0;
+  flex: none;
+}
+.drp-sh-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px 12px;
+  flex: none;
+}
+.drp-sh-h > div {
+  min-width: 0;
+}
+.drp-sh-h .drp-sum-s {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.drp-sh-t {
+  font-size: 19px;
+  font-weight: 800;
+}
+.drp-sh-x {
+  margin-inline-start: auto;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 12px;
+  background: var(--drp-app-bg);
+  color: var(--drp-ink);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex: none;
+}
+.drp-m-sum {
+  margin: 0 16px;
+  border: 1.5px solid var(--drp-line);
+  border-radius: 13px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.drp-m-sum .drp-ft-col {
+  flex: 1;
+  min-width: 0;
+}
+.drp-m-sum .drp-ft-v {
+  font-size: 15px;
+}
+.drp-m-sum .drp-ft-end {
+  text-align: left;
+}
+.drp-m-wd {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  padding: 10px 16px 6px;
+  border-bottom: 1px solid var(--drp-divider);
+  flex: none;
+}
+.drp-m-wd span {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--drp-faint);
+}
+.drp-m-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 16px 16px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+.drp-m-body::-webkit-scrollbar {
+  display: none;
+}
+.drp-m-mo-t {
+  font-size: 17px;
+  font-weight: 800;
+  padding: 16px 4px 10px;
+}
+.drp-m-more {
+  width: 100%;
+  height: 44px;
+  margin-top: 14px;
+  border: 1.5px solid var(--drp-line);
+  border-radius: 12px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--drp-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.drp-m-foot {
+  flex: none;
+  border-top: 1px solid var(--drp-line);
+  padding: 10px 16px calc(26px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #fff;
+}
+.drp-m-foot-h {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--drp-muted);
+  text-align: center;
+}
+.drp-m-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.drp-m-btns .drp-btn,
+.drp-m-btns .drp-btn-sec {
+  width: 100%;
+  padding: 0;
+}
+
+/* ---- הפרויקט (לא חלק מהסקיל): צבעי המותג של DESIGN §2 דרך className="app-drp" ----
+   רק טוקנים, כפי שה-README של הרכיב מתיר: primary/hover/ring/shadow/range = bg-brand · bg-brand-dark · bg-brand-soft
+   (לבן על #3d5afe = 5.1:1, עובר AA, לכן אין דריסה של --drp-primary-strong). הפונט = Heebo של האפליקציה (self-hosted).
+   כל השאר נשאר בדיוק כברירת המחדל של הסקיל. הפופאובר וה-Sheet יושבים ב-portal, ולכן הקלאס עובר ב-className. */
+.drp-root.app-drp {
+  --drp-primary: #3d5afe;
+  --drp-primary-hover: #2c44e0;
+  --drp-primary-ring: rgba(61, 90, 254, 0.12);
+  --drp-primary-shadow: rgba(61, 90, 254, 0.2);
+  --drp-range: #ecefff;
+  --drp-font: var(--font-sans), system-ui, sans-serif;
+}
+}
