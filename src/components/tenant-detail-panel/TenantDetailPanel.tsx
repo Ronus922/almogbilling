@@ -322,13 +322,19 @@ export function TenantDetailPanel({
   }
 
   // FileDown → server-rendered PDF of the print page. Fetch as a blob so we can
-  // download it under a Hebrew filename + surface a toast on failure.
+  // download it under a Hebrew filename + surface a toast on failure — with the
+  // server's own message when it sent one (JSON { message }).
   async function handleExportPdf() {
     if (!debtorId || !tenant || exportingPdf) return;
     setExportingPdf(true);
+    let failure = 'הפקת ה-PDF נכשלה';
     try {
       const res = await fetch(`/api/debtors/${debtorId}/pdf`, { credentials: 'include' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { message?: unknown } | null;
+        if (typeof body?.message === 'string' && body.message) failure = body.message;
+        throw new Error(`HTTP ${res.status}`);
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -339,7 +345,7 @@ export function TenantDetailPanel({
       a.remove();
       URL.revokeObjectURL(url);
     } catch {
-      toast.error('הפקת ה-PDF נכשלה');
+      toast.error(failure);
     } finally {
       setExportingPdf(false);
     }
