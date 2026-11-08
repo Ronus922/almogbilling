@@ -79,25 +79,35 @@ export interface SmsProcessOpts {
   backoffBaseSec?: number;
 }
 
-// A recipient whose SMS leg is finished but whose WhatsApp window was full is
-// PARKED, not failed and not re-queued from scratch: re-claiming it must not
-// send the SMS a second time. No column exists for that state (and none was
-// added), so the row itself carries it — error_class 'rate_limited' plus a
-// last_error that ends in this exact tail. The tail is unique to parking: a
-// WhatsApp 429 from the provider also yields 'rate_limited', but its message
-// is the provider's, so it never matches.
+// ONE SMS per recipient, in every scenario. Once the SMS leg has finished (sent,
+// or failed for good) a recipient that is re-queued — parked because the
+// WhatsApp window was full, or retried because the WhatsApp send itself failed
+// with a 5xx / timeout — must run its WhatsApp leg ONLY: claiming it again must
+// never reach the SMS provider. No column exists for "the SMS leg is done" (and
+// none was added), so the row itself carries it: last_error is
+// "SMS: <019's reason> | WhatsApp (גיבוי): <what happened on the WhatsApp leg>".
+// Every writer of that shape goes through smsLegNote, so the reader below cannot
+// drift from it. A row that never reached the WhatsApp leg has no such shape
+// (an SMS-only failure is just "SMS: <reason>"), and operator "retry failed"
+// clears last_error — an explicit human decision to try the SMS again.
 const WA_SLOT_NOTE = 'ממתין לתור הקצב של וואטסאפ';
-const WA_PARK_TAIL = ` | WhatsApp (גיבוי): ${WA_SLOT_NOTE}`;
+const WA_LEG_SEP = ' | WhatsApp (גיבוי): ';
 const SMS_ERROR_PREFIX = 'SMS: ';
-const MAX_PARKED_SMS_ERROR = 300; // keep the whole marker well inside the 500-char log cap
+const MAX_SMS_ERROR_IN_NOTE = 300; // keep the separator well inside the 500-char log cap
 
-/** The SMS-leg error a parked recipient carries, or null when the row is not a
- *  parked one (the SMS leg still has to run). */
-export function parkedSmsError(item: Pick<Recipient, 'error_class' | 'last_error'>): string | null {
-  if (item.error_class !== 'rate_limited') return null;
+/** last_error of a recipient whose SMS leg is finished: the SMS reason, then
+ *  what the WhatsApp leg did. */
+function smsLegNote(smsError: string, whatsappPart: string): string {
+  return `${SMS_ERROR_PREFIX}${smsError.split(WA_LEG_SEP).join(' ').slice(0, MAX_SMS_ERROR_IN_NOTE)}${WA_LEG_SEP}${whatsappPart}`;
+}
+
+/** The SMS-leg error a re-queued recipient carries, or null when its SMS leg
+ *  has not run yet (it must run). */
+export function smsLegDoneError(item: Pick<Recipient, 'last_error'>): string | null {
   const e = item.last_error ?? '';
-  if (!e.startsWith(SMS_ERROR_PREFIX) || !e.endsWith(WA_PARK_TAIL)) return null;
-  return e.slice(SMS_ERROR_PREFIX.length, e.length - WA_PARK_TAIL.length);
+  if (!e.startsWith(SMS_ERROR_PREFIX)) return null;
+  const sep = e.indexOf(WA_LEG_SEP);
+  return sep < 0 ? null : e.slice(SMS_ERROR_PREFIX.length, sep);
 }
 
 /** Hand the lease back and re-queue the recipient 2s later for the WhatsApp leg
@@ -111,7 +121,7 @@ async function parkForWhatsappSlot(pool: Pool, recipientId: string, smsError: st
             next_attempt_at = now() + interval '2 seconds',
             last_error=$2, error_class='rate_limited'
       where id=$1 and status='processing'`,
-    [recipientId, `${SMS_ERROR_PREFIX}${smsError.slice(0, MAX_PARKED_SMS_ERROR)}${WA_PARK_TAIL}`],
+    [recipientId, smsLegNote(smsError, WA_SLOT_NOTE)],
   );
   return (r.rowCount ?? 0) > 0;
 }
@@ -132,7 +142,7 @@ async function parkForWhatsappSlot(pool: Pool, recipientId: string, smsError: st
  * 'sent', so the reason is not lost. That leg is gated on the instance's
  * WhatsApp rate window exactly like a WhatsApp broadcast recipient (the same
  * bucket, so it shares the budget with any WhatsApp broadcast running on that
- * instance, and a full window defers the recipient — see parkedSmsError). The
+ * instance, and a full window defers the recipient — see smsLegDoneError). The
  * SMS leg keeps its own pace and is never held back by a full WhatsApp window.
  * Until 08/11/2026 this leg was only recorded in the window, never gated, so
  * a run of failing SMS went out at the SMS pace (20/min) instead of 12/min on
@@ -156,9 +166,10 @@ export async function processSmsRecipient(
     `select 1 from public.wa_campaign_recipients where id=$1 and status='processing'`, [item.id]);
   if (!live.rowCount) return { ...base, outcome: 'failed' };
 
-  // Parked on an earlier pass (SMS already failed, WhatsApp window was full):
-  // the SMS leg is finished — never sent twice — so go straight to WhatsApp.
-  const priorSmsError = fallback ? parkedSmsError(item) : null;
+  // Re-queued on an earlier pass (parked for a WhatsApp slot, or its WhatsApp
+  // send failed with a retryable error): the SMS leg is finished — never sent
+  // twice — so go straight to WhatsApp.
+  const priorSmsError = fallback ? smsLegDoneError(item) : null;
   let smsError: string;
   let localPhone: string | null = null;
 
@@ -241,5 +252,7 @@ export async function processSmsRecipient(
   }
 
   const cls = classifyError(new Error(waRes.message), { status: waRes.status, body: waRes.body });
-  return fail({ ...cls, message: `SMS: ${smsError} | WhatsApp (גיבוי): ${cls.message}` });
+  // Retryable (5xx / timeout) → persistFailure re-queues the row with THIS note,
+  // which is what tells the next pass the SMS leg is done.
+  return fail({ ...cls, message: smsLegNote(smsError, cls.message) });
 }
