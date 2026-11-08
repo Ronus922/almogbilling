@@ -14,6 +14,15 @@ type Q = Pool | PoolClient;
 // counted once, so rate_per_min keeps its meaning — recipients per minute. Green
 // API's own send queue spaces the individual messages on its side.
 
+/** The WhatsApp pace of a regular broadcast — wa_campaigns.rate_per_min's DB
+ *  default (the compose form never sends another value). There is no
+ *  per-instance setting: the limit is a column of each campaign and the window
+ *  it is compared against is shared by everything on the instance. The SMS
+ *  channel's WhatsApp fallback has no WhatsApp campaign row of its own to read
+ *  this from (its own rate_per_min is the SMS pace), so it uses this. Kept in
+ *  step with the column default by tests/wa-queue-sms-rate.test.ts. */
+export const DEFAULT_WA_RATE_PER_MIN = 12;
+
 export async function underRateLimit(q: Q, bucket: string, perMin: number): Promise<boolean> {
   const r = await q.query<{ c: string }>(
     `select count(*)::int as c from public.wa_send_log

@@ -6,7 +6,7 @@ import {
   claimBatch, processRecipient, recoverLeases, reconcile, reconcileStale,
   type SendCreds,
 } from './engine';
-import { pruneSendLog } from './rate-limit';
+import { pruneSendLog, DEFAULT_WA_RATE_PER_MIN } from './rate-limit';
 import {
   listCampaignAttachments, listAttachmentsNeedingUpload, recordUploadSuccess, recordUploadFailure,
   asciiLeaf, wireFileName, type AttachmentReader, type CampaignAttachment,
@@ -159,7 +159,11 @@ export class DeliveryWorker {
           let fallback: SmsWhatsappFallback | null = null;
           if (campaign.sms_whatsapp_fallback === true) {
             const { provider, creds } = await this.providerFor(campaign);
-            fallback = { provider, creds, bucket: campaign.instance_id ?? 'default' };
+            fallback = {
+              provider, creds, bucket: campaign.instance_id ?? 'default',
+              // The leg is gated like any WhatsApp recipient on this instance.
+              ratePerMin: DEFAULT_WA_RATE_PER_MIN,
+            };
           }
           ctx = {
             channel: 'sms',
