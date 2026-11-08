@@ -19,6 +19,7 @@ import { PermissionMatrix } from './PermissionMatrix';
 import { PasswordField, PasswordRequirements } from '@/components/auth/PasswordField';
 import { getDefaultPermissions, canManageRole } from '@/lib/permissions/check';
 import { isValidPassword } from '@/lib/auth/passwordPolicy';
+import { GUARD_USERNAME_HELP, isValidGuardUsername, normalizeUsername } from '@/lib/auth/usernamePolicy';
 import { roleLabel, isMatrixRole, ROLE_VALUES, type ModulePermission, type Role } from '@/lib/permissions/constants';
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -56,6 +57,8 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
   const creatableRoles: Role[] = ROLE_VALUES.filter((r) => canManageRole(currentUserRole, r));
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  // Guard only: the login name (a guard has no required e-mail).
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   // No default role: the user is saved in exactly the role picked here. Until
   // 10/10/2026 the form opened on "מנהל", so a click that did not land sent
@@ -70,6 +73,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
     if (open) {
       setFullName('');
       setEmail('');
+      setUsername('');
       setPassword('');
       setRole(null);
       setPermissions([]);
@@ -83,16 +87,27 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
 
   // Dirty = user typed in any text field. Role/permission tinkering doesn't
   // count — closing without filling name/email loses no real work.
-  const dirty = fullName.trim().length > 0 || email.trim().length > 0 || password.length > 0;
+  const dirty =
+    fullName.trim().length > 0 || email.trim().length > 0 || username.trim().length > 0 || password.length > 0;
 
   const trimmedName = fullName.trim();
   const trimmedEmail = email.trim();
-  // Password is OPTIONAL: empty → invite email; non-empty → must meet the policy.
+  // A guard (08/11/2026) is created by username + password: no invite, and the
+  // e-mail is optional (only needed to sign in with Google).
+  const isGuard = role === 'guard';
+  const usernameInvalid = isGuard && username.trim().length > 0 && !isValidGuardUsername(username);
+  const guardEmailInvalid = isGuard && trimmedEmail.length > 0 && !EMAIL_RX.test(trimmedEmail);
+  // Password is OPTIONAL for everyone but a guard: empty → invite email;
+  // non-empty → must meet the policy. A guard has no inbox to invite, so for it
+  // the password is required.
   const passwordInvalid = password.length > 0 && !isValidPassword(password);
+  const identityOk = isGuard
+    ? isValidGuardUsername(username) && !guardEmailInvalid && isValidPassword(password)
+    : EMAIL_RX.test(trimmedEmail);
   const canSubmit =
     trimmedName.length >= 2 &&
     trimmedName.length <= 80 &&
-    EMAIL_RX.test(trimmedEmail) &&
+    identityOk &&
     role !== null &&
     !passwordInvalid &&
     !submitting;
@@ -123,6 +138,7 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
         email: trimmedEmail.toLowerCase(),
         role,
       };
+      if (role === 'guard') body.username = normalizeUsername(username);
       // Password present → direct create (no invite email). Empty → invite.
       if (withPassword) body.password = password;
       // Only send the matrix when the admin actually tweaked it. Unchanged →
@@ -207,9 +223,32 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
                       autoFocus
                     />
                   </div>
+                  {isGuard && (
+                    <div className="space-y-2">
+                      <Label htmlFor="invite-username" className="text-base font-medium text-muted-foreground">
+                        שם משתמש <span className="text-red-500">*</span>
+                      </Label>
+                      <Input
+                        id="invite-username"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        disabled={submitting}
+                        dir="ltr"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        aria-invalid={usernameInvalid ? true : undefined}
+                        className={usernameInvalid ? 'h-10 border-red-400 bg-red-50 focus-visible:ring-red-200' : 'h-10'}
+                        placeholder="guard1"
+                      />
+                      <p className={usernameInvalid ? 'text-[12px] font-semibold text-red-500 text-start' : 'text-[12px] text-slate-500 text-start'}>
+                        {usernameInvalid ? `⚠️ ${GUARD_USERNAME_HELP}` : `בזה השומר נכנס למערכת. ${GUARD_USERNAME_HELP}`}
+                      </p>
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <Label htmlFor="invite-email" className="text-base font-medium text-muted-foreground">
-                      אימייל
+                      {isGuard ? 'אימייל (אופציונלי)' : 'אימייל'}
                     </Label>
                     <Input
                       id="invite-email"
@@ -218,14 +257,20 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
                       onChange={(e) => setEmail(e.target.value)}
                       disabled={submitting}
                       dir="ltr"
-                      className="h-10"
+                      aria-invalid={guardEmailInvalid ? true : undefined}
+                      className={guardEmailInvalid ? 'h-10 border-red-400 bg-red-50 focus-visible:ring-red-200' : 'h-10'}
                       placeholder="user@example.com"
                     />
+                    {isGuard && (
+                      <p className="text-[12px] text-slate-500 text-start">
+                        לא חובה. נדרש רק אם השומר ייכנס גם עם Google.
+                      </p>
+                    )}
                   </div>
                 </div>
               </Section>
 
-              <Section title="סיסמה (אופציונלי)" icon={Lock} iconTone="blue">
+              <Section title={isGuard ? 'סיסמה' : 'סיסמה (אופציונלי)'} icon={Lock} iconTone="blue">
                 <div className="space-y-3 py-2">
                   <PasswordField
                     id="invite-password"
@@ -239,7 +284,9 @@ export function InviteUserPanel({ open, onOpenChange, currentUserRole }: Props) 
                     <PasswordRequirements value={password} />
                   ) : (
                     <p className="text-xs text-slate-500">
-                      מלא סיסמה כדי ליצור עובד מיד (שם משתמש = האימייל, ללא מייל הזמנה). השאר ריק כדי לשלוח הזמנה.
+                      {isGuard
+                        ? 'חובה לשומר — אין לו תיבת מייל לקבל הזמנה. מוסרים לו את שם המשתמש והסיסמה.'
+                        : 'מלא סיסמה כדי ליצור עובד מיד (שם משתמש = האימייל, ללא מייל הזמנה). השאר ריק כדי לשלוח הזמנה.'}
                     </p>
                   )}
                 </div>

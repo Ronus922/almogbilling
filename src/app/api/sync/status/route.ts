@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireActor } from '@/lib/auth/actor';
+import { requireNonGuardActor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { loadSyncHealth } from '@/lib/dashboard/loadSyncHealth';
 
@@ -11,7 +11,7 @@ export const runtime = 'nodejs';
 // refresh the indicator after "סנכרן עכשיו".
 export async function GET() {
   try {
-    await requireActor();
+    await requireNonGuardActor();
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;

@@ -70,7 +70,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
 
   const origin = appUrl();
   const acceptUrl = `${origin}/accept-invite?token=${encodeURIComponent(rawToken)}`;
-  const inviterName = actor.full_name?.trim() || actor.email;
+  const inviterName = actor.full_name?.trim() || actor.email || actor.username;
   const roleLabel = ROLES.find((x) => x.value === invite.role)?.label ?? invite.role;
 
   try {

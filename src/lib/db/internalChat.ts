@@ -35,7 +35,7 @@ export const MAX_GROUP_MEMBERS = 50;
 async function filterEligibleUserIds(ids: string[]): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
   const r = await query<{ id: string }>(
-    `select id from public.users where id = any($1::uuid[]) and is_active = true`,
+    `select id from public.users where id = any($1::uuid[]) and is_active = true and role <> 'guard'`,
     [ids],
   );
   return new Set(r.rows.map((row) => row.id));

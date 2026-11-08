@@ -41,6 +41,7 @@ const NAME_SNAPSHOTS: ReadonlyArray<readonly [table: string, idCol: string, name
   ['documents', 'uploaded_by', 'uploaded_by_name'],
   ['document_folders', 'created_by', 'created_by_name'],
   ['user_reminders', 'created_by', 'created_by_name'],
+  ['visitor_scans', 'scanned_by', 'scanned_by_name'],
   ['audit_log', 'actor_user_id', 'actor_name'],
 ];
 

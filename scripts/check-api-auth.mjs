@@ -21,7 +21,10 @@ import { join } from 'node:path';
 //     guard of the portal's financial endpoints.
 //   requireUserDeleteAccess = the USER_DELETE_ROLES allowlist (super admin only)
 //     of the permanent user deletion, DELETE /api/users/[id] (06/10/2026).
-const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|AssistantAccess|CanManageRole|DriveConnector|PortalSession|PortalFinanceAccess|UserDeleteAccess|PurchasingAny|PurchasingType|PurchasingSettings)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREENAPI_WEBHOOK_TOKEN/;
+//   requireVisitor{View,Create,Edit,Manage} = the VISITOR_*_ROLES allowlists of the
+//     visitor-scan screen (08/11/2026); requireNonGuardActor / requireGuardActor =
+//     "signed in, and not / only the single-screen guard" (src/lib/auth/actor.ts).
+const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|AssistantAccess|CanManageRole|DriveConnector|PortalSession|PortalFinanceAccess|UserDeleteAccess|PurchasingAny|PurchasingType|PurchasingSettings|NonGuardActor|GuardActor|VisitorView|VisitorCreate|VisitorEdit|VisitorManage)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREENAPI_WEBHOOK_TOKEN/;
 
 // Routes that are legitimately public (pre-auth flows + health + public media).
 // Keep tiny and justified — each is unauthenticated BY DESIGN.
@@ -69,4 +72,29 @@ run('check-api-auth', async () => {
     else fail(`${rel} — אין guard (require*/getCurrentActor/getSession/cron/webhook-secret) — route חשוף!`);
   }
   if (checked) ok(`${checked} routes מאובטחים בצד שרת (מתוך ${files.length}, ${PUBLIC.size} ציבוריים מתועדים)`);
+
+  // ── The guard ("שומר", 08/11/2026) holds ONE screen. A handler that only asks
+  //    "is anyone signed in?" (getSession / getCurrentActor / requireActor — the
+  //    "any authenticated user" reads) would answer it too, so each such handler
+  //    must either refuse the guard by name (isGuardRole / requireNonGuardActor),
+  //    or check a permission itself (hasPermission). /api/auth/me is the
+  //    caller's own identity and is exempt. Found by the API crawl in
+  //    e2e/visitors.spec.ts: /api/contacts, /api/contacts/[id], /api/settings/billing.
+  const STRONG = /require(Permission|AnyPermission|Admin|SuperAdmin|CanManageRole|UserDeleteAccess|Purchasing\w*|DriveConnector|PortalSession|PortalFinanceAccess|Visitor\w+|GuardActor|NonGuardActor|NotificationsAccess|AssistantAccess)\b|CRON_SECRET|WEBHOOK_TOKEN/;
+  const WEAK = /getSession\(|getCurrentActor\(|requireActor\(/;
+  const REFUSES_GUARD = /isGuardRole|NonGuardActor|hasPermission\(/;
+  const SESSION_ONLY_OK = new Set(['src/app/api/auth/me/route.ts']);
+  let handlers = 0;
+  for (const rel of files) {
+    if (PUBLIC.has(rel) || SESSION_ONLY_OK.has(rel)) continue;
+    const src = readFileSync(join(root, rel), 'utf8');
+    const parts = src.split(/(?=export async function (?:GET|POST|PUT|PATCH|DELETE)\b)/).slice(1);
+    for (const body of parts) {
+      if (STRONG.test(body) || !WEAK.test(body)) continue;
+      handlers++;
+      const name = /export async function (\w+)/.exec(body)?.[1] ?? '?';
+      if (!REFUSES_GUARD.test(body)) fail(`${rel} ${name} — מאמת רק "מחובר" ולא חוסם שומר (isGuardRole / requireNonGuardActor / hasPermission)`);
+    }
+  }
+  ok(`${handlers} handlers של "כל משתמש מחובר" חוסמים את השומר`);
 });

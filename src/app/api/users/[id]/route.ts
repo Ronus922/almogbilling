@@ -143,6 +143,20 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
     nextGoogleAuth = body.allow_google_auth;
   }
 
+  // ── A user without a mailbox (a guard created with username + password) ──
+  // Google identifies a person by e-mail, so the toggle cannot be ON for one
+  // with none; and the roles that depend on a mailbox (invites, reminders,
+  // notifications, password reset) cannot be handed to them — the panel has no
+  // field to add an address later, so those would be dead accounts.
+  if (target.email === null) {
+    if (nextGoogleAuth && !target.allow_google_auth) {
+      return NextResponse.json({ error: 'כניסה עם Google דורשת כתובת אימייל — למשתמש הזה אין' }, { status: 400 });
+    }
+    if (nextRole !== 'guard') {
+      return NextResponse.json({ error: 'למשתמש בלי אימייל אפשר רק תפקיד שומר' }, { status: 400 });
+    }
+  }
+
   // notification_phone (optional) — stored as ONE canonical local number
   // (0XXXXXXXXX) via cleanPhoneField, the same policy as supplier/contact phones.
   // Empty / null clears it. Anything unparseable → 400.

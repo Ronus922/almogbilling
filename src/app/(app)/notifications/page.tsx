@@ -1,5 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
+import { homePathFor } from '@/lib/auth/home';
+import { canUseNotifications } from '@/lib/permissions/check';
 import { listNotificationsPage } from '@/lib/db/notifications';
 import { NotificationsPageClient } from './notifications-page-client';
 
@@ -13,11 +15,12 @@ const PAGE_SIZE = 20;
 // sees only their own rows (scoped server-side by actor.id). Entry is via the
 // bell's "צפה בכל ההתראות" footer link. The read-only `viewer` is the one
 // exception: scoped to the debtors screen only → no notifications (bell hidden +
-// /api/notifications/* deny viewer), so this page redirects them away.
+// /api/notifications/* deny viewer), so this page redirects them away. The guard
+// (one screen, the visitor scan) is the other: canUseNotifications() decides.
 export default async function NotificationsPage() {
   const actor = await getCurrentActor();
   if (!actor) redirect('/login');
-  if (actor.role === 'viewer') redirect('/dashboard');
+  if (!canUseNotifications(actor.role)) redirect(homePathFor(actor.role));
 
   const { items, total } = await listNotificationsPage(actor.id, { page: 1, pageSize: PAGE_SIZE });
 

@@ -26,11 +26,17 @@
 //     • broadcasts on BOTH channels (WhatsApp / email, 09/10/2026) ride the
 //       existing whatsapp_chat module — send = edit, history = view — with no
 //       module of their own.
+//     • the guard ("שומר", 08/11/2026) is a seventh role OFF the matrix: it holds
+//       no module at all, lands on /visitors, has no bell or assistant, and the
+//       visitor-scan screen is a set of ROLE allowlists — every role reads, only
+//       guard / admin / super_admin scan and write notes, only admin / super_admin
+//       edit every field and delete. Nothing in a matrix row can change that.
 //   Run under tsx (imports .ts source). Pure — no DB.
 import { run, fail, ok } from './_check-lib.mjs';
-import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone, canDeleteUsers, canGrantModule, canOpenUsersScreen, canBulkChangeLegalStatus } from '../src/lib/permissions/check.ts';
+import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone, canDeleteUsers, canGrantModule, canOpenUsersScreen, canBulkChangeLegalStatus, canViewVisitors, canCreateVisitorScan, canEditVisitorNotes, canManageVisitorScans, canUseNotifications, hasAnyAccess } from '../src/lib/permissions/check.ts';
 import { canPurchasingSettings } from '../src/lib/purchasing/access.ts';
-import { DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER, MODULES } from '../src/lib/permissions/constants.ts';
+import { DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER, MODULES, ROLE_VALUES, isMatrixRole } from '../src/lib/permissions/constants.ts';
+import { homePathFor } from '../src/lib/auth/home.ts';
 
 run('check-rbac', async () => {
   const t = (name, cond) => (cond ? ok(name) : fail(name));
@@ -186,4 +192,28 @@ run('check-rbac', async () => {
   t('תפוצה: viewer ברירת מחדל נחסם', hasPermission('viewer', DEFAULT_VIEWER, 'whatsapp_chat', 'view') === false);
   t('תפוצה: worker נחסם', hasPermission('cleaner', DEFAULT_WORKER, 'whatsapp_chat', 'view') === false);
   t('תפוצה: אין מודול הרשאה נפרד למייל/לתפוצות', !MODULES.some((m) => /email|broadcast/i.test(m.key)));
+
+  // The guard (08/11/2026) — one screen, no module, no matrix.
+  t('שומר: תפקיד שביעי', ROLE_VALUES.length === 7 && ROLE_VALUES.includes('guard'));
+  t('שומר: אינו תפקיד מטריצה', isMatrixRole('guard') === false);
+  t('שומר: נחסם בכל מודול', MODULES.every((m) =>
+    hasPermission('guard', [], m.key, 'view') === false && hasPermission('guard', [], m.key, 'edit') === false));
+  t('שומר: נוחת על /visitors', homePathFor('guard') === '/visitors');
+  t('שומר: עובר את שער האפס-גישה', hasAnyAccess('guard', []) === true);
+  t('שומר: בלי פעמון התראות (כמו צופה)', canUseNotifications('guard') === false && canUseNotifications('viewer') === false && canUseNotifications('manager') === true);
+  t('שומר: בלי העוזר האישי', canUseAssistant('guard', [{ module: 'dashboard', canView: true, canEdit: true }]) === false);
+  t('שומר: אדמין מנהל אותו', canManageRole('admin', 'guard') === true && canManageRole('super_admin', 'guard') === true);
+  t('שומר: לא מנהל אף תפקיד', ROLE_VALUES.every((r) => canManageRole('guard', r) === false));
+  t('שומר: לא מוחק משתמשים ולא פותח מסך משתמשים', canDeleteUsers('guard') === false && canOpenUsersScreen('guard') === false);
+
+  // The visitor-scan screen — allowlists by role.
+  for (const role of ROLE_VALUES) {
+    t(`סריקת כניסה: ${role} רואה`, canViewVisitors(role) === true);
+    const scans = role === 'guard' || role === 'admin' || role === 'super_admin';
+    t(`סריקת כניסה: ${role} ${scans ? 'סורק וכותב הערות' : 'לא סורק ולא כותב הערות'}`,
+      canCreateVisitorScan(role) === scans && canEditVisitorNotes(role) === scans);
+    const manages = role === 'admin' || role === 'super_admin';
+    t(`סריקת כניסה: ${role} ${manages ? 'עורך הכול ומוחק' : 'לא עורך שדות ולא מוחק'}`, canManageVisitorScans(role) === manages);
+  }
+  t('סריקת כניסה: תפקיד עתידי נחסם בכל פעולה', [canViewVisitors, canCreateVisitorScan, canEditVisitorNotes, canManageVisitorScans].every((f) => f('resident') === false));
 });

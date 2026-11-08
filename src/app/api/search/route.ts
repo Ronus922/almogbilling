@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
+import { isGuardRole } from '@/lib/permissions/constants';
 import { issueScopeUserId } from '@/lib/auth/issueAccess';
 import { query } from '@/lib/db';
 import { logger } from '@/lib/logger';
@@ -173,6 +174,10 @@ export async function GET(req: NextRequest) {
   const actor = await getCurrentActor();
   if (!actor) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
+  // The guard's whole access is the visitor-scan screen: it has no search.
+  if (isGuardRole(actor.role)) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   }
 
   const q = (req.nextUrl.searchParams.get('q') ?? '').trim();

@@ -39,11 +39,11 @@ describe('RoleSelector — the roles each editor is offered', () => {
     expect(labelsIn(render(null, offeredFor('super_admin')))).toEqual(ROLE_VALUES);
   });
 
-  it('admin: manager, viewer, cleaner, maintenance — never admin or super admin', () => {
-    expect(labelsIn(render(null, offeredFor('admin')))).toEqual(['manager', 'viewer', 'cleaner', 'maintenance']);
+  it('admin: manager, viewer, cleaner, maintenance, guard — never admin or super admin', () => {
+    expect(labelsIn(render(null, offeredFor('admin')))).toEqual(['manager', 'viewer', 'cleaner', 'maintenance', 'guard']);
   });
 
-  it.each(['manager', 'viewer', 'cleaner', 'maintenance'] as const)('%s: nothing', (editor) => {
+  it.each(['manager', 'viewer', 'cleaner', 'maintenance', 'guard'] as const)('%s: nothing', (editor) => {
     expect(offeredFor(editor)).toEqual([]);
   });
 });

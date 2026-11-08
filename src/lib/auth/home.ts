@@ -1,4 +1,4 @@
-import { isWorkerRole, type Role } from '@/lib/permissions/constants';
+import { isGuardRole, isWorkerRole, type Role } from '@/lib/permissions/constants';
 
 /**
  * Post-login / landing path per role. Centralised here so the root page, the
@@ -10,9 +10,11 @@ import { isWorkerRole, type Role } from '@/lib/permissions/constants';
  *    is gone and תקלות/משימות are two screens again). Landing them on
  *    /overview would bounce them straight back out (they have no permission
  *    for it), so the landing path has to know about them.
+ *  - guard sees one screen, the visitor scan → /visitors (08/11/2026).
  *  - everyone else → the overview.
  */
 export function homePathFor(role: Role): string {
+  if (isGuardRole(role)) return '/visitors';
   if (role === 'viewer') return '/dashboard';
   if (isWorkerRole(role)) return '/issues';
   return '/overview';

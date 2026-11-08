@@ -6,9 +6,13 @@ import {
   REPORTER_PHONE_PERMISSION,
   ROLE_DEFAULTS,
   isElevatedRole,
+  isGuardRole,
   MATRIX_MANAGEMENT_MODULES,
   SUPER_ADMIN_ONLY,
   USER_DELETE_ROLES,
+  VISITOR_CREATE_ROLES,
+  VISITOR_MANAGE_ROLES,
+  VISITOR_VIEW_ROLES,
 } from './constants';
 
 export function hasPermission(
@@ -19,6 +23,9 @@ export function hasPermission(
 ): boolean {
   if (role === 'super_admin') return true;
   if (role === 'admin') return !SUPER_ADMIN_ONLY.includes(module);
+  // The guard holds no module whatever rows are handed in (defence in depth: it is not a
+  // matrix role, so none are ever loaded for it — see getCurrentActor).
+  if (isGuardRole(role)) return false;
 
   const p = permissions.find((x) => x.module === module);
   if (!p) return false;
@@ -79,7 +86,44 @@ export function getDefaultPermissions(role: Role): ModulePermission[] | null {
  */
 export function hasAnyAccess(role: Role, permissions: ModulePermission[]): boolean {
   if (role === 'super_admin' || role === 'admin') return true;
+  // The guard holds no matrix row by design; its one screen is a role grant.
+  if (isGuardRole(role)) return true;
   return permissions.some((p) => p.canView || p.canEdit);
+}
+
+/**
+ * May this role use the notification bell and /notifications? Every role except
+ * the two that are scoped to a single screen: the read-only `viewer` (debtors
+ * screen) and the `guard` (visitor scan). One predicate for the three layers —
+ * the bell in the Header, the /notifications page and requireNotificationsAccess
+ * (the /api/notifications/* routes) — so they cannot drift apart.
+ */
+export function canUseNotifications(role: Role): boolean {
+  return role !== 'viewer' && !isGuardRole(role);
+}
+
+// ── Visitor scan ("סריקת כניסה", 08/11/2026) ─────────────────────────────────
+// By ROLE, never the matrix (see VISITOR_*_ROLES). Four questions, four
+// predicates; the routes' require* guards, the page and the UI all call these.
+
+/** Open the screen, read the rows, open the photo of a document. */
+export function canViewVisitors(role: Role): boolean {
+  return VISITOR_VIEW_ROLES.includes(role);
+}
+
+/** Scan a document (create a row). */
+export function canCreateVisitorScan(role: Role): boolean {
+  return VISITOR_CREATE_ROLES.includes(role);
+}
+
+/** Write the notes of any row — the one field a guard may change afterwards. */
+export function canEditVisitorNotes(role: Role): boolean {
+  return VISITOR_CREATE_ROLES.includes(role);
+}
+
+/** Edit every field of a row, and delete it with its photo. */
+export function canManageVisitorScans(role: Role): boolean {
+  return VISITOR_MANAGE_ROLES.includes(role);
 }
 
 /**

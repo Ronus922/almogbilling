@@ -6,13 +6,13 @@ import {
   Building2, LayoutDashboard, LayoutGrid, Users, Truck, ClipboardList, ListChecks,
   Calendar, FileText, MessageCircle, MessagesSquare, Bell, Sliders,
   MapPin, UserCog, KeyRound, SquareParking, Settings as SettingsIcon, Coins, SlidersHorizontal,
-  ShieldCheck, Gavel, Megaphone, MessageSquareText, History, ShoppingCart,
+  ShieldCheck, Gavel, Megaphone, MessageSquareText, History, ShoppingCart, ScanLine,
   type LucideIcon,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { Action, Role } from '@/lib/permissions/constants';
-import { canOpenUsersScreen } from '@/lib/permissions/check';
+import { canOpenUsersScreen, canViewVisitors } from '@/lib/permissions/check';
 
 // Single source of truth for the app navigation — the item config, the role/
 // permission filter, and the link/brand renderers. Consumed by BOTH the desktop
@@ -57,7 +57,12 @@ const SECTIONS: MenuSection[] = [
   {
     title: '',
     items: [
-      { label: 'לוח מחוונים',        icon: LayoutDashboard, href: '/overview', visible: (role) => role !== 'viewer' },
+      // The overview is for the roles that land on it: not the viewer (debtors screen
+      // only) and not the guard (visitor scan only) — homePathFor() sends both away.
+      { label: 'לוח מחוונים',        icon: LayoutDashboard, href: '/overview', visible: (role) => role !== 'viewer' && role !== 'guard' },
+      // Visitor ID scan (08/11/2026) — by ROLE (VISITOR_VIEW_ROLES: every role sees
+      // it; only the guard and the admins scan). The guard's ONLY nav entry.
+      { label: 'סריקת כניסה',        icon: ScanLine, href: '/visitors', visible: (role) => canViewVisitors(role) },
       { label: 'ניהול חיובים',       icon: LayoutGrid, href: '/dashboard', module: 'dashboard' },
       { label: 'רשימת דיירים',       icon: Users, href: '/contacts', module: 'contacts' },
       { label: 'צ׳אט וואטסאפ',       icon: MessageCircle, href: '/messages', module: 'whatsapp_chat' },
