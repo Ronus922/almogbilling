@@ -7,7 +7,7 @@ import { MockProvider } from '@/lib/wa-queue/provider';
 import { MockSmsProvider } from '@/lib/wa-queue/smsProvider';
 import { MockEmailTransport } from '@/lib/wa-queue/email';
 import { DEFAULT_WA_RATE_PER_MIN } from '@/lib/wa-queue/rate-limit';
-import { parkedSmsError, readSmsRatePerMin, SMS_RATE_BUCKET, toIsraeliLocal } from '@/lib/wa-queue/sms';
+import { smsLegDoneError, readSmsRatePerMin, SMS_RATE_BUCKET, toIsraeliLocal } from '@/lib/wa-queue/sms';
 import type { Campaign, Recipient, RecipientInput } from '@/lib/wa-queue/types';
 
 // 08/11/2026 — the WhatsApp leg of an SMS broadcast's opt-in fallback obeys the
@@ -26,24 +26,28 @@ import type { Campaign, Recipient, RecipientInput } from '@/lib/wa-queue/types';
 
 const WA_NOTE = 'ממתין לתור הקצב של וואטסאפ';
 
-describe('parkedSmsError — recognises only a recipient PARKED for a WhatsApp slot', () => {
+describe('smsLegDoneError — recognises a re-queued recipient whose SMS leg is already finished', () => {
   const parked = `SMS: 019sms 515: שם השולח לא מאומת | WhatsApp (גיבוי): ${WA_NOTE}`;
 
   it('returns the SMS-leg error of a parked row', () => {
-    expect(parkedSmsError({ error_class: 'rate_limited', last_error: parked }))
-      .toBe('019sms 515: שם השולח לא מאומת');
+    expect(smsLegDoneError({ last_error: parked })).toBe('019sms 515: שם השולח לא מאומת');
   });
 
-  it('is null for every other row — the SMS leg must still run', () => {
-    expect(parkedSmsError({ error_class: null, last_error: null })).toBeNull();
-    // right tail, wrong class
-    expect(parkedSmsError({ error_class: 'retryable', last_error: parked })).toBeNull();
-    // right class, but a PROVIDER 429 on the WhatsApp leg: its message is Green's, not the note
-    expect(parkedSmsError({
-      error_class: 'rate_limited', last_error: 'SMS: 019sms 515: x | WhatsApp (גיבוי): 429 too many requests',
-    })).toBeNull();
-    // right class, no SMS prefix
-    expect(parkedSmsError({ error_class: 'rate_limited', last_error: `x | WhatsApp (גיבוי): ${WA_NOTE}` })).toBeNull();
+  it('also of a row re-queued after a WhatsApp 5xx / timeout / 429 — the SMS must not run again', () => {
+    for (const waPart of ['mock transient 1/1', 'Green API timeout', '429 too many requests', 'HTTP 502']) {
+      expect(smsLegDoneError({ last_error: `SMS: 019sms 515: x | WhatsApp (גיבוי): ${waPart}` })).toBe('019sms 515: x');
+    }
+  });
+
+  it('is null for every row whose SMS leg has not run — it must still run', () => {
+    expect(smsLegDoneError({ last_error: null })).toBeNull();
+    expect(smsLegDoneError({ last_error: '' })).toBeNull();
+    // an SMS-only failure never reached the WhatsApp leg
+    expect(smsLegDoneError({ last_error: 'SMS: 019sms 515: x' })).toBeNull();
+    // the success note of a delivered fallback is not a re-queue state
+    expect(smsLegDoneError({ last_error: 'SMS נכשל (019sms 515: x) — נשלח בוואטסאפ במקום' })).toBeNull();
+    // no SMS prefix
+    expect(smsLegDoneError({ last_error: `x | WhatsApp (גיבוי): ${WA_NOTE}` })).toBeNull();
   });
 });
 
