@@ -16,6 +16,11 @@ const MAILPIT_SMTP_PORT = process.env.MAILPIT_SMTP_PORT ?? '55525';
 // The portal's login code is delivered over WhatsApp, so the e2e stack runs a
 // stand-in for Green API and db/seed/e2e.sql points its one instance at it.
 const GREENAPI_PORT = process.env.E2E_GREENAPI_PORT ?? '3110';
+// The visitor-scan OCR calls the Anthropic Messages API. The SDK reads
+// ANTHROPIC_BASE_URL, so the app's server is pointed at a stand-in that
+// e2e/visitors.spec.ts starts in-process (nothing else in the suite uses it).
+// The key is a placeholder — it never leaves the machine.
+const ANTHROPIC_PORT = process.env.E2E_ANTHROPIC_PORT ?? '3111';
 
 export default defineConfig({
   testDir: './e2e',
@@ -64,6 +69,9 @@ export default defineConfig({
       SMTP_HOST: '127.0.0.1',
       SMTP_PORT: MAILPIT_SMTP_PORT,
       SMTP_REQUIRE_TLS: 'false',
+      // OCR of the visitor-scan screen → the in-process stub (see ANTHROPIC_PORT above).
+      ANTHROPIC_API_KEY: 'e2e-placeholder-not-a-real-key',
+      ANTHROPIC_BASE_URL: `http://127.0.0.1:${ANTHROPIC_PORT}`,
       // The management company's details, exactly as production carries them
       // in /etc/billing/billing.env — NOT in .env.local, so Next leaves them a
       // live process.env read and the value below is what the screens show.
