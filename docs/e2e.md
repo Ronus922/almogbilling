@@ -73,3 +73,17 @@ npm run e2e:mailpit:down
 Job נפרד `e2e` ב-`.github/workflows/ci.yml`: Postgres service → `dbmate up` →
 seed → Mailpit (`docker compose`) → `playwright install --with-deps chromium` →
 `npm run build` → `npm run test:e2e`. דו"ח Playwright עולה כ-artifact בכישלון.
+
+## Stubs בתוך התהליך (spec אחד, לא גלובליים)
+
+`e2e/visitors.spec.ts` מרים בעצמו, למשך ה-spec בלבד, שני stubs מ-`e2e/visitors-stubs.ts` — כך שאף spec אחר לא רואה אותם:
+
+- **Anthropic Messages API** (ה-OCR). השרת של האפליקציה מופנה אליו ב-`ANTHROPIC_BASE_URL` (+ `ANTHROPIC_API_KEY` placeholder) שב-`playwright.config.ts`;
+  ה-SDK קורא את המשתנה בעצמו, ולכן אין בקוד הייצור שום מתג בדיקה. פורט `E2E_ANTHROPIC_PORT` (ברירת מחדל 3111).
+- **Supabase Storage** (יצירת באקט, העלאה, הורדה, מחיקה) על הפורט של `NEXT_PUBLIC_SUPABASE_URL` (ב-CI: 54321). ב-CI אין שירות Storage,
+  ולכן המסע המלא של צילום (העלאה ← הצגה דרך `/api/files` ← מחיקה) מוכח מול ה-stub. `NEXT_PUBLIC_SUPABASE_URL` נאפה ב-build
+  (`process.env.NEXT_PUBLIC_*` מוחלף בזמן build) — בניית sandbox חייבת לקבל אותו, אחרת השרת יצביע לשום מקום.
+
+**התחברויות נספרות.** כל ניסיון כניסה נספר ברף 20 ל-15 דקות ל-IP, ו-job ה-e2e כולו חולק אותו. spec שמתחבר מחדש לכל מקרה מרעיב את מה שרץ אחריו —
+לכן `visitors.spec.ts` מתחבר פעם אחת לכל משתמש ומשתמש שוב ב-context (גם לאייפון, דרך `storageState`).
+
