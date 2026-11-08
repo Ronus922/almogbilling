@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { requirePermission, requireAnyPermission, type Actor } from '@/lib/auth/actor';
+import { requirePermission, requireAnyPermission, requireVisitorView, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { requirePurchasingAny } from '@/lib/auth/purchasingGuard';
 import { AuthorizationError } from '@/lib/auth/errors';
@@ -67,6 +67,10 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<Actor>> = {
   // Purchasing — documents' attachments, supplier quote files, the letterhead's
   // logo and signature. Super admin only by default (module `purchasing`).
   'purchasing-files': () => requirePurchasingAny('view'),
+  // Photos of scanned visitor documents — by ROLE (VISITOR_VIEW_ROLES: every
+  // staff role, the guard included), never a matrix module. Each open is a
+  // `file_viewed` audit row (describeStoredFile → visitor_scan).
+  'visitor-ids': () => requireVisitorView(),
 };
 
 /**
@@ -217,6 +221,15 @@ async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<
     return row.document_id
       ? { ...base, fileName: row.original_filename, entityType: 'purchasing_document', entityId: row.document_id, documentId: row.id }
       : { ...base, fileName: row.original_filename, entityType: 'purchasing_quote', entityId: row.quote_id as string, documentId: row.id };
+  }
+  if (bucket === 'visitor-ids') {
+    const row = await queryOne<{ id: string; image_original_name: string | null }>(
+      `select id, image_original_name from public.visitor_scans where image_object_key = $1 limit 1`,
+      [path],
+    );
+    if (!row) return orphan;
+    // The row is the parent entity, named exactly as its create/update audit rows name it.
+    return { ...base, fileName: row.image_original_name, entityType: 'visitor_scan', entityId: row.id };
   }
   // issue-attachments: bare paths `<issueId>/<uuid>.<ext>`, no display name — the
   // prefix IS the parent (enforced at upload by buildObjectKey / isPathUnderIssue).
