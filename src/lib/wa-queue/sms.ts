@@ -68,11 +68,52 @@ export interface SmsCreds { username: string; token: string; source: string }
 export interface SmsWhatsappFallback {
   provider: WaProvider;
   creds: SendCreds;
+  /** The sending instance's rate window — the SAME bucket a WhatsApp broadcast
+   *  on this instance counts against. */
   bucket: string;
+  /** Recipients per minute this leg may add to that window (DEFAULT_WA_RATE_PER_MIN). */
+  ratePerMin: number;
 }
 
 export interface SmsProcessOpts {
   backoffBaseSec?: number;
+}
+
+// A recipient whose SMS leg is finished but whose WhatsApp window was full is
+// PARKED, not failed and not re-queued from scratch: re-claiming it must not
+// send the SMS a second time. No column exists for that state (and none was
+// added), so the row itself carries it — error_class 'rate_limited' plus a
+// last_error that ends in this exact tail. The tail is unique to parking: a
+// WhatsApp 429 from the provider also yields 'rate_limited', but its message
+// is the provider's, so it never matches.
+const WA_SLOT_NOTE = 'ממתין לתור הקצב של וואטסאפ';
+const WA_PARK_TAIL = ` | WhatsApp (גיבוי): ${WA_SLOT_NOTE}`;
+const SMS_ERROR_PREFIX = 'SMS: ';
+const MAX_PARKED_SMS_ERROR = 300; // keep the whole marker well inside the 500-char log cap
+
+/** The SMS-leg error a parked recipient carries, or null when the row is not a
+ *  parked one (the SMS leg still has to run). */
+export function parkedSmsError(item: Pick<Recipient, 'error_class' | 'last_error'>): string | null {
+  if (item.error_class !== 'rate_limited') return null;
+  const e = item.last_error ?? '';
+  if (!e.startsWith(SMS_ERROR_PREFIX) || !e.endsWith(WA_PARK_TAIL)) return null;
+  return e.slice(SMS_ERROR_PREFIX.length, e.length - WA_PARK_TAIL.length);
+}
+
+/** Hand the lease back and re-queue the recipient 2s later for the WhatsApp leg
+ *  only (same pacing as engine.releasePaced: the attempt is not counted). The
+ *  status guard keeps a campaign cancelled mid-flight cancelled. */
+async function parkForWhatsappSlot(pool: Pool, recipientId: string, smsError: string): Promise<boolean> {
+  const r = await pool.query(
+    `update public.wa_campaign_recipients
+        set status='pending', worker_id=null, lease_expires_at=null,
+            processing_started_at=null, attempt_count = attempt_count - 1,
+            next_attempt_at = now() + interval '2 seconds',
+            last_error=$2, error_class='rate_limited'
+      where id=$1 and status='processing'`,
+    [recipientId, `${SMS_ERROR_PREFIX}${smsError.slice(0, MAX_PARKED_SMS_ERROR)}${WA_PARK_TAIL}`],
+  );
+  return (r.rowCount ?? 0) > 0;
 }
 
 /**
@@ -88,11 +129,14 @@ export interface SmsProcessOpts {
  * `fallback` set (the campaign opted in): the same text goes out over
  * WhatsApp instead. sent_channel records which one actually went out; a
  * fallback also leaves a note in last_error even though the recipient ends up
- * 'sent', so the reason is not lost. That leg is NOT gated on the WhatsApp
- * rate bucket (it is meant to be the exception, not the common case) but IS
- * recorded there, so concurrent WhatsApp campaigns sharing the same instance
- * still see accurate pacing. A deliberate simplification — see
- * docs/sms-provider.md.
+ * 'sent', so the reason is not lost. That leg is gated on the instance's
+ * WhatsApp rate window exactly like a WhatsApp broadcast recipient (the same
+ * bucket, so it shares the budget with any WhatsApp broadcast running on that
+ * instance, and a full window defers the recipient — see parkedSmsError). The
+ * SMS leg keeps its own pace and is never held back by a full WhatsApp window.
+ * Until 08/11/2026 this leg was only recorded in the window, never gated, so
+ * a run of failing SMS went out at the SMS pace (20/min) instead of 12/min on
+ * a number that had already been blocked once — see docs/sms-provider.md.
  */
 export async function processSmsRecipient(
   pool: Pool,
@@ -112,37 +156,45 @@ export async function processSmsRecipient(
     `select 1 from public.wa_campaign_recipients where id=$1 and status='processing'`, [item.id]);
   if (!live.rowCount) return { ...base, outcome: 'failed' };
 
-  if (!(await underRateLimit(pool, SMS_RATE_BUCKET, smsRatePerMin))) {
-    await releasePaced(pool, item.id);
-    return { ...base, outcome: 'paced' };
-  }
-
-  const attempted = await pool.query(
-    `update public.wa_campaign_recipients set send_attempted_at=now() where id=$1 and status='processing'`, [item.id]);
-  if (!attempted.rowCount) return { ...base, outcome: 'failed' };
-  await recordSend(pool, SMS_RATE_BUCKET);
-
-  const localPhone = toIsraeliLocal(item.phone_intl);
+  // Parked on an earlier pass (SMS already failed, WhatsApp window was full):
+  // the SMS leg is finished — never sent twice — so go straight to WhatsApp.
+  const priorSmsError = fallback ? parkedSmsError(item) : null;
   let smsError: string;
+  let localPhone: string | null = null;
 
-  if (localPhone) {
-    const res = await smsProvider.send({
-      username: smsCreds.username, token: smsCreds.token, source: smsCreds.source,
-      localPhone, message: item.payload,
-    });
-    if (res.ok) {
-      await pool.query(
-        `update public.wa_campaign_recipients
-            set status='sent', provider_message_id=$2, sent_channel='sms', sent_at=now(),
-                lease_expires_at=null, last_error=null, error_class=null
-          where id=$1`,
-        [item.id, res.providerMessageId],
-      );
-      return { ...base, outcome: 'sent' };
-    }
-    smsError = res.message;
+  if (priorSmsError !== null) {
+    smsError = priorSmsError;
   } else {
-    smsError = 'אין מספר נייד ישראלי תקין ל-SMS';
+    if (!(await underRateLimit(pool, SMS_RATE_BUCKET, smsRatePerMin))) {
+      await releasePaced(pool, item.id);
+      return { ...base, outcome: 'paced' };
+    }
+
+    const attempted = await pool.query(
+      `update public.wa_campaign_recipients set send_attempted_at=now() where id=$1 and status='processing'`, [item.id]);
+    if (!attempted.rowCount) return { ...base, outcome: 'failed' };
+    await recordSend(pool, SMS_RATE_BUCKET);
+
+    localPhone = toIsraeliLocal(item.phone_intl);
+    if (localPhone) {
+      const res = await smsProvider.send({
+        username: smsCreds.username, token: smsCreds.token, source: smsCreds.source,
+        localPhone, message: item.payload,
+      });
+      if (res.ok) {
+        await pool.query(
+          `update public.wa_campaign_recipients
+              set status='sent', provider_message_id=$2, sent_channel='sms', sent_at=now(),
+                  lease_expires_at=null, last_error=null, error_class=null
+            where id=$1`,
+          [item.id, res.providerMessageId],
+        );
+        return { ...base, outcome: 'sent' };
+      }
+      smsError = res.message;
+    } else {
+      smsError = 'אין מספר נייד ישראלי תקין ל-SMS';
+    }
   }
 
   if (!fallback) {
@@ -155,11 +207,27 @@ export async function processSmsRecipient(
     });
   }
 
+  // The WhatsApp leg, gated like processRecipient (engine.ts) gates a WhatsApp
+  // broadcast recipient: one unit of the instance's window. A full window parks
+  // the recipient for a later pass instead of sending.
+  if (!(await underRateLimit(pool, fallback.bucket, fallback.ratePerMin))) {
+    const parked = await parkForWhatsappSlot(pool, item.id, smsError);
+    return { ...base, outcome: parked ? 'paced' : 'failed' };
+  }
+
+  // Mark "about to send" and count it in the window BEFORE the network call (a
+  // crash mid-send is then detectable, not a silent duplicate). On the parked
+  // path the claim cleared send_attempted_at, so it is set here.
+  const marked = await pool.query(
+    `update public.wa_campaign_recipients set send_attempted_at=coalesce(send_attempted_at, now())
+      where id=$1 and status='processing'`, [item.id]);
+  if (!marked.rowCount) return { ...base, outcome: 'failed' };
+  await recordSend(pool, fallback.bucket);
+
   const waRes = await fallback.provider.send({
     instanceId: fallback.creds.instanceId, token: fallback.creds.token, apiUrl: fallback.creds.apiUrl,
     chatId: item.chat_id, message: item.payload,
   });
-  await recordSend(pool, fallback.bucket);
 
   if (waRes.ok) {
     await pool.query(
