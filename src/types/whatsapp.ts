@@ -191,6 +191,19 @@ export interface BulkSendProgress {
   reason?: string;
 }
 
+/** The window of the sending number is full, so the NEXT message waits its turn
+ *  (the per-minute budget is shared with broadcasts on the same number).
+ *  Sent when the wait starts and about every 10 seconds while it lasts — it also
+ *  keeps the connection active. The next `progress` line ends the wait. */
+export interface BulkSendWaiting {
+  type: 'waiting';
+  /** The message that is waiting (1-based), of `total`. */
+  index: number;
+  total: number;
+  waited_ms: number;
+  per_min: number;
+}
+
 export interface BulkSendFailure {
   apartment: string;
   error: string;
