@@ -36,6 +36,52 @@ export async function recordSend(q: Q, bucket: string): Promise<void> {
   await q.query(`insert into public.wa_send_log (bucket) values ($1)`, [bucket]);
 }
 
+export interface WindowWaitOpts {
+  /** Called as soon as the window turns out to be full, then about every
+   *  `heartbeatMs` while still waiting — a caller streaming progress to a
+   *  browser uses it to say "waiting" (and to keep the connection active). */
+  onWait?: (waitedMs: number) => void;
+  /** True → stop waiting (the client went away); nothing is counted. */
+  aborted?: () => boolean;
+  /** Injectable for tests; the default is a real timer. */
+  sleep?: (ms: number) => Promise<void>;
+  pollMs?: number;
+  heartbeatMs?: number;
+}
+
+/**
+ * For a caller that cannot be re-queued (a synchronous, request-bound send such
+ * as the debtors table's bulk WhatsApp): wait until the instance's window has
+ * room, then take one slot in it. Returns false only when `aborted` fired first.
+ *
+ * It is the same window and the same unit (one recipient) as the queue worker's
+ * gate, so a broadcast, an SMS fallback and this caller running together on one
+ * instance share one budget. The check and the insert are two statements, as in
+ * the worker; two writers inside the same few milliseconds can overshoot by one.
+ */
+export async function takeWindowSlot(
+  q: Q, bucket: string, perMin: number, opts: WindowWaitOpts = {},
+): Promise<boolean> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const pollMs = opts.pollMs ?? 1000;
+  const heartbeatMs = opts.heartbeatMs ?? 10_000;
+  let waited = 0;
+  let lastBeat = -heartbeatMs; // the first wait is announced at once
+  for (;;) {
+    if (opts.aborted?.()) return false;
+    if (await underRateLimit(q, bucket, perMin)) {
+      await recordSend(q, bucket);
+      return true;
+    }
+    if (waited - lastBeat >= heartbeatMs) {
+      opts.onWait?.(waited);
+      lastBeat = waited;
+    }
+    await sleep(pollMs);
+    waited += pollMs;
+  }
+}
+
 /** Opportunistic prune so wa_send_log stays small (older than 10 min is useless). */
 export async function pruneSendLog(q: Q, bucket: string): Promise<void> {
   await q.query(

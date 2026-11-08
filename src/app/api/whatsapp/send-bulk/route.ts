@@ -10,7 +10,9 @@ import {
 } from '@/lib/db/whatsappInstances';
 import { cleanPhoneField, normalizePhone } from '@/lib/whatsapp';
 import { sendAndRecordWhatsApp } from '@/lib/whatsapp-send';
-import type { BulkSendProgress, BulkSendSummary } from '@/types/whatsapp';
+import { getDbPool } from '@/lib/db';
+import { DEFAULT_WA_RATE_PER_MIN, pruneSendLog, takeWindowSlot } from '@/lib/wa-queue/rate-limit';
+import type { BulkSendProgress, BulkSendSummary, BulkSendWaiting } from '@/types/whatsapp';
 import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -25,6 +27,13 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 // a delay between sends. Streams NDJSON progress (one line per recipient) plus a
 // final summary, so the client shows live "X מתוך Y" and the connection stays
 // active through nginx (X-Accel-Buffering: no). Gated on whatsapp:edit.
+//
+// Every message waits for a slot in the sending number's rate window — the same
+// window (wa_send_log, bucket = the instance) and the same pace (12 a minute) as
+// a broadcast and an SMS broadcast's WhatsApp fallback — so the three running
+// together on one number never pass it. A full window is announced to the client
+// as a `waiting` line (the panel says so) instead of looking stuck. The single
+// send (/api/whatsapp/send), reminders and notifications stay outside the window.
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try {
@@ -94,7 +103,7 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let closed = false;
-      const emit = (obj: BulkSendProgress | BulkSendSummary) => {
+      const emit = (obj: BulkSendProgress | BulkSendWaiting | BulkSendSummary) => {
         if (closed) return;
         try {
           controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
@@ -151,6 +160,15 @@ export async function POST(req: NextRequest) {
                   reason = 'המספר כבר קיבל את ההודעה';
                 } else if (intl) {
                   alreadySent.add(intl);
+                  // Wait for (and take) a slot in the number's shared window; false
+                  // only when the client went away while waiting — stop, send nothing.
+                  const gotSlot = await takeWindowSlot(getDbPool(), creds.id, DEFAULT_WA_RATE_PER_MIN, {
+                    aborted: () => req.signal.aborted,
+                    onWait: (waitedMs) => emit({
+                      type: 'waiting', index: i + 1, total, waited_ms: waitedMs, per_min: DEFAULT_WA_RATE_PER_MIN,
+                    }),
+                  });
+                  if (!gotSlot) break;
                   const result = await sendAndRecordWhatsApp({
                     debtor,
                     phoneIntl: intl,
@@ -187,6 +205,9 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         logger.error('[whatsapp/send-bulk] stream failed', err);
       } finally {
+        // This request's slots are rows in the shared window; nothing else prunes
+        // that bucket when no broadcast is running.
+        await pruneSendLog(getDbPool(), creds.id).catch(() => { /* best-effort */ });
         if (!closed) {
           try {
             controller.close();

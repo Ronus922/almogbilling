@@ -19,7 +19,8 @@ import {
   interpolateTemplate, TEMPLATE_PLACEHOLDERS,
 } from '@/lib/whatsapp-template';
 import type { WhatsAppRecipient } from './WhatsAppSendPanel';
-import type { WhatsAppTemplate, BulkSendProgress, BulkSendSummary } from '@/types/whatsapp';
+import { parseBulkLine } from '@/lib/whatsapp-bulk-stream';
+import type { WhatsAppTemplate, BulkSendSummary } from '@/types/whatsapp';
 
 const FREE_TEXT = '__free__';
 const MAX_RECIPIENTS = 50;
@@ -48,6 +49,9 @@ export function WhatsAppBulkSendPanel({
   const [content, setContent] = useState('');
   const [phase, setPhase] = useState<Phase>('compose');
   const [progress, setProgress] = useState<{ index: number; total: number } | null>(null);
+  // Set while the next message waits for its turn in the number's rate window
+  // (the value is the per-minute pace, for the sentence); null otherwise.
+  const [waitingPerMin, setWaitingPerMin] = useState<number | null>(null);
   const [summary, setSummary] = useState<BulkSendSummary | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -70,6 +74,7 @@ export function WhatsAppBulkSendPanel({
     setContent('');
     setPhase('compose');
     setProgress(null);
+    setWaitingPerMin(null);
     setSummary(null);
     let cancelled = false;
     (async () => {
@@ -124,6 +129,7 @@ export function WhatsAppBulkSendPanel({
     if (!canSend) return;
     setPhase('sending');
     setProgress({ index: 0, total: recipients.length });
+    setWaitingPerMin(null);
     setSummary(null);
     try {
       const res = await fetch('/api/whatsapp/send-bulk', {
@@ -154,9 +160,13 @@ export function WhatsAppBulkSendPanel({
           const line = buffer.slice(0, nl).trim();
           buffer = buffer.slice(nl + 1);
           if (!line) continue;
-          const obj = JSON.parse(line) as BulkSendProgress | BulkSendSummary;
+          const obj = parseBulkLine(line);
+          if (!obj) continue; // a line of a type this panel does not know
           if (obj.type === 'progress') {
             setProgress({ index: obj.index, total: obj.total });
+            setWaitingPerMin(null);
+          } else if (obj.type === 'waiting') {
+            setWaitingPerMin(obj.per_min);
           } else {
             finalSummary = obj;
             setSummary(obj);
@@ -227,7 +237,7 @@ export function WhatsAppBulkSendPanel({
           {phase === 'done' && summary ? (
             <SummaryView summary={summary} />
           ) : sending ? (
-            <SendingView pct={pct} progress={progress} />
+            <SendingView pct={pct} progress={progress} waitingPerMin={waitingPerMin} />
           ) : (
             <>
               {/* Recipients list */}
@@ -356,7 +366,11 @@ export function WhatsAppBulkSendPanel({
   );
 }
 
-function SendingView({ pct, progress }: { pct: number; progress: { index: number; total: number } | null }) {
+function SendingView({ pct, progress, waitingPerMin }: {
+  pct: number;
+  progress: { index: number; total: number } | null;
+  waitingPerMin: number | null;
+}) {
   return (
     <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 text-center">
       <Loader2 className="mx-auto h-8 w-8 animate-spin text-emerald-600" />
@@ -366,6 +380,12 @@ function SendingView({ pct, progress }: { pct: number; progress: { index: number
       <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
         <div className="h-2 rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
       </div>
+      {waitingPerMin !== null && (
+        <div role="note" className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          ממתין לתור כדי לא להעמיס על מספר הוואטסאפ (עד {waitingPerMin} הודעות בדקה).
+          ההודעות ממשיכות להישלח אוטומטית — אל תסגור את החלון.
+        </div>
+      )}
       <p className="text-xs text-slate-400">השליחה מבוצעת בהשהיה בין הודעות — אל תסגור את החלון.</p>
     </div>
   );
