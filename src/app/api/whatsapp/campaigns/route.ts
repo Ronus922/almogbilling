@@ -18,7 +18,7 @@ import { buildEmailCampaignRecipients, isEmailDebtMessage } from '@/lib/email-br
 import { createCampaign, listCampaigns, startCampaign, CampaignConflictError } from '@/lib/wa-queue/campaigns';
 import { listStagedAttachments } from '@/lib/wa-queue/attachments';
 import { readEmailRatePerMin } from '@/lib/wa-queue/email';
-import { readSmsRatePerMin } from '@/lib/wa-queue/sms';
+import { parseSmsWhatsappFallback, readSmsRatePerMin } from '@/lib/wa-queue/sms';
 import { campaignAttachmentIdsSchema } from '@/lib/validation/requests';
 import {
   validateBroadcastAttachmentSet, EMAIL_ATTACHMENTS_MAX_TOTAL_BYTES, WHATSAPP_ATTACHMENT_LIMITS,
@@ -94,11 +94,16 @@ function parseAudience(raw: unknown): ParsedAudience {
 // its id IMMEDIATELY (whatsapp_chat:edit). The worker drains it out of band — the
 // request never holds open for the send. Idempotent on client_token.
 //
-// `channel` (09/10/2026): 'whatsapp' (default — the body is exactly what it was)
-// or 'email', which adds a required `subject` (falls back to the template's),
+// `channel` (09/10/2026): 'whatsapp', 'email' or 'sms' — REQUIRED since
+// 08/11/2026 (it used to default to 'whatsapp' when absent; a compose form
+// that never sent it for SMS turned an SMS broadcast into a WhatsApp one).
+// 'email' adds a required `subject` (falls back to the template's),
 // a "selection" audience only, an email address per recipient instead of a
 // phone, and a 25MB total for the files (one email carries them all). Same
 // permission, same audience rules, same placeholders, same queue.
+// 'sms' (16/10/2026) may add `sms_whatsapp_fallback: true` — the explicit
+// per-campaign opt-in to a WhatsApp retry of failed SMS recipients; absent or
+// false = nothing is ever sent over WhatsApp for that campaign.
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try { actor = await requirePermission('whatsapp_chat', 'edit'); }
@@ -106,14 +111,19 @@ export async function POST(req: NextRequest) {
 
   let body: { name?: unknown; body?: unknown; template_id?: unknown; audience?: unknown;
     dry_run?: unknown; rate_per_min?: unknown; client_token?: unknown; start?: unknown; attachment_ids?: unknown;
-    channel?: unknown; subject?: unknown };
+    channel?: unknown; subject?: unknown; sms_whatsapp_fallback?: unknown };
   try { body = await req.json(); } catch { return NextResponse.json({ error: 'invalid_json' }, { status: 400 }); }
 
-  if (body.channel !== undefined && !(CHANNELS as readonly unknown[]).includes(body.channel)) {
-    return NextResponse.json({ error: 'ערוץ לא תקין' }, { status: 400 });
+  if (!(CHANNELS as readonly unknown[]).includes(body.channel)) {
+    return NextResponse.json({
+      error: body.channel === undefined ? 'ערוץ התפוצה חסר — רעננו את הדף ושלחו שוב' : 'ערוץ לא תקין',
+    }, { status: 400 });
   }
-  const channel: BroadcastChannel =
-    body.channel === 'email' ? 'email' : body.channel === 'sms' ? 'sms' : 'whatsapp';
+  const channel = body.channel as BroadcastChannel;
+
+  const fallbackParsed = parseSmsWhatsappFallback(channel, body.sms_whatsapp_fallback);
+  if (!fallbackParsed.ok) return NextResponse.json({ error: fallbackParsed.error }, { status: 400 });
+  const smsWhatsappFallback = fallbackParsed.value;
 
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   if (!name) return NextResponse.json({ error: 'שם קמפיין חסר' }, { status: 400 });
@@ -172,10 +182,13 @@ export async function POST(req: NextRequest) {
     // dry-run needs no real instance; real sends resolve like chat-send does
     // (own instance, admin falls back to the first connected one).
     // An email broadcast goes out through the SMTP account, not an instance.
-    // SMS needs one too — not to send the SMS itself, but because the
-    // worker's per-recipient WhatsApp fallback (019 failure, or no valid
-    // Israeli mobile) needs real creds the same way a 'whatsapp' campaign does.
-    if (!dryRun && (channel === 'whatsapp' || channel === 'sms')) instanceId = (await resolveSendCreds(actor, null)).id;
+    // An SMS broadcast needs one ONLY when it opted in to the WhatsApp
+    // fallback (019 failure, or no valid Israeli mobile) — then the worker
+    // needs real creds the same way a 'whatsapp' campaign does. Without the
+    // opt-in it has no instance at all: nothing to send over WhatsApp with.
+    if (!dryRun && (channel === 'whatsapp' || (channel === 'sms' && smsWhatsappFallback))) {
+      instanceId = (await resolveSendCreds(actor, null)).id;
+    }
   } catch (err) {
     if (err instanceof InstanceNotConfiguredError) return NextResponse.json({ error: err.message }, { status: 503 });
     throw err;
@@ -281,6 +294,7 @@ export async function POST(req: NextRequest) {
     campaign = await createCampaign(getDbPool(), {
       channel,
       subject: channel === 'email' ? subject : null,
+      smsWhatsappFallback,
       name, body: messageBody, templateName, audience, instanceId, createdBy: actor.id, recipients,
       // Email/SMS: the pace in force when it was created (the worker re-reads
       // the live app_settings value at send time — one shared bucket each).

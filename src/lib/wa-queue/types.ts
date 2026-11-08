@@ -45,6 +45,11 @@ export interface Campaign {
   body: string;
   /** Email subject as entered (placeholders unresolved); null for WhatsApp. */
   subject: string | null;
+  /** 'sms' campaigns only (08/11/2026): true = a recipient whose SMS fails (or
+   *  who has no valid Israeli mobile) is retried over WhatsApp. false (the
+   *  default, and always false on whatsapp/email — a DB CHECK) = the SMS result
+   *  is final and nothing is ever sent over WhatsApp. */
+  sms_whatsapp_fallback: boolean;
   /** Snapshot of the chosen template's name (null = free text). Immutable — stays
    *  correct even after the source template is edited or deleted. */
   template_name: string | null;

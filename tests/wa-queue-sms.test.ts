@@ -11,10 +11,12 @@ import { readSmsRatePerMin, SMS_RATE_BUCKET, toIsraeliLocal } from '@/lib/wa-que
 import type { Campaign, Recipient, RecipientInput } from '@/lib/wa-queue/types';
 
 // The SMS channel of the durable delivery queue (16/10/2026, 019sms), end to
-// end against a real database — the one thing genuinely new versus
-// whatsapp/email: a per-recipient fallback to WhatsApp when 019 fails or the
-// recipient has no valid Israeli mobile. No real message of any kind is
-// sent: MockSmsProvider + MockProvider.
+// end against a real database. The one thing genuinely new versus
+// whatsapp/email is the per-recipient fallback to WhatsApp when 019 fails or
+// the recipient has no valid Israeli mobile — and since 08/11/2026 it is an
+// explicit per-campaign OPT-IN (wa_campaigns.sms_whatsapp_fallback, default
+// false): a campaign without the flag must never produce a WhatsApp send, in
+// any path. No real message of any kind is sent: MockSmsProvider + MockProvider.
 //
 // Runs ONLY against a throwaway database (WA_TEST_DATABASE_URL), never prod,
 // on a schema that already carries migration 20261016163824 (dbmate up).
@@ -55,11 +57,13 @@ function smsRecips(...phones: string[]): RecipientInput[] {
 /** dryRun:true so the WhatsApp-fallback leg never needs a real
  *  whatsapp_instances row — mirrors how the whatsapp fixtures in
  *  wa-queue-email.test.ts resolve creds. */
-async function makeSmsCampaign(recipients: RecipientInput[]): Promise<Campaign> {
+async function makeSmsCampaign(recipients: RecipientInput[], opts: { fallback?: boolean } = {}): Promise<Campaign> {
   const c = await createCampaign(pool, {
     channel: 'sms', name: `sms-${uniq()}`, body: 'שלום {{name}}',
     audience: { type: 'selection', roles: ['owners'] }, instanceId: null, createdBy: null,
     recipients, ratePerMin: 20, dryRun: true,
+    // Explicit everywhere: the default (no flag) is the safe one under test.
+    smsWhatsappFallback: opts.fallback ?? false,
   });
   made.campaigns.push(c.id);
   return startCampaign(pool, c.id);
@@ -115,10 +119,10 @@ d('wa-queue — sms channel (019, WhatsApp fallback)', () => {
     expect((await getCampaign(pool, c.id))).toMatchObject({ status: 'completed', sent_count: 1 });
   });
 
-  it('019 rejects the send (e.g. unverified sender): falls back to WhatsApp, sent_channel=whatsapp, reason kept in last_error', async () => {
+  it('WITH the flag: 019 rejects the send (e.g. unverified sender) → falls back to WhatsApp, sent_channel=whatsapp, reason kept in last_error', async () => {
     const sms = new MockSmsProvider({ fail: { '0500000202': { status: 515, message: '019sms (515): שם השולח לא מאומת' } } });
     const wa = new MockProvider();
-    const c = await makeSmsCampaign(smsRecips('972500000202'));
+    const c = await makeSmsCampaign(smsRecips('972500000202'), { fallback: true });
     await drain(worker({ smsProvider: sms, waProvider: wa }));
 
     expect(wa.sends.map((s) => s.chatId)).toEqual(['972500000202@c.us']);
@@ -129,10 +133,10 @@ d('wa-queue — sms channel (019, WhatsApp fallback)', () => {
     expect(r.last_error).toContain('נשלח בוואטסאפ במקום');
   });
 
-  it('no valid Israeli mobile: 019 is never attempted, straight to WhatsApp', async () => {
+  it('WITH the flag, no valid Israeli mobile: 019 is never attempted, straight to WhatsApp', async () => {
     const sms = new MockSmsProvider();
     const wa = new MockProvider();
-    const c = await makeSmsCampaign(smsRecips('14155552671')); // foreign — WhatsApp-eligible, not 019-eligible
+    const c = await makeSmsCampaign(smsRecips('14155552671'), { fallback: true }); // foreign — WhatsApp-eligible, not 019-eligible
     await drain(worker({ smsProvider: sms, waProvider: wa }));
 
     expect(sms.sends).toEqual([]);
@@ -142,10 +146,10 @@ d('wa-queue — sms channel (019, WhatsApp fallback)', () => {
     expect(r.last_error).toContain('אין מספר נייד ישראלי תקין');
   });
 
-  it('both 019 and the WhatsApp fallback fail: the recipient fails (not silently dropped), both reasons kept', async () => {
+  it('WITH the flag, both 019 and the WhatsApp fallback fail: the recipient fails (not silently dropped), both reasons kept', async () => {
     const sms = new MockSmsProvider({ fail: { '0500000204': { message: '019sms לא הגיב: timeout' } } });
     const wa = new MockProvider({ fail: { '972500000204': { message: 'green api 500', status: 500 } } });
-    const c = await makeSmsCampaign(smsRecips('972500000204'));
+    const c = await makeSmsCampaign(smsRecips('972500000204'), { fallback: true });
     await drain(worker({ smsProvider: sms, waProvider: wa }));
 
     const [r] = await rows(c.id);
@@ -155,6 +159,105 @@ d('wa-queue — sms channel (019, WhatsApp fallback)', () => {
     expect(r.last_error).toContain('WhatsApp (גיבוי)');
     expect(r.sent_channel).toBeNull();
     expect((await getCampaign(pool, c.id))).toMatchObject({ status: 'completed_with_errors', failed_count: 1 });
+  });
+
+  // ── 08/11/2026 — the fallback is opt-in: WITHOUT the flag nothing goes out over WhatsApp ──
+
+  it('NO flag, 019 rejects (515 unverified sender): ZERO WhatsApp sends, the recipient FAILS with 019\'s real code and reason, one SMS attempt only', async () => {
+    const sms = new MockSmsProvider({ fail: { '0500000301': { status: 515, message: '019sms 515: שם השולח (SMS_SENDER) לא מאומת בחשבון 019' } } });
+    const wa = new MockProvider();
+    const c = await makeSmsCampaign(smsRecips('972500000301')); // no flag
+    expect(c.sms_whatsapp_fallback).toBe(false);
+    await drain(worker({ smsProvider: sms, waProvider: wa }));
+
+    expect(wa.sends).toEqual([]);                       // the hard rule
+    expect(sms.sends).toHaveLength(1);                  // never a second SMS attempt
+    const [r] = await rows(c.id);
+    expect(r.status).toBe('failed');
+    expect(r.sent_channel).toBeNull();
+    expect(r.error_class).toBe('permanent');
+    expect(r.last_error).toContain('515');
+    expect(r.last_error).toContain('שם השולח');
+    expect(r.last_error).not.toContain('וואטסאפ');
+    expect(await getCampaign(pool, c.id)).toMatchObject({ status: 'completed_with_errors', failed_count: 1, sent_count: 0 });
+  });
+
+  it('NO flag, recipient without a valid Israeli mobile: neither 019 nor WhatsApp is touched, the recipient FAILS (invalid_phone)', async () => {
+    const sms = new MockSmsProvider();
+    const wa = new MockProvider();
+    const c = await makeSmsCampaign(smsRecips('14155552671', '97237654321')); // foreign + IL landline
+    await drain(worker({ smsProvider: sms, waProvider: wa }));
+
+    expect(sms.sends).toEqual([]);
+    expect(wa.sends).toEqual([]);
+    const got = await rows(c.id);
+    expect(got).toHaveLength(2);
+    for (const r of got) {
+      expect(r.status).toBe('failed');
+      expect(r.error_class).toBe('invalid_phone');
+      expect(r.sent_channel).toBeNull();
+      expect(r.last_error).toContain('אין מספר נייד ישראלי תקין');
+    }
+  });
+
+  it('NO flag: the worker does not even build a WhatsApp provider for the campaign (no creds resolved)', async () => {
+    let providerRequests = 0;
+    const sms = new MockSmsProvider({ fail: { '0500000303': { status: 515, message: '019sms 515: x' } } });
+    const c = await makeSmsCampaign(smsRecips('972500000303'));
+    await drain(new DeliveryWorker({
+      pool, workerId: `sms-nowa-${uniq()}`, idlePollMs: 5, backoffBaseSec: 0,
+      makeProviderFor: () => { providerRequests++; return new MockProvider(); },
+      makeSmsProviderFor: () => sms,
+      resolveSmsCreds: () => ({ username: 'u', token: 't', source: 'AlmogTower' }),
+    }));
+    expect(providerRequests).toBe(0);
+    expect((await rows(c.id))[0].status).toBe('failed');
+  });
+
+  it('NO flag: a successful 019 send is unchanged (sent_channel=sms) and a mixed campaign only fails the failing recipient', async () => {
+    const sms = new MockSmsProvider({ fail: { '0500000305': { status: 515, message: '019sms 515: x' } } });
+    const wa = new MockProvider();
+    const c = await makeSmsCampaign(smsRecips('972500000304', '972500000305'));
+    await drain(worker({ smsProvider: sms, waProvider: wa }));
+    const [ok, bad] = await rows(c.id);
+    expect(ok).toMatchObject({ status: 'sent', sent_channel: 'sms' });
+    expect(bad).toMatchObject({ status: 'failed', sent_channel: null });
+    expect(wa.sends).toEqual([]);
+  });
+
+  it('the flag defaults to false on a campaign created without it, and the schema refuses it on any channel but sms', async () => {
+    const c = await createCampaign(pool, {
+      channel: 'sms', name: `sms-default-${uniq()}`, body: 'x', audience: { type: 'selection', roles: ['owners'] },
+      instanceId: null, createdBy: null, recipients: smsRecips('972500000306'), ratePerMin: 20, dryRun: true,
+    });
+    made.campaigns.push(c.id);
+    expect(c.sms_whatsapp_fallback).toBe(false);
+
+    await expect(createCampaign(pool, {
+      channel: 'whatsapp', name: `wa-flag-${uniq()}`, body: 'x', audience: { type: 'selection', roles: ['owners'] },
+      instanceId: null, createdBy: null, recipients: smsRecips('972500000307'), ratePerMin: 12, dryRun: true,
+      smsWhatsappFallback: true,
+    })).rejects.toThrow(/wa_campaigns_sms_whatsapp_fallback_check/);
+    await expect(createCampaign(pool, {
+      channel: 'email', subject: 's', name: `email-flag-${uniq()}`, body: 'x', audience: { type: 'selection', roles: ['owners'] },
+      instanceId: null, createdBy: null, recipients: [{ contactId, debtorId: null, phoneIntl: '', email: 'flag@example.com', subject: 's', payload: 'p' }],
+      ratePerMin: 30, dryRun: true, smsWhatsappFallback: true,
+    })).rejects.toThrow(/wa_campaigns_sms_whatsapp_fallback_check/);
+  });
+
+  it('WhatsApp and email broadcasts are unaffected: a plain WhatsApp campaign still sends over WhatsApp, with no SMS provider involved', async () => {
+    const sms = new MockSmsProvider();
+    const wa = new MockProvider();
+    const c = await createCampaign(pool, {
+      channel: 'whatsapp', name: `wa-plain-${uniq()}`, body: 'x', audience: { type: 'selection', roles: ['owners'] },
+      instanceId: null, createdBy: null, recipients: smsRecips('972500000308'), ratePerMin: 120, dryRun: true,
+    });
+    made.campaigns.push(c.id);
+    await startCampaign(pool, c.id);
+    await drain(worker({ smsProvider: sms, waProvider: wa }));
+    expect(wa.sends.map((s) => s.chatId)).toEqual(['972500000308@c.us']);
+    expect(sms.sends).toEqual([]);
+    expect((await getCampaign(pool, c.id))).toMatchObject({ status: 'completed', channel: 'whatsapp', sms_whatsapp_fallback: false });
   });
 
   it('routes by channel: sms uses the 019 + fallback providers, never the email transport; a parallel email campaign is unaffected', async () => {
