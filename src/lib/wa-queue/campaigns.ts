@@ -17,7 +17,7 @@ export class CampaignConflictError extends Error {
 }
 
 const COLS = `
-  id, type, channel, status, name, body, subject, template_name, audience, instance_id, created_by,
+  id, type, channel, status, name, body, subject, sms_whatsapp_fallback, template_name, audience, instance_id, created_by,
   total_count, pending_count, processing_count, sent_count, failed_count,
   skipped_count, cancelled_count, rate_per_min, dry_run, client_token,
   scheduled_at, started_at, completed_at, paused_at, cancelled_at, last_error,
@@ -47,6 +47,10 @@ export interface CreateCampaignInput {
   body: string;
   /** Email channel: the subject as entered (required there; null for WhatsApp). */
   subject?: string | null;
+  /** SMS channel only: opt in to the per-recipient WhatsApp fallback. Default
+   *  false — an SMS campaign never touches WhatsApp unless this is true (the
+   *  DB refuses true on any other channel). */
+  smsWhatsappFallback?: boolean;
   /** Chosen template's name (snapshot); null/undefined = free text. */
   templateName?: string | null;
   audience: unknown;
@@ -76,14 +80,14 @@ export async function createCampaign(pool: Pool, input: CreateCampaignInput): Pr
     const c = await client.query<Campaign>(
       `insert into public.wa_campaigns
          (type, status, name, body, template_name, audience, instance_id, created_by, rate_per_min, dry_run, client_token, created_by_name,
-          channel, subject)
+          channel, subject, sms_whatsapp_fallback)
        values ('broadcast','queued',$1,$2,$3,$4::jsonb,$5,$6,coalesce($7,12),coalesce($8,false),$9,
                (select coalesce(u.full_name, u.username) from public.users u where u.id = $6),
-               $10,$11)
+               $10,$11,$12)
        returning ${COLS}`,
       [input.name, input.body, input.templateName ?? null, JSON.stringify(input.audience ?? {}), input.instanceId,
        input.createdBy, input.ratePerMin ?? null, input.dryRun ?? null, input.clientToken ?? null,
-       input.channel ?? 'whatsapp', input.subject ?? null],
+       input.channel ?? 'whatsapp', input.subject ?? null, input.smsWhatsappFallback ?? false],
     );
     const campaign = c.rows[0];
     for (const r of input.recipients) {

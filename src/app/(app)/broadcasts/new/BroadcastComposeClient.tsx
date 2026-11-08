@@ -144,6 +144,10 @@ export function BroadcastComposeClient({
   const [audienceError, setAudienceError] = useState<string | null>(null);
   const [launched, setLaunched] = useState<Campaign | null>(null);
   const [attachments, setAttachments] = useState<StagedAttachment[]>([]);
+  // SMS only: opt in to the per-recipient WhatsApp fallback. OFF by default
+  // (08/11/2026) — without it an SMS that fails ends as "failed", never as a
+  // WhatsApp message.
+  const [smsFallback, setSmsFallback] = useState(false);
   const minDebtAmountErr = minDebtAmountError(onlyWithDebt, minDebtAmount);
   const tokenRef = useRef(newToken());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -172,6 +176,7 @@ export function BroadcastComposeClient({
   // depth), but this keeps the two channels' states honest.
   function selectChannel(value: BroadcastChannel) {
     setChannel(value);
+    if (value !== 'sms') setSmsFallback(false);
     if (value !== 'sms' || attachments.length === 0) return;
     for (const a of attachments) {
       if (a.attachmentId) {
@@ -292,7 +297,12 @@ export function BroadcastComposeClient({
           audience: { type: 'selection', roles, ...(debtFilter ? { debt_filter: debtFilter } : {}) },
           client_token: tokenRef.current,
           attachment_ids: readyAttachmentIds(attachments),
-          ...(isEmail ? { channel, subject: subject.trim() } : {}),
+          // The channel is ALWAYS sent: the server refuses a request without
+          // it. (Until 08/11/2026 it was sent for email only, so choosing SMS
+          // silently created a WhatsApp broadcast.)
+          channel,
+          ...(isEmail ? { subject: subject.trim() } : {}),
+          ...(isSms ? { sms_whatsapp_fallback: smsFallback } : {}),
         }),
       });
       const data = (await r.json().catch(() => ({}))) as Campaign & { error?: string; partial_detail_count?: number };
@@ -312,7 +322,7 @@ export function BroadcastComposeClient({
   function reset() {
     setLaunched(null);
     setName(''); setContent(''); setTemplateId(FREE_TEXT); setRoles(DEFAULT_ROLES); setAttachments([]);
-    setSubject(''); setShowMissing(false);
+    setSubject(''); setShowMissing(false); setSmsFallback(false);
     setAudienceError(null);
     setOnlyWithDebt(false); setMinDebtAmount('');
     tokenRef.current = newToken();
@@ -516,6 +526,26 @@ export function BroadcastComposeClient({
             <AttachmentPicker items={attachments} onChange={setAttachments} disabled={sending}
               policy={isEmail ? EMAIL_BROADCAST_ATTACHMENT_POLICY : WHATSAPP_ATTACHMENT_POLICY} />
             {attachmentsTotalErr && <p className="text-[12px] font-semibold text-red-500">⚠️ {attachmentsTotalErr} — הסירו קבצים כדי לשלוח במייל</p>}
+          </div>
+        )}
+
+        {/* SMS only — the WhatsApp fallback is an explicit opt-in, OFF by default. */}
+        {isSms && (
+          <div className="flex items-start gap-3 rounded-lg border border-slate-200 p-4">
+            <Checkbox id="bc-sms-wa-fallback" checked={smsFallback} disabled={sending}
+              aria-describedby="bc-sms-wa-fallback-hint"
+              onCheckedChange={(v) => setSmsFallback(v === true)} />
+            <div className="space-y-1">
+              <Label htmlFor="bc-sms-wa-fallback" className="min-h-6 text-sm font-medium text-slate-700">
+                גיבוי בוואטסאפ לנמענים שה-SMS נכשל אצלם
+              </Label>
+              <p id="bc-sms-wa-fallback-hint"
+                className={cn('text-xs', smsFallback ? 'font-semibold text-amber-700' : 'text-muted-foreground')}>
+                {smsFallback
+                  ? 'שימו לב: נמען שה-SMS אליו נכשל, או שאין לו נייד ישראלי תקין, יקבל את ההודעה בוואטסאפ ממספר הוואטסאפ של הבניין.'
+                  : 'כבוי כברירת מחדל: נמען שה-SMS אליו נכשל יסומן ״נכשל״ בהיסטוריה, ולא יקבל הודעה בוואטסאפ.'}
+              </p>
+            </div>
           </div>
         )}
       </div>

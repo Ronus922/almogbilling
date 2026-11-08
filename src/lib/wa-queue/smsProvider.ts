@@ -62,7 +62,10 @@ export class Provider019 implements SmsProvider {
         ok: false,
         status: parsed.status,
         body: raw.slice(0, 300),
-        message: describeProvider019Status(parsed.status, parsed.message),
+        // The 019 code is part of the message: it is what the history shows
+        // when the SMS fails with no WhatsApp fallback (e.g. 515 = unverified
+        // sender name), so the operator sees the real reason, not a generic one.
+        message: `019sms ${parsed.status}: ${describeProvider019Status(parsed.status, parsed.message)}`,
       };
     }
     return { ok: true, providerMessageId: parsed.shipment_id ?? '' };

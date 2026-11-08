@@ -15,7 +15,7 @@ import {
   processEmailRecipient, smtpEmailTransport, MockEmailTransport, readEmailRatePerMin,
   EMAIL_RATE_BUCKET, type EmailTransport,
 } from './email';
-import { processSmsRecipient, readSmsRatePerMin, SMS_RATE_BUCKET, type SmsCreds } from './sms';
+import { processSmsRecipient, readSmsRatePerMin, SMS_RATE_BUCKET, type SmsCreds, type SmsWhatsappFallback } from './sms';
 import { makeSmsProvider, type SmsProvider } from './smsProvider';
 import { createSmtpTransporterCache, resolveSmtpSettings, smtpTransportBase } from '@/lib/email/smtp-core';
 import { raiseSmtpAuthAlert, sqlSmtpAuthAlertDeps } from '@/lib/email/smtp-auth-alert';
@@ -79,11 +79,10 @@ type CampaignCtx =
       smsProvider: SmsProvider;
       smsCreds: SmsCreds;
       smsRatePerMin: number;
-      // Fallback transport — 019 cannot reach every number and can fail for
-      // reasons WhatsApp does not share (sender-ID verification, credit).
-      waProvider: WaProvider;
-      waCreds: SendCreds;
-      waBucket: string;
+      // The WhatsApp fallback — present ONLY when the campaign opted in
+      // (wa_campaigns.sms_whatsapp_fallback). null = this SMS campaign has no
+      // WhatsApp provider at all, so nothing can leave over WhatsApp.
+      fallback: SmsWhatsappFallback | null;
       attachments: CampaignAttachment[]; // always [] — the SMS channel carries none
     };
 
@@ -153,15 +152,21 @@ export class DeliveryWorker {
             ratePerMin: await readEmailRatePerMin(this.o.pool), bucket: EMAIL_RATE_BUCKET, attachments,
           };
         } else if (campaign.channel === 'sms') {
-          // Fallback needs real WhatsApp creds too — resolved the same way a
-          // 'whatsapp' campaign would (campaign.instance_id, set at creation).
-          const { provider: waProvider, creds: waCreds } = await this.providerFor(campaign);
+          // WhatsApp credentials are resolved ONLY for a campaign that opted
+          // in to the fallback (same resolution as a 'whatsapp' campaign:
+          // campaign.instance_id, set at creation). Without the flag no
+          // WhatsApp provider is even constructed.
+          let fallback: SmsWhatsappFallback | null = null;
+          if (campaign.sms_whatsapp_fallback === true) {
+            const { provider, creds } = await this.providerFor(campaign);
+            fallback = { provider, creds, bucket: campaign.instance_id ?? 'default' };
+          }
           ctx = {
             channel: 'sms',
             smsProvider: this.smsProviderFor(campaign),
             smsCreds: this.smsCredsFor(),
             smsRatePerMin: await readSmsRatePerMin(this.o.pool),
-            waProvider, waCreds, waBucket: campaign.instance_id ?? 'default',
+            fallback,
             attachments,
           };
         } else {
@@ -180,7 +185,7 @@ export class DeliveryWorker {
           })
         : ctx.channel === 'sms'
           ? await processSmsRecipient(
-              this.o.pool, ctx.smsProvider, ctx.smsCreds, ctx.waProvider, ctx.waCreds, ctx.waBucket,
+              this.o.pool, ctx.smsProvider, ctx.smsCreds, ctx.fallback,
               item, ctx.smsRatePerMin, { backoffBaseSec: this.o.backoffBaseSec },
             )
           : await processRecipient(this.o.pool, ctx.provider, item, ctx.creds, ctx.bucket, ctx.ratePerMin, {
@@ -195,7 +200,7 @@ export class DeliveryWorker {
       // Keep the rate window table small: rows older than the window are useless.
       if (ctx.channel === 'sms') {
         await pruneSendLog(this.o.pool, SMS_RATE_BUCKET);
-        await pruneSendLog(this.o.pool, ctx.waBucket);
+        if (ctx.fallback) await pruneSendLog(this.o.pool, ctx.fallback.bucket);
       } else {
         await pruneSendLog(this.o.pool, ctx.bucket);
       }

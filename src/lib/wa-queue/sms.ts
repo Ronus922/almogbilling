@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import type { Recipient } from './types';
+import type { BroadcastChannel, Recipient } from './types';
 import { classifyError } from './errors';
 import { persistFailure, releasePaced, type ProcessResult, type SendCreds } from './engine';
 import { underRateLimit, recordSend } from './rate-limit';
@@ -7,11 +7,18 @@ import type { WaProvider } from './provider';
 import type { SmsProvider } from './smsProvider';
 
 // The SMS channel of a broadcast (16/10/2026, 019sms) — the same queue,
-// worker, lease, retry policy and statuses as WhatsApp/email; the one thing
-// genuinely new is the per-recipient fallback: 019 cannot reach every number
-// (Israeli mobiles only) and can fail for reasons WhatsApp does not share
-// (sender-ID verification, account credit), so a failed/ineligible SMS falls
-// back to WhatsApp automatically instead of failing the recipient outright.
+// worker, lease, retry policy and statuses as WhatsApp/email. The one thing
+// genuinely new is the OPTIONAL per-recipient fallback: 019 cannot reach every
+// number (Israeli mobiles only) and can fail for reasons WhatsApp does not
+// share (sender-ID verification, account credit).
+//
+// 08/11/2026: the fallback is an explicit per-campaign opt-in
+// (wa_campaigns.sms_whatsapp_fallback, default false). It used to be automatic,
+// and on 08/11 a broken compose form (it never sent channel='sms') plus that
+// automatic fallback meant an SMS broadcast went out over the building's
+// WhatsApp number to ~540 residents. Now a campaign without the flag has NO
+// WhatsApp provider at all in the worker (SmsWhatsappFallback is null), so an
+// SMS recipient that fails is simply 'failed' with 019's real reason.
 // No Next 'server-only' imports: this runs in the standalone worker.
 
 export const SMS_RATE_SETTING_KEY = 'sms_rate_per_min';
@@ -41,7 +48,28 @@ export function toIsraeliLocal(phoneIntl: string): string | null {
   return /^9725\d{8}$/.test(phoneIntl) ? `0${phoneIntl.slice(3)}` : null;
 }
 
+/** The server's hard gate on the opt-in flag, independent of any UI: absent →
+ *  false (the safe default); present → must be a boolean; true is accepted ONLY
+ *  on an 'sms' campaign (the DB CHECK refuses it anywhere else too). */
+export function parseSmsWhatsappFallback(
+  channel: BroadcastChannel, raw: unknown,
+): { ok: true; value: boolean } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: false };
+  if (typeof raw !== 'boolean') return { ok: false, error: 'ערך גיבוי הוואטסאפ לא תקין' };
+  if (raw && channel !== 'sms') return { ok: false, error: 'גיבוי בוואטסאפ זמין רק בתפוצת SMS' };
+  return { ok: true, value: raw };
+}
+
 export interface SmsCreds { username: string; token: string; source: string }
+
+/** The WhatsApp leg of an SMS recipient. Exists ONLY for a campaign that opted
+ *  in (sms_whatsapp_fallback = true); the worker passes null otherwise, so
+ *  processSmsRecipient has nothing to send over WhatsApp with. */
+export interface SmsWhatsappFallback {
+  provider: WaProvider;
+  creds: SendCreds;
+  bucket: string;
+}
 
 export interface SmsProcessOpts {
   backoffBaseSec?: number;
@@ -49,24 +77,28 @@ export interface SmsProcessOpts {
 
 /**
  * Send one claimed ('processing') SMS recipient, respecting the shared SMS
- * rate limit. On failure (ineligible phone or a rejected/undelivered send),
- * falls back to WhatsApp with the same text — never a second SMS attempt,
- * never attachments (the SMS channel carries none). sent_channel records
- * which one actually went out; a fallback also leaves a note in last_error
- * even though the recipient ends up 'sent', so the reason is not lost.
+ * rate limit. ONE SMS attempt, never a retry (a timeout may still have been
+ * delivered — a retry would double-send) and never attachments (the SMS
+ * channel carries none).
  *
- * The WhatsApp fallback is NOT gated on the WhatsApp rate bucket (it is
- * meant to be the exception, not the common case) but IS recorded there, so
- * concurrent WhatsApp campaigns sharing the same instance still see accurate
- * pacing. A deliberate simplification — see docs/sms-provider.md.
+ * `fallback` null (the default for every campaign): a failed/ineligible SMS
+ * ends the recipient as 'failed' with 019's real reason in last_error
+ * (e.g. "019sms 515: …"); nothing is ever sent over WhatsApp.
+ *
+ * `fallback` set (the campaign opted in): the same text goes out over
+ * WhatsApp instead. sent_channel records which one actually went out; a
+ * fallback also leaves a note in last_error even though the recipient ends up
+ * 'sent', so the reason is not lost. That leg is NOT gated on the WhatsApp
+ * rate bucket (it is meant to be the exception, not the common case) but IS
+ * recorded there, so concurrent WhatsApp campaigns sharing the same instance
+ * still see accurate pacing. A deliberate simplification — see
+ * docs/sms-provider.md.
  */
 export async function processSmsRecipient(
   pool: Pool,
   smsProvider: SmsProvider,
   smsCreds: SmsCreds,
-  waProvider: WaProvider,
-  waCreds: SendCreds,
-  waBucket: string,
+  fallback: SmsWhatsappFallback | null,
   item: Recipient,
   smsRatePerMin: number,
   opts: SmsProcessOpts = {},
@@ -113,11 +145,21 @@ export async function processSmsRecipient(
     smsError = 'אין מספר נייד ישראלי תקין ל-SMS';
   }
 
-  const waRes = await waProvider.send({
-    instanceId: waCreds.instanceId, token: waCreds.token, apiUrl: waCreds.apiUrl,
+  if (!fallback) {
+    // No opt-in: the SMS result is final. The reason is 019's own (code +
+    // description), or the missing-mobile note — never a generic message.
+    return fail({
+      errorClass: localPhone ? 'permanent' : 'invalid_phone',
+      retryable: false,
+      message: `SMS: ${smsError}`,
+    });
+  }
+
+  const waRes = await fallback.provider.send({
+    instanceId: fallback.creds.instanceId, token: fallback.creds.token, apiUrl: fallback.creds.apiUrl,
     chatId: item.chat_id, message: item.payload,
   });
-  await recordSend(pool, waBucket);
+  await recordSend(pool, fallback.bucket);
 
   if (waRes.ok) {
     await pool.query(

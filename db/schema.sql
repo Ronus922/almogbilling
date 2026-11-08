@@ -4221,9 +4221,11 @@ CREATE TABLE public.wa_campaigns (
     created_by_name text,
     channel text DEFAULT 'whatsapp'::text NOT NULL,
     subject text,
+    sms_whatsapp_fallback boolean DEFAULT false NOT NULL,
     CONSTRAINT wa_campaigns_channel_check CHECK ((channel = ANY (ARRAY['whatsapp'::text, 'email'::text, 'sms'::text]))),
     CONSTRAINT wa_campaigns_email_subject_check CHECK (((channel <> 'email'::text) OR (subject IS NOT NULL))),
     CONSTRAINT wa_campaigns_rate_per_min_check CHECK (((rate_per_min >= 1) AND (rate_per_min <= 120))),
+    CONSTRAINT wa_campaigns_sms_whatsapp_fallback_check CHECK (((NOT sms_whatsapp_fallback) OR (channel = 'sms'::text))),
     CONSTRAINT wa_campaigns_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'queued'::text, 'running'::text, 'paused'::text, 'completed'::text, 'completed_with_errors'::text, 'cancelled'::text, 'failed'::text]))),
     CONSTRAINT wa_campaigns_type_check CHECK ((type = 'broadcast'::text))
 );
@@ -4248,6 +4250,13 @@ COMMENT ON COLUMN public.wa_campaigns.channel IS 'Delivery channel: whatsapp (Gr
 --
 
 COMMENT ON COLUMN public.wa_campaigns.subject IS 'Email subject as entered (placeholders unresolved). Required when channel = email; NULL for WhatsApp.';
+
+
+--
+-- Name: COLUMN wa_campaigns.sms_whatsapp_fallback; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.wa_campaigns.sms_whatsapp_fallback IS 'sms campaigns only: when true, a recipient whose SMS fails (or who has no valid Israeli mobile) is retried over WhatsApp. Default false = the SMS result is final and NOTHING is ever sent over WhatsApp.';
 
 
 --
@@ -8423,5 +8432,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261024085525'),
     ('20261025120000'),
     ('20261025210248'),
-    ('20261027150735')
+    ('20261027150735'),
+    ('20261108170152')
 ;
