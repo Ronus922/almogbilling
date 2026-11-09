@@ -74,7 +74,7 @@ export function RecropDialog({ open, scan, onClose, onReplaced }: Props) {
         <div className="flex flex-none items-start justify-between gap-4 bg-gradient-to-bl from-slate-900 via-blue-950 to-blue-900 px-6 pb-5 pt-[max(1.25rem,env(safe-area-inset-top))] text-white">
           <div className="min-w-0 flex-1">
             <DialogTitle className="text-2xl font-bold text-white">חיתוך מחדש של הצילום</DialogTitle>
-            <p className="mt-1 truncate text-sm text-white/70">{fullName(scan)} · הצילום השמור יוחלף בגרסה החתוכה.</p>
+            <p className="mt-1 break-words text-sm text-white/70">{fullName(scan)} · הצילום השמור יוחלף בגרסה החתוכה.</p>
           </div>
           <button
             type="button" onClick={onClose} aria-label="סגור" disabled={saving} data-recrop-close

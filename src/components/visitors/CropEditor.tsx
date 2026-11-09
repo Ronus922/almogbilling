@@ -235,7 +235,8 @@ export function CropEditor({ src, initial, confirmLabel, cancelLabel, busy = fal
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-slate-50/60" data-crop-editor>
-      <div className="flex min-h-0 flex-1 flex-col gap-3 p-5">
+      {/* Scrolls (never clips the buttons below it) on a phone held sideways, where the picture's minimum height does not fit. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-5">
         <div
           ref={outerRef} data-crop-stage data-crop-zoom={adj.z.toFixed(2)}
           role="application" aria-label="אזור חיתוך התעודה"
