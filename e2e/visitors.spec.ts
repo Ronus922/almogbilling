@@ -441,12 +441,13 @@ test('the guard scans a document: photo → OCR → editable form → save → t
   await expect(sheet.getByText('נקרא בביטחון נמוך — בדוק מול התעודה')).toHaveCount(1);
   await expect(sheet.locator('#v-dob').locator('xpath=ancestor::div[contains(@class,"border-amber") or contains(@class,"amber")][1]')).toHaveCount(1);
 
-  // What the server sent the OCR: ONE WebP (the compressed photo), at most 1600px, no EXIF, under 300KB.
+  // What the server sent the OCR: ONE progressive JPEG (the compressed photo), at most 1600px, no EXIF, under 300KB.
   expect(anthropic.calls).toHaveLength(1);
   const sent = anthropic.calls[0]!;
-  expect(sent.mediaType).toBe('image/webp');
+  expect(sent.mediaType).toBe('image/jpeg');
   const meta = await sharp(sent.imageBytes).metadata();
-  expect(meta.format).toBe('webp');
+  expect(meta.format).toBe('jpeg');
+  expect(meta.isProgressive).toBe(true);
   expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBe(1600);
   expect(meta.exif).toBeUndefined();
   expect(sent.imageBytes.length).toBeLessThanOrEqual(300 * 1024);
@@ -479,15 +480,15 @@ test('the guard scans a document: photo → OCR → editable form → save → t
     scanned_by: roleUser.guard!.id,
   });
   expect(row.date_of_birth.toISOString().slice(0, 10)).toBe('1990-05-17');
-  expect(row.image_object_key).toMatch(/^[0-9a-f-]{36}\.webp$/);
+  expect(row.image_object_key).toMatch(/^[0-9a-f-]{36}\.jpg$/);
 
-  // The photo is in the PRIVATE bucket, as a WebP at most 1600px with no metadata and under 300KB —
+  // The photo is in the PRIVATE bucket, as a JPEG at most 1600px with no metadata and under 300KB —
   // and it is the VERY bytes the OCR read (one encode), whose weight the row records.
   const stored = storage.objects.get(`visitor-ids/${row.image_object_key}`);
   expect(stored).toBeDefined();
-  expect(stored!.contentType).toBe('image/webp');
+  expect(stored!.contentType).toBe('image/jpeg');
   const m2 = await sharp(stored!.bytes).metadata();
-  expect(m2.format).toBe('webp');
+  expect(m2.format).toBe('jpeg');
   expect(Math.max(m2.width ?? 0, m2.height ?? 0)).toBeLessThanOrEqual(1600);
   expect(m2.exif).toBeUndefined();
   expect(stored!.bytes.length).toBeLessThanOrEqual(300 * 1024);
@@ -527,9 +528,9 @@ test('an iPhone HEIC photo goes through end to end', async ({ browser }) => {
   await expect(sheet.locator('#v-first')).toHaveValue('חיים');
   await expect(sheet.locator('#v-docnum')).toHaveValue('AB123456');
   await expect(sheet.getByRole('radio', { name: 'דרכון' })).toHaveAttribute('aria-checked', 'true');
-  // The OCR got a WebP (decoded from the HEIC, cropped, compressed), not the HEIC.
+  // The OCR got a JPEG (decoded from the HEIC, cropped, compressed), not the HEIC.
   expect(anthropic.calls).toHaveLength(1);
-  expect((await sharp(anthropic.calls[0]!.imageBytes).metadata()).format).toBe('webp');
+  expect((await sharp(anthropic.calls[0]!.imageBytes).metadata()).format).toBe('jpeg');
   // The preview shows (a browser cannot draw a HEIC; this is the converted JPEG).
   const loaded = await sheet.locator('img[alt="צילום התעודה"]').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0);
   expect(loaded).toBe(true);
@@ -539,7 +540,7 @@ test('an iPhone HEIC photo goes through end to end', async ({ browser }) => {
   const row = (await pool.query(`select id, image_object_key from public.visitor_scans where last_name = $1`, [`${NAME_TOKEN}H`])).rows[0];
   scanIds.push(row.id);
   const stored = storage.objects.get(`visitor-ids/${row.image_object_key}`)!;
-  expect((await sharp(stored.bytes).metadata()).format).toBe('webp');
+  expect((await sharp(stored.bytes).metadata()).format).toBe('jpeg');
   expect(stored.bytes.equals(anthropic.calls[0]!.imageBytes)).toBe(true);
 });
 
@@ -836,6 +837,31 @@ test('the guard opens a row: details, the photo, notes — and every other field
   expect(viewed.rows).toHaveLength(1);
   expect(viewed.rows[0].metadata).toMatchObject({ bucket: 'visitor-ids', object_key: firstScanKey });
 
+  // "הורד תמונה" (09/11/2026): a plain link to the proxy with ?download=1, a comfortable touch target.
+  const dl = sheet.locator('a[data-visitor-download]');
+  await expect(dl).toHaveText('הורד תמונה');
+  await expect(dl).toHaveAttribute('href', `/api/files/visitor-ids/${firstScanKey}?download=1`);
+  expect((await dl.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  const scanDay = (await pool.query<{ d: string }>(`select to_char(created_at at time zone 'Asia/Jerusalem', 'YYYY-MM-DD') as d from public.visitor_scans where id = $1`, [firstScanId])).rows[0]!.d;
+  const wantName = `${NAME_TOKEN}_דוד המלך_${scanDay}.jpg`;
+  const [saved] = await Promise.all([page.waitForEvent('download'), dl.click()]);
+  expect(saved.suggestedFilename()).toBe(wantName); // {last}_{first}_{date}.jpg, Hebrew intact
+  // The header itself: an attachment, the UTF-8 name, never cached.
+  const head = await page.request.get(`/api/files/visitor-ids/${firstScanKey}?download=1`);
+  expect(head.status()).toBe(200);
+  expect(head.headers()['content-type']).toBe('image/jpeg');
+  expect(head.headers()['content-disposition']).toContain('attachment');
+  expect(decodeURIComponent(head.headers()['content-disposition']!.split("filename*=UTF-8''")[1]!)).toBe(wantName);
+  expect(head.headers()['cache-control']).toMatch(/no-store/);
+  // Each download is its OWN audit row (file_downloaded, no dedupe), apart from file_viewed - and it
+  // names no person: the visitor's name is in the header, never in the audit metadata.
+  const downloaded = await pool.query(`select metadata from public.audit_log where action = 'file_downloaded' and entity_type = 'visitor_scan' and entity_id = $1 and actor_user_id = $2`, [firstScanId, roleUser.guard!.id]);
+  expect(downloaded.rows).toHaveLength(2); // the click and the direct request
+  expect(downloaded.rows[0].metadata).toMatchObject({ bucket: 'visitor-ids', object_key: firstScanKey });
+  expect(JSON.stringify(downloaded.rows.map((r) => r.metadata))).not.toContain(NAME_TOKEN);
+  const viewedAfter = await pool.query(`select 1 from public.audit_log where action = 'file_viewed' and entity_type = 'visitor_scan' and entity_id = $1 and actor_user_id = $2`, [firstScanId, roleUser.guard!.id]);
+  expect(viewedAfter.rows).toHaveLength(1); // a download is not a second view
+
   // Fields are NOT editable for a guard; the notes are.
   await expect(sheet.locator('#v-first')).toHaveCount(0);
   await expect(sheet.getByRole('button', { name: 'מחק סריקה' })).toHaveCount(0);
@@ -960,7 +986,7 @@ test('an admin re-crops a stored photo: the object is replaced, the old one remo
   const newObj = storage.objects.get(`visitor-ids/${after.image_object_key}`)!;
   expect(newObj).toBeDefined();
   const meta = await sharp(newObj.bytes).metadata();
-  expect(meta.format).toBe('webp');
+  expect(meta.format).toBe('jpeg');
   expect(Math.abs((meta.width ?? 0) - W / 2)).toBeLessThan(80);
   expect(meta.height).toBe(H);
   const px = await sharp(newObj.bytes).resize(1, 1).raw().toBuffer();
@@ -1150,6 +1176,20 @@ test('on an iPhone-sized screen nothing scrolls sideways and the touch targets a
   }
   // The phone shows cards, not the wide table.
   await expect(page.locator('table[data-visitor-table]')).toBeHidden();
+
+  // The details sheet (09/11/2026): "הורד תמונה" sits under the photo, inside the screen, a 44px+ target.
+  await page.locator('[data-visitor-cards] [data-visitor-row]').first().click();
+  const details = page.getByRole('dialog');
+  const dl = details.locator('a[data-visitor-download]');
+  await dl.scrollIntoViewIfNeeded();
+  await expect(dl).toBeVisible();
+  await expect.poll(async () => (await dl.boundingBox())!.x).toBeGreaterThanOrEqual(0); // the sheet has slid in
+  const dlBox = (await dl.boundingBox())!;
+  expect(dlBox.height).toBeGreaterThanOrEqual(44);
+  expect(dlBox.x + dlBox.width).toBeLessThanOrEqual(390);
+  expect(await details.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  await details.getByRole('button', { name: 'סגור' }).first().click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // The scan sheet is the whole screen on a phone and does not overflow either.
   await page.locator('input[data-visitor-file]').setInputFiles({ name: 'id.jpg', mimeType: 'image/jpeg', buffer: await photo() });
