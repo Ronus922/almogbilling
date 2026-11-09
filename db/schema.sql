@@ -4066,6 +4066,7 @@ CREATE TABLE public.visitor_scans (
     scanned_by_name text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    image_bytes integer,
     CONSTRAINT visitor_scans_document_type_check CHECK ((document_type = ANY (ARRAY['id_card'::text, 'driver_license'::text, 'passport'::text])))
 );
 
@@ -4075,6 +4076,13 @@ CREATE TABLE public.visitor_scans (
 --
 
 COMMENT ON TABLE public.visitor_scans IS 'Scanned visitor documents (id card / driver licence / passport). The image is in the private bucket visitor-ids, served only through /api/files. Kept forever.';
+
+
+--
+-- Name: COLUMN visitor_scans.image_bytes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.visitor_scans.image_bytes IS 'Size in bytes of the stored photo (image_object_key); NULL for rows saved before 09/11/2026.';
 
 
 --
@@ -8519,5 +8527,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261025210248'),
     ('20261027150735'),
     ('20261108170152'),
-    ('20261108221704')
+    ('20261108221704'),
+    ('20261109063920')
 ;
