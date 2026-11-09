@@ -301,6 +301,45 @@ describe('compressVisitorImage', { timeout: 60_000 }, () => {
       }
     });
 
+    it('is NOT trusted when a payload hides in extra segments, in junk before a marker, or in repeated tables', async () => {
+      const clean = (await compressVisitorImage(await photoLike(800, 600, 0))).bytes;
+      const marker = Buffer.from('HIDDEN-PAYLOAD-0123456789');
+      const jfifHead = Buffer.concat([Buffer.from('JFIF\0'), Buffer.from([1, 1, 0, 0, 1, 0, 1, 0, 0])]); // canonical: 14 bytes, no thumbnail
+      const firstSos = clean.indexOf(Buffer.from([0xff, 0xda]));
+      const afterScan = clean.indexOf(Buffer.from([0xff, 0xc4]), firstSos + 2); // the next table after the first scan's data
+      expect(afterScan).toBeGreaterThan(firstSos);
+      const cases: [string, Buffer][] = [
+        ['APP0 with a long tail after a JFIF head', withSegment(clean, 0xe0, Buffer.concat([Buffer.from('JFIF\0'), Buffer.alloc(40_000, 0x41), marker]))],
+        ['an APP0 whose head is canonical but carries a thumbnail', withSegment(clean, 0xe0, Buffer.concat([Buffer.from('JFIF\0'), Buffer.from([1, 1, 0, 0, 1, 0, 1, 2, 2]), marker]))],
+        ['two JFIF tags', withSegment(withSegment(clean, 0xe0, jfifHead), 0xe0, jfifHead)],
+        ['junk right before the final EOI', Buffer.concat([clean.subarray(0, clean.length - 2), Buffer.alloc(5_000, 0x41), marker, Buffer.from([0xff, 0xd9])])],
+        ['junk between two scans', Buffer.concat([clean.subarray(0, afterScan), Buffer.alloc(5_000, 0x41), marker, clean.subarray(afterScan)])],
+        ['a pile of quantisation tables', [1, 2, 3, 4, 5].reduce((acc) => withSegment(acc, 0xdb, Buffer.concat([Buffer.from([0]), Buffer.alloc(64, 1)])), clean)],
+        ['an oversized quantisation table', withSegment(clean, 0xdb, Buffer.concat([Buffer.from([0]), Buffer.alloc(900, 1), marker]))],
+      ];
+      for (const [label, crafted] of cases) {
+        // Either the decoder refuses the doctored file outright (a table that is not a table), or the whole
+        // pipeline runs and the payload is gone - what must NEVER happen is storing it as it came.
+        const out = await compressVisitorImage(crafted).catch((err: unknown) => {
+          expect(err, label).toBeInstanceOf(VisitorImageError);
+          return null;
+        });
+        if (!out) continue;
+        expect(out.bytes.equals(crafted), label).toBe(false);
+        expect(out.quality, label).not.toBeNull(); // went through the ladder
+        expect(out.bytes.includes(Buffer.from('HIDDEN-PAYLOAD')), label).toBe(false);
+        expect(out.bytes.length, label).toBeLessThanOrEqual(VISITOR_IMAGE_TARGET_BYTES);
+      }
+    });
+
+    it('accepts ONE canonical JFIF tag right after SOI, as it came', async () => {
+      const clean = (await compressVisitorImage(await photoLike(800, 600, 0))).bytes;
+      const withJfif = withSegment(clean, 0xe0, Buffer.concat([Buffer.from('JFIF\0'), Buffer.from([1, 1, 0, 0, 1, 0, 1, 0, 0])]));
+      const out = await compressVisitorImage(withJfif);
+      expect(out.bytes.equals(withJfif)).toBe(true);
+      expect(out.quality).toBeNull();
+    });
+
     it('is NOT trusted when it is a baseline JPEG (a browser canvas, a camera) — only this pipeline\'s progressive output is final', async () => {
       const baseline = await sharp(await photoLike(1200, 800, 0)).jpeg({ quality: 88, progressive: false }).toBuffer();
       expect((await sharp(baseline).metadata()).isProgressive).toBe(false);

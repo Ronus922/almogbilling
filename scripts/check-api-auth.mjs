@@ -116,7 +116,9 @@ run('check-api-auth', async () => {
   const HANDLER_SPLIT = /(?=export\s+(?:async\s+)?function\s+(?:GET|POST|PUT|PATCH|DELETE)\b|export\s+const\s+(?:GET|POST|PUT|PATCH|DELETE)\s*[=:])/;
   const HANDLER_HEAD = /export\s+(?:async\s+)?function\s+(?:GET|POST|PUT|PATCH|DELETE)\b|export\s+const\s+(?:GET|POST|PUT|PATCH|DELETE)\s*[=:]/;
   const VISITOR_GUARD = /requireVisitor(View|Create|Edit|Manage)\(/;
-  const TOUCHES_VISITORS = /@\/lib\/(db\/visitorScans|storage\/visitorIdStorage|visitors\/)/;
+  // `visitors/downloadName` is a pure string function (no DB, no Storage, no session): the shared files
+  // route imports it to name a download, and that route is guarded per bucket (checked just below).
+  const TOUCHES_VISITORS = /@\/lib\/(db\/visitorScans|storage\/visitorIdStorage|visitors\/(?!downloadName['"]))/;
   let visitorHandlers = 0;
   for (const rel of files) {
     const src = stripComments(readFileSync(join(root, rel), 'utf8'));

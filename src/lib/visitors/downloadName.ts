@@ -7,23 +7,24 @@
 /** What no operating system allows in a file name. */
 const ILLEGAL = /[\\/:*?"<>|]/g;
 /** Control characters and the invisible bidi / zero-width marks a pasted Hebrew-English name drags along. */
-const INVISIBLE = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁠-⁩﻿]/g;
+const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g;
 
-/** At most this many characters of each name: far above any real name, far below a header's limit. */
-const MAX_PART = 60;
+/** At most this many characters (code points) of each name: far above any real name, and two of them in
+ *  Hebrew (2 bytes) or CJK (3 bytes) plus the date still fit the 255 bytes of a file name on APFS / ext4. */
+const MAX_PART = 32;
 
 /** One name made safe: whitespace runs become one space, invisible characters go, illegal ones become
  *  `_`, and a leading / trailing dot or space (hidden file; Windows strips them) is trimmed. */
 export function cleanNamePart(raw: string | null | undefined): string {
-  return (raw ?? '')
+  const cleaned = (raw ?? '')
     .normalize('NFC')
     .replace(/\s+/g, ' ')
     .replace(INVISIBLE, '')
     .replace(ILLEGAL, '_')
     .trim()
-    .replace(/^[. ]+|[. ]+$/g, '')
-    .slice(0, MAX_PART)
-    .replace(/[. ]+$/g, '');
+    .replace(/^[. ]+|[. ]+$/g, '');
+  // By code point, never in the middle of a surrogate pair (a lone surrogate makes encodeURIComponent throw).
+  return Array.from(cleaned).slice(0, MAX_PART).join('').replace(/[. ]+$/g, '');
 }
 
 export interface VisitorDownloadNameInput {

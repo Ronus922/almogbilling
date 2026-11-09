@@ -44,18 +44,20 @@ async function webpPhoto(w = 1800, h = 1200): Promise<Buffer> {
   return sharp({ create: { width: w, height: h, channels: 3, background: '#336699' } }).webp({ quality: 80 }).toBuffer();
 }
 
-async function seedScan(key: string, bytes: number | null): Promise<string> {
+async function seedScan(key: string, bytes: number | null, originalName: string | null = null): Promise<string> {
   const r = await pool.query<{ id: string }>(
     `insert into public.visitor_scans (document_type, document_number, first_name, last_name, date_of_birth,
-       image_object_key, image_bytes, scanned_by_name)
-     values ('id_card', '123456789', 'דוד', $1, '1990-05-17', $2, $3, 'בודק') returning id`,
-    [`VCV${RUN}`, key, bytes],
+       image_object_key, image_bytes, image_original_name, scanned_by_name)
+     values ('id_card', '123456789', 'דוד', $1, '1990-05-17', $2, $3, $4, 'בודק') returning id`,
+    [`VCV${RUN}`, key, bytes, originalName],
   );
   scanIds.push(r.rows[0]!.id);
   return r.rows[0]!.id;
 }
 const rowOf = async (id: string) =>
   (await pool.query<{ image_object_key: string; image_bytes: number | null }>(`select image_object_key, image_bytes from public.visitor_scans where id = $1`, [id])).rows[0]!;
+const nameOf = async (id: string) =>
+  (await pool.query<{ image_original_name: string | null }>(`select image_original_name from public.visitor_scans where id = $1`, [id])).rows[0]!.image_original_name;
 
 function deps(store: PhotoStore, over: Partial<Parameters<typeof convertStoredWebp>[0]> = {}) {
   const lines: string[] = [];
@@ -147,6 +149,17 @@ d('convertStoredWebp', () => {
     expect(audit.rows[0].metadata).toMatchObject({ old_object_key: key, new_object_key: after.image_object_key, new_image_bytes: jpeg.length });
   });
 
+  it('the camera file name follows the new format: IMG_0001.webp -> IMG_0001.jpg (a missing name stays missing)', async () => {
+    const withName = await seedScan(`${randomUUID()}.webp`, 1, 'IMG_0001.webp');
+    const noName = await seedScan(`${randomUUID()}.webp`, 1, null);
+    const objects = new Map<string, Buffer>();
+    for (const id of [withName, noName]) objects.set((await rowOf(id)).image_object_key, await webpPhoto(400, 300));
+    const report = await convertStoredWebp(deps(makeStore(objects).store).deps, { apply: true });
+    expect(report.failed).toEqual([]);
+    expect(await nameOf(withName)).toBe('IMG_0001.jpg');
+    expect(await nameOf(noName)).toBeNull();
+  });
+
   it('never touches a row that is already a JPEG, and a second run finds nothing to do', async () => {
     const jpegKey = `${randomUUID()}.jpg`;
     const id = await seedScan(jpegKey, 4242);
@@ -215,6 +228,52 @@ d('convertStoredWebp', () => {
     expect(log.removed).not.toContain(elsewhere);
     expect(objects.has(key)).toBe(true); // and the WebP it started from is not removed either
     expect((await pool.query(`select 1 from public.audit_log where entity_type = 'visitor_scan' and entity_id = $1`, [id])).rows).toHaveLength(0);
+  });
+
+  it('a lost answer to COMMIT: the new object is KEPT (the row may point at it), the old one stays, the run stops and says so', async () => {
+    const key = `${randomUUID()}.webp`;
+    const id = await seedScan(key, 10);
+    const second = await seedScan(`${randomUUID()}.webp`, 11);
+    const objects = new Map([[key, await webpPhoto()], [(await rowOf(second)).image_object_key, await webpPhoto()]]);
+    const { store, log } = makeStore(objects);
+    // The commit REALLY happens, then the answer is lost.
+    const lossy: Parameters<typeof convertStoredWebp>[0]['db'] = {
+      async query(t, p) {
+        const r = await conn.query(t, p);
+        if (t === 'commit') throw new Error('connection lost');
+        return r;
+      },
+    };
+    const report = await convertStoredWebp(deps(store, { db: lossy }).deps, { apply: true });
+    expect(report.failed).toContainEqual({ id, key, reason: 'commit_unknown' });
+    expect(report.converted).toBe(0);
+    const after = await rowOf(id);
+    expect(after.image_object_key).toMatch(/\.jpg$/); // it really did commit
+    expect(objects.has(after.image_object_key)).toBe(true); // so the object it points at must still exist
+    expect(objects.has(key)).toBe(true); // and the old one was not removed either
+    expect(log.removed).toEqual([]);
+    expect(report.failed.some((f) => f.id === second)).toBe(false); // stopped: the next row was not even tried
+    expect((await rowOf(second)).image_object_key).toMatch(/\.webp$/);
+  });
+
+  it('a database error on the update: the spare JPEG is removed, the row stays, and the run stops there', async () => {
+    const key = `${randomUUID()}.webp`;
+    const id = await seedScan(key, 12);
+    const objects = new Map([[key, await webpPhoto()]]);
+    const { store, log } = makeStore(objects);
+    const broken: Parameters<typeof convertStoredWebp>[0]['db'] = {
+      async query(t, p) {
+        if (/update public\.visitor_scans/i.test(t)) throw new Error('boom');
+        return conn.query(t, p);
+      },
+    };
+    const report = await convertStoredWebp(deps(store, { db: broken }).deps, { apply: true });
+    expect(report.failed).toContainEqual({ id, key, reason: 'update_failed' });
+    expect(await rowOf(id)).toEqual({ image_object_key: key, image_bytes: 12 });
+    expect(log.uploaded).toHaveLength(1);
+    expect(log.removed).toEqual(log.uploaded); // only our own spare object
+    expect(objects.has(key)).toBe(true);
+    expect((await conn.query('select 1 as ok')).rows[0]).toEqual({ ok: 1 }); // the transaction was rolled back: the connection is usable
   });
 
   it('if the old WebP cannot be removed the row is already right: it is reported as left over, not as a failure', async () => {

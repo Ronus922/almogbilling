@@ -325,6 +325,9 @@ export async function GET(req: NextRequest, ctx: RouteCtx) {
     file = unclaimedFile(known, objectPath);
   }
   const download = req.nextUrl.searchParams.get('download') === '1';
+  // Built BEFORE anything is recorded: a header that cannot be built must not leave an audit row for a
+  // download that never happened.
+  const disposition = contentDisposition(download ? (file.downloadName ?? file.fileName) : file.fileName, download);
   // A visitor photo's explicit download is its own audit event (`file_downloaded`, every time, no
   // dedupe) INSTEAD of a `file_viewed`; every other bucket keeps its single view/download event.
   if (download && known === 'visitor-ids') await logFileDownload(req, actor, file);
@@ -334,7 +337,7 @@ export async function GET(req: NextRequest, ctx: RouteCtx) {
     status: 200,
     headers: {
       'Content-Type': blob.type || 'application/octet-stream',
-      'Content-Disposition': contentDisposition(download ? (file.downloadName ?? file.fileName) : file.fileName, download),
+      'Content-Disposition': disposition,
       'Content-Length': String(blob.size),
       'Cache-Control': 'private, no-store',
     },

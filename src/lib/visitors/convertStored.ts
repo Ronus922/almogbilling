@@ -15,6 +15,9 @@ import 'server-only';
 //     object, never a row without a photo - and both keys are logged (bare UUIDs, no personal data).
 //   * Each row is addressed by the exact id and key read in this run (CLAUDE.md iron rule 12), never
 //     by a filter at write time.
+//   * A database error stops the run at that row (the run is safe to repeat). If the answer to COMMIT is
+//     lost, the row may already point at the new object, so that object is NOT removed - both keys are
+//     logged for a manual check.
 //   * Dry run is the default: it reads and reports, writes nothing.
 
 /** What the converter needs from a database connection: a pg Client, or a stand-in. */
@@ -44,7 +47,7 @@ export interface ConvertDeps {
 export interface ConvertFailure {
   id: string;
   key: string;
-  reason: 'object_missing' | 'unreadable' | 'upload_failed' | 'row_changed' | 'update_failed';
+  reason: 'object_missing' | 'unreadable' | 'upload_failed' | 'row_changed' | 'update_failed' | 'commit_unknown';
 }
 
 export interface ConvertReport {
@@ -107,10 +110,16 @@ export async function convertStoredWebp(deps: ConvertDeps, opts: { apply: boolea
     }
 
     let swapped = false;
+    let stage: 'begin' | 'update' | 'commit' = 'begin';
     try {
       await db.query('begin');
+      stage = 'update';
+      // The stored name of the camera file follows its new format, so "save image as" on the inline view
+      // does not offer a .webp name for JPEG bytes.
       const upd = await db.query(
-        `update public.visitor_scans set image_object_key = $2, image_bytes = $3
+        `update public.visitor_scans
+            set image_object_key = $2, image_bytes = $3,
+                image_original_name = regexp_replace(image_original_name, '\\.webp$', '.jpg', 'i')
           where id = $1 and image_object_key = $4`,
         [row.id, toKey, img.bytes.length, row.image_object_key],
       );
@@ -120,16 +129,24 @@ export async function convertStoredWebp(deps: ConvertDeps, opts: { apply: boolea
            values ('image_converted', 'visitor_scan', $1, $2::jsonb)`,
           [row.id, JSON.stringify({ old_object_key: row.image_object_key, new_object_key: toKey, old_bytes: original.length, new_image_bytes: img.bytes.length })],
         );
+        stage = 'commit';
         await db.query('commit');
         swapped = true;
       } else {
         await db.query('rollback');
       }
     } catch {
+      if (stage === 'commit') {
+        // The COMMIT may have reached the server although its answer did not come back: the row can
+        // already point at toKey, so toKey stays, and so does the old object. Settle it by hand.
+        log(`COMMIT UNKNOWN ${row.id}: the row may point at ${toKey}; the old object ${row.image_object_key} was left in place - check the row. Stopping.`);
+        report.failed.push({ id: row.id, key: row.image_object_key, reason: 'commit_unknown' });
+        break;
+      }
       await db.query('rollback').catch(() => undefined);
       await store.remove(toKey);
       fail('update_failed');
-      continue;
+      break; // a database error: the connection is suspect - stop here; a re-run picks up where this stopped
     }
 
     if (!swapped) {

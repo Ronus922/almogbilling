@@ -194,18 +194,31 @@ const SOI = 0xd8;
 const EOI = 0xd9;
 const SOS = 0xda;
 const APP0 = 0xe0;
+const DQT = 0xdb;
+const DHT = 0xc4;
+const DRI = 0xdd;
 const SOF_PROGRESSIVE = 0xc2;
-/** Segments that may sit in the header of a plain photo: the quantisation tables (DB), the Huffman
- *  tables (C4), the restart interval (DD) and the frame header itself (C2 — progressive). */
-const HEADER_MARKERS = new Set([0xdb, 0xc4, 0xdd, SOF_PROGRESSIVE]);
+
+/** The most of each segment a plain photo has, and the longest each may be. A segment inside these
+ *  limits cannot carry a payload worth hiding: sharp's own output has two DQT (luma, chroma), a handful
+ *  of DHT (one set per scan) and no APP0 at all, so the limits sit well above it and far below "room
+ *  for a file". */
+const MAX_DQT = 4;
+const MAX_DQT_LENGTH = 2 + 4 * (1 + 128); // four 16-bit tables
+const MAX_DHT = 64;
+const MAX_DHT_LENGTH = 2 + 4 * (1 + 16 + 256); // four tables of 256 symbols
+const MAX_SCANS = 64;
 
 /** True for a JPEG that is EXACTLY a progressive image and nothing else: it opens with SOI, every segment
- *  before the scans is a quantisation / Huffman table, a restart interval, the one frame header, or the
- *  plain JFIF tag — so no EXIF, XMP, ICC profile (APP1/APP2), Adobe tag or comment can be hiding in it —
- *  and it ends with EOI as the very last two bytes, so nothing is appended after the picture. This is
- *  what sharp's encoder writes for a flattened photo with `progressive: true`; a baseline JPEG (a
- *  browser canvas, a camera) is never "final", it goes through the ladder. The walk is over MARKERS,
- *  not a search for a word, so a tag planted inside the compressed data is not mistaken for a segment. */
+ *  before the scans is a quantisation / Huffman table, a restart interval, the one frame header, or at
+ *  most ONE canonical 16-byte JFIF tag right after SOI (no thumbnail) - each within a small size limit, so
+ *  no EXIF, XMP, ICC profile (APP1/APP2), Adobe tag or comment can be hiding in it and no table can be
+ *  stuffed with a payload - and it ends with EOI as the very last two bytes, so nothing is appended after
+ *  the picture. This is what sharp's encoder writes for a flattened photo with `progressive: true`; a
+ *  baseline JPEG (a browser canvas, a camera) is never "final", it goes through the ladder. The walk is
+ *  over MARKERS, not a search for a word, so a tag planted inside the compressed data is not mistaken for
+ *  a segment. Bytes that only LOOK like entropy data (junk before a marker) are caught by the decoder,
+ *  which acceptFinalJpeg runs with `failOn: 'warning'`. */
 function isPlainJpeg(buf: Buffer): boolean {
   const n = buf.length;
   if (n < 4 || n > MAX_FINAL_BYTES) return false;
@@ -213,6 +226,9 @@ function isPlainJpeg(buf: Buffer): boolean {
   let at = 2;
   let frame = false;
   let scans = 0;
+  let dqt = 0;
+  let dht = 0;
+  let dri = 0;
   while (at + 2 <= n) {
     if (buf[at] !== 0xff) return false;
     const marker = buf[at + 1]!;
@@ -222,15 +238,19 @@ function isPlainJpeg(buf: Buffer): boolean {
     const length = buf.readUInt16BE(at + 2);
     if (length < 2 || at + 2 + length > n) return false;
     if (marker === APP0) {
-      if (length < 7 || buf.toString('latin1', at + 4, at + 9) !== 'JFIF\0') return false;
+      // One canonical JFIF header, straight after SOI: 'JFIF\0', version, units, densities, and a 0×0 thumbnail.
+      if (at !== 2 || length !== 16 || buf.toString('latin1', at + 4, at + 9) !== 'JFIF\0' || buf[at + 16] !== 0 || buf[at + 17] !== 0) return false;
     } else if (marker === SOS) {
-      if (!frame) return false;
-      scans++;
-    } else if (HEADER_MARKERS.has(marker)) {
-      if (marker === SOF_PROGRESSIVE) {
-        if (frame) return false; // one frame only
-        frame = true;
-      }
+      if (!frame || length < 8 || length > 14 || ++scans > MAX_SCANS) return false;
+    } else if (marker === DQT) {
+      if (length > MAX_DQT_LENGTH || ++dqt > MAX_DQT) return false;
+    } else if (marker === DHT) {
+      if (length > MAX_DHT_LENGTH || ++dht > MAX_DHT) return false;
+    } else if (marker === DRI) {
+      if (length !== 4 || ++dri > 1) return false;
+    } else if (marker === SOF_PROGRESSIVE) {
+      if (frame || length < 11 || length > 20) return false; // one frame only, one to four components
+      frame = true;
     } else {
       return false; // APP1..APP15, COM, a baseline / lossless / arithmetic frame, restart markers, …
     }
@@ -261,11 +281,13 @@ function isPlainJpeg(buf: Buffer): boolean {
 async function acceptFinalJpeg(input: Buffer): Promise<CompressedImage | null> {
   if (!isPlainJpeg(input)) return null;
   try {
-    const meta = await sharp(input, { failOn: 'error', limitInputPixels: 120_000_000 }).metadata();
+    // failOn 'warning': libjpeg reports junk between scans or before the final EOI as a warning, and a photo
+    // that is "final" has none.
+    const meta = await sharp(input, { failOn: 'warning', limitInputPixels: 120_000_000 }).metadata();
     const w = meta.width ?? 0;
     const h = meta.height ?? 0;
     if (meta.format !== 'jpeg' || w === 0 || h === 0 || Math.max(w, h) > VISITOR_IMAGE_MAX_SIDE) return null;
-    await sharp(input, { failOn: 'error', limitInputPixels: 120_000_000 }).stats(); // forces a full decode
+    await sharp(input, { failOn: 'warning', limitInputPixels: 120_000_000 }).stats(); // forces a full decode
     return asCompressed(input, w, h, null);
   } catch {
     return null;

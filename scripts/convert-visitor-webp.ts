@@ -28,6 +28,8 @@ async function main(): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL not set');
   const db = new Client({ connectionString: url });
+  // An idle disconnect would otherwise be an unhandled 'error' event and kill the process mid-row.
+  db.on('error', (err) => console.error('database connection error:', err.message));
   await db.connect();
 
   const sc = storageClient();

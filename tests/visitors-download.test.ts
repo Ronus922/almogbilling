@@ -188,9 +188,23 @@ describe('visitorDownloadName', () => {
     expect(visitorDownloadName({ lastName: '', firstName: '', scanDate: null, objectKey: KEY })).toBe('scan.jpg');
   });
 
-  it('caps each name at 60 characters', () => {
-    const out = visitorDownloadName({ ...base, lastName: 'א'.repeat(300), firstName: 'ב' });
-    expect(out).toBe(`${'א'.repeat(60)}_ב_2026-11-09.jpg`);
+  it('caps each name at 32 characters - by code point, so a pair of surrogates is never cut in half', () => {
+    expect(visitorDownloadName({ ...base, lastName: 'א'.repeat(300), firstName: 'ב' })).toBe(`${'א'.repeat(32)}_ב_2026-11-09.jpg`);
+    // 31 letters, then an astral character (2 UTF-16 units) that straddles the cut, then more
+    const straddle = visitorDownloadName({ ...base, lastName: `${'a'.repeat(31)}\u{1F600}bcd`, firstName: 'x' });
+    expect(straddle).toBe(`${'a'.repeat(31)}\u{1F600}_x_2026-11-09.jpg`);
+    expect(() => encodeURIComponent(straddle)).not.toThrow(); // a lone surrogate would throw here
+  });
+
+  it('two maximal names still fit the 255 bytes of a file name, in Hebrew and in CJK', () => {
+    for (const ch of ['א', '漢']) {
+      const name = visitorDownloadName({ ...base, lastName: ch.repeat(100), firstName: ch.repeat(100) });
+      expect(new TextEncoder().encode(name).length).toBeLessThanOrEqual(255);
+    }
+  });
+
+  it('drops the Arabic letter mark along with the other invisible bidi marks', () => {
+    expect(cleanNamePart('כהן\u061c\u200e')).toBe('כהן');
   });
 
   it('takes the extension from the stored object: .jpg, or .webp for a row the conversion has not reached', () => {
