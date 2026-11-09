@@ -1,4 +1,5 @@
-import { CROP_OUTPUT_MAX_SIDE, outputSize, type Rect } from '@/lib/visitors/crop';
+import { outputSize, type Rect } from '@/lib/visitors/crop';
+import { CLIENT_UPLOAD_JPEG_QUALITY, CLIENT_UPLOAD_MAX_SIDE } from '@/lib/visitors/model';
 import { detectDocumentRect } from '@/lib/visitors/cropDetect';
 
 // The two canvas jobs of the crop step: finding the document on a thumbnail of the
@@ -29,9 +30,10 @@ export function detectOnImage(img: HTMLImageElement): Rect | null {
   }
 }
 
-/** The frame as a JPEG (≤1600px on its long side, never enlarged). Drawn in ONE step from
- *  the full-size picture, so a 12MP photo is never copied to a 12MP canvas. */
-export function renderCrop(img: HTMLImageElement, frame: Rect, maxSide = CROP_OUTPUT_MAX_SIDE): Promise<Blob> {
+/** The frame as a JPEG (≤2000px on its long side, quality 85, never enlarged) — the upload. Drawn in
+ *  ONE step from the full-size picture, so a 12MP photo is never copied to a 12MP canvas. The server
+ *  makes the final, lighter WebP. */
+export function renderCrop(img: HTMLImageElement, frame: Rect, maxSide = CLIENT_UPLOAD_MAX_SIDE): Promise<Blob> {
   const out = outputSize(frame, maxSide);
   const canvas = document.createElement('canvas');
   canvas.width = out.w;
@@ -44,6 +46,6 @@ export function renderCrop(img: HTMLImageElement, frame: Rect, maxSide = CROP_OU
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, Math.round(frame.x), Math.round(frame.y), Math.round(frame.w), Math.round(frame.h), 0, 0, out.w, out.h);
   return new Promise((resolve, reject) => {
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('encode_failed'))), 'image/jpeg', 0.92);
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('encode_failed'))), 'image/jpeg', CLIENT_UPLOAD_JPEG_QUALITY);
   });
 }

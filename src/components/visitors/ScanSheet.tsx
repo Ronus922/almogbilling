@@ -16,7 +16,7 @@ import type { OcrField, OcrResponse } from '@/lib/visitors/model';
 import { CropEditor } from './CropEditor';
 import { VisitorForm } from './VisitorForm';
 import {
-  EMPTY_FORM, formFromOcr, jpegBlobFromBase64, lowConfidenceFields, toPayload, validateForm,
+  blobFromBase64, EMPTY_FORM, formFromOcr, lowConfidenceFields, toPayload, validateForm,
   type FormErrors, type VisitorFormValues,
 } from './format';
 
@@ -55,6 +55,7 @@ export function ScanSheet({ file, previewUrl, onClose, onSaved, onRetake }: Prop
   const [problem, setProblem] = useState('');
   const [ocrOk, setOcrOk] = useState(true);
   const [imageB64, setImageB64] = useState('');
+  const [imageType, setImageType] = useState('image/webp');
   const [values, setValues] = useState<VisitorFormValues>(EMPTY_FORM);
   const [low, setLow] = useState<ReadonlySet<OcrField>>(new Set());
   const [errors, setErrors] = useState<FormErrors>({});
@@ -63,13 +64,20 @@ export function ScanSheet({ file, previewUrl, onClose, onSaved, onRetake }: Prop
 
   const open = file !== null;
 
-  // The server's JPEG of a file the browser cannot draw lives as long as this sheet.
-  useEffect(() => () => { if (fallbackRef.current) URL.revokeObjectURL(fallbackRef.current); }, []);
+  // The server's JPEG of a file the browser cannot draw lives as long as this sheet; closing it also
+  // abandons a /prepare that is still on its way (its blob URL would otherwise never be freed).
+  const prepareCtl = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    prepareCtl.current?.abort();
+    if (fallbackRef.current) URL.revokeObjectURL(fallbackRef.current);
+  }, []);
 
   // Step 2 — normalise + read the CROPPED photo. The parent gives every new photo a new `key`,
   // so this component starts from the 'crop' state each time — nothing to reset here.
   useEffect(() => {
-    if (!cropped) return;
+    // `open` is part of the condition: a sheet closed during the last moments of the crop must not
+    // send the abandoned photo to the OCR (and closing mid-read aborts the request).
+    if (!cropped || !open) return;
     const ctl = new AbortController();
 
     (async () => {
@@ -84,6 +92,7 @@ export function ScanSheet({ file, previewUrl, onClose, onSaved, onRetake }: Prop
           return;
         }
         setImageB64(data.image_base64);
+        setImageType(data.image_type ?? 'image/webp');
         setOcrOk(data.ok === true);
         setValues(formFromOcr(data.fields));
         setLow(lowConfidenceFields({ fields: data.fields, confidence: data.confidence ?? {} }));
@@ -95,7 +104,7 @@ export function ScanSheet({ file, previewUrl, onClose, onSaved, onRetake }: Prop
       }
     })();
     return () => ctl.abort();
-  }, [cropped]);
+  }, [cropped, open]);
 
   // The browser could not draw the photo (a HEIC outside Safari, a format it lacks). The server
   // already owns a decoder for it: send the file once, get an upright JPEG back, crop THAT. If even
@@ -107,10 +116,12 @@ export function ScanSheet({ file, previewUrl, onClose, onSaved, onRetake }: Prop
       return;
     }
     setPhase('preparing');
+    const ctl = new AbortController();
+    prepareCtl.current = ctl;
     try {
       const fd = new FormData();
       fd.append('image', file, file.name || 'scan.jpg');
-      const r = await fetch('/api/visitors/prepare', { method: 'POST', body: fd, credentials: 'include' });
+      const r = await fetch('/api/visitors/prepare', { method: 'POST', body: fd, credentials: 'include', signal: ctl.signal });
       if (!r.ok) {
         const data = (await r.json().catch(() => ({}))) as { error?: string };
         setProblem(data.error ?? 'לא ניתן לפתוח את התמונה — צלם שוב');
@@ -121,13 +132,15 @@ export function ScanSheet({ file, previewUrl, onClose, onSaved, onRetake }: Prop
       fallbackRef.current = url;
       setFallbackUrl(url);
       setPhase('crop');
-    } catch {
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return; // the sheet was closed: nothing to show
       setProblem('החיבור נכשל — בדוק את הקליטה ונסה שוב');
       setPhase('unreadable');
     }
   }
 
   function onCropped(blob: Blob) {
+    if (!open) return; // closed while the canvas was being encoded
     setCropped(blob);
     setPhase('reading');
   }
@@ -162,9 +175,10 @@ export function ScanSheet({ file, previewUrl, onClose, onSaved, onRetake }: Prop
     setSaving(true);
     try {
       const fd = new FormData();
-      // The photo is the normalised JPEG; its name is the camera's own (IMG_0001.HEIC → IMG_0001.jpg).
+      // The photo is the compressed one the OCR step returned, posted back unchanged; its name is the
+      // camera's own with the new extension (IMG_0001.HEIC → IMG_0001.webp).
       const base = ((file?.name ?? '').replace(/\.[^.]+$/, '') || 'scan').slice(0, 120);
-      fd.append('image', jpegBlobFromBase64(imageB64), `${base}.jpg`);
+      fd.append('image', blobFromBase64(imageB64, imageType), `${base}.${imageType === 'image/jpeg' ? 'jpg' : 'webp'}`);
       fd.append('data', JSON.stringify(toPayload(values)));
       const r = await fetch('/api/visitors', { method: 'POST', body: fd, credentials: 'include' });
       const data = (await r.json().catch(() => ({}))) as { error?: string; duplicate?: boolean };
@@ -250,7 +264,7 @@ export function ScanSheet({ file, previewUrl, onClose, onSaved, onRetake }: Prop
 
                 {/* eslint-disable-next-line @next/next/no-img-element -- a one-off data: URL of the cropped photo; next/image cannot optimise it */}
                 <img
-                  src={`data:image/jpeg;base64,${imageB64}`} alt="צילום התעודה"
+                  src={`data:${imageType};base64,${imageB64}`} alt="צילום התעודה"
                   className="mx-auto max-h-72 w-full rounded-lg border border-slate-200 bg-white object-contain"
                 />
 

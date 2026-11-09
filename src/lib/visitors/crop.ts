@@ -12,6 +12,8 @@
 // derived from it (resolveView), so a resized stage can never leave the picture
 // off-screen and no effect has to repair state.
 
+import { CLIENT_UPLOAD_MAX_SIDE } from './model';
+
 export interface Rect {
   x: number;
   y: number;
@@ -27,8 +29,6 @@ export const HANDLES: readonly Handle[] = ['n', 'e', 's', 'w', 'nw', 'ne', 'se',
 /** When no document is found, the frame is this much of the picture, centred. */
 export const DEFAULT_CROP_FRACTION = 0.85;
 
-/** The longest side of the photo that goes to the OCR and to Storage. */
-export const CROP_OUTPUT_MAX_SIDE = 1600;
 
 export function fullRect(imgW: number, imgH: number): Rect {
   return { x: 0, y: 0, w: imgW, h: imgH };
@@ -73,8 +73,9 @@ export function resizeRect(r: Rect, handle: Handle, dx: number, dy: number, imgW
   return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
-/** The size the cropped photo is drawn at: the frame, shrunk (never enlarged) to `maxSide`. */
-export function outputSize(r: Rect, maxSide = CROP_OUTPUT_MAX_SIDE): { w: number; h: number } {
+/** The size the cropped photo is drawn at: the frame, shrunk (never enlarged) to `maxSide` — 2000px,
+ *  so a 12MP photo does not cross a mobile connection at full size; the server brings it to 1600. */
+export function outputSize(r: Rect, maxSide = CLIENT_UPLOAD_MAX_SIDE): { w: number; h: number } {
   const k = Math.min(1, maxSide / Math.max(r.w, r.h));
   return { w: Math.max(1, Math.round(r.w * k)), h: Math.max(1, Math.round(r.h * k)) };
 }

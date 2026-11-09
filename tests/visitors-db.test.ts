@@ -21,6 +21,8 @@ let pool: Pool;
 const h = vi.hoisted(() => ({
   session: null as null | { sid: string; user: { id: string; username: string; email: string | null; full_name: string | null; role: string } },
   uploaded: [] as string[],
+  /** What each upload carried (bytes + content type), in order. */
+  uploadedImg: [] as { bytes: Buffer; contentType: string; ext: string }[],
   removed: [] as string[],
   failInsert: false,
   /** What the "point the row at the new photo" statement does: run, fail, or find no row. */
@@ -60,9 +62,10 @@ vi.mock('@/lib/storage/server', () => ({
   buildProxyUrl: (bucket: string, key: string) => `/api/files/${bucket}/${key}`,
 }));
 vi.mock('@/lib/storage/visitorIdStorage', () => ({
-  uploadVisitorPhoto: vi.fn(async () => {
-    const key = `${randomUUID()}.jpg`;
+  uploadVisitorPhoto: vi.fn(async (img: { bytes: Buffer; contentType: string; ext: string }) => {
+    const key = `${randomUUID()}.${img.ext}`;
     h.uploaded.push(key);
+    h.uploadedImg.push(img);
     return key;
   }),
   removeVisitorPhoto: vi.fn(async (key: string) => { h.removed.push(key); return true; }),
@@ -75,6 +78,7 @@ import { POST as PREPARE } from '@/app/api/visitors/prepare/route';
 import { deleteUserPermanently } from '@/lib/db/userDeletion';
 import { insertVisitorScan } from '@/lib/db/visitorScans';
 import { requireVisitorView } from '@/lib/auth/actor';
+import { compressVisitorImage } from '@/lib/visitors/image';
 import { AuthorizationError } from '@/lib/auth/errors';
 import { ROLE_VALUES, isMatrixRole, type Role } from '@/lib/permissions/constants';
 import { getDefaultPermissions } from '@/lib/permissions/check';
@@ -108,10 +112,17 @@ function formReq(fields: Record<string, unknown>, image: Buffer | null): NextReq
 }
 const jsonReq = (method: string, body: unknown) =>
   new NextRequest('http://localhost/api/visitors/x', { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-function imageReq(image: Buffer | null, name = 'crop.jpg'): NextRequest {
+function imageReq(image: Buffer | null, name = 'crop.jpg', fromKey?: string): NextRequest {
   const fd = new FormData();
   if (image) fd.append('image', new File([new Uint8Array(image)], name, { type: 'image/jpeg' }));
+  if (fromKey) fd.append('from_key', fromKey);
   return new NextRequest('http://localhost/api/visitors/x/image', { method: 'POST', body: fd });
+}
+/** A re-crop request carrying the key the row points at now (what the dialog sends), or a made-up one for ids that have no row. */
+async function recropReq(id: string, image: Buffer | null = null): Promise<NextRequest> {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  const row = isUuid ? (await pool.query<{ image_object_key: string }>(`select image_object_key from public.visitor_scans where id = $1`, [id])).rows[0] : undefined;
+  return imageReq(image ?? (await jpeg()), 'crop.jpg', row?.image_object_key ?? `${randomUUID()}.webp`);
 }
 const listReq = (qs: string) => new NextRequest(`http://localhost/api/visitors?${qs}`);
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
@@ -157,7 +168,7 @@ beforeAll(async () => {
   }
 });
 
-beforeEach(() => { h.uploaded.length = 0; h.removed.length = 0; h.failInsert = false; h.replace = 'ok'; });
+beforeEach(() => { h.uploaded.length = 0; h.uploadedImg.length = 0; h.removed.length = 0; h.failInsert = false; h.replace = 'ok'; });
 
 afterAll(async () => {
   if (!pool) return;
@@ -263,6 +274,38 @@ d('scanning — guard, admin, super admin only', () => {
   it('no session → 401', async () => {
     await actAs(null);
     expect((await POST(formReq(FIELDS, await jpeg()))).status).toBe(401);
+  });
+
+  it('the stored photo is the compressed WebP and its weight is recorded on the row', async () => {
+    await actAs('guard');
+    const res = await POST(formReq({ ...FIELDS, last_name: `VTbytes${RUN}` }, await sharp({ create: { width: 3200, height: 2400, channels: 3, background: '#336699' } }).jpeg().toBuffer()));
+    expect(res.status).toBe(201);
+    const { id } = await res.json();
+    scanIds.push(id);
+    const stored = h.uploadedImg[0]!;
+    expect(stored).toMatchObject({ contentType: 'image/webp', ext: 'webp' });
+    const meta = await sharp(stored.bytes).metadata();
+    expect(meta.format).toBe('webp');
+    expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBe(1600); // 3200×2400 in, 1600×1200 out
+    expect(stored.bytes.length).toBeLessThanOrEqual(300 * 1024);
+    expect((await pool.query(`select image_bytes from public.visitor_scans where id = $1`, [id])).rows[0].image_bytes).toBe(stored.bytes.length);
+  });
+
+  it('a photo the OCR step already compressed is stored AS IT CAME; a tampered one is re-encoded (ONE encode, never trusting the client)', async () => {
+    await actAs('guard');
+    const final = await compressVisitorImage(await jpeg());
+    const ok = await POST(formReq({ ...FIELDS, last_name: `VTasis${RUN}` }, final.bytes));
+    expect(ok.status).toBe(201);
+    scanIds.push((await ok.json()).id);
+    expect(h.uploadedImg[0]!.bytes.equals(final.bytes)).toBe(true);
+
+    h.uploadedImg.length = 0;
+    const tainted = Buffer.concat([final.bytes, Buffer.from('<script>alert(1)</script>')]);
+    const bad = await POST(formReq({ ...FIELDS, last_name: `VTtaint${RUN}`, document_number: '777' }, tainted));
+    expect(bad.status).toBe(201);
+    scanIds.push((await bad.json()).id);
+    expect(h.uploadedImg[0]!.bytes.equals(tainted)).toBe(false);
+    expect(h.uploadedImg[0]!.bytes.includes(Buffer.from('<script>'))).toBe(false);
   });
 
   it('the same person saved twice within minutes (a lost answer, a second tap) is ONE row and ONE photo', async () => {
@@ -383,7 +426,7 @@ d('re-cropping a stored photo (admin / super admin)', () => {
     const id = await seedScan({ last_name: `VTrc${RUN}${role}` });
     const oldKey = await keyOf(id);
     await actAs(role);
-    const res = await RECROP(imageReq(await jpeg()), ctx(id));
+    const res = await RECROP(await recropReq(id), ctx(id));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(h.uploaded).toHaveLength(1);
@@ -396,7 +439,10 @@ d('re-cropping a stored photo (admin / super admin)', () => {
     const audit = await pool.query(`select actor_user_id, metadata from public.audit_log where entity_type = 'visitor_scan' and entity_id = $1 and action = 'image_recropped'`, [id]);
     expect(audit.rows).toHaveLength(1);
     expect(audit.rows[0]).toMatchObject({ actor_user_id: userIds.get(role) });
-    expect(audit.rows[0].metadata).toEqual({ actor_role: role, old_object_key: oldKey, new_object_key: newKey, old_photo_removed: true });
+    expect(audit.rows[0].metadata).toEqual({ actor_role: role, old_object_key: oldKey, new_object_key: newKey, new_image_bytes: h.uploadedImg[0]!.bytes.length, old_photo_removed: true });
+    // the new photo is the compressed WebP, its weight is recorded on the row
+    expect(h.uploadedImg[0]).toMatchObject({ contentType: 'image/webp', ext: 'webp' });
+    expect((await pool.query(`select image_bytes from public.visitor_scans where id = $1`, [id])).rows[0].image_bytes).toBe(h.uploadedImg[0]!.bytes.length);
     // the row's data is untouched
     expect(body.scan).toMatchObject({ first_name: 'דוד', document_number: '123456789' });
   });
@@ -405,17 +451,39 @@ d('re-cropping a stored photo (admin / super admin)', () => {
     const id = await seedScan({ last_name: `VTrcno${RUN}${role}` });
     const key = await keyOf(id);
     await actAs(role);
-    expect((await RECROP(imageReq(await jpeg()), ctx(id))).status).toBe(403);
+    expect((await RECROP(await recropReq(id), ctx(id))).status).toBe(403);
     expect(h.uploaded).toHaveLength(0);
     expect(await keyOf(id)).toBe(key);
   });
 
+  it('a crop of a photo that was replaced meanwhile → 409, the newer photo is NOT overwritten or deleted', async () => {
+    const id = await seedScan({ last_name: `VTrcstale${RUN}` });
+    const cropped = await keyOf(id); // what admin A cropped
+    await pool.query(`update public.visitor_scans set image_object_key = $2 where id = $1`, [id, `${randomUUID()}.webp`]); // admin B replaced it
+    const newer = await keyOf(id);
+    await actAs('admin');
+    const res = await RECROP(imageReq(await jpeg(), 'crop.jpg', cropped), ctx(id));
+    expect(res.status).toBe(409);
+    expect(await keyOf(id)).toBe(newer);
+    expect(h.uploaded).toHaveLength(1);
+    expect(h.removed).toEqual(h.uploaded); // only A's freshly uploaded object is removed again
+    expect(h.removed).not.toContain(newer);
+  });
+
+  it('a request without (or with a malformed) from_key → 400 and nothing is uploaded', async () => {
+    const id = await seedScan({ last_name: `VTrcnokey${RUN}` });
+    await actAs('admin');
+    expect((await RECROP(imageReq(await jpeg()), ctx(id))).status).toBe(400);
+    expect((await RECROP(imageReq(await jpeg(), 'crop.jpg', '../../etc/passwd'), ctx(id))).status).toBe(400);
+    expect(h.uploaded).toHaveLength(0);
+  });
+
   it('no session → 401; a bad id or an unknown id → 404 and nothing is uploaded', async () => {
     await actAs(null);
-    expect((await RECROP(imageReq(await jpeg()), ctx(randomUUID()))).status).toBe(401);
+    expect((await RECROP(await recropReq(randomUUID()), ctx(randomUUID()))).status).toBe(401);
     await actAs('admin');
-    expect((await RECROP(imageReq(await jpeg()), ctx('not-a-uuid'))).status).toBe(404);
-    expect((await RECROP(imageReq(await jpeg()), ctx(randomUUID()))).status).toBe(404);
+    expect((await RECROP(await recropReq('not-a-uuid'), ctx('not-a-uuid'))).status).toBe(404);
+    expect((await RECROP(await recropReq(randomUUID()), ctx(randomUUID()))).status).toBe(404);
     expect(h.uploaded).toHaveLength(0);
   });
 
@@ -423,8 +491,8 @@ d('re-cropping a stored photo (admin / super admin)', () => {
     const id = await seedScan({ last_name: `VTrcbad${RUN}` });
     const key = await keyOf(id);
     await actAs('admin');
-    expect((await RECROP(imageReq(null), ctx(id))).status).toBe(400);
-    expect([415, 422]).toContain((await RECROP(imageReq(Buffer.from('definitely not an image')), ctx(id))).status);
+    expect((await RECROP(imageReq(null, 'crop.jpg', key), ctx(id))).status).toBe(400);
+    expect([415, 422]).toContain((await RECROP(imageReq(Buffer.from('definitely not an image'), 'crop.jpg', key), ctx(id))).status);
     expect(h.uploaded).toHaveLength(0);
     expect(await keyOf(id)).toBe(key);
   });
@@ -434,7 +502,7 @@ d('re-cropping a stored photo (admin / super admin)', () => {
     const key = await keyOf(id);
     await actAs('admin');
     h.replace = 'fail';
-    expect((await RECROP(imageReq(await jpeg()), ctx(id))).status).toBe(500);
+    expect((await RECROP(await recropReq(id), ctx(id))).status).toBe(500);
     expect(h.uploaded).toHaveLength(1);
     expect(h.removed).toEqual(h.uploaded); // the NEW one, only
     expect(await keyOf(id)).toBe(key);
@@ -444,7 +512,7 @@ d('re-cropping a stored photo (admin / super admin)', () => {
     const id = await seedScan({ last_name: `VTrcgone${RUN}` });
     await actAs('admin');
     h.replace = 'gone';
-    expect((await RECROP(imageReq(await jpeg()), ctx(id))).status).toBe(404);
+    expect((await RECROP(await recropReq(id), ctx(id))).status).toBe(404);
     expect(h.removed).toEqual(h.uploaded);
   });
 
@@ -454,7 +522,7 @@ d('re-cropping a stored photo (admin / super admin)', () => {
     const past = await pool.query<{ id: string }>(`insert into public.auth_rate_limits (bucket) select $1 from generate_series(1, 60) returning id`, [bucket]);
     try {
       await actAs('admin');
-      const res = await RECROP(imageReq(await jpeg()), ctx(id));
+      const res = await RECROP(await recropReq(id), ctx(id));
       expect(res.status).toBe(429);
       expect(h.uploaded).toHaveLength(0);
     } finally {
@@ -473,7 +541,7 @@ d('the HEIC preview fallback (/api/visitors/prepare)', () => {
     const out = Buffer.from(await res.arrayBuffer());
     const meta = await sharp(out).metadata();
     expect(meta.format).toBe('jpeg');
-    expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBe(1600);
+    expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBe(2000); // the crop step's preview is cut from the upload-sized picture
     expect(h.uploaded).toHaveLength(0);
   });
 
@@ -616,7 +684,7 @@ d('a deleted user leaves their scans readable under their name', () => {
     const id = await insertVisitorScan({
       document_type: 'id_card', document_number: '1', first_name: 'א', last_name: `VTgone${RUN}`,
       date_of_birth: null, nationality: null, phone: null, room_number: null, chip_number: null, notes: null,
-      image_object_key: `${randomUUID()}.jpg`, image_original_name: null, scanned_by: uid,
+      image_object_key: `${randomUUID()}.jpg`, image_bytes: 1234, image_original_name: null, scanned_by: uid,
     });
     scanIds.push(id);
 

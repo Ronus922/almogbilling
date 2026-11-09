@@ -140,6 +140,8 @@ export async function findRecentDuplicate(
 
 export interface NewVisitorScan extends VisitorCreateInput {
   image_object_key: string;
+  /** Final weight of the stored photo, in bytes. */
+  image_bytes: number;
   image_original_name: string | null;
   scanned_by: string;
 }
@@ -149,13 +151,14 @@ export async function insertVisitorScan(v: NewVisitorScan): Promise<string> {
     `insert into public.visitor_scans
        (document_type, document_number, first_name, last_name, date_of_birth, nationality,
         phone, room_number, chip_number, notes, image_object_key, image_original_name,
-        scanned_by, scanned_by_name)
+        scanned_by, scanned_by_name, image_bytes)
      values ($1, $2, $3, $4, $5::date, $6, $7, $8, $9, $10, $11, $12, $13,
-             (select coalesce(u.full_name, u.username) from public.users u where u.id = $13))
+             (select coalesce(u.full_name, u.username) from public.users u where u.id = $13), $14)
      returning id`,
     [
       v.document_type, v.document_number, v.first_name, v.last_name, v.date_of_birth, v.nationality,
       v.phone, v.room_number, v.chip_number, v.notes, v.image_object_key, v.image_original_name, v.scanned_by,
+      v.image_bytes,
     ],
   );
   return r.rows[0]!.id;
@@ -197,20 +200,35 @@ export async function deleteVisitorScan(id: string): Promise<string | null> {
   return r?.image_object_key ?? null;
 }
 
+export type ReplaceImageResult =
+  | { kind: 'replaced'; oldKey: string }
+  /** The row exists but its photo is no longer the one the caller cropped (someone replaced it meanwhile). */
+  | { kind: 'stale' }
+  | { kind: 'gone' };
+
 /**
- * Points a row at a new photo and returns the OLD photo's object key (to remove from
- * Storage), or null when the row does not exist. The lock keeps two re-crops of the
- * same row from both reading the same "old" key and leaving one photo behind.
+ * Points a row at a new photo — but only if it still points at `expectedOldKey`, the photo the
+ * admin actually cropped. The row is locked first, so two re-crops of the same row run one after
+ * the other: the second sees the first's key, no longer matches, and is `stale` instead of
+ * overwriting (and deleting) a newer photo. `replaced` carries the OLD key, to remove from Storage.
  */
-export async function replaceVisitorImage(id: string, newObjectKey: string): Promise<string | null> {
-  const r = await queryOne<{ old_key: string }>(
-    `with old as (select image_object_key from public.visitor_scans where id = $1 for update)
-     update public.visitor_scans s
-        set image_object_key = $2, updated_at = now()
-       from old
-      where s.id = $1
-     returning old.image_object_key as old_key`,
-    [id, newObjectKey],
+export async function replaceVisitorImage(
+  id: string,
+  newObjectKey: string,
+  newBytes: number,
+  expectedOldKey: string,
+): Promise<ReplaceImageResult> {
+  const r = await queryOne<{ replaced: string | null; current: string | null }>(
+    `with old as (select image_object_key from public.visitor_scans where id = $1 for update),
+          upd as (
+            update public.visitor_scans s
+               set image_object_key = $2, image_bytes = $3, updated_at = now()
+              from old
+             where s.id = $1 and old.image_object_key = $4
+            returning old.image_object_key as old_key)
+     select (select old_key from upd) as replaced, (select image_object_key from old) as current`,
+    [id, newObjectKey, newBytes, expectedOldKey],
   );
-  return r?.old_key ?? null;
+  if (!r || r.current === null) return { kind: 'gone' };
+  return r.replaced ? { kind: 'replaced', oldKey: r.replaced } : { kind: 'stale' };
 }

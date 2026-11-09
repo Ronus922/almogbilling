@@ -117,10 +117,10 @@ export function toPayload(v: VisitorFormValues): Record<string, string> {
   };
 }
 
-/** base64 (no data: prefix) → a JPEG Blob, for the multipart save. */
-export function jpegBlobFromBase64(b64: string): Blob {
+/** base64 (no data: prefix) → a Blob of the given media type, for the multipart save. */
+export function blobFromBase64(b64: string, type: string): Blob {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: 'image/jpeg' });
+  return new Blob([bytes], { type });
 }

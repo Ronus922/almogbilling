@@ -42,7 +42,11 @@ export interface OcrOutcome {
 }
 
 /** Never throws — on any failure the form simply opens empty. `client` is a test seam. */
-export async function readVisitorDocument(jpeg: Buffer, client?: Anthropic): Promise<OcrOutcome> {
+export async function readVisitorDocument(
+  image: Buffer,
+  mediaType: 'image/webp' | 'image/jpeg',
+  client?: Anthropic,
+): Promise<OcrOutcome> {
   const empty: OcrOutcome = { ok: false, fields: { ...EMPTY_OCR_FIELDS }, confidence: {} };
 
   let anthropic = client;
@@ -61,7 +65,7 @@ export async function readVisitorDocument(jpeg: Buffer, client?: Anthropic): Pro
         {
           role: 'user',
           content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: jpeg.toString('base64') } },
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data: image.toString('base64') } },
             { type: 'text', text: USER_PROMPT },
           ],
         },

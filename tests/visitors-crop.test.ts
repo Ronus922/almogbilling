@@ -60,10 +60,11 @@ describe('the crop frame', () => {
     }
   });
 
-  it('the stored photo is the frame, shrunk to 1600px on its long side and never enlarged', () => {
-    expect(outputSize({ x: 0, y: 0, w: 3200, h: 2000 })).toEqual({ w: 1600, h: 1000 });
+  it('the upload is the frame, shrunk to 2000px on its long side and never enlarged', () => {
+    expect(outputSize({ x: 0, y: 0, w: 4000, h: 2500 })).toEqual({ w: 2000, h: 1250 });
+    expect(outputSize({ x: 0, y: 0, w: 1800, h: 1100 })).toEqual({ w: 1800, h: 1100 }); // already under 2000: untouched
     expect(outputSize({ x: 0, y: 0, w: 800, h: 500 })).toEqual({ w: 800, h: 500 });
-    expect(outputSize({ x: 0, y: 0, w: 1, h: 4000 })).toEqual({ w: 1, h: 1600 });
+    expect(outputSize({ x: 0, y: 0, w: 1, h: 4000 })).toEqual({ w: 1, h: 2000 });
   });
 });
 

@@ -5,7 +5,7 @@ import { checkRateLimit } from '@/lib/auth/rateLimit';
 import { writeAudit } from '@/lib/db/audit';
 import { findRecentDuplicate, insertVisitorScan, getVisitorScan, listVisitorScans } from '@/lib/db/visitorScans';
 import { removeVisitorPhoto, uploadVisitorPhoto } from '@/lib/storage/visitorIdStorage';
-import { prepareVisitorImage, VisitorImageError } from '@/lib/visitors/image';
+import { compressVisitorImage, VisitorImageError, type CompressedImage } from '@/lib/visitors/image';
 import { MAX_VISITOR_IMAGE_BYTES, VISITOR_PAGE_SIZE } from '@/lib/visitors/model';
 import { visitorCreateSchema, visitorListQuerySchema } from '@/lib/validation/visitors';
 import { logger } from '@/lib/logger';
@@ -42,10 +42,12 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/visitors — step 2 of a scan: save the row. multipart: `image` (the
-// photo, normally the normalised JPEG the OCR step returned) and `data` (the
-// fields as JSON). The photo is re-normalised here — a client is never trusted
-// to have done it — stored in the private bucket, and only then the row is
-// written; if the row cannot be written the photo is removed again.
+// photo, normally the compressed WebP the OCR step returned) and `data` (the
+// fields as JSON). The photo is verified here — a client is never trusted to have
+// done it: a plain WebP within the size bounds that decodes is stored AS IT CAME
+// (one encode, not two), anything else goes through the whole compression — stored
+// in the private bucket, and only then the row is written; if the row cannot be
+// written the photo is removed again.
 export async function POST(req: NextRequest) {
   let actor;
   try {
@@ -103,9 +105,9 @@ export async function POST(req: NextRequest) {
   const again = await findRecentDuplicate(actor.id, parsed.data);
   if (again) return NextResponse.json({ id: again, scan: await getVisitorScan(again), duplicate: true }, { status: 200 });
 
-  let jpeg: Buffer;
+  let img: CompressedImage;
   try {
-    jpeg = (await prepareVisitorImage(Buffer.from(await file.arrayBuffer()))).jpeg;
+    img = await compressVisitorImage(Buffer.from(await file.arrayBuffer()));
   } catch (err) {
     if (err instanceof VisitorImageError) {
       const big = err.code === 'too_large';
@@ -119,7 +121,7 @@ export async function POST(req: NextRequest) {
 
   let objectKey: string;
   try {
-    objectKey = await uploadVisitorPhoto(jpeg);
+    objectKey = await uploadVisitorPhoto(img);
   } catch (err) {
     logger.error('[POST /api/visitors] photo upload failed', { message: err instanceof Error ? err.message : 'unknown' });
     return NextResponse.json({ error: 'שמירת הצילום נכשלה — נסה שוב' }, { status: 502 });
@@ -130,6 +132,7 @@ export async function POST(req: NextRequest) {
     id = await insertVisitorScan({
       ...parsed.data,
       image_object_key: objectKey,
+      image_bytes: img.bytes.length,
       image_original_name: file.name ? file.name.slice(0, 200) : null,
       scanned_by: actor.id,
     });

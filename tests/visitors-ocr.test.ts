@@ -132,7 +132,7 @@ describe('readVisitorDocument', () => {
 
   it('sends the photo as a base64 jpeg image block to the configured model, returns the fields', async () => {
     const create = vi.fn().mockResolvedValue(reply(JSON.stringify(GOOD)));
-    const out = await readVisitorDocument(jpeg, clientWith(create));
+    const out = await readVisitorDocument(jpeg, 'image/jpeg', clientWith(create));
     expect(out.ok).toBe(true);
     expect(out.fields.first_name).toBe('דוד');
     const arg = create.mock.calls[0]![0];
@@ -143,20 +143,26 @@ describe('readVisitorDocument', () => {
     expect(arg.system).toMatch(/untrusted/i);
   });
 
+  it('tells the model the real media type of what it is sent — the stored WebP is read as image/webp', async () => {
+    const create = vi.fn().mockResolvedValue(reply(JSON.stringify(GOOD)));
+    await readVisitorDocument(jpeg, 'image/webp', clientWith(create));
+    expect(create.mock.calls[0]![0].messages[0].content[0].source.media_type).toBe('image/webp');
+  });
+
   it('an API error → the form opens empty (ok false, reason failed), never a throw', async () => {
     const create = vi.fn().mockRejectedValue(new Error('boom'));
-    const out = await readVisitorDocument(jpeg, clientWith(create));
+    const out = await readVisitorDocument(jpeg, 'image/jpeg', clientWith(create));
     expect(out).toMatchObject({ ok: false, reason: 'failed' });
     expect(out.fields.first_name).toBe('');
   });
 
   it('an unparsable answer → ok false, reason unreadable', async () => {
     const create = vi.fn().mockResolvedValue(reply('I am sorry, I cannot help with that.'));
-    expect(await readVisitorDocument(jpeg, clientWith(create))).toMatchObject({ ok: false, reason: 'unreadable' });
+    expect(await readVisitorDocument(jpeg, 'image/jpeg', clientWith(create))).toMatchObject({ ok: false, reason: 'unreadable' });
   });
 
   it('no API key configured → ok false, reason not_configured, and nothing is called', async () => {
     h.key = undefined;
-    expect(await readVisitorDocument(jpeg)).toMatchObject({ ok: false, reason: 'not_configured' });
+    expect(await readVisitorDocument(jpeg, 'image/jpeg')).toMatchObject({ ok: false, reason: 'not_configured' });
   });
 });

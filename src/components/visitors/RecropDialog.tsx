@@ -44,6 +44,8 @@ export function RecropDialog({ open, scan, onClose, onReplaced }: Props) {
     try {
       const fd = new FormData();
       fd.append('image', pending, 'recrop.jpg');
+      // The photo that was cropped, so the server can refuse a crop of a photo someone has since replaced.
+      fd.append('from_key', scan.image_url.slice(scan.image_url.lastIndexOf('/') + 1));
       const r = await fetch(`/api/visitors/${scan.id}/image`, { method: 'POST', body: fd, credentials: 'include' });
       const data = (await r.json().catch(() => ({}))) as { error?: string; scan?: VisitorScan; old_photo_removed?: boolean };
       if (!r.ok || !data.scan) throw new Error(data.error ?? 'החלפת הצילום נכשלה');
@@ -87,7 +89,7 @@ export function RecropDialog({ open, scan, onClose, onReplaced }: Props) {
         {open && (
           <CropEditor
             key={scan.image_url} src={scan.image_url} initial="full"
-            confirmLabel="החלף תמונה" cancelLabel="ביטול" busy={saving}
+            confirmLabel="החלף תמונה" cancelLabel="ביטול" busy={saving} requireChange
             onConfirm={setPending} onCancel={onClose}
             onLoadError={() => { toast.error('לא ניתן לטעון את הצילום'); onClose(); }}
           />
