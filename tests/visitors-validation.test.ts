@@ -101,8 +101,8 @@ describe('list query + helpers', () => {
   it('phoneNeedle needs at least 3 digits and drops the national prefix (0 / +972)', () => {
     expect(phoneNeedle('052-662')).toBe('52662');
     expect(phoneNeedle('+972 52 662')).toBe('52662');
-    expect(phoneNeedle('972526628944')).toBe('526628944');
-    expect(phoneNeedle('0526628944')).toBe('526628944');
+    expect(phoneNeedle('972501234567')).toBe('501234567');
+    expect(phoneNeedle('0501234567')).toBe('501234567');
     expect(phoneNeedle('05')).toBe('');
     expect(phoneNeedle('דוד')).toBe('');
   });
