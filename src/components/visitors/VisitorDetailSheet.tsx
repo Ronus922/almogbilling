@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Camera, Crop, FileText, IdCard, Maximize2, StickyNote, X } from 'lucide-react';
+import { Camera, Crop, Download, FileText, IdCard, Maximize2, StickyNote, X } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -14,6 +14,7 @@ import {
 import { Section } from '@/components/side-panel/Section';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
+import { cn } from '@/lib/utils';
 import { DOCUMENT_TYPE_LABELS, type VisitorScan } from '@/lib/visitors/model';
 import { ImageViewer } from './ImageViewer';
 import { RecropDialog } from './RecropDialog';
@@ -251,6 +252,16 @@ export function VisitorDetailSheet({ scan, open, caps, onClose, onChanged, onDel
                     <img src={scan.image_url} alt={`צילום התעודה של ${fullName(scan)}`} data-visitor-photo
                       className="h-auto w-full object-contain" />
                   </button>
+                  {/* A plain link, not a script: the server answers `?download=1` with Content-Disposition:
+                      attachment and the visitor's name as the file name, and records a `file_downloaded`
+                      audit row. Every role that can open this sheet may download (guard, admin, super admin). */}
+                  <div className="mt-3 flex">
+                    <a href={`${scan.image_url}?download=1`} download data-visitor-download
+                      className={cn(buttonVariants({ variant: 'outline' }), 'w-full gap-1.5 sm:w-auto')}>
+                      <Download className="h-4 w-4" aria-hidden />
+                      הורד תמונה
+                    </a>
+                  </div>
                 </div>
               </Section>
             </div>

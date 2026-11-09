@@ -6,7 +6,8 @@ import { AuthorizationError } from '@/lib/auth/errors';
 import { queryOne } from '@/lib/db';
 import { findResidentReceipt } from '@/lib/db/finance/portal';
 import { resolvePortalIdentity } from '@/lib/db/portal/identity';
-import { logFileView, type FileViewActor, type PortalFileViewer, type ServedFile } from '@/lib/db/fileViewAudit';
+import { logFileDownload, logFileView, type FileViewActor, type PortalFileViewer, type ServedFile } from '@/lib/db/fileViewAudit';
+import { visitorDownloadName } from '@/lib/visitors/downloadName';
 import { getPortalSession } from '@/lib/portal/session';
 import { getObjectStream, PRIVATE_BUCKETS, type PrivateBucket } from '@/lib/storage/server';
 import { logger } from '@/lib/logger';
@@ -69,7 +70,8 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<Actor>> = {
   'purchasing-files': () => requirePurchasingAny('view'),
   // Photos of scanned visitor documents — by ROLE (VISITOR_VIEW_ROLES: guard, admin
   // and super admin; every other role gets 403), never a matrix module. Each open
-  // is a `file_viewed` audit row (describeStoredFile → visitor_scan).
+  // is a `file_viewed` audit row and each `?download=1` a `file_downloaded` one
+  // (describeStoredFile → visitor_scan).
   'visitor-ids': () => requireVisitorView(),
 };
 
@@ -134,7 +136,12 @@ function unclaimedFile(bucket: PrivateBucket, path: string): ServedFile {
   return { bucket, objectKey: path, fileName: null, entityType: 'file', entityId: `${bucket}/${path}` };
 }
 
-async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<ServedFile> {
+/** A served file as its owning table knows it, plus — only where the table has the data for one —
+ *  the readable name a DOWNLOAD is saved under. That name can carry personal data (a visitor's
+ *  name), so it goes to the response header and never into the audit row (`fileName` does). */
+type StoredFile = ServedFile & { downloadName?: string };
+
+async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<StoredFile> {
   const base = { bucket, objectKey: path };
   const orphan = unclaimedFile(bucket, path);
 
@@ -223,13 +230,23 @@ async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<
       : { ...base, fileName: row.original_filename, entityType: 'purchasing_quote', entityId: row.quote_id as string, documentId: row.id };
   }
   if (bucket === 'visitor-ids') {
-    const row = await queryOne<{ id: string; image_original_name: string | null }>(
-      `select id, image_original_name from public.visitor_scans where image_object_key = $1 limit 1`,
+    const row = await queryOne<{
+      id: string; image_original_name: string | null; first_name: string; last_name: string; scan_date: string;
+    }>(
+      `select id, image_original_name, first_name, last_name,
+              to_char(created_at at time zone 'Asia/Jerusalem', 'YYYY-MM-DD') as scan_date
+         from public.visitor_scans where image_object_key = $1 limit 1`,
       [path],
     );
     if (!row) return orphan;
     // The row is the parent entity, named exactly as its create/update audit rows name it.
-    return { ...base, fileName: row.image_original_name, entityType: 'visitor_scan', entityId: row.id };
+    return {
+      ...base,
+      fileName: row.image_original_name,
+      entityType: 'visitor_scan',
+      entityId: row.id,
+      downloadName: visitorDownloadName({ lastName: row.last_name, firstName: row.first_name, scanDate: row.scan_date, objectKey: path }),
+    };
   }
   // issue-attachments: bare paths `<issueId>/<uuid>.<ext>`, no display name — the
   // prefix IS the parent (enforced at upload by buildObjectKey / isPathUnderIssue).
@@ -240,12 +257,15 @@ async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<
 
 /** RFC 5987: ASCII fallback + UTF-8 form so a Hebrew name survives.
  *  `download` (the `?download=1` of a "הורדה" button) sends it as an
- *  attachment; otherwise the browser opens it in place. */
+ *  attachment; otherwise the browser opens it in place.
+ *  encodeURIComponent leaves `' ( ) *` as they are, but RFC 5987's attr-char does not allow them -
+ *  and a name like O'Brien is a real visitor - so those four are percent-encoded too. */
 function contentDisposition(name: string | null, download: boolean): string {
   const kind = download ? 'attachment' : 'inline';
   if (!name) return kind;
   const ascii = name.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_') || 'file';
-  return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+  const utf8 = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${kind}; filename="${ascii}"; filename*=UTF-8''${utf8}`;
 }
 
 export async function GET(req: NextRequest, ctx: RouteCtx) {
@@ -297,20 +317,24 @@ export async function GET(req: NextRequest, ctx: RouteCtx) {
   // Permission passed and the object exists: record the view (F9), then serve.
   // Neither step may withhold the file — the owner lookup falls back to the
   // bare object and logFileView never throws.
-  let file: ServedFile;
+  let file: StoredFile;
   try {
     file = await describeStoredFile(known, objectPath);
   } catch (err) {
     logger.error(`[GET /api/files/${bucket}] owner lookup failed`, err);
     file = unclaimedFile(known, objectPath);
   }
-  await logFileView(req, actor, file);
+  const download = req.nextUrl.searchParams.get('download') === '1';
+  // A visitor photo's explicit download is its own audit event (`file_downloaded`, every time, no
+  // dedupe) INSTEAD of a `file_viewed`; every other bucket keeps its single view/download event.
+  if (download && known === 'visitor-ids') await logFileDownload(req, actor, file);
+  else await logFileView(req, actor, file);
 
   return new NextResponse(blob, {
     status: 200,
     headers: {
       'Content-Type': blob.type || 'application/octet-stream',
-      'Content-Disposition': contentDisposition(file.fileName, req.nextUrl.searchParams.get('download') === '1'),
+      'Content-Disposition': contentDisposition(download ? (file.downloadName ?? file.fileName) : file.fileName, download),
       'Content-Length': String(blob.size),
       'Cache-Control': 'private, no-store',
     },

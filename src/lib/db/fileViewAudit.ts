@@ -23,6 +23,10 @@ import { logger } from '@/lib/logger';
  */
 export const FILE_VIEW_ACTION = 'file_viewed';
 export const FILE_VIEW_DEDUPE_MINUTES = 10;
+/** A deliberate download (the "הורד תמונה" button of a visitor scan, `?download=1`) is its own
+ *  event, next to `file_viewed` and never merged into it: every one is a row, no dedupe window —
+ *  the file left the screen for a disk, and a document of an identity is what such a row is for. */
+export const FILE_DOWNLOAD_ACTION = 'file_downloaded';
 
 /** The user the file is served to — what a route's require* guard returns. */
 export interface FileViewActor {
@@ -61,6 +65,50 @@ export interface ServedFile {
   documentId?: string | null;
   /** Extra context mirrored from the upload rows (e.g. `debtor_id`). */
   extra?: Record<string, unknown>;
+}
+
+/** The metadata both rows carry: the file, who got it, and from where. */
+function accessMetadata(req: Request, actor: FileViewActor | PortalFileViewer, file: ServedFile): Record<string, unknown> {
+  const portal = isPortalViewer(actor) ? actor : null;
+  const staff = isPortalViewer(actor) ? null : actor;
+  return {
+    ...file.extra,
+    file_key: `${file.bucket}/${file.objectKey}`,
+    bucket: file.bucket,
+    object_key: file.objectKey,
+    file_name: file.fileName,
+    document_id: file.documentId ?? null,
+    ...(portal
+      ? {
+          actor_kind: 'portal_owner',
+          actor_name: portal.ownerName ?? portal.phoneE164,
+          portal_phone: portal.phoneE164,
+          apartment_numbers: portal.apartmentNumbers,
+        }
+      : { actor_name: staff?.full_name ?? staff?.username ?? null }),
+    ip: clientIp(req),
+  };
+}
+
+/** Records one `file_downloaded` row — EVERY download, no dedupe. Same fail-safe contract as
+ *  logFileView: it never throws, and the file is served whatever happens here. */
+export async function logFileDownload(req: Request, actor: FileViewActor | PortalFileViewer, file: ServedFile): Promise<void> {
+  try {
+    await writeAudit({
+      actorUserId: isPortalViewer(actor) ? null : actor.id,
+      action: FILE_DOWNLOAD_ACTION,
+      entityType: file.entityType,
+      entityId: file.entityId,
+      metadata: accessMetadata(req, actor, file),
+    });
+  } catch (err) {
+    logger.error('[logFileDownload] failed to record file download', {
+      entityType: file.entityType,
+      entityId: file.entityId,
+      fileKey: `${file.bucket}/${file.objectKey}`,
+      err,
+    });
+  }
 }
 
 export async function logFileView(req: Request, actor: FileViewActor | PortalFileViewer, file: ServedFile): Promise<void> {
@@ -103,23 +151,7 @@ export async function logFileView(req: Request, actor: FileViewActor | PortalFil
       action: FILE_VIEW_ACTION,
       entityType: file.entityType,
       entityId: file.entityId,
-      metadata: {
-        ...file.extra,
-        file_key: fileKey,
-        bucket: file.bucket,
-        object_key: file.objectKey,
-        file_name: file.fileName,
-        document_id: file.documentId ?? null,
-        ...(portal
-          ? {
-              actor_kind: 'portal_owner',
-              actor_name: portal.ownerName ?? portal.phoneE164,
-              portal_phone: portal.phoneE164,
-              apartment_numbers: portal.apartmentNumbers,
-            }
-          : { actor_name: staff?.full_name ?? staff?.username ?? null }),
-        ip: clientIp(req),
-      },
+      metadata: accessMetadata(req, actor, file),
     });
   } catch (err) {
     // Best-effort, exactly like writeAudit: the file is served regardless.
