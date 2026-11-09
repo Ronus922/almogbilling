@@ -23,6 +23,8 @@ const h = vi.hoisted(() => ({
   uploaded: [] as string[],
   removed: [] as string[],
   failInsert: false,
+  /** What the "point the row at the new photo" statement does: run, fail, or find no row. */
+  replace: 'ok' as 'ok' | 'fail' | 'gone',
 }));
 
 vi.mock('@/lib/db', () => ({
@@ -31,7 +33,11 @@ vi.mock('@/lib/db', () => ({
     if (h.failInsert && text.includes('insert into public.visitor_scans')) return Promise.reject(new Error('insert failed'));
     return pool.query(text, params);
   },
-  queryOne: async (text: string, params?: unknown[]) => (await pool.query(text, params)).rows[0] ?? null,
+  queryOne: async (text: string, params?: unknown[]) => {
+    if (text.includes('with old as') && h.replace === 'fail') throw Object.assign(new Error('update failed'), { code: 'XX000' });
+    if (text.includes('with old as') && h.replace === 'gone') return null;
+    return (await pool.query(text, params)).rows[0] ?? null;
+  },
   withTransaction: async (fn: (c: PoolClient) => Promise<unknown>) => {
     const c = await pool.connect();
     try {
@@ -59,11 +65,13 @@ vi.mock('@/lib/storage/visitorIdStorage', () => ({
     h.uploaded.push(key);
     return key;
   }),
-  removeVisitorPhoto: vi.fn(async (key: string) => { h.removed.push(key); }),
+  removeVisitorPhoto: vi.fn(async (key: string) => { h.removed.push(key); return true; }),
 }));
 
 import { GET, POST } from '@/app/api/visitors/route';
 import { DELETE, PATCH } from '@/app/api/visitors/[id]/route';
+import { POST as RECROP } from '@/app/api/visitors/[id]/image/route';
+import { POST as PREPARE } from '@/app/api/visitors/prepare/route';
 import { deleteUserPermanently } from '@/lib/db/userDeletion';
 import { insertVisitorScan } from '@/lib/db/visitorScans';
 import { requireVisitorView } from '@/lib/auth/actor';
@@ -100,6 +108,11 @@ function formReq(fields: Record<string, unknown>, image: Buffer | null): NextReq
 }
 const jsonReq = (method: string, body: unknown) =>
   new NextRequest('http://localhost/api/visitors/x', { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+function imageReq(image: Buffer | null, name = 'crop.jpg'): NextRequest {
+  const fd = new FormData();
+  if (image) fd.append('image', new File([new Uint8Array(image)], name, { type: 'image/jpeg' }));
+  return new NextRequest('http://localhost/api/visitors/x/image', { method: 'POST', body: fd });
+}
 const listReq = (qs: string) => new NextRequest(`http://localhost/api/visitors?${qs}`);
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 
@@ -144,7 +157,7 @@ beforeAll(async () => {
   }
 });
 
-beforeEach(() => { h.uploaded.length = 0; h.removed.length = 0; h.failInsert = false; });
+beforeEach(() => { h.uploaded.length = 0; h.removed.length = 0; h.failInsert = false; h.replace = 'ok'; });
 
 afterAll(async () => {
   if (!pool) return;
@@ -359,6 +372,122 @@ d('changing a saved scan', () => {
     await actAs(role);
     expect((await PATCH(jsonReq('PATCH', { notes: 'x' }), ctx(id))).status).toBe(403);
     expect((await pool.query(`select notes from public.visitor_scans where id = $1`, [id])).rows[0].notes).toBeNull();
+  });
+});
+
+d('re-cropping a stored photo (admin / super admin)', () => {
+  const keyOf = async (id: string) =>
+    (await pool.query<{ image_object_key: string }>(`select image_object_key from public.visitor_scans where id = $1`, [id])).rows[0]!.image_object_key;
+
+  it.each(['admin', 'super_admin'] as Role[])('%s: a new photo is stored, the row points at it, the old photo is removed, the audit row names both keys', async (role) => {
+    const id = await seedScan({ last_name: `VTrc${RUN}${role}` });
+    const oldKey = await keyOf(id);
+    await actAs(role);
+    const res = await RECROP(imageReq(await jpeg()), ctx(id));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(h.uploaded).toHaveLength(1);
+    const newKey = h.uploaded[0]!;
+    expect(newKey).not.toBe(oldKey);
+    expect(await keyOf(id)).toBe(newKey);
+    expect(body.scan.image_url).toBe(`/api/files/visitor-ids/${newKey}`);
+    expect(body.old_photo_removed).toBe(true);
+    expect(h.removed).toEqual([oldKey]);
+    const audit = await pool.query(`select actor_user_id, metadata from public.audit_log where entity_type = 'visitor_scan' and entity_id = $1 and action = 'image_recropped'`, [id]);
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]).toMatchObject({ actor_user_id: userIds.get(role) });
+    expect(audit.rows[0].metadata).toEqual({ actor_role: role, old_object_key: oldKey, new_object_key: newKey, old_photo_removed: true });
+    // the row's data is untouched
+    expect(body.scan).toMatchObject({ first_name: 'דוד', document_number: '123456789' });
+  });
+
+  it.each(['guard', 'manager', 'viewer', 'cleaner', 'maintenance'] as Role[])('%s: 403, nothing uploaded, the row keeps its photo', async (role) => {
+    const id = await seedScan({ last_name: `VTrcno${RUN}${role}` });
+    const key = await keyOf(id);
+    await actAs(role);
+    expect((await RECROP(imageReq(await jpeg()), ctx(id))).status).toBe(403);
+    expect(h.uploaded).toHaveLength(0);
+    expect(await keyOf(id)).toBe(key);
+  });
+
+  it('no session → 401; a bad id or an unknown id → 404 and nothing is uploaded', async () => {
+    await actAs(null);
+    expect((await RECROP(imageReq(await jpeg()), ctx(randomUUID()))).status).toBe(401);
+    await actAs('admin');
+    expect((await RECROP(imageReq(await jpeg()), ctx('not-a-uuid'))).status).toBe(404);
+    expect((await RECROP(imageReq(await jpeg()), ctx(randomUUID()))).status).toBe(404);
+    expect(h.uploaded).toHaveLength(0);
+  });
+
+  it('a missing photo → 400, a non-image → 415/422; nothing is uploaded and the photo stays', async () => {
+    const id = await seedScan({ last_name: `VTrcbad${RUN}` });
+    const key = await keyOf(id);
+    await actAs('admin');
+    expect((await RECROP(imageReq(null), ctx(id))).status).toBe(400);
+    expect([415, 422]).toContain((await RECROP(imageReq(Buffer.from('definitely not an image')), ctx(id))).status);
+    expect(h.uploaded).toHaveLength(0);
+    expect(await keyOf(id)).toBe(key);
+  });
+
+  it('if the row cannot be updated the new photo is removed again and the old one stays (no orphan, no loss)', async () => {
+    const id = await seedScan({ last_name: `VTrcfail${RUN}` });
+    const key = await keyOf(id);
+    await actAs('admin');
+    h.replace = 'fail';
+    expect((await RECROP(imageReq(await jpeg()), ctx(id))).status).toBe(500);
+    expect(h.uploaded).toHaveLength(1);
+    expect(h.removed).toEqual(h.uploaded); // the NEW one, only
+    expect(await keyOf(id)).toBe(key);
+  });
+
+  it('a row deleted between the check and the update → 404 and the new photo is removed', async () => {
+    const id = await seedScan({ last_name: `VTrcgone${RUN}` });
+    await actAs('admin');
+    h.replace = 'gone';
+    expect((await RECROP(imageReq(await jpeg()), ctx(id))).status).toBe(404);
+    expect(h.removed).toEqual(h.uploaded);
+  });
+
+  it('60 an hour per user, then 429 - and nothing is stored for the refused one', async () => {
+    const id = await seedScan({ last_name: `VTrcrate${RUN}` });
+    const bucket = `visitor-recrop:user:${userIds.get('admin')}`;
+    const past = await pool.query<{ id: string }>(`insert into public.auth_rate_limits (bucket) select $1 from generate_series(1, 60) returning id`, [bucket]);
+    try {
+      await actAs('admin');
+      const res = await RECROP(imageReq(await jpeg()), ctx(id));
+      expect(res.status).toBe(429);
+      expect(h.uploaded).toHaveLength(0);
+    } finally {
+      await pool.query(`delete from public.auth_rate_limits where id = any($1::bigint[])`, [past.rows.map((r) => r.id)]);
+    }
+  });
+});
+
+d('the HEIC preview fallback (/api/visitors/prepare)', () => {
+  it.each(['guard', 'admin', 'super_admin'] as Role[])('%s: a photo comes back as an upright JPEG, nothing is stored', async (role) => {
+    await actAs(role);
+    const res = await PREPARE(imageReq(await sharp({ create: { width: 2400, height: 1800, channels: 3, background: '#336699' } }).png().toBuffer(), 'big.png'));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/jpeg');
+    expect(res.headers.get('cache-control')).toMatch(/no-store/);
+    const out = Buffer.from(await res.arrayBuffer());
+    const meta = await sharp(out).metadata();
+    expect(meta.format).toBe('jpeg');
+    expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBe(1600);
+    expect(h.uploaded).toHaveLength(0);
+  });
+
+  it.each(['manager', 'viewer', 'cleaner', 'maintenance'] as Role[])('%s: 403', async (role) => {
+    await actAs(role);
+    expect((await PREPARE(imageReq(await jpeg()))).status).toBe(403);
+  });
+
+  it('no session → 401; no photo → 400; a non-image → 415', async () => {
+    await actAs(null);
+    expect((await PREPARE(imageReq(await jpeg()))).status).toBe(401);
+    await actAs('guard');
+    expect((await PREPARE(imageReq(null))).status).toBe(400);
+    expect((await PREPARE(imageReq(Buffer.from('%PDF-1.4 not an image')))).status).toBe(415);
   });
 });
 

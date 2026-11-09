@@ -196,3 +196,21 @@ export async function deleteVisitorScan(id: string): Promise<string | null> {
   );
   return r?.image_object_key ?? null;
 }
+
+/**
+ * Points a row at a new photo and returns the OLD photo's object key (to remove from
+ * Storage), or null when the row does not exist. The lock keeps two re-crops of the
+ * same row from both reading the same "old" key and leaving one photo behind.
+ */
+export async function replaceVisitorImage(id: string, newObjectKey: string): Promise<string | null> {
+  const r = await queryOne<{ old_key: string }>(
+    `with old as (select image_object_key from public.visitor_scans where id = $1 for update)
+     update public.visitor_scans s
+        set image_object_key = $2, updated_at = now()
+       from old
+      where s.id = $1
+     returning old.image_object_key as old_key`,
+    [id, newObjectKey],
+  );
+  return r?.old_key ?? null;
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import sharp from 'sharp';
+import sharp, { type OverlayOptions } from 'sharp';
 import {
   adjustFor, clampRect, defaultCropRect, fitScale, fullRect, HANDLES, MAX_ZOOM, minCropSide, moveRect,
   NO_ADJUST, outputSize, rectOnStage, resizeRect, resolveView, zoomAt, type Handle, type Rect,
@@ -138,7 +138,7 @@ async function scene(opts: {
   const base = opts.noise
     ? sharp({ create: { width: w, height: h, channels: 3, background: opts.bg, noise: { type: 'gaussian', mean: 60, sigma: opts.noise } } })
     : sharp({ create: { width: w, height: h, channels: 3, background: opts.bg } });
-  const layers: sharp.OverlayOptions[] = [];
+  const layers: OverlayOptions[] = [];
   if (opts.card) {
     const c = opts.card;
     const cx = c.x + c.w / 2;

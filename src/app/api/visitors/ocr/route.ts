@@ -2,17 +2,18 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { requireVisitorCreate } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { checkRateLimit } from '@/lib/auth/rateLimit';
-import { prepareVisitorImage, VisitorImageError } from '@/lib/visitors/image';
+import { readImageUpload } from '@/lib/visitors/upload';
 import { readVisitorDocument } from '@/lib/visitors/ocr';
-import { MAX_VISITOR_IMAGE_BYTES, type OcrResponse } from '@/lib/visitors/model';
+import type { OcrResponse } from '@/lib/visitors/model';
 
 export const runtime = 'nodejs';
 
-// POST /api/visitors/ocr — step 1 of a scan. Takes the photo, normalises it
-// (HEIC → JPEG, upright, ≤1600px, no metadata), asks Claude to read it and hands
-// back the fields PLUS that normalised photo. NOTHING is stored here: the photo
-// reaches Storage only when the row is saved (POST /api/visitors), so an
-// abandoned scan leaves no trace.
+// POST /api/visitors/ocr — step 2 of a scan (step 1 is the guard's crop, in the
+// browser). Takes the CROPPED photo, normalises it (HEIC → JPEG, upright,
+// ≤1600px, no metadata), asks Claude to read it and hands back the fields PLUS
+// that normalised photo. NOTHING is stored here: the photo reaches Storage only
+// when the row is saved (POST /api/visitors), so an abandoned scan leaves no
+// trace — and the uncropped original never leaves the guard's phone at all.
 //
 // Guard / admin / super admin only (requireVisitorCreate). Each call is a paid
 // vision request, so a user gets 60 per 10 minutes — far above a gate's pace,
@@ -50,47 +51,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const declared = Number(req.headers.get('content-length') ?? 0);
-  if (declared > MAX_VISITOR_IMAGE_BYTES + 64 * 1024) {
-    return NextResponse.json({ error: 'התמונה גדולה מדי' }, { status: 413 });
-  }
+  const up = await readImageUpload(req);
+  if (!up.ok) return up.response;
 
-  let form: FormData;
-  try {
-    form = await req.formData();
-  } catch {
-    return NextResponse.json({ error: 'בקשה לא תקינה' }, { status: 400 });
-  }
-  const file = form.get('image');
-  if (!(file instanceof File) || file.size === 0) {
-    return NextResponse.json({ error: 'לא נשלחה תמונה' }, { status: 400 });
-  }
-  if (file.size > MAX_VISITOR_IMAGE_BYTES) {
-    return NextResponse.json({ error: 'התמונה גדולה מדי' }, { status: 413 });
-  }
-
-  let prepared;
-  try {
-    prepared = await prepareVisitorImage(Buffer.from(await file.arrayBuffer()));
-  } catch (err) {
-    if (err instanceof VisitorImageError) {
-      const unsupported = err.code === 'unsupported';
-      const message = unsupported
-        ? 'הקובץ אינו תמונה נתמכת'
-        : err.code === 'too_large'
-          ? 'התמונה גדולה מדי — צלם ברזולוציה נמוכה יותר'
-          : 'לא ניתן לפתוח את התמונה — צלם שוב';
-      return NextResponse.json({ error: message }, { status: unsupported ? 415 : err.code === 'too_large' ? 413 : 422 });
-    }
-    throw err;
-  }
-
-  const ocr = await readVisitorDocument(prepared.jpeg);
+  const ocr = await readVisitorDocument(up.jpeg);
   const body: OcrResponse = {
     ok: ocr.ok,
     fields: ocr.fields,
     confidence: ocr.confidence,
-    image_base64: prepared.jpeg.toString('base64'),
+    image_base64: up.jpeg.toString('base64'),
   };
   return NextResponse.json(body);
 }
