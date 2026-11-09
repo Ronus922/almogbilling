@@ -5,9 +5,8 @@ import type { CompressedImage } from '@/lib/visitors/image';
 
 /**
  * Storage for the photos of scanned visitor documents. All access goes through
- * ./server.ts. The bucket is PRIVATE and the key is a bare `<uuid>.webp` (`.jpg` for the
- * rows saved before 09/11/2026, and for the net-under-WebP case) — the name of the photo the
- * guard took lives only in visitor_scans. The photo is served by /api/files/visitor-ids/<key>
+ * ./server.ts. The bucket is PRIVATE and the key is a bare `<uuid>.jpg` — the name of the photo
+ * the guard took lives only in visitor_scans. The photo is served by /api/files/visitor-ids/<key>
  * (session + role + audit), never by a URL.
  */
 

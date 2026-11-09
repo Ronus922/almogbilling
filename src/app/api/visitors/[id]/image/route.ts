@@ -16,7 +16,8 @@ interface RouteCtx {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** A stored photo's object key: a bare UUID and its extension (`.webp`; `.jpg` for older rows). */
+/** A stored photo's object key: a bare UUID and its extension (`.jpg`; `.webp` only for a row that the
+ *  one-off conversion script has not reached yet). */
 const OBJECT_KEY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(webp|jpg)$/i;
 const RECROP_MAX_PER_HOUR = 60;
 

@@ -143,10 +143,10 @@ describe('readVisitorDocument', () => {
     expect(arg.system).toMatch(/untrusted/i);
   });
 
-  it('tells the model the real media type of what it is sent — the stored WebP is read as image/webp', async () => {
+  it('tells the model the real media type of what it is sent — the stored photo is a JPEG, read as image/jpeg', async () => {
     const create = vi.fn().mockResolvedValue(reply(JSON.stringify(GOOD)));
-    await readVisitorDocument(jpeg, 'image/webp', clientWith(create));
-    expect(create.mock.calls[0]![0].messages[0].content[0].source.media_type).toBe('image/webp');
+    await readVisitorDocument(jpeg, 'image/jpeg', clientWith(create));
+    expect(create.mock.calls[0]![0].messages[0].content[0].source.media_type).toBe('image/jpeg');
   });
 
   it('an API error → the form opens empty (ok false, reason failed), never a throw', async () => {

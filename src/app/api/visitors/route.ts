@@ -42,9 +42,9 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/visitors — step 2 of a scan: save the row. multipart: `image` (the
-// photo, normally the compressed WebP the OCR step returned) and `data` (the
+// photo, normally the compressed JPEG the OCR step returned) and `data` (the
 // fields as JSON). The photo is verified here — a client is never trusted to have
-// done it: a plain WebP within the size bounds that decodes is stored AS IT CAME
+// done it: a plain progressive JPEG within the size bounds that decodes is stored AS IT CAME
 // (one encode, not two), anything else goes through the whole compression — stored
 // in the private bucket, and only then the row is written; if the row cannot be
 // written the photo is removed again.

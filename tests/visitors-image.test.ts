@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -7,7 +7,8 @@ import { VISITOR_IMAGE_TARGET_BYTES } from '@/lib/visitors/model';
 vi.mock('@/lib/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 
 // What every photo goes through before the OCR and before Storage: one upright
-// image, at most 1600px, with no metadata — a WebP of at most ~300KB (compressVisitorImage);
+// image, at most 1600px, with no metadata — a progressive JPEG of at most ~300KB (compressVisitorImage;
+// JPEG and not WebP: it has to open on any computer and travel to outside parties);
 // prepareVisitorImage is only the crop step's JPEG preview of a file the browser cannot draw. The HEIC fixture is a 96×64 synthetic
 // gradient made with pillow-heif — no person, no document — so it can live in a
 // public repo.
@@ -143,7 +144,7 @@ describe('the guards in front of the decoder', () => {
 
 
 
-// ── The stored form: one WebP, as light as it can be while staying readable ───
+// ── The stored form: one JPEG, as light as it can be while staying readable ──
 
 /** A photo-like picture: smooth gradients plus fine text-like detail and sensor noise. */
 async function photoLike(w: number, h: number, noise: number): Promise<Buffer> {
@@ -155,48 +156,64 @@ async function photoLike(w: number, h: number, noise: number): Promise<Buffer> {
   return sharp(base).composite([{ input: grain, blend: 'overlay' }]).jpeg({ quality: 90 }).toBuffer();
 }
 
-describe('compressVisitorImage', () => {
-  afterEach(() => vi.restoreAllMocks());
+/** Splices one extra segment (marker + payload) in right after SOI, the way a tool that tags a JPEG would. */
+function withSegment(jpeg: Buffer, marker: number, payload: Buffer): Buffer {
+  const seg = Buffer.alloc(4 + payload.length);
+  seg[0] = 0xff;
+  seg[1] = marker;
+  seg.writeUInt16BE(payload.length + 2, 2);
+  payload.copy(seg, 4);
+  return Buffer.concat([jpeg.subarray(0, 2), seg, jpeg.subarray(2)]);
+}
 
-  it('a phone-sized photo (several MB) comes out as one WebP under 300KB, at most 1600px, no metadata', async () => {
+// These build 3-4 megapixel noise photos and encode them up to eight times (mozjpeg is slower than the
+// WebP encoder it replaced): several seconds on a quiet machine, over vitest's 5s default on a loaded
+// one. The limit is the test's, not the code's.
+describe('compressVisitorImage', { timeout: 60_000 }, () => {
+  it('a phone-sized photo (several MB) comes out as one progressive JPEG under 300KB, at most 1600px, no metadata', async () => {
     const original = await photoLike(3000, 2250, 18);
     expect(original.length).toBeGreaterThan(1_000_000); // the input really is a heavy photo
     const out = await compressVisitorImage(original);
-    expect(out.format).toBe('webp');
-    expect(out.contentType).toBe('image/webp');
-    expect(out.ext).toBe('webp');
+    expect(out.format).toBe('jpeg');
+    expect(out.contentType).toBe('image/jpeg');
+    expect(out.ext).toBe('jpg');
     expect(out.bytes.length).toBeLessThanOrEqual(VISITOR_IMAGE_TARGET_BYTES);
     const meta = await sharp(out.bytes).metadata();
-    expect(meta.format).toBe('webp');
+    expect(meta.format).toBe('jpeg');
+    expect(meta.isProgressive).toBe(true);
     expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBeLessThanOrEqual(1600);
     expect([out.width, out.height]).toEqual([meta.width, meta.height]);
     expect(meta.exif).toBeUndefined();
     expect(meta.icc).toBeUndefined();
+    // A real JPEG file: SOI first, EOI last.
+    expect([...out.bytes.subarray(0, 2)]).toEqual([0xff, 0xd8]);
+    expect([...out.bytes.subarray(-2)]).toEqual([0xff, 0xd9]);
   });
 
-  it('starts at quality 80 and 1600px: an easy photo is not degraded for nothing', async () => {
+  it('starts at quality 82 and 1600px: an easy photo is not degraded for nothing', async () => {
     const out = await compressVisitorImage(await photoLike(1200, 800, 0));
-    expect(out.quality).toBe(80);
+    expect(out.quality).toBe(82);
     expect(Math.max(out.width, out.height)).toBe(1200); // never enlarged, never shrunk without need
   });
 
-  it('steps the quality down in tens, and shrinks to 1280px only when quality 60 is not enough', async () => {
-    // Heavy grain: 80 → 70 → 60 at 1600px all stay over 300KB, so the picture drops to 1280px.
+  it('steps the quality down in sixes (82, 76, 70, 64), and shrinks to 1280px only when 64 is not enough', async () => {
+    // Heavy grain: every step at 1600px stays over 300KB, so the picture drops to 1280px.
     const out = await compressVisitorImage(await photoLike(4000, 3000, 60));
-    expect(out.format).toBe('webp');
-    expect(out.quality).toBeGreaterThanOrEqual(60);
+    expect(out.format).toBe('jpeg');
+    expect([82, 76, 70, 64]).toContain(out.quality);
     expect(Math.max(out.width, out.height)).toBeGreaterThanOrEqual(1280);
     expect(Math.max(out.width, out.height)).toBeLessThanOrEqual(1600);
     if (Math.max(out.width, out.height) === 1600) expect(out.bytes.length).toBeLessThanOrEqual(VISITOR_IMAGE_TARGET_BYTES);
   });
 
-  it('NEVER goes below quality 60 or 1280px: readability beats weight, the floor is kept even when heavy', async () => {
-    // Pure white-noise: nothing fits 300KB. The result is the floor — 1280px at quality 60 — and it stays heavy.
-    const raw = Buffer.alloc(3000 * 2250 * 3);
+  it('NEVER goes below quality 64 or 1280px: readability beats weight, the floor is kept even when heavy', async () => {
+    // Pure white-noise: nothing fits 300KB. The result is the floor — 1280px at quality 64 — and it stays heavy.
+    // (1600×1200: close enough to 1280px that shrinking cannot average the noise away.)
+    const raw = Buffer.alloc(1600 * 1200 * 3);
     for (let i = 0; i < raw.length; i += 1) raw[i] = Math.floor(Math.random() * 256);
-    const noise = await sharp(raw, { raw: { width: 3000, height: 2250, channels: 3 } }).jpeg({ quality: 95 }).toBuffer();
+    const noise = await sharp(raw, { raw: { width: 1600, height: 1200, channels: 3 } }).jpeg({ quality: 95 }).toBuffer();
     const out = await compressVisitorImage(noise);
-    expect(out.quality).toBe(60);
+    expect(out.quality).toBe(64);
     expect(Math.max(out.width, out.height)).toBe(1280);
     expect(out.bytes.length).toBeGreaterThan(VISITOR_IMAGE_TARGET_BYTES);
   });
@@ -220,10 +237,17 @@ describe('compressVisitorImage', () => {
     expect(data[0]).toBeGreaterThan(240);
   });
 
-  it('decodes a real HEIC (an iPhone photo) into the stored WebP', async () => {
+  it('decodes a real HEIC (an iPhone photo) into the stored JPEG', async () => {
     const out = await compressVisitorImage(HEIC);
-    expect(out.format).toBe('webp');
+    expect(out.format).toBe('jpeg');
     expect([out.width, out.height]).toEqual([96, 64]);
+  });
+
+  it('still accepts a WebP or PNG as INPUT (a gallery photo) — it just never stores one', async () => {
+    const webp = await sharp(await photoLike(1000, 700, 0)).webp({ quality: 80 }).toBuffer();
+    const out = await compressVisitorImage(webp);
+    expect(out.format).toBe('jpeg');
+    expect((await sharp(out.bytes).metadata()).format).toBe('jpeg');
   });
 
   it('refuses what is not a photo, with the same typed errors', async () => {
@@ -233,22 +257,12 @@ describe('compressVisitorImage', () => {
     await expect(compressVisitorImage(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="9" height="9"/>'))).rejects.toMatchObject({ code: 'unsupported' });
   });
 
-  it('writes JPEG when WebP cannot be written — the same ladder, a .jpg object', async () => {
-    vi.spyOn(sharp.prototype, 'webp').mockImplementation(() => { throw new Error('webp unsupported in this build'); });
-    const out = await compressVisitorImage(await photoLike(1600, 1000, 0));
-    expect(out.format).toBe('jpeg');
-    expect(out.contentType).toBe('image/jpeg');
-    expect(out.ext).toBe('jpg');
-    expect((await sharp(out.bytes).metadata()).format).toBe('jpeg');
-    expect(out.quality).toBeGreaterThanOrEqual(60);
-  });
-
   describe('a photo that already came out of this pipeline (the save step posts the OCR step\'s bytes back)', () => {
     it('is stored AS IT CAME — one encode, not two', async () => {
       const first = await compressVisitorImage(await photoLike(3000, 2000, 12));
       const again = await compressVisitorImage(first.bytes);
       expect(again.bytes.equals(first.bytes)).toBe(true);
-      expect(again.format).toBe('webp');
+      expect(again.format).toBe('jpeg');
       expect([again.width, again.height]).toEqual([first.width, first.height]);
       expect(again.quality).toBeNull(); // not re-encoded
     });
@@ -259,27 +273,68 @@ describe('compressVisitorImage', () => {
       const out = await compressVisitorImage(tainted);
       expect(out.bytes.equals(tainted)).toBe(false);
       expect(out.bytes.includes(Buffer.from('<script>'))).toBe(false);
+      expect(out.quality).not.toBeNull();
     });
 
-    it('is NOT trusted when it carries EXIF / XMP / a colour profile (a VP8X WebP) — re-encoded, tags gone', async () => {
-      const withTags = await sharp(await photoLike(800, 600, 0)).withExif({ IFD0: { Make: 'TestPhone' } }).webp({ quality: 80 }).toBuffer();
-      expect(withTags.includes(Buffer.from('TestPhone'))).toBe(true); // the fixture really carries it
-      const out = await compressVisitorImage(withTags);
-      expect(out.bytes.equals(withTags)).toBe(false);
+    it('is NOT trusted when it carries EXIF — re-encoded, the tag is gone', async () => {
+      const withExif = await sharp(await photoLike(800, 600, 0)).withExif({ IFD0: { Make: 'TestPhone' } }).jpeg({ quality: 80, progressive: true }).toBuffer();
+      expect(withExif.includes(Buffer.from('TestPhone'))).toBe(true); // the fixture really carries it
+      const out = await compressVisitorImage(withExif);
+      expect(out.bytes.equals(withExif)).toBe(false);
       expect(out.bytes.includes(Buffer.from('TestPhone'))).toBe(false);
       expect((await sharp(out.bytes).metadata()).exif).toBeUndefined();
     });
 
+    it('is NOT trusted when it carries a colour profile, an XMP packet or a comment — each is a segment the pipeline strips', async () => {
+      const clean = (await compressVisitorImage(await photoLike(800, 600, 0))).bytes;
+      const cases: [string, Buffer][] = [
+        ['ICC profile (APP2)', withSegment(clean, 0xe2, Buffer.from('ICC_PROFILE\0\x01\x01 tag-in-profile'))],
+        ['XMP (APP1)', withSegment(clean, 0xe1, Buffer.from('http://ns.adobe.com/xap/1.0/\0<x:xmpmeta>tag-in-xmp</x:xmpmeta>'))],
+        ['comment (COM)', withSegment(clean, 0xfe, Buffer.from('tag-in-comment'))],
+        ['Adobe tag (APP14)', withSegment(clean, 0xee, Buffer.from('Adobe\0\x64\0\0\0\0\x01'))],
+      ];
+      for (const [label, tagged] of cases) {
+        const out = await compressVisitorImage(tagged);
+        expect(out.bytes.equals(tagged), label).toBe(false);
+        expect(out.bytes.includes(Buffer.from('tag-in')), label).toBe(false);
+        expect(out.quality, label).not.toBeNull(); // went through the ladder
+      }
+    });
+
+    it('is NOT trusted when it is a baseline JPEG (a browser canvas, a camera) — only this pipeline\'s progressive output is final', async () => {
+      const baseline = await sharp(await photoLike(1200, 800, 0)).jpeg({ quality: 88, progressive: false }).toBuffer();
+      expect((await sharp(baseline).metadata()).isProgressive).toBe(false);
+      const out = await compressVisitorImage(baseline);
+      expect(out.bytes.equals(baseline)).toBe(false);
+      expect(out.quality).toBe(82);
+      expect((await sharp(out.bytes).metadata()).isProgressive).toBe(true);
+    });
+
     it('is NOT trusted when it is bigger than 1600px — brought down to 1600px', async () => {
-      const big = await sharp(await photoLike(2400, 1600, 0)).webp({ quality: 80 }).toBuffer();
+      const big = await sharp(await photoLike(2400, 1600, 0)).jpeg({ quality: 80, progressive: true }).toBuffer();
       const out = await compressVisitorImage(big);
       expect(Math.max(out.width, out.height)).toBe(1600);
       expect(out.bytes.equals(big)).toBe(false);
     });
 
-    it('a truncated WebP is refused like any corrupt photo', async () => {
+    it('a truncated final photo is never stored as it is — a complete JPEG comes out', async () => {
       const first = await compressVisitorImage(await photoLike(1600, 1000, 8));
-      await expect(compressVisitorImage(first.bytes.subarray(0, Math.floor(first.bytes.length / 2)))).rejects.toBeInstanceOf(VisitorImageError);
+      const cut = first.bytes.subarray(0, Math.floor(first.bytes.length / 2));
+      try {
+        const out = await compressVisitorImage(cut);
+        expect(out.bytes.equals(cut)).toBe(false);
+        expect([...out.bytes.subarray(-2)]).toEqual([0xff, 0xd9]);
+      } catch (err) {
+        expect(err).toBeInstanceOf(VisitorImageError); // or refused outright - both keep a half photo out
+      }
+    });
+
+    it('is NOT trusted when a marker is planted inside the compressed data after the picture — appended after EOI', async () => {
+      const first = await compressVisitorImage(await photoLike(900, 600, 0));
+      const afterEoi = Buffer.concat([first.bytes, Buffer.from([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x08, 0x45, 0x78, 0x69, 0x66, 0x00, 0x00, 0xff, 0xd9])]);
+      const out = await compressVisitorImage(afterEoi);
+      expect(out.bytes.equals(afterEoi)).toBe(false);
+      expect(out.bytes.includes(Buffer.from('Exif'))).toBe(false);
     });
   });
 });

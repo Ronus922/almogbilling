@@ -55,13 +55,15 @@ export const VISITOR_IMAGE_MAX_SIDE = 1600;
 /** The browser shrinks the CROP to this before uploading (JPEG, quality below) so a 12MP photo does
  *  not cross a mobile connection at full size; the server then brings it down to 1600px. */
 export const CLIENT_UPLOAD_MAX_SIDE = 2000;
-export const CLIENT_UPLOAD_JPEG_QUALITY = 0.85;
-/** The ladder's second rung: if quality 60 at 1600px is still over the target, 1280px. Never smaller. */
+export const CLIENT_UPLOAD_JPEG_QUALITY = 0.88;
+/** The ladder's second rung: if the lowest quality at 1600px is still over the target, 1280px. Never smaller. */
 export const VISITOR_IMAGE_FALLBACK_SIDE = 1280;
 /** The weight the stored photo aims for (09/11/2026). Readability comes first: the floor may exceed it. */
 export const VISITOR_IMAGE_TARGET_BYTES = 300 * 1024;
-/** WebP (or JPEG) qualities tried in this order at each size. Nothing below 60. */
-export const VISITOR_IMAGE_QUALITIES = [80, 70, 60] as const;
+/** JPEG qualities tried in this order at each size: 82, then steps of 6 down to 64. Nothing below 64.
+ *  The stored form is a JPEG, not a WebP, because the photo has to open on any computer and travel to
+ *  outside parties (police, a court) as an ordinary file. */
+export const VISITOR_IMAGE_QUALITIES = [82, 76, 70, 64] as const;
 
 /** What the OCR could read. Every value is a string ('' = could not read) so the
  *  form can be pre-filled without null handling; `confidence` is 0–1 per field. */
@@ -91,10 +93,10 @@ export interface OcrResponse {
   ok: boolean;
   fields: OcrFields;
   confidence: Partial<Record<OcrField, number>>;
-  /** The compressed photo (WebP, ≤1600px, no metadata) as base64 — the very bytes the save step
+  /** The compressed photo (JPEG, ≤1600px, no metadata) as base64 — the very bytes the save step
    *  stores (it posts them back and the server keeps them as they are), so the preview matches. */
   image_base64: string;
-  /** Its media type (`image/webp`; `image/jpeg` only if WebP could not be written). */
+  /** Its media type — always `image/jpeg`. */
   image_type: string;
   /** Its weight in bytes — what `visitor_scans.image_bytes` will hold. */
   image_bytes: number;

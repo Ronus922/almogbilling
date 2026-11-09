@@ -55,7 +55,7 @@ export function ScanSheet({ file, previewUrl, onClose, onSaved, onRetake }: Prop
   const [problem, setProblem] = useState('');
   const [ocrOk, setOcrOk] = useState(true);
   const [imageB64, setImageB64] = useState('');
-  const [imageType, setImageType] = useState('image/webp');
+  const [imageType, setImageType] = useState('image/jpeg');
   const [values, setValues] = useState<VisitorFormValues>(EMPTY_FORM);
   const [low, setLow] = useState<ReadonlySet<OcrField>>(new Set());
   const [errors, setErrors] = useState<FormErrors>({});
@@ -92,7 +92,7 @@ export function ScanSheet({ file, previewUrl, onClose, onSaved, onRetake }: Prop
           return;
         }
         setImageB64(data.image_base64);
-        setImageType(data.image_type ?? 'image/webp');
+        setImageType(data.image_type ?? 'image/jpeg');
         setOcrOk(data.ok === true);
         setValues(formFromOcr(data.fields));
         setLow(lowConfidenceFields({ fields: data.fields, confidence: data.confidence ?? {} }));
@@ -176,9 +176,9 @@ export function ScanSheet({ file, previewUrl, onClose, onSaved, onRetake }: Prop
     try {
       const fd = new FormData();
       // The photo is the compressed one the OCR step returned, posted back unchanged; its name is the
-      // camera's own with the new extension (IMG_0001.HEIC → IMG_0001.webp).
+      // camera's own with the new extension (IMG_0001.HEIC → IMG_0001.jpg).
       const base = ((file?.name ?? '').replace(/\.[^.]+$/, '') || 'scan').slice(0, 120);
-      fd.append('image', blobFromBase64(imageB64, imageType), `${base}.${imageType === 'image/jpeg' ? 'jpg' : 'webp'}`);
+      fd.append('image', blobFromBase64(imageB64, imageType), `${base}.jpg`);
       fd.append('data', JSON.stringify(toPayload(values)));
       const r = await fetch('/api/visitors', { method: 'POST', body: fd, credentials: 'include' });
       const data = (await r.json().catch(() => ({}))) as { error?: string; duplicate?: boolean };

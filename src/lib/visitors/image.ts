@@ -1,5 +1,5 @@
 import 'server-only';
-import sharp, { type OutputInfo, type Sharp } from 'sharp';
+import sharp, { type Sharp } from 'sharp';
 import heicConvert from 'heic-convert';
 import { logger } from '@/lib/logger';
 import {
@@ -9,9 +9,11 @@ import {
 // One entry point for every photo of a document: whatever the phone sent
 // (JPEG, PNG, WebP, HEIC / HEIF) comes out as ONE shape — upright, at most
 // 1600px on its long side, with no metadata, and as light as it can be while
-// every letter and digit stays readable (compressVisitorImage: a WebP of at
-// most ~300KB). The OCR reads that, the Storage keeps that, the screen shows
-// that — ONE encode, never two.
+// every letter and digit stays readable (compressVisitorImage: a progressive
+// JPEG of at most ~300KB). The OCR reads that, the Storage keeps that, the
+// screen shows that — ONE encode, never two. JPEG and not WebP on purpose: the
+// photo of a document has to open on any computer and be handed to outside
+// parties (police, a court) as an ordinary file.
 //
 // Stripping the metadata is deliberate: a phone photo carries GPS coordinates
 // and the device model in EXIF, none of which belongs next to an ID document.
@@ -148,8 +150,8 @@ function upright(source: Buffer, side: number): Sharp {
 }
 
 /** An upright JPEG of at most `maxSide` (default 1600px) — the PREVIEW the crop step draws when the
- *  browser could not open the file itself (a HEIC outside Safari). Not the stored form: see
- *  compressVisitorImage. */
+ *  browser could not open the file itself (a HEIC outside Safari). Not the stored form (that one is
+ *  weighed against 300KB and verified before it is kept): see compressVisitorImage. */
 export async function prepareVisitorImage(input: Buffer, maxSide: number = VISITOR_IMAGE_MAX_SIDE): Promise<PreparedImage> {
   const source = await openSource(input);
   return guarded(async () => {
@@ -162,57 +164,109 @@ export async function prepareVisitorImage(input: Buffer, maxSide: number = VISIT
 
 export interface CompressedImage {
   bytes: Buffer;
-  format: 'webp' | 'jpeg';
-  contentType: 'image/webp' | 'image/jpeg';
+  format: 'jpeg';
+  contentType: 'image/jpeg';
   /** Without the dot — the object key's extension. */
-  ext: 'webp' | 'jpg';
+  ext: 'jpg';
   width: number;
   height: number;
   /** The quality the ladder stopped at; null for a photo that arrived already final. */
   quality: number | null;
 }
 
-const asCompressed = (data: Buffer, format: 'webp' | 'jpeg', width: number, height: number, quality: number | null): CompressedImage => ({
+const asCompressed = (data: Buffer, width: number, height: number, quality: number | null): CompressedImage => ({
   bytes: data,
-  format,
-  contentType: format === 'webp' ? 'image/webp' : 'image/jpeg',
-  ext: format === 'webp' ? 'webp' : 'jpg',
+  format: 'jpeg',
+  contentType: 'image/jpeg',
+  ext: 'jpg',
   width,
   height,
   quality,
 });
 
-/** The biggest file `acceptFinalWebp` waves through untouched. The ladder aims at 300KB and accepts
- *  its floor (1280px, quality 60) even when that is heavier, so a final photo can legitimately weigh
+/** The biggest file `acceptFinalJpeg` waves through untouched. The ladder aims at 300KB and accepts
+ *  its floor (1280px, quality 64) even when that is heavier, so a final photo can legitimately weigh
  *  more than the target; this is the ceiling of "legitimately". */
 const MAX_FINAL_BYTES = 1_000_000;
 
-/** True for a WebP that is EXACTLY one plain lossy bitstream: `RIFF` size matching the file (nothing
- *  appended), a single `VP8 ` chunk filling it. No VP8X header, so no alpha, ICC profile, EXIF, XMP or
- *  animation can be hiding in it — sharp's encoder writes exactly this for a flattened photo. */
-function isPlainWebp(buf: Buffer): boolean {
-  if (buf.length < 30 || buf.length > MAX_FINAL_BYTES) return false;
-  if (buf.toString('latin1', 0, 4) !== 'RIFF' || buf.toString('latin1', 8, 12) !== 'WEBP') return false;
-  if (buf.readUInt32LE(4) + 8 !== buf.length) return false;
-  if (buf.toString('latin1', 12, 16) !== 'VP8 ') return false;
-  const size = buf.readUInt32LE(16);
-  return 20 + size + (size & 1) === buf.length;
+/** JPEG markers the walker below knows. */
+const SOI = 0xd8;
+const EOI = 0xd9;
+const SOS = 0xda;
+const APP0 = 0xe0;
+const SOF_PROGRESSIVE = 0xc2;
+/** Segments that may sit in the header of a plain photo: the quantisation tables (DB), the Huffman
+ *  tables (C4), the restart interval (DD) and the frame header itself (C2 — progressive). */
+const HEADER_MARKERS = new Set([0xdb, 0xc4, 0xdd, SOF_PROGRESSIVE]);
+
+/** True for a JPEG that is EXACTLY a progressive image and nothing else: it opens with SOI, every segment
+ *  before the scans is a quantisation / Huffman table, a restart interval, the one frame header, or the
+ *  plain JFIF tag — so no EXIF, XMP, ICC profile (APP1/APP2), Adobe tag or comment can be hiding in it —
+ *  and it ends with EOI as the very last two bytes, so nothing is appended after the picture. This is
+ *  what sharp's encoder writes for a flattened photo with `progressive: true`; a baseline JPEG (a
+ *  browser canvas, a camera) is never "final", it goes through the ladder. The walk is over MARKERS,
+ *  not a search for a word, so a tag planted inside the compressed data is not mistaken for a segment. */
+function isPlainJpeg(buf: Buffer): boolean {
+  const n = buf.length;
+  if (n < 4 || n > MAX_FINAL_BYTES) return false;
+  if (buf[0] !== 0xff || buf[1] !== SOI) return false;
+  let at = 2;
+  let frame = false;
+  let scans = 0;
+  while (at + 2 <= n) {
+    if (buf[at] !== 0xff) return false;
+    const marker = buf[at + 1]!;
+    if (marker === EOI) return frame && scans > 0 && at + 2 === n;
+    // Every other marker allowed here carries a length (which counts its own two bytes).
+    if (at + 4 > n) return false;
+    const length = buf.readUInt16BE(at + 2);
+    if (length < 2 || at + 2 + length > n) return false;
+    if (marker === APP0) {
+      if (length < 7 || buf.toString('latin1', at + 4, at + 9) !== 'JFIF\0') return false;
+    } else if (marker === SOS) {
+      if (!frame) return false;
+      scans++;
+    } else if (HEADER_MARKERS.has(marker)) {
+      if (marker === SOF_PROGRESSIVE) {
+        if (frame) return false; // one frame only
+        frame = true;
+      }
+    } else {
+      return false; // APP1..APP15, COM, a baseline / lossless / arithmetic frame, restart markers, …
+    }
+    at += 2 + length;
+    if (marker === SOS) {
+      // The entropy-coded data: runs until the next real marker. 0xFF 0x00 is a stuffed data byte,
+      // 0xFF 0xD0..D7 a restart, 0xFF 0xFF a fill byte; anything else is the next segment.
+      while (at < n) {
+        if (buf[at] === 0xff) {
+          const next = buf[at + 1];
+          if (next === undefined) return false;
+          if (next === 0x00 || (next >= 0xd0 && next <= 0xd7)) { at += 2; continue; }
+          if (next === 0xff) { at += 1; continue; }
+          break;
+        }
+        at++;
+      }
+    }
+  }
+  return false; // ran off the end without an EOI
 }
 
 /** A photo that already left the OCR step in its final shape (the save step posts it back) is stored
  *  as it came — "one processing, not two" — but only after it proves to be exactly that shape:
- *  a plain WebP, within the size bounds, that decodes. Anything else returns null and goes through
- *  the whole pipeline instead, so what reaches Storage is always an image this server has verified. */
-async function acceptFinalWebp(input: Buffer): Promise<CompressedImage | null> {
-  if (!isPlainWebp(input)) return null;
+ *  a plain progressive JPEG, within the size bounds, that decodes end to end. Anything else returns
+ *  null and goes through the whole pipeline instead, so what reaches Storage is always an image this
+ *  server has verified. */
+async function acceptFinalJpeg(input: Buffer): Promise<CompressedImage | null> {
+  if (!isPlainJpeg(input)) return null;
   try {
-    const img = sharp(input, { failOn: 'error', limitInputPixels: 120_000_000 });
-    const meta = await img.metadata();
+    const meta = await sharp(input, { failOn: 'error', limitInputPixels: 120_000_000 }).metadata();
     const w = meta.width ?? 0;
     const h = meta.height ?? 0;
-    if (meta.format !== 'webp' || (meta.pages ?? 1) !== 1 || w === 0 || h === 0 || Math.max(w, h) > VISITOR_IMAGE_MAX_SIDE) return null;
+    if (meta.format !== 'jpeg' || w === 0 || h === 0 || Math.max(w, h) > VISITOR_IMAGE_MAX_SIDE) return null;
     await sharp(input, { failOn: 'error', limitInputPixels: 120_000_000 }).stats(); // forces a full decode
-    return asCompressed(input, 'webp', w, h, null);
+    return asCompressed(input, w, h, null);
   } catch {
     return null;
   }
@@ -220,40 +274,26 @@ async function acceptFinalWebp(input: Buffer): Promise<CompressedImage | null> {
 
 /**
  * The one encode of a document photo: orientation applied → shrunk to 1600px on the long side →
- * every piece of metadata dropped → WebP quality 80. If that weighs more than 300KB the quality steps
- * down (70, 60); if it still does, the picture is shrunk to 1280px and the same steps run again.
- * NEVER below quality 60 or 1280px — being able to read the document comes before its weight, so the
- * floor is accepted even when it is heavier than the target.
+ * every piece of metadata dropped → progressive JPEG (mozjpeg when the build has it) at quality 82.
+ * If that weighs more than 300KB the quality steps down by 6 (76, 70, 64); if it still does, the
+ * picture is shrunk to 1280px and the same steps run again. NEVER below quality 64 or 1280px —
+ * being able to read the document comes before its weight, so the floor is accepted even when it is
+ * heavier than the target.
  *
- * If WebP cannot be written (it can in every sharp build we run; this is the net under it), the same
- * ladder runs as JPEG. A photo that is already final (see acceptFinalWebp) is returned as it is.
+ * A photo that is already final (see acceptFinalJpeg) is returned as it is.
  */
 export async function compressVisitorImage(input: Buffer): Promise<CompressedImage> {
-  const final = await acceptFinalWebp(input);
+  const final = await acceptFinalJpeg(input);
   if (final) return final;
 
   const source = await openSource(input);
-  let format: 'webp' | 'jpeg' = 'webp';
   let last: CompressedImage | null = null;
 
   for (const side of [VISITOR_IMAGE_MAX_SIDE, VISITOR_IMAGE_FALLBACK_SIDE]) {
     const pipe = upright(source, side);
     for (const quality of VISITOR_IMAGE_QUALITIES) {
-      let out: { data: Buffer; info: OutputInfo };
-      if (format === 'webp') {
-        try {
-          out = await guarded(() => pipe.clone().webp({ quality, effort: 4 }).toBuffer({ resolveWithObject: true }));
-        } catch (err) {
-          // A broken INPUT is not a missing encoder: the JPEG attempt below reads the same pixels and
-          // fails the same way, which is what the caller must see.
-          logger.warn('[visitors image] webp encode failed, falling back to jpeg', { name: err instanceof Error ? err.name : 'unknown' });
-          format = 'jpeg';
-          out = await guarded(() => pipe.clone().jpeg({ quality, mozjpeg: true }).toBuffer({ resolveWithObject: true }));
-        }
-      } else {
-        out = await guarded(() => pipe.clone().jpeg({ quality, mozjpeg: true }).toBuffer({ resolveWithObject: true }));
-      }
-      last = asCompressed(out.data, format, out.info.width, out.info.height, quality);
+      const out = await guarded(() => pipe.clone().jpeg({ quality, progressive: true, mozjpeg: true }).toBuffer({ resolveWithObject: true }));
+      last = asCompressed(out.data, out.info.width, out.info.height, quality);
       if (out.data.length <= VISITOR_IMAGE_TARGET_BYTES) return last;
     }
   }

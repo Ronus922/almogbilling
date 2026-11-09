@@ -11,7 +11,7 @@ export const runtime = 'nodejs';
 
 // POST /api/visitors/ocr — step 2 of a scan (step 1 is the guard's crop, in the
 // browser, which also shrinks it to ≤2000px JPEG for the upload). Takes the CROPPED
-// photo, compresses it (upright, ≤1600px, no metadata, WebP ≤~300KB), asks Claude to
+// photo, compresses it (upright, ≤1600px, no metadata, a progressive JPEG ≤~300KB), asks Claude to
 // read it and hands back the fields PLUS that compressed photo. NOTHING is stored here: the photo reaches Storage only
 // when the row is saved (POST /api/visitors), so an abandoned scan leaves no
 // trace — and the uncropped original never leaves the guard's phone at all.
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ONE encode: the compressed photo (WebP ≤300KB) is what the model reads, what the guard sees in
+  // ONE encode: the compressed photo (JPEG ≤300KB) is what the model reads, what the guard sees in
   // the preview, and — posted back by the save step — what Storage keeps.
   const up = await readImageUpload(req, compressVisitorImage);
   if (!up.ok) return up.response;

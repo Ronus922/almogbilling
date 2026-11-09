@@ -30,9 +30,9 @@ export function detectOnImage(img: HTMLImageElement): Rect | null {
   }
 }
 
-/** The frame as a JPEG (≤2000px on its long side, quality 85, never enlarged) — the upload. Drawn in
+/** The frame as a JPEG (≤2000px on its long side, quality 88, never enlarged) — the upload. Drawn in
  *  ONE step from the full-size picture, so a 12MP photo is never copied to a 12MP canvas. The server
- *  makes the final, lighter WebP. */
+ *  makes the final, lighter JPEG. */
 export function renderCrop(img: HTMLImageElement, frame: Rect, maxSide = CLIENT_UPLOAD_MAX_SIDE): Promise<Blob> {
   const out = outputSize(frame, maxSide);
   const canvas = document.createElement('canvas');
