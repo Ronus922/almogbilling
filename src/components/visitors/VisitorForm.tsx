@@ -13,6 +13,11 @@ import type { FormErrors, VisitorFormValues } from './format';
 //
 // A field the OCR was unsure about gets an amber state and a one-line hint: the
 // guard's second look goes where the model's doubt is, nowhere else.
+//
+// There is NO nationality field (Ronen, 09/11/2026): the column and the OCR's
+// reading of it stay, the value rides along in `values` untouched (so a scan
+// saves what the model read, and an admin's edit never blanks it), but no
+// screen shows or edits it.
 
 interface Props {
   values: VisitorFormValues;
@@ -93,10 +98,6 @@ export function VisitorForm({ values, onChange, errors = {}, lowConfidence, disa
           <Field id="v-dob" label="תאריך לידה" type="date" value={values.date_of_birth} disabled={disabled}
             dir="ltr" onChange={(v) => onChange({ date_of_birth: v })} error={errors.date_of_birth}
             hint={low('date_of_birth') ? LOW_HINT : undefined} />
-        ))}
-        {flagged('nationality', (
-          <Field id="v-nat" label="לאום" value={values.nationality} disabled={disabled}
-            onChange={(v) => onChange({ nationality: v })} hint={low('nationality') ? LOW_HINT : undefined} />
         ))}
       </div>
 

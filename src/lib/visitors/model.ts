@@ -25,6 +25,7 @@ export interface VisitorScan {
   last_name: string;
   /** `YYYY-MM-DD`, or null when the document did not show / nobody typed it. */
   date_of_birth: string | null;
+  /** Read by the OCR and stored, but shown on no screen (Ronen, 09/11/2026). */
   nationality: string | null;
   phone: string | null;
   room_number: string | null;

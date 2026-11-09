@@ -73,10 +73,17 @@ export function formFromScan(v: VisitorScan): VisitorFormValues {
   };
 }
 
-/** The OCR fields the model was unsure about (or left empty while sure of nothing). */
+/** OCR fields that are read and stored but never shown (so never flagged either): a
+ *  flag on a field nobody can see would only tell the guard to look for something that
+ *  is not there. */
+const UNSHOWN_OCR_FIELDS: ReadonlySet<OcrField> = new Set<OcrField>(['nationality']);
+
+/** The OCR fields the model was unsure about (or left empty while sure of nothing) —
+ *  among the ones the form shows. */
 export function lowConfidenceFields(res: Pick<OcrResponse, 'fields' | 'confidence'>): Set<OcrField> {
   const out = new Set<OcrField>();
   for (const [k, c] of Object.entries(res.confidence) as [OcrField, number][]) {
+    if (UNSHOWN_OCR_FIELDS.has(k)) continue;
     if (res.fields[k] !== '' && c < OCR_LOW_CONFIDENCE) out.add(k);
   }
   return out;

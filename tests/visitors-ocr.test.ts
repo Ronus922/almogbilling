@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
 import { extractJsonObject, normalizeDate, parseOcrText } from '@/lib/visitors/ocrParse';
-import { lowConfidenceFields } from '@/components/visitors/format';
+import { EMPTY_FORM, formFromOcr, formFromScan, lowConfidenceFields, toPayload } from '@/components/visitors/format';
 
 // The OCR half that needs no network: the tolerant parser, and the client call
 // with a stand-in for the Anthropic SDK. A real read is checked end-to-end in
@@ -91,6 +91,35 @@ describe('lowConfidenceFields — where the guard looks twice', () => {
     const parsed = parseOcrText(JSON.stringify(GOOD))!;
     expect([...lowConfidenceFields(parsed)]).toEqual(['date_of_birth']);
     expect(lowConfidenceFields({ fields: { ...parsed.fields, date_of_birth: '' }, confidence: parsed.confidence }).size).toBe(0);
+  });
+
+  it('never flags the nationality: it is read and stored but no screen shows it (09/11/2026)', () => {
+    const parsed = parseOcrText(JSON.stringify({ ...GOOD, confidence: { ...GOOD.confidence, nationality: 0.1, date_of_birth: 0.95 } }))!;
+    expect(parsed.fields.nationality).toBe('ישראלית');
+    expect(lowConfidenceFields(parsed).size).toBe(0); // no "yellow field" banner for a field nobody can see
+  });
+});
+
+describe('the hidden nationality still travels with the form', () => {
+  const parsed = parseOcrText(JSON.stringify(GOOD))!;
+
+  it('a scan saves what the OCR read, untouched', () => {
+    const form = formFromOcr(parsed.fields);
+    expect(form.nationality).toBe('ישראלית');
+    expect(toPayload(form).nationality).toBe('ישראלית');
+  });
+
+  it('a document with no nationality saves an empty string, which the server stores as NULL', () => {
+    const form = formFromOcr({ ...parsed.fields, nationality: '' });
+    expect(toPayload(form).nationality).toBe('');
+    expect(toPayload(EMPTY_FORM).nationality).toBe('');
+  });
+
+  it('an admin\'s edit form starts from the stored value, so it is never in the diff and never blanked', () => {
+    const scan = { ...parsed.fields, id: 'x', document_type: 'id_card' as const, nationality: 'ישראלית', date_of_birth: '1990-05-17' };
+    const form = formFromScan({ ...scan, phone: null, room_number: null, chip_number: null, notes: null, image_url: '/x', image_original_name: null, scanned_by: null, scanned_by_name: null, created_at: '', updated_at: '' });
+    expect(form.nationality).toBe('ישראלית');
+    expect(toPayload(form).nationality).toBe('ישראלית');
   });
 });
 

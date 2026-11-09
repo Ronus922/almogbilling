@@ -193,7 +193,6 @@ export function VisitorDetailSheet({ scan, open, caps, onClose, onChanged, onDel
                         <Row label="שם פרטי">{scan.first_name}</Row>
                         <Row label="שם משפחה">{scan.last_name}</Row>
                         <Row label="תאריך לידה" ltr>{formatBirthDate(scan.date_of_birth)}</Row>
-                        <Row label="לאום">{scan.nationality ?? '—'}</Row>
                         <Row label="טלפון" ltr>{scan.phone ?? '—'}</Row>
                         <Row label="מספר חדר">{scan.room_number ?? '—'}</Row>
                         <Row label="מספר צ׳יפ" ltr>{scan.chip_number ?? '—'}</Row>
