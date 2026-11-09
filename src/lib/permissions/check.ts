@@ -103,10 +103,11 @@ export function canUseNotifications(role: Role): boolean {
 }
 
 // ── Visitor scan ("סריקת כניסה", 08/11/2026) ─────────────────────────────────
-// By ROLE, never the matrix (see VISITOR_*_ROLES). Four questions, four
+// By ROLE, never the matrix (see VISITOR_*_ROLES) — the screen has no module row,
+// so a matrix grant can neither open it nor close it. Four questions, four
 // predicates; the routes' require* guards, the page and the UI all call these.
 
-/** Open the screen, read the rows, open the photo of a document. */
+/** Open the screen, read the rows, open the photo of a document (guard, admin, super admin). */
 export function canViewVisitors(role: Role): boolean {
   return VISITOR_VIEW_ROLES.includes(role);
 }

@@ -27,7 +27,8 @@ import {
 // server's rule (VISITOR_*_ROLES) mirrored here, never the other way round:
 //   admin / super admin : every field + delete
 //   guard               : the notes, with their own "שמור הערות"
-//   everyone else       : read only
+// No other role reaches this sheet (VISITOR_VIEW_ROLES), so a read-only branch exists only
+// as the fail-safe of the two flags below.
 // Always a Sheet (DESIGN §12) — it is a details/edit panel, not a confirmation.
 
 export interface DetailCaps {

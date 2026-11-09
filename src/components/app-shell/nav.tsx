@@ -60,8 +60,8 @@ const SECTIONS: MenuSection[] = [
       // The overview is for the roles that land on it: not the viewer (debtors screen
       // only) and not the guard (visitor scan only) — homePathFor() sends both away.
       { label: 'לוח מחוונים',        icon: LayoutDashboard, href: '/overview', visible: (role) => role !== 'viewer' && role !== 'guard' },
-      // Visitor ID scan (08/11/2026) — by ROLE (VISITOR_VIEW_ROLES: every role sees
-      // it; only the guard and the admins scan). The guard's ONLY nav entry.
+      // Visitor ID scan (08/11/2026) — by ROLE (VISITOR_VIEW_ROLES: guard, admin and
+      // super admin only, since 09/11/2026; no other role sees the item). The guard's ONLY nav entry.
       { label: 'סריקת כניסה',        icon: ScanLine, href: '/visitors', visible: (role) => canViewVisitors(role) },
       { label: 'ניהול חיובים',       icon: LayoutGrid, href: '/dashboard', module: 'dashboard' },
       { label: 'רשימת דיירים',       icon: Users, href: '/contacts', module: 'contacts' },

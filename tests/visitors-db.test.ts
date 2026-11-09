@@ -66,6 +66,8 @@ import { GET, POST } from '@/app/api/visitors/route';
 import { DELETE, PATCH } from '@/app/api/visitors/[id]/route';
 import { deleteUserPermanently } from '@/lib/db/userDeletion';
 import { insertVisitorScan } from '@/lib/db/visitorScans';
+import { requireVisitorView } from '@/lib/auth/actor';
+import { AuthorizationError } from '@/lib/auth/errors';
 import { ROLE_VALUES, isMatrixRole, type Role } from '@/lib/permissions/constants';
 import { getDefaultPermissions } from '@/lib/permissions/check';
 
@@ -157,14 +159,28 @@ afterAll(async () => {
   await pool.end();
 });
 
-d('reading — every role may, nobody anonymous', () => {
-  it.each(ROLE_VALUES)('%s: GET /api/visitors → 200', async (role) => {
+d('reading — guard, admin and super admin only; nobody anonymous', () => {
+  it.each(['guard', 'admin', 'super_admin'] as Role[])('%s: GET /api/visitors → 200', async (role) => {
     await actAs(role);
     const res = await GET(listReq(`q=VT${RUN}`));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchObject({ page: 1, page_size: 25 });
     expect(Array.isArray(body.rows)).toBe(true);
+  });
+
+  it.each(['manager', 'viewer', 'cleaner', 'maintenance'] as Role[])('%s: GET /api/visitors → 403, and the photo guard refuses too (09/11/2026)', async (role) => {
+    await seedScan({ last_name: `VTcl${RUN}${role}` });
+    await actAs(role);
+    const res = await GET(listReq(`q=VTcl${RUN}`));
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(await res.json())).not.toContain(`VTcl${RUN}`); // no row leaks into the refusal
+    await expect(requireVisitorView()).rejects.toBeInstanceOf(AuthorizationError); // /api/files/visitor-ids
+  });
+
+  it.each(['guard', 'admin', 'super_admin'] as Role[])('%s: the photo guard lets them in', async (role) => {
+    await actAs(role);
+    await expect(requireVisitorView()).resolves.toMatchObject({ role });
   });
 
   it('no session → 401', async () => {
@@ -174,7 +190,7 @@ d('reading — every role may, nobody anonymous', () => {
 
   it('a row goes out with a same-origin proxy path, never the object key or a storage URL', async () => {
     const id = await seedScan({ last_name: `VTproxy${RUN}` });
-    await actAs('viewer');
+    await actAs('guard');
     const body = await (await GET(listReq(`q=VTproxy${RUN}`))).json();
     expect(body.rows).toHaveLength(1);
     const row = body.rows[0];
@@ -185,22 +201,21 @@ d('reading — every role may, nobody anonymous', () => {
   });
 });
 
-d('zero access closes the API too, not only the pages', () => {
-  it('a viewer whose matrix was emptied gets 403 on the list and on the photo guard; restored, 200', async () => {
-    const uid = userIds.get('viewer')!;
-    const before = await pool.query(`select module, can_view, can_edit from public.user_permissions where user_id = $1`, [uid]);
-    expect(before.rows.length).toBeGreaterThan(0);
-    await actAs('viewer');
-    expect((await GET(listReq(`q=VT${RUN}`))).status).toBe(200);
-    try {
-      await pool.query(`update public.user_permissions set can_view = false, can_edit = false where user_id = $1`, [uid]);
-      expect((await GET(listReq(`q=VT${RUN}`))).status).toBe(403);
-    } finally {
-      for (const row of before.rows) {
-        await pool.query(`update public.user_permissions set can_view = $2, can_edit = $3 where user_id = $1 and module = $4`, [uid, row.can_view, row.can_edit, row.module]);
+d('a matrix grant cannot open the screen', () => {
+  it('a manager and a viewer holding EVERY module at view+edit still get 403 — the role is the whole test', async () => {
+    for (const role of ['manager', 'viewer'] as Role[]) {
+      const uid = userIds.get(role)!;
+      const before = await pool.query(`select module, can_view, can_edit from public.user_permissions where user_id = $1`, [uid]);
+      await actAs(role);
+      try {
+        await pool.query(`update public.user_permissions set can_view = true, can_edit = true where user_id = $1`, [uid]);
+        expect((await GET(listReq(`q=VT${RUN}`))).status).toBe(403);
+      } finally {
+        for (const row of before.rows) {
+          await pool.query(`update public.user_permissions set can_view = $2, can_edit = $3 where user_id = $1 and module = $4`, [uid, row.can_view, row.can_edit, row.module]);
+        }
       }
     }
-    expect((await GET(listReq(`q=VT${RUN}`))).status).toBe(200);
   });
 });
 
@@ -383,7 +398,7 @@ d('searching and paging', () => {
   it('a name, either order, any case; a phone however it is written', async () => {
     await seedScan({ first_name: 'דוד', last_name: TOKEN, phone: '050-123 4567' });
     await seedScan({ first_name: 'משה', last_name: TOKEN, phone: null });
-    await actAs('viewer');
+    await actAs('guard');
     const find = async (q: string) => (await (await GET(listReq(`q=${encodeURIComponent(q)}`))).json()).rows as { first_name: string }[];
 
     expect((await find(TOKEN)).length).toBe(2);
@@ -405,7 +420,7 @@ d('searching and paging', () => {
   it('LIKE wildcards in the text are matched literally', async () => {
     await seedScan({ first_name: '100%', last_name: TOKEN });
     await seedScan({ first_name: '100x', last_name: TOKEN }); // a "%" that worked as a wildcard would match this one too
-    await actAs('viewer');
+    await actAs('guard');
     const find = async (q: string) => (await (await GET(listReq(`q=${encodeURIComponent(q)}`))).json()).rows as { first_name: string; last_name: string }[];
     const pct = await find('100%');
     expect(pct.map((r) => r.first_name)).toEqual(['100%']);
@@ -423,7 +438,7 @@ d('searching and paging', () => {
     // Summer (UTC+3): 20:30Z = 23:30 on the 10th; 21:30Z = 00:30 on the 11th.
     const s1 = await seedScan({ last_name: token, created_at: '2026-07-10T20:30:00Z' });
     const s2 = await seedScan({ last_name: token, created_at: '2026-07-10T21:30:00Z' });
-    await actAs('manager');
+    await actAs('guard');
     const ids = async (from: string, to: string) =>
       ((await (await GET(listReq(`q=${token}&from=${from}&to=${to}`))).json()).rows as { id: string }[]).map((r) => r.id).sort();
 
@@ -444,7 +459,7 @@ d('searching and paging', () => {
     for (let i = 0; i < 27; i += 1) {
       await seedScan({ first_name: `n${String(i).padStart(2, '0')}`, last_name: token, created_at: `2026-01-01T10:${String(i).padStart(2, '0')}:00Z` });
     }
-    await actAs('viewer');
+    await actAs('guard');
     const p1 = await (await GET(listReq(`q=${token}&page=1`))).json();
     const p2 = await (await GET(listReq(`q=${token}&page=2`))).json();
     expect(p1.total).toBe(27);

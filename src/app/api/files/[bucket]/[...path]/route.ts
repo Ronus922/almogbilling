@@ -67,9 +67,9 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<Actor>> = {
   // Purchasing — documents' attachments, supplier quote files, the letterhead's
   // logo and signature. Super admin only by default (module `purchasing`).
   'purchasing-files': () => requirePurchasingAny('view'),
-  // Photos of scanned visitor documents — by ROLE (VISITOR_VIEW_ROLES: every
-  // staff role, the guard included), never a matrix module. Each open is a
-  // `file_viewed` audit row (describeStoredFile → visitor_scan).
+  // Photos of scanned visitor documents — by ROLE (VISITOR_VIEW_ROLES: guard, admin
+  // and super admin; every other role gets 403), never a matrix module. Each open
+  // is a `file_viewed` audit row (describeStoredFile → visitor_scan).
   'visitor-ids': () => requireVisitorView(),
 };
 

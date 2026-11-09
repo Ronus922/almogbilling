@@ -330,14 +330,17 @@ export function isGuardRole(role: Role): boolean {
   return role === 'guard';
 }
 
-// Who may OPEN the visitor-scan screen, its rows and the photo of the document
-// (Ronen, 08/11/2026: "כולם רואים"). Every role is listed — by name, not by
-// "any role" — so the list is the decision, in one place.
-export const VISITOR_VIEW_ROLES: readonly Role[] = [
-  'super_admin', 'admin', 'manager', 'viewer', 'cleaner', 'maintenance', 'guard',
-];
+// Who may OPEN the visitor-scan screen, see its rows and the photo of the
+// document — and so who may scan. Three roles, listed by name (Ronen, 09/11/2026:
+// "רואים וסורקים רק: guard, admin, super_admin"; it was every role on 08/11).
+// manager, viewer, cleaner and maintenance have no access at all: no menu item,
+// /visitors sends them home, every /api/visitors/* and /api/files/visitor-ids/*
+// answers 403. The list is the decision, in one place.
+export const VISITOR_VIEW_ROLES: readonly Role[] = ['super_admin', 'admin', 'guard'];
 
-// Who may scan (create a row) and, afterwards, write the NOTES of any row.
+// Who may scan (create a row) and, afterwards, write the NOTES of any row. Kept as
+// its own list: seeing the log and writing to it are two questions, and widening
+// the first must never widen the second.
 export const VISITOR_CREATE_ROLES: readonly Role[] = ['super_admin', 'admin', 'guard'];
 
 // Who may edit EVERY field of a row and delete it (the photo goes with it).

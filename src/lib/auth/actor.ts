@@ -4,7 +4,7 @@ import { getSession, type SessionUser } from './session';
 import { AuthorizationError } from './errors';
 import {
   hasPermission, canManageRole, canUseAssistant, canDeleteUsers, canUseNotifications,
-  canViewVisitors, canCreateVisitorScan, canEditVisitorNotes, canManageVisitorScans, hasAnyAccess,
+  canViewVisitors, canCreateVisitorScan, canEditVisitorNotes, canManageVisitorScans,
 } from '@/lib/permissions/check';
 import { isGuardRole, isMatrixRole } from '@/lib/permissions/constants';
 import type { Action, ModulePermission, Role } from '@/lib/permissions/constants';
@@ -142,11 +142,8 @@ export async function requireGuardActor(): Promise<Actor> {
 /** Read rows and open the photo of a document (/api/files/visitor-ids). */
 export async function requireVisitorView(): Promise<Actor> {
   const actor = await requireActor();
-  // "Every role reads" does not outrank "zero access": a viewer / manager whose matrix an
-  // admin emptied is sent to /no-access by the layout, and the data must close with the page.
-  if (!canViewVisitors(actor.role) || !hasAnyAccess(actor.role, actor.permissions)) {
-    throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
-  }
+  // Guard, admin, super admin — none of them has a matrix to empty, so the role is the whole test.
+  if (!canViewVisitors(actor.role)) throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
   return actor;
 }
 

@@ -28,9 +28,11 @@
 //       module of their own.
 //     • the guard ("שומר", 08/11/2026) is a seventh role OFF the matrix: it holds
 //       no module at all, lands on /visitors, has no bell or assistant, and the
-//       visitor-scan screen is a set of ROLE allowlists — every role reads, only
-//       guard / admin / super_admin scan and write notes, only admin / super_admin
-//       edit every field and delete. Nothing in a matrix row can change that.
+//       visitor-scan screen is a set of ROLE allowlists — only guard / admin /
+//       super_admin see it, scan and write notes (manager, viewer, cleaner and
+//       maintenance have no access at all, 09/11/2026), only admin / super_admin
+//       edit every field, re-crop a photo and delete. Nothing in a matrix row can
+//       change that.
 //   Run under tsx (imports .ts source). Pure — no DB.
 import { run, fail, ok } from './_check-lib.mjs';
 import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone, canDeleteUsers, canGrantModule, canOpenUsersScreen, canBulkChangeLegalStatus, canViewVisitors, canCreateVisitorScan, canEditVisitorNotes, canManageVisitorScans, canUseNotifications, hasAnyAccess } from '../src/lib/permissions/check.ts';
@@ -208,8 +210,8 @@ run('check-rbac', async () => {
 
   // The visitor-scan screen — allowlists by role.
   for (const role of ROLE_VALUES) {
-    t(`סריקת כניסה: ${role} רואה`, canViewVisitors(role) === true);
     const scans = role === 'guard' || role === 'admin' || role === 'super_admin';
+    t(`סריקת כניסה: ${role} ${scans ? 'רואה' : 'אין גישה בכלל'}`, canViewVisitors(role) === scans);
     t(`סריקת כניסה: ${role} ${scans ? 'סורק וכותב הערות' : 'לא סורק ולא כותב הערות'}`,
       canCreateVisitorScan(role) === scans && canEditVisitorNotes(role) === scans);
     const manages = role === 'admin' || role === 'super_admin';

@@ -97,4 +97,25 @@ run('check-api-auth', async () => {
     }
   }
   ok(`${handlers} handlers של "כל משתמש מחובר" חוסמים את השומר`);
+
+  // ── The visitor-scan screen (09/11/2026) is guard / admin / super_admin ONLY.
+  //    A bare requireActor() / getSession() in one of its handlers would answer
+  //    EVERY signed-in role (manager, viewer, cleaner, maintenance), so each
+  //    handler under /api/visitors must call a requireVisitor* guard — the role
+  //    allowlists — and the visitor-ids file bucket must keep its own.
+  const VISITOR_GUARD = /requireVisitor(View|Create|Edit|Manage)\(/;
+  let visitorHandlers = 0;
+  for (const rel of files.filter((f) => f.startsWith('src/app/api/visitors/'))) {
+    const src = readFileSync(join(root, rel), 'utf8');
+    const parts = src.split(/(?=export async function (?:GET|POST|PUT|PATCH|DELETE)\b)/).slice(1);
+    for (const body of parts) {
+      visitorHandlers++;
+      const name = /export async function (\w+)/.exec(body)?.[1] ?? '?';
+      if (!VISITOR_GUARD.test(body) || WEAK.test(body)) fail(`${rel} ${name} — חייב requireVisitor* (guard/admin/super_admin בלבד) ולא אימות "מחובר" גורף`);
+    }
+  }
+  if (visitorHandlers === 0) fail('לא נמצאו handlers תחת /api/visitors — האם הנתיב השתנה?');
+  const filesRoute = readFileSync(join(root, 'src/app/api/files/[bucket]/[...path]/route.ts'), 'utf8');
+  if (!/'visitor-ids':\s*\(\)\s*=>\s*requireVisitorView\(\)/.test(filesRoute)) fail("src/app/api/files — הבאקט visitor-ids חייב להישען על requireVisitorView()");
+  ok(`${visitorHandlers} handlers של סריקת כניסה נשענים על requireVisitor*; הקבצים של visitor-ids על requireVisitorView`);
 });

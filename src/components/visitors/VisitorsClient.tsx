@@ -11,7 +11,7 @@ import { VisitorDetailSheet } from './VisitorDetailSheet';
 import { EMPTY_VISITOR_FILTER, VisitorFilters, type VisitorFilter } from './VisitorFilters';
 import { formatStamp, fullName } from './format';
 
-// "סריקת כניסה" — the guard's one screen, and a log every role may read.
+// "סריקת כניסה" — the guard's one screen (the admins use it too; no other role reaches it).
 // Mobile first (an iPhone at the gate): one big "סרוק תעודה" button that opens
 // the camera, a search, and the scans as cards on a phone / a table from md up.
 

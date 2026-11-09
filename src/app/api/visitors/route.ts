@@ -14,7 +14,7 @@ export const runtime = 'nodejs';
 
 const SAVE_MAX_PER_HOUR = 120;
 
-// GET /api/visitors — the table. Every role may read it (VISITOR_VIEW_ROLES).
+// GET /api/visitors — the table. Guard, admin and super admin (VISITOR_VIEW_ROLES); 403 to the rest.
 // Newest first, 25 to a page; `q` is a name (either order) or part of a phone,
 // `from`/`to` an inclusive day range in Israel time.
 export async function GET(req: NextRequest) {

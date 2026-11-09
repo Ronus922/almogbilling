@@ -76,9 +76,25 @@ describe('the guard role', () => {
 });
 
 describe('the visitor-scan allowlists', () => {
-  it('every role may view the screen, the rows and the photo (Ronen: כולם רואים)', () => {
-    for (const r of ALL) expect(canViewVisitors(r)).toBe(true);
-    expect([...VISITOR_VIEW_ROLES].sort()).toEqual([...ALL].sort());
+  it('only guard, admin and super admin may view the screen, the rows and the photo', () => {
+    const allowed = new Set<Role>(['guard', 'admin', 'super_admin']);
+    for (const r of ALL) expect(canViewVisitors(r)).toBe(allowed.has(r));
+    expect([...VISITOR_VIEW_ROLES].sort()).toEqual(['admin', 'guard', 'super_admin']);
+  });
+
+  it('manager, viewer, cleaner and maintenance have no access of any kind (09/11/2026)', () => {
+    for (const r of ['manager', 'viewer', 'cleaner', 'maintenance'] as const) {
+      expect(canViewVisitors(r)).toBe(false);
+      expect(canCreateVisitorScan(r)).toBe(false);
+      expect(canEditVisitorNotes(r)).toBe(false);
+      expect(canManageVisitorScans(r)).toBe(false);
+    }
+  });
+
+  it('seeing the log is never wider than writing to it', () => {
+    for (const r of ALL) {
+      if (canCreateVisitorScan(r) || canEditVisitorNotes(r) || canManageVisitorScans(r)) expect(canViewVisitors(r)).toBe(true);
+    }
   });
 
   it('only guard, admin and super admin scan and write notes', () => {
