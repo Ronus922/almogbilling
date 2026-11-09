@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { AlertTriangle, IdCard, Loader2, ScanLine, X, Info } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -13,6 +13,7 @@ import { Section } from '@/components/side-panel/Section';
 import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import type { OcrField, OcrResponse } from '@/lib/visitors/model';
+import { CropEditor } from './CropEditor';
 import { VisitorForm } from './VisitorForm';
 import {
   EMPTY_FORM, formFromOcr, jpegBlobFromBase64, lowConfidenceFields, toPayload, validateForm,
@@ -20,9 +21,13 @@ import {
 } from './format';
 
 // The create flow of one scan, opened by the screen's "סרוק תעודה" once a photo
-// exists: photo → OCR (the server normalises the photo and Claude reads it) →
-// a form pre-filled from the document, every field editable → "שמור". The photo
-// reaches Storage only on that last click; closing before it leaves nothing.
+// exists: photo → CROP (the guard fits a frame around the document, in the browser)
+// → OCR (the server normalises the CROPPED photo and Claude reads it) → a form
+// pre-filled from the document, every field editable → "שמור". The uncropped photo
+// never leaves the phone (the one exception is a file the browser cannot draw — a
+// HEIC outside Safari — which is sent to /api/visitors/prepare to be turned into a
+// JPEG, and is not stored). The cropped photo reaches Storage only on the last click;
+// closing before it leaves nothing.
 //
 // Sheet, not Dialog (DESIGN §12): a create form always opens in the side panel,
 // which on a phone is the whole screen.
@@ -30,16 +35,23 @@ import {
 interface Props {
   /** The photo the guard just took; null = closed. */
   file: File | null;
+  /** An object URL of that photo, for the crop step to draw (the parent owns and revokes it). */
+  previewUrl: string | null;
   onClose: () => void;
   onSaved: () => void;
   /** Take another photo (the photo could not be opened). */
   onRetake: () => void;
 }
 
-type Phase = 'reading' | 'ready' | 'unreadable';
+type Phase = 'crop' | 'preparing' | 'reading' | 'ready' | 'unreadable';
 
-export function ScanSheet({ file, onClose, onSaved, onRetake }: Props) {
-  const [phase, setPhase] = useState<Phase>('reading');
+export function ScanSheet({ file, previewUrl, onClose, onSaved, onRetake }: Props) {
+  const [phase, setPhase] = useState<Phase>('crop');
+  // A file the browser could not draw, as the server turned it into a JPEG (see onLoadError).
+  const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
+  const fallbackRef = useRef<string | null>(null);
+  // What the guard framed: the only picture that is read and stored.
+  const [cropped, setCropped] = useState<Blob | null>(null);
   const [problem, setProblem] = useState('');
   const [ocrOk, setOcrOk] = useState(true);
   const [imageB64, setImageB64] = useState('');
@@ -51,16 +63,19 @@ export function ScanSheet({ file, onClose, onSaved, onRetake }: Props) {
 
   const open = file !== null;
 
-  // Step 1 — normalise + read. The parent gives every new photo a new `key`, so this
-  // component starts from the 'reading' state each time — nothing to reset here.
+  // The server's JPEG of a file the browser cannot draw lives as long as this sheet.
+  useEffect(() => () => { if (fallbackRef.current) URL.revokeObjectURL(fallbackRef.current); }, []);
+
+  // Step 2 — normalise + read the CROPPED photo. The parent gives every new photo a new `key`,
+  // so this component starts from the 'crop' state each time — nothing to reset here.
   useEffect(() => {
-    if (!file) return;
+    if (!cropped) return;
     const ctl = new AbortController();
 
     (async () => {
       try {
         const fd = new FormData();
-        fd.append('image', file, file.name || 'scan.jpg');
+        fd.append('image', cropped, 'scan.jpg');
         const r = await fetch('/api/visitors/ocr', { method: 'POST', body: fd, credentials: 'include', signal: ctl.signal });
         const data = (await r.json().catch(() => ({}))) as Partial<OcrResponse> & { error?: string };
         if (!r.ok || !data.fields || !data.image_base64) {
@@ -80,14 +95,50 @@ export function ScanSheet({ file, onClose, onSaved, onRetake }: Props) {
       }
     })();
     return () => ctl.abort();
-  }, [file]);
+  }, [cropped]);
+
+  // The browser could not draw the photo (a HEIC outside Safari, a format it lacks). The server
+  // already owns a decoder for it: send the file once, get an upright JPEG back, crop THAT. If even
+  // that cannot be drawn there is nothing more to try — say so.
+  async function onLoadError() {
+    if (!file || fallbackUrl) {
+      setProblem('לא ניתן לפתוח את התמונה — צלם שוב');
+      setPhase('unreadable');
+      return;
+    }
+    setPhase('preparing');
+    try {
+      const fd = new FormData();
+      fd.append('image', file, file.name || 'scan.jpg');
+      const r = await fetch('/api/visitors/prepare', { method: 'POST', body: fd, credentials: 'include' });
+      if (!r.ok) {
+        const data = (await r.json().catch(() => ({}))) as { error?: string };
+        setProblem(data.error ?? 'לא ניתן לפתוח את התמונה — צלם שוב');
+        setPhase('unreadable');
+        return;
+      }
+      const url = URL.createObjectURL(await r.blob());
+      fallbackRef.current = url;
+      setFallbackUrl(url);
+      setPhase('crop');
+    } catch {
+      setProblem('החיבור נכשל — בדוק את הקליטה ונסה שוב');
+      setPhase('unreadable');
+    }
+  }
+
+  function onCropped(blob: Blob) {
+    setCropped(blob);
+    setPhase('reading');
+  }
 
   useEscapeKey(open && !confirmCloseOpen, () => requestClose());
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
 
   function requestClose() {
     if (saving) return;
-    // A read photo is unsaved work: closing it deserves a second tap.
+    // A read photo is unsaved work: closing it deserves a second tap. Before the OCR there is
+    // nothing yet to lose (the crop is a few seconds of work and the photo can be retaken).
     if (phase === 'ready') setConfirmCloseOpen(true);
     else onClose();
   }
@@ -139,7 +190,11 @@ export function ScanSheet({ file, onClose, onSaved, onRetake }: Props) {
               <div className="min-w-0 flex-1">
                 <SheetTitle className="text-2xl font-bold text-white">סריקת תעודה</SheetTitle>
                 <p className="mt-1 text-sm text-white/70">
-                  {phase === 'reading' ? 'קורא את התעודה…' : 'בדוק את הפרטים, מלא חדר / צ׳יפ / טלפון ושמור.'}
+                  {phase === 'crop'
+                    ? 'סמן את התעודה בלבד ולחץ „המשך”.'
+                    : phase === 'preparing' || phase === 'reading'
+                      ? (phase === 'reading' ? 'קורא את התעודה…' : 'מכין את התמונה…')
+                      : 'בדוק את הפרטים, מלא חדר / צ׳יפ / טלפון ושמור.'}
                 </p>
               </div>
               <button
@@ -151,11 +206,19 @@ export function ScanSheet({ file, onClose, onSaved, onRetake }: Props) {
             </div>
           </SheetHeader>
 
+          {phase === 'crop' && open ? (
+            <CropEditor
+              src={fallbackUrl ?? previewUrl ?? ''} initial="auto"
+              confirmLabel="המשך" cancelLabel="צלם שוב"
+              onConfirm={onCropped} onCancel={onRetake} onLoadError={() => void onLoadError()}
+            />
+          ) : (
+          <>
           <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5">
-            {phase === 'reading' && (
+            {(phase === 'reading' || phase === 'preparing') && (
               <div role="status" aria-live="polite" className="flex flex-col items-center gap-4 rounded-lg border border-slate-200 bg-white p-8 text-center">
                 <Loader2 className="h-9 w-9 animate-spin text-brand" aria-hidden />
-                <div className="text-lg font-bold text-slate-900">קורא את התעודה…</div>
+                <div className="text-lg font-bold text-slate-900">{phase === 'reading' ? 'קורא את התעודה…' : 'מכין את התמונה…'}</div>
                 <div className="text-sm text-slate-500">זה לוקח כמה שניות. אפשר לא לסגור את החלון.</div>
               </div>
             )}
@@ -185,7 +248,7 @@ export function ScanSheet({ file, onClose, onSaved, onRetake }: Props) {
                   </div>
                 )}
 
-                {/* eslint-disable-next-line @next/next/no-img-element -- a one-off data: URL of the photo just taken; next/image cannot optimise it */}
+                {/* eslint-disable-next-line @next/next/no-img-element -- a one-off data: URL of the cropped photo; next/image cannot optimise it */}
                 <img
                   src={`data:image/jpeg;base64,${imageB64}`} alt="צילום התעודה"
                   className="mx-auto max-h-72 w-full rounded-lg border border-slate-200 bg-white object-contain"
@@ -206,6 +269,8 @@ export function ScanSheet({ file, onClose, onSaved, onRetake }: Props) {
             saveDisabled={phase !== 'ready' || saving}
             saveLabel={saving ? 'שומר…' : 'שמור'}
           />
+          </>
+          )}
         </SheetContent>
       </Sheet>
 

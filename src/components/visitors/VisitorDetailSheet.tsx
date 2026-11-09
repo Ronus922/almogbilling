@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Camera, FileText, IdCard, Maximize2, StickyNote, X } from 'lucide-react';
+import { Camera, Crop, FileText, IdCard, Maximize2, StickyNote, X } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -16,6 +16,7 @@ import { PanelFooter } from '@/components/side-panel/PanelFooter';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { DOCUMENT_TYPE_LABELS, type VisitorScan } from '@/lib/visitors/model';
 import { ImageViewer } from './ImageViewer';
+import { RecropDialog } from './RecropDialog';
 import { VisitorForm } from './VisitorForm';
 import {
   formatBirthDate, formatStamp, formFromScan, fullName, toPayload, validateForm,
@@ -71,6 +72,7 @@ export function VisitorDetailSheet({ scan, open, caps, onClose, onChanged, onDel
   const [errors, setErrors] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [recropOpen, setRecropOpen] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -88,7 +90,7 @@ export function VisitorDetailSheet({ scan, open, caps, onClose, onChanged, onDel
 
   // Base UI's own Esc did not work in this project (see useEscapeKey): each layer registers
   // its own, innermost first.
-  useEscapeKey(open && !viewerOpen && !confirmDeleteOpen && !confirmCloseOpen, requestClose);
+  useEscapeKey(open && !viewerOpen && !recropOpen && !confirmDeleteOpen && !confirmCloseOpen, requestClose);
   useEscapeKey(viewerOpen && !confirmDeleteOpen, () => setViewerOpen(false));
   useEscapeKey(confirmDeleteOpen, () => setConfirmDeleteOpen(false));
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
@@ -229,10 +231,18 @@ export function VisitorDetailSheet({ scan, open, caps, onClose, onChanged, onDel
               {/* Left (RTL end): the photo of the document */}
               <Section title="צילום התעודה" icon={Camera} iconTone="violet"
                 headerSlot={(
-                  <Button type="button" variant="outline" onClick={() => setViewerOpen(true)} className="gap-1.5">
-                    <Maximize2 className="h-3.5 w-3.5" aria-hidden />
-                    מסך מלא
-                  </Button>
+                  <>
+                    {caps.canManage && (
+                      <Button type="button" variant="outline" onClick={() => setRecropOpen(true)} data-recrop-open className="gap-1.5">
+                        <Crop className="h-3.5 w-3.5" aria-hidden />
+                        חתוך מחדש
+                      </Button>
+                    )}
+                    <Button type="button" variant="outline" onClick={() => setViewerOpen(true)} className="gap-1.5">
+                      <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                      מסך מלא
+                    </Button>
+                  </>
                 )}>
                 <div className="py-2">
                   <button type="button" onClick={() => setViewerOpen(true)} aria-label="פתח את הצילום במסך מלא"
@@ -247,6 +257,12 @@ export function VisitorDetailSheet({ scan, open, caps, onClose, onChanged, onDel
           </div>
 
           <ImageViewer open={viewerOpen} src={scan.image_url} alt={`צילום התעודה של ${fullName(scan)}`} onClose={() => setViewerOpen(false)} />
+          {caps.canManage && (
+            <RecropDialog
+              open={recropOpen} scan={scan} onClose={() => setRecropOpen(false)}
+              onReplaced={(next) => { setRecropOpen(false); onChanged(next); }}
+            />
+          )}
 
           {caps.canManage ? (
             <PanelFooter

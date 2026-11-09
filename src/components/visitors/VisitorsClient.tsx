@@ -47,9 +47,11 @@ export function VisitorsClient({ caps }: { caps: VisitorCaps }) {
 
   const [selected, setSelected] = useState<VisitorScan | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [scanFile, setScanFile] = useState<File | null>(null);
+  // The photo the guard just took and an object URL of it for the crop step; both go together.
+  const [scan, setScan] = useState<{ file: File; url: string } | null>(null);
   const [pwOpen, setPwOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const urlRef = useRef<string | null>(null);
 
   // The search waits for a pause in typing; the dates apply at once.
   useEffect(() => {
@@ -85,6 +87,16 @@ export function VisitorsClient({ caps }: { caps: VisitorCaps }) {
   }, [q, filter.from, filter.to, page, tick, reqKey]);
 
   const openCamera = useCallback(() => fileRef.current?.click(), []);
+
+  /** Replaces the current photo (freeing its object URL); null drops it. */
+  function setPhoto(file: File | null) {
+    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+    const url = file ? URL.createObjectURL(file) : null;
+    urlRef.current = url;
+    setScan(file && url ? { file, url } : null);
+  }
+
+  useEffect(() => () => { if (urlRef.current) URL.revokeObjectURL(urlRef.current); }, []);
 
   function onFilterChange(next: VisitorFilter) {
     if (next.from !== filter.from || next.to !== filter.to) setPage(1);
@@ -147,7 +159,7 @@ export function VisitorsClient({ caps }: { caps: VisitorCaps }) {
           onChange={(e) => {
             const f = e.target.files?.[0];
             e.target.value = '';
-            if (f) { setScanKey((k) => k + 1); setScanFile(f); }
+            if (f) { setScanKey((k) => k + 1); setPhoto(f); }
           }}
         />
       )}
@@ -262,10 +274,10 @@ export function VisitorsClient({ caps }: { caps: VisitorCaps }) {
       )}
 
       <ScanSheet
-        key={scanKey} file={scanFile}
-        onClose={() => setScanFile(null)}
-        onRetake={() => { setScanFile(null); openCamera(); }}
-        onSaved={() => { setScanFile(null); setPage(1); setTick((t) => t + 1); }}
+        key={scanKey} file={scan?.file ?? null} previewUrl={scan?.url ?? null}
+        onClose={() => setPhoto(null)}
+        onRetake={() => { setPhoto(null); openCamera(); }}
+        onSaved={() => { setPhoto(null); setPage(1); setTick((t) => t + 1); }}
       />
 
       {caps.isGuard && <ChangePasswordSheet open={pwOpen} onClose={() => setPwOpen(false)} />}
