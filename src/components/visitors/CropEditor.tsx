@@ -35,6 +35,9 @@ interface Props {
   cancelLabel: string;
   /** The parent is working on the answer (disables the buttons). */
   busy?: boolean;
+  /** Keep the confirm button off until the frame differs from where it started — a re-crop of the
+   *  whole picture that changed nothing would only re-encode (and degrade) the stored photo. */
+  requireChange?: boolean;
   onConfirm: (jpeg: Blob) => void;
   onCancel: () => void;
   /** The picture could not be opened (a format this browser cannot draw). */
@@ -74,7 +77,7 @@ function Dot({ handle }: { handle: Handle }) {
   );
 }
 
-export function CropEditor({ src, initial, confirmLabel, cancelLabel, busy = false, onConfirm, onCancel, onLoadError }: Props) {
+export function CropEditor({ src, initial, confirmLabel, cancelLabel, busy = false, requireChange = false, onConfirm, onCancel, onLoadError }: Props) {
   const [loaded, setLoaded] = useState<{ img: HTMLImageElement; start: Rect; auto: boolean } | null>(null);
   const [rect, setRect] = useState<Rect | null>(null);
   const [adj, setAdj] = useState<ViewAdjust>(NO_ADJUST);
@@ -130,7 +133,9 @@ export function CropEditor({ src, initial, confirmLabel, cancelLabel, busy = fal
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const box = layer.getBoundingClientRect();
-      setAdj((a) => zoomAt(a, Math.exp(-e.deltaY * 0.0015), e.clientX - box.left, e.clientY - box.top, stage, size));
+      // Firefox reports a mouse notch in lines (deltaMode 1), Chrome in pixels: bring both to pixels.
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 100 : e.deltaY;
+      setAdj((a) => zoomAt(a, Math.exp(-dy * 0.0015), e.clientX - box.left, e.clientY - box.top, stage, size));
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
@@ -148,7 +153,7 @@ export function CropEditor({ src, initial, confirmLabel, cancelLabel, busy = fal
 
   function onPointerDown(e: React.PointerEvent) {
     if (!view || !rect) return;
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 1) return;
     const p = local(e);
     pointers.current.set(e.pointerId, p);
     try { outerRef.current?.setPointerCapture(e.pointerId); } catch { /* the pointer is already gone */ }
@@ -163,7 +168,10 @@ export function CropEditor({ src, initial, confirmLabel, cancelLabel, busy = fal
       };
       return;
     }
-    const target = (e.target as Element).closest<HTMLElement>('[data-crop-handle]');
+    // A mouse can pan a zoomed picture from anywhere — even from inside a frame that covers it —
+    // with the middle button or Shift held; a finger does it with two fingers (below) or from outside the frame.
+    const forcePan = e.pointerType === 'mouse' && (e.button === 1 || e.shiftKey);
+    const target = forcePan ? null : (e.target as Element).closest<HTMLElement>('[data-crop-handle]');
     const handle = target?.dataset.cropHandle as Handle | 'move' | undefined;
     if (handle) {
       gesture.current = { kind: 'rect', id: e.pointerId, handle, x0: p.x, y0: p.y, rect0: rect, scale: view.scale };
@@ -204,6 +212,7 @@ export function CropEditor({ src, initial, confirmLabel, cancelLabel, busy = fal
     if (!pointers.current.delete(e.pointerId)) return;
     const g = gesture.current;
     if (g.kind === 'pinch') {
+      if (!g.ids.includes(e.pointerId)) return; // a third finger lifting must not end the pinch of the other two
       // One finger stays down: carry on as a pan from where the picture is now.
       const [rest] = [...pointers.current.keys()];
       if (rest !== undefined && view) startPan(rest, resolveView(adj, stage, imgSize));
@@ -232,6 +241,8 @@ export function CropEditor({ src, initial, confirmLabel, cancelLabel, busy = fal
 
   const box = view && rect ? rectOnStage(rect, view) : null;
   const disabled = busy || working;
+  const unchanged = !!loaded && !!rect
+    && rect.x === loaded.start.x && rect.y === loaded.start.y && rect.w === loaded.start.w && rect.h === loaded.start.h;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-slate-50/60" data-crop-editor>
@@ -307,7 +318,7 @@ export function CropEditor({ src, initial, confirmLabel, cancelLabel, busy = fal
           <Button type="button" variant="outline" onClick={onCancel} disabled={disabled} data-crop-cancel>
             {cancelLabel}
           </Button>
-          <Button type="button" onClick={() => void confirm()} disabled={!ready || disabled} data-crop-confirm className="gap-2">
+          <Button type="button" onClick={() => void confirm()} disabled={!ready || disabled || (requireChange && unchanged)} data-crop-confirm className="gap-2">
             {disabled && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
             {confirmLabel}
           </Button>

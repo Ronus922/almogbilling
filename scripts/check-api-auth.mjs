@@ -98,24 +98,40 @@ run('check-api-auth', async () => {
   }
   ok(`${handlers} handlers של "כל משתמש מחובר" חוסמים את השומר`);
 
-  // ── The visitor-scan screen (09/11/2026) is guard / admin / super_admin ONLY.
+  // ── The visitor-scan screen (09/11/2026) is guard / admin / super admin ONLY.
   //    A bare requireActor() / getSession() in one of its handlers would answer
   //    EVERY signed-in role (manager, viewer, cleaner, maintenance), so each
   //    handler under /api/visitors must call a requireVisitor* guard — the role
-  //    allowlists — and the visitor-ids file bucket must keep its own.
+  //    allowlists — and the visitor-ids file bucket must keep its own. Three
+  //    holes the security review of 09/11/2026 pointed at are closed here:
+  //      · every export form counts (`export async function`, `export function`,
+  //        `export const GET = …`), and a visitors route with NO recognisable
+  //        handler fails instead of being skipped;
+  //      · comments are stripped first, so a commented-out requireVisitorView(
+  //        proves nothing;
+  //      · the rule is not tied to the folder: ANY route that touches the scans
+  //        table or their photos (imports visitorScans / visitorIdStorage /
+  //        lib/visitors) must carry the guard too.
+  const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  const HANDLER_SPLIT = /(?=export\s+(?:async\s+)?function\s+(?:GET|POST|PUT|PATCH|DELETE)\b|export\s+const\s+(?:GET|POST|PUT|PATCH|DELETE)\s*[=:])/;
+  const HANDLER_HEAD = /export\s+(?:async\s+)?function\s+(?:GET|POST|PUT|PATCH|DELETE)\b|export\s+const\s+(?:GET|POST|PUT|PATCH|DELETE)\s*[=:]/;
   const VISITOR_GUARD = /requireVisitor(View|Create|Edit|Manage)\(/;
+  const TOUCHES_VISITORS = /@\/lib\/(db\/visitorScans|storage\/visitorIdStorage|visitors\/)/;
   let visitorHandlers = 0;
-  for (const rel of files.filter((f) => f.startsWith('src/app/api/visitors/'))) {
-    const src = readFileSync(join(root, rel), 'utf8');
-    const parts = src.split(/(?=export async function (?:GET|POST|PUT|PATCH|DELETE)\b)/).slice(1);
+  for (const rel of files) {
+    const src = stripComments(readFileSync(join(root, rel), 'utf8'));
+    const inFolder = rel.startsWith('src/app/api/visitors/');
+    if (!inFolder && !TOUCHES_VISITORS.test(src)) continue;
+    const parts = src.split(HANDLER_SPLIT).filter((p) => HANDLER_HEAD.test(p.slice(0, 120)));
+    if (parts.length === 0) { fail(`${rel} — נתיב של סריקת כניסה בלי handler שהבדיקה מזהה (export function / export const GET = …)`); continue; }
     for (const body of parts) {
       visitorHandlers++;
-      const name = /export async function (\w+)/.exec(body)?.[1] ?? '?';
-      if (!VISITOR_GUARD.test(body) || WEAK.test(body)) fail(`${rel} ${name} — חייב requireVisitor* (guard/admin/super_admin בלבד) ולא אימות "מחובר" גורף`);
+      const name = /(GET|POST|PUT|PATCH|DELETE)/.exec(body.slice(0, 120))?.[1] ?? '?';
+      if (!VISITOR_GUARD.test(body) || WEAK.test(body)) fail(`${rel} ${name} — חייב requireVisitor* (guard/admin/super admin בלבד) ולא אימות "מחובר" גורף`);
     }
   }
-  if (visitorHandlers === 0) fail('לא נמצאו handlers תחת /api/visitors — האם הנתיב השתנה?');
-  const filesRoute = readFileSync(join(root, 'src/app/api/files/[bucket]/[...path]/route.ts'), 'utf8');
+  if (visitorHandlers === 0) fail('לא נמצאו handlers של סריקת כניסה — האם הנתיב השתנה?');
+  const filesRoute = stripComments(readFileSync(join(root, 'src/app/api/files/[bucket]/[...path]/route.ts'), 'utf8'));
   if (!/'visitor-ids':\s*\(\)\s*=>\s*requireVisitorView\(\)/.test(filesRoute)) fail("src/app/api/files — הבאקט visitor-ids חייב להישען על requireVisitorView()");
   ok(`${visitorHandlers} handlers של סריקת כניסה נשענים על requireVisitor*; הקבצים של visitor-ids על requireVisitorView`);
 });

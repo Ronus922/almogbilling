@@ -139,9 +139,16 @@ async function openRow(page: Page, text: string): Promise<void> {
 
 interface Frame { x: number; y: number; w: number; h: number }
 
-/** The crop step is on screen and the picture is drawn: the frame is positioned. */
+/** The crop step is on screen, the picture is drawn, and the sheet has FINISHED sliding in (it takes
+ *  1.2s from the left): a drag that aims at a handle's coordinates while the sheet still moves would
+ *  miss a 44px target. Only finite animations are awaited — spinners never end. */
 async function cropReady(page: Page): Promise<void> {
   await expect(page.locator('[data-crop-rect]')).toBeVisible();
+  await page.evaluate(() => Promise.all(
+    document.getAnimations()
+      .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+      .map((a) => a.finished.catch(() => undefined)),
+  ));
 }
 
 /** Presses "המשך" on the crop step. */
@@ -150,12 +157,21 @@ async function cropContinue(page: Page): Promise<void> {
   await page.locator('[data-crop-confirm]').click();
 }
 
-/** The frame in the PICTURE's pixels, read off the editor. */
+/** The frame in the PICTURE's pixels, read off the editor — once two reads 40ms apart agree (the
+ *  last pointer move of a drag commits a render later). */
 async function frameOf(page: Page): Promise<Frame> {
-  return page.locator('[data-crop-rect]').evaluate((el) => {
+  const read = () => page.locator('[data-crop-rect]').evaluate((el) => {
     const d = (el as HTMLElement).dataset;
     return { x: Number(d.x), y: Number(d.y), w: Number(d.w), h: Number(d.h) };
   });
+  let prev = await read();
+  for (let i = 0; i < 25; i += 1) {
+    await page.waitForTimeout(40);
+    const cur = await read();
+    if (cur.x === prev.x && cur.y === prev.y && cur.w === prev.w && cur.h === prev.h) return cur;
+    prev = cur;
+  }
+  return prev;
 }
 
 async function centerOf(page: Page, selector: string): Promise<{ x: number; y: number }> {
@@ -425,13 +441,15 @@ test('the guard scans a document: photo → OCR → editable form → save → t
   await expect(sheet.getByText('נקרא בביטחון נמוך — בדוק מול התעודה')).toHaveCount(1);
   await expect(sheet.locator('#v-dob').locator('xpath=ancestor::div[contains(@class,"border-amber") or contains(@class,"amber")][1]')).toHaveCount(1);
 
-  // What the server sent the OCR: ONE JPEG, at most 1600px, no EXIF, to the configured model.
+  // What the server sent the OCR: ONE WebP (the compressed photo), at most 1600px, no EXIF, under 300KB.
   expect(anthropic.calls).toHaveLength(1);
   const sent = anthropic.calls[0]!;
-  expect(sent.mediaType).toBe('image/jpeg');
+  expect(sent.mediaType).toBe('image/webp');
   const meta = await sharp(sent.imageBytes).metadata();
+  expect(meta.format).toBe('webp');
   expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBe(1600);
   expect(meta.exif).toBeUndefined();
+  expect(sent.imageBytes.length).toBeLessThanOrEqual(300 * 1024);
   expect(sent.system).toMatch(/untrusted/i);
 
   // Nothing is stored until "שמור".
@@ -461,16 +479,20 @@ test('the guard scans a document: photo → OCR → editable form → save → t
     scanned_by: roleUser.guard!.id,
   });
   expect(row.date_of_birth.toISOString().slice(0, 10)).toBe('1990-05-17');
-  expect(row.image_object_key).toMatch(/^[0-9a-f-]{36}\.jpg$/);
+  expect(row.image_object_key).toMatch(/^[0-9a-f-]{36}\.webp$/);
 
-  // The photo is in the PRIVATE bucket, as a JPEG at most 1600px with no metadata.
+  // The photo is in the PRIVATE bucket, as a WebP at most 1600px with no metadata and under 300KB —
+  // and it is the VERY bytes the OCR read (one encode), whose weight the row records.
   const stored = storage.objects.get(`visitor-ids/${row.image_object_key}`);
   expect(stored).toBeDefined();
-  expect(stored!.contentType).toBe('image/jpeg');
+  expect(stored!.contentType).toBe('image/webp');
   const m2 = await sharp(stored!.bytes).metadata();
-  expect(m2.format).toBe('jpeg');
+  expect(m2.format).toBe('webp');
   expect(Math.max(m2.width ?? 0, m2.height ?? 0)).toBeLessThanOrEqual(1600);
   expect(m2.exif).toBeUndefined();
+  expect(stored!.bytes.length).toBeLessThanOrEqual(300 * 1024);
+  expect(stored!.bytes.equals(sent.imageBytes)).toBe(true);
+  expect(row.image_bytes).toBe(stored!.bytes.length);
 
   // The table shows the new row; the guard is named as the scanner.
   const tr = page.locator('tr[data-visitor-row]', { hasText: NAME_TOKEN });
@@ -505,9 +527,9 @@ test('an iPhone HEIC photo goes through end to end', async ({ browser }) => {
   await expect(sheet.locator('#v-first')).toHaveValue('חיים');
   await expect(sheet.locator('#v-docnum')).toHaveValue('AB123456');
   await expect(sheet.getByRole('radio', { name: 'דרכון' })).toHaveAttribute('aria-checked', 'true');
-  // The OCR got a JPEG (decoded from the HEIC), not the HEIC.
+  // The OCR got a WebP (decoded from the HEIC, cropped, compressed), not the HEIC.
   expect(anthropic.calls).toHaveLength(1);
-  expect(anthropic.calls[0]!.imageBytes.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+  expect((await sharp(anthropic.calls[0]!.imageBytes).metadata()).format).toBe('webp');
   // The preview shows (a browser cannot draw a HEIC; this is the converted JPEG).
   const loaded = await sheet.locator('img[alt="צילום התעודה"]').evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0);
   expect(loaded).toBe(true);
@@ -517,8 +539,8 @@ test('an iPhone HEIC photo goes through end to end', async ({ browser }) => {
   const row = (await pool.query(`select id, image_object_key from public.visitor_scans where last_name = $1`, [`${NAME_TOKEN}H`])).rows[0];
   scanIds.push(row.id);
   const stored = storage.objects.get(`visitor-ids/${row.image_object_key}`)!;
-  expect(stored.bytes.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
-  expect((await sharp(stored.bytes).metadata()).format).toBe('jpeg');
+  expect((await sharp(stored.bytes).metadata()).format).toBe('webp');
+  expect(stored.bytes.equals(anthropic.calls[0]!.imageBytes)).toBe(true);
 });
 
 test('when the OCR cannot read, the form opens empty and the guard fills it by hand', async ({ browser }) => {
@@ -650,6 +672,26 @@ test('with no document found the frame is 85% centred; the guard drags the sides
   const meta = await sharp(anthropic.calls[0]!.imageBytes).metadata();
   expect(Math.abs((meta.width ?? 1) / (meta.height ?? 1) - final.w / final.h) / (final.w / final.h)).toBeLessThan(0.01);
   expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBe(1600);
+  await page.keyboard.press('Escape');
+  await page.getByRole('alertdialog').getByRole('button', { name: 'צא ללא שמירה' }).click();
+});
+
+test('a phone photo that carries an EXIF rotation is cropped UPRIGHT, the way the guard sees it', async ({ browser }) => {
+  // An iPhone stores a portrait shot as a landscape JPEG plus "rotate 90°" in EXIF (orientation 6).
+  const rotated = await sharp({ create: { width: 2400, height: 1600, channels: 3, background: '#4a6fa5' } })
+    .withMetadata({ orientation: 6 }).jpeg().toBuffer();
+  expect((await sharp(rotated).metadata()).orientation).toBe(6); // the fixture really carries it
+  const { page } = await signIn(browser, GUARD);
+  await page.goto('/visitors');
+  await page.locator('input[data-visitor-file]').setInputFiles({ name: 'IMG_0002.jpg', mimeType: 'image/jpeg', buffer: rotated });
+  await cropReady(page);
+  // the picture is 1600 wide × 2400 tall as displayed → the 85% frame is portrait too
+  expect(await frameOf(page)).toEqual({ x: 120, y: 180, w: 1360, h: 2040 });
+  await page.locator('[data-crop-confirm]').click();
+  await expect(page.getByRole('dialog').locator('#v-first')).toHaveValue('דוד');
+  const meta = await sharp(anthropic.calls[0]!.imageBytes).metadata();
+  expect((meta.height ?? 0)).toBeGreaterThan(meta.width ?? 0); // what the OCR reads is portrait, upright
+  expect(meta.orientation).toBeUndefined(); // and carries no rotation tag any more
   await page.keyboard.press('Escape');
   await page.getByRole('alertdialog').getByRole('button', { name: 'צא ללא שמירה' }).click();
 });
@@ -888,6 +930,7 @@ test('an admin re-crops a stored photo: the object is replaced, the old one remo
   await sheet.locator('[data-recrop-open]').click();
   await cropReady(page);
   expect(await frameOf(page)).toEqual({ x: 0, y: 0, w: W, h: H }); // a re-crop starts as the whole picture
+  await expect(page.locator('[data-crop-confirm]')).toBeDisabled(); // …and an untouched frame cannot replace (re-encode) the photo
   await page.locator('[data-crop-cancel]').click();
   await expect(page.locator('[data-crop-editor]')).toHaveCount(0);
   expect((await pool.query(`select image_object_key from public.visitor_scans where id = $1`, [id])).rows[0].image_object_key).toBe(oldKey);
@@ -910,14 +953,14 @@ test('an admin re-crops a stored photo: the object is replaced, the old one remo
   await confirm.locator('[data-recrop-confirm]').click();
   await expect(page.getByText('הצילום הוחלף')).toBeVisible();
 
-  const after = (await pool.query(`select image_object_key, first_name, nationality from public.visitor_scans where id = $1`, [id])).rows[0];
+  const after = (await pool.query(`select image_object_key, image_bytes, first_name, nationality from public.visitor_scans where id = $1`, [id])).rows[0];
   expect(after.image_object_key).not.toBe(oldKey);
   expect(after.first_name).toBe('חיתוך');
   expect(after.nationality).toBe('ישראלית'); // the hidden field is untouched
   const newObj = storage.objects.get(`visitor-ids/${after.image_object_key}`)!;
   expect(newObj).toBeDefined();
   const meta = await sharp(newObj.bytes).metadata();
-  expect(meta.format).toBe('jpeg');
+  expect(meta.format).toBe('webp');
   expect(Math.abs((meta.width ?? 0) - W / 2)).toBeLessThan(80);
   expect(meta.height).toBe(H);
   const px = await sharp(newObj.bytes).resize(1, 1).raw().toBuffer();
@@ -928,7 +971,8 @@ test('an admin re-crops a stored photo: the object is replaced, the old one remo
   const audit = await pool.query(`select actor_user_id, metadata from public.audit_log where entity_type = 'visitor_scan' and entity_id = $1 and action = 'image_recropped'`, [id]);
   expect(audit.rows).toHaveLength(1);
   expect(audit.rows[0].actor_user_id).toBe(roleUser.admin!.id);
-  expect(audit.rows[0].metadata).toEqual({ actor_role: 'admin', old_object_key: oldKey, new_object_key: after.image_object_key, old_photo_removed: true });
+  expect(audit.rows[0].metadata).toEqual({ actor_role: 'admin', old_object_key: oldKey, new_object_key: after.image_object_key, new_image_bytes: newObj.bytes.length, old_photo_removed: true });
+  expect(after.image_bytes).toBe(newObj.bytes.length);
   // the sheet shows the new photo, served through the proxy
   await expect(sheet.locator('img[data-visitor-photo]')).toHaveAttribute('src', `/api/files/visitor-ids/${after.image_object_key}`);
 });
