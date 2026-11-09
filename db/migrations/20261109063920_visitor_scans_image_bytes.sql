@@ -1,8 +1,9 @@
 -- migrate:up
 -- "סריקת כניסה" — the weight of the stored photo (09/11/2026).
 --
--- The photo is now a WebP of at most ~300KB (a ladder of quality 80→60, then 1280px,
--- never below either: readability before weight). image_bytes records the FINAL size
+-- The photo is now a progressive JPEG of at most ~300KB (a ladder of quality 82→64, then
+-- 1280px, never below either: readability before weight; JPEG so that it opens on any
+-- computer and can be handed to outside parties). image_bytes records the FINAL size
 -- of each stored object so the weight can be followed over time with plain SQL.
 --
 -- Additive: one nullable column. Rows saved before this change keep NULL (their
