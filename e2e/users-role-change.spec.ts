@@ -93,7 +93,7 @@ test.describe('roles on /settings/users — as an admin', () => {
     await expect(panel.getByRole('heading', { name: 'צור משתמש' })).toBeVisible();
 
     const roleCards = panel.locator('button[aria-pressed]');
-    await expect(roleCards).toHaveCount(4); // an admin: manager, viewer, cleaner, maintenance
+    await expect(roleCards).toHaveCount(5); // an admin: manager, viewer, cleaner, maintenance, guard (08/11/2026)
     await expect(panel.locator('button[aria-pressed="true"]')).toHaveCount(0);
     await expect(panel.getByText('בחר תפקיד — אין ברירת מחדל')).toBeVisible();
 

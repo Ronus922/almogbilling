@@ -7,7 +7,8 @@ import type { Action, ModulePermission, Role } from '@/lib/permissions/constants
 export interface ClientActor {
   id: string;
   username: string;
-  email: string;
+  /** null for a guard created without a mailbox. */
+  email: string | null;
   full_name: string | null;
   role: Role;
   permissions: ModulePermission[];

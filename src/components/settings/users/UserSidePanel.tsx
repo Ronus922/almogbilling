@@ -334,7 +334,7 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
                       </span>
                     )}
                   </div>
-                  <p dir="ltr" className="mt-1 text-sm text-white/70">{user.email}</p>
+                  <p dir="ltr" className="mt-1 text-sm text-white/70">{user.email ?? user.username}</p>
                 </div>
                 <button
                   type="button"
@@ -393,7 +393,7 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
                       </div>
                       <div className="space-y-2">
                         <Label className="text-base font-medium text-muted-foreground">אימייל</Label>
-                        <Input value={user.email} disabled dir="ltr" className="h-10" />
+                        <Input value={user.email ?? ''} placeholder={user.email ? undefined : 'ללא אימייל'} disabled dir="ltr" className="h-10" />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="user-phone" className="text-base font-medium text-muted-foreground">טלפון</Label>
@@ -489,15 +489,17 @@ export function UserSidePanel({ open, userId, currentUserId, currentUserRole, on
                           {user.allow_google_auth ? 'מאופשרת' : 'כבויה'}
                         </div>
                         <div className="mt-0.5 text-xs text-slate-500">
-                          {user.allow_google_auth
-                            ? 'המשתמש יכול להתחבר עם חשבון Google התואם לאימייל שלו.'
-                            : 'התחברות עם Google חסומה. כניסה עם שם משתמש וסיסמה תמיד זמינה.'}
+                          {user.email === null
+                            ? 'כניסה עם Google מזהה לפי כתובת אימייל, ולמשתמש הזה אין — היא זמינה רק עם אימייל.'
+                            : user.allow_google_auth
+                              ? 'המשתמש יכול להתחבר עם חשבון Google התואם לאימייל שלו.'
+                              : 'התחברות עם Google חסומה. כניסה עם שם משתמש וסיסמה תמיד זמינה.'}
                         </div>
                       </div>
                       <Switch
                         checked={user.allow_google_auth}
                         onCheckedChange={() => void toggleGoogleAuth()}
-                        disabled={lacksAuthority}
+                        disabled={lacksAuthority || user.email === null}
                         aria-label="אפשר כניסה עם Google"
                         className="shrink-0"
                       />

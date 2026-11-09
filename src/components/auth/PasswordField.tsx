@@ -20,6 +20,7 @@ export function PasswordField({
   disabled,
   error,
   placeholder,
+  autoComplete = 'new-password',
 }: {
   id: string;
   label: string;
@@ -28,6 +29,8 @@ export function PasswordField({
   disabled?: boolean;
   error?: string | null;
   placeholder?: string;
+  /** Default 'new-password'. 'current-password' lets iOS Keychain offer the saved one. */
+  autoComplete?: 'new-password' | 'current-password';
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -37,7 +40,7 @@ export function PasswordField({
         <Input
           id={id}
           type={show ? 'text' : 'password'}
-          autoComplete="new-password"
+          autoComplete={autoComplete}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}

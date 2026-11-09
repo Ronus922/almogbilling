@@ -9,6 +9,7 @@ import { writeAudit } from '@/lib/db/audit';
 import { query, withTransaction } from '@/lib/db';
 import { hashPassword } from '@/lib/auth/password';
 import { isValidPassword } from '@/lib/auth/passwordPolicy';
+import { GUARD_USERNAME_HELP, GUARD_USERNAME_RX, normalizeUsername } from '@/lib/auth/usernamePolicy';
 import {
   listUsers,
   listOpenInvites,
@@ -77,7 +78,69 @@ export async function GET() {
   return NextResponse.json({ users, invites });
 }
 
+/**
+ * Create a guard ("שומר", 08/11/2026): the admin types a username and a
+ * password; the e-mail is optional (and only needed if the guard is to sign in
+ * with Google). Never an invite — there is no mailbox to send one to. A guard
+ * is not a matrix role, so no user_permissions rows are written: its one screen
+ * is a role grant (VISITOR_*_ROLES), not a matrix cell.
+ */
+async function createGuard(actor: Actor, body: PostBody, email: string, full_name: string): Promise<NextResponse> {
+  if (!canManageRole(actor.role, 'guard')) {
+    return NextResponse.json({ error: 'אין הרשאה ליצור משתמש בתפקיד זה' }, { status: 403 });
+  }
+  const username = typeof body.username === 'string' ? normalizeUsername(body.username) : '';
+  const password = typeof body.password === 'string' ? body.password : '';
+
+  if (full_name.length < 2 || full_name.length > 80) {
+    return NextResponse.json({ error: 'שם מלא חייב להיות 2-80 תווים' }, { status: 400 });
+  }
+  if (!GUARD_USERNAME_RX.test(username)) {
+    return NextResponse.json({ error: `שם משתמש: ${GUARD_USERNAME_HELP}` }, { status: 400 });
+  }
+  if (!isValidPassword(password)) {
+    return NextResponse.json({ error: 'הסיסמה לא עומדת בדרישות' }, { status: 400 });
+  }
+  if (email !== '' && !EMAIL_RX.test(email)) {
+    return NextResponse.json({ error: 'כתובת אימייל לא תקינה' }, { status: 400 });
+  }
+  if (email !== '' && (await emailExistsAsUserOrOpenInvite(email))) {
+    return NextResponse.json({ error: 'כתובת המייל כבר רשומה במערכת' }, { status: 409 });
+  }
+
+  const password_hash = await hashPassword(password);
+  let userId: string;
+  try {
+    const ins = await query<{ id: string }>(
+      `insert into public.users (username, email, full_name, password_hash, role, is_active)
+       values ($1, $2, $3, $4, 'guard', true)
+       returning id`,
+      [username, email === '' ? null : email, full_name, password_hash],
+    );
+    userId = ins.rows[0]!.id;
+  } catch (err) {
+    const e = err as { code?: string; constraint?: string };
+    if (e.code === '23505') {
+      const dup = e.constraint?.includes('username') ? 'שם המשתמש כבר קיים במערכת' : 'כתובת המייל כבר רשומה במערכת';
+      return NextResponse.json({ error: dup }, { status: 409 });
+    }
+    logger.error('[users POST guard]', err);
+    return NextResponse.json({ error: 'server_error' }, { status: 500 });
+  }
+
+  await writeAudit({
+    actorUserId: actor.id,
+    action: 'created',
+    entityType: 'user',
+    entityId: userId,
+    metadata: { username, email: email === '' ? null : email, full_name, role: 'guard', actor_role: actor.role, method: 'password' },
+  });
+  return NextResponse.json({ id: userId, role: 'guard' }, { status: 201 });
+}
+
 interface PostBody {
+  /** Guard only: the login name (a guard has no required e-mail). */
+  username?: unknown;
   email?: unknown;
   full_name?: unknown;
   role?: unknown;
@@ -107,6 +170,9 @@ export async function POST(req: NextRequest) {
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   const full_name = typeof body.full_name === 'string' ? body.full_name.trim() : '';
   const role = typeof body.role === 'string' ? (body.role as Role) : '' as Role;
+
+  // A guard is created by username + password — no invite, no mailbox required.
+  if (role === 'guard') return createGuard(actor, body, email, full_name);
 
   if (!EMAIL_RX.test(email)) {
     return NextResponse.json({ error: 'כתובת אימייל לא תקינה' }, { status: 400 });
@@ -230,7 +296,7 @@ export async function POST(req: NextRequest) {
 
   const origin = appUrl();
   const acceptUrl = `${origin}/accept-invite?token=${encodeURIComponent(rawToken)}`;
-  const inviterName = actor.full_name?.trim() || actor.email;
+  const inviterName = actor.full_name?.trim() || actor.email || actor.username;
   const roleLabel = ROLES.find((x) => x.value === role)?.label ?? role;
 
   try {

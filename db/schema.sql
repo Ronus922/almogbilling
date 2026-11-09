@@ -4021,7 +4021,7 @@ COMMENT ON COLUMN public.user_work_board_order.employee_ids IS 'The exact lane s
 CREATE TABLE public.users (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     username text NOT NULL,
-    email text NOT NULL,
+    email text,
     password_hash text NOT NULL,
     full_name text,
     is_active boolean DEFAULT true NOT NULL,
@@ -4033,7 +4033,7 @@ CREATE TABLE public.users (
     notify_whatsapp boolean DEFAULT false NOT NULL,
     allow_google_auth boolean DEFAULT false NOT NULL,
     last_seen_at timestamp with time zone,
-    CONSTRAINT users_role_check CHECK ((role = ANY (ARRAY['super_admin'::text, 'admin'::text, 'manager'::text, 'viewer'::text, 'cleaner'::text, 'maintenance'::text])))
+    CONSTRAINT users_role_check CHECK ((role = ANY (ARRAY['super_admin'::text, 'admin'::text, 'manager'::text, 'viewer'::text, 'cleaner'::text, 'maintenance'::text, 'guard'::text])))
 );
 
 
@@ -4042,6 +4042,47 @@ CREATE TABLE public.users (
 --
 
 COMMENT ON COLUMN public.users.last_seen_at IS 'Last realtime-chat heartbeat (SSE connect/heartbeat). Drives the online dot: online = now() - last_seen_at < 60s.';
+
+
+--
+-- Name: visitor_scans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.visitor_scans (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    document_type text NOT NULL,
+    document_number text NOT NULL,
+    first_name text NOT NULL,
+    last_name text NOT NULL,
+    date_of_birth date,
+    nationality text,
+    phone text,
+    room_number text,
+    chip_number text,
+    notes text,
+    image_object_key text NOT NULL,
+    image_original_name text,
+    scanned_by uuid,
+    scanned_by_name text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    image_bytes integer,
+    CONSTRAINT visitor_scans_document_type_check CHECK ((document_type = ANY (ARRAY['id_card'::text, 'driver_license'::text, 'passport'::text])))
+);
+
+
+--
+-- Name: TABLE visitor_scans; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.visitor_scans IS 'Scanned visitor documents (id card / driver licence / passport). The image is in the private bucket visitor-ids, served only through /api/files. Kept forever.';
+
+
+--
+-- Name: COLUMN visitor_scans.image_bytes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.visitor_scans.image_bytes IS 'Size in bytes of the stored photo (image_object_key); NULL for rows saved before 09/11/2026.';
 
 
 --
@@ -5331,6 +5372,14 @@ ALTER TABLE ONLY public.users
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_username_key UNIQUE (username);
+
+
+--
+-- Name: visitor_scans visitor_scans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.visitor_scans
+    ADD CONSTRAINT visitor_scans_pkey PRIMARY KEY (id);
 
 
 --
@@ -6677,6 +6726,41 @@ CREATE UNIQUE INDEX users_email_lower_idx ON public.users USING btree (lower(ema
 --
 
 CREATE UNIQUE INDEX users_username_lower_idx ON public.users USING btree (lower(username));
+
+
+--
+-- Name: visitor_scans_created_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX visitor_scans_created_at_idx ON public.visitor_scans USING btree (created_at DESC);
+
+
+--
+-- Name: visitor_scans_document_number_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX visitor_scans_document_number_idx ON public.visitor_scans USING btree (document_number);
+
+
+--
+-- Name: visitor_scans_image_object_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX visitor_scans_image_object_key_idx ON public.visitor_scans USING btree (image_object_key);
+
+
+--
+-- Name: visitor_scans_name_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX visitor_scans_name_idx ON public.visitor_scans USING btree (lower(((first_name || ' '::text) || last_name)));
+
+
+--
+-- Name: visitor_scans_phone_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX visitor_scans_phone_idx ON public.visitor_scans USING btree (phone);
 
 
 --
@@ -8199,6 +8283,14 @@ ALTER TABLE ONLY public.user_work_board_order
 
 
 --
+-- Name: visitor_scans visitor_scans_scanned_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.visitor_scans
+    ADD CONSTRAINT visitor_scans_scanned_by_fkey FOREIGN KEY (scanned_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: wa_campaign_attachments wa_campaign_attachments_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8289,6 +8381,7 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 -- PostgreSQL database dump complete
 --
+
 
 
 --
@@ -8433,5 +8526,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261025120000'),
     ('20261025210248'),
     ('20261027150735'),
-    ('20261108170152')
+    ('20261108170152'),
+    ('20261108221704'),
+    ('20261109063920')
 ;

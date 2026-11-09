@@ -9,7 +9,8 @@ import { GlobalSearch } from './GlobalSearch';
 import { MobileNav } from './MobileNav';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useAuth, usePermissions } from '@/lib/auth/context';
-import { ROLE_STYLES, roleLabel } from '@/lib/permissions/constants';
+import { ROLE_STYLES, isGuardRole, roleLabel } from '@/lib/permissions/constants';
+import { canUseNotifications } from '@/lib/permissions/check';
 import { cn } from '@/lib/utils';
 
 export function Header() {
@@ -22,8 +23,10 @@ export function Header() {
   // the bell from ever mounting/polling for a viewer. The InternalChatBell and the
   // WhatsappBell (each its own badge + popover, fed by its own slice of
   // /api/notifications) reuse the same per-module RBAC as their sidebar entries
-  // (no new gate).
-  const showNotifications = user.role !== 'viewer';
+  // (no new gate). The guard (one screen: the visitor scan) is hidden from the
+  // bell and from the global search the same way — canUseNotifications().
+  const showNotifications = canUseNotifications(user.role);
+  const showSearch = !isGuardRole(user.role);
   const showChat = can('internal_chat', 'view');
   const showWhatsapp = can('whatsapp_chat', 'view');
   const hasIcons = showNotifications || showChat || showWhatsapp;
@@ -34,9 +37,11 @@ export function Header() {
           md:hidden (the desktop Sidebar covers ≥md); search collapses on mobile
           so the hamburger is always reachable and nothing gets crammed. */}
       <MobileNav />
-      <div className="hidden w-full max-w-[440px] items-center md:flex">
-        <GlobalSearch />
-      </div>
+      {showSearch && (
+        <div className="hidden w-full max-w-[440px] items-center md:flex">
+          <GlobalSearch />
+        </div>
+      )}
 
       <div className="flex-1" />
 
@@ -99,7 +104,7 @@ function UserPill() {
               {roleLabel(user.role)}
             </span>
           </div>
-          <div className="font-num mt-0.5 truncate text-[11.5px] text-ink-3">{user.email}</div>
+          <div className="font-num mt-0.5 truncate text-[11.5px] text-ink-3">{user.email ?? user.username}</div>
         </div>
         <div className="p-1.5">
           <button

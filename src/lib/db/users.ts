@@ -6,7 +6,8 @@ import type { Role } from '@/lib/permissions/constants';
 export interface UserListRow {
   id: string;
   username: string;
-  email: string;
+  /** null for a guard created without a mailbox (08/11/2026). */
+  email: string | null;
   full_name: string | null;
   role: Role;
   is_active: boolean;
@@ -57,15 +58,19 @@ export interface AssignableUser {
   id: string;
   full_name: string | null;
   username: string;
-  email: string;
+  email: string | null;
   notification_phone: string | null;
 }
 
+// The people pickers (assignees, calendar participants, internal chat, reminders)
+// all read this list. The guard (08/11/2026) has one screen and no part in any
+// of them, so it is never offered — and never reachable by picking it.
 export async function listAssignableUsers(): Promise<AssignableUser[]> {
   const r = await query<AssignableUser>(
     `select id, full_name, username, email, notification_phone
        from public.users
       where is_active = true
+        and role <> 'guard'
       order by full_name asc nulls last, username asc`,
   );
   return r.rows;
@@ -81,7 +86,7 @@ export async function listActiveAdmins(): Promise<{ id: string; name: string }[]
  *  opt-in flags. Null when the user doesn't exist. */
 export interface NotificationRecipient {
   id: string;
-  email: string;
+  email: string | null;
   full_name: string | null;
   username: string;
   is_active: boolean;

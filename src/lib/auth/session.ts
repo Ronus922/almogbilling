@@ -13,7 +13,8 @@ import type { Role } from '@/lib/permissions/constants';
 export interface SessionUser {
   id: string;
   username: string;
-  email: string;
+  /** null for a guard created without a mailbox (08/11/2026). */
+  email: string | null;
   full_name: string | null;
   role: Role;
 }
@@ -53,7 +54,7 @@ interface SessionRow {
   sid: string;
   user_id: string;
   username: string;
-  email: string;
+  email: string | null;
   full_name: string | null;
   is_active: boolean;
   role: Role;

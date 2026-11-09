@@ -8,6 +8,7 @@ import {
   updateBillingSettings,
 } from '@/lib/db/appSettings';
 import { getSession } from '@/lib/auth/session';
+import { isGuardRole } from '@/lib/permissions/constants';
 import { parseJsonBody } from '@/lib/http/body';
 import { billingSettingsBodySchema } from '@/lib/validation/requests';
 
@@ -20,6 +21,8 @@ export const runtime = 'nodejs';
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  // The guard has one screen (08/11/2026); "any authenticated user" does not include it.
+  if (isGuardRole(session.user.role)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   return NextResponse.json(await getBillingSettings());
 }
 

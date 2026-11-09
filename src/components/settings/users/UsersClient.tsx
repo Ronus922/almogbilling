@@ -46,6 +46,7 @@ export function UsersClient({ initialUsers, initialInvites, currentUserId, curre
     viewer:      initialUsers.filter((u) => u.role === 'viewer').length,
     cleaner:     initialUsers.filter((u) => u.role === 'cleaner').length,
     maintenance: initialUsers.filter((u) => u.role === 'maintenance').length,
+    guard:       initialUsers.filter((u) => u.role === 'guard').length,
     invites:     initialInvites.length,
   }), [initialUsers, initialInvites]);
 
@@ -57,7 +58,7 @@ export function UsersClient({ initialUsers, initialInvites, currentUserId, curre
       if (tab !== 'all' && u.role !== tab) return false;
       if (!q) return true;
       const name = (u.full_name ?? '').toLowerCase();
-      return matchesSearch(name, q) || matchesSearch(u.email, q);
+      return matchesSearch(name, q) || matchesSearch(u.email ?? '', q) || matchesSearch(u.username, q);
     });
   }, [initialUsers, tab, search]);
 

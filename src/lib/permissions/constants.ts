@@ -1,4 +1,4 @@
-export type Role = 'super_admin' | 'admin' | 'manager' | 'viewer' | 'cleaner' | 'maintenance';
+export type Role = 'super_admin' | 'admin' | 'manager' | 'viewer' | 'cleaner' | 'maintenance' | 'guard';
 export type Action = 'view' | 'edit';
 
 export interface ModulePermission {
@@ -25,6 +25,9 @@ export const ROLES: RoleMeta[] = [
   { value: 'viewer',      label: 'צופה',        description: 'הרשאות לפי מטריצה — צפייה בלבד',           level: 1 },
   { value: 'cleaner',     label: 'עובד ניקיון', description: 'עובד שטח — משימות ותקלות בלבד',            level: 1 },
   { value: 'maintenance', label: 'עובד אחזקה',  description: 'עובד שטח — משימות ותקלות בלבד',            level: 1 },
+  // The lowest rank (08/11/2026): below viewer. Not a matrix role and not an
+  // elevated one — see GUARD_ROLE below.
+  { value: 'guard',       label: 'שומר',        description: 'מסך „סריקת כניסה” בלבד — אין הרשאות נוספות', level: 0 },
 ];
 
 /** Every role value, in ROLES order. Derive from here — never re-list the union. */
@@ -45,6 +48,7 @@ export const ROLE_STYLES: Record<Role, { bg: string; fg: string; ring: string }>
   viewer:      { bg: 'bg-slate-100',  fg: 'text-slate-600',   ring: 'ring-slate-200'   },
   cleaner:     { bg: 'bg-sky-50',     fg: 'text-sky-700',     ring: 'ring-sky-200'     },
   maintenance: { bg: 'bg-amber-50',   fg: 'text-amber-700',   ring: 'ring-amber-200'   },
+  guard:       { bg: 'bg-teal-50',    fg: 'text-teal-700',    ring: 'ring-teal-200'    },
 };
 
 export interface ModuleMeta {
@@ -311,3 +315,33 @@ export function isMatrixRole(role: Role): boolean {
 export function isElevatedRole(role: Role): boolean {
   return role === 'super_admin' || role === 'admin';
 }
+
+// ── The guard ("שומר", 08/11/2026) and the visitor-scan screen ───────────────
+// `guard` is deliberately NEITHER a matrix role (no ROLE_DEFAULTS entry, so no
+// user_permissions rows exist or can ever take effect: getCurrentActor loads
+// none, hasPermission denies every module) NOR an elevated one. Everything it
+// may do is an ALLOWLIST of ROLES below — the same shape as ASSISTANT_ROLES and
+// USER_DELETE_ROLES — so a role added later is denied until someone lists it
+// here on purpose. canManageRole() needs no change: an admin manages any
+// non-elevated role, a guard included.
+
+/** True for the guard — drives the one-screen landing, the nav and the 403s. */
+export function isGuardRole(role: Role): boolean {
+  return role === 'guard';
+}
+
+// Who may OPEN the visitor-scan screen, see its rows and the photo of the
+// document — and so who may scan. Three roles, listed by name (Ronen, 09/11/2026:
+// "רואים וסורקים רק: guard, admin, super_admin"; it was every role on 08/11).
+// manager, viewer, cleaner and maintenance have no access at all: no menu item,
+// /visitors sends them home, every /api/visitors/* and /api/files/visitor-ids/*
+// answers 403. The list is the decision, in one place.
+export const VISITOR_VIEW_ROLES: readonly Role[] = ['super_admin', 'admin', 'guard'];
+
+// Who may scan (create a row) and, afterwards, write the NOTES of any row. Kept as
+// its own list: seeing the log and writing to it are two questions, and widening
+// the first must never widen the second.
+export const VISITOR_CREATE_ROLES: readonly Role[] = ['super_admin', 'admin', 'guard'];
+
+// Who may edit EVERY field of a row and delete it (the photo goes with it).
+export const VISITOR_MANAGE_ROLES: readonly Role[] = ['super_admin', 'admin'];

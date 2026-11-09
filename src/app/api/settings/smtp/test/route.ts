@@ -32,7 +32,7 @@ export async function POST(req: Request) {
   if (!body.ok) return body.response;
   const { to } = body.data;
 
-  const senderLabel = actor.full_name?.trim() || actor.email;
+  const senderLabel = actor.full_name?.trim() || actor.email || actor.username;
   const sentAt = new Date().toLocaleString('he-IL', {
     timeZone: 'Asia/Jerusalem',
     dateStyle: 'medium',

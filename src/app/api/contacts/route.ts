@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth/session';
+import { isGuardRole } from '@/lib/permissions/constants';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listContacts, createContact, getContactById, ConflictError } from '@/lib/db/contacts';
@@ -21,6 +22,8 @@ const SORTS: readonly ContactSort[] = [
 export async function GET(req: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  // The guard has one screen (08/11/2026); "any authenticated user" does not include it.
+  if (isGuardRole(session.user.role)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   const sp = req.nextUrl.searchParams;
   const search = sp.get('search')?.trim() || undefined;

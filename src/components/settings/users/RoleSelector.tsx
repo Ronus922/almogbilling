@@ -1,6 +1,6 @@
 'use client';
 
-import { Crown, Shield, Briefcase, Eye, Sparkles, Wrench, type LucideIcon } from 'lucide-react';
+import { Crown, Shield, Briefcase, Eye, Sparkles, Wrench, ScanLine, type LucideIcon } from 'lucide-react';
 import { ROLES, ROLE_STYLES, type Role } from '@/lib/permissions/constants';
 import { cn } from '@/lib/utils';
 
@@ -24,6 +24,7 @@ const ROLE_ICONS: Record<Role, LucideIcon> = {
   viewer: Eye,
   cleaner: Sparkles,
   maintenance: Wrench,
+  guard: ScanLine,
 };
 
 export function RoleSelector({ value, onChange, disabled, allowedRoles }: Props) {

@@ -2,8 +2,11 @@ import 'server-only';
 import { query } from '@/lib/db';
 import { getSession, type SessionUser } from './session';
 import { AuthorizationError } from './errors';
-import { hasPermission, canManageRole, canUseAssistant, canDeleteUsers } from '@/lib/permissions/check';
-import { isMatrixRole } from '@/lib/permissions/constants';
+import {
+  hasPermission, canManageRole, canUseAssistant, canDeleteUsers, canUseNotifications,
+  canViewVisitors, canCreateVisitorScan, canEditVisitorNotes, canManageVisitorScans,
+} from '@/lib/permissions/check';
+import { isGuardRole, isMatrixRole } from '@/lib/permissions/constants';
 import type { Action, ModulePermission, Role } from '@/lib/permissions/constants';
 
 export interface Actor extends SessionUser {
@@ -105,9 +108,64 @@ export async function requireAnyPermission(
  */
 export async function requireNotificationsAccess(): Promise<Actor> {
   const actor = await requireActor();
-  if (actor.role === 'viewer') {
+  // canUseNotifications: not the viewer, and not the single-screen guard.
+  if (!canUseNotifications(actor.role)) {
     throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
   }
+  return actor;
+}
+
+/**
+ * `requireActor()` for the few routes that carry no module permission of their
+ * own (sync status, global search) and so would otherwise be open to EVERY
+ * signed-in role. The guard — whose whole access is the visitor-scan screen —
+ * gets 403 here; every other role keeps what it had.
+ */
+export async function requireNonGuardActor(): Promise<Actor> {
+  const actor = await requireActor();
+  if (isGuardRole(actor.role)) {
+    throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
+  }
+  return actor;
+}
+
+/** The guard's own account only (password change): 403 for every other role. */
+export async function requireGuardActor(): Promise<Actor> {
+  const actor = await requireActor();
+  if (!isGuardRole(actor.role)) {
+    throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
+  }
+  return actor;
+}
+
+// ── Visitor scan ("סריקת כניסה") — by ROLE, see VISITOR_*_ROLES ──────────────
+/** Read rows and open the photo of a document (/api/files/visitor-ids). */
+export async function requireVisitorView(): Promise<Actor> {
+  const actor = await requireActor();
+  // Guard, admin, super admin — none of them has a matrix to empty, so the role is the whole test.
+  if (!canViewVisitors(actor.role)) throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
+  return actor;
+}
+
+/** Scan a document: OCR and create a row. */
+export async function requireVisitorCreate(): Promise<Actor> {
+  const actor = await requireActor();
+  if (!canCreateVisitorScan(actor.role)) throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
+  return actor;
+}
+
+/** Change a row afterwards. A guard (notes only) passes; the route then checks
+ *  that the body touches nothing but `notes` unless canManageVisitorScans. */
+export async function requireVisitorEdit(): Promise<Actor> {
+  const actor = await requireActor();
+  if (!canEditVisitorNotes(actor.role)) throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
+  return actor;
+}
+
+/** Delete a row with its photo. */
+export async function requireVisitorManage(): Promise<Actor> {
+  const actor = await requireActor();
+  if (!canManageVisitorScans(actor.role)) throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
   return actor;
 }
 

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth/session';
+import { isGuardRole } from '@/lib/permissions/constants';
 import { requirePermission } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
@@ -23,6 +24,8 @@ interface RouteCtx {
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  // The guard has one screen (08/11/2026); "any authenticated user" does not include it.
+  if (isGuardRole(session.user.role)) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
   const { id } = await ctx.params;
   const contact = await getContactById(id);

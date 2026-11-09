@@ -44,9 +44,16 @@ export const PORTAL_DECISIONS_BUCKET = 'portal-decisions';
  *  this proxy. Deliberately NOT in the Storage GC's BILLING_BUCKETS. */
 export const PURCHASING_FILES_BUCKET = 'purchasing-files';
 
+/** The photo of a scanned visitor document (visitor_scans) — PRIVATE, kept
+ *  forever. Reached ONLY through /api/files (VISITOR_VIEW_ROLES), and every
+ *  open is a `file_viewed` audit row. Deliberately NOT in the Storage GC's
+ *  BILLING_BUCKETS: an allowlist the GC never lists is a bucket it can never
+ *  empty. */
+export const VISITOR_IDS_BUCKET = 'visitor-ids';
+
 export const PRIVATE_BUCKETS = [
   'supplier-documents', 'documents', 'issue-attachments', WHATSAPP_ATTACHMENTS_BUCKET, FINANCE_RECEIPTS_BUCKET,
-  REMINDER_ATTACHMENTS_BUCKET, PORTAL_DECISIONS_BUCKET, PURCHASING_FILES_BUCKET,
+  REMINDER_ATTACHMENTS_BUCKET, PORTAL_DECISIONS_BUCKET, PURCHASING_FILES_BUCKET, VISITOR_IDS_BUCKET,
 ] as const;
 export type PrivateBucket = (typeof PRIVATE_BUCKETS)[number];
 
@@ -123,6 +130,28 @@ export async function deleteObjects(bucket: string, paths: string[]): Promise<vo
     await getStorage().from(bucket).remove(paths);
   } catch {
     // swallow — orphaned objects are harmless
+  }
+}
+
+/**
+ * Removes objects and reports whether Storage really did. storage-js returns
+ * `{ error }` instead of throwing, so the best-effort deleteObjects above cannot tell
+ * a removed object from a refused request. For data that must be gone when its row is
+ * (an ID-document photo) the caller needs the truth — and a log line naming the key
+ * (a UUID, no personal data) when it was not.
+ */
+export async function removeObjectsStrict(bucket: string, paths: string[]): Promise<boolean> {
+  if (paths.length === 0) return true;
+  try {
+    const { error } = await getStorage().from(bucket).remove(paths);
+    if (error) {
+      logger.error('[storage] remove refused', { bucket, paths, message: error.message });
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.error('[storage] remove failed', { bucket, paths, message: err instanceof Error ? err.message : 'unknown' });
+    return false;
   }
 }
 
