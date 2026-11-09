@@ -10,9 +10,11 @@ import { AnthropicStub, StorageStub } from './visitors-stubs';
 // "סריקת כניסה" and the guard ("שומר", 08/11/2026), end to end on the production
 // build: the admin creates a guard with a username and a password and NO e-mail
 // (through the real Users screen); the guard signs in and sees one screen only —
-// every other page and every other API answers no; a scan goes photo → OCR →
-// form → save → table → details → notes; the roles that may only read cannot
-// write; the admin edits and deletes; the guard changes their own password.
+// every other page and every other API answers no; a scan goes photo → CROP →
+// OCR → form → save → table → details → notes; manager / viewer / cleaner /
+// maintenance have no access to the module at all (09/11/2026); the admin edits,
+// re-crops a stored photo and deletes; the guard changes their own password; the
+// nationality is read and saved but shown nowhere.
 //
 // Two stand-ins run IN this process for the length of the spec (no other spec
 // sees them): the Anthropic Messages API (the OCR — the app's server is started
@@ -135,6 +137,67 @@ async function openRow(page: Page, text: string): Promise<void> {
   await rows.first().click();
 }
 
+interface Frame { x: number; y: number; w: number; h: number }
+
+/** The crop step is on screen and the picture is drawn: the frame is positioned. */
+async function cropReady(page: Page): Promise<void> {
+  await expect(page.locator('[data-crop-rect]')).toBeVisible();
+}
+
+/** Presses "המשך" on the crop step. */
+async function cropContinue(page: Page): Promise<void> {
+  await cropReady(page);
+  await page.locator('[data-crop-confirm]').click();
+}
+
+/** The frame in the PICTURE's pixels, read off the editor. */
+async function frameOf(page: Page): Promise<Frame> {
+  return page.locator('[data-crop-rect]').evaluate((el) => {
+    const d = (el as HTMLElement).dataset;
+    return { x: Number(d.x), y: Number(d.y), w: Number(d.w), h: Number(d.h) };
+  });
+}
+
+async function centerOf(page: Page, selector: string): Promise<{ x: number; y: number }> {
+  const box = await page.locator(selector).first().boundingBox();
+  expect(box, selector).not.toBeNull();
+  return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+}
+
+/** Drags a point on screen with the mouse (pointer events, like a trackpad / desktop admin). */
+async function dragFrom(page: Page, from: { x: number; y: number }, dx: number, dy: number): Promise<void> {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + dx, from.y + dy, { steps: 8 });
+  await page.mouse.up();
+}
+
+const dragHandle = async (page: Page, handle: string, dx: number, dy: number) =>
+  dragFrom(page, await centerOf(page, `[data-crop-handle="${handle}"]`), dx, dy);
+
+function iou(a: Frame, b: Frame): number {
+  const w = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+  const h = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  const inter = w * h;
+  return inter / (a.w * a.h + b.w * b.h - inter);
+}
+
+/** A dark desk with a light card (print and a dark photo patch) at a known place. */
+async function cardPhoto(): Promise<{ jpeg: Buffer; card: Frame }> {
+  const W = 3000;
+  const H = 2000;
+  const card = { x: 700, y: 480, w: 1700, h: 1070 };
+  const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+    <rect x="${card.x}" y="${card.y}" width="${card.w}" height="${card.h}" fill="#ece8dc"/>
+    <rect x="${card.x + 100}" y="${card.y + 250}" width="420" height="600" fill="#3a3a3a"/>
+    <rect x="${card.x + 620}" y="${card.y + 200}" width="900" height="70" fill="#222"/>
+    <rect x="${card.x + 620}" y="${card.y + 420}" width="700" height="70" fill="#222"/>
+    <rect x="${card.x + 620}" y="${card.y + 640}" width="800" height="70" fill="#222"/></svg>`;
+  const jpeg = await sharp({ create: { width: W, height: H, channels: 3, background: '#26282b' } })
+    .composite([{ input: Buffer.from(svg) }]).jpeg({ quality: 85 }).toBuffer();
+  return { jpeg, card };
+}
+
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async () => {
@@ -154,7 +217,7 @@ test.afterAll(async () => {
   await pool.query(`delete from public.audit_log where entity_id = any($1::text[]) or entity_id = any($2::text[]) or actor_user_id = any($2::uuid[])`, [scans, userIds]);
   await pool.query(`delete from public.visitor_scans where id = any($1::uuid[])`, [scans]);
   // rate-limit rows of the users made here, by their exact buckets (iron rule 12)
-  const buckets = userIds.flatMap((id) => [`pwchange:user:${id}`, `visitor-ocr:user:${id}`, `visitor-ocr-day:user:${id}`, `visitor-save:user:${id}`]);
+  const buckets = userIds.flatMap((id) => [`pwchange:user:${id}`, `visitor-ocr:user:${id}`, `visitor-ocr-day:user:${id}`, `visitor-save:user:${id}`, `visitor-prepare:user:${id}`, `visitor-recrop:user:${id}`]);
   await pool.query(`delete from public.auth_rate_limits where bucket = any($1::text[]) or bucket = any($2::text[])`, [buckets, [`login:user:${GUARD}`, `login:user:${GUARD2}`]]);
   await pool.query(`delete from public.users where id = any($1::uuid[])`, [userIds]);
   await anthropic.stop();
@@ -220,7 +283,7 @@ test('the admin creates a guard with a username and a password, and no e-mail', 
 });
 
 test('the other roles exist for the rest of the spec', async ({ request }) => {
-  for (const role of ['admin', 'manager', 'viewer', 'maintenance']) {
+  for (const role of ['admin', 'manager', 'viewer', 'cleaner', 'maintenance']) {
     const username = `rl-${role}-${RUN}@billing.local`;
     const r = await request.post('/api/users', { data: { role, email: username, full_name: `בודק ${role} ${RUN}`, password: PASSWORD } });
     expect(r.status(), await r.text()).toBe(201);
@@ -319,6 +382,10 @@ test('the guard may call the visitor API and its own password change, nothing ne
   const { ctx } = await signIn(browser, GUARD);
   expect((await ctx.request.get('/api/visitors')).status()).toBe(200);
   expect((await ctx.request.get('/api/auth/me')).status()).toBe(200);
+  // the crop step's HEIC fallback is open to the guard (400: no photo sent); re-cropping a STORED photo is not
+  expect((await ctx.request.post('/api/visitors/prepare', { data: {} })).status()).toBe(400);
+  expect((await ctx.request.get('/api/visitors/prepare')).status()).toBe(405);
+  expect((await ctx.request.post(`/api/visitors/${FAKE_ID}/image`, { multipart: { image: { name: 'a.jpg', mimeType: 'image/jpeg', buffer: await photo(50, 50) } } })).status()).toBe(403);
   expect((await ctx.request.post('/api/account/password', { data: {} })).status()).toBe(400); // allowed in, then validated
   for (const url of ['/api/notifications', '/api/search?q=abc', '/api/sync/status', '/api/agent/chat', '/api/users']) {
     const res = await ctx.request.get(url);
@@ -340,6 +407,10 @@ test('the guard scans a document: photo → OCR → editable form → save → t
   await page.locator('input[data-visitor-file]').setInputFiles({ name: 'id.jpg', mimeType: 'image/jpeg', buffer: jpeg });
 
   const sheet = page.getByRole('dialog');
+  // The crop step comes first and nothing has left the phone yet.
+  await cropReady(page);
+  expect(anthropic.calls).toHaveLength(0);
+  await cropContinue(page);
   await expect(sheet.getByText('קורא את התעודה…').first()).toBeVisible();
   // The form arrives pre-filled from the document, every field editable.
   await expect(sheet.locator('#v-first')).toHaveValue('דוד');
@@ -347,6 +418,9 @@ test('the guard scans a document: photo → OCR → editable form → save → t
   await expect(sheet.locator('#v-docnum')).toHaveValue('123456789');
   await expect(sheet.locator('#v-dob')).toHaveValue('1990-05-17');
   await expect(sheet.getByRole('radio', { name: 'תעודת זהות' })).toHaveAttribute('aria-checked', 'true');
+  // The nationality was read (and is saved below) but no field shows it (09/11/2026).
+  await expect(sheet.getByText('לאום')).toHaveCount(0);
+  await expect(sheet.locator('#v-nat')).toHaveCount(0);
   // The one field the model doubted (0.55) is flagged; the confident ones are not.
   await expect(sheet.getByText('נקרא בביטחון נמוך — בדוק מול התעודה')).toHaveCount(1);
   await expect(sheet.locator('#v-dob').locator('xpath=ancestor::div[contains(@class,"border-amber") or contains(@class,"amber")][1]')).toHaveCount(1);
@@ -405,14 +479,27 @@ test('the guard scans a document: photo → OCR → editable form → save → t
   await expect(tr).toContainText('204');
   await expect(tr).toContainText('C-7781');
   await expect(tr).toContainText('תעודת זהות');
+  await expect(page.locator('table[data-visitor-table] thead')).not.toContainText('לאום');
+  await expect(tr).not.toContainText('ישראלית');
 });
 
 test('an iPhone HEIC photo goes through end to end', async ({ browser }) => {
   const { page } = await signIn(browser, GUARD);
   await page.goto('/visitors');
+  const storedBefore = storage.keys('visitor-ids').length;
   anthropic.reply = { ...OCR_REPLY, first_name: 'חיים', last_name: `${NAME_TOKEN}H`, document_number: 'AB 123 456', document_type: 'passport' };
   const heic = readFileSync(join(process.cwd(), 'tests/fixtures/synthetic-96x64.heic'));
+  // Chromium cannot draw a HEIC (Safari can): the browser fails to open it, so the file goes ONCE to the
+  // server's decoder (/api/visitors/prepare), comes back as a JPEG, and THAT is cropped on screen.
+  const prepared = page.waitForResponse((r) => r.url().endsWith('/api/visitors/prepare') && r.request().method() === 'POST');
   await page.locator('input[data-visitor-file]').setInputFiles({ name: 'IMG_0001.HEIC', mimeType: 'image/heic', buffer: heic });
+  const prep = await prepared;
+  expect(prep.status()).toBe(200);
+  expect(prep.headers()['content-type']).toBe('image/jpeg');
+  expect(prep.headers()['cache-control']).toMatch(/no-store/); // a photo of a document is never cached (so DevTools keeps no body to read here)
+  expect(anthropic.calls).toHaveLength(0); // still nothing read, nothing stored
+  expect(storage.keys('visitor-ids')).toHaveLength(storedBefore);
+  await cropContinue(page);
 
   const sheet = page.getByRole('dialog');
   await expect(sheet.locator('#v-first')).toHaveValue('חיים');
@@ -440,6 +527,7 @@ test('when the OCR cannot read, the form opens empty and the guard fills it by h
   for (const mode of ['error', 'garbage'] as const) {
     anthropic.mode = mode;
     await page.locator('input[data-visitor-file]').setInputFiles({ name: 'id.jpg', mimeType: 'image/jpeg', buffer: await photo() });
+    await cropContinue(page);
     const sheet = page.getByRole('dialog');
     await expect(sheet.getByText('לא הצלחנו לקרוא את התעודה אוטומטית')).toBeVisible();
     await expect(sheet.locator('#v-first')).toHaveValue('');
@@ -469,9 +557,188 @@ test('a file that is not an image is refused and nothing is stored', async ({ br
   await page.locator('input[data-visitor-file]').setInputFiles({ name: 'doc.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 not an image') });
   await expect(page.getByRole('dialog').getByText('הקובץ אינו תמונה נתמכת')).toBeVisible();
   expect(storage.keys('visitor-ids')).toHaveLength(before);
+  expect(anthropic.calls).toHaveLength(0);
   // and straight at the API
   const res = await ctx.request.post('/api/visitors/ocr', { multipart: { image: { name: 'x.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') } } });
   expect(res.status()).toBe(415);
+});
+
+// ── 3b. The crop step (09/11/2026) ───────────────────────────────────────────
+
+test('the frame starts on the document when it is found, and what the OCR reads is only that frame', async ({ browser }) => {
+  const { page } = await signIn(browser, GUARD);
+  await page.goto('/visitors');
+  const { jpeg, card } = await cardPhoto();
+  await page.locator('input[data-visitor-file]').setInputFiles({ name: 'desk.jpg', mimeType: 'image/jpeg', buffer: jpeg });
+  await cropReady(page);
+
+  // found: the frame hugs the card, and the screen says so
+  await expect(page.locator('[data-crop-hint]')).toContainText('זיהינו את התעודה');
+  const f = await frameOf(page);
+  expect(iou(f, card), `frame ${JSON.stringify(f)} vs card ${JSON.stringify(card)}`).toBeGreaterThan(0.85);
+
+  await page.locator('[data-crop-confirm]').click();
+  await expect(page.getByRole('dialog').locator('#v-first')).toHaveValue('דוד');
+
+  // The OCR got the CROPPED photo: the card's proportions, not the desk's (3:2), and bright (the card), not dark (the desk)
+  expect(anthropic.calls).toHaveLength(1);
+  const sent = anthropic.calls[0]!.imageBytes;
+  const meta = await sharp(sent).metadata();
+  expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBe(1600); // 1700px of card, shrunk
+  const ratio = (meta.width ?? 1) / (meta.height ?? 1);
+  expect(Math.abs(ratio - card.w / card.h) / (card.w / card.h)).toBeLessThan(0.08);
+  expect(Math.abs(ratio - 1.5)).toBeGreaterThan(0.05);
+  expect((await sharp(sent).stats()).channels[0]!.mean).toBeGreaterThan(150);
+  await page.keyboard.press('Escape'); // leave without saving
+  await page.getByRole('alertdialog').getByRole('button', { name: 'צא ללא שמירה' }).click();
+});
+
+test('with no document found the frame is 85% centred; the guard drags the sides and corners, moves it, zooms, resets', async ({ browser }) => {
+  const { page } = await signIn(browser, GUARD);
+  await page.goto('/visitors');
+  await page.locator('input[data-visitor-file]').setInputFiles({ name: 'id.jpg', mimeType: 'image/jpeg', buffer: await photo(3200, 2400) });
+  await cropReady(page);
+
+  await expect(page.locator('[data-crop-hint]')).not.toContainText('זיהינו');
+  const start = await frameOf(page);
+  expect(start).toEqual({ x: 240, y: 180, w: 2720, h: 2040 }); // 85% of 3200×2400, centred
+  await expect(page.locator('[data-crop-stage]')).toHaveAttribute('data-crop-zoom', '1.00');
+
+  // a corner moves its two edges and leaves the opposite corner alone
+  await dragHandle(page, 'nw', 40, 30);
+  const afterNw = await frameOf(page);
+  expect(afterNw.x).toBeGreaterThan(start.x);
+  expect(afterNw.y).toBeGreaterThan(start.y);
+  expect(afterNw.x + afterNw.w).toBe(start.x + start.w);
+  expect(afterNw.y + afterNw.h).toBe(start.y + start.h);
+
+  // a side moves one edge
+  await dragHandle(page, 'e', -40, 0);
+  const afterE = await frameOf(page);
+  expect(afterE.w).toBeLessThan(afterNw.w);
+  expect(afterE.x).toBe(afterNw.x);
+  expect(afterE.h).toBe(afterNw.h);
+
+  // dragging inside moves the whole frame without resizing it
+  await dragFrom(page, await centerOf(page, '[data-crop-rect]'), -25, 20);
+  const moved = await frameOf(page);
+  expect(moved.w).toBe(afterE.w);
+  expect(moved.h).toBe(afterE.h);
+  expect(moved.x).toBeLessThan(afterE.x);
+  expect(moved.y).toBeGreaterThan(afterE.y);
+
+  // the buttons and the wheel zoom the PICTURE (the frame stays in picture pixels)
+  await page.locator('[data-crop-zoom-in]').click();
+  const z1 = Number(await page.locator('[data-crop-stage]').getAttribute('data-crop-zoom'));
+  expect(z1).toBeGreaterThan(1.3);
+  await page.mouse.move(...(Object.values(await centerOf(page, '[data-crop-stage]')) as [number, number]));
+  await page.mouse.wheel(0, -400);
+  await expect.poll(async () => Number(await page.locator('[data-crop-stage]').getAttribute('data-crop-zoom'))).toBeGreaterThan(z1);
+  await page.locator('[data-crop-zoom-out]').click();
+  expect(await frameOf(page)).toEqual(moved);
+
+  // "אפס מסגרת": the starting frame, the whole picture
+  await page.locator('[data-crop-reset]').click();
+  expect(await frameOf(page)).toEqual(start);
+  await expect(page.locator('[data-crop-stage]')).toHaveAttribute('data-crop-zoom', '1.00');
+
+  // adjust once more and continue: what is read has the frame's proportions
+  await dragHandle(page, 'se', -60, -50);
+  const final = await frameOf(page);
+  await page.locator('[data-crop-confirm]').click();
+  await expect(page.getByRole('dialog').locator('#v-first')).toHaveValue('דוד');
+  const meta = await sharp(anthropic.calls[0]!.imageBytes).metadata();
+  expect(Math.abs((meta.width ?? 1) / (meta.height ?? 1) - final.w / final.h) / (final.w / final.h)).toBeLessThan(0.01);
+  expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBe(1600);
+  await page.keyboard.press('Escape');
+  await page.getByRole('alertdialog').getByRole('button', { name: 'צא ללא שמירה' }).click();
+});
+
+test('"צלם שוב" drops the photo and opens the camera again; nothing was read or stored', async ({ browser }) => {
+  const { page } = await signIn(browser, GUARD);
+  await page.goto('/visitors');
+  const storedBefore = storage.keys('visitor-ids').length;
+  const rowsBefore = (await pool.query(`select count(*)::int as n from public.visitor_scans where scanned_by = $1`, [roleUser.guard!.id])).rows[0].n;
+  await page.locator('input[data-visitor-file]').setInputFiles({ name: 'id.jpg', mimeType: 'image/jpeg', buffer: await photo() });
+  await cropReady(page);
+  const chooser = page.waitForEvent('filechooser');
+  await page.locator('[data-crop-cancel]').click();
+  await chooser; // the camera / file picker is open again
+  await expect(page.locator('[data-crop-editor]')).toHaveCount(0);
+  expect(anthropic.calls).toHaveLength(0);
+  expect(storage.keys('visitor-ids')).toHaveLength(storedBefore);
+  expect((await pool.query(`select count(*)::int as n from public.visitor_scans where scanned_by = $1`, [roleUser.guard!.id])).rows[0].n).toBe(rowsBefore);
+});
+
+test('on a touch screen: a one-finger drag on a handle, a two-finger pinch zooms, the targets are 44px', async ({ browser }) => {
+  const iphone = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true };
+  const base = await signIn(browser, GUARD);
+  const phoneCtx = await browser.newContext({ ...iphone, storageState: await base.ctx.storageState() });
+  contexts.push(phoneCtx);
+  const page = await phoneCtx.newPage();
+  await page.goto('/visitors');
+  await page.locator('input[data-visitor-file]').setInputFiles({ name: 'id.jpg', mimeType: 'image/jpeg', buffer: await photo(3200, 2400) });
+  await cropReady(page);
+
+  // layout: the whole crop screen fits an iPhone, nothing scrolls sideways, every target is 44px
+  const sheet = page.getByRole('dialog');
+  expect((await sheet.boundingBox())!.width).toBeLessThanOrEqual(390);
+  expect(await sheet.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  const stageBox = (await page.locator('[data-crop-stage]').boundingBox())!;
+  expect(stageBox.height).toBeGreaterThan(250); // the picture gets most of the screen
+  for (const sel of ['[data-crop-confirm]', '[data-crop-cancel]', '[data-crop-zoom-in]', '[data-crop-zoom-out]', '[data-crop-reset]']) {
+    const b = (await page.locator(sel).boundingBox())!;
+    expect(b.height, `${sel} height`).toBeGreaterThanOrEqual(44);
+    expect(b.width, `${sel} width`).toBeGreaterThanOrEqual(44);
+  }
+  for (const h of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) {
+    const b = (await page.locator(`[data-crop-handle="${h}"]`).boundingBox())!;
+    expect(Math.min(b.width, b.height), `handle ${h}`).toBeGreaterThanOrEqual(44);
+  }
+
+  // real touch input (CDP) → pointer events with pointerType "touch"
+  const cdp = await phoneCtx.newCDPSession(page);
+  const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', points: { x: number; y: number; id: number }[]) =>
+    cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : points.map((p) => ({ x: p.x, y: p.y, id: p.id })) });
+
+  const before = await frameOf(page);
+  const se = await centerOf(page, '[data-crop-handle="se"]');
+  await touch('touchStart', [{ x: se.x, y: se.y, id: 1 }]);
+  for (let i = 1; i <= 6; i += 1) await touch('touchMove', [{ x: se.x - i * 8, y: se.y - i * 8, id: 1 }]);
+  await touch('touchEnd', []);
+  const afterDrag = await frameOf(page);
+  expect(afterDrag.w).toBeLessThan(before.w);
+  expect(afterDrag.h).toBeLessThan(before.h);
+  expect(afterDrag.x).toBe(before.x);
+
+  const mid = await centerOf(page, '[data-crop-stage]');
+  await touch('touchStart', [{ x: mid.x - 30, y: mid.y, id: 1 }, { x: mid.x + 30, y: mid.y, id: 2 }]);
+  for (let i = 1; i <= 8; i += 1) {
+    await touch('touchMove', [{ x: mid.x - 30 - i * 12, y: mid.y, id: 1 }, { x: mid.x + 30 + i * 12, y: mid.y, id: 2 }]);
+  }
+  await touch('touchEnd', []);
+  await expect.poll(async () => Number(await page.locator('[data-crop-stage]').getAttribute('data-crop-zoom'))).toBeGreaterThan(1.5);
+  expect(await frameOf(page)).toEqual(afterDrag); // zooming the picture does not move the frame in picture pixels
+  await page.locator('[data-crop-cancel]').click();
+});
+
+test('on a phone held sideways the crop buttons stay on screen (the picture scrolls, the actions do not)', async ({ browser }) => {
+  const base = await signIn(browser, GUARD);
+  const phoneCtx = await browser.newContext({
+    viewport: { width: 844, height: 390 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, storageState: await base.ctx.storageState(),
+  });
+  contexts.push(phoneCtx);
+  const page = await phoneCtx.newPage();
+  await page.goto('/visitors');
+  await page.locator('input[data-visitor-file]').setInputFiles({ name: 'id.jpg', mimeType: 'image/jpeg', buffer: await photo(3200, 2400) });
+  await cropReady(page);
+  for (const sel of ['[data-crop-confirm]', '[data-crop-cancel]']) {
+    await expect(page.locator(sel)).toBeInViewport({ ratio: 1 });
+    const b = (await page.locator(sel).boundingBox())!;
+    expect(b.y + b.height, `${sel} bottom`).toBeLessThanOrEqual(390);
+  }
+  expect(await page.getByRole('dialog').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  await page.locator('[data-crop-cancel]').click(); // leaves the file picker open - nothing else to do here
 });
 
 // ── 4. The table: search, dates, details, the photo ──────────────────────────
@@ -559,29 +826,126 @@ test('the guard opens a row: details, the photo, notes — and every other field
   await expect(sheet.locator('img[data-visitor-photo]')).toBeVisible(); // back in the sheet, still open
 });
 
-test('the roles that may only read cannot write — the screen and the API agree', async ({ browser }) => {
-  for (const role of ['manager', 'viewer', 'maintenance'] as const) {
+test('manager, viewer, cleaner and maintenance have no access at all — menu, page and every API agree', async ({ browser }) => {
+  const key = firstScanKey;
+  for (const role of ['manager', 'viewer', 'cleaner', 'maintenance'] as const) {
     const { page, ctx } = await signIn(browser, roleUser[role]!.username);
+    // the page sends them home (not to /visitors) and the menu has no such item
     await page.goto('/visitors');
-    // they see the table, the details and the photo …
-    await expect(page.locator('[data-scan-button]')).toHaveCount(0); // … but no scan button
-    await openRow(page, 'דוד המלך');
-    const sheet = page.getByRole('dialog');
-    await expect(sheet.getByText('123456789')).toBeVisible();
-    await expect(sheet.locator('img[data-visitor-photo]')).toBeVisible();
-    await expect(sheet.locator('#v-notes')).toHaveCount(0); // notes are text, not a field
-    await expect(sheet.getByRole('button', { name: 'שמור הערות' })).toHaveCount(0);
-    await expect(sheet.getByRole('button', { name: 'מחק סריקה' })).toHaveCount(0);
-    // … and the API says the same
-    expect((await ctx.request.get('/api/visitors')).status()).toBe(200);
-    expect((await ctx.request.get(`/api/files/visitor-ids/${firstScanKey}`)).status()).toBe(200);
-    expect((await ctx.request.patch(`/api/visitors/${firstScanId}`, { data: { notes: 'x' } })).status()).toBe(403);
-    expect((await ctx.request.delete(`/api/visitors/${firstScanId}`)).status()).toBe(403);
-    expect((await ctx.request.post('/api/visitors/ocr', { multipart: { image: { name: 'a.jpg', mimeType: 'image/jpeg', buffer: await photo(50, 50) } } })).status()).toBe(403);
+    await expect(page).not.toHaveURL(/\/visitors/);
+    await expect(page.locator('aside a[href="/visitors"]')).toHaveCount(0);
+    await expect(page.getByText('סריקת כניסה')).toHaveCount(0);
+    // every route of the module, every method: 403 — the rows, the photo, the writes, the OCR, the crop
+    expect((await ctx.request.get('/api/visitors')).status(), `${role} list`).toBe(403);
+    expect((await ctx.request.get(`/api/visitors?q=${NAME_TOKEN}`)).status()).toBe(403);
+    expect((await ctx.request.get(`/api/files/visitor-ids/${key}`)).status(), `${role} photo`).toBe(403);
+    expect((await ctx.request.post('/api/visitors', { multipart: { image: { name: 'a.jpg', mimeType: 'image/jpeg', buffer: await photo(50, 50) }, data: JSON.stringify({ document_type: 'id_card', document_number: '1', first_name: 'a', last_name: 'b' }) } })).status(), `${role} create`).toBe(403);
+    expect((await ctx.request.patch(`/api/visitors/${firstScanId}`, { data: { notes: 'x' } })).status(), `${role} patch`).toBe(403);
+    expect((await ctx.request.delete(`/api/visitors/${firstScanId}`)).status(), `${role} delete`).toBe(403);
+    expect((await ctx.request.post('/api/visitors/ocr', { multipart: { image: { name: 'a.jpg', mimeType: 'image/jpeg', buffer: await photo(50, 50) } } })).status(), `${role} ocr`).toBe(403);
+    expect((await ctx.request.post('/api/visitors/prepare', { multipart: { image: { name: 'a.jpg', mimeType: 'image/jpeg', buffer: await photo(50, 50) } } })).status(), `${role} prepare`).toBe(403);
+    expect((await ctx.request.post(`/api/visitors/${firstScanId}/image`, { multipart: { image: { name: 'a.jpg', mimeType: 'image/jpeg', buffer: await photo(50, 50) } } })).status(), `${role} recrop`).toBe(403);
     expect((await ctx.request.get('/api/account/password')).status()).toBe(405);
     expect((await ctx.request.post('/api/account/password', { data: { current_password: 'a', new_password: 'b' } })).status()).toBe(403);
   }
   expect(anthropic.calls).toHaveLength(0);
+  // …while the three roles that do have it see the item
+  const admin = await signIn(browser, roleUser.admin!.username);
+  await admin.page.goto('/visitors');
+  await expect(admin.page.locator('aside a[href="/visitors"]')).toHaveCount(1);
+  // and no request without a session gets anything either
+  const anon = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  contexts.push(anon);
+  expect((await anon.request.get('/api/visitors')).status()).toBe(401);
+  expect((await anon.request.post('/api/visitors/prepare')).status()).toBe(401);
+  expect((await anon.request.post(`/api/visitors/${firstScanId}/image`)).status()).toBe(401);
+});
+
+test('an admin re-crops a stored photo: the object is replaced, the old one removed, the audit row names both', async ({ browser }) => {
+  const { page } = await signIn(browser, roleUser.admin!.username);
+  // A stored photo with a known picture: left half red, right half blue.
+  const W = 1200;
+  const H = 800;
+  const stored = await sharp({ create: { width: W, height: H, channels: 3, background: '#cc2222' } })
+    .composite([{ input: await sharp({ create: { width: W / 2, height: H, channels: 3, background: '#2222cc' } }).png().toBuffer(), left: W / 2, top: 0 }])
+    .jpeg({ quality: 92 }).toBuffer();
+  const oldKey = `${randomUUID()}.jpg`;
+  storage.objects.set(`visitor-ids/${oldKey}`, { contentType: 'image/jpeg', bytes: stored });
+  const row = await pool.query<{ id: string }>(
+    `insert into public.visitor_scans (document_type, document_number, first_name, last_name, nationality, image_object_key, scanned_by, scanned_by_name)
+     values ('id_card', 'RC1', 'חיתוך', $1, 'ישראלית', $2, $3, 'בודק') returning id`,
+    [`${NAME_TOKEN}R`, oldKey, roleUser.admin!.id],
+  );
+  const id = row.rows[0]!.id;
+  scanIds.push(id);
+
+  await page.goto('/visitors');
+  await openRow(page, `${NAME_TOKEN}R`);
+  const sheet = page.getByRole('dialog').first();
+  await expect(sheet.locator('img[data-visitor-photo]')).toHaveAttribute('src', `/api/files/visitor-ids/${oldKey}`);
+
+  // cancelling changes nothing
+  await sheet.locator('[data-recrop-open]').click();
+  await cropReady(page);
+  expect(await frameOf(page)).toEqual({ x: 0, y: 0, w: W, h: H }); // a re-crop starts as the whole picture
+  await page.locator('[data-crop-cancel]').click();
+  await expect(page.locator('[data-crop-editor]')).toHaveCount(0);
+  expect((await pool.query(`select image_object_key from public.visitor_scans where id = $1`, [id])).rows[0].image_object_key).toBe(oldKey);
+
+  // keep only the right half: drag the west edge to the middle
+  await sheet.locator('[data-recrop-open]').click();
+  await cropReady(page);
+  const stage = (await page.locator('[data-crop-stage]').boundingBox())!;
+  const scale = (await page.locator('[data-crop-rect]').boundingBox())!.width / W;
+  await dragHandle(page, 'w', (W / 2) * scale, 0);
+  const f = await frameOf(page);
+  expect(f.x).toBeGreaterThan(W / 2 - 40);
+  expect(f.x).toBeLessThan(W / 2 + 40);
+  expect(stage.width).toBeGreaterThan(0);
+
+  await page.locator('[data-crop-confirm]').click();
+  // the cut is irreversible: a confirmation first
+  const confirm = page.getByRole('alertdialog');
+  await expect(confirm).toContainText('הצילום הנוכחי יוחלף');
+  await confirm.locator('[data-recrop-confirm]').click();
+  await expect(page.getByText('הצילום הוחלף')).toBeVisible();
+
+  const after = (await pool.query(`select image_object_key, first_name, nationality from public.visitor_scans where id = $1`, [id])).rows[0];
+  expect(after.image_object_key).not.toBe(oldKey);
+  expect(after.first_name).toBe('חיתוך');
+  expect(after.nationality).toBe('ישראלית'); // the hidden field is untouched
+  const newObj = storage.objects.get(`visitor-ids/${after.image_object_key}`)!;
+  expect(newObj).toBeDefined();
+  const meta = await sharp(newObj.bytes).metadata();
+  expect(meta.format).toBe('jpeg');
+  expect(Math.abs((meta.width ?? 0) - W / 2)).toBeLessThan(80);
+  expect(meta.height).toBe(H);
+  const px = await sharp(newObj.bytes).resize(1, 1).raw().toBuffer();
+  expect(px[2]!).toBeGreaterThan(px[0]! * 2); // blue, not red: the right half was kept
+  expect(storage.objects.has(`visitor-ids/${oldKey}`)).toBe(false); // the old photo is gone from Storage
+  expect(storage.removed).toContain(`visitor-ids/${oldKey}`);
+
+  const audit = await pool.query(`select actor_user_id, metadata from public.audit_log where entity_type = 'visitor_scan' and entity_id = $1 and action = 'image_recropped'`, [id]);
+  expect(audit.rows).toHaveLength(1);
+  expect(audit.rows[0].actor_user_id).toBe(roleUser.admin!.id);
+  expect(audit.rows[0].metadata).toEqual({ actor_role: 'admin', old_object_key: oldKey, new_object_key: after.image_object_key, old_photo_removed: true });
+  // the sheet shows the new photo, served through the proxy
+  await expect(sheet.locator('img[data-visitor-photo]')).toHaveAttribute('src', `/api/files/visitor-ids/${after.image_object_key}`);
+});
+
+test('the guard has no "חתוך מחדש" on a saved photo, and the server refuses it too', async ({ browser }) => {
+  const { page, ctx } = await signIn(browser, GUARD);
+  await page.goto('/visitors');
+  await openRow(page, `${NAME_TOKEN}R`);
+  const sheet = page.getByRole('dialog').first();
+  await expect(sheet.locator('img[data-visitor-photo]')).toBeVisible();
+  await expect(sheet.locator('[data-recrop-open]')).toHaveCount(0);
+  await expect(sheet.getByRole('button', { name: 'חתוך מחדש' })).toHaveCount(0);
+  const id = (await pool.query<{ id: string }>(`select id from public.visitor_scans where last_name = $1`, [`${NAME_TOKEN}R`])).rows[0]!.id;
+  const key = (await pool.query<{ image_object_key: string }>(`select image_object_key from public.visitor_scans where id = $1`, [id])).rows[0]!.image_object_key;
+  const res = await ctx.request.post(`/api/visitors/${id}/image`, { multipart: { image: { name: 'a.jpg', mimeType: 'image/jpeg', buffer: await photo(50, 50) } } });
+  expect(res.status()).toBe(403);
+  expect((await pool.query(`select image_object_key from public.visitor_scans where id = $1`, [id])).rows[0].image_object_key).toBe(key);
 });
 
 test('the admin edits every field and deletes — the photo goes with the row', async ({ browser }) => {
@@ -623,7 +987,8 @@ test('deleting the only row of the last page steps back instead of stranding the
   }
   await page.goto('/visitors');
   await page.locator('input[data-filter-search]').fill(token);
-  await expect(page.locator('[data-page-info]')).toContainText('עמוד 1 מתוך 2');
+  // the FILTERED total (26), not the unfiltered list's "page 1 of 2" that is on screen until the debounced search lands
+  await expect(page.locator('[data-page-info]')).toContainText('עמוד 1 מתוך 2 · 26 סריקות');
   await page.locator('[data-page-next]').click();
   await expect(page.locator('[data-page-info]')).toContainText('עמוד 2 מתוך 2');
   const rows = page.locator('tr[data-visitor-row]');
@@ -744,6 +1109,7 @@ test('on an iPhone-sized screen nothing scrolls sideways and the touch targets a
 
   // The scan sheet is the whole screen on a phone and does not overflow either.
   await page.locator('input[data-visitor-file]').setInputFiles({ name: 'id.jpg', mimeType: 'image/jpeg', buffer: await photo() });
+  await cropContinue(page);
   const sheet = page.getByRole('dialog');
   await expect(sheet.locator('#v-first')).toBeVisible();
   const box = await sheet.boundingBox();
