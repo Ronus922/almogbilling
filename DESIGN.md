@@ -885,33 +885,75 @@ toast.info('...');
 
 ---
 
-## 14. Sidebar
+## 14. Sidebar — פס קטגוריות + פאנל (11/11/2026)
 
-`src/components/app-shell/Sidebar.tsx` — תפריט צד ימני (RTL), **collapsible**. הקונפיג (`SECTIONS`/`SETTINGS_ITEM`), פונקציית הסינון `filterNav(role, can)`, והרינדור (`NavBrand`/`Section`/`NavLink`/`FooterButton`) חיים ב-**`src/components/app-shell/nav.tsx`** ונצרכים גם ע״י ה-drawer במובייל (§15) — **מקור אמת אחד לרשימה ולסינון**, אסור שתי רשימות שעלולות להיפרד.
+**מקור-האמת העיצובי: `ref/sidebar-rail/` ("Sidebar B - Rail.html" — מחייב 1:1; ה-README והצילום מלווים אותו).** הסעיף הזה (ואזכורי ה-brand block ב-§15/§32) מחליף את תפריט הצד הקודם — רשימה שטוחה אחת, 266px, עם מצב מכווץ 80px. זה שינוי **ניווט ועיצוב בלבד**: כל פריט שהיה קיים נשאר עם אותו `href`/`module`/`action`/gate לפי תפקיד; מטריצת ההרשאות, ה-route guards ו-`user_permissions` לא נגעו.
 
-- **Container**: `relative hidden shrink-0 flex-col border-l border-line bg-white transition-[width] duration-200 md:flex`. רוחב מתחלף: `w-[266px]` פתוח ↔ `w-[80px]` מכווץ.
-- **Collapse state**: עצמאי בתוך הסיידבר בלבד (`useState` + `localStorage` key `almog:sidebar-collapsed`, נקרא ב-`useEffect` אחרי mount → SSR-safe, בלי hydration mismatch). הסיידבר מצר/מתרחב והתוכן זורם דרך `flex` — **אין נגיעה ב-AppShell / `<main>`**.
-- **Edge toggle**: כפתור עגול `h-7 w-7` שרוכב על הקצה הפנימי (`absolute top-1/2 left-0 -translate-x-1/2`). אייקון `ChevronRight` יחיד שמסתובב `rotate-180` במצב מכווץ.
-- **Brand block** (ראש הסיידבר): מיכל `flex h-16 shrink-0 items-center gap-3 border-b border-line` (`px-5`; מכווץ → `justify-center px-0`). **גובהו זהה ל-Header (`h-16`) וה-`border-b` תואם**, כך שהקו התחתון שלו והקו התחתון של ה-Header מתיישרים לקו רציף אחד לאורך ראש המסך (ראה §32). תוכן: לוגו-גרדיאנט `grid h-11 w-11 rounded-[13px] bg-gradient-to-br from-brand to-brand-dark text-white` + `Building2`, וכותרת `text-[22px] font-black tracking-tight text-ink` = "ניהול אלמוג". מכווץ → רק הלוגו, ממורכז.
-- **רשימה אחידה** (ללא כותרות-סקשן): כל פריטי הניווט ברשימה שטוחה אחת — עבודה יומיומית + תקשורת קודם, אחריהם הגדרות-המערכת (סטטוסים, תבניות, אזורים, משתמשים). תמיכת הסקשנים נשמרה בקוד (`title` ריק → לא מרונדרת כותרת/קו): כדי לפצל שוב, מוסיפים entry ל-`SECTIONS` עם `title`. כל פריט עם ה-route + module שלו → RBAC 1:1 (פריט לא-מורשה פשוט מוסתר). **שני פריטים לפי תפקיד ולא לפי מודול** (`visible`, גובר על בדיקת ה-module): „לוח מחוונים” (`/overview`, כל תפקיד פרט לצופה) ו**„משתמשים”** (`/settings/users`, אדמין + סופר אדמין — `canOpenUsersScreen`, אותו predicate שסוגר את העמוד; 07/10/2026). שורת `users_management` במטריצה **לא** מציגה אותו.
-- **קבוצות עם כותרת** (כמו „שקיפות כספית”, „פורטל בעלי דירות”): **„תפוצה”** (09/10/2026) — „תפוצה חדשה” (`/broadcasts/new`) · „תבניות” (`/whatsapp-templates`, עבר מהרשימה הראשית; ה-route לא השתנה) · „היסטוריה” (`/broadcasts/history`, כולל הפירוט `/broadcasts/history/[id]`). פריט יכול לדרוש פעולה אחרת מ-`view` דרך `action` — „תפוצה חדשה” מוצג רק עם `whatsapp_chat:edit`, אותו שער כמו העמוד וה-route.
-- **Item**: `group flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-colors`. מכווץ → `justify-center px-0`.
-  - **Active**: `bg-gradient-to-l from-brand-dark to-brand text-white shadow-[0_10px_20px_-9px_rgba(61,90,254,0.6)]` (אייקון `text-white`).
-  - **Idle**: `text-ink-2 hover:bg-row-hover hover:text-ink` (אייקון `text-ink-3 group-hover:text-brand`).
-  - **Disabled (בקרוב)**: `cursor-not-allowed text-ink-ghost` + Tooltip "בקרוב".
-  - אייקון: `h-5 w-5 shrink-0`.
-- **Badge** (אופציונלי, על פריט): `grid h-[21px] min-w-[21px] rounded-full px-1.5 text-[11.5px] font-extrabold`. וריאנטים: `default` (`bg-[#eef1f6] text-[#64748b]`), `warn` (`bg-[#fdecec] text-[#dc2626]`), `green` (`bg-[#e7f7ee] text-[#16a34a]`); על פריט active → `bg-white/25 text-white`. **חוק**: badge מוצג רק כשיש מקור נתונים אמיתי (`item.badge.count`). אסור מספר demo — היכולת קיימת אך רדומה עד שמחווט מקור.
-- **Tooltip**: כל פריט במצב מכווץ (וכל פריט "בקרוב") עטוף ב-`Tooltip side="left"` עם ה-label.
-- **Footer**: `border-t border-line-soft px-3.5 py-3` — `הגדרות` (פריט רגיל, מגודר במודול `settings`) + `התנתק` (`text-[#b91c1c] hover:bg-[#fdecec]`, אייקון `LogOut` `text-[#dc2626]`, קורא ל-`signOut()` מ-`useAuth`).
-- **גריד**: `nav` עם `flex-1 overflow-y-auto overflow-x-hidden px-3.5`, פריטים `space-y-1`.
+תפריט דו-שכבתי: **פס** אייקונים כהה של קטגוריות (72px) ולידו **פאנל** לבן (236px) שמציג את פריטי קטגוריה **אחת**. הקבצים (`src/components/app-shell/`):
 
----
+| קובץ | תפקיד |
+|---|---|
+| `nav.tsx` | **מקור אמת יחיד** לרשימה ולסינון — `NAV_CATEGORIES` (מזהה, תווית בפס, כותרת, תיאור, אייקון, פריטים), `filterNav(role, can, counts)` → `{ categories }`, `findActive(categories, pathname)`. נצרך ע״י הדסקטופ והמובייל — אסור שתי רשימות. |
+| `navIcons.tsx` | אייקוני הניווט (ראה "אייקונים"). |
+| `NavRail.tsx` | הרינדור המשותף: `NavRail` (פס + פאנל), `RailButton`, `NavPanel`, `PanelItem`. |
+| `useNavPanel.ts` | ההתנהגות: איזו קטגוריה מוצגת, פתוח/סגור, שמירה ב-localStorage. |
+| `Sidebar.tsx` | מעטפת הדסקטופ (`hidden shrink-0 md:flex`). |
+| `MobileNav.tsx` | המבורגר + `Sheet` (§15). |
+
+### הקטגוריות (תווית בפס · כותרת הפאנל · שורת התיאור · פריטים לפי הסדר)
+
+| # | בפס | כותרת | תיאור | פריטים |
+|---|---|---|---|---|
+| 1 | ראשי | ראשי | מבט-על ופעולות מהירות | לוח מחוונים |
+| 2 | כספים | כספים וחיובים | חיובים, גבייה ושקיפות כספית | ניהול חיובים · ניהול סטטוס חיובים · סקירה חודשית · סעיפים והגדרות · צ׳יפים |
+| 3 | דיירים | דיירים ותקשורת | דיירים, צ׳אטים וחניות | רשימת דיירים · צ׳אט וואטסאפ · צ׳אט פנימי · חניות ומחסנים |
+| 4 | תפוצה | תפוצה | שליחת הודעות לדיירים | תפוצה חדשה · תבניות · היסטוריית תפוצות |
+| 5 | תפעול | תפעול ואחזקה | תקלות, משימות ולו"ז | תקלות · משימות · תזכורות · יומן · ניהול אזורים |
+| 6 | רכש | רכש וספקים | הצעות מחיר, הזמנות ומסמכים | בקשות והזמנות · ספקים · מסמכים |
+| 7 | פורטל | פורטל בעלי דירות | שקיפות והרשאות לבעלי הדירות | החלטות ופרוטוקולים · התחברויות לפורטל · משתמשים |
+| 8 | אבטחה | אבטחה וביטחון | בקרת כניסה ומעקב | סריקת כניסה |
+| 9 | הגדרות (מקובעת בתחתית הפס) | הגדרות | הגדרות מערכת | הגדרות כלליות |
+| — | יציאה (בתחתית הפס, בלי פאנל) | | | התנתקות מיידית, `aria-label="התנתק"` |
+
+- שינויי תווית מול התפריט הקודם: „היסטוריה” → „היסטוריית תפוצות”; „הגדרות” (הפריט) → „הגדרות כלליות” (הקטגוריה נקראת „הגדרות”). כותרות העמודים לא השתנו. הגרשיים בתוויות נשארו `׳` (כמו בכל הפרויקט).
+- **קטגוריה מוצגת בפס רק אם נשאר בה פריט מורשה** (כולל „הגדרות”); אין קטגוריות → אין פאנל. הסינון זהה לקודם: `visible` (תפקיד) גובר על `module`+`action`. שומר רואה רק „אבטחה”; צופה (מטריצת ברירת המחדל) רק „כספים”; „משתמשים” (אדמין/סופר אדמין, `canOpenUsersScreen`) תחת „פורטל”. נעולים ב-`tests/nav-rail-parity.test.ts` (שוויון מלא מול הרשימה הישנה, פריט-פריט ולפי תפקיד) וב-`e2e/nav-rail.spec.ts`.
+- יכולות פריט שנשמרו: `badge` (רק עם `count` אמיתי — היום רק „בקשות והזמנות”; **בלי מספרי demo, ובלי badge חדש על כפתור קטגוריה**), פריט בלי `href` = „בקרוב” (עמום, Tooltip). פריט פעיל ב-`aria-current="page"`.
+- **אין** עוד: כותרת „ניהול אלמוג”, כפתור כיווץ עגול על הקצה, מצב 80px עם tooltips, כותרות-סקשן ברשימה. ללוגו אין התנהגות לחיצה (כמו קודם).
+
+### התנהגות — דסקטופ (md ומעלה)
+
+„קטגוריית המסלול” = הקטגוריה שמכילה את פריט העמוד הנוכחי (`findActive`: הנתיב ומה שתחתיו; **כששני פריטים מתאימים — ה-`href` הארוך גובר**, כך ש-`/settings/users` הוא „משתמשים” ולא גם „הגדרות כלליות”; `exact` נשמר ל-`/finance`).
+
+1. בטעינה ובכל שינוי route — הקטגוריה המוצגת היא קטגוריית המסלול. עמוד בלי קטגוריה: נשארת האחרונה שהוצגה; בטעינה ראשונה — הראשונה המורשית.
+2. **לחיצה על קטגוריה לא מנווטת — רק מחליפה את רשימת הפאנל** (גם לקטגוריה עם פריט יחיד): פאנל סגור → נפתח; פתוח על אחרת → מתחלף; פתוח עליה → נסגר. כפתור הכיווץ (חץ כפול, `title="כיווץ תפריט"`) סוגר.
+3. סימון בפס: פתוח → הקטגוריה המוצגת; סגור → קטגוריית המסלול (או כלום). סימון בפאנל: **רק** פריט העמוד הנוכחי — בקטגוריה שהעמוד לא שייך אליה אף פריט לא מסומן (לא „הראשון כברירת מחדל”).
+4. לחיצה על פריט מנווטת; הפאנל נשאר פתוח; ניווט לא פותח פאנל סגור.
+5. המצב נשמר ב-`localStorage` במפתח הקיים `almog:sidebar-collapsed` (`'1'` = סגור; ברירת מחדל פתוח) דרך `useSyncExternalStore` — השרת וה-hydration רואים „פתוח”, הלקוח קורא אחר כך (בלי hydration mismatch). האנימציה נדלקת רק בלחיצה הראשונה, כך ששחזור מצב סגור אחרי רענון לא „מתקפל” לעיני המשתמש.
+6. הפאנל **דוחף** את התוכן (אין overlay) — לא נוגעים ב-`AppShell`/`<main>`. הרוחב המשותף 308px (72+236) מול 266px שהיה: התוכן צר ב-42px כשהפאנל פתוח; בטאבלט צר (768px) התוכן 460px — סוגרים את הפאנל והתוכן חוזר ל-696px.
+
+### מידות וצבעים (מהרפרנס; ערכי px מוחלטים — `html` הוא 17px, ו-rem ייצא 6.25% סטייה)
+
+- **פס**: `w-[72px] bg-rail py-[14px] gap-[4px]`, ממורכז. לוגו `40×40 rounded-[12px] bg-brand` עם `LogoMark` (20px, stroke 2), רווח 10px מתחתיו (padding של עוטף, לא margin). כפתור קטגוריה: `w-[52px] py-[9px] rounded-[11px]`, אייקון 19px (stroke 1.9), תווית `text-[9.5px] font-semibold`, צבע `text-rail-ink`; hover `bg-rail-hover text-white`; פעיל `bg-brand text-white`. „יציאה” — hover `bg-rail-danger-bg text-rail-danger`. מעבר `background/color .13s`.
+- **פאנל**: `w-[236px] bg-white`, קו `border-line` משני הצדדים. כותרת: `px-[16px] pt-[18px] pb-[10px]`, שם `text-[15px] font-extrabold text-ink`, תיאור `text-[11.5px] font-medium text-ink-3` (רווח 2px). כפתור הכיווץ `28×28 rounded-[8px]` ב-`top-[16px] end-[10px]`, `text-ink-ghost`, hover `bg-row-hover text-ink`. רשימה: `px-[10px] pt-[4px] pb-[14px] gap-[1px]`. פריט: `gap-[10px] px-[10px] py-[9px] rounded-[9px] text-[13.5px] font-semibold text-ink-2`, אייקון 16px `text-ink-3`; hover `bg-row-hover text-ink`; פעיל `bg-brand-soft text-brand-text` (גם האייקון). מעבר `.12s`.
+- **כיווץ**: רוחב הפאנל 236→0 ב-`220ms cubic-bezier(.4,0,.2,1)`, `opacity` ב-`180ms`; התוכן הפנימי `min-w-[236px]` כדי שלא ישבר באנימציה; פאנל סגור `inert` (מחוץ ל-tab order ול-accessibility tree) והקווים שלו נעלמים איתו.
+- **טוקנים חדשים** (`globals.css @theme`): `rail` `#141a2e` · `rail-ink` `#8e96b3` · `rail-hover` `rgb(255 255 255 / .07)` · `rail-danger-bg` `rgb(255 80 80 / .14)` · `rail-danger` `#ff9a9a`. כל השאר טוקנים קיימים (`brand`, `brand-soft`, `brand-text`, `ink*`, `line`, `row-hover`).
+
+### סטיות מוצהרות (מהרפרנס ומכללי הפרויקט)
+
+1. **קו מפריד `border-line` בצד הפאנל הפונה לתוכן** (לא ברפרנס): שם התוכן אפור, אצלנו ה-Header לבן וצמוד לפאנל. נעלם כשהפאנל נסגר.
+2. **חלון נמוך**: הפס צריך ~662px. אזור הקטגוריות הוא `overflow-y-auto` בלי פס גלילה בולט (`scrollbar-width:none`); הלוגו למעלה ו„הגדרות”+„יציאה” למטה מקובעים. נעול ב-e2e ב-1366×620.
+3. **נגישות**: `aria-current="page"` לפריט, `aria-expanded` + `aria-controls` לכפתורי הקטגוריה, `aria-label` לכפתורים בלי טקסט, `focus-visible` כ-outline פנימי (`-outline-offset-2`; לבן על הפס הכהה, `brand` בפאנל) — כך שלא נחתך בגלילה.
+4. **כפתור הכיווץ 28×28 מתחת לכלל ה-44px** — דסקטופ בלבד; בטלפון אין כפתור כיווץ.
+5. **תווית 9.5px בפס** — מתחת למינימום הטיפוגרפי, כפי שברפרנס.
+6. **ריפוד לפי הרפרנס, מתחת לטבלת ה-Minimum Padding הכללית**: כפתור קטגוריה `py-[9px]` בלי ריפוד צד (52px קבוע), פריט פאנל `px-[10px] py-[9px]`.
+7. **הגלגל בפאנל**: ב-HTML האב-טיפוס אייקון `gear` של הפאנל הוא עיגול בודד (עותק קטוע של הגלגל שבפס); בפאנל משתמשים בגלגל המלא — אותו אייקון כמו בפס. שאר אייקוני הפאנל — כמו ברפרנס, כולל הפשוטים („רשימת דיירים” אדם בודד, „תפוצה חדשה” מגפון בלי ידית, „תזכורות” פעמון בלי לשון).
+8. **אייקונים**: ב-lucide-react 1.62 כמעט כל הצורות שברפרנס צוירו מחדש (`credit-card` קיבל קו שני, `shield`/`megaphone` ב-paths אחרים…). נבדקו אוטומטית מול כל 4,352 האייקונים — רק `layout-grid` זהה, והוא ממש מ-lucide; כל השאר `<svg>` inline עם ה-path המקורי ב-`navIcons.tsx`.
 
 ## 15. Header (Top bar)
 
 `src/components/app-shell/Header.tsx` — סרגל עליון מלא-רוחב.
 
-- **Container**: `flex h-16 shrink-0 items-center gap-4 border-b border-line bg-white/90 px-6 backdrop-blur`. יושב **בתוך אזור התוכן בלבד** — לא חוצה מעל הסיידבר (§32). הגובה `h-16` תואם לגובה ה-brand block בראש הסיידבר (§14) → הקווים התחתונים מתיישרים.
+- **Container**: `flex h-16 shrink-0 items-center gap-4 border-b border-line bg-white/90 px-6 backdrop-blur`. יושב **בתוך אזור התוכן בלבד** — לא חוצה מעל הסיידבר (§32). מ-11/11/2026 אין brand block בראש הסיידבר (§14: הפס הכהה נושא רק לוגו 40×40), ולכן אין קו תחתון משותף להתיישר איתו — ה-Header משמר את `h-16` וה-`border-b` שלו.
 - **חיפוש** (RTL start / ימין): `<GlobalSearch />` בתוך `flex w-full max-w-[440px] items-center`. ה-slot הוא **טריגר ויזואלי** — `button` `h-11 rounded-[13px] border border-line bg-surface-2 pr-11 pl-2.5` עם אייקון `Search` ב-`absolute right-3.5 text-ink-3`, placeholder `text-ink-3`, ו-`kbd` `⌘K`/`Ctrl K` בקצה (מ-`sm:` ומעלה). לחיצה (או `⌘/Ctrl+K` גלובלי) פותחת את ה-Command Palette — ראה **§31 Global Search**. במובייל (`<md`) ה-slot **מוסתר** (`hidden md:flex`) כדי שההמבורגר יישאר נגיש ולא ייווצר צפיפות — ראה ניווט המובייל למטה.
 - **`<div className="flex-1" />`** דוחף את הצד השני לקצה.
 - **אזור פעולות** (RTL end / שמאל) `flex items-center gap-2.5`:
@@ -919,8 +961,8 @@ toast.info('...');
   - אייקוני quick-link `צ׳אט פנימי` (→ `/chat`) ו-`צ׳אט וואטסאפ` (→ `/messages`), מגודרים ב-`can('internal_chat'|'whatsapp_chat','view')`. סגנון זהה לפעמון: `grid h-[38px] w-[38px] rounded-[10px] border border-line bg-surface-2 text-ink-2 hover:bg-row-hover`. **בלי badge** — אין מקור unread בהדר (החוק: בלי מקור → בלי badge).
   - מפריד `h-[30px] w-px bg-line` (רק אם יש אייקונים).
   - **User-pill**: `Popover`. Trigger = `flex h-[44px] items-center gap-2.5 rounded-[13px] border border-line bg-white` עם avatar `h-[34px] w-[34px] rounded-[10px] bg-brand-soft text-brand-text` (אות ראשונה), שם `text-[13px] font-extrabold` + תפקיד `text-[10.5px] text-ink-3`, ו-`ChevronDown` שמסתובב כשפתוח. הנתונים מהמשתמש המחובר (`useAuth`); התפקיד מ-`roleLabel(user.role)` (לעולם לא מהשם). תוכן ה-Popover: שם + badge תפקיד (`ROLE_STYLES`) + אימייל + כפתור `התנתק` אדום (`signOut`).
-- ה-Brand עבר לסיידבר (§14); ההדר אינו מציג לוגו.
-- **ניווט מובייל (drawer)**: `MobileNav` — כפתור המבורגר ב-RTL-start (לפני החיפוש), **`md:hidden` בלבד** (בדסקטופ הסיידבר מכסה; אפס כפילות). סגנון זהה לאייקוני ההדר: `grid h-[38px] w-[38px] rounded-[10px] border border-line bg-surface-2 text-ink-2 hover:bg-row-hover`, אייקון `Menu`. לחיצה פותחת `Sheet` עם **`side="right"`** (`w-[280px]`, `bg-white`, `showCloseButton={false}`) — נפתח מהקצה הפיזי הימני, **אותו צד של הסיידבר** (ב-`ui/sheet.tsx`, מבוסס base-ui, ה-`side` ממומש בתכונות CSS פיזיות `right-0`/`left-0` ולכן **אינו מתהפך לפי dir** — `side="right"` דטרמיניסטי). תוכן ה-drawer = אותם פריטים כמו הסיידבר דרך `nav.tsx`: `NavBrand` + `Section`/`NavLink` (active/disabled זהים) + פוטר `הגדרות`/`התנתק`. קליק על פריט קורא ל-`onNavigate` → סוגר את ה-Sheet. הסיידבר הדסקטופי נשאר `hidden md:flex`.
+- הלוגו יושב בראש הפס (§14); ההדר אינו מציג לוגו.
+- **ניווט מובייל (drawer)**: `MobileNav` — כפתור המבורגר ב-RTL-start (לפני החיפוש), **`md:hidden` בלבד** (בדסקטופ הסיידבר מכסה; אפס כפילות). סגנון זהה לאייקוני ההדר: `grid h-[38px] w-[38px] rounded-[10px] border border-line bg-surface-2 text-ink-2 hover:bg-row-hover`, אייקון `Menu`. לחיצה פותחת `Sheet` עם **`side="right"`** (`w-[308px] max-w-full` = פס 72 + פאנל 236, `bg-white`, `p-0`, `flex-row`, בלי `border-l`, `showCloseButton={false}`) — נפתח מהקצה הפיזי הימני, **אותו צד של הסיידבר** (ב-`ui/sheet.tsx`, מבוסס base-ui, ה-`side` ממומש בתכונות CSS פיזיות `right-0`/`left-0` ולכן **אינו מתהפך לפי dir** — `side="right"` דטרמיניסטי). תוכן ה-drawer = **אותו `NavRail`** כמו בדסקטופ (§14) מאותן קטגוריות מסוננות מ-`nav.tsx`, ב-variant `mobile`: בפתיחה מוצגת קטגוריית המסלול; לחיצה על קטגוריה **רק מחליפה** את הרשימה; לחיצה על פריט מנווטת וסוגרת את ה-Sheet (`onNavigate`); **אין כיווץ ואין כפתור כיווץ**; פריטי הפאנל `min-h-[44px]` וכפתורי הפס גבוהים מ-44px; „יציאה” מתנתקת. ה-Sheet מפרק את התוכן כשהוא נסגר, ולכן הקטגוריה המוצגת מתאפסת לקטגוריית המסלול בכל פתיחה. **אין מצב שלישי**: מ-`md` ומעלה הפאנל דוחף את התוכן, מתחת ל-`md` הכול בתוך ה-Sheet.
 
 ---
 
@@ -1868,7 +1910,7 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 
 ```tsx
 <div className="h-shell flex bg-app">         {/* row, RTL → סיידבר בימין */}
-  <Sidebar />                                  {/* עמודה מלאת-גובה בקצה ימין, brand בראשה */}
+  <Sidebar />                                  {/* עמודה מלאת-גובה בקצה ימין: פס כהה + פאנל (§14) */}
   <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
     <Header />                                 {/* בתוך אזור התוכן בלבד */}
     <main className="flex-1 overflow-auto overscroll-contain bg-app">
@@ -1885,12 +1927,12 @@ rename `34×34 rounded-[9px] text-[#64748b] hover:bg-[#eef2f7]`, delete `34×34 
 
 **עקרונות (מה שמנע את הסטייה):**
 
-- **הסיידבר הוא עמודה מלאת-גובה בקצה ימין** — נמתח מ-`top` ל-`bottom` של המסך (הילד הראשון ב-row, `align-items: stretch`). ה-brand block בראשו עולה עד הקצה העליון ממש.
+- **הסיידבר הוא עמודה מלאת-גובה בקצה ימין** — נמתח מ-`top` ל-`bottom` של המסך (הילד הראשון ב-row, `align-items: stretch`). הפס הכהה (§14) עולה עד הקצה העליון ממש, והלוגו בראשו.
 - **ה-Header יושב רק מעל אזור התוכן** — הוא ילד של עמודת התוכן (`flex-1 flex-col`), ולכן **נעצר בגבול הסיידבר ולא חוצה מעליו**. זו הנקודה הקריטית: header אסור שיהיה אח (sibling) של הסיידבר ברמת ה-row.
-- **יישור הקווים התחתונים**: ה-brand block (§14) וה-Header (§15) חולקים `h-16` + `border-b border-line` → שני הקווים התחתונים מתלכדים לקו רציף אחד לרוחב ראש המסך.
+- **ה-Header והפאנל**: מ-11/11/2026 אין brand block לחלוק איתו `h-16` + `border-b` (§14). ה-Header נשאר `h-16 border-b border-line`; הפאנל הלבן (כשהוא פתוח) צמוד אליו מימין עם קו `border-line` בצד שפונה לתוכן, כך שה-Header הלבן לא „נספג” בפאנל.
 - **ריפוד התוכן (gutter)**: `18px` מתחת ל-`md`, `md:p-6` (1.5rem = 25.5px — ה-root הוא 17px) מ-`md` ומעלה, בארבעת הצדדים. הצדדים = `max(ה-gutter, env(safe-area-inset-left/right))` בכל רוחב, והתחתית כך מתחת ל-`md` — בטלפון לרוחב התוכן לא נכנס מתחת ל-notch, ובכל מקום אחר הריפוד הוא ה-gutter עצמו. **safe-area כותבים בתוך ה-utility עצמו (`max(…, env(safe-area-inset-*))`), לא במחלקה נפרדת, ולא שמים מחלקה מ-`responsive.css` על אלמנט שיש לו גם utility של padding:** הקובץ לא בתוך layer, ולכן כל כלל שבו גובר על כל utility של Tailwind (סדר ה-layers נקבע לפני ה-specificity). כך `.safe-px` העלים את הריפוד הצדדי בכל הדפים מ-13/08 עד 10/10/2026; הוא וחמש מחלקות ה-`safe-*` האחרות (`safe-pt`/`safe-pb`/`safe-mb`/`safe-pb-3`/`safe-pb-4`, שלא היו בשימוש) נמחקו ב-10/10/2026. שומר רגרסיה: `e2e/app-shell-padding.spec.ts`.
 - **Scroll**: רק `<main>` גולל (`overflow-auto`); הסיידבר וההדר קבועים. עמודת התוכן היא `overflow-hidden` כך שה-`<main>` הוא המשטח הגולל היחיד.
-- **רספונסיביות**: הסיידבר `hidden md:flex` — במובייל הוא מוסתר, אזור התוכן תופס את כל הרוחב, וההדר נמתח על פניו (אין סיידבר לחצות מעליו). התנהגות ה-collapse נשמרת בתוך הסיידבר עצמו (§14).
+- **רספונסיביות**: הסיידבר `hidden md:flex` — במובייל הוא מוסתר, אזור התוכן תופס את כל הרוחב, וההדר נמתח על פניו (אין סיידבר לחצות מעליו). התנהגות הפתיחה/כיווץ של הפאנל נשמרת בתוך הסיידבר עצמו (§14, `useNavPanel`).
 - **גבול שינוי**: עורכים כאן את **מבנה ה-wrapper בלבד** — לא את `{children}`, לא את ה-`<main>` הפנימי, ולא את לוגיקת הניווט/ההרשאות.
 
 ---
