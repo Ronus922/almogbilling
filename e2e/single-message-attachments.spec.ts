@@ -30,9 +30,15 @@ test('single-recipient sheet: two files in one pick, listed and previewed', asyn
   const openSheet = page.getByRole('row').filter({ hasText: 'E2E-101' })
     .locator('button[aria-label="שליחת WhatsApp"]:visible').first();
   await expect(openSheet).toBeVisible({ timeout: 15_000 });
-  await openSheet.click();
 
+  // The row action is server-rendered, so it is visible (and "actionable") a few hundred ms
+  // BEFORE React hydrates — a click in that window does nothing (the same race the bulk
+  // legal-status and board-order specs already guard against). Click until the sheet is up.
   const sheet = page.getByRole('dialog').filter({ hasText: 'שליחת הודעת WhatsApp' });
+  await expect(async () => {
+    await openSheet.click();
+    await expect(sheet).toBeVisible({ timeout: 1_500 });
+  }).toPass({ timeout: 15_000 });
   await expect(sheet.getByText('קבצים מצורפים')).toBeVisible();
 
   const input = sheet.locator('input[type="file"]');

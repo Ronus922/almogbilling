@@ -11,19 +11,19 @@ import { DEFAULT_MANAGER } from '@/lib/permissions/constants';
 
 const section = (role: 'admin' | 'super_admin' | 'manager') =>
   filterNav(role, (m, a) => (role === 'manager' ? hasPermission(role, DEFAULT_MANAGER, m, a) : true))
-    .sections.find((s) => s.title === 'פורטל בעלי דירות');
+    .categories.find((c) => c.id === 'portal');
 
 describe('nav — "טלפונים חסומים" removed, no duplicate of /contacts', () => {
-  it('the owners-portal category no longer lists "טלפונים חסומים"', () => {
+  it('the owners-portal category no longer lists "טלפונים חסומים" (it holds "משתמשים" since 11/11/2026)', () => {
     for (const role of ['admin', 'super_admin'] as const) {
       const items = section(role)?.items ?? [];
       expect(items.map((i) => i.label)).not.toContain('טלפונים חסומים');
-      expect(items.map((i) => i.href)).toEqual(['/decisions', '/admin/portal-log']);
+      expect(items.map((i) => i.href)).toEqual(['/decisions', '/admin/portal-log', '/settings/users']);
     }
   });
 
   it('no nav item anywhere points at /admin/portal-blocked or duplicates /contacts', () => {
-    const all = filterNav('super_admin', () => true).sections.flatMap((s) => s.items);
+    const all = filterNav('super_admin', () => true).categories.flatMap((c) => c.items);
     expect(all.some((i) => i.href === '/admin/portal-blocked')).toBe(false);
     expect(all.filter((i) => i.href === '/contacts')).toHaveLength(1);
   });

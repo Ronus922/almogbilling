@@ -21,7 +21,7 @@ import { hasPermission } from '@/lib/permissions/check';
 import { DEFAULT_MANAGER, type ModulePermission, type Role } from '@/lib/permissions/constants';
 
 const navHrefs = (role: Role, perms: ModulePermission[] = []) =>
-  filterNav(role, (m, a) => hasPermission(role, perms, m, a)).sections.flatMap((s) => s.items.map((i) => i.href));
+  filterNav(role, (m, a) => hasPermission(role, perms, m, a)).categories.flatMap((c) => c.items.map((i) => i.href));
 
 describe('nav — "משתמשים" by role, never by the matrix', () => {
   it('admin and super_admin see it', () => {

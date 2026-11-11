@@ -6,17 +6,17 @@ import { DEFAULT_MANAGER, DEFAULT_WORKER, type ModulePermission, type Role } fro
 // "תקלות"/"משימות" nav items (13/10/2026, decision 4: "הרשאות קובעות, לא
 // תפקיד") — the nav's own filter (filterNav + hasPermission) already drives
 // visibility entirely off the issues/tasks module permission, with no
-// role-name special case anywhere in SECTIONS for these two items (nav.tsx).
+// role-name special case anywhere in NAV_CATEGORIES for these two items (nav.tsx).
 // A manager/worker without an effective view permission already does not see
 // the item; admin/super_admin see it because hasPermission grants them every
 // module that is not in SUPER_ADMIN_ONLY — issues/tasks are not in that list,
 // matching the project's standing "admin has every module" model (RBAC
-// history: PR #78/#79/#93). This locks that behavior down so a future SECTIONS
+// history: PR #78/#79/#93). This locks that behavior down so a future NAV_CATEGORIES
 // edit cannot silently special-case either role back in.
 
 const hrefs = (role: Role, perms: ModulePermission[] = []) =>
-  filterNav(role, (m, a) => hasPermission(role, perms, m, a)).sections
-    .flatMap((s) => s.items)
+  filterNav(role, (m, a) => hasPermission(role, perms, m, a)).categories
+    .flatMap((c) => c.items)
     .map((i) => i.href);
 
 describe('nav — תקלות/משימות visibility follows the module permission, not the role', () => {

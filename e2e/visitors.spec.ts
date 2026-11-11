@@ -318,6 +318,9 @@ test('the guard lands on /visitors and the menu offers nothing else', async ({ b
   await expect(page).toHaveURL(/\/visitors$/);
   await expect(page.getByRole('heading', { name: 'סריקת כניסה' })).toBeVisible();
 
+  // The rail offers ONE category (no "הגדרות" either), its panel ONE item.
+  const categories = await page.locator('aside button[data-nav-category]').allInnerTexts();
+  expect(categories.map((t) => t.trim())).toEqual(['אבטחה']);
   const links = await page.locator('aside nav a').allInnerTexts();
   expect(links.map((t) => t.trim())).toEqual(['סריקת כניסה']);
   // no Settings link, no bell, no global search, no personal assistant

@@ -10,7 +10,7 @@ import { DEFAULT_MANAGER, DEFAULT_VIEWER, type ModulePermission, type Role } fro
 // (/api/whatsapp/campaigns, /api/whatsapp/templates). The UI layer of the three.
 
 const section = (role: Role, perms: ModulePermission[] = []) =>
-  filterNav(role, (m, a) => hasPermission(role, perms, m, a)).sections.find((s) => s.title === 'תפוצה');
+  filterNav(role, (m, a) => hasPermission(role, perms, m, a)).categories.find((c) => c.id === 'broadcasts');
 const hrefs = (role: Role, perms: ModulePermission[] = []) => section(role, perms)?.items.map((i) => i.href) ?? [];
 
 describe('nav — the "תפוצה" category', () => {
@@ -40,9 +40,10 @@ describe('nav — the "תפוצה" category', () => {
   });
 
   it('the templates entry moved into the category — not duplicated in the main list', () => {
-    const all = filterNav('admin', () => true).sections.flatMap((s) => s.items.map((i) => i.href));
+    const all = filterNav('admin', () => true).categories.flatMap((c) => c.items.map((i) => i.href));
     expect(all.filter((h) => h === '/whatsapp-templates')).toHaveLength(1);
     // The chat itself did not move.
-    expect(filterNav('admin', () => true).sections[0].items.map((i) => i.href)).toContain('/messages');
+    const chat = filterNav('admin', () => true).categories.find((c) => c.id === 'residents');
+    expect(chat?.items.map((i) => i.href)).toContain('/messages');
   });
 });

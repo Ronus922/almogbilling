@@ -73,7 +73,9 @@ test.describe('tiered users management — as an admin', () => {
     adminCtx = login.ctx;
     adminPage = login.page;
 
-    const link = adminPage.locator('a[href="/settings/users"]').first();
+    // "משתמשים" sits in the "פורטל" category of the rail (11/11/2026): open it, then the item.
+    await adminPage.locator('aside button[data-nav-category]', { hasText: /^פורטל$/ }).click();
+    const link = adminPage.locator('aside a[href="/settings/users"]');
     await expect(link).toBeVisible();
     await link.click();
     await expect(adminPage).toHaveURL(/\/settings\/users$/);
@@ -83,7 +85,9 @@ test.describe('tiered users management — as an admin', () => {
   test('purchasing ("רכש") is open to an admin: nav item, the page, the routes, the file proxy (24/10/2026)', async () => {
     const page = adminPage!;
     await page.goto('/dashboard');
-    await expect(page.locator('a[href="/purchasing"]')).toHaveCount(1);
+    // "רכש" is a category of the rail; its panel lists "בקשות והזמנות" (the panel shows one category at a time).
+    await page.locator('aside button[data-nav-category]', { hasText: /^רכש$/ }).click();
+    await expect(page.locator('aside a[href="/purchasing"]')).toHaveCount(1);
     await page.goto('/purchasing');
     await expect(page).toHaveURL(/\/purchasing/);
     await expect(page.getByRole('heading', { name: 'רכש' })).toBeVisible();
