@@ -55,6 +55,13 @@
   --color-brand-soft: #ecefff;
   --color-brand-border: #cfd7ff;
   --color-brand-text: #243bb5;
+  /* Navigation rail — the dark category strip (DESIGN.md §14). Everything else the
+     rail and its panel use is an existing token (brand, ink-*, line, row-hover). */
+  --color-rail: #141a2e;
+  --color-rail-ink: #8e96b3;
+  --color-rail-hover: rgb(255 255 255 / 0.07);
+  --color-rail-danger-bg: rgb(255 80 80 / 0.14);
+  --color-rail-danger: #ff9a9a;
   /* Soft, slightly-blue shadows */
   --shadow-soft-xs: 0 1px 2px rgba(20, 28, 50, 0.04);
   --shadow-soft-sm: 0 1px 3px rgba(20, 28, 50, 0.05), 0 1px 2px rgba(20, 28, 50, 0.03);

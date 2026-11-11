@@ -2,27 +2,27 @@
 
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { Menu, LogOut } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useAuth, usePermissions } from '@/lib/auth/context';
 import { PURCHASING_MODULES } from '@/lib/purchasing/access';
 import { usePurchasingUnseen } from '@/components/purchasing/unseen';
-import { filterNav, NavBrand, Section, NavLink, FooterButton, SETTINGS_ITEM } from './nav';
+import { filterNav, type NavCategory } from './nav';
+import { NavRail } from './NavRail';
+import { useNavPanel } from './useNavPanel';
 
-// Mobile-only navigation. The desktop Sidebar is `hidden md:flex`, so on phones
-// there is no nav at all — this hamburger (md:hidden) opens a Sheet with the
-// SAME filtered items, active state and disabled state via the shared `nav`
-// module (no second list). Drawer opens from the right (`side="right"`) to match
-// the desktop Sidebar's physical right edge. See DESIGN.md §15.
+// Mobile-only navigation. The desktop Sidebar is `hidden md:flex`, so on phones there is no
+// nav at all — this hamburger (md:hidden) opens a Sheet holding the SAME rail + panel, built
+// from the SAME filtered categories via the shared `nav` module (no second list). The drawer
+// opens from the right (`side="right"`) to match the desktop sidebar's physical right edge,
+// 308px wide (72 rail + 236 panel) and never wider than the screen. See DESIGN.md §14 + §15.
 export function MobileNav() {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
   const { can, role } = usePermissions();
-  const { signOut } = useAuth();
 
   const unseenQuotes = usePurchasingUnseen(open && PURCHASING_MODULES.some((m) => can(m, 'view')));
-  const { sections, showSettings } = filterNav(role, can, { '/purchasing': unseenQuotes });
-  const close = () => setOpen(false);
+  const { categories } = filterNav(role, can, { '/purchasing': unseenQuotes });
 
   return (
     <>
@@ -40,39 +40,39 @@ export function MobileNav() {
           side="right"
           dir="rtl"
           showCloseButton={false}
-          className="flex w-[280px] flex-col gap-0 bg-white p-0"
+          className="w-[308px] max-w-full flex-row gap-0 bg-white p-0 data-[side=right]:border-l-0"
         >
           <SheetTitle className="sr-only">תפריט ניווט</SheetTitle>
-
-          <NavBrand collapsed={false} />
-
-          <nav className="flex-1 overflow-y-auto overflow-x-hidden px-3.5 pb-3.5 pt-1">
-            {sections.map((section) => (
-              <Section
-                key={section.title}
-                title={section.title}
-                items={section.items}
-                pathname={pathname}
-                collapsed={false}
-                onNavigate={close}
-              />
-            ))}
-          </nav>
-
-          <div className="border-t border-line-soft px-3.5 py-3">
-            {showSettings && (
-              <NavLink item={SETTINGS_ITEM} pathname={pathname} collapsed={false} onNavigate={close} />
-            )}
-            <FooterButton
-              icon={LogOut}
-              label="התנתק"
-              collapsed={false}
-              onClick={() => { close(); void signOut(); }}
-              tone="logout"
-            />
-          </div>
+          {/* The Sheet unmounts its content when closed, so the shown category starts at the
+              current page's category on every open. */}
+          <DrawerNav categories={categories} pathname={pathname} onClose={() => setOpen(false)} />
         </SheetContent>
       </Sheet>
     </>
+  );
+}
+
+function DrawerNav({
+  categories, pathname, onClose,
+}: {
+  categories: NavCategory[];
+  pathname: string;
+  onClose: () => void;
+}) {
+  const { signOut } = useAuth();
+  const panel = useNavPanel(categories, pathname, false);
+  return (
+    <NavRail
+      categories={categories}
+      shown={panel.shown}
+      open
+      animate={false}
+      highlightedId={panel.highlightedId}
+      activeHref={panel.activeHref}
+      variant="mobile"
+      onSelectCategory={panel.selectCategory}
+      onNavigate={onClose}
+      onSignOut={() => { onClose(); void signOut(); }}
+    />
   );
 }

@@ -1,0 +1,261 @@
+'use client';
+
+import { useId, useRef } from 'react';
+import Link from 'next/link';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
+import type { BadgeTone, MenuItem, NavCategory } from './nav';
+import type { NavIcon } from './navIcons';
+import { CollapseChevrons, LogoMark, RailLogout } from './navIcons';
+
+// The navigation surface, shared by the desktop Sidebar and the mobile drawer: a dark rail of
+// category buttons (72px) and a white panel (236px) listing the items of ONE category.
+// Pixel values are the reference's own (ref/sidebar-rail/"Sidebar B - Rail.html"), written as
+// arbitrary px values — the root font-size is 17px, so rem utilities would be 6% off.
+// DESIGN.md §14 declares the three places this deliberately departs from the generic rules
+// (9.5px rail label, 28px collapse button, the reference's own paddings).
+
+export interface NavRailProps {
+  categories: NavCategory[];
+  /** The category the panel lists (null → no panel at all: nothing permitted). */
+  shown: NavCategory | null;
+  open: boolean;
+  /** Width transition on (after the first click). */
+  animate: boolean;
+  highlightedId: string | null;
+  activeHref: string | null;
+  /** desktop: the panel pushes the content and has a collapse button; mobile: it lives in
+   *  the drawer, never collapses, and its items are 44px tall. */
+  variant: 'desktop' | 'mobile';
+  onSelectCategory: (id: string) => void;
+  onClosePanel?: () => void;
+  /** Fired after an item navigates — lets the mobile drawer close itself. */
+  onNavigate?: () => void;
+  onSignOut: () => void;
+}
+
+export function NavRail({
+  categories, shown, open, animate, highlightedId, activeHref, variant,
+  onSelectCategory, onClosePanel, onNavigate, onSignOut,
+}: NavRailProps) {
+  const panelId = useId();
+  const railRef = useRef<HTMLElement>(null);
+  const scrolling = categories.filter((c) => !c.pinned);
+  const pinned = categories.filter((c) => c.pinned);
+  const categoryButton = (c: NavCategory) => (
+    <RailButton
+      key={c.id}
+      icon={c.icon}
+      label={c.label}
+      selected={highlightedId === c.id}
+      expanded={open && shown?.id === c.id}
+      controls={panelId}
+      category={c.id}
+      onClick={() => onSelectCategory(c.id)}
+    />
+  );
+
+  return (
+    <>
+      <nav ref={railRef} aria-label="קטגוריות ניווט" className="flex w-[72px] shrink-0 flex-col items-center gap-[4px] bg-rail py-[14px]">
+        <div className="shrink-0 pb-[10px]">
+          <span className="grid h-[40px] w-[40px] place-items-center rounded-[12px] bg-brand text-white">
+            <LogoMark size={20} strokeWidth={2} />
+          </span>
+        </div>
+        {/* Short windows: only the categories scroll (no visible scrollbar); the logo above
+            and settings + logout below stay put. */}
+        <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-[4px] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {scrolling.map(categoryButton)}
+        </div>
+        <div className="flex shrink-0 flex-col items-center gap-[4px]">
+          {pinned.map(categoryButton)}
+          <RailButton icon={RailLogout} label="יציאה" ariaLabel="התנתק" danger onClick={onSignOut} />
+        </div>
+      </nav>
+      {shown && (
+        <NavPanel
+          id={panelId}
+          category={shown}
+          open={open}
+          animate={animate}
+          variant={variant}
+          activeHref={activeHref}
+          onClose={onClosePanel && (() => {
+            onClosePanel();
+            // The collapse button lives in the panel that is about to go inert: hand the focus
+            // to the rail button of the category that was shown, or a keyboard user loses it.
+            railRef.current?.querySelector<HTMLElement>(`[data-nav-category="${shown.id}"]`)?.focus();
+          })}
+          onNavigate={onNavigate}
+        />
+      )}
+    </>
+  );
+}
+
+function RailButton({
+  icon: Icon, label, selected, expanded, controls, ariaLabel, category, danger, onClick,
+}: {
+  icon: NavIcon;
+  label: string;
+  selected?: boolean;
+  expanded?: boolean;
+  controls?: string;
+  ariaLabel?: string;
+  category?: string;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={ariaLabel}
+      aria-expanded={category ? expanded : undefined}
+      aria-controls={category ? controls : undefined}
+      data-nav-category={category}
+      data-selected={selected ? 'true' : undefined}
+      className={cn(
+        'flex w-[52px] shrink-0 flex-col items-center gap-[3px] rounded-[11px] px-0 py-[9px] text-[9.5px] font-semibold leading-[normal] [transition:background_.13s,color_.13s] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-white/80',
+        selected
+          ? 'bg-brand text-white'
+          : danger
+            ? 'text-rail-ink hover:bg-rail-danger-bg hover:text-rail-danger'
+            : 'text-rail-ink hover:bg-rail-hover hover:text-white',
+      )}
+    >
+      <Icon size={19} strokeWidth={1.9} />
+      {label}
+    </button>
+  );
+}
+
+function NavPanel({
+  id, category, open, animate, variant, activeHref, onClose, onNavigate,
+}: {
+  id: string;
+  category: NavCategory;
+  open: boolean;
+  animate: boolean;
+  variant: 'desktop' | 'mobile';
+  activeHref: string | null;
+  onClose?: () => void;
+  onNavigate?: () => void;
+}) {
+  return (
+    <div
+      id={id}
+      data-nav-panel={category.id}
+      data-state={open ? 'open' : 'closed'}
+      // A closed panel is 0px wide and transparent, but its links are still in the DOM — inert
+      // keeps them out of the tab order and the accessibility tree.
+      inert={!open}
+      className={cn(
+        'flex flex-col overflow-hidden bg-white',
+        // Desktop: fixed 236. The drawer is max-w-full, so on a screen narrower than 308px the
+        // panel gives way (its labels truncate) instead of hanging past the edge.
+        variant === 'desktop' ? 'shrink-0' : 'min-w-0 shrink',
+        // The line toward the content (desktop only — the drawer has its own edge) goes with
+        // the panel when it closes; the line toward the rail is the reference's own.
+        variant === 'desktop' ? 'border-x border-line' : 'border-s border-line',
+        animate && '[transition:width_.22s_cubic-bezier(.4,0,.2,1),opacity_.18s]',
+        open ? 'w-[236px] opacity-100' : 'w-0 border-x-0 opacity-0',
+      )}
+    >
+      {/* min-width keeps the content from re-wrapping while the panel animates to 0. */}
+      <div className={cn('flex h-full flex-col', variant === 'desktop' ? 'w-[236px] min-w-[236px]' : 'w-full min-w-0')}>
+        <div className="relative flex flex-col gap-[2px] px-[16px] pb-[10px] pt-[18px]">
+          <div className="text-[16px] leading-[normal]">
+            {/* A <b>, like the reference — not a heading: it would add an h2 to every page. */}
+            <b className="text-[15px] font-extrabold text-ink">{category.title}</b>
+          </div>
+          <p className="text-[11.5px] font-medium leading-[normal] text-ink-3">{category.description}</p>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              title="כיווץ תפריט"
+              aria-label="כיווץ תפריט"
+              className="absolute end-[10px] top-[16px] grid h-[28px] w-[28px] place-items-center rounded-[8px] text-ink-ghost [transition:background_.13s,color_.13s] hover:bg-row-hover hover:text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand"
+            >
+              <CollapseChevrons size={15} strokeWidth={2} />
+            </button>
+          )}
+        </div>
+        <nav aria-label={category.title} className="flex min-h-0 flex-1 flex-col gap-[1px] overflow-y-auto px-[10px] pb-[14px] pt-[4px]">
+          {category.items.map((item) => (
+            <PanelItem
+              key={item.label}
+              item={item}
+              active={!!item.href && item.href === activeHref}
+              variant={variant}
+              onNavigate={onNavigate}
+            />
+          ))}
+        </nav>
+      </div>
+    </div>
+  );
+}
+
+const BADGE_TONE: Record<BadgeTone, string> = {
+  default: 'bg-[#eef1f6] text-[#64748b]',
+  warn: 'bg-[#fdecec] text-[#dc2626]',
+  green: 'bg-[#e7f7ee] text-[#16a34a]',
+};
+
+function PanelItem({
+  item, active, variant, onNavigate,
+}: {
+  item: MenuItem;
+  active: boolean;
+  variant: 'desktop' | 'mobile';
+  onNavigate?: () => void;
+}) {
+  const Icon = item.icon;
+  const ready = !!item.href;
+  const className = cn(
+    'flex w-full items-center gap-[10px] rounded-[9px] px-[10px] py-[9px] text-start text-[13.5px] font-semibold leading-[normal] [transition:background_.12s,color_.12s] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
+    variant === 'mobile' && 'min-h-[44px]',
+    !ready
+      ? 'cursor-not-allowed text-ink-ghost'
+      : active
+        ? 'bg-brand-soft text-brand-text'
+        : 'text-ink-2 hover:bg-row-hover hover:text-ink',
+  );
+  const content = (
+    <>
+      <Icon size={16} strokeWidth={1.9} className={cn('shrink-0', active ? 'text-brand-text' : 'text-ink-3')} />
+      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      {item.badge && item.badge.count > 0 && (
+        <span className={cn('grid h-[21px] min-w-[21px] place-items-center rounded-full px-1.5 text-[11.5px] font-extrabold', BADGE_TONE[item.badge.tone ?? 'default'])}>
+          {item.badge.count}
+        </span>
+      )}
+    </>
+  );
+
+  // An item whose route is not wired yet stays visible, muted, with a "בקרוב" tooltip.
+  if (!ready) {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={<span className="block" />}>
+          <span aria-disabled="true" className={className}>{content}</span>
+        </TooltipTrigger>
+        <TooltipContent side="left">בקרוב</TooltipContent>
+      </Tooltip>
+    );
+  }
+  return (
+    <Link
+      href={item.href!}
+      aria-current={active ? 'page' : undefined}
+      data-nav-item={item.href}
+      onClick={onNavigate}
+      className={className}
+    >
+      {content}
+    </Link>
+  );
+}
