@@ -4,12 +4,18 @@ import { createHash, randomBytes } from 'node:crypto';
 
 // The navigation rail + panel (11/11/2026, DESIGN.md §14): a dark strip of category buttons and
 // a white panel listing the items of ONE category. Pinned here, on the production build:
-//   · a click on a category only switches the panel — the URL does not move, nothing is marked;
+//   · a PANEL category (two or more permitted items): a click only switches the panel — the URL
+//     does not move, nothing is marked;
+//   · a LINK category (exactly one permitted item — "ראשי", "אבטחה", "הגדרות", or any category the
+//     permissions cut down to one): the rail button IS the link — a click navigates, there is no
+//     panel and no aria-expanded, and it never touches the saved panel choice;
 //   · a click on an item navigates and marks it, and its category is marked in the rail;
 //   · the shown category's button again closes the panel (any button opens a closed one), the
 //     choice survives a reload, and the panel PUSHES the content;
 //   · who sees which categories (guard / viewer / admin) — the same set the old single list showed;
-//   · the phone drawer: the same rail + panel, 44px items, an item navigates and closes it;
+//   · the rail labels are 12px / 600 on one line, none clipped;
+//   · the phone drawer: the same rail + panel (the rail alone on a link category's page), 44px
+//     items, an item or a link category navigates and closes it;
 //   · a short window (1366×620): settings and logout stay on screen and reachable.
 //
 // Users made here get a session row straight in the DB (the cookie holds the raw token, the table
@@ -48,8 +54,10 @@ async function sessionFor(browser: Browser, uid: string, viewport?: { width: num
 }
 
 const rail = (page: Page) => page.locator('aside nav[aria-label="קטגוריות ניווט"]');
-const railButtons = (page: Page) => rail(page).locator('button[data-nav-category]');
-const railButton = (page: Page, label: string) => rail(page).locator('button[data-nav-category]', { hasText: new RegExp(`^${label}$`) });
+// A rail control is a <button> for a panel category and an <a> for a link category.
+const railButtons = (page: Page) => rail(page).locator('[data-nav-category]');
+const railButton = (page: Page, label: string) => rail(page).locator('[data-nav-category]', { hasText: new RegExp(`^${label}$`) });
+const savedChoice = (page: Page) => page.evaluate((k) => localStorage.getItem(k), STORAGE_KEY);
 const panel = (page: Page) => page.locator('aside [data-nav-panel]');
 const panelItems = (panelRoot: Locator) => panelRoot.locator('a[data-nav-item]');
 const railLabels = async (page: Page) => (await railButtons(page).allInnerTexts()).map((t) => t.trim());
@@ -114,10 +122,17 @@ test('a click on an item navigates, marks it, and marks its category in the rail
   await expect(rail(page).locator('[data-selected="true"]')).toHaveCount(1);
 });
 
-test('a first load on a page in no category shows the first permitted one, nothing marked in the panel', async ({ page }) => {
+test('a first load on a page in no category shows no panel and marks nothing; a panel category then opens it', async ({ page }) => {
   await page.goto('/notifications');
-  await expect(panel(page)).toHaveAttribute('data-nav-panel', 'home');
-  await expect(panel(page).locator('[aria-current]')).toHaveCount(0);
+  await expect(panel(page)).toHaveAttribute('data-state', 'closed');
+  await expect(page.locator('aside').first()).toHaveCSS('width', '72px');
+  await expect(rail(page).locator('[data-selected="true"]')).toHaveCount(0);
+  expect(await savedChoice(page)).toBeNull(); // nothing the user did → nothing saved
+
+  await railButton(page, 'דיירים').click();
+  await expect(panel(page)).toHaveAttribute('data-state', 'open');
+  await expect(panel(page)).toHaveAttribute('data-nav-panel', 'residents');
+  expect(new URL(page.url()).pathname).toBe('/notifications');
 });
 
 test('the same button again closes the panel, any button opens it, the choice survives a reload, and the panel pushes the content', async ({ page }) => {
@@ -166,30 +181,45 @@ test('the same button again closes the panel, any button opens it, the choice su
 });
 
 test('who sees what: the guard only "אבטחה", the viewer no "ראשי" and no "משתמשים", the admin "משתמשים" under "פורטל"', async ({ browser }) => {
-  // — the guard: one category, no settings, a logout that is labelled for screen readers.
+  // — the guard: one category, a direct link — no panel, no aria-expanded — no settings, and a
+  //   logout that is labelled for screen readers.
   const guard = await sessionFor(browser, people.guard.id);
   await guard.goto('/');
   await expect(guard).toHaveURL(/\/visitors$/);
   expect(await railLabels(guard)).toEqual(['אבטחה']);
-  await expect(panel(guard)).toHaveAttribute('data-nav-panel', 'security');
-  expect(await panelItems(panel(guard)).allInnerTexts()).toEqual(['סריקת כניסה']);
+  const guardLink = railButton(guard, 'אבטחה');
+  await expect(guardLink).toHaveAttribute('data-nav-kind', 'link');
+  await expect(guardLink).toHaveAttribute('href', '/visitors');
+  await expect(guardLink).toHaveAttribute('aria-current', 'page');
+  await expect(guardLink).not.toHaveAttribute('aria-expanded');
+  await expect(panel(guard)).toHaveCount(0); // no panel at all
+  await expect(guard.locator('aside').first()).toHaveCSS('width', '72px');
+  await guardLink.click(); // a link to the page you are on — still no panel
+  await expect(panel(guard)).toHaveCount(0);
+  await expect(guard).toHaveURL(/\/visitors$/);
   await expect(guard.locator('aside a[href="/settings"]')).toHaveCount(0);
   await expect(guard.locator('aside').getByRole('button', { name: 'התנתק' })).toBeVisible();
 
-  // — the viewer: the debtors screen is theirs, and only that.
+  // — the viewer: the debtors screen is theirs, and only that. "כספים" has five items in the
+  //   config but ONE for them, so for them it is a link to that screen — no panel.
   const viewer = await sessionFor(browser, people.viewer.id);
   await viewer.goto('/dashboard');
   const viewerLabels = await railLabels(viewer);
   expect(viewerLabels).toEqual(['כספים']);
   expect(viewerLabels).not.toContain('ראשי');
   expect(viewerLabels).not.toContain('פורטל');
-  expect(await panelItems(panel(viewer)).allInnerTexts()).toEqual(['ניהול חיובים']);
+  await expect(railButton(viewer, 'כספים')).toHaveAttribute('data-nav-kind', 'link');
+  await expect(railButton(viewer, 'כספים')).toHaveAttribute('href', '/dashboard');
+  await expect(panel(viewer)).toHaveCount(0);
   await expect(viewer.locator('aside a[href="/settings/users"]')).toHaveCount(0);
 
   // — the admin: every category, settings pinned last; "משתמשים" is in the portal's.
   const admin = await sessionFor(browser, people.admin.id);
   await admin.goto('/overview');
   expect(await railLabels(admin)).toEqual(['ראשי', 'כספים', 'דיירים', 'תפוצה', 'תפעול', 'רכש', 'פורטל', 'אבטחה', 'הגדרות']);
+  // …three of them single-item (links), six with a panel.
+  const kinds = await railButtons(admin).evaluateAll((els) => els.map((e) => e.getAttribute('data-nav-kind')));
+  expect(kinds).toEqual(['link', 'panel', 'panel', 'panel', 'panel', 'panel', 'panel', 'link', 'link']);
   await railButton(admin, 'פורטל').click();
   expect(await panelItems(panel(admin)).allInnerTexts()).toEqual(['החלטות ופרוטוקולים', 'התחברויות לפורטל', 'משתמשים']);
   await panel(admin).locator('a[data-nav-item="/settings/users"]').click();
@@ -197,6 +227,174 @@ test('who sees what: the guard only "אבטחה", the viewer no "ראשי" and n
   // …and it is the page's item, not "general settings" as well.
   await expect(panel(admin).locator('a[aria-current="page"]')).toHaveText('משתמשים');
   await expect(panel(admin).locator('a[aria-current="page"]')).toHaveCount(1);
+});
+
+test('"ראשי", "אבטחה" and "הגדרות" are direct links: a click navigates, no panel opens, the category is marked', async ({ page }) => {
+  await page.goto('/dashboard');
+  await expect(panel(page)).toHaveAttribute('data-state', 'open');
+  const aside = page.locator('aside').first();
+  for (const [label, path] of [['ראשי', '/overview'], ['אבטחה', '/visitors'], ['הגדרות', '/settings']] as const) {
+    const control = railButton(page, label);
+    // It IS a link — and not a disclosure button: no aria-expanded, no aria-controls.
+    await expect(control).toHaveAttribute('data-nav-kind', 'link');
+    await expect(control).toHaveAttribute('href', path);
+    await expect(control).not.toHaveAttribute('aria-expanded');
+    await expect(control).not.toHaveAttribute('aria-controls');
+    await control.click();
+    await expect(page).toHaveURL(new RegExp(`${path}$`));
+    // The panel steps aside (the page is a link category's), the rail marks the category.
+    await expect(panel(page)).toHaveAttribute('data-state', 'closed');
+    await expect(aside).toHaveCSS('width', '72px');
+    await expect(control).toHaveAttribute('aria-current', 'page');
+    await expect(control).toHaveAttribute('data-selected', 'true');
+    await expect(rail(page).locator('[data-selected="true"]')).toHaveCount(1);
+  }
+  // The six categories with a panel are buttons, with aria-expanded.
+  for (const label of ['כספים', 'דיירים', 'תפוצה', 'תפעול', 'רכש', 'פורטל']) {
+    await expect(railButton(page, label)).toHaveAttribute('data-nav-kind', 'panel');
+    await expect(railButton(page, label)).toHaveAttribute('aria-expanded');
+  }
+});
+
+test('from a link category\'s page, a panel category opens its panel and the URL does not move', async ({ page }) => {
+  await page.goto('/overview');
+  await expect(panel(page)).toHaveAttribute('data-state', 'closed');
+  await railButton(page, 'כספים').click();
+  await expect(panel(page)).toHaveAttribute('data-state', 'open');
+  await expect(panel(page)).toHaveAttribute('data-nav-panel', 'finance');
+  await expect(page.locator('aside').first()).toHaveCSS('width', '308px');
+  expect(new URL(page.url()).pathname).toBe('/overview');
+  // The rail marks what the open panel shows; the page's own link still says it is the page.
+  await expect(railButton(page, 'כספים')).toHaveAttribute('data-selected', 'true');
+  await expect(railButton(page, 'ראשי')).not.toHaveAttribute('data-selected', 'true');
+  await expect(railButton(page, 'ראשי')).toHaveAttribute('aria-current', 'page');
+});
+
+test('a link category never touches the saved choice; only a panel category and the collapse button write it', async ({ page }) => {
+  await page.goto('/dashboard');
+  await expect(panel(page)).toHaveAttribute('data-state', 'open');
+  expect(await savedChoice(page)).toBeNull();
+
+  // The collapse button saves "closed"…
+  await panel(page).getByRole('button', { name: 'כיווץ תפריט' }).click();
+  await expect(panel(page)).toHaveAttribute('data-state', 'closed');
+  expect(await savedChoice(page)).toBe('1');
+
+  // …a link category does not change it (the panel is closed anyway)…
+  await railButton(page, 'ראשי').click();
+  await expect(page).toHaveURL(/\/overview$/);
+  await expect(panel(page)).toHaveAttribute('data-state', 'closed');
+  expect(await savedChoice(page)).toBe('1');
+
+  // …a panel category opens the panel and saves "open"…
+  await railButton(page, 'כספים').click();
+  await expect(panel(page)).toHaveAttribute('data-state', 'open');
+  expect(await savedChoice(page)).toBe('0');
+  expect(new URL(page.url()).pathname).toBe('/overview');
+
+  // …and the link of the page you are ALREADY on still steps the panel aside — a click on it
+  // changes no route, so the panel must not wait for one. The saved choice stays "open".
+  await railButton(page, 'ראשי').click();
+  await expect(panel(page)).toHaveAttribute('data-state', 'closed');
+  await expect(railButton(page, 'ראשי')).toHaveAttribute('data-selected', 'true');
+  expect(await savedChoice(page)).toBe('0');
+
+  // Back to a panel category's page (a client-side route change): the panel follows the page —
+  // on its category, open, because the saved choice says open.
+  await page.goBack();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(panel(page)).toHaveAttribute('data-nav-panel', 'finance');
+  await expect(panel(page)).toHaveAttribute('data-state', 'open');
+  await expect(railButton(page, 'כספים')).toHaveAttribute('data-selected', 'true');
+  expect(await savedChoice(page)).toBe('0');
+});
+
+test('a panel category\'s page keeps a saved "closed" panel closed — navigating does not open it', async ({ page }) => {
+  await page.goto('/dashboard');
+  await panel(page).getByRole('button', { name: 'כיווץ תפריט' }).click();
+  await expect(panel(page)).toHaveAttribute('data-state', 'closed');
+  await railButton(page, 'ראשי').click(); // → a link category's page
+  await expect(page).toHaveURL(/\/overview$/);
+  await page.goBack(); // → a panel category's page again
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(panel(page)).toHaveAttribute('data-state', 'closed');
+  await expect(railButton(page, 'כספים')).toHaveAttribute('data-selected', 'true'); // closed: the route's own category
+  expect(await savedChoice(page)).toBe('1');
+});
+
+test('the rail labels are 12px / 600 on ONE line and none is clipped — desktop and the phone drawer', async ({ browser, page }) => {
+  // The label is the text node directly inside each rail control (an icon + the text).
+  const measure = (root: Locator) => root.locator('[data-nav-category], button[aria-label="התנתק"]').evaluateAll((els) =>
+    els.map((el) => {
+      const text = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE)!;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const cs = getComputedStyle(el);
+      return {
+        label: (text.textContent ?? '').trim(),
+        fontSize: cs.fontSize,
+        fontWeight: cs.fontWeight,
+        lines: range.getClientRects().length,
+        textWidth: range.getBoundingClientRect().width,
+        controlWidth: el.getBoundingClientRect().width,
+      };
+    }));
+  const expectOneLine = (rows: Awaited<ReturnType<typeof measure>>, count: number) => {
+    expect(rows.map((r) => r.label)).toHaveLength(count);
+    for (const r of rows) {
+      expect(r.fontSize, r.label).toBe('12px');
+      expect(r.fontWeight, r.label).toBe('600');
+      expect(r.lines, `${r.label} wraps`).toBe(1);
+      expect(r.textWidth, `${r.label} is wider than its button`).toBeLessThanOrEqual(r.controlWidth);
+    }
+  };
+
+  await page.goto('/overview');
+  const desktop = await measure(rail(page));
+  expectOneLine(desktop, 10); // nine categories + "יציאה"
+  expect((await rail(page).boundingBox())!.width).toBe(72); // the rail keeps its width
+
+  const ctx = await browser.newContext({ storageState: 'e2e/.auth/state.json', viewport: { width: 390, height: 844 }, hasTouch: true });
+  contexts.push(ctx);
+  const phone = await ctx.newPage();
+  await phone.goto('/dashboard');
+  await phone.getByRole('button', { name: 'פתח תפריט' }).click();
+  const drawer = phone.getByRole('dialog');
+  await expect(drawer).toBeVisible();
+  expectOneLine(await measure(drawer), 10);
+});
+
+test('phone: a link category navigates and closes the drawer; on its page the drawer is the rail alone, 72px wide', async ({ browser }) => {
+  const ctx = await browser.newContext({ storageState: 'e2e/.auth/state.json', viewport: { width: 390, height: 844 }, hasTouch: true });
+  contexts.push(ctx);
+  const page = await ctx.newPage();
+  await page.goto('/overview'); // a link category's page
+  await page.getByRole('button', { name: 'פתח תפריט' }).click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer).toBeVisible();
+  // No panel is shown: the drawer is as wide as the rail, and holds no panel at all.
+  await expect.poll(async () => Math.round((await drawer.boundingBox())!.width)).toBe(72);
+  await expect(drawer.locator('[data-nav-panel]')).toHaveCount(0);
+  await expect(drawer.locator('a[data-nav-category="home"]')).toHaveAttribute('aria-current', 'page');
+
+  // A panel category adds the panel (308px) and does not navigate.
+  await drawer.locator('button[data-nav-category]', { hasText: /^כספים$/ }).click();
+  await expect(drawer.locator('[data-nav-panel]')).toHaveAttribute('data-nav-panel', 'finance');
+  await expect.poll(async () => Math.round((await drawer.boundingBox())!.width)).toBe(308);
+  expect(new URL(page.url()).pathname).toBe('/overview');
+  await expect(drawer).toBeVisible();
+
+  // A link category navigates and closes the drawer, like an item does.
+  await drawer.locator('a[data-nav-category="security"]').click();
+  await expect(page).toHaveURL(/\/visitors$/);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+
+  // Reopened on that page: the rail alone again, its link marked.
+  await page.getByRole('button', { name: 'פתח תפריט' }).click();
+  const again = page.getByRole('dialog');
+  await expect.poll(async () => Math.round((await again.boundingBox())!.width)).toBe(72);
+  await expect(again.locator('a[data-nav-category="security"]')).toHaveAttribute('data-selected', 'true');
+  await expect(again.locator('[data-nav-panel]')).toHaveCount(0);
 });
 
 test('phone: the burger opens the rail and the panel, a category switches the list, an item navigates and closes', async ({ browser }) => {
@@ -221,7 +419,7 @@ test('phone: the burger opens the rail and the panel, a category switches the li
     expect((await item.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
   // …and so is every rail button.
-  for (const b of await drawer.locator('nav[aria-label="קטגוריות ניווט"] button').all()) {
+  for (const b of await drawer.locator('nav[aria-label="קטגוריות ניווט"] :is(button, a)').all()) {
     expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
 
@@ -260,7 +458,8 @@ test('a short window (1366×620): settings and logout stay on screen and reachab
   // …and the last category can be reached.
   await railButton(page, 'אבטחה').scrollIntoViewIfNeeded();
   await expect(railButton(page, 'אבטחה')).toBeInViewport();
+  // "הגדרות" is a direct link now: the click goes to the page, it does not open a panel.
   await railButton(page, 'הגדרות').click();
-  await expect(panel(page)).toHaveAttribute('data-nav-panel', 'settings');
-  expect(new URL(page.url()).pathname).toBe('/overview');
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(panel(page)).toHaveAttribute('data-state', 'closed');
 });
