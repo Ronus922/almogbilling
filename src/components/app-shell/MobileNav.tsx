@@ -14,8 +14,9 @@ import { useNavPanel } from './useNavPanel';
 // Mobile-only navigation. The desktop Sidebar is `hidden md:flex`, so on phones there is no
 // nav at all — this hamburger (md:hidden) opens a Sheet holding the SAME rail + panel, built
 // from the SAME filtered categories via the shared `nav` module (no second list). The drawer
-// opens from the right (`side="right"`) to match the desktop sidebar's physical right edge,
-// 308px wide (72 rail + 236 panel) and never wider than the screen. See DESIGN.md §14 + §15.
+// opens from the right (`side="right"`) to match the desktop sidebar's physical right edge.
+// Its width follows its content: 72px (the rail alone) while no panel is shown, 308px (72 rail +
+// 236 panel) when one is, and never wider than the screen. See DESIGN.md §14 + §15.
 export function MobileNav() {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
@@ -40,11 +41,11 @@ export function MobileNav() {
           side="right"
           dir="rtl"
           showCloseButton={false}
-          className="w-[308px] max-w-full flex-row gap-0 bg-white p-0 data-[side=right]:border-l-0"
+          className="w-auto max-w-full flex-row gap-0 bg-white p-0 data-[side=right]:border-l-0"
         >
           <SheetTitle className="sr-only">תפריט ניווט</SheetTitle>
-          {/* The Sheet unmounts its content when closed, so the shown category starts at the
-              current page's category on every open. */}
+          {/* The Sheet unmounts its content when closed, so every open starts from the page: the
+              panel shows its category if it is a panel category, otherwise the rail stands alone. */}
           <DrawerNav categories={categories} pathname={pathname} onClose={() => setOpen(false)} />
         </SheetContent>
       </Sheet>
@@ -65,12 +66,13 @@ function DrawerNav({
     <NavRail
       categories={categories}
       shown={panel.shown}
-      open
+      open={panel.open}
       animate={false}
       highlightedId={panel.highlightedId}
       activeHref={panel.activeHref}
       variant="mobile"
       onSelectCategory={panel.selectCategory}
+      onOpenLink={panel.openLink}
       onNavigate={onClose}
       onSignOut={() => { onClose(); void signOut(); }}
     />

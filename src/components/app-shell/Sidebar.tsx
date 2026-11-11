@@ -10,6 +10,7 @@ import { useNavPanel } from './useNavPanel';
 
 // Desktop navigation (md and up): the dark category rail plus the white items panel, in a row
 // beside the content — the panel PUSHES the content (no overlay) and closes to the rail alone.
+// A category with one permitted item is a direct link in the rail and has no panel at all.
 // Below md the whole thing is hidden and the drawer in MobileNav takes over. The rail's
 // behaviour lives in useNavPanel, the markup in NavRail, the item list in nav.tsx.
 export function Sidebar() {
@@ -33,6 +34,7 @@ export function Sidebar() {
         activeHref={panel.activeHref}
         variant="desktop"
         onSelectCategory={panel.selectCategory}
+        onOpenLink={panel.openLink}
         onClosePanel={panel.closePanel}
         onSignOut={() => signOut()}
       />

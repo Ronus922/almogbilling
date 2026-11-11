@@ -1,10 +1,10 @@
 'use client';
 
-import { useId, useRef } from 'react';
+import { useId, useRef, type MouseEvent } from 'react';
 import Link from 'next/link';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import type { BadgeTone, MenuItem, NavCategory } from './nav';
+import { categoryKind, type BadgeTone, type MenuItem, type NavCategory } from './nav';
 import type { NavIcon } from './navIcons';
 import { CollapseChevrons, LogoMark, RailLogout } from './navIcons';
 
@@ -12,8 +12,9 @@ import { CollapseChevrons, LogoMark, RailLogout } from './navIcons';
 // category buttons (72px) and a white panel (236px) listing the items of ONE category.
 // Pixel values are the reference's own (ref/sidebar-rail/"Sidebar B - Rail.html"), written as
 // arbitrary px values — the root font-size is 17px, so rem utilities would be 6% off.
-// DESIGN.md §14 declares the three places this deliberately departs from the generic rules
-// (9.5px rail label, 28px collapse button, the reference's own paddings).
+// DESIGN.md §14 declares the places this deliberately departs from the generic rules (the 12px
+// rail label, 28px collapse button, the reference's own paddings, the link category).
+// A category with ONE permitted item is a direct link (no panel); two or more switch the panel.
 
 export interface NavRailProps {
   categories: NavCategory[];
@@ -27,7 +28,10 @@ export interface NavRailProps {
   /** desktop: the panel pushes the content and has a collapse button; mobile: it lives in
    *  the drawer, never collapses, and its items are 44px tall. */
   variant: 'desktop' | 'mobile';
+  /** A click on a PANEL category: switches what the panel lists (never navigates). */
   onSelectCategory: (id: string) => void;
+  /** A click on a LINK category: the link navigates, the panel steps aside. */
+  onOpenLink: () => void;
   onClosePanel?: () => void;
   /** Fired after an item navigates — lets the mobile drawer close itself. */
   onNavigate?: () => void;
@@ -36,24 +40,49 @@ export interface NavRailProps {
 
 export function NavRail({
   categories, shown, open, animate, highlightedId, activeHref, variant,
-  onSelectCategory, onClosePanel, onNavigate, onSignOut,
+  onSelectCategory, onOpenLink, onClosePanel, onNavigate, onSignOut,
 }: NavRailProps) {
   const panelId = useId();
   const railRef = useRef<HTMLElement>(null);
   const scrolling = categories.filter((c) => !c.pinned);
   const pinned = categories.filter((c) => c.pinned);
-  const categoryButton = (c: NavCategory) => (
-    <RailButton
-      key={c.id}
-      icon={c.icon}
-      label={c.label}
-      selected={highlightedId === c.id}
-      expanded={open && shown?.id === c.id}
-      controls={panelId}
-      category={c.id}
-      onClick={() => onSelectCategory(c.id)}
-    />
-  );
+  // The drawer keeps no panel in the DOM while none is shown (its width follows the content);
+  // the desktop panel stays mounted so it can animate open and shut.
+  const panelMounted = !!shown && (variant === 'desktop' || open);
+  const categoryButton = (c: NavCategory) => {
+    if (categoryKind(c) === 'link') {
+      const item = c.items[0]!;
+      return (
+        <RailLink
+          key={c.id}
+          icon={c.icon}
+          label={c.label}
+          category={c.id}
+          href={item.href}
+          selected={highlightedId === c.id}
+          current={!!item.href && item.href === activeHref}
+          onClick={(e) => {
+            // Ctrl/Cmd/Shift-click opens the page elsewhere: this tab stays as it is.
+            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            onOpenLink();
+            onNavigate?.();
+          }}
+        />
+      );
+    }
+    return (
+      <RailButton
+        key={c.id}
+        icon={c.icon}
+        label={c.label}
+        selected={highlightedId === c.id}
+        expanded={open && shown?.id === c.id}
+        controls={panelMounted ? panelId : undefined}
+        category={c.id}
+        onClick={() => onSelectCategory(c.id)}
+      />
+    );
+  };
 
   return (
     <>
@@ -73,7 +102,7 @@ export function NavRail({
           <RailButton icon={RailLogout} label="יציאה" ariaLabel="התנתק" danger onClick={onSignOut} />
         </div>
       </nav>
-      {shown && (
+      {shown && panelMounted && (
         <NavPanel
           id={panelId}
           category={shown}
@@ -92,6 +121,18 @@ export function NavRail({
       )}
     </>
   );
+}
+
+// One look for every control of the rail — 12px/600 label on one line (DESIGN.md §14).
+const RAIL_CONTROL =
+  'flex w-[52px] shrink-0 flex-col items-center gap-[3px] whitespace-nowrap rounded-[11px] px-0 py-[9px] text-[12px] font-semibold leading-[normal] [transition:background_.13s,color_.13s] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-white/80';
+
+function railTone(selected?: boolean, danger?: boolean): string {
+  return selected
+    ? 'bg-brand text-white'
+    : danger
+      ? 'text-rail-ink hover:bg-rail-danger-bg hover:text-rail-danger'
+      : 'text-rail-ink hover:bg-rail-hover hover:text-white';
 }
 
 function RailButton({
@@ -115,19 +156,66 @@ function RailButton({
       aria-expanded={category ? expanded : undefined}
       aria-controls={category ? controls : undefined}
       data-nav-category={category}
+      data-nav-kind={category ? 'panel' : undefined}
       data-selected={selected ? 'true' : undefined}
-      className={cn(
-        'flex w-[52px] shrink-0 flex-col items-center gap-[3px] rounded-[11px] px-0 py-[9px] text-[9.5px] font-semibold leading-[normal] [transition:background_.13s,color_.13s] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-white/80',
-        selected
-          ? 'bg-brand text-white'
-          : danger
-            ? 'text-rail-ink hover:bg-rail-danger-bg hover:text-rail-danger'
-            : 'text-rail-ink hover:bg-rail-hover hover:text-white',
-      )}
+      className={cn(RAIL_CONTROL, railTone(selected, danger))}
     >
       <Icon size={19} strokeWidth={1.9} />
       {label}
     </button>
+  );
+}
+
+// A category with one permitted item: the rail button is that item's link — no panel, no
+// aria-expanded. `current` is the semantic truth (this IS the page you are on); `selected` is
+// the rail's mark, which follows the panel while one is shown. An item whose route is not wired
+// yet ("בקרוב") is muted and inert, like the same item in a panel.
+function RailLink({
+  icon: Icon, label, category, href, selected, current, onClick,
+}: {
+  icon: NavIcon;
+  label: string;
+  category: string;
+  href: string | undefined;
+  selected: boolean;
+  current: boolean;
+  onClick: (e: MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  const content = (
+    <>
+      <Icon size={19} strokeWidth={1.9} />
+      {label}
+    </>
+  );
+  if (!href) {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={<span className="block" />}>
+          <span
+            aria-disabled="true"
+            data-nav-category={category}
+            data-nav-kind="link"
+            className={cn(RAIL_CONTROL, 'cursor-not-allowed text-rail-ink/50')}
+          >
+            {content}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="left">בקרוב</TooltipContent>
+      </Tooltip>
+    );
+  }
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      aria-current={current ? 'page' : undefined}
+      data-nav-category={category}
+      data-nav-kind="link"
+      data-selected={selected ? 'true' : undefined}
+      className={cn(RAIL_CONTROL, railTone(selected))}
+    >
+      {content}
+    </Link>
   );
 }
 

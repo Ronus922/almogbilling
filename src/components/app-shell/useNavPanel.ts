@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useSyncExternalStore } from 'react';
-import { findActive, type NavCategory } from './nav';
+import { categoryKind, findActive, type NavCategory } from './nav';
 
 // Existing key (it belonged to the old sidebar's collapse state): '1' = the panel is closed.
 const STORAGE_KEY = 'almog:sidebar-collapsed';
@@ -38,51 +38,81 @@ function writeClosed(closed: boolean): void {
 }
 
 /** The behaviour of the rail + panel (DESIGN.md §14), shared by the desktop sidebar
- *  (`collapsible`) and the mobile drawer (never collapsible):
- *   · the panel SHOWS the category of the current page — on load and on every route change;
- *     a page in no category leaves the last one shown (first permitted one on first load);
- *   · a click on a rail button never navigates: it switches what the panel shows;
- *   · desktop only: the same button again closes the panel, any button opens a closed one,
- *     and the choice is remembered (the server and hydration render see "open", the client then
- *     reads localStorage — no hydration mismatch);
- *   · navigating never opens a closed panel. */
+ *  (`collapsible`) and the mobile drawer (never collapsible).
+ *
+ *  Two kinds of category (`categoryKind`, decided after the permission filter):
+ *   · a LINK category (one permitted item) is a direct link — it has no panel, and a click on
+ *     it navigates (`openLink` hides the panel; the saved choice is not touched);
+ *   · a PANEL category (two or more) never navigates: a click switches what the panel shows.
+ *
+ *  Terms: the route category = the one holding the current page's item; the shown category =
+ *  the panel category the panel lists; the saved choice = `almog:sidebar-collapsed`.
+ *   · on load and on every route change: a page of a panel category → it is the shown one and
+ *     the panel is on (open unless the saved choice says closed); a page of a link category →
+ *     the panel is off; a page in no category → nothing changes (a first load: panel off);
+ *   · desktop, a click on a panel category: panel not shown → opens on it; showing another →
+ *     switches; showing it → closes. The saved choice is written ONLY by this and by the
+ *     collapse button — closing saves "closed", opening saves "open" (never by navigation);
+ *   · mobile: the panel is on only once a panel category is picked or the page belongs to one.
+ *
+ *  The server and the hydration render see "open", the client then reads localStorage — no
+ *  hydration mismatch. */
 export function useNavPanel(categories: NavCategory[], pathname: string, collapsible: boolean) {
   const active = findActive(categories, pathname);
   const routeCategoryId = active?.categoryId ?? null;
+  const routeCategory = categories.find((c) => c.id === routeCategoryId) ?? null;
+  const routeIsPanel = !!routeCategory && categoryKind(routeCategory) === 'panel';
 
-  const [pickedId, setPickedId] = useState<string>(routeCategoryId ?? categories[0]?.id ?? '');
+  const [shownId, setShownId] = useState<string | null>(routeIsPanel ? routeCategoryId : null);
+  // The panel is "on" when the page (or a click) asked for it; the saved choice can still keep it closed.
+  const [panelOn, setPanelOn] = useState(routeIsPanel);
   const [seenPath, setSeenPath] = useState(pathname);
+  // The width transition is switched on by the first click or route change, so restoring a
+  // saved "closed" state after mount snaps instead of animating.
+  const [animate, setAnimate] = useState(false);
   if (pathname !== seenPath) {
-    // Route changed: show the new page's category (derived during render, not in an effect).
+    // Route changed: follow the new page's category (derived during render, not in an effect).
     setSeenPath(pathname);
-    if (routeCategoryId) setPickedId(routeCategoryId);
+    setAnimate(true);
+    if (routeCategory) {
+      if (routeIsPanel) setShownId(routeCategory.id);
+      setPanelOn(routeIsPanel);
+    }
   }
 
   const savedClosed = useSyncExternalStore(subscribe, readClosed, () => false);
   const closed = collapsible && savedClosed;
-  // The width transition is switched on by the first click, so restoring a saved "closed"
-  // state after mount snaps instead of animating.
-  const [animate, setAnimate] = useState(false);
 
-  const shown = categories.find((c) => c.id === pickedId) ?? categories[0] ?? null;
-  const open = !closed;
+  // The panel holds the shown category even while it is off (so it can animate open and shut);
+  // before any was shown it holds the first panel category, invisible. No panel category → no panel.
+  const panelCategories = categories.filter((c) => categoryKind(c) === 'panel');
+  const shown = panelCategories.find((c) => c.id === shownId) ?? panelCategories[0] ?? null;
+  const open = shown !== null && panelOn && !closed;
 
   function setPanelClosed(next: boolean) {
     setAnimate(true);
     writeClosed(next);
   }
 
+  /** A click on a PANEL category's rail button. */
   function selectCategory(id: string) {
     if (!collapsible) {
-      setPickedId(id);
-    } else if (closed) {
-      setPickedId(id);
-      setPanelClosed(false);
-    } else if (shown?.id === id) {
+      setShownId(id);
+      setPanelOn(true);
+    } else if (open && shown?.id === id) {
       setPanelClosed(true);
     } else {
-      setPickedId(id);
+      setShownId(id);
+      setPanelOn(true);
+      if (!open) setPanelClosed(false);
     }
+  }
+
+  /** A click on a LINK category: the link navigates, the panel steps aside. Navigation alone
+   *  would not do it when the page is already that one. The saved choice stays as it was. */
+  function openLink() {
+    setAnimate(true);
+    setPanelOn(false);
   }
 
   return {
@@ -90,10 +120,11 @@ export function useNavPanel(categories: NavCategory[], pathname: string, collaps
     open,
     animate,
     activeHref: active?.href ?? null,
-    /** What the rail highlights: the shown category while the panel is open, the page's own
-     *  category (if it has one) while it is closed. */
-    highlightedId: open ? (shown?.id ?? null) : routeCategoryId,
+    /** What the rail marks: the shown category while the panel is open, otherwise the page's
+     *  own category (link or panel) if it has one. */
+    highlightedId: open && shown ? shown.id : routeCategoryId,
     selectCategory,
+    openLink,
     closePanel: () => setPanelClosed(true),
   };
 }

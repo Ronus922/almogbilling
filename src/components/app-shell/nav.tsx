@@ -220,6 +220,17 @@ export function filterNav(
   return { categories };
 }
 
+/** How a category behaves in the rail — decided AFTER the permission filter, per user, in this
+ *  one place for the desktop sidebar and the mobile drawer:
+ *   · 'link'  — exactly one permitted item: the rail button IS that item (a direct link to its
+ *     page, no panel, no sub-menu). The item is `category.items[0]`.
+ *   · 'panel' — two or more: the rail button switches the panel's list, it never navigates.
+ *  (A category with no permitted item is already gone — filterNav drops it.) */
+export type NavCategoryKind = 'link' | 'panel';
+export function categoryKind(category: Pick<NavCategory, 'items'>): NavCategoryKind {
+  return category.items.length === 1 ? 'link' : 'panel';
+}
+
 function matchesPath(item: MenuItem, pathname: string): boolean {
   return !!item.href && (pathname === item.href || (!item.exact && pathname.startsWith(item.href + '/')));
 }
