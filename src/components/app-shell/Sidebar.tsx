@@ -1,82 +1,43 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { LogOut, ChevronRight } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { useAuth, usePermissions } from '@/lib/auth/context';
 import { PURCHASING_MODULES } from '@/lib/purchasing/access';
 import { usePurchasingUnseen } from '@/components/purchasing/unseen';
-import { filterNav, NavBrand, Section, NavLink, FooterButton, SETTINGS_ITEM } from './nav';
+import { filterNav } from './nav';
+import { NavRail } from './NavRail';
+import { useNavPanel } from './useNavPanel';
 
-const STORAGE_KEY = 'almog:sidebar-collapsed';
-
+// Desktop navigation (md and up): the dark category rail plus the white items panel, in a row
+// beside the content — the panel PUSHES the content (no overlay) and closes to the rail alone.
+// A category with one permitted item is a direct link in the rail and has no panel at all.
+// Below md the whole thing is hidden and the drawer in MobileNav takes over. The rail's
+// behaviour lives in useNavPanel, the markup in NavRail, the item list in nav.tsx.
 export function Sidebar() {
   const pathname = usePathname();
   const { can, role } = usePermissions();
   const { signOut } = useAuth();
-  const [collapsed, setCollapsed] = useState(false);
-
-  // Persisted collapse state — read AFTER mount so the server-rendered markup
-  // (always expanded) matches the first client render, avoiding a hydration
-  // mismatch. State lives entirely inside the Sidebar; the sidebar's own width
-  // shrinks and the main content reflows via flex — no shell plumbing needed.
-  useEffect(() => {
-    setCollapsed(localStorage.getItem(STORAGE_KEY) === '1');
-  }, []);
-
-  function toggle() {
-    setCollapsed((prev) => {
-      const next = !prev;
-      localStorage.setItem(STORAGE_KEY, next ? '1' : '0');
-      return next;
-    });
-  }
 
   // Shared filter — identical item set on desktop (here) and the mobile drawer.
   const unseenQuotes = usePurchasingUnseen(PURCHASING_MODULES.some((m) => can(m, 'view')));
-  const { sections, showSettings } = filterNav(role, can, { '/purchasing': unseenQuotes });
+  const { categories } = filterNav(role, can, { '/purchasing': unseenQuotes });
+  const panel = useNavPanel(categories, pathname, true);
 
   return (
-    <aside
-      className={cn(
-        'relative hidden shrink-0 flex-col border-l border-line bg-white transition-[width] duration-200 md:flex',
-        collapsed ? 'w-[80px]' : 'w-[266px]',
-      )}
-    >
-      {/* Collapse / expand toggle — straddles the sidebar's inner (leading) edge. */}
-      <button
-        type="button"
-        onClick={toggle}
-        aria-label={collapsed ? 'פתח תפריט' : 'כווץ תפריט'}
-        aria-expanded={!collapsed}
-        className="hit-44 absolute top-1/2 left-0 z-30 grid h-7 w-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-line bg-white text-ink-2 shadow-soft-md transition-colors hover:text-brand"
-      >
-        <ChevronRight className={cn('h-4 w-4 transition-transform duration-200', collapsed && 'rotate-180')} />
-      </button>
-
-      <NavBrand collapsed={collapsed} />
-
-      {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto overflow-x-hidden px-3.5 pb-3.5 pt-1">
-        {sections.map((section) => (
-          <Section key={section.title} title={section.title} items={section.items} pathname={pathname} collapsed={collapsed} />
-        ))}
-      </nav>
-
-      {/* Footer: settings + logout */}
-      <div className="border-t border-line-soft px-3.5 py-3">
-        {showSettings && (
-          <NavLink item={SETTINGS_ITEM} pathname={pathname} collapsed={collapsed} />
-        )}
-        <FooterButton
-          icon={LogOut}
-          label="התנתק"
-          collapsed={collapsed}
-          onClick={() => signOut()}
-          tone="logout"
-        />
-      </div>
+    <aside className="hidden shrink-0 md:flex">
+      <NavRail
+        categories={categories}
+        shown={panel.shown}
+        open={panel.open}
+        animate={panel.animate}
+        highlightedId={panel.highlightedId}
+        activeHref={panel.activeHref}
+        variant="desktop"
+        onSelectCategory={panel.selectCategory}
+        onOpenLink={panel.openLink}
+        onClosePanel={panel.closePanel}
+        onSignOut={() => signOut()}
+      />
     </aside>
   );
 }

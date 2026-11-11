@@ -318,8 +318,14 @@ test('the guard lands on /visitors and the menu offers nothing else', async ({ b
   await expect(page).toHaveURL(/\/visitors$/);
   await expect(page.getByRole('heading', { name: 'סריקת כניסה' })).toBeVisible();
 
-  const links = await page.locator('aside nav a').allInnerTexts();
-  expect(links.map((t) => t.trim())).toEqual(['סריקת כניסה']);
+  // The rail offers ONE category (no "הגדרות" either). With one permitted item it is a direct
+  // link to the screen — no panel, no sub-menu (DESIGN.md §14, link category).
+  const categories = await page.locator('aside [data-nav-category]').allInnerTexts();
+  expect(categories.map((t) => t.trim())).toEqual(['אבטחה']);
+  const links = await page.locator('aside nav a').all();
+  expect(links).toHaveLength(1);
+  await expect(links[0]!).toHaveAttribute('href', '/visitors');
+  await expect(page.locator('aside [data-nav-panel]')).toHaveCount(0);
   // no Settings link, no bell, no global search, no personal assistant
   await expect(page.locator('aside a[href="/settings"]')).toHaveCount(0);
   await expect(page.getByLabel('התראות')).toHaveCount(0);

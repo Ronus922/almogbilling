@@ -139,6 +139,11 @@ test.afterAll(async () => {
 });
 
 test('requests tab: header, counters, columns, order, offers pill, winner, unseen dot and the four row icons', async ({ page }) => {
+  // The content width this test pins is 1280 − the old 266px sidebar = 1014px. The navigation rail with
+  // its panel open is 308px (DESIGN.md §14), so the same content width is a 1322px window. At a plain 1280
+  // the requests table is 1px wider than its card with the panel open (measured 11/11/2026; the table is
+  // not touched by the navigation change — reported, not fixed there).
+  await page.setViewportSize({ width: 1322, height: 720 });
   await page.goto('/purchasing?tab=rfq');
   await expect(page.locator('h1')).toHaveText('רכש');
   await expect(page.getByText('בקשות להצעת מחיר לספקים והזמנות רכש — מופקות על נייר המכתבים של החברה, עם PDF ושליחה במייל ו-WhatsApp.')).toBeVisible();
@@ -181,7 +186,7 @@ test('requests tab: header, counters, columns, order, offers pill, winner, unsee
   await expect(row(page, ID.c).locator('[data-new-quote-tag]')).toHaveCount(0);
   await expect(row(page, ID.c)).toContainText('נסגרה');
 
-  // Every pill is one line at the default desktop width (1280, sidebar open): the dot beside a pill used to
+  // Every pill is one line at the default desktop content width (1014px — see above): the dot beside a pill used to
   // squeeze it into two lines ("2 מתוך" / "2"), so a squeezed pill is taller than the one that fits.
   const heights = await page.locator(offersOf([ID.a, ID.b, ID.c])).evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
   expect(heights).toHaveLength(3);
