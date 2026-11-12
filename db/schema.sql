@@ -1877,15 +1877,18 @@ CREATE TABLE public.chip_orders (
     created_ip text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    is_test boolean DEFAULT false NOT NULL,
     CONSTRAINT chip_orders_address_check CHECK (((length(btrim(address)) >= 2) AND (length(btrim(address)) <= 300))),
     CONSTRAINT chip_orders_email_check CHECK (((length(btrim(email)) >= 3) AND (length(btrim(email)) <= 254))),
     CONSTRAINT chip_orders_full_name_check CHECK (((length(btrim(full_name)) >= 2) AND (length(btrim(full_name)) <= 120))),
-    CONSTRAINT chip_orders_paid_fields_check CHECK (((status = 'pending_payment'::text) OR ((paid_at IS NOT NULL) AND (grow_transaction_id IS NOT NULL)))),
+    CONSTRAINT chip_orders_paid_fields_check CHECK (((status = 'pending_payment'::text) OR ((paid_at IS NOT NULL) AND ((grow_transaction_id IS NOT NULL) OR is_test)))),
     CONSTRAINT chip_orders_phone_e164_check CHECK ((phone_e164 ~ '^\+9725[0-9]{8}$'::text)),
-    CONSTRAINT chip_orders_refund_status_check CHECK (((refund_status IS NULL) OR (refund_status = ANY (ARRAY['refunded'::text, 'manual_required'::text])))),
+    CONSTRAINT chip_orders_refund_not_required_check CHECK (((refund_status IS DISTINCT FROM 'not_required'::text) OR is_test)),
+    CONSTRAINT chip_orders_refund_status_check CHECK (((refund_status IS NULL) OR (refund_status = ANY (ARRAY['refunded'::text, 'manual_required'::text, 'not_required'::text])))),
     CONSTRAINT chip_orders_reject_reason_check CHECK (((status <> 'rejected'::text) OR ((reject_reason IS NOT NULL) AND (length(btrim(reject_reason)) > 0)))),
     CONSTRAINT chip_orders_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text]))),
     CONSTRAINT chip_orders_status_check CHECK ((status = ANY (ARRAY['pending_payment'::text, 'paid'::text, 'approved'::text, 'ready'::text, 'collected'::text, 'rejected'::text]))),
+    CONSTRAINT chip_orders_test_no_grow_check CHECK (((NOT is_test) OR ((grow_process_id IS NULL) AND (grow_transaction_id IS NULL) AND (invoice_url IS NULL)))),
     CONSTRAINT chip_orders_total_check CHECK ((total > (0)::numeric)),
     CONSTRAINT chip_orders_tracking_token_check CHECK ((length(tracking_token) >= 32))
 );
@@ -1896,6 +1899,13 @@ CREATE TABLE public.chip_orders (
 --
 
 COMMENT ON TABLE public.chip_orders IS 'Elevator-chip orders from the public page /chip-order. pending_payment rows are never shown in /chips; Grow confirms payment server-to-server and through its API before status becomes paid.';
+
+
+--
+-- Name: COLUMN chip_orders.is_test; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.is_test IS 'A test order (test mode, /chip-order?test=…): paid without Grow, never refunded through Grow, excluded from every count and sum, never purged as unpaid, deleted only through "מחק הזמנת בדיקה".';
 
 
 --
@@ -8795,5 +8805,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261108170152'),
     ('20261108221704'),
     ('20261109063920'),
-    ('20261112194633')
+    ('20261112194633'),
+    ('20261112222606')
 ;
