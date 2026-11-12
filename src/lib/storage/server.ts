@@ -51,9 +51,16 @@ export const PURCHASING_FILES_BUCKET = 'purchasing-files';
  *  empty. */
 export const VISITOR_IDS_BUCKET = 'visitor-ids';
 
+/** The lease / management agreement a tenant or an operator attaches to a chip
+ *  order (/chip-order, chip_order_items) — PRIVATE. Uploaded by the public order
+ *  route, opened ONLY by staff through /api/files (chips_orders_manage:view).
+ *  Deliberately NOT in the Storage GC's BILLING_BUCKETS. */
+export const CHIP_ORDER_LEASES_BUCKET = 'chip-order-leases';
+
 export const PRIVATE_BUCKETS = [
   'supplier-documents', 'documents', 'issue-attachments', WHATSAPP_ATTACHMENTS_BUCKET, FINANCE_RECEIPTS_BUCKET,
   REMINDER_ATTACHMENTS_BUCKET, PORTAL_DECISIONS_BUCKET, PURCHASING_FILES_BUCKET, VISITOR_IDS_BUCKET,
+  CHIP_ORDER_LEASES_BUCKET,
 ] as const;
 export type PrivateBucket = (typeof PRIVATE_BUCKETS)[number];
 

@@ -54,6 +54,17 @@ const PUBLIC = new Set([
   'src/app/api/public/quote/[token]/files/route.ts',
   'src/app/api/public/quote/[token]/logo/route.ts',
   'src/app/api/public/quote/[token]/files/[fileId]/route.ts',
+  // Chip orders (/chip-order, 12/11/2026) — a resident with no account orders
+  // chips. OTP request / verify = the portal's own OTP (purpose 'chip_order'),
+  // rate-limited per IP and per phone; the submit needs the sealed
+  // "phone verified" cookie, and creates an UNPAID order only. The two Grow
+  // callbacks carry our HMAC of the order id, and payment is confirmed only
+  // through Grow's API. None of them returns resident data.
+  'src/app/api/public/chip-order/otp/request/route.ts',
+  'src/app/api/public/chip-order/otp/verify/route.ts',
+  'src/app/api/public/chip-order/route.ts',
+  'src/app/api/public/chip-order/grow/notify/route.ts',
+  'src/app/api/public/chip-order/grow/invoice/route.ts',
 ]);
 
 run('check-api-auth', async () => {

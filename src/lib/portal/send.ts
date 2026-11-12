@@ -7,6 +7,7 @@ import { e164ToChatId, toPortalE164 } from './phone';
 import { webOtpDomain } from './otpChannel';
 import { sendSms } from './sms';
 import type { OtpChannel } from '@/lib/types/portal';
+import type { OtpPurpose } from '@/lib/db/portal/otp';
 import { PORTAL_OTP_TTL_MINUTES, portalLockoutAlertMessage } from '@/lib/constants/portal';
 
 // The portal's OTP send, over either live channel (15/10/2026, "SMS ראשי,
@@ -23,9 +24,16 @@ import { PORTAL_OTP_TTL_MINUTES, portalLockoutAlertMessage } from '@/lib/constan
  *  the final one, verbatim — anything after it and the browser stops matching.
  *  `requestHost` is the `Host` header of the request that triggered this send
  *  (see webOtpDomain) — not a second, separately-maintained config value. */
-function smsMessage(code: string, requestHost: string | null): string {
+/** The first line of either message — what the code is for. */
+function codeHeading(purpose: OtpPurpose): string {
+  return purpose === 'chip_order'
+    ? 'קוד האימות שלך להזמנת צ׳יפים:'
+    : 'קוד הכניסה שלך לפורטל בעלי הדירות:';
+}
+
+function smsMessage(code: string, requestHost: string | null, purpose: OtpPurpose): string {
   return [
-    'קוד הכניסה שלך לפורטל בעלי הדירות:',
+    codeHeading(purpose),
     code,
     '',
     `הקוד תקף ל-${PORTAL_OTP_TTL_MINUTES} דקות.`,
@@ -38,9 +46,9 @@ function smsMessage(code: string, requestHost: string | null): string {
  *  renders it bold (16/10/2026 — monospace shrank the digits in WhatsApp's
  *  renderer for no benefit; bold keeps them full-size and still stands out
  *  from the surrounding sentence). */
-function whatsappMessage(code: string): string {
+function whatsappMessage(code: string, purpose: OtpPurpose): string {
   return [
-    'קוד הכניסה שלך לפורטל בעלי הדירות:',
+    codeHeading(purpose),
     `*${code}*`,
     '',
     `הקוד תקף ל-${PORTAL_OTP_TTL_MINUTES} דקות.`,
@@ -52,7 +60,7 @@ export type SendResult =
   | { ok: true; channel: OtpChannel }
   | { ok: false; error: string; channel: OtpChannel };
 
-async function sendViaWhatsApp(phoneE164: string, code: string): Promise<SendResult> {
+async function sendViaWhatsApp(phoneE164: string, code: string, purpose: OtpPurpose): Promise<SendResult> {
   const creds = await getDefaultSendCreds();
   if (!creds) return { ok: false, error: 'no_whatsapp_instance', channel: 'whatsapp' };
   try {
@@ -61,7 +69,7 @@ async function sendViaWhatsApp(phoneE164: string, code: string): Promise<SendRes
       token: creds.token,
       apiUrl: creds.apiUrl,
       chatId: e164ToChatId(phoneE164),
-      message: whatsappMessage(code),
+      message: whatsappMessage(code, purpose),
     });
     return { ok: true, channel: 'whatsapp' };
   } catch (err) {
@@ -71,8 +79,13 @@ async function sendViaWhatsApp(phoneE164: string, code: string): Promise<SendRes
   }
 }
 
-async function sendViaSms(phoneE164: string, code: string, requestHost: string | null): Promise<SendResult> {
-  const res = await sendSms(phoneE164, smsMessage(code, requestHost));
+async function sendViaSms(
+  phoneE164: string,
+  code: string,
+  requestHost: string | null,
+  purpose: OtpPurpose,
+): Promise<SendResult> {
+  const res = await sendSms(phoneE164, smsMessage(code, requestHost, purpose));
   if (res.ok) return { ok: true, channel: 'sms' };
   // No silent cross-channel fallback: the resident sees the failure and, if
   // they want, presses "שלח בוואטסאפ במקום" themselves — switching channel
@@ -88,15 +101,19 @@ async function sendViaSms(phoneE164: string, code: string, requestHost: string |
  * transport's own message only). `requestHost` is the `Host` header of the
  * incoming OTP request, threaded through to the SMS WebOTP binding line
  * (webOtpDomain) — optional because WhatsApp doesn't need it and existing
- * callers/tests may omit it.
+ * callers/tests may omit it. `purpose` only changes the first line of the
+ * text (the chip-order page reuses this exact send, 12/11/2026).
  */
 export async function sendPortalCode(
   phoneE164: string,
   code: string,
   channel: OtpChannel,
   requestHost?: string | null,
+  purpose: OtpPurpose = 'portal_login',
 ): Promise<SendResult> {
-  return channel === 'sms' ? sendViaSms(phoneE164, code, requestHost ?? null) : sendViaWhatsApp(phoneE164, code);
+  return channel === 'sms'
+    ? sendViaSms(phoneE164, code, requestHost ?? null, purpose)
+    : sendViaWhatsApp(phoneE164, code, purpose);
 }
 
 /**

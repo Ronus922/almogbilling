@@ -13,6 +13,9 @@ import { ChipsKpiRow } from './ChipsKpiRow';
 import { ChipsTable } from './ChipsTable';
 import { IssueChipSheet } from './IssueChipSheet';
 import { ChipHolderPanel, type HolderRef } from './ChipHolderPanel';
+import { ChipOrdersPanel } from './ChipOrdersPanel';
+import { ChipOrderSheet, type AssignRequest } from './ChipOrderSheet';
+import { activeLinked, type ChipOrderListItem } from '@/lib/chipOrders/model';
 
 // List filter tabs — labels per the chips product spec (ChipTab values).
 const TABS: { value: ChipTab; label: string }[] = [
@@ -30,6 +33,8 @@ type IssueInitial = {
   residentRole?: string | null;
   holderName?: string | null;
   holderPhone?: string | null;
+  /** Chip orders: issuing for one order line ("שייך צ׳יפים"). */
+  orderItem?: { id: string; orderNumber: number; remaining: number } | null;
 } | null;
 
 function issueInitialFromChip(chip: Chip): IssueInitial {
@@ -60,10 +65,86 @@ function sameHolder(chip: ChipWithHolder, ref: HolderRef): boolean {
   return ref.holderName === null || chip.holder_name === ref.holderName;
 }
 
-export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
+export function ChipsPageClient({
+  canEdit,
+  canManageOrders = false,
+  canEditOrders = false,
+  canWriteContacts = false,
+}: {
+  canEdit: boolean;
+  /** chips_orders_manage:view — shows the "הזמנות" view (12/11/2026). Without
+   *  it the page is exactly what it was before chip orders existed. */
+  canManageOrders?: boolean;
+  canEditOrders?: boolean;
+  /** contacts:edit — the order approval may write to the tenants list. */
+  canWriteContacts?: boolean;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+
+  // ── Chip orders view (/chips?view=orders) ────────────────────────────────
+  const [view, setView] = useState<'chips' | 'orders'>(
+    canManageOrders && searchParams.get('view') === 'orders' ? 'orders' : 'chips',
+  );
+  const [orders, setOrders] = useState<ChipOrderListItem[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [orderSheetId, setOrderSheetId] = useState<string | null>(null);
+  const [orderSheetOpen, setOrderSheetOpen] = useState(false);
+  // The order to come back to when the issue window it opened closes.
+  const [returnToOrder, setReturnToOrder] = useState<string | null>(null);
+
+  const fetchOrders = useCallback(async () => {
+    if (!canManageOrders) return;
+    setOrdersLoading(true);
+    try {
+      const res = await fetch('/api/chip-orders', { credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { items?: ChipOrderListItem[] };
+      setOrders(Array.isArray(data.items) ? data.items : []);
+    } catch (err) {
+      toast.error(`טעינת ההזמנות נכשלה: ${(err as Error).message}`);
+    } finally {
+      setOrdersLoading(false);
+    }
+  }, [canManageOrders]);
+
+  useEffect(() => {
+    void fetchOrders();
+  }, [fetchOrders]);
+
+  const openOrdersInProgress = orders.filter((o) => o.status === 'paid' || o.status === 'approved' || o.status === 'ready').length;
+
+  function switchView(next: 'chips' | 'orders') {
+    setView(next);
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === 'orders') params.set('view', 'orders');
+    else params.delete('view');
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }
+
+  function openOrder(id: string) {
+    setOrderSheetId(id);
+    setOrderSheetOpen(true);
+  }
+
+  function assignFromOrder(req: AssignRequest) {
+    setReturnToOrder(req.orderId);
+    setOrderSheetOpen(false);
+    openIssueSheet({
+      contactId: req.item.contact_id,
+      apartmentNumber: req.item.apartment_number,
+      residentRole: req.role,
+      holderName: req.holderName,
+      holderPhone: req.holderPhone,
+      orderItem: {
+        id: req.item.id,
+        orderNumber: req.orderNumber,
+        remaining: Math.max(0, req.item.chips_count - activeLinked(req.item)),
+      },
+    });
+  }
 
   const [items, setItems] = useState<ChipWithHolder[]>([]);
   const [kpis, setKpis] = useState<ChipsKpis | null>(null);
@@ -228,6 +309,42 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
         )}
       </div>
 
+      {/* View switch — only with chips_orders_manage; without it nothing changes */}
+      {canManageOrders && (
+        <div role="tablist" aria-label="תצוגה" className="flex flex-wrap items-center gap-2">
+          {([
+            { value: 'chips', label: 'צ׳יפים' },
+            { value: 'orders', label: 'הזמנות' },
+          ] as const).map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              role="tab"
+              aria-selected={view === t.value}
+              onClick={() => switchView(t.value)}
+              className={cn(
+                'inline-flex h-11 cursor-pointer items-center gap-2 rounded-[11px] px-5 text-[14px] transition-colors',
+                view === t.value
+                  ? 'bg-[var(--chip-ink)] font-bold text-white'
+                  : 'border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] font-semibold text-[var(--chip-ink-muted)] hover:bg-[var(--chip-hover)]',
+              )}
+            >
+              {t.label}
+              {t.value === 'orders' && openOrdersInProgress > 0 && (
+                <span className="chip-num inline-flex h-[20px] min-w-[20px] items-center justify-center rounded-full bg-[var(--chip-brand)] px-1.5 text-[11.5px] font-bold text-white">
+                  {openOrdersInProgress}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {view === 'orders' && (
+        <ChipOrdersPanel items={orders} loading={ordersLoading} onOpen={openOrder} />
+      )}
+
+      {view === 'chips' && (<>
       {/* Partial-registry info banner — dismissible, remembered in localStorage */}
       {bannerVisible && (
         <div className="flex items-center gap-3 rounded-[11px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] px-4 py-3 text-[12.5px] font-semibold text-[var(--chip-amber-ink)]">
@@ -317,6 +434,7 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
           onHolderFilter={(chip) => setHolderFilter(holderRefFromChip(chip))}
         />
       </div>
+      </>)}
 
       <IssueChipSheet
         open={issueOpen}
@@ -325,11 +443,30 @@ export function ChipsPageClient({ canEdit }: { canEdit: boolean }) {
           if (!o) {
             setIssueInitial(null);
             clearChipParam();
+            // Opened from an order's "שייך צ׳יפים" → back to that order.
+            if (returnToOrder) {
+              setOrderSheetId(returnToOrder);
+              setOrderSheetOpen(true);
+              setReturnToOrder(null);
+              void fetchOrders();
+            }
           }
         }}
         initial={issueInitial}
         onIssued={refetchAll}
       />
+
+      {canManageOrders && (
+        <ChipOrderSheet
+          orderId={orderSheetId}
+          open={orderSheetOpen}
+          onOpenChange={setOrderSheetOpen}
+          canEdit={canEditOrders && canEdit}
+          canWriteContacts={canWriteContacts}
+          onAssign={assignFromOrder}
+          onChanged={() => void fetchOrders()}
+        />
+      )}
 
       {/* Holder view — all chips of one person (name → numbers); a chip row
           opens the issue window of its apartment */}

@@ -127,6 +127,12 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
       // can't drift out of sync with a hardcoded copy here.
       return NextResponse.json({ error: e.message ?? 'לא ניתן למחוק — קיים חוב פעיל לדירה זו' }, { status: 409 });
     }
+    if (e.code === '23503' && e.constraint === 'chip_order_items_contact_id_fkey') {
+      return NextResponse.json(
+        { error: 'לא ניתן למחוק את הדירה — יש לה הזמנות צ׳יפים' },
+        { status: 409 },
+      );
+    }
     if (e.code === '23503' && e.constraint === 'wa_campaign_recipients_contact_id_fkey') {
       return NextResponse.json(
         { error: 'לא ניתן למחוק את הדירה — נשלחו אליה תפוצות WhatsApp בעבר' },

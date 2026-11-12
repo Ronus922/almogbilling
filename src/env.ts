@@ -101,6 +101,18 @@ export const env = createEnv({
     // fails with their error 515 ("Unverified source").
     SMS_SENDER: optionalString,
 
+    // Chip orders (/chip-order) — Grow (formerly Meshulam) Light API
+    // (developers.grow.business). Both identifiers are issued by Grow support
+    // during onboarding, separately for the sandbox and for production. Unset
+    // (either one) = isGrowConfigured() is false and /chip-order stays closed
+    // ("ההזמנות ייפתחו בקרוב") whatever the settings switch says.
+    GROW_USER_ID: optionalString,
+    GROW_PAGE_CODE: optionalString,
+    // 'production' → secure.meshulam.co.il, 'sandbox' → sandbox.meshulam.co.il.
+    // Required for the page to open (no default — test payments on the live
+    // site must be a conscious choice).
+    GROW_ENV: z.enum(['production', 'sandbox']).optional(),
+
     // ── monitoring (all optional; unset = off) ────────────────────────────
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).optional(),
     SENTRY_DSN: optionalUrl,

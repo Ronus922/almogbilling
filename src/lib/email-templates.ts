@@ -5,6 +5,8 @@ import { taskNotificationTemplate } from '@/templates/email/task-notification';
 import { legalStatusChangeTemplate } from '@/templates/email/legal-status-change';
 import { legalStatusBulkChangeTemplate } from '@/templates/email/legal-status-bulk-change';
 import { broadcastEmailTemplate } from '@/templates/email/broadcast';
+import { chipOrderEmailTemplate } from '@/templates/email/chip-order';
+import type { ChipOrderMessage } from '@/lib/chipOrders/messages';
 import { appUrl } from '@/lib/config';
 
 export type EmailTemplateName =
@@ -13,7 +15,8 @@ export type EmailTemplateName =
   | 'task-notification'
   | 'legal-status-change'
   | 'legal-status-bulk-change'
-  | 'broadcast';
+  | 'broadcast'
+  | 'chip-order';
 
 interface RenderArgs {
   'reset-password': { userName: string; resetUrl: string };
@@ -54,6 +57,8 @@ interface RenderArgs {
   /** One email of a broadcast — the delivery worker renders it itself (it
    *  cannot load this server-only registry); registered for the app side. */
   broadcast: { subject: string; body: string };
+  /** A chip-order status message (chipOrderMessage(), shared with WhatsApp). */
+  'chip-order': ChipOrderMessage;
 }
 
 export interface RenderedEmail {
@@ -79,6 +84,8 @@ export function renderTemplate<N extends EmailTemplateName>(
       return legalStatusBulkChangeTemplate(data as RenderArgs['legal-status-bulk-change']);
     case 'broadcast':
       return broadcastEmailTemplate({ ...(data as RenderArgs['broadcast']), site: appUrl() });
+    case 'chip-order':
+      return chipOrderEmailTemplate(data as RenderArgs['chip-order']);
     default:
       throw new Error(`Unknown email template: ${String(name)}`);
   }

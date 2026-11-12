@@ -4,6 +4,7 @@ import { hasPermission } from '@/lib/permissions/check';
 import { SmtpSettingsCard } from '@/components/settings/SmtpSettingsCard';
 import { BillingSettingsCard } from '@/components/settings/BillingSettingsCard';
 import { LegalContactCard } from '@/components/settings/LegalContactCard';
+import { ChipOrderSettingsCard } from '@/components/settings/ChipOrderSettingsCard';
 import { WhatsAppConnections } from './components/WhatsAppConnections';
 
 export const runtime = 'nodejs';
@@ -27,6 +28,7 @@ export default async function SettingsPage() {
 
       <BillingSettingsCard />
       <LegalContactCard canEdit={canEdit} />
+      <ChipOrderSettingsCard canEdit={canEdit} />
       <SmtpSettingsCard />
       <WhatsAppConnections isAdmin={isAdmin} currentUserId={actor.id} />
     </div>

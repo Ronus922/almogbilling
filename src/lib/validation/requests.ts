@@ -460,3 +460,76 @@ export const workBoardOrderBodySchema = z.object({
     .max(200, { error: 'too_many_ids' })
     .refine((ids) => new Set(ids).size === ids.length, { error: 'duplicate_ids' }),
 });
+
+// ── Chip orders (/chip-order, 12/11/2026) ──────────────────────────────────
+
+const chipOrderPhone = z
+  .string({ error: 'מספר טלפון לא תקין' })
+  .trim()
+  .min(9, 'מספר טלפון לא תקין')
+  .max(20, 'מספר טלפון לא תקין');
+
+/** POST /api/public/chip-order/otp/request */
+export const chipOrderOtpRequestBodySchema = z.object({
+  phone: chipOrderPhone,
+  channel: z.enum(['whatsapp']).optional(),
+});
+
+/** POST /api/public/chip-order/otp/verify */
+export const chipOrderOtpVerifyBodySchema = z.object({
+  phone: chipOrderPhone,
+  code: z
+    .string({ error: 'הקוד חייב להכיל 6 ספרות' })
+    .trim()
+    .regex(/^\d{6}$/, 'הקוד חייב להכיל 6 ספרות'),
+});
+
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'תאריך לא תקין');
+
+/** The JSON part ("order") of POST /api/public/chip-order (multipart — the
+ *  leases ride beside it as lease_<index> files). The price is NOT in here:
+ *  the server computes it. */
+export const chipOrderSubmitSchema = z.object({
+  fullName: z.string({ error: 'נדרש שם מלא' }).trim().min(2, 'נדרש שם מלא').max(120, 'השם ארוך מדי')
+    .regex(/^[\p{L}\p{M}\s'׳"״.\-]+$/u, 'השם יכול להכיל אותיות בלבד')
+    .refine((v) => v.split(/\s+/).filter(Boolean).length >= 2, 'נדרש שם מלא — שם פרטי ושם משפחה'),
+  phone: chipOrderPhone,
+  email: z.string({ error: 'כתובת מייל לא תקינה' }).trim().toLowerCase().email('כתובת מייל לא תקינה').max(254),
+  address: z.string({ error: 'נדרשת כתובת מגורים' }).trim().min(2, 'נדרשת כתובת מגורים').max(300, 'הכתובת ארוכה מדי'),
+  role: z.enum(['owner', 'tenant', 'operator'], { error: 'נדרש לבחור: בעלים, שוכר או מפעיל' }),
+  acceptTerms: z.literal(true, { error: 'נדרש לאשר את תנאי ההזמנה' }),
+  lines: z
+    .array(
+      z.object({
+        apartment: z.string({ error: 'נדרש לבחור דירה' }).trim().min(1, 'נדרש לבחור דירה').max(20, 'נדרש לבחור דירה'),
+        chipsCount: z.number({ error: 'כמות לא תקינה' }).int('כמות לא תקינה').min(1, 'כמות לא תקינה').max(50, 'כמות לא תקינה'),
+        leaseEndDate: isoDay.nullable().optional(),
+      }),
+    )
+    .min(1, 'נדרשת לפחות דירה אחת')
+    .max(10, 'עד 10 דירות בהזמנה אחת'),
+});
+
+/** PUT /api/settings/chip-orders */
+export const chipOrderSettingsBodySchema = z.object({
+  // > 0: a free chip would make a ₪0 order, which Grow cannot charge (and the DB refuses).
+  unitPrice: z.number({ error: 'מחיר לא תקין' }).min(1, 'המחיר חייב להיות לפחות ₪1').max(10_000, 'מחיר לא תקין'),
+  threshold: z.number({ error: 'סף לא תקין' }).int('סף לא תקין').min(0, 'סף לא תקין').max(20, 'סף לא תקין'),
+  priceAbove: z.number({ error: 'מחיר לא תקין' }).min(1, 'המחיר חייב להיות לפחות ₪1').max(10_000, 'מחיר לא תקין'),
+  maxPerApartment: z.number({ error: 'מקסימום לא תקין' }).int('מקסימום לא תקין').min(1, 'מקסימום לא תקין').max(20, 'מקסימום לא תקין'),
+  pickupText: z.string().trim().max(500, 'הטקסט ארוך מדי'),
+  termsText: z.string().trim().max(4000, 'הטקסט ארוך מדי'),
+  ordersOpen: z.boolean(),
+});
+
+/** POST /api/chip-orders/[id]/approve */
+export const chipOrderApproveBodySchema = z.object({
+  fields: z
+    .array(z.object({ item_id: z.uuid(), name: z.boolean(), phone: z.boolean(), email: z.boolean() }))
+    .max(10),
+});
+
+/** POST /api/chip-orders/[id]/reject */
+export const chipOrderRejectBodySchema = z.object({
+  reason: z.string({ error: 'נדרשת סיבת דחייה' }).trim().min(2, 'נדרשת סיבת דחייה').max(500, 'הסיבה ארוכה מדי'),
+});
