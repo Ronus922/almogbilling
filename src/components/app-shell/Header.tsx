@@ -38,7 +38,10 @@ export function Header() {
           so the hamburger is always reachable and nothing gets crammed. */}
       <MobileNav />
       {showSearch && (
-        <div className="hidden w-full max-w-[440px] items-center md:flex">
+        // 768–1023 only (`md:max-lg:`): the search may shrink below the width of its own placeholder (the
+        // text is cut with an ellipsis) — its content-based minimum (~325px) is what pushed the user menu
+        // off the edge when the name was long. ≥1024 and the phone are untouched.
+        <div className="hidden w-full max-w-[440px] items-center md:flex md:max-lg:min-w-0 md:max-lg:[&>button]:min-w-0">
           <GlobalSearch />
         </div>
       )}
@@ -85,8 +88,11 @@ function UserPill() {
         </span>
         {/* Identity from the actual logged-in user; role derives from user.role
             (roleLabel) — never from the display name. */}
-        <span className="hidden flex-col items-start leading-tight sm:flex">
-          <span className="text-[13px] font-extrabold text-ink">{name}</span>
+        {/* 768–1023 (tablets): the name and the role stay on one line each — the search gives way
+            instead — and a very long name is cut. Without it the pill was squeezed below its natural
+            width and the text wrapped out of the button. Desktop and phone are untouched. */}
+        <span className="hidden flex-col items-start leading-tight sm:flex md:max-lg:whitespace-nowrap">
+          <span className="text-[13px] font-extrabold text-ink md:max-lg:max-w-[9rem] md:max-lg:truncate">{name}</span>
           <span className="text-[10.5px] font-semibold text-ink-3">{roleLabel(user.role)}</span>
         </span>
         <ChevronDown className={cn('h-4 w-4 shrink-0 text-ink-3 transition-transform', open && 'rotate-180')} />

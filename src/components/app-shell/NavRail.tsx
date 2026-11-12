@@ -15,6 +15,9 @@ import { CollapseChevrons, LogoMark, RailLogout } from './navIcons';
 // DESIGN.md §14 declares the places this deliberately departs from the generic rules (the 12px
 // rail label, 28px collapse button, the reference's own paddings, the link category).
 // A category with ONE permitted item is a direct link (no panel); two or more switch the panel.
+// Where the panel goes (`placement`): in a column beside the content ('inline' — desktop, 1024px and
+// up), or floating over it ('overlay' — tablets, 768–1023px, see useTabletNav). Mobile has its own
+// container (the drawer) and never uses either.
 
 export interface NavRailProps {
   categories: NavCategory[];
@@ -28,6 +31,11 @@ export interface NavRailProps {
   /** desktop: the panel pushes the content and has a collapse button; mobile: it lives in
    *  the drawer, never collapses, and its items are 44px tall. */
   variant: 'desktop' | 'mobile';
+  /** desktop only. 'inline': the panel is a column beside the content and pushes it (and is hidden by
+   *  CSS below 1024px, so a tablet never sees it before the client has chosen). 'overlay': the panel is
+   *  rendered only while open, floating next to the rail over a dimmed content area; a click on the dim
+   *  area closes it (`onClosePanel`). */
+  placement?: 'inline' | 'overlay';
   /** A click on a PANEL category: switches what the panel lists (never navigates). */
   onSelectCategory: (id: string) => void;
   /** A click on a LINK category: the link navigates, the panel steps aside. */
@@ -39,16 +47,17 @@ export interface NavRailProps {
 }
 
 export function NavRail({
-  categories, shown, open, animate, highlightedId, activeHref, variant,
+  categories, shown, open, animate, highlightedId, activeHref, variant, placement = 'inline',
   onSelectCategory, onOpenLink, onClosePanel, onNavigate, onSignOut,
 }: NavRailProps) {
   const panelId = useId();
   const railRef = useRef<HTMLElement>(null);
   const scrolling = categories.filter((c) => !c.pinned);
   const pinned = categories.filter((c) => c.pinned);
-  // The drawer keeps no panel in the DOM while none is shown (its width follows the content);
-  // the desktop panel stays mounted so it can animate open and shut.
-  const panelMounted = !!shown && (variant === 'desktop' || open);
+  // The drawer and the tablet overlay keep no panel in the DOM while none is shown (the drawer's width
+  // follows its content); the desktop's inline panel stays mounted so it can animate open and shut.
+  const overlay = placement === 'overlay';
+  const panelMounted = !!shown && ((variant === 'desktop' && !overlay) || open);
   const categoryButton = (c: NavCategory) => {
     if (categoryKind(c) === 'link') {
       const item = c.items[0]!;
@@ -86,7 +95,19 @@ export function NavRail({
 
   return (
     <>
-      <nav ref={railRef} aria-label="קטגוריות ניווט" className="flex w-[72px] shrink-0 flex-col items-center gap-[4px] bg-rail py-[14px]">
+      {/* Tablet overlay: the dimmed content area. It sits at the bottom of the sidebar's own stacking
+          context, under the rail and the panel, so a click on either never reaches it. */}
+      {overlay && open && (
+        <div aria-hidden data-nav-scrim onClick={onClosePanel} className="fixed inset-0 z-0 bg-slate-950/40" />
+      )}
+      <nav
+        ref={railRef}
+        aria-label="קטגוריות ניווט"
+        className={cn(
+          'flex w-[72px] shrink-0 flex-col items-center gap-[4px] bg-rail py-[14px]',
+          variant === 'desktop' && 'md:max-lg:relative md:max-lg:z-10',
+        )}
+      >
         <div className="shrink-0 pb-[10px]">
           <span className="grid h-[40px] w-[40px] place-items-center rounded-[12px] bg-brand text-white">
             <LogoMark size={20} strokeWidth={2} />
@@ -109,6 +130,7 @@ export function NavRail({
           open={open}
           animate={animate}
           variant={variant}
+          placement={placement}
           activeHref={activeHref}
           onClose={onClosePanel && (() => {
             onClosePanel();
@@ -220,13 +242,14 @@ function RailLink({
 }
 
 function NavPanel({
-  id, category, open, animate, variant, activeHref, onClose, onNavigate,
+  id, category, open, animate, variant, placement, activeHref, onClose, onNavigate,
 }: {
   id: string;
   category: NavCategory;
   open: boolean;
   animate: boolean;
   variant: 'desktop' | 'mobile';
+  placement: 'inline' | 'overlay';
   activeHref: string | null;
   onClose?: () => void;
   onNavigate?: () => void;
@@ -241,14 +264,24 @@ function NavPanel({
       inert={!open}
       className={cn(
         'flex flex-col overflow-hidden bg-white',
-        // Desktop: fixed 236. The drawer is max-w-full, so on a screen narrower than 308px the
-        // panel gives way (its labels truncate) instead of hanging past the edge.
-        variant === 'desktop' ? 'shrink-0' : 'min-w-0 shrink',
-        // The line toward the content (desktop only — the drawer has its own edge) goes with
-        // the panel when it closes; the line toward the rail is the reference's own.
-        variant === 'desktop' ? 'border-x border-line' : 'border-s border-line',
-        animate && '[transition:width_.22s_cubic-bezier(.4,0,.2,1),opacity_.18s]',
-        open ? 'w-[236px] opacity-100' : 'w-0 border-x-0 opacity-0',
+        placement === 'overlay'
+          // Tablet: floats next to the rail (the rail is 72px, on the start side), over the content,
+          // full height, above the scrim. Mounted only while open, so it fades in instead of sliding
+          // its width. `start` is the rail's side under dir=rtl.
+          ? 'absolute inset-y-0 start-[72px] z-10 w-[236px] border-x border-line shadow-soft-md animate-in fade-in-0 duration-150 motion-reduce:animate-none'
+          : cn(
+              // Desktop: fixed 236. The drawer is max-w-full, so on a screen narrower than 308px the
+              // panel gives way (its labels truncate) instead of hanging past the edge.
+              variant === 'desktop' ? 'shrink-0' : 'min-w-0 shrink',
+              // The line toward the content (desktop only — the drawer has its own edge) goes with
+              // the panel when it closes; the line toward the rail is the reference's own.
+              variant === 'desktop' ? 'border-x border-line' : 'border-s border-line',
+              animate && '[transition:width_.22s_cubic-bezier(.4,0,.2,1),opacity_.18s]',
+              open ? 'w-[236px] opacity-100' : 'w-0 border-x-0 opacity-0',
+              // 768–1023: the column is not used (the overlay above is) — display:none also takes its links
+              // out of the tab order and the accessibility tree. From 1024 this class does nothing.
+              variant === 'desktop' && 'max-lg:hidden',
+            ),
       )}
     >
       {/* min-width keeps the content from re-wrapping while the panel animates to 0. */}
@@ -263,8 +296,8 @@ function NavPanel({
             <button
               type="button"
               onClick={onClose}
-              title="כיווץ תפריט"
-              aria-label="כיווץ תפריט"
+              title={placement === 'overlay' ? 'סגירת תפריט' : 'כיווץ תפריט'}
+              aria-label={placement === 'overlay' ? 'סגירת תפריט' : 'כיווץ תפריט'}
               className="absolute end-[10px] top-[16px] grid h-[28px] w-[28px] place-items-center rounded-[8px] text-ink-ghost [transition:background_.13s,color_.13s] hover:bg-row-hover hover:text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand"
             >
               <CollapseChevrons size={15} strokeWidth={2} />
