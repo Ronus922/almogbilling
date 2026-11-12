@@ -1,4 +1,4 @@
-import { CHIP_ORDER_REFUND_LABEL, type ChipOrderNotifyKind, type ChipOrderRefundStatus } from './model';
+import { CHIP_ORDER_REFUND_LABEL, CHIP_ORDER_TEST_LABEL, type ChipOrderNotifyKind, type ChipOrderRefundStatus } from './model';
 
 // The four messages a resident gets about a chip order — one wording for both
 // channels (the email wraps it in the standard frame, WhatsApp sends it as
@@ -19,6 +19,9 @@ export interface ChipOrderMessageInput {
   refundStatus?: ChipOrderRefundStatus | null;
   /** Grow's invoice / receipt — linked, never copied. */
   invoiceUrl?: string | null;
+  /** A test-mode order: every message starts with "[בדיקה]", never mentions an
+   *  invoice, and a rejection says nothing was charged. */
+  isTest?: boolean;
 }
 
 export interface ChipOrderMessage {
@@ -31,7 +34,9 @@ export interface ChipOrderMessage {
 }
 
 export function chipOrderMessage(m: ChipOrderMessageInput): ChipOrderMessage {
-  const links = [m.trackUrl, ...(m.invoiceUrl ? [m.invoiceUrl] : [])];
+  const test = m.isTest === true;
+  const invoiceUrl = test ? null : (m.invoiceUrl ?? null);
+  const links = [m.trackUrl, ...(invoiceUrl ? [invoiceUrl] : [])];
   const apts = m.apartments.length === 1 ? `דירה ${m.apartments[0]}` : `דירות ${m.apartments.join(', ')}`;
   const ref = `הזמנה מספר ${m.orderNumber} (${apts})`;
   const msg = ((): Omit<ChipOrderMessage, 'links'> => {
@@ -42,7 +47,9 @@ export function chipOrderMessage(m: ChipOrderMessageInput): ChipOrderMessage {
         lines: [
           `שלום ${m.fullName},`,
           `${ref} התקבלה והתשלום נקלט. ההזמנה ממתינה לבדיקה של חברת הניהול.`,
-          ...(m.invoiceUrl ? [`החשבונית / הקבלה: ${m.invoiceUrl}`] : ['החשבונית / הקבלה נשלחת אליך בנפרד מחברת הסליקה.']),
+          ...(test
+            ? []
+            : invoiceUrl ? [`החשבונית / הקבלה: ${invoiceUrl}`] : ['החשבונית / הקבלה נשלחת אליך בנפרד מחברת הסליקה.']),
           `מעקב אחרי ההזמנה: ${m.trackUrl}`,
         ],
       };
@@ -74,7 +81,9 @@ export function chipOrderMessage(m: ChipOrderMessageInput): ChipOrderMessage {
           `שלום ${m.fullName},`,
           `${ref} נדחתה.`,
           ...(m.rejectReason?.trim() ? [`הסיבה: ${m.rejectReason.trim()}`] : []),
-          m.refundStatus === 'refunded'
+          test || m.refundStatus === 'not_required'
+            ? 'זו הזמנת בדיקה: לא בוצע חיוב, ולכן אין זיכוי.'
+            : m.refundStatus === 'refunded'
             ? 'התשלום זוכה במלואו לאמצעי התשלום שבו שילמת.'
             : m.refundStatus === 'manual_required'
               ? `מצב הזיכוי: ${CHIP_ORDER_REFUND_LABEL.manual_required} — חברת הניהול תטפל בהחזר התשלום ותעדכן אותך.`
@@ -84,7 +93,13 @@ export function chipOrderMessage(m: ChipOrderMessageInput): ChipOrderMessage {
       };
   }
   })();
-  return { ...msg, links };
+  if (!test) return { ...msg, links };
+  const mark = `[${CHIP_ORDER_TEST_LABEL}]`;
+  return {
+    subject: `${mark} ${msg.subject}`,
+    lines: [`${mark} ${msg.lines[0] ?? ''}`.trim(), ...msg.lines.slice(1)],
+    links,
+  };
 }
 
 /** WhatsApp body — the same paragraphs, blank line between them. */

@@ -277,12 +277,13 @@ export interface OrderForNotify {
   invoice_url: string | null;
   total: number;
   apartments: string[];
+  is_test: boolean;
 }
 
 export async function getOrderForNotify(orderId: string): Promise<OrderForNotify | null> {
   return queryOne<OrderForNotify>(
     `select o.id, o.order_number, o.full_name, o.phone_e164, o.email, o.status, o.tracking_token,
-            o.due_at, o.reject_reason, o.refund_status, o.invoice_url, o.total::float8 as total,
+            o.due_at, o.reject_reason, o.refund_status, o.invoice_url, o.total::float8 as total, o.is_test,
             array(select i.apartment_number from public.chip_order_items i
                    where i.order_id = o.id order by i.created_at) as apartments
        from public.chip_orders o where o.id = $1`,
@@ -306,7 +307,9 @@ export async function recordChipOrderNotification(row: {
 
 // ── The staff screen (/chips → הזמנות) ─────────────────────────────────────
 
-/** Every order that was paid — pending_payment never shows up. */
+/** Every order that was paid — pending_payment never shows up. Test orders
+ *  come with is_test; the screen badges them and keeps them out of every
+ *  count. */
 export async function listChipOrders(): Promise<ChipOrderListItem[]> {
   const r = await query<ChipOrderListItem>(
     `select o.id, o.order_number, o.full_name, o.phone_e164, o.role, o.status, o.total::float8 as total,
@@ -318,7 +321,8 @@ export async function listChipOrders(): Promise<ChipOrderListItem[]> {
                join public.chip_order_items i on i.id = c.order_item_id
               where i.order_id = o.id and c.status = 'active') as chips_linked,
             exists (select 1 from public.chip_order_notifications n
-                     where n.order_id = o.id and n.status = 'failed') as has_failed_notification
+                     where n.order_id = o.id and n.status = 'failed') as has_failed_notification,
+            o.is_test
        from public.chip_orders o
       where o.status <> 'pending_payment'
       order by case o.status when 'paid' then 0 when 'approved' then 1 when 'ready' then 2 else 3 end,
@@ -338,7 +342,7 @@ export async function getChipOrderDetail(id: string): Promise<ChipOrderDetail | 
   const order = await queryOne<Omit<ChipOrderDetail, 'items' | 'notifications'>>(
     `select id, order_number, full_name, phone_e164, email, address, role, status, total::float8 as total,
             grow_transaction_id, grow_asmachta, invoice_url, invoice_number, paid_at, approved_at, due_at,
-            ready_at, collected_at, rejected_at, reject_reason, refund_status, refund_note, created_at
+            ready_at, collected_at, rejected_at, reject_reason, refund_status, refund_note, created_at, is_test
        from public.chip_orders where id = $1 and status <> 'pending_payment'`,
     [id],
   );
@@ -492,6 +496,7 @@ export interface RejectedOrder {
   total: number;
   grow_transaction_id: string | null;
   grow_transaction_token: string | null;
+  is_test: boolean;
 }
 
 /** paid / approved → rejected with a reason. The refund runs after this
@@ -517,7 +522,7 @@ export async function rejectChipOrder(id: string, reason: string): Promise<Rejec
         `update public.chip_orders
             set status = 'rejected', rejected_at = now(), reject_reason = $2, updated_at = now()
           where id = $1
-          returning total::float8 as total, grow_transaction_id, grow_transaction_token`,
+          returning total::float8 as total, grow_transaction_id, grow_transaction_token, is_test`,
         [id, reason],
       )
     ).rows[0];
@@ -593,4 +598,20 @@ export async function deleteChipOrderWithLeases(
     await client.query(`delete from public.chip_orders where id = $1`, [id]);
     return 'deleted';
   });
+}
+
+/** Test orders whose "סיים הזמנת בדיקה" was never pressed — not in the list
+ *  (pending_payment never is), but still removed by "delete all". */
+export async function countUnfinishedTestOrders(): Promise<number> {
+  const r = await queryOne<{ n: number }>(
+    `select count(*)::int as n from public.chip_orders where is_test and status = 'pending_payment'`,
+  );
+  return r?.n ?? 0;
+}
+
+/** Every test order (any status, pending_payment included — those never show
+ *  in /chips, so "מחק את כל הזמנות הבדיקה" is their only way out). */
+export async function listTestOrderIds(): Promise<string[]> {
+  const r = await query<{ id: string }>(`select id from public.chip_orders where is_test order by created_at`);
+  return r.rows.map((row) => row.id);
 }

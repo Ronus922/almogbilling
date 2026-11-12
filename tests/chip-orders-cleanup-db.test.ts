@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Pool, type PoolClient } from 'pg';
+import { requireSeededAdmin } from './db-fixtures';
 
 // Removing chip orders (13/11/2026), on a throwaway database
 // (WA_TEST_DATABASE_URL), never prod:
@@ -7,6 +8,8 @@ import { Pool, type PoolClient } from 'pg';
 //     (49h → deleted with its lease files, files first; 47h → kept; paid a
 //     month ago → kept; a test order → kept; a Grow process with Grow off or
 //     failing → kept; Grow says paid → moved to paid; Storage refusing → kept);
+//   - "מחק את כל הזמנות הבדיקה": test orders go, a real order stays, a chip
+//     issued for a test order stays in the chips module (order_item_id → NULL).
 // Grow, Storage and the notifications are mocked; every row is real.
 // Fixtures are numeric apartments far from the seed, removed by exact ids.
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
@@ -49,13 +52,15 @@ vi.mock('@/lib/storage/chipOrderLeaseStorage', () => ({
 vi.mock('@/lib/chipOrders/notify', () => ({ notifyChipOrder: vi.fn(async () => undefined) }));
 
 const db = await import('@/lib/db/chipOrders');
-const { purgeUnpaidChipOrders } = await import('@/lib/chipOrders/cleanup');
+const { purgeUnpaidChipOrders, deleteAllTestChipOrders, deleteTestChipOrder } = await import('@/lib/chipOrders/cleanup');
+const { issueChipGroups } = await import('@/lib/db/chips');
 const { DEFAULT_CHIP_ORDER_SETTINGS } = await import('@/lib/chipOrders/model');
 
 const tag = String(Date.now()).slice(-6);
 const APT = `992${tag}1`;
 const made = { contacts: [] as string[], orders: [] as string[], chips: [] as string[] };
 let contactId = '';
+let admin: { id: string; name: string };
 
 async function order(opts: { hoursAgo: number; lease?: boolean; isTest?: boolean }): Promise<string> {
   const o = await db.createChipOrder(
@@ -76,10 +81,11 @@ async function order(opts: { hoursAgo: number; lease?: boolean; isTest?: boolean
 const exists = async (id: string) => ((await pool.query(`select 1 from public.chip_orders where id = $1`, [id])).rowCount ?? 0) > 0;
 const statusOf = async (id: string) => (await pool.query<{ status: string }>(`select status from public.chip_orders where id = $1`, [id])).rows[0]?.status;
 
-d('chip orders — hourly purge of unpaid orders', () => {
+d('chip orders — hourly purge of unpaid orders, and deleting test orders', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: TEST_URL });
     pool.on('error', () => {});
+    admin = { id: await requireSeededAdmin(pool), name: 'e2e-admin' };
     const c = await pool.query<{ id: string }>(
       `insert into public.contacts (apartment_number, owner_name, owner_phone) values ($1, 'בעלים בדיקה', '0539300001') returning id`,
       [APT],
@@ -175,4 +181,45 @@ d('chip orders — hourly purge of unpaid orders', () => {
     expect(await exists(stuck)).toBe(false);
   });
 
+  it('deleting test orders never touches a real order; a chip issued for a test order stays (order_item_id → NULL)', async () => {
+    const real = await order({ hoursAgo: 1 });
+    const t1 = await order({ hoursAgo: 1, isTest: true, lease: true });
+    const t2 = await order({ hoursAgo: 1, isTest: true });
+    // t2 goes all the way: "paid" by the test button, approved, one chip issued.
+    const token = (await pool.query<{ t: string }>(`select tracking_token as t from public.chip_orders where id = $1`, [t2])).rows[0]!.t;
+    expect(await db.markTestChipOrderPaid(token)).toBe(t2);
+    expect(await db.markTestChipOrderPaid(token)).toBeNull();
+    await db.approveChipOrder(t2, []);
+    const item = (await db.getChipOrderDetail(t2))!.items[0]!;
+    const issued = await issueChipGroups(
+      { contact_id: contactId, groups: [{ resident_role: 'owner', chip_type: 'physical', numbers: [`T${tag}1`] }], order_item_id: item.id },
+      admin,
+    );
+    made.chips.push(...issued.items.map((c) => c.id));
+
+    // The test button can never "pay" a real order.
+    const realToken = (await pool.query<{ t: string }>(`select tracking_token as t from public.chip_orders where id = $1`, [real])).rows[0]!.t;
+    expect(await db.markTestChipOrderPaid(realToken)).toBeNull();
+    expect(await statusOf(real)).toBe('pending_payment');
+    // One test order by id: a real order's id is refused.
+    expect(await deleteTestChipOrder(real)).toEqual({ deleted: 0, fileFailed: 0, notFound: 1 });
+
+    const r = await deleteAllTestChipOrders();
+    expect(r.deleted).toBeGreaterThanOrEqual(2);
+    expect(await exists(t1)).toBe(false);
+    expect(await exists(t2)).toBe(false);
+    expect(await exists(real)).toBe(true);
+    const chip = (await pool.query<{ order_item_id: string | null; status: string }>(
+      `select order_item_id, status from public.chips where id = $1`, [issued.items[0]!.id],
+    )).rows[0];
+    expect(chip).toEqual({ order_item_id: null, status: 'active' });
+  });
+
+  it('the database refuses Grow fields on a test order and "not required" on a real one', async () => {
+    const t = await order({ hoursAgo: 1, isTest: true });
+    await expect(pool.query(`update public.chip_orders set grow_process_id = 'x' where id = $1`, [t])).rejects.toThrow(/chip_orders_test_no_grow_check/);
+    const real = await order({ hoursAgo: 1 });
+    await expect(pool.query(`update public.chip_orders set refund_status = 'not_required' where id = $1`, [real])).rejects.toThrow(/chip_orders_refund_not_required_check/);
+    await expect(pool.query(`update public.chip_orders set status = 'paid', paid_at = now() where id = $1`, [real])).rejects.toThrow(/chip_orders_paid_fields_check/);
+  });
 });

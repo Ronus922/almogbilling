@@ -1,6 +1,6 @@
-import { AlarmClock } from 'lucide-react';
+import { AlarmClock, FlaskConical } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { CHIP_ORDER_STATUS_LABEL, type ChipOrderStatus } from '@/lib/chipOrders/model';
+import { CHIP_ORDER_STATUS_LABEL, CHIP_ORDER_TEST_LABEL, type ChipOrderStatus } from '@/lib/chipOrders/model';
 
 // One status vocabulary for the orders list, the order panel and the public
 // tracking page — chips-skin tone families (DESIGN "מודול צ׳יפים").
@@ -25,6 +25,20 @@ export function ChipOrderStatusPill({ status, overdue = false }: { status: ChipO
           באיחור
         </span>
       )}
+    </span>
+  );
+}
+
+/** "בדיקה" — a test-mode order (13/11/2026): the orders list and the order
+ *  panel. Violet, so it never reads as a status. */
+export function ChipOrderTestBadge() {
+  return (
+    <span
+      data-testid="chip-order-test-badge"
+      className="inline-flex h-[24px] shrink-0 items-center gap-1 whitespace-nowrap rounded-[7px] border border-[var(--chip-violet-border)] bg-[var(--chip-violet-soft)] px-2.5 text-[12px] font-bold text-[var(--chip-violet-ink)]"
+    >
+      <FlaskConical className="h-3.5 w-3.5" />
+      {CHIP_ORDER_TEST_LABEL}
     </span>
   );
 }

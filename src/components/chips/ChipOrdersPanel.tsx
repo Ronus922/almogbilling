@@ -3,15 +3,23 @@
 // /chips → "הזמנות" (12/11/2026): the PAID chip orders residents placed on
 // /chip-order. Chips-skin table on desktop, cards on a phone — the same
 // anatomy as ChipsTable. A row opens the order panel (ChipOrderSheet).
+// Test orders (13/11/2026) carry a "בדיקה" badge, can be hidden, are never
+// part of a count, and "מחק את כל הזמנות הבדיקה" removes them all.
 
 import { useMemo, useState } from 'react';
-import { AlertTriangle, Inbox } from 'lucide-react';
+import { toast } from 'sonner';
+import { AlertTriangle, FlaskConical, Inbox, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { e164ToLocal } from '@/lib/portal/phone';
 import {
   CHIP_ORDER_ROLE_LABEL, formatIls, isChipOrderOverdue, type ChipOrderListItem, type ChipOrderStatus,
 } from '@/lib/chipOrders/model';
-import { ChipOrderStatusPill } from './ChipOrderStatusPill';
+import { ChipOrderStatusPill, ChipOrderTestBadge } from './ChipOrderStatusPill';
 
 type Filter = 'open' | 'all' | 'collected' | 'rejected';
 
@@ -32,26 +40,56 @@ const DATE_TIME = new Intl.DateTimeFormat('he-IL', {
 });
 
 export function ChipOrdersPanel({
-  items, loading, onOpen,
+  items, loading, onOpen, canEdit = false, unfinishedTests = 0, onChanged,
 }: {
   items: ChipOrderListItem[];
   loading: boolean;
   onOpen: (id: string) => void;
+  /** chips_orders_manage:edit — offers "מחק את כל הזמנות הבדיקה". */
+  canEdit?: boolean;
+  /** Test orders never finished (not in `items`) — deleted with the rest. */
+  unfinishedTests?: number;
+  onChanged?: () => void;
 }) {
   const [filter, setFilter] = useState<Filter>('open');
+  const [showTests, setShowTests] = useState(true);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const tests = useMemo(() => items.filter((o) => o.is_test), [items]);
   const visible = useMemo(() => {
     const f = FILTERS.find((x) => x.value === filter)?.statuses ?? null;
-    return f ? items.filter((o) => f.includes(o.status)) : items;
-  }, [items, filter]);
+    return items.filter((o) => (showTests || !o.is_test) && (!f || f.includes(o.status)));
+  }, [items, filter, showTests]);
+  // Test orders are never counted (nor summed) — only shown, when asked.
   const counts = useMemo(() => {
-    const c: Record<Filter, number> = { open: 0, all: items.length, collected: 0, rejected: 0 };
-    for (const o of items) {
+    const real = items.filter((o) => !o.is_test);
+    const c: Record<Filter, number> = { open: 0, all: real.length, collected: 0, rejected: 0 };
+    for (const o of real) {
       if (o.status === 'collected') c.collected++;
       else if (o.status === 'rejected') c.rejected++;
       else c.open++;
     }
     return c;
   }, [items]);
+  const testCount = tests.length + unfinishedTests;
+  const testActiveChips = tests.reduce((n, o) => n + o.chips_linked, 0);
+
+  async function deleteAllTests() {
+    setDeleting(true);
+    try {
+      const res = await fetch('/api/chip-orders/test-orders', { method: 'DELETE', credentials: 'include' });
+      const data = (await res.json().catch(() => ({}))) as { deleted?: number; fileFailed?: number; error?: string };
+      if (!res.ok) throw new Error(data.error ?? 'המחיקה נכשלה');
+      if (data.fileFailed) toast.warning(`נמחקו ${data.deleted ?? 0} הזמנות בדיקה; ${data.fileFailed} נשארו כי קובץ החוזה לא נמחק — נסו שוב.`);
+      else toast.success(data.deleted ? `נמחקו ${data.deleted} הזמנות בדיקה` : 'לא נמצאו הזמנות בדיקה');
+      setDeleteAllOpen(false);
+      onChanged?.();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <div className="overflow-hidden rounded-[16px] border border-[var(--chip-border)] bg-[var(--chip-panel)]">
@@ -74,6 +112,35 @@ export function ChipOrdersPanel({
             </span>
           </button>
         ))}
+        {testCount > 0 && (
+          <span className="flex flex-wrap items-center gap-2 sm:ms-auto">
+            <button
+              type="button"
+              aria-pressed={showTests}
+              onClick={() => setShowTests((v) => !v)}
+              data-testid="chip-orders-toggle-tests"
+              className={cn(
+                'inline-flex h-11 cursor-pointer items-center gap-1.5 rounded-full border-[1.5px] px-4 text-[13.5px] font-semibold transition-colors sm:h-9',
+                showTests
+                  ? 'border-[var(--chip-violet-border)] bg-[var(--chip-violet-soft)] text-[var(--chip-violet-ink)]'
+                  : 'border-[var(--chip-border)] bg-[var(--chip-panel)] text-[var(--chip-ink-muted)] hover:bg-[var(--chip-hover)]',
+              )}
+            >
+              <FlaskConical className="h-4 w-4" />
+              {showTests ? 'הסתר הזמנות בדיקה' : 'הצג הזמנות בדיקה'}
+            </button>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => setDeleteAllOpen(true)}
+                data-testid="chip-orders-delete-all-tests"
+                className="inline-flex h-11 cursor-pointer items-center rounded-full border-[1.5px] border-[var(--chip-red-border)] bg-[var(--chip-panel)] px-4 text-[13.5px] font-semibold text-[var(--chip-red-ink)] transition-colors hover:bg-[var(--chip-red-soft)] sm:h-9"
+              >
+                מחק את כל הזמנות הבדיקה
+              </button>
+            )}
+          </span>
+        )}
       </div>
 
       {loading ? (
@@ -122,6 +189,7 @@ export function ChipOrdersPanel({
                     <span className="flex min-w-0 flex-col gap-[2px]">
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className="truncate text-[14.5px] font-bold text-[var(--chip-ink)]">{o.full_name}</span>
+                        {o.is_test && <ChipOrderTestBadge />}
                         {o.has_failed_notification && (
                           <span title="שליחת הודעה נכשלה" className="shrink-0 text-[var(--chip-red)]">
                             <AlertTriangle className="h-4 w-4" />
@@ -163,6 +231,7 @@ export function ChipOrdersPanel({
                   <span className="flex w-full items-center gap-2">
                     <span className="chip-num text-[13px] font-bold text-[var(--chip-ink-muted)]">{o.order_number}</span>
                     <span className="min-w-0 flex-1 truncate text-[15px] font-bold text-[var(--chip-ink)]">{o.full_name}</span>
+                    {o.is_test && <ChipOrderTestBadge />}
                     <span className="text-[14px] font-bold text-[var(--chip-ink)]">{formatIls(o.total)}</span>
                   </span>
                   <span className="text-[12.5px] font-semibold text-[var(--chip-ink-muted)]">
@@ -175,6 +244,35 @@ export function ChipOrdersPanel({
           </div>
         </>
       )}
+
+      <AlertDialog open={deleteAllOpen} onOpenChange={(o) => { if (!deleting) setDeleteAllOpen(o); }}>
+        <AlertDialogContent dir="rtl" className="chips-skin">
+          <AlertDialogHeader>
+            <AlertDialogTitle>למחוק את כל הזמנות הבדיקה?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {`${testCount === 1 ? 'הזמנת בדיקה אחת תימחק' : `${testCount} הזמנות בדיקה יימחקו`} לצמיתות, עם הדירות, ההודעות וקובצי החוזה. הזמנות רגילות לא נפגעות. צ׳יפים שהונפקו להזמנות הבדיקה נשארים במודול הצ׳יפים, רק בלי הקישור להזמנה.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {testActiveChips > 0 && (
+            <p role="alert" className="flex items-start gap-2 rounded-[11px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] p-3 text-[13.5px] font-semibold text-[var(--chip-amber-ink)]">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {testActiveChips === 1 ? 'להזמנות הבדיקה צ׳יפ פעיל אחד' : `להזמנות הבדיקה ${testActiveChips} צ׳יפים פעילים`}. הם לא יימחקו — השביתו אותם בחלון ההנפקה של הדירה.
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting} className="h-11 px-4">ביטול</AlertDialogCancel>
+            <Button
+              type="button"
+              disabled={deleting}
+              onClick={() => void deleteAllTests()}
+              className="h-11 gap-2 bg-destructive px-4 text-white hover:bg-destructive/90"
+            >
+              {deleting && <Loader2 className="h-4 w-4 animate-spin" />}
+              מחק את כל הזמנות הבדיקה
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

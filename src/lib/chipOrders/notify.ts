@@ -100,6 +100,7 @@ export async function notifyChipOrder(orderId: string, kind: ChipOrderNotifyKind
       rejectReason: order.reject_reason,
       refundStatus: order.refund_status,
       invoiceUrl: order.invoice_url,
+      isTest: order.is_test,
     });
     await Promise.allSettled([
       viaEmail(orderId, kind, order.email, renderTemplate('chip-order', msg)),

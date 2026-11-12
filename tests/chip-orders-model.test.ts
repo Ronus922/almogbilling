@@ -148,6 +148,29 @@ describe('chipOrderMessage — the four messages', () => {
   it('names several apartments', () => {
     expect(chipOrderMessage({ ...base, apartments: ['1210', '520'], kind: 'paid' }).lines[1]).toContain('דירות 1210, 520');
   });
+
+  it('a test order: every message starts with [בדיקה], no invoice, and a rejection says nothing was charged', () => {
+    for (const kind of ['paid', 'approved', 'ready', 'rejected'] as const) {
+      const m = chipOrderMessage({ ...base, kind, isTest: true, rejectReason: 'בדיקה', refundStatus: 'not_required' });
+      expect(m.subject.startsWith('[בדיקה] ')).toBe(true);
+      expect(chipOrderWhatsAppText(m).startsWith('[בדיקה] ')).toBe(true);
+    }
+    // Even if an invoice URL were somehow present, a test order never links one.
+    const paid = chipOrderMessage({ ...base, kind: 'paid', isTest: true, invoiceUrl: 'https://meshulam.co.il/s/abc' });
+    const text = chipOrderWhatsAppText(paid);
+    expect(text).not.toContain('meshulam');
+    expect(text).not.toContain('החשבונית');
+    expect(paid.links).toEqual([base.trackUrl]);
+    const rejected = chipOrderWhatsAppText(chipOrderMessage({ ...base, kind: 'rejected', isTest: true, refundStatus: 'not_required' }));
+    expect(rejected).toContain('לא בוצע חיוב');
+    expect(rejected).not.toContain('Grow');
+  });
+
+  it('a real order never carries the test mark', () => {
+    const m = chipOrderMessage({ ...base, kind: 'paid' });
+    expect(m.subject).not.toContain('[בדיקה]');
+    expect(chipOrderWhatsAppText(m)).toContain('החשבונית');
+  });
 });
 
 describe('leaseFileProblem — PDF or image, up to 10MB', () => {

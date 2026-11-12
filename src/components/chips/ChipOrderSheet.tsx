@@ -29,7 +29,7 @@ import {
   type ChipOrderApprovalFields, type ChipOrderDetail, type ChipOrderItemDetail, type ChipOrderMatchStatus,
 } from '@/lib/chipOrders/model';
 import { ChipSection, LABEL_CLS } from './ChipSection';
-import { ChipOrderStatusPill } from './ChipOrderStatusPill';
+import { ChipOrderStatusPill, ChipOrderTestBadge } from './ChipOrderStatusPill';
 
 export interface AssignRequest {
   orderId: string;
@@ -93,6 +93,7 @@ export function ChipOrderSheet({
   const [checks, setChecks] = useState<Record<string, Record<FieldKey, boolean>>>({});
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!orderId) return;
@@ -116,6 +117,7 @@ export function ChipOrderSheet({
     if (!open) {
       setRejectOpen(false);
       setRejectReason('');
+      setDeleteOpen(false);
     }
   }, [open, orderId, load]);
 
@@ -143,6 +145,25 @@ export function ChipOrderSheet({
     }
   }
 
+  /** "מחק הזמנת בדיקה" — test orders only (the server refuses any other). */
+  async function deleteTestOrder(): Promise<void> {
+    if (!orderId) return;
+    setBusy('delete');
+    try {
+      const res = await fetch(`/api/chip-orders/${orderId}`, { method: 'DELETE', credentials: 'include' });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error === 'not_found' ? 'הזמנת הבדיקה לא נמצאה' : data.error ?? 'המחיקה נכשלה');
+      toast.success('הזמנת הבדיקה נמחקה');
+      setDeleteOpen(false);
+      onChanged();
+      onOpenChange(false);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function approve() {
     if (!order) return;
     const fields: ChipOrderApprovalFields[] = order.items.map((i) => ({
@@ -155,6 +176,7 @@ export function ChipOrderSheet({
   }
 
   const linkedAll = useMemo(() => (order ? allChipsLinked(order.items) : false), [order]);
+  const activeChips = useMemo(() => (order ? order.items.reduce((n, i) => n + activeLinked(i), 0) : 0), [order]);
   const overdue = order ? isChipOrderOverdue(order) : false;
 
   const orderPhone = order?.phone_e164 ?? '';
@@ -183,7 +205,9 @@ export function ChipOrderSheet({
                   {order ? `הזמנת צ׳יפים ${order.order_number}` : 'הזמנת צ׳יפים'}
                 </SheetTitle>
                 <p className="mt-[4px] text-[13.5px] font-medium text-white/[0.82]">
-                  {order ? `${CHIP_ORDER_STATUS_LABEL[order.status]} · ${formatIls(order.total)}` : 'טוען…'}
+                  {order
+                    ? `${order.is_test ? 'הזמנת בדיקה · ' : ''}${CHIP_ORDER_STATUS_LABEL[order.status]} · ${formatIls(order.total)}`
+                    : 'טוען…'}
                 </p>
               </div>
               <button
@@ -208,6 +232,7 @@ export function ChipOrderSheet({
               <div className="mx-auto flex max-w-[820px] flex-col gap-[18px]">
                 {/* Status strip */}
                 <div className="flex flex-wrap items-center gap-2 rounded-[13px] border border-[var(--chip-border)] bg-[var(--chip-panel)] p-4">
+                  {order.is_test && <ChipOrderTestBadge />}
                   <ChipOrderStatusPill status={order.status} overdue={overdue} />
                   {order.due_at && order.status === 'approved' && (
                     <span className={cn('text-[13px] font-bold', overdue ? 'text-[var(--chip-red-ink)]' : 'text-[var(--chip-ink-muted)]')}>
@@ -259,7 +284,9 @@ export function ChipOrderSheet({
                           פתח {order.invoice_number ? `(${order.invoice_number})` : ''}
                         </a>
                       ) : (
-                        <span className="text-[var(--chip-ink-soft)]">טרם התקבלה מ-Grow</span>
+                        <span className="text-[var(--chip-ink-soft)]">
+                          {order.is_test ? 'אין — הזמנת בדיקה, ללא חיוב' : 'טרם התקבלה מ-Grow'}
+                        </span>
                       )}
                     </Row>
                   </div>
@@ -491,6 +518,18 @@ export function ChipOrderSheet({
                     דחה
                   </Button>
                 )}
+                {order.is_test && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setDeleteOpen(true)}
+                    disabled={busy !== null}
+                    data-testid="chip-order-delete-test"
+                    className="h-[46px] rounded-[11px] border-[1.5px] border-[var(--chip-red-border)] bg-[var(--chip-panel)] px-[22px] text-[14px] font-bold text-[var(--chip-red-ink)] hover:bg-[var(--chip-red-soft)]"
+                  >
+                    מחק הזמנת בדיקה
+                  </Button>
+                )}
               </div>
             )}
             <span className="hidden flex-1 sm:block" />
@@ -511,7 +550,9 @@ export function ChipOrderSheet({
           <AlertDialogHeader>
             <AlertDialogTitle>לדחות את ההזמנה?</AlertDialogTitle>
             <AlertDialogDescription>
-              ההזמנה תסומן „נדחה” ויתבקש זיכוי מלא מ-Grow. המזמין יקבל מייל ווואטסאפ עם הסיבה ומצב הזיכוי.
+              {order?.is_test
+                ? 'הזמנת בדיקה: היא תסומן „נדחה” בלי פנייה ל-Grow (לא היה חיוב — הזיכוי „לא נדרש”). המזמין יקבל מייל ווואטסאפ עם הסיבה.'
+                : 'ההזמנה תסומן „נדחה” ויתבקש זיכוי מלא מ-Grow. המזמין יקבל מייל ווואטסאפ עם הסיבה ומצב הזיכוי.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Textarea
@@ -534,7 +575,36 @@ export function ChipOrderSheet({
               className="h-11 gap-2 bg-destructive px-4 text-white hover:bg-destructive/90"
             >
               {busy === 'reject' && <Loader2 className="h-4 w-4 animate-spin" />}
-              דחה והחזר תשלום
+              {order?.is_test ? 'דחה' : 'דחה והחזר תשלום'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleteOpen} onOpenChange={(o) => { if (!busy) setDeleteOpen(o); }}>
+        <AlertDialogContent dir="rtl" className="chips-skin">
+          <AlertDialogHeader>
+            <AlertDialogTitle>למחוק את הזמנת הבדיקה?</AlertDialogTitle>
+            <AlertDialogDescription>
+              ההזמנה, הדירות שלה, ההודעות וקובצי החוזה יימחקו לצמיתות. צ׳יפים שהונפקו לה נשארים במודול הצ׳יפים, רק בלי הקישור להזמנה.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {activeChips > 0 && (
+            <p role="alert" className="flex items-start gap-2 rounded-[11px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] p-3 text-[13.5px] font-semibold text-[var(--chip-amber-ink)]">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {activeChips === 1 ? 'להזמנה צ׳יפ פעיל אחד' : `להזמנה ${activeChips} צ׳יפים פעילים`}. הם לא יימחקו — השביתו אותם בחלון ההנפקה של הדירה.
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy !== null} className="h-11 px-4">ביטול</AlertDialogCancel>
+            <Button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void deleteTestOrder()}
+              className="h-11 gap-2 bg-destructive px-4 text-white hover:bg-destructive/90"
+            >
+              {busy === 'delete' && <Loader2 className="h-4 w-4 animate-spin" />}
+              מחק הזמנת בדיקה
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

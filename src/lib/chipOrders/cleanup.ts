@@ -1,15 +1,19 @@
 import 'server-only';
 import { logger } from '@/lib/logger';
 import { isGrowConfigured } from '@/lib/grow/client';
-import { deleteChipOrderWithLeases, listStaleUnpaidOrders } from '@/lib/db/chipOrders';
+import {
+  deleteChipOrderWithLeases, listStaleUnpaidOrders, listTestOrderIds, type OrderDeleteOutcome,
+} from '@/lib/db/chipOrders';
 import { removeChipOrderLeasesStrict } from '@/lib/storage/chipOrderLeaseStorage';
 import { confirmChipOrderPayment } from './payment';
 
-// Removing chip orders that must not stay (13/11/2026): the hourly purge of
-// real orders that were never paid (POST /api/cron/chip-orders-purge,
-// billing-chip-orders-purge.timer). The lease files are deleted FIRST and the
-// row after; a file Storage refuses keeps its order for the next attempt. A
-// paid order is never deleted.
+// Removing chip orders that must not stay (13/11/2026):
+//   - the hourly purge of real orders that were never paid (POST
+//     /api/cron/chip-orders-purge, billing-chip-orders-purge.timer);
+//   - test orders, by hand, from /chips ("מחק הזמנת בדיקה" / "מחק את כל
+//     הזמנות הבדיקה").
+// Both delete the lease files FIRST and the row after; a file Storage refuses
+// keeps its order for the next attempt. A paid order is never deleted.
 
 /** An unpaid order is purged this long after it was created. */
 export const UNPAID_ORDER_TTL_HOURS = 48;
@@ -78,4 +82,32 @@ export async function purgeUnpaidChipOrders(): Promise<PurgeResult> {
   const { paidOrderIds, ...counts } = r;
   logger.info('[chip-orders] unpaid purge', { ...counts, paid: paidOrderIds.length });
   return r;
+}
+
+export interface TestDeleteResult {
+  deleted: number;
+  fileFailed: number;
+  notFound: number;
+}
+
+function tally(outcomes: OrderDeleteOutcome[]): TestDeleteResult {
+  return {
+    deleted: outcomes.filter((o) => o === 'deleted').length,
+    fileFailed: outcomes.filter((o) => o === 'file_failed').length,
+    notFound: outcomes.filter((o) => o === 'not_found').length,
+  };
+}
+
+/** "מחק הזמנת בדיקה" — one TEST order (a real order answers not_found). */
+export async function deleteTestChipOrder(id: string): Promise<TestDeleteResult> {
+  return tally([await deleteChipOrderWithLeases(id, 'test', removeChipOrderLeasesStrict)]);
+}
+
+/** "מחק את כל הזמנות הבדיקה" — every test order, any status. */
+export async function deleteAllTestChipOrders(): Promise<TestDeleteResult> {
+  const outcomes: OrderDeleteOutcome[] = [];
+  for (const id of await listTestOrderIds()) {
+    outcomes.push(await deleteChipOrderWithLeases(id, 'test', removeChipOrderLeasesStrict));
+  }
+  return tally(outcomes);
 }
