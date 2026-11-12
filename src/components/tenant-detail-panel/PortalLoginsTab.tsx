@@ -4,7 +4,10 @@
 // banner for each of its phones that is locked out right now, with "שחרר חסימה".
 //
 // The log itself is the shared PortalLogTable (the same component /admin/portal-log
-// renders), with the apartment column dropped: every row here is this apartment.
+// renders), with the apartment column dropped: every row here is this apartment. It is
+// `contained` — one scroll box (capped at 70% of the window, so its sideways scrollbar is
+// on screen, not under 200 rows), a sticky header row, long values cut with a title. The
+// tab shows the newest 200 events of the apartment and is not paged (DESIGN.md §9).
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -111,7 +114,7 @@ export function PortalLoginsTab({ apartmentNumber, canEdit }: {
           ) : !events ? (
             <div className="h-40 animate-pulse rounded-xl bg-muted/60" />
           ) : (
-            <PortalLogTable events={events} showApartment={false} />
+            <PortalLogTable events={events} showApartment={false} contained />
           )}
         </div>
       </Section>

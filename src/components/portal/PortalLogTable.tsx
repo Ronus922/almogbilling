@@ -18,12 +18,13 @@ import { PortalEventBadge } from './PortalEventBadge';
 // the owner and the apartment cell — that is the whole point of logging it.
 // DESIGN.md §9: header h-11 / bg-slate-50, cells px-4 py-3.
 //
-// `contained` (the admin screen only) turns the table into ONE scroll box that is
-// also the card: it scrolls both ways inside itself, the header row stays put, the
-// horizontal scrollbar is always on screen (the box is capped at 70% of the
-// viewport) and the long columns (owner, apartments, IP) are cut with an ellipsis
-// and carry the full value in `title`. The apartment-card tab leaves it off and
-// renders exactly what it always did.
+// `contained` (both surfaces) turns the table into ONE scroll box that is also the
+// card: it scrolls both ways inside itself, the header row stays put, the horizontal
+// scrollbar is always on screen (the box is capped at 70% of the viewport) and the long
+// columns (owner, apartments, IP) are cut with an ellipsis and carry the full value in
+// `title`. Without it the table sits in ui/Table's own overflow-x-auto wrapper inside a
+// second one — the scrollbar ends up under every row. The admin screen shipped it on
+// 12/11/2026 (PR #155); the apartment-card tab followed.
 
 /** A user-agent is unreadable in a table cell — show the device family only.
  *  Order matters: Edge and Chrome both claim "Chrome", iPad claims "Macintosh". */
@@ -61,7 +62,7 @@ export function PortalLogTable({ events, showApartment, contained = false }: {
   events: PortalLoginEvent[];
   /** The admin screen shows it; the apartment card does not (one apartment). */
   showApartment: boolean;
-  /** The admin screen: one scroll box (both axes), sticky header, clipped long values. */
+  /** One scroll box (both axes), sticky header, clipped long values — the admin screen and the card's tab. */
   contained?: boolean;
 }) {
   if (events.length === 0) {

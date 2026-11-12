@@ -13,6 +13,9 @@ import { Pool } from 'pg';
 //     so its horizontal scrollbar is on screen instead of under 50–200 rows;
 //   - the header row stays put while the rows scroll;
 //   - the filters / tabs wrap by the CARD's width (container queries): nothing is cut or overlapped at 768–1024.
+//   - the same card on the apartment card's "התחברויות לפורטל" tab (12/11/2026): ONE scroll box (no ui/Table wrapper
+//     under it — the sideways bar used to sit under all 200 rows), capped at 70% of the window, sticky header,
+//     long values cut with a title.
 // No pixel values are asserted except relative ones (the viewport the test itself chose).
 //
 // Fixtures are inserted with FIXED ids (…7e00xx) and removed by exactly those ids (CLAUDE.md iron rule 12):
@@ -157,6 +160,53 @@ for (const size of SIZES) {
       const clipped = page.locator('[data-log-scroll] tbody tr').first().locator('span[title*="990001"]');
       await expect(clipped).toHaveAttribute('title', /990001, 990002, 990003, 990004, 990005/);
       await expect(clipped).toHaveCSS('text-overflow', 'ellipsis');
+    });
+
+    test('apartment card tab: one scroll box, capped height, sticky header, long values cut with a title', async ({ page }) => {
+      await page.goto('/dashboard');
+      // 990001 is on every one of the 60 fixture events (five apartments each) — the tab lists at least those.
+      await page.locator('[data-debtors-scroll] tbody tr', { hasText: '990001' }).first().click();
+      const dialog = page.getByRole('dialog');
+      await dialog.locator('button', { hasText: /^התחברויות לפורטל$/ }).click();
+      const box = dialog.locator('[data-log-scroll]');
+      await expect(box.locator('tbody tr').first()).toBeVisible();
+      expect(await box.locator('tbody tr').count(), 'the fixtures, at least — other specs may have logged for 990001 too').toBeGreaterThanOrEqual(60);
+
+      // ui/Table's own overflow wrapper is gone: the box IS the card and the table's only horizontal scroller.
+      await expect(dialog.locator('[data-slot="table-container"]')).toHaveCount(0);
+      const info = await box.evaluate((el) => {
+        const table = el.querySelector('table')!;
+        let scrollers = 0;
+        for (let n: HTMLElement | null = table.parentElement; n && n !== el.closest('[role="dialog"]'); n = n.parentElement) {
+          const cs = getComputedStyle(n);
+          // The sheet's own body scrolls vertically (overflow-y:auto makes overflow-x compute to auto as well) —
+          // a scroller counts only if it is a box with the table's own horizontal overflow.
+          if (['auto', 'scroll'].includes(cs.overflowX) && n.scrollWidth > n.clientWidth + 1) scrollers += 1;
+        }
+        const r = el.getBoundingClientRect();
+        const th = table.querySelector('thead th');
+        return {
+          scrollers, height: r.height, innerHeight: window.innerHeight,
+          overflowsSideways: el.scrollWidth > el.clientWidth,
+          headerSticky: th ? getComputedStyle(th).position : null,
+        };
+      });
+      expect(info.scrollers, 'exactly one box scrolls the table sideways').toBe(1);
+      expect(info.height).toBeLessThanOrEqual(info.innerHeight * 0.7 + 1);
+      expect(info.headerSticky).toBe('sticky');
+      // The table is wider than the card at every width here (min 720px): the sideways scroll is the box's own.
+      expect(info.overflowsSideways).toBe(true);
+      // The tab is one apartment's: no apartment column. The long value here is the IPv6 address — cut, whole value in `title`.
+      await expect(box.locator('thead th', { hasText: /^דירה$/ })).toHaveCount(0);
+      const clipped = box.locator('tbody tr').first().locator('span[title^="2a02:0ed0:abcd:1234:5678:90ab:cdef:"]');
+      await expect(clipped).toHaveAttribute('title', /^2a02:0ed0:abcd:1234:5678:90ab:cdef:[0-9a-f]+$/);
+      await expect(clipped).toHaveCSS('text-overflow', 'ellipsis');
+      // The header row stays put while the rows scroll inside the box.
+      const head = box.locator('thead th').first();
+      const before = await head.boundingBox();
+      await box.evaluate((el) => { el.scrollTop = 300; });
+      expect(await box.evaluate((el) => el.scrollTop), 'the box has to be tall enough to scroll').toBeGreaterThan(0);
+      expect((await head.boundingBox())!.y).toBeCloseTo(before!.y, 0);
     });
 
     test('portal log: the five filters wrap by the card width — none is cut or overlapped', async ({ page }) => {
