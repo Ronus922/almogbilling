@@ -105,7 +105,9 @@ export function DocumentsTable({ tab, rows, selectedId, canEdit, onSelect, onOpe
     // layout viewport grows to the table's width and the whole page slides out of sight (the white
     // screen of /purchasing, 27/10/2026). With it the table scrolls inside the card, nothing else moves.
     <div className="relative overflow-x-auto rounded-xl border border-line bg-white shadow-soft-xs" data-table-scroll>
-      <table className={cn('w-full border-collapse text-sm', rfq ? 'min-w-[920px]' : 'min-w-[840px]')} data-list={tab}>
+      {/* 900/820: with the navigation panel open the card is ~918px at a 1280 window, and ~904px once the
+          page scrollbar is on screen (Windows) — the old 920/840 floors made the card scroll by a few px there. */}
+      <table className={cn('w-full border-collapse text-sm', rfq ? 'min-w-[900px]' : 'min-w-[820px]')} data-list={tab}>
         <thead>
           <tr className="border-b border-line bg-slate-50">
             <th className={TH}>מספר</th>
