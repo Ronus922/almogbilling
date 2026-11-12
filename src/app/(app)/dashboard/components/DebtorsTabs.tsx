@@ -53,7 +53,10 @@ export function DebtorsTabs({
   }
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+    // Columns follow the strip's own width (container query): with the navigation panel open a 1024px
+    // window leaves ~650px, where six tabs overlap their badges.
+    <div className="@container">
+    <div className="grid grid-cols-2 gap-2 @min-[560px]:grid-cols-3 @min-[900px]:grid-cols-6">
       {tabs.map((t) => {
         const isActive = t.key === active;
         const Icon = t.icon;
@@ -93,6 +96,7 @@ export function DebtorsTabs({
         }
         return <span key={t.key} className="block">{button}</span>;
       })}
+    </div>
     </div>
   );
 }
