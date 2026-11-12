@@ -21,6 +21,13 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
+// The route under test refuses everything while the order page is closed
+// (the state here: no Grow); open it, so the per-IP ceiling is what answers.
+vi.mock('@/lib/chipOrders/server', async (orig) => ({
+  ...(await orig<typeof import('@/lib/chipOrders/server')>()),
+  chipOrdersOpen: () => true,
+}));
+
 const { checkRateLimit } = await import('@/lib/auth/rateLimit');
 const { POST: verifyChipOrderOtp } = await import('@/app/api/public/chip-order/otp/verify/route');
 const { PORTAL_VERIFY_MAX_PER_IP } = await import('@/lib/constants/portal');
