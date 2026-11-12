@@ -219,7 +219,7 @@ export function AdminPortalLogClient() {
       ) : !events ? (
         <div className="h-64 animate-pulse rounded-xl bg-muted/60" />
       ) : (
-        <PortalLogTable events={events} showApartment />
+        <PortalLogTable events={events} showApartment contained />
       )}
     </div>
   );
