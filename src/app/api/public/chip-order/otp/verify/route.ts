@@ -3,7 +3,7 @@ import { parseJsonBody } from '@/lib/http/body';
 import { chipOrderOtpVerifyBodySchema } from '@/lib/validation/requests';
 import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 import { toPortalE164 } from '@/lib/portal/phone';
-import { verifyCodeReserved } from '@/lib/db/portal/otp';
+import { verifyCode } from '@/lib/db/portal/otp';
 import { setVerifiedPhoneCookie, CHIP_ORDER_PUBLIC_HEADERS as H } from '@/lib/chipOrders/server';
 import { PORTAL_OTP_IP_WINDOW_SEC, PORTAL_OTP_MAX_ATTEMPTS, PORTAL_VERIFY_MAX_PER_IP } from '@/lib/constants/portal';
 
@@ -11,12 +11,13 @@ export const runtime = 'nodejs';
 
 // POST /api/public/chip-order/otp/verify — the code typed on /chip-order.
 //
-// PUBLIC BY DESIGN (pre-auth). The portal's verifyCode with purpose
+// PUBLIC BY DESIGN (pre-auth). The portal's own verifyCode with purpose
 // 'chip_order': only the NEWEST chip-order code of the phone counts, wrong
 // guesses are counted on that code — each one RESERVES its attempt atomically
-// before the compare (verifyCodeReserved), so parallel guesses cannot exceed
-// PORTAL_OTP_MAX_ATTEMPTS per code — and then a new code must be requested. Success seals the phone into an httpOnly cookie
-// (30 minutes) that the order submit requires.
+// before the compare, so parallel guesses cannot exceed
+// PORTAL_OTP_MAX_ATTEMPTS per code — and then a new code must be requested.
+// Success seals the phone into an httpOnly cookie (30 minutes) that the order
+// submit requires.
 
 export async function POST(req: Request) {
   const body = await parseJsonBody(req, chipOrderOtpVerifyBodySchema);
@@ -39,7 +40,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, message: 'נדרש מספר טלפון נייד ישראלי.' }, { status: 400, headers: H });
   }
 
-  const outcome = await verifyCodeReserved(phoneE164, body.data.code, 'chip_order', PORTAL_OTP_MAX_ATTEMPTS);
+  const outcome = await verifyCode(phoneE164, body.data.code, 'chip_order', PORTAL_OTP_MAX_ATTEMPTS);
   if (outcome.kind === 'ok') {
     await setVerifiedPhoneCookie(phoneE164);
     return NextResponse.json({ ok: true }, { headers: H });

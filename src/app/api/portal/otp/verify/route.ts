@@ -25,7 +25,9 @@ export const runtime = 'nodejs';
 // The wrong-code ceiling is counted on the code row itself (attempts), not in a
 // rate-limit bucket, so it cannot be spread across several live codes: asking for
 // a new code invalidates the previous one (verifyCode only ever looks at the
-// newest row).
+// newest row). Each guess RESERVES its attempt atomically before the compare
+// (13/11/2026), so even parallel guesses check at most PORTAL_OTP_MAX_ATTEMPTS
+// values per code; the one that uses up the last attempt sets the lockout.
 //
 // That ceiling alone does NOT cover a phone with no live code: once a code is
 // consumed or expired every guess answers `code_expired` and nothing counts it,
@@ -74,7 +76,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const outcome = await verifyCode(phoneE164, body.data.code);
+  const outcome = await verifyCode(phoneE164, body.data.code, 'portal_login', PORTAL_OTP_MAX_ATTEMPTS);
 
   // Resolved once, up front, and attached to EVERY failure event below. The
   // apartment card filters the log on apartment_numbers, so an event logged
