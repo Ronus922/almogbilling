@@ -12,7 +12,7 @@ import {
 import { DebtorsSelectionBar } from './DebtorsSelectionBar';
 import { BulkLegalStatusControls } from './BulkLegalStatusControls';
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -434,9 +434,24 @@ export function DebtorsTable({
         })}
       </ul>
 
-      <div className="hidden overflow-hidden rounded-xl border border-line roomy:block">
-        <Table>
-          <TableHeader className="[&_tr]:border-b [&_tr]:border-line">
+      {/* ONE scroll box, and it is the card: it scrolls both ways inside itself, capped at 70% of the
+          viewport so the horizontal scrollbar is always on screen (it used to sit under all 50 rows),
+          and the header row stays put. `ui/Table` would wrap the <table> in a second overflow-x-auto
+          div — that div would capture the sticky header — so the bare <table> goes in directly. The box
+          is focusable and named: a scrollable region has to be reachable by keyboard. The "פעולות" column
+          (WhatsApp, archive…) is pinned to the left edge while the box is wide enough (≥640px) to scroll
+          the rest under it — the table is wider than the card at every laptop width. */}
+      <div
+        role="region"
+        aria-label="טבלת חייבים"
+        tabIndex={0}
+        data-debtors-scroll
+        className="@container hidden max-h-[70dvh] overflow-auto rounded-xl border border-line focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand roomy:block"
+      >
+        <table data-slot="table" className="w-full caption-bottom text-sm">
+          {/* Sticky cells carry their own background (rows scroll under them) and an inset line instead
+              of the row border — a border-collapse border does not travel with a sticky cell. */}
+          <TableHeader className="[&_tr]:border-b [&_tr]:border-line [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-surface-2 [&_th]:shadow-[inset_0_-1px_0_var(--color-line)] @min-[640px]:[&_th:last-child]:left-0 @min-[640px]:[&_th:last-child]:z-20 @min-[640px]:[&_th:last-child]:shadow-[inset_0_-1px_0_var(--color-line),inset_-1px_0_0_var(--color-line)]">
             <TableRow className="bg-surface-2 hover:bg-surface-2">
               {showSelection && (
                 <TableHead className="h-11 w-10 px-4 text-center">
@@ -480,7 +495,7 @@ export function DebtorsTable({
                   key={d.id}
                   onClick={() => openPanel(d.id)}
                   className={cn(
-                    'h-[46px] cursor-pointer border-b border-line-soft hover:bg-row-hover',
+                    'group h-[46px] cursor-pointer border-b border-line-soft hover:bg-row-hover',
                     selectedIds.has(d.id) && 'bg-emerald-50/40 hover:bg-emerald-50/60',
                   )}
                 >
@@ -497,8 +512,11 @@ export function DebtorsTable({
                     {d.apartment_number}
                   </TableCell>
                   <TableCell className="px-4 py-3 text-start text-sm font-medium text-ink">
-                    <span className="inline-flex items-center gap-1.5">
-                      <span>{d.owner_name ?? <span className="text-ink-ghost">—</span>}</span>
+                    {/* A long owner name (a management company) is cut with an ellipsis, the full name in `title`. */}
+                    <span className="flex max-w-[15rem] min-w-0 items-center gap-1.5">
+                      <span className="min-w-0 truncate" title={d.owner_name ?? undefined}>
+                        {d.owner_name ?? <span className="text-ink-ghost">—</span>}
+                      </span>
                       <DocIndicator count={d.doc_count} lastAt={d.last_doc_at} />
                     </span>
                   </TableCell>
@@ -522,7 +540,7 @@ export function DebtorsTable({
                   </TableCell>
                   {isActionsTab && (
                     <>
-                      <TableCell className="px-4 py-3 text-start text-sm text-slate-700">
+                      <TableCell className="px-4 py-3 text-start text-sm text-slate-700" title={d.next_action_description ?? undefined}>
                         {truncate(d.next_action_description, 30)}
                       </TableCell>
                       <TableCell className="px-4 py-3 text-center text-sm" dir="ltr">
@@ -535,7 +553,15 @@ export function DebtorsTable({
                       {formatDueDate(d.archived_at)}
                     </TableCell>
                   )}
-                  <TableCell className="px-4 py-3 text-end" onClick={(e) => e.stopPropagation()}>
+                  <TableCell
+                    className={cn(
+                      'px-4 py-3 text-end shadow-[inset_0_-1px_0_var(--color-line-soft),inset_-1px_0_0_var(--color-line)] @min-[640px]:sticky @min-[640px]:left-0 @min-[640px]:z-10',
+                      // The row's own tint is translucent (emerald-50/40, /60); this cell must be opaque, so
+                      // these are those tints already blended over white.
+                      selectedIds.has(d.id) ? 'bg-[#f7fefb] group-hover:bg-[#f4fef9]' : 'bg-white group-hover:bg-row-hover',
+                    )}
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <RowActions
                       debtorId={d.id}
                       apartment={d.apartment_number}
@@ -566,7 +592,7 @@ export function DebtorsTable({
               );
             })}
           </TableBody>
-        </Table>
+        </table>
       </div>
 
       {totalPages > 1 && (
