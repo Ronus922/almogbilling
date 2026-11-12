@@ -4,7 +4,8 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { pullGreenApiMessages } from '@/lib/whatsapp-inbound';
 import { resolveSendCreds, InstanceNotConfiguredError } from '@/lib/db/whatsappInstances';
 import { WhatsAppError } from '@/lib/whatsapp';
-import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { WHATSAPP_PULL_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
 
 export const runtime = 'nodejs';
@@ -15,7 +16,7 @@ export const runtime = 'nodejs';
 export async function POST(req: NextRequest) {
   // Throttle by IP before auth so floods can't hammer the external Green API
   // pull (which writes inbound rows). Matches the login 429 shape.
-  const { allowed, retryAfterSec } = await checkRateLimit('whatsapp:pull:ip:' + clientIp(req), {
+  const { allowed, retryAfterSec } = await checkRateLimit('whatsapp:pull:ip:' + getClientIp(req), {
     max: WHATSAPP_PULL_MAX_PER_IP,
     windowSec: AUTH_RATE_WINDOW_SEC,
   });

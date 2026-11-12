@@ -72,7 +72,7 @@ const KEY = 'a1b2c3d4-0000-4000-8000-0000000000aa.jpg';
 const guard = { id: 'u-guard', username: 'gate', email: null, full_name: 'שומר שער', role: 'guard' };
 
 const open = (qs = '', bucket = 'visitor-ids', key = KEY) =>
-  GET(new NextRequest(`http://localhost/api/files/${bucket}/${key}${qs}`, { headers: { 'x-forwarded-for': '10.0.0.7' } }),
+  GET(new NextRequest(`http://localhost/api/files/${bucket}/${key}${qs}`, { headers: { 'x-real-ip': '10.0.0.7' } }),
     { params: Promise.resolve({ bucket, path: [key] }) });
 
 /** The decoded UTF-8 name of a Content-Disposition's `filename*`. */

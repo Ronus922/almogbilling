@@ -65,7 +65,7 @@ const req = (url: string, init: NextInit & { ip?: string } = {}) => {
   const { ip: clientIp, ...rest } = init;
   return new NextRequest(`http://localhost${url}`, {
     ...rest,
-    headers: { 'x-forwarded-for': clientIp ?? ip(), ...(rest.headers as Record<string, string> | undefined) },
+    headers: { 'x-real-ip': clientIp ?? ip(), ...(rest.headers as Record<string, string> | undefined) },
   });
 };
 

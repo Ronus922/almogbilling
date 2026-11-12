@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { queryOne } from '@/lib/db';
 import { verifyPassword } from '@/lib/auth/password';
 import { createSession } from '@/lib/auth/session';
-import { checkRateLimit, clearRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit, clearRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { AUTH_RATE_WINDOW_SEC, LOGIN_MAX_PER_USER, LOGIN_MAX_PER_IP } from '@/lib/constants';
 import { parseJsonBody } from '@/lib/http/body';
 import { loginBodySchema } from '@/lib/validation/requests';
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
 
   // Brute-force protection: throttle by IP and by username before any
   // password verification. Either bucket being exhausted blocks the attempt.
-  const ipBucket = 'login:ip:' + clientIp(req);
+  const ipBucket = 'login:ip:' + getClientIp(req);
   const userBucket = 'login:user:' + username.toLowerCase();
   const ipLimit = await checkRateLimit(ipBucket, {
     max: LOGIN_MAX_PER_IP,

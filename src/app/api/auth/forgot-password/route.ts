@@ -3,7 +3,8 @@ import { queryOne } from '@/lib/db';
 import { generateResetToken } from '@/lib/auth/tokens';
 import { sendResetPasswordEmail } from '@/services/email';
 import { appUrl } from '@/lib/config';
-import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { FORGOT_PASSWORD_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
@@ -23,7 +24,7 @@ export async function POST(req: Request) {
 
   // Rate limit by IP. To preserve anti-enumeration we still answer 200 but
   // skip all work (no DB lookup, no email) when the IP is over the limit.
-  const { allowed } = await checkRateLimit('forgot:ip:' + clientIp(req), {
+  const { allowed } = await checkRateLimit('forgot:ip:' + getClientIp(req), {
     max: FORGOT_PASSWORD_MAX_PER_IP,
     windowSec: AUTH_RATE_WINDOW_SEC,
   });

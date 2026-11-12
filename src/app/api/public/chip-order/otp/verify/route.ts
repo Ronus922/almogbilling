@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { parseJsonBody } from '@/lib/http/body';
 import { chipOrderOtpVerifyBodySchema } from '@/lib/validation/requests';
-import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { toPortalE164 } from '@/lib/portal/phone';
 import { verifyCode } from '@/lib/db/portal/otp';
 import { setVerifiedPhoneCookie, CHIP_ORDER_PUBLIC_HEADERS as H } from '@/lib/chipOrders/server';
@@ -23,7 +24,7 @@ export async function POST(req: Request) {
   const body = await parseJsonBody(req, chipOrderOtpVerifyBodySchema);
   if (!body.ok) return body.response;
 
-  const ip = clientIp(req);
+  const ip = getClientIp(req);
   const ipLimit = await checkRateLimit(`chip-order:verify:ip:${ip}`, {
     max: PORTAL_VERIFY_MAX_PER_IP,
     windowSec: PORTAL_OTP_IP_WINDOW_SEC,

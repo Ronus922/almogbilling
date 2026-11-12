@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { chipOrderSubmitSchema } from '@/lib/validation/requests';
-import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { toPortalE164, e164ToLocal } from '@/lib/portal/phone';
 import { appUrl } from '@/lib/config';
 import { logger } from '@/lib/logger';
@@ -45,7 +46,7 @@ export async function POST(req: Request) {
     return err(413, 'הקבצים גדולים מדי. אפשר לצרף עד 40MB בהזמנה אחת.');
   }
 
-  const ip = clientIp(req);
+  const ip = getClientIp(req);
   const ipLimit = await checkRateLimit(`chip-order:submit:ip:${ip}`, { max: 10, windowSec: 3600 });
   if (!ipLimit.allowed) return err(429, 'יותר מדי הזמנות מהמכשיר הזה. נסו שוב מאוחר יותר.');
 

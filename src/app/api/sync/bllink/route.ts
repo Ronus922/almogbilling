@@ -14,7 +14,8 @@ import {
   stageHttpStatus,
   type SyncStage,
 } from '@/lib/sync/decision';
-import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { SYNC_BLLINK_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
 import { syncBllinkBodySchema } from '@/lib/validation/requests';
 import { logger } from '@/lib/logger';
@@ -89,7 +90,7 @@ export async function POST(req: Request) {
   // IP rate-limit (anti double-click / abuse). Runs AFTER auth so only
   // authenticated callers are counted, and BEFORE any sync side-effect so a
   // throttled request never triggers a Bllink scrape or debtors merge.
-  const { allowed, retryAfterSec } = await checkRateLimit('sync:bllink:ip:' + clientIp(req), {
+  const { allowed, retryAfterSec } = await checkRateLimit('sync:bllink:ip:' + getClientIp(req), {
     max: SYNC_BLLINK_MAX_PER_IP,
     windowSec: AUTH_RATE_WINDOW_SEC,
   });

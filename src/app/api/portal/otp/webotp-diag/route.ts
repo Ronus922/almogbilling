@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { parseJsonBody } from '@/lib/http/body';
 import { portalOtpWebotpDiagBodySchema } from '@/lib/validation/requests';
-import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
   const body = await parseJsonBody(req, portalOtpWebotpDiagBodySchema);
   if (!body.ok) return body.response;
 
-  const ip = clientIp(req);
+  const ip = getClientIp(req);
   const limit = await checkRateLimit(`portal:webotp-diag:ip:${ip}`, { max: 30, windowSec: 60 });
   // Best-effort beacon: a throttled caller gets the same empty 200 as a
   // logged one — there is nothing for the resident's screen to react to.

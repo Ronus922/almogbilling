@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { parseJsonBody } from '@/lib/http/body';
 import { portalOtpVerifyBodySchema } from '@/lib/validation/requests';
-import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { toPortalE164 } from '@/lib/portal/phone';
 import { alertManagerAboutLockout } from '@/lib/portal/send';
 import { startPortalSession } from '@/lib/portal/session';
@@ -39,7 +40,7 @@ export async function POST(req: Request) {
   const body = await parseJsonBody(req, portalOtpVerifyBodySchema);
   if (!body.ok) return body.response;
 
-  const ip = clientIp(req);
+  const ip = getClientIp(req);
   const userAgent = req.headers.get('user-agent');
   const phoneE164 = toPortalE164(body.data.phone);
   if (!phoneE164) {

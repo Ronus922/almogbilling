@@ -1,6 +1,7 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 
 // The unauthenticated supplier link (/quote/<token>) is the only part of
 // purchasing a stranger can reach, so every call to it passes this gate:
@@ -10,7 +11,7 @@ import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
 // Reads and writes of a valid link are far below both.
 
 export async function publicReadGate(req: Request): Promise<NextResponse | null> {
-  const r = await checkRateLimit(`pq:ip:${clientIp(req)}`, { max: 120, windowSec: 600 });
+  const r = await checkRateLimit(`pq:ip:${getClientIp(req)}`, { max: 120, windowSec: 600 });
   if (r.allowed) return null;
   return NextResponse.json(
     { error: 'יותר מדי בקשות — נסו שוב בעוד כמה דקות' },

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { parseJsonBody } from '@/lib/http/body';
 import { chipOrderOtpRequestBodySchema } from '@/lib/validation/requests';
-import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { toPortalE164 } from '@/lib/portal/phone';
 import { sendPortalCode } from '@/lib/portal/send';
 import { resolveDefaultChannel } from '@/lib/portal/otpChannel';
@@ -45,7 +46,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, message: 'נדרש מספר טלפון נייד ישראלי.' }, { status: 400, headers: H });
   }
 
-  const ip = clientIp(req);
+  const ip = getClientIp(req);
   const limits: { key: string; max: number; windowSec: number; message: string }[] = [
     { key: `chip-order:otp:ip:${ip}`, max: PORTAL_OTP_MAX_PER_IP, windowSec: PORTAL_OTP_IP_WINDOW_SEC, message: 'יותר מדי בקשות מהמכשיר הזה. נסו שוב מאוחר יותר.' },
   ];

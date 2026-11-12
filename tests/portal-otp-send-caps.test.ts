@@ -81,7 +81,7 @@ async function clearCooldown(phoneE164: string) {
 function req(body: Record<string, unknown>, ip: string) {
   return new Request('http://x/api/portal/otp/request', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+    headers: { 'content-type': 'application/json', 'x-real-ip': ip },
     body: JSON.stringify(body),
   });
 }
