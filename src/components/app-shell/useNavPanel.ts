@@ -120,6 +120,8 @@ export function useNavPanel(categories: NavCategory[], pathname: string, collaps
     open,
     animate,
     activeHref: active?.href ?? null,
+    /** The category that holds the current page's item (null: the page is in none). */
+    routeCategoryId,
     /** What the rail marks: the shown category while the panel is open, otherwise the page's
      *  own category (link or panel) if it has one. */
     highlightedId: open && shown ? shown.id : routeCategoryId,
