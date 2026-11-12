@@ -105,6 +105,9 @@ export const PORTAL_LOCKOUT_ALERT_TIER = 3;
  *  number is recorded so a future job has one place to read it from. */
 export const PORTAL_LOG_RETENTION_DAYS = 365;
 
+/** Rows per page on /admin/portal-log (Ronen, 12/11/2026). */
+export const PORTAL_LOG_PAGE_SIZE = 50;
+
 // ── Copy shown to the resident ───────────────────────────────────────────────
 
 /** Phone not on the roster / a tenant's phone / deactivated. Revealing that the
