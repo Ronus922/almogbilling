@@ -65,9 +65,15 @@ const nextConfig: NextConfig = {
       })),
       { source: "/chip-order", headers: [{ key: "Content-Security-Policy", value: CHIP_ORDER_CSP }] },
       // The order / tracking pages carry personal flow state — never cached.
+      // And no Referer at all (13/11/2026): their URLs carry a secret (the test
+      // link's ?test=<token>, the tracking token), which would otherwise ride
+      // on every request the page makes — into nginx's access log, and to Grow.
       ...["/chip-order", "/chip-order/:path*"].map((source) => ({
         source,
-        headers: [{ key: "Cache-Control", value: "private, no-store" }],
+        headers: [
+          { key: "Cache-Control", value: "private, no-store" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+        ],
       })),
     ];
   },

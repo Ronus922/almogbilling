@@ -14,6 +14,7 @@ import { CHIP_ORDER_LIMITS, needsLease } from '@/lib/chipOrders/model';
 import {
   callbackSignature, chipOrdersOpen, readVerifiedPhone, CHIP_ORDER_PUBLIC_HEADERS as H,
 } from '@/lib/chipOrders/server';
+import { isTestRequest } from '@/lib/chipOrders/testMode';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,13 +29,20 @@ export const dynamic = 'force-dynamic';
 // per phone. Everything is validated here; the PRICE is computed here from the
 // settings and never read from the browser. The order is created as
 // pending_payment — invisible in /chips until Grow confirms the payment.
+//
+// Test mode (13/11/2026): with the CURRENT test-link token in the
+// X-Chip-Order-Test header the page counts as open, everything above runs
+// unchanged, the order is created is_test, and Grow is never called — the
+// answer carries the tracking token for "סיים הזמנת בדיקה"
+// (/api/public/chip-order/test-finish).
 
 const err = (status: number, message: string, extra: Record<string, unknown> = {}) =>
   NextResponse.json({ ok: false, message, ...extra }, { status, headers: H });
 
 export async function POST(req: Request) {
   const settings = await getChipOrderSettings();
-  if (!chipOrdersOpen(settings)) return err(403, 'ההזמנות ייפתחו בקרוב.');
+  const test = await isTestRequest(req);
+  if (!chipOrdersOpen(settings) && !test) return err(403, 'ההזמנות ייפתחו בקרוב.');
 
   // Before the body is read at all: a verified phone (the sealed OTP cookie)
   // and a body no larger than the leases may add up to — an anonymous caller
@@ -134,7 +142,7 @@ export async function POST(req: Request) {
   let order;
   try {
     order = await createChipOrder(
-      { fullName: o.fullName, phoneE164, email: o.email, address: o.address, role: o.role, lines, ip },
+      { fullName: o.fullName, phoneE164, email: o.email, address: o.address, role: o.role, lines, ip, isTest: test },
       settings,
     );
   } catch (e) {
@@ -146,6 +154,12 @@ export async function POST(req: Request) {
 
   const base = appUrl();
   const track = `${base}/chip-order/track/${order.trackingToken}`;
+  if (test) {
+    return NextResponse.json(
+      { ok: true, test: true, orderNumber: order.orderNumber, total: order.total, trackingToken: order.trackingToken, trackUrl: track },
+      { status: 201, headers: H },
+    );
+  }
   try {
     const payment = await createPaymentProcess({
       sum: order.total,

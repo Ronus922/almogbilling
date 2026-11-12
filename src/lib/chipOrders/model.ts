@@ -51,6 +51,13 @@ export const CHIP_ORDER_REFUND_LABEL: Record<ChipOrderRefundStatus, string> = {
   manual_required: 'דורש זיכוי ידני',
 };
 
+/** Test mode: the header the order page sends its test-link token in (never
+ *  a URL the server logs). Checked by every public chip-order API call. */
+export const CHIP_ORDER_TEST_HEADER = 'x-chip-order-test';
+
+/** The strip pinned to the top of /chip-order in test mode. */
+export const CHIP_ORDER_TEST_BANNER = 'מצב בדיקה, אין חיוב';
+
 /** Roles that must attach a lease / management agreement and its end date. */
 export function needsLease(role: ChipOrderRole): boolean {
   return role === 'tenant' || role === 'operator';

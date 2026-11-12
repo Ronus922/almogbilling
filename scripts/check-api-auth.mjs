@@ -65,6 +65,10 @@ const PUBLIC = new Set([
   'src/app/api/public/chip-order/route.ts',
   'src/app/api/public/chip-order/grow/notify/route.ts',
   'src/app/api/public/chip-order/grow/invoice/route.ts',
+  // Test mode (13/11/2026): "סיים הזמנת בדיקה" — 403 without the CURRENT
+  // test-link token (hashed in app_settings, constant-time compare); it can
+  // only mark a TEST order (is_test) paid, never a real one.
+  'src/app/api/public/chip-order/test-finish/route.ts',
 ]);
 
 run('check-api-auth', async () => {

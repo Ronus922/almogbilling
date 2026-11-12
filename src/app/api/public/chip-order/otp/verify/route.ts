@@ -5,7 +5,9 @@ import { checkRateLimit } from '@/lib/auth/rateLimit';
 import { getClientIp } from '@/lib/http/clientIp';
 import { toPortalE164 } from '@/lib/portal/phone';
 import { verifyCode } from '@/lib/db/portal/otp';
-import { setVerifiedPhoneCookie, CHIP_ORDER_PUBLIC_HEADERS as H } from '@/lib/chipOrders/server';
+import { chipOrdersOpen, setVerifiedPhoneCookie, CHIP_ORDER_PUBLIC_HEADERS as H } from '@/lib/chipOrders/server';
+import { isTestRequest } from '@/lib/chipOrders/testMode';
+import { getChipOrderSettings } from '@/lib/db/appSettings';
 import { PORTAL_OTP_IP_WINDOW_SEC, PORTAL_OTP_MAX_ATTEMPTS, PORTAL_VERIFY_MAX_PER_IP } from '@/lib/constants/portal';
 
 export const runtime = 'nodejs';
@@ -18,9 +20,13 @@ export const runtime = 'nodejs';
 // before the compare, so parallel guesses cannot exceed
 // PORTAL_OTP_MAX_ATTEMPTS per code — and then a new code must be requested.
 // Success seals the phone into an httpOnly cookie (30 minutes) that the order
-// submit requires.
+// submit requires. Like every write of the page: only while it is open, or
+// with the CURRENT test-link token (test mode).
 
 export async function POST(req: Request) {
+  if (!chipOrdersOpen(await getChipOrderSettings()) && !(await isTestRequest(req))) {
+    return NextResponse.json({ ok: false, message: 'ההזמנות ייפתחו בקרוב.' }, { status: 403, headers: H });
+  }
   const body = await parseJsonBody(req, chipOrderOtpVerifyBodySchema);
   if (!body.ok) return body.response;
 

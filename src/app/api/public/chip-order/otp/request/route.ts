@@ -9,6 +9,7 @@ import { resolveDefaultChannel } from '@/lib/portal/otpChannel';
 import { issueCode, resendCooldownRemaining } from '@/lib/db/portal/otp';
 import { getChipOrderSettings } from '@/lib/db/appSettings';
 import { chipOrdersOpen, CHIP_ORDER_PUBLIC_HEADERS as H } from '@/lib/chipOrders/server';
+import { isTestRequest } from '@/lib/chipOrders/testMode';
 import { CHIP_ORDER_LIMITS } from '@/lib/chipOrders/model';
 import {
   PORTAL_OTP_DAY_WINDOW_SEC, PORTAL_OTP_HOUR_WINDOW_SEC, PORTAL_OTP_IP_WINDOW_SEC, PORTAL_OTP_MAX_PER_DAY,
@@ -33,9 +34,11 @@ export const runtime = 'nodejs';
 // and a daily ceiling for ALL chip-order codes together (an SMS costs money and
 // any Israeli mobile can be typed here).
 // The phone must be an Israeli mobile — Grow's payment page requires one.
+// Open = the page is open, or the request carries the CURRENT test-link token
+// (test mode — the same code, the same ceilings).
 
 export async function POST(req: Request) {
-  if (!chipOrdersOpen(await getChipOrderSettings())) {
+  if (!chipOrdersOpen(await getChipOrderSettings()) && !(await isTestRequest(req))) {
     return NextResponse.json({ ok: false, message: 'ההזמנות ייפתחו בקרוב.' }, { status: 403, headers: H });
   }
   const body = await parseJsonBody(req, chipOrderOtpRequestBodySchema);

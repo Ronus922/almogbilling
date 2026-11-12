@@ -18,6 +18,9 @@ export default async function SettingsPage() {
 
   const isAdmin = actor.role === 'admin' || actor.role === 'super_admin';
   const canEdit = hasPermission(actor.role, actor.permissions, 'settings', 'edit');
+  // The test mode of /chip-order is part of handling orders, not of settings.
+  const canManageOrders = hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'view');
+  const canEditOrders = hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'edit');
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
@@ -28,7 +31,7 @@ export default async function SettingsPage() {
 
       <BillingSettingsCard />
       <LegalContactCard canEdit={canEdit} />
-      <ChipOrderSettingsCard canEdit={canEdit} />
+      <ChipOrderSettingsCard canEdit={canEdit} canManageOrders={canManageOrders} canEditOrders={canEditOrders} />
       <SmtpSettingsCard />
       <WhatsAppConnections isAdmin={isAdmin} currentUserId={actor.id} />
     </div>

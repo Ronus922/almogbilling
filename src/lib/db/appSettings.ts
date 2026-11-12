@@ -245,3 +245,37 @@ export async function updateChipOrderSettings(
   await upsertAppSetting(CHIP_ORDERS_KEY, settings, updatedBy);
   return getChipOrderSettings();
 }
+
+// ── Chip orders: test mode (app_settings key 'chip_orders_test_mode') ─────
+// Kept apart from 'chip_orders' on purpose: that row is replaced whole by the
+// settings form (settings:edit), and the test switch belongs to
+// chips_orders_manage only. The link's token is never stored — only its
+// SHA-256 (src/lib/chipOrders/testMode.ts).
+
+const CHIP_ORDERS_TEST_KEY = 'chip_orders_test_mode';
+
+export interface ChipOrderTestModeRow {
+  enabled: boolean;
+  /** hex SHA-256 of the current link's token, or null (no live link). */
+  tokenHash: string | null;
+  /** When the current link was made (ISO), or null. */
+  linkCreatedAt: string | null;
+}
+
+export async function getChipOrderTestModeRow(): Promise<ChipOrderTestModeRow> {
+  const row = await queryOne<{ value: Partial<ChipOrderTestModeRow> | null }>(
+    `select value from public.app_settings where key = $1 limit 1`,
+    [CHIP_ORDERS_TEST_KEY],
+  );
+  const v = row?.value ?? {};
+  const hash = typeof v.tokenHash === 'string' && /^[0-9a-f]{64}$/.test(v.tokenHash) ? v.tokenHash : null;
+  return {
+    enabled: v.enabled === true && hash !== null,
+    tokenHash: hash,
+    linkCreatedAt: typeof v.linkCreatedAt === 'string' ? v.linkCreatedAt : null,
+  };
+}
+
+export async function setChipOrderTestModeRow(row: ChipOrderTestModeRow, updatedBy: string): Promise<void> {
+  await upsertAppSetting(CHIP_ORDERS_TEST_KEY, row, updatedBy);
+}

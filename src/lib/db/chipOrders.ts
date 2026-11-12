@@ -209,6 +209,22 @@ export async function markChipOrderPaid(
   return (r.rowCount ?? 0) > 0;
 }
 
+/** "סיים הזמנת בדיקה": a TEST order goes pending_payment → paid, with no Grow
+ *  field and no invoice. Matched by its tracking token AND is_test, so it can
+ *  never touch an order created without the test link. Returns the order id
+ *  for the call that made the transition, else null. */
+export async function markTestChipOrderPaid(trackingToken: string): Promise<string | null> {
+  if (!/^[A-Za-z0-9_-]{32,64}$/.test(trackingToken)) return null;
+  const r = await queryOne<{ id: string }>(
+    `update public.chip_orders
+        set status = 'paid', paid_at = now(), updated_at = now()
+      where tracking_token = $1 and is_test and status = 'pending_payment'
+      returning id`,
+    [trackingToken],
+  );
+  return r?.id ?? null;
+}
+
 /** Grow's invoice callback: attach the document link to the order. */
 export async function setChipOrderInvoice(
   orderId: string,

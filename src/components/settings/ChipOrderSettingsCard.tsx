@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { DEFAULT_CHIP_ORDER_SETTINGS, formatIls, priceLine, type ChipOrderSettings } from '@/lib/chipOrders/model';
+import { ChipOrderTestModeSection } from './ChipOrderTestModeSection';
 
 /**
  * Chip orders (/chip-order, 12/11/2026) — the price rule, the per-apartment
@@ -17,7 +18,15 @@ import { DEFAULT_CHIP_ORDER_SETTINGS, formatIls, priceLine, type ChipOrderSettin
  * the page only when Grow is configured too (its identifiers are server env,
  * never shown here — only whether they exist).
  */
-export function ChipOrderSettingsCard({ canEdit }: { canEdit: boolean }) {
+export function ChipOrderSettingsCard({
+  canEdit, canManageOrders = false, canEditOrders = false,
+}: {
+  canEdit: boolean;
+  /** chips_orders_manage:view — sees the test-mode section (13/11/2026). */
+  canManageOrders?: boolean;
+  /** chips_orders_manage:edit — may switch it and make a new link. */
+  canEditOrders?: boolean;
+}) {
   const [loading, setLoading] = useState(true);
   // A failed load must never let the defaults be saved over the real settings.
   const [loadFailed, setLoadFailed] = useState(false);
@@ -198,6 +207,12 @@ export function ChipOrderSettingsCard({ canEdit }: { canEdit: boolean }) {
           </div>
         )}
       </form>
+
+      {canManageOrders && (
+        <div className="mt-6">
+          <ChipOrderTestModeSection canEdit={canEditOrders} />
+        </div>
+      )}
     </Card>
   );
 }

@@ -14,15 +14,26 @@ function formatPhone(raw: string): string {
 }
 
 export function ChipOrderShell({
-  subtitle, supportPhone, supportEmail, children,
+  subtitle, supportPhone, supportEmail, banner, children,
 }: {
   subtitle?: string;
   supportPhone?: string | null;
   supportEmail?: string | null;
+  /** A strip pinned to the top of the viewport (test mode: "מצב בדיקה, אין חיוב"). */
+  banner?: string;
   children: ReactNode;
 }) {
   return (
     <div dir="rtl" className="chips-skin min-h-dvh bg-[var(--chip-bg)] text-[var(--chip-ink)]">
+      {banner && (
+        <div
+          role="status"
+          data-testid="chip-order-test-banner"
+          className="sticky top-0 z-30 border-b border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] px-4 py-3 pt-[max(12px,env(safe-area-inset-top))] text-center text-[14px] font-extrabold text-[var(--chip-amber-ink)]"
+        >
+          {banner}
+        </div>
+      )}
       <header className="bg-[image:var(--chip-header-gradient)] px-4 pb-16 pt-[max(28px,env(safe-area-inset-top))] text-white">
         <div className="mx-auto flex max-w-[720px] items-center gap-3">
           <span className="grid h-12 w-12 shrink-0 place-items-center rounded-[14px] border border-white/25 bg-white/15">
