@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
+import { hasPermission } from '@/lib/permissions/check';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   listChips,
@@ -257,6 +258,17 @@ export async function POST(req: NextRequest) {
       if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
       groups.push(parsed.group);
     }
+    // Chip orders (12/11/2026): issuing for an order line is part of handling
+    // the order — chips:edit alone is not enough for it.
+    let orderItemId: string | null = null;
+    if (bodyRec.order_item_id !== undefined && bodyRec.order_item_id !== null) {
+      const raw = typeof bodyRec.order_item_id === 'string' ? bodyRec.order_item_id.trim() : '';
+      if (!UUID_RE.test(raw)) return NextResponse.json({ error: 'invalid_order_item_id' }, { status: 400 });
+      if (!hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'edit')) {
+        return NextResponse.json({ error: 'אין הרשאה לשייך צ׳יפים להזמנה' }, { status: 403 });
+      }
+      orderItemId = raw;
+    }
     input = {
       contact_id: contactId,
       groups,
@@ -265,6 +277,7 @@ export async function POST(req: NextRequest) {
       fee_charged: bodyRec.fee_charged === true,
       notes: coerceText(bodyRec.notes),
       limit_override_reason: coerceText(bodyRec.limit_override_reason),
+      order_item_id: orderItemId,
     };
   } else {
     // Legacy flat body — validate exactly as before, then adapt to one group.
@@ -371,6 +384,15 @@ export async function POST(req: NextRequest) {
     }
     if (err instanceof Error && err.message === 'holder_name_required') {
       return NextResponse.json({ error: 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא' }, { status: 400 });
+    }
+    if (err instanceof Error && err.message === 'order_item_not_found') {
+      return NextResponse.json({ error: 'שורת ההזמנה לא נמצאה לדירה זו' }, { status: 404 });
+    }
+    if (err instanceof Error && err.message === 'order_not_approved') {
+      return NextResponse.json({ error: 'אפשר לשייך צ׳יפים רק להזמנה מאושרת' }, { status: 409 });
+    }
+    if (err instanceof Error && err.message === 'order_item_full') {
+      return NextResponse.json({ error: 'מספר הצ׳יפים עובר את הכמות שהוזמנה לדירה' }, { status: 422 });
     }
     if (err instanceof Error && err.message === 'holder_not_in_registry') {
       return NextResponse.json(

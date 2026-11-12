@@ -32,7 +32,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import type { LucideIcon } from 'lucide-react';
 import {
   AlertTriangle, Building2, Check, ChevronsUpDown, CreditCard, Info,
   Loader2, Plus, Power, RotateCcw, Search, Smartphone, Users, Wallet, X,
@@ -62,60 +61,8 @@ import type {
   ChipHolderUpdate, ChipResidentRole, ChipStatus, ChipType, ChipWithHolder,
   ContactResidentCard, ContactResidents, IssueChipGroup,
 } from '@/lib/types/chips';
+import { ChipSection, INPUT_CLS, LABEL_CLS } from './ChipSection';
 
-// ── Ref field tokens (Chip.md: input 44px, radius 11, border 1.5, focus ring) ─
-
-const INPUT_CLS =
-  'h-11 rounded-[11px] border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] px-[14px] text-[14.5px] text-[var(--chip-ink)] ' +
-  'placeholder:text-[var(--chip-ink-soft)] ' +
-  'focus-visible:border-[var(--chip-brand)] focus-visible:ring-4 focus-visible:ring-[rgba(61,90,254,0.12)]';
-
-const LABEL_CLS = 'flex items-center gap-1 text-[13px] font-bold text-[var(--chip-ink-muted)]';
-
-// ── Section card (ref: white card, radius 16, head + divider, icon tile) ────
-
-type SectionTone = 'blue' | 'violet' | 'amber' | 'green';
-
-const SECTION_TONE: Record<SectionTone, string> = {
-  blue: 'bg-[var(--chip-brand-soft)] text-[var(--chip-brand)]',
-  violet: 'bg-[var(--chip-violet-soft)] text-[var(--chip-violet)]',
-  amber: 'bg-[var(--chip-amber-soft)] text-[var(--chip-amber)]',
-  green: 'bg-[var(--chip-green-soft)] text-[var(--chip-green)]',
-};
-
-function ChipSection({
-  title, sub, icon: Icon, iconTone = 'blue', children,
-}: {
-  title: string;
-  sub?: string;
-  icon: LucideIcon;
-  iconTone?: SectionTone;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="overflow-hidden rounded-[16px] border border-[var(--chip-border)] bg-[var(--chip-panel)]">
-      <div className="flex items-center gap-[11px] border-b border-[var(--chip-border)] px-5 pb-[13px] pt-[15px]">
-        <span
-          className={cn(
-            'grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[10px]',
-            SECTION_TONE[iconTone],
-          )}
-        >
-          <Icon className="h-[19px] w-[19px]" strokeWidth={1.9} />
-        </span>
-        <div className="flex-1 text-start">
-          <h2 className="text-[15.5px] font-extrabold tracking-[-0.01em] text-[var(--chip-ink)]">
-            {title}
-          </h2>
-          {sub && (
-            <div className="mt-0.5 text-[12.5px] font-medium text-[var(--chip-ink-soft)]">{sub}</div>
-          )}
-        </div>
-      </div>
-      <div className="p-4">{children}</div>
-    </section>
-  );
-}
 
 /** Ref `.note` — amber inline note (snapshot scope). */
 function AmberNote({ children }: { children: React.ReactNode }) {
@@ -218,6 +165,11 @@ interface IssueChipSheetProps {
     residentRole?: string | null;
     holderName?: string | null;
     holderPhone?: string | null;
+    /** Chip orders (12/11/2026): issuing for one apartment line of an order
+     *  ("שייך צ׳יפים"). Every new chip of this save is stamped with the line
+     *  (order_item_id); at most `remaining` new numbers. Absent = the window
+     *  behaves exactly as before. */
+    orderItem?: { id: string; orderNumber: number; remaining: number } | null;
   } | null;
   onIssued: () => void;
 }
@@ -382,10 +334,12 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
             const cleaned = next.filter(
               (b) => b.role !== null || b.pending.length > 0 || b.saved.length > 0 || b.numInput.trim() !== '',
             );
-            const result = cleaned.length > 0 ? cleaned : [emptyBlock(blockSeq.current++)];
+            const init = initialRef.current;
+            // An order line ("שייך צ׳יפים") always brings its own holder block
+            // (step 4), so no empty placeholder goes in front of it.
+            const result = cleaned.length > 0 || init?.orderItem ? cleaned : [emptyBlock(blockSeq.current++)];
 
             // 4. Reissue prefill: ensure a block exists for the initial holder.
-            const init = initialRef.current;
             if (init?.residentRole) {
               const role = init.residentRole as ChipResidentRole;
               if ((CHIP_RESIDENT_ROLES as readonly string[]).includes(role)) {
@@ -402,7 +356,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                 }
               }
             }
-            return result;
+            return result.length > 0 ? result : [emptyBlock(blockSeq.current++)];
           });
         }
       } catch {
@@ -497,9 +451,22 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     return null;
   };
 
+  const orderItem = initial?.orderItem ?? null;
+  // The window keeps ONE block per registry role. When this apartment already
+  // has chips in the orderer's role under another name (an earlier tenant),
+  // the new chips would join that person's block — say so before the save.
+  const orderRoleTakenBy = (() => {
+    if (!orderItem || !initial?.residentRole) return null;
+    const want = (initial.holderName ?? '').trim();
+    const b = blocks.find((x) => x.role === initial.residentRole && x.saved.length > 0);
+    const name = b?.holderName.trim() ?? '';
+    return b && name && name !== want ? name : null;
+  })();
+
   const canSubmit =
     !!contactId &&
     (totalPending >= 1 || totalUpdates >= 1) &&
+    (!orderItem || (totalPending >= 1 && totalPending <= orderItem.remaining)) &&
     blocks.every((b) => blockInvalid(b) === null) &&
     !feeError &&
     (!overLimit || overrideReason.trim() !== '') &&
@@ -821,6 +788,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
           fee_charged: feeCharged,
           notes: notes.trim() || null,
           limit_override_reason: overLimit ? overrideReason.trim() : null,
+          ...(orderItem ? { order_item_id: orderItem.id } : {}),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -900,6 +868,32 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
           {/* Body — screen-bg behind white section cards */}
           <div className="flex-1 overflow-y-auto bg-[var(--chip-bg)] p-[22px]">
             <div className="mx-auto flex max-w-[820px] flex-col gap-[18px]">
+              {/* Chip order line — only when opened from an order's "שייך צ׳יפים" */}
+              {orderItem && (
+                <div
+                  data-testid="issue-order-banner"
+                  className="flex items-center gap-3 rounded-[11px] border border-[var(--chip-brand-border)] bg-[var(--chip-brand-soft)] px-4 py-3 text-[13px] font-bold text-[var(--chip-brand-ink)]"
+                >
+                  <span className="min-w-0 flex-1">
+                    שיוך להזמנה {orderItem.orderNumber} · נדרשים עוד {orderItem.remaining} צ׳יפים לדירה זו
+                  </span>
+                  <span
+                    className={
+                      totalPending > orderItem.remaining
+                        ? 'shrink-0 text-[var(--chip-red-ink)]'
+                        : 'shrink-0'
+                    }
+                  >
+                    בחלון: {totalPending}
+                  </span>
+                </div>
+              )}
+              {orderRoleTakenBy && (
+                <AmberNote>
+                  לדירה כבר יש צ׳יפים בתפקיד הזה על שם {orderRoleTakenBy}. מספר שיתווסף לבלוק הזה יונפק על שמו.
+                  אם המזמין הוא אדם אחר — הוסיפו בעל צ׳יפ מסוג „אחר” עם שם המזמין והנפיקו שם.
+                </AmberNote>
+              )}
               {/* Section 1 — apartment / unit (unchanged) */}
               <ChipSection title="דירה / יחידה" icon={Building2} iconTone="blue">
                 <div className="space-y-2 px-1 pb-1">

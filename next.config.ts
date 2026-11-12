@@ -20,6 +20,16 @@ const SECURITY_HEADERS = [
   },
 ];
 
+// /chip-order (12/11/2026) is the ONE page that embeds a third-party frame:
+// Grow's payment page (developers.grow.business R/the-process — an iframe of
+// the url createPaymentProcess returns, on meshulam.co.il / secure. / sandbox.).
+// Same policy plus frame-src for those hosts only; Next applies the LAST
+// matching header of a key, so this entry replaces the global CSP on that
+// path alone and every other route keeps the string above byte for byte.
+const CHIP_ORDER_CSP = `${
+  SECURITY_HEADERS.find((h) => h.key === "Content-Security-Policy")!.value
+}; frame-src 'self' https://meshulam.co.il https://*.meshulam.co.il`;
+
 const nextConfig: NextConfig = {
   // Produce a standalone server bundle at .next/standalone/ for systemd deployment.
   output: "standalone",
@@ -50,6 +60,12 @@ const nextConfig: NextConfig = {
       // The owners portal and the file proxy serve personal data: never cached
       // by a browser or an intermediary, whatever the route's own headers say.
       ...["/portal", "/portal/:path*", "/api/portal/:path*", "/api/files/:path*"].map((source) => ({
+        source,
+        headers: [{ key: "Cache-Control", value: "private, no-store" }],
+      })),
+      { source: "/chip-order", headers: [{ key: "Content-Security-Policy", value: CHIP_ORDER_CSP }] },
+      // The order / tracking pages carry personal flow state — never cached.
+      ...["/chip-order", "/chip-order/:path*"].map((source) => ({
         source,
         headers: [{ key: "Cache-Control", value: "private, no-store" }],
       })),

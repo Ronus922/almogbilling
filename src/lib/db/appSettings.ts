@@ -5,6 +5,11 @@ import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legal
 import { env } from '@/env';
 import { resolveSmtpSettings, SMTP_SETTINGS_KEY, type SmtpSettings } from '@/lib/email/smtp-core';
 import { claimSmtpAuthAlertSlotWith } from '@/lib/email/smtp-auth-alert';
+import {
+  CHIP_ORDER_LIMITS,
+  DEFAULT_CHIP_ORDER_SETTINGS,
+  type ChipOrderSettings,
+} from '@/lib/chipOrders/model';
 
 export type { SmtpSettings };
 
@@ -197,4 +202,46 @@ export async function updateLegalContact(
  *  email/smtp-auth-alert.ts, shared with the delivery worker. */
 export async function claimSmtpAuthAlertSlot(): Promise<{ at: string } | null> {
   return claimSmtpAuthAlertSlotWith({ query });
+}
+
+// ── Chip orders (app_settings key 'chip_orders') ──────────────────────────
+
+const CHIP_ORDERS_KEY = 'chip_orders';
+
+function money(v: unknown, fallback: number): number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 1 && v <= CHIP_ORDER_LIMITS.maxPrice ? v : fallback;
+}
+function count(v: unknown, fallback: number, max: number): number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max ? v : fallback;
+}
+
+/** The price rule and texts of /chip-order. A missing row (or a broken field)
+ *  reads as the defaults: 50 ₪, threshold 2, 70 ₪ above it, 4 per apartment,
+ *  and the page closed. */
+export async function getChipOrderSettings(): Promise<ChipOrderSettings> {
+  const row = await queryOne<{ value: Partial<ChipOrderSettings> | null }>(
+    `select value from public.app_settings where key = $1 limit 1`,
+    [CHIP_ORDERS_KEY],
+  );
+  const v = row?.value ?? {};
+  const d = DEFAULT_CHIP_ORDER_SETTINGS;
+  const max = count(v.maxPerApartment, d.maxPerApartment, CHIP_ORDER_LIMITS.maxPerApartmentCeiling);
+  return {
+    unitPrice: money(v.unitPrice, d.unitPrice),
+    threshold: count(v.threshold, d.threshold, CHIP_ORDER_LIMITS.maxPerApartmentCeiling),
+    priceAbove: money(v.priceAbove, d.priceAbove),
+    maxPerApartment: max >= 1 ? max : d.maxPerApartment,
+    pickupText: typeof v.pickupText === 'string' ? v.pickupText : d.pickupText,
+    termsText: typeof v.termsText === 'string' ? v.termsText : d.termsText,
+    ordersOpen: v.ordersOpen === true,
+  };
+}
+
+/** Persist the chip-order settings (validated by the route's zod schema). */
+export async function updateChipOrderSettings(
+  settings: ChipOrderSettings,
+  updatedBy: string,
+): Promise<ChipOrderSettings> {
+  await upsertAppSetting(CHIP_ORDERS_KEY, settings, updatedBy);
+  return getChipOrderSettings();
 }

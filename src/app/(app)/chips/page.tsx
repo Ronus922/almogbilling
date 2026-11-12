@@ -14,6 +14,18 @@ export default async function ChipsPage() {
   }
 
   const canEdit = hasPermission(actor.role, actor.permissions, 'chips', 'edit');
+  // Chip orders (12/11/2026) — the "הזמנות" view, admin / super admin by default.
+  const canManageOrders = hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'view');
+  const canEditOrders = hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'edit');
 
-  return <ChipsPageClient canEdit={canEdit} />;
+  const canWriteContacts = hasPermission(actor.role, actor.permissions, 'contacts', 'edit');
+
+  return (
+    <ChipsPageClient
+      canEdit={canEdit}
+      canManageOrders={canManageOrders}
+      canEditOrders={canEditOrders}
+      canWriteContacts={canWriteContacts}
+    />
+  );
 }

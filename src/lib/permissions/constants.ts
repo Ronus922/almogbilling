@@ -108,6 +108,14 @@ export const MODULES: ModuleMeta[] = [
   // and up (canPurchasingSettings), never a matrix level.
   { key: 'purchasing_requests', label: 'בקשות להצעות מחיר', group: 'admin' },
   { key: 'purchasing_orders',   label: 'הזמנות רכש',        group: 'admin' },
+  // Chip orders ("הזמנות צ׳יפים", 12/11/2026) — handling the orders residents
+  // place on the public page /chip-order, inside /chips: viewing the order and
+  // its lease, approving (which writes to the tenants list), issuing the chips,
+  // rejecting with a refund. admin and super_admin hold it through the matrix
+  // bypass (hasPermission); every matrix role is denied by default (no row =
+  // denied), exactly like `finance` / `portal_*`, so no user_permissions rows
+  // are seeded. An admin may grant it per user later.
+  { key: 'chips_orders_manage', label: 'הזמנות צ׳יפים',     group: 'admin' },
 ];
 
 export const SUPER_ADMIN_ONLY: readonly string[] = ['users_management', 'roles_management'];
@@ -197,6 +205,7 @@ export const DEFAULT_MANAGER: ModulePermission[] = [
   noPerm('portal_decisions'),
   noPerm('purchasing_requests'),
   noPerm('purchasing_orders'),
+  noPerm('chips_orders_manage'),
 ];
 
 // Viewer defaults — read-only access to the DEBTORS SCREEN (dashboard) ONLY.
@@ -237,6 +246,7 @@ export const DEFAULT_VIEWER: ModulePermission[] = [
   noPerm('portal_decisions'),
   noPerm('purchasing_requests'),
   noPerm('purchasing_orders'),
+  noPerm('chips_orders_manage'),
 ];
 
 // Field-worker defaults (cleaner + maintenance) — tasks + issues only, view+edit.
@@ -276,6 +286,7 @@ export const DEFAULT_WORKER: ModulePermission[] = [
   noPerm('portal_decisions'),
   noPerm('purchasing_requests'),
   noPerm('purchasing_orders'),
+  noPerm('chips_orders_manage'),
 ];
 
 // ── Role classification ──────────────────────────────────────────────────────

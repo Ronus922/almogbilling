@@ -10,6 +10,11 @@ import { PORTAL_OTP_DIGITS, PORTAL_OTP_RESEND_COOLDOWN_SEC, PORTAL_OTP_TTL_MINUT
 // so a DB read (backup, replica, injection) cannot yield a usable code. Nothing
 // here ever writes the digits to a log.
 
+/** What a code is for (migration 20261112194633). The portal reads only its
+ *  own codes, so a code sent for a chip order can never open a portal session;
+ *  every caller that omits it is the portal, exactly as before. */
+export type OtpPurpose = 'portal_login' | 'chip_order';
+
 export interface IssuedCode {
   id: string;
   /** The plain digits — hand straight to the WhatsApp send, never anywhere else. */
@@ -25,27 +30,34 @@ function newCode(): string {
  * Seconds still to wait before this phone may ask for another code, or 0. Based
  * on the newest code row, so it is unaffected by how many rows came before.
  */
-export async function resendCooldownRemaining(phoneE164: string): Promise<number> {
+export async function resendCooldownRemaining(
+  phoneE164: string,
+  purpose: OtpPurpose = 'portal_login',
+): Promise<number> {
   const row = await queryOne<{ remaining: number }>(
     `select ceil(greatest(0, $2::int - extract(epoch from (now() - created_at))))::int as remaining
        from public.portal_otp_codes
-      where phone_e164 = $1
+      where phone_e164 = $1 and purpose = $3
       order by created_at desc
       limit 1`,
-    [phoneE164, PORTAL_OTP_RESEND_COOLDOWN_SEC],
+    [phoneE164, PORTAL_OTP_RESEND_COOLDOWN_SEC, purpose],
   );
   return row?.remaining ?? 0;
 }
 
 /** Issues a code: stores only its hash, returns the digits to the caller. */
-export async function issueCode(phoneE164: string, ip: string | null): Promise<IssuedCode> {
+export async function issueCode(
+  phoneE164: string,
+  ip: string | null,
+  purpose: OtpPurpose = 'portal_login',
+): Promise<IssuedCode> {
   const code = newCode();
   const codeHash = await hashPassword(code);
   const row = await queryOne<{ id: string }>(
-    `insert into public.portal_otp_codes (phone_e164, code_hash, expires_at, ip)
-     values ($1, $2, now() + ($3 || ' minutes')::interval, $4)
+    `insert into public.portal_otp_codes (phone_e164, code_hash, expires_at, ip, purpose)
+     values ($1, $2, now() + ($3 || ' minutes')::interval, $4, $5)
      returning id`,
-    [phoneE164, codeHash, String(PORTAL_OTP_TTL_MINUTES), ip],
+    [phoneE164, codeHash, String(PORTAL_OTP_TTL_MINUTES), ip, purpose],
   );
   return { id: row!.id, code };
 }
@@ -74,16 +86,20 @@ interface CodeRow {
  * could be spread across several live codes. A wrong guess bumps `attempts` on
  * that row and returns the new count, which is what drives the lockout.
  */
-export async function verifyCode(phoneE164: string, code: string): Promise<VerifyOutcome> {
+export async function verifyCode(
+  phoneE164: string,
+  code: string,
+  purpose: OtpPurpose = 'portal_login',
+): Promise<VerifyOutcome> {
   const row = await queryOne<CodeRow>(
     `select id, code_hash, attempts,
             (expires_at <= now()) as expired,
             (consumed_at is not null) as consumed
        from public.portal_otp_codes
-      where phone_e164 = $1
+      where phone_e164 = $1 and purpose = $2
       order by created_at desc
       limit 1`,
-    [phoneE164],
+    [phoneE164, purpose],
   );
   if (!row) return { kind: 'none' };
   if (row.expired || row.consumed) return { kind: 'expired' };
@@ -100,4 +116,48 @@ export async function verifyCode(phoneE164: string, code: string): Promise<Verif
 
   await query(`update public.portal_otp_codes set consumed_at = now() where id = $1`, [row.id]);
   return { kind: 'ok' };
+}
+
+/**
+ * The chip-order page's verify (12/11/2026): every guess first RESERVES an
+ * attempt on the newest live code in one UPDATE (`attempts < maxAttempts`),
+ * and only a reserved guess is compared — so a burst of parallel guesses can
+ * never check more than `maxAttempts` values per code, whatever their timing.
+ * A match then consumes the code with a guarded UPDATE, so of two correct
+ * guesses racing only one wins. The portal keeps verifyCode (its ceiling is the
+ * lockout ladder).
+ */
+export async function verifyCodeReserved(
+  phoneE164: string,
+  code: string,
+  purpose: OtpPurpose,
+  maxAttempts: number,
+): Promise<VerifyOutcome> {
+  const reserved = await queryOne<{ id: string; code_hash: string; attempts: number }>(
+    `update public.portal_otp_codes
+        set attempts = attempts + 1
+      where id = (select id from public.portal_otp_codes
+                   where phone_e164 = $1 and purpose = $2
+                   order by created_at desc limit 1)
+        and consumed_at is null
+        and expires_at > now()
+        and attempts < $3
+      returning id, code_hash, attempts`,
+    [phoneE164, purpose, maxAttempts],
+  );
+  if (!reserved) {
+    const newest = await queryOne<{ id: string }>(
+      `select id from public.portal_otp_codes where phone_e164 = $1 and purpose = $2 limit 1`,
+      [phoneE164, purpose],
+    );
+    return newest ? { kind: 'expired' } : { kind: 'none' };
+  }
+  const ok = await verifyPassword(code, reserved.code_hash);
+  if (!ok) return { kind: 'invalid', attempts: reserved.attempts };
+  const consumed = await queryOne<{ id: string }>(
+    `update public.portal_otp_codes set consumed_at = now()
+      where id = $1 and consumed_at is null returning id`,
+    [reserved.id],
+  );
+  return consumed ? { kind: 'ok' } : { kind: 'expired' };
 }

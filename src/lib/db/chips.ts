@@ -457,6 +457,30 @@ export async function issueChipGroups(
       if (row) updated.push(row);
     }
 
+    // Chip order line (12/11/2026): the new chips must fit what the line
+    // ordered (ACTIVE chips count — a deactivated one may be replaced), on its
+    // apartment, once the order is approved. The line AND the order are locked,
+    // so two windows cannot both fill the last slot and a rejection running at
+    // the same moment cannot slip past the status check.
+    const orderItemId = input.order_item_id ?? null;
+    if (orderItemId && totalNew > 0) {
+      const item = (
+        await client.query<{ contact_id: string; chips_count: number; status: string; linked: number }>(
+          `select i.contact_id, i.chips_count, o.status,
+                  (select count(*)::int from public.chips c
+                    where c.order_item_id = i.id and c.status = 'active') as linked
+             from public.chip_order_items i
+             join public.chip_orders o on o.id = i.order_id
+            where i.id = $1
+            for update of i, o`,
+          [orderItemId],
+        )
+      ).rows[0];
+      if (!item || item.contact_id !== input.contact_id) throw new Error('order_item_not_found');
+      if (item.status !== 'approved') throw new Error('order_not_approved');
+      if (item.linked + totalNew > item.chips_count) throw new Error('order_item_full');
+    }
+
     const created: ChipWithHolder[] = [];
     for (const { index, numbers } of groups) {
       const group = input.groups[index];
@@ -497,8 +521,8 @@ export async function issueChipGroups(
                (chip_number, chip_type, contact_id, apartment_number, resident_role,
                 holder_name, holder_phone, issued_by, issued_by_name,
                 app_platform, app_invite_status, app_expires_at,
-                issuance_fee, fee_charged, limit_override_reason, notes)
-             values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+                issuance_fee, fee_charged, limit_override_reason, notes, order_item_id)
+             values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
              returning ${CHIP_COLUMNS}`,
             [
               num, group.chip_type, input.contact_id, contact.apartment_number,
@@ -506,7 +530,7 @@ export async function issueChipGroups(
               actor.id, actor.name,
               group.app_platform ?? null, group.app_invite_status ?? null, group.app_expires_at ?? null,
               fee, feeCharged,
-              input.limit_override_reason ?? null, input.notes ?? null,
+              input.limit_override_reason ?? null, input.notes ?? null, orderItemId,
             ],
           );
           chip = r.rows[0];
@@ -526,6 +550,7 @@ export async function issueChipGroups(
             resident_role: chip.resident_role,
             holder_name: chip.holder_name,
             holder_phone: chip.holder_phone,
+            ...(orderItemId ? { order_item_id: orderItemId } : {}),
           },
         });
         created.push(await selectChipWithHolder(client, chip.id));

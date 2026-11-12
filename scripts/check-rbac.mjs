@@ -98,6 +98,18 @@ run('check-rbac', async () => {
   t('purchasing: מנהל עם צפייה בלבד — לא עורך', hasPermission('manager', [{ module: 'purchasing_orders', canView: true, canEdit: false }], 'purchasing_orders', 'edit') === false);
   t('purchasing: הגדרות — אדמין וסופר אדמין בלבד', canPurchasingSettings('admin') && canPurchasingSettings('super_admin') && !canPurchasingSettings('manager') && !canPurchasingSettings('viewer'));
   t('portal_decisions: worker נחסם', hasPermission('cleaner', DEFAULT_WORKER, 'portal_decisions', 'view') === false);
+
+  // chips_orders_manage (12/11/2026, handling /chip-order orders inside /chips)
+  // — admin / super_admin through the bypass; every matrix role denied by
+  // default, even a manager holding chips:edit in its full default matrix.
+  t('chips_orders_manage: super_admin רשאי edit', hasPermission('super_admin', [], 'chips_orders_manage', 'edit') === true);
+  t('chips_orders_manage: admin רשאי edit', hasPermission('admin', [], 'chips_orders_manage', 'edit') === true);
+  t('chips_orders_manage: manager עם המטריצה המלאה נחסם', hasPermission('manager', DEFAULT_MANAGER, 'chips_orders_manage', 'view') === false
+    && hasPermission('manager', DEFAULT_MANAGER, 'chips', 'edit') === true);
+  t('chips_orders_manage: viewer נחסם', hasPermission('viewer', DEFAULT_VIEWER, 'chips_orders_manage', 'view') === false);
+  t('chips_orders_manage: עובד שטח נחסם', hasPermission('cleaner', DEFAULT_WORKER, 'chips_orders_manage', 'view') === false);
+  t('chips_orders_manage: שומר נחסם', hasPermission('guard', [], 'chips_orders_manage', 'view') === false);
+  t('chips_orders_manage: רשום ב-MODULES', MODULES.some((m) => m.key === 'chips_orders_manage'));
   t('portal_manage: viewer ללא שורה נחסם', hasPermission('viewer', [], 'portal_manage', 'view') === false);
   t('portal_manage: cleaner ללא שורה נחסם', hasPermission('cleaner', [], 'portal_manage', 'view') === false);
 

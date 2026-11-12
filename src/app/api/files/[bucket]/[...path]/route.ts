@@ -73,6 +73,10 @@ const BUCKET_GUARD: Record<PrivateBucket, () => Promise<Actor>> = {
   // is a `file_viewed` audit row and each `?download=1` a `file_downloaded` one
   // (describeStoredFile → visitor_scan).
   'visitor-ids': () => requireVisitorView(),
+  // Leases / management agreements attached to chip orders (/chip-order) —
+  // whoever handles the orders inside /chips (chips_orders_manage: admin and
+  // super admin). A resident never reaches them; there is no portal path.
+  'chip-order-leases': () => requirePermission('chips_orders_manage', 'view'),
 };
 
 /**
@@ -247,6 +251,14 @@ async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<
       entityId: row.id,
       downloadName: visitorDownloadName({ lastName: row.last_name, firstName: row.first_name, scanDate: row.scan_date, objectKey: path }),
     };
+  }
+  if (bucket === 'chip-order-leases') {
+    const row = await queryOne<{ id: string; order_id: string; lease_file_name: string | null }>(
+      `select id, order_id, lease_file_name from public.chip_order_items where lease_file_key = $1 limit 1`,
+      [path],
+    );
+    if (!row) return orphan;
+    return { ...base, fileName: row.lease_file_name, entityType: 'chip_order', entityId: row.order_id, documentId: row.id };
   }
   // issue-attachments: bare paths `<issueId>/<uuid>.<ext>`, no display name — the
   // prefix IS the parent (enforced at upload by buildObjectKey / isPathUnderIssue).
