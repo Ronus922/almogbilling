@@ -12,13 +12,18 @@ import { notifyChipOrder } from './notify';
 // tracking page right after the payment iframe reported success (?paid=1),
 // throttled by its caller.
 
+/** Who saw the payment: Grow's callback, the tracking page's fallback, the
+ *  hourly purge (an "unpaid" order Grow says WAS paid), or — for a test order,
+ *  which never touches Grow — the "סיים הזמנת בדיקה" button. */
+export type PaymentSource = 'grow_callback' | 'track_page' | 'purge' | 'test_finish';
+
 export type PaymentCheck =
   | { kind: 'paid'; transitioned: boolean }
   | { kind: 'not_paid' }
   | { kind: 'unknown_order' }
   | { kind: 'error'; message: string };
 
-export async function confirmChipOrderPayment(orderId: string, source: 'grow_callback' | 'track_page'): Promise<PaymentCheck> {
+export async function confirmChipOrderPayment(orderId: string, source: PaymentSource): Promise<PaymentCheck> {
   const order = await getOrderPaymentRef(orderId);
   if (!order || !order.grow_process_id || !order.grow_process_token) return { kind: 'unknown_order' };
   if (order.status !== 'pending_payment') return { kind: 'paid', transitioned: false };
@@ -44,7 +49,7 @@ export async function confirmChipOrderPayment(orderId: string, source: 'grow_cal
 
 /** What follows the transition to paid — the audit row and the "received &
  *  paid" message (email + WhatsApp). Run it in after(). */
-export async function afterChipOrderPaid(orderId: string, source: 'grow_callback' | 'track_page'): Promise<void> {
+export async function afterChipOrderPaid(orderId: string, source: PaymentSource): Promise<void> {
   await writeAudit({
     actorUserId: null,
     action: 'paid',

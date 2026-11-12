@@ -65,6 +65,9 @@ export interface NewOrderInput {
   role: ChipOrderRole;
   lines: NewOrderLine[];
   ip: string | null;
+  /** Test mode (a valid test link): the order is marked is_test and is later
+   *  "paid" by markTestChipOrderPaid, never through Grow. */
+  isTest?: boolean;
 }
 
 export interface CreatedOrder {
@@ -126,10 +129,10 @@ export async function createChipOrder(input: NewOrderInput, settings: ChipOrderS
     const order = (
       await client.query<{ id: string; order_number: number }>(
         `insert into public.chip_orders
-           (full_name, phone_e164, email, address, role, total, tracking_token, created_ip)
-         values ($1,$2,$3,$4,$5,$6,$7,$8)
+           (full_name, phone_e164, email, address, role, total, tracking_token, created_ip, is_test)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          returning id, order_number`,
-        [input.fullName, input.phoneE164, input.email, input.address, input.role, total, trackingToken, input.ip],
+        [input.fullName, input.phoneE164, input.email, input.address, input.role, total, trackingToken, input.ip, input.isTest === true],
       )
     ).rows[0];
 
@@ -511,4 +514,67 @@ export async function setChipOrderRefund(id: string, status: ChipOrderRefundStat
     `update public.chip_orders set refund_status = $2, refund_note = $3, updated_at = now() where id = $1`,
     [id, status, note ? note.slice(0, 500) : null],
   );
+}
+
+// ── Cleanup: stale unpaid orders (hourly) and test orders (by hand) ────────
+
+export interface StaleUnpaidOrder {
+  id: string;
+  grow_process_id: string | null;
+}
+
+/** Real orders still pending_payment (never paid) that were created more than
+ *  `hours` ago — the hourly purge's candidates, oldest first. Test orders are
+ *  never purged here (they are deleted only by hand). */
+export async function listStaleUnpaidOrders(hours: number, limit = 200): Promise<StaleUnpaidOrder[]> {
+  const r = await query<StaleUnpaidOrder>(
+    `select id, grow_process_id from public.chip_orders
+      where status = 'pending_payment' and paid_at is null and not is_test
+        and created_at < now() - make_interval(hours => $1)
+      order by created_at
+      limit $2`,
+    [hours, limit],
+  );
+  return r.rows;
+}
+
+export type OrderDeleteOutcome = 'deleted' | 'not_found' | 'file_failed';
+
+/**
+ * Deletes ONE order with its lease files: the files first, then the row (its
+ * lines and notifications go with it — ON DELETE CASCADE; a chip issued for
+ * one of its lines stays in the chips module, its order_item_id set NULL by
+ * the FK). The row is locked for the whole operation and must still match:
+ *   'unpaid' — a REAL order still pending_payment that was never paid. A paid
+ *              order, in any status, is never deleted.
+ *   'test'   — a test order (is_test), in any status.
+ * If Storage refuses a file, nothing is deleted: the row stays and the next
+ * attempt retries (`file_failed`).
+ */
+export async function deleteChipOrderWithLeases(
+  id: string,
+  which: 'unpaid' | 'test',
+  removeLeases: (objectKeys: string[]) => Promise<boolean>,
+): Promise<OrderDeleteOutcome> {
+  return withTransaction(async (client) => {
+    const locked = await client.query(
+      which === 'unpaid'
+        ? `select id from public.chip_orders
+            where id = $1 and status = 'pending_payment' and paid_at is null and not is_test
+            for update`
+        : `select id from public.chip_orders where id = $1 and is_test for update`,
+      [id],
+    );
+    if ((locked.rowCount ?? 0) === 0) return 'not_found';
+    const keys = (
+      await client.query<{ k: string }>(
+        `select lease_file_key as k from public.chip_order_items
+          where order_id = $1 and lease_file_key is not null`,
+        [id],
+      )
+    ).rows.map((r) => r.k);
+    if (keys.length > 0 && !(await removeLeases(keys))) return 'file_failed';
+    await client.query(`delete from public.chip_orders where id = $1`, [id]);
+    return 'deleted';
+  });
 }
