@@ -57,7 +57,10 @@ export function ListFilters({ filter, onChange }: Props) {
   };
 
   return (
-    <div className="flex flex-col gap-3 md:flex-row md:items-center" data-list-filters>
+    // The search and the range share a row only when the list is wide enough for both (container
+    // query, not the window's md): at 768–1024 the 256px range button squeezed the search to ~120px.
+    <div className="@container">
+    <div className="flex flex-col gap-3 @min-[640px]:flex-row @min-[640px]:items-center" data-list-filters>
       <div className="relative min-w-0 flex-1">
         <Search aria-hidden className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-3" />
         <Input
@@ -83,7 +86,7 @@ export function ListFilters({ filter, onChange }: Props) {
           data-filter-range data-ranged={ranged ? '' : undefined}
           aria-label="סינון לפי טווח תאריכים" aria-haspopup="dialog" aria-expanded={open}
           className={cn(
-            'inline-flex h-11 min-w-0 flex-1 items-center justify-between gap-3 rounded-xl border border-line bg-white px-3 text-sm font-medium transition-colors hover:bg-row-hover md:w-64 md:flex-none',
+            'inline-flex h-11 min-w-0 flex-1 items-center justify-between gap-3 rounded-xl border border-line bg-white px-3 text-sm font-medium transition-colors hover:bg-row-hover @min-[640px]:w-64 @min-[640px]:flex-none',
             ranged ? 'text-ink' : 'text-ink-2',
           )}
         >
@@ -113,6 +116,7 @@ export function ListFilters({ filter, onChange }: Props) {
         }}
         onCancel={() => setOpen(false)}
       />
+    </div>
     </div>
   );
 }

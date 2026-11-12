@@ -128,7 +128,10 @@ export function AdminPortalLogClient() {
         onSubmit={(e) => { e.preventDefault(); apply(filters); }}
         className="space-y-4 rounded-2xl border border-line bg-white p-4 shadow-soft-sm"
       >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        {/* Columns follow the FORM's width (container query), not the window's: with the navigation
+            panel open a 1024px window leaves the card ~650px, where five columns cut the date inputs. */}
+        <div className="@container">
+        <div className="grid grid-cols-1 gap-4 @min-[340px]:grid-cols-2 @min-[520px]:grid-cols-3 @min-[820px]:grid-cols-5">
           <div className="space-y-2">
             <Label htmlFor="pl-event" className="text-[13px] font-semibold text-slate-700">סוג אירוע</Label>
             <Select value={filters.eventType} onValueChange={(v) => setFilters((f) => ({ ...f, eventType: v ?? ANY }))}>
@@ -196,6 +199,7 @@ export function AdminPortalLogClient() {
 
           <DateField id="pl-from" label="מתאריך" value={filters.from} onChange={(v) => setFilters((f) => ({ ...f, from: v }))} />
           <DateField id="pl-to" label="עד תאריך" value={filters.to} onChange={(v) => setFilters((f) => ({ ...f, to: v }))} />
+        </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

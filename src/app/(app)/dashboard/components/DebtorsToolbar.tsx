@@ -119,7 +119,10 @@ export function DebtorsToolbar({ totalRows, canExport }: { totalRows: number; ca
   }, [printRows]);
 
   return (
-    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    // The title and the controls share a row only when the card is wide enough for both (container
+    // query, not the window's md): at 1024–1280 the controls wrapped one button onto a second line.
+    <div className="@container">
+    <div className="flex flex-col gap-3 @min-[920px]:flex-row @min-[920px]:items-center @min-[920px]:justify-between">
       <div className="flex items-baseline gap-3">
         <h2 className="text-[16px] font-bold text-ink">טבלת חייבים</h2>
         <span className="text-sm text-ink-2">
@@ -188,6 +191,7 @@ export function DebtorsToolbar({ totalRows, canExport }: { totalRows: number; ca
       </div>
 
       {printRows && <PrintableDebtorsTable rows={printRows} />}
+    </div>
     </div>
   );
 }
