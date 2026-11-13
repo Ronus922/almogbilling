@@ -34,6 +34,17 @@
 - **מחיקה:** „מחק הזמנת בדיקה” (בחלון ההזמנה) ו-„מחק את כל הזמנות הבדיקה” (ברשימה; כולל הזמנות בדיקה שלא סיימו), עם אישור. קודם קבצי החוזה, אחר כך השורות (דירות והודעות נמחקות איתן). צ׳יפים ששויכו נשארים במודול הצ׳יפים, רק `order_item_id` שלהם מתאפס; אם יש ביניהם פעילים — אזהרה להשבית אותם בחלון ההנפקה. המחיקה נעולה ל-`is_test`, כך שהזמנה רגילה לא נמחקת לעולם.
 - **DB:** `chip_orders.is_test` (מיגרציה `20261112222606`); הזמנת בדיקה „שולמה” בלי עסקת Grow, לעולם לא נושאת שדות Grow או חשבונית, ו-`refund_status = 'not_required'` מותר רק לה.
 - **לוגים:** הדפים `/chip-order*` שולחים `Referrer-Policy: no-referrer`, ו-nginx רושם את `/chip-order` בלי ה-query string (פורמט `billing_redacted` ב-`sites-available/almog-haifa.co.il`) — הטוקן לא נשמר ביומן.
+- **„דלג על אימות (מצב בדיקה)” (13/11/2026):** בקישור הבדיקה בלבד, אחרי שביקשו קוד (גם אם השליחה נכשלה), מופיע מתחת לשלב הקוד הכפתור „דלג על אימות (מצב בדיקה)”. הוא קורא ל-`POST /api/public/chip-order/otp/skip`, שבודק את טוקן הבדיקה בכל בקשה: בלי טוקן, עם טוקן שגוי, כשהמתג כבוי, וגם כשהעמוד פתוח לציבור בלי טוקן — 403, בלי רמז שמצב בדיקה קיים. עם טוקן תקין נשמר טלפון ההזמנה ב-cookie חתום **נפרד** (`chip_order_phone_skip`, AES-GCM, 30 דקות), שלא נחשב לעולם כטלפון מאומת. השליחה (`POST /api/public/chip-order`) מקבלת אותו רק כשבאותה בקשה יש טוקן תקין ורק לאותו טלפון; ההזמנה נשמרת `is_test = true` ו-`phone_verified = false`. בלי טוקן ה-cookie הזה מתעלמים ממנו, והזמנה רגילה עדיין דורשת קוד מאומת (401). הדילוג לא מנפיק קוד, לא צורך קוד, לא נוגע במגבלות הקצב ולא פונה ל-019 או ל-Green API. ב-`/chips` (ברשימה ובחלון ההזמנה) מופיע ליד „בדיקה” תג „טלפון לא אומת”. ה-DB אוכף: `chip_orders_phone_verified_check` — `phone_verified = false` מותר רק להזמנת בדיקה (מיגרציה `20261113133131`).
+
+## „שליחת הקוד נכשלה” — איך מאבחנים (13/11/2026)
+
+- **השליחה משותפת לפורטל ולהזמנות** (`sendPortalCode` ב-`src/lib/portal/send.ts`, SMS דרך 019 ב-`src/lib/portal/sms.ts`). כשל SMS אחד שובר את שניהם, ולכן תקלה בהזמנה היא בדרך כלל גם תקלה בכניסה לפורטל.
+- **על המסך** — תמיד ההודעה הכללית „שליחת הקוד נכשלה. נסו שוב בעוד רגע.” (502), בלי פרטי הספק. **ביומן** — הסיבה המלאה: `journalctl -u billing.service | grep 'code send failed'`. בשורה יש `error` (קוד הסטטוס של 019 והתרגום שלו) ו-`purpose` (`chip_order` או `portal_login`). לפני 13/11 לא היה `purpose`, וכשל של הזמנה נראה ביומן כמו כשל של הפורטל.
+- **סטטוס 4 = אין קרדיט ב-019.** כך נעצרה הזמנת הבדיקה ב-13/11: תפוצת ה-SMS מ-09/11 (162 תווים בעברית = 3 יחידות להודעה, 312 נשלחו) גמרה את כל היתרה (936), ומאז 191 נמענים של אותה תפוצה וכל קוד SMS לפורטל ולהזמנות נכשלו. אין התרעה על יתרה נמוכה; את היתרה בודקים בפאנל של 019, או בפעולת `balance` שלהם לקריאה בלבד.
+- **„שליחת הקוד בוואטסאפ במקום”** לא עובר דרך 019, ולכן עובד גם כשאין קרדיט, כל עוד המופע של Green API מחובר (`whatsapp_instances.state = 'authorized'`).
+- **הכפתור הזה נחסם עד 13/11/2026 בקוד שלנו, לא ב-Green API.** הבקשה שנכשלה ב-SMS כבר יצרה שורת קוד, ולכן התחילה את ה-cooldown של 45 שניות לשליחה חוזרת. הכפתור הופיע מיד, הבקשה בוואטסאפ (שנייה אחרי) קיבלה 429 („אפשר לבקש קוד חדש בעוד 44 שניות”), והכפתור נעלם. כך נכשל הניסיון של רונן ב-13:09:23/13:09:24 UTC: ב-nginx `502` ואז `429`, שורת קוד אחת בלבד, ואין ביומן שום `code send failed (whatsapp)`, כי הבקשה לא הגיעה לשליחה. **התיקון:** ה-502 מחזיר `retryAfterSec` (ה-cooldown שהתחיל), והכפתור נשאר מושבת עם ספירה לאחור („שליחת הקוד בוואטסאפ במקום — בעוד N שניות”) ואז נפתח; 429 שהוא רק ה-cooldown לא מעלים אותו. ה-cooldown עצמו ושאר המגבלות לא השתנו.
+- **בפורטל (לא שונה):** כשה-SMS הראשון נכשל, מסך הכניסה מציג את השגיאה בלבד, בלי אפשרות וואטסאפ (הכפתור „שלח בוואטסאפ במקום” קיים רק בשלב הקוד, אחרי שליחה מוצלחת). כל עוד יתרת 019 היא 0, דיירים לא יכולים להיכנס לפורטל.
+- **הטלפון** נשמר, נספר במגבלות הקצב ונשלח כמספר אחד: `05…`, `9725…` ו-`+9725…` (גם עם מקפים ורווחים) הופכים ל-`+9725XXXXXXXX` (`toPortalE164`), ו-019 מקבל `05XXXXXXXX`. בקשה שנכשלה בשליחה נספרת במגבלות כמו בקשה מוצלחת. בדיקות: `tests/chip-order-otp-send.test.ts`.
 
 ## ניקוי הזמנות שלא שולמו (13/11/2026)
 
@@ -85,14 +96,14 @@
 
 ## קבצים מרכזיים
 
-- DB: `db/migrations/20261112194633_chip_orders.sql`, `src/lib/db/chipOrders.ts`
+- DB: `db/migrations/20261112194633_chip_orders.sql`, `20261112222606_chip_orders_test_mode.sql`, `20261113133131_chip_orders_phone_verified.sql`, `src/lib/db/chipOrders.ts`
 - כללים טהורים: `src/lib/chipOrders/model.ts` (מחיר, 72 שעות, תוויות), `match.ts`, `messages.ts`, `lease.ts`
 - Grow: `src/lib/grow/client.ts`
 - ציבורי: `src/app/chip-order/**`, `src/app/api/public/chip-order/**`, `src/components/chip-order/*`
 - צוות: `src/app/api/chip-orders/**`, `src/components/chips/ChipOrdersPanel.tsx`, `ChipOrderSheet.tsx`, `ChipOrderStatusPill.tsx`
-- מצב בדיקה: `src/lib/chipOrders/testMode.ts`, `src/app/api/chip-orders/test-mode/route.ts`, `src/app/api/public/chip-order/test-finish/route.ts`, `src/components/settings/ChipOrderTestModeSection.tsx`
+- מצב בדיקה: `src/lib/chipOrders/testMode.ts`, `src/app/api/chip-orders/test-mode/route.ts`, `src/app/api/public/chip-order/test-finish/route.ts`, `src/app/api/public/chip-order/otp/skip/route.ts`, `src/components/settings/ChipOrderTestModeSection.tsx`
 - ניקוי: `src/lib/chipOrders/cleanup.ts`, `src/app/api/cron/chip-orders-purge/route.ts`, `src/app/api/chip-orders/test-orders/route.ts`, `scripts/run-chip-orders-purge.sh`, `deploy/systemd/billing-chip-orders-purge.{service,timer}`
-- בדיקות: `tests/chip-orders-model.test.ts`, `tests/chip-orders-grow.test.ts`, `tests/chip-orders-db.test.ts`, `tests/chip-orders-cleanup-db.test.ts`, `tests/chip-orders-test-mode-db.test.ts`, `tests/otp-verify-atomic.test.ts`, `tests/rate-limit-atomic.test.ts`, `tests/client-ip.test.ts`, `e2e/chip-orders.spec.ts`
+- בדיקות: `tests/chip-orders-model.test.ts`, `tests/chip-orders-grow.test.ts`, `tests/chip-orders-db.test.ts`, `tests/chip-orders-cleanup-db.test.ts`, `tests/chip-orders-test-mode-db.test.ts`, `tests/chip-order-skip-verification-db.test.ts`, `tests/chip-order-otp-send.test.ts`, `tests/otp-verify-atomic.test.ts`, `tests/rate-limit-atomic.test.ts`, `tests/client-ip.test.ts`, `e2e/chip-orders.spec.ts`
 
 ## מחוץ להיקף (שלב א׳)
 

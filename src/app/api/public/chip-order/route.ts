@@ -12,7 +12,7 @@ import { createPaymentProcess, GrowApiError } from '@/lib/grow/client';
 import { isLeaseError, readLease } from '@/lib/chipOrders/lease';
 import { CHIP_ORDER_LIMITS, needsLease } from '@/lib/chipOrders/model';
 import {
-  callbackSignature, chipOrdersOpen, readVerifiedPhone, CHIP_ORDER_PUBLIC_HEADERS as H,
+  callbackSignature, chipOrdersOpen, readSkippedPhone, readVerifiedPhone, CHIP_ORDER_PUBLIC_HEADERS as H,
 } from '@/lib/chipOrders/server';
 import { isTestRequest } from '@/lib/chipOrders/testMode';
 
@@ -35,6 +35,12 @@ export const dynamic = 'force-dynamic';
 // unchanged, the order is created is_test, and Grow is never called — the
 // answer carries the tracking token for "סיים הזמנת בדיקה"
 // (/api/public/chip-order/test-finish).
+//
+// "דלג על אימות (מצב בדיקה)" (13/11/2026): in test mode ONLY, the phone may
+// carry the sealed SKIP cookie (/api/public/chip-order/otp/skip) instead of the
+// verified one. It counts only while this same request carries the valid test
+// token; the order is then stored phone_verified = false. Without the token a
+// skip cookie is ignored — a real order still needs a verified code.
 
 const err = (status: number, message: string, extra: Record<string, unknown> = {}) =>
   NextResponse.json({ ok: false, message, ...extra }, { status, headers: H });
@@ -48,7 +54,9 @@ export async function POST(req: Request) {
   // and a body no larger than the leases may add up to — an anonymous caller
   // cannot make the server buffer a large upload.
   const verified = await readVerifiedPhone();
-  if (!verified) return err(401, 'יש לאמת את מספר הטלפון בקוד לפני התשלום.', { needsOtp: true });
+  const skipped = !verified && test ? await readSkippedPhone() : null;
+  const provenPhone = verified ?? skipped;
+  if (!provenPhone) return err(401, 'יש לאמת את מספר הטלפון בקוד לפני התשלום.', { needsOtp: true });
   const length = Number(req.headers.get('content-length') ?? 'NaN');
   if (!Number.isFinite(length) || length > CHIP_ORDER_LIMITS.maxRequestBytes) {
     return err(413, 'הקבצים גדולים מדי. אפשר לצרף עד 40MB בהזמנה אחת.');
@@ -78,7 +86,7 @@ export async function POST(req: Request) {
 
   const phoneE164 = toPortalE164(o.phone);
   if (!phoneE164 || !phoneE164.startsWith('+9725')) return err(400, 'נדרש מספר טלפון נייד ישראלי.');
-  if (verified !== phoneE164) return err(401, 'יש לאמת את מספר הטלפון בקוד לפני התשלום.', { needsOtp: true });
+  if (provenPhone !== phoneE164) return err(401, 'יש לאמת את מספר הטלפון בקוד לפני התשלום.', { needsOtp: true });
 
   const phoneLimit = await checkRateLimit(`chip-order:submit:phone:${phoneE164}`, { max: 5, windowSec: 3600 });
   if (!phoneLimit.allowed) return err(429, 'יותר מדי הזמנות למספר הזה. נסו שוב מאוחר יותר.');
@@ -142,7 +150,10 @@ export async function POST(req: Request) {
   let order;
   try {
     order = await createChipOrder(
-      { fullName: o.fullName, phoneE164, email: o.email, address: o.address, role: o.role, lines, ip, isTest: test },
+      {
+        fullName: o.fullName, phoneE164, email: o.email, address: o.address, role: o.role, lines, ip, isTest: test,
+        phoneVerified: verified === phoneE164,
+      },
       settings,
     );
   } catch (e) {

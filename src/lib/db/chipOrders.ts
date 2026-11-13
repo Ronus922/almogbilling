@@ -68,6 +68,9 @@ export interface NewOrderInput {
   /** Test mode (a valid test link): the order is marked is_test and is later
    *  "paid" by markTestChipOrderPaid, never through Grow. */
   isTest?: boolean;
+  /** False only for a test order whose phone code was skipped ("דלג על אימות
+   *  (מצב בדיקה)"); the database refuses false on a real order. */
+  phoneVerified?: boolean;
 }
 
 export interface CreatedOrder {
@@ -129,10 +132,11 @@ export async function createChipOrder(input: NewOrderInput, settings: ChipOrderS
     const order = (
       await client.query<{ id: string; order_number: number }>(
         `insert into public.chip_orders
-           (full_name, phone_e164, email, address, role, total, tracking_token, created_ip, is_test)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           (full_name, phone_e164, email, address, role, total, tracking_token, created_ip, is_test, phone_verified)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          returning id, order_number`,
-        [input.fullName, input.phoneE164, input.email, input.address, input.role, total, trackingToken, input.ip, input.isTest === true],
+        [input.fullName, input.phoneE164, input.email, input.address, input.role, total, trackingToken, input.ip, input.isTest === true,
+          input.phoneVerified !== false],
       )
     ).rows[0];
 
@@ -322,7 +326,7 @@ export async function listChipOrders(): Promise<ChipOrderListItem[]> {
               where i.order_id = o.id and c.status = 'active') as chips_linked,
             exists (select 1 from public.chip_order_notifications n
                      where n.order_id = o.id and n.status = 'failed') as has_failed_notification,
-            o.is_test
+            o.is_test, o.phone_verified
        from public.chip_orders o
       where o.status <> 'pending_payment'
       order by case o.status when 'paid' then 0 when 'approved' then 1 when 'ready' then 2 else 3 end,
@@ -342,7 +346,8 @@ export async function getChipOrderDetail(id: string): Promise<ChipOrderDetail | 
   const order = await queryOne<Omit<ChipOrderDetail, 'items' | 'notifications'>>(
     `select id, order_number, full_name, phone_e164, email, address, role, status, total::float8 as total,
             grow_transaction_id, grow_asmachta, invoice_url, invoice_number, paid_at, approved_at, due_at,
-            ready_at, collected_at, rejected_at, reject_reason, refund_status, refund_note, created_at, is_test
+            ready_at, collected_at, rejected_at, reject_reason, refund_status, refund_note, created_at, is_test,
+            phone_verified
        from public.chip_orders where id = $1 and status <> 'pending_payment'`,
     [id],
   );

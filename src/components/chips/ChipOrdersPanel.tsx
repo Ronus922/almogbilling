@@ -19,7 +19,7 @@ import { e164ToLocal } from '@/lib/portal/phone';
 import {
   CHIP_ORDER_ROLE_LABEL, formatIls, isChipOrderOverdue, type ChipOrderListItem, type ChipOrderStatus,
 } from '@/lib/chipOrders/model';
-import { ChipOrderStatusPill, ChipOrderTestBadge } from './ChipOrderStatusPill';
+import { ChipOrderStatusPill, ChipOrderTestBadge, ChipOrderUnverifiedPhoneBadge } from './ChipOrderStatusPill';
 
 type Filter = 'open' | 'all' | 'collected' | 'rejected';
 
@@ -190,6 +190,7 @@ export function ChipOrdersPanel({
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className="truncate text-[14.5px] font-bold text-[var(--chip-ink)]">{o.full_name}</span>
                         {o.is_test && <ChipOrderTestBadge />}
+                        {!o.phone_verified && <ChipOrderUnverifiedPhoneBadge />}
                         {o.has_failed_notification && (
                           <span title="שליחת הודעה נכשלה" className="shrink-0 text-[var(--chip-red)]">
                             <AlertTriangle className="h-4 w-4" />
@@ -232,6 +233,7 @@ export function ChipOrdersPanel({
                     <span className="chip-num text-[13px] font-bold text-[var(--chip-ink-muted)]">{o.order_number}</span>
                     <span className="min-w-0 flex-1 truncate text-[15px] font-bold text-[var(--chip-ink)]">{o.full_name}</span>
                     {o.is_test && <ChipOrderTestBadge />}
+                    {!o.phone_verified && <ChipOrderUnverifiedPhoneBadge />}
                     <span className="text-[14px] font-bold text-[var(--chip-ink)]">{formatIls(o.total)}</span>
                   </span>
                   <span className="text-[12.5px] font-semibold text-[var(--chip-ink-muted)]">

@@ -74,7 +74,7 @@ async function sendViaWhatsApp(phoneE164: string, code: string, purpose: OtpPurp
     return { ok: true, channel: 'whatsapp' };
   } catch (err) {
     const error = (err as Error).message;
-    logger.error('[portal] code send failed (whatsapp)', { error });
+    logger.error('[portal] code send failed (whatsapp)', { error, purpose });
     return { ok: false, error, channel: 'whatsapp' };
   }
 }
@@ -91,7 +91,10 @@ async function sendViaSms(
   // they want, presses "שלח בוואטסאפ במקום" themselves — switching channel
   // without saying so would be confusing (a code arrives on the number but
   // not the app the screen just promised).
-  logger.error('[portal] code send failed (sms)', { error: res.error });
+  // `purpose` tells a chip-order failure from a portal-login one: both paths
+  // share this send and its '[portal]' prefix (13/11/2026 — a chip-order
+  // failure had to be matched to its request through the nginx log).
+  logger.error('[portal] code send failed (sms)', { error: res.error, purpose });
   return { ok: false, error: res.error, channel: 'sms' };
 }
 

@@ -168,6 +168,8 @@ test.describe.serial('test mode', () => {
   const phoneDigits = `05393${String(Date.now()).slice(-5)}`;
   const phoneE164 = `+972${phoneDigits.slice(1)}`;
   const state = { link: '', orderId: '', orderNumber: 0, hadRow: false, row: null as unknown };
+  const APT2 = `992${tag}2`;
+  const skipState = { contact: '', orderId: '', phone: '' };
 
   test.beforeAll(async () => {
     const prev = await pool.query(`select value from public.app_settings where key = 'chip_orders_test_mode'`);
@@ -177,6 +179,18 @@ test.describe.serial('test mode', () => {
 
   test.afterAll(async () => {
     if (state.orderId) await pool.query(`delete from public.chip_orders where id = $1 and is_test`, [state.orderId]);
+    if (skipState.orderId) {
+      const chips = await pool.query<{ id: string }>(
+        `select c.id from public.chips c join public.chip_order_items i on i.id = c.order_item_id where i.order_id = $1`,
+        [skipState.orderId],
+      );
+      for (const { id } of chips.rows) {
+        await pool.query(`delete from public.chip_events where chip_id = $1`, [id]);
+        await pool.query(`delete from public.chips where id = $1`, [id]);
+      }
+      await pool.query(`delete from public.chip_orders where id = $1 and is_test`, [skipState.orderId]);
+    }
+    if (skipState.contact) await pool.query(`delete from public.contacts where id = $1`, [skipState.contact]);
     await pool.query(`delete from public.portal_otp_codes where phone_e164 = $1`, [phoneE164]);
     if (state.hadRow) {
       await pool.query(`update public.app_settings set value = $1::jsonb where key = 'chip_orders_test_mode'`, [JSON.stringify(state.row)]);
@@ -291,6 +305,103 @@ test.describe.serial('test mode', () => {
     await expect(row).toHaveCount(0);
     expect((await pool.query(`select 1 from public.chip_orders where id = $1`, [state.orderId])).rowCount).toBe(0);
     state.orderId = '';
+  });
+
+  // "דלג על אימות (מצב בדיקה)" (13/11/2026): with SMS credit at 0 no code
+  // reached Ronen's phone, and "שליחת הקוד בוואטסאפ במקום" always met the
+  // 45-second resend cooldown the failed SMS had started (429 → the button
+  // vanished). The send is played by page.route here (a failing SMS, then that
+  // cooldown), the skip and everything after it are real.
+  test('a failed send keeps the WhatsApp button through the cooldown; "דלג על אימות" → finish → /chips "טלפון לא אומת" → approve → assign → ready → collected', async ({ browser, page }) => {
+    const skipPhone = `05394${String(Date.now()).slice(-5)}`;
+    const skipE164 = `+972${skipPhone.slice(1)}`;
+    const c = await pool.query<{ id: string }>(`insert into public.contacts (apartment_number) values ($1) returning id`, [APT2]);
+    skipState.contact = c.rows[0]!.id;
+    skipState.phone = skipE164;
+
+    const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 390, height: 844 } });
+    const pub = await ctx.newPage();
+    const sent: { channel?: string }[] = [];
+    await pub.route('**/api/public/chip-order/otp/request', async (route) => {
+      const body = route.request().postDataJSON() as { channel?: string };
+      sent.push(body);
+      await route.fulfill(body.channel === 'whatsapp'
+        ? { status: 429, json: { ok: false, retryAfterSec: 2, message: 'אפשר לבקש קוד חדש בעוד 2 שניות.' } }
+        : { status: 502, json: { ok: false, retryAfterSec: 2, message: 'שליחת הקוד נכשלה. נסו שוב בעוד רגע.' } });
+    });
+    await pub.goto(new URL(state.link).pathname + new URL(state.link).search);
+    await expect(pub.getByTestId('chip-order-test-banner')).toBeVisible();
+    // Nothing to skip before a code was asked for.
+    await expect(pub.getByTestId('chip-order-skip-verification')).toHaveCount(0);
+    await pub.getByLabel('שם מלא').fill('בודק דילוג');
+    await pub.getByPlaceholder('05X-XXXXXXX').fill(skipPhone);
+    await pub.getByLabel('מייל').fill('skip.e2e@example.test');
+    await pub.getByLabel('כתובת מגורים').fill('רחוב בדיקה 3');
+    await pub.getByRole('radio', { name: 'בעלים' }).click();
+    await pub.getByLabel('דירה 1').selectOption(APT2);
+    await pub.getByRole('checkbox').check();
+    await pub.getByRole('button', { name: /המשך לתשלום/ }).click();
+
+    const wa = pub.getByTestId('chip-order-otp-whatsapp-fallback');
+    await expect(pub.getByText('שליחת הקוד נכשלה. נסו שוב בעוד רגע.')).toBeVisible();
+    await expect(wa).toBeDisabled();
+    await expect(wa).toContainText('בעוד');
+    await expect(wa).toBeEnabled({ timeout: 5_000 });
+    await wa.click();
+    await expect.poll(() => sent.at(-1)?.channel).toBe('whatsapp');
+    // Refused only by the cooldown → the button stays, counting down again.
+    await expect(wa).toBeVisible();
+    await expect(wa).toBeEnabled({ timeout: 5_000 });
+
+    await pub.getByTestId('chip-order-skip-verification').click();
+    await expect(pub.getByTestId('chip-order-test-step')).toBeVisible();
+    await pub.getByRole('button', { name: 'סיים הזמנת בדיקה' }).click();
+    await pub.waitForURL(/\/chip-order\/track\//);
+    await expect(pub.getByTestId('chip-order-track')).toContainText('שולם, ממתין לבדיקה');
+    await ctx.close();
+
+    const row = (await pool.query<{ id: string; order_number: number; is_test: boolean; phone_verified: boolean; status: string }>(
+      `select id, order_number, is_test, phone_verified, status from public.chip_orders where phone_e164 = $1`, [skipE164],
+    )).rows;
+    expect(row).toHaveLength(1);
+    skipState.orderId = row[0]!.id;
+    expect(row[0]).toMatchObject({ is_test: true, phone_verified: false, status: 'paid' });
+    // No code was issued (the request was played), none consumed by the skip.
+    expect((await pool.query(`select 1 from public.portal_otp_codes where phone_e164 = $1`, [skipE164])).rowCount).toBe(0);
+
+    // Staff: the order is in /chips → "הזמנות", badged.
+    await page.goto('/chips');
+    await page.getByRole('tab', { name: /הזמנות/ }).click();
+    await page.getByRole('button', { name: 'הכל' }).click();
+    const listRow = page.getByTestId('chip-orders-table').getByRole('button').filter({ hasText: String(row[0]!.order_number) });
+    await expect(listRow).toBeVisible();
+    await expect(listRow.getByTestId('chip-order-test-badge')).toHaveText('בדיקה');
+    await expect(listRow.getByTestId('chip-order-phone-unverified')).toHaveText('טלפון לא אומת');
+    await listRow.click();
+    const sheet = page.getByRole('dialog').filter({ hasText: `הזמנת צ׳יפים ${row[0]!.order_number}` });
+    await expect(sheet.getByTestId('chip-order-phone-unverified')).toBeVisible();
+
+    // Approve with nothing ticked → the tenants list is untouched.
+    for (const f of ['שם', 'טלפון', 'מייל']) {
+      await expect(sheet.getByRole('checkbox', { name: `לכתוב ${f} לדירה ${APT2}` })).not.toBeChecked();
+    }
+    await sheet.getByRole('button', { name: 'אשר', exact: true }).click();
+    await expect(sheet.getByText('מאושר, בהכנה').first()).toBeVisible();
+    const contact = await pool.query(`select owner_name, owner_phone, owner_email from public.contacts where id = $1`, [skipState.contact]);
+    expect(contact.rows[0]).toEqual({ owner_name: null, owner_phone: null, owner_email: null });
+
+    await sheet.getByRole('button', { name: /שייך צ׳יפים \(1\)/ }).click();
+    const issue = page.getByRole('dialog').filter({ hasText: 'הנפקת צ׳יפ' });
+    await expect(issue.getByTestId('issue-order-banner')).toContainText(`שיוך להזמנה ${row[0]!.order_number}`);
+    const numberInput = issue.getByPlaceholder('מספר צ׳יפ').first();
+    await numberInput.fill(`E2S${tag}1`);
+    await numberInput.press('Enter');
+    await issue.getByRole('button', { name: /הנפק/ }).click();
+    await expect(sheet.getByText('צ׳יפים פעילים ששויכו: 1 מתוך 1')).toBeVisible();
+
+    await sheet.getByRole('button', { name: 'מוכן לאיסוף' }).click();
+    await sheet.getByRole('button', { name: 'נאסף', exact: true }).click();
+    await expect.poll(async () => (await pool.query(`select status from public.chip_orders where id = $1`, [skipState.orderId])).rows[0].status).toBe('collected');
   });
 
   test('switching test mode off kills the link', async ({ page, browser }) => {

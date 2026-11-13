@@ -57,6 +57,10 @@ export const CHIP_ORDER_REFUND_LABEL: Record<ChipOrderRefundStatus, string> = {
  *  message it sends. */
 export const CHIP_ORDER_TEST_LABEL = 'בדיקה';
 
+/** A test order whose phone code was skipped ("דלג על אימות (מצב בדיקה)",
+ *  13/11/2026) — the badge in /chips. */
+export const CHIP_ORDER_PHONE_UNVERIFIED_LABEL = 'טלפון לא אומת';
+
 /** Test mode: the header the order page sends its test-link token in (never
  *  a URL the server logs). Checked by every public chip-order API call. */
 export const CHIP_ORDER_TEST_HEADER = 'x-chip-order-test';
@@ -228,6 +232,8 @@ export interface ChipOrderListItem {
   has_failed_notification: boolean;
   /** A test-mode order — shown with a "בדיקה" badge, never counted or summed. */
   is_test: boolean;
+  /** False = the phone code was skipped in test mode — "טלפון לא אומת". */
+  phone_verified: boolean;
 }
 
 export interface ChipOrderItemDetail {
@@ -283,6 +289,8 @@ export interface ChipOrderDetail {
   refund_note: string | null;
   created_at: string;
   is_test: boolean;
+  /** False = the phone code was skipped in test mode — "טלפון לא אומת". */
+  phone_verified: boolean;
   items: ChipOrderItemDetail[];
   notifications: ChipOrderNotification[];
 }

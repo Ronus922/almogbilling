@@ -475,6 +475,11 @@ export const chipOrderOtpRequestBodySchema = z.object({
   channel: z.enum(['whatsapp']).optional(),
 });
 
+/** POST /api/public/chip-order/otp/skip — "דלג על אימות (מצב בדיקה)". */
+export const chipOrderOtpSkipBodySchema = z.object({
+  phone: chipOrderPhone,
+});
+
 /** POST /api/public/chip-order/otp/verify */
 export const chipOrderOtpVerifyBodySchema = z.object({
   phone: chipOrderPhone,
