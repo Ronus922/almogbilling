@@ -537,11 +537,11 @@ export const chipOrderTestFinishBodySchema = z.object({
   trackingToken: z.string().regex(/^[A-Za-z0-9_-]{32,64}$/),
 });
 
-/** POST /api/chip-orders/[id]/approve */
-export const chipOrderApproveBodySchema = z.object({
-  fields: z
-    .array(z.object({ item_id: z.uuid(), name: z.boolean(), phone: z.boolean(), email: z.boolean() }))
-    .max(10),
+/** POST /api/chip-orders/items/[itemId]/registry — "עדכן בכרטיס הדייר": the
+ *  holder block's name and phone, as typed in the issue window. */
+export const chipOrderRegistryBodySchema = z.object({
+  name: z.string().trim().max(120, 'השם ארוך מדי').nullable().optional(),
+  phone: z.string().trim().max(40, 'מספר הטלפון ארוך מדי').nullable().optional(),
 });
 
 /** POST /api/chip-orders/[id]/reject */

@@ -28,6 +28,16 @@
 //     inline, Enter/blur commits (409 when another active chip holds it).
 // A pending tag's X removes a NOT-YET-ISSUED number — saved chips have no
 // removal path anywhere (product law).
+//
+// Chip orders (13/11/2026): an Orders-tab row opens THIS window on the
+// apartment (`initial.orderItemId`). The orderer's holder block is the block
+// whose phone matches the order's (normalized), else a new block prefilled
+// with the order's name, phone and role ("אחר" when another person already
+// holds that role here — the window keeps one block per registry role). That
+// block carries "עדכן בכרטיס הדייר" and one "פרטי הזמנה" section per open
+// order of the person (ChipOrderSection.tsx); its NEW numbers are linked to
+// those order lines (order_item_id per group). Opened without an order, the
+// window is exactly what it was.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -50,6 +60,9 @@ import {
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { validatePhone } from '@/lib/validation';
 import { cn } from '@/lib/utils';
+import { e164ToLocal, toPortalE164 } from '@/lib/portal/phone';
+import type { ChipOrderSection, ChipOrderSheetContext } from '@/lib/chipOrders/model';
+import { assignToOrderLines, pendingPerLine } from '@/lib/chipOrders/assign';
 import {
   CHIP_RESIDENT_ROLES, CHIP_TYPE_LABEL, RESIDENT_ROLE_LABEL, UNIT_TYPE_LABEL,
 } from '@/lib/constants/chips';
@@ -62,6 +75,7 @@ import type {
   ContactResidentCard, ContactResidents, IssueChipGroup,
 } from '@/lib/types/chips';
 import { ChipSection, INPUT_CLS, LABEL_CLS } from './ChipSection';
+import { ChipOrderSectionCard, HolderRegistryButton } from './ChipOrderSection';
 
 
 /** Ref `.note` — amber inline note (snapshot scope). */
@@ -112,12 +126,16 @@ interface HolderBlock {
   orig: HolderSnapshot | null;
   /** Client-side duplicate hint under the add row. */
   dupHint: string | null;
+  /** Chip orders: THE orderer's block — it holds the "פרטי הזמנה" sections and
+   *  its new numbers are linked to the order lines. At most one per window. */
+  orderLinked: boolean;
 }
 
 function emptyBlock(key: number): HolderBlock {
   return {
     key, role: null, holderName: '', holderPhone: '', phoneTouched: false,
     numInput: '', numType: 'physical', pending: [], saved: [], orig: null, dupHint: null,
+    orderLinked: false,
   };
 }
 
@@ -165,16 +183,20 @@ interface IssueChipSheetProps {
     residentRole?: string | null;
     holderName?: string | null;
     holderPhone?: string | null;
-    /** Chip orders (12/11/2026): issuing for one apartment line of an order
-     *  ("שייך צ׳יפים"). Every new chip of this save is stamped with the line
-     *  (order_item_id); at most `remaining` new numbers. Absent = the window
-     *  behaves exactly as before. */
-    orderItem?: { id: string; orderNumber: number; remaining: number } | null;
+    /** Chip orders (13/11/2026): opened from an Orders-tab row — that
+     *  apartment line. Absent = the window behaves exactly as before. */
+    orderItemId?: string | null;
   } | null;
   onIssued: () => void;
+  /** chips_orders_manage:edit — the order buttons of a "פרטי הזמנה" section. */
+  canEditOrders?: boolean;
+  /** contacts:edit — "עדכן בכרטיס הדייר" (the server checks it again). */
+  canWriteContacts?: boolean;
 }
 
-export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueChipSheetProps) {
+export function IssueChipSheet({
+  open, onOpenChange, initial, onIssued, canEditOrders = false, canWriteContacts = false,
+}: IssueChipSheetProps) {
   // Contact selection
   const [contactId, setContactId] = useState<string | null>(null);
   const [contactLabel, setContactLabel] = useState('');
@@ -214,6 +236,11 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
   const [dirty, setDirty] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
 
+  // Chip orders: the open orders of the row's person for this apartment, and
+  // whether one of their confirmation dialogs is open (Escape belongs to it).
+  const [orderCtx, setOrderCtx] = useState<ChipOrderSheetContext | null>(null);
+  const [orderModalOpen, setOrderModalOpen] = useState(false);
+
   // Async apartment picker
   const [pickerOpen, setPickerOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -252,6 +279,8 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     setSubmitting(false);
     setDirty(false);
     setConfirmCloseOpen(false);
+    setOrderCtx(null);
+    setOrderModalOpen(false);
     setPickerOpen(false);
     setQuery('');
     setResults([]);
@@ -270,15 +299,25 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     }
     let cancelled = false;
     setResidentsLoading(true);
+    const orderItemId = initialRef.current?.orderItemId ?? null;
     (async () => {
       try {
-        const [rRes, cRes] = await Promise.all([
+        const [rRes, cRes, oRes] = await Promise.all([
           fetch(`/api/contacts/${contactId}/residents`, { credentials: 'include' }),
           fetch(`/api/contacts/${contactId}/chips`, { credentials: 'include' }),
+          orderItemId
+            ? fetch(`/api/chip-orders/items/${orderItemId}`, { credentials: 'include' })
+            : Promise.resolve(null),
         ]);
         if (rRes.ok) {
           const data = (await rRes.json()) as ContactResidents;
           if (!cancelled) setResidents(data);
+        }
+        let ctx: ChipOrderSheetContext | null = null;
+        if (oRes) {
+          if (oRes.ok) ctx = ((await oRes.json()) as { context?: ChipOrderSheetContext }).context ?? null;
+          else if (!cancelled) toast.error('טעינת פרטי ההזמנה נכשלה');
+          if (!cancelled) setOrderCtx(ctx);
         }
         if (cRes.ok) {
           const data = (await cRes.json()) as { items?: ChipWithHolder[]; active_count?: number };
@@ -335,9 +374,9 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
               (b) => b.role !== null || b.pending.length > 0 || b.saved.length > 0 || b.numInput.trim() !== '',
             );
             const init = initialRef.current;
-            // An order line ("שייך צ׳יפים") always brings its own holder block
-            // (step 4), so no empty placeholder goes in front of it.
-            const result = cleaned.length > 0 || init?.orderItem ? cleaned : [emptyBlock(blockSeq.current++)];
+            // An Orders-tab row always brings the orderer's block (step 5), so
+            // no empty placeholder goes in front of it.
+            const result = cleaned.length > 0 || init?.orderItemId ? cleaned : [emptyBlock(blockSeq.current++)];
 
             // 4. Reissue prefill: ensure a block exists for the initial holder.
             if (init?.residentRole) {
@@ -354,6 +393,27 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                     holderPhone: init.holderPhone ?? '',
                   });
                 }
+              }
+            }
+            // 5. Chip orders: the orderer's block — the one whose phone is the
+            //    order's (normalized: 05…, 9725…, +9725… are one number), else
+            //    a new block prefilled from the order. A registry role another
+            //    person already holds here becomes "אחר" (one block per
+            //    registry role). Never a duplicate: once marked, it stays.
+            if (ctx && !result.some((b) => b.orderLinked)) {
+              const phone = ctx.holder.phone_e164;
+              const i = result.findIndex((b) => toPortalE164(b.holderPhone) === phone);
+              if (i >= 0) {
+                result[i] = { ...result[i], orderLinked: true };
+              } else {
+                const role: ChipResidentRole = result.some((b) => b.role === ctx.holder.role) ? 'other' : ctx.holder.role;
+                result.push({
+                  ...emptyBlock(blockSeq.current++),
+                  role,
+                  holderName: ctx.holder.full_name,
+                  holderPhone: e164ToLocal(phone),
+                  orderLinked: true,
+                });
               }
             }
             return result.length > 0 ? result : [emptyBlock(blockSeq.current++)];
@@ -451,22 +511,17 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     return null;
   };
 
-  const orderItem = initial?.orderItem ?? null;
-  // The window keeps ONE block per registry role. When this apartment already
-  // has chips in the orderer's role under another name (an earlier tenant),
-  // the new chips would join that person's block — say so before the save.
-  const orderRoleTakenBy = (() => {
-    if (!orderItem || !initial?.residentRole) return null;
-    const want = (initial.holderName ?? '').trim();
-    const b = blocks.find((x) => x.role === initial.residentRole && x.saved.length > 0);
-    const name = b?.holderName.trim() ?? '';
-    return b && name && name !== want ? name : null;
-  })();
+  // Chip orders: the open order lines the orderer's block links its new
+  // numbers to (oldest order first), and how many each would get now.
+  const orderSections: ChipOrderSection[] = orderCtx?.sections ?? [];
+  const orderBlock = blocks.find((b) => b.orderLinked) ?? null;
+  const pendingBySection = orderBlock
+    ? pendingPerLine(effectivePending(orderBlock).map((p) => p.number), orderSections)
+    : {};
 
   const canSubmit =
     !!contactId &&
     (totalPending >= 1 || totalUpdates >= 1) &&
-    (!orderItem || (totalPending >= 1 && totalPending <= orderItem.remaining)) &&
     blocks.every((b) => blockInvalid(b) === null) &&
     !feeError &&
     (!overLimit || overrideReason.trim() !== '') &&
@@ -474,7 +529,7 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
 
   // ── ESC layering (LIFO: confirm > picker > panel) ────────────────────────
 
-  useEscapeKey(open && !confirmCloseOpen && !pickerOpen, () => requestClose());
+  useEscapeKey(open && !confirmCloseOpen && !pickerOpen && !orderModalOpen, () => requestClose());
   useEscapeKey(open && pickerOpen && !confirmCloseOpen, () => setPickerOpen(false));
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
 
@@ -667,6 +722,13 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
     onIssued(); // parent list/KPIs refresh
   }
 
+  /** An order button (ready / collected / reject / delete) or the registry
+   *  write went through: reload the sections, the residents and the parent. */
+  function afterOrderChange() {
+    setChipsVersion((v) => v + 1);
+    onIssued();
+  }
+
   /**
    * Inline registry create — the search returned nothing, so POST /api/contacts
    * with the minimal body { apartment_number: <typed query> } and select the
@@ -754,19 +816,28 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
       for (const b of blocks) {
         const pending = effectivePending(b);
         if (pending.length === 0 || !b.role) continue;
-        const byType = new Map<ChipType, string[]>();
+        // The orderer's block: each new number goes to an order line.
+        const lineOf = b.orderLinked
+          ? assignToOrderLines(pending.map((p) => p.number), orderSections)
+          : new Map<string, string>();
+        const byGroup = new Map<string, { type: ChipType; itemId: string | null; numbers: string[] }>();
         for (const p of pending) {
-          byType.set(p.chip_type, [...(byType.get(p.chip_type) ?? []), p.number]);
+          const itemId = lineOf.get(p.number) ?? null;
+          const k = `${p.chip_type}|${itemId ?? ''}`;
+          const g = byGroup.get(k) ?? { type: p.chip_type, itemId, numbers: [] };
+          g.numbers.push(p.number);
+          byGroup.set(k, g);
         }
-        for (const [type, numbers] of byType) {
+        for (const g of byGroup.values()) {
           groups.push({
             resident_role: b.role,
             holder_name: b.holderName.trim() || null,
             holder_phone: b.holderPhone.trim()
               ? validatePhone(b.holderPhone).normalized
               : null,
-            chip_type: type,
-            numbers,
+            chip_type: g.type,
+            numbers: g.numbers,
+            ...(g.itemId ? { order_item_id: g.itemId } : {}),
           });
           groupToBlock.push(b.key);
         }
@@ -788,7 +859,6 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
           fee_charged: feeCharged,
           notes: notes.trim() || null,
           limit_override_reason: overLimit ? overrideReason.trim() : null,
-          ...(orderItem ? { order_item_id: orderItem.id } : {}),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -868,32 +938,6 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
           {/* Body — screen-bg behind white section cards */}
           <div className="flex-1 overflow-y-auto bg-[var(--chip-bg)] p-[22px]">
             <div className="mx-auto flex max-w-[820px] flex-col gap-[18px]">
-              {/* Chip order line — only when opened from an order's "שייך צ׳יפים" */}
-              {orderItem && (
-                <div
-                  data-testid="issue-order-banner"
-                  className="flex items-center gap-3 rounded-[11px] border border-[var(--chip-brand-border)] bg-[var(--chip-brand-soft)] px-4 py-3 text-[13px] font-bold text-[var(--chip-brand-ink)]"
-                >
-                  <span className="min-w-0 flex-1">
-                    שיוך להזמנה {orderItem.orderNumber} · נדרשים עוד {orderItem.remaining} צ׳יפים לדירה זו
-                  </span>
-                  <span
-                    className={
-                      totalPending > orderItem.remaining
-                        ? 'shrink-0 text-[var(--chip-red-ink)]'
-                        : 'shrink-0'
-                    }
-                  >
-                    בחלון: {totalPending}
-                  </span>
-                </div>
-              )}
-              {orderRoleTakenBy && (
-                <AmberNote>
-                  לדירה כבר יש צ׳יפים בתפקיד הזה על שם {orderRoleTakenBy}. מספר שיתווסף לבלוק הזה יונפק על שמו.
-                  אם המזמין הוא אדם אחר — הוסיפו בעל צ׳יפ מסוג „אחר” עם שם המזמין והנפיקו שם.
-                </AmberNote>
-              )}
               {/* Section 1 — apartment / unit (unchanged) */}
               <ChipSection title="דירה / יחידה" icon={Building2} iconTone="blue">
                 <div className="space-y-2 px-1 pb-1">
@@ -1088,6 +1132,32 @@ export function IssueChipSheet({ open, onOpenChange, initial, onIssued }: IssueC
                         onNumberEdit={setNumberEditBoth}
                         onCommitNumber={commitNumberEdit}
                         onRemoveBlock={() => removeBlock(block.key)}
+                        orderPanel={block.orderLinked && orderSections.length > 0 ? (
+                          <div className="mt-3 flex flex-col gap-3">
+                            <HolderRegistryButton
+                              itemId={orderSections[0].item_id}
+                              apartmentNumber={contactLabel}
+                              role={orderSections[0].role}
+                              name={block.holderName}
+                              phone={block.holderPhone}
+                              canWriteContacts={canWriteContacts && canEditOrders}
+                              disabled={submitting}
+                              onDone={afterOrderChange}
+                              onModalChange={setOrderModalOpen}
+                            />
+                            {orderSections.map((sec) => (
+                              <ChipOrderSectionCard
+                                key={sec.order_id}
+                                section={sec}
+                                pending={pendingBySection[sec.item_id] ?? 0}
+                                canEditOrders={canEditOrders}
+                                disabled={submitting}
+                                onChanged={afterOrderChange}
+                                onModalChange={setOrderModalOpen}
+                              />
+                            ))}
+                          </div>
+                        ) : null}
                       />
                     ))}
 
@@ -1264,6 +1334,7 @@ function HolderBlockCard({
   invalid, phoneError,
   onPatch, onSelectRole, onSelectOther, onAddNumber, onRemovePending,
   onToggleSaved, togglingId, numberEdit, onNumberEdit, onCommitNumber, onRemoveBlock,
+  orderPanel,
 }: {
   block: HolderBlock;
   index: number;
@@ -1287,6 +1358,9 @@ function HolderBlockCard({
   onNumberEdit: (e: { chipId: string; value: string } | null) => void;
   onCommitNumber: () => void;
   onRemoveBlock: () => void;
+  /** Chip orders: "עדכן בכרטיס הדייר" + the "פרטי הזמנה" sections — only on
+   *  the orderer's block, below its name and phone. */
+  orderPanel?: React.ReactNode;
 }) {
   const hasSaved = block.saved.length > 0;
   const firstName = block.holderName.trim().split(/\s+/)[0] || null;
@@ -1295,6 +1369,7 @@ function HolderBlockCard({
 
   return (
     <div
+      data-testid="chip-holder-block"
       className={cn(
         'relative rounded-[14px] border-[1.5px] p-4 shadow-[0_1px_0_rgba(124,77,255,0.04)]',
         index > 0 && 'mt-[14px]',
@@ -1324,8 +1399,9 @@ function HolderBlockCard({
             {hasSaved && ` · ${block.saved.length} צ׳יפים קיימים`}
           </span>
         </div>
-        {/* Remove block — ONLY while it holds no saved chips (approved rule) */}
-        {!hasSaved && (
+        {/* Remove block — ONLY while it holds no saved chips (approved rule),
+            and never the orderer's block (it holds the order sections) */}
+        {!hasSaved && !block.orderLinked && (
           <button
             type="button"
             title="הסר בלוק"
@@ -1486,6 +1562,7 @@ function HolderBlockCard({
           </AmberNote>
         </div>
       )}
+      {orderPanel}
 
       {/* Separator (Chip2 `.sepline`) */}
       <div className="my-[14px] h-px bg-[var(--chip-border)]" />

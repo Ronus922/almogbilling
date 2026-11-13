@@ -13,6 +13,7 @@ import type {
   IssueChipsInput,
 } from '@/lib/types/chips';
 import { isSnapshotRole } from '@/lib/chips/holder';
+import { isOpenChipOrder, type ChipOrderStatus } from '@/lib/chipOrders/model';
 import {
   ACTIVE_CHIPS_SOFT_LIMIT,
   MAX_CHIPS_PER_GROUP,
@@ -457,18 +458,19 @@ export async function issueChipGroups(
       if (row) updated.push(row);
     }
 
-    // Chip order line (12/11/2026): the new chips must fit what the line
-    // ordered (ACTIVE chips count — a deactivated one may be replaced), on its
-    // apartment, once the order is approved. The line AND the order are locked,
-    // so two windows cannot both fill the last slot and a rejection running at
-    // the same moment cannot slip past the status check.
-    const orderItemId = input.order_item_id ?? null;
-    if (orderItemId && totalNew > 0) {
+    // Chip order lines (13/11/2026): a group may carry the order line its NEW
+    // chips are issued for — the holder block that holds the order's "פרטי
+    // הזמנה" section; every other group of the same save stays unlinked. The
+    // line must be on THIS apartment and its order still open (paid — being
+    // assigned — or ready). More chips than the line ordered are allowed (the
+    // window warns). The lines AND their orders are locked, in a fixed order,
+    // so a rejection running at the same moment cannot slip past the status
+    // check.
+    const orderItemIds = [...new Set(groups.map((g) => input.groups[g.index].order_item_id).filter((v): v is string => !!v))].sort();
+    for (const orderItemId of orderItemIds) {
       const item = (
-        await client.query<{ contact_id: string; chips_count: number; status: string; linked: number }>(
-          `select i.contact_id, i.chips_count, o.status,
-                  (select count(*)::int from public.chips c
-                    where c.order_item_id = i.id and c.status = 'active') as linked
+        await client.query<{ contact_id: string; status: string }>(
+          `select i.contact_id, o.status
              from public.chip_order_items i
              join public.chip_orders o on o.id = i.order_id
             where i.id = $1
@@ -477,13 +479,13 @@ export async function issueChipGroups(
         )
       ).rows[0];
       if (!item || item.contact_id !== input.contact_id) throw new Error('order_item_not_found');
-      if (item.status !== 'approved') throw new Error('order_not_approved');
-      if (item.linked + totalNew > item.chips_count) throw new Error('order_item_full');
+      if (!isOpenChipOrder(item.status as ChipOrderStatus)) throw new Error('order_not_open');
     }
 
     const created: ChipWithHolder[] = [];
     for (const { index, numbers } of groups) {
       const group = input.groups[index];
+      const orderItemId = group.order_item_id ?? null;
 
       // Holder identity enforcement (product rule 2, CHECK 074): every chip is
       // issued on a specific person's name. Registry roles snapshot the LIVE

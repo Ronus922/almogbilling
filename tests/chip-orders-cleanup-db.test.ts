@@ -185,14 +185,14 @@ d('chip orders — hourly purge of unpaid orders, and deleting test orders', () 
     const real = await order({ hoursAgo: 1 });
     const t1 = await order({ hoursAgo: 1, isTest: true, lease: true });
     const t2 = await order({ hoursAgo: 1, isTest: true });
-    // t2 goes all the way: "paid" by the test button, approved, one chip issued.
+    // t2 goes all the way: "paid" by the test button, one chip issued (there
+    // is no approval step since 13/11/2026).
     const token = (await pool.query<{ t: string }>(`select tracking_token as t from public.chip_orders where id = $1`, [t2])).rows[0]!.t;
     expect(await db.markTestChipOrderPaid(token)).toBe(t2);
     expect(await db.markTestChipOrderPaid(token)).toBeNull();
-    await db.approveChipOrder(t2, []);
-    const item = (await db.getChipOrderDetail(t2))!.items[0]!;
+    const item = (await pool.query<{ id: string }>(`select id from public.chip_order_items where order_id = $1`, [t2])).rows[0]!;
     const issued = await issueChipGroups(
-      { contact_id: contactId, groups: [{ resident_role: 'owner', chip_type: 'physical', numbers: [`T${tag}1`] }], order_item_id: item.id },
+      { contact_id: contactId, groups: [{ resident_role: 'owner', chip_type: 'physical', numbers: [`T${tag}1`], order_item_id: item.id }] },
       admin,
     );
     made.chips.push(...issued.items.map((c) => c.id));

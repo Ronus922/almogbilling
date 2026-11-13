@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
-  allChipsLinked, chipOrderDueAt, formatIls, isChipOrderOverdue, needsLease, orderTotal, priceLine,
+  chipOrderDueAt, chipOrderStage, chipOrderStageLabel, formatIls, isChipOrderOverdue, isOpenChipOrder, needsLease,
+  orderTotal, priceLine,
 } from '@/lib/chipOrders/model';
+import { assignToOrderLines, pendingPerLine } from '@/lib/chipOrders/assign';
 import { chipOrderMatchStatus } from '@/lib/chipOrders/match';
 import { chipOrderMessage, chipOrderWhatsAppText } from '@/lib/chipOrders/messages';
 import { leaseFileProblem } from '@/lib/chipOrders/lease';
 
 // Chip orders (12/11/2026) — the pure rules: the price per apartment, the
-// 72-working-hour due date, the match status and the four messages.
+// 72-working-hour due date (from the payment since 13/11/2026), the match
+// status, the three messages, and (13/11/2026) the stage of one apartment and
+// which order line a new chip number is linked to.
 
 const S = { unitPrice: 50, threshold: 2, priceAbove: 70 };
 
@@ -57,13 +61,13 @@ describe('chipOrderDueAt — 72 hours of Sunday–Thursday, Israel time', () => 
     expect(due.toISOString()).toBe('2026-11-23T08:00:00.000Z');
   });
 
-  it('approval on Friday starts counting on Sunday 00:00', () => {
+  it('a payment on Friday starts counting on Sunday 00:00', () => {
     const due = chipOrderDueAt(new Date('2026-11-20T10:00:00Z'));
     // Sunday 00:00 IL = Saturday 22:00 UTC; + 72h of Sun–Tue = Wednesday 00:00 IL.
     expect(due.toISOString()).toBe('2026-11-24T22:00:00.000Z');
   });
 
-  it('approval on Saturday also starts on Sunday 00:00', () => {
+  it('a payment on Saturday also starts on Sunday 00:00', () => {
     expect(chipOrderDueAt(new Date('2026-11-21T15:00:00Z')).toISOString()).toBe('2026-11-24T22:00:00.000Z');
   });
 
@@ -72,10 +76,12 @@ describe('chipOrderDueAt — 72 hours of Sunday–Thursday, Israel time', () => 
     expect(due.toISOString()).toBe('2026-11-24T21:00:00.000Z');
   });
 
-  it('overdue only while approved and past due', () => {
+  it('overdue only while still being assigned (paid) and past due', () => {
     const now = new Date('2026-11-20T00:00:00Z');
+    expect(isChipOrderOverdue({ status: 'paid', due_at: '2026-11-19T00:00:00Z' }, now)).toBe(true);
+    expect(isChipOrderOverdue({ status: 'paid', due_at: '2026-11-21T00:00:00Z' }, now)).toBe(false);
+    // A legacy 'approved' row reads as paid.
     expect(isChipOrderOverdue({ status: 'approved', due_at: '2026-11-19T00:00:00Z' }, now)).toBe(true);
-    expect(isChipOrderOverdue({ status: 'approved', due_at: '2026-11-21T00:00:00Z' }, now)).toBe(false);
     expect(isChipOrderOverdue({ status: 'ready', due_at: '2026-11-19T00:00:00Z' }, now)).toBe(false);
     expect(isChipOrderOverdue({ status: 'paid', due_at: null }, now)).toBe(false);
   });
@@ -104,19 +110,43 @@ describe('chipOrderMatchStatus', () => {
   });
 });
 
-describe('allChipsLinked', () => {
-  it('true only when every line has its chips', () => {
-    const on = { status: 'active' };
-    const off = { status: 'inactive' };
-    expect(allChipsLinked([{ chips_count: 2, linked_chips: [on, on] }, { chips_count: 1, linked_chips: [on] }])).toBe(true);
-    expect(allChipsLinked([{ chips_count: 2, linked_chips: [on] }])).toBe(false);
-    // A deactivated chip no longer counts as delivered.
-    expect(allChipsLinked([{ chips_count: 2, linked_chips: [on, off] }])).toBe(false);
-    expect(allChipsLinked([])).toBe(false);
+describe('the stage of one apartment — the Orders tab and the "פרטי הזמנה" section', () => {
+  it('ממתין לשיוך → שויכו X מתוך Y → שויך → מוכן לאיסוף', () => {
+    expect(chipOrderStage('paid', 0, 3)).toBe('awaiting');
+    expect(chipOrderStage('paid', 2, 3)).toBe('partial');
+    expect(chipOrderStage('paid', 3, 3)).toBe('assigned');
+    // More than ordered is allowed — still "שויך".
+    expect(chipOrderStage('paid', 4, 3)).toBe('assigned');
+    expect(chipOrderStage('ready', 3, 3)).toBe('ready');
+    expect(chipOrderStage('approved', 1, 2)).toBe('partial');
+    expect(chipOrderStageLabel('awaiting', 0, 3)).toBe('ממתין לשיוך');
+    expect(chipOrderStageLabel('partial', 2, 3)).toBe('שויכו 2 מתוך 3');
+    expect(chipOrderStageLabel('assigned', 3, 3)).toBe('שויך');
+    expect(chipOrderStageLabel('ready', 3, 3)).toBe('מוכן לאיסוף');
+  });
+
+  it('open = still in the Orders tab: paid (and legacy approved) or ready', () => {
+    expect(['pending_payment', 'paid', 'approved', 'ready', 'collected', 'rejected'].filter((x) => isOpenChipOrder(x as never)))
+      .toEqual(['paid', 'approved', 'ready']);
   });
 });
 
-describe('chipOrderMessage — the four messages', () => {
+describe('assignToOrderLines — which order line a new number of the orderer\'s block goes to', () => {
+  const a = { item_id: 'a', chips_count: 2, chips_linked: 1 };
+  const b = { item_id: 'b', chips_count: 1, chips_linked: 0 };
+  it('fills the lines in order (oldest order first), up to what each still misses', () => {
+    expect([...assignToOrderLines(['1', '2'], [a, b]).entries()]).toEqual([['1', 'a'], ['2', 'b']]);
+  });
+  it('the surplus goes to the LAST line (more than ordered is allowed)', () => {
+    expect(pendingPerLine(['1', '2', '3', '4'], [a, b])).toEqual({ a: 1, b: 3 });
+    expect(pendingPerLine(['1', '2'], [{ ...a, chips_linked: 2 }])).toEqual({ a: 2 });
+  });
+  it('no open order → nothing is linked', () => {
+    expect(assignToOrderLines(['1'], []).size).toBe(0);
+  });
+});
+
+describe('chipOrderMessage — the three messages', () => {
   const base = { fullName: 'דנה כהן', orderNumber: 1001, apartments: ['1210'], trackUrl: 'https://x.test/chip-order/track/t' };
 
   it('paid: tracking link, and the invoice link when Grow sent it', () => {
@@ -127,9 +157,10 @@ describe('chipOrderMessage — the four messages', () => {
     expect(text).toContain('https://meshulam.co.il/s/abc');
   });
 
-  it('approved carries the due date', () => {
-    const text = chipOrderWhatsAppText(chipOrderMessage({ ...base, kind: 'approved', dueText: 'יום רביעי, 18.11.2026' }));
-    expect(text).toContain('יום רביעי, 18.11.2026');
+  it('paid carries the due date (there is no separate "approved" message any more)', () => {
+    const text = chipOrderWhatsAppText(chipOrderMessage({ ...base, kind: 'paid', dueText: 'יום רביעי, 18.11.2026' }));
+    expect(text).toContain('מועד היעד להכנה: יום רביעי, 18.11.2026.');
+    expect(text).not.toContain('ממתינה לבדיקה');
   });
 
   it('ready carries the pickup place and hours from the settings', () => {
@@ -150,7 +181,7 @@ describe('chipOrderMessage — the four messages', () => {
   });
 
   it('a test order: every message starts with [בדיקה], no invoice, and a rejection says nothing was charged', () => {
-    for (const kind of ['paid', 'approved', 'ready', 'rejected'] as const) {
+    for (const kind of ['paid', 'ready', 'rejected'] as const) {
       const m = chipOrderMessage({ ...base, kind, isTest: true, rejectReason: 'בדיקה', refundStatus: 'not_required' });
       expect(m.subject.startsWith('[בדיקה] ')).toBe(true);
       expect(chipOrderWhatsAppText(m).startsWith('[בדיקה] ')).toBe(true);

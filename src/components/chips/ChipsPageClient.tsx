@@ -14,8 +14,8 @@ import { ChipsTable } from './ChipsTable';
 import { IssueChipSheet } from './IssueChipSheet';
 import { ChipHolderPanel, type HolderRef } from './ChipHolderPanel';
 import { ChipOrdersPanel } from './ChipOrdersPanel';
-import { ChipOrderSheet, type AssignRequest } from './ChipOrderSheet';
-import { activeLinked, type ChipOrderListItem } from '@/lib/chipOrders/model';
+import { e164ToLocal } from '@/lib/portal/phone';
+import type { ChipOrderRow } from '@/lib/chipOrders/model';
 
 // List filter tabs — labels per the chips product spec (ChipTab values).
 const TABS: { value: ChipTab; label: string }[] = [
@@ -33,8 +33,8 @@ type IssueInitial = {
   residentRole?: string | null;
   holderName?: string | null;
   holderPhone?: string | null;
-  /** Chip orders: issuing for one order line ("שייך צ׳יפים"). */
-  orderItem?: { id: string; orderNumber: number; remaining: number } | null;
+  /** Chip orders (13/11/2026): opened from an Orders-tab row — its line. */
+  orderItemId?: string | null;
 } | null;
 
 function issueInitialFromChip(chip: Chip): IssueInitial {
@@ -76,7 +76,7 @@ export function ChipsPageClient({
    *  it the page is exactly what it was before chip orders existed. */
   canManageOrders?: boolean;
   canEditOrders?: boolean;
-  /** contacts:edit — the order approval may write to the tenants list. */
+  /** contacts:edit — "עדכן בכרטיס הדייר" in the orderer's holder block. */
   canWriteContacts?: boolean;
 }) {
   const router = useRouter();
@@ -87,13 +87,9 @@ export function ChipsPageClient({
   const [view, setView] = useState<'chips' | 'orders'>(
     canManageOrders && searchParams.get('view') === 'orders' ? 'orders' : 'chips',
   );
-  const [orders, setOrders] = useState<ChipOrderListItem[]>([]);
+  const [orders, setOrders] = useState<ChipOrderRow[]>([]);
   const [unfinishedTests, setUnfinishedTests] = useState(0);
   const [ordersLoading, setOrdersLoading] = useState(false);
-  const [orderSheetId, setOrderSheetId] = useState<string | null>(null);
-  const [orderSheetOpen, setOrderSheetOpen] = useState(false);
-  // The order to come back to when the issue window it opened closes.
-  const [returnToOrder, setReturnToOrder] = useState<string | null>(null);
 
   const fetchOrders = useCallback(async () => {
     if (!canManageOrders) return;
@@ -101,7 +97,7 @@ export function ChipsPageClient({
     try {
       const res = await fetch('/api/chip-orders', { credentials: 'include' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { items?: ChipOrderListItem[]; unfinishedTestOrders?: number };
+      const data = (await res.json()) as { items?: ChipOrderRow[]; unfinishedTestOrders?: number };
       setOrders(Array.isArray(data.items) ? data.items : []);
       setUnfinishedTests(typeof data.unfinishedTestOrders === 'number' ? data.unfinishedTestOrders : 0);
     } catch (err) {
@@ -115,10 +111,9 @@ export function ChipsPageClient({
     void fetchOrders();
   }, [fetchOrders]);
 
-  // Test orders are never counted (13/11/2026).
-  const openOrdersInProgress = orders.filter(
-    (o) => !o.is_test && (o.status === 'paid' || o.status === 'approved' || o.status === 'ready'),
-  ).length;
+  // Open rows (one per apartment of an open order); test orders are never
+  // counted (13/11/2026).
+  const openOrdersInProgress = orders.filter((o) => !o.is_test).length;
 
   function switchView(next: 'chips' | 'orders') {
     setView(next);
@@ -129,25 +124,15 @@ export function ChipsPageClient({
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }
 
-  function openOrder(id: string) {
-    setOrderSheetId(id);
-    setOrderSheetOpen(true);
-  }
-
-  function assignFromOrder(req: AssignRequest) {
-    setReturnToOrder(req.orderId);
-    setOrderSheetOpen(false);
+  /** An Orders-tab row opens the EXISTING issue window on its apartment
+   *  (13/11/2026) — the window finds or prefills the orderer's block. */
+  function openOrderRow(row: ChipOrderRow) {
     openIssueSheet({
-      contactId: req.item.contact_id,
-      apartmentNumber: req.item.apartment_number,
-      residentRole: req.role,
-      holderName: req.holderName,
-      holderPhone: req.holderPhone,
-      orderItem: {
-        id: req.item.id,
-        orderNumber: req.orderNumber,
-        remaining: Math.max(0, req.item.chips_count - activeLinked(req.item)),
-      },
+      contactId: row.contact_id,
+      apartmentNumber: row.apartment_number,
+      holderName: row.full_name,
+      holderPhone: e164ToLocal(row.phone_e164),
+      orderItemId: row.item_id,
     });
   }
 
@@ -349,7 +334,7 @@ export function ChipsPageClient({
         <ChipOrdersPanel
           items={orders}
           loading={ordersLoading}
-          onOpen={openOrder}
+          onOpen={canEdit ? openOrderRow : undefined}
           canEdit={canEditOrders}
           unfinishedTests={unfinishedTests}
           onChanged={() => void fetchOrders()}
@@ -455,30 +440,16 @@ export function ChipsPageClient({
           if (!o) {
             setIssueInitial(null);
             clearChipParam();
-            // Opened from an order's "שייך צ׳יפים" → back to that order.
-            if (returnToOrder) {
-              setOrderSheetId(returnToOrder);
-              setOrderSheetOpen(true);
-              setReturnToOrder(null);
-              void fetchOrders();
-            }
           }
         }}
         initial={issueInitial}
-        onIssued={refetchAll}
+        onIssued={() => {
+          refetchAll();
+          void fetchOrders();
+        }}
+        canEditOrders={canEditOrders}
+        canWriteContacts={canWriteContacts}
       />
-
-      {canManageOrders && (
-        <ChipOrderSheet
-          orderId={orderSheetId}
-          open={orderSheetOpen}
-          onOpenChange={setOrderSheetOpen}
-          canEdit={canEditOrders && canEdit}
-          canWriteContacts={canWriteContacts}
-          onAssign={assignFromOrder}
-          onChanged={() => void fetchOrders()}
-        />
-      )}
 
       {/* Holder view — all chips of one person (name → numbers); a chip row
           opens the issue window of its apartment */}

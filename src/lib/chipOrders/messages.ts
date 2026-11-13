@@ -1,8 +1,10 @@
 import { CHIP_ORDER_REFUND_LABEL, CHIP_ORDER_TEST_LABEL, type ChipOrderNotifyKind, type ChipOrderRefundStatus } from './model';
 
-// The four messages a resident gets about a chip order — one wording for both
-// channels (the email wraps it in the standard frame, WhatsApp sends it as
-// text). Pure: the caller resolves dates and links.
+// The three messages a resident gets about a chip order — one wording for
+// both channels (the email wraps it in the standard frame, WhatsApp sends it
+// as text). Pure: the caller resolves dates and links. (The "approved" message
+// went with the approval step on 13/11/2026; the "received & paid" message now
+// carries the due date it used to send.)
 
 export interface ChipOrderMessageInput {
   kind: ChipOrderNotifyKind;
@@ -10,7 +12,7 @@ export interface ChipOrderMessageInput {
   orderNumber: number;
   apartments: string[];
   trackUrl: string;
-  /** Already formatted (he-IL, Asia/Jerusalem) — approved only. */
+  /** Already formatted (he-IL, Asia/Jerusalem) — paid only. */
   dueText?: string | null;
   /** From the settings — ready only. */
   pickupText?: string | null;
@@ -46,21 +48,12 @@ export function chipOrderMessage(m: ChipOrderMessageInput): ChipOrderMessage {
         subject: `הזמנת הצ׳יפים התקבלה — הזמנה ${m.orderNumber}`,
         lines: [
           `שלום ${m.fullName},`,
-          `${ref} התקבלה והתשלום נקלט. ההזמנה ממתינה לבדיקה של חברת הניהול.`,
+          `${ref} התקבלה והתשלום נקלט. ההזמנה נמצאת בהכנה.`,
+          ...(m.dueText ? [`מועד היעד להכנה: ${m.dueText}.`] : []),
+          'נעדכן אותך כשהצ׳יפים יהיו מוכנים לאיסוף.',
           ...(test
             ? []
             : invoiceUrl ? [`החשבונית / הקבלה: ${invoiceUrl}`] : ['החשבונית / הקבלה נשלחת אליך בנפרד מחברת הסליקה.']),
-          `מעקב אחרי ההזמנה: ${m.trackUrl}`,
-        ],
-      };
-    case 'approved':
-      return {
-        subject: `הזמנת הצ׳יפים אושרה — הזמנה ${m.orderNumber}`,
-        lines: [
-          `שלום ${m.fullName},`,
-          `${ref} אושרה ונמצאת בהכנה.`,
-          ...(m.dueText ? [`מועד היעד להכנה: ${m.dueText}.`] : []),
-          'נעדכן אותך כשהצ׳יפים יהיו מוכנים לאיסוף.',
           `מעקב אחרי ההזמנה: ${m.trackUrl}`,
         ],
       };

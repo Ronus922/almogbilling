@@ -1903,6 +1903,20 @@ COMMENT ON TABLE public.chip_orders IS 'Elevator-chip orders from the public pag
 
 
 --
+-- Name: COLUMN chip_orders.approved_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.approved_at IS 'History only: when the approval step (removed 13/11/2026) approved the order. Never written since; a non-null value on a paid row marks an order approved before the change.';
+
+
+--
+-- Name: COLUMN chip_orders.due_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.due_at IS '72 working hours (Sunday to Thursday, Israel time) from paid_at, set when the order is paid. Until 13/11/2026 it was set at the approval.';
+
+
+--
 -- Name: COLUMN chip_orders.is_test; Type: COMMENT; Schema: public; Owner: -
 --
 
@@ -8814,5 +8828,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261109063920'),
     ('20261112194633'),
     ('20261112222606'),
-    ('20261113133131')
+    ('20261113133131'),
+    ('20261113220605')
 ;
