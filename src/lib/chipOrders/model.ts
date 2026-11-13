@@ -18,7 +18,8 @@ export type ChipOrderStatus =
  *  no owner on file → unassigned; tenant / operator → document_review. */
 export type ChipOrderMatchStatus = 'matched' | 'review' | 'unassigned' | 'document_review';
 
-export type ChipOrderRefundStatus = 'refunded' | 'manual_required';
+/** not_required — a rejected TEST order: nothing was charged, Grow is never asked. */
+export type ChipOrderRefundStatus = 'refunded' | 'manual_required' | 'not_required';
 
 export type ChipOrderNotifyKind = 'paid' | 'approved' | 'ready' | 'rejected';
 
@@ -49,7 +50,19 @@ export const CHIP_ORDER_MATCH_LABEL: Record<ChipOrderMatchStatus, string> = {
 export const CHIP_ORDER_REFUND_LABEL: Record<ChipOrderRefundStatus, string> = {
   refunded: 'זוכה במלואו',
   manual_required: 'דורש זיכוי ידני',
+  not_required: 'לא נדרש (בדיקה)',
 };
+
+/** The label of a test order — the badge in /chips and the prefix of every
+ *  message it sends. */
+export const CHIP_ORDER_TEST_LABEL = 'בדיקה';
+
+/** Test mode: the header the order page sends its test-link token in (never
+ *  a URL the server logs). Checked by every public chip-order API call. */
+export const CHIP_ORDER_TEST_HEADER = 'x-chip-order-test';
+
+/** The strip pinned to the top of /chip-order in test mode. */
+export const CHIP_ORDER_TEST_BANNER = 'מצב בדיקה, אין חיוב';
 
 /** Roles that must attach a lease / management agreement and its end date. */
 export function needsLease(role: ChipOrderRole): boolean {
@@ -213,6 +226,8 @@ export interface ChipOrderListItem {
   chips_total: number;
   chips_linked: number;
   has_failed_notification: boolean;
+  /** A test-mode order — shown with a "בדיקה" badge, never counted or summed. */
+  is_test: boolean;
 }
 
 export interface ChipOrderItemDetail {
@@ -267,6 +282,7 @@ export interface ChipOrderDetail {
   refund_status: ChipOrderRefundStatus | null;
   refund_note: string | null;
   created_at: string;
+  is_test: boolean;
   items: ChipOrderItemDetail[];
   notifications: ChipOrderNotification[];
 }

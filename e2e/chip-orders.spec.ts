@@ -155,3 +155,154 @@ test.describe('public page', () => {
     expect(res?.status()).toBe(404);
   });
 });
+
+// ── Test mode (13/11/2026) ─────────────────────────────────────────────────
+// The settings switch makes a secret link; with it /chip-order opens without
+// Grow under a pinned "מצב בדיקה, אין חיוב" strip, the code arrives on
+// WhatsApp (the Green API stub, as in portal-login-otp.spec.ts), the payment
+// step is "סיים הזמנת בדיקה", and the order shows in /chips with a "בדיקה"
+// badge until "מחק הזמנת בדיקה". A wrong token or no token is the closed page
+// as before — no hint. The previous test-mode row is put back afterwards.
+test.describe.serial('test mode', () => {
+  const STUB = `http://127.0.0.1:${process.env.E2E_GREENAPI_PORT ?? 3110}`;
+  const phoneDigits = `05393${String(Date.now()).slice(-5)}`;
+  const phoneE164 = `+972${phoneDigits.slice(1)}`;
+  const state = { link: '', orderId: '', orderNumber: 0, hadRow: false, row: null as unknown };
+
+  test.beforeAll(async () => {
+    const prev = await pool.query(`select value from public.app_settings where key = 'chip_orders_test_mode'`);
+    state.hadRow = (prev.rowCount ?? 0) > 0;
+    state.row = prev.rows[0]?.value ?? null;
+  });
+
+  test.afterAll(async () => {
+    if (state.orderId) await pool.query(`delete from public.chip_orders where id = $1 and is_test`, [state.orderId]);
+    await pool.query(`delete from public.portal_otp_codes where phone_e164 = $1`, [phoneE164]);
+    if (state.hadRow) {
+      await pool.query(`update public.app_settings set value = $1::jsonb where key = 'chip_orders_test_mode'`, [JSON.stringify(state.row)]);
+    } else {
+      await pool.query(`delete from public.app_settings where key = 'chip_orders_test_mode'`);
+    }
+  });
+
+  test('settings: switching test mode on shows a secret link with a copy button', async ({ page }) => {
+    await page.goto('/settings');
+    const section = page.getByTestId('chip-order-test-mode');
+    await expect(section).toBeVisible();
+    const sw = section.getByRole('switch', { name: 'מצב בדיקה' });
+    if ((await sw.getAttribute('aria-checked')) === 'true') {
+      await sw.click();
+      await expect(sw).toHaveAttribute('aria-checked', 'false');
+    }
+    await sw.click();
+    const link = section.getByTestId('chip-order-test-link');
+    await expect(link).toBeVisible();
+    state.link = await link.inputValue();
+    expect(state.link).toMatch(/\/chip-order\?test=[A-Za-z0-9_-]{43}$/);
+    await expect(section.getByRole('button', { name: 'העתק' })).toBeVisible();
+  });
+
+  test('a wrong token (or none) is the closed page — no hint of test mode, every write 403', async ({ browser }) => {
+    const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+    const page = await ctx.newPage();
+    const token = new URL(state.link).searchParams.get('test')!;
+    const wrong = `${token.slice(0, -1)}${token.endsWith('A') ? 'B' : 'A'}`;
+    await page.goto(`/chip-order?test=${wrong}`);
+    await expect(page.getByTestId('chip-order-closed')).toBeVisible();
+    await expect(page.getByTestId('chip-order-test-banner')).toHaveCount(0);
+    await expect(page.locator('body')).not.toContainText('מצב בדיקה');
+    const r = await page.request.post('/api/public/chip-order/test-finish', {
+      headers: { 'x-chip-order-test': wrong }, data: { trackingToken: 'x'.repeat(43) },
+    });
+    expect(r.status()).toBe(403);
+    expect((await page.request.post('/api/public/chip-order/test-finish', { data: { trackingToken: 'x'.repeat(43) } })).status()).toBe(403);
+    await ctx.close();
+  });
+
+  test('with the link: the whole order, the code on WhatsApp, "סיים הזמנת בדיקה", the tracking page; messages say [בדיקה]', async ({ browser }) => {
+    await fetch(`${STUB}/__reset`, { method: 'POST' });
+    const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 390, height: 844 } });
+    const page = await ctx.newPage();
+    const res = await page.goto(new URL(state.link).pathname + new URL(state.link).search);
+    expect(res?.headers()['referrer-policy']).toBe('no-referrer');
+    await expect(page.getByTestId('chip-order-test-banner')).toHaveText('מצב בדיקה, אין חיוב');
+    await expect(page.getByTestId('chip-order-closed')).toHaveCount(0);
+
+    await page.getByLabel('שם מלא').fill('בודק מצב בדיקה');
+    await page.getByPlaceholder('05X-XXXXXXX').fill(phoneDigits);
+    await page.getByLabel('מייל').fill('test-mode.e2e@example.test');
+    await page.getByLabel('כתובת מגורים').fill('רחוב בדיקה 2');
+    await page.getByRole('radio', { name: 'בעלים' }).click();
+    await page.getByLabel('דירה 1').selectOption(APT);
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button', { name: /המשך לתשלום/ }).click();
+
+    const chatId = `${phoneE164.slice(1)}@c.us`;
+    let code = '';
+    await expect.poll(async () => {
+      const r = await fetch(`${STUB}/__messages?chatId=${encodeURIComponent(chatId)}`);
+      const { messages } = (await r.json()) as { messages: { message: string }[] };
+      code = messages.at(-1)?.message.match(/(\d{6})/)?.[1] ?? '';
+      return code;
+    }, { timeout: 15_000 }).toMatch(/^\d{6}$/);
+    await page.getByLabel('קוד אימות').fill(code);
+    await page.getByRole('button', { name: 'אימות והמשך לתשלום' }).click();
+
+    await expect(page.getByTestId('chip-order-test-step')).toBeVisible();
+    await expect(page.getByTestId('chip-order-payment')).toHaveCount(0);
+    await page.getByRole('button', { name: 'סיים הזמנת בדיקה' }).click();
+    await page.waitForURL(/\/chip-order\/track\//);
+    await expect(page.getByTestId('chip-order-track')).toContainText('שולם, ממתין לבדיקה');
+    await noSideScroll(page);
+
+    const row = (await pool.query<{ id: string; order_number: number; is_test: boolean; status: string; grow_process_id: string | null }>(
+      `select id, order_number, is_test, status, grow_process_id from public.chip_orders where phone_e164 = $1 order by created_at desc limit 1`,
+      [phoneE164],
+    )).rows[0]!;
+    state.orderId = row.id;
+    state.orderNumber = row.order_number;
+    expect(row).toMatchObject({ is_test: true, status: 'paid', grow_process_id: null });
+    // The "received & paid" WhatsApp goes out after the response — marked.
+    await expect.poll(async () => {
+      const r = await fetch(`${STUB}/__messages?chatId=${encodeURIComponent(chatId)}`);
+      const { messages } = (await r.json()) as { messages: { message: string }[] };
+      return messages.at(-1)?.message.startsWith('[בדיקה]') ?? false;
+    }, { timeout: 20_000 }).toBe(true);
+    await ctx.close();
+  });
+
+  test('/chips: the test order has the badge, is not counted, hides on demand, and "מחק הזמנת בדיקה" removes it', async ({ page }) => {
+    await page.goto('/chips?view=orders');
+    await page.getByRole('button', { name: 'הכל' }).click();
+    const row = page.getByTestId('chip-orders-table').getByRole('button').filter({ hasText: String(state.orderNumber) });
+    await expect(row).toBeVisible();
+    await expect(row.getByTestId('chip-order-test-badge')).toHaveText('בדיקה');
+    const realCount = await pool.query<{ n: number }>(`select count(*)::int as n from public.chip_orders where status <> 'pending_payment' and not is_test`);
+    await expect(page.getByRole('button', { name: 'הכל' })).toContainText(String(realCount.rows[0]!.n));
+
+    await page.getByTestId('chip-orders-toggle-tests').click();
+    await expect(row).toHaveCount(0);
+    await page.getByTestId('chip-orders-toggle-tests').click();
+    await expect(row).toBeVisible();
+
+    await row.click();
+    await page.getByTestId('chip-order-delete-test').click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'מחק הזמנת בדיקה' }).click();
+    await expect(row).toHaveCount(0);
+    expect((await pool.query(`select 1 from public.chip_orders where id = $1`, [state.orderId])).rowCount).toBe(0);
+    state.orderId = '';
+  });
+
+  test('switching test mode off kills the link', async ({ page, browser }) => {
+    await page.goto('/settings');
+    const sw = page.getByTestId('chip-order-test-mode').getByRole('switch', { name: 'מצב בדיקה' });
+    await expect(sw).toHaveAttribute('aria-checked', 'true');
+    await sw.click();
+    await expect(sw).toHaveAttribute('aria-checked', 'false');
+    const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+    const pub = await ctx.newPage();
+    await pub.goto(new URL(state.link).pathname + new URL(state.link).search);
+    await expect(pub.getByTestId('chip-order-closed')).toBeVisible();
+    await ctx.close();
+  });
+});

@@ -5,7 +5,7 @@
 ## זרימה
 
 1. **טופס** (`/chip-order`): שם מלא, טלפון נייד ישראלי, מייל, כתובת, „אני”: בעלים / שוכר / מפעיל. שורה לכל דירה (מספר דירה בלבד), כמות עד המקסימום, מחיר לשורה. לשוכר ולמפעיל חובה חוזה או הסכם ניהול (PDF או תמונה, עד 10MB) ותאריך סיום חוזה.
-2. **אימות טלפון**: ה-OTP של הפורטל (`issueCode` / `sendPortalCode`, אותה טבלה) עם `purpose='chip_order'`: SMS קודם, וכפתור „שליחה בוואטסאפ במקום”. קוד של הזמנה לא פותח את הפורטל, וקוד של הפורטל לא עובר כאן. האימות (`verifyCodeReserved`) שומר כל ניסיון באופן אטומי לפני ההשוואה: 5 ניסיונות לקוד גם כשהבקשות מגיעות במקביל. תקרה יומית לכל קודי ההזמנה יחד (300). אימות מוצלח = cookie חתום (AES-GCM, 30 דקות) שהשליחה דורשת, ונבדק **לפני** קריאת גוף הבקשה (תקרה של 40MB לחוזים בהזמנה).
+2. **אימות טלפון**: ה-OTP של הפורטל (`issueCode` / `sendPortalCode`, אותה טבלה) עם `purpose='chip_order'`: SMS קודם, וכפתור „שליחה בוואטסאפ במקום”. קוד של הזמנה לא פותח את הפורטל, וקוד של הפורטל לא עובר כאן. האימות הוא פונקציה אחת לפורטל ולהזמנות (`verifyCode`, מ-13/11/2026): כל ניסיון נרשם באופן אטומי לפני ההשוואה, כך שגם בניסיונות מקבילים נבדקים לכל היותר 5 ערכים לקוד, ואחריהם הקוד נשרף. תקרה יומית לכל קודי ההזמנה יחד (300). אימות מוצלח = cookie חתום (AES-GCM, 30 דקות) שהשליחה דורשת, ונבדק **לפני** קריאת גוף הבקשה (תקרה של 40MB לחוזים בהזמנה).
 3. **שליחה** (`POST /api/public/chip-order`): ולידציה בשרת, המחיר מחושב בשרת מההגדרות ונשמר כתמונת מצב בכל שורה, החוזים לבאקט הפרטי `chip-order-leases`, ההזמנה נוצרת כ-`pending_payment` (לא מופיעה ב-`/chips`), ונוצר תהליך תשלום ב-Grow (`createPaymentProcess`).
 4. **תשלום בתוך העמוד**: דף התשלום של Grow ב-iframe. ה-postMessage `payment` מעביר לעמוד המעקב.
 5. **אישור התשלום** (`/api/public/chip-order/grow/notify`): HMAC שלנו על ה-URL, התאמת `processId`/`processToken` לשמורים, ובדיקה מול Grow (`getPaymentProcessInfo`: `statusCode` 2 והסכום המדויק). רק אז `paid`. אחר כך `approveTransaction` ושליחת הודעת „התקבל ושולם”. **גיבוי:** אם ה-callback מתעכב, עמוד המעקב (`?paid=1`) מריץ את אותה בדיקה, לכל היותר פעם ב-15 שניות להזמנה (`src/lib/chipOrders/payment.ts`).
@@ -20,6 +20,29 @@
 - **שייך צ׳יפים**: פותח את `IssueChipSheet` ממולא מראש (דירה, מחזיק, `orderItem`). השרת בודק בתוך הטרנזקציה שהשורה שייכת לדירה, שההזמנה מאושרת, ושלא עוברים את הכמות. האירועים ב-`chip_events` כרגיל (`issued`, עם `order_item_id`).
 - **מוכן לאיסוף**: רק כשבכל שורה משויכים כל הצ׳יפים **הפעילים** (צ׳יפ שהושבת לא נספר, ואפשר להנפיק במקומו).
 - **דחה**: סיבה חובה. נחסם כל עוד יש להזמנה צ׳יפים פעילים (משביתים אותם קודם בחלון ההנפקה). הסטטוס משתנה, ואז מתבקש זיכוי מלא מ-Grow (`refundTransaction`). הצלחה (או 210, „כבר זוכה”) = `refunded`. כל תשובה אחרת (למשל 110: הכסף כבר הועבר וממתין לאישור של Grow) = `manual_required`, עם הודעת Grow ב-`refund_note`.
+
+## מצב בדיקה (13/11/2026)
+
+מאפשר לעבור על כל התהליך לפני שיש מזהי Grow. דייר שאין לו את הקישור לא יכול להזמין בלי לשלם.
+
+- **הדלקה:** `/settings` ← כרטיס „הזמנת צ׳יפים למעלית” ← „מצב בדיקה” (רק למי שיש `chips_orders_manage`; כבוי כברירת מחדל; השינוי נשמר מיד, לא דרך „שמור”). בהדלקה נוצר קישור `https://almog-haifa.co.il/chip-order?test=<token>` עם כפתור „העתק”. „צור קישור חדש” מבטל את הקודם, וכיבוי המתג מבטל את הקישור.
+- **הטוקן:** 32 בתים אקראיים (43 תווים). נשמר רק ה-SHA-256 שלו (`app_settings`, מפתח `chip_orders_test_mode`, נפרד מ-`chip_orders` שהטופס שומר בשלמותו), ונבדק בהשוואה בזמן קבוע. לכן הקישור מוצג רק ברגע שנוצר; אחרי רענון אפשר רק ליצור קישור חדש. בעמוד הוא עובר בכותרת `X-Chip-Order-Test` (לא ב-URL שנרשם), וכל נתיב בודק אותו מחדש: בקשת קוד, אימות קוד, שליחה, וסיום.
+- **בלי טוקן או עם טוקן שגוי:** בדיוק כמו קודם — „ההזמנות ייפתחו בקרוב”, בלי רמז, וכל נתיב כתיבה מחזיר 403.
+- **עם טוקן תקין:** העמוד נפתח גם בלי Grow וגם כשמתג הפתיחה כבוי, עם פס קבוע „מצב בדיקה, אין חיוב”. אימות הטלפון, העלאת החוזה, המחיר בשרת וה-rate limits — כמו בהזמנה אמיתית. ההזמנה נוצרת עם `is_test = true`, ו-Grow לא נקרא. במקום התשלום: „סיים הזמנת בדיקה” (`POST /api/public/chip-order/test-finish`) מסמן אותה „שולם, ממתין לבדיקה” בלי שדות Grow ובלי חשבונית, ועובר לעמוד המעקב. הנתיב הזה נוגע רק בהזמנה עם `is_test` שעדיין `pending_payment`.
+- **הודעות:** מייל ווואטסאפ אמיתיים בכל שינוי סטטוס. כל הודעה מתחילה ב-„[בדיקה]”, בלי שורת חשבונית; בדחייה — „לא בוצע חיוב, ולכן אין זיכוי”.
+- **ב-`/chips`:** תג „בדיקה” (סגול), כפתור „הסתר / הצג הזמנות בדיקה”, והזמנות בדיקה לא נכנסות לשום ספירה או סכום (כפתורי הסינון, המונה על הלשונית). כל הפעולות כרגיל. „דחה” בהזמנת בדיקה לא פונה ל-Grow, והזיכוי „לא נדרש (בדיקה)”.
+- **מחיקה:** „מחק הזמנת בדיקה” (בחלון ההזמנה) ו-„מחק את כל הזמנות הבדיקה” (ברשימה; כולל הזמנות בדיקה שלא סיימו), עם אישור. קודם קבצי החוזה, אחר כך השורות (דירות והודעות נמחקות איתן). צ׳יפים ששויכו נשארים במודול הצ׳יפים, רק `order_item_id` שלהם מתאפס; אם יש ביניהם פעילים — אזהרה להשבית אותם בחלון ההנפקה. המחיקה נעולה ל-`is_test`, כך שהזמנה רגילה לא נמחקת לעולם.
+- **DB:** `chip_orders.is_test` (מיגרציה `20261112222606`); הזמנת בדיקה „שולמה” בלי עסקת Grow, לעולם לא נושאת שדות Grow או חשבונית, ו-`refund_status = 'not_required'` מותר רק לה.
+- **לוגים:** הדפים `/chip-order*` שולחים `Referrer-Policy: no-referrer`, ו-nginx רושם את `/chip-order` בלי ה-query string (פורמט `billing_redacted` ב-`sites-available/almog-haifa.co.il`) — הטוקן לא נשמר ביומן.
+
+## ניקוי הזמנות שלא שולמו (13/11/2026)
+
+- `billing-chip-orders-purge.timer` — כל שעה בדקה 17 (`deploy/systemd/`), דרך `POST /api/cron/chip-orders-purge` (`x-cron-secret`, כמו ארכוב התקלות). הלוגיקה: `src/lib/chipOrders/cleanup.ts`.
+- נמחקת רק הזמנה אמיתית (`is_test = false`) שעדיין `pending_payment`, שלא שולמה, ושנוצרה לפני יותר מ-48 שעות.
+- להזמנה עם תהליך Grow בודקים קודם מול Grow (`getPaymentProcessInfo`): שולמה → עוברת ל„שולם” ונשלחת הודעת „התקבל ושולם”; Grow לא מוגדר או לא עונה → לא נמחקת בריצה הזו.
+- מחיקה מלאה: קודם קבצי החוזה בבאקט `chip-order-leases` (`removeObjectsStrict`), ואז השורה (דירות והודעות איתה), תחת נעילת השורה. קובץ שלא נמחק → ההזמנה נשארת לריצה הבאה, והריצה ממשיכה.
+- הזמנה ששולמה, בכל סטטוס, לא נמחקת לעולם.
+- כל ריצה כותבת ליומן את המספרים: `journalctl -u billing-chip-orders-purge` (שורת JSON: `scanned`, `deleted`, `movedToPaid`, `skippedGrowUnavailable`, `skippedGrowError`, `fileFailed`, `skippedOther`). הרצה ידנית: `sudo systemctl start billing-chip-orders-purge.service`.
 
 ## הודעות
 
@@ -67,8 +90,15 @@
 - Grow: `src/lib/grow/client.ts`
 - ציבורי: `src/app/chip-order/**`, `src/app/api/public/chip-order/**`, `src/components/chip-order/*`
 - צוות: `src/app/api/chip-orders/**`, `src/components/chips/ChipOrdersPanel.tsx`, `ChipOrderSheet.tsx`, `ChipOrderStatusPill.tsx`
-- בדיקות: `tests/chip-orders-model.test.ts`, `tests/chip-orders-grow.test.ts`, `tests/chip-orders-db.test.ts`, `e2e/chip-orders.spec.ts`
+- מצב בדיקה: `src/lib/chipOrders/testMode.ts`, `src/app/api/chip-orders/test-mode/route.ts`, `src/app/api/public/chip-order/test-finish/route.ts`, `src/components/settings/ChipOrderTestModeSection.tsx`
+- ניקוי: `src/lib/chipOrders/cleanup.ts`, `src/app/api/cron/chip-orders-purge/route.ts`, `src/app/api/chip-orders/test-orders/route.ts`, `scripts/run-chip-orders-purge.sh`, `deploy/systemd/billing-chip-orders-purge.{service,timer}`
+- בדיקות: `tests/chip-orders-model.test.ts`, `tests/chip-orders-grow.test.ts`, `tests/chip-orders-db.test.ts`, `tests/chip-orders-cleanup-db.test.ts`, `tests/chip-orders-test-mode-db.test.ts`, `tests/otp-verify-atomic.test.ts`, `tests/rate-limit-atomic.test.ts`, `tests/client-ip.test.ts`, `e2e/chip-orders.spec.ts`
 
 ## מחוץ להיקף (שלב א׳)
 
-Morning, SMS כערוץ הודעה, חיבור לפורטל, ניתוק אוטומטי בסיום חוזה (רק התאריך נשמר), דוחות. גם ניקוי הזמנות שלא שולמו (`pending_payment` נשאר בטבלה עם החוזה בבאקט) — לא נבנה.
+Morning, SMS כערוץ הודעה, חיבור לפורטל, ניתוק אוטומטי בסיום חוזה (רק התאריך נשמר), דוחות. (ניקוי הזמנות שלא שולמו — נבנה ב-13/11/2026, ראה למעלה.)
+
+## כתובת ה-IP ומגבלות הקצב (13/11/2026)
+
+- **`getClientIp`** (`src/lib/http/clientIp.ts`) — הפונקציה היחידה שגוזרת IP באפליקציה. סומכת רק על `X-Real-IP`, ש-nginx קובע מה-peer של ה-TCP (`proxy_set_header` דורס כל עותק של הלקוח). מאחורי Cloudflare, מודול ה-realip של nginx (`conf.d/cloudflare-realip.conf`) כבר הופך peer של Cloudflare ל-`CF-Connecting-IP` — כך שאותה כותרת נכונה בשני המצבים. **הדומיין כרגע DNS-only** (ה-proxy של Cloudflare כבוי), ולכן `CF-Connecting-IP` שהלקוח שולח לא נקרא. `X-Forwarded-For` לא נקרא לעולם (nginx מוסיף לסוף מה שהלקוח שלח). בלי כותרת או ערך שאינו IP → `unknown`.
+- **`checkRateLimit`** (`src/lib/auth/rateLimit.ts`) — אטומית: הספירה, ההחלטה והרישום בפקודת SQL אחת, תחת `pg_advisory_xact_lock` לכל bucket. אותה טבלה (`auth_rate_limits`), אותו חלון נע, אותם ספים.

@@ -5,7 +5,8 @@ import { createSession } from '@/lib/auth/session';
 import { getDefaultPermissions } from '@/lib/permissions/check';
 import { isValidPassword } from '@/lib/auth/passwordPolicy';
 import { hashInviteToken } from '@/lib/auth/inviteTokens';
-import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { ACCEPT_INVITE_MAX_PER_IP, AUTH_RATE_WINDOW_SEC } from '@/lib/constants';
 import { MODULES, isMatrixRole, type ModulePermission, type Role } from '@/lib/permissions/constants';
 import { writeAudit } from '@/lib/db/audit';
@@ -68,7 +69,7 @@ export async function POST(req: Request) {
   const password = typeof body.password === 'string' ? body.password : '';
 
   // Rate limit by IP to throttle invite-token brute forcing.
-  const { allowed, retryAfterSec } = await checkRateLimit('accept-invite:ip:' + clientIp(req), {
+  const { allowed, retryAfterSec } = await checkRateLimit('accept-invite:ip:' + getClientIp(req), {
     max: ACCEPT_INVITE_MAX_PER_IP,
     windowSec: AUTH_RATE_WINDOW_SEC,
   });

@@ -3,6 +3,8 @@ import { env } from '@/env';
 import { getChipOrderSettings } from '@/lib/db/appSettings';
 import { listOrderableApartments } from '@/lib/db/chipOrders';
 import { chipOrdersOpen } from '@/lib/chipOrders/server';
+import { isValidTestToken } from '@/lib/chipOrders/testMode';
+import { CHIP_ORDER_TEST_BANNER } from '@/lib/chipOrders/model';
 import { growMode } from '@/lib/grow/client';
 import { ChipOrderShell } from '@/components/chip-order/ChipOrderShell';
 import { ChipOrderForm } from '@/components/chip-order/ChipOrderForm';
@@ -14,14 +16,26 @@ export const dynamic = 'force-dynamic';
 // Grow is configured AND the settings switch is on (chipOrdersOpen). Open: the
 // order form with the apartment NUMBERS of the registry (never a name) and the
 // price rule; the price shown is recomputed by the server on submit.
-export default async function ChipOrderPage() {
+//
+// Test mode (13/11/2026): /chip-order?test=<token> with the CURRENT token of
+// the test link (src/lib/chipOrders/testMode.ts) opens the form even without
+// Grow and with the switch off, under a pinned "מצב בדיקה, אין חיוב" strip,
+// and its payment step is "סיים הזמנת בדיקה". A missing or wrong token is
+// exactly the page above — no hint that test mode exists.
+export default async function ChipOrderPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ test?: string | string[] }>;
+}) {
+  const sp = await searchParams;
+  const testToken = typeof sp.test === 'string' && (await isValidTestToken(sp.test)) ? sp.test : null;
   const settings = await getChipOrderSettings();
   const support = {
     supportPhone: env.NEXT_PUBLIC_PORTAL_SUPPORT_PHONE ?? null,
     supportEmail: env.NEXT_PUBLIC_PORTAL_SUPPORT_EMAIL ?? null,
   };
 
-  if (!chipOrdersOpen(settings)) {
+  if (!chipOrdersOpen(settings) && !testToken) {
     return (
       <ChipOrderShell {...support}>
         <section
@@ -42,8 +56,8 @@ export default async function ChipOrderPage() {
 
   const apartments = await listOrderableApartments();
   return (
-    <ChipOrderShell {...support}>
-      {growMode() === 'sandbox' && (
+    <ChipOrderShell {...support} banner={testToken ? CHIP_ORDER_TEST_BANNER : undefined}>
+      {!testToken && growMode() === 'sandbox' && (
         <p role="status" className="rounded-[11px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] p-3 text-center text-[13.5px] font-bold text-[var(--chip-amber-ink)]">
           סביבת בדיקות — התשלום בכרטיס בדיקה, אין חיוב אמיתי.
         </p>
@@ -57,6 +71,7 @@ export default async function ChipOrderPage() {
           maxPerApartment: settings.maxPerApartment,
         }}
         termsText={settings.termsText}
+        testToken={testToken}
       />
     </ChipOrderShell>
   );

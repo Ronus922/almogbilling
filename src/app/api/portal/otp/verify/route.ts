@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { parseJsonBody } from '@/lib/http/body';
 import { portalOtpVerifyBodySchema } from '@/lib/validation/requests';
-import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { toPortalE164 } from '@/lib/portal/phone';
 import { alertManagerAboutLockout } from '@/lib/portal/send';
 import { startPortalSession } from '@/lib/portal/session';
@@ -25,7 +26,9 @@ export const runtime = 'nodejs';
 // The wrong-code ceiling is counted on the code row itself (attempts), not in a
 // rate-limit bucket, so it cannot be spread across several live codes: asking for
 // a new code invalidates the previous one (verifyCode only ever looks at the
-// newest row).
+// newest row). Each guess RESERVES its attempt atomically before the compare
+// (13/11/2026), so even parallel guesses check at most PORTAL_OTP_MAX_ATTEMPTS
+// values per code; the one that uses up the last attempt sets the lockout.
 //
 // That ceiling alone does NOT cover a phone with no live code: once a code is
 // consumed or expired every guess answers `code_expired` and nothing counts it,
@@ -37,7 +40,7 @@ export async function POST(req: Request) {
   const body = await parseJsonBody(req, portalOtpVerifyBodySchema);
   if (!body.ok) return body.response;
 
-  const ip = clientIp(req);
+  const ip = getClientIp(req);
   const userAgent = req.headers.get('user-agent');
   const phoneE164 = toPortalE164(body.data.phone);
   if (!phoneE164) {
@@ -74,7 +77,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const outcome = await verifyCode(phoneE164, body.data.code);
+  const outcome = await verifyCode(phoneE164, body.data.code, 'portal_login', PORTAL_OTP_MAX_ATTEMPTS);
 
   // Resolved once, up front, and attached to EVERY failure event below. The
   // apartment card filters the log on apartment_numbers, so an event logged

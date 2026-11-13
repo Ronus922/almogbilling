@@ -1,8 +1,10 @@
 import 'server-only';
 import { randomInt } from 'node:crypto';
-import { query, queryOne } from '@/lib/db';
+import { queryOne } from '@/lib/db';
 import { hashPassword, verifyPassword } from '@/lib/auth/password';
-import { PORTAL_OTP_DIGITS, PORTAL_OTP_RESEND_COOLDOWN_SEC, PORTAL_OTP_TTL_MINUTES } from '@/lib/constants/portal';
+import {
+  PORTAL_OTP_DIGITS, PORTAL_OTP_MAX_ATTEMPTS, PORTAL_OTP_RESEND_COOLDOWN_SEC, PORTAL_OTP_TTL_MINUTES,
+} from '@/lib/constants/portal';
 
 // One-time codes for the owners portal. The 6 digits exist in exactly two
 // places: the WhatsApp message and this module's return value. What reaches the
@@ -67,71 +69,31 @@ export type VerifyOutcome =
   | { kind: 'ok' }
   /** Wrong digits. `attempts` is the running count against the newest code. */
   | { kind: 'invalid'; attempts: number }
-  /** Newest code is past its TTL, or was already used. */
+  /** Newest code is past its TTL, already used, or out of attempts. */
   | { kind: 'expired' }
   /** No code was ever issued to this phone. */
   | { kind: 'none' };
 
-interface CodeRow {
-  id: string;
-  code_hash: string;
-  attempts: number;
-  expired: boolean;
-  consumed: boolean;
-}
-
 /**
- * Checks `code` against the NEWEST code of this phone — not "any valid code":
- * asking for a second code must invalidate the first, or the 5-attempt ceiling
- * could be spread across several live codes. A wrong guess bumps `attempts` on
- * that row and returns the new count, which is what drives the lockout.
+ * The ONE verify of a one-time code — the owners portal and the chip-order
+ * page alike (13/11/2026; until then the portal compared first and counted
+ * after, so a burst of parallel guesses was compared in full). Each purpose
+ * keeps its own codes apart through `purpose`.
+ *
+ * Only the NEWEST code of this phone and purpose counts — asking for a new code
+ * invalidates the previous one, or the ceiling could be spread across several
+ * live codes. Every guess first RESERVES an attempt on that code in one UPDATE
+ * (`attempts < maxAttempts`, live, not consumed), and only a reserved guess is
+ * compared — so however the guesses are timed, at most `maxAttempts` values are
+ * ever checked against one code, and after that even the right digits are
+ * refused (`expired`: ask for a new code). A match then consumes the code with
+ * a guarded UPDATE, so of two correct guesses racing only one wins.
  */
 export async function verifyCode(
   phoneE164: string,
   code: string,
   purpose: OtpPurpose = 'portal_login',
-): Promise<VerifyOutcome> {
-  const row = await queryOne<CodeRow>(
-    `select id, code_hash, attempts,
-            (expires_at <= now()) as expired,
-            (consumed_at is not null) as consumed
-       from public.portal_otp_codes
-      where phone_e164 = $1 and purpose = $2
-      order by created_at desc
-      limit 1`,
-    [phoneE164, purpose],
-  );
-  if (!row) return { kind: 'none' };
-  if (row.expired || row.consumed) return { kind: 'expired' };
-
-  const ok = await verifyPassword(code, row.code_hash);
-  if (!ok) {
-    const bumped = await queryOne<{ attempts: number }>(
-      `update public.portal_otp_codes set attempts = attempts + 1
-        where id = $1 returning attempts`,
-      [row.id],
-    );
-    return { kind: 'invalid', attempts: bumped?.attempts ?? row.attempts + 1 };
-  }
-
-  await query(`update public.portal_otp_codes set consumed_at = now() where id = $1`, [row.id]);
-  return { kind: 'ok' };
-}
-
-/**
- * The chip-order page's verify (12/11/2026): every guess first RESERVES an
- * attempt on the newest live code in one UPDATE (`attempts < maxAttempts`),
- * and only a reserved guess is compared — so a burst of parallel guesses can
- * never check more than `maxAttempts` values per code, whatever their timing.
- * A match then consumes the code with a guarded UPDATE, so of two correct
- * guesses racing only one wins. The portal keeps verifyCode (its ceiling is the
- * lockout ladder).
- */
-export async function verifyCodeReserved(
-  phoneE164: string,
-  code: string,
-  purpose: OtpPurpose,
-  maxAttempts: number,
+  maxAttempts: number = PORTAL_OTP_MAX_ATTEMPTS,
 ): Promise<VerifyOutcome> {
   const reserved = await queryOne<{ id: string; code_hash: string; attempts: number }>(
     `update public.portal_otp_codes
@@ -146,11 +108,11 @@ export async function verifyCodeReserved(
     [phoneE164, purpose, maxAttempts],
   );
   if (!reserved) {
-    const newest = await queryOne<{ id: string }>(
+    const any = await queryOne<{ id: string }>(
       `select id from public.portal_otp_codes where phone_e164 = $1 and purpose = $2 limit 1`,
       [phoneE164, purpose],
     );
-    return newest ? { kind: 'expired' } : { kind: 'none' };
+    return any ? { kind: 'expired' } : { kind: 'none' };
   }
   const ok = await verifyPassword(code, reserved.code_hash);
   if (!ok) return { kind: 'invalid', attempts: reserved.attempts };

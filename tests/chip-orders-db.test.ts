@@ -27,7 +27,7 @@ vi.mock('@/lib/db', () => ({
 
 const db = await import('@/lib/db/chipOrders');
 const { issueChipGroups, deactivateChip } = await import('@/lib/db/chips');
-const { issueCode, verifyCode, verifyCodeReserved } = await import('@/lib/db/portal/otp');
+const { issueCode, verifyCode } = await import('@/lib/db/portal/otp');
 const { DEFAULT_CHIP_ORDER_SETTINGS } = await import('@/lib/chipOrders/model');
 
 const tag = String(Date.now()).slice(-6);
@@ -260,14 +260,14 @@ d('chip orders on the DB', () => {
     const fresh = await issueCode(p, null, 'chip_order');
     made.otp.push(fresh.id);
     const wrong = fresh.code === '000000' ? '111111' : '000000';
-    const burst = await Promise.all(Array.from({ length: 12 }, () => verifyCodeReserved(p, wrong, 'chip_order', 5)));
+    const burst = await Promise.all(Array.from({ length: 12 }, () => verifyCode(p, wrong, 'chip_order', 5)));
     expect(burst.filter((r) => r.kind === 'invalid')).toHaveLength(5);
     expect(burst.filter((r) => r.kind === 'expired')).toHaveLength(7);
-    expect((await verifyCodeReserved(p, fresh.code, 'chip_order', 5)).kind).toBe('expired');
+    expect((await verifyCode(p, fresh.code, 'chip_order', 5)).kind).toBe('expired');
     // A fresh code with the right digits passes exactly once.
     const good = await issueCode(p, null, 'chip_order');
     made.otp.push(good.id);
-    const twice = await Promise.all([verifyCodeReserved(p, good.code, 'chip_order', 5), verifyCodeReserved(p, good.code, 'chip_order', 5)]);
+    const twice = await Promise.all([verifyCode(p, good.code, 'chip_order', 5), verifyCode(p, good.code, 'chip_order', 5)]);
     expect(twice.filter((r) => r.kind === 'ok')).toHaveLength(1);
     // The portal's own code was untouched by all of it.
     expect((await verifyCode(p, portal.code)).kind).toBe('ok');

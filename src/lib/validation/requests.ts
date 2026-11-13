@@ -522,6 +522,16 @@ export const chipOrderSettingsBodySchema = z.object({
   ordersOpen: z.boolean(),
 });
 
+/** POST /api/chip-orders/test-mode — switch the test mode of /chip-order. */
+export const chipOrderTestModeBodySchema = z.object({
+  action: z.enum(['enable', 'regenerate', 'disable']),
+});
+
+/** POST /api/public/chip-order/test-finish — "סיים הזמנת בדיקה". */
+export const chipOrderTestFinishBodySchema = z.object({
+  trackingToken: z.string().regex(/^[A-Za-z0-9_-]{32,64}$/),
+});
+
 /** POST /api/chip-orders/[id]/approve */
 export const chipOrderApproveBodySchema = z.object({
   fields: z

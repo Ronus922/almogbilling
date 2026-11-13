@@ -1,6 +1,8 @@
 import 'server-only';
 import { buildObjectKey } from './objectKey';
-import { ensureBucket, uploadObject, deleteObjects, CHIP_ORDER_LEASES_BUCKET as BUCKET } from './server';
+import {
+  ensureBucket, uploadObject, deleteObjects, removeObjectsStrict, CHIP_ORDER_LEASES_BUCKET as BUCKET,
+} from './server';
 
 /**
  * Storage for chip-order leases (/chip-order). The bucket is PRIVATE and the
@@ -23,4 +25,10 @@ export async function uploadChipOrderLease(
 export async function removeChipOrderLeases(objectKeys: string[]): Promise<void> {
   if (objectKeys.length === 0) return;
   await deleteObjects(BUCKET, objectKeys);
+}
+
+/** Removal that reports the truth — for deleting an order (unpaid purge, test
+ *  orders): false = Storage refused, so the caller keeps the row and retries. */
+export async function removeChipOrderLeasesStrict(objectKeys: string[]): Promise<boolean> {
+  return removeObjectsStrict(BUCKET, objectKeys);
 }

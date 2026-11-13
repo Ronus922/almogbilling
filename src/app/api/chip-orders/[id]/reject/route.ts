@@ -8,7 +8,7 @@ import { writeAudit } from '@/lib/db/audit';
 import { isGrowConfigured, refundTransaction } from '@/lib/grow/client';
 import { notifyChipOrder } from '@/lib/chipOrders/notify';
 import { badOrderId, chipOrderErrorResponse } from '@/lib/chipOrders/routeErrors';
-import { CHIP_ORDER_REFUND_LABEL } from '@/lib/chipOrders/model';
+import { CHIP_ORDER_REFUND_LABEL, type ChipOrderRefundStatus } from '@/lib/chipOrders/model';
 import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -20,6 +20,8 @@ export const runtime = 'nodejs';
 // balance, refunds not enabled — leaves refund_status = manual_required with
 // Grow's own message, shown on the order. The rejection message (email +
 // WhatsApp) goes out after the refund outcome is known, so it states it.
+// A TEST order (13/11/2026) was never charged: Grow is not asked at all and
+// the refund status is not_required ("לא נדרש (בדיקה)").
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   let actor: Actor;
   try {
@@ -43,8 +45,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return chipOrderErrorResponse(err, 'POST /api/chip-orders/:id/reject');
   }
 
-  let refund: { status: 'refunded' | 'manual_required'; note: string | null };
-  if (!rejected.grow_transaction_id || !rejected.grow_transaction_token || !isGrowConfigured()) {
+  let refund: { status: ChipOrderRefundStatus; note: string | null };
+  if (rejected.is_test) {
+    refund = { status: 'not_required', note: null };
+  } else if (!rejected.grow_transaction_id || !rejected.grow_transaction_token || !isGrowConfigured()) {
     refund = { status: 'manual_required', note: 'אין פרטי עסקה של Grow להזמנה — נדרש זיכוי ידני' };
   } else {
     const r = await refundTransaction({

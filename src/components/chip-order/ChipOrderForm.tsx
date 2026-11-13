@@ -5,19 +5,22 @@
 //   2. phone verification — the portal's OTP (SMS first, WhatsApp fallback);
 //   3. payment inside the page — Grow's payment page in an iframe; its
 //      postMessage "payment" sends the browser to the tracking page.
+//      In test mode (a valid test link, 13/11/2026) step 3 is the button
+//      "סיים הזמנת בדיקה" instead — no Grow, no charge — and the link's token
+//      rides on every API call in the X-Chip-Order-Test header.
 // The browser's price is a preview: the server recomputes it from the settings.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { z } from 'zod';
-import { Building2, CreditCard, FileUp, Loader2, Minus, Plus, ShieldCheck, Trash2, User } from 'lucide-react';
+import { Building2, CreditCard, FileUp, FlaskConical, Loader2, Minus, Plus, ShieldCheck, Trash2, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { toPortalE164 } from '@/lib/portal/phone';
 import {
-  CHIP_ORDER_LIMITS, CHIP_ORDER_ROLE_LABEL, LEASE_FILE_ACCEPT, formatIls, needsLease, orderTotal, priceLine,
-  type ChipOrderRole,
+  CHIP_ORDER_LIMITS, CHIP_ORDER_ROLE_LABEL, CHIP_ORDER_TEST_HEADER, LEASE_FILE_ACCEPT, formatIls, needsLease,
+  orderTotal, priceLine, type ChipOrderRole,
 } from '@/lib/chipOrders/model';
 import { leaseFileProblem } from '@/lib/chipOrders/lease';
 import { ChipSection, INPUT_CLS, LABEL_CLS } from '@/components/chips/ChipSection';
@@ -37,7 +40,7 @@ interface Line {
   endDate: string;
 }
 
-type Step = 'form' | 'otp' | 'paying';
+type Step = 'form' | 'otp' | 'paying' | 'test';
 
 // Grow's payment iframe posts from one of these (R/postmessage).
 const GROW_ORIGINS = ['https://meshulam.co.il', 'https://secure.meshulam.co.il', 'https://sandbox.meshulam.co.il'];
@@ -52,13 +55,16 @@ function todayIso(): string {
 }
 
 export function ChipOrderForm({
-  apartments, pricing, termsText,
+  apartments, pricing, termsText, testToken = null,
 }: {
   apartments: string[];
   pricing: Pricing;
   termsText: string;
+  /** Test mode: the token of the test link (the server checked it). */
+  testToken?: string | null;
 }) {
   const router = useRouter();
+  const testHeaders: Record<string, string> = testToken ? { [CHIP_ORDER_TEST_HEADER]: testToken } : {};
   const seq = useRef(1);
   const [step, setStep] = useState<Step>('form');
   const [fullName, setFullName] = useState('');
@@ -84,6 +90,7 @@ export function ChipOrderForm({
 
   // Payment
   const [payment, setPayment] = useState<{ url: string; trackUrl: string; orderNumber: number; total: number } | null>(null);
+  const [testOrder, setTestOrder] = useState<{ trackingToken: string; trackUrl: string; orderNumber: number; total: number } | null>(null);
   const [payNote, setPayNote] = useState<string | null>(null);
 
   useEffect(() => {
@@ -156,7 +163,7 @@ export function ChipOrderForm({
     try {
       const res = await fetch('/api/public/chip-order/otp/request', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...testHeaders },
         body: JSON.stringify({ phone, ...(channel ? { channel } : {}) }),
       });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string; channel?: string; retryAfterSec?: number };
@@ -198,14 +205,20 @@ export function ChipOrderForm({
       }),
     );
     if (lease) lines.forEach((l, i) => { if (l.file) fd.append(`lease_${i}`, l.file); });
-    const res = await fetch('/api/public/chip-order', { method: 'POST', body: fd });
+    const res = await fetch('/api/public/chip-order', { method: 'POST', body: fd, headers: testHeaders });
     const data = (await res.json().catch(() => ({}))) as {
-      ok?: boolean; message?: string; needsOtp?: boolean;
+      ok?: boolean; message?: string; needsOtp?: boolean; test?: boolean; trackingToken?: string;
       paymentUrl?: string; trackUrl?: string; orderNumber?: number; total?: number;
     };
     if (res.status === 401 && data.needsOtp) {
       setVerifiedPhone(null);
       await requestCode();
+      return;
+    }
+    if (res.ok && data.ok && data.test && data.trackingToken && data.trackUrl) {
+      setTestOrder({ trackingToken: data.trackingToken, trackUrl: data.trackUrl, orderNumber: data.orderNumber ?? 0, total: data.total ?? total });
+      setStep('test');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
     if (!res.ok || !data.ok || !data.paymentUrl || !data.trackUrl) throw new Error(data.message ?? 'שליחת ההזמנה נכשלה');
@@ -236,7 +249,7 @@ export function ChipOrderForm({
     try {
       const res = await fetch('/api/public/chip-order/otp/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...testHeaders },
         body: JSON.stringify({ phone, code }),
       });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
@@ -248,6 +261,52 @@ export function ChipOrderForm({
     } finally {
       setBusy(false);
     }
+  }
+
+  // "סיים הזמנת בדיקה" — the server marks the TEST order paid (no Grow) and
+  // the browser goes to its tracking page, as after a real payment.
+  async function finishTestOrder() {
+    if (!testOrder) return;
+    setBusy(true);
+    setServerError(null);
+    try {
+      const res = await fetch('/api/public/chip-order/test-finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...testHeaders },
+        body: JSON.stringify({ trackingToken: testOrder.trackingToken }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+      if (!res.ok || !data.ok) throw new Error(data.message ?? 'סיום הזמנת הבדיקה נכשל');
+      router.push(new URL(testOrder.trackUrl).pathname);
+    } catch (err) {
+      setServerError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  // ── Test step (test mode only) ───────────────────────────────────────────
+  if (step === 'test' && testOrder) {
+    return (
+      <ChipSection title={`הזמנת בדיקה — הזמנה ${testOrder.orderNumber}`} sub={`סה״כ ${formatIls(testOrder.total)} · אין חיוב`} icon={FlaskConical} iconTone="amber">
+        <div className="flex flex-col gap-3" data-testid="chip-order-test-step">
+          <p className="text-[14px] font-semibold text-[var(--chip-ink-muted)]">
+            זו הזמנת בדיקה: אין דף תשלום ואין חיוב. הכפתור מסמן את ההזמנה „שולם, ממתין לבדיקה” ושולח את ההודעות, כמו אחרי תשלום אמיתי.
+          </p>
+          {serverError && (
+            <p role="alert" className="rounded-[11px] border border-red-400 bg-red-50 p-4 text-[14px] font-semibold text-red-700">{serverError}</p>
+          )}
+          <Button
+            type="button"
+            onClick={() => void finishTestOrder()}
+            disabled={busy}
+            className="h-[52px] w-full gap-2 rounded-[13px] bg-[var(--chip-brand)] px-4 text-[16px] font-bold text-white hover:bg-[var(--chip-brand-hover)] disabled:opacity-60"
+          >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            סיים הזמנת בדיקה
+          </Button>
+        </div>
+      </ChipSection>
+    );
   }
 
   // ── Payment step ─────────────────────────────────────────────────────────

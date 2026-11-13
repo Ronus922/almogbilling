@@ -1,0 +1,13 @@
+[Unit]
+Description=Run billing-chip-orders-purge.service every hour
+
+[Timer]
+# At minute 17 of every hour — away from the :00 crowd of other timers.
+OnCalendar=*-*-* *:17:00
+# Catch up a run missed while the server was down.
+Persistent=true
+AccuracySec=1min
+Unit=billing-chip-orders-purge.service
+
+[Install]
+WantedBy=timers.target

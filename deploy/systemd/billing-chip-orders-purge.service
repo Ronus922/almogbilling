@@ -1,0 +1,29 @@
+# Hourly purge of unpaid chip orders (13/11/2026). Real orders still unpaid 48
+# hours after they were created are deleted with their lease files (bucket
+# chip-order-leases) — the files first, then the row. An order with a Grow
+# payment process is checked against Grow's API first: paid → moved to "paid";
+# Grow not configured / not answering → kept for a later run. Test orders and
+# paid orders (any status) are never touched. Logic:
+# src/lib/chipOrders/cleanup.ts, route /api/cron/chip-orders-purge.
+#
+# Install:
+#   sudo cp deploy/systemd/billing-chip-orders-purge.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now billing-chip-orders-purge.timer
+#   systemctl list-timers billing-chip-orders-purge.timer
+# Manual run + log (the JSON line = the run's counts):
+#   sudo systemctl start billing-chip-orders-purge.service && journalctl -u billing-chip-orders-purge -n 20
+[Unit]
+Description=ALMOG billing — purge chip orders unpaid for 48 hours (one-shot)
+After=network.target billing.service
+Wants=billing.service
+OnFailure=billing-alert@%n.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=devops-www
+# systemd reads this as root and injects BILLING_CRON_SECRET into the env —
+# the same pattern billing.service uses. The script never reads the file.
+EnvironmentFile=/etc/billing/billing.env
+ExecStart=/var/www/billing/scripts/run-chip-orders-purge.sh
+TimeoutStartSec=5min

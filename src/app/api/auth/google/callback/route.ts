@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
 import { queryOne } from '@/lib/db';
 import { createSession } from '@/lib/auth/session';
-import { checkRateLimit, clientIp } from '@/lib/auth/rateLimit';
+import { checkRateLimit } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { getGoogleConfig, createGoogleClient, appUrl } from '@/lib/auth/google';
 import { AUTH_RATE_WINDOW_SEC, LOGIN_MAX_PER_IP } from '@/lib/constants';
 import { openDriveState } from '@/lib/finance/drive-oauth';
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
   };
 
   // Coarse abuse cap on the callback by IP (independent of the password buckets).
-  const rl = await checkRateLimit('google:ip:' + clientIp(req), {
+  const rl = await checkRateLimit('google:ip:' + getClientIp(req), {
     max: LOGIN_MAX_PER_IP,
     windowSec: AUTH_RATE_WINDOW_SEC,
   });

@@ -141,7 +141,7 @@ const supplierFile = {
 };
 
 function req(url: string, ip = '10.0.0.7') {
-  return new NextRequest(url, { headers: { 'x-forwarded-for': `${ip}, 127.0.0.1` } });
+  return new NextRequest(url, { headers: { 'x-real-ip': ip } });
 }
 
 beforeEach(() => {

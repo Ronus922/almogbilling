@@ -1,7 +1,7 @@
 import 'server-only';
 import { queryOne } from '@/lib/db';
 import { writeAudit } from '@/lib/db/audit';
-import { clientIp } from '@/lib/auth/rateLimit';
+import { getClientIp } from '@/lib/http/clientIp';
 import { logger } from '@/lib/logger';
 
 /**
@@ -86,7 +86,7 @@ function accessMetadata(req: Request, actor: FileViewActor | PortalFileViewer, f
           apartment_numbers: portal.apartmentNumbers,
         }
       : { actor_name: staff?.full_name ?? staff?.username ?? null }),
-    ip: clientIp(req),
+    ip: getClientIp(req),
   };
 }
 

@@ -88,6 +88,7 @@ export function ChipsPageClient({
     canManageOrders && searchParams.get('view') === 'orders' ? 'orders' : 'chips',
   );
   const [orders, setOrders] = useState<ChipOrderListItem[]>([]);
+  const [unfinishedTests, setUnfinishedTests] = useState(0);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [orderSheetId, setOrderSheetId] = useState<string | null>(null);
   const [orderSheetOpen, setOrderSheetOpen] = useState(false);
@@ -100,8 +101,9 @@ export function ChipsPageClient({
     try {
       const res = await fetch('/api/chip-orders', { credentials: 'include' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { items?: ChipOrderListItem[] };
+      const data = (await res.json()) as { items?: ChipOrderListItem[]; unfinishedTestOrders?: number };
       setOrders(Array.isArray(data.items) ? data.items : []);
+      setUnfinishedTests(typeof data.unfinishedTestOrders === 'number' ? data.unfinishedTestOrders : 0);
     } catch (err) {
       toast.error(`טעינת ההזמנות נכשלה: ${(err as Error).message}`);
     } finally {
@@ -113,7 +115,10 @@ export function ChipsPageClient({
     void fetchOrders();
   }, [fetchOrders]);
 
-  const openOrdersInProgress = orders.filter((o) => o.status === 'paid' || o.status === 'approved' || o.status === 'ready').length;
+  // Test orders are never counted (13/11/2026).
+  const openOrdersInProgress = orders.filter(
+    (o) => !o.is_test && (o.status === 'paid' || o.status === 'approved' || o.status === 'ready'),
+  ).length;
 
   function switchView(next: 'chips' | 'orders') {
     setView(next);
@@ -341,7 +346,14 @@ export function ChipsPageClient({
       )}
 
       {view === 'orders' && (
-        <ChipOrdersPanel items={orders} loading={ordersLoading} onOpen={openOrder} />
+        <ChipOrdersPanel
+          items={orders}
+          loading={ordersLoading}
+          onOpen={openOrder}
+          canEdit={canEditOrders}
+          unfinishedTests={unfinishedTests}
+          onChanged={() => void fetchOrders()}
+        />
       )}
 
       {view === 'chips' && (<>
