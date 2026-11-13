@@ -29,7 +29,7 @@ import {
   type ChipOrderApprovalFields, type ChipOrderDetail, type ChipOrderItemDetail, type ChipOrderMatchStatus,
 } from '@/lib/chipOrders/model';
 import { ChipSection, LABEL_CLS } from './ChipSection';
-import { ChipOrderStatusPill, ChipOrderTestBadge } from './ChipOrderStatusPill';
+import { ChipOrderStatusPill, ChipOrderTestBadge, ChipOrderUnverifiedPhoneBadge } from './ChipOrderStatusPill';
 
 export interface AssignRequest {
   orderId: string;
@@ -233,6 +233,7 @@ export function ChipOrderSheet({
                 {/* Status strip */}
                 <div className="flex flex-wrap items-center gap-2 rounded-[13px] border border-[var(--chip-border)] bg-[var(--chip-panel)] p-4">
                   {order.is_test && <ChipOrderTestBadge />}
+                  {!order.phone_verified && <ChipOrderUnverifiedPhoneBadge />}
                   <ChipOrderStatusPill status={order.status} overdue={overdue} />
                   {order.due_at && order.status === 'approved' && (
                     <span className={cn('text-[13px] font-bold', overdue ? 'text-[var(--chip-red-ink)]' : 'text-[var(--chip-ink-muted)]')}>

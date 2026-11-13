@@ -1,6 +1,8 @@
-import { AlarmClock, FlaskConical } from 'lucide-react';
+import { AlarmClock, FlaskConical, PhoneOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { CHIP_ORDER_STATUS_LABEL, CHIP_ORDER_TEST_LABEL, type ChipOrderStatus } from '@/lib/chipOrders/model';
+import {
+  CHIP_ORDER_PHONE_UNVERIFIED_LABEL, CHIP_ORDER_STATUS_LABEL, CHIP_ORDER_TEST_LABEL, type ChipOrderStatus,
+} from '@/lib/chipOrders/model';
 
 // One status vocabulary for the orders list, the order panel and the public
 // tracking page — chips-skin tone families (DESIGN "מודול צ׳יפים").
@@ -39,6 +41,21 @@ export function ChipOrderTestBadge() {
     >
       <FlaskConical className="h-3.5 w-3.5" />
       {CHIP_ORDER_TEST_LABEL}
+    </span>
+  );
+}
+
+/** "טלפון לא אומת" — a test order created with "דלג על אימות (מצב בדיקה)"
+ *  (13/11/2026): nobody proved the phone belongs to the orderer. Amber, with
+ *  an icon, next to the "בדיקה" badge. */
+export function ChipOrderUnverifiedPhoneBadge() {
+  return (
+    <span
+      data-testid="chip-order-phone-unverified"
+      className="inline-flex h-[24px] shrink-0 items-center gap-1 whitespace-nowrap rounded-[7px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] px-2.5 text-[12px] font-bold text-[var(--chip-amber-ink)]"
+    >
+      <PhoneOff className="h-3.5 w-3.5" />
+      {CHIP_ORDER_PHONE_UNVERIFIED_LABEL}
     </span>
   );
 }

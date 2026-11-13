@@ -125,7 +125,11 @@ describe('chip-order OTP send — one canonical phone, SMS through 019, WhatsApp
 
     expect(res.status).toBe(502);
     const body = (await res.json()) as { ok: boolean; message: string };
-    expect(body).toEqual({ ok: false, message: GENERIC_FAILURE });
+    // retryAfterSec = the resend cooldown the issued code row just started:
+    // the page waits it out before "שליחת הקוד בוואטסאפ במקום" (13/11/2026 —
+    // offered at once, that request always met the cooldown and got a 429).
+    expect(body).toEqual({ ok: false, retryAfterSec: 45, message: GENERIC_FAILURE });
+    expect(res.headers.get('retry-after')).toBe('45');
     expect(JSON.stringify(body)).not.toMatch(/019|קרדיט|credit/i);
     expect(h.loggerError).toHaveBeenCalledWith('[portal] code send failed (sms)', {
       error: '019sms (4): אין מספיק קרדיט בחשבון 019',

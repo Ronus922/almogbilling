@@ -14,7 +14,7 @@ import { CHIP_ORDER_LIMITS } from '@/lib/chipOrders/model';
 import {
   PORTAL_OTP_DAY_WINDOW_SEC, PORTAL_OTP_HOUR_WINDOW_SEC, PORTAL_OTP_IP_WINDOW_SEC, PORTAL_OTP_MAX_PER_DAY,
   PORTAL_OTP_MAX_PER_HOUR, PORTAL_OTP_MAX_PER_IP, PORTAL_OTP_MAX_REQUESTS_PER_WINDOW,
-  PORTAL_OTP_REQUEST_WINDOW_SEC, PORTAL_OTP_TOO_MANY_MESSAGE,
+  PORTAL_OTP_REQUEST_WINDOW_SEC, PORTAL_OTP_RESEND_COOLDOWN_SEC, PORTAL_OTP_TOO_MANY_MESSAGE,
 } from '@/lib/constants/portal';
 
 export const runtime = 'nodejs';
@@ -87,9 +87,11 @@ export async function POST(req: Request) {
   const channel = body.data.channel ?? resolveDefaultChannel();
   const sent = await sendPortalCode(phoneE164, code, channel, req.headers.get('host'), 'chip_order');
   if (!sent.ok) {
+    // The code row above already started the resend cooldown; the page waits
+    // it out before it offers "שליחת הקוד בוואטסאפ במקום" (13/11/2026).
     return NextResponse.json(
-      { ok: false, message: 'שליחת הקוד נכשלה. נסו שוב בעוד רגע.' },
-      { status: 502, headers: H },
+      { ok: false, retryAfterSec: PORTAL_OTP_RESEND_COOLDOWN_SEC, message: 'שליחת הקוד נכשלה. נסו שוב בעוד רגע.' },
+      { status: 502, headers: { ...H, 'Retry-After': String(PORTAL_OTP_RESEND_COOLDOWN_SEC) } },
     );
   }
   return NextResponse.json({ ok: true, sent: true, channel }, { headers: H });

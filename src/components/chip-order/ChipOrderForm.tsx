@@ -87,6 +87,9 @@ export function ChipOrderForm({
   // portal's own "שלח בוואטסאפ במקום").
   const [otpChannel, setOtpChannel] = useState<'sms' | 'whatsapp' | null>(null);
   const [offerWhatsApp, setOfferWhatsApp] = useState(false);
+  // Test mode: "דלג על אימות (מצב בדיקה)" appears once a code was asked for
+  // (whatever came of it) — next to the code step, never on a real order.
+  const [codeAsked, setCodeAsked] = useState(false);
 
   // Payment
   const [payment, setPayment] = useState<{ url: string; trackUrl: string; orderNumber: number; total: number } | null>(null);
@@ -160,6 +163,7 @@ export function ChipOrderForm({
   async function requestCode(channel?: 'whatsapp') {
     setBusy(true);
     setServerError(null);
+    setCodeAsked(true);
     try {
       const res = await fetch('/api/public/chip-order/otp/request', {
         method: 'POST',
@@ -169,8 +173,16 @@ export function ChipOrderForm({
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string; channel?: string; retryAfterSec?: number };
       if (!res.ok || !data.ok) {
         if (data.retryAfterSec) setCooldown(data.retryAfterSec);
-        // A send that failed outright (not a ceiling) may still go out on WhatsApp.
-        setOfferWhatsApp(res.status === 502 && channel !== 'whatsapp');
+        // A send that failed outright (not a ceiling) may still go out on
+        // WhatsApp — once the resend cooldown that failed send started is
+        // over (13/11/2026: offered at once, the WhatsApp request always met
+        // that 45-second cooldown, got a 429, and the button disappeared).
+        // A request refused only by that cooldown keeps the button (and the
+        // WhatsApp request itself always offers it again).
+        const cooldownOnly = res.status === 429 && Boolean(data.retryAfterSec);
+        setOfferWhatsApp((prev) =>
+          res.status === 502 ? channel !== 'whatsapp' : cooldownOnly && (prev || channel === 'whatsapp'),
+        );
         throw new Error(data.message ?? 'שליחת הקוד נכשלה');
       }
       setOfferWhatsApp(false);
@@ -254,6 +266,31 @@ export function ChipOrderForm({
       });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
       if (!res.ok || !data.ok) throw new Error(data.message ?? 'האימות נכשל');
+      setVerifiedPhone(toPortalE164(phone));
+      await submitOrder();
+    } catch (err) {
+      setServerError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // "דלג על אימות (מצב בדיקה)" — test link only. The server accepts the skip
+  // only with the valid test token (and checks it again on the submit); the
+  // order is then a test order stored "טלפון לא אומת".
+  async function skipVerification() {
+    setServerError(null);
+    if (!validate()) return;
+    setBusy(true);
+    try {
+      const res = await fetch('/api/public/chip-order/otp/skip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...testHeaders },
+        body: JSON.stringify({ phone }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+      if (!res.ok || !data.ok) throw new Error(data.message ?? 'הדילוג על האימות נכשל');
+      setOfferWhatsApp(false);
       setVerifiedPhone(toPortalE164(phone));
       await submitOrder();
     } catch (err) {
@@ -554,11 +591,25 @@ export function ChipOrderForm({
             <div role="alert" className="flex flex-col gap-2 rounded-[11px] border border-red-400 bg-red-50 p-4 text-[14px] font-semibold text-red-700">
               {serverError}
               {offerWhatsApp && (
-                <button type="button" disabled={busy} onClick={() => void requestCode('whatsapp')}
+                <button type="button" disabled={busy || cooldown > 0} onClick={() => void requestCode('whatsapp')}
+                  data-testid="chip-order-otp-whatsapp-fallback"
                   className="min-h-[44px] w-fit text-[13.5px] font-bold text-[var(--chip-brand-ink)] underline underline-offset-2 disabled:opacity-50">
-                  שליחת הקוד בוואטסאפ במקום
+                  {cooldown > 0 ? `שליחת הקוד בוואטסאפ במקום — בעוד ${cooldown} שניות` : 'שליחת הקוד בוואטסאפ במקום'}
                 </button>
               )}
+            </div>
+          )}
+
+          {testToken && (step === 'otp' || codeAsked) && (
+            <div className="flex flex-col gap-2 rounded-[13px] border border-dashed border-[var(--chip-violet-border)] bg-[var(--chip-violet-soft)] p-4">
+              <p className="text-[13px] font-semibold text-[var(--chip-violet-ink)]">
+                מצב בדיקה: אפשר להמשיך בלי קוד. ההזמנה תסומן „טלפון לא אומת”.
+              </p>
+              <button type="button" disabled={busy} onClick={() => void skipVerification()}
+                data-testid="chip-order-skip-verification"
+                className="min-h-[44px] w-fit rounded-[11px] border border-[var(--chip-violet-border)] bg-white px-4 py-2 text-[14px] font-bold text-[var(--chip-violet-ink)] transition-colors hover:bg-[var(--chip-violet-soft)] disabled:opacity-50">
+                דלג על אימות (מצב בדיקה)
+              </button>
             </div>
           )}
 

@@ -69,6 +69,11 @@ const PUBLIC = new Set([
   // test-link token (hashed in app_settings, constant-time compare); it can
   // only mark a TEST order (is_test) paid, never a real one.
   'src/app/api/public/chip-order/test-finish/route.ts',
+  // "דלג על אימות (מצב בדיקה)" (13/11/2026) — 403 without the CURRENT
+  // test-link token, also when the page is open to the public. It only seals
+  // the typed phone into a skip cookie that the submit honours together with
+  // the same token, for a TEST order stored phone_verified = false.
+  'src/app/api/public/chip-order/otp/skip/route.ts',
 ]);
 
 run('check-api-auth', async () => {
