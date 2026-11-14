@@ -24,7 +24,7 @@ jobs:
         # Pinned: postgres 15.20 (image of 12/11/2026) writes a random
         # pg_attver=<n> into every column's attoptions, so two schema dumps
         # never match and the parity check fails. 15.19 is the last good one.
-        image: postgres:15.19
+        image: postgres:15.20
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: billing
@@ -89,7 +89,7 @@ jobs:
     services:
       db:
         # Same pin as check:all, so both jobs run on one known postgres.
-        image: postgres:15.19
+        image: postgres:15.20
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: billing
