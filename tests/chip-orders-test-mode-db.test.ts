@@ -71,8 +71,9 @@ const H = (token?: string): Record<string, string> => ({ 'x-real-ip': ips.a, ...
 async function submitOrder(token?: string): Promise<Response> {
   const fd = new FormData();
   fd.append('order', JSON.stringify({
-    fullName: 'בדיקה בודקת', phone: '0539400001', email: 'test-mode@example.test', address: 'הרצל 1 חיפה',
-    role: 'owner', acceptTerms: true, lines: [{ apartment: APT, chipsCount: 2, leaseEndDate: null }],
+    phone: '0539400001', email: 'test-mode@example.test',
+    addressStreet: 'הרצל 1', addressCity: 'חיפה', addressZip: '3300000', acceptTerms: true,
+    rows: [{ role: 'owner', fullName: 'בדיקה בודקת', apartment: APT, chipsCount: 2, phone: '0539400001', email: '', leaseEndDate: null }],
   }));
   // The route refuses a body without a Content-Length — serialize it first.
   const encoded = new Response(fd);

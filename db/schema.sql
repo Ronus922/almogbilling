@@ -3,6 +3,7 @@
 --
 
 
+
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -1786,6 +1787,47 @@ CREATE TABLE public.chip_events (
 
 
 --
+-- Name: chip_order_holders; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.chip_order_holders (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    order_id uuid NOT NULL,
+    item_id uuid NOT NULL,
+    "position" integer DEFAULT 0 NOT NULL,
+    source text DEFAULT 'order'::text NOT NULL,
+    role text NOT NULL,
+    full_name text NOT NULL,
+    phone text,
+    email text,
+    chips_count integer DEFAULT 0 NOT NULL,
+    lease_file_key text,
+    lease_file_name text,
+    lease_file_mime text,
+    lease_file_size integer,
+    lease_end_date date,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chip_order_holders_chips_count_check CHECK (((chips_count >= 0) AND (chips_count <= 50))),
+    CONSTRAINT chip_order_holders_email_check CHECK (((email IS NULL) OR ((length(btrim(email)) >= 3) AND (length(btrim(email)) <= 254)))),
+    CONSTRAINT chip_order_holders_full_name_check CHECK (((length(btrim(full_name)) >= 2) AND (length(btrim(full_name)) <= 120))),
+    CONSTRAINT chip_order_holders_lease_file_size_check CHECK (((lease_file_size IS NULL) OR (lease_file_size > 0))),
+    CONSTRAINT chip_order_holders_lease_pair_check CHECK (((lease_file_key IS NULL) = (lease_file_name IS NULL))),
+    CONSTRAINT chip_order_holders_order_row_check CHECK (((source = 'staff'::text) OR ((chips_count >= 1) AND (phone IS NOT NULL)))),
+    CONSTRAINT chip_order_holders_phone_check CHECK (((phone IS NULL) OR ((length(btrim(phone)) >= 5) AND (length(btrim(phone)) <= 32)))),
+    CONSTRAINT chip_order_holders_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text, 'other'::text, 'staff'::text]))),
+    CONSTRAINT chip_order_holders_source_check CHECK ((source = ANY (ARRAY['order'::text, 'staff'::text])))
+);
+
+
+--
+-- Name: TABLE chip_order_holders; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.chip_order_holders IS 'One person of a chip order (a row of /chip-order, or a holder the staff added in the issue window). Price stays on chip_order_items (per apartment); a renter row keeps its lease here.';
+
+
+--
 -- Name: chip_order_items; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1878,9 +1920,18 @@ CREATE TABLE public.chip_orders (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     is_test boolean DEFAULT false NOT NULL,
     phone_verified boolean DEFAULT true NOT NULL,
+    address_street text,
+    address_city text,
+    address_zip text,
+    renter_terms_accepted_at timestamp with time zone,
+    internal_note text,
     CONSTRAINT chip_orders_address_check CHECK (((length(btrim(address)) >= 2) AND (length(btrim(address)) <= 300))),
+    CONSTRAINT chip_orders_address_city_check CHECK (((address_city IS NULL) OR ((length(btrim(address_city)) >= 2) AND (length(btrim(address_city)) <= 100)))),
+    CONSTRAINT chip_orders_address_street_check CHECK (((address_street IS NULL) OR ((length(btrim(address_street)) >= 2) AND (length(btrim(address_street)) <= 200)))),
+    CONSTRAINT chip_orders_address_zip_check CHECK (((address_zip IS NULL) OR (address_zip ~ '^[0-9]{7}$'::text))),
     CONSTRAINT chip_orders_email_check CHECK (((length(btrim(email)) >= 3) AND (length(btrim(email)) <= 254))),
     CONSTRAINT chip_orders_full_name_check CHECK (((length(btrim(full_name)) >= 2) AND (length(btrim(full_name)) <= 120))),
+    CONSTRAINT chip_orders_internal_note_check CHECK (((internal_note IS NULL) OR (length(internal_note) <= 2000))),
     CONSTRAINT chip_orders_paid_fields_check CHECK (((status = 'pending_payment'::text) OR ((paid_at IS NOT NULL) AND ((grow_transaction_id IS NOT NULL) OR is_test)))),
     CONSTRAINT chip_orders_phone_e164_check CHECK ((phone_e164 ~ '^\+9725[0-9]{8}$'::text)),
     CONSTRAINT chip_orders_phone_verified_check CHECK ((phone_verified OR is_test)),
@@ -1931,6 +1982,20 @@ COMMENT ON COLUMN public.chip_orders.phone_verified IS 'False only on a test ord
 
 
 --
+-- Name: COLUMN chip_orders.renter_terms_accepted_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.renter_terms_accepted_at IS 'When the orderer ticked "השוכר מתחייב להחזיר את הכרטיס…" — set only when the order has a renter row.';
+
+
+--
+-- Name: COLUMN chip_orders.internal_note; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.internal_note IS 'The staff''s internal note on the order (issue window, "פירוט עסקה והערות"). Never shown to the orderer.';
+
+
+--
 -- Name: chip_orders_order_number_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -1977,6 +2042,7 @@ CREATE TABLE public.chips (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     order_item_id uuid,
+    order_holder_id uuid,
     CONSTRAINT chips_app_invite_status_check CHECK (((app_invite_status IS NULL) OR (app_invite_status = ANY (ARRAY['pending'::text, 'active'::text, 'expired'::text])))),
     CONSTRAINT chips_app_platform_check CHECK (((app_platform IS NULL) OR (app_platform = ANY (ARRAY['ios'::text, 'android'::text, 'unknown'::text])))),
     CONSTRAINT chips_chip_type_check CHECK ((chip_type = ANY (ARRAY['physical'::text, 'app'::text]))),
@@ -1993,6 +2059,13 @@ CREATE TABLE public.chips (
 --
 
 COMMENT ON COLUMN public.chips.order_item_id IS 'The chip-order line this chip was issued for (NULL for every chip issued outside an order).';
+
+
+--
+-- Name: COLUMN chips.order_holder_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chips.order_holder_id IS 'The chip-order holder line (person) this chip was issued for. NULL for every chip issued outside an order and for chips of orders made before 20/11/2026.';
 
 
 --
@@ -4768,6 +4841,14 @@ ALTER TABLE ONLY public.chip_events
 
 
 --
+-- Name: chip_order_holders chip_order_holders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_order_holders
+    ADD CONSTRAINT chip_order_holders_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: chip_order_items chip_order_items_order_contact_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5854,10 +5935,38 @@ CREATE INDEX chip_events_chip_idx ON public.chip_events USING btree (chip_id, cr
 
 
 --
+-- Name: chip_order_holders_item_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chip_order_holders_item_idx ON public.chip_order_holders USING btree (item_id);
+
+
+--
+-- Name: chip_order_holders_lease_file_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX chip_order_holders_lease_file_key_idx ON public.chip_order_holders USING btree (lease_file_key) WHERE (lease_file_key IS NOT NULL);
+
+
+--
+-- Name: chip_order_holders_order_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chip_order_holders_order_idx ON public.chip_order_holders USING btree (order_id, "position");
+
+
+--
 -- Name: chip_order_items_contact_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX chip_order_items_contact_idx ON public.chip_order_items USING btree (contact_id);
+
+
+--
+-- Name: chip_order_items_id_order_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX chip_order_items_id_order_uniq ON public.chip_order_items USING btree (id, order_id);
 
 
 --
@@ -5942,6 +6051,13 @@ CREATE INDEX chips_number_idx ON public.chips USING btree (chip_number);
 --
 
 CREATE INDEX chips_number_trgm_idx ON public.chips USING gin (chip_number public.gin_trgm_ops);
+
+
+--
+-- Name: chips_order_holder_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chips_order_holder_idx ON public.chips USING btree (order_holder_id) WHERE (order_holder_id IS NOT NULL);
 
 
 --
@@ -7533,6 +7649,22 @@ ALTER TABLE ONLY public.chip_events
 
 
 --
+-- Name: chip_order_holders chip_order_holders_item_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_order_holders
+    ADD CONSTRAINT chip_order_holders_item_fkey FOREIGN KEY (item_id, order_id) REFERENCES public.chip_order_items(id, order_id) ON DELETE CASCADE;
+
+
+--
+-- Name: chip_order_holders chip_order_holders_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_order_holders
+    ADD CONSTRAINT chip_order_holders_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.chip_orders(id) ON DELETE CASCADE;
+
+
+--
 -- Name: chip_order_items chip_order_items_contact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7578,6 +7710,14 @@ ALTER TABLE ONLY public.chips
 
 ALTER TABLE ONLY public.chips
     ADD CONSTRAINT chips_issued_by_fkey FOREIGN KEY (issued_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: chips chips_order_holder_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chips
+    ADD CONSTRAINT chips_order_holder_id_fkey FOREIGN KEY (order_holder_id) REFERENCES public.chip_order_holders(id) ON DELETE SET NULL;
 
 
 --
@@ -8681,6 +8821,7 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 
 
+
 --
 -- Dbmate schema migrations
 --
@@ -8829,5 +8970,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261112194633'),
     ('20261112222606'),
     ('20261113133131'),
-    ('20261113220605')
+    ('20261113220605'),
+    ('20261120222746')
 ;

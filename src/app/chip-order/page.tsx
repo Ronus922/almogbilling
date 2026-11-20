@@ -14,8 +14,10 @@ export const dynamic = 'force-dynamic';
 
 // /chip-order — PUBLIC (no login). Closed — "ההזמנות ייפתחו בקרוב" — until
 // Grow is configured AND the settings switch is on (chipOrdersOpen). Open: the
-// order form with the apartment NUMBERS of the registry (never a name) and the
-// price rule; the price shown is recomputed by the server on submit.
+// order form (20/11/2026 design) with the apartment NUMBERS of the registry
+// (never a name) and the price rule from the settings; the price shown is
+// recomputed by the server on submit. The 6-per-apartment cap is fixed
+// (CHIP_ORDER_LIMITS.maxChipsPerApartment).
 //
 // Test mode (13/11/2026): /chip-order?test=<token> with the CURRENT token of
 // the test link (src/lib/chipOrders/testMode.ts) opens the form even without
@@ -38,15 +40,12 @@ export default async function ChipOrderPage({
   if (!chipOrdersOpen(settings) && !testToken) {
     return (
       <ChipOrderShell {...support}>
-        <section
-          data-testid="chip-order-closed"
-          className="flex flex-col items-center gap-3 rounded-[16px] border border-[var(--chip-border)] bg-[var(--chip-panel)] p-8 text-center"
-        >
-          <span className="grid h-14 w-14 place-items-center rounded-full bg-[var(--chip-brand-soft)] text-[var(--chip-brand)]">
+        <section data-testid="chip-order-closed" className="cr-cfcard">
+          <span className="cr-cfic cr-brand">
             <Clock className="h-7 w-7" />
           </span>
-          <h2 className="text-[20px] font-extrabold">ההזמנות ייפתחו בקרוב</h2>
-          <p className="max-w-[420px] text-[14.5px] font-medium text-[var(--chip-ink-muted)]">
+          <h2>ההזמנות ייפתחו בקרוב</h2>
+          <p className="cr-msg">
             הזמנת צ׳יפים למעלית באתר עדיין לא פתוחה. בינתיים אפשר לפנות לחברת הניהול.
           </p>
         </section>
@@ -56,19 +55,17 @@ export default async function ChipOrderPage({
 
   const apartments = await listOrderableApartments();
   return (
-    <ChipOrderShell {...support} banner={testToken ? CHIP_ORDER_TEST_BANNER : undefined}>
-      {!testToken && growMode() === 'sandbox' && (
-        <p role="status" className="rounded-[11px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] p-3 text-center text-[13.5px] font-bold text-[var(--chip-amber-ink)]">
-          סביבת בדיקות — התשלום בכרטיס בדיקה, אין חיוב אמיתי.
-        </p>
-      )}
+    <ChipOrderShell
+      {...support}
+      banner={testToken ? CHIP_ORDER_TEST_BANNER : undefined}
+      notice={!testToken && growMode() === 'sandbox' ? 'סביבת בדיקות — התשלום בכרטיס בדיקה, אין חיוב אמיתי.' : undefined}
+    >
       <ChipOrderForm
         apartments={apartments}
         pricing={{
           unitPrice: settings.unitPrice,
           threshold: settings.threshold,
           priceAbove: settings.priceAbove,
-          maxPerApartment: settings.maxPerApartment,
         }}
         termsText={settings.termsText}
         testToken={testToken}

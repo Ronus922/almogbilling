@@ -120,7 +120,13 @@ export const DEFAULT_CHIP_ORDER_SETTINGS: ChipOrderSettings = {
 export const CHIP_ORDER_LIMITS = {
   /** Hard ceiling of the settings field (the DB CHECK allows 50). */
   maxPerApartmentCeiling: 20,
+  /** The public page (20/11/2026): at most 6 chips per apartment in one
+   *  order, counted over every row of that apartment. Replaces the old 4 of
+   *  the settings field on the page — client and server both enforce it. */
+  maxChipsPerApartment: 6,
   maxApartmentsPerOrder: 10,
+  /** Rows (people) in one order — several may share an apartment. */
+  maxRowsPerOrder: 20,
   leaseFileBytes: 10 * 1024 * 1024,
   /** The whole multipart submit (every lease + the JSON) — checked from
    *  Content-Length before the body is read. */
@@ -165,6 +171,33 @@ export function priceLine(
 
 export function orderTotal(lines: { lineTotal: number }[]): number {
   return Math.round(lines.reduce((s, l) => s + Math.round(l.lineTotal * 100), 0)) / 100;
+}
+
+/** The order page's money format (20/11/2026 design): "240₪", "1,050₪",
+ *  "52.5₪" — the number first, then the sign, rendered inside an LTR-isolated
+ *  span. */
+export function formatIlsAfter(n: number): string {
+  return `${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}₪`;
+}
+
+/** The price breakdown of the order page and of the issue window: how many
+ *  chips fall at the base price and how many above the threshold, counted PER
+ *  APARTMENT (each apartment's first X chips are at the base price) and summed
+ *  over the apartments. `counts` = chips per apartment. */
+export function priceBreakdown(
+  counts: readonly number[],
+  s: Pick<ChipOrderSettings, 'unitPrice' | 'threshold' | 'priceAbove'>,
+): { base: number; above: number; baseTotal: number; aboveTotal: number; total: number } {
+  let base = 0;
+  let above = 0;
+  for (const raw of counts) {
+    const n = Math.max(0, Math.floor(raw));
+    base += Math.min(n, s.threshold);
+    above += Math.max(0, n - s.threshold);
+  }
+  const baseTotal = (base * Math.round(s.unitPrice * 100)) / 100;
+  const aboveTotal = (above * Math.round(s.priceAbove * 100)) / 100;
+  return { base, above, baseTotal, aboveTotal, total: orderTotal(counts.map((c) => priceLine(c, s))) };
 }
 
 /** ₪ with up to two decimals, no trailing zeros ("₪50", "₪52.5"). */

@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
 // RTL, fonts and the Toaster come from the root layout.
 
 export const metadata: Metadata = {
-  title: 'הזמנת צ׳יפים למעלית — בניין אלמוג',
+  title: 'הזמנת כרטיסי בקרת כניסה — בניין אלמוג',
   description: 'הזמנה ותשלום של צ׳יפים למעלית',
   robots: { index: false, follow: false },
 };
@@ -16,7 +16,7 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: '#2B3FB8',
+  themeColor: '#3D5AFE',
 };
 
 export default function ChipOrderLayout({ children }: { children: ReactNode }) {

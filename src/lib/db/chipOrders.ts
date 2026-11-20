@@ -56,13 +56,35 @@ export interface NewOrderLine {
   leaseEndDate: string | null;
 }
 
+/** One row of the redesigned order page (20/11/2026) = ONE PERSON who will
+ *  hold chips. Rows of the same apartment are priced together. */
+export interface NewOrderRow {
+  role: 'owner' | 'tenant';
+  fullName: string;
+  apartmentNumber: string;
+  chipsCount: number;
+  phoneE164: string;
+  email: string | null;
+  lease: { objectKey: string; fileName: string; mime: string; size: number } | null;
+  leaseEndDate: string | null;
+}
+
 export interface NewOrderInput {
   fullName: string;
   phoneE164: string;
   email: string;
   address: string;
   role: ChipOrderRole;
-  lines: NewOrderLine[];
+  /** The page before 20/11/2026: one line per apartment, no holder lines.
+   *  Kept for the tests and as the shape of an old order. */
+  lines?: NewOrderLine[];
+  /** The page from 20/11/2026: one row per person; becomes one apartment
+   *  line per apartment (the price) + one holder line per row. */
+  rows?: NewOrderRow[];
+  /** The address in its three parts (20/11/2026); `address` is composed from it. */
+  addressParts?: { street: string; city: string; zip: string } | null;
+  /** The renter commitment box was ticked (only when a renter row exists). */
+  renterTermsAccepted?: boolean;
   ip: string | null;
   /** Test mode (a valid test link): the order is marked is_test and is later
    *  "paid" by markTestChipOrderPaid, never through Grow. */
@@ -119,45 +141,90 @@ async function ownersOf(client: PoolClient, apartmentNumbers: string[]): Promise
  */
 export async function createChipOrder(input: NewOrderInput, settings: ChipOrderSettings): Promise<CreatedOrder> {
   const trackingToken = randomBytes(32).toString('base64url');
+  // Rows → one group per apartment, in the order the apartments first appear.
+  // Legacy `lines` are groups of their own with no holder rows.
+  type Group = { apartmentNumber: string; chipsCount: number; rows: NewOrderRow[]; line: NewOrderLine | null };
+  const groups: Group[] = [];
+  if (input.rows && input.rows.length > 0) {
+    const byApt = new Map<string, Group>();
+    for (const r of input.rows) {
+      let g = byApt.get(r.apartmentNumber);
+      if (!g) {
+        g = { apartmentNumber: r.apartmentNumber, chipsCount: 0, rows: [], line: null };
+        byApt.set(r.apartmentNumber, g);
+        groups.push(g);
+      }
+      g.chipsCount += r.chipsCount;
+      g.rows.push(r);
+    }
+  } else {
+    for (const l of input.lines ?? []) groups.push({ apartmentNumber: l.apartmentNumber, chipsCount: l.chipsCount, rows: [], line: l });
+  }
+  if (groups.length === 0) throw new Error('no_lines');
+
   return withTransaction(async (client) => {
-    const owners = await ownersOf(client, input.lines.map((l) => l.apartmentNumber));
-    const priced = input.lines.map((l) => {
-      const o = owners.get(l.apartmentNumber);
+    const owners = await ownersOf(client, groups.map((g) => g.apartmentNumber));
+    const priced = groups.map((g) => {
+      const o = owners.get(g.apartmentNumber);
       if (!o) throw new Error('apartment_not_found');
-      return { line: l, owner: o, price: priceLine(l.chipsCount, settings) };
+      return { group: g, owner: o, price: priceLine(g.chipsCount, settings) };
     });
     const total = orderTotal(priced.map((p) => p.price));
+    const parts = input.addressParts ?? null;
 
     const order = (
       await client.query<{ id: string; order_number: number }>(
         `insert into public.chip_orders
-           (full_name, phone_e164, email, address, role, total, tracking_token, created_ip, is_test, phone_verified)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           (full_name, phone_e164, email, address, role, total, tracking_token, created_ip, is_test, phone_verified,
+            address_street, address_city, address_zip, renter_terms_accepted_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, case when $14::boolean then now() else null end)
          returning id, order_number`,
         [input.fullName, input.phoneE164, input.email, input.address, input.role, total, trackingToken, input.ip, input.isTest === true,
-          input.phoneVerified !== false],
+          input.phoneVerified !== false, parts?.street ?? null, parts?.city ?? null, parts?.zip ?? null,
+          input.renterTermsAccepted === true],
       )
     ).rows[0];
 
-    for (const { line, owner, price } of priced) {
+    let position = 0;
+    for (const { group, owner, price } of priced) {
+      // The match is read from the apartment's FIRST row (its role and phone);
+      // a legacy line uses the order's own role and phone.
+      const first = group.rows[0];
       const match: ChipOrderMatchStatus = chipOrderMatchStatus({
-        role: input.role,
-        orderPhoneE164: input.phoneE164,
+        role: first ? first.role : input.role,
+        orderPhoneE164: first ? first.phoneE164 : input.phoneE164,
         ownerPhonesE164: owner.phones,
         ownerOnFile: owner.onFile,
       });
-      await client.query(
-        `insert into public.chip_order_items
-           (order_id, contact_id, apartment_number, chips_count, unit_price, threshold, price_above, line_total,
-            lease_file_key, lease_file_name, lease_file_mime, lease_file_size, lease_end_date, match_status)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-        [
-          order.id, owner.contactId, owner.apartment, line.chipsCount,
-          price.unitPrice, price.threshold, price.priceAbove, price.lineTotal,
-          line.lease?.objectKey ?? null, line.lease?.fileName ?? null, line.lease?.mime ?? null, line.lease?.size ?? null,
-          line.leaseEndDate, match,
-        ],
-      );
+      const line = group.line;
+      const item = (
+        await client.query<{ id: string }>(
+          `insert into public.chip_order_items
+             (order_id, contact_id, apartment_number, chips_count, unit_price, threshold, price_above, line_total,
+              lease_file_key, lease_file_name, lease_file_mime, lease_file_size, lease_end_date, match_status)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           returning id`,
+          [
+            order.id, owner.contactId, owner.apartment, group.chipsCount,
+            price.unitPrice, price.threshold, price.priceAbove, price.lineTotal,
+            line?.lease?.objectKey ?? null, line?.lease?.fileName ?? null, line?.lease?.mime ?? null, line?.lease?.size ?? null,
+            line?.leaseEndDate ?? null, match,
+          ],
+        )
+      ).rows[0];
+      for (const r of group.rows) {
+        await client.query(
+          `insert into public.chip_order_holders
+             (order_id, item_id, position, source, role, full_name, phone, email, chips_count,
+              lease_file_key, lease_file_name, lease_file_mime, lease_file_size, lease_end_date)
+           values ($1,$2,$3,'order',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [
+            order.id, item.id, position++, r.role, r.fullName, r.phoneE164, r.email, r.chipsCount,
+            r.lease?.objectKey ?? null, r.lease?.fileName ?? null, r.lease?.mime ?? null, r.lease?.size ?? null,
+            r.leaseEndDate,
+          ],
+        );
+      }
     }
     return {
       id: order.id,
@@ -578,6 +645,9 @@ export async function deleteChipOrderWithLeases(
     const keys = (
       await client.query<{ k: string }>(
         `select lease_file_key as k from public.chip_order_items
+          where order_id = $1 and lease_file_key is not null
+         union
+         select lease_file_key as k from public.chip_order_holders
           where order_id = $1 and lease_file_key is not null`,
         [id],
       )

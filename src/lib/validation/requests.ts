@@ -494,25 +494,42 @@ const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'תאריך לא תקין
 /** The JSON part ("order") of POST /api/public/chip-order (multipart — the
  *  leases ride beside it as lease_<index> files). The price is NOT in here:
  *  the server computes it. */
+const chipOrderPersonName = z.string({ error: 'נדרש שם מלא' }).trim().min(2, 'נדרש שם מלא').max(120, 'השם ארוך מדי')
+  .regex(/^[\p{L}\p{M}\s'׳"״.\-]+$/u, 'השם יכול להכיל אותיות בלבד')
+  .refine((v) => v.split(/\s+/).filter(Boolean).length >= 2, 'נדרש שם מלא — שם פרטי ושם משפחה');
+
+const chipOrderEmail = z.string({ error: 'כתובת מייל לא תקינה' }).trim().toLowerCase().email('כתובת מייל לא תקינה').max(254);
+
+/** The JSON part ("order") of POST /api/public/chip-order (multipart — every
+ *  renter row's lease rides beside it as lease_<row index>). Redesigned
+ *  20/11/2026: every row is ONE PERSON who will hold chips (role, name,
+ *  apartment, quantity, phone, email); several rows may share an apartment.
+ *  The contact block (phone = the OTP target, email, address in three parts)
+ *  belongs to whoever places the order. The price is NOT in here: the server
+ *  computes it, per apartment over all its rows. */
 export const chipOrderSubmitSchema = z.object({
-  fullName: z.string({ error: 'נדרש שם מלא' }).trim().min(2, 'נדרש שם מלא').max(120, 'השם ארוך מדי')
-    .regex(/^[\p{L}\p{M}\s'׳"״.\-]+$/u, 'השם יכול להכיל אותיות בלבד')
-    .refine((v) => v.split(/\s+/).filter(Boolean).length >= 2, 'נדרש שם מלא — שם פרטי ושם משפחה'),
   phone: chipOrderPhone,
-  email: z.string({ error: 'כתובת מייל לא תקינה' }).trim().toLowerCase().email('כתובת מייל לא תקינה').max(254),
-  address: z.string({ error: 'נדרשת כתובת מגורים' }).trim().min(2, 'נדרשת כתובת מגורים').max(300, 'הכתובת ארוכה מדי'),
-  role: z.enum(['owner', 'tenant', 'operator'], { error: 'נדרש לבחור: בעלים, שוכר או מפעיל' }),
-  acceptTerms: z.literal(true, { error: 'נדרש לאשר את תנאי ההזמנה' }),
-  lines: z
+  email: chipOrderEmail,
+  addressStreet: z.string({ error: 'נדרשת כתובת מגורים' }).trim().min(2, 'נדרשת כתובת מגורים').max(200, 'הכתובת ארוכה מדי'),
+  addressCity: z.string({ error: 'נדרשת עיר' }).trim().min(2, 'נדרשת עיר').max(100, 'שם העיר ארוך מדי'),
+  addressZip: z.string({ error: 'מיקוד — 7 ספרות' }).trim().regex(/^\d{7}$/, 'מיקוד — 7 ספרות'),
+  acceptTerms: z.literal(true, { error: 'נדרש לאשר שהפרטים נכונים' }),
+  /** Required (true) when at least one row is a renter — the route checks it. */
+  acceptRenterTerms: z.boolean().optional(),
+  rows: z
     .array(
       z.object({
+        role: z.enum(['owner', 'tenant'], { error: 'נדרש לבחור: בעלים או שוכר' }),
+        fullName: chipOrderPersonName,
         apartment: z.string({ error: 'נדרש לבחור דירה' }).trim().min(1, 'נדרש לבחור דירה').max(20, 'נדרש לבחור דירה'),
         chipsCount: z.number({ error: 'כמות לא תקינה' }).int('כמות לא תקינה').min(1, 'כמות לא תקינה').max(50, 'כמות לא תקינה'),
+        phone: chipOrderPhone,
+        email: z.union([z.literal(''), chipOrderEmail]).optional(),
         leaseEndDate: isoDay.nullable().optional(),
       }),
     )
-    .min(1, 'נדרשת לפחות דירה אחת')
-    .max(10, 'עד 10 דירות בהזמנה אחת'),
+    .min(1, 'נדרשת לפחות שורה אחת')
+    .max(20, 'עד 20 שורות בהזמנה אחת'),
 });
 
 /** PUT /api/settings/chip-orders */
