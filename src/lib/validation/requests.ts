@@ -559,6 +559,34 @@ export const chipOrderTestFinishBodySchema = z.object({
 export const chipOrderRegistryBodySchema = z.object({
   name: z.string().trim().max(120, 'השם ארוך מדי').nullable().optional(),
   phone: z.string().trim().max(40, 'מספר הטלפון ארוך מדי').nullable().optional(),
+  /** The block's role (20/11/2026 — one block per person, each with its own
+   *  role). Absent = the order's role, as before. */
+  role: z.enum(['owner', 'tenant', 'operator']).optional(),
+});
+
+/** POST /api/chip-orders/[id]/holders — "שמור שינויים" of the order window
+ *  (20/11/2026): every person block (edits + new chip numbers), the order's
+ *  internal note, and the window-global fee fields. */
+export const chipOrderWindowSaveSchema = z.object({
+  holders: z.array(z.object({
+    id: z.uuid().nullable(),
+    item_id: z.uuid(),
+    legacy: z.boolean().optional(),
+    role: z.enum(['owner', 'tenant', 'operator', 'other', 'staff'], { error: 'תפקיד לא תקין' }),
+    full_name: z.string().trim().max(120, 'השם ארוך מדי'),
+    phone: z.string().trim().max(40, 'מספר הטלפון ארוך מדי').nullable(),
+    email: z.union([z.literal(''), z.string().trim().toLowerCase().email('כתובת מייל לא תקינה').max(254)]).nullable(),
+    new_chips: z.array(z.object({
+      number: z.string().trim().min(1, 'מספר צ׳יפ ריק').max(64, 'מספר צ׳יפ ארוך מדי'),
+      chip_type: z.enum(['physical', 'app']),
+    })).max(20, 'יותר מדי מספרים בבלוק אחד'),
+  })).max(40),
+  /** Staff holders removed in the window (only one with no chips is removed). */
+  removed_holder_ids: z.array(z.uuid()).max(40).optional(),
+  note: z.string().max(2000, 'ההערה ארוכה מדי').nullable().optional(),
+  issuance_fee: z.number().min(0, 'סכום לא תקין').max(100_000, 'סכום לא תקין').nullable().optional(),
+  fee_charged: z.boolean().optional(),
+  limit_override_reason: z.string().trim().max(500).nullable().optional(),
 });
 
 /** POST /api/chip-orders/[id]/reject */

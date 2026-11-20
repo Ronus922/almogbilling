@@ -1,3 +1,5 @@
+import type { ChipResidentRole, ChipStatus, ChipType } from '@/lib/types/chips';
+
 // Chip orders (/chip-order, 12/11/2026) — the pure, client-safe half: types,
 // statuses and their Hebrew labels, the price rule and the due date. The
 // server and the public page import the SAME functions, so the price a
@@ -351,4 +353,91 @@ export interface ChipOrderSheetContext {
   /** The clicked row's orderer — the holder block is matched / prefilled from it. */
   holder: { full_name: string; phone_e164: string; role: ChipOrderRole };
   sections: ChipOrderSection[];
+}
+
+// ── The issue window of an order (20/11/2026 design) ───────────────────────
+
+/** A chip as the order window shows it. */
+export interface ChipOrderWindowChip {
+  id: string;
+  chip_number: string;
+  chip_type: ChipType;
+  status: ChipStatus;
+  contact_id: string;
+  order_item_id: string | null;
+  order_holder_id: string | null;
+  resident_role: ChipResidentRole;
+  holder_name: string | null;
+  holder_phone: string | null;
+}
+
+/** One apartment line of the order (price snapshot, as stored). */
+export interface ChipOrderWindowItem {
+  id: string;
+  contact_id: string;
+  apartment_number: string;
+  chips_count: number;
+  unit_price: number;
+  threshold: number;
+  price_above: number;
+  line_total: number;
+  lease_file_key: string | null;
+  lease_file_name: string | null;
+  lease_end_date: string | null;
+  /** ACTIVE chips linked to the line. */
+  chips_linked: number;
+}
+
+/** One block of the window = one person.
+ *   'order'  — a row of the public page (chip_order_holders, part of the paid quantity);
+ *   'staff'  — a holder the staff added (chip_order_holders, chips_count 0, never priced);
+ *   'legacy' — an order made before 20/11/2026 has no holder lines: one block per
+ *              apartment, built from the order's own name and phone (stored as a
+ *              holder line the first time the block is saved). */
+export interface ChipOrderWindowHolder {
+  id: string | null;
+  item_id: string;
+  source: 'order' | 'staff' | 'legacy';
+  role: ChipResidentRole;
+  full_name: string;
+  phone: string | null;
+  email: string | null;
+  chips_count: number;
+  lease_file_key: string | null;
+  lease_file_name: string | null;
+  lease_end_date: string | null;
+  /** Chips issued for THIS person of this order. */
+  chips: ChipOrderWindowChip[];
+  /** The same person's earlier chips in this apartment (matched by phone) —
+   *  shown in the block; not part of the order's count. */
+  existing: ChipOrderWindowChip[];
+}
+
+export interface ChipOrderWindowOrder {
+  id: string;
+  order_number: number;
+  status: ChipOrderStatus;
+  role: ChipOrderRole;
+  is_test: boolean;
+  phone_verified: boolean;
+  full_name: string;
+  phone_e164: string;
+  email: string;
+  address: string;
+  total: number;
+  paid_at: string | null;
+  due_at: string | null;
+  created_at: string;
+  internal_note: string | null;
+}
+
+/** What the issue window loads for an Orders-tab row (20/11/2026). */
+export interface ChipOrderWindow {
+  order: ChipOrderWindowOrder;
+  items: ChipOrderWindowItem[];
+  holders: ChipOrderWindowHolder[];
+  /** The line whose row was clicked — a holder the staff adds goes there. */
+  clicked_item_id: string;
+  /** Every line has all its chips (active) — "מוכן לאיסוף" may go. */
+  order_all_linked: boolean;
 }

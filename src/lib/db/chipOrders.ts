@@ -478,6 +478,8 @@ async function lockOrder(client: PoolClient, id: string): Promise<{ status: Chip
 export async function writeOrderHolderToRegistry(
   itemId: string,
   values: { name: string | null; phone: string | null },
+  /** The block's own role (20/11/2026: a block per person). Absent = the order's. */
+  roleOverride?: ChipOrderRole,
 ): Promise<{ order_id: string; contact_id: string; apartment_number: string; role: ChipOrderRole; fields: Record<string, string | null> } | null> {
   return withTransaction(async (client) => {
     const item = (
@@ -490,7 +492,8 @@ export async function writeOrderHolderToRegistry(
     const order = await lockOrder(client, item.order_id);
     if (!order) return null;
     if (!isOpenChipOrder(order.status)) throw new ChipOrderStateError('not_open');
-    const cols = REGISTRY_COLS[order.role];
+    const role = roleOverride ?? order.role;
+    const cols = REGISTRY_COLS[role];
     const body: Record<string, unknown> = {};
     if (values.name?.trim()) body[cols.name] = values.name.trim();
     if (values.phone?.trim()) body[cols.phone] = values.phone.trim();
@@ -502,7 +505,7 @@ export async function writeOrderHolderToRegistry(
       order_id: item.order_id,
       contact_id: item.contact_id,
       apartment_number: item.apartment_number,
-      role: order.role,
+      role,
       fields: coerced.fields as Record<string, string | null>,
     };
   });

@@ -13,7 +13,8 @@ export const runtime = 'nodejs';
 // POST /api/chip-orders/items/[itemId]/registry — "עדכן בכרטיס הדייר"
 // (13/11/2026, replaces the per-field checkboxes of the removed approval). It
 // copies the holder block's name and phone into the tenants list of the
-// line's apartment, in the slot of the order's role, and ONLY on this click.
+// line's apartment, in the slot of the block's role (the order's role when the
+// body names none — 20/11/2026), and ONLY on this click.
 // Writing to the tenants list is a contacts edit (and an owner phone opens the
 // owners portal), so it needs contacts:edit — checked here, on the server —
 // on top of handling the order (chips_orders_manage:edit).
@@ -35,7 +36,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ itemId: string
   const body = await parseJsonBody(req, chipOrderRegistryBodySchema);
   if (!body.ok) return body.response;
   try {
-    const res = await writeOrderHolderToRegistry(itemId, { name: body.data.name ?? null, phone: body.data.phone ?? null });
+    const res = await writeOrderHolderToRegistry(itemId, { name: body.data.name ?? null, phone: body.data.phone ?? null }, body.data.role);
     if (!res) return NextResponse.json({ error: 'not_found' }, { status: 404 });
     after(() =>
       writeAudit({

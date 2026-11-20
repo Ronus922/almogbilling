@@ -381,6 +381,20 @@ export async function issueChipGroups(
   input: IssueChipsInput,
   actor: { id: string; name: string },
 ): Promise<{ items: ChipWithHolder[]; updated: ChipWithHolder[] }> {
+  return withTransaction((client) => issueChipGroupsInTx(client, input, actor));
+}
+
+/**
+ * The body of issueChipGroups on a transaction the CALLER owns — the chip-order
+ * window (20/11/2026) saves the holders of several apartments of one order in
+ * ONE transaction, one call per apartment. Same rules, same events, same
+ * errors as issueChipGroups.
+ */
+export async function issueChipGroupsInTx(
+  client: PoolClient,
+  input: IssueChipsInput,
+  actor: { id: string; name: string },
+): Promise<{ items: ChipWithHolder[]; updated: ChipWithHolder[] }> {
   // Trim + reject blanks; a repeated number within or ACROSS groups is a
   // conflict (client blocks it too — the server is the authority).
   const seen = new Set<string>();
@@ -402,164 +416,164 @@ export async function issueChipGroups(
   if (groups.length === 0 && updates.length === 0) throw new Error('invalid_chip_numbers');
   const totalNew = groups.reduce((s, g) => s + g.numbers.length, 0);
 
-  return withTransaction(async (client) => {
-    const contact = (
-      await client.query<{
-        id: string;
-        apartment_number: string;
-        unit_type: string;
-        owner_name: string | null;
-        owner_phone: string | null;
-        tenant_name: string | null;
-        tenant_phone: string | null;
-        operator_name: string | null;
-        operator_phone: string | null;
-      }>(
-        `select id, apartment_number, unit_type,
-                owner_name, owner_phone, tenant_name, tenant_phone,
-                operator_name, operator_phone
-           from public.contacts
-          where id = $1
-          for update`,
-        [input.contact_id],
+  const contact = (
+    await client.query<{
+      id: string;
+      apartment_number: string;
+      unit_type: string;
+      owner_name: string | null;
+      owner_phone: string | null;
+      tenant_name: string | null;
+      tenant_phone: string | null;
+      operator_name: string | null;
+      operator_phone: string | null;
+    }>(
+      `select id, apartment_number, unit_type,
+              owner_name, owner_phone, tenant_name, tenant_phone,
+              operator_name, operator_phone
+         from public.contacts
+        where id = $1
+        for update`,
+      [input.contact_id],
+    )
+  ).rows[0];
+  if (!contact) throw new Error('contact_not_found');
+
+  const activeCount = (
+    await client.query<{ count: number }>(
+      `select count(*)::int as count from public.chips
+        where contact_id = $1 and status = 'active'`,
+      [input.contact_id],
+    )
+  ).rows[0].count;
+
+  // Soft limit over the SUM of all groups — the per-type client split never
+  // bypasses the count (clarification 1). Holder edits alone never trip it.
+  const overrideReason = input.limit_override_reason?.trim() ?? '';
+  if (totalNew > 0 && exceedsSoftLimit(activeCount, totalNew) && !overrideReason) {
+    throw new ChipLimitError();
+  }
+
+  // Holder edits of ALREADY-SAVED chips go first, same transaction, so a
+  // save is still all-or-nothing. Every edited chip must belong to this
+  // contact — the window never edits across apartments.
+  const updated: ChipWithHolder[] = [];
+  for (const { id, ...patch } of updates) {
+    const owner = (
+      await client.query<{ contact_id: string }>(
+        `select contact_id from public.chips where id = $1`,
+        [id],
       )
     ).rows[0];
-    if (!contact) throw new Error('contact_not_found');
+    if (!owner) throw new Error('chip_not_found');
+    if (owner.contact_id !== input.contact_id) throw new Error('chip_not_in_contact');
+    const row = await applyChipPatch(client, id, patch, actor);
+    if (row) updated.push(row);
+  }
 
-    const activeCount = (
-      await client.query<{ count: number }>(
-        `select count(*)::int as count from public.chips
-          where contact_id = $1 and status = 'active'`,
-        [input.contact_id],
+  // Chip order lines (13/11/2026): a group may carry the order line its NEW
+  // chips are issued for — the holder block that holds the order's "פרטי
+  // הזמנה" section; every other group of the same save stays unlinked. The
+  // line must be on THIS apartment and its order still open (paid — being
+  // assigned — or ready). More chips than the line ordered are allowed (the
+  // window warns). The lines AND their orders are locked, in a fixed order,
+  // so a rejection running at the same moment cannot slip past the status
+  // check.
+  const orderItemIds = [...new Set(groups.map((g) => input.groups[g.index].order_item_id).filter((v): v is string => !!v))].sort();
+  for (const orderItemId of orderItemIds) {
+    const item = (
+      await client.query<{ contact_id: string; status: string }>(
+        `select i.contact_id, o.status
+           from public.chip_order_items i
+           join public.chip_orders o on o.id = i.order_id
+          where i.id = $1
+          for update of i, o`,
+        [orderItemId],
       )
-    ).rows[0].count;
+    ).rows[0];
+    if (!item || item.contact_id !== input.contact_id) throw new Error('order_item_not_found');
+    if (!isOpenChipOrder(item.status as ChipOrderStatus)) throw new Error('order_not_open');
+  }
 
-    // Soft limit over the SUM of all groups — the per-type client split never
-    // bypasses the count (clarification 1). Holder edits alone never trip it.
-    const overrideReason = input.limit_override_reason?.trim() ?? '';
-    if (totalNew > 0 && exceedsSoftLimit(activeCount, totalNew) && !overrideReason) {
-      throw new ChipLimitError();
+  const created: ChipWithHolder[] = [];
+  for (const { index, numbers } of groups) {
+    const group = input.groups[index];
+    const orderItemId = group.order_item_id ?? null;
+
+    // Holder identity enforcement (product rule 2, CHECK 074): every chip is
+    // issued on a specific person's name. Registry roles snapshot the LIVE
+    // registry values (an explicit override is allowed and applies to this
+    // group's chips only); snapshot roles must bring their own name.
+    const role = group.resident_role;
+    let holderName = group.holder_name?.trim() || null;
+    let holderPhone = group.holder_phone?.trim() || null;
+    if (isSnapshotRole(role)) {
+      if (!holderName) throw new Error('holder_name_required');
+    } else {
+      const liveName = {
+        owner: contact.owner_name,
+        tenant: contact.tenant_name,
+        operator: contact.operator_name,
+      }[role]?.trim() || null;
+      const livePhone = {
+        owner: contact.owner_phone,
+        tenant: contact.tenant_phone,
+        operator: contact.operator_phone,
+      }[role]?.trim() || null;
+      holderName = holderName ?? liveName;
+      holderPhone = holderPhone ?? livePhone;
+      if (!holderName) throw new Error('holder_not_in_registry');
     }
 
-    // Holder edits of ALREADY-SAVED chips go first, same transaction, so a
-    // save is still all-or-nothing. Every edited chip must belong to this
-    // contact — the window never edits across apartments.
-    const updated: ChipWithHolder[] = [];
-    for (const { id, ...patch } of updates) {
-      const owner = (
-        await client.query<{ contact_id: string }>(
-          `select contact_id from public.chips where id = $1`,
-          [id],
-        )
-      ).rows[0];
-      if (!owner) throw new Error('chip_not_found');
-      if (owner.contact_id !== input.contact_id) throw new Error('chip_not_in_contact');
-      const row = await applyChipPatch(client, id, patch, actor);
-      if (row) updated.push(row);
-    }
+    const fee = group.issuance_fee ?? input.issuance_fee ?? null;
+    const feeCharged = group.fee_charged ?? input.fee_charged ?? false;
 
-    // Chip order lines (13/11/2026): a group may carry the order line its NEW
-    // chips are issued for — the holder block that holds the order's "פרטי
-    // הזמנה" section; every other group of the same save stays unlinked. The
-    // line must be on THIS apartment and its order still open (paid — being
-    // assigned — or ready). More chips than the line ordered are allowed (the
-    // window warns). The lines AND their orders are locked, in a fixed order,
-    // so a rejection running at the same moment cannot slip past the status
-    // check.
-    const orderItemIds = [...new Set(groups.map((g) => input.groups[g.index].order_item_id).filter((v): v is string => !!v))].sort();
-    for (const orderItemId of orderItemIds) {
-      const item = (
-        await client.query<{ contact_id: string; status: string }>(
-          `select i.contact_id, o.status
-             from public.chip_order_items i
-             join public.chip_orders o on o.id = i.order_id
-            where i.id = $1
-            for update of i, o`,
-          [orderItemId],
-        )
-      ).rows[0];
-      if (!item || item.contact_id !== input.contact_id) throw new Error('order_item_not_found');
-      if (!isOpenChipOrder(item.status as ChipOrderStatus)) throw new Error('order_not_open');
-    }
-
-    const created: ChipWithHolder[] = [];
-    for (const { index, numbers } of groups) {
-      const group = input.groups[index];
-      const orderItemId = group.order_item_id ?? null;
-
-      // Holder identity enforcement (product rule 2, CHECK 074): every chip is
-      // issued on a specific person's name. Registry roles snapshot the LIVE
-      // registry values (an explicit override is allowed and applies to this
-      // group's chips only); snapshot roles must bring their own name.
-      const role = group.resident_role;
-      let holderName = group.holder_name?.trim() || null;
-      let holderPhone = group.holder_phone?.trim() || null;
-      if (isSnapshotRole(role)) {
-        if (!holderName) throw new Error('holder_name_required');
-      } else {
-        const liveName = {
-          owner: contact.owner_name,
-          tenant: contact.tenant_name,
-          operator: contact.operator_name,
-        }[role]?.trim() || null;
-        const livePhone = {
-          owner: contact.owner_phone,
-          tenant: contact.tenant_phone,
-          operator: contact.operator_phone,
-        }[role]?.trim() || null;
-        holderName = holderName ?? liveName;
-        holderPhone = holderPhone ?? livePhone;
-        if (!holderName) throw new Error('holder_not_in_registry');
-      }
-
-      const fee = group.issuance_fee ?? input.issuance_fee ?? null;
-      const feeCharged = group.fee_charged ?? input.fee_charged ?? false;
-
-      for (const num of numbers) {
-        let chip: Chip;
-        try {
-          const r = await client.query<Chip>(
-            `insert into public.chips
-               (chip_number, chip_type, contact_id, apartment_number, resident_role,
-                holder_name, holder_phone, issued_by, issued_by_name,
-                app_platform, app_invite_status, app_expires_at,
-                issuance_fee, fee_charged, limit_override_reason, notes, order_item_id)
-             values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-             returning ${CHIP_COLUMNS}`,
-            [
-              num, group.chip_type, input.contact_id, contact.apartment_number,
-              role, holderName, holderPhone,
-              actor.id, actor.name,
-              group.app_platform ?? null, group.app_invite_status ?? null, group.app_expires_at ?? null,
-              fee, feeCharged,
-              input.limit_override_reason ?? null, input.notes ?? null, orderItemId,
-            ],
-          );
-          chip = r.rows[0];
-        } catch (err) {
-          // Partial unique index chips_number_active_uniq — number held by
-          // another ACTIVE chip. The transaction rolls back (all-or-nothing).
-          if ((err as { code?: string }).code === '23505') {
-            throw new ChipNumberTakenError(num, index);
-          }
-          throw err;
+    for (const num of numbers) {
+      let chip: Chip;
+      try {
+        const r = await client.query<Chip>(
+          `insert into public.chips
+             (chip_number, chip_type, contact_id, apartment_number, resident_role,
+              holder_name, holder_phone, issued_by, issued_by_name,
+              app_platform, app_invite_status, app_expires_at,
+              issuance_fee, fee_charged, limit_override_reason, notes, order_item_id, order_holder_id)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+           returning ${CHIP_COLUMNS}`,
+          [
+            num, group.chip_type, input.contact_id, contact.apartment_number,
+            role, holderName, holderPhone,
+            actor.id, actor.name,
+            group.app_platform ?? null, group.app_invite_status ?? null, group.app_expires_at ?? null,
+            fee, feeCharged,
+            input.limit_override_reason ?? null, input.notes ?? null, orderItemId,
+            group.order_holder_id ?? null,
+          ],
+        );
+        chip = r.rows[0];
+      } catch (err) {
+        // Partial unique index chips_number_active_uniq — number held by
+        // another ACTIVE chip. The transaction rolls back (all-or-nothing).
+        if ((err as { code?: string }).code === '23505') {
+          throw new ChipNumberTakenError(num, index);
         }
-
-        await insertChipEvent(client, chip.id, 'issued', actor, {
-          newValue: {
-            chip_number: chip.chip_number,
-            chip_type: chip.chip_type,
-            resident_role: chip.resident_role,
-            holder_name: chip.holder_name,
-            holder_phone: chip.holder_phone,
-            ...(orderItemId ? { order_item_id: orderItemId } : {}),
-          },
-        });
-        created.push(await selectChipWithHolder(client, chip.id));
+        throw err;
       }
+
+      await insertChipEvent(client, chip.id, 'issued', actor, {
+        newValue: {
+          chip_number: chip.chip_number,
+          chip_type: chip.chip_type,
+          resident_role: chip.resident_role,
+          holder_name: chip.holder_name,
+          holder_phone: chip.holder_phone,
+          ...(orderItemId ? { order_item_id: orderItemId } : {}),
+          ...(group.order_holder_id ? { order_holder_id: group.order_holder_id } : {}),
+        },
+      });
+      created.push(await selectChipWithHolder(client, chip.id));
     }
-    return { items: created, updated };
-  });
+  }
+  return { items: created, updated };
 }
 
 /**

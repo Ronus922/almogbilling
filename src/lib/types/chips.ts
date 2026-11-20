@@ -140,6 +140,10 @@ export interface IssueChipGroup {
    *  (chips.order_item_id) — set only on the groups of the holder block that
    *  holds the order's "פרטי הזמנה" section. Absent = an ordinary issue. */
   order_item_id?: string | null;
+  /** Chip orders (20/11/2026): the holder line (person) of the order these
+   *  NEW chips are issued for (chips.order_holder_id). Set only by the order
+   *  window's save (never read from a request body). */
+  order_holder_id?: string | null;
 }
 
 /** Holder-snapshot edit of ONE existing chip, sent by the issue window when
