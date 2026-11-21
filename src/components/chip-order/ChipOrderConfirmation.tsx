@@ -19,7 +19,7 @@ export interface ConfirmedRow {
 const BUILDING_DETAILS: { label: string; value: string; num?: boolean }[] = [
   { label: 'הבניין', value: 'מגדלי חוף הכרמל — בניין אלמוג, דוד אלעזר 10' },
   { label: 'חברת הניהול', value: 'להב יעדים בע"מ' },
-  { label: 'מחלקת גבייה · 08:00–16:00', value: '04-83411881', num: true },
+  { label: 'מחלקת גבייה · 08:00–16:00', value: '04-8500184', num: true },
   { label: 'הנהלת הבניין · א׳–ה׳ 10:00–13:00', value: '04-8500184', num: true },
   { label: 'רונן משולם, מנהל בניין (דחוף בלבד)', value: '052-6628944', num: true },
   { label: 'מייל', value: 'lahav.yeadim@gmail.com', num: true },
