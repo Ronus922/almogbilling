@@ -6,6 +6,7 @@
 | `favicon.svg` | favicon מודרני (רדיוס 7px, גאומטריה מפושטת) |
 | `favicon-16/32/48.png` | לאיחוד ל־`favicon.ico` |
 | `icon-180.png` | `apple-touch-icon` (ללא שקיפות) |
+| `apple-touch-icon.png` · `apple-touch-icon-precomposed.png` | העתק זהה של `icon-180.png` בשורש האתר — הנתיבים ש-iOS מבקש כברירת מחדל כשאין לו תגית (למשל מדף שגיאה). מוחלפים יחד עם `icon-180.png` (`tests/pwa-icons.test.ts`) |
 | `icon-192.png` · `icon-512.png` | PWA manifest |
 | `icon-maskable-512.png` | Android maskable — התוכן ב־68% מרכזי |
 | `icon-rounded.svg` | אייקון מעוגל לשימוש בתוך הממשק |

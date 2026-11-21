@@ -1,4 +1,7 @@
 export const SESSION_COOKIE = 'almog_sid';
+/** Clears a session cookie that no longer names a live session (21/11/2026) —
+ *  the one place a dead cookie is removed; it always ends on /login. */
+export const SESSION_RESET_PATH = '/api/auth/session-reset';
 export const RESEND_COOLDOWN_SECONDS = 60;
 export const RESET_TOKEN_LIFETIME_MIN = 60;
 export const SESSION_LIFETIME_DAYS_REMEMBER = 30;

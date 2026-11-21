@@ -32,6 +32,10 @@ const PUBLIC = new Set([
   'src/app/api/health/route.ts',                    // liveness probe, no data
   'src/app/api/auth/login/route.ts',                // establishes a session
   'src/app/api/auth/logout/route.ts',               // clears a session cookie
+  // Clears a session cookie that names NO live session (21/11/2026) and ends on
+  // /login; a live session is sent home untouched (a GET must never sign out).
+  // It returns nothing but a redirect — the guard question does not arise.
+  'src/app/api/auth/session-reset/route.ts',
   'src/app/api/auth/forgot-password/route.ts',      // token-gated, pre-auth
   'src/app/api/auth/reset-password/route.ts',       // token-gated, pre-auth
   'src/app/api/auth/accept-invite/route.ts',        // token-gated, pre-auth

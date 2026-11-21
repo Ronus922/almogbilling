@@ -90,12 +90,18 @@ export async function getSession(): Promise<{ sid: string; user: SessionUser } |
   };
 }
 
+/** The request carries a session cookie — live or dead, this does not say. */
+export async function hasSessionCookie(): Promise<boolean> {
+  const cookieStore = await cookies();
+  return Boolean(cookieStore.get(SESSION_COOKIE)?.value);
+}
+
 /**
  * Returns the session id from cookie if a row exists in DB, regardless
- * of the user's is_active state. Used ONLY by (app)/layout.tsx to
- * distinguish "no session at all" from "session exists but user was
- * disabled". For all other cases use getSession() which fail-closes
- * on is_active=false.
+ * of the user's is_active state. Used ONLY by the session-reset route
+ * (src/app/api/auth/session-reset) to distinguish "no session at all" from
+ * "session exists but user was disabled". For all other cases use
+ * getSession() which fail-closes on is_active=false.
  */
 export async function getActiveSessionId(): Promise<string | null> {
   const cookieStore = await cookies();
