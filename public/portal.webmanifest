@@ -1,0 +1,18 @@
+{
+  "id": "/portal",
+  "name": "מגדלי חוף הכרמל — בניין אלמוג",
+  "short_name": "פורטל אלמוג",
+  "description": "פורטל בעלי הדירות — שקיפות כספית",
+  "dir": "rtl",
+  "lang": "he",
+  "start_url": "/portal",
+  "scope": "/portal",
+  "display": "standalone",
+  "theme_color": "#FFFFFF",
+  "background_color": "#F4F6FA",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
