@@ -1,6 +1,9 @@
 import { Mail } from 'lucide-react';
 import { AuthLayout } from '@/components/auth/AuthLayout';
 import { ResendTimer } from '@/components/auth/ResendTimer';
+import { redirectIfSignedIn } from '@/lib/auth/signedIn';
+
+export const runtime = 'nodejs';
 
 type SearchParams = Promise<{ email?: string }>;
 
@@ -9,6 +12,7 @@ export default async function ForgotPasswordSentPage({
 }: {
   searchParams: SearchParams;
 }) {
+  await redirectIfSignedIn();
   const { email = '' } = await searchParams;
 
   return (

@@ -1,10 +1,17 @@
 import { Suspense } from 'react';
 import { LoginBrandPanel } from '@/components/auth/LoginBrandPanel';
 import { LoginForm } from '@/components/auth/LoginForm';
+import { redirectIfSignedIn } from '@/lib/auth/signedIn';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 // Login screen — single rounded card: brand panel (right, RTL) + form (left).
 // On <lg the brand panel collapses and the form fills the card.
-export default function LoginPage() {
+// A visitor who is really signed in goes home; a dead cookie gets the form
+// (21/11/2026 — the proxy no longer decides this, see src/proxy.ts).
+export default async function LoginPage() {
+  await redirectIfSignedIn();
   return (
     <div
       dir="rtl"

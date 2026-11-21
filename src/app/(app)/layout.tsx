@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { hasAnyAccess } from '@/lib/permissions/check';
-import { deleteSession, getActiveSessionId } from '@/lib/auth/session';
+import { hasSessionCookie } from '@/lib/auth/session';
+import { SESSION_RESET_PATH } from '@/lib/constants';
 import { AuthProvider } from '@/lib/auth/context';
 import { AppShell } from '@/components/app-shell/AppShell';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -16,17 +17,15 @@ export default async function ProtectedLayout({
   const actor = await getCurrentActor();
 
   if (!actor) {
-    // Distinguish "no session at all" from "session exists but user disabled".
-    const sid = await getActiveSessionId();
-    if (sid) {
-      await deleteSession();
-      redirect('/login?reason=disabled');
-    }
-    redirect('/login');
+    // A cookie that names no live session (expired, deleted, or its user
+    // disabled) goes to the reset route: a layout cannot modify cookies, the
+    // route can — it clears the cookie, tells a disabled user apart
+    // (?reason=disabled) and ends on /login. No cookie at all → /login.
+    redirect((await hasSessionCookie()) ? SESSION_RESET_PATH : '/login');
   }
 
-  // Authenticated but zero permissions (matrix role with no rows): sending them
-  // to /login loops (the proxy bounces authed users back via `/`). /no-access
+  // Authenticated but zero permissions (matrix role with no rows): /login
+  // would send them straight back home, into this layout again. /no-access
   // sits outside this layout, so it breaks the cycle.
   if (!hasAnyAccess(actor.role, actor.permissions)) {
     redirect('/no-access');
