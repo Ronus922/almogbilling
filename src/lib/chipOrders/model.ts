@@ -1,3 +1,5 @@
+import type { ChipResidentRole, ChipStatus, ChipType } from '@/lib/types/chips';
+
 // Chip orders (/chip-order, 12/11/2026) — the pure, client-safe half: types,
 // statuses and their Hebrew labels, the price rule and the due date. The
 // server and the public page import the SAME functions, so the price a
@@ -6,6 +8,11 @@
 
 export type ChipOrderRole = 'owner' | 'tenant' | 'operator';
 
+/** paid = being assigned (13/11/2026: the approval step is gone — a paid
+ *  order goes straight to assigning chips). 'approved' is LEGACY only: rows
+ *  approved before 13/11 were mapped to paid (migration 20261113220605), and
+ *  nothing writes it any more; the code still treats it as paid, so a rollback
+ *  build that approves an order leaves nothing stranded. */
 export type ChipOrderStatus =
   | 'pending_payment'
   | 'paid'
@@ -14,6 +21,14 @@ export type ChipOrderStatus =
   | 'collected'
   | 'rejected';
 
+/** Open = still in the Orders tab: paid (assigning) or ready. A row leaves the
+ *  tab once collected or rejected. */
+const OPEN_CHIP_ORDER_STATUSES: readonly ChipOrderStatus[] = ['paid', 'approved', 'ready'];
+
+export function isOpenChipOrder(status: ChipOrderStatus): boolean {
+  return OPEN_CHIP_ORDER_STATUSES.includes(status);
+}
+
 /** owner phone = registry owner → matched; another owner on file → review;
  *  no owner on file → unassigned; tenant / operator → document_review. */
 export type ChipOrderMatchStatus = 'matched' | 'review' | 'unassigned' | 'document_review';
@@ -21,7 +36,9 @@ export type ChipOrderMatchStatus = 'matched' | 'review' | 'unassigned' | 'docume
 /** not_required — a rejected TEST order: nothing was charged, Grow is never asked. */
 export type ChipOrderRefundStatus = 'refunded' | 'manual_required' | 'not_required';
 
-export type ChipOrderNotifyKind = 'paid' | 'approved' | 'ready' | 'rejected';
+/** The three messages an orderer gets (the "approved" message went with the
+ *  approval step, 13/11/2026; old rows of that kind stay in the history). */
+export type ChipOrderNotifyKind = 'paid' | 'ready' | 'rejected';
 
 export const CHIP_ORDER_ROLES: readonly ChipOrderRole[] = ['owner', 'tenant', 'operator'];
 
@@ -33,8 +50,8 @@ export const CHIP_ORDER_ROLE_LABEL: Record<ChipOrderRole, string> = {
 
 export const CHIP_ORDER_STATUS_LABEL: Record<ChipOrderStatus, string> = {
   pending_payment: 'ממתין לתשלום',
-  paid: 'שולם, ממתין לבדיקה',
-  approved: 'מאושר, בהכנה',
+  paid: 'שולם, בהכנה',
+  approved: 'שולם, בהכנה',
   ready: 'מוכן לאיסוף',
   collected: 'נאסף',
   rejected: 'נדחה',
@@ -76,14 +93,9 @@ export function needsLease(role: ChipOrderRole): boolean {
 // ── Settings (app_settings key 'chip_orders') ─────────────────────────────
 
 export interface ChipOrderSettings {
-  /** ₪ per chip for chips 1..threshold of one apartment. */
+  /** ₪ per chip — ONE flat price for every chip of an order (21/11/2026:
+   *  no threshold, no higher price above it, no quantity limit). */
   unitPrice: number;
-  /** X — how many chips per apartment are sold at unitPrice. */
-  threshold: number;
-  /** ₪ per chip from chip X+1 of one apartment. */
-  priceAbove: number;
-  /** Most chips one apartment may order in one order. */
-  maxPerApartment: number;
   /** Where and when chips are collected — goes into the "ready" message. */
   pickupText: string;
   /** Order terms shown above the consent checkbox (Grow's go-live review asks for one). */
@@ -94,18 +106,24 @@ export interface ChipOrderSettings {
 
 export const DEFAULT_CHIP_ORDER_SETTINGS: ChipOrderSettings = {
   unitPrice: 50,
-  threshold: 2,
-  priceAbove: 70,
-  maxPerApartment: 4,
   pickupText: '',
   termsText: '',
   ordersOpen: false,
 };
 
 export const CHIP_ORDER_LIMITS = {
-  /** Hard ceiling of the settings field (the DB CHECK allows 50). */
-  maxPerApartmentCeiling: 20,
-  maxApartmentsPerOrder: 10,
+  /** Chips one apartment may order in one order (Ronen, 21/11/2026 noon),
+   *  counted over ALL its rows; an order may hold several apartments, each up
+   *  to this. Checked on the page (plus button + submit) and on the server.
+   *  The DB CHECK of chip_order_items / chip_order_holders (≤ 50) stays as
+   *  the storage ceiling. The issue window has no limit. */
+  maxChipsPerApartment: 10,
+  /** The orderer's note ("הערות" on the public page) — stored as the order's
+   *  note (chip_orders.internal_note, the "הערה" of the issue window). */
+  customerNoteMax: 500,
+  /** Rows (people) in one order — several may share an apartment. A bound on
+   *  the public request, not on the quantity. */
+  maxRowsPerOrder: 20,
   leaseFileBytes: 10 * 1024 * 1024,
   /** The whole multipart submit (every lease + the JSON) — checked from
    *  Content-Length before the body is read. */
@@ -116,6 +134,10 @@ export const CHIP_ORDER_LIMITS = {
   otpPerDay: 300,
   maxPrice: 10_000,
 } as const;
+
+/** Shown next to the quantity (plus button / submit) and returned by the server. */
+export const CHIP_ORDER_APT_LIMIT_MESSAGE =
+  `ניתן להזמין עד ${CHIP_ORDER_LIMITS.maxChipsPerApartment} כרטיסים לדירה בהזמנה אחת. לכמות גדולה יותר יש לפנות להנהלת הבניין.`;
 
 /** The lease may be a PDF or a photo. */
 export const LEASE_FILE_EXTS = ['pdf', 'jpg', 'jpeg', 'png', 'webp'] as const;
@@ -130,26 +152,30 @@ export interface LinePrice {
   lineTotal: number;
 }
 
-/** Chips 1..X of ONE apartment at the base price, chip X+1 onwards at the
- *  price above the threshold. Agorot-safe (integer arithmetic on cents). */
-export function priceLine(
-  chipsCount: number,
-  s: Pick<ChipOrderSettings, 'unitPrice' | 'threshold' | 'priceAbove'>,
-): LinePrice {
+/** One apartment line at the flat price: chips × unit price. Agorot-safe
+ *  (integer arithmetic on cents). The snapshot columns of the old threshold
+ *  rule stay filled so an order still reads alone: threshold = the line's own
+ *  count and price_above = the unit price, i.e. every chip at one price. Orders
+ *  made before 21/11/2026 keep the threshold snapshot they were sold with. */
+export function priceLine(chipsCount: number, s: Pick<ChipOrderSettings, 'unitPrice'>): LinePrice {
   const n = Math.max(0, Math.floor(chipsCount));
-  const base = Math.min(n, s.threshold);
-  const above = Math.max(0, n - s.threshold);
-  const cents = base * Math.round(s.unitPrice * 100) + above * Math.round(s.priceAbove * 100);
   return {
     unitPrice: s.unitPrice,
-    threshold: s.threshold,
-    priceAbove: s.priceAbove,
-    lineTotal: cents / 100,
+    threshold: n,
+    priceAbove: s.unitPrice,
+    lineTotal: (n * Math.round(s.unitPrice * 100)) / 100,
   };
 }
 
 export function orderTotal(lines: { lineTotal: number }[]): number {
   return Math.round(lines.reduce((s, l) => s + Math.round(l.lineTotal * 100), 0)) / 100;
+}
+
+/** The order page's money format (20/11/2026 design): "240₪", "1,050₪",
+ *  "52.5₪" — the number first, then the sign, rendered inside an LTR-isolated
+ *  span. */
+export function formatIlsAfter(n: number): string {
+  return `${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}₪`;
 }
 
 /** ₪ with up to two decimals, no trailing zeros ("₪50", "₪52.5"). */
@@ -181,13 +207,14 @@ function jerusalemParts(d: Date): { weekday: number; msIntoDay: number } {
 }
 
 /**
- * approved_at + 72 hours that fall on Sunday–Thursday (Israel time). Friday and
+ * paid_at + 72 hours that fall on Sunday–Thursday (Israel time). Friday and
  * Saturday do not count at all; every hour of a working day does (the rule is
  * "72 שעות עבודה, א' עד ה'", not office hours). Holidays are not modelled.
- * Approval on a Friday starts counting on Sunday 00:00.
+ * A payment on a Friday starts counting on Sunday 00:00. (Until 13/11/2026 the
+ * clock started at the approval; there is no approval any more.)
  */
-export function chipOrderDueAt(approvedAt: Date): Date {
-  let cursor = approvedAt.getTime();
+export function chipOrderDueAt(paidAt: Date): Date {
+  let cursor = paidAt.getTime();
   let remaining = DUE_WORKING_HOURS * HOUR_MS;
   // At most a few weeks of iterations — each loop either consumes a working
   // day's remainder or skips one weekend day.
@@ -205,38 +232,123 @@ export function chipOrderDueAt(approvedAt: Date): Date {
   return new Date(cursor);
 }
 
-/** Overdue = still being prepared after its due date. */
+/** Overdue = still being assigned (not ready yet) after its due date. */
 export function isChipOrderOverdue(
   o: { status: ChipOrderStatus; due_at: string | null },
   now: Date = new Date(),
 ): boolean {
-  return o.status === 'approved' && o.due_at !== null && new Date(o.due_at).getTime() < now.getTime();
+  return (o.status === 'paid' || o.status === 'approved') && o.due_at !== null && new Date(o.due_at).getTime() < now.getTime();
+}
+
+// ── The stage of ONE apartment of an order (the Orders tab row, the order
+//    section in the issue window) ──────────────────────────────────────────
+
+/** awaiting "ממתין לשיוך" · partial "שויכו X מתוך Y" · assigned "שויך" ·
+ *  ready "מוכן לאיסוף" (the order's own status). X counts ACTIVE chips only. */
+export type ChipOrderStage = 'awaiting' | 'partial' | 'assigned' | 'ready';
+
+export function chipOrderStage(status: ChipOrderStatus, linked: number, ordered: number): ChipOrderStage {
+  if (status === 'ready') return 'ready';
+  if (linked <= 0) return 'awaiting';
+  return linked >= ordered ? 'assigned' : 'partial';
+}
+
+export function chipOrderStageLabel(stage: ChipOrderStage, linked: number, ordered: number): string {
+  switch (stage) {
+    case 'awaiting': return 'ממתין לשיוך';
+    case 'partial': return `שויכו ${linked} מתוך ${ordered}`;
+    case 'assigned': return 'שויך';
+    case 'ready': return 'מוכן לאיסוף';
+  }
 }
 
 // ── Shapes the staff screen reads ──────────────────────────────────────────
 
-export interface ChipOrderListItem {
-  id: string;
+/** One row of /chips → "הזמנות": ONE APARTMENT of an open order (13/11/2026;
+ *  until then a row was a whole order). */
+export interface ChipOrderRow {
+  item_id: string;
+  order_id: string;
   order_number: number;
+  contact_id: string;
+  apartment_number: string;
   full_name: string;
   phone_e164: string;
   role: ChipOrderRole;
   status: ChipOrderStatus;
-  total: number;
+  /** Chips this apartment ordered. */
+  chips_count: number;
+  /** ACTIVE chips issued for this apartment line (chips.order_item_id). */
+  chips_linked: number;
   paid_at: string | null;
   due_at: string | null;
   created_at: string;
-  apartments: string[];
-  chips_total: number;
-  chips_linked: number;
   has_failed_notification: boolean;
-  /** A test-mode order — shown with a "בדיקה" badge, never counted or summed. */
+  /** A test-mode order — shown with a "בדיקה" badge, never counted. */
   is_test: boolean;
   /** False = the phone code was skipped in test mode — "טלפון לא אומת". */
   phone_verified: boolean;
 }
 
-export interface ChipOrderItemDetail {
+/** One "פרטי הזמנה" section of the issue window: an OPEN order of the same
+ *  person (same phone) for this apartment — its line for the apartment, plus
+ *  what the order-wide buttons need ("מוכן לאיסוף" acts on the whole order). */
+export interface ChipOrderSection {
+  order_id: string;
+  order_number: number;
+  item_id: string;
+  full_name: string;
+  phone_e164: string;
+  email: string;
+  address: string;
+  role: ChipOrderRole;
+  status: ChipOrderStatus;
+  /** What the order was paid in total (every apartment of it). */
+  total: number;
+  chips_count: number;
+  /** ACTIVE chips linked to this line. */
+  chips_linked: number;
+  lease_file_key: string | null;
+  lease_file_name: string | null;
+  lease_end_date: string | null;
+  paid_at: string | null;
+  due_at: string | null;
+  created_at: string;
+  is_test: boolean;
+  phone_verified: boolean;
+  /** The order's OTHER apartments (an order may cover several). */
+  other_apartments: string[];
+  /** Every line of the order has all its chips (active) — "מוכן לאיסוף". */
+  order_all_linked: boolean;
+}
+
+/** What the issue window loads for an Orders-tab row. */
+export interface ChipOrderSheetContext {
+  contact_id: string;
+  apartment_number: string;
+  /** The clicked row's orderer — the holder block is matched / prefilled from it. */
+  holder: { full_name: string; phone_e164: string; role: ChipOrderRole };
+  sections: ChipOrderSection[];
+}
+
+// ── The issue window of an order (20/11/2026 design) ───────────────────────
+
+/** A chip as the order window shows it. */
+export interface ChipOrderWindowChip {
+  id: string;
+  chip_number: string;
+  chip_type: ChipType;
+  status: ChipStatus;
+  contact_id: string;
+  order_item_id: string | null;
+  order_holder_id: string | null;
+  resident_role: ChipResidentRole;
+  holder_name: string | null;
+  holder_phone: string | null;
+}
+
+/** One apartment line of the order (price snapshot, as stored). */
+export interface ChipOrderWindowItem {
   id: string;
   contact_id: string;
   apartment_number: string;
@@ -248,68 +360,60 @@ export interface ChipOrderItemDetail {
   lease_file_key: string | null;
   lease_file_name: string | null;
   lease_end_date: string | null;
-  match_status: ChipOrderMatchStatus;
-  /** Chips already issued for this line (chips.order_item_id). */
-  linked_chips: { id: string; chip_number: string; status: string }[];
-  /** The registry slot the order's role maps to, read live. */
-  registry: { name: string | null; phone: string | null; email: string | null; emailSupported: boolean };
+  /** ACTIVE chips linked to the line. */
+  chips_linked: number;
 }
 
-export interface ChipOrderNotification {
-  id: string;
-  kind: ChipOrderNotifyKind;
-  channel: 'email' | 'whatsapp';
-  status: 'sent' | 'failed' | 'skipped';
-  error: string | null;
-  created_at: string;
+/** One block of the window = one person.
+ *   'order'  — a row of the public page (chip_order_holders, part of the paid quantity);
+ *   'staff'  — a holder the staff added (chip_order_holders, chips_count 0, never priced);
+ *   'legacy' — an order made before 20/11/2026 has no holder lines: one block per
+ *              apartment, built from the order's own name and phone (stored as a
+ *              holder line the first time the block is saved). */
+export interface ChipOrderWindowHolder {
+  id: string | null;
+  item_id: string;
+  source: 'order' | 'staff' | 'legacy';
+  role: ChipResidentRole;
+  full_name: string;
+  phone: string | null;
+  email: string | null;
+  chips_count: number;
+  lease_file_key: string | null;
+  lease_file_name: string | null;
+  lease_end_date: string | null;
+  /** Chips issued for THIS person of this order. */
+  chips: ChipOrderWindowChip[];
+  /** The same person's earlier chips in this apartment (matched by phone) —
+   *  shown in the block; not part of the order's count. */
+  existing: ChipOrderWindowChip[];
 }
 
-export interface ChipOrderDetail {
+export interface ChipOrderWindowOrder {
   id: string;
   order_number: number;
+  status: ChipOrderStatus;
+  role: ChipOrderRole;
+  is_test: boolean;
+  phone_verified: boolean;
   full_name: string;
   phone_e164: string;
   email: string;
   address: string;
-  role: ChipOrderRole;
-  status: ChipOrderStatus;
   total: number;
-  grow_transaction_id: string | null;
-  grow_asmachta: string | null;
-  invoice_url: string | null;
-  invoice_number: string | null;
   paid_at: string | null;
-  approved_at: string | null;
   due_at: string | null;
-  ready_at: string | null;
-  collected_at: string | null;
-  rejected_at: string | null;
-  reject_reason: string | null;
-  refund_status: ChipOrderRefundStatus | null;
-  refund_note: string | null;
   created_at: string;
-  is_test: boolean;
-  /** False = the phone code was skipped in test mode — "טלפון לא אומת". */
-  phone_verified: boolean;
-  items: ChipOrderItemDetail[];
-  notifications: ChipOrderNotification[];
+  internal_note: string | null;
 }
 
-/** Which registry fields an approval writes, per apartment line. */
-export interface ChipOrderApprovalFields {
-  item_id: string;
-  name: boolean;
-  phone: boolean;
-  email: boolean;
-}
-
-/** ACTIVE chips issued for a line — a deactivated one no longer counts as
- *  delivered, so it can be replaced. */
-export function activeLinked(item: { linked_chips: { status: string }[] }): number {
-  return item.linked_chips.filter((c) => c.status === 'active').length;
-}
-
-/** Every line has as many ACTIVE chips linked as it ordered. */
-export function allChipsLinked(items: { chips_count: number; linked_chips: { status: string }[] }[]): boolean {
-  return items.length > 0 && items.every((i) => activeLinked(i) >= i.chips_count);
+/** What the issue window loads for an Orders-tab row (20/11/2026). */
+export interface ChipOrderWindow {
+  order: ChipOrderWindowOrder;
+  items: ChipOrderWindowItem[];
+  holders: ChipOrderWindowHolder[];
+  /** The line whose row was clicked — a holder the staff adds goes there. */
+  clicked_item_id: string;
+  /** Every line has all its chips (active) — "מוכן לאיסוף" may go. */
+  order_all_linked: boolean;
 }

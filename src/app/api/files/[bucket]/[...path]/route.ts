@@ -253,8 +253,13 @@ async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<
     };
   }
   if (bucket === 'chip-order-leases') {
+    // A lease sits on the apartment line (orders before 20/11/2026) or on the
+    // renter's holder line (the redesigned page).
     const row = await queryOne<{ id: string; order_id: string; lease_file_name: string | null }>(
-      `select id, order_id, lease_file_name from public.chip_order_items where lease_file_key = $1 limit 1`,
+      `select id, order_id, lease_file_name from public.chip_order_items where lease_file_key = $1
+       union all
+       select id, order_id, lease_file_name from public.chip_order_holders where lease_file_key = $1
+       limit 1`,
       [path],
     );
     if (!row) return orphan;

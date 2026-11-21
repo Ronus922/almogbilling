@@ -20,13 +20,14 @@ export const dynamic = 'force-dynamic';
 // The token is 32 random bytes; the page shows the status, the due date and
 // the pickup details ONLY — no name, phone, apartment or amount.
 
+// Three steps since 13/11/2026 — there is no approval step any more; a legacy
+// 'approved' row reads as paid.
 const STEPS: { status: ChipOrderStatus; label: string }[] = [
   { status: 'paid', label: 'שולם' },
-  { status: 'approved', label: 'אושר' },
   { status: 'ready', label: 'מוכן לאיסוף' },
   { status: 'collected', label: 'נאסף' },
 ];
-const RANK: Record<ChipOrderStatus, number> = { pending_payment: -1, paid: 0, approved: 1, ready: 2, collected: 3, rejected: -1 };
+const RANK: Record<ChipOrderStatus, number> = { pending_payment: -1, paid: 0, approved: 0, ready: 1, collected: 2, rejected: -1 };
 
 export default async function ChipOrderTrackPage({
   params, searchParams,
@@ -79,7 +80,7 @@ export default async function ChipOrderTrackPage({
         )}
 
         {rank >= 0 && (
-          <ol className="grid grid-cols-4 gap-2" aria-label="שלבי ההזמנה">
+          <ol className="grid grid-cols-3 gap-2" aria-label="שלבי ההזמנה">
             {STEPS.map((s, i) => (
               <li key={s.status} className="flex flex-col items-center gap-1.5 text-center">
                 <span className={cn(
@@ -94,7 +95,7 @@ export default async function ChipOrderTrackPage({
           </ol>
         )}
 
-        {view.status === 'approved' && view.due_at && (
+        {(view.status === 'paid' || view.status === 'approved') && view.due_at && (
           <p className="flex items-start gap-2 text-[14.5px] font-semibold">
             <CalendarClock className="mt-0.5 h-5 w-5 shrink-0 text-[var(--chip-brand)]" />
             מועד היעד להכנה: {formatDueText(view.due_at)}

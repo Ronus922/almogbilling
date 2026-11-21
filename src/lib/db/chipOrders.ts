@@ -8,18 +8,17 @@ import { updateContact } from '@/lib/db/contacts';
 import { chipOrderMatchStatus } from '@/lib/chipOrders/match';
 import {
   chipOrderDueAt,
+  isOpenChipOrder,
   orderTotal,
   priceLine,
-  type ChipOrderApprovalFields,
-  type ChipOrderDetail,
-  type ChipOrderItemDetail,
-  type ChipOrderListItem,
   type ChipOrderMatchStatus,
-  type ChipOrderNotification,
   type ChipOrderNotifyKind,
   type ChipOrderRefundStatus,
   type ChipOrderRole,
+  type ChipOrderRow,
+  type ChipOrderSection,
   type ChipOrderSettings,
+  type ChipOrderSheetContext,
   type ChipOrderStatus,
 } from '@/lib/chipOrders/model';
 
@@ -57,13 +56,38 @@ export interface NewOrderLine {
   leaseEndDate: string | null;
 }
 
+/** One row of the redesigned order page (20/11/2026) = ONE PERSON who will
+ *  hold chips. Rows of the same apartment are priced together. */
+export interface NewOrderRow {
+  role: 'owner' | 'tenant';
+  fullName: string;
+  apartmentNumber: string;
+  chipsCount: number;
+  phoneE164: string;
+  email: string | null;
+  lease: { objectKey: string; fileName: string; mime: string; size: number } | null;
+  leaseEndDate: string | null;
+}
+
 export interface NewOrderInput {
   fullName: string;
   phoneE164: string;
   email: string;
   address: string;
   role: ChipOrderRole;
-  lines: NewOrderLine[];
+  /** The page before 20/11/2026: one line per apartment, no holder lines.
+   *  Kept for the tests and as the shape of an old order. */
+  lines?: NewOrderLine[];
+  /** The page from 20/11/2026: one row per person; becomes one apartment
+   *  line per apartment (the price) + one holder line per row. */
+  rows?: NewOrderRow[];
+  /** The address in its three parts (20/11/2026); `address` is composed from it. */
+  addressParts?: { street: string; city: string; zip: string } | null;
+  /** The renter commitment box was ticked (only when a renter row exists). */
+  renterTermsAccepted?: boolean;
+  /** The orderer's "הערות" (21/11/2026) — stored as the order's note
+   *  (internal_note), which the issue window shows and edits as "הערה". */
+  note?: string | null;
   ip: string | null;
   /** Test mode (a valid test link): the order is marked is_test and is later
    *  "paid" by markTestChipOrderPaid, never through Grow. */
@@ -120,45 +144,90 @@ async function ownersOf(client: PoolClient, apartmentNumbers: string[]): Promise
  */
 export async function createChipOrder(input: NewOrderInput, settings: ChipOrderSettings): Promise<CreatedOrder> {
   const trackingToken = randomBytes(32).toString('base64url');
+  // Rows → one group per apartment, in the order the apartments first appear.
+  // Legacy `lines` are groups of their own with no holder rows.
+  type Group = { apartmentNumber: string; chipsCount: number; rows: NewOrderRow[]; line: NewOrderLine | null };
+  const groups: Group[] = [];
+  if (input.rows && input.rows.length > 0) {
+    const byApt = new Map<string, Group>();
+    for (const r of input.rows) {
+      let g = byApt.get(r.apartmentNumber);
+      if (!g) {
+        g = { apartmentNumber: r.apartmentNumber, chipsCount: 0, rows: [], line: null };
+        byApt.set(r.apartmentNumber, g);
+        groups.push(g);
+      }
+      g.chipsCount += r.chipsCount;
+      g.rows.push(r);
+    }
+  } else {
+    for (const l of input.lines ?? []) groups.push({ apartmentNumber: l.apartmentNumber, chipsCount: l.chipsCount, rows: [], line: l });
+  }
+  if (groups.length === 0) throw new Error('no_lines');
+
   return withTransaction(async (client) => {
-    const owners = await ownersOf(client, input.lines.map((l) => l.apartmentNumber));
-    const priced = input.lines.map((l) => {
-      const o = owners.get(l.apartmentNumber);
+    const owners = await ownersOf(client, groups.map((g) => g.apartmentNumber));
+    const priced = groups.map((g) => {
+      const o = owners.get(g.apartmentNumber);
       if (!o) throw new Error('apartment_not_found');
-      return { line: l, owner: o, price: priceLine(l.chipsCount, settings) };
+      return { group: g, owner: o, price: priceLine(g.chipsCount, settings) };
     });
     const total = orderTotal(priced.map((p) => p.price));
+    const parts = input.addressParts ?? null;
 
     const order = (
       await client.query<{ id: string; order_number: number }>(
         `insert into public.chip_orders
-           (full_name, phone_e164, email, address, role, total, tracking_token, created_ip, is_test, phone_verified)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           (full_name, phone_e164, email, address, role, total, tracking_token, created_ip, is_test, phone_verified,
+            address_street, address_city, address_zip, renter_terms_accepted_at, internal_note)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, case when $14::boolean then now() else null end, $15)
          returning id, order_number`,
         [input.fullName, input.phoneE164, input.email, input.address, input.role, total, trackingToken, input.ip, input.isTest === true,
-          input.phoneVerified !== false],
+          input.phoneVerified !== false, parts?.street ?? null, parts?.city ?? null, parts?.zip ?? null,
+          input.renterTermsAccepted === true, input.note?.trim() ? input.note.trim() : null],
       )
     ).rows[0];
 
-    for (const { line, owner, price } of priced) {
+    let position = 0;
+    for (const { group, owner, price } of priced) {
+      // The match is read from the apartment's FIRST row (its role and phone);
+      // a legacy line uses the order's own role and phone.
+      const first = group.rows[0];
       const match: ChipOrderMatchStatus = chipOrderMatchStatus({
-        role: input.role,
-        orderPhoneE164: input.phoneE164,
+        role: first ? first.role : input.role,
+        orderPhoneE164: first ? first.phoneE164 : input.phoneE164,
         ownerPhonesE164: owner.phones,
         ownerOnFile: owner.onFile,
       });
-      await client.query(
-        `insert into public.chip_order_items
-           (order_id, contact_id, apartment_number, chips_count, unit_price, threshold, price_above, line_total,
-            lease_file_key, lease_file_name, lease_file_mime, lease_file_size, lease_end_date, match_status)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-        [
-          order.id, owner.contactId, owner.apartment, line.chipsCount,
-          price.unitPrice, price.threshold, price.priceAbove, price.lineTotal,
-          line.lease?.objectKey ?? null, line.lease?.fileName ?? null, line.lease?.mime ?? null, line.lease?.size ?? null,
-          line.leaseEndDate, match,
-        ],
-      );
+      const line = group.line;
+      const item = (
+        await client.query<{ id: string }>(
+          `insert into public.chip_order_items
+             (order_id, contact_id, apartment_number, chips_count, unit_price, threshold, price_above, line_total,
+              lease_file_key, lease_file_name, lease_file_mime, lease_file_size, lease_end_date, match_status)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           returning id`,
+          [
+            order.id, owner.contactId, owner.apartment, group.chipsCount,
+            price.unitPrice, price.threshold, price.priceAbove, price.lineTotal,
+            line?.lease?.objectKey ?? null, line?.lease?.fileName ?? null, line?.lease?.mime ?? null, line?.lease?.size ?? null,
+            line?.leaseEndDate ?? null, match,
+          ],
+        )
+      ).rows[0];
+      for (const r of group.rows) {
+        await client.query(
+          `insert into public.chip_order_holders
+             (order_id, item_id, position, source, role, full_name, phone, email, chips_count,
+              lease_file_key, lease_file_name, lease_file_mime, lease_file_size, lease_end_date)
+           values ($1,$2,$3,'order',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [
+            order.id, item.id, position++, r.role, r.fullName, r.phoneE164, r.email, r.chipsCount,
+            r.lease?.objectKey ?? null, r.lease?.fileName ?? null, r.lease?.mime ?? null, r.lease?.size ?? null,
+            r.leaseEndDate,
+          ],
+        );
+      }
     }
     return {
       id: order.id,
@@ -197,18 +266,21 @@ export async function getOrderPaymentRef(orderId: string): Promise<OrderPaymentR
 }
 
 /** pending_payment → paid, once. Returns true only for the call that made the
- *  transition (Grow repeats its callback; the second one changes nothing). */
+ *  transition (Grow repeats its callback; the second one changes nothing).
+ *  The due date (72 working hours) starts here — there is no approval step
+ *  (13/11/2026), and the "received & paid" message states it. */
 export async function markChipOrderPaid(
   orderId: string,
   tx: { transactionId: string; transactionToken: string; asmachta: string | null },
+  now: Date = new Date(),
 ): Promise<boolean> {
   const r = await query(
     `update public.chip_orders
-        set status = 'paid', paid_at = now(),
+        set status = 'paid', paid_at = $5, due_at = $6,
             grow_transaction_id = $2, grow_transaction_token = $3, grow_asmachta = $4,
             updated_at = now()
       where id = $1 and status = 'pending_payment'`,
-    [orderId, tx.transactionId, tx.transactionToken, tx.asmachta],
+    [orderId, tx.transactionId, tx.transactionToken, tx.asmachta, now.toISOString(), chipOrderDueAt(now).toISOString()],
   );
   return (r.rowCount ?? 0) > 0;
 }
@@ -217,14 +289,14 @@ export async function markChipOrderPaid(
  *  field and no invoice. Matched by its tracking token AND is_test, so it can
  *  never touch an order created without the test link. Returns the order id
  *  for the call that made the transition, else null. */
-export async function markTestChipOrderPaid(trackingToken: string): Promise<string | null> {
+export async function markTestChipOrderPaid(trackingToken: string, now: Date = new Date()): Promise<string | null> {
   if (!/^[A-Za-z0-9_-]{32,64}$/.test(trackingToken)) return null;
   const r = await queryOne<{ id: string }>(
     `update public.chip_orders
-        set status = 'paid', paid_at = now(), updated_at = now()
+        set status = 'paid', paid_at = $2, due_at = $3, updated_at = now()
       where tracking_token = $1 and is_test and status = 'pending_payment'
       returning id`,
-    [trackingToken],
+    [trackingToken, now.toISOString(), chipOrderDueAt(now).toISOString()],
   );
   return r?.id ?? null;
 }
@@ -311,91 +383,85 @@ export async function recordChipOrderNotification(row: {
 
 // ── The staff screen (/chips → הזמנות) ─────────────────────────────────────
 
-/** Every order that was paid — pending_payment never shows up. Test orders
- *  come with is_test; the screen badges them and keeps them out of every
- *  count. */
-export async function listChipOrders(): Promise<ChipOrderListItem[]> {
-  const r = await query<ChipOrderListItem>(
-    `select o.id, o.order_number, o.full_name, o.phone_e164, o.role, o.status, o.total::float8 as total,
+const OPEN_SQL = `('paid', 'approved', 'ready')`;
+
+/** The Orders tab: ONE ROW PER APARTMENT of every open order (paid — being
+ *  assigned — or ready). pending_payment never shows; a row leaves once its
+ *  order is collected or rejected. Test orders come with is_test; the screen
+ *  badges them and keeps them out of every count. */
+export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
+  const r = await query<ChipOrderRow>(
+    `select i.id as item_id, o.id as order_id, o.order_number, i.contact_id, i.apartment_number,
+            o.full_name, o.phone_e164, o.role, o.status, i.chips_count,
+            (select count(*)::int from public.chips c where c.order_item_id = i.id and c.status = 'active') as chips_linked,
             o.paid_at, o.due_at, o.created_at,
-            array(select i.apartment_number from public.chip_order_items i
-                   where i.order_id = o.id order by i.created_at) as apartments,
-            (select coalesce(sum(i.chips_count), 0)::int from public.chip_order_items i where i.order_id = o.id) as chips_total,
-            (select count(*)::int from public.chips c
-               join public.chip_order_items i on i.id = c.order_item_id
-              where i.order_id = o.id and c.status = 'active') as chips_linked,
             exists (select 1 from public.chip_order_notifications n
                      where n.order_id = o.id and n.status = 'failed') as has_failed_notification,
             o.is_test, o.phone_verified
-       from public.chip_orders o
-      where o.status <> 'pending_payment'
-      order by case o.status when 'paid' then 0 when 'approved' then 1 when 'ready' then 2 else 3 end,
-               o.paid_at desc nulls last`,
+       from public.chip_order_items i
+       join public.chip_orders o on o.id = i.order_id
+      where o.status in ${OPEN_SQL}
+      order by case o.status when 'ready' then 1 else 0 end, o.paid_at desc nulls last, o.order_number desc, i.created_at`,
   );
   return r.rows;
 }
 
-const REGISTRY_COLS: Record<ChipOrderRole, { name: string; phone: string; email: string | null }> = {
-  owner: { name: 'owner_name', phone: 'owner_phone', email: 'owner_email' },
-  tenant: { name: 'tenant_name', phone: 'tenant_phone', email: 'tenant_email' },
-  // The registry has no operator e-mail column — the e-mail field is not offered.
-  operator: { name: 'operator_name', phone: 'operator_phone', email: null },
-};
-
-export async function getChipOrderDetail(id: string): Promise<ChipOrderDetail | null> {
-  const order = await queryOne<Omit<ChipOrderDetail, 'items' | 'notifications'>>(
-    `select id, order_number, full_name, phone_e164, email, address, role, status, total::float8 as total,
-            grow_transaction_id, grow_asmachta, invoice_url, invoice_number, paid_at, approved_at, due_at,
-            ready_at, collected_at, rejected_at, reject_reason, refund_status, refund_note, created_at, is_test,
-            phone_verified
-       from public.chip_orders where id = $1 and status <> 'pending_payment'`,
-    [id],
+/**
+ * What the issue window loads for one Orders-tab row: the apartment, the
+ * clicked row's orderer (the holder block is matched by that phone or
+ * prefilled from it), and EVERY open order of the same person (same phone)
+ * for this apartment — one "פרטי הזמנה" section each, oldest first. Null when
+ * the line does not exist or its order was never paid.
+ */
+export async function getChipOrderSheetContext(itemId: string): Promise<ChipOrderSheetContext | null> {
+  const head = await queryOne<{ contact_id: string; apartment_number: string; full_name: string; phone_e164: string; role: ChipOrderRole }>(
+    `select i.contact_id, c.apartment_number, o.full_name, o.phone_e164, o.role
+       from public.chip_order_items i
+       join public.chip_orders o on o.id = i.order_id
+       join public.contacts c on c.id = i.contact_id
+      where i.id = $1 and o.status <> 'pending_payment'`,
+    [itemId],
   );
-  if (!order) return null;
-
-  const cols = REGISTRY_COLS[order.role];
-  const items = (
-    await query<Omit<ChipOrderItemDetail, 'registry' | 'linked_chips'> & {
-      reg_name: string | null; reg_phone: string | null; reg_email: string | null;
-      linked_chips: { id: string; chip_number: string; status: string }[] | null;
-    }>(
-      `select i.id, i.contact_id, i.apartment_number, i.chips_count,
-              i.unit_price::float8 as unit_price, i.threshold, i.price_above::float8 as price_above,
-              i.line_total::float8 as line_total, i.lease_file_key, i.lease_file_name,
-              to_char(i.lease_end_date, 'YYYY-MM-DD') as lease_end_date, i.match_status,
-              c.${cols.name} as reg_name, c.${cols.phone} as reg_phone,
-              ${cols.email ? `c.${cols.email}` : 'null::text'} as reg_email,
-              (select coalesce(json_agg(json_build_object('id', ch.id, 'chip_number', ch.chip_number, 'status', ch.status)
-                                        order by ch.issued_at), '[]'::json)
-                 from public.chips ch where ch.order_item_id = i.id) as linked_chips
+  if (!head) return null;
+  const sections = (
+    await query<ChipOrderSection>(
+      `select o.id as order_id, o.order_number, i.id as item_id, o.full_name, o.phone_e164, o.email, o.address,
+              o.role, o.status, o.total::float8 as total, i.chips_count,
+              (select count(*)::int from public.chips ch where ch.order_item_id = i.id and ch.status = 'active') as chips_linked,
+              i.lease_file_key, i.lease_file_name, to_char(i.lease_end_date, 'YYYY-MM-DD') as lease_end_date,
+              o.paid_at, o.due_at, o.created_at, o.is_test, o.phone_verified,
+              array(select x.apartment_number from public.chip_order_items x
+                     where x.order_id = o.id and x.id <> i.id order by x.created_at) as other_apartments,
+              not exists (select 1 from public.chip_order_items x
+                           where x.order_id = o.id
+                             and (select count(*) from public.chips ch
+                                   where ch.order_item_id = x.id and ch.status = 'active') < x.chips_count) as order_all_linked
          from public.chip_order_items i
-         join public.contacts c on c.id = i.contact_id
-        where i.order_id = $1
-        order by i.created_at`,
-      [id],
-    )
-  ).rows.map(({ reg_name, reg_phone, reg_email, linked_chips, ...rest }) => ({
-    ...rest,
-    linked_chips: linked_chips ?? [],
-    registry: { name: reg_name, phone: reg_phone, email: reg_email, emailSupported: cols.email !== null },
-  }));
-
-  const notifications = (
-    await query<ChipOrderNotification>(
-      `select id, kind, channel, status, error, created_at
-         from public.chip_order_notifications where order_id = $1 order by created_at`,
-      [id],
+         join public.chip_orders o on o.id = i.order_id
+        where i.contact_id = $1 and o.phone_e164 = $2 and o.status in ${OPEN_SQL}
+        order by o.created_at, o.order_number`,
+      [head.contact_id, head.phone_e164],
     )
   ).rows;
-
-  return { ...order, items, notifications };
+  return {
+    contact_id: head.contact_id,
+    apartment_number: head.apartment_number,
+    holder: { full_name: head.full_name, phone_e164: head.phone_e164, role: head.role },
+    sections,
+  };
 }
 
-async function lockOrder(client: PoolClient, id: string): Promise<{ status: ChipOrderStatus; role: ChipOrderRole; full_name: string; phone_e164: string; email: string } | null> {
+const REGISTRY_COLS: Record<ChipOrderRole, { name: string; phone: string }> = {
+  owner: { name: 'owner_name', phone: 'owner_phone' },
+  tenant: { name: 'tenant_name', phone: 'tenant_phone' },
+  operator: { name: 'operator_name', phone: 'operator_phone' },
+};
+
+async function lockOrder(client: PoolClient, id: string): Promise<{ status: ChipOrderStatus; role: ChipOrderRole } | null> {
   return (
     (
-      await client.query<{ status: ChipOrderStatus; role: ChipOrderRole; full_name: string; phone_e164: string; email: string }>(
-        `select status, role, full_name, phone_e164, email from public.chip_orders where id = $1 for update`,
+      await client.query<{ status: ChipOrderStatus; role: ChipOrderRole }>(
+        `select status, role from public.chip_orders where id = $1 for update`,
         [id],
       )
     ).rows[0] ?? null
@@ -403,67 +469,57 @@ async function lockOrder(client: PoolClient, id: string): Promise<{ status: Chip
 }
 
 /**
- * "אשר": paid → approved. Writes ONLY the ticked fields of each apartment to
- * the tenants list, in the slot the order's role maps to (owner_* / tenant_* /
- * operator_*), through the same updateContact the apartment card uses — so the
- * portal roster triggers fire exactly as on a manual edit. Sets approved_at
- * and due_at (72 working hours). All-or-nothing.
- * Returns the contact fields that changed, for the audit row.
+ * "עדכן בכרטיס הדייר" (13/11/2026) — copies the holder block's NAME and PHONE
+ * (as typed in the window) into the tenants list of the line's apartment, in
+ * the slot of the order's role (owner_* / tenant_* / operator_*), through the
+ * same updateContact the apartment card uses — so the portal roster triggers
+ * fire exactly as on a manual edit (an owner phone opens the portal). Only on
+ * that click: nothing else in the order flow writes to the tenants list. An
+ * empty value is left out, never cleared. Only while the order is open.
+ * Returns what was written, for the audit row; null when the line is unknown.
  */
-export async function approveChipOrder(
-  id: string,
-  fields: ChipOrderApprovalFields[],
-  now: Date = new Date(),
-): Promise<{ written: { contact_id: string; apartment_number: string; fields: Record<string, string | null> }[] } | null> {
+export async function writeOrderHolderToRegistry(
+  itemId: string,
+  values: { name: string | null; phone: string | null },
+  /** The block's own role (20/11/2026: a block per person). Absent = the order's. */
+  roleOverride?: ChipOrderRole,
+): Promise<{ order_id: string; contact_id: string; apartment_number: string; role: ChipOrderRole; fields: Record<string, string | null> } | null> {
   return withTransaction(async (client) => {
-    const order = await lockOrder(client, id);
-    if (!order) return null;
-    if (order.status !== 'paid') throw new ChipOrderStateError('not_paid');
-
-    const items = (
-      await client.query<{ id: string; contact_id: string; apartment_number: string }>(
-        `select id, contact_id, apartment_number from public.chip_order_items where order_id = $1`,
-        [id],
+    const item = (
+      await client.query<{ order_id: string; contact_id: string; apartment_number: string }>(
+        `select order_id, contact_id, apartment_number from public.chip_order_items where id = $1`,
+        [itemId],
       )
-    ).rows;
-    const byId = new Map(items.map((i) => [i.id, i]));
-    const cols = REGISTRY_COLS[order.role];
-    const written: { contact_id: string; apartment_number: string; fields: Record<string, string | null> }[] = [];
-
-    for (const f of fields) {
-      const item = byId.get(f.item_id);
-      if (!item) throw new ChipOrderStateError('item_not_in_order');
-      const body: Record<string, unknown> = {};
-      if (f.name) body[cols.name] = order.full_name;
-      if (f.phone) body[cols.phone] = order.phone_e164.startsWith('+972') ? `0${order.phone_e164.slice(4)}` : order.phone_e164;
-      if (f.email && cols.email) body[cols.email] = order.email;
-      if (Object.keys(body).length === 0) continue;
-      const coerced = coerceContactInput(body, 'update');
-      if (!coerced.ok) throw new ChipOrderStateError(coerced.error);
-      await updateContact(item.contact_id, coerced.fields, client);
-      written.push({
-        contact_id: item.contact_id,
-        apartment_number: item.apartment_number,
-        fields: coerced.fields as Record<string, string | null>,
-      });
-    }
-
-    await client.query(
-      `update public.chip_orders
-          set status = 'approved', approved_at = $2, due_at = $3, updated_at = now()
-        where id = $1`,
-      [id, now.toISOString(), chipOrderDueAt(now).toISOString()],
-    );
-    return { written };
+    ).rows[0];
+    if (!item) return null;
+    const order = await lockOrder(client, item.order_id);
+    if (!order) return null;
+    if (!isOpenChipOrder(order.status)) throw new ChipOrderStateError('not_open');
+    const role = roleOverride ?? order.role;
+    const cols = REGISTRY_COLS[role];
+    const body: Record<string, unknown> = {};
+    if (values.name?.trim()) body[cols.name] = values.name.trim();
+    if (values.phone?.trim()) body[cols.phone] = values.phone.trim();
+    if (Object.keys(body).length === 0) throw new ChipOrderStateError('nothing_to_write');
+    const coerced = coerceContactInput(body, 'update');
+    if (!coerced.ok) throw new ChipOrderStateError(coerced.error);
+    await updateContact(item.contact_id, coerced.fields, client);
+    return {
+      order_id: item.order_id,
+      contact_id: item.contact_id,
+      apartment_number: item.apartment_number,
+      role,
+      fields: coerced.fields as Record<string, string | null>,
+    };
   });
 }
 
-/** approved → ready, only when every line has all its chips linked. */
+/** paid → ready, only when every line has all its chips linked (ACTIVE). */
 export async function markChipOrderReady(id: string): Promise<boolean | null> {
   return withTransaction(async (client) => {
     const order = await lockOrder(client, id);
     if (!order) return null;
-    if (order.status !== 'approved') throw new ChipOrderStateError('not_approved');
+    if (order.status !== 'paid' && order.status !== 'approved') throw new ChipOrderStateError('not_assigning');
     const missing = (
       await client.query<{ missing: number }>(
         `select count(*)::int as missing
@@ -483,7 +539,7 @@ export async function markChipOrderReady(id: string): Promise<boolean | null> {
   });
 }
 
-/** ready → collected. */
+/** ready → collected — the row leaves the Orders tab. */
 export async function markChipOrderCollected(id: string): Promise<boolean | null> {
   return withTransaction(async (client) => {
     const order = await lockOrder(client, id);
@@ -504,8 +560,8 @@ export interface RejectedOrder {
   is_test: boolean;
 }
 
-/** paid / approved → rejected with a reason. The refund runs after this
- *  commits (setChipOrderRefund records its outcome). */
+/** paid → rejected with a reason ('approved' = legacy paid). The refund runs
+ *  after this commits (setChipOrderRefund records its outcome). */
 export async function rejectChipOrder(id: string, reason: string): Promise<RejectedOrder | null> {
   return withTransaction(async (client) => {
     const order = await lockOrder(client, id);
@@ -595,6 +651,9 @@ export async function deleteChipOrderWithLeases(
     const keys = (
       await client.query<{ k: string }>(
         `select lease_file_key as k from public.chip_order_items
+          where order_id = $1 and lease_file_key is not null
+         union
+         select lease_file_key as k from public.chip_order_holders
           where order_id = $1 and lease_file_key is not null`,
         [id],
       )

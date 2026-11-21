@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  ACTIVE_CHIPS_SOFT_LIMIT,
-  countGroupNumbers,
-  exceedsSoftLimit,
+  MAX_CHIPS_PER_GROUP,
   findDuplicateNumber,
   holderUpdatesForBlock,
   legacyChipBodyToInput,
@@ -11,8 +9,9 @@ import type { IssueChipGroup } from '@/lib/types/chips';
 
 // The multi-person issue window sends holder GROUPS (one per person+type; the
 // client splits a mixed-type block into per-type groups). These helpers are
-// the shared authority for: the soft-limit count over the SUM of all groups,
-// cross-group duplicate detection, and the legacy flat-body adapter.
+// the shared authority for cross-group duplicate detection and the legacy
+// flat-body adapter. Since 21/11/2026 there is no limit of active chips per
+// apartment and no override reason.
 
 function group(partial: Partial<IssueChipGroup>): IssueChipGroup {
   return {
@@ -23,27 +22,15 @@ function group(partial: Partial<IssueChipGroup>): IssueChipGroup {
   };
 }
 
-describe('exceedsSoftLimit — counted over the SUM of all groups', () => {
-  it('trips past 4 actives regardless of how numbers split into groups', () => {
-    // 2 existing actives + 3 new (2 physical + 1 app, SAME person split by
-    // type) = 5 > 4 — the per-type split must NOT bypass the count.
-    const groups = [
-      group({ numbers: ['A-1', 'A-2'] }),
-      group({ chip_type: 'app', numbers: ['A-3'] }),
-    ];
-    expect(countGroupNumbers(groups)).toBe(3);
-    expect(exceedsSoftLimit(2, countGroupNumbers(groups))).toBe(true);
-    expect(exceedsSoftLimit(1, countGroupNumbers(groups))).toBe(false);
+describe('no quantity limit in the issue window (21/11/2026)', () => {
+  it('the soft limit of 4 active chips per apartment is gone', async () => {
+    const mod = await import('@/lib/chips/issueGroups');
+    expect(mod).not.toHaveProperty('ACTIVE_CHIPS_SOFT_LIMIT');
+    expect(mod).not.toHaveProperty('exceedsSoftLimit');
   });
 
-  it('blank entries do not count', () => {
-    expect(countGroupNumbers([group({ numbers: ['A-1', ' ', ''] })])).toBe(1);
-  });
-
-  it('boundary: exactly at the limit is allowed', () => {
-    expect(exceedsSoftLimit(ACTIVE_CHIPS_SOFT_LIMIT, 0)).toBe(false);
-    expect(exceedsSoftLimit(ACTIVE_CHIPS_SOFT_LIMIT - 1, 1)).toBe(false);
-    expect(exceedsSoftLimit(ACTIVE_CHIPS_SOFT_LIMIT, 1)).toBe(true);
+  it('one block may carry many new numbers in one save (only a request bound remains)', () => {
+    expect(MAX_CHIPS_PER_GROUP).toBeGreaterThanOrEqual(50);
   });
 });
 
@@ -69,7 +56,7 @@ describe('findDuplicateNumber — within and across groups', () => {
 });
 
 describe('legacyChipBodyToInput — the pre-groups flat body adapter', () => {
-  it('maps EVERY field, incl. limit_override_reason staying window-global', () => {
+  it('maps every field; fee and notes stay window-global', () => {
     const input = legacyChipBodyToInput({
       contact_id: 'c-1',
       chip_type: 'app',
@@ -82,7 +69,6 @@ describe('legacyChipBodyToInput — the pre-groups flat body adapter', () => {
       app_expires_at: '2027-01-01',
       issuance_fee: 50,
       fee_charged: true,
-      limit_override_reason: 'משפחה מורחבת',
       notes: 'הערה',
     });
 
@@ -101,35 +87,7 @@ describe('legacyChipBodyToInput — the pre-groups flat body adapter', () => {
     expect(input.issuance_fee).toBe(50);
     expect(input.fee_charged).toBe(true);
     expect(input.notes).toBe('הערה');
-    expect(input.limit_override_reason).toBe('משפחה מורחבת');
-  });
-
-  it('legacy body over the soft limit WITH a reason passes the gate (clarification 2)', () => {
-    // 4 existing actives + a 5th legacy number → over the limit; the adapted
-    // input must carry the reason so the DB gate (exceeds && !reason) passes.
-    const input = legacyChipBodyToInput({
-      contact_id: 'c-1',
-      chip_type: 'physical',
-      chip_numbers: ['A-5'],
-      resident_role: 'owner',
-      limit_override_reason: 'עובד סיעודי',
-    });
-    const over = exceedsSoftLimit(4, countGroupNumbers(input.groups));
-    expect(over).toBe(true);
-    const gateBlocks = over && !(input.limit_override_reason?.trim());
-    expect(gateBlocks).toBe(false);
-  });
-
-  it('same legacy body WITHOUT a reason is blocked by the gate', () => {
-    const input = legacyChipBodyToInput({
-      contact_id: 'c-1',
-      chip_type: 'physical',
-      chip_numbers: ['A-5'],
-      resident_role: 'owner',
-    });
-    const over = exceedsSoftLimit(4, countGroupNumbers(input.groups));
-    const gateBlocks = over && !(input.limit_override_reason?.trim());
-    expect(gateBlocks).toBe(true);
+    expect(input).not.toHaveProperty('limit_override_reason');
   });
 });
 

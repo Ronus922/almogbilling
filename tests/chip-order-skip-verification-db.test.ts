@@ -99,8 +99,9 @@ const askSkip = (token?: string, phone = LOCAL) =>
 async function submitOrder(token?: string): Promise<Response> {
   const fd = new FormData();
   fd.append('order', JSON.stringify({
-    fullName: 'דילוג בודק', phone: LOCAL, email: 'skip.e2e@example.test', address: 'הרצל 2 חיפה',
-    role: 'owner', acceptTerms: true, lines: [{ apartment: APT, chipsCount: 1, leaseEndDate: null }],
+    phone: LOCAL, email: 'skip.e2e@example.test',
+    addressStreet: 'הרצל 2', addressCity: 'חיפה', addressZip: '3300000', acceptTerms: true,
+    rows: [{ role: 'owner', fullName: 'דילוג בודק', apartment: APT, chipsCount: 1, phone: LOCAL, email: '', leaseEndDate: null }],
   }));
   const encoded = new Response(fd);
   const body = Buffer.from(await encoded.arrayBuffer());

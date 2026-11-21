@@ -5,7 +5,6 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   listChips,
   issueChipGroups,
-  ChipLimitError,
   ChipNumberTakenError,
 } from '@/lib/db/chips';
 import { legacyChipBodyToInput, MAX_CHIPS_PER_GROUP } from '@/lib/chips/issueGroups';
@@ -37,7 +36,7 @@ export const runtime = 'nodejs';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const CHIP_NUMBERS_ERROR = 'נדרש לפחות מספר צ׳יפ אחד (עד 5)';
+const CHIP_NUMBERS_ERROR = 'נדרש לפחות מספר צ׳יפ אחד';
 
 /**
  * Notify every active admin (super_admin + admin) — except the issuer — that a
@@ -175,6 +174,14 @@ function coerceGroup(
     fee = n;
   }
 
+  // Chip orders (13/11/2026): the order line of this group's NEW chips.
+  let orderItemId: string | null = null;
+  if (rec.order_item_id !== undefined && rec.order_item_id !== null) {
+    const raw = typeof rec.order_item_id === 'string' ? rec.order_item_id.trim() : '';
+    if (!UUID_RE.test(raw)) return { ok: false, error: 'invalid_order_item_id' };
+    orderItemId = raw;
+  }
+
   return {
     ok: true,
     group: {
@@ -188,6 +195,7 @@ function coerceGroup(
       app_expires_at: coerceText(rec.app_expires_at),
       issuance_fee: fee,
       fee_charged: typeof rec.fee_charged === 'boolean' ? rec.fee_charged : null,
+      order_item_id: orderItemId,
     },
   };
 }
@@ -196,10 +204,11 @@ function coerceGroup(
 // contact for zero or more holder groups AND/OR apply holder edits to chips
 // already saved there (`updates`), ONE transaction, all-or-nothing. Accepts
 // the groups shape ({contact_id, groups:[...], updates?:[...], issuance_fee?,
-// fee_charged?, notes?, limit_override_reason?}) AND the legacy flat
-// single-holder body, which is adapted to a single group with every field
-// mapped (incl. the override reason, so a legacy over-limit request with a
-// reason still passes). 201 when anything was issued, 200 for edits only.
+// fee_charged?, notes?}) AND the legacy flat single-holder body, which is
+// adapted to a single group with every field mapped. No limit of active chips
+// per apartment and no override reason since 21/11/2026 (a
+// limit_override_reason a caller still sends is ignored). 201 when anything
+// was issued, 200 for edits only.
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try {
@@ -258,16 +267,10 @@ export async function POST(req: NextRequest) {
       if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
       groups.push(parsed.group);
     }
-    // Chip orders (12/11/2026): issuing for an order line is part of handling
-    // the order — chips:edit alone is not enough for it.
-    let orderItemId: string | null = null;
-    if (bodyRec.order_item_id !== undefined && bodyRec.order_item_id !== null) {
-      const raw = typeof bodyRec.order_item_id === 'string' ? bodyRec.order_item_id.trim() : '';
-      if (!UUID_RE.test(raw)) return NextResponse.json({ error: 'invalid_order_item_id' }, { status: 400 });
-      if (!hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'edit')) {
-        return NextResponse.json({ error: 'אין הרשאה לשייך צ׳יפים להזמנה' }, { status: 403 });
-      }
-      orderItemId = raw;
+    // Chip orders: issuing for an order line is part of handling the order —
+    // chips:edit alone is not enough for it.
+    if (groups.some((g) => g.order_item_id) && !hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'edit')) {
+      return NextResponse.json({ error: 'אין הרשאה לשייך צ׳יפים להזמנה' }, { status: 403 });
     }
     input = {
       contact_id: contactId,
@@ -276,8 +279,6 @@ export async function POST(req: NextRequest) {
       issuance_fee: issuanceFee,
       fee_charged: bodyRec.fee_charged === true,
       notes: coerceText(bodyRec.notes),
-      limit_override_reason: coerceText(bodyRec.limit_override_reason),
-      order_item_id: orderItemId,
     };
   } else {
     // Legacy flat body — validate exactly as before, then adapt to one group.
@@ -335,7 +336,6 @@ export async function POST(req: NextRequest) {
       app_expires_at: coerceText(bodyRec.app_expires_at),
       issuance_fee: issuanceFee,
       fee_charged: bodyRec.fee_charged === true,
-      limit_override_reason: coerceText(bodyRec.limit_override_reason),
       notes: coerceText(bodyRec.notes),
     });
   }
@@ -353,12 +353,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ items, updated }, { status: items.length > 0 ? 201 : 200 });
   } catch (err) {
-    if (err instanceof ChipLimitError) {
-      return NextResponse.json(
-        { error: 'לדירה זו כבר מוקצים 4 צ׳יפים פעילים — נדרשת סיבת חריגה להנפקה נוספת' },
-        { status: 422 },
-      );
-    }
     if (err instanceof ChipNumberTakenError) {
       // group_index lets the UI mark the exact offending tag red.
       return NextResponse.json(
@@ -388,11 +382,8 @@ export async function POST(req: NextRequest) {
     if (err instanceof Error && err.message === 'order_item_not_found') {
       return NextResponse.json({ error: 'שורת ההזמנה לא נמצאה לדירה זו' }, { status: 404 });
     }
-    if (err instanceof Error && err.message === 'order_not_approved') {
-      return NextResponse.json({ error: 'אפשר לשייך צ׳יפים רק להזמנה מאושרת' }, { status: 409 });
-    }
-    if (err instanceof Error && err.message === 'order_item_full') {
-      return NextResponse.json({ error: 'מספר הצ׳יפים עובר את הכמות שהוזמנה לדירה' }, { status: 422 });
+    if (err instanceof Error && err.message === 'order_not_open') {
+      return NextResponse.json({ error: 'ההזמנה כבר נאספה או נדחתה — אי אפשר לשייך לה צ׳יפים' }, { status: 409 });
     }
     if (err instanceof Error && err.message === 'holder_not_in_registry') {
       return NextResponse.json(

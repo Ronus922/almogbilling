@@ -6,11 +6,11 @@ import { toPortalE164, e164ToLocal } from '@/lib/portal/phone';
 import { appUrl } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { getChipOrderSettings } from '@/lib/db/appSettings';
-import { createChipOrder, setOrderGrowProcess, type NewOrderLine } from '@/lib/db/chipOrders';
+import { createChipOrder, setOrderGrowProcess, type NewOrderRow } from '@/lib/db/chipOrders';
 import { uploadChipOrderLease, removeChipOrderLeases } from '@/lib/storage/chipOrderLeaseStorage';
 import { createPaymentProcess, GrowApiError } from '@/lib/grow/client';
 import { isLeaseError, readLease } from '@/lib/chipOrders/lease';
-import { CHIP_ORDER_LIMITS, needsLease } from '@/lib/chipOrders/model';
+import { CHIP_ORDER_APT_LIMIT_MESSAGE, CHIP_ORDER_LIMITS, needsLease } from '@/lib/chipOrders/model';
 import {
   callbackSignature, chipOrdersOpen, readSkippedPhone, readVerifiedPhone, CHIP_ORDER_PUBLIC_HEADERS as H,
 } from '@/lib/chipOrders/server';
@@ -20,8 +20,13 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // POST /api/public/chip-order — the order form of /chip-order, multipart:
-//   order    = JSON (chipOrderSubmitSchema — details, role, apartment lines)
-//   lease_<i> = the lease of line i (tenant / operator only)
+//   order     = JSON (chipOrderSubmitSchema — the contact block, the address in
+//               three parts, and the ROWS: one person each — 20/11/2026)
+//   lease_<i> = the lease of row i (renter rows only)
+// One flat price per chip (21/11/2026): total = all chips × the price of the
+// settings. Up to CHIP_ORDER_LIMITS.maxChipsPerApartment chips per apartment,
+// counted over all its rows (21/11/2026 noon); an order may hold several
+// apartments, each up to that. `note` ("הערות") becomes the order's note.
 //
 // PUBLIC BY DESIGN, gated three ways: the page must be open (Grow configured
 // AND the settings switch), the phone must have passed the OTP (the sealed
@@ -91,54 +96,66 @@ export async function POST(req: Request) {
   const phoneLimit = await checkRateLimit(`chip-order:submit:phone:${phoneE164}`, { max: 5, windowSec: 3600 });
   if (!phoneLimit.allowed) return err(429, 'יותר מדי הזמנות למספר הזה. נסו שוב מאוחר יותר.');
 
-  // Line rules: one line per apartment, the per-apartment maximum, and a lease
-  // + its end date for a tenant / operator.
-  const seen = new Set<string>();
+  // Row rules: a phone for every row, and a lease + its end date for every
+  // renter row; with a renter row the renter commitment box is required. One
+  // apartment orders at most maxChipsPerApartment chips over all its rows.
   const today = new Date().toISOString().slice(0, 10);
-  for (const [i, l] of o.lines.entries()) {
-    if (seen.has(l.apartment)) return err(400, 'כל דירה יכולה להופיע פעם אחת בהזמנה.');
-    seen.add(l.apartment);
-    if (l.chipsCount > settings.maxPerApartment) {
-      return err(400, `אפשר להזמין עד ${settings.maxPerApartment} צ׳יפים לדירה.`);
+  const perApartment = new Map<string, number>();
+  const rowPhones: string[] = [];
+  for (const [i, r] of o.rows.entries()) {
+    perApartment.set(r.apartment, (perApartment.get(r.apartment) ?? 0) + r.chipsCount);
+    const rowPhone = toPortalE164(r.phone);
+    if (!rowPhone) return err(400, `מספר טלפון לא תקין (שורה ${i + 1}).`);
+    rowPhones.push(rowPhone);
+    if (needsLease(r.role)) {
+      if (!r.leaseEndDate) return err(400, `נדרש תאריך סיום חוזה (שורה ${i + 1}).`);
+      if (r.leaseEndDate < today) return err(400, `תאריך סיום החוזה כבר עבר (שורה ${i + 1}).`);
+      if (!(form.get(`lease_${i}`) instanceof File)) return err(400, `נדרש לצרף חוזה או הסכם ניהול (שורה ${i + 1}).`);
     }
-    if (needsLease(o.role)) {
-      if (!l.leaseEndDate) return err(400, `נדרש תאריך סיום חוזה (דירה ${i + 1}).`);
-      if (l.leaseEndDate < today) return err(400, `תאריך סיום החוזה כבר עבר (דירה ${i + 1}).`);
-      if (!(form.get(`lease_${i}`) instanceof File)) return err(400, `נדרש לצרף חוזה או הסכם ניהול (דירה ${i + 1}).`);
-    }
+  }
+  for (const count of perApartment.values()) {
+    if (count > CHIP_ORDER_LIMITS.maxChipsPerApartment) return err(400, CHIP_ORDER_APT_LIMIT_MESSAGE);
+  }
+  const hasRenter = o.rows.some((r) => needsLease(r.role));
+  if (hasRenter && o.acceptRenterTerms !== true) {
+    return err(400, 'נדרש לאשר את התחייבות השוכר להחזרת הכרטיס.');
   }
 
   // Read + check every lease before anything is stored.
   const leases: ({ bytes: Buffer; mime: string; name: string } | null)[] = [];
-  for (let i = 0; i < o.lines.length; i++) {
-    if (!needsLease(o.role)) {
+  for (let i = 0; i < o.rows.length; i++) {
+    if (!needsLease(o.rows[i].role)) {
       leases.push(null);
       continue;
     }
     const read = await readLease(form.get(`lease_${i}`) as File);
-    if (isLeaseError(read)) return err(400, `${read.error} (דירה ${i + 1}).`);
+    if (isLeaseError(read)) return err(400, `${read.error} (שורה ${i + 1}).`);
     leases.push(read);
   }
   const leaseBytes = leases.reduce((sum, l) => sum + (l?.bytes.byteLength ?? 0), 0);
   if (leaseBytes > CHIP_ORDER_LIMITS.maxLeaseBytesTotal) return err(413, 'הקבצים גדולים מדי. אפשר לצרף עד 40MB בהזמנה אחת.');
 
   const uploadedKeys: string[] = [];
-  let lines: NewOrderLine[];
+  let rows: NewOrderRow[];
   try {
-    lines = [];
-    for (const [i, l] of o.lines.entries()) {
+    rows = [];
+    for (const [i, r] of o.rows.entries()) {
       const lease = leases[i];
-      let stored: NewOrderLine['lease'] = null;
+      let stored: NewOrderRow['lease'] = null;
       if (lease) {
         const up = await uploadChipOrderLease(lease.bytes, lease.name, lease.mime);
         uploadedKeys.push(up.objectKey);
         stored = { objectKey: up.objectKey, fileName: lease.name, mime: lease.mime, size: up.sizeBytes };
       }
-      lines.push({
-        apartmentNumber: l.apartment,
-        chipsCount: l.chipsCount,
+      rows.push({
+        role: r.role,
+        fullName: r.fullName,
+        apartmentNumber: r.apartment,
+        chipsCount: r.chipsCount,
+        phoneE164: rowPhones[i],
+        email: r.email ? r.email : null,
         lease: stored,
-        leaseEndDate: needsLease(o.role) ? (l.leaseEndDate ?? null) : null,
+        leaseEndDate: needsLease(r.role) ? (r.leaseEndDate ?? null) : null,
       });
     }
   } catch (e) {
@@ -147,11 +164,19 @@ export async function POST(req: Request) {
     return err(502, 'העלאת החוזה נכשלה. נסו שוב.');
   }
 
+  // The order-level name and role are the first row's (the orderer is
+  // whoever filled the form; the contact block carries no name). The old
+  // `address` column is composed from the three parts.
+  const address = `${o.addressStreet}, ${o.addressCity} ${o.addressZip}`;
   let order;
   try {
     order = await createChipOrder(
       {
-        fullName: o.fullName, phoneE164, email: o.email, address: o.address, role: o.role, lines, ip, isTest: test,
+        fullName: o.rows[0].fullName, phoneE164, email: o.email, address, role: o.rows[0].role, rows,
+        addressParts: { street: o.addressStreet, city: o.addressCity, zip: o.addressZip },
+        renterTermsAccepted: hasRenter && o.acceptRenterTerms === true,
+        note: o.note ? o.note : null,
+        ip, isTest: test,
         phoneVerified: verified === phoneE164,
       },
       settings,
@@ -175,7 +200,7 @@ export async function POST(req: Request) {
     const payment = await createPaymentProcess({
       sum: order.total,
       description: `הזמנה ${order.orderNumber} כרטיסי כניסה למעלית`,
-      fullName: o.fullName,
+      fullName: o.rows[0].fullName,
       phoneLocal: e164ToLocal(phoneE164),
       email: o.email,
       successUrl: `${track}?paid=1`,

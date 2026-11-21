@@ -136,6 +136,14 @@ export interface IssueChipGroup {
   /** Optional per-group overrides of the window-global fee fields. */
   issuance_fee?: number | null;
   fee_charged?: boolean | null;
+  /** Chip orders (13/11/2026): the order line these NEW chips are issued for
+   *  (chips.order_item_id) — set only on the groups of the holder block that
+   *  holds the order's "פרטי הזמנה" section. Absent = an ordinary issue. */
+  order_item_id?: string | null;
+  /** Chip orders (20/11/2026): the holder line (person) of the order these
+   *  NEW chips are issued for (chips.order_holder_id). Set only by the order
+   *  window's save (never read from a request body). */
+  order_holder_id?: string | null;
 }
 
 /** Holder-snapshot edit of ONE existing chip, sent by the issue window when
@@ -151,7 +159,7 @@ export interface ChipHolderUpdate {
 /** Payload for saving the issue window — one apartment, zero or more holder
  *  groups to ISSUE plus zero or more existing chips to UPDATE, in ONE
  *  transaction, all-or-nothing. At least one of the two must be non-empty.
- *  Fee/notes/override are window-global (a group may override its fee fields). */
+ *  Fee/notes are window-global (a group may override its fee fields). */
 export interface IssueChipsInput {
   contact_id: string;
   groups: IssueChipGroup[];
@@ -160,13 +168,6 @@ export interface IssueChipsInput {
   issuance_fee?: number | null;
   fee_charged?: boolean;
   notes?: string | null;
-  /** Required (non-empty) when existing actives + ALL new numbers exceed the
-   *  soft limit of 4 active chips per contact. */
-  limit_override_reason?: string | null;
-  /** Chip orders (12/11/2026): the order line these NEW chips are issued for —
-   *  stamped on every chip of this save (chips.order_item_id). Omitted by every
-   *  other caller, which then behaves exactly as before. */
-  order_item_id?: string | null;
 }
 
 /** One of the three inline resident slots of a contacts row (owner/tenant/operator).

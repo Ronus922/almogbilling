@@ -4,13 +4,13 @@ import { ChipOrderStateError } from '@/lib/db/chipOrders';
 import { logger } from '@/lib/logger';
 
 const MESSAGES: Record<string, { status: number; message: string }> = {
-  not_paid: { status: 409, message: 'אפשר לאשר רק הזמנה ששולמה וממתינה לבדיקה' },
-  not_approved: { status: 409, message: 'אפשר לסמן "מוכן לאיסוף" רק להזמנה מאושרת' },
+  not_assigning: { status: 409, message: 'אפשר לסמן "מוכן לאיסוף" רק הזמנה שעדיין בשיוך' },
   chips_missing: { status: 409, message: 'עדיין לא שויכו כל הצ׳יפים שהוזמנו' },
   not_ready: { status: 409, message: 'אפשר לסמן "נאסף" רק הזמנה שמוכנה לאיסוף' },
-  not_rejectable: { status: 409, message: 'אפשר לדחות רק הזמנה ששולמה או שאושרה' },
+  not_rejectable: { status: 409, message: 'אפשר לדחות רק הזמנה שעדיין בשיוך' },
   chips_active: { status: 409, message: 'להזמנה שויכו צ׳יפים פעילים — יש להשבית אותם בחלון ההנפקה לפני הדחייה' },
-  item_not_in_order: { status: 400, message: 'שורה שאינה שייכת להזמנה' },
+  not_open: { status: 409, message: 'ההזמנה כבר נאספה או נדחתה' },
+  nothing_to_write: { status: 400, message: 'אין שם או טלפון לעדכן' },
   invalid_phone: { status: 400, message: 'מספר הטלפון אינו תקין לרשימת הדיירים' },
 };
 

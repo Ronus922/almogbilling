@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legalContact';
 import { validatePhone } from '@/lib/validation';
 import { CHIP_RESIDENT_ROLES } from '@/lib/constants/chips';
+import { CHIP_ORDER_APT_LIMIT_MESSAGE, CHIP_ORDER_LIMITS } from '@/lib/chipOrders/model';
 import { WHATSAPP_ATTACHMENT_LIMITS, WHATSAPP_MESSAGE_MAX_FILES } from '@/lib/constants/whatsappAttachments';
 import { FINANCE_RECEIPT_LIMITS } from '@/lib/constants/finance';
 import { SUPPLIERS_LANE_ID } from '@/lib/constants/workItems';
@@ -494,34 +495,51 @@ const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'תאריך לא תקין
 /** The JSON part ("order") of POST /api/public/chip-order (multipart — the
  *  leases ride beside it as lease_<index> files). The price is NOT in here:
  *  the server computes it. */
+const chipOrderPersonName = z.string({ error: 'נדרש שם מלא' }).trim().min(2, 'נדרש שם מלא').max(120, 'השם ארוך מדי')
+  .regex(/^[\p{L}\p{M}\s'׳"״.\-]+$/u, 'השם יכול להכיל אותיות בלבד')
+  .refine((v) => v.split(/\s+/).filter(Boolean).length >= 2, 'נדרש שם מלא — שם פרטי ושם משפחה');
+
+const chipOrderEmail = z.string({ error: 'כתובת מייל לא תקינה' }).trim().toLowerCase().email('כתובת מייל לא תקינה').max(254);
+
+/** The JSON part ("order") of POST /api/public/chip-order (multipart — every
+ *  renter row's lease rides beside it as lease_<row index>). Redesigned
+ *  20/11/2026: every row is ONE PERSON who will hold chips (role, name,
+ *  apartment, quantity, phone, email); several rows may share an apartment.
+ *  The contact block (phone = the OTP target, email, address in three parts)
+ *  belongs to whoever places the order. The price is NOT in here: the server
+ *  computes it, per apartment over all its rows. */
 export const chipOrderSubmitSchema = z.object({
-  fullName: z.string({ error: 'נדרש שם מלא' }).trim().min(2, 'נדרש שם מלא').max(120, 'השם ארוך מדי')
-    .regex(/^[\p{L}\p{M}\s'׳"״.\-]+$/u, 'השם יכול להכיל אותיות בלבד')
-    .refine((v) => v.split(/\s+/).filter(Boolean).length >= 2, 'נדרש שם מלא — שם פרטי ושם משפחה'),
   phone: chipOrderPhone,
-  email: z.string({ error: 'כתובת מייל לא תקינה' }).trim().toLowerCase().email('כתובת מייל לא תקינה').max(254),
-  address: z.string({ error: 'נדרשת כתובת מגורים' }).trim().min(2, 'נדרשת כתובת מגורים').max(300, 'הכתובת ארוכה מדי'),
-  role: z.enum(['owner', 'tenant', 'operator'], { error: 'נדרש לבחור: בעלים, שוכר או מפעיל' }),
-  acceptTerms: z.literal(true, { error: 'נדרש לאשר את תנאי ההזמנה' }),
-  lines: z
+  email: chipOrderEmail,
+  addressStreet: z.string({ error: 'נדרשת כתובת מגורים' }).trim().min(2, 'נדרשת כתובת מגורים').max(200, 'הכתובת ארוכה מדי'),
+  addressCity: z.string({ error: 'נדרשת עיר' }).trim().min(2, 'נדרשת עיר').max(100, 'שם העיר ארוך מדי'),
+  addressZip: z.string({ error: 'מיקוד — 7 ספרות' }).trim().regex(/^\d{7}$/, 'מיקוד — 7 ספרות'),
+  acceptTerms: z.literal(true, { error: 'נדרש לאשר שהפרטים נכונים' }),
+  /** Required (true) when at least one row is a renter — the route checks it. */
+  acceptRenterTerms: z.boolean().optional(),
+  rows: z
     .array(
       z.object({
+        role: z.enum(['owner', 'tenant'], { error: 'נדרש לבחור: בעלים או שוכר' }),
+        fullName: chipOrderPersonName,
         apartment: z.string({ error: 'נדרש לבחור דירה' }).trim().min(1, 'נדרש לבחור דירה').max(20, 'נדרש לבחור דירה'),
-        chipsCount: z.number({ error: 'כמות לא תקינה' }).int('כמות לא תקינה').min(1, 'כמות לא תקינה').max(50, 'כמות לא תקינה'),
+        chipsCount: z.number({ error: 'כמות לא תקינה' }).int('כמות לא תקינה').min(1, 'כמות לא תקינה')
+          .max(CHIP_ORDER_LIMITS.maxChipsPerApartment, CHIP_ORDER_APT_LIMIT_MESSAGE),
+        phone: chipOrderPhone,
+        email: z.union([z.literal(''), chipOrderEmail]).optional(),
         leaseEndDate: isoDay.nullable().optional(),
       }),
     )
-    .min(1, 'נדרשת לפחות דירה אחת')
-    .max(10, 'עד 10 דירות בהזמנה אחת'),
+    .min(1, 'נדרשת לפחות שורה אחת')
+    .max(20, 'עד 20 שורות בהזמנה אחת'),
+  /** "הערות" — optional; stored as the order's note (the issue window's "הערה"). */
+  note: z.string().trim().max(CHIP_ORDER_LIMITS.customerNoteMax, `ההערה ארוכה מדי — עד ${CHIP_ORDER_LIMITS.customerNoteMax} תווים`).optional(),
 });
 
-/** PUT /api/settings/chip-orders */
+/** PUT /api/settings/chip-orders — one flat price per chip (21/11/2026). */
 export const chipOrderSettingsBodySchema = z.object({
   // > 0: a free chip would make a ₪0 order, which Grow cannot charge (and the DB refuses).
   unitPrice: z.number({ error: 'מחיר לא תקין' }).min(1, 'המחיר חייב להיות לפחות ₪1').max(10_000, 'מחיר לא תקין'),
-  threshold: z.number({ error: 'סף לא תקין' }).int('סף לא תקין').min(0, 'סף לא תקין').max(20, 'סף לא תקין'),
-  priceAbove: z.number({ error: 'מחיר לא תקין' }).min(1, 'המחיר חייב להיות לפחות ₪1').max(10_000, 'מחיר לא תקין'),
-  maxPerApartment: z.number({ error: 'מקסימום לא תקין' }).int('מקסימום לא תקין').min(1, 'מקסימום לא תקין').max(20, 'מקסימום לא תקין'),
   pickupText: z.string().trim().max(500, 'הטקסט ארוך מדי'),
   termsText: z.string().trim().max(4000, 'הטקסט ארוך מדי'),
   ordersOpen: z.boolean(),
@@ -537,11 +555,38 @@ export const chipOrderTestFinishBodySchema = z.object({
   trackingToken: z.string().regex(/^[A-Za-z0-9_-]{32,64}$/),
 });
 
-/** POST /api/chip-orders/[id]/approve */
-export const chipOrderApproveBodySchema = z.object({
-  fields: z
-    .array(z.object({ item_id: z.uuid(), name: z.boolean(), phone: z.boolean(), email: z.boolean() }))
-    .max(10),
+/** POST /api/chip-orders/items/[itemId]/registry — "עדכן בכרטיס הדייר": the
+ *  holder block's name and phone, as typed in the issue window. */
+export const chipOrderRegistryBodySchema = z.object({
+  name: z.string().trim().max(120, 'השם ארוך מדי').nullable().optional(),
+  phone: z.string().trim().max(40, 'מספר הטלפון ארוך מדי').nullable().optional(),
+  /** The block's role (20/11/2026 — one block per person, each with its own
+   *  role). Absent = the order's role, as before. */
+  role: z.enum(['owner', 'tenant', 'operator']).optional(),
+});
+
+/** POST /api/chip-orders/[id]/holders — "שמור שינויים" of the order window
+ *  (20/11/2026): every person block (edits + new chip numbers), the order's
+ *  internal note, and the window-global fee fields. */
+export const chipOrderWindowSaveSchema = z.object({
+  holders: z.array(z.object({
+    id: z.uuid().nullable(),
+    item_id: z.uuid(),
+    legacy: z.boolean().optional(),
+    role: z.enum(['owner', 'tenant', 'operator', 'other', 'staff'], { error: 'תפקיד לא תקין' }),
+    full_name: z.string().trim().max(120, 'השם ארוך מדי'),
+    phone: z.string().trim().max(40, 'מספר הטלפון ארוך מדי').nullable(),
+    email: z.union([z.literal(''), z.string().trim().toLowerCase().email('כתובת מייל לא תקינה').max(254)]).nullable(),
+    new_chips: z.array(z.object({
+      number: z.string().trim().min(1, 'מספר צ׳יפ ריק').max(64, 'מספר צ׳יפ ארוך מדי'),
+      chip_type: z.enum(['physical', 'app']),
+    })).max(50, 'יותר מדי מספרים בבלוק אחד בשמירה אחת'),
+  })).max(40),
+  /** Staff holders removed in the window (only one with no chips is removed). */
+  removed_holder_ids: z.array(z.uuid()).max(40).optional(),
+  note: z.string().max(2000, 'ההערה ארוכה מדי').nullable().optional(),
+  issuance_fee: z.number().min(0, 'סכום לא תקין').max(100_000, 'סכום לא תקין').nullable().optional(),
+  fee_charged: z.boolean().optional(),
 });
 
 /** POST /api/chip-orders/[id]/reject */

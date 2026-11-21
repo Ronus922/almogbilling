@@ -211,13 +211,11 @@ const CHIP_ORDERS_KEY = 'chip_orders';
 function money(v: unknown, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) && v >= 1 && v <= CHIP_ORDER_LIMITS.maxPrice ? v : fallback;
 }
-function count(v: unknown, fallback: number, max: number): number {
-  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max ? v : fallback;
-}
 
-/** The price rule and texts of /chip-order. A missing row (or a broken field)
- *  reads as the defaults: 50 ₪, threshold 2, 70 ₪ above it, 4 per apartment,
- *  and the page closed. */
+/** The price and texts of /chip-order. A missing row (or a broken field)
+ *  reads as the defaults: 50 ₪ per chip and the page closed. Since 21/11/2026
+ *  every chip costs the one price; the old rule's keys (threshold, priceAbove,
+ *  maxPerApartment) may still sit in the stored row and are not read. */
 export async function getChipOrderSettings(): Promise<ChipOrderSettings> {
   const row = await queryOne<{ value: Partial<ChipOrderSettings> | null }>(
     `select value from public.app_settings where key = $1 limit 1`,
@@ -225,24 +223,30 @@ export async function getChipOrderSettings(): Promise<ChipOrderSettings> {
   );
   const v = row?.value ?? {};
   const d = DEFAULT_CHIP_ORDER_SETTINGS;
-  const max = count(v.maxPerApartment, d.maxPerApartment, CHIP_ORDER_LIMITS.maxPerApartmentCeiling);
   return {
     unitPrice: money(v.unitPrice, d.unitPrice),
-    threshold: count(v.threshold, d.threshold, CHIP_ORDER_LIMITS.maxPerApartmentCeiling),
-    priceAbove: money(v.priceAbove, d.priceAbove),
-    maxPerApartment: max >= 1 ? max : d.maxPerApartment,
     pickupText: typeof v.pickupText === 'string' ? v.pickupText : d.pickupText,
     termsText: typeof v.termsText === 'string' ? v.termsText : d.termsText,
     ordersOpen: v.ordersOpen === true,
   };
 }
 
-/** Persist the chip-order settings (validated by the route's zod schema). */
+/** Persist the chip-order settings (validated by the route's zod schema).
+ *  MERGED into the stored row (jsonb ||), so keys this screen no longer edits
+ *  — the old threshold rule — keep their stored values. */
 export async function updateChipOrderSettings(
   settings: ChipOrderSettings,
   updatedBy: string,
 ): Promise<ChipOrderSettings> {
-  await upsertAppSetting(CHIP_ORDERS_KEY, settings, updatedBy);
+  await query(
+    `insert into public.app_settings (key, value, updated_by, updated_at)
+     values ($1, $2::jsonb, $3, now())
+     on conflict (key) do update
+       set value = public.app_settings.value || excluded.value,
+           updated_by = excluded.updated_by,
+           updated_at = now()`,
+    [CHIP_ORDERS_KEY, JSON.stringify(settings), updatedBy],
+  );
   return getChipOrderSettings();
 }
 
