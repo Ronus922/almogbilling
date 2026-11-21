@@ -1,73 +1,142 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
 import { Pool } from 'pg';
+import { StorageStub } from './visitors-stubs';
 
-// Chip orders, in the browser (12/11/2026; handled inside the issue window
-// since 13/11/2026 — there is no order panel and no "אשר" step):
-//   · /chips keeps its chips view as the default — KPIs, the table, "הנפק צ׳יפ";
-//   · the issue window opened WITHOUT an order is unchanged (no order section,
-//     no "עדכן בכרטיס הדייר"), even for an apartment that has an open order;
-//   · a PAID order is one Orders-tab row per apartment; the row opens the
-//     EXISTING issue window on the apartment with the orderer's block
-//     prefilled and its "פרטי הזמנה" section; more chips than ordered warn but
-//     save; the tenants list is written ONLY by "עדכן בכרטיס הדייר", after a
-//     confirmation; "מוכן לאיסוף" → "נאסף" takes the row out of the tab; a
-//     repeat order of the same person opens the SAME block with its chips;
-//   · /chip-order is closed ("ההזמנות ייפתחו בקרוב") while Grow is not
-//     configured — the CI state — and no page scrolls sideways on a phone.
-// The real order is seeded straight into the DB (paid = what Grow's verified
-// callback produces); fixtures are numeric apartments, removed by exact ids.
+// Chip orders in the browser — the 20/11/2026 redesign (ref/chip-order) with
+// the 21/11/2026 fixes (one flat price per chip, no quantity limits):
+//   · /chips keeps its chips view as the default;
+//   · the issue window WITHOUT an order: apartment picker, holder blocks, no
+//     transaction section, ANY number of chips with no reason, card / app, the
+//     active / disabled switch, and the kept "עמלת הנפקה (₪)", "החיוב בוצע"
+//     and "הערה" fields — saved with the chips;
+//   · a paid order opens the window with ONE BLOCK PER PERSON (owner and
+//     renter of one apartment, plus a second apartment), the renter's lease
+//     end date, chips per block (Enter and "הוסף", card / app), the counter
+//     "שויכו X מתוך Y" full when done, "הוסף בעל צ׳יפ" outside the paid
+//     quantity, ONE price line in the transaction section, "מוכן לאיסוף" and
+//     "נאסף"; an order made before 21/11/2026 keeps its two price lines;
+//   · /settings: one price field — the threshold, price-above and maximum
+//     fields are gone, and saving keeps the old rule's stored keys;
+//   · the public page (test link): rows per person (owner + renter with a
+//     lease), the add-row prefill, no quantity limit (the plus button never
+//     disables), one breakdown line at the price of /settings, the card fields
+//     never sent, the code on WhatsApp → the confirmation screen; the staff
+//     side of that test order (blocks, lease link, chips, the switch) and
+//     "מחק הזמנת בדיקה" (its chips are disabled first, never deleted);
+//   · "דלג על אימות" → confirmation → "דחה" on the test order;
+//   · /chip-order is closed while Grow is not configured — the CI state.
+// Real orders are seeded straight into the DB (paid = what Grow's verified
+// callback leaves); fixtures are numeric apartments, removed by exact ids.
+// Supabase Storage is the in-process stand-in of visitors-stubs.ts (CI runs
+// no Storage), started for this file only.
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
 pool.on('error', () => undefined);
 
 const tag = String(Date.now()).slice(-6);
-const APT = `992${tag}1`;
-const PHONE = '+972539300001';
-const made = { contact: '', orders: [] as string[] };
+const APT = `992${tag}1`; // staff: the order of two people + a staff holder
+const APT_B = `992${tag}2`; // staff: the second apartment of that order
+const APT_OLD = `992${tag}3`; // staff: an order from before 21/11/2026
+const APT_PUB = `992${tag}4`; // test link: owner + renter
+const APT_SKIP = `992${tag}5`; // test link: "דלג על אימות"
+const P_OWNER = '+972539300001';
+const P_RENTER = '+972539300002';
+const made = { contacts: {} as Record<string, string>, orders: [] as string[] };
+
+const storageUrl = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'http://localhost:54321');
+const storage = new StorageStub();
+
+const PDF = Buffer.from('%PDF-1.4\n% e2e lease\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n');
 
 async function noSideScroll(page: Page) {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
-/** A PAID real order of 'דנה בדיקה' for APT — what Grow's verified callback leaves. */
-async function seedPaidOrder(chips: number): Promise<{ id: string; orderNumber: number; itemId: string }> {
+interface SeedRow { apt: string; role: 'owner' | 'tenant'; name: string; phone: string; qty: number; leaseEnd?: string }
+
+/** A PAID real order made of the given rows (one item per apartment, one
+ *  holder line per row) — what Grow's verified callback leaves since
+ *  20/11/2026, priced at one flat price as since 21/11/2026. */
+async function seedPaidOrder(rows: SeedRow[], unit = 50): Promise<{ id: string; orderNumber: number; items: Record<string, string> }> {
+  const total = rows.reduce((s, r) => s + r.qty, 0) * unit;
+  const n = made.orders.length;
   const o = await pool.query<{ id: string; order_number: number }>(
     `insert into public.chip_orders
        (full_name, phone_e164, email, address, role, status, total, tracking_token, paid_at, due_at,
-        grow_process_id, grow_transaction_id, grow_asmachta)
-     values ('דנה בדיקה', $4, 'dana.e2e@example.test', 'רחוב בדיקה 1', 'owner', 'paid', $5, $1, now(), now() + interval '3 days',
-             $2, $3, 'e2e')
+        grow_process_id, grow_transaction_id, grow_asmachta, address_street, address_city, address_zip)
+     values ($1, $2, 'dana.e2e@example.test', 'רחוב בדיקה 1, חיפה 3300000', 'owner', 'paid', $3, $4, now(), now() + interval '3 days',
+             $5, $6, 'e2e', 'רחוב בדיקה 1', 'חיפה', '3300000')
      returning id, order_number`,
-    [randomBytes(32).toString('base64url'), `e2e-p-${tag}-${made.orders.length}`, `e2e-t-${tag}-${made.orders.length}`, PHONE, 50 * chips],
+    [rows[0]!.name, rows[0]!.phone, total, randomBytes(32).toString('base64url'), `e2e-p-${tag}-${n}`, `e2e-t-${tag}-${n}`],
   );
-  made.orders.push(o.rows[0]!.id);
-  const i = await pool.query<{ id: string }>(
-    `insert into public.chip_order_items
-       (order_id, contact_id, apartment_number, chips_count, unit_price, threshold, price_above, line_total, match_status)
-     values ($1, $2, $3, $4, 50, 2, 70, $5, 'unassigned') returning id`,
-    [o.rows[0]!.id, made.contact, APT, chips, 50 * chips],
-  );
-  return { id: o.rows[0]!.id, orderNumber: o.rows[0]!.order_number, itemId: i.rows[0]!.id };
+  const order = o.rows[0]!;
+  made.orders.push(order.id);
+  const items: Record<string, string> = {};
+  for (const apt of [...new Set(rows.map((r) => r.apt))]) {
+    const qty = rows.filter((r) => r.apt === apt).reduce((s, r) => s + r.qty, 0);
+    const i = await pool.query<{ id: string }>(
+      `insert into public.chip_order_items
+         (order_id, contact_id, apartment_number, chips_count, unit_price, threshold, price_above, line_total, match_status)
+       values ($1, $2, $3, $4, $5, $4, $5, $6, 'unassigned') returning id`,
+      [order.id, made.contacts[apt], apt, qty, unit, qty * unit],
+    );
+    items[apt] = i.rows[0]!.id;
+  }
+  for (const [position, r] of rows.entries()) {
+    await pool.query(
+      `insert into public.chip_order_holders (order_id, item_id, position, source, role, full_name, phone, chips_count, lease_end_date)
+       values ($1, $2, $3, 'order', $4, $5, $6, $7, $8)`,
+      [order.id, items[r.apt], position, r.role, r.name, r.phone, r.qty, r.leaseEnd ?? null],
+    );
+  }
+  return { id: order.id, orderNumber: order.order_number, items };
+}
+
+/** The window's apartment rows in /chips → "הזמנות". */
+function orderRow(page: Page, text: string): Locator {
+  return page.getByTestId('chip-orders-table').getByTestId('chip-order-row').filter({ hasText: text });
+}
+
+function issueWindow(page: Page): Locator {
+  return page.getByRole('dialog').filter({ hasText: 'הנפקת צ׳יפ' });
+}
+
+/** The window without an order: pick the apartment in its search popover. */
+async function pickApartment(page: Page, apt: string) {
+  await issueWindow(page).getByText('בחר דירה או יחידה…').click();
+  await page.getByPlaceholder('מספר דירה או שם דייר…').fill(apt);
+  await page.locator('[data-slot="popover-content"]').getByRole('button').filter({ hasText: apt }).first().click();
+}
+
+/** Type a number into a block's chip field and add it (Enter or "הוסף"). */
+async function addChip(block: Locator, number: string, how: 'enter' | 'button' = 'enter') {
+  const input = block.getByLabel(/^מספר צ׳יפ/);
+  await input.fill(number);
+  if (how === 'enter') await input.press('Enter');
+  else await block.getByRole('button', { name: 'הוסף', exact: true }).click();
+  await expect(block.getByText(number, { exact: true })).toBeVisible();
 }
 
 test.beforeAll(async () => {
-  const c = await pool.query<{ id: string }>(
-    `insert into public.contacts (apartment_number) values ($1) returning id`,
-    [APT],
-  );
-  made.contact = c.rows[0]!.id;
+  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP]) {
+    const c = await pool.query<{ id: string }>(`insert into public.contacts (apartment_number) values ($1) returning id`, [apt]);
+    made.contacts[apt] = c.rows[0]!.id;
+  }
+  await storage.start(Number(storageUrl.port || 54321));
 });
 
 test.afterAll(async () => {
-  const chips = await pool.query<{ id: string }>(`select id from public.chips where contact_id = $1`, [made.contact]);
+  const contactIds = Object.values(made.contacts);
+  const chips = await pool.query<{ id: string }>(`select id from public.chips where contact_id = any($1::uuid[])`, [contactIds]);
   for (const { id } of chips.rows) {
     await pool.query(`delete from public.chip_events where chip_id = $1`, [id]);
     await pool.query(`delete from public.chips where id = $1`, [id]);
   }
   for (const id of made.orders) await pool.query(`delete from public.chip_orders where id = $1`, [id]);
-  if (made.contact) await pool.query(`delete from public.contacts where id = $1`, [made.contact]);
+  for (const id of contactIds) await pool.query(`delete from public.contacts where id = $1`, [id]);
+  await storage.stop();
   await pool.end();
 });
 
@@ -80,117 +149,189 @@ test('/chips opens on the chips view, unchanged, with the orders switch beside i
   await expect(page.getByTestId('chip-orders-table')).toHaveCount(0);
 });
 
-test.describe.serial('staff: orders inside the issue window', () => {
-  const first = { id: '', orderNumber: 0, itemId: '' };
+test.describe.serial('staff: the issue window', () => {
+  const order = { id: '', orderNumber: 0, items: {} as Record<string, string> };
 
-  test('the issue window WITHOUT an order is unchanged — even for an apartment with an open order', async ({ page }) => {
-    Object.assign(first, await seedPaidOrder(1));
-    await page.goto('/chips');
-    await page.getByRole('button', { name: 'הנפק צ׳יפ' }).click();
-    const issue = page.getByRole('dialog').filter({ hasText: 'הנפקת צ׳יפ' });
-    await expect(issue.getByText('בחר דירה כדי להוסיף בעלי צ׳יפ')).toBeVisible();
-    await issue.getByText('בחר דירה או יחידה…').click();
-    await page.getByPlaceholder('מספר דירה או שם דייר…').fill(APT);
-    await page.getByRole('button').filter({ hasText: APT }).first().click();
-    await expect(issue.getByTestId('chip-holder-block')).toHaveCount(1);
-    await expect(issue.getByTestId('chip-holder-block')).toContainText('בעל צ׳יפ חדש');
-    await expect(issue.getByTestId('chip-order-section')).toHaveCount(0);
-    await expect(issue.getByTestId('chip-holder-registry-update')).toHaveCount(0);
-    await expect(issue.getByLabel('שם בעל הצ׳יפ')).toHaveValue('');
+  test.beforeAll(async () => {
+    Object.assign(order, await seedPaidOrder([
+      { apt: APT, role: 'owner', name: 'דנה בדיקה', phone: P_OWNER, qty: 2 },
+      { apt: APT, role: 'tenant', name: 'שרה שוכרת', phone: P_RENTER, qty: 1, leaseEnd: '2030-01-31' },
+      { apt: APT_B, role: 'owner', name: 'דנה בדיקה', phone: P_OWNER, qty: 1 },
+    ]));
   });
 
-  test('a row per apartment → the prefilled block + "פרטי הזמנה" → more than ordered warns but saves → "שויך" → "עדכן בכרטיס הדייר" only on click → ready → collected → the row leaves', async ({ page }) => {
-    await page.goto('/chips?view=orders');
-    const row = page.getByTestId('chip-orders-table').getByTestId('chip-order-row').filter({ hasText: APT });
-    await expect(row).toHaveCount(1);
-    await expect(row).toContainText('דנה בדיקה');
-    await expect(row.getByTestId('chip-order-stage')).toHaveText('ממתין לשיוך');
-    await row.click();
-
-    const issue = page.getByRole('dialog').filter({ hasText: 'הנפקת צ׳יפ' });
-    await expect(issue.getByText(`דירה ${APT}`)).toBeVisible();
+  test('without an order: one block, no transaction section, 6 chips with no reason, card / app, fee + "החיוב בוצע" + note saved, the switch disables and re-enables', async ({ page }) => {
+    await page.goto('/chips');
+    await page.getByRole('button', { name: 'הנפק צ׳יפ' }).click();
+    const issue = issueWindow(page);
+    await expect(issue.getByText('בחר דירה כדי להוסיף בעלי צ׳יפ')).toBeVisible();
+    await pickApartment(page, APT);
     const block = issue.getByTestId('chip-holder-block');
     await expect(block).toHaveCount(1);
-    await expect(block.getByLabel('שם בעל הצ׳יפ')).toHaveValue('דנה בדיקה');
-    await expect(block.getByLabel('טלפון בעל הצ׳יפ')).toHaveValue('0539300001');
-    await expect(block).toContainText('בעל דירה');
-    const section = block.getByTestId('chip-order-section');
-    await expect(section).toContainText('פרטי הזמנה');
+    await expect(block).toContainText('בעל צ׳יפ חדש');
+    // APT has an open order, and still: no transaction section here.
+    await expect(issue.getByTestId('chip-order-section')).toHaveCount(0);
+    await expect(issue.getByTestId('chip-holder-registry-update')).toHaveCount(0);
+
+    await block.getByRole('radio', { name: 'אחר' }).click();
+    await block.getByLabel('שם מלא').fill('מטפלת בדיקה');
+    // Six chips on one person (the old cap of 4 per apartment, and the old 5
+    // per save, are gone) — one of them an app.
+    for (let k = 1; k <= 5; k++) await addChip(block, `N${tag}${k}`, k % 2 ? 'enter' : 'button');
+    await block.getByRole('radio', { name: 'אפליקציה' }).click();
+    await addChip(block, `N${tag}6`);
+    await expect(block.getByTestId('chip-alloc-counter')).toHaveText('שויכו 6');
+    await expect(issue.getByText('סיבת חריגה')).toHaveCount(0);
+
+    // The three kept fields.
+    await issue.getByLabel('עמלת הנפקה (₪)').fill('25');
+    await issue.getByRole('checkbox', { name: 'החיוב בוצע' }).check();
+    await issue.getByLabel('הערה', { exact: true }).fill('הערת בדיקה');
+    await issue.getByTestId('chip-issue-save').click();
+    await expect(issue).toHaveCount(0);
+    const saved = (await pool.query<{ chip_number: string; chip_type: string; status: string; issuance_fee: number; fee_charged: boolean; notes: string; limit_override_reason: string | null; order_item_id: string | null }>(
+      `select chip_number, chip_type, status, issuance_fee::float8 as issuance_fee, fee_charged, notes, limit_override_reason, order_item_id
+         from public.chips where contact_id = $1 order by chip_number`, [made.contacts[APT]],
+    )).rows;
+    expect(saved).toHaveLength(6);
+    for (const c of saved) {
+      expect(c).toMatchObject({ status: 'active', issuance_fee: 25, fee_charged: true, notes: 'הערת בדיקה', limit_override_reason: null, order_item_id: null });
+    }
+    expect(saved.find((c) => c.chip_number === `N${tag}6`)!.chip_type).toBe('app');
+    expect(saved.filter((c) => c.chip_type === 'physical')).toHaveLength(5);
+
+    // The switch: off (asks once) and back on — immediate, never deleted.
+    await page.getByRole('button', { name: 'הנפק צ׳יפ' }).click();
+    await pickApartment(page, APT);
+    const again = issue.getByTestId('chip-holder-block').filter({ hasText: 'מטפלת בדיקה' });
+    page.once('dialog', (d) => void d.accept());
+    await again.getByRole('button', { name: `השבת את N${tag}1` }).click();
+    await expect.poll(async () => (await pool.query(`select status from public.chips where chip_number = $1`, [`N${tag}1`])).rows[0].status).toBe('inactive');
+    await again.getByRole('button', { name: `החזר לפעיל את N${tag}1` }).click();
+    await expect.poll(async () => (await pool.query(`select status from public.chips where chip_number = $1`, [`N${tag}1`])).rows[0].status).toBe('active');
+    // Picking the apartment counts as an edit: closing asks first.
+    await issue.getByRole('button', { name: 'סגור' }).last().click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'צא ללא שמירה' }).click();
+    await expect(issue).toHaveCount(0);
+  });
+
+  test('a paid order: one block per person, the renter, one price line, chips per block, the counter, "הוסף בעל צ׳יפ" outside the paid quantity → save → ready → collected', async ({ page }) => {
+    await page.goto('/chips?view=orders');
+    const row = orderRow(page, APT);
+    await expect(row.filter({ hasText: APT_B })).toHaveCount(0);
+    await expect(orderRow(page, APT_B)).toHaveCount(1);
+    await expect(row.first()).toContainText('דנה בדיקה');
+    await expect(row.first().getByTestId('chip-order-stage')).toHaveText('ממתין לשיוך');
+    await row.first().click();
+
+    const issue = issueWindow(page);
+    const blocks = issue.getByTestId('chip-holder-block');
+    await expect(blocks).toHaveCount(3);
+    const [owner, renter, second] = [blocks.nth(0), blocks.nth(1), blocks.nth(2)];
+    await expect(owner.getByLabel('שם מלא')).toHaveValue('דנה בדיקה');
+    await expect(owner.getByRole('radio', { name: 'בעלים' })).toHaveAttribute('aria-checked', 'true');
+    await expect(owner.getByLabel('טלפון נייד')).toHaveValue('0539300001');
+    await expect(renter.getByLabel('שם מלא')).toHaveValue('שרה שוכרת');
+    await expect(renter.getByRole('radio', { name: 'שוכר' })).toHaveAttribute('aria-checked', 'true');
+    await expect(renter).toContainText('סיום חוזה: 31.01.2030');
+    await expect(second).toContainText(`דירה ${APT_B}`);
+
+    // The transaction section: one price line for the whole order.
+    const section = issue.getByTestId('chip-order-section');
+    await expect(section).toContainText(String(order.orderNumber));
     await expect(section).toContainText('dana.e2e@example.test');
-    await expect(section).toContainText('רחוב בדיקה 1');
-    await expect(section).toContainText(String(first.orderNumber));
-    await expect(section).toContainText('₪50');
-    await expect(section.getByTestId('chip-order-stage')).toHaveText('ממתין לשיוך');
+    await expect(section.getByTestId('chip-order-progress')).toHaveText('0 מתוך 4');
+    await expect(section).toContainText('כרטיס בקרת כניסה — 4×50₪');
+    await expect(section).not.toContainText('הכרטיסים הראשונים');
+    await expect(section).toContainText('200₪');
     await expect(section.getByRole('button', { name: 'מוכן לאיסוף' })).toBeDisabled();
 
-    // Two numbers for one ordered chip: a warning, and the save still goes through.
-    const numberInput = block.getByPlaceholder('מספר צ׳יפ');
-    for (const n of [`E2E${tag}1`, `E2E${tag}2`]) {
-      await numberInput.fill(n);
-      await numberInput.press('Enter');
-    }
-    await expect(section.getByRole('alert')).toContainText('יותר צ׳יפים ממה שהוזמן');
-    await issue.getByRole('button', { name: /^(הנפק צ׳יפ|שמור והנפק)$/ }).click();
+    await addChip(owner, `E2E${tag}1`, 'enter');
+    await addChip(owner, `E2E${tag}2`, 'button');
+    await expect(owner.getByTestId('chip-alloc-counter')).toHaveText('שויכו 2 מתוך 2');
+    await expect(owner.getByTestId('chip-alloc-counter')).toHaveClass(/ci-full/);
+    await renter.getByRole('radio', { name: 'אפליקציה' }).click();
+    await addChip(renter, `E2E${tag}3`);
+    await addChip(second, `E2E${tag}4`);
+
+    // A holder the staff adds: not part of the paid quantity (no "מתוך").
+    await issue.getByRole('button', { name: 'הוסף בעל צ׳יפ' }).click();
+    await expect(blocks).toHaveCount(4);
+    const staff = blocks.nth(3);
+    await staff.getByLabel('שם מלא').fill('עובד צוות');
+    await addChip(staff, `E2E${tag}5`);
+    await expect(staff.getByTestId('chip-alloc-counter')).toHaveText('שויכו 1');
+
+    await issue.getByTestId('chip-issue-save').click();
     await expect(issue).toHaveCount(0);
-    const linked = await pool.query(`select count(*)::int as n from public.chips where order_item_id = $1 and status = 'active'`, [first.itemId]);
-    expect(linked.rows[0].n).toBe(2);
+    const chips = (await pool.query<{ chip_number: string; chip_type: string; order_item_id: string; full_name: string; source: string; chips_count: number }>(
+      `select c.chip_number, c.chip_type, c.order_item_id, h.full_name, h.source, h.chips_count
+         from public.chips c join public.chip_order_holders h on h.id = c.order_holder_id
+        where c.chip_number like $1 order by c.chip_number`, [`E2E${tag}%`],
+    )).rows;
+    expect(chips.map((c) => [c.chip_number, c.full_name, c.source])).toEqual([
+      [`E2E${tag}1`, 'דנה בדיקה', 'order'], [`E2E${tag}2`, 'דנה בדיקה', 'order'], [`E2E${tag}3`, 'שרה שוכרת', 'order'],
+      [`E2E${tag}4`, 'דנה בדיקה', 'order'], [`E2E${tag}5`, 'עובד צוות', 'staff'],
+    ]);
+    expect(chips.find((c) => c.source === 'staff')!.chips_count).toBe(0);
+    expect(chips[2]!.chip_type).toBe('app');
+    expect(chips[3]!.order_item_id).toBe(order.items[APT_B]);
     // Issuing wrote nothing to the tenants list.
-    const untouched = await pool.query(`select owner_name, owner_phone, owner_email from public.contacts where id = $1`, [made.contact]);
-    expect(untouched.rows[0]).toEqual({ owner_name: null, owner_phone: null, owner_email: null });
-    await expect(row.getByTestId('chip-order-stage')).toHaveText('שויך');
+    expect((await pool.query(`select owner_name, owner_phone from public.contacts where id = $1`, [made.contacts[APT]])).rows[0])
+      .toEqual({ owner_name: null, owner_phone: null });
 
     // The chips are in the "צ׳יפים" tab like any other chip.
     await page.getByRole('tab', { name: /צ׳יפים/ }).click();
-    await page.getByPlaceholder('חפש לפי מספר צ׳יפ, מספר דירה או שם דייר').fill(`E2E${tag}1`);
-    await expect(page.getByText(`E2E${tag}1`).first()).toBeVisible();
+    await page.getByPlaceholder('חפש לפי מספר צ׳יפ, מספר דירה או שם דייר').fill(`E2E${tag}3`);
+    await expect(page.getByText(`E2E${tag}3`).first()).toBeVisible();
     await page.getByRole('tab', { name: /הזמנות/ }).click();
 
-    await row.click();
-    await expect(section.getByTestId('chip-order-stage')).toHaveText('שויך');
-    // "עדכן בכרטיס הדייר": a confirmation first; the phone of an owner warns about the portal.
-    await block.getByTestId('chip-holder-registry-update').click();
-    const confirm = page.getByRole('alertdialog');
-    await expect(confirm).toContainText('פורטל הדירה');
-    await confirm.getByRole('button', { name: 'עדכן בכרטיס הדייר' }).click();
-    await expect.poll(async () => (await pool.query(`select owner_name, owner_phone, owner_email from public.contacts where id = $1`, [made.contact])).rows[0])
-      .toEqual({ owner_name: 'דנה בדיקה', owner_phone: '0539300001', owner_email: null });
-
+    await orderRow(page, APT).first().click();
+    await expect(section.getByTestId('chip-order-progress')).toHaveText('4 מתוך 4');
     await section.getByRole('button', { name: 'מוכן לאיסוף' }).click();
-    await expect(section.getByTestId('chip-order-stage')).toHaveText('מוכן לאיסוף');
+    await expect(section.getByRole('button', { name: 'נאסף', exact: true })).toBeVisible();
+    await expect(section.getByRole('button', { name: 'מוכן לאיסוף' })).toHaveCount(0);
     // The "ready" message was attempted on both channels, each on its own.
     await expect.poll(async () => (await pool.query(
       `select count(distinct channel)::int as n from public.chip_order_notifications where order_id = $1 and kind = 'ready'`,
-      [first.id],
+      [order.id],
     )).rows[0].n, { timeout: 30_000 }).toBe(2);
     await section.getByRole('button', { name: 'נאסף', exact: true }).click();
-    await expect(block.getByTestId('chip-order-section')).toHaveCount(0);
-    await expect.poll(async () => (await pool.query(`select status from public.chip_orders where id = $1`, [first.id])).rows[0].status).toBe('collected');
-    await issue.getByRole('button', { name: 'סגור' }).last().click();
-    await expect(row).toHaveCount(0);
+    await expect(issue).toHaveCount(0);
+    await expect.poll(async () => (await pool.query(`select status from public.chip_orders where id = $1`, [order.id])).rows[0].status).toBe('collected');
+    await expect(orderRow(page, APT)).toHaveCount(0);
+    await expect(orderRow(page, APT_B)).toHaveCount(0);
   });
 
-  test('a repeat order of the same person opens the SAME block, with the chips already issued, plus the new "פרטי הזמנה"', async ({ page }) => {
-    const repeat = await seedPaidOrder(1);
+  test('an order made before 21/11/2026 keeps the two price lines it was sold with, in one block from the order', async ({ page }) => {
+    const o = await pool.query<{ id: string; order_number: number }>(
+      `insert into public.chip_orders
+         (full_name, phone_e164, email, address, role, status, total, tracking_token, paid_at, due_at,
+          grow_process_id, grow_transaction_id, grow_asmachta)
+       values ('ותיק בדיקה', '+972539300003', 'old.e2e@example.test', 'רחוב בדיקה 3', 'owner', 'paid', 170, $1, now(), now() + interval '3 days',
+               $2, $3, 'e2e')
+       returning id, order_number`,
+      [randomBytes(32).toString('base64url'), `e2e-p-${tag}-old`, `e2e-t-${tag}-old`],
+    );
+    made.orders.push(o.rows[0]!.id);
+    await pool.query(
+      `insert into public.chip_order_items
+         (order_id, contact_id, apartment_number, chips_count, unit_price, threshold, price_above, line_total, match_status)
+       values ($1, $2, $3, 3, 50, 2, 70, 170, 'unassigned')`,
+      [o.rows[0]!.id, made.contacts[APT_OLD], APT_OLD],
+    );
     await page.goto('/chips?view=orders');
-    const row = page.getByTestId('chip-orders-table').getByTestId('chip-order-row').filter({ hasText: APT });
-    await expect(row).toHaveCount(1);
-    await row.click();
-    const issue = page.getByRole('dialog').filter({ hasText: 'הנפקת צ׳יפ' });
+    await orderRow(page, APT_OLD).click();
+    const issue = issueWindow(page);
     const blocks = issue.getByTestId('chip-holder-block');
     await expect(blocks).toHaveCount(1);
-    await expect(blocks).toContainText('2 צ׳יפים קיימים');
-    await expect(blocks.getByTestId('chip-order-section')).toHaveCount(1);
-    await expect(blocks.getByTestId('chip-order-section')).toContainText(String(repeat.orderNumber));
-    const numberInput = blocks.getByPlaceholder('מספר צ׳יפ');
-    await numberInput.fill(`E2E${tag}3`);
-    await numberInput.press('Enter');
-    await issue.getByRole('button', { name: /^(הנפק צ׳יפ|שמור והנפק)$/ }).click();
+    await expect(blocks.getByLabel('שם מלא')).toHaveValue('ותיק בדיקה');
+    const section = issue.getByTestId('chip-order-section');
+    await expect(section).toContainText('2 הכרטיסים הראשונים לכל דירה — 2×50₪');
+    await expect(section).toContainText('מהכרטיס ה-3 ואילך — 1×70₪');
+    await expect(section).toContainText('170₪');
+    await issue.getByRole('button', { name: 'סגור' }).last().click();
     await expect(issue).toHaveCount(0);
-    const r = await pool.query<{ order_item_id: string; holder_name: string }>(
-      `select order_item_id, holder_name from public.chips where chip_number = $1`, [`E2E${tag}3`],
-    );
-    expect(r.rows[0]).toEqual({ order_item_id: repeat.itemId, holder_name: 'דנה בדיקה' });
-    await expect(row.getByTestId('chip-order-stage')).toHaveText('שויך');
   });
 });
 
@@ -223,47 +364,63 @@ test.describe('public page', () => {
   });
 });
 
-// ── Test mode (13/11/2026) ─────────────────────────────────────────────────
+// ── Test mode ──────────────────────────────────────────────────────────────
 // The settings switch makes a secret link; with it /chip-order opens without
 // Grow under a pinned "מצב בדיקה, אין חיוב" strip, the code arrives on
-// WhatsApp (the Green API stub, as in portal-login-otp.spec.ts), the payment
-// step is "סיים הזמנת בדיקה", and the order shows in /chips with a "בדיקה"
-// badge until "מחק הזמנת בדיקה". A wrong token or no token is the closed page
-// as before — no hint. The previous test-mode row is put back afterwards.
+// WhatsApp (the Green API stub, as in portal-login-otp.spec.ts), the pay
+// button finishes the test order on the server (no Grow, no charge) and shows
+// the confirmation. A wrong token or no token is the closed page — no hint.
+// The previous settings rows are put back afterwards.
 test.describe.serial('test mode', () => {
   const STUB = `http://127.0.0.1:${process.env.E2E_GREENAPI_PORT ?? 3110}`;
   const phoneDigits = `05393${String(Date.now()).slice(-5)}`;
   const phoneE164 = `+972${phoneDigits.slice(1)}`;
-  const state = { link: '', orderId: '', orderNumber: 0, hadRow: false, row: null as unknown };
-  const APT2 = `992${tag}2`;
-  const skipState = { contact: '', orderId: '', phone: '' };
+  const renterDigits = `05395${String(Date.now()).slice(-5)}`;
+  const PRICE = 45; // set through /settings below — the page must follow it
+  const state = { link: '', orderId: '', orderNumber: 0, rows: {} as Record<string, unknown>, leaseKey: '' };
+  const skipState = { orderId: '', phone: '' };
+  const saved = { testMode: null as unknown, chipOrders: null as unknown };
 
   test.beforeAll(async () => {
-    const prev = await pool.query(`select value from public.app_settings where key = 'chip_orders_test_mode'`);
-    state.hadRow = (prev.rowCount ?? 0) > 0;
-    state.row = prev.rows[0]?.value ?? null;
+    const r = await pool.query<{ key: string; value: unknown }>(
+      `select key, value from public.app_settings where key in ('chip_orders_test_mode', 'chip_orders')`,
+    );
+    for (const row of r.rows) {
+      if (row.key === 'chip_orders_test_mode') saved.testMode = row.value;
+      else saved.chipOrders = row.value;
+    }
+    // The old price rule's keys, stored as before 21/11/2026 — a save on the
+    // new screen must keep them (nothing reads them any more).
+    await pool.query(
+      `insert into public.app_settings (key, value) values ('chip_orders', $1::jsonb)
+       on conflict (key) do update set value = excluded.value`,
+      [JSON.stringify({ unitPrice: 50, threshold: 2, priceAbove: 70, maxPerApartment: 4, pickupText: '', termsText: '', ordersOpen: false })],
+    );
   });
 
   test.afterAll(async () => {
-    if (state.orderId) await pool.query(`delete from public.chip_orders where id = $1 and is_test`, [state.orderId]);
-    if (skipState.orderId) {
-      const chips = await pool.query<{ id: string }>(
-        `select c.id from public.chips c join public.chip_order_items i on i.id = c.order_item_id where i.order_id = $1`,
-        [skipState.orderId],
-      );
-      for (const { id } of chips.rows) {
-        await pool.query(`delete from public.chip_events where chip_id = $1`, [id]);
-        await pool.query(`delete from public.chips where id = $1`, [id]);
-      }
-      await pool.query(`delete from public.chip_orders where id = $1 and is_test`, [skipState.orderId]);
+    for (const id of [state.orderId, skipState.orderId].filter(Boolean)) {
+      await pool.query(`delete from public.chip_orders where id = $1 and is_test`, [id]);
     }
-    if (skipState.contact) await pool.query(`delete from public.contacts where id = $1`, [skipState.contact]);
-    await pool.query(`delete from public.portal_otp_codes where phone_e164 = $1`, [phoneE164]);
-    if (state.hadRow) {
-      await pool.query(`update public.app_settings set value = $1::jsonb where key = 'chip_orders_test_mode'`, [JSON.stringify(state.row)]);
-    } else {
-      await pool.query(`delete from public.app_settings where key = 'chip_orders_test_mode'`);
+    await pool.query(`delete from public.portal_otp_codes where phone_e164 = any($1::text[])`, [[phoneE164, skipState.phone].filter(Boolean)]);
+    for (const [key, value] of [['chip_orders_test_mode', saved.testMode], ['chip_orders', saved.chipOrders]] as const) {
+      if (value === null) await pool.query(`delete from public.app_settings where key = $1`, [key]);
+      else await pool.query(`update public.app_settings set value = $2::jsonb where key = $1`, [key, JSON.stringify(value)]);
     }
+  });
+
+  test('settings: one price per chip — no threshold, price-above or maximum field; the save keeps the old stored keys', async ({ page }) => {
+    await page.goto('/settings');
+    const card = page.getByTestId('chip-order-settings');
+    const price = card.getByLabel('מחיר לצ׳יפ (₪)');
+    await expect(price).toHaveValue('50');
+    await expect(card.getByText('סף — כמה צ׳יפים לדירה במחיר הבסיס')).toHaveCount(0);
+    await expect(card.getByText('מחיר לצ׳יפ מעל הסף (₪)')).toHaveCount(0);
+    await expect(card.getByText('מקסימום צ׳יפים לדירה בהזמנה')).toHaveCount(0);
+    await price.fill(String(PRICE));
+    await card.getByRole('button', { name: 'שמור', exact: true }).click();
+    await expect.poll(async () => (await pool.query(`select value from public.app_settings where key = 'chip_orders'`)).rows[0].value)
+      .toMatchObject({ unitPrice: PRICE, threshold: 2, priceAbove: 70, maxPerApartment: 4 });
   });
 
   test('settings: switching test mode on shows a secret link with a copy button', async ({ page }) => {
@@ -300,23 +457,74 @@ test.describe.serial('test mode', () => {
     await ctx.close();
   });
 
-  test('with the link: the whole order, the code on WhatsApp, "סיים הזמנת בדיקה", the tracking page; messages say [בדיקה]', async ({ browser }) => {
+  test('with the link: an owner row and a renter row (prefilled, lease + end date), no quantity limit, one flat price line, the card never sent, the code on WhatsApp → the confirmation', async ({ browser }) => {
     await fetch(`${STUB}/__reset`, { method: 'POST' });
     const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 390, height: 844 } });
     const page = await ctx.newPage();
+    const posted: string[] = [];
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/public/chip-order') posted.push(r.postDataBuffer()?.toString('latin1') ?? '');
+    });
     const res = await page.goto(new URL(state.link).pathname + new URL(state.link).search);
     expect(res?.headers()['referrer-policy']).toBe('no-referrer');
     await expect(page.getByTestId('chip-order-test-banner')).toHaveText('מצב בדיקה, אין חיוב');
     await expect(page.getByTestId('chip-order-closed')).toHaveCount(0);
 
-    await page.getByLabel('שם מלא').fill('בודק מצב בדיקה');
-    await page.getByPlaceholder('05X-XXXXXXX').fill(phoneDigits);
-    await page.getByLabel('מייל').fill('test-mode.e2e@example.test');
-    await page.getByLabel('כתובת מגורים').fill('רחוב בדיקה 2');
-    await page.getByRole('radio', { name: 'בעלים' }).click();
-    await page.getByLabel('דירה 1').selectOption(APT);
-    await page.getByRole('checkbox').check();
-    await page.getByRole('button', { name: /המשך לתשלום/ }).click();
+    const rows = page.getByTestId('chip-order-line');
+    const first = rows.nth(0);
+    await expect(first.getByRole('radio', { name: 'בעלים' })).toHaveAttribute('aria-checked', 'true');
+    await expect(first.getByRole('radio')).toHaveCount(2); // owner and renter only
+    await first.getByLabel('שם מלא').fill('בודק בדיקה');
+    await first.getByRole('button', { name: 'דירה, שורה 1' }).click();
+    await page.getByLabel('חיפוש לפי מספר דירה').fill(APT_PUB);
+    await page.getByLabel('חיפוש לפי מספר דירה').press('Enter');
+    await expect(first.getByRole('button', { name: 'דירה, שורה 1' })).toHaveText(`דירה ${APT_PUB}`);
+    // Seven chips for one apartment — past the old caps of 4 and 6; the plus never disables.
+    const plus = first.getByRole('button', { name: 'יותר' });
+    for (let k = 0; k < 6; k++) await plus.click();
+    await expect(first.locator('.cr-qty b')).toHaveText('7');
+    await expect(plus).toBeEnabled();
+    await first.getByLabel('טלפון נייד').fill(phoneDigits);
+    await first.getByLabel('מייל').fill('test-mode.e2e@example.test');
+
+    // "הוספת דירה": the new row starts with the previous row's name, phone and email.
+    await page.getByRole('button', { name: 'הוספת דירה' }).click();
+    const second = rows.nth(1);
+    await expect(second.getByLabel('שם מלא')).toHaveValue('בודק בדיקה');
+    await expect(second.getByLabel('טלפון נייד')).toHaveValue(phoneDigits);
+    await expect(second.getByLabel('מייל')).toHaveValue('test-mode.e2e@example.test');
+    await page.getByLabel('חיפוש לפי מספר דירה').fill(APT_PUB);
+    await page.getByLabel('חיפוש לפי מספר דירה').press('Enter');
+    await second.getByRole('radio', { name: 'שוכר' }).click();
+    await second.getByLabel('שם מלא').fill('שרה שוכרת');
+    await second.getByLabel('טלפון נייד').fill(renterDigits);
+    await second.getByLabel('מייל').fill('');
+    await second.getByLabel('חוזה, שורה 2').setInputFiles({ name: 'lease.pdf', mimeType: 'application/pdf', buffer: PDF });
+    await second.getByLabel('תאריך סיום החוזה').fill('2030-01-31');
+
+    // One breakdown line: all 8 chips at the one price of /settings.
+    const brk = page.getByTestId('chip-order-breakdown');
+    await expect(brk.locator('.cr-br')).toHaveCount(1);
+    await expect(brk.locator('.cr-br')).toContainText('כרטיס בקרת כניסה');
+    await expect(brk.locator('.cr-br')).toContainText('8');
+    await expect(brk.locator('.cr-br')).toContainText(`${PRICE}₪`);
+    await expect(brk).not.toContainText('הכרטיסים הראשונים');
+    await expect(brk).not.toContainText('נוסף');
+    await expect(page.getByTestId('chip-order-total')).toHaveText(`${8 * PRICE}₪`);
+
+    await page.locator('#co-phone').fill(phoneDigits);
+    await page.locator('#co-email').fill('test-mode.e2e@example.test');
+    await page.locator('#co-street').fill('רחוב בדיקה 2');
+    await page.locator('#co-city').fill('חיפה');
+    await page.locator('#co-zip').fill('3300000');
+    // The card fields are drawn but never read: typed here, absent from every request.
+    const card = page.getByTestId('chip-order-card-fields');
+    await card.getByLabel('מספר כרטיס').fill('4111111111111111');
+    await card.getByLabel('ת"ז בעל הכרטיס').fill('123456782');
+    await page.getByRole('checkbox', { name: /הפרטים שמסרתי הינם נכונים/ }).check();
+    await expect(page.getByTestId('chip-order-pay')).toBeDisabled(); // the renter commitment is still missing
+    await page.getByRole('checkbox', { name: /השוכר מתחייב להחזיר את הכרטיס/ }).check();
+    await page.getByTestId('chip-order-pay').click();
 
     const chatId = `${phoneE164.slice(1)}@c.us`;
     let code = '';
@@ -327,25 +535,46 @@ test.describe.serial('test mode', () => {
       return code;
     }, { timeout: 15_000 }).toMatch(/^\d{6}$/);
     await page.getByLabel('קוד אימות').fill(code);
-    await page.getByRole('button', { name: 'אימות והמשך לתשלום' }).click();
+    await page.getByTestId('chip-order-pay').click();
 
-    await expect(page.getByTestId('chip-order-test-step')).toBeVisible();
-    await expect(page.getByTestId('chip-order-payment')).toHaveCount(0);
-    await page.getByRole('button', { name: 'סיים הזמנת בדיקה' }).click();
-    await page.waitForURL(/\/chip-order\/track\//);
-    await expect(page.getByTestId('chip-order-track')).toContainText('שולם, בהכנה');
-    await expect(page.getByTestId('chip-order-track')).toContainText('מועד היעד להכנה');
+    const done = page.getByTestId('chip-order-confirmation');
+    await expect(done).toBeVisible();
+    await expect(done).toContainText('ההזמנה התקבלה בהצלחה');
+    await expect(done).toContainText('בודק בדיקה (בעלים)');
+    await expect(done).toContainText('שרה שוכרת (שוכר)');
+    await expect(done).toContainText(`${8 * PRICE}₪`);
+    // The collections department number (fixed 21/11/2026).
+    await expect(done).toContainText('04-8500184');
+    await expect(done).not.toContainText('04-83411881');
     await noSideScroll(page);
 
-    const row = (await pool.query<{ id: string; order_number: number; is_test: boolean; status: string; grow_process_id: string | null }>(
-      `select id, order_number, is_test, status, grow_process_id from public.chip_orders where phone_e164 = $1 order by created_at desc limit 1`,
-      [phoneE164],
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).not.toContain('4111');
+    expect(posted[0]).not.toContain('123456782');
+
+    const row = (await pool.query<{ id: string; order_number: number; is_test: boolean; status: string; total: number; grow_process_id: string | null; rt: boolean; address_zip: string }>(
+      `select id, order_number, is_test, status, total::float8 as total, grow_process_id, renter_terms_accepted_at is not null as rt, address_zip
+         from public.chip_orders where phone_e164 = $1 order by created_at desc limit 1`, [phoneE164],
     )).rows[0]!;
     state.orderId = row.id;
     state.orderNumber = row.order_number;
-    expect(row).toMatchObject({ is_test: true, status: 'paid', grow_process_id: null });
-    // The "received & paid" WhatsApp goes out after the response — marked, and
-    // with the due date (there is no separate "approved" message any more).
+    expect(row).toMatchObject({ is_test: true, status: 'paid', total: 8 * PRICE, grow_process_id: null, rt: true, address_zip: '3300000' });
+    await expect(done.getByTestId('chip-order-confirmation-number')).toHaveText(String(row.order_number));
+    const items = (await pool.query(
+      `select chips_count, unit_price::float8 as unit_price, price_above::float8 as price_above, line_total::float8 as line_total
+         from public.chip_order_items where order_id = $1`, [row.id],
+    )).rows;
+    expect(items).toEqual([{ chips_count: 8, unit_price: PRICE, price_above: PRICE, line_total: 8 * PRICE }]);
+    const holders = (await pool.query<{ role: string; full_name: string; chips_count: number; lease_file_key: string | null; lease_end: string | null }>(
+      `select role, full_name, chips_count, lease_file_key, to_char(lease_end_date, 'YYYY-MM-DD') as lease_end
+         from public.chip_order_holders where order_id = $1 order by position`, [row.id],
+    )).rows;
+    expect(holders.map((h) => [h.role, h.full_name, h.chips_count, h.lease_end])).toEqual([
+      ['owner', 'בודק בדיקה', 7, null], ['tenant', 'שרה שוכרת', 1, '2030-01-31'],
+    ]);
+    state.leaseKey = holders[1]!.lease_file_key ?? '';
+    expect(storage.keys('chip-order-leases')).toEqual([`chip-order-leases/${state.leaseKey}`]);
+    // The "received & paid" WhatsApp goes out after the response — marked, and with the due date.
     await expect.poll(async () => {
       const r = await fetch(`${STUB}/__messages?chatId=${encodeURIComponent(chatId)}`);
       const { messages } = (await r.json()) as { messages: { message: string }[] };
@@ -355,12 +584,11 @@ test.describe.serial('test mode', () => {
     await ctx.close();
   });
 
-  test('/chips: the test order has the badge, is not counted, hides on demand, and "מחק הזמנת בדיקה" (in its section) removes it', async ({ page }) => {
+  test('/chips: the test order — badge, not counted, hides on demand; two blocks with the lease, chips per block, the switch; "מחק הזמנת בדיקה" disables its chips first', async ({ page }) => {
     await page.goto('/chips?view=orders');
-    const row = page.getByTestId('chip-orders-table').getByTestId('chip-order-row').filter({ hasText: 'בודק מצב בדיקה' });
+    const row = orderRow(page, APT_PUB);
     await expect(row).toBeVisible();
     await expect(row.getByTestId('chip-order-test-badge')).toHaveText('בדיקה');
-    // Never counted: the tab's number is the open REAL rows only.
     const realOpen = (await pool.query<{ n: number }>(
       `select count(*)::int as n from public.chip_order_items i join public.chip_orders o on o.id = i.order_id
         where o.status in ('paid', 'approved', 'ready') and not o.is_test`,
@@ -368,35 +596,62 @@ test.describe.serial('test mode', () => {
     const tab = page.getByRole('tab', { name: /הזמנות/ });
     if (realOpen > 0) await expect(tab).toContainText(String(realOpen));
     else await expect(tab).toHaveText('הזמנות');
-
     await page.getByTestId('chip-orders-toggle-tests').click();
     await expect(row).toHaveCount(0);
     await page.getByTestId('chip-orders-toggle-tests').click();
     await expect(row).toBeVisible();
 
     await row.click();
-    const issue = page.getByRole('dialog').filter({ hasText: 'הנפקת צ׳יפ' });
+    const issue = issueWindow(page);
+    const blocks = issue.getByTestId('chip-holder-block');
+    await expect(blocks).toHaveCount(2);
+    const [owner, renter] = [blocks.nth(0), blocks.nth(1)];
+    await expect(renter.getByRole('radio', { name: 'שוכר' })).toHaveAttribute('aria-checked', 'true');
+    const lease = renter.getByTestId('chip-order-lease-link');
+    await expect(lease).toBeVisible();
+    const file = await page.request.get((await lease.getAttribute('href'))!);
+    expect(file.status()).toBe(200);
+    expect((await file.body()).subarray(0, 5).toString()).toBe('%PDF-');
     const section = issue.getByTestId('chip-order-section');
     await expect(section).toContainText('בדיקה, ללא חיוב');
+    await expect(section).toContainText(`כרטיס בקרת כניסה — 8×${PRICE}₪`);
+
+    for (let k = 1; k <= 7; k++) await addChip(owner, `T${tag}${k}`);
+    await expect(owner.getByTestId('chip-alloc-counter')).toHaveText('שויכו 7 מתוך 7');
+    await renter.getByRole('radio', { name: 'אפליקציה' }).click();
+    await addChip(renter, `T${tag}8`, 'button');
+    await issue.getByTestId('chip-issue-save').click();
+    await expect(issue).toHaveCount(0);
+    await expect(row.getByTestId('chip-order-stage')).toHaveText('שויך');
+
+    await row.click();
+    await expect(owner.getByTestId('chip-alloc-counter')).toHaveText('שויכו 7 מתוך 7');
+    page.once('dialog', (d) => void d.accept());
+    await owner.getByRole('button', { name: `השבת את T${tag}1` }).click();
+    await expect(owner.getByTestId('chip-alloc-counter')).toHaveText('שויכו 6 מתוך 7');
+    await expect.poll(async () => (await pool.query(`select status from public.chips where chip_number = $1`, [`T${tag}1`])).rows[0].status).toBe('inactive');
+
     await section.getByTestId('chip-order-delete-test').click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'מחק הזמנת בדיקה' }).click();
-    await expect(section).toHaveCount(0);
-    await issue.getByRole('button', { name: 'סגור' }).last().click();
+    await expect(issue).toHaveCount(0);
     await expect(row).toHaveCount(0);
     expect((await pool.query(`select 1 from public.chip_orders where id = $1`, [state.orderId])).rowCount).toBe(0);
     state.orderId = '';
+    // Its chips are disabled, never deleted — and no longer linked to the order.
+    const chips = (await pool.query<{ status: string; order_item_id: string | null }>(
+      `select status, order_item_id from public.chips where chip_number like $1`, [`T${tag}%`],
+    )).rows;
+    expect(chips).toHaveLength(8);
+    expect(chips.every((c) => c.status === 'inactive' && c.order_item_id === null)).toBe(true);
+    expect(storage.removed).toContain(`chip-order-leases/${state.leaseKey}`);
   });
 
-  // "דלג על אימות (מצב בדיקה)" (13/11/2026): with SMS credit at 0 no code
-  // reached Ronen's phone, and "שליחת הקוד בוואטסאפ במקום" always met the
-  // 45-second resend cooldown the failed SMS had started (429 → the button
-  // vanished). The send is played by page.route here (a failing SMS, then that
-  // cooldown), the skip and everything after it are real.
-  test('a failed send keeps the WhatsApp button through the cooldown; "דלג על אימות" → finish → a row in "הזמנות" → the issue window with the prefilled block and "פרטי הזמנה" → chip → "שויך" → in "צ׳יפים" → ready → collected → the row leaves', async ({ browser, page }) => {
+  // "דלג על אימות (מצב בדיקה)" (13/11/2026): a failed send keeps the WhatsApp
+  // button through the resend cooldown; the send is played by page.route, the
+  // skip and everything after it are real. Then the staff reject the test order.
+  test('a failed send keeps the WhatsApp button through the cooldown; "דלג על אימות" → confirmation → the window → "דחה" → the row leaves', async ({ browser, page }) => {
     const skipPhone = `05394${String(Date.now()).slice(-5)}`;
     const skipE164 = `+972${skipPhone.slice(1)}`;
-    const c = await pool.query<{ id: string }>(`insert into public.contacts (apartment_number) values ($1) returning id`, [APT2]);
-    skipState.contact = c.rows[0]!.id;
     skipState.phone = skipE164;
 
     const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 390, height: 844 } });
@@ -413,14 +668,19 @@ test.describe.serial('test mode', () => {
     await expect(pub.getByTestId('chip-order-test-banner')).toBeVisible();
     // Nothing to skip before a code was asked for.
     await expect(pub.getByTestId('chip-order-skip-verification')).toHaveCount(0);
-    await pub.getByLabel('שם מלא').fill('בודק דילוג');
-    await pub.getByPlaceholder('05X-XXXXXXX').fill(skipPhone);
-    await pub.getByLabel('מייל').fill('skip.e2e@example.test');
-    await pub.getByLabel('כתובת מגורים').fill('רחוב בדיקה 3');
-    await pub.getByRole('radio', { name: 'בעלים' }).click();
-    await pub.getByLabel('דירה 1').selectOption(APT2);
-    await pub.getByRole('checkbox').check();
-    await pub.getByRole('button', { name: /המשך לתשלום/ }).click();
+    const first = pub.getByTestId('chip-order-line').nth(0);
+    await first.getByLabel('שם מלא').fill('בודק דילוג');
+    await first.getByRole('button', { name: 'דירה, שורה 1' }).click();
+    await pub.getByLabel('חיפוש לפי מספר דירה').fill(APT_SKIP);
+    await pub.getByLabel('חיפוש לפי מספר דירה').press('Enter');
+    await first.getByLabel('טלפון נייד').fill(skipPhone);
+    await pub.locator('#co-phone').fill(skipPhone);
+    await pub.locator('#co-email').fill('skip.e2e@example.test');
+    await pub.locator('#co-street').fill('רחוב בדיקה 3');
+    await pub.locator('#co-city').fill('חיפה');
+    await pub.locator('#co-zip').fill('3300000');
+    await pub.getByRole('checkbox', { name: /הפרטים שמסרתי הינם נכונים/ }).check();
+    await pub.getByTestId('chip-order-pay').click();
 
     const wa = pub.getByTestId('chip-order-otp-whatsapp-fallback');
     await expect(pub.getByText('שליחת הקוד נכשלה. נסו שוב בעוד רגע.')).toBeVisible();
@@ -434,14 +694,11 @@ test.describe.serial('test mode', () => {
     await expect(wa).toBeEnabled({ timeout: 5_000 });
 
     await pub.getByTestId('chip-order-skip-verification').click();
-    await expect(pub.getByTestId('chip-order-test-step')).toBeVisible();
-    await pub.getByRole('button', { name: 'סיים הזמנת בדיקה' }).click();
-    await pub.waitForURL(/\/chip-order\/track\//);
-    await expect(pub.getByTestId('chip-order-track')).toContainText('שולם, בהכנה');
+    await expect(pub.getByTestId('chip-order-confirmation')).toBeVisible();
     await ctx.close();
 
-    const row = (await pool.query<{ id: string; order_number: number; is_test: boolean; phone_verified: boolean; status: string }>(
-      `select id, order_number, is_test, phone_verified, status from public.chip_orders where phone_e164 = $1`, [skipE164],
+    const row = (await pool.query<{ id: string; is_test: boolean; phone_verified: boolean; status: string }>(
+      `select id, is_test, phone_verified, status from public.chip_orders where phone_e164 = $1`, [skipE164],
     )).rows;
     expect(row).toHaveLength(1);
     skipState.orderId = row[0]!.id;
@@ -449,54 +706,28 @@ test.describe.serial('test mode', () => {
     // No code was issued (the request was played), none consumed by the skip.
     expect((await pool.query(`select 1 from public.portal_otp_codes where phone_e164 = $1`, [skipE164])).rowCount).toBe(0);
 
-    // Staff: the order is a row in /chips → "הזמנות", badged.
-    await page.goto('/chips');
-    await page.getByRole('tab', { name: /הזמנות/ }).click();
-    const listRow = page.getByTestId('chip-orders-table').getByTestId('chip-order-row').filter({ hasText: APT2 });
-    await expect(listRow).toBeVisible();
+    await page.goto('/chips?view=orders');
+    const listRow = orderRow(page, APT_SKIP);
     await expect(listRow).toContainText('בודק דילוג');
     await expect(listRow.getByTestId('chip-order-test-badge')).toHaveText('בדיקה');
     await expect(listRow.getByTestId('chip-order-phone-unverified')).toHaveText('טלפון לא אומת');
     await expect(listRow.getByTestId('chip-order-stage')).toHaveText('ממתין לשיוך');
-
-    // The row opens the ISSUE window: the apartment, the prefilled block, "פרטי הזמנה".
     await listRow.click();
-    const issue = page.getByRole('dialog').filter({ hasText: 'הנפקת צ׳יפ' });
-    await expect(issue.getByText(`דירה ${APT2}`)).toBeVisible();
+    const issue = issueWindow(page);
     const block = issue.getByTestId('chip-holder-block');
     await expect(block).toHaveCount(1);
-    await expect(block.getByLabel('שם בעל הצ׳יפ')).toHaveValue('בודק דילוג');
-    await expect(block.getByLabel('טלפון בעל הצ׳יפ')).toHaveValue(skipPhone);
-    const section = block.getByTestId('chip-order-section');
-    await expect(section).toContainText('פרטי הזמנה');
+    await expect(block.getByLabel('שם מלא')).toHaveValue('בודק דילוג');
+    await expect(block.getByLabel('טלפון נייד')).toHaveValue(skipPhone);
+    const section = issue.getByTestId('chip-order-section');
     await expect(section).toContainText('skip.e2e@example.test');
-    await expect(section).toContainText('בדיקה, ללא חיוב');
-    await expect(section.getByTestId('chip-order-phone-unverified')).toBeVisible();
-
-    // Chip number → "הוסף" → save.
-    await block.getByPlaceholder('מספר צ׳יפ').fill(`E2S${tag}1`);
-    await block.getByRole('button', { name: 'הוסף', exact: true }).click();
-    await issue.getByRole('button', { name: /^(הנפק צ׳יפ|שמור והנפק)$/ }).click();
+    await section.getByRole('button', { name: 'דחה', exact: true }).click();
+    const dlg = page.getByRole('alertdialog');
+    await dlg.getByLabel('סיבת הדחייה').fill('בדיקת דחייה');
+    await dlg.getByRole('button', { name: 'דחה', exact: true }).click();
     await expect(issue).toHaveCount(0);
-    await expect(listRow.getByTestId('chip-order-stage')).toHaveText('שויך');
-    // Nothing was written to the tenants list.
-    const contact = await pool.query(`select owner_name, owner_phone, owner_email from public.contacts where id = $1`, [skipState.contact]);
-    expect(contact.rows[0]).toEqual({ owner_name: null, owner_phone: null, owner_email: null });
-
-    // The chip is in the "צ׳יפים" tab.
-    await page.getByRole('tab', { name: /צ׳יפים/ }).click();
-    await page.getByPlaceholder('חפש לפי מספר צ׳יפ, מספר דירה או שם דייר').fill(`E2S${tag}1`);
-    await expect(page.getByText(`E2S${tag}1`).first()).toBeVisible();
-
-    // Back to the row: "מוכן לאיסוף" → "נאסף" → the row leaves the tab.
-    await page.getByRole('tab', { name: /הזמנות/ }).click();
-    await listRow.click();
-    await section.getByRole('button', { name: 'מוכן לאיסוף' }).click();
-    await expect(section.getByTestId('chip-order-stage')).toHaveText('מוכן לאיסוף');
-    await section.getByRole('button', { name: 'נאסף', exact: true }).click();
-    await expect.poll(async () => (await pool.query(`select status from public.chip_orders where id = $1`, [skipState.orderId])).rows[0].status).toBe('collected');
-    await issue.getByRole('button', { name: 'סגור' }).last().click();
     await expect(listRow).toHaveCount(0);
+    expect((await pool.query(`select status, refund_status, reject_reason from public.chip_orders where id = $1`, [skipState.orderId])).rows[0])
+      .toEqual({ status: 'rejected', refund_status: 'not_required', reject_reason: 'בדיקת דחייה' });
   });
 
   test('switching test mode off kills the link', async ({ page, browser }) => {
