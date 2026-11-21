@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { CHIP_ORDER_LIMITS, formatIlsAfter, orderTotal, priceLine } from '@/lib/chipOrders/model';
+import { CHIP_ORDER_APT_LIMIT_MESSAGE, CHIP_ORDER_LIMITS, formatIlsAfter, orderTotal, priceLine } from '@/lib/chipOrders/model';
 import { chipOrderSubmitSchema } from '@/lib/validation/requests';
 
 // The order page (20/11/2026 design, 21/11/2026 pricing): rows are PEOPLE, and
 // every chip costs ONE flat price — total = all chips × the price of /settings,
-// no threshold and no quantity limit. The prices below are test inputs only;
-// the page always takes the price from /settings.
+// no threshold. One apartment orders up to 10 chips over all its rows (21/11
+// noon). The prices below are test inputs only; the page always takes the
+// price from /settings.
 
 describe('priceLine — one flat price per chip', () => {
   it('chips × the unit price, whatever the count', () => {
@@ -24,10 +25,11 @@ describe('priceLine — one flat price per chip', () => {
     const split = orderTotal([4, 1, 6].map((n) => priceLine(n, { unitPrice: 50 })));
     expect(split).toBe(priceLine(11, { unitPrice: 50 }).lineTotal);
   });
-  it('no business cap — only the storage ceiling of one apartment line (DB CHECK 50)', () => {
-    expect(CHIP_ORDER_LIMITS).not.toHaveProperty('maxChipsPerApartment');
+  it('up to 10 chips per apartment in one order; no cap on the apartments of an order', () => {
+    expect(CHIP_ORDER_LIMITS.maxChipsPerApartment).toBe(10);
     expect(CHIP_ORDER_LIMITS).not.toHaveProperty('maxApartmentsPerOrder');
-    expect(CHIP_ORDER_LIMITS.chipsPerApartmentCeiling).toBe(50);
+    expect(CHIP_ORDER_LIMITS).not.toHaveProperty('chipsPerApartmentCeiling');
+    expect(CHIP_ORDER_APT_LIMIT_MESSAGE).toBe('ניתן להזמין עד 10 כרטיסים לדירה בהזמנה אחת. לכמות גדולה יותר יש לפנות להנהלת הבניין.');
   });
   it('formats the amount number-first, as the reference', () => {
     expect(formatIlsAfter(240)).toBe('240₪');
@@ -68,8 +70,24 @@ describe('chipOrderSubmitSchema — the rows shape', () => {
     expect(chipOrderSubmitSchema.safeParse({ ...base, rows: [{ ...base.rows[0], phone: '' }] }).success).toBe(false);
     expect(chipOrderSubmitSchema.safeParse({ ...base, rows: [{ ...base.rows[0], email: 'nope' }] }).success).toBe(false);
   });
-  it('a row may order more than the old caps (no 4 / 6 per apartment)', () => {
-    expect(chipOrderSubmitSchema.safeParse({ ...base, rows: [{ ...base.rows[0], chipsCount: 12 }] }).success).toBe(true);
+  it('a row orders up to 10 chips; past it the answer is the apartment message', () => {
+    expect(chipOrderSubmitSchema.safeParse({ ...base, rows: [{ ...base.rows[0], chipsCount: 10 }] }).success).toBe(true);
+    const r = chipOrderSubmitSchema.safeParse({ ...base, rows: [{ ...base.rows[0], chipsCount: 11 }] });
+    expect(r.success).toBe(false);
+    expect(r.error?.issues[0]?.message).toBe(CHIP_ORDER_APT_LIMIT_MESSAGE);
+  });
+  it('several apartments, each up to 10, pass the schema (the per-apartment sum is the route\'s)', () => {
+    const rows = [
+      { ...base.rows[0], apartment: '101', chipsCount: 10 },
+      { ...base.rows[0], apartment: '102', chipsCount: 10 },
+    ];
+    expect(chipOrderSubmitSchema.safeParse({ ...base, rows }).success).toBe(true);
+  });
+  it('"הערות" is optional, trimmed, and up to 500 characters', () => {
+    expect(chipOrderSubmitSchema.parse(base).note).toBeUndefined();
+    expect(chipOrderSubmitSchema.parse({ ...base, note: '  למסור לשכן  ' }).note).toBe('למסור לשכן');
+    expect(chipOrderSubmitSchema.safeParse({ ...base, note: 'א'.repeat(500) }).success).toBe(true);
+    expect(chipOrderSubmitSchema.safeParse({ ...base, note: 'א'.repeat(501) }).success).toBe(false);
   });
   it('never carries card fields or a price', () => {
     const parsed = chipOrderSubmitSchema.parse({ ...base, cardNumber: '4111111111111111', total: 1 });

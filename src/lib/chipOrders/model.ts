@@ -112,11 +112,15 @@ export const DEFAULT_CHIP_ORDER_SETTINGS: ChipOrderSettings = {
 };
 
 export const CHIP_ORDER_LIMITS = {
-  /** A storage ceiling, not a business rule: the DB CHECK of chip_order_items
-   *  and chip_order_holders keeps one apartment's line in one order at ≤ 50
-   *  chips. The page shows no limit and its plus button is never disabled;
-   *  only a submit past this is refused, with a clear message (21/11/2026). */
-  chipsPerApartmentCeiling: 50,
+  /** Chips one apartment may order in one order (Ronen, 21/11/2026 noon),
+   *  counted over ALL its rows; an order may hold several apartments, each up
+   *  to this. Checked on the page (plus button + submit) and on the server.
+   *  The DB CHECK of chip_order_items / chip_order_holders (≤ 50) stays as
+   *  the storage ceiling. The issue window has no limit. */
+  maxChipsPerApartment: 10,
+  /** The orderer's note ("הערות" on the public page) — stored as the order's
+   *  note (chip_orders.internal_note, the "הערה" of the issue window). */
+  customerNoteMax: 500,
   /** Rows (people) in one order — several may share an apartment. A bound on
    *  the public request, not on the quantity. */
   maxRowsPerOrder: 20,
@@ -130,6 +134,10 @@ export const CHIP_ORDER_LIMITS = {
   otpPerDay: 300,
   maxPrice: 10_000,
 } as const;
+
+/** Shown next to the quantity (plus button / submit) and returned by the server. */
+export const CHIP_ORDER_APT_LIMIT_MESSAGE =
+  `ניתן להזמין עד ${CHIP_ORDER_LIMITS.maxChipsPerApartment} כרטיסים לדירה בהזמנה אחת. לכמות גדולה יותר יש לפנות להנהלת הבניין.`;
 
 /** The lease may be a PDF or a photo. */
 export const LEASE_FILE_EXTS = ['pdf', 'jpg', 'jpeg', 'png', 'webp'] as const;

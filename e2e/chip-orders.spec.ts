@@ -4,7 +4,8 @@ import { Pool } from 'pg';
 import { StorageStub } from './visitors-stubs';
 
 // Chip orders in the browser — the 20/11/2026 redesign (ref/chip-order) with
-// the 21/11/2026 fixes (one flat price per chip, no quantity limits):
+// the 21/11/2026 fixes (one flat price per chip; the issue window has no
+// quantity limit; the public page up to 10 chips per apartment — noon):
 //   · /chips keeps its chips view as the default;
 //   · the issue window WITHOUT an order: apartment picker, holder blocks, no
 //     transaction section, ANY number of chips with no reason, card / app, the
@@ -19,10 +20,12 @@ import { StorageStub } from './visitors-stubs';
 //   · /settings: one price field — the threshold, price-above and maximum
 //     fields are gone, and saving keeps the old rule's stored keys;
 //   · the public page (test link): rows per person (owner + renter with a
-//     lease), the add-row prefill, no quantity limit (the plus button never
-//     disables), one breakdown line at the price of /settings, the card fields
-//     never sent, the code on WhatsApp → the confirmation screen; the staff
-//     side of that test order (blocks, lease link, chips, the switch) and
+//     lease), the add-row prefill, up to 10 chips per apartment over its rows
+//     (the plus past it shows the message next to the quantity; the server
+//     refuses a body past it), one breakdown line at the price of /settings,
+//     the "הערות" field, the card fields never sent, the code on WhatsApp →
+//     the confirmation screen and its text; the staff side of that test order
+//     (blocks, lease link, the note in "הערה", chips, the switch) and
 //     "מחק הזמנת בדיקה" (its chips are disabled first, never deleted);
 //   · "דלג על אימות" → confirmation → "דחה" on the test order;
 //   · /chip-order is closed while Grow is not configured — the CI state.
@@ -40,6 +43,8 @@ const APT_B = `992${tag}2`; // staff: the second apartment of that order
 const APT_OLD = `992${tag}3`; // staff: an order from before 21/11/2026
 const APT_PUB = `992${tag}4`; // test link: owner + renter
 const APT_SKIP = `992${tag}5`; // test link: "דלג על אימות"
+const APT_LIMIT_MSG = 'ניתן להזמין עד 10 כרטיסים לדירה בהזמנה אחת. לכמות גדולה יותר יש לפנות להנהלת הבניין.';
+const PUB_NOTE = 'אני מבקש למסור את הכרטיסים לשכן מדירה 5';
 const P_OWNER = '+972539300001';
 const P_RENTER = '+972539300002';
 const made = { contacts: {} as Record<string, string>, orders: [] as string[] };
@@ -457,7 +462,7 @@ test.describe.serial('test mode', () => {
     await ctx.close();
   });
 
-  test('with the link: an owner row and a renter row (prefilled, lease + end date), no quantity limit, one flat price line, the card never sent, the code on WhatsApp → the confirmation', async ({ browser }) => {
+  test('with the link: an owner row and a renter row (prefilled, lease + end date), up to 10 per apartment, one flat price line, the note, the card never sent, the code on WhatsApp → the confirmation', async ({ browser }) => {
     await fetch(`${STUB}/__reset`, { method: 'POST' });
     const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 390, height: 844 } });
     const page = await ctx.newPage();
@@ -479,7 +484,7 @@ test.describe.serial('test mode', () => {
     await page.getByLabel('חיפוש לפי מספר דירה').fill(APT_PUB);
     await page.getByLabel('חיפוש לפי מספר דירה').press('Enter');
     await expect(first.getByRole('button', { name: 'דירה, שורה 1' })).toHaveText(`דירה ${APT_PUB}`);
-    // Seven chips for one apartment — past the old caps of 4 and 6; the plus never disables.
+    // Seven chips for one apartment — past the old caps of 4 and 6.
     const plus = first.getByRole('button', { name: 'יותר' });
     for (let k = 0; k < 6; k++) await plus.click();
     await expect(first.locator('.cr-qty b')).toHaveText('7');
@@ -502,6 +507,26 @@ test.describe.serial('test mode', () => {
     await second.getByLabel('חוזה, שורה 2').setInputFiles({ name: 'lease.pdf', mimeType: 'application/pdf', buffer: PDF });
     await second.getByLabel('תאריך סיום החוזה').fill('2030-01-31');
 
+    // Up to 10 chips per apartment, counted over ITS rows (7 + 3 = 10): one
+    // more plus shows the message next to that quantity and adds nothing.
+    const plus2 = second.getByRole('button', { name: 'יותר' });
+    await plus2.click();
+    await plus2.click();
+    await expect(second.locator('.cr-qty b')).toHaveText('3');
+    await expect(second.locator('.cr-err')).toHaveCount(0);
+    await plus2.click();
+    await expect(second.locator('.cr-qty b')).toHaveText('3');
+    await expect(second.locator('.cr-fld').filter({ has: page.locator('.cr-qty') })).toContainText(APT_LIMIT_MSG);
+    await expect(plus2).toBeEnabled();
+    await plus.click(); // the other row of the same apartment is refused too
+    await expect(first.locator('.cr-qty b')).toHaveText('7');
+    await expect(first.locator('.cr-fld').filter({ has: page.locator('.cr-qty') })).toContainText(APT_LIMIT_MSG);
+    const minus2 = second.getByRole('button', { name: 'פחות' });
+    await minus2.click();
+    await minus2.click();
+    await expect(second.locator('.cr-qty b')).toHaveText('1');
+    await expect(rows.locator('.cr-err')).toHaveCount(0);
+
     // One breakdown line: all 8 chips at the one price of /settings.
     const brk = page.getByTestId('chip-order-breakdown');
     await expect(brk.locator('.cr-br')).toHaveCount(1);
@@ -517,6 +542,11 @@ test.describe.serial('test mode', () => {
     await page.locator('#co-street').fill('רחוב בדיקה 2');
     await page.locator('#co-city').fill('חיפה');
     await page.locator('#co-zip').fill('3300000');
+    // "הערות" — optional, up to 500, below the address; it becomes the order's note.
+    const noteField = page.getByLabel('הערות', { exact: true });
+    await expect(noteField).toHaveAttribute('placeholder', 'למשל: אני מבקש למסור את הכרטיסים ל...');
+    await expect(noteField).toHaveAttribute('maxlength', '500');
+    await noteField.fill(PUB_NOTE);
     // The card fields are drawn but never read: typed here, absent from every request.
     const card = page.getByTestId('chip-order-card-fields');
     await card.getByLabel('מספר כרטיס').fill('4111111111111111');
@@ -539,7 +569,12 @@ test.describe.serial('test mode', () => {
 
     const done = page.getByTestId('chip-order-confirmation');
     await expect(done).toBeVisible();
-    await expect(done).toContainText('ההזמנה התקבלה בהצלחה');
+    await expect(done.getByRole('heading', { level: 2 })).toHaveText('תודה על הזמנתך!');
+    await expect(done.locator('p.cr-msg')).toHaveText([
+      'הנהלת הבניין תבדוק ותאמת שהפרטים שמסרת נכונים ותואמים, ועם אישור ההזמנה תישלח אליך הודעה על מועד איסוף הכרטיסים מעמדת השומר בלובי הבניין. ניתן להגיע לאיסוף בכל יום ובכל שעה, ללא תיאום מראש.',
+      'קבלת הכרטיסים מותנית בהצגת תעודה מזהה התואמת לפחות לאחד מהמוטבים בהזמנה.',
+    ]);
+    await expect(done).not.toContainText('ההזמנה התקבלה בהצלחה');
     await expect(done).toContainText('בודק בדיקה (בעלים)');
     await expect(done).toContainText('שרה שוכרת (שוכר)');
     await expect(done).toContainText(`${8 * PRICE}₪`);
@@ -552,13 +587,29 @@ test.describe.serial('test mode', () => {
     expect(posted[0]).not.toContain('4111');
     expect(posted[0]).not.toContain('123456782');
 
-    const row = (await pool.query<{ id: string; order_number: number; is_test: boolean; status: string; total: number; grow_process_id: string | null; rt: boolean; address_zip: string }>(
-      `select id, order_number, is_test, status, total::float8 as total, grow_process_id, renter_terms_accepted_at is not null as rt, address_zip
+    const row = (await pool.query<{ id: string; order_number: number; is_test: boolean; status: string; total: number; grow_process_id: string | null; rt: boolean; address_zip: string; internal_note: string | null }>(
+      `select id, order_number, is_test, status, total::float8 as total, grow_process_id, renter_terms_accepted_at is not null as rt, address_zip, internal_note
          from public.chip_orders where phone_e164 = $1 order by created_at desc limit 1`, [phoneE164],
     )).rows[0]!;
     state.orderId = row.id;
     state.orderNumber = row.order_number;
-    expect(row).toMatchObject({ is_test: true, status: 'paid', total: 8 * PRICE, grow_process_id: null, rt: true, address_zip: '3300000' });
+    expect(row).toMatchObject({ is_test: true, status: 'paid', total: 8 * PRICE, grow_process_id: null, rt: true, address_zip: '3300000', internal_note: PUB_NOTE });
+
+    // The server refuses an apartment past 10 over its rows (6 + 5) with the
+    // same message, before anything is written (the phone is still verified).
+    const over = await page.request.post('/api/public/chip-order', {
+      headers: { 'x-chip-order-test': new URL(state.link).searchParams.get('test')! },
+      multipart: {
+        order: JSON.stringify({
+          phone: phoneDigits, email: 'test-mode.e2e@example.test', addressStreet: 'רחוב בדיקה 2', addressCity: 'חיפה', addressZip: '3300000',
+          acceptTerms: true, acceptRenterTerms: false,
+          rows: [6, 5].map((n) => ({ role: 'owner', fullName: 'בודק בדיקה', apartment: APT_PUB, chipsCount: n, phone: phoneDigits, email: '' })),
+        }),
+      },
+    });
+    expect(over.status()).toBe(400);
+    expect(((await over.json()) as { message?: string }).message).toBe(APT_LIMIT_MSG);
+    expect((await pool.query(`select count(*)::int as n from public.chip_orders where phone_e164 = $1`, [phoneE164])).rows[0].n).toBe(1);
     await expect(done.getByTestId('chip-order-confirmation-number')).toHaveText(String(row.order_number));
     const items = (await pool.query(
       `select chips_count, unit_price::float8 as unit_price, price_above::float8 as price_above, line_total::float8 as line_total
@@ -615,6 +666,8 @@ test.describe.serial('test mode', () => {
     const section = issue.getByTestId('chip-order-section');
     await expect(section).toContainText('בדיקה, ללא חיוב');
     await expect(section).toContainText(`כרטיס בקרת כניסה — 8×${PRICE}₪`);
+    // The orderer's "הערות" is the window's "הערה", editable as always.
+    await expect(issue.getByLabel('הערה', { exact: true })).toHaveValue(PUB_NOTE);
 
     for (let k = 1; k <= 7; k++) await addChip(owner, `T${tag}${k}`);
     await expect(owner.getByTestId('chip-alloc-counter')).toHaveText('שויכו 7 מתוך 7');

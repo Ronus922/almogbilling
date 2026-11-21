@@ -73,6 +73,7 @@ d('chip order window on the DB', () => {
         fullName: 'דנה כהן', phoneE164: '+972539300001', email: 'dana@example.test', address: 'הרצל 1, חיפה 3300000', role: 'owner',
         ip: null, isTest: true, phoneVerified: false, renterTermsAccepted: true,
         addressParts: { street: 'הרצל 1', city: 'חיפה', zip: '3300000' },
+        note: '  אני מבקש למסור את הכרטיסים לשכן  ',
         rows: [
           { role: 'owner', fullName: 'דנה כהן', apartmentNumber: apt.a, chipsCount: 2, phoneE164: '+972539300001', email: 'dana@example.test', lease: null, leaseEndDate: null },
           { role: 'tenant', fullName: 'שרה לוי', apartmentNumber: apt.a, chipsCount: 2, phoneE164: '+972539300002', email: null, lease: null, leaseEndDate: '2030-01-01' },
@@ -96,8 +97,9 @@ d('chip order window on the DB', () => {
       { role: 'tenant', full_name: 'שרה לוי', phone: '+972539300002', chips_count: 2, source: 'order', has_end: true },
       { role: 'owner', full_name: 'דנה כהן', phone: '+972539300001', chips_count: 1, source: 'order', has_end: false },
     ]);
-    const row = (await pool.query(`select address_street, address_city, address_zip, renter_terms_accepted_at is not null as rt from public.chip_orders where id = $1`, [o.id])).rows[0];
-    expect(row).toEqual({ address_street: 'הרצל 1', address_city: 'חיפה', address_zip: '3300000', rt: true });
+    const row = (await pool.query(`select address_street, address_city, address_zip, renter_terms_accepted_at is not null as rt, internal_note from public.chip_orders where id = $1`, [o.id])).rows[0];
+    // The orderer's "הערות" (21/11/2026) is the order's note, trimmed.
+    expect(row).toEqual({ address_street: 'הרצל 1', address_city: 'חיפה', address_zip: '3300000', rt: true, internal_note: 'אני מבקש למסור את הכרטיסים לשכן' });
   });
 
   it('the window: never for an unpaid order; one block per person once paid', async () => {
@@ -109,6 +111,8 @@ d('chip order window on the DB', () => {
     expect(w.holders.map((h) => [h.full_name, h.source, h.chips_count])).toEqual([['דנה כהן', 'order', 2], ['שרה לוי', 'order', 2], ['דנה כהן', 'order', 1]]);
     expect(w.clicked_item_id).toBe(ids.itemB);
     expect(w.order_all_linked).toBe(false);
+    // The orderer's note is the window's "הערה" (the next test edits it).
+    expect(w.order.internal_note).toBe('אני מבקש למסור את הכרטיסים לשכן');
     ids.h0 = w.holders[0].id!;
     ids.h1 = w.holders[1].id!;
     ids.h2 = w.holders[2].id!;

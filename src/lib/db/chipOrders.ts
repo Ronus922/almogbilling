@@ -85,6 +85,9 @@ export interface NewOrderInput {
   addressParts?: { street: string; city: string; zip: string } | null;
   /** The renter commitment box was ticked (only when a renter row exists). */
   renterTermsAccepted?: boolean;
+  /** The orderer's "הערות" (21/11/2026) — stored as the order's note
+   *  (internal_note), which the issue window shows and edits as "הערה". */
+  note?: string | null;
   ip: string | null;
   /** Test mode (a valid test link): the order is marked is_test and is later
    *  "paid" by markTestChipOrderPaid, never through Grow. */
@@ -176,12 +179,12 @@ export async function createChipOrder(input: NewOrderInput, settings: ChipOrderS
       await client.query<{ id: string; order_number: number }>(
         `insert into public.chip_orders
            (full_name, phone_e164, email, address, role, total, tracking_token, created_ip, is_test, phone_verified,
-            address_street, address_city, address_zip, renter_terms_accepted_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, case when $14::boolean then now() else null end)
+            address_street, address_city, address_zip, renter_terms_accepted_at, internal_note)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, case when $14::boolean then now() else null end, $15)
          returning id, order_number`,
         [input.fullName, input.phoneE164, input.email, input.address, input.role, total, trackingToken, input.ip, input.isTest === true,
           input.phoneVerified !== false, parts?.street ?? null, parts?.city ?? null, parts?.zip ?? null,
-          input.renterTermsAccepted === true],
+          input.renterTermsAccepted === true, input.note?.trim() ? input.note.trim() : null],
       )
     ).rows[0];
 

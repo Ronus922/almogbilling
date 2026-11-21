@@ -101,15 +101,16 @@
   .cr-fld { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   .cr-fld > label, .cr-fld > .cr-lbl { font: 600 12.5px "Heebo", sans-serif; color: var(--cr-muted); }
   .cr-req { color: var(--cr-req); }
-  .cr-fld input:not([type="checkbox"]):not([type="file"]) {
+  .cr-fld input:not([type="checkbox"]):not([type="file"]), .cr-fld textarea {
     height: 44px; border: 1px solid transparent; border-radius: 10px; background: var(--cr-field);
     padding-inline: 14px; font: 600 16px "Heebo", sans-serif; color: var(--cr-ink); width: 100%;
     transition: border-color .15s, box-shadow .15s, background .15s;
   }
-  @media (min-width: 621px) { .cr-fld input:not([type="checkbox"]):not([type="file"]) { font-size: 14px; } }
-  .cr-fld input::placeholder { color: var(--cr-ghost); font-weight: 500; }
-  .cr-fld input:focus { outline: 0; background: #fff; border-color: var(--cr-brand); box-shadow: 0 0 0 3px var(--cr-brand-soft); }
-  .cr-fld input:disabled { opacity: .65; }
+  @media (min-width: 621px) { .cr-fld input:not([type="checkbox"]):not([type="file"]), .cr-fld textarea { font-size: 14px; } }
+  .cr-fld textarea { height: auto; min-height: 88px; padding-block: 10px; line-height: 1.6; resize: vertical; }
+  .cr-fld input::placeholder, .cr-fld textarea::placeholder { color: var(--cr-ghost); font-weight: 500; }
+  .cr-fld input:focus, .cr-fld textarea:focus { outline: 0; background: #fff; border-color: var(--cr-brand); box-shadow: 0 0 0 3px var(--cr-brand-soft); }
+  .cr-fld input:disabled, .cr-fld textarea:disabled { opacity: .65; }
   .cr-fld input.cr-ltr { direction: ltr; text-align: start; }
   /* DESIGN.md error state */
   .cr-fld .cr-bad, .cr-fld input.cr-bad { border-color: #f87171; background: #fef2f2; }
@@ -121,6 +122,7 @@
   .cr-perow, .cr-contact, .cr-rentrow, .cr-addrrow, .cr-frow, .cr-paygrid { display: grid; grid-template-columns: 1fr; gap: 12px; }
   .cr-perow { margin-top: 12px; }
   .cr-addrrow { margin-top: 12px; }
+  .cr-notefld { margin-top: 12px; }
   .cr-frow, .cr-paygrid { margin-top: 14px; }
   @media (min-width: 621px) {
     .cr-mainrow { grid-template-columns: 1.5fr 1.1fr .9fr; }

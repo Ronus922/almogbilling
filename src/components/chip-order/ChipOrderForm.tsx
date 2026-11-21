@@ -8,11 +8,13 @@
 //     apartment; "הוספת דירה" adds a row prefilled with the previous row's
 //     name, phone and email. A renter row needs its lease + its end date.
 //     One flat price per chip (21/11/2026): total = all chips × the price of
-//     /settings, no quantity limit (the plus button is never disabled) — the
-//     server recomputes it. Only the storage ceiling of one apartment's line
-//     (CHIP_ORDER_LIMITS.chipsPerApartmentCeiling) refuses a submit past it.
-//   · פרטי התקשרות — the orderer's phone (the code goes there), email and the
-//     current address (street + number, city, 7-digit zip).
+//     /settings — the server recomputes it. One apartment orders at most
+//     CHIP_ORDER_LIMITS.maxChipsPerApartment chips over all its rows (21/11
+//     noon): the plus button past it, or a submit past it, shows the message
+//     next to the quantity instead; the server refuses it too.
+//   · פרטי התקשרות — the orderer's phone (the code goes there), email, the
+//     current address (street + number, city, 7-digit zip) and an optional
+//     "הערות" (≤ 500), stored as the order's note — the issue window's "הערה".
 //   · אישור ותשלום — card fields drawn as in the reference but UI ONLY: no
 //     `name`, never read, never sent, never stored. The processor's hosted
 //     fields will replace them. With Grow configured (the page open to the
@@ -31,7 +33,7 @@ import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toPortalE164 } from '@/lib/portal/phone';
 import {
-  CHIP_ORDER_LIMITS, CHIP_ORDER_TEST_HEADER, LEASE_FILE_ACCEPT, formatIlsAfter, priceLine,
+  CHIP_ORDER_APT_LIMIT_MESSAGE, CHIP_ORDER_LIMITS, CHIP_ORDER_TEST_HEADER, LEASE_FILE_ACCEPT, formatIlsAfter, priceLine,
 } from '@/lib/chipOrders/model';
 import { leaseFileProblem } from '@/lib/chipOrders/lease';
 import { ApartmentCombo } from './ApartmentCombo';
@@ -60,7 +62,8 @@ type Step = 'form' | 'otp' | 'paying' | 'done';
 // Grow's payment iframe posts from one of these (R/postmessage).
 const GROW_ORIGINS = ['https://meshulam.co.il', 'https://secure.meshulam.co.il', 'https://sandbox.meshulam.co.il'];
 const PAID_ACTIONS = ['payment', 'bit_payment', 'apple_payment', 'google_payment'];
-const APT_CEILING = CHIP_ORDER_LIMITS.chipsPerApartmentCeiling;
+const APT_MAX = CHIP_ORDER_LIMITS.maxChipsPerApartment;
+const NOTE_MAX = CHIP_ORDER_LIMITS.customerNoteMax;
 
 function todayIso(): string {
   const d = new Date();
@@ -126,6 +129,7 @@ export function ChipOrderForm({
   const [street, setStreet] = useState('');
   const [city, setCity] = useState('');
   const [zip, setZip] = useState('');
+  const [note, setNote] = useState('');
   const [agree, setAgree] = useState(false);
   const [agreeRent, setAgreeRent] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -171,7 +175,7 @@ export function ChipOrderForm({
     return () => window.removeEventListener('message', onMessage);
   }, [step, payment, router]);
 
-  // Chips per apartment (all its rows) — only for the storage ceiling.
+  // Chips per apartment (all its rows) — for the per-apartment maximum.
   const perGroup = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of rows) m.set(groupKey(r), (m.get(groupKey(r)) ?? 0) + r.qty);
@@ -185,6 +189,31 @@ export function ChipOrderForm({
 
   function patchRow(key: number, patch: Partial<Row>) {
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  }
+
+  /** Clears the quantity message of every row of r's apartment. */
+  function clearQtyErrors(r: Row) {
+    const keys = rows.filter((x) => groupKey(x) === groupKey(r)).map((x) => `qty_${x.key}`);
+    setErrors((prev) => {
+      if (!keys.some((k) => prev[k])) return prev;
+      const next = { ...prev };
+      for (const k of keys) delete next[k];
+      return next;
+    });
+  }
+
+  function addChip(r: Row) {
+    if ((perGroup.get(groupKey(r)) ?? 0) + 1 > APT_MAX) {
+      setErrors((prev) => ({ ...prev, [`qty_${r.key}`]: CHIP_ORDER_APT_LIMIT_MESSAGE }));
+      return;
+    }
+    clearQtyErrors(r);
+    patchRow(r.key, { qty: r.qty + 1 });
+  }
+
+  function removeChip(r: Row) {
+    clearQtyErrors(r);
+    patchRow(r.key, { qty: r.qty - 1 });
   }
 
   function addRow() {
@@ -201,14 +230,10 @@ export function ChipOrderForm({
   function validate(): boolean {
     const e: Record<string, string> = {};
     const today = todayIso();
-    const counted = new Set<string>();
     for (const r of rows) {
       if (r.name.trim().split(/\s+/).filter(Boolean).length < 2) e[`name_${r.key}`] = 'נדרש שם מלא — שם פרטי ושם משפחה';
       if (!r.apt) e[`apt_${r.key}`] = 'נדרש לבחור דירה';
-      else if (!counted.has(r.apt) && (perGroup.get(groupKey(r)) ?? 0) > APT_CEILING) {
-        e[`apt_${r.key}`] = `ליותר מ-${APT_CEILING} כרטיסים לדירה אחת יש לפנות להנהלת הבניין`;
-        counted.add(r.apt);
-      }
+      if ((perGroup.get(groupKey(r)) ?? 0) > APT_MAX) e[`qty_${r.key}`] = CHIP_ORDER_APT_LIMIT_MESSAGE;
       if (!toPortalE164(r.phone)) e[`phone_${r.key}`] = 'נדרש מספר טלפון נייד';
       if (r.email.trim() && !isEmail(r.email)) e[`email_${r.key}`] = 'כתובת מייל לא תקינה';
       if (r.role === 'tenant') {
@@ -305,6 +330,7 @@ export function ChipOrderForm({
         addressStreet: street.trim(),
         addressCity: city.trim(),
         addressZip: zip.trim(),
+        note: note.trim(),
         acceptTerms: agree,
         acceptRenterTerms: hasRenter ? agreeRent : false,
         rows: rows.map((r) => ({
@@ -502,12 +528,12 @@ export function ChipOrderForm({
                     </div>
                     <div className="cr-fld">
                       <span className="cr-lbl">כמות כרטיסים</span>
-                      <div className="cr-qty">
-                        <button type="button" aria-label="פחות" disabled={locked || r.qty <= 1} onClick={() => patchRow(r.key, { qty: r.qty - 1 })}>−</button>
+                      <div className={cn('cr-qty', errors[`qty_${r.key}`] && 'cr-bad')}>
+                        <button type="button" aria-label="פחות" disabled={locked || r.qty <= 1} onClick={() => removeChip(r)}>−</button>
                         <b className="cr-num" aria-live="polite">{r.qty}</b>
-                        <button type="button" aria-label="יותר" disabled={locked}
-                          onClick={() => patchRow(r.key, { qty: r.qty + 1 })}>+</button>
+                        <button type="button" aria-label="יותר" disabled={locked} onClick={() => addChip(r)}>+</button>
                       </div>
+                      <Err msg={errors[`qty_${r.key}`]} />
                     </div>
                   </div>
                   <div className="cr-perow">
@@ -613,6 +639,11 @@ export function ChipOrderForm({
                 className={cn('cr-num cr-ltr', errors.zip && 'cr-bad')} onChange={(e) => setZip(e.target.value.replace(/\D/g, '').slice(0, 7))} />
               <Err msg={errors.zip} />
             </div>
+          </div>
+          <div className="cr-fld cr-notefld">
+            <label htmlFor="co-note">הערות</label>
+            <textarea id="co-note" rows={3} maxLength={NOTE_MAX} placeholder="למשל: אני מבקש למסור את הכרטיסים ל..." value={note} disabled={locked}
+              onChange={(e) => setNote(e.target.value.slice(0, NOTE_MAX))} />
           </div>
         </div>
       </section>

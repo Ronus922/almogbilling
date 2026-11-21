@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legalContact';
 import { validatePhone } from '@/lib/validation';
 import { CHIP_RESIDENT_ROLES } from '@/lib/constants/chips';
+import { CHIP_ORDER_APT_LIMIT_MESSAGE, CHIP_ORDER_LIMITS } from '@/lib/chipOrders/model';
 import { WHATSAPP_ATTACHMENT_LIMITS, WHATSAPP_MESSAGE_MAX_FILES } from '@/lib/constants/whatsappAttachments';
 import { FINANCE_RECEIPT_LIMITS } from '@/lib/constants/finance';
 import { SUPPLIERS_LANE_ID } from '@/lib/constants/workItems';
@@ -522,7 +523,8 @@ export const chipOrderSubmitSchema = z.object({
         role: z.enum(['owner', 'tenant'], { error: 'נדרש לבחור: בעלים או שוכר' }),
         fullName: chipOrderPersonName,
         apartment: z.string({ error: 'נדרש לבחור דירה' }).trim().min(1, 'נדרש לבחור דירה').max(20, 'נדרש לבחור דירה'),
-        chipsCount: z.number({ error: 'כמות לא תקינה' }).int('כמות לא תקינה').min(1, 'כמות לא תקינה').max(50, 'כמות לא תקינה'),
+        chipsCount: z.number({ error: 'כמות לא תקינה' }).int('כמות לא תקינה').min(1, 'כמות לא תקינה')
+          .max(CHIP_ORDER_LIMITS.maxChipsPerApartment, CHIP_ORDER_APT_LIMIT_MESSAGE),
         phone: chipOrderPhone,
         email: z.union([z.literal(''), chipOrderEmail]).optional(),
         leaseEndDate: isoDay.nullable().optional(),
@@ -530,6 +532,8 @@ export const chipOrderSubmitSchema = z.object({
     )
     .min(1, 'נדרשת לפחות שורה אחת')
     .max(20, 'עד 20 שורות בהזמנה אחת'),
+  /** "הערות" — optional; stored as the order's note (the issue window's "הערה"). */
+  note: z.string().trim().max(CHIP_ORDER_LIMITS.customerNoteMax, `ההערה ארוכה מדי — עד ${CHIP_ORDER_LIMITS.customerNoteMax} תווים`).optional(),
 });
 
 /** PUT /api/settings/chip-orders — one flat price per chip (21/11/2026). */

@@ -10,7 +10,7 @@ import { createChipOrder, setOrderGrowProcess, type NewOrderRow } from '@/lib/db
 import { uploadChipOrderLease, removeChipOrderLeases } from '@/lib/storage/chipOrderLeaseStorage';
 import { createPaymentProcess, GrowApiError } from '@/lib/grow/client';
 import { isLeaseError, readLease } from '@/lib/chipOrders/lease';
-import { CHIP_ORDER_LIMITS, needsLease } from '@/lib/chipOrders/model';
+import { CHIP_ORDER_APT_LIMIT_MESSAGE, CHIP_ORDER_LIMITS, needsLease } from '@/lib/chipOrders/model';
 import {
   callbackSignature, chipOrdersOpen, readSkippedPhone, readVerifiedPhone, CHIP_ORDER_PUBLIC_HEADERS as H,
 } from '@/lib/chipOrders/server';
@@ -24,9 +24,9 @@ export const dynamic = 'force-dynamic';
 //               three parts, and the ROWS: one person each — 20/11/2026)
 //   lease_<i> = the lease of row i (renter rows only)
 // One flat price per chip (21/11/2026): total = all chips × the price of the
-// settings. No quantity limit per apartment or per order; only the storage
-// ceiling of one apartment's line (CHIP_ORDER_LIMITS.chipsPerApartmentCeiling,
-// the DB CHECK) refuses a submit past it with a clear message.
+// settings. Up to CHIP_ORDER_LIMITS.maxChipsPerApartment chips per apartment,
+// counted over all its rows (21/11/2026 noon); an order may hold several
+// apartments, each up to that. `note` ("הערות") becomes the order's note.
 //
 // PUBLIC BY DESIGN, gated three ways: the page must be open (Grow configured
 // AND the settings switch), the phone must have passed the OTP (the sealed
@@ -97,12 +97,11 @@ export async function POST(req: Request) {
   if (!phoneLimit.allowed) return err(429, 'יותר מדי הזמנות למספר הזה. נסו שוב מאוחר יותר.');
 
   // Row rules: a phone for every row, and a lease + its end date for every
-  // renter row; with a renter row the renter commitment box is required. No
-  // quantity limit — only the storage ceiling of one apartment's line.
+  // renter row; with a renter row the renter commitment box is required. One
+  // apartment orders at most maxChipsPerApartment chips over all its rows.
   const today = new Date().toISOString().slice(0, 10);
   const perApartment = new Map<string, number>();
   const rowPhones: string[] = [];
-  const ceiling = CHIP_ORDER_LIMITS.chipsPerApartmentCeiling;
   for (const [i, r] of o.rows.entries()) {
     perApartment.set(r.apartment, (perApartment.get(r.apartment) ?? 0) + r.chipsCount);
     const rowPhone = toPortalE164(r.phone);
@@ -114,8 +113,8 @@ export async function POST(req: Request) {
       if (!(form.get(`lease_${i}`) instanceof File)) return err(400, `נדרש לצרף חוזה או הסכם ניהול (שורה ${i + 1}).`);
     }
   }
-  for (const [apt, count] of perApartment) {
-    if (count > ceiling) return err(400, `ליותר מ-${ceiling} כרטיסים לדירה אחת יש לפנות להנהלת הבניין (דירה ${apt}).`);
+  for (const count of perApartment.values()) {
+    if (count > CHIP_ORDER_LIMITS.maxChipsPerApartment) return err(400, CHIP_ORDER_APT_LIMIT_MESSAGE);
   }
   const hasRenter = o.rows.some((r) => needsLease(r.role));
   if (hasRenter && o.acceptRenterTerms !== true) {
@@ -176,6 +175,7 @@ export async function POST(req: Request) {
         fullName: o.rows[0].fullName, phoneE164, email: o.email, address, role: o.rows[0].role, rows,
         addressParts: { street: o.addressStreet, city: o.addressCity, zip: o.addressZip },
         renterTermsAccepted: hasRenter && o.acceptRenterTerms === true,
+        note: o.note ? o.note : null,
         ip, isTest: test,
         phoneVerified: verified === phoneE164,
       },
