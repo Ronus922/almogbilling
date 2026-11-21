@@ -159,7 +159,7 @@ export interface ChipHolderUpdate {
 /** Payload for saving the issue window — one apartment, zero or more holder
  *  groups to ISSUE plus zero or more existing chips to UPDATE, in ONE
  *  transaction, all-or-nothing. At least one of the two must be non-empty.
- *  Fee/notes/override are window-global (a group may override its fee fields). */
+ *  Fee/notes are window-global (a group may override its fee fields). */
 export interface IssueChipsInput {
   contact_id: string;
   groups: IssueChipGroup[];
@@ -168,9 +168,6 @@ export interface IssueChipsInput {
   issuance_fee?: number | null;
   fee_charged?: boolean;
   notes?: string | null;
-  /** Required (non-empty) when existing actives + ALL new numbers exceed the
-   *  soft limit of 4 active chips per contact. */
-  limit_override_reason?: string | null;
 }
 
 /** One of the three inline resident slots of a contacts row (owner/tenant/operator).

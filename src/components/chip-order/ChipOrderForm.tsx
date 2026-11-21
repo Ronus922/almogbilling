@@ -7,8 +7,10 @@
 //     full name, apartment, quantity, phone, email). Several rows may share an
 //     apartment; "הוספת דירה" adds a row prefilled with the previous row's
 //     name, phone and email. A renter row needs its lease + its end date.
-//     The price is per apartment over all its rows (the threshold counts per
-//     apartment), at most 6 chips per apartment — the server recomputes both.
+//     One flat price per chip (21/11/2026): total = all chips × the price of
+//     /settings, no quantity limit (the plus button is never disabled) — the
+//     server recomputes it. Only the storage ceiling of one apartment's line
+//     (CHIP_ORDER_LIMITS.chipsPerApartmentCeiling) refuses a submit past it.
 //   · פרטי התקשרות — the orderer's phone (the code goes there), email and the
 //     current address (street + number, city, 7-digit zip).
 //   · אישור ותשלום — card fields drawn as in the reference but UI ONLY: no
@@ -29,7 +31,7 @@ import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toPortalE164 } from '@/lib/portal/phone';
 import {
-  CHIP_ORDER_LIMITS, CHIP_ORDER_TEST_HEADER, LEASE_FILE_ACCEPT, formatIlsAfter, priceBreakdown,
+  CHIP_ORDER_LIMITS, CHIP_ORDER_TEST_HEADER, LEASE_FILE_ACCEPT, formatIlsAfter, priceLine,
 } from '@/lib/chipOrders/model';
 import { leaseFileProblem } from '@/lib/chipOrders/lease';
 import { ApartmentCombo } from './ApartmentCombo';
@@ -37,8 +39,6 @@ import { ChipOrderConfirmation, type ConfirmedRow } from './ChipOrderConfirmatio
 
 interface Pricing {
   unitPrice: number;
-  threshold: number;
-  priceAbove: number;
 }
 
 type Role = 'owner' | 'tenant';
@@ -60,7 +60,7 @@ type Step = 'form' | 'otp' | 'paying' | 'done';
 // Grow's payment iframe posts from one of these (R/postmessage).
 const GROW_ORIGINS = ['https://meshulam.co.il', 'https://secure.meshulam.co.il', 'https://sandbox.meshulam.co.il'];
 const PAID_ACTIONS = ['payment', 'bit_payment', 'apple_payment', 'google_payment'];
-const MAX_PER_APT = CHIP_ORDER_LIMITS.maxChipsPerApartment;
+const APT_CEILING = CHIP_ORDER_LIMITS.chipsPerApartmentCeiling;
 
 function todayIso(): string {
   const d = new Date();
@@ -171,13 +171,15 @@ export function ChipOrderForm({
     return () => window.removeEventListener('message', onMessage);
   }, [step, payment, router]);
 
-  // Chips per apartment (all its rows) — the cap and the price both count so.
+  // Chips per apartment (all its rows) — only for the storage ceiling.
   const perGroup = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of rows) m.set(groupKey(r), (m.get(groupKey(r)) ?? 0) + r.qty);
     return m;
   }, [rows]);
-  const brk = priceBreakdown([...perGroup.values()], pricing);
+  // One flat price: every chip of the order × the unit price.
+  const totalQty = rows.reduce((s, r) => s + r.qty, 0);
+  const total = priceLine(totalQty, pricing).lineTotal;
   const hasRenter = rows.some((r) => r.role === 'tenant');
   const locked = step === 'otp' || busy;
 
@@ -203,8 +205,8 @@ export function ChipOrderForm({
     for (const r of rows) {
       if (r.name.trim().split(/\s+/).filter(Boolean).length < 2) e[`name_${r.key}`] = 'נדרש שם מלא — שם פרטי ושם משפחה';
       if (!r.apt) e[`apt_${r.key}`] = 'נדרש לבחור דירה';
-      else if (!counted.has(r.apt) && (perGroup.get(groupKey(r)) ?? 0) > MAX_PER_APT) {
-        e[`apt_${r.key}`] = `עד ${MAX_PER_APT} כרטיסים לדירה בהזמנה`;
+      else if (!counted.has(r.apt) && (perGroup.get(groupKey(r)) ?? 0) > APT_CEILING) {
+        e[`apt_${r.key}`] = `ליותר מ-${APT_CEILING} כרטיסים לדירה אחת יש לפנות להנהלת הבניין`;
         counted.add(r.apt);
       }
       if (!toPortalE164(r.phone)) e[`phone_${r.key}`] = 'נדרש מספר טלפון נייד';
@@ -222,9 +224,6 @@ export function ChipOrderForm({
     const leaseBytes = rows.reduce((s, r) => s + (r.role === 'tenant' ? r.file?.size ?? 0 : 0), 0);
     const lastRenter = [...rows].reverse().find((r) => r.role === 'tenant');
     if (leaseBytes > CHIP_ORDER_LIMITS.maxLeaseBytesTotal && lastRenter) e[`file_${lastRenter.key}`] = 'כל הקבצים יחד עד 40MB בהזמנה אחת';
-    if (new Set(rows.map((r) => r.apt).filter(Boolean)).size > CHIP_ORDER_LIMITS.maxApartmentsPerOrder) {
-      e.rows = `עד ${CHIP_ORDER_LIMITS.maxApartmentsPerOrder} דירות בהזמנה אחת`;
-    }
     const e164 = toPortalE164(phone);
     if (!e164 || !e164.startsWith('+9725')) e.phone = 'נדרש מספר טלפון נייד ישראלי';
     if (!isEmail(email)) e.email = 'כתובת מייל לא תקינה';
@@ -331,13 +330,13 @@ export function ChipOrderForm({
       return;
     }
     if (res.ok && data.ok && data.test && data.trackingToken) {
-      const t = { trackingToken: data.trackingToken, orderNumber: data.orderNumber ?? 0, total: data.total ?? brk.total };
+      const t = { trackingToken: data.trackingToken, orderNumber: data.orderNumber ?? 0, total: data.total ?? total };
       setTestOrder(t);
       await finishTestOrder(t);
       return;
     }
     if (!res.ok || !data.ok || !data.paymentUrl || !data.trackUrl) throw new Error(data.message ?? 'שליחת ההזמנה נכשלה');
-    setPayment({ url: data.paymentUrl, trackUrl: data.trackUrl, orderNumber: data.orderNumber ?? 0, total: data.total ?? brk.total });
+    setPayment({ url: data.paymentUrl, trackUrl: data.trackUrl, orderNumber: data.orderNumber ?? 0, total: data.total ?? total });
     setStep('paying');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -461,7 +460,6 @@ export function ChipOrderForm({
         <div className="cr-cbody">
           <div>
             {rows.map((r, i) => {
-              const aptTotal = perGroup.get(groupKey(r)) ?? r.qty;
               return (
                 <div key={r.key} className="cr-orow" data-testid="chip-order-line">
                   {rows.length > 1 && (
@@ -507,8 +505,7 @@ export function ChipOrderForm({
                       <div className="cr-qty">
                         <button type="button" aria-label="פחות" disabled={locked || r.qty <= 1} onClick={() => patchRow(r.key, { qty: r.qty - 1 })}>−</button>
                         <b className="cr-num" aria-live="polite">{r.qty}</b>
-                        <button type="button" aria-label="יותר" disabled={locked || aptTotal >= MAX_PER_APT}
-                          title={aptTotal >= MAX_PER_APT ? `עד ${MAX_PER_APT} כרטיסים לדירה` : undefined}
+                        <button type="button" aria-label="יותר" disabled={locked}
                           onClick={() => patchRow(r.key, { qty: r.qty + 1 })}>+</button>
                       </div>
                     </div>
@@ -558,30 +555,20 @@ export function ChipOrderForm({
             </button>
           )}
           {errors.rows && <p className="cr-err mt-2">{errors.rows}</p>}
-          {(brk.base > 0 || brk.above > 0) && (
-            <div className="cr-brk">
+          {totalQty > 0 && (
+            <div className="cr-brk" data-testid="chip-order-breakdown">
               <div className="cr-bh"><span>פריט</span><span className="cr-c">כמות</span><span className="cr-c">מחיר ליחידה</span><span className="cr-t">סה&quot;כ</span></div>
-              {brk.base > 0 && (
-                <div className="cr-br">
-                  <span>כרטיס בקרת כניסה<small>{pricing.threshold} הכרטיסים הראשונים לכל דירה</small></span>
-                  <span className="cr-c cr-num">{brk.base}</span>
-                  <span className="cr-c cr-num">{formatIlsAfter(pricing.unitPrice)}</span>
-                  <span className="cr-t cr-num">{formatIlsAfter(brk.baseTotal)}</span>
-                </div>
-              )}
-              {brk.above > 0 && (
-                <div className="cr-br">
-                  <span>כרטיס בקרת כניסה — נוסף<small>מהכרטיס ה-{pricing.threshold + 1} ואילך לדירה</small></span>
-                  <span className="cr-c cr-num">{brk.above}</span>
-                  <span className="cr-c cr-num">{formatIlsAfter(pricing.priceAbove)}</span>
-                  <span className="cr-t cr-num">{formatIlsAfter(brk.aboveTotal)}</span>
-                </div>
-              )}
+              <div className="cr-br">
+                <span>כרטיס בקרת כניסה</span>
+                <span className="cr-c cr-num">{totalQty}</span>
+                <span className="cr-c cr-num">{formatIlsAfter(pricing.unitPrice)}</span>
+                <span className="cr-t cr-num">{formatIlsAfter(total)}</span>
+              </div>
             </div>
           )}
           <div className="cr-total">
             <span>סה&quot;כ לתשלום</span>
-            <b className="cr-num" data-testid="chip-order-total">{formatIlsAfter(brk.total)}</b>
+            <b className="cr-num" data-testid="chip-order-total">{formatIlsAfter(total)}</b>
           </div>
         </div>
       </section>
@@ -755,7 +742,7 @@ export function ChipOrderForm({
             {busy ? <Loader2 className="h-[17px] w-[17px] cr-spin" /> : <LockIcon />}
             {step === 'otp'
               ? <span>אימות והמשך לתשלום</span>
-              : <span>תשלום מאובטח — <b className="cr-num">{formatIlsAfter(brk.total)}</b></span>}
+              : <span>תשלום מאובטח — <b className="cr-num">{formatIlsAfter(total)}</b></span>}
           </button>
           {(errors.agree || errors.agreeRent) && <p className="cr-err mt-2">{errors.agree ?? errors.agreeRent}</p>}
         </div>

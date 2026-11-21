@@ -8,38 +8,36 @@ import { chipOrderMatchStatus } from '@/lib/chipOrders/match';
 import { chipOrderMessage, chipOrderWhatsAppText } from '@/lib/chipOrders/messages';
 import { leaseFileProblem } from '@/lib/chipOrders/lease';
 
-// Chip orders (12/11/2026) — the pure rules: the price per apartment, the
+// Chip orders (12/11/2026) — the pure rules: the price (one flat price per
+// chip since 21/11/2026), the
 // 72-working-hour due date (from the payment since 13/11/2026), the match
 // status, the three messages, and (13/11/2026) the stage of one apartment and
 // which order line a new chip number is linked to.
 
-const S = { unitPrice: 50, threshold: 2, priceAbove: 70 };
+const S = { unitPrice: 50 };
 
-describe('priceLine — chips 1..X at the base price, X+1 onwards above it, per apartment', () => {
+describe('priceLine — one flat price per chip (21/11/2026)', () => {
   it.each([
     [1, 50],
     [2, 100],
-    [3, 170],
-    [4, 240],
+    [3, 150],
+    [4, 200],
+    [9, 450],
     [0, 0],
   ])('%i chips → ₪%i', (n, total) => {
     expect(priceLine(n, S).lineTotal).toBe(total);
   });
 
-  it('freezes the rule it was priced with (the snapshot)', () => {
-    expect(priceLine(3, S)).toEqual({ unitPrice: 50, threshold: 2, priceAbove: 70, lineTotal: 170 });
-  });
-
-  it('threshold 0 = every chip at the higher price', () => {
-    expect(priceLine(2, { ...S, threshold: 0 }).lineTotal).toBe(140);
+  it('freezes the price it was priced with (the snapshot: every chip at the base price)', () => {
+    expect(priceLine(3, S)).toEqual({ unitPrice: 50, threshold: 3, priceAbove: 50, lineTotal: 150 });
   });
 
   it('is agorot-safe', () => {
-    expect(priceLine(3, { unitPrice: 0.1, threshold: 2, priceAbove: 0.2 }).lineTotal).toBe(0.4);
+    expect(priceLine(3, { unitPrice: 0.1 }).lineTotal).toBe(0.3);
     expect(orderTotal([{ lineTotal: 0.1 }, { lineTotal: 0.2 }])).toBe(0.3);
   });
 
-  it('prices each apartment on its own (two apartments × 2 chips = 4 × base)', () => {
+  it('two apartments × 2 chips = 4 × the price', () => {
     expect(orderTotal([priceLine(2, S), priceLine(2, S)])).toBe(200);
   });
 

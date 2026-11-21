@@ -14,26 +14,13 @@ import type {
 } from '@/lib/types/chips';
 import { isSnapshotRole } from '@/lib/chips/holder';
 import { isOpenChipOrder, type ChipOrderStatus } from '@/lib/chipOrders/model';
-import {
-  ACTIVE_CHIPS_SOFT_LIMIT,
-  MAX_CHIPS_PER_GROUP,
-  exceedsSoftLimit,
-} from '@/lib/chips/issueGroups';
+import { MAX_CHIPS_PER_GROUP } from '@/lib/chips/issueGroups';
 
 // Closed product rules enforced here (not in routes): no DELETE ever; the
 // only way back is inactive -> active (reactivate); chip_number may be
 // CORRECTED (a typo fix, logged as a 'note' event with reason 'תיקון מספר')
 // but never set to a number another ACTIVE chip holds; every mutation writes
 // its chip_events row in the SAME transaction (legal_status_history pattern).
-
-/** Thrown when an issue request would push a contact past the soft limit
- *  without a limit_override_reason. */
-export class ChipLimitError extends Error {
-  constructor(message = 'chip_limit_exceeded') {
-    super(message);
-    this.name = 'ChipLimitError';
-  }
-}
 
 /** Thrown when a chip_number collides with another ACTIVE chip (partial unique
  *  index chips_number_active_uniq) or repeats within one issue request.
@@ -369,10 +356,10 @@ export async function getChipsKpis(): Promise<ChipsKpis> {
 /**
  * Issue chips to one contact for ONE OR MORE holder groups (multi-person
  * window), all in ONE transaction, all-or-nothing. The contact row is locked
- * FOR UPDATE so the active-count check and the apartment_number snapshot are
- * race-free. The soft limit of 4 active chips per contact is counted over
- * existing actives + the SUM of all groups' numbers TOGETHER (a non-empty
- * limit_override_reason is required past it, else ChipLimitError). A number
+ * FOR UPDATE so the apartment_number snapshot is race-free. There is no limit
+ * of active chips per apartment and no override reason (21/11/2026 — the old
+ * soft limit of 4 is gone; limit_override_reason stays in the table for the
+ * chips issued under it, and is no longer written). A number
  * colliding with another ACTIVE chip — or repeated within/across groups —
  * throws ChipNumberTakenError carrying the offending group index.
  * Returns the created chips in input order (groups then numbers).
@@ -414,7 +401,6 @@ export async function issueChipGroupsInTx(
   // A save may carry only holder edits (no new numbers) — but never nothing.
   const updates = input.updates ?? [];
   if (groups.length === 0 && updates.length === 0) throw new Error('invalid_chip_numbers');
-  const totalNew = groups.reduce((s, g) => s + g.numbers.length, 0);
 
   const contact = (
     await client.query<{
@@ -438,21 +424,6 @@ export async function issueChipGroupsInTx(
     )
   ).rows[0];
   if (!contact) throw new Error('contact_not_found');
-
-  const activeCount = (
-    await client.query<{ count: number }>(
-      `select count(*)::int as count from public.chips
-        where contact_id = $1 and status = 'active'`,
-      [input.contact_id],
-    )
-  ).rows[0].count;
-
-  // Soft limit over the SUM of all groups — the per-type client split never
-  // bypasses the count (clarification 1). Holder edits alone never trip it.
-  const overrideReason = input.limit_override_reason?.trim() ?? '';
-  if (totalNew > 0 && exceedsSoftLimit(activeCount, totalNew) && !overrideReason) {
-    throw new ChipLimitError();
-  }
 
   // Holder edits of ALREADY-SAVED chips go first, same transaction, so a
   // save is still all-or-nothing. Every edited chip must belong to this
@@ -536,8 +507,8 @@ export async function issueChipGroupsInTx(
              (chip_number, chip_type, contact_id, apartment_number, resident_role,
               holder_name, holder_phone, issued_by, issued_by_name,
               app_platform, app_invite_status, app_expires_at,
-              issuance_fee, fee_charged, limit_override_reason, notes, order_item_id, order_holder_id)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+              issuance_fee, fee_charged, notes, order_item_id, order_holder_id)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
            returning ${CHIP_COLUMNS}`,
           [
             num, group.chip_type, input.contact_id, contact.apartment_number,
@@ -545,7 +516,7 @@ export async function issueChipGroupsInTx(
             actor.id, actor.name,
             group.app_platform ?? null, group.app_invite_status ?? null, group.app_expires_at ?? null,
             fee, feeCharged,
-            input.limit_override_reason ?? null, input.notes ?? null, orderItemId,
+            input.notes ?? null, orderItemId,
             group.order_holder_id ?? null,
           ],
         );

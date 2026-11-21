@@ -84,11 +84,12 @@ d('chip order window on the DB', () => {
     made.orders.push(o.id);
     ids.order = o.id;
     ids.token = (await pool.query<{ t: string }>(`select tracking_token as t from public.chip_orders where id = $1`, [o.id])).rows[0]!.t;
-    // apartment A: 4 chips → 2 at the base price + 2 above it; apartment B: 1.
+    // One flat price (21/11/2026): apartment A 4 chips + apartment B 1 = 5 × the price.
     const s = DEFAULT_CHIP_ORDER_SETTINGS;
-    expect(o.total).toBe(2 * s.unitPrice + 2 * s.priceAbove + s.unitPrice);
-    const items = (await pool.query(`select apartment_number, chips_count, line_total::float8 as lt from public.chip_order_items where order_id = $1 order by apartment_number`, [o.id])).rows;
+    expect(o.total).toBe(5 * s.unitPrice);
+    const items = (await pool.query(`select apartment_number, chips_count, line_total::float8 as lt, unit_price::float8 as up, price_above::float8 as pa from public.chip_order_items where order_id = $1 order by apartment_number`, [o.id])).rows;
     expect(items.map((i) => [i.apartment_number, i.chips_count])).toEqual([[apt.a, 4], [apt.b, 1]]);
+    expect(items.map((i) => [i.lt, i.up, i.pa])).toEqual([[4 * s.unitPrice, s.unitPrice, s.unitPrice], [s.unitPrice, s.unitPrice, s.unitPrice]]);
     const holders = (await pool.query(`select role, full_name, phone, chips_count, source, lease_end_date is not null as has_end from public.chip_order_holders where order_id = $1 order by position`, [o.id])).rows;
     expect(holders).toEqual([
       { role: 'owner', full_name: 'דנה כהן', phone: '+972539300001', chips_count: 2, source: 'order', has_end: false },

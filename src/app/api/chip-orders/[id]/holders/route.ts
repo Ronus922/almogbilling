@@ -5,7 +5,6 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { chipOrderWindowSaveSchema } from '@/lib/validation/requests';
 import { saveChipOrderWindow, WindowChipConflictError, WindowInputError } from '@/lib/db/chipOrderWindow';
-import { ChipLimitError } from '@/lib/db/chips';
 import { badOrderId, chipOrderErrorResponse } from '@/lib/chipOrders/routeErrors';
 
 export const runtime = 'nodejs';
@@ -16,6 +15,7 @@ export const dynamic = 'force-dynamic';
 // numbers linked to the order line and the holder line) and the internal note,
 // in ONE transaction. Issuing chips is chips:edit; doing it for an order is
 // also chips_orders_manage:edit — the same two guards the issue window had.
+// No limit of active chips per apartment (21/11/2026).
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   let actor: Actor;
   try {
@@ -42,7 +42,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         note: body.data.note,
         issuance_fee: body.data.issuance_fee ?? null,
         fee_charged: body.data.fee_charged ?? false,
-        limit_override_reason: body.data.limit_override_reason ?? null,
       },
       { id: actor.id, name: actor.full_name ?? actor.username },
     );
@@ -53,12 +52,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       return NextResponse.json(
         { error: `מספר צ׳יפ ${err.chipNumber} כבר פעיל במערכת`, chip_number: err.chipNumber, holder_index: err.holderIndex },
         { status: 409 },
-      );
-    }
-    if (err instanceof ChipLimitError) {
-      return NextResponse.json(
-        { error: 'לדירה כבר מוקצים 4 צ׳יפים פעילים — נדרשת סיבת חריגה להנפקה נוספת', needs_override: true },
-        { status: 422 },
       );
     }
     if (err instanceof WindowInputError) {

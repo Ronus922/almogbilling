@@ -93,14 +93,9 @@ export function needsLease(role: ChipOrderRole): boolean {
 // ── Settings (app_settings key 'chip_orders') ─────────────────────────────
 
 export interface ChipOrderSettings {
-  /** ₪ per chip for chips 1..threshold of one apartment. */
+  /** ₪ per chip — ONE flat price for every chip of an order (21/11/2026:
+   *  no threshold, no higher price above it, no quantity limit). */
   unitPrice: number;
-  /** X — how many chips per apartment are sold at unitPrice. */
-  threshold: number;
-  /** ₪ per chip from chip X+1 of one apartment. */
-  priceAbove: number;
-  /** Most chips one apartment may order in one order. */
-  maxPerApartment: number;
   /** Where and when chips are collected — goes into the "ready" message. */
   pickupText: string;
   /** Order terms shown above the consent checkbox (Grow's go-live review asks for one). */
@@ -111,23 +106,19 @@ export interface ChipOrderSettings {
 
 export const DEFAULT_CHIP_ORDER_SETTINGS: ChipOrderSettings = {
   unitPrice: 50,
-  threshold: 2,
-  priceAbove: 70,
-  maxPerApartment: 4,
   pickupText: '',
   termsText: '',
   ordersOpen: false,
 };
 
 export const CHIP_ORDER_LIMITS = {
-  /** Hard ceiling of the settings field (the DB CHECK allows 50). */
-  maxPerApartmentCeiling: 20,
-  /** The public page (20/11/2026): at most 6 chips per apartment in one
-   *  order, counted over every row of that apartment. Replaces the old 4 of
-   *  the settings field on the page — client and server both enforce it. */
-  maxChipsPerApartment: 6,
-  maxApartmentsPerOrder: 10,
-  /** Rows (people) in one order — several may share an apartment. */
+  /** A storage ceiling, not a business rule: the DB CHECK of chip_order_items
+   *  and chip_order_holders keeps one apartment's line in one order at ≤ 50
+   *  chips. The page shows no limit and its plus button is never disabled;
+   *  only a submit past this is refused, with a clear message (21/11/2026). */
+  chipsPerApartmentCeiling: 50,
+  /** Rows (people) in one order — several may share an apartment. A bound on
+   *  the public request, not on the quantity. */
   maxRowsPerOrder: 20,
   leaseFileBytes: 10 * 1024 * 1024,
   /** The whole multipart submit (every lease + the JSON) — checked from
@@ -153,21 +144,18 @@ export interface LinePrice {
   lineTotal: number;
 }
 
-/** Chips 1..X of ONE apartment at the base price, chip X+1 onwards at the
- *  price above the threshold. Agorot-safe (integer arithmetic on cents). */
-export function priceLine(
-  chipsCount: number,
-  s: Pick<ChipOrderSettings, 'unitPrice' | 'threshold' | 'priceAbove'>,
-): LinePrice {
+/** One apartment line at the flat price: chips × unit price. Agorot-safe
+ *  (integer arithmetic on cents). The snapshot columns of the old threshold
+ *  rule stay filled so an order still reads alone: threshold = the line's own
+ *  count and price_above = the unit price, i.e. every chip at one price. Orders
+ *  made before 21/11/2026 keep the threshold snapshot they were sold with. */
+export function priceLine(chipsCount: number, s: Pick<ChipOrderSettings, 'unitPrice'>): LinePrice {
   const n = Math.max(0, Math.floor(chipsCount));
-  const base = Math.min(n, s.threshold);
-  const above = Math.max(0, n - s.threshold);
-  const cents = base * Math.round(s.unitPrice * 100) + above * Math.round(s.priceAbove * 100);
   return {
     unitPrice: s.unitPrice,
-    threshold: s.threshold,
-    priceAbove: s.priceAbove,
-    lineTotal: cents / 100,
+    threshold: n,
+    priceAbove: s.unitPrice,
+    lineTotal: (n * Math.round(s.unitPrice * 100)) / 100,
   };
 }
 
@@ -180,26 +168,6 @@ export function orderTotal(lines: { lineTotal: number }[]): number {
  *  span. */
 export function formatIlsAfter(n: number): string {
   return `${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}₪`;
-}
-
-/** The price breakdown of the order page and of the issue window: how many
- *  chips fall at the base price and how many above the threshold, counted PER
- *  APARTMENT (each apartment's first X chips are at the base price) and summed
- *  over the apartments. `counts` = chips per apartment. */
-export function priceBreakdown(
-  counts: readonly number[],
-  s: Pick<ChipOrderSettings, 'unitPrice' | 'threshold' | 'priceAbove'>,
-): { base: number; above: number; baseTotal: number; aboveTotal: number; total: number } {
-  let base = 0;
-  let above = 0;
-  for (const raw of counts) {
-    const n = Math.max(0, Math.floor(raw));
-    base += Math.min(n, s.threshold);
-    above += Math.max(0, n - s.threshold);
-  }
-  const baseTotal = (base * Math.round(s.unitPrice * 100)) / 100;
-  const aboveTotal = (above * Math.round(s.priceAbove * 100)) / 100;
-  return { base, above, baseTotal, aboveTotal, total: orderTotal(counts.map((c) => priceLine(c, s))) };
 }
 
 /** ₪ with up to two decimals, no trailing zeros ("₪50", "₪52.5"). */

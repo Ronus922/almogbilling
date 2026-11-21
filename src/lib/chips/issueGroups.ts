@@ -9,29 +9,12 @@ import type {
   IssueChipsInput,
 } from '@/lib/types/chips';
 
-/** Soft cap of ACTIVE chips per contact — exceeding it requires a non-empty
- *  limit_override_reason (routes map the failure to 422 with a Hebrew message). */
-export const ACTIVE_CHIPS_SOFT_LIMIT = 4;
+// No limit of active chips per apartment and no override reason (21/11/2026 —
+// the old soft limit of 4 is gone).
 
-/** Max NEW numbers per group/block in one save. */
-export const MAX_CHIPS_PER_GROUP = 5;
-
-/**
- * The soft-limit decision, counted over existing actives + the SUM of all
- * groups' numbers TOGETHER (splitting one holder block into per-type groups
- * never bypasses the count). True → the request must carry an override reason.
- */
-export function exceedsSoftLimit(activeCount: number, totalNewNumbers: number): boolean {
-  return activeCount + totalNewNumbers > ACTIVE_CHIPS_SOFT_LIMIT;
-}
-
-/** Total NEW numbers across all groups (blank entries ignored). */
-export function countGroupNumbers(groups: IssueChipGroup[]): number {
-  return groups.reduce(
-    (sum, g) => sum + g.numbers.filter((n) => n.trim() !== '').length,
-    0,
-  );
-}
+/** NEW numbers per group/block in ONE save — a bound on the request, not a
+ *  quantity rule (21/11/2026: raised from 5; the window shows no limit). */
+export const MAX_CHIPS_PER_GROUP = 50;
 
 /** First number repeated within or ACROSS groups (after trim), or null. */
 export function findDuplicateNumber(
@@ -51,9 +34,9 @@ export function findDuplicateNumber(
 
 /**
  * Adapter for the pre-groups POST /api/chips body (flat, single holder).
- * Maps EVERY field: the holder + numbers + app fields become one group; fee /
- * notes / limit_override_reason stay window-global exactly as before — so a
- * legacy request that exceeded the soft limit WITH a reason still passes.
+ * Maps every field: the holder + numbers + app fields become one group; fee /
+ * notes stay window-global exactly as before. A limit_override_reason a legacy
+ * caller still sends is ignored (there is no limit since 21/11/2026).
  * The caller validates enums/values; this only reshapes.
  */
 export function legacyChipBodyToInput(body: {
@@ -68,7 +51,6 @@ export function legacyChipBodyToInput(body: {
   app_expires_at?: string | null;
   issuance_fee?: number | null;
   fee_charged?: boolean;
-  limit_override_reason?: string | null;
   notes?: string | null;
 }): IssueChipsInput {
   return {
@@ -88,7 +70,6 @@ export function legacyChipBodyToInput(body: {
     issuance_fee: body.issuance_fee ?? null,
     fee_charged: body.fee_charged ?? false,
     notes: body.notes ?? null,
-    limit_override_reason: body.limit_override_reason ?? null,
   };
 }
 

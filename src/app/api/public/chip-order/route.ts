@@ -23,8 +23,10 @@ export const dynamic = 'force-dynamic';
 //   order     = JSON (chipOrderSubmitSchema — the contact block, the address in
 //               three parts, and the ROWS: one person each — 20/11/2026)
 //   lease_<i> = the lease of row i (renter rows only)
-// Rows of the same apartment are priced together (the threshold counts per
-// apartment over all its rows) and capped together at 6 chips per apartment.
+// One flat price per chip (21/11/2026): total = all chips × the price of the
+// settings. No quantity limit per apartment or per order; only the storage
+// ceiling of one apartment's line (CHIP_ORDER_LIMITS.chipsPerApartmentCeiling,
+// the DB CHECK) refuses a submit past it with a clear message.
 //
 // PUBLIC BY DESIGN, gated three ways: the page must be open (Grow configured
 // AND the settings switch), the phone must have passed the OTP (the sealed
@@ -94,13 +96,13 @@ export async function POST(req: Request) {
   const phoneLimit = await checkRateLimit(`chip-order:submit:phone:${phoneE164}`, { max: 5, windowSec: 3600 });
   if (!phoneLimit.allowed) return err(429, 'יותר מדי הזמנות למספר הזה. נסו שוב מאוחר יותר.');
 
-  // Row rules: at most 6 chips per apartment (all its rows together), at most
-  // 10 apartments, a phone for every row, and a lease + its end date for every
-  // renter row; with a renter row the renter commitment box is required.
+  // Row rules: a phone for every row, and a lease + its end date for every
+  // renter row; with a renter row the renter commitment box is required. No
+  // quantity limit — only the storage ceiling of one apartment's line.
   const today = new Date().toISOString().slice(0, 10);
   const perApartment = new Map<string, number>();
   const rowPhones: string[] = [];
-  const max = CHIP_ORDER_LIMITS.maxChipsPerApartment;
+  const ceiling = CHIP_ORDER_LIMITS.chipsPerApartmentCeiling;
   for (const [i, r] of o.rows.entries()) {
     perApartment.set(r.apartment, (perApartment.get(r.apartment) ?? 0) + r.chipsCount);
     const rowPhone = toPortalE164(r.phone);
@@ -113,10 +115,7 @@ export async function POST(req: Request) {
     }
   }
   for (const [apt, count] of perApartment) {
-    if (count > max) return err(400, `אפשר להזמין עד ${max} כרטיסים לדירה (דירה ${apt}).`);
-  }
-  if (perApartment.size > CHIP_ORDER_LIMITS.maxApartmentsPerOrder) {
-    return err(400, `עד ${CHIP_ORDER_LIMITS.maxApartmentsPerOrder} דירות בהזמנה אחת.`);
+    if (count > ceiling) return err(400, `ליותר מ-${ceiling} כרטיסים לדירה אחת יש לפנות להנהלת הבניין (דירה ${apt}).`);
   }
   const hasRenter = o.rows.some((r) => needsLease(r.role));
   if (hasRenter && o.acceptRenterTerms !== true) {

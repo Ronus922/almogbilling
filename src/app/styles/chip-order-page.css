@@ -141,7 +141,6 @@
   .cr-brk .cr-bh { background: #fafbff; border-bottom: 1px solid var(--cr-border); font: 700 11.5px "Heebo", sans-serif; color: var(--cr-soft); }
   .cr-brk .cr-br { border-bottom: 1px solid var(--cr-border); font: 600 13px "Heebo", sans-serif; color: var(--cr-ink); }
   .cr-brk .cr-br:last-child { border-bottom: 0; }
-  .cr-brk .cr-br small { display: block; font: 500 11.5px "Heebo", sans-serif; color: var(--cr-soft); margin-top: 2px; }
   .cr-brk .cr-c { text-align: center; font: 600 13px "Inter", sans-serif; color: var(--cr-muted); }
   .cr-brk .cr-t { text-align: left; font: 700 13.5px "Inter", sans-serif; color: var(--cr-ink); }
   .cr-brk .cr-bh .cr-c, .cr-brk .cr-bh .cr-t { font: 700 11.5px "Heebo", sans-serif; color: var(--cr-soft); }

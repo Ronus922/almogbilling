@@ -285,8 +285,6 @@
   .ci-chk { display: flex; align-items: center; gap: 9px; height: 42px; cursor: pointer; font: 600 13px "Heebo", sans-serif; color: var(--ci-muted); }
   .ci-chk input { width: 19px; height: 19px; accent-color: var(--ci-brand); cursor: pointer; }
 
-  .ci-over { border: 1px solid var(--ci-amber-border); background: var(--ci-amber-soft); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-  .ci-over p { margin: 0; font: 600 13px/1.5 "Heebo", sans-serif; color: var(--ci-amber-ink); display: flex; gap: 8px; }
   .ci-alert { border: 1px solid #f87171; background: #fef2f2; border-radius: 12px; padding: 12px 14px; font: 600 13.5px "Heebo", sans-serif; color: #b91c1c; }
   .ci-skel { height: 180px; border-radius: 13px; background: #f3f5fc; animation: ci-pulse 1.4s ease-in-out infinite; }
   @keyframes ci-pulse { 50% { opacity: .55; } }

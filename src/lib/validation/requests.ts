@@ -532,13 +532,10 @@ export const chipOrderSubmitSchema = z.object({
     .max(20, 'עד 20 שורות בהזמנה אחת'),
 });
 
-/** PUT /api/settings/chip-orders */
+/** PUT /api/settings/chip-orders — one flat price per chip (21/11/2026). */
 export const chipOrderSettingsBodySchema = z.object({
   // > 0: a free chip would make a ₪0 order, which Grow cannot charge (and the DB refuses).
   unitPrice: z.number({ error: 'מחיר לא תקין' }).min(1, 'המחיר חייב להיות לפחות ₪1').max(10_000, 'מחיר לא תקין'),
-  threshold: z.number({ error: 'סף לא תקין' }).int('סף לא תקין').min(0, 'סף לא תקין').max(20, 'סף לא תקין'),
-  priceAbove: z.number({ error: 'מחיר לא תקין' }).min(1, 'המחיר חייב להיות לפחות ₪1').max(10_000, 'מחיר לא תקין'),
-  maxPerApartment: z.number({ error: 'מקסימום לא תקין' }).int('מקסימום לא תקין').min(1, 'מקסימום לא תקין').max(20, 'מקסימום לא תקין'),
   pickupText: z.string().trim().max(500, 'הטקסט ארוך מדי'),
   termsText: z.string().trim().max(4000, 'הטקסט ארוך מדי'),
   ordersOpen: z.boolean(),
@@ -579,14 +576,13 @@ export const chipOrderWindowSaveSchema = z.object({
     new_chips: z.array(z.object({
       number: z.string().trim().min(1, 'מספר צ׳יפ ריק').max(64, 'מספר צ׳יפ ארוך מדי'),
       chip_type: z.enum(['physical', 'app']),
-    })).max(20, 'יותר מדי מספרים בבלוק אחד'),
+    })).max(50, 'יותר מדי מספרים בבלוק אחד בשמירה אחת'),
   })).max(40),
   /** Staff holders removed in the window (only one with no chips is removed). */
   removed_holder_ids: z.array(z.uuid()).max(40).optional(),
   note: z.string().max(2000, 'ההערה ארוכה מדי').nullable().optional(),
   issuance_fee: z.number().min(0, 'סכום לא תקין').max(100_000, 'סכום לא תקין').nullable().optional(),
   fee_charged: z.boolean().optional(),
-  limit_override_reason: z.string().trim().max(500).nullable().optional(),
 });
 
 /** POST /api/chip-orders/[id]/reject */

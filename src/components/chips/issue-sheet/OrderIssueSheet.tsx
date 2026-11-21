@@ -22,11 +22,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { validatePhone } from '@/lib/validation';
 import { cn } from '@/lib/utils';
 import { e164ToLocal } from '@/lib/portal/phone';
+import { MAX_CHIPS_PER_GROUP } from '@/lib/chips/issueGroups';
 import type { ChipOrderRole, ChipOrderWindow, ChipOrderWindowChip, ChipOrderWindowHolder } from '@/lib/chipOrders/model';
 import type { ChipResidentRole, ChipType } from '@/lib/types/chips';
 import { HolderRegistryButton } from '../ChipOrderSection';
@@ -38,7 +39,9 @@ import { OrderTransaction } from './OrderTransaction';
 import type { IssueChipSheetProps } from '../IssueChipSheet';
 
 const DATE_ONLY = new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: 'numeric' });
-const MAX_PENDING_PER_BLOCK = 20;
+/** New numbers of one block in one save — the request bound of the server
+ *  (chipOrderWindowSaveSchema), not a quantity rule (21/11/2026). */
+const MAX_PENDING_PER_BLOCK = MAX_CHIPS_PER_GROUP;
 const ROLE_OPTIONS = [
   { value: 'owner', label: 'בעלים' },
   { value: 'tenant', label: 'שוכר' },
@@ -111,8 +114,6 @@ export function OrderIssueSheet({
   const [noteOrig, setNoteOrig] = useState('');
   const [fee, setFee] = useState('');
   const [feeCharged, setFeeCharged] = useState(false);
-  const [needsOverride, setNeedsOverride] = useState(false);
-  const [overrideReason, setOverrideReason] = useState('');
   const [conflict, setConflict] = useState<{ blockKey: number; number: string } | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -134,8 +135,6 @@ export function OrderIssueSheet({
     setNoteOrig('');
     setFee('');
     setFeeCharged(false);
-    setNeedsOverride(false);
-    setOverrideReason('');
     setConflict(null);
     setServerError(null);
     setSubmitting(false);
@@ -203,7 +202,7 @@ export function OrderIssueSheet({
   const changes = totalPending + blocks.filter(edited).length + removed.length + (noteChanged ? 1 : 0);
   const canSubmit =
     !!win && changes > 0 && blocks.every((b) => blockInvalid(b) === null) && !feeError &&
-    (!needsOverride || overrideReason.trim() !== '') && !submitting && canEditOrders;
+    !submitting && canEditOrders;
 
   // ── ESC layering ─────────────────────────────────────────────────────────
 
@@ -289,20 +288,15 @@ export function OrderIssueSheet({
           ...(noteChanged ? { note: note.trim() || null } : {}),
           issuance_fee: fee.trim() ? Number(fee) : null,
           fee_charged: feeCharged,
-          limit_override_reason: needsOverride ? overrideReason.trim() : null,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
-        issued?: number; error?: string; chip_number?: string; holder_index?: number | null; needs_override?: boolean;
+        issued?: number; error?: string; chip_number?: string; holder_index?: number | null;
       };
       if (!res.ok) {
         if (res.status === 409 && data.chip_number) {
           const b = typeof data.holder_index === 'number' ? sent[data.holder_index] : undefined;
           if (b) setConflict({ blockKey: b.key, number: data.chip_number });
-        }
-        if (res.status === 422 && data.needs_override) {
-          setNeedsOverride(true);
-          setOverrideReason((r) => r || `הזמנת צ׳יפים ${win.order.order_number}`);
         }
         setServerError(data.error ?? 'השמירה נכשלה');
         return;
@@ -452,20 +446,6 @@ export function OrderIssueSheet({
             </>
           )}
         </Section>
-
-        {needsOverride && (
-          <div className="ci-over">
-            <p>
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>בדירה יהיו יותר מ-4 צ׳יפים פעילים. נדרשת סיבת חריגה כדי להנפיק — ואז „שמור שינויים” שוב.</span>
-            </p>
-            <div className="ci-fld">
-              <label htmlFor="order-override">סיבת חריגה <span className="ci-req">*</span></label>
-              <textarea id="order-override" value={overrideReason} disabled={submitting}
-                onChange={(e) => { setDirty(true); setOverrideReason(e.target.value); }} />
-            </div>
-          </div>
-        )}
 
         {win && (
           <Section icon={<WalletIco />} tone="green" title="פירוט עסקה והערות" sub="פרטי ההזמנה, התשלום והצ׳יפים להנפקה">

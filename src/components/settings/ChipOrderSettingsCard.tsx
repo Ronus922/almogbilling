@@ -9,12 +9,13 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import { DEFAULT_CHIP_ORDER_SETTINGS, formatIls, priceLine, type ChipOrderSettings } from '@/lib/chipOrders/model';
+import { DEFAULT_CHIP_ORDER_SETTINGS, type ChipOrderSettings } from '@/lib/chipOrders/model';
 import { ChipOrderTestModeSection } from './ChipOrderTestModeSection';
 
 /**
- * Chip orders (/chip-order, 12/11/2026) — the price rule, the per-apartment
- * maximum, the pickup and terms texts, and the page switch. The switch opens
+ * Chip orders (/chip-order, 12/11/2026) — the price per chip (one flat price
+ * since 21/11/2026: no threshold, no quantity limit), the pickup and terms
+ * texts, and the page switch. The switch opens
  * the page only when Grow is configured too (its identifiers are server env,
  * never shown here — only whether they exist).
  */
@@ -34,9 +35,6 @@ export function ChipOrderSettingsCard({
   const [growMode, setGrowMode] = useState<'production' | 'sandbox' | null>(null);
   const [form, setForm] = useState({
     unitPrice: String(DEFAULT_CHIP_ORDER_SETTINGS.unitPrice),
-    threshold: String(DEFAULT_CHIP_ORDER_SETTINGS.threshold),
-    priceAbove: String(DEFAULT_CHIP_ORDER_SETTINGS.priceAbove),
-    maxPerApartment: String(DEFAULT_CHIP_ORDER_SETTINGS.maxPerApartment),
     pickupText: '',
     termsText: '',
     ordersOpen: false,
@@ -53,9 +51,6 @@ export function ChipOrderSettingsCard({
         setGrowMode(d.growMode);
         setForm({
           unitPrice: String(d.settings.unitPrice),
-          threshold: String(d.settings.threshold),
-          priceAbove: String(d.settings.priceAbove),
-          maxPerApartment: String(d.settings.maxPerApartment),
           pickupText: d.settings.pickupText,
           termsText: d.settings.termsText,
           ordersOpen: d.settings.ordersOpen,
@@ -74,12 +69,6 @@ export function ChipOrderSettingsCard({
 
   const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
   const num = (v: string) => (v.trim() === '' ? Number.NaN : Number(v));
-  const example = (() => {
-    const s = { unitPrice: num(form.unitPrice), threshold: num(form.threshold), priceAbove: num(form.priceAbove) };
-    if (![s.unitPrice, s.threshold, s.priceAbove].every(Number.isFinite)) return null;
-    const n = Math.max(1, Math.min(num(form.maxPerApartment) || 1, Math.trunc(s.threshold) + 1));
-    return { n, total: priceLine(n, s).lineTotal };
-  })();
 
   async function onSave(e: FormEvent) {
     e.preventDefault();
@@ -92,9 +81,6 @@ export function ChipOrderSettingsCard({
         credentials: 'include',
         body: JSON.stringify({
           unitPrice: num(form.unitPrice),
-          threshold: num(form.threshold),
-          priceAbove: num(form.priceAbove),
-          maxPerApartment: num(form.maxPerApartment),
           pickupText: form.pickupText,
           termsText: form.termsText,
           ordersOpen: form.ordersOpen,
@@ -141,16 +127,8 @@ export function ChipOrderSettingsCard({
 
       <form onSubmit={onSave} className="mt-6 flex flex-col gap-5" noValidate>
         <div className="grid gap-4 sm:grid-cols-2">
-          {numField('unitPrice', 'מחיר לצ׳יפ (₪)')}
-          {numField('threshold', 'סף — כמה צ׳יפים לדירה במחיר הבסיס')}
-          {numField('priceAbove', 'מחיר לצ׳יפ מעל הסף (₪)')}
-          {numField('maxPerApartment', 'מקסימום צ׳יפים לדירה בהזמנה')}
+          {numField('unitPrice', 'מחיר לצ׳יפ (₪)', 'כל צ׳יפ באותו מחיר. המחיר נשמר בכל הזמנה כפי שהיה ברגע ההזמנה.')}
         </div>
-        {example && (
-          <p className="rounded-lg bg-slate-50 p-3 text-[13px] text-slate-600">
-            לדוגמה: {example.n} צ׳יפים לדירה אחת = {formatIls(example.total)}. התמחור לכל דירה בנפרד, והמחיר נשמר בכל הזמנה כפי שהיה ברגע ההזמנה.
-          </p>
-        )}
 
         <div className="space-y-2">
           <Label htmlFor="co-pickup" className="text-base font-medium text-muted-foreground">מקום ושעות איסוף</Label>

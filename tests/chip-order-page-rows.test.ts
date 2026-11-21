@@ -1,34 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { CHIP_ORDER_LIMITS, formatIlsAfter, priceBreakdown } from '@/lib/chipOrders/model';
+import { CHIP_ORDER_LIMITS, formatIlsAfter, orderTotal, priceLine } from '@/lib/chipOrders/model';
 import { chipOrderSubmitSchema } from '@/lib/validation/requests';
 
-// The redesigned order page (20/11/2026): rows are PEOPLE, the price and the
-// cap count per apartment over all its rows, and the contact block carries the
-// address in three parts. The numbers below are the settings' defaults, used
-// only as test inputs — the page always takes them from /settings.
+// The order page (20/11/2026 design, 21/11/2026 pricing): rows are PEOPLE, and
+// every chip costs ONE flat price — total = all chips × the price of /settings,
+// no threshold and no quantity limit. The prices below are test inputs only;
+// the page always takes the price from /settings.
 
-const S = { unitPrice: 50, threshold: 2, priceAbove: 70 };
-
-describe('priceBreakdown — the threshold counts per apartment over all its rows', () => {
-  it('one apartment, two rows of 2 → 2 at the base price + 2 above', () => {
-    // Rows are grouped by apartment BEFORE pricing: [2 + 2] for apartment A.
-    const b = priceBreakdown([4], S);
-    expect(b).toEqual({ base: 2, above: 2, baseTotal: 100, aboveTotal: 140, total: 240 });
+describe('priceLine — one flat price per chip', () => {
+  it('chips × the unit price, whatever the count', () => {
+    expect(priceLine(1, { unitPrice: 50 }).lineTotal).toBe(50);
+    expect(priceLine(4, { unitPrice: 50 }).lineTotal).toBe(200);
+    expect(priceLine(13, { unitPrice: 50 }).lineTotal).toBe(650);
   });
-  it('two apartments × 2 → all four at the base price', () => {
-    const b = priceBreakdown([2, 2], S);
-    expect(b).toEqual({ base: 4, above: 0, baseTotal: 200, aboveTotal: 0, total: 200 });
+  it('uses the price it is given (no fixed price)', () => {
+    expect(priceLine(3, { unitPrice: 55.5 }).lineTotal).toBe(166.5);
+    expect(priceLine(3, { unitPrice: 0.1 }).lineTotal).toBe(0.3);
   });
-  it('uses the settings it is given (no fixed prices)', () => {
-    const b = priceBreakdown([3], { unitPrice: 40, threshold: 1, priceAbove: 55.5 });
-    expect(b).toEqual({ base: 1, above: 2, baseTotal: 40, aboveTotal: 111, total: 151 });
+  it('fills the old snapshot columns as one price: every chip at the base price', () => {
+    expect(priceLine(7, { unitPrice: 40 })).toEqual({ unitPrice: 40, threshold: 7, priceAbove: 40, lineTotal: 280 });
   });
-  it('the total equals the sum of the per-apartment line prices', () => {
-    const b = priceBreakdown([4, 1, 6], S);
-    expect(b.total).toBe(b.baseTotal + b.aboveTotal);
+  it('the order total is the same however the chips split over apartments', () => {
+    const split = orderTotal([4, 1, 6].map((n) => priceLine(n, { unitPrice: 50 })));
+    expect(split).toBe(priceLine(11, { unitPrice: 50 }).lineTotal);
   });
-  it('the cap is 6 chips per apartment', () => {
-    expect(CHIP_ORDER_LIMITS.maxChipsPerApartment).toBe(6);
+  it('no business cap — only the storage ceiling of one apartment line (DB CHECK 50)', () => {
+    expect(CHIP_ORDER_LIMITS).not.toHaveProperty('maxChipsPerApartment');
+    expect(CHIP_ORDER_LIMITS).not.toHaveProperty('maxApartmentsPerOrder');
+    expect(CHIP_ORDER_LIMITS.chipsPerApartmentCeiling).toBe(50);
   });
   it('formats the amount number-first, as the reference', () => {
     expect(formatIlsAfter(240)).toBe('240₪');
@@ -68,6 +67,9 @@ describe('chipOrderSubmitSchema — the rows shape', () => {
     expect(chipOrderSubmitSchema.safeParse({ ...base, rows: [{ ...base.rows[0], fullName: 'ישראל' }] }).success).toBe(false);
     expect(chipOrderSubmitSchema.safeParse({ ...base, rows: [{ ...base.rows[0], phone: '' }] }).success).toBe(false);
     expect(chipOrderSubmitSchema.safeParse({ ...base, rows: [{ ...base.rows[0], email: 'nope' }] }).success).toBe(false);
+  });
+  it('a row may order more than the old caps (no 4 / 6 per apartment)', () => {
+    expect(chipOrderSubmitSchema.safeParse({ ...base, rows: [{ ...base.rows[0], chipsCount: 12 }] }).success).toBe(true);
   });
   it('never carries card fields or a price', () => {
     const parsed = chipOrderSubmitSchema.parse({ ...base, cardNumber: '4111111111111111', total: 1 });

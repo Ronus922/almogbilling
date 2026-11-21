@@ -153,7 +153,6 @@ export interface WindowSaveInput {
   note?: string | null;
   issuance_fee?: number | null;
   fee_charged?: boolean;
-  limit_override_reason?: string | null;
 }
 
 /** A number another chip holds — `holderIndex` is the block's index in the
@@ -349,7 +348,6 @@ export async function saveChipOrderWindow(
             issuance_fee: input.issuance_fee ?? null,
             fee_charged: input.fee_charged === true,
             notes: null,
-            limit_override_reason: input.limit_override_reason?.trim() || null,
           },
           actor,
         );

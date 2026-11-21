@@ -80,15 +80,19 @@ export function OrderTransaction({
   const overdue = isChipOrderOverdue(o);
   const assigning = o.status === 'paid' || o.status === 'approved';
 
-  // Price lines from the order's own snapshot (per apartment).
-  let base = 0, above = 0, baseTotal = 0, aboveTotal = 0;
+  // Price lines from the order's own snapshot (per apartment). An order since
+  // 21/11/2026 has one flat price (price_above = unit_price) → ONE line; an
+  // older order keeps the threshold rule it was sold with → its two lines.
+  let base = 0, above = 0, baseCents = 0, aboveCents = 0;
   for (const i of win.items) {
     const b = Math.min(i.chips_count, i.threshold);
     const a = Math.max(0, i.chips_count - i.threshold);
     base += b; above += a;
-    baseTotal += b * i.unit_price; aboveTotal += a * i.price_above;
+    baseCents += b * Math.round(i.unit_price * 100);
+    aboveCents += a * Math.round(i.price_above * 100);
   }
   const first = win.items[0];
+  const tiered = above > 0 && win.items.some((i) => i.price_above !== i.unit_price);
 
   function setModal(kind: 'reject' | 'delete', open: boolean) {
     if (kind === 'reject') setRejectOpen(open);
@@ -166,16 +170,23 @@ export function OrderTransaction({
       </div>
       {first && (base > 0 || above > 0) && (
         <div className="ci-invlines">
-          {base > 0 && (
+          {tiered ? (
+            <>
+              {base > 0 && (
+                <div>
+                  <span>{first.threshold} הכרטיסים הראשונים לכל דירה — <b className="ci-num">{base}×{formatIlsAfter(first.unit_price)}</b></span>
+                  <b className="ci-num">{formatIlsAfter(baseCents / 100)}</b>
+                </div>
+              )}
+              <div>
+                <span>מהכרטיס ה-{first.threshold + 1} ואילך — <b className="ci-num">{above}×{formatIlsAfter(first.price_above)}</b></span>
+                <b className="ci-num">{formatIlsAfter(aboveCents / 100)}</b>
+              </div>
+            </>
+          ) : (
             <div>
-              <span>{first.threshold} הכרטיסים הראשונים לכל דירה — <b className="ci-num">{base}×{formatIlsAfter(first.unit_price)}</b></span>
-              <b className="ci-num">{formatIlsAfter(baseTotal)}</b>
-            </div>
-          )}
-          {above > 0 && (
-            <div>
-              <span>מהכרטיס ה-{first.threshold + 1} ואילך — <b className="ci-num">{above}×{formatIlsAfter(first.price_above)}</b></span>
-              <b className="ci-num">{formatIlsAfter(aboveTotal)}</b>
+              <span>כרטיס בקרת כניסה — <b className="ci-num">{base + above}×{formatIlsAfter(first.unit_price)}</b></span>
+              <b className="ci-num">{formatIlsAfter((baseCents + aboveCents) / 100)}</b>
             </div>
           )}
         </div>

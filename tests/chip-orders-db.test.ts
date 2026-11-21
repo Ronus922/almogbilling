@@ -70,7 +70,7 @@ d('chip orders on the DB', () => {
     await pool.end();
   });
 
-  it('prices per apartment from the settings and freezes the snapshot; owner match statuses', async () => {
+  it('prices every chip at the one price of the settings and freezes the snapshot; owner match statuses', async () => {
     const o = await db.createChipOrder(
       {
         fullName: 'דנה כהן', phoneE164: PHONE, email: 'dana@example.test', address: 'הרצל 1 חיפה', role: 'owner', ip: null,
@@ -84,13 +84,13 @@ d('chip orders on the DB', () => {
     );
     made.orders.push(o.id);
     ids.order = o.id;
-    expect(o.total).toBe(170 + 100 + 50);
+    expect(o.total).toBe(150 + 100 + 50);
     const items = (await pool.query(
       `select apartment_number, match_status, unit_price::float8 as unit_price, threshold, price_above::float8 as price_above,
               line_total::float8 as line_total
          from public.chip_order_items where order_id = $1 order by apartment_number`, [o.id])).rows;
     const by = Object.fromEntries(items.map((i) => [i.apartment_number, i]));
-    expect(by[apt.owned]).toMatchObject({ match_status: 'matched', unit_price: 50, threshold: 2, price_above: 70, line_total: 170 });
+    expect(by[apt.owned]).toMatchObject({ match_status: 'matched', unit_price: 50, threshold: 3, price_above: 50, line_total: 150 });
     expect(by[apt.empty].match_status).toBe('unassigned');
     expect(by[apt.rented].match_status).toBe('review');
   });
@@ -149,12 +149,13 @@ d('chip orders on the DB', () => {
           { resident_role: 'owner', holder_name: 'דנה כהן', holder_phone: '0539200001', chip_type: 'physical', numbers: [`A${tag}1`, `A${tag}2`, `A${tag}3`, `A${tag}4`], order_item_id: owned },
           { resident_role: 'other', holder_name: 'מטפלת', chip_type: 'physical', numbers: [`O${tag}1`] },
         ],
-        limit_override_reason: 'בדיקה',
       },
       admin,
     );
     made.chips.push(...issued.items.map((c) => c.id));
+    // 5 active chips on one apartment, no reason asked: no limit since 21/11/2026.
     expect(issued.items).toHaveLength(5);
+    expect(issued.items.every((c) => c.limit_override_reason === null)).toBe(true);
     const links = (await pool.query<{ chip_number: string; order_item_id: string | null }>(
       `select chip_number, order_item_id from public.chips where id = any($1::uuid[]) order by chip_number`, [issued.items.map((c) => c.id)],
     )).rows;
@@ -184,14 +185,14 @@ d('chip orders on the DB', () => {
     await expect(db.rejectChipOrder(ids.order, 'x')).rejects.toThrow('not_rejectable');
     // A replacement chip may still be linked while the order is ready.
     const extra = await issueChipGroups(
-      { contact_id: ids.owned, groups: [{ resident_role: 'owner', holder_name: 'דנה כהן', chip_type: 'physical', numbers: [`A${tag}5`], order_item_id: owned }], limit_override_reason: 'בדיקה' },
+      { contact_id: ids.owned, groups: [{ resident_role: 'owner', holder_name: 'דנה כהן', chip_type: 'physical', numbers: [`A${tag}5`], order_item_id: owned }] },
       admin,
     );
     made.chips.push(...extra.items.map((c) => c.id));
     expect(await db.markChipOrderCollected(ids.order)).toBe(true);
     expect(await rowsOf(ids.order)).toEqual([]);
     await expect(issueChipGroups(
-      { contact_id: ids.owned, groups: [{ resident_role: 'owner', holder_name: 'דנה כהן', chip_type: 'physical', numbers: [`A${tag}6`], order_item_id: owned }], limit_override_reason: 'בדיקה' },
+      { contact_id: ids.owned, groups: [{ resident_role: 'owner', holder_name: 'דנה כהן', chip_type: 'physical', numbers: [`A${tag}6`], order_item_id: owned }] },
       admin,
     )).rejects.toThrow('order_not_open');
   });

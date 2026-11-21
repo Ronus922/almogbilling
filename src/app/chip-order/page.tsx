@@ -15,9 +15,9 @@ export const dynamic = 'force-dynamic';
 // /chip-order — PUBLIC (no login). Closed — "ההזמנות ייפתחו בקרוב" — until
 // Grow is configured AND the settings switch is on (chipOrdersOpen). Open: the
 // order form (20/11/2026 design) with the apartment NUMBERS of the registry
-// (never a name) and the price rule from the settings; the price shown is
-// recomputed by the server on submit. The 6-per-apartment cap is fixed
-// (CHIP_ORDER_LIMITS.maxChipsPerApartment).
+// (never a name) and the one price per chip from the settings (21/11/2026 —
+// no threshold, no quantity limit); the price shown is recomputed by the
+// server on submit.
 //
 // Test mode (13/11/2026): /chip-order?test=<token> with the CURRENT token of
 // the test link (src/lib/chipOrders/testMode.ts) opens the form even without
@@ -62,11 +62,7 @@ export default async function ChipOrderPage({
     >
       <ChipOrderForm
         apartments={apartments}
-        pricing={{
-          unitPrice: settings.unitPrice,
-          threshold: settings.threshold,
-          priceAbove: settings.priceAbove,
-        }}
+        pricing={{ unitPrice: settings.unitPrice }}
         termsText={settings.termsText}
         testToken={testToken}
       />

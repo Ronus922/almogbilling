@@ -25,7 +25,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { AlertTriangle, Check, ChevronsUpDown, Loader2, Plus, Search } from 'lucide-react';
+import { Check, ChevronsUpDown, Loader2, Plus, Search } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { validatePhone } from '@/lib/validation';
@@ -33,7 +33,7 @@ import { cn } from '@/lib/utils';
 import { CHIP_RESIDENT_ROLES, UNIT_TYPE_LABEL } from '@/lib/constants/chips';
 import { isSnapshotRole, resolveChipHolder } from '@/lib/chips/holder';
 import {
-  MAX_CHIPS_PER_GROUP, exceedsSoftLimit, holderUpdatesForBlock, type HolderSnapshot,
+  MAX_CHIPS_PER_GROUP, holderUpdatesForBlock, type HolderSnapshot,
 } from '@/lib/chips/issueGroups';
 import type {
   ChipHolderUpdate, ChipResidentRole, ChipType, ChipWithHolder,
@@ -155,18 +155,16 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
   const [contactLabel, setContactLabel] = useState('');
   const [residents, setResidents] = useState<ContactResidents | null>(null);
   const [residentsLoading, setResidentsLoading] = useState(false);
-  const [activeCount, setActiveCount] = useState<number | null>(null);
 
   // Holder blocks
   const blockSeq = useRef(1);
   const [blocks, setBlocks] = useState<HolderBlockState[]>([emptyBlock(0)]);
   const [chipsVersion, setChipsVersion] = useState(0); // bump → refetch saved chips
 
-  // Global fee / notes / override
+  // Global fee / notes
   const [fee, setFee] = useState('');
   const [feeCharged, setFeeCharged] = useState(false);
   const [notes, setNotes] = useState('');
-  const [overrideReason, setOverrideReason] = useState('');
 
   // 409 marking: the offending pending number turns red
   const [conflict, setConflict] = useState<{ blockKey: number; number: string } | null>(null);
@@ -206,14 +204,12 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     setContactId(init?.contactId ?? null);
     setContactLabel(init?.apartmentNumber ?? '');
     setResidents(null);
-    setActiveCount(null);
     blockSeq.current = 1;
     setBlocks([emptyBlock(0)]);
     setChipsVersion(0);
     setFee('');
     setFeeCharged(false);
     setNotes('');
-    setOverrideReason('');
     setConflict(null);
     setServerError(null);
     setSubmitting(false);
@@ -232,7 +228,6 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
   useEffect(() => {
     if (!open || !contactId) {
       setResidents(null);
-      setActiveCount(null);
       return;
     }
     let cancelled = false;
@@ -248,9 +243,8 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
           if (!cancelled) setResidents(data);
         }
         if (cRes.ok) {
-          const data = (await cRes.json()) as { items?: ChipWithHolder[]; active_count?: number };
+          const data = (await cRes.json()) as { items?: ChipWithHolder[] };
           if (cancelled) return;
-          setActiveCount(typeof data.active_count === 'number' ? data.active_count : 0);
           const items = Array.isArray(data.items) ? data.items : [];
 
           // Group saved chips by holder identity, then merge into current blocks.
@@ -321,7 +315,7 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
           });
         }
       } catch {
-        // Panel stays usable without the resident cards / limit meter.
+        // Panel stays usable without the resident cards.
       } finally {
         if (!cancelled) setResidentsLoading(false);
       }
@@ -386,9 +380,6 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     return Number.isFinite(n) && n >= 0 ? null : 'סכום לא תקין';
   }, [fee]);
 
-  // Soft limit: existing actives + ALL pending numbers across ALL blocks.
-  const overLimit = activeCount != null && exceedsSoftLimit(activeCount, Math.max(totalPending, 1));
-
   /** Per-block validity — only blocks that issue or edit something matter. */
   const blockInvalid = (b: HolderBlockState): string | null => {
     const pending = effectivePending(b);
@@ -396,7 +387,7 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     if (!b.role) return 'בחר תפקיד לבעל הצ׳יפ';
     if (isSnapshotRole(b.role) && !b.holderName.trim()) return 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא';
     if (phoneErrorOf(b)) return phoneErrorOf(b);
-    if (b.pending.length > MAX_CHIPS_PER_GROUP) return `עד ${MAX_CHIPS_PER_GROUP} מספרים חדשים לבלוק`;
+    if (b.pending.length > MAX_CHIPS_PER_GROUP) return `עד ${MAX_CHIPS_PER_GROUP} מספרים חדשים לבלוק בשמירה אחת`;
     return null;
   };
 
@@ -405,7 +396,6 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     (totalPending >= 1 || totalUpdates >= 1) &&
     blocks.every((b) => blockInvalid(b) === null) &&
     !feeError &&
-    (!overLimit || overrideReason.trim() !== '') &&
     !submitting;
 
   // ── ESC layering (LIFO: confirm > number edit > picker > panel) ──────────
@@ -580,7 +570,6 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
           issuance_fee: fee.trim() ? Number(fee) : null,
           fee_charged: feeCharged,
           notes: notes.trim() || null,
-          limit_override_reason: overLimit ? overrideReason.trim() : null,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -810,7 +799,6 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
                     )}
                     <ChipAllocation
                       title={`הקצאת צ׳יפים — ${block.holderName.trim() || 'בעל הצ׳יפ'}`}
-                      sub={`עד ${MAX_CHIPS_PER_GROUP} חדשים בשמירה`}
                       assigned={block.saved.filter((c) => quick.view(c).status === 'active').length + block.pending.length}
                       of={null}
                       firstName={firstName}
@@ -841,21 +829,6 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
             </>
           )}
         </Section>
-
-        {/* Window-global soft-limit warning + required override reason */}
-        {overLimit && (
-          <div className="ci-over">
-            <p>
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>סך הצ׳יפים הפעילים בדירה ({activeCount} קיימים + {Math.max(totalPending, 1)} חדשים בכל הבלוקים) חורג מהמגבלה של 4 צ׳יפים לדירה.</span>
-            </p>
-            <div className="ci-fld">
-              <label htmlFor="chip-override">סיבת חריגה <span className="ci-req">*</span></label>
-              <textarea id="chip-override" value={overrideReason} disabled={submitting} placeholder="לדוגמה: משפחה מורחבת, עובד סיעודי…"
-                onChange={(e) => { setDirty(true); setOverrideReason(e.target.value); }} />
-            </div>
-          </div>
-        )}
 
         {/* No order: the transaction details are hidden; fee + note stay */}
         <Section icon={<WalletIco />} tone="green" title="עמלה והערות" sub="חל על כל הצ׳יפים החדשים בשמירה הזו">

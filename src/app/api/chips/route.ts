@@ -5,7 +5,6 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import {
   listChips,
   issueChipGroups,
-  ChipLimitError,
   ChipNumberTakenError,
 } from '@/lib/db/chips';
 import { legacyChipBodyToInput, MAX_CHIPS_PER_GROUP } from '@/lib/chips/issueGroups';
@@ -37,7 +36,7 @@ export const runtime = 'nodejs';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const CHIP_NUMBERS_ERROR = 'נדרש לפחות מספר צ׳יפ אחד (עד 5)';
+const CHIP_NUMBERS_ERROR = 'נדרש לפחות מספר צ׳יפ אחד';
 
 /**
  * Notify every active admin (super_admin + admin) — except the issuer — that a
@@ -205,10 +204,11 @@ function coerceGroup(
 // contact for zero or more holder groups AND/OR apply holder edits to chips
 // already saved there (`updates`), ONE transaction, all-or-nothing. Accepts
 // the groups shape ({contact_id, groups:[...], updates?:[...], issuance_fee?,
-// fee_charged?, notes?, limit_override_reason?}) AND the legacy flat
-// single-holder body, which is adapted to a single group with every field
-// mapped (incl. the override reason, so a legacy over-limit request with a
-// reason still passes). 201 when anything was issued, 200 for edits only.
+// fee_charged?, notes?}) AND the legacy flat single-holder body, which is
+// adapted to a single group with every field mapped. No limit of active chips
+// per apartment and no override reason since 21/11/2026 (a
+// limit_override_reason a caller still sends is ignored). 201 when anything
+// was issued, 200 for edits only.
 export async function POST(req: NextRequest) {
   let actor: Actor;
   try {
@@ -279,7 +279,6 @@ export async function POST(req: NextRequest) {
       issuance_fee: issuanceFee,
       fee_charged: bodyRec.fee_charged === true,
       notes: coerceText(bodyRec.notes),
-      limit_override_reason: coerceText(bodyRec.limit_override_reason),
     };
   } else {
     // Legacy flat body — validate exactly as before, then adapt to one group.
@@ -337,7 +336,6 @@ export async function POST(req: NextRequest) {
       app_expires_at: coerceText(bodyRec.app_expires_at),
       issuance_fee: issuanceFee,
       fee_charged: bodyRec.fee_charged === true,
-      limit_override_reason: coerceText(bodyRec.limit_override_reason),
       notes: coerceText(bodyRec.notes),
     });
   }
@@ -355,12 +353,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ items, updated }, { status: items.length > 0 ? 201 : 200 });
   } catch (err) {
-    if (err instanceof ChipLimitError) {
-      return NextResponse.json(
-        { error: 'לדירה זו כבר מוקצים 4 צ׳יפים פעילים — נדרשת סיבת חריגה להנפקה נוספת' },
-        { status: 422 },
-      );
-    }
     if (err instanceof ChipNumberTakenError) {
       // group_index lets the UI mark the exact offending tag red.
       return NextResponse.json(
