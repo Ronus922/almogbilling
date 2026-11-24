@@ -280,6 +280,12 @@ export interface ChipOrderRow {
   chips_count: number;
   /** ACTIVE chips issued for this apartment line (chips.order_item_id). */
   chips_linked: number;
+  /** What this apartment line cost (the stored price snapshot). */
+  line_total: number;
+  /** The people of this apartment line — the names of its holder lines, in the
+   *  order of the window's blocks; a line with no holder line of the order
+   *  itself (an order made before 20/11/2026) starts with whoever ordered. */
+  people: string[];
   paid_at: string | null;
   due_at: string | null;
   created_at: string;

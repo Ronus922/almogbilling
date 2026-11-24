@@ -65,8 +65,9 @@ export function IssueSheetFrame({
 }) {
   return (
     <Sheet open={open} onOpenChange={(o) => { if (!o) onRequestClose(); }}>
-      {/* The width is ONE variable, --ci-panel-w (780px), in chip-issue-sheet.css:
-          `.ci-panel { width: min(var(--ci-panel-w), 100%) }`, anchored to the left edge. */}
+      {/* The width lives in chip-issue-sheet.css (`.ci-panel`): 60% of the viewport
+          (--ci-panel-w), never under 780px (--ci-panel-min), never wider than the
+          screen — anchored to the left edge. */}
       <SheetContent
         side="left"
         dir="rtl"

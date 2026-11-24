@@ -1,5 +1,6 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
+import ExcelJS from 'exceljs';
 import { Pool } from 'pg';
 import { StorageStub } from './visitors-stubs';
 
@@ -31,9 +32,17 @@ import { StorageStub } from './visitors-stubs';
 //   · /chip-order is closed while Grow is not configured — the CI state;
 //   · the look of the issue window (v2 of 24/11/2026,
 //     ref/chip-order/chip-issue-admin-v2.html), kept as numbers on orders of
-//     its own: the 780px panel, nothing cut or scrolling sideways down to
-//     320px, the two breakpoints, the status row — also for an order that was
-//     closed somewhere else — and the 16px fields of a touch phone.
+//     its own: the panel — 60% of the viewport, never under 780px — nothing
+//     cut or scrolling sideways from 1920px down to 320px, the two
+//     breakpoints, the status row — also for an order that was closed
+//     somewhere else — and the 16px fields of a touch phone;
+//   · 24/11/2026, third round (Ronen): "שמור שינויים" of an order keeps the
+//     window open; "מוכן לאיסוף" is one click (it saves what is waiting, then
+//     marks the order ready; a save that fails marks nothing) and says under
+//     the buttons why it is off; the Orders tab has a quick status button per
+//     row ("מוכן לאיסוף" / "נאסף", each asking first), a search by apartment
+//     number and by name, "ייצוא לאקסל" and "הדפסה"; and "צ׳יפים" sits under
+//     "אבטחה" in the menu.
 // Real orders are seeded straight into the DB (paid = what Grow's verified
 // callback leaves); fixtures are numeric apartments, removed by exact ids.
 // Supabase Storage is the in-process stand-in of visitors-stubs.ts (CI runs
@@ -51,6 +60,11 @@ const APT_SKIP = `992${tag}5`; // test link: "דלג על אימות"
 const APT_LAY = `992${tag}6`; // the look of the window: an order of two people…
 const APT_LAY_B = `992${tag}7`; // …and its second apartment
 const APT_GONE = `992${tag}8`; // an order closed behind the screen's back
+const APT_TAKEN = `992${tag}9`; // one-click "מוכן לאיסוף" with a taken number
+const APT_ROW = `993${tag}1`; // the quick status button of a row: an order of two apartments…
+const APT_ROW_B = `993${tag}2`; // …and its second apartment
+const APT_S1 = `993${tag}3`; // search / Excel / print: an owner and a renter
+const APT_S2 = `993${tag}4`; // search / Excel / print: another order
 const APT_LIMIT_MSG = 'ניתן להזמין עד 10 כרטיסים לדירה בהזמנה אחת. לכמות גדולה יותר יש לפנות להנהלת הבניין.';
 const PUB_NOTE = 'אני מבקש למסור את הכרטיסים לשכן מדירה 5';
 const P_OWNER = '+972539300001';
@@ -186,6 +200,23 @@ function statusRowGaps(issue: Locator): Promise<string[]> {
   });
 }
 
+/** A toast of the app (sonner) with this text. */
+function toast(page: Page, text: string): Locator {
+  return page.locator('[data-sonner-toast]').filter({ hasText: text }).first();
+}
+
+/** An instant as a date in Israel, dd/mm/yyyy — how the Excel file writes an
+ *  order's date. */
+function dateInIsrael(at: Date): string {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: 'numeric' })
+    .formatToParts(at).map((x) => [x.type, x.value]));
+  return `${p.day}/${p.month}/${p.year}`;
+}
+
+/** The width the issue window takes in a viewport: 60% of it, never under
+ *  780px, never wider than the screen. */
+const panelWidth = (viewport: number) => Math.min(Math.max(0.6 * viewport, 780), viewport);
+
 /** The font sizes of the window's text fields. */
 function fieldSizes(issue: Locator): Promise<string[]> {
   return issue.evaluate((root) => [...new Set(
@@ -194,7 +225,7 @@ function fieldSizes(issue: Locator): Promise<string[]> {
 }
 
 test.beforeAll(async () => {
-  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE]) {
+  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2]) {
     const c = await pool.query<{ id: string }>(`insert into public.contacts (apartment_number) values ($1) returning id`, [apt]);
     made.contacts[apt] = c.rows[0]!.id;
   }
@@ -221,6 +252,40 @@ test('/chips opens on the chips view, unchanged, with the orders switch beside i
   await expect(page.getByPlaceholder('חפש לפי מספר צ׳יפ, מספר דירה או שם דייר')).toBeVisible();
   await expect(page.getByRole('tab', { name: /צ׳יפים/ })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByTestId('chip-orders-table')).toHaveCount(0);
+});
+
+// "צ׳יפים" moved from "כספים" to "אבטחה" (24/11/2026) — the item alone; its
+// route and its `chips` permission did not move. Whoever sees both items of
+// "אבטחה" (this user) gets the ordinary panel. The other case — the guard, who
+// sees one item, for whom the rail button stays a direct link to /visitors —
+// is pinned in e2e/nav-rail.spec.ts ("who sees what") and in
+// tests/nav-category-kind.test.ts.
+test('the menu: "צ׳יפים" sits under "אבטחה", next to "סריקת כניסה", and no longer under "כספים"', async ({ page }) => {
+  const rail = page.locator('aside nav[aria-label="קטגוריות ניווט"]');
+  const category = (label: string) => rail.locator('[data-nav-category]', { hasText: new RegExp(`^${label}$`) });
+  const panel = page.locator('aside [data-nav-panel]');
+  const items = () => panel.locator('a[data-nav-item]').allInnerTexts();
+
+  await page.goto('/chips');
+  // The page's own category is shown, with the page's own item marked.
+  await expect(panel).toHaveAttribute('data-nav-panel', 'security');
+  await expect(category('אבטחה')).toHaveAttribute('data-nav-kind', 'panel');
+  await expect(category('אבטחה')).toHaveAttribute('data-selected', 'true');
+  expect(await items()).toEqual(['סריקת כניסה', 'צ׳יפים']);
+  await expect(panel.locator('a[aria-current="page"]')).toHaveText('צ׳יפים');
+  await category('כספים').click();
+  await expect(panel).toHaveAttribute('data-nav-panel', 'finance');
+  expect(await items()).toEqual(['ניהול חיובים', 'ניהול סטטוס חיובים', 'סקירה חודשית', 'סעיפים והגדרות']);
+
+  // From another page: "אבטחה" opens its list without navigating (two items —
+  // a panel, not a link), and "צ׳יפים" in it leads to /chips.
+  await page.goto('/dashboard');
+  await category('אבטחה').click();
+  await expect(panel).toHaveAttribute('data-nav-panel', 'security');
+  expect(new URL(page.url()).pathname).toBe('/dashboard');
+  await panel.locator('a[data-nav-item="/chips"]').click();
+  await expect(page).toHaveURL(/\/chips$/);
+  await expect(page.getByRole('heading', { name: 'צ׳יפי כניסה' })).toBeVisible();
 });
 
 test.describe.serial('staff: the issue window', () => {
@@ -307,7 +372,7 @@ test.describe.serial('staff: the issue window', () => {
     await expect(issue).toHaveCount(0);
   });
 
-  test('a paid order: one block per person, the renter, one price line, chips per block, the counter, "הוסף בעל צ׳יפ" outside the paid quantity → save → ready → collected', async ({ page }) => {
+  test('a paid order: one block per person, the renter, one price line, chips per block, the counter, "הוסף בעל צ׳יפ" outside the paid quantity; "שמור שינויים" keeps the window open; "מוכן לאיסוף" in ONE click saves what is waiting and marks the order ready → collected', async ({ page }) => {
     await page.goto('/chips?view=orders');
     const row = orderRow(page, APT);
     await expect(row.filter({ hasText: APT_B })).toHaveCount(0);
@@ -336,14 +401,43 @@ test.describe.serial('staff: the issue window', () => {
     await expect(section).toContainText('כרטיס בקרת כניסה — 4×50₪');
     await expect(section).not.toContainText('הכרטיסים הראשונים');
     await expect(section).toContainText('200₪');
-    await expect(section.getByRole('button', { name: 'מוכן לאיסוף' })).toBeDisabled();
+    const readyBtn = section.getByRole('button', { name: 'מוכן לאיסוף' });
+    const reason = section.getByTestId('chip-order-ready-reason');
+    const saveBtn = issue.getByTestId('chip-issue-save');
+    const savedNumbers = async () => (await pool.query<{ chip_number: string }>(
+      `select chip_number from public.chips where chip_number like $1 order by chip_number`, [`E2E${tag}%`],
+    )).rows.map((r) => r.chip_number);
+    const status = async () => (await pool.query(`select status from public.chip_orders where id = $1`, [order.id])).rows[0].status;
+    // Off — and WHY is written under the buttons, not left to a tooltip.
+    await expect(readyBtn).toBeDisabled();
+    await expect(reason).toHaveText('יש לשייך את כל הצ׳יפים שהוזמנו — חסרים 4 צ׳יפים');
 
     await addChip(owner, `E2E${tag}1`, 'enter');
     await addChip(owner, `E2E${tag}2`, 'button');
     await expect(owner.getByTestId('chip-alloc-counter')).toHaveText('שויכו 2 מתוך 2');
     await expect(owner.getByTestId('chip-alloc-counter')).toHaveClass(/ci-full/);
+    // A number still waiting in the window already counts toward "ready".
+    await expect(reason).toHaveText('יש לשייך את כל הצ׳יפים שהוזמנו — חסרים 2 צ׳יפים');
+
+    // "שמור שינויים" saves and STAYS (until 24/11/2026 it closed the window):
+    // a success message, and the window reloaded on what is stored now.
+    await saveBtn.click();
+    await expect(toast(page, '2 צ׳יפים הונפקו')).toBeVisible();
+    await expect(owner.getByRole('button', { name: `השבת את E2E${tag}1` })).toBeVisible(); // a saved chip: it has the switch
+    await expect(issue.getByText('ממתין לשמירה')).toHaveCount(0);
+    await expect(saveBtn).toBeDisabled(); // nothing is left to save
+    await expect(issue).toBeVisible();
+    await expect(section.getByTestId('chip-order-progress')).toHaveText('2 מתוך 4');
+    await expect(readyBtn).toBeDisabled();
+    await expect(reason).toHaveText('יש לשייך את כל הצ׳יפים שהוזמנו — חסרים 2 צ׳יפים');
+    expect(await savedNumbers()).toEqual([`E2E${tag}1`, `E2E${tag}2`]);
+    // The row behind the window followed, in place.
+    await expect(orderRow(page, APT).first().getByTestId('chip-order-stage')).toHaveText('שויכו 2 מתוך 3');
+
     await renter.getByRole('radio', { name: 'אפליקציה' }).click();
     await addChip(renter, `E2E${tag}3`);
+    await expect(reason).toHaveText('יש לשייך את כל הצ׳יפים שהוזמנו — חסר צ׳יפ אחד');
+    await expect(readyBtn).toBeDisabled();
     await addChip(second, `E2E${tag}4`);
 
     // A holder the staff adds: not part of the paid quantity (no "מתוך").
@@ -354,8 +448,20 @@ test.describe.serial('staff: the issue window', () => {
     await addChip(staff, `E2E${tag}5`);
     await expect(staff.getByTestId('chip-alloc-counter')).toHaveText('שויכו 1');
 
-    await issue.getByTestId('chip-issue-save').click();
-    await expect(issue).toHaveCount(0);
+    // Every ordered chip is covered now — two saved, two still waiting — so
+    // "מוכן לאיסוף" is on, and the line under the buttons is gone. Nothing of
+    // the three new numbers is saved yet.
+    await expect(readyBtn).toBeEnabled();
+    await expect(reason).toHaveCount(0);
+    expect(await savedNumbers()).toEqual([`E2E${tag}1`, `E2E${tag}2`]);
+    expect(await status()).toBe('paid');
+
+    // ONE click: the window is saved, then the order is marked ready — and the
+    // window stays open, on the new status.
+    await readyBtn.click();
+    await expect(toast(page, 'סומן מוכן לאיסוף — נשלחה הודעה למזמין')).toBeVisible();
+    await expect(issue).toBeVisible();
+    expect(await status()).toBe('ready');
     const chips = (await pool.query<{ chip_number: string; chip_type: string; order_item_id: string; full_name: string; source: string; chips_count: number }>(
       `select c.chip_number, c.chip_type, c.order_item_id, h.full_name, h.source, h.chips_count
          from public.chips c join public.chip_order_holders h on h.id = c.order_holder_id
@@ -372,33 +478,107 @@ test.describe.serial('staff: the issue window', () => {
     expect((await pool.query(`select owner_name, owner_phone from public.contacts where id = $1`, [made.contacts[APT]])).rows[0])
       .toEqual({ owner_name: null, owner_phone: null });
 
-    // The chips are in the "צ׳יפים" tab like any other chip.
-    await page.getByRole('tab', { name: /צ׳יפים/ }).click();
-    await page.getByPlaceholder('חפש לפי מספר צ׳יפ, מספר דירה או שם דייר').fill(`E2E${tag}3`);
-    await expect(page.getByText(`E2E${tag}3`).first()).toBeVisible();
-    await page.getByRole('tab', { name: /הזמנות/ }).click();
-
-    await orderRow(page, APT).first().click();
+    // The window, reloaded: nothing is waiting, all four are linked, the staff
+    // holder is a saved block. The three buttons stay: the stage the order is
+    // in now is a mark, the next step is the one button to press, and there is
+    // no way back or to reject. There is no "בטיפול" — the system has no such
+    // status.
+    await expect(issue.getByText('ממתין לשמירה')).toHaveCount(0);
+    await expect(blocks).toHaveCount(4);
     await expect(section.getByTestId('chip-order-progress')).toHaveText('4 מתוך 4');
-    await section.getByRole('button', { name: 'מוכן לאיסוף' }).click();
-    // The three buttons stay: the stage the order is in now is a mark, the
-    // next step is the one button to press, and there is no way back or to
-    // reject. There is no "בטיפול" — the system has no such status.
-    await expect(section.getByRole('button', { name: 'מוכן לאיסוף' })).toHaveAttribute('aria-current', 'step');
-    await expect(section.getByRole('button', { name: 'מוכן לאיסוף' })).toBeDisabled();
+    await expect(saveBtn).toBeDisabled();
+    await expect(readyBtn).toHaveAttribute('aria-current', 'step');
+    await expect(readyBtn).toBeDisabled();
+    await expect(reason).toHaveText('ההזמנה כבר מוכנה לאיסוף — השלב הבא: „נאסף”');
     await expect(section.getByText('בטיפול')).toHaveCount(0);
     await expect(section.getByRole('button', { name: 'דחה', exact: true })).toBeDisabled();
     await expect(section.getByRole('button', { name: 'נאסף', exact: true })).toBeEnabled();
-    // The "ready" message was attempted on both channels, each on its own.
+    // The "ready" message was attempted on both channels, each on its own —
+    // once, and the audit row is the one "מוכן לאיסוף" always wrote.
     await expect.poll(async () => (await pool.query(
       `select count(distinct channel)::int as n from public.chip_order_notifications where order_id = $1 and kind = 'ready'`,
       [order.id],
     )).rows[0].n, { timeout: 30_000 }).toBe(2);
+    expect((await pool.query(`select count(*)::int as n from public.chip_order_notifications where order_id = $1 and kind = 'ready'`, [order.id])).rows[0].n).toBe(2);
+    await expect.poll(async () => (await pool.query(
+      `select count(*)::int as n from public.audit_log where entity_type = 'chip_order' and entity_id = $1 and action = 'ready'`, [order.id],
+    )).rows[0].n).toBe(1);
+
     await section.getByRole('button', { name: 'נאסף', exact: true }).click();
     await expect(issue).toHaveCount(0);
-    await expect.poll(async () => (await pool.query(`select status from public.chip_orders where id = $1`, [order.id])).rows[0].status).toBe('collected');
+    await expect.poll(status).toBe('collected');
     await expect(orderRow(page, APT)).toHaveCount(0);
     await expect(orderRow(page, APT_B)).toHaveCount(0);
+
+    // The chips are in the "צ׳יפים" tab like any other chip.
+    await page.getByRole('tab', { name: /צ׳יפים/ }).click();
+    await page.getByPlaceholder('חפש לפי מספר צ׳יפ, מספר דירה או שם דייר').fill(`E2E${tag}3`);
+    await expect(page.getByText(`E2E${tag}3`).first()).toBeVisible();
+  });
+
+  // The numbers the test above issued are active chips now.
+  test('"מוכן לאיסוף" in one click with a number another chip holds: nothing is saved, nothing is marked ready, the reason is on the screen; with a free number the same click goes through', async ({ page }) => {
+    const o = await seedPaidOrder([{ apt: APT_TAKEN, role: 'owner', name: 'תמר תפוסה', phone: P_OWNER, qty: 1 }]);
+    const status = async () => (await pool.query(`select status from public.chip_orders where id = $1`, [o.id])).rows[0].status;
+    const linked = async () => (await pool.query<{ chip_number: string }>(
+      `select chip_number from public.chips where order_item_id = $1 order by chip_number`, [o.items[APT_TAKEN]],
+    )).rows.map((r) => r.chip_number);
+    await page.goto('/chips?view=orders');
+    await orderRow(page, APT_TAKEN).click();
+    const issue = issueWindow(page);
+    const block = issue.getByTestId('chip-holder-block');
+    const section = issue.getByTestId('chip-order-section');
+    const readyBtn = section.getByRole('button', { name: 'מוכן לאיסוף' });
+    const reason = section.getByTestId('chip-order-ready-reason');
+    await expect(reason).toHaveText('יש לשייך את כל הצ׳יפים שהוזמנו — חסר צ׳יפ אחד');
+
+    // A number typed into the box and NOT added with "הוסף" counts as well —
+    // the click saves it too.
+    const box = block.getByLabel(/^מספר צ׳יפ/);
+    await box.fill(`E2E${tag}1`);
+    await expect(readyBtn).toBeEnabled();
+    await expect(reason).toHaveCount(0);
+    await readyBtn.click();
+    // The save was refused, so nothing went on: the error of any save, the
+    // order still paid, no chip, no message, no audit row. The refused number
+    // left the box and became a row of its own, in red, with an X — so the
+    // line under the buttons points at something that is really there.
+    await expect(issue.locator('.ci-alert')).toContainText(`מספר צ׳יפ E2E${tag}1 כבר פעיל במערכת`);
+    await expect(block.locator('.ci-chiprow.ci-conflict')).toContainText(`E2E${tag}1`);
+    await expect(block.getByText('מספר תפוס')).toBeVisible();
+    await expect(box).toHaveValue('');
+    await expect(readyBtn).toBeDisabled();
+    await expect(reason).toHaveText('יש להסיר או להחליף את מספר הצ׳יפ התפוס שמסומן באדום');
+    expect(await status()).toBe('paid');
+    expect(await linked()).toEqual([]);
+    expect((await pool.query(`select count(*)::int as n from public.chip_order_notifications where order_id = $1 and kind = 'ready'`, [o.id])).rows[0].n).toBe(0);
+    expect((await pool.query(`select count(*)::int as n from public.audit_log where entity_type = 'chip_order' and entity_id = $1`, [o.id])).rows[0].n).toBe(0);
+
+    // Removing the red number is enough to move on: the refusal does not stick.
+    await block.getByRole('button', { name: `הסר את המספר E2E${tag}1 מהרשימה` }).click();
+    await expect(reason).toHaveText('יש לשייך את כל הצ׳יפים שהוזמנו — חסר צ׳יפ אחד');
+    // The same with a number that WAS added to the list (another active chip).
+    await addChip(block, `E2E${tag}2`);
+    await readyBtn.click();
+    await expect(issue.locator('.ci-alert')).toContainText(`מספר צ׳יפ E2E${tag}2 כבר פעיל במערכת`);
+    await expect(block.locator('.ci-chiprow.ci-conflict')).toContainText(`E2E${tag}2`);
+    await expect(readyBtn).toBeDisabled();
+    expect(await status()).toBe('paid');
+    expect(await linked()).toEqual([]);
+
+    // The red number out, a free one in: the same one click saves and marks.
+    await block.getByRole('button', { name: `הסר את המספר E2E${tag}2 מהרשימה` }).click();
+    await expect(reason).toHaveText('יש לשייך את כל הצ׳יפים שהוזמנו — חסר צ׳יפ אחד');
+    await addChip(block, `TK${tag}1`);
+    await readyBtn.click();
+    await expect.poll(status).toBe('ready');
+    await expect(readyBtn).toHaveAttribute('aria-current', 'step');
+    expect(await linked()).toEqual([`TK${tag}1`]);
+    await expect(block.getByRole('button', { name: `השבת את TK${tag}1` })).toBeVisible();
+    await issue.getByTestId('chip-issue-close').click();
+    await expect(issue).toHaveCount(0);
+    // The row followed: ready, with "נאסף" as its quick step.
+    await expect(orderRow(page, APT_TAKEN).getByTestId('chip-order-stage')).toHaveText('מוכן לאיסוף');
   });
 
   test('an order made before 21/11/2026 keeps the two price lines it was sold with, in one block from the order', async ({ page }) => {
@@ -445,7 +625,7 @@ test.describe('staff: the look of the issue window', () => {
     ]);
   });
 
-  test('the layout: a 780px panel on the left edge, nothing cut or scrolling sideways from 1440 down to 320, the two breakpoints to the pixel, a one-line registry button, the footer order, the three status buttons with no hole between them', async ({ page }) => {
+  test('the layout: the panel on the left edge at 60% of the viewport and never under 780px, nothing cut or scrolling sideways from 1920 down to 320, the two breakpoints to the pixel, a one-line registry button, the footer order, the three status buttons with no hole between them', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/chips?view=orders');
     await orderRow(page, APT_LAY).first().click();
@@ -457,13 +637,16 @@ test.describe('staff: the look of the issue window', () => {
     await expect(blocks).toHaveCount(3);
     const columns = (el: Locator) => el.first().evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(' ').length);
 
-    // 701 and 541 are one pixel above the reference's breakpoints: the layout
-    // must not have moved yet there, and must have moved at 700 and at 540.
-    for (const width of [1440, 780, 701, 700, 541, 540, 390, 320]) {
+    // The panel is 60% of the viewport from 1300px up (1920 → 1152, 1440 →
+    // 864, 1366 → 819.6), the reference's 780px under that (1300, 1299, 1024),
+    // and the whole screen where 780px do not fit. 701 and 541 are one pixel
+    // above the reference's breakpoints: the layout must not have moved yet
+    // there, and must have moved at 700 and at 540.
+    for (const width of [1920, 1440, 1366, 1300, 1299, 1024, 780, 701, 700, 541, 540, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
       // The sheet slides in for 1.2s — wait until the panel rests on the edge.
       await expect.poll(async () => (await issue.boundingBox())!.x, { message: `panel on the left edge @${width}` }).toBe(0);
-      expect((await issue.boundingBox())!.width, `panel width @${width}`).toBeCloseTo(Math.min(780, width), 0);
+      expect((await issue.boundingBox())!.width, `panel width @${width}`).toBeCloseTo(panelWidth(width), 0);
       // Nothing scrolls sideways and nothing is cut: the body is not wider than
       // it shows (it has no overflow-x guard), and no clipping box of the
       // window — panel, section, block, card — hides content.
@@ -493,6 +676,18 @@ test.describe('staff: the look of the issue window', () => {
       // The status row is tight at every width, on one line or wrapped: no
       // hole where the reference's "בטיפול" would have been.
       expect(await statusRowGaps(issue), `status row spacing @${width}`).toEqual([]);
+
+      // A wide window stretches the fields, never a sentence: a line of the
+      // note stays as long as in the reference's 780px panel (676px), while
+      // its box keeps the width of the row above it.
+      const note = await issue.getByLabel('הערה', { exact: true }).evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return { box: el.getBoundingClientRect().width, line: el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) };
+      });
+      const feeRow = (await issue.locator('.ci-feegrid').boundingBox())!.width;
+      expect(note.box, `the note's box is as wide as the fee row @${width}`).toBeCloseTo(feeRow, 0);
+      expect(note.line, `a line of the note @${width}`).toBeLessThanOrEqual(676.5);
+      if (width >= 780) expect(note.line, `a line of the note @${width}`).toBeCloseTo(676, 0);
     }
 
     // The panel's own text settings win over the Sheet primitive's utilities.
@@ -513,6 +708,9 @@ test.describe('staff: the look of the issue window', () => {
     await expect(actions.getByRole('button', { name: 'מוכן לאיסוף' })).toBeDisabled();
     await expect(actions.getByRole('button', { name: 'נאסף', exact: true })).toBeDisabled();
     await expect(actions.getByRole('button', { name: 'דחה', exact: true })).toBeEnabled();
+    // Why "מוכן לאיסוף" is off is a line of text under the row, on the screen.
+    await expect(section.getByTestId('chip-order-ready-reason')).toHaveText('יש לשייך את כל הצ׳יפים שהוזמנו — חסרים 4 צ׳יפים');
+    await expect(section.getByTestId('chip-order-ready-reason')).toBeVisible();
     // Numbers: Inter, tabular, isolated left-to-right.
     const num = await section.getByTestId('chip-order-progress').locator('.ci-num').first().evaluate((el) => {
       const cs = getComputedStyle(el);
@@ -539,7 +737,7 @@ test.describe('staff: the look of the issue window', () => {
       try {
         await page.goto('/chips?view=orders');
         // The order's row: a table row from 640px, a card under it.
-        await page.locator('[role="button"]:visible').filter({ hasText: APT_LAY }).first().click();
+        await page.locator('[data-testid="chip-order-row"]:visible, [data-testid="chip-order-card"]:visible').filter({ hasText: APT_LAY }).first().click();
         const issue = issueWindow(page);
         await expect(issue.getByTestId('chip-order-section')).toBeVisible();
         expect(await fieldSizes(issue), `field font size on ${what}`).toEqual([size]);
@@ -569,9 +767,250 @@ test.describe('staff: the look of the issue window', () => {
       await expect(actions.getByRole('button')).toHaveText(['מוכן לאיסוף', 'נאסף', 'דחה']);
       await expect(actions.locator('[aria-current="step"]')).toHaveText(mark);
       for (const button of await actions.getByRole('button').all()) await expect(button).toBeDisabled();
+      // …and the line under the row says why nothing can be pressed.
+      await expect(issue.getByTestId('chip-order-ready-reason')).toHaveText(mark === 'נאסף' ? 'ההזמנה כבר נאספה' : 'ההזמנה נדחתה');
       await issue.getByTestId('chip-issue-close').click();
       await expect(issue).toHaveCount(0);
     }
+  });
+});
+
+// The Orders tab itself (24/11/2026): the quick status button of a row, the
+// search, "ייצוא לאקסל" and "הדפסה". Orders of its own.
+test.describe('staff: the Orders tab', () => {
+  test('the quick status button of a row: off with the reason until every chip of the ORDER is issued; "מוכן לאיסוף" and "נאסף" ask first, never open the window, and the rows follow in place — also on a phone card', async ({ page }) => {
+    const o = await seedPaidOrder([
+      { apt: APT_ROW, role: 'owner', name: 'רותם שורה', phone: P_OWNER, qty: 1 },
+      { apt: APT_ROW_B, role: 'owner', name: 'רותם שורה', phone: P_OWNER, qty: 1 },
+    ]);
+    const status = async () => (await pool.query(`select status from public.chip_orders where id = $1`, [o.id])).rows[0].status;
+    const audits = async (action: string) => (await pool.query(
+      `select count(*)::int as n from public.audit_log where entity_type = 'chip_order' and entity_id = $1 and action = $2`, [o.id, action],
+    )).rows[0].n;
+    await page.goto('/chips?view=orders');
+    const rowA = orderRow(page, APT_ROW);
+    const rowB = orderRow(page, APT_ROW_B);
+    const issue = issueWindow(page);
+    const blocks = issue.getByTestId('chip-holder-block');
+    const dialog = page.getByRole('alertdialog');
+
+    // Nothing is issued: "מוכן לאיסוף" is off, the reason is written under it,
+    // and "נאסף" is not offered before its turn.
+    for (const r of [rowA, rowB]) {
+      await expect(r.getByTestId('chip-order-row-ready')).toBeDisabled();
+      await expect(r.getByTestId('chip-order-row-reason')).toHaveText('חסרים 2 צ׳יפים בהזמנה');
+      await expect(r.getByTestId('chip-order-row-collected')).toHaveCount(0);
+    }
+    // A 1024px window with the menu panel open leaves the card narrower than
+    // the table: the table scrolls sideways inside the card, and the action
+    // column stays pinned to the card's edge — in sight without scrolling.
+    await page.setViewportSize({ width: 1024, height: 800 });
+    const table = page.getByTestId('chip-orders-table');
+    expect(await table.evaluate((el) => el.scrollWidth > el.parentElement!.clientWidth), 'the table is wider than its card at 1024').toBe(true);
+    await expect(rowA.getByTestId('chip-order-row-ready')).toBeInViewport({ ratio: 1 });
+    await expect(rowA.getByTestId('chip-order-row-reason')).toBeInViewport({ ratio: 1 });
+    await noSideScroll(page);
+    // The assistant's floating button lives in that same corner of the screen.
+    // Scrolled to the end, the LAST row's button is clear of it: the card
+    // leaves room under itself.
+    await page.locator('main').evaluate((el) => el.scrollTo(0, el.scrollHeight));
+    const lastButton = (await table.getByTestId('chip-order-row').last()
+      .locator('[data-testid="chip-order-row-ready"], [data-testid="chip-order-row-collected"]').boundingBox())!;
+    const floating = (await page.locator('[data-agent-fab]').boundingBox())!;
+    expect(lastButton.y + lastButton.height, 'the last row\'s button ends above the floating button').toBeLessThanOrEqual(floating.y);
+    await page.locator('main').evaluate((el) => el.scrollTo(0, 0));
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    // A button lives inside the row now, so the row itself is no button: a
+    // mouse click anywhere on it opens the window, and for the keyboard (and
+    // a screen reader) the orderer's name is the button that does.
+    expect(await rowA.getAttribute('role')).toBeNull();
+    await rowA.getByRole('button', { name: 'רותם שורה', exact: true }).press('Enter');
+    await expect(issue).toBeVisible();
+    await issue.getByTestId('chip-issue-close').click();
+    await expect(issue).toHaveCount(0);
+
+    // Apartment A gets its chip in the window. Its own stage is done — and its
+    // button still waits, because the status belongs to the whole order.
+    await rowA.click();
+    await addChip(blocks.nth(0), `RW${tag}1`);
+    await issue.getByTestId('chip-issue-save').click();
+    await expect(issue.getByTestId('chip-issue-save')).toBeDisabled();
+    await issue.getByTestId('chip-issue-close').click();
+    await expect(issue).toHaveCount(0);
+    await expect(rowA.getByTestId('chip-order-stage')).toHaveText('שויך');
+    await expect(rowA.getByTestId('chip-order-row-ready')).toBeDisabled();
+    await expect(rowA.getByTestId('chip-order-row-reason')).toHaveText('חסר צ׳יפ אחד בהזמנה');
+
+    await rowB.click();
+    await addChip(blocks.nth(1), `RW${tag}2`);
+    await issue.getByTestId('chip-issue-save').click();
+    await expect(issue.getByTestId('chip-issue-save')).toBeDisabled();
+    await issue.getByTestId('chip-issue-close').click();
+    await expect(issue).toHaveCount(0);
+
+    // Every chip of the order is issued and saved: the button is on, on both
+    // rows. It asks first — and it does not open the issue window.
+    for (const r of [rowA, rowB]) {
+      await expect(r.getByTestId('chip-order-row-ready')).toBeEnabled();
+      await expect(r.getByTestId('chip-order-row-reason')).toHaveCount(0);
+    }
+    await rowB.getByTestId('chip-order-row-ready').click();
+    await expect(dialog).toContainText(`לסמן את הזמנה ${o.orderNumber} כמוכנה לאיסוף?`);
+    await expect(dialog).toContainText('תישלח הודעה למזמין, רותם שורה, במייל ובוואטסאפ');
+    await expect(dialog).toContainText(`הסימון חל על ההזמנה כולה — דירות ${APT_ROW}, ${APT_ROW_B}.`);
+    await expect(issue).toHaveCount(0);
+    // "ביטול" changes nothing.
+    await dialog.getByRole('button', { name: 'ביטול' }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(await status()).toBe('paid');
+
+    await rowB.getByTestId('chip-order-row-ready').click();
+    await dialog.getByRole('button', { name: 'סמן מוכן לאיסוף' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(toast(page, 'סומן מוכן לאיסוף — נשלחה הודעה למזמין')).toBeVisible();
+    // Both rows of the order follow in place: the stage, and the next step.
+    for (const r of [rowA, rowB]) {
+      await expect(r.getByTestId('chip-order-stage')).toHaveText('מוכן לאיסוף');
+      await expect(r.getByTestId('chip-order-row-collected')).toBeEnabled();
+      await expect(r.getByTestId('chip-order-row-ready')).toHaveCount(0);
+    }
+    expect(await status()).toBe('ready');
+    // The same message and the same audit row as the window's button.
+    await expect.poll(async () => (await pool.query(
+      `select count(distinct channel)::int as n from public.chip_order_notifications where order_id = $1 and kind = 'ready'`, [o.id],
+    )).rows[0].n, { timeout: 30_000 }).toBe(2);
+    await expect.poll(() => audits('ready')).toBe(1);
+
+    // "נאסף" — from the card of a phone, which carries the same button.
+    await page.setViewportSize({ width: 390, height: 844 });
+    const card = page.getByTestId('chip-order-card').filter({ hasText: APT_ROW_B });
+    const collect = card.getByTestId('chip-order-row-collected');
+    await expect(collect).toBeVisible();
+    expect((await collect.boundingBox())!.height, 'a 44px touch target on a phone').toBeGreaterThanOrEqual(44);
+    await noSideScroll(page);
+    await collect.click();
+    await expect(dialog).toContainText(`לסמן את הזמנה ${o.orderNumber} כנאספה?`);
+    await expect(dialog).toContainText('לא נשלחת הודעה למזמין');
+    await expect(issue).toHaveCount(0);
+    await dialog.getByRole('button', { name: 'סמן כנאסף' }).click();
+    await expect(dialog).toHaveCount(0);
+    // Collected = out of the open list: both cards leave.
+    await expect(page.getByTestId('chip-order-card').filter({ hasText: APT_ROW })).toHaveCount(0);
+    await expect(page.getByTestId('chip-order-card').filter({ hasText: APT_ROW_B })).toHaveCount(0);
+    expect(await status()).toBe('collected');
+    await expect.poll(() => audits('collected')).toBe(1);
+    // No message goes out on "נאסף".
+    expect((await pool.query(`select count(*)::int as n from public.chip_order_notifications where order_id = $1 and kind <> 'ready'`, [o.id])).rows[0].n).toBe(0);
+    await page.setViewportSize({ width: 1280, height: 720 });
+  });
+
+  test('search by apartment number and by name (the orderer, the people of the order); "ייצוא לאקסל" and "הדפסה" take the rows the search left', async ({ page }) => {
+    const s1 = await seedPaidOrder([
+      { apt: APT_S1, role: 'owner', name: 'גדעון חיפוש', phone: '+972539300011', qty: 2 },
+      { apt: APT_S1, role: 'tenant', name: 'רינה שוכרת', phone: P_RENTER, qty: 1, leaseEnd: '2030-01-31' },
+    ]);
+    await seedPaidOrder([{ apt: APT_S2, role: 'owner', name: 'מיכל אחרת', phone: '+972539300012', qty: 1 }]);
+    await page.goto('/chips?view=orders');
+    const rows = page.getByTestId('chip-orders-table').getByTestId('chip-order-row');
+    const search = page.getByTestId('chip-orders-search');
+    await expect(orderRow(page, APT_S1)).toHaveCount(1);
+    await expect(orderRow(page, APT_S2)).toHaveCount(1);
+
+    // By apartment number.
+    await search.fill(APT_S1);
+    await expect(rows).toHaveCount(1);
+    await expect(rows).toContainText('גדעון חיפוש');
+    // By the orderer's name.
+    await search.fill('מיכל');
+    await expect(rows).toHaveCount(1);
+    await expect(rows).toContainText(APT_S2);
+    // By a person of the order who did not place it — and the row says who.
+    await search.fill('רינה');
+    await expect(rows).toHaveCount(1);
+    await expect(rows).toContainText(APT_S1);
+    await expect(rows.getByTestId('chip-order-row-hit')).toHaveText('בעל צ׳יפ בהזמנה: רינה שוכרת');
+    // Every word must be found: one order's name with the other's apartment is nothing.
+    await search.fill(`גדעון ${APT_S2}`);
+    await expect(page.getByTestId('chip-orders-no-match')).toContainText(`אין הזמנות עבור „גדעון ${APT_S2}”`);
+    await expect(page.getByTestId('chip-orders-export')).toBeDisabled();
+    await expect(page.getByTestId('chip-orders-print')).toBeDisabled();
+    await search.fill(`גדעון ${APT_S1}`);
+    await expect(rows).toHaveCount(1);
+
+    // "ייצוא לאקסל": the rows on the screen, in the agreed columns.
+    const headers = ['מס׳ הזמנה', 'תאריך הזמנה', 'שם המזמין', 'טלפון', 'דירה', 'בעלי הצ׳יפ', 'כמות', 'סה״כ (₪)', 'סטטוס', 'יעד להכנה', 'הזמנת בדיקה'];
+    const downloading = page.waitForEvent('download');
+    await page.getByTestId('chip-orders-export').click();
+    const download = await downloading;
+    expect(download.suggestedFilename()).toMatch(/^chip-orders_\d{4}-\d{2}-\d{2}\.xlsx$/);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile((await download.path())!);
+    const ws = wb.worksheets[0]!;
+    const cells = (n: number) => (ws.getRow(n).values as unknown[]).slice(1);
+    expect(ws.views[0]?.rightToLeft).toBe(true);
+    expect(cells(1)).toEqual(headers);
+    expect(ws.rowCount, 'the header and the one row the search left').toBe(2);
+    // The order's date is the stored instant, in Israel time (read back from
+    // the DB — "today" would be wrong for a run that crosses midnight).
+    const ordered = (await pool.query<{ created_at: Date }>(`select created_at from public.chip_orders where id = $1`, [s1.id])).rows[0]!.created_at;
+    expect(cells(2)).toEqual([
+      s1.orderNumber, dateInIsrael(ordered), 'גדעון חיפוש', '0539300011', APT_S1, 'גדעון חיפוש, רינה שוכרת', 3, 150, 'ממתין לשיוך',
+      expect.stringMatching(/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/), 'לא',
+    ]);
+
+    // "הדפסה": the print dialog opens on a print-only table of the same rows —
+    // right to left, and everything else on the page (the menu, the toolbar,
+    // every button) hidden. `window.print` is replaced by a probe that reads
+    // the page as the printer would get it (print media).
+    interface Printed { text: string; dir: string; shown: string; controls: number; restHidden: boolean; headers: (string | null)[]; rows: number }
+    await page.evaluate(() => {
+      const w = window as unknown as { __printed: unknown };
+      w.__printed = null;
+      window.print = () => {
+        const root = document.getElementById('chip-orders-print-root');
+        w.__printed = root && {
+          text: root.innerText,
+          dir: getComputedStyle(root).direction,
+          shown: getComputedStyle(root).display,
+          controls: root.querySelectorAll('button, a, input').length,
+          restHidden: [...document.body.children].filter((el) => el !== root).every((el) => getComputedStyle(el).display === 'none'),
+          headers: [...root.querySelectorAll('th')].map((th) => th.textContent),
+          rows: root.querySelectorAll('tbody tr').length,
+        };
+        // What a browser does when its print dialog closes — the page takes
+        // the print-only table down on this, not when print() returns.
+        window.dispatchEvent(new Event('afterprint'));
+      };
+    });
+    await page.emulateMedia({ media: 'print' });
+    // In print media the screen itself is hidden — the click is a DOM click.
+    await page.getByTestId('chip-orders-print').evaluate((button: HTMLElement) => button.click());
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __printed: unknown }).__printed !== null)).toBe(true);
+    const printed = await page.evaluate(() => (window as unknown as { __printed: Printed }).__printed);
+    await page.emulateMedia({ media: null });
+    expect(printed).toMatchObject({ dir: 'rtl', shown: 'block', controls: 0, restHidden: true, headers, rows: 1 });
+    expect(printed.text).toContain('הזמנות צ׳יפים פתוחות');
+    expect(printed.text).toContain(`סינון: „גדעון ${APT_S1}”`);
+    expect(printed.text).toContain('גדעון חיפוש, רינה שוכרת');
+    expect(printed.text).toContain(APT_S1);
+    expect(printed.text).not.toContain('מיכל אחרת');
+    // On the screen the print-only table never shows, and it is gone afterwards.
+    await expect(page.locator('#chip-orders-print-root')).toHaveCount(0);
+    await expect(rows).toHaveCount(1);
+
+    // The other print view that shares print.css must still print: the debtor
+    // card's own print page (what the tenant panel's printer button and the
+    // PDF route render) shows its root in print media only because its selector
+    // outranks the app-wide hide rule — a rule this change sits next to.
+    const debtor = (await pool.query<{ id: string }>(`select id from public.debtors order by apartment_number limit 1`)).rows[0];
+    expect(debtor, 'the e2e seed holds debtors').toBeTruthy();
+    await page.goto(`/debtors/${debtor!.id}/print`);
+    const card = page.locator('#debtor-detail-print');
+    await expect(card).toBeVisible();
+    await page.emulateMedia({ media: 'print' });
+    expect(await card.evaluate((el) => getComputedStyle(el).display), 'the debtor card in print media').toBe('block');
+    await page.emulateMedia({ media: null });
   });
 });
 
@@ -908,11 +1347,12 @@ test.describe.serial('test mode', () => {
     await expect(owner.getByTestId('chip-alloc-counter')).toHaveText('שויכו 7 מתוך 7');
     await renter.getByRole('radio', { name: 'אפליקציה' }).click();
     await addChip(renter, `T${tag}8`, 'button');
+    // The save keeps the window open (24/11/2026), reloaded: nothing waits any
+    // more, and the row behind it followed.
     await issue.getByTestId('chip-issue-save').click();
-    await expect(issue).toHaveCount(0);
+    await expect(issue.getByTestId('chip-issue-save')).toBeDisabled();
+    await expect(issue.getByText('ממתין לשמירה')).toHaveCount(0);
     await expect(row.getByTestId('chip-order-stage')).toHaveText('שויך');
-
-    await row.click();
     await expect(owner.getByTestId('chip-alloc-counter')).toHaveText('שויכו 7 מתוך 7');
     page.once('dialog', (d) => void d.accept());
     await owner.getByRole('button', { name: `השבת את T${tag}1` }).click();

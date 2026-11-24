@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Info, KeyRound, Plus, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -90,20 +90,35 @@ export function ChipsPageClient({
   const [orders, setOrders] = useState<ChipOrderRow[]>([]);
   const [unfinishedTests, setUnfinishedTests] = useState(0);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  // The loading skeleton is for the FIRST load only. Every later load — after a
+  // quick status button of a row, after a save in the issue window (which now
+  // stays open) — swaps the rows in place, with no flash of an empty table.
+  const ordersLoaded = useRef(false);
+  // The rows are reloaded after every change, and two changes may follow each
+  // other closely (a chip switched, then "מוכן לאיסוף"): only the newest answer
+  // may land, or an older one would draw a ready order as still being assigned.
+  const ordersSeq = useRef(0);
 
   const fetchOrders = useCallback(async () => {
     if (!canManageOrders) return;
-    setOrdersLoading(true);
+    const mine = ++ordersSeq.current;
+    if (!ordersLoaded.current) setOrdersLoading(true);
     try {
       const res = await fetch('/api/chip-orders', { credentials: 'include' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { items?: ChipOrderRow[]; unfinishedTestOrders?: number };
-      setOrders(Array.isArray(data.items) ? data.items : []);
+      if (ordersSeq.current !== mine) return;
+      // `people` and `line_total` joined the rows on 24/11/2026. A tab left open
+      // across a rollback to an older build gets rows without them — the search
+      // and the Excel file must not break on that.
+      const rows = Array.isArray(data.items) ? data.items : [];
+      setOrders(rows.map((r) => ({ ...r, people: Array.isArray(r.people) ? r.people : [], line_total: Number(r.line_total ?? 0) })));
       setUnfinishedTests(typeof data.unfinishedTestOrders === 'number' ? data.unfinishedTestOrders : 0);
+      ordersLoaded.current = true;
     } catch (err) {
-      toast.error(`טעינת ההזמנות נכשלה: ${(err as Error).message}`);
+      if (ordersSeq.current === mine) toast.error(`טעינת ההזמנות נכשלה: ${(err as Error).message}`);
     } finally {
-      setOrdersLoading(false);
+      if (ordersSeq.current === mine) setOrdersLoading(false);
     }
   }, [canManageOrders]);
 
@@ -337,7 +352,7 @@ export function ChipsPageClient({
           onOpen={canEdit ? openOrderRow : undefined}
           canEdit={canEditOrders}
           unfinishedTests={unfinishedTests}
-          onChanged={() => void fetchOrders()}
+          onChanged={fetchOrders}
         />
       )}
 

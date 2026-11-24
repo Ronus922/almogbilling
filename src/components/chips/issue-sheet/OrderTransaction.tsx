@@ -23,6 +23,13 @@
 // was collected or rejected somewhere else while its row was still on this
 // screen opens too: its closing stage is the mark and nothing is offered. The
 // status belongs to the whole order.
+//
+// "מוכן לאיסוף" IS ONE CLICK (24/11/2026): the window decides when it may be
+// pressed and what the click does — save what is waiting, then mark the order
+// ready (OrderIssueSheet `markReady`); this card only draws the button. And
+// whenever the button cannot be pressed, the reason is a line of text under
+// the row, always on the screen — a tooltip alone says nothing on a touch
+// screen, and nobody hovers over a greyed button to find out why.
 
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -39,7 +46,7 @@ import {
   isChipOrderOverdue, type ChipOrderWindow,
 } from '@/lib/chipOrders/model';
 import { e164ToLocal } from '@/lib/portal/phone';
-import { CheckIco, Ico, ROLE_SHORT, TrashIco, roleTone } from './parts';
+import { AlertIco, CheckIco, Ico, ROLE_SHORT, TrashIco, roleTone } from './parts';
 
 const DUE = new Intl.DateTimeFormat('he-IL', {
   timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
@@ -77,16 +84,16 @@ const CheckAllIco = () => <Ico size={13} sw={2}><path d="M20 7 10 17l-6-6" /><pa
 const FlaskIco = () => <Ico size={11} sw={2.2} join={false}><path d="M10 2v6L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8V2M8.5 2h7" /></Ico>;
 
 export function OrderTransaction({
-  win, pending, canEditOrders, disabled, onChanged, onGone, onModalChange,
+  win, readyAction, canEditOrders, disabled, onGone, onModalChange,
 }: {
   win: ChipOrderWindow;
-  /** New numbers waiting in the window (not saved yet). */
-  pending: number;
+  /** "מוכן לאיסוף" of an order that is being assigned: whether it may be
+   *  pressed now, why not (`reason`, shown under the buttons), and the click —
+   *  which saves the window first. */
+  readyAction: { can: boolean; busy: boolean; reason: string | null; run: () => void };
   /** chips_orders_manage:edit — the order's buttons. */
   canEditOrders: boolean;
   disabled: boolean;
-  /** The order changed and stays open (ready) — reload. */
-  onChanged: () => void;
   /** The order left the open list (collected / rejected / deleted). */
   onGone: () => void;
   onModalChange: (open: boolean) => void;
@@ -129,13 +136,14 @@ export function OrderTransaction({
     onModalChange(open);
   }
 
-  async function act(key: string, run: () => Promise<{ refund_label?: string; refund_note?: string | null }>, okMsg: string, gone: boolean): Promise<boolean> {
+  /** "נאסף", "דחה" and "מחק הזמנת בדיקה" — each takes the order out of the
+   *  open list, so the window closes after it. */
+  async function act(key: string, run: () => Promise<{ refund_label?: string; refund_note?: string | null }>, okMsg: string): Promise<boolean> {
     setBusy(key);
     try {
       const data = await run();
       toast.success(okMsg, data.refund_label ? { description: `זיכוי: ${data.refund_label}${data.refund_note ? ` — ${data.refund_note}` : ''}` } : undefined);
-      if (gone) onGone();
-      else onChanged();
+      onGone();
       return true;
     } catch (e) {
       toast.error((e as Error).message);
@@ -146,6 +154,14 @@ export function OrderTransaction({
   }
 
   const stageTag = stage === 'ready' ? 'ci-solid' : stage === 'assigned' ? 'ci-green' : 'ci-amber';
+  // Why "מוכן לאיסוף" cannot be pressed — a visible line, not only a tooltip.
+  // Amber while something is still missing; quiet once the order moved on.
+  const readyNote: { text: string; quiet: boolean } | null = assigning
+    ? (readyAction.reason ? { text: readyAction.reason, quiet: false } : null)
+    : ready ? { text: 'ההזמנה כבר מוכנה לאיסוף — השלב הבא: „נאסף”', quiet: true }
+      : collected ? { text: 'ההזמנה כבר נאספה', quiet: true }
+        : rejected ? { text: 'ההזמנה נדחתה', quiet: true }
+          : null;
 
   return (
     <div className="ci-inv" data-testid="chip-order-section">
@@ -234,10 +250,9 @@ export function OrderTransaction({
             {/* No "בטיפול" here, although the reference draws one: the system
                 has no such status (see the note at the top of the file). */}
             {assigning ? (
-              <button type="button" className="ci-btn ci-primary" disabled={disabled || busy !== null || !win.order_all_linked || pending > 0}
-                title={!win.order_all_linked ? 'יש לשייך ולשמור קודם את כל הצ׳יפים שהוזמנו' : pending > 0 ? 'יש לשמור קודם את הצ׳יפים שנוספו' : undefined}
-                onClick={() => void act('ready', () => postJson(`/api/chip-orders/${o.id}/ready`), 'סומן מוכן לאיסוף — נשלחה הודעה למזמין', false)}>
-                {busy === 'ready' ? <Loader2 className="ci-spin h-3.5 w-3.5" /> : <CheckIco />}
+              <button type="button" className="ci-btn ci-primary" disabled={disabled || busy !== null || !readyAction.can}
+                title={readyAction.reason ?? undefined} onClick={readyAction.run}>
+                {readyAction.busy ? <Loader2 className="ci-spin h-3.5 w-3.5" /> : <CheckIco />}
                 מוכן לאיסוף
               </button>
             ) : (
@@ -254,7 +269,7 @@ export function OrderTransaction({
               disabled={disabled || busy !== null || !ready}
               aria-current={collected ? 'step' : undefined}
               title={ready ? undefined : collected ? 'ההזמנה נאספה — זה השלב שלה כרגע' : rejected ? 'ההזמנה נדחתה' : 'אפשר לסמן „נאסף” רק אחרי „מוכן לאיסוף”'}
-              onClick={() => void act('collected', () => postJson(`/api/chip-orders/${o.id}/collected`), 'סומן כנאסף', true)}>
+              onClick={() => void act('collected', () => postJson(`/api/chip-orders/${o.id}/collected`), 'סומן כנאסף')}>
               {busy === 'collected' ? <Loader2 className="ci-spin h-3.5 w-3.5" /> : <CheckAllIco />}
               נאסף
             </button>
@@ -273,6 +288,12 @@ export function OrderTransaction({
               </button>
             )}
           </div>
+          {readyNote && (
+            <p className={cn('ci-reason', readyNote.quiet && 'ci-quiet')} role="status" data-testid="chip-order-ready-reason">
+              <AlertIco size={13} />
+              <span>{readyNote.text}</span>
+            </p>
+          )}
           {win.items.length > 1 && (
             <p className="ci-actnote">„מוכן לאיסוף”, „נאסף” ו„דחה” חלים על ההזמנה כולה — כל הדירות שבה.</p>
           )}
@@ -303,7 +324,7 @@ export function OrderTransaction({
               type="button"
               disabled={busy !== null || rejectReason.trim().length < 2}
               onClick={async () => {
-                const ok = await act('reject', () => postJson(`/api/chip-orders/${o.id}/reject`, { reason: rejectReason.trim() }), 'ההזמנה נדחתה', true);
+                const ok = await act('reject', () => postJson(`/api/chip-orders/${o.id}/reject`, { reason: rejectReason.trim() }), 'ההזמנה נדחתה');
                 if (ok) { setModal('reject', false); setRejectReason(''); }
               }}
               className="h-11 gap-2 bg-destructive px-4 text-white hover:bg-destructive/90"
@@ -329,7 +350,7 @@ export function OrderTransaction({
               type="button"
               disabled={busy !== null}
               onClick={async () => {
-                const ok = await act('delete', () => postJson(`/api/chip-orders/${o.id}`, undefined, 'DELETE'), 'הזמנת הבדיקה נמחקה', true);
+                const ok = await act('delete', () => postJson(`/api/chip-orders/${o.id}`, undefined, 'DELETE'), 'הזמנת הבדיקה נמחקה');
                 if (ok) setModal('delete', false);
               }}
               className="h-11 gap-2 bg-destructive px-4 text-white hover:bg-destructive/90"

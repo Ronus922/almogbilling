@@ -2,7 +2,10 @@
    Chip issue window (IssueChipSheet, opened from /chips) — DECLARED
    EXCEPTION (DESIGN.md "מודול צ׳יפים" (ו), v2 of 24/11/2026). Ported 1:1 from
    ref/chip-order/chip-issue-admin-v2.html: the reference wins over DESIGN.md
-   for this window, and every value below is the reference's own.
+   for this window, and every value below is the reference's own — except the
+   WIDTH OF THE PANEL (Ronen, 24/11/2026, third round): 60% of the viewport,
+   never under the reference's 780px, and the whole screen where even 780px
+   do not fit. See `.ci-panel` at the end of the file.
 
    SCOPE RULE: every class is `ci-*` and every token `--ci-*`, under `.ci-skin`
    (the SheetContent). Nothing here may reach another screen.
@@ -26,8 +29,10 @@
 
 @layer components {
   .ci-skin {
-    /* The width of the panel — the ONE place to change it. */
-    --ci-panel-w: 780px;
+    /* The width of the panel — the ONE place to change it: a share of the
+       viewport and the floor under it (the reference's fixed 780px). */
+    --ci-panel-w: 60vw;
+    --ci-panel-min: 780px;
     --ci-border: #e8eaf2;
     --ci-border-strong: #d9ddea;
     --ci-ink: #1a2233;
@@ -315,11 +320,28 @@
   /* The stage the order is in right now: drawn as the reference draws the
      button, and not a button to press. */
   .ci-btn.ci-cur:disabled { opacity: 1; cursor: default; }
+  /* Why "מוכן לאיסוף" cannot be pressed right now — a line under the buttons
+     that is always on the screen (not in the reference; a tooltip alone says
+     nothing on a touch screen). Amber while a chip is still missing, quiet
+     once the order has moved on. */
+  .ci-reason {
+    display: flex; align-items: flex-start; gap: 7px; padding: 0 14px 12px; background: #fbfcfe; margin: 0;
+    font: 600 12.5px/1.5 "Heebo", sans-serif; color: var(--ci-amber-ink); overflow-wrap: anywhere;
+  }
+  .ci-reason svg { flex: none; margin-top: 3px; }
+  .ci-reason.ci-quiet { color: var(--ci-soft); }
   .ci-actnote { padding: 0 14px 12px; background: #fbfcfe; font: 600 12px "Heebo", sans-serif; color: var(--ci-soft); margin: 0; }
 
   .ci-feegrid { display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: end; }
   .ci-inv + .ci-feegrid { margin-top: 14px; }
   .ci-notefld { margin-top: 14px; }
+  /* The window is 60% of the viewport now, and the note is the one place where
+     somebody reads sentences: its box grows with the window like every field,
+     but a line of it stays as long as it is in the reference — 676px (the
+     706px field of the 780px panel, less its border and its two 14px
+     paddings). The rest of a wider box is padding at the far end, so the box
+     itself stays aligned with the rows above it. */
+  .ci-notefld textarea { padding-inline-end: max(14px, calc(100% - 692px)); }
   .ci-chk { display: flex; align-items: center; gap: 9px; height: 42px; cursor: pointer; font: 600 13px "Heebo", sans-serif; color: var(--ci-muted); white-space: nowrap; }
   .ci-chk input { width: 19px; height: 19px; accent-color: var(--ci-brand); cursor: pointer; }
 
@@ -377,7 +399,11 @@
    after Tailwind's own, where they win by source order. */
 @layer utilities {
   .ci-panel {
-    width: min(var(--ci-panel-w), 100%);
+    /* 60vw from a 1300px viewport up (1366 → 820px, 1440 → 864px, 1920 →
+       1152px), 780px under it, the whole screen under 780px. The layout inside
+       still moves at the reference's two breakpoints only (700px and 540px of
+       the VIEWPORT) — and at those widths the panel is the screen. */
+    width: min(max(var(--ci-panel-w), var(--ci-panel-min)), 100%);
     max-width: none;
     box-shadow: 12px 0 60px rgba(16, 22, 40, .25);
     color: var(--ci-ink);

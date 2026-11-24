@@ -128,6 +128,10 @@ d('chip orders on the DB', () => {
     const rows = await rowsOf(ids.order);
     expect(rows.map((r) => r.apartment_number).sort()).toEqual([apt.owned, apt.empty, apt.rented].sort());
     expect(rows.find((r) => r.apartment_number === apt.owned)).toMatchObject({ chips_count: 3, chips_linked: 0, status: 'paid', contact_id: ids.owned });
+    // The row's own amount, and its people: an order of apartment lines only
+    // (the shape before 20/11/2026) has no holder lines, so the row names
+    // whoever ordered.
+    expect(rows.find((r) => r.apartment_number === apt.owned)).toMatchObject({ line_total: 150, people: ['דנה כהן'] });
     const ctx = await db.getChipOrderSheetContext(await itemOf(ids.order, apt.owned));
     expect(JSON.stringify(ctx)).not.toContain('tok'); // the process token never reaches the screen
   });

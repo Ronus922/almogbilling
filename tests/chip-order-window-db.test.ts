@@ -116,6 +116,15 @@ d('chip order window on the DB', () => {
     ids.h0 = w.holders[0].id!;
     ids.h1 = w.holders[1].id!;
     ids.h2 = w.holders[2].id!;
+    // The Orders tab (24/11/2026): each apartment row carries ITS people, in the
+    // order of the blocks, and its own amount — what the tab searches, exports
+    // and prints.
+    const rows = (await orders.listOpenChipOrderRows()).filter((r) => r.order_id === ids.order);
+    const s = DEFAULT_CHIP_ORDER_SETTINGS;
+    expect(Object.fromEntries(rows.map((r) => [r.apartment_number, [r.people, r.line_total]]))).toEqual({
+      [apt.a]: [['דנה כהן', 'שרה לוי'], 4 * s.unitPrice],
+      [apt.b]: [['דנה כהן'], s.unitPrice],
+    });
   });
 
   it('ONE save issues for both apartments, each chip linked to its line AND its person', async () => {
@@ -161,6 +170,10 @@ d('chip order window on the DB', () => {
     }, admin);
     const staff = (await pool.query(`select id, full_name, source, chips_count from public.chip_order_holders where order_id = $1 and source = 'staff' order by position`, [ids.order])).rows;
     expect(staff.map((s) => [s.full_name, s.chips_count])).toEqual([['מטפלת סיעודית', 0], ['בן משפחה', 0]]);
+    // Whoever the staff added in the window is one of the row's people too
+    // (after the order's own), under the name the block holds now.
+    const rowA = (await orders.listOpenChipOrderRows()).find((r) => r.item_id === ids.itemA)!;
+    expect(rowA.people).toEqual(['דנה כהן-לוי', 'שרה לוי', 'מטפלת סיעודית', 'בן משפחה']);
     expect((await pool.query(`select total::float8 as t from public.chip_orders where id = $1`, [ids.order])).rows[0].t).toBe(before);
     await expect(win.saveChipOrderWindow(ids.order, { holders: [], removedHolderIds: [staff[0].id] }, admin)).rejects.toThrow(win.WindowInputError);
     await win.saveChipOrderWindow(ids.order, { holders: [], removedHolderIds: [staff[1].id] }, admin);
@@ -196,9 +209,26 @@ d('chip order window on the DB', () => {
     expect(w.holders).toHaveLength(1);
     expect(w.holders[0]).toMatchObject({ id: null, source: 'legacy', full_name: 'יוסי לגסי', chips_count: 1 });
     expect(w.holders[0].existing.map((c) => c.chip_number)).toEqual([num(7)]);
+    // The Orders tab names whoever ordered on such a line — it has no holder
+    // line of its own to take the name from.
+    const peopleOf = async () => (await orders.listOpenChipOrderRows()).find((r) => r.item_id === itemC)!.people;
+    expect(await peopleOf()).toEqual(['יוסי לגסי']);
+    // …and keeps naming them first when the staff adds somebody to the line
+    // before the old block was ever saved (the person who paid must not drop
+    // out of the Excel file).
+    await win.saveChipOrderWindow(o.id, {
+      holders: [{ id: null, item_id: itemC, role: 'other', full_name: 'אורח של יוסי', phone: null, email: null, new_chips: [] }],
+    }, admin);
+    expect(await peopleOf()).toEqual(['יוסי לגסי', 'אורח של יוסי']);
+    const added = (await pool.query<{ id: string }>(`select id from public.chip_order_holders where order_id = $1 and source = 'staff'`, [o.id])).rows;
+    expect(added).toHaveLength(1);
+    await win.saveChipOrderWindow(o.id, { holders: [], removedHolderIds: [added[0]!.id] }, admin);
+    expect(await peopleOf()).toEqual(['יוסי לגסי']);
     await win.saveChipOrderWindow(o.id, {
       holders: [{ id: null, legacy: true, item_id: itemC, role: 'owner', full_name: 'יוסי לגסי', phone: '0539300077', email: null, new_chips: [{ number: num(8), chip_type: 'physical' }] }],
     }, admin);
+    // Stored as the line's own holder now: named once, from the holder line.
+    expect(await peopleOf()).toEqual(['יוסי לגסי']);
     const w2 = (await win.getChipOrderWindow(itemC))!;
     expect(w2.holders).toHaveLength(1);
     expect(w2.holders[0]).toMatchObject({ source: 'order', chips_count: 1 });

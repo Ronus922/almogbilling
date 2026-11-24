@@ -388,12 +388,23 @@ const OPEN_SQL = `('paid', 'approved', 'ready')`;
 /** The Orders tab: ONE ROW PER APARTMENT of every open order (paid — being
  *  assigned — or ready). pending_payment never shows; a row leaves once its
  *  order is collected or rejected. Test orders come with is_test; the screen
- *  badges them and keeps them out of every count. */
+ *  badges them and keeps them out of every count. `people` — the people of
+ *  the apartment line (the search, the Excel file and the print view of the
+ *  tab, 24/11/2026): the names of its holder lines, in the order of the
+ *  window's blocks. A line with no holder line of the order itself — an order
+ *  made before 20/11/2026 — starts with whoever ordered, so the person who
+ *  paid is never missing, also when the staff added somebody to it. */
 export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
   const r = await query<ChipOrderRow>(
     `select i.id as item_id, o.id as order_id, o.order_number, i.contact_id, i.apartment_number,
             o.full_name, o.phone_e164, o.role, o.status, i.chips_count,
             (select count(*)::int from public.chips c where c.order_item_id = i.id and c.status = 'active') as chips_linked,
+            i.line_total::float8 as line_total,
+            (case when exists (select 1 from public.chip_order_holders h
+                                where h.item_id = i.id and h.source = 'order')
+                  then array[]::text[] else array[o.full_name] end)
+            || array(select h.full_name from public.chip_order_holders h
+                      where h.item_id = i.id order by h.position, h.created_at, h.id) as people,
             o.paid_at, o.due_at, o.created_at,
             exists (select 1 from public.chip_order_notifications n
                      where n.order_id = o.id and n.status = 'failed') as has_failed_notification,

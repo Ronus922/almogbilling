@@ -18,9 +18,16 @@
 //   · "פירוט עסקה והערות" — the order (OrderTransaction) + fee + internal note.
 //   · "שמור שינויים" — ONE request, one transaction (POST
 //     /api/chip-orders/[id]/holders): holder edits, staff holders, new numbers
-//     (linked to the order line AND the holder line), the note.
+//     (linked to the order line AND the holder line), the note. The window
+//     STAYS OPEN afterwards (24/11/2026), reloaded on what is saved now.
+//   · "מוכן לאיסוף" is ONE CLICK (24/11/2026): it may be pressed as soon as
+//     every ordered chip is covered — by a saved chip or by a number still
+//     waiting in the window — and it saves the window first (the same request
+//     as "שמור שינויים") and only then marks the order ready. A save that
+//     fails marks nothing. The server's own rule did not move: an order is
+//     ready only when all its chips are issued.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ExternalLink } from 'lucide-react';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
@@ -29,6 +36,7 @@ import { cn } from '@/lib/utils';
 import { e164ToLocal } from '@/lib/portal/phone';
 import { MAX_CHIPS_PER_GROUP } from '@/lib/chips/issueGroups';
 import type { ChipOrderRole, ChipOrderWindow, ChipOrderWindowChip, ChipOrderWindowHolder } from '@/lib/chipOrders/model';
+import { missingChipsText } from '@/lib/chipOrders/orderRows';
 import type { ChipResidentRole, ChipType } from '@/lib/types/chips';
 import { HolderRegistryButton } from '../ChipOrderSection';
 import {
@@ -95,6 +103,14 @@ function edited(b: Block): boolean {
   return b.role !== b.orig.role || b.name.trim() !== b.orig.name || b.phone.trim() !== b.orig.phone || b.email.trim() !== b.orig.email;
 }
 
+async function fetchWindow(orderItemId: string): Promise<ChipOrderWindow> {
+  const res = await fetch(`/api/chip-orders/items/${orderItemId}`, { credentials: 'include' });
+  if (!res.ok) throw new Error(res.status === 404 ? 'ההזמנה לא נמצאה או כבר נסגרה' : 'טעינת ההזמנה נכשלה');
+  const data = (await res.json()) as { window?: ChipOrderWindow };
+  if (!data.window) throw new Error('טעינת ההזמנה נכשלה');
+  return data.window;
+}
+
 export function OrderIssueSheet({
   open, onOpenChange, onIssued, canEditOrders = false, canWriteContacts = false, orderItemId,
 }: IssueChipSheetProps & { orderItemId: string }) {
@@ -113,9 +129,18 @@ export function OrderIssueSheet({
   const [conflict, setConflict] = useState<{ blockKey: number; number: string } | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /** The one click of "מוכן לאיסוף" is running (save, then ready). */
+  const [readyBusy, setReadyBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  /** Only the newest load of the order may land (a reload after an immediate
+   *  action must never overwrite the reload that follows a save). */
+  const loadSeq = useRef(0);
+  /** A save went through and its reload has not landed yet: whichever load
+   *  lands next is the order as stored, even if it is not the one the save
+   *  itself asked for — or saved numbers would stay on the screen as waiting. */
+  const freshNext = useRef(false);
 
   const reload = () => setVersion((v) => v + 1);
   const quick = useChipQuickActions(version, () => { reload(); onIssued(); });
@@ -134,46 +159,80 @@ export function OrderIssueSheet({
     setConflict(null);
     setServerError(null);
     setSubmitting(false);
+    setReadyBusy(false);
     setDirty(false);
     setConfirmCloseOpen(false);
     setModalOpen(false);
     setVersion(0);
   }, [open]);
 
-  // Load (and reload after an immediate action) — local edits, pending numbers
-  // and new blocks survive a reload; chips and quantities refresh.
+  // What a load puts on the screen. A SOFT load (after an immediate action —
+  // the switch, a number fix, "עדכן בכרטיס הדייר") keeps the local edits, the
+  // numbers waiting to be saved and the new blocks; chips and quantities
+  // refresh. A FRESH load (the window opens, or a save went through) is the
+  // order as stored: nothing local survives it, because nothing local is left.
+  const applyWindow = useCallback((w: ChipOrderWindow, fresh: boolean) => {
+    setWin(w);
+    setLoadError(null);
+    if (fresh) {
+      setNote(w.order.internal_note ?? '');
+      setNoteOrig(w.order.internal_note ?? '');
+      setRemoved([]);
+      setFee('');
+      setFeeCharged(false);
+      setConflict(null);
+      setServerError(null);
+      setDirty(false);
+    }
+    setBlocks((prev) => {
+      const hidden = fresh ? [] : removedRef.current;
+      const loaded = w.holders.filter((h) => !h.id || !hidden.includes(h.id)).map((h) => fromHolder(h, 0));
+      const out: Block[] = [];
+      for (const f of loaded) {
+        const old = prev.find((p) => identity(p) === identity({ ...f, key: -1 }));
+        if (old && !fresh) out.push({ ...old, id: f.id, source: f.source, qty: f.qty, lease: f.lease, chips: f.chips, existing: f.existing });
+        else out.push({ ...f, key: old?.key ?? seq.current++ });
+      }
+      // Staff holders added in this window and not saved yet stay.
+      if (!fresh) for (const p of prev) if (!p.id && p.source === 'staff') out.push(p);
+      return out;
+    });
+  }, []);
+
+  // Load (and reload after an immediate action).
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/chip-orders/items/${orderItemId}`, { credentials: 'include' });
-        if (!res.ok) throw new Error(res.status === 404 ? 'ההזמנה לא נמצאה או כבר נסגרה' : 'טעינת ההזמנה נכשלה');
-        const data = (await res.json()) as { window?: ChipOrderWindow };
-        if (cancelled || !data.window) return;
-        const w = data.window;
-        setWin(w);
-        setLoadError(null);
-        setNoteOrig((prev) => (version === 0 ? w.order.internal_note ?? '' : prev));
-        if (version === 0) setNote(w.order.internal_note ?? '');
-        setBlocks((prev) => {
-          const fresh = w.holders.filter((h) => !h.id || !removedRef.current.includes(h.id)).map((h) => fromHolder(h, 0));
-          const out: Block[] = [];
-          for (const f of fresh) {
-            const old = prev.find((p) => identity(p) === identity({ ...f, key: -1 }));
-            if (old) out.push({ ...old, id: f.id, source: f.source, qty: f.qty, lease: f.lease, chips: f.chips, existing: f.existing });
-            else out.push({ ...f, key: seq.current++ });
-          }
-          // Staff holders added in this window and not saved yet stay.
-          for (const p of prev) if (!p.id && p.source === 'staff') out.push(p);
-          return out;
-        });
-      } catch (e) {
-        if (!cancelled) setLoadError((e as Error).message);
-      }
-    })();
+    const mine = ++loadSeq.current;
+    fetchWindow(orderItemId)
+      .then((w) => {
+        if (cancelled || loadSeq.current !== mine) return;
+        applyWindow(w, version === 0 || freshNext.current);
+        freshNext.current = false;
+      })
+      .catch((e: Error) => { if (!cancelled && loadSeq.current === mine) setLoadError(e.message); });
     return () => { cancelled = true; };
-  }, [open, orderItemId, version]);
+  }, [open, orderItemId, version, applyWindow]);
+
+  /** Load the order now and wait for it — after a save. False = it could not
+   *  be loaded. */
+  async function refreshNow(fresh: boolean): Promise<boolean> {
+    if (fresh) freshNext.current = true;
+    const mine = ++loadSeq.current;
+    try {
+      const w = await fetchWindow(orderItemId);
+      if (loadSeq.current === mine) {
+        applyWindow(w, freshNext.current);
+        freshNext.current = false;
+      }
+      return true;
+    } catch {
+      // Not armed for later: a load that was never asked to be fresh must not
+      // wipe what is typed after this point.
+      freshNext.current = false;
+      return false;
+    }
+  }
 
   const items = win?.items ?? [];
   const aptOf = (itemId: string) => items.find((i) => i.id === itemId)?.apartment_number ?? '';
@@ -196,9 +255,41 @@ export function OrderIssueSheet({
   }
 
   const changes = totalPending + blocks.filter(edited).length + removed.length + (noteChanged ? 1 : 0);
-  const canSubmit =
-    !!win && changes > 0 && blocks.every((b) => blockInvalid(b) === null) && !feeError &&
-    !submitting && canEditOrders;
+  const blocksValid = blocks.every((b) => blockInvalid(b) === null);
+  // An immediate action on a chip (the switch, a number fix) is its own
+  // request: nothing is saved over it while it is still running.
+  const idle = !submitting && quick.busyId === null;
+  const canSubmit = !!win && changes > 0 && blocksValid && !feeError && idle && canEditOrders;
+
+  // ── "מוכן לאיסוף" in one click ───────────────────────────────────────────
+  // The order may be marked ready once EVERY apartment line is covered — the
+  // server's own rule (active chips linked to the line ≥ what it ordered),
+  // with the numbers still waiting in the window counted too, since the click
+  // saves them first. A number the server already refused does not count.
+  const assigning = !!win && (win.order.status === 'paid' || win.order.status === 'approved');
+  // The refused number counts as refused only while it is still waiting in its
+  // block: once it is removed or replaced, the refusal is history and must not
+  // hold the button back.
+  const refused = conflict && blocks.some((b) => b.key === conflict.blockKey && effectivePending(b).some((p) => p.number === conflict.number))
+    ? conflict
+    : null;
+  const missing = items.reduce((sum, i) => {
+    let have = 0;
+    for (const b of blocks) {
+      if (b.itemId !== i.id) continue;
+      have += b.chips.filter((c) => c.order_item_id === i.id && quick.view(c).status === 'active').length;
+      have += effectivePending(b).filter((p) => !(refused?.blockKey === b.key && refused.number === p.number)).length;
+    }
+    return sum + Math.max(0, i.chips_count - have);
+  }, 0);
+  /** Why "מוכן לאיסוף" cannot be pressed now (shown under the buttons); null = it can. */
+  const readyReason = !assigning ? null
+    : refused ? 'יש להסיר או להחליף את מספר הצ׳יפ התפוס שמסומן באדום'
+    : missing > 0 ? `יש לשייך את כל הצ׳יפים שהוזמנו — ${missingChipsText(missing)}`
+    : !blocksValid ? 'יש לתקן את הפרטים המסומנים באדום בבעלי הצ׳יפ'
+    : feeError ? 'סכום עמלת ההנפקה אינו תקין'
+    : null;
+  const canReady = assigning && readyReason === null && idle && canEditOrders;
 
   // ── ESC layering ─────────────────────────────────────────────────────────
 
@@ -258,9 +349,11 @@ export function OrderIssueSheet({
 
   // ── Save ─────────────────────────────────────────────────────────────────
 
-  async function save() {
-    if (!canSubmit || !win) return;
-    setSubmitting(true);
+  /** POSTs everything the window changed, in one transaction. Returns how many
+   *  chips were issued, or null when nothing was saved — the reason is on the
+   *  screen by then (the server's message; a taken number turns red). */
+  async function persist(): Promise<number | null> {
+    if (!win) return null;
     setServerError(null);
     setConflict(null);
     const sent = blocks.filter((b) => edited(b) || effectivePending(b).length > 0);
@@ -292,19 +385,89 @@ export function OrderIssueSheet({
       if (!res.ok) {
         if (res.status === 409 && data.chip_number) {
           const b = typeof data.holder_index === 'number' ? sent[data.holder_index] : undefined;
-          if (b) setConflict({ blockKey: b.key, number: data.chip_number });
+          if (b) {
+            const taken = data.chip_number;
+            setConflict({ blockKey: b.key, number: taken });
+            // A number that was still in the box (typed, never added with
+            // "הוסף") becomes a row of its own: the refusal needs something to
+            // turn red, and an X to remove it with.
+            setBlocks((prev) => prev.map((x) => (
+              x.key === b.key && x.numInput.trim() === taken && !x.pending.some((n) => n.number === taken)
+                ? { ...x, pending: [...x.pending, { number: taken, chip_type: x.numType }], numInput: '' }
+                : x
+            )));
+          }
         }
         setServerError(data.error ?? 'השמירה נכשלה');
-        return;
+        return null;
       }
-      const n = data.issued ?? 0;
-      toast.success(n > 1 ? `${n} צ׳יפים הונפקו` : n === 1 ? 'הצ׳יפ הונפק' : 'השינויים נשמרו');
-      onIssued();
-      onOpenChange(false);
+      return data.issued ?? 0;
     } catch {
       toast.error('השמירה נכשלה');
+      return null;
+    }
+  }
+
+  /** "שמור שינויים": save, say so, and stay — the window reloads on what is
+   *  stored now (24/11/2026; until then a save closed it). If the order cannot
+   *  be loaded again the window closes, rather than show saved numbers as if
+   *  they were still waiting. */
+  async function save() {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    try {
+      const n = await persist();
+      if (n === null) return;
+      toast.success(n > 1 ? `${n} צ׳יפים הונפקו` : n === 1 ? 'הצ׳יפ הונפק' : 'השינויים נשמרו');
+      onIssued();
+      if (!(await refreshNow(true))) onOpenChange(false);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  /** "מוכן לאיסוף" in one click: save whatever the window holds, THEN mark
+   *  the order ready. A save that fails marks nothing — its error is shown as
+   *  on any save. The window stays open on the new status, "נאסף" next. */
+  async function markReady() {
+    if (!win || !canReady) return;
+    setSubmitting(true);
+    setReadyBusy(true);
+    try {
+      let issued: number | null = null;
+      if (changes > 0) {
+        issued = await persist();
+        if (issued === null) return;
+      }
+      let failed: string | null = null;
+      try {
+        const res = await fetch(`/api/chip-orders/${win.order.id}/ready`, { method: 'POST', credentials: 'include' });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          failed = data.error === 'not_found' ? 'ההזמנה לא נמצאה' : data.error ?? 'הפעולה נכשלה';
+        }
+      } catch {
+        failed = 'הפעולה נכשלה';
+      }
+      if (failed) {
+        toast.error(issued !== null ? `השינויים נשמרו, אבל ההזמנה לא סומנה מוכנה: ${failed}` : failed);
+      } else {
+        toast.success(
+          'סומן מוכן לאיסוף — נשלחה הודעה למזמין',
+          issued ? { description: issued === 1 ? 'הצ׳יפ הונפק ונשמר' : `${issued} צ׳יפים הונפקו ונשמרו` } : undefined,
+        );
+      }
+      onIssued();
+      // Something was stored (the save, the status or both) → the order as
+      // stored; a refusal with nothing saved → a plain reload. If what was
+      // stored cannot be loaded, the window closes rather than show an order
+      // that is no longer true.
+      const stored = issued !== null || !failed;
+      const loaded = await refreshNow(stored);
+      if (!loaded && stored) onOpenChange(false);
+    } finally {
+      setSubmitting(false);
+      setReadyBusy(false);
     }
   }
 
@@ -449,10 +612,9 @@ export function OrderIssueSheet({
           <Section icon={<WalletIco />} tone="green" title="פירוט עסקה והערות" sub="פרטי ההזמנה, התשלום והצ׳יפים להנפקה">
             <OrderTransaction
               win={win}
-              pending={totalPending}
+              readyAction={{ can: canReady, busy: readyBusy, reason: readyReason, run: () => void markReady() }}
               canEditOrders={canEditOrders}
               disabled={submitting}
-              onChanged={() => { reload(); onIssued(); }}
               onGone={() => { onIssued(); onOpenChange(false); }}
               onModalChange={setModalOpen}
             />
