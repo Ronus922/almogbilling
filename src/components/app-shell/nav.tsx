@@ -85,7 +85,6 @@ export const NAV_CATEGORIES: NavCategory[] = [
       // (admin / super_admin in slice A).
       { label: 'סקירה חודשית', icon: ItemClock, href: '/finance', module: 'finance', exact: true },
       { label: 'סעיפים והגדרות', icon: ItemList, href: '/finance/settings', module: 'finance' },
-      { label: 'צ׳יפים', icon: ItemArchive, href: '/chips', module: 'chips' },
     ],
   },
   {
@@ -171,6 +170,10 @@ export const NAV_CATEGORIES: NavCategory[] = [
   },
   // Visitor ID scan (08/11/2026) — by ROLE (VISITOR_VIEW_ROLES: guard, admin and super admin
   // only, since 09/11/2026; no other role sees the item). The guard's ONLY nav entry.
+  // "צ׳יפים" moved here from "כספים" on 24/11/2026 (Ronen) — the item alone moved: it keeps its
+  // route and its `chips` module gate, and the guard holds no module, so the guard still sees one
+  // item and the category stays a direct link for them. Whoever sees both items gets the panel;
+  // whoever holds `chips` without the visitor scan gets a direct link to /chips.
   {
     id: 'security',
     label: 'אבטחה',
@@ -179,6 +182,7 @@ export const NAV_CATEGORIES: NavCategory[] = [
     icon: RailSecurity,
     items: [
       { label: 'סריקת כניסה', icon: ItemScan, href: '/visitors', visible: (role) => canViewVisitors(role) },
+      { label: 'צ׳יפים', icon: ItemArchive, href: '/chips', module: 'chips' },
     ],
   },
   // Pinned to the bottom of the rail (next to "יציאה"), gated by the `settings` module.

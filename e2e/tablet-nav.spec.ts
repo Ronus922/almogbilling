@@ -177,7 +177,8 @@ for (const width of TABLET_WIDTHS) {
         await railButton(page, 'דיירים').click();
         await railButton(page, 'דיירים').click();
         await page.keyboard.press('Escape');
-        await railButton(page, 'כספים').click();
+        // "צ׳יפים" sits under "אבטחה" since 24/11/2026 — a panel category for whoever sees both its items.
+        await railButton(page, 'אבטחה').click();
         await panel(page).locator('a[data-nav-item="/chips"]').click();
         await expect(page).toHaveURL(/\/chips/);
         expect(await saved(page), `saved choice after using the overlay (was ${choice})`).toBe(choice);

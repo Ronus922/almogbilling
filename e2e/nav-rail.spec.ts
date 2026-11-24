@@ -6,9 +6,11 @@ import { createHash, randomBytes } from 'node:crypto';
 // a white panel listing the items of ONE category. Pinned here, on the production build:
 //   · a PANEL category (two or more permitted items): a click only switches the panel — the URL
 //     does not move, nothing is marked;
-//   · a LINK category (exactly one permitted item — "ראשי", "אבטחה", "הגדרות", or any category the
-//     permissions cut down to one): the rail button IS the link — a click navigates, there is no
-//     panel and no aria-expanded, and it never touches the saved panel choice;
+//   · a LINK category (exactly one permitted item — "ראשי", "הגדרות", "אבטחה" for the guard, or any
+//     category the permissions cut down to one): the rail button IS the link — a click navigates,
+//     there is no panel and no aria-expanded, and it never touches the saved panel choice.
+//     ("אבטחה" holds two items since 24/11/2026 — "סריקת כניסה" and "צ׳יפים", moved from "כספים" —
+//     so it is a panel for whoever sees both, and still a link for the guard, who sees one.)
 //   · a click on an item navigates and marks it, and its category is marked in the rail;
 //   · the shown category's button again closes the panel (any button opens a closed one), the
 //     choice survives a reload, and the panel PUSHES the content;
@@ -200,7 +202,7 @@ test('who sees what: the guard only "אבטחה", the viewer no "ראשי" and n
   await expect(guard.locator('aside a[href="/settings"]')).toHaveCount(0);
   await expect(guard.locator('aside').getByRole('button', { name: 'התנתק' })).toBeVisible();
 
-  // — the viewer: the debtors screen is theirs, and only that. "כספים" has five items in the
+  // — the viewer: the debtors screen is theirs, and only that. "כספים" has four items in the
   //   config but ONE for them, so for them it is a link to that screen — no panel.
   const viewer = await sessionFor(browser, people.viewer.id);
   await viewer.goto('/dashboard');
@@ -217,9 +219,16 @@ test('who sees what: the guard only "אבטחה", the viewer no "ראשי" and n
   const admin = await sessionFor(browser, people.admin.id);
   await admin.goto('/overview');
   expect(await railLabels(admin)).toEqual(['ראשי', 'כספים', 'דיירים', 'תפוצה', 'תפעול', 'רכש', 'פורטל', 'אבטחה', 'הגדרות']);
-  // …three of them single-item (links), six with a panel.
+  // …two of them single-item (links), seven with a panel — "אבטחה" among them since "צ׳יפים"
+  //   joined "סריקת כניסה" there (24/11/2026): the admin sees both, so it is a panel for them,
+  //   while the guard above, who sees one, keeps the direct link.
   const kinds = await railButtons(admin).evaluateAll((els) => els.map((e) => e.getAttribute('data-nav-kind')));
-  expect(kinds).toEqual(['link', 'panel', 'panel', 'panel', 'panel', 'panel', 'panel', 'link', 'link']);
+  expect(kinds).toEqual(['link', 'panel', 'panel', 'panel', 'panel', 'panel', 'panel', 'panel', 'link']);
+  await railButton(admin, 'אבטחה').click();
+  expect(await panelItems(panel(admin)).allInnerTexts()).toEqual(['סריקת כניסה', 'צ׳יפים']);
+  expect(new URL(admin.url()).pathname).toBe('/overview'); // a panel category does not navigate
+  await railButton(admin, 'כספים').click();
+  expect(await panelItems(panel(admin)).allInnerTexts()).toEqual(['ניהול חיובים', 'ניהול סטטוס חיובים', 'סקירה חודשית', 'סעיפים והגדרות']);
   await railButton(admin, 'פורטל').click();
   expect(await panelItems(panel(admin)).allInnerTexts()).toEqual(['החלטות ופרוטוקולים', 'התחברויות לפורטל', 'משתמשים']);
   await panel(admin).locator('a[data-nav-item="/settings/users"]').click();
@@ -229,11 +238,11 @@ test('who sees what: the guard only "אבטחה", the viewer no "ראשי" and n
   await expect(panel(admin).locator('a[aria-current="page"]')).toHaveCount(1);
 });
 
-test('"ראשי", "אבטחה" and "הגדרות" are direct links: a click navigates, no panel opens, the category is marked', async ({ page }) => {
+test('"ראשי" and "הגדרות" are direct links: a click navigates, no panel opens, the category is marked', async ({ page }) => {
   await page.goto('/dashboard');
   await expect(panel(page)).toHaveAttribute('data-state', 'open');
   const aside = page.locator('aside').first();
-  for (const [label, path] of [['ראשי', '/overview'], ['אבטחה', '/visitors'], ['הגדרות', '/settings']] as const) {
+  for (const [label, path] of [['ראשי', '/overview'], ['הגדרות', '/settings']] as const) {
     const control = railButton(page, label);
     // It IS a link — and not a disclosure button: no aria-expanded, no aria-controls.
     await expect(control).toHaveAttribute('data-nav-kind', 'link');
@@ -249,8 +258,9 @@ test('"ראשי", "אבטחה" and "הגדרות" are direct links: a click navi
     await expect(control).toHaveAttribute('data-selected', 'true');
     await expect(rail(page).locator('[data-selected="true"]')).toHaveCount(1);
   }
-  // The six categories with a panel are buttons, with aria-expanded.
-  for (const label of ['כספים', 'דיירים', 'תפוצה', 'תפעול', 'רכש', 'פורטל']) {
+  // The seven categories with a panel are buttons, with aria-expanded ("אבטחה" too, for whoever
+  // sees both of its items — as this user does).
+  for (const label of ['כספים', 'דיירים', 'תפוצה', 'תפעול', 'רכש', 'פורטל', 'אבטחה']) {
     await expect(railButton(page, label)).toHaveAttribute('data-nav-kind', 'panel');
     await expect(railButton(page, label)).toHaveAttribute('aria-expanded');
   }
@@ -385,15 +395,15 @@ test('phone: a link category navigates and closes the drawer; on its page the dr
   await expect(drawer).toBeVisible();
 
   // A link category navigates and closes the drawer, like an item does.
-  await drawer.locator('a[data-nav-category="security"]').click();
-  await expect(page).toHaveURL(/\/visitors$/);
+  await drawer.locator('a[data-nav-category="settings"]').click();
+  await expect(page).toHaveURL(/\/settings$/);
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // Reopened on that page: the rail alone again, its link marked.
   await page.getByRole('button', { name: 'פתח תפריט' }).click();
   const again = page.getByRole('dialog');
   await expect.poll(async () => Math.round((await again.boundingBox())!.width)).toBe(72);
-  await expect(again.locator('a[data-nav-category="security"]')).toHaveAttribute('data-selected', 'true');
+  await expect(again.locator('a[data-nav-category="settings"]')).toHaveAttribute('data-selected', 'true');
   await expect(again.locator('[data-nav-panel]')).toHaveCount(0);
 });
 

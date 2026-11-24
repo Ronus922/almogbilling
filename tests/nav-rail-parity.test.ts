@@ -11,6 +11,8 @@ import { PURCHASING_MODULES } from '@/lib/purchasing/access';
 // pinned "הגדרות". This is a navigation and design change ONLY — every item keeps the href,
 // module, action and role gate it had. `OLD` below is the previous list, copied from nav.tsx as
 // it stood before the change (labels left out on purpose: they are the one thing that moved).
+// 24/11/2026 (Ronen): "צ׳יפים" moved from "כספים" to "אבטחה" — the item alone, with the same href
+// and the same `chips` module gate, so the parity below still holds item by item.
 
 type Can = (module: string, action: Action) => boolean;
 interface OldItem {
@@ -100,13 +102,13 @@ describe('nav rail — the categories', () => {
       NAV_CATEGORIES.map((c) => ({ id: c.id, label: c.label, title: c.title, description: c.description, pinned: !!c.pinned, items: c.items.map((i) => i.label) })),
     ).toEqual([
       { id: 'home', label: 'ראשי', title: 'ראשי', description: 'מבט-על ופעולות מהירות', pinned: false, items: ['לוח מחוונים'] },
-      { id: 'finance', label: 'כספים', title: 'כספים וחיובים', description: 'חיובים, גבייה ושקיפות כספית', pinned: false, items: ['ניהול חיובים', 'ניהול סטטוס חיובים', 'סקירה חודשית', 'סעיפים והגדרות', 'צ׳יפים'] },
+      { id: 'finance', label: 'כספים', title: 'כספים וחיובים', description: 'חיובים, גבייה ושקיפות כספית', pinned: false, items: ['ניהול חיובים', 'ניהול סטטוס חיובים', 'סקירה חודשית', 'סעיפים והגדרות'] },
       { id: 'residents', label: 'דיירים', title: 'דיירים ותקשורת', description: 'דיירים, צ׳אטים וחניות', pinned: false, items: ['רשימת דיירים', 'צ׳אט וואטסאפ', 'צ׳אט פנימי', 'חניות ומחסנים'] },
       { id: 'broadcasts', label: 'תפוצה', title: 'תפוצה', description: 'שליחת הודעות לדיירים', pinned: false, items: ['תפוצה חדשה', 'תבניות', 'היסטוריית תפוצות'] },
       { id: 'ops', label: 'תפעול', title: 'תפעול ואחזקה', description: 'תקלות, משימות ולו"ז', pinned: false, items: ['תקלות', 'משימות', 'תזכורות', 'יומן', 'ניהול אזורים'] },
       { id: 'purchasing', label: 'רכש', title: 'רכש וספקים', description: 'הצעות מחיר, הזמנות ומסמכים', pinned: false, items: ['בקשות והזמנות', 'ספקים', 'מסמכים'] },
       { id: 'portal', label: 'פורטל', title: 'פורטל בעלי דירות', description: 'שקיפות והרשאות לבעלי הדירות', pinned: false, items: ['החלטות ופרוטוקולים', 'התחברויות לפורטל', 'משתמשים'] },
-      { id: 'security', label: 'אבטחה', title: 'אבטחה וביטחון', description: 'בקרת כניסה ומעקב', pinned: false, items: ['סריקת כניסה'] },
+      { id: 'security', label: 'אבטחה', title: 'אבטחה וביטחון', description: 'בקרת כניסה ומעקב', pinned: false, items: ['סריקת כניסה', 'צ׳יפים'] },
       { id: 'settings', label: 'הגדרות', title: 'הגדרות', description: 'הגדרות מערכת', pinned: true, items: ['הגדרות כלליות'] },
     ]);
   });
@@ -118,7 +120,7 @@ describe('nav rail — the categories', () => {
     expect(byHref('/broadcasts/new')).toBe('broadcasts');
     expect(byHref('/whatsapp-templates')).toBe('broadcasts');
     expect(byHref('/broadcasts/history')).toBe('broadcasts');
-    expect(byHref('/chips')).toBe('finance');
+    expect(byHref('/chips')).toBe('security');
     expect(byHref('/suppliers')).toBe('purchasing');
     expect(byHref('/documents')).toBe('purchasing');
     expect(byHref('/visitors')).toBe('security');
@@ -129,6 +131,18 @@ describe('nav rail — the categories', () => {
       filterNav(role, (m, a) => hasPermission(role, perms, m, a)).categories.map((c) => c.id);
     expect(ids('guard', [])).toEqual(['security']);
     expect(ids('viewer', DEFAULT_VIEWER)).toEqual(['finance']);
+    // "צ׳יפים" sits in "אבטחה" since 24/11/2026: whoever holds the chips module finds it there,
+    // and "כספים" no longer lists it for anyone.
+    const security = (role: Role, perms: ModulePermission[]) =>
+      filterNav(role, (m, a) => hasPermission(role, perms, m, a)).categories.find((c) => c.id === 'security')?.items.map((i) => i.href);
+    expect(security('guard', [])).toEqual(['/visitors']);
+    expect(security('admin', [])).toEqual(['/visitors', '/chips']);
+    expect(security('manager', DEFAULT_MANAGER)).toEqual(['/chips']);
+    expect(security('viewer', DEFAULT_VIEWER)).toBeUndefined();
+    for (const role of ['admin', 'manager'] as const) {
+      const finance = filterNav(role, (m, a) => hasPermission(role, role === 'manager' ? DEFAULT_MANAGER : [], m, a)).categories.find((c) => c.id === 'finance');
+      expect(finance?.items.map((i) => i.href)).not.toContain('/chips');
+    }
     expect(ids('viewer', [])).toEqual([]);
     expect(ids('admin', [])).toEqual(NAV_CATEGORIES.map((c) => c.id));
   });
