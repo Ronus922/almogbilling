@@ -2,6 +2,8 @@ import { test, expect, type Locator, type Page } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
 import ExcelJS from 'exceljs';
 import { Pool } from 'pg';
+import { readFileSync } from 'node:fs';
+import { paintedText } from '../tests/helpers/pdf-painted';
 import { StorageStub } from './visitors-stubs';
 
 // Chip orders in the browser — the 20/11/2026 redesign (ref/chip-order) with
@@ -42,7 +44,14 @@ import { StorageStub } from './visitors-stubs';
 //     the buttons why it is off; the Orders tab has a quick status button per
 //     row ("מוכן לאיסוף" / "נאסף", each asking first), a search by apartment
 //     number and by name, "ייצוא לאקסל" and "הדפסה"; and "צ׳יפים" sits under
-//     "אבטחה" in the menu.
+//     "אבטחה" in the menu;
+//   · 25/11/2026, fourth round (Ronen): the Orders table has a "תגיות" column
+//     of its own and every value sits under its header; while chips are
+//     missing the action column holds a plain label "בהמתנה" — no button; and
+//     both tabs carry the same three buttons — "הדפסה", "ייצוא לאקסל",
+//     "הורדה ל-PDF" — on the rows the tab shows. The PDF is read back by what
+//     is painted (tests/helpers/pdf-painted.ts): Hebrew right to left, a phone
+//     and a date in their reading order.
 // Real orders are seeded straight into the DB (paid = what Grow's verified
 // callback leaves); fixtures are numeric apartments, removed by exact ids.
 // Supabase Storage is the in-process stand-in of visitors-stubs.ts (CI runs
@@ -65,6 +74,9 @@ const APT_ROW = `993${tag}1`; // the quick status button of a row: an order of t
 const APT_ROW_B = `993${tag}2`; // …and its second apartment
 const APT_S1 = `993${tag}3`; // search / Excel / print: an owner and a renter
 const APT_S2 = `993${tag}4`; // search / Excel / print: another order
+const APT_T1 = `993${tag}5`; // the table's columns: an ordinary order…
+const APT_T2 = `993${tag}6`; // …and a test order with every tag
+const APT_CH = `993${tag}7`; // the chips tab: print / Excel / PDF
 const APT_LIMIT_MSG = 'ניתן להזמין עד 10 כרטיסים לדירה בהזמנה אחת. לכמות גדולה יותר יש לפנות להנהלת הבניין.';
 const PUB_NOTE = 'אני מבקש למסור את הכרטיסים לשכן מדירה 5';
 const P_OWNER = '+972539300001';
@@ -213,6 +225,110 @@ function dateInIsrael(at: Date): string {
   return `${p.day}/${p.month}/${p.year}`;
 }
 
+/** A string as a right-to-left line is painted in a PDF: back to front. */
+const rev = (s: string) => Array.from(s).reverse().join('');
+
+/** The Orders table, measured: for every column, how far each body cell is
+ *  from its header. The cell's own box must be the header cell's box (the
+ *  same grid track), it must carry the header's alignment, and what it holds
+ *  must sit where the header's label sits — the same start edge, or centre
+ *  under centre. Returns what is off; an empty list = every value under its
+ *  header. An empty cell (a row with no tag) has nothing to measure. */
+function offItsHeader(table: Locator): Promise<string[]> {
+  return table.evaluate((root) => {
+    const ink = (el: Element) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const rects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+      return rects.length === 0 ? null : { left: Math.min(...rects.map((r) => r.left)), right: Math.max(...rects.map((r) => r.right)) };
+    };
+    const off: string[] = [];
+    const rows = [...root.querySelectorAll('[data-testid="chip-order-row"]')];
+    for (const head of root.querySelectorAll<HTMLElement>('[data-testid="chip-orders-head"] [data-col]')) {
+      const col = head.dataset.col!;
+      const align = getComputedStyle(head).textAlign;
+      const label = ink(head)!;
+      const headBox = head.getBoundingClientRect();
+      rows.forEach((row, n) => {
+        const cell = row.querySelector<HTMLElement>(`[data-col="${col}"]`);
+        if (!cell) { off.push(`${col}, row ${n + 1}: no cell`); return; }
+        const box = cell.getBoundingClientRect();
+        if (Math.abs(box.left - headBox.left) > 0.5 || Math.abs(box.right - headBox.right) > 0.5) off.push(`${col}, row ${n + 1}: the cell is not under the header cell`);
+        if (getComputedStyle(cell).textAlign !== align) off.push(`${col}, row ${n + 1}: aligned ${getComputedStyle(cell).textAlign}, the header ${align}`);
+        const value = ink(cell);
+        if (!value) return;
+        const away = align === 'center' ? (value.left + value.right) / 2 - (label.left + label.right) / 2 : value.right - label.right;
+        if (Math.abs(away) > 1) off.push(`${col}, row ${n + 1}: ${Math.round(away * 10) / 10}px away from its header`);
+      });
+    }
+    return off;
+  });
+}
+
+/** The three export buttons of a tab, as they look: the labels in their
+ *  order, the look they share, and where the group stands in the toolbar. */
+function exportButtons(page: Page, prefix: 'chips' | 'chip-orders') {
+  return page.getByTestId(`${prefix}-exports`).evaluate((group) => {
+    const buttons = [...group.querySelectorAll('button')];
+    const look = (b: HTMLElement) => {
+      const cs = getComputedStyle(b);
+      return [cs.height, cs.fontSize, cs.fontWeight, cs.borderRadius, cs.borderTopWidth, cs.color, cs.backgroundColor].join(' ');
+    };
+    const end = group.parentElement!;
+    return {
+      labels: buttons.map((b) => b.textContent?.trim()),
+      looks: [...new Set(buttons.map(look))],
+      // The group closes the toolbar's far-end group, right after the search box.
+      lastInToolbar: end.lastElementChild === group && end.parentElement!.lastElementChild === end,
+      afterSearch: group.previousElementSibling?.querySelector('input') !== null,
+    };
+  });
+}
+
+/** Presses a download button and reads the file it hands over. */
+async function download(page: Page, testId: string): Promise<{ name: string; bytes: Buffer }> {
+  const downloading = page.waitForEvent('download');
+  await page.getByTestId(testId).click();
+  const file = await downloading;
+  return { name: file.suggestedFilename(), bytes: readFileSync((await file.path())!) };
+}
+
+interface Printed { text: string; dir: string; shown: string; controls: number; restHidden: boolean; headers: (string | null)[]; rows: number }
+
+/** Presses "הדפסה" with `window.print` replaced by a probe that reads the page
+ *  as the printer would get it (print media): the print-only table, and
+ *  whether everything else on the page is hidden. */
+async function printed(page: Page, testId: string): Promise<Printed> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __printed: unknown };
+    w.__printed = null;
+    window.print = () => {
+      const root = document.getElementById('chips-print-root');
+      w.__printed = root && {
+        text: root.innerText,
+        dir: getComputedStyle(root).direction,
+        shown: getComputedStyle(root).display,
+        controls: root.querySelectorAll('button, a, input').length,
+        restHidden: [...document.body.children].filter((el) => el !== root).every((el) => getComputedStyle(el).display === 'none'),
+        headers: [...root.querySelectorAll('th')].map((th) => th.textContent),
+        rows: root.querySelectorAll('tbody tr').length,
+      };
+      // What a browser does when its print dialog closes — the page takes
+      // the print-only table down on this, not when print() returns.
+      window.dispatchEvent(new Event('afterprint'));
+    };
+  });
+  await page.emulateMedia({ media: 'print' });
+  // In print media the screen itself is hidden — the click is a DOM click.
+  await page.getByTestId(testId).evaluate((button: HTMLElement) => button.click());
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __printed: unknown }).__printed !== null)).toBe(true);
+  const result = await page.evaluate(() => (window as unknown as { __printed: Printed }).__printed);
+  await page.emulateMedia({ media: null });
+  // On the screen the print-only table never shows, and it is gone afterwards.
+  await expect(page.locator('#chips-print-root')).toHaveCount(0);
+  return result;
+}
+
 /** The width the issue window takes in a viewport: 60% of it, never under
  *  780px, never wider than the screen. */
 const panelWidth = (viewport: number) => Math.min(Math.max(0.6 * viewport, 780), viewport);
@@ -225,7 +341,7 @@ function fieldSizes(issue: Locator): Promise<string[]> {
 }
 
 test.beforeAll(async () => {
-  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2]) {
+  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2, APT_T1, APT_T2, APT_CH]) {
     const c = await pool.query<{ id: string }>(`insert into public.contacts (apartment_number) values ($1) returning id`, [apt]);
     made.contacts[apt] = c.rows[0]!.id;
   }
@@ -775,10 +891,11 @@ test.describe('staff: the look of the issue window', () => {
   });
 });
 
-// The Orders tab itself (24/11/2026): the quick status button of a row, the
-// search, "ייצוא לאקסל" and "הדפסה". Orders of its own.
+// The Orders tab itself (24/11/2026): the action column of a row, the table's
+// columns, the search, and the three export buttons — which the chips tab
+// carries too. Orders of its own.
 test.describe('staff: the Orders tab', () => {
-  test('the quick status button of a row: off with the reason until every chip of the ORDER is issued; "מוכן לאיסוף" and "נאסף" ask first, never open the window, and the rows follow in place — also on a phone card', async ({ page }) => {
+  test('the action column of a row: a plain "בהמתנה" with what is missing — no button — until every chip of the ORDER is issued; then "מוכן לאיסוף" and "נאסף" ask first, never open the window, and the rows follow in place — also on a phone card', async ({ page }) => {
     const o = await seedPaidOrder([
       { apt: APT_ROW, role: 'owner', name: 'רותם שורה', phone: P_OWNER, qty: 1 },
       { apt: APT_ROW_B, role: 'owner', name: 'רותם שורה', phone: P_OWNER, qty: 1 },
@@ -794,12 +911,17 @@ test.describe('staff: the Orders tab', () => {
     const blocks = issue.getByTestId('chip-holder-block');
     const dialog = page.getByRole('alertdialog');
 
-    // Nothing is issued: "מוכן לאיסוף" is off, the reason is written under it,
+    // Nothing is issued: there is NO "מוכן לאיסוף" at all — a dimmed one read
+    // as if the order were ready. The row waits: a plain label, with what is
+    // missing written under it; nothing in the action column can be pressed,
     // and "נאסף" is not offered before its turn.
     for (const r of [rowA, rowB]) {
-      await expect(r.getByTestId('chip-order-row-ready')).toBeDisabled();
-      await expect(r.getByTestId('chip-order-row-reason')).toHaveText('חסרים 2 צ׳יפים בהזמנה');
+      await expect(r.getByTestId('chip-order-row-ready')).toHaveCount(0);
       await expect(r.getByTestId('chip-order-row-collected')).toHaveCount(0);
+      const waiting = r.getByTestId('chip-order-row-waiting');
+      await expect(waiting).toContainText('בהמתנה');
+      await expect(waiting.getByTestId('chip-order-row-reason')).toHaveText('חסרים 2 צ׳יפים בהזמנה');
+      await expect(r.locator('[data-col="action"]').locator('button, a, [role="button"]')).toHaveCount(0);
     }
     // A 1024px window with the menu panel open leaves the card narrower than
     // the table: the table scrolls sideways inside the card, and the action
@@ -807,25 +929,31 @@ test.describe('staff: the Orders tab', () => {
     await page.setViewportSize({ width: 1024, height: 800 });
     const table = page.getByTestId('chip-orders-table');
     expect(await table.evaluate((el) => el.scrollWidth > el.parentElement!.clientWidth), 'the table is wider than its card at 1024').toBe(true);
-    await expect(rowA.getByTestId('chip-order-row-ready')).toBeInViewport({ ratio: 1 });
+    await expect(rowA.getByTestId('chip-order-row-waiting')).toBeInViewport({ ratio: 1 });
     await expect(rowA.getByTestId('chip-order-row-reason')).toBeInViewport({ ratio: 1 });
     await noSideScroll(page);
     // The assistant's floating button lives in that same corner of the screen.
     // Scrolled to the end, the LAST row's button is clear of it: the card
     // leaves room under itself.
     await page.locator('main').evaluate((el) => el.scrollTo(0, el.scrollHeight));
-    const lastButton = (await table.getByTestId('chip-order-row').last()
-      .locator('[data-testid="chip-order-row-ready"], [data-testid="chip-order-row-collected"]').boundingBox())!;
+    const lastAction = (await table.getByTestId('chip-order-row').last()
+      .locator('[data-testid="chip-order-row-waiting"], [data-testid="chip-order-row-ready"], [data-testid="chip-order-row-collected"]').boundingBox())!;
     const floating = (await page.locator('[data-agent-fab]').boundingBox())!;
-    expect(lastButton.y + lastButton.height, 'the last row\'s button ends above the floating button').toBeLessThanOrEqual(floating.y);
+    expect(lastAction.y + lastAction.height, 'the last row\'s action ends above the floating button').toBeLessThanOrEqual(floating.y);
     await page.locator('main').evaluate((el) => el.scrollTo(0, 0));
     await page.setViewportSize({ width: 1280, height: 720 });
 
-    // A button lives inside the row now, so the row itself is no button: a
+    // A button may live inside the row, so the row itself is no button: a
     // mouse click anywhere on it opens the window, and for the keyboard (and
     // a screen reader) the orderer's name is the button that does.
     expect(await rowA.getAttribute('role')).toBeNull();
     await rowA.getByRole('button', { name: 'רותם שורה', exact: true }).press('Enter');
+    await expect(issue).toBeVisible();
+    await issue.getByTestId('chip-issue-close').click();
+    await expect(issue).toHaveCount(0);
+    // The waiting label holds no click of its own: pressed, the row under it
+    // opens the issue window — which is where the missing chips are issued.
+    await rowA.getByTestId('chip-order-row-waiting').click();
     await expect(issue).toBeVisible();
     await issue.getByTestId('chip-issue-close').click();
     await expect(issue).toHaveCount(0);
@@ -839,7 +967,8 @@ test.describe('staff: the Orders tab', () => {
     await issue.getByTestId('chip-issue-close').click();
     await expect(issue).toHaveCount(0);
     await expect(rowA.getByTestId('chip-order-stage')).toHaveText('שויך');
-    await expect(rowA.getByTestId('chip-order-row-ready')).toBeDisabled();
+    await expect(rowA.getByTestId('chip-order-row-ready')).toHaveCount(0);
+    await expect(rowA.getByTestId('chip-order-row-waiting')).toContainText('בהמתנה');
     await expect(rowA.getByTestId('chip-order-row-reason')).toHaveText('חסר צ׳יפ אחד בהזמנה');
 
     await rowB.click();
@@ -849,10 +978,12 @@ test.describe('staff: the Orders tab', () => {
     await issue.getByTestId('chip-issue-close').click();
     await expect(issue).toHaveCount(0);
 
-    // Every chip of the order is issued and saved: the button is on, on both
-    // rows. It asks first — and it does not open the issue window.
+    // Every chip of the order is issued and saved: only now the button is
+    // there, on both rows, and the waiting label is gone. It asks first — and
+    // it does not open the issue window.
     for (const r of [rowA, rowB]) {
       await expect(r.getByTestId('chip-order-row-ready')).toBeEnabled();
+      await expect(r.getByTestId('chip-order-row-waiting')).toHaveCount(0);
       await expect(r.getByTestId('chip-order-row-reason')).toHaveCount(0);
     }
     await rowB.getByTestId('chip-order-row-ready').click();
@@ -905,7 +1036,7 @@ test.describe('staff: the Orders tab', () => {
     await page.setViewportSize({ width: 1280, height: 720 });
   });
 
-  test('search by apartment number and by name (the orderer, the people of the order); "ייצוא לאקסל" and "הדפסה" take the rows the search left', async ({ page }) => {
+  test('search by apartment number and by name (the orderer, the people of the order); "הדפסה", "ייצוא לאקסל" and "הורדה ל-PDF" take the rows the search left', async ({ page }) => {
     const s1 = await seedPaidOrder([
       { apt: APT_S1, role: 'owner', name: 'גדעון חיפוש', phone: '+972539300011', qty: 2 },
       { apt: APT_S1, role: 'tenant', name: 'רינה שוכרת', phone: P_RENTER, qty: 1, leaseEnd: '2030-01-31' },
@@ -933,21 +1064,19 @@ test.describe('staff: the Orders tab', () => {
     // Every word must be found: one order's name with the other's apartment is nothing.
     await search.fill(`גדעון ${APT_S2}`);
     await expect(page.getByTestId('chip-orders-no-match')).toContainText(`אין הזמנות עבור „גדעון ${APT_S2}”`);
-    await expect(page.getByTestId('chip-orders-export')).toBeDisabled();
-    await expect(page.getByTestId('chip-orders-print')).toBeDisabled();
+    for (const id of ['chip-orders-print', 'chip-orders-export', 'chip-orders-pdf']) await expect(page.getByTestId(id)).toBeDisabled();
     await search.fill(`גדעון ${APT_S1}`);
     await expect(rows).toHaveCount(1);
 
-    // "ייצוא לאקסל": the rows on the screen, in the agreed columns.
-    const headers = ['מס׳ הזמנה', 'תאריך הזמנה', 'שם המזמין', 'טלפון', 'דירה', 'בעלי הצ׳יפ', 'כמות', 'סה״כ (₪)', 'סטטוס', 'יעד להכנה', 'הזמנת בדיקה'];
-    const downloading = page.waitForEvent('download');
-    await page.getByTestId('chip-orders-export').click();
-    const download = await downloading;
-    expect(download.suggestedFilename()).toMatch(/^chip-orders_\d{4}-\d{2}-\d{2}\.xlsx$/);
+    // "ייצוא לאקסל": the rows on the screen, in the agreed columns — the tags
+    // right after the orderer, as in the table.
+    const headers = ['מס׳ הזמנה', 'תאריך הזמנה', 'שם המזמין', 'טלפון', 'תגיות', 'דירה', 'בעלי הצ׳יפ', 'כמות', 'סה״כ (₪)', 'סטטוס', 'יעד להכנה', 'הזמנת בדיקה'];
+    const excel = await download(page, 'chip-orders-export');
+    expect(excel.name).toMatch(/^chip-orders_\d{4}-\d{2}-\d{2}\.xlsx$/);
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.readFile((await download.path())!);
+    await wb.xlsx.load(excel.bytes as unknown as ArrayBuffer);
     const ws = wb.worksheets[0]!;
-    const cells = (n: number) => (ws.getRow(n).values as unknown[]).slice(1);
+    const cells = (n: number) => headers.map((_, i) => ws.getRow(n).getCell(i + 1).value);
     expect(ws.views[0]?.rightToLeft).toBe(true);
     expect(cells(1)).toEqual(headers);
     expect(ws.rowCount, 'the header and the one row the search left').toBe(2);
@@ -955,49 +1084,43 @@ test.describe('staff: the Orders tab', () => {
     // the DB — "today" would be wrong for a run that crosses midnight).
     const ordered = (await pool.query<{ created_at: Date }>(`select created_at from public.chip_orders where id = $1`, [s1.id])).rows[0]!.created_at;
     expect(cells(2)).toEqual([
-      s1.orderNumber, dateInIsrael(ordered), 'גדעון חיפוש', '0539300011', APT_S1, 'גדעון חיפוש, רינה שוכרת', 3, 150, 'ממתין לשיוך',
+      s1.orderNumber, dateInIsrael(ordered), 'גדעון חיפוש', '0539300011', null, APT_S1, 'גדעון חיפוש, רינה שוכרת', 3, 150, 'ממתין לשיוך',
       expect.stringMatching(/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/), 'לא',
     ]);
 
     // "הדפסה": the print dialog opens on a print-only table of the same rows —
     // right to left, and everything else on the page (the menu, the toolbar,
-    // every button) hidden. `window.print` is replaced by a probe that reads
-    // the page as the printer would get it (print media).
-    interface Printed { text: string; dir: string; shown: string; controls: number; restHidden: boolean; headers: (string | null)[]; rows: number }
-    await page.evaluate(() => {
-      const w = window as unknown as { __printed: unknown };
-      w.__printed = null;
-      window.print = () => {
-        const root = document.getElementById('chip-orders-print-root');
-        w.__printed = root && {
-          text: root.innerText,
-          dir: getComputedStyle(root).direction,
-          shown: getComputedStyle(root).display,
-          controls: root.querySelectorAll('button, a, input').length,
-          restHidden: [...document.body.children].filter((el) => el !== root).every((el) => getComputedStyle(el).display === 'none'),
-          headers: [...root.querySelectorAll('th')].map((th) => th.textContent),
-          rows: root.querySelectorAll('tbody tr').length,
-        };
-        // What a browser does when its print dialog closes — the page takes
-        // the print-only table down on this, not when print() returns.
-        window.dispatchEvent(new Event('afterprint'));
-      };
-    });
-    await page.emulateMedia({ media: 'print' });
-    // In print media the screen itself is hidden — the click is a DOM click.
-    await page.getByTestId('chip-orders-print').evaluate((button: HTMLElement) => button.click());
-    await expect.poll(() => page.evaluate(() => (window as unknown as { __printed: unknown }).__printed !== null)).toBe(true);
-    const printed = await page.evaluate(() => (window as unknown as { __printed: Printed }).__printed);
-    await page.emulateMedia({ media: null });
-    expect(printed).toMatchObject({ dir: 'rtl', shown: 'block', controls: 0, restHidden: true, headers, rows: 1 });
-    expect(printed.text).toContain('הזמנות צ׳יפים פתוחות');
-    expect(printed.text).toContain(`סינון: „גדעון ${APT_S1}”`);
-    expect(printed.text).toContain('גדעון חיפוש, רינה שוכרת');
-    expect(printed.text).toContain(APT_S1);
-    expect(printed.text).not.toContain('מיכל אחרת');
-    // On the screen the print-only table never shows, and it is gone afterwards.
-    await expect(page.locator('#chip-orders-print-root')).toHaveCount(0);
+    // every button) hidden.
+    const paper = await printed(page, 'chip-orders-print');
+    expect(paper).toMatchObject({ dir: 'rtl', shown: 'block', controls: 0, restHidden: true, headers, rows: 1 });
+    expect(paper.text).toContain('הזמנות צ׳יפים פתוחות');
+    expect(paper.text).toContain('סה״כ 1 שורות');
+    expect(paper.text).toContain(`סינון: „גדעון ${APT_S1}”`);
+    expect(paper.text).toContain('גדעון חיפוש, רינה שוכרת');
+    expect(paper.text).toContain(APT_S1);
+    expect(paper.text).not.toContain('מיכל אחרת');
     await expect(rows).toHaveCount(1);
+
+    // "הורדה ל-PDF": a real PDF file of the same rows, read back by what is
+    // PAINTED — a Hebrew word goes on the page back to front (the glyphs are
+    // laid left to right), a phone, an apartment number and a date do not.
+    const pdf = await download(page, 'chip-orders-pdf');
+    expect(pdf.name).toMatch(/^chip-orders_\d{4}-\d{2}-\d{2}\.pdf$/);
+    expect(pdf.bytes.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(pdf.bytes.length, 'a real file, with its fonts inside').toBeGreaterThan(10_000);
+    const file = pdf.bytes.toString('latin1');
+    expect(file).toContain('/FontFile2'); // an embedded font program…
+    expect(file).toContain('/BaseFont /Heebo'); // …the Hebrew one
+    const ink = paintedText(pdf.bytes);
+    expect(ink.every((p) => p.text !== null), 'nothing is drawn with a font that is not in the file').toBe(true);
+    const lines = ink.map((p) => p.text);
+    expect(lines).toContain(rev('הזמנות צ׳יפים פתוחות')); // the title: the tab
+    expect(lines.some((l) => /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2} /.test(l!) && l!.endsWith(rev('תאריך הפקה:'))), 'the date, in its reading order').toBe(true);
+    expect(lines).toContain(rev('גדעון חיפוש'));
+    expect(lines).toContain(`${rev('רינה שוכרת')} ,${rev('גדעון חיפוש')}`);
+    for (const asIs of ['0539300011', APT_S1, String(s1.orderNumber), dateInIsrael(ordered), '150', '3']) expect(lines, asIs).toContain(asIs);
+    expect(lines).toContain(`1 ${rev('מתוך')} 1 ${rev('עמוד')}`); // the page number
+    expect(lines.some((l) => l!.includes(rev('מיכל'))), 'the row the search hid is not in the file').toBe(false);
 
     // The other print view that shares print.css must still print: the debtor
     // card's own print page (what the tenant panel's printer button and the
@@ -1011,6 +1134,226 @@ test.describe('staff: the Orders tab', () => {
     await page.emulateMedia({ media: 'print' });
     expect(await card.evaluate((el) => getComputedStyle(el).display), 'the debtor card in print media').toBe('block');
     await page.emulateMedia({ media: null });
+  });
+
+  test('the table: מזמין · תגיות · דירה · כמות · תאריך הזמנה · סטטוס · פעולה — the tags in a column of their own, every value under its header, and a tidy phone card with the same facts', async ({ page }) => {
+    const plain = await seedPaidOrder([{ apt: APT_T1, role: 'owner', name: 'אביגיל עמודות', phone: '+972539300021', qty: 2 }]);
+    // A test order that carries every tag: made in test mode, its phone never
+    // proved, and a message to its orderer that failed.
+    const flagged = await seedPaidOrder([{ apt: APT_T2, role: 'tenant', name: 'בועז תגיות', phone: '+972539300022', qty: 1, leaseEnd: '2030-01-31' }]);
+    // (A test order never went through Grow — the table refuses one that carries Grow's ids.)
+    await pool.query(
+      `update public.chip_orders set is_test = true, phone_verified = false, role = 'tenant', grow_process_id = null, grow_transaction_id = null where id = $1`,
+      [flagged.id],
+    );
+    await pool.query(
+      `insert into public.chip_order_notifications (order_id, kind, channel, status, error) values ($1, 'paid', 'email', 'failed', 'e2e')`, [flagged.id],
+    );
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto('/chips?view=orders');
+      const table = page.getByTestId('chip-orders-table');
+      const rowPlain = orderRow(page, APT_T1);
+      const rowFlagged = orderRow(page, APT_T2);
+      await expect(rowPlain).toHaveCount(1);
+      await expect(rowFlagged).toHaveCount(1);
+
+      // The columns, right to left.
+      const heads = table.getByTestId('chip-orders-head').locator('[data-col]');
+      await expect(heads).toHaveText(['מזמין', 'תגיות', 'דירה', 'כמות', 'תאריך הזמנה', 'סטטוס', 'פעולה']);
+      const headX = await heads.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().right));
+      expect([...headX].sort((a, b) => b - a), 'the first column is the right-most').toEqual(headX);
+
+      // The orderer's column: the name, the role and the phone under it — and
+      // no tag. Every tag of the row stands in the tags column.
+      const orderer = rowFlagged.locator('[data-col="orderer"]');
+      await expect(orderer).toHaveText(/^בועז תגיותשוכר · 0539300022$/);
+      await expect(orderer.locator('[data-testid^="chip-order-"]')).toHaveCount(0);
+      const tags = rowFlagged.locator('[data-col="tags"]');
+      await expect(tags.getByTestId('chip-order-test-badge')).toHaveText('בדיקה');
+      await expect(tags.getByTestId('chip-order-phone-unverified')).toHaveText('טלפון לא אומת');
+      await expect(tags.getByTestId('chip-order-notify-failed')).toHaveText('הודעה נכשלה');
+      // An ordinary order has none: its name starts exactly where the other's does.
+      await expect(rowPlain.locator('[data-col="tags"]')).toHaveText('');
+      await expect(rowPlain.locator('[data-col="orderer"]')).toHaveText(/^אביגיל עמודותבעלים · 0539300021$/);
+      const nameEdge = (row: Locator) => row.locator('[data-col="orderer"] button').evaluate((el) => el.getBoundingClientRect().right);
+      expect(Math.abs((await nameEdge(rowPlain)) - (await nameEdge(rowFlagged))), 'names start on one line, tag or no tag').toBeLessThanOrEqual(0.5);
+
+      // Every value under its header — the cell in the header's track, with
+      // the header's alignment, and its content where the label is. Measured
+      // with the menu panel open and closed, and at a laptop's width.
+      expect(await offItsHeader(table), 'at 1440px').toEqual([]);
+      await page.setViewportSize({ width: 1280, height: 800 });
+      expect(await offItsHeader(table), 'at 1280px').toEqual([]);
+      await page.setViewportSize({ width: 1920, height: 1000 });
+      expect(await offItsHeader(table), 'at 1920px').toEqual([]);
+      // Narrower than the table (1024px with the menu panel open): the table
+      // scrolls inside the card, and the columns still answer their headers —
+      // the pinned action column too.
+      await page.setViewportSize({ width: 1024, height: 800 });
+      expect(await offItsHeader(table), 'at 1024px').toEqual([]);
+      await noSideScroll(page);
+      // The three number columns are centred under their headers, the text
+      // columns start at the header's start edge.
+      const aligns = await heads.evaluateAll((els) => els.map((el) => getComputedStyle(el).textAlign));
+      expect(aligns).toEqual(['start', 'start', 'center', 'center', 'center', 'start', 'start']);
+
+      // A phone card holds the same facts, each on its own line: who (the name,
+      // the role and the phone), the tags, what was ordered, the stage, the step.
+      await page.setViewportSize({ width: 390, height: 844 });
+      const card = page.getByTestId('chip-order-card').filter({ hasText: APT_T2 });
+      await expect(card).toBeVisible();
+      await expect(card).toContainText('בועז תגיות');
+      await expect(card).toContainText('שוכר · 0539300022');
+      await expect(card).toContainText(`דירה ${APT_T2} · 1 צ׳יפים`);
+      await expect(card.getByTestId('chip-order-card-tags').locator('[data-testid^="chip-order-"]')).toHaveCount(3);
+      await expect(card.getByTestId('chip-order-stage')).toHaveText('ממתין לשיוך');
+      await expect(card.getByTestId('chip-order-row-waiting')).toContainText('בהמתנה');
+      await expect(card.getByTestId('chip-order-row-reason')).toHaveText('חסר צ׳יפ אחד');
+      // The lines follow each other, none beside another, nothing cut.
+      const tops = await card.evaluate((el) => [...el.children].map((c) => Math.round(c.getBoundingClientRect().top)));
+      expect([...tops].sort((a, b) => a - b), 'one fact under the other').toEqual(tops);
+      expect(new Set(tops).size).toBe(tops.length);
+      expect(await card.evaluate((el) => el.scrollWidth - el.clientWidth), 'nothing sticks out of the card').toBeLessThanOrEqual(0);
+      await noSideScroll(page);
+      const plainCard = page.getByTestId('chip-order-card').filter({ hasText: APT_T1 });
+      await expect(plainCard.getByTestId('chip-order-card-tags')).toHaveCount(0);
+      await expect(plainCard).toContainText('בעלים · 0539300021');
+      await noSideScroll(page);
+      await page.setViewportSize({ width: 320, height: 700 });
+      await noSideScroll(page);
+
+      // The tags travel with the row: in the Excel file they are words.
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await page.getByTestId('chip-orders-search').fill(APT_T2);
+      await expect(table.getByTestId('chip-order-row')).toHaveCount(1);
+      const excel = await download(page, 'chip-orders-export');
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(excel.bytes as unknown as ArrayBuffer);
+      expect(wb.worksheets[0]!.getRow(1).getCell(5).value).toBe('תגיות');
+      expect(wb.worksheets[0]!.getRow(2).getCell(5).value).toBe('בדיקה, טלפון לא אומת, הודעה נכשלה');
+      expect((await printed(page, 'chip-orders-print')).text).toContain('בדיקה, טלפון לא אומת, הודעה נכשלה');
+    } finally {
+      // A test-mode order must not stay behind for the tests that count them.
+      await pool.query(`delete from public.chip_orders where id = $1`, [flagged.id]);
+      await pool.query(`delete from public.chip_orders where id = $1`, [plain.id]);
+      await page.setViewportSize({ width: 1280, height: 720 });
+    }
+  });
+
+  test('the chips tab: "הדפסה", "ייצוא לאקסל" and "הורדה ל-PDF" take the rows the table shows — the same three buttons, at the same place, as the Orders tab', async ({ page }) => {
+    // Three chips of one apartment, straight into the DB: a card of the owner,
+    // a disabled app chip of the owner, and a guest's card.
+    const chips: [string, string, string, string, string, string | null, string][] = [
+      [`EX${tag}1`, 'physical', 'active', 'owner', 'בעלים ייצוא', null, '2026-11-03T10:00:00Z'],
+      [`EX${tag}2`, 'app', 'inactive', 'owner', 'בעלים ייצוא', 'lost', '2026-11-02T10:00:00Z'],
+      [`EX${tag}3`, 'physical', 'active', 'other', 'אורח ייצוא', null, '2026-11-01T10:00:00Z'],
+    ];
+    for (const [number, type, status, role, holder, reason, issued] of chips) {
+      await pool.query(
+        `insert into public.chips (chip_number, chip_type, contact_id, apartment_number, status, resident_role, holder_name, issued_at, issued_by_name, deactivation_reason)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, 'בודק ייצוא', $9)`,
+        [number, type, made.contacts[APT_CH], APT_CH, status, role, holder, issued, reason],
+      );
+    }
+    await page.goto('/chips');
+    const rows = page.getByTestId('chips-table').getByTestId('chips-row');
+    const search = page.getByPlaceholder('חפש לפי מספר צ׳יפ, מספר דירה או שם דייר');
+
+    // The same three buttons in both tabs: the labels and their order, one
+    // look, and one place — closing the toolbar, right after the search box.
+    const onChips = await exportButtons(page, 'chips');
+    expect(onChips.labels).toEqual(['הדפסה', 'ייצוא לאקסל', 'הורדה ל-PDF']);
+    expect(onChips.looks, 'the three buttons look alike').toHaveLength(1);
+    expect(onChips).toMatchObject({ lastInToolbar: true, afterSearch: true });
+    await page.getByRole('tab', { name: /הזמנות/ }).click();
+    await expect(page.getByTestId('chip-orders-search')).toBeVisible();
+    const onOrders = await exportButtons(page, 'chip-orders');
+    expect(onOrders.labels).toEqual(onChips.labels);
+    expect(onOrders).toMatchObject({ lastInToolbar: true, afterSearch: true });
+    await page.getByRole('tab', { name: /צ׳יפים/ }).click();
+
+    // The search narrows the table to the apartment (all statuses) — and the
+    // three exports take exactly those rows, in the table's order.
+    await search.fill(APT_CH);
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0)).toContainText(`EX${tag}1`);
+    const headers = ['מחזיק', 'דירה', 'תפקיד', 'מספר צ׳יפ', 'סוג', 'סטטוס', 'הונפק', 'מנפיק'];
+    const sheet = [
+      ['בעלים ייצוא', APT_CH, 'בעל דירה', `EX${tag}1`, 'כרטיס', 'פעיל', '03/11/2026', 'בודק ייצוא'],
+      ['בעלים ייצוא', APT_CH, 'בעל דירה', `EX${tag}2`, 'אפליקציה', 'לא פעיל', '02/11/2026', 'בודק ייצוא'],
+      ['אורח ייצוא', APT_CH, 'אורח', `EX${tag}3`, 'כרטיס', 'פעיל', '01/11/2026', 'בודק ייצוא'],
+    ];
+
+    const excel = await download(page, 'chips-export');
+    expect(excel.name).toMatch(/^chips_\d{4}-\d{2}-\d{2}\.xlsx$/);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(excel.bytes as unknown as ArrayBuffer);
+    const ws = wb.worksheets[0]!;
+    const cells = (n: number) => headers.map((_, i) => ws.getRow(n).getCell(i + 1).value);
+    expect(ws.name).toBe('צ׳יפים');
+    expect(ws.views[0]?.rightToLeft).toBe(true);
+    expect([1, 2, 3, 4].map(cells)).toEqual([headers, ...sheet]);
+    expect(ws.rowCount, 'the header and the three rows of the table').toBe(4);
+
+    const paper = await printed(page, 'chips-print');
+    expect(paper).toMatchObject({ dir: 'rtl', shown: 'block', controls: 0, restHidden: true, headers, rows: 3 });
+    expect(paper.text).toContain('צ׳יפים');
+    expect(paper.text).toContain('סה״כ 3 שורות');
+    expect(paper.text).toContain(`חיפוש: „${APT_CH}” (בכל הסטטוסים)`);
+    for (const [number] of chips) expect(paper.text).toContain(number);
+
+    const pdf = await download(page, 'chips-pdf');
+    expect(pdf.name).toMatch(/^chips_\d{4}-\d{2}-\d{2}\.pdf$/);
+    expect(pdf.bytes.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(pdf.bytes.length).toBeGreaterThan(10_000);
+    expect(pdf.bytes.toString('latin1')).toContain('/BaseFont /Heebo');
+    const ink = paintedText(pdf.bytes);
+    expect(ink.every((p) => p.text !== null), 'nothing is drawn with a font that is not in the file').toBe(true);
+    const lines = ink.map((p) => p.text);
+    expect(lines).toContain(rev('צ׳יפים')); // the title: the tab
+    expect(lines.some((l) => /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2} /.test(l!) && l!.endsWith(rev('תאריך הפקה:'))), 'the date').toBe(true);
+    // A chip number, an apartment and a date in their reading order; Hebrew back to front.
+    for (const asIs of [`EX${tag}1`, `EX${tag}2`, `EX${tag}3`, APT_CH, '03/11/2026']) expect(lines, asIs).toContain(asIs);
+    for (const hebrew of ['בעלים ייצוא', 'אורח ייצוא', 'בעל דירה', 'אורח', 'לא פעיל', 'אפליקציה', 'מספר צ׳יפ']) expect(lines, hebrew).toContain(rev(hebrew));
+    expect(lines).toContain(`1 ${rev('מתוך')} 1 ${rev('עמוד')}`);
+    // The table's order, top to bottom (a PDF's y grows upward).
+    const y = (number: string) => ink.find((p) => p.text === number)!.y;
+    expect(y(`EX${tag}1`)).toBeGreaterThan(y(`EX${tag}2`));
+    expect(y(`EX${tag}2`)).toBeGreaterThan(y(`EX${tag}3`));
+
+    // The status tabs narrow the files too: "לא פעילים" holds the disabled
+    // chip and not the two active ones — as many lines as the table has rows.
+    await search.fill('');
+    await page.getByRole('button', { name: 'לא פעילים', exact: true }).click();
+    await expect(rows.filter({ hasText: `EX${tag}2` })).toHaveCount(1);
+    await expect(rows.filter({ hasText: `EX${tag}1` })).toHaveCount(0);
+    const onScreen = await rows.count();
+    const inactive = new ExcelJS.Workbook();
+    await inactive.xlsx.load((await download(page, 'chips-export')).bytes as unknown as ArrayBuffer);
+    const numbers = (inactive.worksheets[0]!.getColumn(4).values as unknown[]).slice(2);
+    expect(numbers).toHaveLength(onScreen);
+    expect(numbers).toContain(`EX${tag}2`);
+    expect(numbers).not.toContain(`EX${tag}1`);
+    expect((await printed(page, 'chips-print')).text).toContain('סינון: לא פעילים');
+
+    // Nothing to export = nothing to press.
+    await search.fill(`אין-כזה-${tag}`);
+    await expect(rows).toHaveCount(0);
+    for (const id of ['chips-print', 'chips-export', 'chips-pdf']) await expect(page.getByTestId(id)).toBeDisabled();
+
+    // A phone: the three buttons stay whole inside the card, 44px each.
+    await search.fill(APT_CH);
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const id of ['chips-print', 'chips-export', 'chips-pdf']) {
+      const box = (await page.getByTestId(id).boundingBox())!;
+      expect(box.height, `${id}: a 44px touch target`).toBeGreaterThanOrEqual(44);
+      expect(await textLines(page.getByTestId(id)), `${id}: one line`).toBe(1);
+    }
+    await noSideScroll(page);
+    await page.setViewportSize({ width: 320, height: 700 });
+    await noSideScroll(page);
+    await page.setViewportSize({ width: 1280, height: 720 });
   });
 });
 

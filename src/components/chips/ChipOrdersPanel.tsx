@@ -9,23 +9,32 @@
 // for the keyboard and for a screen reader the orderer's NAME is the button
 // that opens it — the row itself carries no button role, because a button
 // (the quick status step) lives inside it.
-// Test orders carry a "בדיקה" badge, can be hidden, are never part of a
-// count, and "מחק את כל הזמנות הבדיקה" removes them all.
+// Test orders carry a "בדיקה" tag, can be hidden, are never part of a count,
+// and "מחק את כל הזמנות הבדיקה" removes them all.
 //
 // 24/11/2026 (Ronen):
 //   · a search box — by apartment number and by name (the orderer's and the
-//     people of the row), "ייצוא לאקסל" and "הדפסה": all three work on the rows
-//     the tab holds, nothing is fetched, and whoever sees the tab has them;
-//   · a quick status button per row, without opening the window — the order's
-//     NEXT step: "מוכן לאיסוף" (only once every chip of the whole order is
-//     issued and saved; otherwise off, with the reason written under it) or
-//     "נאסף" (a ready order). Each asks first. The same routes, permission
+//     people of the row) — "ייצוא לאקסל" and "הדפסה": all work on the rows the
+//     tab holds, nothing is fetched, and whoever sees the tab has them;
+//   · the action column — the order's NEXT step, without opening the window:
+//     "מוכן לאיסוף" once every chip of the whole order is issued and saved,
+//     "נאסף" for a ready order; each asks first. The same routes, permission
 //     (chips_orders_manage:edit), messages and audit rows as the window's
 //     buttons; "דחה" and "מחק הזמנת בדיקה" stay inside the window.
+// 25/11/2026 (Ronen):
+//   · while chips are missing the action column holds NO button: a plain label
+//     "בהמתנה" with what is missing under it — a dimmed "מוכן לאיסוף" read as
+//     if the order were ready;
+//   · tags ("בדיקה", "טלפון לא אומת", "הודעה נכשלה") have a column of their
+//     own, so the orderer's column is the name with the role and the phone
+//     under it, and nothing else;
+//   · every value sits under its header — see the note above COLS;
+//   · the toolbar and its three buttons — "הדפסה", "ייצוא לאקסל",
+//     "הורדה ל-PDF" — are the chips tab's too (ChipsToolbar, ChipListExports).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, Check, CheckCheck, FileSpreadsheet, FlaskConical, Inbox, Loader2, Printer, Search } from 'lucide-react';
+import { AlertTriangle, Check, CheckCheck, FlaskConical, Hourglass, Inbox, Loader2, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -38,15 +47,39 @@ import {
   CHIP_ORDER_ROLE_LABEL, chipOrderStage, isChipOrderOverdue, type ChipOrderRow,
 } from '@/lib/chipOrders/model';
 import {
-  chipOrderRowAction, filterChipOrderRows, searchHitPeople, summarizeChipOrders, type ChipOrderRowAction,
+  CHIP_ORDERS_EXPORT, CHIP_ORDER_WAITING_LABEL, chipOrderRowAction, chipOrderRowTags, filterChipOrderRows, searchHitPeople,
+  summarizeChipOrders, type ChipOrderRowAction,
 } from '@/lib/chipOrders/orderRows';
-import { exportChipOrdersExcel } from '@/lib/export/chip-orders-export';
-import { ChipOrderStagePill, ChipOrderTestBadge, ChipOrderUnverifiedPhoneBadge } from './ChipOrderStatusPill';
-import { PrintableChipOrders } from './PrintableChipOrders';
+import { ChipListExports } from './ChipListExports';
+import { CHIPS_SEARCH_INPUT, ChipsToolbar } from './ChipsToolbar';
+import { ChipOrderStagePill } from './ChipOrderStatusPill';
+import { ChipOrderTags } from './ChipOrderTags';
 
-// מזמין · דירה · כמות · תאריך הזמנה · סטטוס (· פעולה — with chips_orders_manage:edit)
-const COLS = 'grid-cols-[1.8fr_0.8fr_0.7fr_0.9fr_1.4fr]';
-const COLS_ACT = 'grid-cols-[1.8fr_0.8fr_0.7fr_0.9fr_1.4fr_1.25fr]';
+// מזמין · תגיות · דירה · כמות · תאריך הזמנה · סטטוס (· פעולה — with chips_orders_manage:edit)
+//
+// A VALUE SITS UNDER ITS HEADER (25/11/2026). The header row and every body
+// row are grids of their own, so they agree on the columns only if no track
+// is sized by what it holds. Every track here is a fixed width, or a share of
+// the row with a floor of its own — minmax(px, fr), never a bare `fr`, whose
+// floor is its content: one long name or a wide button would then push the
+// columns of that row alone. And a column has ONE alignment, written once in
+// COL and worn by its header cell and by its body cells alike: text columns
+// from the start edge, the three number columns centred.
+// The floors add up to the table's minimum width: 900px with the action
+// column, 738px without it (the table keeps its 760px).
+const COLS = 'grid-cols-[minmax(150px,1.5fr)_minmax(132px,1fr)_72px_56px_92px_minmax(128px,1.2fr)]';
+const COLS_ACT = 'grid-cols-[minmax(150px,1.5fr)_minmax(132px,1fr)_72px_56px_92px_minmax(128px,1.2fr)_150px]';
+const COL = {
+  orderer: 'text-start',
+  tags: 'text-start',
+  apartment: 'text-center',
+  quantity: 'text-center',
+  date: 'text-center',
+  status: 'text-start',
+  action: 'text-start',
+} as const;
+type Col = keyof typeof COL;
+
 const HEAD_CELL = 'text-[12px] font-bold uppercase tracking-[0.02em] text-[var(--chip-ink-soft)]';
 // The action column stays in sight: where the card is narrower than the table
 // (a 1024–1280px window with the menu panel open) the table scrolls sideways
@@ -57,14 +90,15 @@ const HEAD_CELL = 'text-[12px] font-bold uppercase tracking-[0.02em] text-[var(-
 // and a soft shadow on its start side — what scrolls under it reads as under.
 const ACT_CELL =
   'sticky end-0 z-[1] -me-6 self-stretch pe-6 ps-3 flex items-center @max-[899px]:border-s @max-[899px]:border-[var(--chip-border)] @max-[899px]:shadow-[10px_0_14px_-12px_rgba(20,27,52,0.28)]';
-// One line always: on the narrowest phones (under ~340px) the two buttons do
-// not fit side by side, so their row wraps and each takes a line of its own.
-const TOOL_BTN =
-  'inline-flex h-11 cursor-pointer items-center gap-2 whitespace-nowrap rounded-[11px] border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] px-3 text-[13.5px] font-semibold text-[var(--chip-ink-muted)] transition-colors hover:bg-[var(--chip-hover)] disabled:cursor-not-allowed disabled:opacity-50 sm:px-4';
 
 const DATE = new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: '2-digit' });
 
 type StatusStep = 'ready' | 'collected';
+
+/** A header cell: the column's name, in the column's alignment. */
+function Head({ col, className, children }: { col: Col; className?: string; children: string }) {
+  return <span data-col={col} className={cn(HEAD_CELL, COL[col], className)}>{children}</span>;
+}
 
 /** The orderer's name. Where rows open the issue window it is a real button —
  *  the row's handle for the keyboard and for assistive technology. */
@@ -74,54 +108,73 @@ function OrdererName({ name, onOpen, className }: { name: string; onOpen?: () =>
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onOpen(); }}
-      className={cn(className, 'cursor-pointer rounded-[4px] text-start focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--chip-brand)]')}
+      className={cn(className, 'max-w-full cursor-pointer self-start rounded-[4px] text-start focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--chip-brand)]')}
     >
       {name}
     </button>
   );
 }
 
-/** The quick status button of one row. The click and the keys stop here: the
- *  row behind it opens the issue window, and this button must not. */
+/** The orderer's column: the name, and under it the role and the phone. */
+function Orderer({ row, onOpen, nameClass }: { row: ChipOrderRow; onOpen?: () => void; nameClass: string }) {
+  return (
+    <>
+      <OrdererName name={row.full_name} onOpen={onOpen} className={cn('truncate font-bold text-[var(--chip-ink)]', nameClass)} />
+      <span className="truncate text-[12.5px] font-semibold text-[var(--chip-ink-muted)]">
+        {CHIP_ORDER_ROLE_LABEL[row.role]} · <span className="chip-num">{e164ToLocal(row.phone_e164)}</span>
+      </span>
+    </>
+  );
+}
+
+/** What the action column of one row holds. */
 function RowAction({
   action, wide, onAsk,
 }: {
   action: ChipOrderRowAction;
-  /** A phone card: the button fills the card's width and is 44px tall. */
+  /** A phone card: a button fills the card's width and is 44px tall. */
   wide: boolean;
   onAsk: (step: StatusStep) => void;
 }) {
+  // Chips are still missing: nothing to press. A label, not a button — and it
+  // does not hold the click, so the row under it opens the issue window, which
+  // is where the missing chips are issued.
+  if (action.kind === 'waiting') {
+    return (
+      <span className="inline-flex flex-col items-start gap-1" data-testid="chip-order-row-waiting">
+        <span className="inline-flex h-[24px] items-center gap-1 whitespace-nowrap rounded-[7px] border border-[var(--chip-border-strong)] bg-[var(--chip-hover)] px-2.5 text-[12px] font-bold text-[var(--chip-ink-muted)]">
+          <Hourglass className="h-3.5 w-3.5" />
+          {CHIP_ORDER_WAITING_LABEL}
+        </span>
+        <span data-testid="chip-order-row-reason" className="text-[11.5px] font-semibold leading-[1.35] text-[var(--chip-ink-muted)]">
+          {action.missing}
+        </span>
+      </span>
+    );
+  }
   const ready = action.kind === 'ready';
-  const off = ready && !action.enabled;
   return (
+    // The click and the keys stop here: the row behind the button opens the
+    // issue window, and the button must not.
     <span
-      className={cn('inline-flex flex-col gap-1', wide ? 'w-full items-stretch' : 'items-start')}
+      className={cn('inline-flex', wide && 'w-full')}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
       <button
         type="button"
-        disabled={off}
         onClick={() => onAsk(action.kind)}
         data-testid={ready ? 'chip-order-row-ready' : 'chip-order-row-collected'}
         className={cn(
-          'relative inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] px-3 text-[13px] font-bold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-45',
+          'relative inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] px-3 text-[13px] font-bold text-white transition-colors',
           // 36px in the table, with a 44px hit area around it; 44px on a card.
-          wide ? 'h-11' : "h-9 after:absolute after:inset-x-0 after:-inset-y-1 after:content-['']",
-          ready
-            ? 'bg-[var(--chip-brand)] hover:bg-[var(--chip-brand-hover)] disabled:hover:bg-[var(--chip-brand)]'
-            : 'bg-[var(--chip-green)] hover:bg-[var(--chip-green-ink)]',
+          wide ? 'h-11 w-full' : "h-9 after:absolute after:inset-x-0 after:-inset-y-1 after:content-['']",
+          ready ? 'bg-[var(--chip-brand)] hover:bg-[var(--chip-brand-hover)]' : 'bg-[var(--chip-green)] hover:bg-[var(--chip-green-ink)]',
         )}
       >
         {ready ? <Check className="h-4 w-4" strokeWidth={2.4} /> : <CheckCheck className="h-4 w-4" strokeWidth={2.2} />}
         {ready ? 'מוכן לאיסוף' : 'נאסף'}
       </button>
-      {/* Why the button is off — written out, not left to a tooltip. */}
-      {ready && action.reason && (
-        <span data-testid="chip-order-row-reason" className="text-[11.5px] font-semibold leading-[1.35] text-[var(--chip-amber-ink)]">
-          {action.reason}
-        </span>
-      )}
     </span>
   );
 }
@@ -134,7 +187,7 @@ export function ChipOrdersPanel({
   /** Opens the issue window on the row's apartment; absent = rows are not
    *  clickable (no chips:edit). */
   onOpen?: (row: ChipOrderRow) => void;
-  /** chips_orders_manage:edit — the quick status button of a row, and
+  /** chips_orders_manage:edit — the action column of a row, and
    *  "מחק את כל הזמנות הבדיקה". */
   canEdit?: boolean;
   /** Test orders never finished (not in `items`) — deleted with the rest. */
@@ -151,8 +204,6 @@ export function ChipOrdersPanel({
   const [ask, setAsk] = useState<{ step: StatusStep; row: ChipOrderRow } | null>(null);
   const [askOpen, setAskOpen] = useState(false);
   const [acting, setActing] = useState(false);
-  const [exporting, setExporting] = useState(false);
-  const [printRows, setPrintRows] = useState<ChipOrderRow[] | null>(null);
 
   const tests = useMemo(() => items.filter((o) => o.is_test), [items]);
   // The status belongs to the whole order: what a row may do is read from ALL
@@ -202,33 +253,6 @@ export function ChipOrdersPanel({
     }
   }
 
-  async function exportExcel() {
-    if (exporting || visible.length === 0) return;
-    setExporting(true);
-    try {
-      await exportChipOrdersExcel(visible);
-    } catch {
-      toast.error('הייצוא לאקסל נכשל');
-    } finally {
-      setExporting(false);
-    }
-  }
-
-  // Once the print-only table is in the DOM, open the print dialog. The table
-  // is taken down when the browser says the printing is over (`afterprint`),
-  // not when print() returns: where print() does not wait for the dialog (a
-  // phone), the page would be printed after the table is already gone.
-  useEffect(() => {
-    if (!printRows) return;
-    const done = () => setPrintRows(null);
-    window.addEventListener('afterprint', done);
-    const t = setTimeout(() => window.print(), 80);
-    return () => {
-      clearTimeout(t);
-      window.removeEventListener('afterprint', done);
-    };
-  }, [printRows]);
-
   // Mouse only — see the note at the top of the file (the name is the button).
   const rowProps = (o: ChipOrderRow) => (onOpen ? { onClick: () => onOpen(o) } : {});
 
@@ -238,16 +262,39 @@ export function ChipOrdersPanel({
   const askApartments = ask ? summaries.get(ask.row.order_id)?.apartments ?? [] : [];
 
   return (
-    // mb-16 with the quick buttons: the card is the LAST thing on the page, and
+    // mb-16 with the action column: the card is the LAST thing on the page, and
     // its buttons sit at the far edge — the corner of the assistant's floating
     // button (AgentFab, fixed bottom-6 left-6, 56px). Scrolled to the end, the
     // last row rises above it (the same room the paging control of other
     // screens leaves under itself).
     <div className={cn('overflow-hidden rounded-[16px] border border-[var(--chip-border)] bg-[var(--chip-panel)]', canEdit && 'mb-16')}>
-      {/* Toolbar: the test-orders controls (only while there are any) · search · Excel · print */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--chip-border)] px-[22px] py-4">
+      {/* Toolbar: the test-orders controls (only while there are any) · search · print · Excel · PDF */}
+      <ChipsToolbar
+        searchWidth="@min-[1140px]:w-[280px]"
+        search={
+          <Input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="חפש לפי דירה או שם"
+            aria-label="חיפוש בהזמנות לפי מספר דירה או שם"
+            data-testid="chip-orders-search"
+            className={CHIPS_SEARCH_INPUT}
+          />
+        }
+        exports={
+          <ChipListExports
+            list={CHIP_ORDERS_EXPORT}
+            rows={visible}
+            rowKey={(o) => o.item_id}
+            filter={searching ? [`סינון: „${query.trim()}”`] : []}
+            disabled={loading}
+            testId="chip-orders"
+          />
+        }
+      >
         {testCount > 0 && (
-          <div className="flex flex-wrap items-center gap-2">
+          <>
             <button
               type="button"
               aria-pressed={showTests}
@@ -273,36 +320,9 @@ export function ChipOrdersPanel({
                 מחק את כל הזמנות הבדיקה
               </button>
             )}
-          </div>
+          </>
         )}
-        {/* Pushed to the far end; drops to a line of its own when the card is too narrow for both groups. */}
-        <div className="flex w-full flex-col gap-2 sm:ms-auto sm:w-auto sm:flex-row sm:items-center">
-          <div className="relative w-full sm:w-[280px]">
-            <Search className="pointer-events-none absolute start-[13px] top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-[var(--chip-ink-soft)]" />
-            <Input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="חפש לפי דירה או שם"
-              aria-label="חיפוש בהזמנות לפי מספר דירה או שם"
-              data-testid="chip-orders-search"
-              className="h-11 rounded-[11px] border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] ps-[42px] pe-[14px] text-[14px] placeholder:text-[var(--chip-ink-soft)] focus-visible:border-[var(--chip-brand)] focus-visible:ring-4 focus-visible:ring-[rgba(61,90,254,0.12)]"
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" className={cn(TOOL_BTN, 'flex-1 justify-center sm:flex-none')} onClick={() => void exportExcel()} disabled={loading || exporting || visible.length === 0}
-              data-testid="chip-orders-export">
-              {exporting ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <FileSpreadsheet className="h-4 w-4 shrink-0" />}
-              ייצוא לאקסל
-            </button>
-            <button type="button" className={cn(TOOL_BTN, 'flex-1 justify-center sm:flex-none')} onClick={() => setPrintRows([...visible])} disabled={loading || visible.length === 0}
-              data-testid="chip-orders-print">
-              <Printer className="h-4 w-4 shrink-0" />
-              הדפסה
-            </button>
-          </div>
-        </div>
-      </div>
+      </ChipsToolbar>
 
       {loading ? (
         <div className="space-y-2 p-4">
@@ -332,13 +352,14 @@ export function ChipOrdersPanel({
           {/* Desktop table */}
           <div className="@container hidden overflow-x-auto sm:block">
             <div className={canEdit ? 'min-w-[900px]' : 'min-w-[760px]'} data-testid="chip-orders-table">
-              <div className={cn('grid items-center gap-3 border-b border-[var(--chip-border)] bg-[var(--chip-panel-alt)] px-6 py-[13px]', cols)}>
-                <span className={HEAD_CELL}>מזמין</span>
-                <span className={HEAD_CELL}>דירה</span>
-                <span className={cn(HEAD_CELL, 'text-center')}>כמות</span>
-                <span className={HEAD_CELL}>תאריך הזמנה</span>
-                <span className={HEAD_CELL}>סטטוס</span>
-                {canEdit && <span className={cn(HEAD_CELL, ACT_CELL, '-my-[13px] bg-[var(--chip-panel-alt)] py-[13px]')}>פעולה</span>}
+              <div data-testid="chip-orders-head" className={cn('grid items-center gap-3 border-b border-[var(--chip-border)] bg-[var(--chip-panel-alt)] px-6 py-[13px]', cols)}>
+                <Head col="orderer">מזמין</Head>
+                <Head col="tags">תגיות</Head>
+                <Head col="apartment">דירה</Head>
+                <Head col="quantity">כמות</Head>
+                <Head col="date">תאריך הזמנה</Head>
+                <Head col="status">סטטוס</Head>
+                {canEdit && <Head col="action" className={cn(ACT_CELL, '-my-[13px] bg-[var(--chip-panel-alt)] py-[13px]')}>פעולה</Head>}
               </div>
               {visible.map((o) => {
                 const action = actionOf(o);
@@ -354,30 +375,27 @@ export function ChipOrdersPanel({
                       cols,
                     )}
                   >
-                    <span className="flex min-w-0 flex-col gap-[2px]">
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <OrdererName name={o.full_name} onOpen={onOpen && (() => onOpen(o))} className="truncate text-[14.5px] font-bold text-[var(--chip-ink)]" />
-                        {o.is_test && <ChipOrderTestBadge />}
-                        {!o.phone_verified && <ChipOrderUnverifiedPhoneBadge />}
-                        {o.has_failed_notification && (
-                          <span title="שליחת הודעה נכשלה" className="shrink-0 text-[var(--chip-red)]">
-                            <AlertTriangle className="h-4 w-4" />
-                          </span>
-                        )}
-                      </span>
-                      <span className="text-[12.5px] font-semibold text-[var(--chip-ink-muted)]">
-                        {CHIP_ORDER_ROLE_LABEL[o.role]} · <span className="chip-num">{e164ToLocal(o.phone_e164)}</span>
-                      </span>
+                    <span data-col="orderer" className={cn(COL.orderer, 'flex min-w-0 flex-col gap-[2px]')}>
+                      <Orderer row={o} onOpen={onOpen && (() => onOpen(o))} nameClass="text-[14.5px]" />
                       {hits.length > 0 && (
                         <span className="truncate text-[12px] font-semibold text-[var(--chip-brand-ink)]" data-testid="chip-order-row-hit">
                           בעל צ׳יפ בהזמנה: {hits.join(', ')}
                         </span>
                       )}
                     </span>
-                    <span className="chip-num text-[14px] font-bold text-[var(--chip-ink)]">{o.apartment_number}</span>
-                    <span className="chip-num text-center text-[14px] font-bold text-[var(--chip-ink-muted)]">{o.chips_count}</span>
-                    <span className="chip-num text-[13px] font-semibold text-[var(--chip-ink-muted)]">{DATE.format(new Date(o.created_at))}</span>
-                    <span>
+                    <span data-col="tags" className={cn(COL.tags, 'flex min-w-0 flex-wrap items-center gap-1.5')}>
+                      <ChipOrderTags tags={chipOrderRowTags(o)} />
+                    </span>
+                    <span data-col="apartment" className={cn(COL.apartment, 'min-w-0 text-[14px] font-bold text-[var(--chip-ink)] [overflow-wrap:anywhere]')}>
+                      <span className="chip-num">{o.apartment_number}</span>
+                    </span>
+                    <span data-col="quantity" className={cn(COL.quantity, 'text-[14px] font-bold text-[var(--chip-ink-muted)]')}>
+                      <span className="chip-num">{o.chips_count}</span>
+                    </span>
+                    <span data-col="date" className={cn(COL.date, 'text-[13px] font-semibold text-[var(--chip-ink-muted)]')}>
+                      <span className="chip-num">{DATE.format(new Date(o.created_at))}</span>
+                    </span>
+                    <span data-col="status" className={cn(COL.status, 'min-w-0')}>
                       <ChipOrderStagePill
                         stage={chipOrderStage(o.status, o.chips_linked, o.chips_count)}
                         linked={o.chips_linked}
@@ -386,7 +404,10 @@ export function ChipOrdersPanel({
                       />
                     </span>
                     {canEdit && (
-                      <span className={cn(ACT_CELL, '-my-[12px] bg-[var(--chip-panel)] py-[12px] transition-colors', onOpen && 'group-hover:bg-[var(--chip-hover)]')}>
+                      <span
+                        data-col="action"
+                        className={cn(COL.action, ACT_CELL, '-my-[12px] bg-[var(--chip-panel)] py-[12px] transition-colors', onOpen && 'group-hover:bg-[var(--chip-hover)]')}
+                      >
                         {action && <RowAction action={action} wide={false} onAsk={askFor(o)} />}
                       </span>
                     )}
@@ -396,11 +417,12 @@ export function ChipOrdersPanel({
             </div>
           </div>
 
-          {/* Phone cards */}
+          {/* Phone cards — the same facts, top to bottom: who, the tags, what was ordered, where it stands, the next step. */}
           <div className="space-y-2 p-4 sm:hidden">
             {visible.map((o) => {
               const action = actionOf(o);
               const hits = searching ? searchHitPeople(o, query) : [];
+              const tags = chipOrderRowTags(o);
               return (
                 <div
                   key={o.item_id}
@@ -411,23 +433,28 @@ export function ChipOrdersPanel({
                     onOpen && 'cursor-pointer hover:bg-[var(--chip-hover)]',
                   )}
                 >
-                  <span className="flex w-full items-center gap-2">
-                    <OrdererName name={o.full_name} onOpen={onOpen && (() => onOpen(o))} className="min-w-0 flex-1 truncate text-[15px] font-bold text-[var(--chip-ink)]" />
-                    {o.is_test && <ChipOrderTestBadge />}
-                    {!o.phone_verified && <ChipOrderUnverifiedPhoneBadge />}
+                  <span className="flex min-w-0 flex-col gap-[2px]">
+                    <Orderer row={o} onOpen={onOpen && (() => onOpen(o))} nameClass="text-[15px]" />
                   </span>
+                  {tags.length > 0 && (
+                    <span className="flex flex-wrap items-center gap-1.5" data-testid="chip-order-card-tags">
+                      <ChipOrderTags tags={tags} />
+                    </span>
+                  )}
                   <span className="text-[12.5px] font-semibold text-[var(--chip-ink-muted)]">
                     דירה <span className="chip-num">{o.apartment_number}</span> · {o.chips_count} צ׳יפים · {DATE.format(new Date(o.created_at))}
                   </span>
                   {hits.length > 0 && (
                     <span className="text-[12px] font-semibold text-[var(--chip-brand-ink)]">בעל צ׳יפ בהזמנה: {hits.join(', ')}</span>
                   )}
-                  <ChipOrderStagePill
-                    stage={chipOrderStage(o.status, o.chips_linked, o.chips_count)}
-                    linked={o.chips_linked}
-                    ordered={o.chips_count}
-                    overdue={isChipOrderOverdue(o)}
-                  />
+                  <span>
+                    <ChipOrderStagePill
+                      stage={chipOrderStage(o.status, o.chips_linked, o.chips_count)}
+                      linked={o.chips_linked}
+                      ordered={o.chips_count}
+                      overdue={isChipOrderOverdue(o)}
+                    />
+                  </span>
                   {action && <RowAction action={action} wide onAsk={askFor(o)} />}
                 </div>
               );
@@ -498,8 +525,6 @@ export function ChipOrdersPanel({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      {printRows && <PrintableChipOrders rows={printRows} query={query} />}
     </div>
   );
 }

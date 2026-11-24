@@ -48,6 +48,11 @@ export const CHIP_TYPE_LABEL: Record<ChipType, string> = {
   app: 'אפליקציה',
 };
 
+export const CHIP_STATUS_LABEL: Record<ChipStatus, string> = {
+  active: 'פעיל',
+  inactive: 'לא פעיל',
+};
+
 // "אורח" is the screen name of the stored role `other` in the whole chips
 // module (Ronen, 24/11/2026): a temporary chip that the guard or the
 // management issues for a guest. Display text only — the DB value, the API

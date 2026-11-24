@@ -5,8 +5,8 @@
    other direct child of <body> (the app shell: sidebar, header, toolbar,
    pagination, toasts) and show only the print root.
 
-   A second print-only table lives here since 24/11/2026: the open chip
-   orders of /chips → "הזמנות" (PrintableChipOrders, #chip-orders-print-root),
+   A second print-only table lives here since 24/11/2026: the lists of /chips
+   — "הזמנות", and since 25/11/2026 "צ׳יפים" too (PrintableChipList, #chips-print-root),
    with the same look through the shared `.app-print-*` classes.
 
    DO NOT TOUCH THE HIDE RULE BELOW. Its specificity (1,0,1) is a contract:
@@ -20,7 +20,7 @@
    ───────────────────────────────────────────────────────────────────── */
 
 #debtors-print-root,
-#chip-orders-print-root {
+#chips-print-root {
   display: none;
 }
 
@@ -40,7 +40,7 @@
   }
 
   /* (1,0,2) — outranks the hide rule above, which matches this root too. */
-  body > div#chip-orders-print-root {
+  body > div#chips-print-root {
     display: block !important;
     direction: rtl;
     font-family: 'Heebo', system-ui, sans-serif;

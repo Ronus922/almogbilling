@@ -1,14 +1,19 @@
 import { e164ToLocal } from '@/lib/portal/phone';
-import { chipOrderStage, chipOrderStageLabel, isChipOrderOverdue, type ChipOrderRow } from './model';
+import { exportDate, exportDateTime, type ListExport } from '@/lib/export/list-export';
+import {
+  CHIP_ORDER_PHONE_UNVERIFIED_LABEL, CHIP_ORDER_TEST_LABEL, chipOrderStage, chipOrderStageLabel, isChipOrderOverdue,
+  type ChipOrderRow,
+} from './model';
 
 // The Orders tab of /chips (24/11/2026) — the pure, client-safe half of what
-// the tab does with its rows: the search, what the quick status button of a
-// row may do, and the columns of the Excel file and of the print view.
+// the tab does with its rows: the search, the tags of a row, what the action
+// column of a row offers, and the columns of the Excel file, of the print view
+// and of the PDF file.
 //
 // A ROW IS ONE APARTMENT OF AN ORDER, and everything here keeps that shape:
-// the search filters rows, the Excel file and the print view hold one line per
-// row on the screen. Only the status is wider than a row — it belongs to the
-// whole order — so the quick button is decided from all the order's rows.
+// the search filters rows, and the three exports hold one line per row on the
+// screen. Only the status is wider than a row — it belongs to the whole order
+// — so the action column is decided from all the order's rows.
 
 // ── Search ─────────────────────────────────────────────────────────────────
 
@@ -38,7 +43,30 @@ export function searchHitPeople(row: Searchable, query: string): string[] {
   return row.people.filter((p) => fold(p) !== orderer && words.some((w) => fold(p).includes(w)));
 }
 
-// ── The quick status button of a row ───────────────────────────────────────
+// ── The tags of a row ("תגיות") ────────────────────────────────────────────
+
+/** What a row is flagged with, in the order the tags are shown: a test-mode
+ *  order, a phone nobody proved (a test order made with "דלג על אימות"), and a
+ *  message to the orderer that failed to go out. */
+export type ChipOrderTag = 'test' | 'phone_unverified' | 'notify_failed';
+
+export const CHIP_ORDER_TAG_LABEL: Record<ChipOrderTag, string> = {
+  test: CHIP_ORDER_TEST_LABEL,
+  phone_unverified: CHIP_ORDER_PHONE_UNVERIFIED_LABEL,
+  notify_failed: 'הודעה נכשלה',
+};
+
+export function chipOrderRowTags(
+  row: Pick<ChipOrderRow, 'is_test' | 'phone_verified' | 'has_failed_notification'>,
+): ChipOrderTag[] {
+  const tags: ChipOrderTag[] = [];
+  if (row.is_test) tags.push('test');
+  if (!row.phone_verified) tags.push('phone_unverified');
+  if (row.has_failed_notification) tags.push('notify_failed');
+  return tags;
+}
+
+// ── The action column of a row ─────────────────────────────────────────────
 
 export interface ChipOrderSummary {
   /** Ordered chips not issued yet, over ALL the apartments of the order. */
@@ -67,13 +95,21 @@ export function missingChipsText(missing: number): string {
   return missing === 1 ? 'חסר צ׳יפ אחד' : `חסרים ${missing} צ׳יפים`;
 }
 
-/** The one status step a row offers without opening the window — the order's
- *  NEXT step: "מוכן לאיסוף" while it is being assigned (pressable only once
- *  every chip of the whole order is issued and saved — the server's own rule;
- *  otherwise off, with the reason), "נאסף" once it is ready. */
+/** What the action column of a row holds — the order's NEXT step, without
+ *  opening the window:
+ *    · waiting   — chips are still missing: nothing to press. A plain label
+ *                  ("בהמתנה") with what is missing under it. A dimmed
+ *                  "מוכן לאיסוף" read as if the order were ready (25/11/2026);
+ *    · ready     — every chip of the whole order is issued and saved (the
+ *                  server's own rule): the button "מוכן לאיסוף";
+ *    · collected — the order is ready: the button "נאסף". */
 export type ChipOrderRowAction =
-  | { kind: 'ready'; enabled: boolean; reason: string | null }
+  | { kind: 'waiting'; missing: string }
+  | { kind: 'ready' }
   | { kind: 'collected' };
+
+/** The label of a row that waits for its chips. */
+export const CHIP_ORDER_WAITING_LABEL = 'בהמתנה';
 
 export function chipOrderRowAction(
   row: Pick<ChipOrderRow, 'order_id' | 'status'>,
@@ -82,32 +118,12 @@ export function chipOrderRowAction(
   if (row.status === 'ready') return { kind: 'collected' };
   if (row.status !== 'paid' && row.status !== 'approved') return null;
   const missing = summary?.missing ?? 0;
-  if (missing === 0) return { kind: 'ready', enabled: true, reason: null };
+  if (missing === 0) return { kind: 'ready' };
   const several = (summary?.apartments.length ?? 1) > 1;
-  return { kind: 'ready', enabled: false, reason: several ? `${missingChipsText(missing)} בהזמנה` : missingChipsText(missing) };
+  return { kind: 'waiting', missing: several ? `${missingChipsText(missing)} בהזמנה` : missingChipsText(missing) };
 }
 
-// ── Excel + print: one column model ────────────────────────────────────────
-
-const IL = new Intl.DateTimeFormat('en-GB', {
-  timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-});
-
-function ilParts(iso: string): Record<string, string> {
-  return Object.fromEntries(IL.formatToParts(new Date(iso)).map((p) => [p.type, p.value]));
-}
-
-/** dd/mm/yyyy in Israel time. */
-export function formatOrderDate(iso: string): string {
-  const p = ilParts(iso);
-  return `${p.day}/${p.month}/${p.year}`;
-}
-
-/** dd/mm/yyyy hh:mm in Israel time. */
-export function formatOrderDateTime(iso: string): string {
-  const p = ilParts(iso);
-  return `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}`;
-}
+// ── Excel, print and PDF: one column model ─────────────────────────────────
 
 /** The people of a row. The server already names whoever ordered on a line
  *  that has no holder line of its own; the fallback here covers rows that
@@ -125,29 +141,30 @@ export function chipOrderRowStatusText(
   return isChipOrderOverdue(row, now) ? `${stage} · באיחור` : stage;
 }
 
-export interface ChipOrderExportColumn {
-  header: string;
-  /** number / money — numeric cells Excel can sum; ltr — a phone or a date,
-   *  kept as text and isolated left-to-right in print. */
-  kind: 'text' | 'number' | 'money' | 'ltr';
-  /** Excel column width (characters). Print ignores it. */
-  width: number;
-  get: (row: ChipOrderRow, now: Date) => string | number;
+/** The tags of a row in words, as the three exports write them. */
+export function chipOrderRowTagsText(row: Pick<ChipOrderRow, 'is_test' | 'phone_verified' | 'has_failed_notification'>): string {
+  return chipOrderRowTags(row).map((t) => CHIP_ORDER_TAG_LABEL[t]).join(', ');
 }
 
-/** The columns of the Excel file and of the print view, right to left. The
+/** The Orders tab as a file — its names, and its columns right to left. The
  *  amount is the apartment line's own (the lines of one order add up to what
  *  the order paid), so a column of the file can be summed. */
-export const CHIP_ORDER_EXPORT_COLUMNS: ChipOrderExportColumn[] = [
-  { header: 'מס׳ הזמנה', kind: 'number', width: 12, get: (r) => r.order_number },
-  { header: 'תאריך הזמנה', kind: 'ltr', width: 13, get: (r) => formatOrderDate(r.created_at) },
-  { header: 'שם המזמין', kind: 'text', width: 24, get: (r) => r.full_name },
-  { header: 'טלפון', kind: 'ltr', width: 15, get: (r) => e164ToLocal(r.phone_e164) },
-  { header: 'דירה', kind: 'ltr', width: 9, get: (r) => r.apartment_number },
-  { header: 'בעלי הצ׳יפ', kind: 'text', width: 34, get: (r) => chipOrderRowPeople(r).join(', ') },
-  { header: 'כמות', kind: 'number', width: 8, get: (r) => r.chips_count },
-  { header: 'סה״כ (₪)', kind: 'money', width: 11, get: (r) => r.line_total },
-  { header: 'סטטוס', kind: 'text', width: 22, get: (r, now) => chipOrderRowStatusText(r, now) },
-  { header: 'יעד להכנה', kind: 'ltr', width: 18, get: (r) => (r.due_at ? formatOrderDateTime(r.due_at) : '') },
-  { header: 'הזמנת בדיקה', kind: 'text', width: 13, get: (r) => (r.is_test ? 'כן' : 'לא') },
-];
+export const CHIP_ORDERS_EXPORT: ListExport<ChipOrderRow> = {
+  title: 'הזמנות צ׳יפים פתוחות',
+  sheet: 'הזמנות צ׳יפים',
+  file: 'chip-orders',
+  columns: [
+    { header: 'מס׳ הזמנה', kind: 'number', width: 12, get: (r) => r.order_number },
+    { header: 'תאריך הזמנה', kind: 'ltr', width: 13, get: (r) => exportDate(r.created_at) },
+    { header: 'שם המזמין', kind: 'text', width: 24, get: (r) => r.full_name },
+    { header: 'טלפון', kind: 'ltr', width: 15, get: (r) => e164ToLocal(r.phone_e164) },
+    { header: 'תגיות', kind: 'text', width: 24, get: (r) => chipOrderRowTagsText(r) },
+    { header: 'דירה', kind: 'ltr', width: 9, get: (r) => r.apartment_number },
+    { header: 'בעלי הצ׳יפ', kind: 'text', width: 34, get: (r) => chipOrderRowPeople(r).join(', ') },
+    { header: 'כמות', kind: 'number', width: 8, get: (r) => r.chips_count },
+    { header: 'סה״כ (₪)', kind: 'money', width: 11, get: (r) => r.line_total },
+    { header: 'סטטוס', kind: 'text', width: 22, get: (r, now) => chipOrderRowStatusText(r, now) },
+    { header: 'יעד להכנה', kind: 'ltr', width: 18, get: (r) => (r.due_at ? exportDateTime(r.due_at) : '') },
+    { header: 'הזמנת בדיקה', kind: 'text', width: 13, get: (r) => (r.is_test ? 'כן' : 'לא') },
+  ],
+};

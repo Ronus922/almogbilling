@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Info, KeyRound, Plus, Search, X } from 'lucide-react';
+import { Info, KeyRound, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,9 @@ import { ChipsTable } from './ChipsTable';
 import { IssueChipSheet } from './IssueChipSheet';
 import { ChipHolderPanel, type HolderRef } from './ChipHolderPanel';
 import { ChipOrdersPanel } from './ChipOrdersPanel';
+import { ChipListExports } from './ChipListExports';
+import { CHIPS_SEARCH_INPUT, ChipsToolbar } from './ChipsToolbar';
+import { CHIPS_EXPORT } from '@/lib/chips/exportColumns';
 import { e164ToLocal } from '@/lib/portal/phone';
 import type { ChipOrderRow } from '@/lib/chipOrders/model';
 
@@ -283,6 +286,16 @@ export function ChipsPageClient({
     [items, holderFilter],
   );
 
+  // What narrowed the list, in words — printed under the title of the print
+  // view and of the PDF file. A search runs over every status (the server
+  // skips the status tab while searching), so the two never appear together.
+  const exportFilter = [
+    ...(debouncedQ
+      ? [`חיפוש: „${debouncedQ}” (בכל הסטטוסים)`]
+      : tab !== 'all' ? [`סינון: ${TABS.find((t) => t.value === tab)?.label ?? ''}`] : []),
+    ...(holderFilter ? [`מחזיק: ${holderFilter.displayName} · דירה ${holderFilter.apartmentNumber}`] : []),
+  ];
+
   return (
     <div className="chips-skin space-y-6">
       {/* Top bar — structure §28.9, chips-skin tones (ref) */}
@@ -381,44 +394,57 @@ export function ChipsPageClient({
       {/* KPI row */}
       <ChipsKpiRow kpis={kpis} />
 
-      {/* Single card: toolbar (border-bottom) → table */}
+      {/* Single card: toolbar (border-bottom) → table. The toolbar is the one
+          of the Orders tab (ChipsToolbar): the status tabs at the start, then
+          the search box and the three export buttons. */}
       <div className="overflow-hidden rounded-[16px] border border-[var(--chip-border)] bg-[var(--chip-panel)]">
-        <div className="flex flex-col gap-3 border-b border-[var(--chip-border)] px-[22px] py-4 md:flex-row md:items-center md:justify-between">
-          {/* Tab pills (RTL start = right) */}
-          <div className="flex flex-wrap items-center gap-2">
-            {TABS.map((t) => (
-              <button
-                key={t.value}
-                type="button"
-                onClick={() => setTab(t.value)}
-                className={cn(
-                  'inline-flex h-9 cursor-pointer items-center rounded-full px-4 text-[13.5px] transition-colors',
-                  tab === t.value
-                    ? 'bg-[var(--chip-brand)] font-bold text-white'
-                    : 'border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] font-semibold text-[var(--chip-ink-muted)] hover:bg-[var(--chip-hover)]',
-                )}
-              >
-                {t.label}
-              </button>
-            ))}
-            {debouncedQ && (
-              <span className="inline-flex h-9 items-center rounded-full bg-[var(--chip-brand-soft)] px-3 text-[12px] font-bold text-[var(--chip-brand-ink)]">
-                מציג תוצאות מכל הסטטוסים
-              </span>
-            )}
-          </div>
-
-          {/* Search — one box, both directions (number → name, name → numbers) */}
-          <div className="relative w-full md:w-[340px]">
-            <Search className="pointer-events-none absolute start-[13px] top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-[var(--chip-ink-soft)]" />
+        <ChipsToolbar
+          searchWidth="@min-[1140px]:w-[340px]"
+          search={
+            // One box, both directions (number → name, name → numbers).
             <Input
               placeholder="חפש לפי מספר צ׳יפ, מספר דירה או שם דייר"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-11 rounded-[11px] border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] ps-[42px] pe-[14px] text-[14px] placeholder:text-[var(--chip-ink-soft)] focus-visible:border-[var(--chip-brand)] focus-visible:ring-4 focus-visible:ring-[rgba(61,90,254,0.12)]"
+              className={CHIPS_SEARCH_INPUT}
             />
-          </div>
-        </div>
+          }
+          exports={
+            // "הדפסה" · "ייצוא לאקסל" · "הורדה ל-PDF" — the rows the table shows
+            // (the status tab, the search, the one-holder filter), for whoever
+            // sees the tab (25/11/2026).
+            <ChipListExports
+              list={CHIPS_EXPORT}
+              rows={visibleItems}
+              rowKey={(c) => c.id}
+              filter={exportFilter}
+              disabled={loading}
+              testId="chips"
+            />
+          }
+        >
+          {/* Tab pills (RTL start = right) */}
+          {TABS.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => setTab(t.value)}
+              className={cn(
+                'inline-flex h-9 cursor-pointer items-center rounded-full px-4 text-[13.5px] transition-colors',
+                tab === t.value
+                  ? 'bg-[var(--chip-brand)] font-bold text-white'
+                  : 'border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] font-semibold text-[var(--chip-ink-muted)] hover:bg-[var(--chip-hover)]',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+          {debouncedQ && (
+            <span className="inline-flex h-9 items-center rounded-full bg-[var(--chip-brand-soft)] px-3 text-[12px] font-bold text-[var(--chip-brand-ink)]">
+              מציג תוצאות מכל הסטטוסים
+            </span>
+          )}
+        </ChipsToolbar>
 
         {/* Holder-filter bar — active after clicking "N צ׳יפים" */}
         {holderFilter && (

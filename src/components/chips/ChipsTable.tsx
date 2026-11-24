@@ -3,7 +3,7 @@
 import { History, KeyRound, Search, UserX } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ChipMatchType, ChipResidentRole, ChipWithHolder } from '@/lib/types/chips';
-import { CHIP_TYPE_LABEL, RESIDENT_ROLE_LABEL } from '@/lib/constants/chips';
+import { CHIP_STATUS_LABEL, CHIP_TYPE_LABEL, RESIDENT_ROLE_LABEL } from '@/lib/constants/chips';
 import { resolveChipHolder } from '@/lib/chips/holder';
 
 // Chips-skin table (declared exception — extended from the ref palette; the
@@ -136,7 +136,7 @@ function StatusPill({ chip }: { chip: ChipWithHolder }) {
           active ? 'bg-[var(--chip-green)]' : 'bg-[var(--chip-red)]',
         )}
       />
-      {active ? 'פעיל' : 'לא פעיל'}
+      {CHIP_STATUS_LABEL[chip.status]}
     </span>
   );
 }
@@ -209,7 +209,7 @@ export function ChipsTable({
     <>
       {/* Desktop — CSS grid */}
       <div className="hidden overflow-x-auto sm:block">
-        <div className="min-w-[880px]">
+        <div className="min-w-[880px]" data-testid="chips-table">
           {/* head */}
           <div className={cn('grid items-center gap-3 border-b border-[var(--chip-border)] bg-[var(--chip-panel-alt)] px-6 py-[13px]', COLS)}>
             <span className={cn(HEAD_CELL, 'text-start')}>מחזיק</span>
@@ -226,6 +226,7 @@ export function ChipsTable({
             return (
               <div
                 key={c.id}
+                data-testid="chips-row"
                 onClick={onRowClick ? () => onRowClick(c) : undefined}
                 className={cn(
                   'grid min-h-[58px] items-center gap-3 border-b border-[var(--chip-border)] px-6 py-[12px] transition-colors last:border-0',
