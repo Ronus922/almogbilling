@@ -64,7 +64,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       return NextResponse.json({ error: 'ההזמנה כבר נאספה או נדחתה — אי אפשר לשייך לה צ׳יפים' }, { status: 409 });
     }
     if (err instanceof Error && err.message === 'holder_not_in_registry') {
-      return NextResponse.json({ error: 'לתפקיד זה אין פרטים במרשם הדירה — הזן שם או בחר "אחר"' }, { status: 422 });
+      return NextResponse.json({ error: 'לתפקיד זה אין פרטים במרשם הדירה — הזן שם או בחר "אורח"' }, { status: 422 });
     }
     return chipOrderErrorResponse(err, 'POST /api/chip-orders/:id/holders');
   }

@@ -164,6 +164,28 @@ function textLines(el: Locator): Promise<number> {
   });
 }
 
+/** The status row of the transaction card, measured: every line of buttons
+ *  starts at the row's start edge (the right — the window is RTL) and the
+ *  buttons follow each other with the row's own gap, so a button that is not
+ *  there leaves no hole. Returns what is off; an empty list = a tight row.
+ *  "מחק הזמנת בדיקה" is pushed to the far end on purpose and is not measured. */
+function statusRowGaps(issue: Locator): Promise<string[]> {
+  return issue.getByTestId('chip-order-actions').evaluate((row) => {
+    const cs = getComputedStyle(row);
+    const gap = parseFloat(cs.columnGap);
+    const start = row.getBoundingClientRect().right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight);
+    const off: string[] = [];
+    let prev: DOMRect | null = null;
+    for (const button of row.querySelectorAll<HTMLElement>('button:not(.ci-danger)')) {
+      const box = button.getBoundingClientRect();
+      const want = prev !== null && Math.abs(box.top - prev.top) < 1 ? prev.left - gap : start;
+      if (Math.abs(box.right - want) > 0.5) off.push(`${button.textContent?.trim()}: ${Math.round((want - box.right) * 10) / 10}px away from its place`);
+      prev = box;
+    }
+    return off;
+  });
+}
+
 /** The font sizes of the window's text fields. */
 function fieldSizes(issue: Locator): Promise<string[]> {
   return issue.evaluate((root) => [...new Set(
@@ -256,6 +278,19 @@ test.describe.serial('staff: the issue window', () => {
     // "אורח" is a name on the screen only — the stored role did not change.
     expect((await pool.query(`select distinct resident_role from public.chips where contact_id = $1`, [made.contacts[APT]])).rows)
       .toEqual([{ resident_role: 'other' }]);
+    // And it is the name of that role in the whole module, not only in this
+    // window: the chips table and the holder's panel say "אורח", never "אחר".
+    const search = page.getByPlaceholder('חפש לפי מספר צ׳יפ, מספר דירה או שם דייר');
+    await search.fill(`N${tag}1`);
+    await expect(page.locator('main').getByText('אורח', { exact: true }).locator('visible=true')).toHaveCount(1);
+    await expect(page.locator('main').getByText('אחר', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'מטפלת בדיקה', exact: true }).click();
+    const holderPanel = page.getByRole('dialog').filter({ hasText: 'מטפלת בדיקה' });
+    await expect(holderPanel.getByText('אורח', { exact: true }).first()).toBeVisible();
+    await expect(holderPanel.getByText('אחר', { exact: true })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(holderPanel).toHaveCount(0);
+    await search.fill('');
 
     // The switch: off (asks once) and back on — immediate, never deleted.
     await page.getByRole('button', { name: 'הנפק צ׳יפ' }).click();
@@ -346,12 +381,12 @@ test.describe.serial('staff: the issue window', () => {
     await orderRow(page, APT).first().click();
     await expect(section.getByTestId('chip-order-progress')).toHaveText('4 מתוך 4');
     await section.getByRole('button', { name: 'מוכן לאיסוף' }).click();
-    // The row stays whole: the stage the order is in now is a mark, the next
-    // step is the one button to press, and there is no way back or to reject.
+    // The three buttons stay: the stage the order is in now is a mark, the
+    // next step is the one button to press, and there is no way back or to
+    // reject. There is no "בטיפול" — the system has no such status.
     await expect(section.getByRole('button', { name: 'מוכן לאיסוף' })).toHaveAttribute('aria-current', 'step');
     await expect(section.getByRole('button', { name: 'מוכן לאיסוף' })).toBeDisabled();
-    await expect(section.getByRole('button', { name: 'בטיפול' })).toBeDisabled();
-    await expect(section.getByRole('button', { name: 'בטיפול' })).not.toHaveAttribute('aria-current', 'step');
+    await expect(section.getByText('בטיפול')).toHaveCount(0);
     await expect(section.getByRole('button', { name: 'דחה', exact: true })).toBeDisabled();
     await expect(section.getByRole('button', { name: 'נאסף', exact: true })).toBeEnabled();
     // The "ready" message was attempted on both channels, each on its own.
@@ -410,7 +445,7 @@ test.describe('staff: the look of the issue window', () => {
     ]);
   });
 
-  test('the layout: a 780px panel on the left edge, nothing cut or scrolling sideways from 1440 down to 320, the two breakpoints to the pixel, a one-line registry button, the footer order, the status row in full', async ({ page }) => {
+  test('the layout: a 780px panel on the left edge, nothing cut or scrolling sideways from 1440 down to 320, the two breakpoints to the pixel, a one-line registry button, the footer order, the three status buttons with no hole between them', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/chips?view=orders');
     await orderRow(page, APT_LAY).first().click();
@@ -454,6 +489,10 @@ test.describe('staff: the look of the issue window', () => {
       expect(save.x, `"שמור שינויים" is left of "סגור" @${width}`).toBeLessThan(close.x);
       expect(close.x - (save.x + save.width), `gap between the two @${width}`).toBeCloseTo(10, 0);
       expect(close.y, `one row @${width}`).toBeCloseTo(save.y, 0);
+
+      // The status row is tight at every width, on one line or wrapped: no
+      // hole where the reference's "בטיפול" would have been.
+      expect(await statusRowGaps(issue), `status row spacing @${width}`).toEqual([]);
     }
 
     // The panel's own text settings win over the Sheet primitive's utilities.
@@ -463,12 +502,14 @@ test.describe('staff: the look of the issue window', () => {
     })).toEqual({ size: '16px', color: 'rgb(26, 34, 51)' });
     // "אני": four states, the stored role of the block selected.
     await expect(blocks.first().getByRole('radiogroup', { name: 'אני' }).getByRole('radio')).toHaveText(['בעלים', 'שוכר', 'מפעיל', 'אורח']);
-    // The status row of a real order, whole: the stage it is in is a mark,
-    // "מוכן לאיסוף" waits for the chips, "נאסף" waits for "מוכן לאיסוף".
+    // The status row of a real order: the three real actions and nothing else.
+    // The reference's "בטיפול" is left out — the system has no such status —
+    // so a paid order carries no stage mark in the row. "מוכן לאיסוף" waits
+    // for the chips, "נאסף" waits for "מוכן לאיסוף".
     const actions = issue.getByTestId('chip-order-actions');
-    await expect(actions.getByRole('button')).toHaveText(['בטיפול', 'מוכן לאיסוף', 'נאסף', 'דחה']);
-    await expect(actions.locator('[aria-current="step"]')).toHaveText('בטיפול');
-    await expect(actions.getByRole('button', { name: 'בטיפול' })).toBeDisabled();
+    await expect(actions.getByRole('button')).toHaveText(['מוכן לאיסוף', 'נאסף', 'דחה']);
+    await expect(actions.locator('[aria-current="step"]')).toHaveCount(0);
+    await expect(issue.getByText('בטיפול')).toHaveCount(0);
     await expect(actions.getByRole('button', { name: 'מוכן לאיסוף' })).toBeDisabled();
     await expect(actions.getByRole('button', { name: 'נאסף', exact: true })).toBeDisabled();
     await expect(actions.getByRole('button', { name: 'דחה', exact: true })).toBeEnabled();
@@ -525,7 +566,7 @@ test.describe('staff: the look of the issue window', () => {
     ] as const) {
       await pool.query(close, [gone.id]);
       await row.click();
-      await expect(actions.getByRole('button')).toHaveText(['בטיפול', 'מוכן לאיסוף', 'נאסף', 'דחה']);
+      await expect(actions.getByRole('button')).toHaveText(['מוכן לאיסוף', 'נאסף', 'דחה']);
       await expect(actions.locator('[aria-current="step"]')).toHaveText(mark);
       for (const button of await actions.getByRole('button').all()) await expect(button).toBeDisabled();
       await issue.getByTestId('chip-issue-close').click();

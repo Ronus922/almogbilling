@@ -141,7 +141,7 @@ function coerceGroup(
   }
   const holderName = coerceText(rec.holder_name);
   if (isSnapshotRole(residentRole.value) && !holderName) {
-    return { ok: false, error: `לבעל צ׳יפ מסוג "אחר" נדרש שם מלא (בלוק ${index + 1})` };
+    return { ok: false, error: `לבעל צ׳יפ מסוג "אורח" נדרש שם מלא (בלוק ${index + 1})` };
   }
   const numbers = Array.isArray(rec.numbers)
     ? rec.numbers
@@ -299,13 +299,13 @@ export async function POST(req: NextRequest) {
     const residentRole = coerceEnum(bodyRec.resident_role, CHIP_RESIDENT_ROLES);
     if (!residentRole.ok || residentRole.value === null) {
       return NextResponse.json(
-        { error: 'נדרש לבחור בעל צ׳יפ (בעל דירה / שוכר / מפעיל / אחר)' },
+        { error: 'נדרש לבחור בעל צ׳יפ (בעל דירה / שוכר / מפעיל / אורח)' },
         { status: 400 },
       );
     }
     const holderName = coerceText(bodyRec.holder_name);
     if (isSnapshotRole(residentRole.value) && !holderName) {
-      return NextResponse.json({ error: 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא' }, { status: 400 });
+      return NextResponse.json({ error: 'לבעל צ׳יפ מסוג "אורח" נדרש שם מלא' }, { status: 400 });
     }
     const appPlatform = coerceEnum(bodyRec.app_platform, APP_PLATFORMS);
     if (!appPlatform.ok) {
@@ -377,7 +377,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: CHIP_NUMBERS_ERROR }, { status: 400 });
     }
     if (err instanceof Error && err.message === 'holder_name_required') {
-      return NextResponse.json({ error: 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא' }, { status: 400 });
+      return NextResponse.json({ error: 'לבעל צ׳יפ מסוג "אורח" נדרש שם מלא' }, { status: 400 });
     }
     if (err instanceof Error && err.message === 'order_item_not_found') {
       return NextResponse.json({ error: 'שורת ההזמנה לא נמצאה לדירה זו' }, { status: 404 });
@@ -387,7 +387,7 @@ export async function POST(req: NextRequest) {
     }
     if (err instanceof Error && err.message === 'holder_not_in_registry') {
       return NextResponse.json(
-        { error: 'לתפקיד זה אין פרטים במרשם הדירה — השלם פרטים בדירה או בחר "אחר"' },
+        { error: 'לתפקיד זה אין פרטים במרשם הדירה — השלם פרטים בדירה או בחר "אורח"' },
         { status: 422 },
       );
     }

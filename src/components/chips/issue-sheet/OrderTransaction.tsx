@@ -4,18 +4,25 @@
 // ref/chip-order/chip-issue-admin-v2.html): the order's number and tags, who
 // ordered (three columns), status, what was paid, the due date, "שויכו X מתוך
 // Y", one line per apartment (its people, role, quantity, price), the price
-// lines from the order's own snapshot, the total — and the reference's row of
-// status buttons: "בטיפול", "מוכן לאיסוף", "נאסף", "דחה" and, at the far end,
-// "מחק הזמנת בדיקה" (test orders only; it disables the order's chips first).
-// The row is ALWAYS drawn in full; what an order cannot do right now is
-// disabled (greyed), not hidden. The actions themselves did not change: paid →
-// ready → collected, or paid → rejected. Three looks: the stage the order is
-// in now = an outlined button at full strength that is not pressed (a mark);
-// its next step = the filled button; everything else = greyed. "בטיפול" is the
-// stage a paid order is in — the server has no move back into it — so it is
-// only ever the mark. An order that was collected or rejected somewhere else
-// while its row was still on this screen opens too: its closing stage is the
-// mark and nothing is offered. The status belongs to the whole order.
+// lines from the order's own snapshot, the total — and the row of status
+// buttons: "מוכן לאיסוף", "נאסף", "דחה" and, at the far end, "מחק הזמנת בדיקה"
+// (test orders only; it disables the order's chips first).
+//
+// DECLARED DEVIATION from the reference (Ronen, 24/11/2026): the reference
+// opens the row with a fourth button, "בטיפול". The system has no such status
+// — a paid order is simply open, and no server move leads into it — so the
+// element is left out altogether: not greyed and not turned into a label. The
+// row holds the real actions only.
+//
+// The three are ALWAYS drawn; what an order cannot do right now is disabled
+// (greyed), not hidden. The actions themselves did not change: paid → ready →
+// collected, or paid → rejected. Three looks: the stage the order is in now =
+// an outlined button at full strength that is not pressed (a mark); its next
+// step = the filled button; everything else = greyed. A paid order has no
+// mark in the row — where it stands is the "סטטוס" tag above. An order that
+// was collected or rejected somewhere else while its row was still on this
+// screen opens too: its closing stage is the mark and nothing is offered. The
+// status belongs to the whole order.
 
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -53,7 +60,9 @@ async function postJson(url: string, body?: unknown, method = 'POST') {
 }
 
 /** The role tag of an apartment line: one role = its name in the tone of the
- *  holder block's tag (owner brand, renter amber, the rest grey). */
+ *  holder block's tag (owner brand, renter amber, the rest grey). The last
+ *  line is NOT the role `other` (that one is "אורח", through ROLE_SHORT): it
+ *  names a line whose people hold a mix of roles other than owner + renter. */
 function roleOf(roles: string[]): { label: string; tone: ReturnType<typeof roleTone> } {
   const set = new Set(roles);
   if (set.size === 1) {
@@ -64,7 +73,6 @@ function roleOf(roles: string[]): { label: string; tone: ReturnType<typeof roleT
   return { label: 'אחר', tone: 'ci-other' };
 }
 
-const ClockIco = () => <Ico size={13} sw={2}><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></Ico>;
 const CheckAllIco = () => <Ico size={13} sw={2}><path d="M20 7 10 17l-6-6" /><path d="M22 11 12 21l-2-2" /></Ico>;
 const FlaskIco = () => <Ico size={11} sw={2.2} join={false}><path d="M10 2v6L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8V2M8.5 2h7" /></Ico>;
 
@@ -223,15 +231,8 @@ export function OrderTransaction({
       {canEditOrders && (
         <>
           <div className="ci-oact" data-testid="chip-order-actions">
-            {/* The stage of a paid order. No server move leads back into it, so
-                it is a mark, never an action: drawn as the reference draws it
-                while the order is being handled, greyed once it moved on. */}
-            <button type="button" className={cn('ci-btn ci-line', assigning && 'ci-cur')} disabled
-              aria-current={assigning ? 'step' : undefined}
-              title={assigning ? 'ההזמנה בטיפול — זה השלב שלה כרגע' : 'ההזמנה כבר עברה את שלב הטיפול'}>
-              <ClockIco />
-              בטיפול
-            </button>
+            {/* No "בטיפול" here, although the reference draws one: the system
+                has no such status (see the note at the top of the file). */}
             {assigning ? (
               <button type="button" className="ci-btn ci-primary" disabled={disabled || busy !== null || !win.order_all_linked || pending > 0}
                 title={!win.order_all_linked ? 'יש לשייך ולשמור קודם את כל הצ׳יפים שהוזמנו' : pending > 0 ? 'יש לשמור קודם את הצ׳יפים שנוספו' : undefined}
@@ -247,8 +248,8 @@ export function OrderTransaction({
                 מוכן לאיסוף
               </button>
             )}
-            {/* The filled button is always the NEXT step: "מוכן לאיסוף" while the
-                order is handled (as the reference draws it), "נאסף" once it is ready. */}
+            {/* The filled button is always the NEXT step: "מוכן לאיסוף" for a
+                paid order (as the reference draws it), "נאסף" once it is ready. */}
             <button type="button" className={cn('ci-btn', ready ? 'ci-primary' : 'ci-line', collected && 'ci-cur')}
               disabled={disabled || busy !== null || !ready}
               aria-current={collected ? 'step' : undefined}
