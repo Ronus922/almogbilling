@@ -10,7 +10,7 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, Loader2, UserPen } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { validatePhone } from '@/lib/validation';
 import { CHIP_ORDER_ROLE_LABEL, type ChipOrderRole } from '@/lib/chipOrders/model';
+import { PencilIco } from './issue-sheet/parts';
 
 async function postJson(url: string, body?: unknown) {
   const res = await fetch(url, {
@@ -79,15 +80,16 @@ export function HolderRegistryButton({
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="ci-regwrap">
+      {/* One line at every width (`.ci-ghostbtn` never wraps). */}
       <button
         type="button"
         disabled={disabled || !ready}
         onClick={() => setModal(true)}
         data-testid="chip-holder-registry-update"
-        className="ci-ghostbtn w-fit"
+        className="ci-ghostbtn"
       >
-        <UserPen className="h-4 w-4" />
+        <PencilIco />
         עדכן בכרטיס הדייר
       </button>
       {!canWriteContacts && (

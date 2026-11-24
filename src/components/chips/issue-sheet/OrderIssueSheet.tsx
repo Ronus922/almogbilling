@@ -1,7 +1,7 @@
 'use client';
 
-// The issue window opened from an Orders-tab row (20/11/2026 design,
-// ref/chip-order/chip-issue-admin.html):
+// The issue window opened from an Orders-tab row (v2 design of 24/11/2026,
+// ref/chip-order/chip-issue-admin-v2.html):
 //
 //   · "בעלי הצ׳יפ" — ONE BLOCK PER PERSON of the order (its holder lines; an
 //     order made before 20/11/2026 gets one block per apartment, from the
@@ -32,7 +32,7 @@ import type { ChipOrderRole, ChipOrderWindow, ChipOrderWindowChip, ChipOrderWind
 import type { ChipResidentRole, ChipType } from '@/lib/types/chips';
 import { HolderRegistryButton } from '../ChipOrderSection';
 import {
-  AmberNote, ChipAllocation, DiscardDialog, HolderBlock, IssueSheetFrame, IssueSheetFooter, PlusIco, RoleSegment,
+  AmberNote, ChipAllocation, DiscardDialog, HolderBlock, IssueSheetFrame, IssueSheetFooter, PlusIco, ROLE_SHORT, RoleSegment,
   Section, UsersIco, WalletIco, useChipQuickActions, type PendingChip,
 } from './parts';
 import { OrderTransaction } from './OrderTransaction';
@@ -42,12 +42,8 @@ const DATE_ONLY = new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem',
 /** New numbers of one block in one save — the request bound of the server
  *  (chipOrderWindowSaveSchema), not a quantity rule (21/11/2026). */
 const MAX_PENDING_PER_BLOCK = MAX_CHIPS_PER_GROUP;
-const ROLE_OPTIONS = [
-  { value: 'owner', label: 'בעלים' },
-  { value: 'tenant', label: 'שוכר' },
-  { value: 'operator', label: 'מפעיל' },
-  { value: 'other', label: 'אחר' },
-];
+/** "אני" — the reference's four states. "אורח" is the stored role `other`. */
+const ROLE_OPTIONS = (['owner', 'tenant', 'operator', 'other'] as const).map((value) => ({ value, label: ROLE_SHORT[value] }));
 
 interface Snapshot { role: ChipResidentRole; name: string; phone: string; email: string }
 
@@ -360,7 +356,7 @@ export function OrderIssueSheet({
                       </div>
                       <div className="ci-fld">
                         <label htmlFor={`oh-apt-${b.key}`}>דירה</label>
-                        <input id={`oh-apt-${b.key}`} type="text" readOnly value={`דירה ${apt}`} className="ci-ro" />
+                        <input id={`oh-apt-${b.key}`} type="text" readOnly value={`דירה ${apt}`} className="ci-num ci-ro" />
                       </div>
                       <div className="ci-fld">
                         <span className="ci-lbl">כמות כרטיסים</span>
@@ -411,7 +407,7 @@ export function OrderIssueSheet({
                     )}
                     <ChipAllocation
                       title={`הקצאת צ׳יפים — ${b.name.trim() || 'בעל הצ׳יפ'}`}
-                      sub={paidLine ? `לפי ההזמנה: ${b.qty} כרטיסים` : 'מחוץ לכמות ששולמה'}
+                      sub={paidLine ? <>לפי ההזמנה: <span className="ci-num">{b.qty}</span> כרטיסים</> : 'מחוץ לכמות ששולמה'}
                       assigned={activeLinked + b.pending.length}
                       of={paidLine ? b.qty : null}
                       firstName={firstName}
@@ -433,14 +429,16 @@ export function OrderIssueSheet({
                       onRemovePending={(n) => removePending(b, n)}
                     />
                     {paidLine && activeLinked + b.pending.length > b.qty && (
-                      <p className="ci-warn">נוספו יותר צ׳יפים ממה שהוזמן ({activeLinked + b.pending.length} מתוך {b.qty}). אפשר לשמור — הם יקושרו גם הם להזמנה.</p>
+                      <p className="ci-warn">
+                        נוספו יותר צ׳יפים ממה שהוזמן (<span className="ci-num">{activeLinked + b.pending.length}</span> מתוך <span className="ci-num">{b.qty}</span>). אפשר לשמור — הם יקושרו גם הם להזמנה.
+                      </p>
                     )}
                     {invalid && <p className="ci-err mt-2">⚠️ {invalid}</p>}
                   </HolderBlock>
                 );
               })}
               <button type="button" className="ci-addowner" onClick={addHolder} disabled={submitting || !canEditOrders}>
-                <PlusIco />
+                <PlusIco size={15} />
                 הוסף בעל צ׳יפ
               </button>
             </>
@@ -458,7 +456,7 @@ export function OrderIssueSheet({
               onGone={() => { onIssued(); onOpenChange(false); }}
               onModalChange={setModalOpen}
             />
-            <div className="ci-feegrid mt-[14px]">
+            <div className="ci-feegrid">
               <div className="ci-fld">
                 <label htmlFor="order-fee">עמלת הנפקה (₪)</label>
                 <input id="order-fee" type="text" inputMode="decimal" dir="ltr" placeholder="0" value={fee} disabled={submitting}
@@ -470,7 +468,7 @@ export function OrderIssueSheet({
                 החיוב בוצע
               </label>
             </div>
-            <div className="ci-fld mt-[14px]">
+            <div className="ci-fld ci-notefld">
               <label htmlFor="order-note">הערה</label>
               <textarea id="order-note" value={note} disabled={submitting} maxLength={2000} placeholder="הערות פנימיות על ההנפקה..."
                 onChange={(e) => { setDirty(true); setNote(e.target.value); }} />

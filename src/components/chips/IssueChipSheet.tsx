@@ -1,7 +1,7 @@
 'use client';
 
-// The chip issue window "הנפקת צ׳יפ" — redesigned 20/11/2026 after
-// ref/chip-order/chip-issue-admin.html (DESIGN.md "מודול צ׳יפים" (ו), styles
+// The chip issue window "הנפקת צ׳יפ" — v2 design of 24/11/2026 after
+// ref/chip-order/chip-issue-admin-v2.html (DESIGN.md "מודול צ׳יפים" (ו), styles
 // in app/styles/chip-issue-sheet.css). THIS WINDOW IS THE ONLY PLACE CHIPS ARE
 // MANAGED: every chip click in the app (table row, holder panel, tenant tab,
 // ?chip= deep link, an Orders-tab row) lands here. Two modes, one window:
@@ -11,8 +11,9 @@
 //     "פירוט עסקה והערות", one save for everything.
 //   · WITHOUT an order (below) — the window as it was, in the new look: pick
 //     an apartment (async registry combobox, inline create) → one or more
-//     holder blocks, each one person (registry role or "אחר" + snapshot
-//     name/phone + new numbers of a chosen type) → fee / note → ONE save = ONE
+//     holder blocks, each one person (registry role or "אורח" — the stored
+//     role `other` — + snapshot name/phone + new numbers of a chosen type) →
+//     fee / note → ONE save = ONE
 //     server transaction, all-or-nothing: it issues every pending number of
 //     every block AND applies holder edits (name / phone / role) to the block's
 //     saved chips (diffed against the values the block was seeded with).
@@ -385,7 +386,7 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     const pending = effectivePending(b);
     if (pending.length === 0 && blockUpdates(b).length === 0) return null; // nothing to save here
     if (!b.role) return 'בחר תפקיד לבעל הצ׳יפ';
-    if (isSnapshotRole(b.role) && !b.holderName.trim()) return 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא';
+    if (isSnapshotRole(b.role) && !b.holderName.trim()) return `לבעל צ׳יפ מסוג "${ROLE_SHORT[b.role] ?? b.role}" נדרש שם מלא`;
     if (phoneErrorOf(b)) return phoneErrorOf(b);
     if (b.pending.length > MAX_CHIPS_PER_GROUP) return `עד ${MAX_CHIPS_PER_GROUP} מספרים חדשים לבלוק בשמירה אחת`;
     return null;
@@ -762,7 +763,7 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
                           disabled: takenBy(card.role) || !card.exists,
                           title: takenBy(card.role) ? 'נבחר בבלוק אחר' : !card.exists ? 'לא הוזנו פרטים במרשם' : undefined,
                         })),
-                        { value: 'other', label: 'אחר', title: 'הזנה חופשית של שם וטלפון' },
+                        { value: 'other', label: ROLE_SHORT.other, title: 'הזנה חופשית של שם וטלפון' },
                       ]}
                       value={block.role}
                       onChange={(v) => selectRole(block, v, residentCards)}
@@ -823,7 +824,7 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
                 );
               })}
               <button type="button" className="ci-addowner" onClick={addBlock} disabled={disabledAll}>
-                <PlusIco />
+                <PlusIco size={15} />
                 הוסף בעל צ׳יפ
               </button>
             </>
@@ -844,7 +845,7 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
               החיוב בוצע
             </label>
           </div>
-          <div className="ci-fld mt-[14px]">
+          <div className="ci-fld ci-notefld">
             <label htmlFor="chip-notes">הערה</label>
             <textarea id="chip-notes" value={notes} disabled={disabledAll} placeholder="הערות פנימיות על ההנפקה…"
               onChange={(e) => { setDirty(true); setNotes(e.target.value); }} />

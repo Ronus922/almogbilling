@@ -1,12 +1,21 @@
 'use client';
 
-// "פירוט עסקה" of the issue window (20/11/2026 design, `.inv` of
-// ref/chip-order/chip-issue-admin.html): the order's number and tags, who
-// ordered, status, what was paid, the due date, "שויכו X מתוך Y", one line per
-// apartment (its people, role, quantity, price), the price lines from the
-// order's own snapshot, the total — and the order's buttons: "מוכן לאיסוף",
-// "נאסף" (once ready), "דחה", and "מחק הזמנת בדיקה" (test orders only; it
-// disables the order's chips first). The status belongs to the whole order.
+// "פירוט עסקה" of the issue window (v2 design of 24/11/2026, `.inv` of
+// ref/chip-order/chip-issue-admin-v2.html): the order's number and tags, who
+// ordered (three columns), status, what was paid, the due date, "שויכו X מתוך
+// Y", one line per apartment (its people, role, quantity, price), the price
+// lines from the order's own snapshot, the total — and the reference's row of
+// status buttons: "בטיפול", "מוכן לאיסוף", "נאסף", "דחה" and, at the far end,
+// "מחק הזמנת בדיקה" (test orders only; it disables the order's chips first).
+// The row is ALWAYS drawn in full; what an order cannot do right now is
+// disabled (greyed), not hidden. The actions themselves did not change: paid →
+// ready → collected, or paid → rejected. Three looks: the stage the order is
+// in now = an outlined button at full strength that is not pressed (a mark);
+// its next step = the filled button; everything else = greyed. "בטיפול" is the
+// stage a paid order is in — the server has no move back into it — so it is
+// only ever the mark. An order that was collected or rejected somewhere else
+// while its row was still on this screen opens too: its closing stage is the
+// mark and nothing is offered. The status belongs to the whole order.
 
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -23,7 +32,7 @@ import {
   isChipOrderOverdue, type ChipOrderWindow,
 } from '@/lib/chipOrders/model';
 import { e164ToLocal } from '@/lib/portal/phone';
-import { CheckIco, Ico, TrashIco } from './parts';
+import { CheckIco, Ico, ROLE_SHORT, TrashIco, roleTone } from './parts';
 
 const DUE = new Intl.DateTimeFormat('he-IL', {
   timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
@@ -43,14 +52,21 @@ async function postJson(url: string, body?: unknown, method = 'POST') {
   return data;
 }
 
-function roleOf(roles: string[]): { label: string; renter: boolean } {
+/** The role tag of an apartment line: one role = its name in the tone of the
+ *  holder block's tag (owner brand, renter amber, the rest grey). */
+function roleOf(roles: string[]): { label: string; tone: ReturnType<typeof roleTone> } {
   const set = new Set(roles);
-  if (set.size === 1 && set.has('tenant')) return { label: 'שוכר', renter: true };
-  if (set.size === 1 && set.has('owner')) return { label: 'בעלים', renter: false };
-  if (set.size === 1 && set.has('operator')) return { label: 'מפעיל', renter: true };
-  if (set.has('owner') && set.has('tenant')) return { label: 'בעלים + שוכר', renter: false };
-  return { label: 'אחר', renter: false };
+  if (set.size === 1) {
+    const role = roles[0]!;
+    return { label: ROLE_SHORT[role] ?? role, tone: roleTone(role) };
+  }
+  if (set.has('owner') && set.has('tenant')) return { label: 'בעלים + שוכר', tone: undefined };
+  return { label: 'אחר', tone: 'ci-other' };
 }
+
+const ClockIco = () => <Ico size={13} sw={2}><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></Ico>;
+const CheckAllIco = () => <Ico size={13} sw={2}><path d="M20 7 10 17l-6-6" /><path d="M22 11 12 21l-2-2" /></Ico>;
+const FlaskIco = () => <Ico size={11} sw={2.2} join={false}><path d="M10 2v6L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8V2M8.5 2h7" /></Ico>;
 
 export function OrderTransaction({
   win, pending, canEditOrders, disabled, onChanged, onGone, onModalChange,
@@ -79,6 +95,11 @@ export function OrderTransaction({
   const stage = chipOrderStage(o.status, linkedAll, ordered);
   const overdue = isChipOrderOverdue(o);
   const assigning = o.status === 'paid' || o.status === 'approved';
+  const ready = o.status === 'ready';
+  // Closed orders leave the Orders tab, but that list does not refresh on its
+  // own: a row another user (or tab) already closed still opens this window.
+  const collected = o.status === 'collected';
+  const rejected = o.status === 'rejected';
 
   // Price lines from the order's own snapshot (per apartment). An order since
   // 21/11/2026 has one flat price (price_above = unit_price) → ONE line; an
@@ -123,22 +144,22 @@ export function OrderTransaction({
       <div className="ci-invhead">
         <Ico size={15}><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z" /><path d="M16 8h-6a2 2 0 0 0 0 4h4a2 2 0 0 1 0 4H8" /></Ico>
         פירוט עסקה · הזמנה <span className="ci-num">{o.order_number}</span>
-        {o.is_test && <span className="ci-tag ci-amber">{CHIP_ORDER_TEST_LABEL}</span>}
+        {o.is_test && <span className="ci-tag ci-amber"><FlaskIco />{CHIP_ORDER_TEST_LABEL}</span>}
         {!o.phone_verified && <span className="ci-tag ci-red">{CHIP_ORDER_PHONE_UNVERIFIED_LABEL}</span>}
       </div>
       <div className="ci-invwho">
         <div><span>שם המזמין</span><b>{o.full_name}</b></div>
         <div><span>טלפון נייד</span><b className="ci-num">{phoneView(o.phone_e164)}</b></div>
-        <div><span>מייל</span><b className="ci-num" title={o.email}>{o.email}</b></div>
-        <div><span>כתובת מגורים</span><b className="ci-wrap">{o.address}</b></div>
+        <div><span>מייל</span><b className="ci-num">{o.email}</b></div>
+        <div><span>כתובת מגורים</span><b>{o.address}</b></div>
         <div>
           <span>סטטוס</span>
-          <b className="ci-wrap">
+          <b>
             <span className={cn('ci-tag', stageTag)}>{chipOrderStageLabel(stage, linkedAll, ordered)}</span>
             {overdue && <> <span className="ci-tag ci-red">באיחור</span></>}
           </b>
         </div>
-        <div><span>סכום ששולם</span><b className="ci-num">{o.is_test ? 'בדיקה, ללא חיוב' : formatIlsAfter(o.total)}</b></div>
+        <div><span>סכום ששולם</span>{o.is_test ? <b>בדיקה, ללא חיוב</b> : <b className="ci-num">{formatIlsAfter(o.total)}</b>}</div>
         <div>
           <span>יעד להכנה</span>
           <b className={cn('ci-num', overdue && 'ci-late')}>{o.due_at ? DUE.format(new Date(o.due_at)) : '—'}</b>
@@ -154,14 +175,18 @@ export function OrderTransaction({
           const r = roleOf(people.map((h) => h.role));
           const phones = [...new Set(people.map((h) => phoneView(h.phone)).filter(Boolean))];
           const emails = [...new Set(people.map((h) => h.email ?? '').filter(Boolean))];
+          const contact = [...phones, ...emails];
           return (
             <div key={i.id} className="ci-invapt">
               <span className="ci-aptno ci-num">{i.apartment_number}</span>
               <div className="ci-who">
                 <b>{people.map((h) => h.full_name).join(', ') || o.full_name}</b>
-                <small><span className="ci-num">{[...phones, ...emails].join(' · ')}</span></small>
+                {/* Each phone / email is isolated LTR; the line itself runs right to left. */}
+                <small title={contact.join(' · ')}>
+                  {contact.map((c, ci) => <span key={c}>{ci > 0 && ' · '}<span className="ci-num">{c}</span></span>)}
+                </small>
               </div>
-              <span className={cn('ci-role', r.renter && 'ci-renter')}>{r.label}</span>
+              <span className={cn('ci-role', r.tone)}>{r.label}</span>
               <span className="ci-aqty"><b className="ci-num">{i.chips_count}</b> כרטיסים</span>
               <span className="ci-aprice ci-num">{formatIlsAfter(i.line_total)}</span>
             </div>
@@ -197,27 +222,48 @@ export function OrderTransaction({
       </div>
       {canEditOrders && (
         <>
-          <div className="ci-oact">
-            {assigning && (
+          <div className="ci-oact" data-testid="chip-order-actions">
+            {/* The stage of a paid order. No server move leads back into it, so
+                it is a mark, never an action: drawn as the reference draws it
+                while the order is being handled, greyed once it moved on. */}
+            <button type="button" className={cn('ci-btn ci-line', assigning && 'ci-cur')} disabled
+              aria-current={assigning ? 'step' : undefined}
+              title={assigning ? 'ההזמנה בטיפול — זה השלב שלה כרגע' : 'ההזמנה כבר עברה את שלב הטיפול'}>
+              <ClockIco />
+              בטיפול
+            </button>
+            {assigning ? (
               <button type="button" className="ci-btn ci-primary" disabled={disabled || busy !== null || !win.order_all_linked || pending > 0}
                 title={!win.order_all_linked ? 'יש לשייך ולשמור קודם את כל הצ׳יפים שהוזמנו' : pending > 0 ? 'יש לשמור קודם את הצ׳יפים שנוספו' : undefined}
                 onClick={() => void act('ready', () => postJson(`/api/chip-orders/${o.id}/ready`), 'סומן מוכן לאיסוף — נשלחה הודעה למזמין', false)}>
                 {busy === 'ready' ? <Loader2 className="ci-spin h-3.5 w-3.5" /> : <CheckIco />}
                 מוכן לאיסוף
               </button>
-            )}
-            {o.status === 'ready' && (
-              <button type="button" className="ci-btn ci-green" disabled={disabled || busy !== null}
-                onClick={() => void act('collected', () => postJson(`/api/chip-orders/${o.id}/collected`), 'סומן כנאסף', true)}>
-                {busy === 'collected' ? <Loader2 className="ci-spin h-3.5 w-3.5" /> : <CheckIco />}
-                נאסף
+            ) : (
+              <button type="button" className={cn('ci-btn ci-line', ready && 'ci-cur')} disabled
+                aria-current={ready ? 'step' : undefined}
+                title={ready ? 'ההזמנה מוכנה לאיסוף — זה השלב שלה כרגע' : collected ? 'ההזמנה כבר נאספה' : 'ההזמנה נדחתה'}>
+                <CheckIco />
+                מוכן לאיסוף
               </button>
             )}
-            {assigning && (
-              <button type="button" className="ci-btn ci-line" disabled={disabled || busy !== null} onClick={() => setModal('reject', true)}>
-                דחה
-              </button>
-            )}
+            {/* The filled button is always the NEXT step: "מוכן לאיסוף" while the
+                order is handled (as the reference draws it), "נאסף" once it is ready. */}
+            <button type="button" className={cn('ci-btn', ready ? 'ci-primary' : 'ci-line', collected && 'ci-cur')}
+              disabled={disabled || busy !== null || !ready}
+              aria-current={collected ? 'step' : undefined}
+              title={ready ? undefined : collected ? 'ההזמנה נאספה — זה השלב שלה כרגע' : rejected ? 'ההזמנה נדחתה' : 'אפשר לסמן „נאסף” רק אחרי „מוכן לאיסוף”'}
+              onClick={() => void act('collected', () => postJson(`/api/chip-orders/${o.id}/collected`), 'סומן כנאסף', true)}>
+              {busy === 'collected' ? <Loader2 className="ci-spin h-3.5 w-3.5" /> : <CheckAllIco />}
+              נאסף
+            </button>
+            <button type="button" className={cn('ci-btn ci-line', rejected && 'ci-cur')}
+              disabled={disabled || busy !== null || !assigning}
+              aria-current={rejected ? 'step' : undefined}
+              title={assigning ? undefined : rejected ? 'ההזמנה נדחתה — זה השלב שלה כרגע' : collected ? 'ההזמנה כבר נאספה' : 'אפשר לדחות הזמנה רק לפני „מוכן לאיסוף”'}
+              onClick={() => setModal('reject', true)}>
+              דחה
+            </button>
             {o.is_test && (
               <button type="button" className="ci-btn ci-danger" disabled={disabled || busy !== null} onClick={() => setModal('delete', true)}
                 data-testid="chip-order-delete-test">

@@ -28,7 +28,12 @@ import { StorageStub } from './visitors-stubs';
 //     (blocks, lease link, the note in "הערה", chips, the switch) and
 //     "מחק הזמנת בדיקה" (its chips are disabled first, never deleted);
 //   · "דלג על אימות" → confirmation → "דחה" on the test order;
-//   · /chip-order is closed while Grow is not configured — the CI state.
+//   · /chip-order is closed while Grow is not configured — the CI state;
+//   · the look of the issue window (v2 of 24/11/2026,
+//     ref/chip-order/chip-issue-admin-v2.html), kept as numbers on orders of
+//     its own: the 780px panel, nothing cut or scrolling sideways down to
+//     320px, the two breakpoints, the status row — also for an order that was
+//     closed somewhere else — and the 16px fields of a touch phone.
 // Real orders are seeded straight into the DB (paid = what Grow's verified
 // callback leaves); fixtures are numeric apartments, removed by exact ids.
 // Supabase Storage is the in-process stand-in of visitors-stubs.ts (CI runs
@@ -43,6 +48,9 @@ const APT_B = `992${tag}2`; // staff: the second apartment of that order
 const APT_OLD = `992${tag}3`; // staff: an order from before 21/11/2026
 const APT_PUB = `992${tag}4`; // test link: owner + renter
 const APT_SKIP = `992${tag}5`; // test link: "דלג על אימות"
+const APT_LAY = `992${tag}6`; // the look of the window: an order of two people…
+const APT_LAY_B = `992${tag}7`; // …and its second apartment
+const APT_GONE = `992${tag}8`; // an order closed behind the screen's back
 const APT_LIMIT_MSG = 'ניתן להזמין עד 10 כרטיסים לדירה בהזמנה אחת. לכמות גדולה יותר יש לפנות להנהלת הבניין.';
 const PUB_NOTE = 'אני מבקש למסור את הכרטיסים לשכן מדירה 5';
 const P_OWNER = '+972539300001';
@@ -124,8 +132,47 @@ async function addChip(block: Locator, number: string, how: 'enter' | 'button' =
   await expect(block.getByText(number, { exact: true })).toBeVisible();
 }
 
+/** Boxes of the window that clip sideways — the panel, a section, a block, the
+ *  transaction card — and hold more than they show: content that is cut off
+ *  with no way to reach it. A line cut on purpose (ellipsis) and form fields
+ *  are not part of it. */
+function cutOff(issue: Locator): Promise<string[]> {
+  return issue.evaluate((root) => {
+    const out: string[] = [];
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      if (!(el instanceof HTMLElement) || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) continue;
+      const cs = getComputedStyle(el);
+      if (cs.overflowX === 'visible' || cs.textOverflow === 'ellipsis' || el.clientWidth <= 1) continue;
+      const over = el.scrollWidth - el.clientWidth;
+      if (over > 1) out.push(`${el.className} +${over}px`);
+    }
+    return out;
+  });
+}
+
+/** On how many lines the element's own text sits. */
+function textLines(el: Locator): Promise<number> {
+  return el.evaluate((node) => {
+    const tops = new Set<number>();
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+      const range = document.createRange();
+      range.selectNodeContents(t);
+      for (const rect of range.getClientRects()) if (rect.width > 0) tops.add(Math.round(rect.top));
+    }
+    return tops.size;
+  });
+}
+
+/** The font sizes of the window's text fields. */
+function fieldSizes(issue: Locator): Promise<string[]> {
+  return issue.evaluate((root) => [...new Set(
+    [...root.querySelectorAll<HTMLElement>('input:not([type="checkbox"]), textarea')].map((el) => getComputedStyle(el).fontSize),
+  )]);
+}
+
 test.beforeAll(async () => {
-  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP]) {
+  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE]) {
     const c = await pool.query<{ id: string }>(`insert into public.contacts (apartment_number) values ($1) returning id`, [apt]);
     made.contacts[apt] = c.rows[0]!.id;
   }
@@ -178,7 +225,9 @@ test.describe.serial('staff: the issue window', () => {
     await expect(issue.getByTestId('chip-order-section')).toHaveCount(0);
     await expect(issue.getByTestId('chip-holder-registry-update')).toHaveCount(0);
 
-    await block.getByRole('radio', { name: 'אחר' }).click();
+    // "אני" has four states; the fourth, "אורח", is the stored role `other`.
+    await expect(block.locator('.ci-roleseg').getByRole('radio')).toHaveText(['בעלים', 'שוכר', 'מפעיל', 'אורח']);
+    await block.getByRole('radio', { name: 'אורח' }).click();
     await block.getByLabel('שם מלא').fill('מטפלת בדיקה');
     // Six chips on one person (the old cap of 4 per apartment, and the old 5
     // per save, are gone) — one of them an app.
@@ -204,6 +253,9 @@ test.describe.serial('staff: the issue window', () => {
     }
     expect(saved.find((c) => c.chip_number === `N${tag}6`)!.chip_type).toBe('app');
     expect(saved.filter((c) => c.chip_type === 'physical')).toHaveLength(5);
+    // "אורח" is a name on the screen only — the stored role did not change.
+    expect((await pool.query(`select distinct resident_role from public.chips where contact_id = $1`, [made.contacts[APT]])).rows)
+      .toEqual([{ resident_role: 'other' }]);
 
     // The switch: off (asks once) and back on — immediate, never deleted.
     await page.getByRole('button', { name: 'הנפק צ׳יפ' }).click();
@@ -294,8 +346,14 @@ test.describe.serial('staff: the issue window', () => {
     await orderRow(page, APT).first().click();
     await expect(section.getByTestId('chip-order-progress')).toHaveText('4 מתוך 4');
     await section.getByRole('button', { name: 'מוכן לאיסוף' }).click();
-    await expect(section.getByRole('button', { name: 'נאסף', exact: true })).toBeVisible();
-    await expect(section.getByRole('button', { name: 'מוכן לאיסוף' })).toHaveCount(0);
+    // The row stays whole: the stage the order is in now is a mark, the next
+    // step is the one button to press, and there is no way back or to reject.
+    await expect(section.getByRole('button', { name: 'מוכן לאיסוף' })).toHaveAttribute('aria-current', 'step');
+    await expect(section.getByRole('button', { name: 'מוכן לאיסוף' })).toBeDisabled();
+    await expect(section.getByRole('button', { name: 'בטיפול' })).toBeDisabled();
+    await expect(section.getByRole('button', { name: 'בטיפול' })).not.toHaveAttribute('aria-current', 'step');
+    await expect(section.getByRole('button', { name: 'דחה', exact: true })).toBeDisabled();
+    await expect(section.getByRole('button', { name: 'נאסף', exact: true })).toBeEnabled();
     // The "ready" message was attempted on both channels, each on its own.
     await expect.poll(async () => (await pool.query(
       `select count(distinct channel)::int as n from public.chip_order_notifications where order_id = $1 and kind = 'ready'`,
@@ -337,6 +395,142 @@ test.describe.serial('staff: the issue window', () => {
     await expect(section).toContainText('170₪');
     await issue.getByRole('button', { name: 'סגור' }).last().click();
     await expect(issue).toHaveCount(0);
+  });
+});
+
+// The v2 look (ref/chip-order/chip-issue-admin-v2.html), kept as numbers. On
+// orders of its own and outside the serial flow above: a cosmetic miss here
+// must never skip "save → ready → collected".
+test.describe('staff: the look of the issue window', () => {
+  test.beforeAll(async () => {
+    await seedPaidOrder([
+      { apt: APT_LAY, role: 'owner', name: 'דנה בדיקה', phone: P_OWNER, qty: 2 },
+      { apt: APT_LAY, role: 'tenant', name: 'שרה שוכרת', phone: P_RENTER, qty: 1, leaseEnd: '2030-01-31' },
+      { apt: APT_LAY_B, role: 'owner', name: 'דנה בדיקה', phone: P_OWNER, qty: 1 },
+    ]);
+  });
+
+  test('the layout: a 780px panel on the left edge, nothing cut or scrolling sideways from 1440 down to 320, the two breakpoints to the pixel, a one-line registry button, the footer order, the status row in full', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/chips?view=orders');
+    await orderRow(page, APT_LAY).first().click();
+    const issue = issueWindow(page);
+    const section = issue.getByTestId('chip-order-section');
+    await expect(section).toBeVisible();
+    const body = issue.getByTestId('chip-issue-body');
+    const blocks = issue.getByTestId('chip-holder-block');
+    await expect(blocks).toHaveCount(3);
+    const columns = (el: Locator) => el.first().evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(' ').length);
+
+    // 701 and 541 are one pixel above the reference's breakpoints: the layout
+    // must not have moved yet there, and must have moved at 700 and at 540.
+    for (const width of [1440, 780, 701, 700, 541, 540, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      // The sheet slides in for 1.2s — wait until the panel rests on the edge.
+      await expect.poll(async () => (await issue.boundingBox())!.x, { message: `panel on the left edge @${width}` }).toBe(0);
+      expect((await issue.boundingBox())!.width, `panel width @${width}`).toBeCloseTo(Math.min(780, width), 0);
+      // Nothing scrolls sideways and nothing is cut: the body is not wider than
+      // it shows (it has no overflow-x guard), and no clipping box of the
+      // window — panel, section, block, card — hides content.
+      expect(await body.evaluate((el) => el.scrollWidth - el.clientWidth), `the body scrolls sideways @${width}`).toBeLessThanOrEqual(0);
+      expect(await cutOff(issue), `content cut off sideways @${width}`).toEqual([]);
+
+      // "עדכן בכרטיס הדייר": one line of text in a 38px button, whatever the width.
+      for (const btn of await issue.getByTestId('chip-holder-registry-update').all()) {
+        expect(await textLines(btn), `registry button lines @${width}`).toBe(1);
+        expect((await btn.boundingBox())!.height, `registry button height @${width}`).toBeCloseTo(38, 0);
+      }
+      // The reference's breakpoints: 700px and 540px.
+      expect(await columns(section.locator('.ci-invwho')), `order grid columns @${width}`).toBe(width > 700 ? 3 : 2);
+      expect(await columns(issue.locator('.ci-mainrow')), `name / apartment / quantity @${width}`).toBe(width > 700 ? 3 : 2);
+      expect(await columns(issue.locator('.ci-frow')), `phone / email @${width}`).toBe(width > 540 ? 2 : 1);
+      expect(await columns(issue.getByRole('radiogroup', { name: 'אני' })), `role buttons @${width}`).toBe(width > 540 ? 4 : 2);
+      // A desktop keeps the reference's 14px in the fields at every width.
+      expect(await fieldSizes(issue), `field font size @${width}`).toEqual(['14px']);
+
+      // Footer: "שמור שינויים" at the left, "סגור" right beside it (10px).
+      const save = (await issue.getByTestId('chip-issue-save').boundingBox())!;
+      const close = (await issue.getByTestId('chip-issue-close').boundingBox())!;
+      expect(save.x, `"שמור שינויים" is left of "סגור" @${width}`).toBeLessThan(close.x);
+      expect(close.x - (save.x + save.width), `gap between the two @${width}`).toBeCloseTo(10, 0);
+      expect(close.y, `one row @${width}`).toBeCloseTo(save.y, 0);
+    }
+
+    // The panel's own text settings win over the Sheet primitive's utilities.
+    expect(await issue.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { size: cs.fontSize, color: cs.color };
+    })).toEqual({ size: '16px', color: 'rgb(26, 34, 51)' });
+    // "אני": four states, the stored role of the block selected.
+    await expect(blocks.first().getByRole('radiogroup', { name: 'אני' }).getByRole('radio')).toHaveText(['בעלים', 'שוכר', 'מפעיל', 'אורח']);
+    // The status row of a real order, whole: the stage it is in is a mark,
+    // "מוכן לאיסוף" waits for the chips, "נאסף" waits for "מוכן לאיסוף".
+    const actions = issue.getByTestId('chip-order-actions');
+    await expect(actions.getByRole('button')).toHaveText(['בטיפול', 'מוכן לאיסוף', 'נאסף', 'דחה']);
+    await expect(actions.locator('[aria-current="step"]')).toHaveText('בטיפול');
+    await expect(actions.getByRole('button', { name: 'בטיפול' })).toBeDisabled();
+    await expect(actions.getByRole('button', { name: 'מוכן לאיסוף' })).toBeDisabled();
+    await expect(actions.getByRole('button', { name: 'נאסף', exact: true })).toBeDisabled();
+    await expect(actions.getByRole('button', { name: 'דחה', exact: true })).toBeEnabled();
+    // Numbers: Inter, tabular, isolated left-to-right.
+    const num = await section.getByTestId('chip-order-progress').locator('.ci-num').first().evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { family: cs.fontFamily.split(',')[0]!.replace(/["']/g, '').trim(), numeric: cs.fontVariantNumeric, direction: cs.direction, bidi: cs.unicodeBidi };
+    });
+    expect(num).toEqual({ family: 'Inter', numeric: 'tabular-nums', direction: 'ltr', bidi: 'isolate' });
+
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await issue.getByTestId('chip-issue-close').click();
+    await expect(issue).toHaveCount(0);
+  });
+
+  // iOS zooms the page into a focused field under 16px and stays zoomed. The
+  // one media query of the window that is not a layout breakpoint: a touch
+  // screen under 768px, or a phone on its side.
+  test('a touch phone gets 16px fields, upright and on its side; a touch tablet keeps the 14px of the reference', async ({ browser }) => {
+    for (const [what, viewport, size] of [
+      ['a phone', { width: 390, height: 844 }, '16px'],
+      ['a phone on its side', { width: 844, height: 390 }, '16px'],
+      ['a tablet', { width: 900, height: 1200 }, '14px'],
+    ] as const) {
+      const ctx = await browser.newContext({ storageState: 'e2e/.auth/state.json', viewport, isMobile: true, hasTouch: true, locale: 'he-IL' });
+      const page = await ctx.newPage();
+      try {
+        await page.goto('/chips?view=orders');
+        // The order's row: a table row from 640px, a card under it.
+        await page.locator('[role="button"]:visible').filter({ hasText: APT_LAY }).first().click();
+        const issue = issueWindow(page);
+        await expect(issue.getByTestId('chip-order-section')).toBeVisible();
+        expect(await fieldSizes(issue), `field font size on ${what}`).toEqual([size]);
+      } finally {
+        await ctx.close();
+      }
+    }
+  });
+
+  // The Orders tab lists open orders only, but it does not refresh on its own:
+  // a row another user already closed still opens the window. The status row
+  // then marks where the order stands and offers nothing to press.
+  test('an order closed somewhere else while its row is still on the screen: the closing stage is the mark, every status button is off', async ({ page }) => {
+    const gone = await seedPaidOrder([{ apt: APT_GONE, role: 'owner', name: 'גלית בדיקה', phone: P_OWNER, qty: 1 }]);
+    await page.goto('/chips?view=orders');
+    const row = orderRow(page, APT_GONE);
+    await expect(row).toHaveCount(1);
+    const issue = issueWindow(page);
+    const actions = issue.getByTestId('chip-order-actions');
+
+    for (const [mark, close] of [
+      ['נאסף', `update public.chip_orders set status = 'collected', collected_at = now() where id = $1`],
+      ['דחה', `update public.chip_orders set status = 'rejected', rejected_at = now(), reject_reason = 'e2e' where id = $1`],
+    ] as const) {
+      await pool.query(close, [gone.id]);
+      await row.click();
+      await expect(actions.getByRole('button')).toHaveText(['בטיפול', 'מוכן לאיסוף', 'נאסף', 'דחה']);
+      await expect(actions.locator('[aria-current="step"]')).toHaveText(mark);
+      for (const button of await actions.getByRole('button').all()) await expect(button).toBeDisabled();
+      await issue.getByTestId('chip-issue-close').click();
+      await expect(issue).toHaveCount(0);
+    }
   });
 });
 
