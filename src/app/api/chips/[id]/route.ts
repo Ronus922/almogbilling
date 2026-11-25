@@ -74,7 +74,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
       return NextResponse.json({ error: 'נדרש מספר צ׳יפ' }, { status: 400 });
     }
     if (err instanceof Error && err.message === 'holder_name_required') {
-      return NextResponse.json({ error: 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא' }, { status: 400 });
+      return NextResponse.json({ error: 'לבעל צ׳יפ מסוג "אורח" נדרש שם מלא' }, { status: 400 });
     }
     const e = err as { code?: string };
     if (e.code === '23503') {

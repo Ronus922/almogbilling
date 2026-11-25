@@ -1,7 +1,7 @@
 'use client';
 
-// The chip issue window "הנפקת צ׳יפ" — redesigned 20/11/2026 after
-// ref/chip-order/chip-issue-admin.html (DESIGN.md "מודול צ׳יפים" (ו), styles
+// The chip issue window "הנפקת צ׳יפ" — v2 design of 24/11/2026 after
+// ref/chip-order/chip-issue-admin-v2.html (DESIGN.md "מודול צ׳יפים" (ו), styles
 // in app/styles/chip-issue-sheet.css). THIS WINDOW IS THE ONLY PLACE CHIPS ARE
 // MANAGED: every chip click in the app (table row, holder panel, tenant tab,
 // ?chip= deep link, an Orders-tab row) lands here. Two modes, one window:
@@ -9,13 +9,25 @@
 //   · WITH an order (an Orders-tab row, `initial.orderItemId`) —
 //     issue-sheet/OrderIssueSheet.tsx: one block per person of the order,
 //     "פירוט עסקה והערות", one save for everything.
-//   · WITHOUT an order (below) — the window as it was, in the new look: pick
-//     an apartment (async registry combobox, inline create) → one or more
-//     holder blocks, each one person (registry role or "אחר" + snapshot
-//     name/phone + new numbers of a chosen type) → fee / note → ONE save = ONE
-//     server transaction, all-or-nothing: it issues every pending number of
-//     every block AND applies holder edits (name / phone / role) to the block's
-//     saved chips (diffed against the values the block was seeded with).
+//   · WITHOUT an order (below) — issuing a chip at the reception: pick an
+//     apartment (async registry combobox, inline create) → one or more holder
+//     blocks, each one person (registry role or "אורח" — the stored role
+//     `other` — + snapshot name / phone / email, a renter's lease and its end
+//     date, + new numbers of a chosen type) → who ordered → how the new chips
+//     are paid + a note → ONE save = ONE server transaction, all-or-nothing:
+//     it issues every pending number of every block AND applies holder edits
+//     (name / phone / role / email / lease) to the block's saved chips (diffed
+//     against the values the block was seeded with).
+//
+//     25/11/2026 (Ronen): the window collects what the public order form
+//     collects, and none of it is required of the manager. "עמלת הנפקה (₪)"
+//     and "החיוב בוצע" are gone (both modes); in their place the payment of
+//     the NEW chips of the save — the amount read only (chips × the price of
+//     /settings) and a method with no default: "אשראי" (not active yet —
+//     disabled, drawn for admin and super admin only), "מזומן או העברה" (the
+//     save makes a chip order, source 'reception', already paid and collected)
+//     or "ללא חיוב" (no order; the details are kept and shown again on the
+//     block). Editing saved chips alone asks for no payment.
 //
 // Two actions are IMMEDIATE in both modes, never part of the save: the active
 // / disabled switch of a saved chip (switching off asks once) and the chip
@@ -31,12 +43,18 @@ import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { validatePhone } from '@/lib/validation';
 import { cn } from '@/lib/utils';
 import { CHIP_RESIDENT_ROLES, UNIT_TYPE_LABEL } from '@/lib/constants/chips';
-import { isSnapshotRole, resolveChipHolder } from '@/lib/chips/holder';
+import { chipHolderDetails, isSnapshotRole, resolveChipHolder } from '@/lib/chips/holder';
+import { leaseFileProblem } from '@/lib/chipOrders/lease';
+import { formatIlsAfter } from '@/lib/chipOrders/model';
+import {
+  EMPTY_ORDERER_FIELDS, RECEPTION_PAYMENT_LABEL, looksLikeEmail, ordererProblems, receptionAmount, receptionMethodInForce,
+  receptionPaymentReason, receptionRecordsOf, type OrdererFields, type ReceptionContext, type ReceptionPaymentMethod,
+} from '@/lib/chipOrders/reception';
 import {
   MAX_CHIPS_PER_GROUP, holderUpdatesForBlock, type HolderSnapshot,
 } from '@/lib/chips/issueGroups';
 import type {
-  ChipHolderUpdate, ChipResidentRole, ChipType, ChipWithHolder,
+  ChipHolderUpdate, ChipLeaseRef, ChipResidentRole, ChipType, ChipWithHolder,
   ContactResidentCard, ContactResidents, IssueChipGroup,
 } from '@/lib/types/chips';
 import {
@@ -44,6 +62,7 @@ import {
   PlusIco, ROLE_SHORT, RoleSegment, Section, UsersIco, WalletIco, useChipQuickActions, type PendingChip,
 } from './issue-sheet/parts';
 import { OrderIssueSheet } from './issue-sheet/OrderIssueSheet';
+import { LeaseField, OrdererForm, ReceptionPayment, ReceptionRecords, UserIco } from './issue-sheet/reception';
 
 // ── Contact search item (GET /api/contacts/search) ─────────────────────────
 
@@ -65,6 +84,14 @@ interface HolderBlockState {
   holderName: string;
   holderPhone: string;
   phoneTouched: boolean;
+  /** 25/11/2026 — the holder's email; a renter's lease (already in Storage —
+   *  the save writes its reference on the chips) and its end date
+   *  (YYYY-MM-DD, '' = none). All optional. */
+  email: string;
+  lease: ChipLeaseRef | null;
+  leaseEnd: string;
+  leaseBusy: boolean;
+  leaseError: string | null;
   numInput: string;
   /** Current type selector value — captured into each number on add. */
   numType: ChipType;
@@ -81,8 +108,18 @@ interface HolderBlockState {
 function emptyBlock(key: number): HolderBlockState {
   return {
     key, role: null, holderName: '', holderPhone: '', phoneTouched: false,
+    email: '', lease: null, leaseEnd: '', leaseBusy: false, leaseError: null,
     numInput: '', numType: 'physical', pending: [], saved: [], orig: null, dupHint: null,
   };
+}
+
+/** The block's email as it is stored (trimmed, lower case), or null. */
+const blockEmail = (b: Pick<HolderBlockState, 'email'>): string | null => b.email.trim().toLowerCase() || null;
+
+/** The email, the lease and its end date as a block's saved chips hold them. */
+function detailsOf(saved: ChipWithHolder[]): Pick<HolderBlockState, 'email' | 'lease' | 'leaseEnd'> {
+  const d = chipHolderDetails(saved);
+  return { email: d.email ?? '', lease: d.lease, leaseEnd: d.leaseEnd ?? '' };
 }
 
 /** Holder edits this block would send on save (its saved chips only). */
@@ -91,7 +128,7 @@ function blockUpdates(b: HolderBlockState): ChipHolderUpdate[] {
   const phone = phoneRaw ? validatePhone(phoneRaw).normalized || phoneRaw : null;
   return holderUpdatesForBlock(
     b.saved.map((c) => c.id),
-    { name: b.holderName.trim() || null, phone, role: b.role },
+    { name: b.holderName.trim() || null, phone, role: b.role, email: blockEmail(b), lease: b.lease, leaseEnd: b.leaseEnd || null },
     b.orig,
   );
 }
@@ -138,6 +175,9 @@ export interface IssueChipSheetProps {
   canEditOrders?: boolean;
   /** contacts:edit — "עדכן בכרטיס הדייר" (the server checks it again). */
   canWriteContacts?: boolean;
+  /** Admin / super admin — "בטל הזמנת קבלה" in the window of a reception
+   *  order (the server checks the role again). */
+  canCancelReception?: boolean;
 }
 
 export function IssueChipSheet(props: IssueChipSheetProps) {
@@ -161,9 +201,20 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
   const [blocks, setBlocks] = useState<HolderBlockState[]>([emptyBlock(0)]);
   const [chipsVersion, setChipsVersion] = useState(0); // bump → refetch saved chips
 
-  // Global fee / notes
-  const [fee, setFee] = useState('');
-  const [feeCharged, setFeeCharged] = useState(false);
+  // Who ordered (25/11/2026). Name and phone follow the first chip holder of
+  // this save until the manager types in them.
+  const [orderer, setOrderer] = useState<OrdererFields>(EMPTY_ORDERER_FIELDS);
+  const [ordererOwn, setOrdererOwn] = useState({ name: false, phone: false });
+  // How the NEW chips of this save are paid — nothing is chosen by default.
+  // "מזומן או העברה" confirms a SUM: the one on the screen when it was chosen.
+  const [method, setMethod] = useState<ReceptionPaymentMethod | null>(null);
+  const [confirmedAmount, setConfirmedAmount] = useState<number | null>(null);
+  // The window as it is now: an apartment switch or a reopening starts block
+  // keys over, so whatever was still on its way to the window before that (a
+  // lease upload) no longer has a block to land on.
+  const sessionRef = useRef(0);
+  // The price per chip, what the viewer may see, the apartment's earlier saves.
+  const [reception, setReception] = useState<ReceptionContext | null>(null);
   const [notes, setNotes] = useState('');
 
   // 409 marking: the offending pending number turns red
@@ -207,8 +258,12 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     blockSeq.current = 1;
     setBlocks([emptyBlock(0)]);
     setChipsVersion(0);
-    setFee('');
-    setFeeCharged(false);
+    setOrderer(EMPTY_ORDERER_FIELDS);
+    setOrdererOwn({ name: false, phone: false });
+    setMethod(null);
+    setConfirmedAmount(null);
+    setReception(null);
+    sessionRef.current += 1;
     setNotes('');
     setConflict(null);
     setServerError(null);
@@ -228,19 +283,28 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
   useEffect(() => {
     if (!open || !contactId) {
       setResidents(null);
+      setReception(null);
       return;
     }
     let cancelled = false;
     setResidentsLoading(true);
     (async () => {
       try {
-        const [rRes, cRes] = await Promise.all([
+        const [rRes, cRes, xRes] = await Promise.all([
           fetch(`/api/contacts/${contactId}/residents`, { credentials: 'include' }),
           fetch(`/api/contacts/${contactId}/chips`, { credentials: 'include' }),
+          fetch(`/api/chips/reception?contact_id=${contactId}`, { credentials: 'include' }),
         ]);
         if (rRes.ok) {
           const data = (await rRes.json()) as ContactResidents;
           if (!cancelled) setResidents(data);
+        }
+        // The price per chip and the apartment's earlier reception saves. If it
+        // cannot be loaded the window still works: no amount is shown, and only
+        // "ללא חיוב" can be chosen.
+        if (xRes.ok) {
+          const data = (await xRes.json()) as ReceptionContext;
+          if (!cancelled) setReception({ ...data, records: Array.isArray(data.records) ? data.records : [] });
         }
         if (cRes.ok) {
           const data = (await cRes.json()) as { items?: ChipWithHolder[] };
@@ -266,7 +330,10 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
               if (idKey) used.add(idKey);
               const orig =
                 b.orig ?? (saved.length > 0
-                  ? { name: b.holderName.trim() || null, phone: b.holderPhone.trim() || null, role: b.role }
+                  ? {
+                      name: b.holderName.trim() || null, phone: b.holderPhone.trim() || null, role: b.role,
+                      email: blockEmail(b), lease: b.lease, leaseEnd: b.leaseEnd || null,
+                    }
                   : null);
               next.push({ ...b, saved, orig });
             }
@@ -280,13 +347,18 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
               const holder = resolveChipHolder(first);
               const name = first.holder_name?.trim() || (holder.name === '—' ? '' : holder.name);
               const phone = first.holder_phone?.trim() || holder.phone || '';
+              const details = detailsOf(saved);
               next.push({
                 ...emptyBlock(blockSeq.current++),
                 role: first.resident_role,
                 holderName: name,
                 holderPhone: phone,
+                ...details,
                 saved,
-                orig: { name: name || null, phone: phone || null, role: first.resident_role },
+                orig: {
+                  name: name || null, phone: phone || null, role: first.resident_role,
+                  email: details.email || null, lease: details.lease, leaseEnd: details.leaseEnd || null,
+                },
               });
             }
             // 3. Drop empty placeholder blocks if real ones arrived; always ≥1.
@@ -374,19 +446,39 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     return v.valid ? null : v.error ?? 'מספר טלפון לא תקין';
   };
 
-  const feeError = useMemo(() => {
-    if (!fee.trim()) return null;
-    const n = Number(fee);
-    return Number.isFinite(n) && n >= 0 ? null : 'סכום לא תקין';
-  }, [fee]);
+  // The orderer defaults to the first chip holder of THIS save — the first
+  // block that gets a new number, else the first block — until the manager
+  // types a name / a phone of their own.
+  const firstHolder = blocks.find((b) => effectivePending(b).length > 0) ?? blocks[0];
+  const ordererShown: OrdererFields = {
+    ...orderer,
+    name: ordererOwn.name ? orderer.name : firstHolder?.holderName ?? '',
+    phone: ordererOwn.phone ? orderer.phone : firstHolder?.holderPhone ?? '',
+  };
+  const ordererBad = ordererProblems(ordererShown, (p) => {
+    const v = validatePhone(p);
+    return v.valid ? null : v.error ?? 'מספר טלפון לא תקין';
+  });
+
+  // The amount of this save: NEW chips × the price per chip of /settings. The
+  // server computes it again and refuses a save whose amount moved.
+  const unitPrice = reception?.unit_price ?? null;
+  const amount = unitPrice === null ? null : receptionAmount(totalPending, unitPrice);
+  // The choice that still stands: a chip added or removed after "מזומן או
+  // העברה" was chosen changes the sum, and the old confirmation is not a
+  // confirmation of the new one.
+  const methodNow = receptionMethodInForce({ method, amount, confirmedAmount });
+  const payReason = receptionPaymentReason({ newChips: totalPending, method, amount, confirmedAmount });
+  const leaseBusy = blocks.some((b) => b.leaseBusy);
 
   /** Per-block validity — only blocks that issue or edit something matter. */
   const blockInvalid = (b: HolderBlockState): string | null => {
     const pending = effectivePending(b);
     if (pending.length === 0 && blockUpdates(b).length === 0) return null; // nothing to save here
     if (!b.role) return 'בחר תפקיד לבעל הצ׳יפ';
-    if (isSnapshotRole(b.role) && !b.holderName.trim()) return 'לבעל צ׳יפ מסוג "אחר" נדרש שם מלא';
+    if (isSnapshotRole(b.role) && !b.holderName.trim()) return `לבעל צ׳יפ מסוג "${ROLE_SHORT[b.role] ?? b.role}" נדרש שם מלא`;
     if (phoneErrorOf(b)) return phoneErrorOf(b);
+    if (b.email.trim() && !looksLikeEmail(b.email)) return 'כתובת מייל לא תקינה';
     if (b.pending.length > MAX_CHIPS_PER_GROUP) return `עד ${MAX_CHIPS_PER_GROUP} מספרים חדשים לבלוק בשמירה אחת`;
     return null;
   };
@@ -395,7 +487,11 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     !!contactId &&
     (totalPending >= 1 || totalUpdates >= 1) &&
     blocks.every((b) => blockInvalid(b) === null) &&
-    !feeError &&
+    // New chips need a payment method, and what was typed about the orderer
+    // must be storable; edits of saved chips alone need neither.
+    payReason === null &&
+    (totalPending === 0 || Object.keys(ordererBad).length === 0) &&
+    !leaseBusy &&
     !submitting;
 
   // ── ESC layering (LIFO: confirm > number edit > picker > panel) ──────────
@@ -422,6 +518,44 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     setDirty(true);
     setBlocks((prev) => [...prev, emptyBlock(blockSeq.current++)]);
   }
+
+  /** The lease of a renter block: checked here as the server checks it, sent
+   *  to Storage at once, and kept on the block as a reference — the save
+   *  writes it on the holder's chips. */
+  async function uploadLease(key: number, file: File) {
+    const problem = leaseFileProblem({ name: file.name, size: file.size, type: file.type });
+    if (problem) {
+      patchBlock(key, { leaseError: problem });
+      return;
+    }
+    // The file belongs to THIS apartment's block. If the apartment is switched
+    // (or the window reopened) while it is on its way, block keys start over —
+    // and a lease must never land on another apartment's block of the same key.
+    const session = sessionRef.current;
+    patchBlock(key, { leaseBusy: true, leaseError: null });
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const res = await fetch('/api/chips/leases', { method: 'POST', credentials: 'include', body });
+      const data = (await res.json().catch(() => ({}))) as { lease?: ChipLeaseRef; error?: string };
+      if (sessionRef.current !== session) return;
+      if (!res.ok || !data.lease) throw new Error(data.error ?? 'העלאת החוזה נכשלה');
+      patchBlock(key, { lease: data.lease, leaseBusy: false, leaseError: null });
+    } catch (e) {
+      if (sessionRef.current !== session) return;
+      patchBlock(key, { leaseBusy: false, leaseError: (e as Error).message || 'העלאת החוזה נכשלה' });
+    }
+  }
+
+  function changeOrderer(field: keyof OrdererFields, value: string) {
+    setDirty(true);
+    setServerError(null);
+    setOrderer((o) => ({ ...o, [field]: value }));
+    if (field === 'name' || field === 'phone') setOrdererOwn((own) => ({ ...own, [field]: true }));
+  }
+
+  /** The reception saves this block's chips came from (shown again, read only). */
+  const recordsOf = (b: HolderBlockState) => receptionRecordsOf(b.saved, reception?.records ?? []);
 
   /** Remove a block — only while it has NO saved chips. If it was the last
    *  one, a fresh empty block takes its place (the window keeps ≥1). */
@@ -525,6 +659,13 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     setQuery('');
     setResults([]);
     setCreateError(null);
+    // Another apartment is another save: who orders and how it is paid start over.
+    setOrderer(EMPTY_ORDERER_FIELDS);
+    setOrdererOwn({ name: false, phone: false });
+    setMethod(null);
+    setConfirmedAmount(null);
+    setReception(null);
+    sessionRef.current += 1;
   }
 
   // ── Submit — ALL pending numbers from ALL blocks, one transaction ────────
@@ -550,6 +691,11 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
             resident_role: b.role,
             holder_name: b.holderName.trim() || null,
             holder_phone: b.holderPhone.trim() ? validatePhone(b.holderPhone).normalized : null,
+            holder_email: blockEmail(b),
+            lease: b.lease,
+            lease_end_date: b.leaseEnd || null,
+            // A block with cards AND app chips is two groups of ONE person.
+            block: b.key,
             chip_type: type,
             numbers,
           });
@@ -567,13 +713,27 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
           contact_id: contactId,
           groups,
           updates,
-          issuance_fee: fee.trim() ? Number(fee) : null,
-          fee_charged: feeCharged,
           notes: notes.trim() || null,
+          // Who ordered and how it is paid — only a save of NEW chips carries them.
+          ...(totalPending > 0
+            ? {
+                orderer: {
+                  name: ordererShown.name.trim() || null,
+                  phone: ordererShown.phone.trim() || null,
+                  email: ordererShown.email.trim() || null,
+                  street: ordererShown.street.trim() || null,
+                  city: ordererShown.city.trim() || null,
+                  zip: ordererShown.zip.trim() || null,
+                },
+                // The amount is what the window SHOWED; the server computes its own.
+                payment: methodNow ? { method: methodNow, amount: methodNow === 'cash_transfer' ? amount ?? 0 : 0 } : null,
+              }
+            : {}),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
-        items?: unknown[]; error?: string; chip_number?: string; group_index?: number | null;
+        items?: unknown[]; error?: string; code?: string; chip_number?: string; group_index?: number | null;
+        order?: { order_number: number; total: number } | null; record?: { id: string } | null;
       };
       if (!res.ok) {
         const msg = data.error ?? 'הנפקת הצ׳יפ נכשלה';
@@ -581,6 +741,13 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
           // Nothing was saved (all-or-nothing) — mark the offending number red.
           const blockKey = typeof data.group_index === 'number' ? groupToBlock[data.group_index] ?? null : null;
           if (blockKey != null) setConflict({ blockKey, number: data.chip_number });
+          setServerError(msg);
+        } else if (res.status === 409 && data.code === 'amount_mismatch') {
+          // The price per chip moved while the window was open. Nothing was
+          // saved: the new sum is loaded, and the payment is asked again.
+          setMethod(null);
+          setConfirmedAmount(null);
+          setChipsVersion((v) => v + 1);
           setServerError(msg);
         } else if (res.status === 400 || res.status === 422) {
           setServerError(msg);
@@ -590,7 +757,12 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
         return;
       }
       const count = Array.isArray(data.items) ? data.items.length : 0;
-      toast.success(count > 1 ? `${count} צ׳יפים הונפקו` : count === 1 ? 'הצ׳יפ הונפק' : 'השינויים נשמרו');
+      toast.success(
+        count > 1 ? `${count} צ׳יפים הונפקו` : count === 1 ? 'הצ׳יפ הונפק' : 'השינויים נשמרו',
+        data.order
+          ? { description: `נרשם תשלום ${formatIlsAfter(data.order.total)} — ${RECEPTION_PAYMENT_LABEL.cash_transfer} · הזמנה ${data.order.order_number}` }
+          : data.record ? { description: RECEPTION_PAYMENT_LABEL.none } : undefined,
+      );
       onIssued();
       onOpenChange(false);
     } catch {
@@ -742,6 +914,7 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
                 const takenHints = residentCards.filter((c) => takenBy(c.role));
                 const firstName = block.holderName.trim().split(/\s+/)[0] || null;
                 const phoneError = block.phoneTouched ? phoneErrorOf(block) : null;
+                const emailBad = block.email.trim() !== '' && !looksLikeEmail(block.email);
                 const invalid = blockInvalid(block);
                 return (
                   <HolderBlock
@@ -762,7 +935,7 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
                           disabled: takenBy(card.role) || !card.exists,
                           title: takenBy(card.role) ? 'נבחר בבלוק אחר' : !card.exists ? 'לא הוזנו פרטים במרשם' : undefined,
                         })),
-                        { value: 'other', label: 'אחר', title: 'הזנה חופשית של שם וטלפון' },
+                        { value: 'other', label: ROLE_SHORT.other, title: 'הזנה חופשית של שם וטלפון' },
                       ]}
                       value={block.role}
                       onChange={(v) => selectRole(block, v, residentCards)}
@@ -779,7 +952,7 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
                         )}
                       </div>
                     )}
-                    <div className="ci-frow">
+                    <div className="ci-ordrow ci-inblock">
                       <div className="ci-fld">
                         <label htmlFor={`holder-name-${block.key}`}>שם מלא</label>
                         <input id={`holder-name-${block.key}`} type="text" value={block.holderName} disabled={submitting} placeholder="שם מלא"
@@ -793,7 +966,28 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
                           onBlur={() => patchBlock(block.key, { phoneTouched: true })} />
                         {phoneError && <span className="ci-err">⚠️ {phoneError}</span>}
                       </div>
+                      <div className="ci-fld">
+                        <label htmlFor={`holder-email-${block.key}`}>מייל</label>
+                        <input id={`holder-email-${block.key}`} type="email" inputMode="email" autoComplete="off" value={block.email}
+                          disabled={submitting} className={cn('ci-num ci-ltr', emailBad && 'ci-bad')}
+                          onChange={(e) => patchBlock(block.key, { email: e.target.value })} />
+                      </div>
                     </div>
+                    {/* A renter (or an operator, on a management agreement): the lease and its end date. */}
+                    {(block.role === 'tenant' || block.role === 'operator' || block.lease) && (
+                      <LeaseField
+                        idBase={`holder-${block.key}`}
+                        lease={block.lease}
+                        leaseEnd={block.leaseEnd}
+                        busy={block.leaseBusy}
+                        error={block.leaseError}
+                        canView={reception?.lease_view ?? false}
+                        disabled={submitting}
+                        onPick={(file) => void uploadLease(block.key, file)}
+                        onRemove={() => patchBlock(block.key, { lease: null, leaseError: null })}
+                        onLeaseEnd={(v) => patchBlock(block.key, { leaseEnd: v })}
+                      />
+                    )}
                     {block.role && !isSnapshotRole(block.role) && (
                       <AmberNote>שינוי השם או הטלפון כאן חל על הצ׳יפים של הבלוק הזה בלבד — מרשם הדיירים לא מתעדכן.</AmberNote>
                     )}
@@ -818,35 +1012,44 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
                       onCommitNumber={() => void quick.commitNumber(allSaved, (n, id) => numberExistsInWindow(n, id), submitting)}
                       onRemovePending={(n) => removePending(block, n)}
                     />
+                    <ReceptionRecords records={recordsOf(block)} />
                     {invalid && <p className="ci-err mt-2">⚠️ {invalid}</p>}
                   </HolderBlock>
                 );
               })}
               <button type="button" className="ci-addowner" onClick={addBlock} disabled={disabledAll}>
-                <PlusIco />
+                <PlusIco size={15} />
                 הוסף בעל צ׳יפ
               </button>
             </>
           )}
         </Section>
 
-        {/* No order: the transaction details are hidden; fee + note stay */}
-        <Section icon={<WalletIco />} tone="green" title="עמלה והערות" sub="חל על כל הצ׳יפים החדשים בשמירה הזו">
-          <div className="ci-feegrid">
-            <div className="ci-fld">
-              <label htmlFor="chip-fee">עמלת הנפקה (₪)</label>
-              <input id="chip-fee" type="text" inputMode="decimal" dir="ltr" placeholder="0" value={fee} disabled={disabledAll}
-                className={cn('ci-num ci-ltr', feeError && 'ci-bad')} onChange={(e) => { setDirty(true); setFee(e.target.value); }} />
-              {feeError && <span className="ci-err">⚠️ {feeError}</span>}
-            </div>
-            <label className="ci-chk">
-              <input type="checkbox" checked={feeCharged} disabled={disabledAll} onChange={(e) => { setDirty(true); setFeeCharged(e.target.checked); }} />
-              החיוב בוצע
-            </label>
-          </div>
-          <div className="ci-fld mt-[14px]">
+        {/* Who ordered — every field optional; kept with the NEW chips of the save */}
+        <Section icon={<UserIco />} title="פרטי המזמין" sub="לא חובה · נשמרים עם הצ׳יפים החדשים שבשמירה הזו">
+          <OrdererForm value={ordererShown} problems={ordererBad} disabled={disabledAll} onChange={changeOrderer} />
+        </Section>
+
+        {/* No order: the payment of the new chips (in place of the old fee fields) + the note */}
+        <Section icon={<WalletIco />} tone="green" title="תשלום והערות" sub="חל על כל הצ׳יפים החדשים בשמירה הזו">
+          <ReceptionPayment
+            newChips={totalPending}
+            unitPrice={unitPrice}
+            method={methodNow}
+            onMethod={(m) => {
+              setDirty(true);
+              setServerError(null);
+              setMethod(m);
+              // What the manager confirms by choosing: the sum on the screen now.
+              setConfirmedAmount(m === 'cash_transfer' ? amount : null);
+            }}
+            cardOption={reception?.card_option ?? false}
+            disabled={disabledAll}
+            reason={payReason}
+          />
+          <div className="ci-fld ci-notefld">
             <label htmlFor="chip-notes">הערה</label>
-            <textarea id="chip-notes" value={notes} disabled={disabledAll} placeholder="הערות פנימיות על ההנפקה…"
+            <textarea id="chip-notes" value={notes} disabled={disabledAll} maxLength={2000} placeholder="הערות פנימיות על ההנפקה…"
               onChange={(e) => { setDirty(true); setNotes(e.target.value); }} />
           </div>
         </Section>

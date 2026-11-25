@@ -318,14 +318,15 @@ test('the guard lands on /visitors and the menu offers nothing else', async ({ b
   await expect(page).toHaveURL(/\/visitors$/);
   await expect(page.getByRole('heading', { name: 'סריקת כניסה' })).toBeVisible();
 
-  // The rail offers ONE category (no "הגדרות" either). With one permitted item it is a direct
-  // link to the screen — no panel, no sub-menu (DESIGN.md §14, link category).
+  // The rail offers ONE category (no "הגדרות" either). Since 25/11/2026 it holds two role
+  // screens — the visitor scan and the chip pickup ("מסירת צ׳יפים") — so it is a panel with
+  // exactly those two links, and nothing else in the whole menu (DESIGN.md §14).
   const categories = await page.locator('aside [data-nav-category]').allInnerTexts();
   expect(categories.map((t) => t.trim())).toEqual(['אבטחה']);
-  const links = await page.locator('aside nav a').all();
-  expect(links).toHaveLength(1);
-  await expect(links[0]!).toHaveAttribute('href', '/visitors');
-  await expect(page.locator('aside [data-nav-panel]')).toHaveCount(0);
+  const navPanel = page.locator('aside [data-nav-panel]');
+  if ((await navPanel.count()) === 0 || (await navPanel.getAttribute('data-state')) !== 'open') await page.locator('aside [data-nav-category]').click();
+  const hrefs = await page.locator('aside a[href]').evaluateAll((els) => [...new Set(els.map((e) => e.getAttribute('href')))]);
+  expect(hrefs).toEqual(['/visitors', '/chip-pickup']);
   // no Settings link, no bell, no global search, no personal assistant
   await expect(page.locator('aside a[href="/settings"]')).toHaveCount(0);
   await expect(page.getByLabel('התראות')).toHaveCount(0);
@@ -344,8 +345,10 @@ test('every other page sends the guard back; every other API refuses', async ({ 
   // ── pages ──
   const appRoot = join(process.cwd(), 'src/app');
   const pageFiles = [...findFiles(join(appRoot, '(app)'), 'page.tsx'), ...findFiles(join(appRoot, 'debtors'), 'page.tsx')];
+  // The guard's two screens: the visitor scan, and the chip pickup (25/11/2026).
+  const guardPages = ['/visitors', '/chip-pickup'];
   const pages = [...new Set(pageFiles.map((f) => urlFor(f, f.includes('/debtors/') ? appRoot : join(appRoot, '(app)'))))]
-    .filter((u) => u !== '/visitors');
+    .filter((u) => !guardPages.includes(u));
   expect(pages.length).toBeGreaterThan(20); // the crawl really found the app's screens
   const leaked: string[] = [];
   for (const u of pages) {
@@ -359,7 +362,11 @@ test('every other page sends the guard back; every other API refuses', async ({ 
   // ── API routes ──
   const apiRoot = join(appRoot, 'api');
   const skip = ['/api/health', '/api/auth/', '/api/public/', '/api/portal/', '/api/webhooks'];
-  const allowed = ['/api/visitors', '/api/files/visitor-ids', '/api/account/password'];
+  // '/api/chip-pickup' — the pickup screen's narrow list and its hand-over (25/11/2026); what
+  // they answer, and that every OTHER chip route refuses the guard, is asserted in
+  // e2e/chip-pickup.spec.ts and tests/chip-pickup-db.test.ts.
+  const allowed = ['/api/visitors', '/api/files/visitor-ids', '/api/account/password', '/api/chip-pickup'];
+  const chipApi = /^\/api\/(chips(\/|$)|chip-orders(\/|$)|settings\/chip-orders|contacts\/[^/]+\/chips|cron\/chip-orders-purge)/;
   const offenders: string[] = [];
   let probed = 0;
   for (const file of findFiles(apiRoot, 'route.ts')) {
@@ -381,6 +388,10 @@ test('every other page sends the guard back; every other API refuses', async ({ 
       // with a kind it must refuse — asserted right after the loop.
       if (method === 'GET' && url === '/api/work-items' && s === 400) continue;
       if (![401, 403, 404, 405].includes(s)) offenders.push(`${method} ${url} → ${s}`);
+      // The chips module (the guard has a screen right next to it, 25/11/2026): a
+      // 404 for the made-up id would not prove the guard was refused — every chip
+      // route must say so itself, before it looks anything up.
+      else if (chipApi.test(url) && ![401, 403].includes(s)) offenders.push(`${method} ${url} → ${s} (a chip route must refuse the guard with 401/403)`);
     }
   }
   expect(probed).toBeGreaterThan(100);

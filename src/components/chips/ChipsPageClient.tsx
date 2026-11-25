@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Info, KeyRound, Plus, Search, X } from 'lucide-react';
+import { Info, KeyRound, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,8 +14,11 @@ import { ChipsTable } from './ChipsTable';
 import { IssueChipSheet } from './IssueChipSheet';
 import { ChipHolderPanel, type HolderRef } from './ChipHolderPanel';
 import { ChipOrdersPanel } from './ChipOrdersPanel';
-import { e164ToLocal } from '@/lib/portal/phone';
+import { ChipListExports } from './ChipListExports';
+import { CHIPS_SEARCH_INPUT, ChipsToolbar } from './ChipsToolbar';
+import { CHIPS_EXPORT } from '@/lib/chips/exportColumns';
 import type { ChipOrderRow } from '@/lib/chipOrders/model';
+import { chipOrderRowPhone, countOpenChipOrderRows } from '@/lib/chipOrders/orderRows';
 
 // List filter tabs — labels per the chips product spec (ChipTab values).
 const TABS: { value: ChipTab; label: string }[] = [
@@ -70,6 +73,7 @@ export function ChipsPageClient({
   canManageOrders = false,
   canEditOrders = false,
   canWriteContacts = false,
+  canCancelReception = false,
 }: {
   canEdit: boolean;
   /** chips_orders_manage:view — shows the "הזמנות" view (12/11/2026). Without
@@ -78,6 +82,8 @@ export function ChipsPageClient({
   canEditOrders?: boolean;
   /** contacts:edit — "עדכן בכרטיס הדייר" in the orderer's holder block. */
   canWriteContacts?: boolean;
+  /** Admin / super admin, by role — "בטל הזמנת קבלה" in a reception order's window. */
+  canCancelReception?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -90,20 +96,35 @@ export function ChipsPageClient({
   const [orders, setOrders] = useState<ChipOrderRow[]>([]);
   const [unfinishedTests, setUnfinishedTests] = useState(0);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  // The loading skeleton is for the FIRST load only. Every later load — after a
+  // quick status button of a row, after a save in the issue window (which now
+  // stays open) — swaps the rows in place, with no flash of an empty table.
+  const ordersLoaded = useRef(false);
+  // The rows are reloaded after every change, and two changes may follow each
+  // other closely (a chip switched, then "מוכן לאיסוף"): only the newest answer
+  // may land, or an older one would draw a ready order as still being assigned.
+  const ordersSeq = useRef(0);
 
   const fetchOrders = useCallback(async () => {
     if (!canManageOrders) return;
-    setOrdersLoading(true);
+    const mine = ++ordersSeq.current;
+    if (!ordersLoaded.current) setOrdersLoading(true);
     try {
       const res = await fetch('/api/chip-orders', { credentials: 'include' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { items?: ChipOrderRow[]; unfinishedTestOrders?: number };
-      setOrders(Array.isArray(data.items) ? data.items : []);
+      if (ordersSeq.current !== mine) return;
+      // `people` and `line_total` joined the rows on 24/11/2026. A tab left open
+      // across a rollback to an older build gets rows without them — the search
+      // and the Excel file must not break on that.
+      const rows = Array.isArray(data.items) ? data.items : [];
+      setOrders(rows.map((r) => ({ ...r, people: Array.isArray(r.people) ? r.people : [], line_total: Number(r.line_total ?? 0) })));
       setUnfinishedTests(typeof data.unfinishedTestOrders === 'number' ? data.unfinishedTestOrders : 0);
+      ordersLoaded.current = true;
     } catch (err) {
-      toast.error(`טעינת ההזמנות נכשלה: ${(err as Error).message}`);
+      if (ordersSeq.current === mine) toast.error(`טעינת ההזמנות נכשלה: ${(err as Error).message}`);
     } finally {
-      setOrdersLoading(false);
+      if (ordersSeq.current === mine) setOrdersLoading(false);
     }
   }, [canManageOrders]);
 
@@ -112,8 +133,9 @@ export function ChipsPageClient({
   }, [fetchOrders]);
 
   // Open rows (one per apartment of an open order); test orders are never
-  // counted (13/11/2026).
-  const openOrdersInProgress = orders.filter((o) => !o.is_test).length;
+  // counted (13/11/2026), and neither is a reception order — it is collected
+  // the moment it is made, so nothing waits on it (25/11/2026).
+  const openOrdersInProgress = countOpenChipOrderRows(orders);
 
   function switchView(next: 'chips' | 'orders') {
     setView(next);
@@ -131,7 +153,7 @@ export function ChipsPageClient({
       contactId: row.contact_id,
       apartmentNumber: row.apartment_number,
       holderName: row.full_name,
-      holderPhone: e164ToLocal(row.phone_e164),
+      holderPhone: chipOrderRowPhone(row) || null,
       orderItemId: row.item_id,
     });
   }
@@ -268,6 +290,16 @@ export function ChipsPageClient({
     [items, holderFilter],
   );
 
+  // What narrowed the list, in words — printed under the title of the print
+  // view and of the PDF file. A search runs over every status (the server
+  // skips the status tab while searching), so the two never appear together.
+  const exportFilter = [
+    ...(debouncedQ
+      ? [`חיפוש: „${debouncedQ}” (בכל הסטטוסים)`]
+      : tab !== 'all' ? [`סינון: ${TABS.find((t) => t.value === tab)?.label ?? ''}`] : []),
+    ...(holderFilter ? [`מחזיק: ${holderFilter.displayName} · דירה ${holderFilter.apartmentNumber}`] : []),
+  ];
+
   return (
     <div className="chips-skin space-y-6">
       {/* Top bar — structure §28.9, chips-skin tones (ref) */}
@@ -337,7 +369,7 @@ export function ChipsPageClient({
           onOpen={canEdit ? openOrderRow : undefined}
           canEdit={canEditOrders}
           unfinishedTests={unfinishedTests}
-          onChanged={() => void fetchOrders()}
+          onChanged={fetchOrders}
         />
       )}
 
@@ -366,44 +398,57 @@ export function ChipsPageClient({
       {/* KPI row */}
       <ChipsKpiRow kpis={kpis} />
 
-      {/* Single card: toolbar (border-bottom) → table */}
+      {/* Single card: toolbar (border-bottom) → table. The toolbar is the one
+          of the Orders tab (ChipsToolbar): the status tabs at the start, then
+          the search box and the three export buttons. */}
       <div className="overflow-hidden rounded-[16px] border border-[var(--chip-border)] bg-[var(--chip-panel)]">
-        <div className="flex flex-col gap-3 border-b border-[var(--chip-border)] px-[22px] py-4 md:flex-row md:items-center md:justify-between">
-          {/* Tab pills (RTL start = right) */}
-          <div className="flex flex-wrap items-center gap-2">
-            {TABS.map((t) => (
-              <button
-                key={t.value}
-                type="button"
-                onClick={() => setTab(t.value)}
-                className={cn(
-                  'inline-flex h-9 cursor-pointer items-center rounded-full px-4 text-[13.5px] transition-colors',
-                  tab === t.value
-                    ? 'bg-[var(--chip-brand)] font-bold text-white'
-                    : 'border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] font-semibold text-[var(--chip-ink-muted)] hover:bg-[var(--chip-hover)]',
-                )}
-              >
-                {t.label}
-              </button>
-            ))}
-            {debouncedQ && (
-              <span className="inline-flex h-9 items-center rounded-full bg-[var(--chip-brand-soft)] px-3 text-[12px] font-bold text-[var(--chip-brand-ink)]">
-                מציג תוצאות מכל הסטטוסים
-              </span>
-            )}
-          </div>
-
-          {/* Search — one box, both directions (number → name, name → numbers) */}
-          <div className="relative w-full md:w-[340px]">
-            <Search className="pointer-events-none absolute start-[13px] top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-[var(--chip-ink-soft)]" />
+        <ChipsToolbar
+          searchWidth="@min-[1140px]:w-[340px]"
+          search={
+            // One box, both directions (number → name, name → numbers).
             <Input
               placeholder="חפש לפי מספר צ׳יפ, מספר דירה או שם דייר"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-11 rounded-[11px] border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] ps-[42px] pe-[14px] text-[14px] placeholder:text-[var(--chip-ink-soft)] focus-visible:border-[var(--chip-brand)] focus-visible:ring-4 focus-visible:ring-[rgba(61,90,254,0.12)]"
+              className={CHIPS_SEARCH_INPUT}
             />
-          </div>
-        </div>
+          }
+          exports={
+            // "הדפסה" · "ייצוא לאקסל" · "הורדה ל-PDF" — the rows the table shows
+            // (the status tab, the search, the one-holder filter), for whoever
+            // sees the tab (25/11/2026).
+            <ChipListExports
+              list={CHIPS_EXPORT}
+              rows={visibleItems}
+              rowKey={(c) => c.id}
+              filter={exportFilter}
+              disabled={loading}
+              testId="chips"
+            />
+          }
+        >
+          {/* Tab pills (RTL start = right) */}
+          {TABS.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => setTab(t.value)}
+              className={cn(
+                'inline-flex h-9 cursor-pointer items-center rounded-full px-4 text-[13.5px] transition-colors',
+                tab === t.value
+                  ? 'bg-[var(--chip-brand)] font-bold text-white'
+                  : 'border-[1.5px] border-[var(--chip-border)] bg-[var(--chip-panel)] font-semibold text-[var(--chip-ink-muted)] hover:bg-[var(--chip-hover)]',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+          {debouncedQ && (
+            <span className="inline-flex h-9 items-center rounded-full bg-[var(--chip-brand-soft)] px-3 text-[12px] font-bold text-[var(--chip-brand-ink)]">
+              מציג תוצאות מכל הסטטוסים
+            </span>
+          )}
+        </ChipsToolbar>
 
         {/* Holder-filter bar — active after clicking "N צ׳יפים" */}
         {holderFilter && (
@@ -449,6 +494,7 @@ export function ChipsPageClient({
         }}
         canEditOrders={canEditOrders}
         canWriteContacts={canWriteContacts}
+        canCancelReception={canCancelReception}
       />
 
       {/* Holder view — all chips of one person (name → numbers); a chip row
@@ -459,6 +505,8 @@ export function ChipsPageClient({
         onOpenChange={(o: boolean) => {
           if (!o) setHolderPanel(null);
         }}
+        canViewLeases={canManageOrders}
+        canSeeReception={canEdit}
         onChipClick={
           canEdit
             ? (chip: ChipWithHolder) => {

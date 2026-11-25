@@ -1,9 +1,9 @@
 import { PURCHASING_MODULES } from '@/lib/purchasing/access';
 import type { Action, Role } from '@/lib/permissions/constants';
-import { canOpenUsersScreen, canViewVisitors } from '@/lib/permissions/check';
+import { canHandOverChips, canOpenUsersScreen, canViewVisitors } from '@/lib/permissions/check';
 import {
   ItemArchive, ItemBell, ItemBill, ItemCalendar, ItemCart, ItemChart, ItemChat, ItemChatInternal,
-  ItemCheck, ItemClipboard, ItemClock, ItemDoc, ItemGear, ItemGrid, ItemKey, ItemList,
+  ItemCheck, ItemClipboard, ItemClock, ItemDoc, ItemGear, ItemGrid, ItemHandover, ItemKey, ItemList,
   ItemMegaphone, ItemParking, ItemPin, ItemScan, ItemShield, ItemTruck, ItemUser, ItemUserPlus,
   RailBroadcast, RailFinance, RailHome, RailOps, RailPortal, RailPurchasing, RailResidents,
   RailSecurity, RailSettings,
@@ -85,7 +85,6 @@ export const NAV_CATEGORIES: NavCategory[] = [
       // (admin / super_admin in slice A).
       { label: 'סקירה חודשית', icon: ItemClock, href: '/finance', module: 'finance', exact: true },
       { label: 'סעיפים והגדרות', icon: ItemList, href: '/finance/settings', module: 'finance' },
-      { label: 'צ׳יפים', icon: ItemArchive, href: '/chips', module: 'chips' },
     ],
   },
   {
@@ -170,7 +169,13 @@ export const NAV_CATEGORIES: NavCategory[] = [
     ],
   },
   // Visitor ID scan (08/11/2026) — by ROLE (VISITOR_VIEW_ROLES: guard, admin and super admin
-  // only, since 09/11/2026; no other role sees the item). The guard's ONLY nav entry.
+  // only, since 09/11/2026; no other role sees the item).
+  // "מסירת צ׳יפים" (25/11/2026, Ronen) — the guard's pickup screen, gated the same way: by ROLE
+  // (CHIP_PICKUP_ROLES: guard, admin, super admin), never a module. The guard now sees TWO items
+  // here, so "אבטחה" is a panel for the guard too (it was a direct link while it held one item).
+  // "צ׳יפים" moved here from "כספים" on 24/11/2026 (Ronen) — the item alone moved: it keeps its
+  // route and its `chips` module gate, which the guard cannot hold, so the guard never sees it.
+  // Whoever holds `chips` without the two role screens still gets a direct link to /chips.
   {
     id: 'security',
     label: 'אבטחה',
@@ -179,6 +184,8 @@ export const NAV_CATEGORIES: NavCategory[] = [
     icon: RailSecurity,
     items: [
       { label: 'סריקת כניסה', icon: ItemScan, href: '/visitors', visible: (role) => canViewVisitors(role) },
+      { label: 'מסירת צ׳יפים', icon: ItemHandover, href: '/chip-pickup', visible: (role) => canHandOverChips(role) },
+      { label: 'צ׳יפים', icon: ItemArchive, href: '/chips', module: 'chips' },
     ],
   },
   // Pinned to the bottom of the rail (next to "יציאה"), gated by the `settings` module.

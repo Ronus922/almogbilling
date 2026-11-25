@@ -1,16 +1,16 @@
 'use client';
 
-// Shared pieces of the chip issue window (20/11/2026 design,
-// ref/chip-order/chip-issue-admin.html, styles in app/styles/chip-issue-sheet.css):
+// Shared pieces of the chip issue window (v2 design of 24/11/2026,
+// ref/chip-order/chip-issue-admin-v2.html, styles in app/styles/chip-issue-sheet.css):
 // the sheet frame (header / scrolling body / footer), a section, a holder
-// block, the role segment, and the chip allocation of one person — add a
+// block, the role buttons, and the chip allocation of one person — add a
 // number (card / app, "הוסף" or Enter), the person's chips as rows with an
 // active / disabled switch, and the inline number fix (click the number).
 // Used by BOTH modes of the window (with and without an order).
 
 import { useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { Info, Loader2, X } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -21,9 +21,11 @@ import type { ChipStatus, ChipType } from '@/lib/types/chips';
 
 // ── Icons of the reference ──────────────────────────────────────────────────
 
-export function Ico({ size = 16, sw = 1.9, children }: { size?: number; sw?: number; children: ReactNode }) {
+/** `join={false}` — the few icons the reference draws without round joins. */
+export function Ico({ size = 16, sw = 1.9, join = true, children }: { size?: number; sw?: number; join?: boolean; children: ReactNode }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round"
+      strokeLinejoin={join ? 'round' : undefined} aria-hidden="true">
       {children}
     </svg>
   );
@@ -40,9 +42,14 @@ export const BuildingIco = () => <Ico><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1m
 export const TrashIco = ({ size = 15 }: { size?: number }) => (
   <Ico size={size}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M10 11v6M14 11v6" /></Ico>
 );
-export const PlusIco = () => <Ico size={14} sw={2.4}><path d="M12 5v14M5 12h14" /></Ico>;
+/** 14px in "הוסף", 15px in "הוסף בעל צ׳יפ" — the reference's two sizes. */
+export const PlusIco = ({ size = 14 }: { size?: number }) => <Ico size={size} sw={2.4} join={false}><path d="M12 5v14M5 12h14" /></Ico>;
 export const SaveIco = () => <Ico size={16} sw={2}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" /><path d="M17 21v-8H7v8M7 3v5h8" /></Ico>;
 export const CheckIco = () => <Ico size={14} sw={2.4}><path d="M20 6 9 17l-5-5" /></Ico>;
+/** The circled "!" of the amber note (14px) and of the hint line (12px). */
+export const AlertIco = ({ size = 14 }: { size?: number }) => <Ico size={size} sw={2} join={false}><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></Ico>;
+/** The pencil of "עדכן בכרטיס הדייר". */
+export const PencilIco = () => <Ico size={13}><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></Ico>;
 const MarkIco = () => <Ico size={20}><path d="M14 4.1 12 6M5.1 8 2.8 10.3a3 3 0 0 0 0 4.2l6.7 6.7a3 3 0 0 0 4.2 0L16 19M15 9l6-6M9 15l6-6" /></Ico>;
 
 // ── Frame ────────────────────────────────────────────────────────────────────
@@ -58,23 +65,26 @@ export function IssueSheetFrame({
 }) {
   return (
     <Sheet open={open} onOpenChange={(o) => { if (!o) onRequestClose(); }}>
+      {/* The width lives in chip-issue-sheet.css (`.ci-panel`): 60% of the viewport
+          (--ci-panel-w), never under 780px (--ci-panel-min), never wider than the
+          screen — anchored to the left edge. */}
       <SheetContent
         side="left"
         dir="rtl"
         showCloseButton={false}
-        className="ci-skin flex w-full max-w-full flex-col gap-0 overflow-hidden p-0 sm:w-[680px] sm:max-w-[680px]"
+        className="ci-skin ci-panel flex flex-col gap-0 overflow-hidden p-0 data-[side=left]:border-r-0"
       >
         <header className="ci-head">
           <span className="ci-mic"><MarkIco /></span>
           <div className="min-w-0 flex-1">
-            <SheetTitle className="m-0 text-[19px] leading-snug font-extrabold text-white">הנפקת צ׳יפ</SheetTitle>
+            <SheetTitle className="m-0 text-[19px] leading-[normal] font-extrabold text-white">הנפקת צ׳יפ</SheetTitle>
             <p>דירה אחת · כמה בעלי צ׳יפ · לכל אחד הצ׳יפים שלו</p>
           </div>
           <button type="button" className="ci-close" aria-label="סגירה" title="סגירה" disabled={closeDisabled} onClick={onRequestClose}>
-            <Ico size={16} sw={2.2}><path d="M18 6 6 18M6 6l12 12" /></Ico>
+            <Ico size={16} sw={2.2} join={false}><path d="M18 6 6 18M6 6l12 12" /></Ico>
           </button>
         </header>
-        <div className="ci-body">{children}</div>
+        <div className="ci-body" data-testid="chip-issue-body">{children}</div>
         <footer className="ci-foot">{footer}</footer>
       </SheetContent>
     </Sheet>
@@ -88,13 +98,15 @@ export function IssueSheetFooter({ onSave, saveDisabled, saving, onClose, closeD
   onClose: () => void;
   closeDisabled?: boolean;
 }) {
+  // The reference's order: "סגור" first, the footer packs to the end — so
+  // "שמור שינויים" sits at the left edge and "סגור" right beside it.
   return (
     <>
+      <button type="button" className="ci-cancel" onClick={onClose} disabled={closeDisabled} data-testid="chip-issue-close">סגור</button>
       <button type="button" className="ci-save" onClick={onSave} disabled={saveDisabled} data-testid="chip-issue-save">
         {saving ? <Loader2 className="ci-spin h-4 w-4" /> : <SaveIco />}
         {saving ? 'שומר…' : 'שמור שינויים'}
       </button>
-      <button type="button" className="ci-cancel" onClick={onClose} disabled={closeDisabled}>סגור</button>
     </>
   );
 }
@@ -137,7 +149,7 @@ export function Section({ icon, tone, title, sub, children }: {
 export function AmberNote({ children }: { children: ReactNode }) {
   return (
     <div className="ci-note">
-      <Info className="h-[15px] w-[15px]" />
+      <AlertIco />
       <span>{children}</span>
     </div>
   );
@@ -145,9 +157,17 @@ export function AmberNote({ children }: { children: ReactNode }) {
 
 // ── Holder block ────────────────────────────────────────────────────────────
 
+/** The window's names of the roles. The fourth state of "אני" is "אורח" (v2
+ *  reference) — the stored value stays `other`; nothing in the schema moved. */
 export const ROLE_SHORT: Record<string, string> = {
-  owner: 'בעלים', tenant: 'שוכר', operator: 'מפעיל', other: 'אחר', staff: 'צוות',
+  owner: 'בעלים', tenant: 'שוכר', operator: 'מפעיל', other: 'אורח', staff: 'צוות',
 };
+
+/** The role tag: owner = brand, renter = amber, everyone else = grey. */
+export function roleTone(role: string | null): 'ci-renter' | 'ci-other' | undefined {
+  if (role === 'tenant') return 'ci-renter';
+  return role === 'owner' ? undefined : 'ci-other';
+}
 
 export function HolderBlock({
   index, name, role, apartment, onRemove, removeDisabled, removeTitle, children,
@@ -166,11 +186,7 @@ export function HolderBlock({
       <div className="ci-bhead">
         <span className="ci-avnum ci-num">{index + 1}</span>
         <b>{name.trim() || 'בעל צ׳יפ חדש'}</b>
-        {role && (
-          <span className={cn('ci-rolechip', role === 'tenant' && 'ci-renter', (role === 'other' || role === 'staff') && 'ci-other')}>
-            {ROLE_SHORT[role] ?? role}
-          </span>
-        )}
+        {role && <span className={cn('ci-rolechip', roleTone(role))}>{ROLE_SHORT[role] ?? role}</span>}
         {apartment && <span className="ci-meta">דירה <span className="ci-num">{apartment}</span></span>}
         {onRemove && (
           <button type="button" className="ci-bdel" title={removeTitle ?? 'הסרה'} aria-label={`הסרת בעל צ׳יפ ${index + 1}`}
@@ -201,7 +217,7 @@ export function RoleSegment({ label = 'אני', options, value, onChange, disabl
   return (
     <div className="ci-fld">
       <span className="ci-lbl ci-strong">{label}</span>
-      <div className={cn('ci-seg', options.length > 2 && 'ci-wide')} role="radiogroup" aria-label={label}>
+      <div className="ci-roleseg" role="radiogroup" aria-label={label}>
         {options.map((o) => (
           <button key={o.value} type="button" role="radio" aria-checked={value === o.value} title={o.title}
             className={cn(value === o.value && 'ci-on')} disabled={disabled || (o.disabled && value !== o.value)}
@@ -321,11 +337,11 @@ export interface PendingChip {
 export function ChipAllocation({
   title, sub, assigned, of, firstName,
   numInput, onNumInput, numType, onNumType, onAdd, addBlocked,
-  saved, existing, pending, conflictNumber, dupHint, disabled,
+  saved, existing, extras, pending, conflictNumber, dupHint, disabled,
   quick, onToggle, onCommitNumber, onRemovePending,
 }: {
   title: string;
-  sub?: string;
+  sub?: ReactNode;
   /** Active chips counted for this person (saved active + pending). */
   assigned: number;
   /** What was ordered for this person; null = no ordered quantity (no counter "מתוך"). */
@@ -341,6 +357,9 @@ export function ChipAllocation({
   saved: SavedChipLike[];
   /** Earlier chips of the same person (order mode) — tagged "קודם". */
   existing?: SavedChipLike[];
+  /** Extra chips added for the person beyond what the order paid for, and
+   *  paid at the reception (order mode) — tagged "נוסף · קבלה". */
+  extras?: SavedChipLike[];
   pending: PendingChip[];
   conflictNumber?: string | null;
   dupHint?: string | null;
@@ -351,8 +370,9 @@ export function ChipAllocation({
   onRemovePending: (n: string) => void;
 }) {
   const full = of !== null ? assigned >= of && of > 0 : assigned > 0;
-  const rows: { chip: SavedChipLike; earlier: boolean }[] = [
+  const rows: { chip: SavedChipLike; earlier: boolean; extra?: boolean }[] = [
     ...saved.map((c) => ({ chip: c, earlier: false })),
+    ...(extras ?? []).map((c) => ({ chip: c, earlier: false, extra: true })),
     ...(existing ?? []).map((c) => ({ chip: c, earlier: true })),
   ];
   return (
@@ -398,7 +418,7 @@ export function ChipAllocation({
           <div className="ci-chipempty">עדיין לא הונפקו צ׳יפים ל{firstName ?? 'בעל הצ׳יפ'}</div>
         ) : (
           <>
-            {rows.map(({ chip: raw, earlier }) => {
+            {rows.map(({ chip: raw, earlier, extra }) => {
               const chip = quick.view(raw);
               const on = chip.status === 'active';
               const busy = quick.busyId === chip.id;
@@ -425,6 +445,7 @@ export function ChipAllocation({
                   )}
                   <span className="ci-kind">{chip.chip_type === 'app' ? <AppIco /> : <CardIco />}{chip.chip_type === 'app' ? 'אפליקציה' : 'כרטיס'}</span>
                   {earlier && <span className="ci-tag-mini" title="צ׳יפ קודם של אותו אדם בדירה — לא חלק מההזמנה">קודם</span>}
+                  {extra && <span className="ci-tag-mini" title="צ׳יפ שנוסף מעבר לכמות ששולמה באתר, ושולם בקבלה — שייך להזמנת קבלה נפרדת" data-testid="chip-extra-tag">נוסף · קבלה</span>}
                   <button type="button" className="ci-tgl" aria-pressed={on} aria-label={on ? `השבת את ${chip.chip_number}` : `החזר לפעיל את ${chip.chip_number}`}
                     disabled={disabled || quick.busyId !== null} onClick={() => onToggle(raw)}>
                     {busy ? <Loader2 className="ci-spin h-3.5 w-3.5" /> : on ? 'פעיל' : 'מושבת'}
@@ -437,12 +458,12 @@ export function ChipAllocation({
               const conflict = conflictNumber === p.number;
               return (
                 <div key={p.number} className={cn('ci-chiprow ci-pending', conflict && 'ci-conflict')}>
-                  <span className="ci-num font-bold">{p.number}</span>
+                  <span className="ci-num ci-pnum">{p.number}</span>
                   <span className="ci-kind">{p.chip_type === 'app' ? <AppIco /> : <CardIco />}{p.chip_type === 'app' ? 'אפליקציה' : 'כרטיס'}</span>
                   <span className={cn('ci-tag-mini', conflict ? 'ci-red' : 'ci-amber')}>{conflict ? 'מספר תפוס' : 'ממתין לשמירה'}</span>
                   <button type="button" className="ci-rm" title="הסר (טרם נשמר)" aria-label={`הסר את המספר ${p.number} מהרשימה`}
                     disabled={disabled} onClick={() => onRemovePending(p.number)}>
-                    <X className="h-3.5 w-3.5" strokeWidth={2.4} />
+                    <X className="h-3 w-3" strokeWidth={2.4} />
                   </button>
                 </div>
               );
@@ -451,7 +472,7 @@ export function ChipAllocation({
         )}
       </div>
       <div className="ci-chiphint">
-        <Info className="h-[13px] w-[13px]" />
+        <AlertIco size={12} />
         <span>צ׳יפ שהונפק לא נמחק — משביתים ומחזירים לפעיל במתג, ומתקנים מספר בלחיצה עליו.</span>
       </div>
     </div>

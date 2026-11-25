@@ -246,7 +246,8 @@
   .cr-total span { font: 700 14.5px "Heebo", sans-serif; }
   .cr-total b { font: 800 22px "Inter", sans-serif; }
 
-  /* Payment (UI only — the processor's hosted fields replace it later) */
+  /* Payment. Without a processor the section is UI only; with card payment
+     (PayPlus hosted fields, 25/11/2026) the rules below it take over. */
   .cr-cardfld { position: relative; }
   .cr-cardfld svg { position: absolute; inset-inline-start: 13px; bottom: 13px; color: var(--cr-ghost); pointer-events: none; }
   .cr-cardfld input:not([type="checkbox"]) { padding-inline-start: 42px; }
@@ -345,4 +346,67 @@
   }
   .cr-support a { display: inline-flex; min-height: 44px; align-items: center; gap: 6px; color: var(--cr-muted); text-decoration: none; }
   .cr-support a:hover { color: var(--cr-brand); }
+
+  /* ── Card payment: the processor's hosted fields (PayPlus) ────────────────
+     .cr-hf is OUR box and draws the field exactly like .cr-fld input — the
+     same 44px, radius, fill, border and focus ring. The frame inside it is
+     the processor's: transparent, borderless, it holds only the typed text
+     (styled through the SDK, PayPlusCardFields.tsx). Before a payment session
+     exists the box shows the placeholder text of the reference, inert. */
+  .cr-hf {
+    position: relative; height: 44px; border: 1px solid transparent; border-radius: 10px; background: var(--cr-field);
+    overflow: hidden; transition: border-color .15s, box-shadow .15s, background .15s;
+  }
+  /* .cr-hf-focus is set by PayPlusCardFields: focus inside a frame of another
+     origin is not visible to :focus-within. */
+  .cr-hf:focus-within, .cr-hf.cr-hf-focus { background: #fff; border-color: var(--cr-brand); box-shadow: 0 0 0 3px var(--cr-brand-soft); }
+  /* The SDK marks a refused field on its frame; DESIGN.md error state on the box. */
+  .cr-hf:has(.__payplus_hosted_fields_err_fld) { border-color: #f87171; background: #fef2f2; }
+  .cr-fld input.__payplus_hosted_fields_err_fld { border-color: #f87171; background: #fef2f2; }
+  .cr-hf .__payplus_hosted_fields_item_fld-wrapper { display: block; height: 100%; }
+  .cr-hf iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
+  .cr-hf span.cr-hf-ph {
+    display: flex; align-items: center; height: 100%; padding-inline: 14px; direction: ltr; justify-content: flex-start;
+    font: 500 16px "Inter", "Heebo", sans-serif; color: var(--cr-ghost); white-space: nowrap; user-select: none;
+  }
+  @media (min-width: 621px) { .cr-hf span.cr-hf-ph { font-size: 14px; } }
+  /* The card number, laid out like the input it replaces (.cr-cardfld input,
+     left-to-right with padding-inline-start 42px): the box is left-to-right
+     and gives 28px, the text inside brings its own 14px. The icon stays where
+     it was, above the box (which — unlike an input — is a positioned element). */
+  .cr-cardfld .cr-hf { direction: ltr; padding-inline-start: 28px; }
+  .cr-cardfld > svg { z-index: 1; }
+  .cr-ppbox[data-state="idle"] .cr-hf { opacity: .65; }
+  /* Two expiry layouts are drawn; the SDK keeps the one its payment page uses.
+     Until it does, only the single MM/YY box of the reference shows. */
+  .cr-hf-split { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; direction: ltr; }
+  #pp-expiry-split-wrap:has(span.cr-hf-ph) { display: none; }
+  /* A field the payment page does not ask for is removed by the SDK. */
+  @media (min-width: 621px) {
+    .cr-pp-row1:not(:has(#pp-id-wrap)) { grid-template-columns: 1fr; }
+    .cr-pp-row2:not(:has(#pp-name-wrap)) { grid-template-columns: 1fr 1fr; }
+  }
+  .cr-pp-recaptcha:has(iframe) { margin-top: 12px; }
+  .cr-pp-recaptcha iframe.hsted-Flds--r-recaptcha-iframe--v2 { display: block; width: 304px; max-width: 100%; height: 78px; border: 0; }
+  .cr-pp-recaptcha iframe.hsted-Flds--r-recaptcha-iframe--challenge { width: 100%; height: 600px; }
+  .cr-ppinfo {
+    margin: 14px 0 0; border: 1px solid #cfd7ff; background: var(--cr-brand-soft); border-radius: 12px; padding: 10px 14px;
+    font: 700 13.5px "Heebo", sans-serif; color: var(--cr-brand-ink);
+  }
+  .cr-pphint { margin: 12px 0 0; font: 600 13px/1.6 "Heebo", sans-serif; color: var(--cr-muted); }
+  .cr-3ds-backdrop { position: fixed; inset: 0; z-index: 2147483000; background: rgba(16, 22, 40, .55); }
+}
+
+/* The card issuer's 3-D Secure window. The SDK appends this frame to <body>
+   (outside .cr-skin) and its own layout is a fixed 500×500 box that does not
+   fit a phone, so the layout is ours: centred, never wider or taller than the
+   screen, above the backdrop. The class exists only while the SDK shows it. */
+@layer components {
+  iframe.hsted-Flds--r-secure3ds-iframe {
+    position: fixed; inset: 0; margin: auto; z-index: 2147483001;
+    width: min(500px, calc(100vw - 24px)); height: min(640px, calc(100dvh - 24px));
+    border: 0; border-radius: 14px; background: #fff; box-shadow: 0 24px 70px rgba(16, 22, 40, .35);
+  }
+  /* The invisible-reCAPTCHA badge the SDK pins to the window edge, when the payment page uses one. */
+  iframe.hsted-Flds--r-recaptcha-iframe--v3 { border: 0; }
 }

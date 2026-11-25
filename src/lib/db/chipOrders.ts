@@ -5,7 +5,11 @@ import { query, queryOne, withTransaction } from '@/lib/db';
 import { toPortalE164 } from '@/lib/portal/phone';
 import { coerceContactInput } from '@/lib/validation/contacts';
 import { updateContact } from '@/lib/db/contacts';
+import { writeAuditInTx } from '@/lib/db/audit';
+import { deactivateChipInTx } from '@/lib/db/chips';
+import { forgetLeaseUploads } from '@/lib/db/chipLeaseUploads';
 import { chipOrderMatchStatus } from '@/lib/chipOrders/match';
+import { PICKUP_ORDERER_KEY, isPickupPersonKey } from '@/lib/chipOrders/pickup';
 import {
   chipOrderDueAt,
   isOpenChipOrder,
@@ -13,6 +17,7 @@ import {
   priceLine,
   type ChipOrderMatchStatus,
   type ChipOrderNotifyKind,
+  type ChipOrderPersonRole,
   type ChipOrderRefundStatus,
   type ChipOrderRole,
   type ChipOrderRow,
@@ -387,21 +392,43 @@ const OPEN_SQL = `('paid', 'approved', 'ready')`;
 
 /** The Orders tab: ONE ROW PER APARTMENT of every open order (paid — being
  *  assigned — or ready). pending_payment never shows; a row leaves once its
- *  order is collected or rejected. Test orders come with is_test; the screen
- *  badges them and keeps them out of every count. */
+ *  order is collected or rejected — EXCEPT a reception order (25/11/2026),
+ *  which is collected the moment it is made and stays in the tab, after the
+ *  open orders, newest first, tagged "קבלה" — also once it was cancelled
+ *  (stored `rejected`, shown "בוטל"). Test orders come with is_test;
+ *  the screen badges them and keeps them out of every count. `people` — the people of
+ *  the apartment line (the search, the Excel file and the print view of the
+ *  tab, 24/11/2026): the names of its holder lines, in the order of the
+ *  window's blocks. A line with no holder line of the order itself — an order
+ *  made before 20/11/2026 — starts with whoever ordered, so the person who
+ *  paid is never missing, also when the staff added somebody to it. */
 export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
   const r = await query<ChipOrderRow>(
     `select i.id as item_id, o.id as order_id, o.order_number, i.contact_id, i.apartment_number,
-            o.full_name, o.phone_e164, o.role, o.status, i.chips_count,
+            o.full_name, o.phone_e164, o.role, o.source, o.status, i.chips_count,
             (select count(*)::int from public.chips c where c.order_item_id = i.id and c.status = 'active') as chips_linked,
+            i.line_total::float8 as line_total,
+            (case when exists (select 1 from public.chip_order_holders h
+                                where h.item_id = i.id and h.source in ('order', 'reception'))
+                  then array[]::text[] else array[o.full_name] end)
+            || array(select h.full_name from public.chip_order_holders h
+                      where h.item_id = i.id order by h.position, h.created_at, h.id) as people,
+            (case when exists (select 1 from public.chip_order_holders h
+                                where h.item_id = i.id and h.source in ('order', 'reception'))
+                  then array[]::text[] else array[$1::text] end)
+            || array(select h.id::text from public.chip_order_holders h
+                      where h.item_id = i.id order by h.position, h.created_at, h.id) as people_keys,
+            (select x.order_number from public.chip_orders x where x.id = o.extra_of_order_id) as extra_of_order_number,
             o.paid_at, o.due_at, o.created_at,
             exists (select 1 from public.chip_order_notifications n
                      where n.order_id = o.id and n.status = 'failed') as has_failed_notification,
             o.is_test, o.phone_verified
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id
-      where o.status in ${OPEN_SQL}
-      order by case o.status when 'ready' then 1 else 0 end, o.paid_at desc nulls last, o.order_number desc, i.created_at`,
+      where o.status in ${OPEN_SQL} or (o.source = 'reception' and o.status in ('collected', 'rejected'))
+      order by case o.status when 'collected' then 2 when 'rejected' then 2 when 'ready' then 1 else 0 end,
+               o.paid_at desc nulls last, o.order_number desc, i.created_at`,
+    [PICKUP_ORDERER_KEY],
   );
   return r.rows;
 }
@@ -457,10 +484,10 @@ const REGISTRY_COLS: Record<ChipOrderRole, { name: string; phone: string }> = {
   operator: { name: 'operator_name', phone: 'operator_phone' },
 };
 
-async function lockOrder(client: PoolClient, id: string): Promise<{ status: ChipOrderStatus; role: ChipOrderRole } | null> {
+async function lockOrder(client: PoolClient, id: string): Promise<{ status: ChipOrderStatus; role: ChipOrderPersonRole } | null> {
   return (
     (
-      await client.query<{ status: ChipOrderStatus; role: ChipOrderRole }>(
+      await client.query<{ status: ChipOrderStatus; role: ChipOrderPersonRole }>(
         `select status, role from public.chip_orders where id = $1 for update`,
         [id],
       )
@@ -496,6 +523,9 @@ export async function writeOrderHolderToRegistry(
     if (!order) return null;
     if (!isOpenChipOrder(order.status)) throw new ChipOrderStateError('not_open');
     const role = roleOverride ?? order.role;
+    // Only a role the tenants list has a slot for (a reception order may be a
+    // guest's; it is closed by then anyway — the check above).
+    if (role !== 'owner' && role !== 'tenant' && role !== 'operator') throw new ChipOrderStateError('nothing_to_write');
     const cols = REGISTRY_COLS[role];
     const body: Record<string, unknown> = {};
     if (values.name?.trim()) body[cols.name] = values.name.trim();
@@ -539,17 +569,190 @@ export async function markChipOrderReady(id: string): Promise<boolean | null> {
   });
 }
 
-/** ready → collected — the row leaves the Orders tab. */
-export async function markChipOrderCollected(id: string): Promise<boolean | null> {
+/** Where an order is marked collected: the guard's pickup screen, or the
+ *  management's own screens (the orders table, the issue window). */
+export type ChipHandoverVia = 'pickup' | 'management';
+
+export interface ChipHandover {
+  order_number: number;
+  /** The person who collected, by name — null when nobody was named. */
+  collector_name: string | null;
+}
+
+/** The person of the order that `key` names — a holder line of THIS order, or
+ *  its orderer when the order has an apartment line with no person of its own
+ *  (an order made before 20/11/2026). Anything else is not a person of the
+ *  order: the name is always read here, never taken from a request. */
+async function resolveCollector(
+  client: PoolClient,
+  orderId: string,
+  ordererName: string,
+  key: string,
+): Promise<{ holderId: string | null; name: string }> {
+  if (!isPickupPersonKey(key)) throw new ChipOrderStateError('collector_not_in_order');
+  if (key === PICKUP_ORDERER_KEY) {
+    const old = await client.query(
+      `select 1 from public.chip_order_items i
+        where i.order_id = $1
+          and not exists (select 1 from public.chip_order_holders h
+                           where h.item_id = i.id and h.source in ('order', 'reception'))
+        limit 1`,
+      [orderId],
+    );
+    if ((old.rowCount ?? 0) === 0) throw new ChipOrderStateError('collector_not_in_order');
+    return { holderId: null, name: ordererName };
+  }
+  const holder = (
+    await client.query<{ id: string; full_name: string }>(
+      `select id, full_name from public.chip_order_holders where id = $1 and order_id = $2`,
+      [key, orderId],
+    )
+  ).rows[0];
+  if (!holder) throw new ChipOrderStateError('collector_not_in_order');
+  return { holderId: holder.id, name: holder.full_name };
+}
+
+/**
+ * ready → collected ("נאסף" / "נמסר") — the row leaves the Orders tab. ONE
+ * function for both places an order is handed over:
+ *   · the guard's pickup screen (`via: 'pickup'`): the person who showed an ID
+ *     must be named, and must be a person of the order;
+ *   · the management (`via: 'management'`): naming that person is optional.
+ * Only an order that is READY moves — anything else is refused (`not_ready`),
+ * whoever asks. On the pickup screen an order with NO active chip is refused
+ * too (`no_active_chips`): there is nothing to hand over, and what happened to
+ * its chips is the management's to sort out. Who handed over, where, when and who collected are stored on
+ * the order, and the audit row is written in the SAME transaction: a hand-over
+ * and its trail are one fact. Nobody is notified (as before). Null when the
+ * order does not exist.
+ */
+export async function markChipOrderCollected(
+  id: string,
+  by: { id: string; name: string },
+  opts: { via: ChipHandoverVia; collector?: string | null },
+): Promise<ChipHandover | null> {
   return withTransaction(async (client) => {
-    const order = await lockOrder(client, id);
+    const order = (
+      await client.query<{ status: ChipOrderStatus; order_number: number; full_name: string }>(
+        `select status, order_number, full_name from public.chip_orders where id = $1 for update`,
+        [id],
+      )
+    ).rows[0];
     if (!order) return null;
     if (order.status !== 'ready') throw new ChipOrderStateError('not_ready');
+    const key = opts.collector?.trim() || null;
+    if (!key && opts.via === 'pickup') throw new ChipOrderStateError('collector_required');
+    const collector = key ? await resolveCollector(client, id, order.full_name, key) : null;
+    if (opts.via === 'pickup') {
+      // The same chips the pickup list shows: the order's own, and the paid
+      // extras that were added for its people.
+      const any = await client.query(
+        `select 1 from public.chips c
+          where c.status = 'active'
+            and (c.order_item_id in (select i.id from public.chip_order_items i where i.order_id = $1)
+              or c.order_holder_id in (select e.id from public.chip_order_holders e
+                                         join public.chip_order_holders h on h.id = e.extra_of_holder_id
+                                        where h.order_id = $1))
+          limit 1`,
+        [id],
+      );
+      if ((any.rowCount ?? 0) === 0) throw new ChipOrderStateError('no_active_chips');
+    }
     await client.query(
-      `update public.chip_orders set status = 'collected', collected_at = now(), updated_at = now() where id = $1`,
-      [id],
+      `update public.chip_orders
+          set status = 'collected', collected_at = now(),
+              collected_by_name = $2, collected_holder_id = $3,
+              handed_over_by = $4, handed_over_by_name = $5, handed_over_via = $6,
+              updated_at = now()
+        where id = $1`,
+      [id, collector?.name ?? null, collector?.holderId ?? null, by.id, by.name, opts.via],
     );
-    return true;
+    await writeAuditInTx(client, {
+      actorUserId: by.id,
+      action: 'collected',
+      entityType: 'chip_order',
+      entityId: id,
+      metadata: {
+        via: opts.via,
+        order_number: order.order_number,
+        // Who collected: the person's holder line (null = the orderer of an
+        // order with no holder lines), and the name as it stood right then.
+        collector: collector ? (collector.holderId ? 'holder' : 'orderer') : null,
+        collector_holder_id: collector?.holderId ?? null,
+        collector_name: collector?.name ?? null,
+      },
+    });
+    return { order_number: order.order_number, collector_name: collector?.name ?? null };
+  });
+}
+
+/**
+ * "בטל הזמנת קבלה" (25/11/2026) — a reception order is real: it has no test
+ * mode and is collected the moment it is made, so nothing else undoes one. The
+ * cancellation, in ONE transaction:
+ *   · only a RECEPTION order that is still collected (`not_reception` /
+ *     `not_cancellable` otherwise — a web order is rejected through its own
+ *     flow, with its refund);
+ *   · every ACTIVE chip of the order is disabled — never deleted — with a chip
+ *     event each, exactly like the switch in the issue window. A chip that was
+ *     moved to another apartment since (its contact is no longer the line's)
+ *     is somebody else's chip now: it is left alone and counted in the audit;
+ *   · the order is stored `rejected` with the reason (the existing status: a
+ *     new one would mean rewriting the status CHECK), plus who cancelled it;
+ *   · the audit row, in the same transaction.
+ * No message goes to anyone, and no refund is recorded: what happens to the
+ * cash is between the management and the customer. Null when the order does
+ * not exist.
+ */
+export async function cancelReceptionOrder(
+  id: string,
+  reason: string,
+  by: { id: string; name: string },
+): Promise<{ order_number: number; chips_disabled: number } | null> {
+  return withTransaction(async (client) => {
+    const order = (
+      await client.query<{ status: ChipOrderStatus; source: string; order_number: number; total: number }>(
+        `select status, source, order_number, total::float8 as total from public.chip_orders where id = $1 for update`,
+        [id],
+      )
+    ).rows[0];
+    if (!order) return null;
+    if (order.source !== 'reception') throw new ChipOrderStateError('not_reception');
+    if (order.status !== 'collected') throw new ChipOrderStateError('not_cancellable');
+    const active = (
+      await client.query<{ id: string; moved: boolean }>(
+        `select c.id, (c.contact_id is distinct from i.contact_id) as moved
+           from public.chips c
+           join public.chip_order_items i on i.id = c.order_item_id
+          where i.order_id = $1 and c.status = 'active'
+          order by c.issued_at, c.id
+          for update of c`,
+        [id],
+      )
+    ).rows;
+    const chips = active.filter((c) => !c.moved);
+    for (const c of chips) {
+      await deactivateChipInTx(client, c.id, { reason: 'unknown', note: `ביטול הזמנת קבלה ${order.order_number}` }, by);
+    }
+    await client.query(
+      `update public.chip_orders
+          set status = 'rejected', rejected_at = now(), reject_reason = $2,
+              cancelled_by = $3, cancelled_by_name = $4, updated_at = now()
+        where id = $1`,
+      [id, reason, by.id, by.name],
+    );
+    await writeAuditInTx(client, {
+      actorUserId: by.id,
+      action: 'reception_cancelled',
+      entityType: 'chip_order',
+      entityId: id,
+      metadata: {
+        source: 'reception', order_number: order.order_number, reason,
+        amount: order.total, chips_disabled: chips.length,
+        chips_left_moved: active.length - chips.length,
+      },
+    });
+    return { order_number: order.order_number, chips_disabled: chips.length };
   });
 }
 
@@ -659,6 +862,8 @@ export async function deleteChipOrderWithLeases(
       )
     ).rows.map((r) => r.k);
     if (keys.length > 0 && !(await removeLeases(keys))) return 'file_failed';
+    // The files are gone: so are their rows in the lease registry.
+    await forgetLeaseUploads(client, keys);
     await client.query(`delete from public.chip_orders where id = $1`, [id]);
     return 'deleted';
   });

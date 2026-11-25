@@ -3,6 +3,7 @@ import {
   type ModulePermission,
   type Role,
   ASSISTANT_ROLES,
+  CHIP_PICKUP_ROLES,
   REPORTER_PHONE_PERMISSION,
   ROLE_DEFAULTS,
   isElevatedRole,
@@ -125,6 +126,14 @@ export function canEditVisitorNotes(role: Role): boolean {
 /** Edit every field of a row, and delete it with its photo. */
 export function canManageVisitorScans(role: Role): boolean {
   return VISITOR_MANAGE_ROLES.includes(role);
+}
+
+// ── The guard's pickup screen ("מסירת צ׳יפים", 25/11/2026) ───────────────────
+/** Open /chip-pickup, read the orders that are ready for pickup and mark one
+ *  handed over (guard, admin, super admin — CHIP_PICKUP_ROLES). One predicate
+ *  for the nav item, the page and requireChipPickup() of the two routes. */
+export function canHandOverChips(role: Role): boolean {
+  return CHIP_PICKUP_ROLES.includes(role);
 }
 
 /**

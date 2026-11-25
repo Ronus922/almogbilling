@@ -128,6 +128,10 @@ d('chip orders on the DB', () => {
     const rows = await rowsOf(ids.order);
     expect(rows.map((r) => r.apartment_number).sort()).toEqual([apt.owned, apt.empty, apt.rented].sort());
     expect(rows.find((r) => r.apartment_number === apt.owned)).toMatchObject({ chips_count: 3, chips_linked: 0, status: 'paid', contact_id: ids.owned });
+    // The row's own amount, and its people: an order of apartment lines only
+    // (the shape before 20/11/2026) has no holder lines, so the row names
+    // whoever ordered.
+    expect(rows.find((r) => r.apartment_number === apt.owned)).toMatchObject({ line_total: 150, people: ['דנה כהן'] });
     const ctx = await db.getChipOrderSheetContext(await itemOf(ids.order, apt.owned));
     expect(JSON.stringify(ctx)).not.toContain('tok'); // the process token never reaches the screen
   });
@@ -189,7 +193,7 @@ d('chip orders on the DB', () => {
       admin,
     );
     made.chips.push(...extra.items.map((c) => c.id));
-    expect(await db.markChipOrderCollected(ids.order)).toBe(true);
+    expect(await db.markChipOrderCollected(ids.order, admin, { via: 'management' })).toMatchObject({ collector_name: null });
     expect(await rowsOf(ids.order)).toEqual([]);
     await expect(issueChipGroups(
       { contact_id: ids.owned, groups: [{ resident_role: 'owner', holder_name: 'דנה כהן', chip_type: 'physical', numbers: [`A${tag}6`], order_item_id: owned }] },

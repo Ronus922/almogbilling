@@ -5,6 +5,8 @@ import { listOrderableApartments } from '@/lib/db/chipOrders';
 import { chipOrdersOpen } from '@/lib/chipOrders/server';
 import { isValidTestToken } from '@/lib/chipOrders/testMode';
 import { CHIP_ORDER_TEST_BANNER } from '@/lib/chipOrders/model';
+import { CHIP_ORDER_TEST_CARD_BANNER } from '@/lib/chipOrders/card';
+import { cardStepConfig } from '@/lib/chipOrders/cardPayment';
 import { growMode } from '@/lib/grow/client';
 import { ChipOrderShell } from '@/components/chip-order/ChipOrderShell';
 import { ChipOrderForm } from '@/components/chip-order/ChipOrderForm';
@@ -24,6 +26,10 @@ export const dynamic = 'force-dynamic';
 // Grow and with the switch off, under a pinned "מצב בדיקה, אין חיוב" strip,
 // and its payment step is "סיים הזמנת בדיקה". A missing or wrong token is
 // exactly the page above — no hint that test mode exists.
+//
+// Card payment (25/11/2026): while PayPlus is configured in sandbox, the
+// payment step of the TEST link is the sandbox card (PayPlus hosted fields)
+// instead of "סיים הזמנת בדיקה". Without the test link nothing changes.
 export default async function ChipOrderPage({
   searchParams,
 }: {
@@ -54,10 +60,12 @@ export default async function ChipOrderPage({
   }
 
   const apartments = await listOrderableApartments();
+  // The sandbox card step exists only behind the test link.
+  const cardPayment = Boolean(testToken) && cardStepConfig() !== null;
   return (
     <ChipOrderShell
       {...support}
-      banner={testToken ? CHIP_ORDER_TEST_BANNER : undefined}
+      banner={testToken ? (cardPayment ? CHIP_ORDER_TEST_CARD_BANNER : CHIP_ORDER_TEST_BANNER) : undefined}
       notice={!testToken && growMode() === 'sandbox' ? 'סביבת בדיקות — התשלום בכרטיס בדיקה, אין חיוב אמיתי.' : undefined}
     >
       <ChipOrderForm
@@ -65,6 +73,7 @@ export default async function ChipOrderPage({
         pricing={{ unitPrice: settings.unitPrice }}
         termsText={settings.termsText}
         testToken={testToken}
+        cardPayment={cardPayment}
       />
     </ChipOrderShell>
   );

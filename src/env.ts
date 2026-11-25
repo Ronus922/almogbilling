@@ -113,6 +113,22 @@ export const env = createEnv({
     // site must be a conscious choice).
     GROW_ENV: z.enum(['production', 'sandbox']).optional(),
 
+    // Chip orders — card payment through PayPlus hosted fields
+    // (docs.payplus.co.il/reference/hosted-fields; src/lib/payplus/client.ts).
+    // PAYPLUS_MODE picks the key set AND the API host: 'sandbox' → the DEV
+    // keys on restapidev.payplus.co.il, 'production' → the PROD keys on
+    // restapi.payplus.co.il. Unset, or any of the mode's three values missing
+    // = no card payment anywhere (the order page behaves as it did before).
+    // In 'sandbox' only a TEST order can reach the payment step. The keys are
+    // server-only: never sent to a browser, never written to a log.
+    PAYPLUS_MODE: z.enum(['sandbox', 'production']).optional(),
+    PAYPLUS_DEV_API_KEY: optionalString,
+    PAYPLUS_DEV_SECRET_KEY: optionalString,
+    PAYPLUS_DEV_PAGE_UID: optionalString,
+    PAYPLUS_PROD_API_KEY: optionalString,
+    PAYPLUS_PROD_SECRET_KEY: optionalString,
+    PAYPLUS_PROD_PAGE_UID: optionalString,
+
     // ── monitoring (all optional; unset = off) ────────────────────────────
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).optional(),
     SENTRY_DSN: optionalUrl,

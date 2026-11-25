@@ -26,9 +26,16 @@ const SECURITY_HEADERS = [
 // Same policy plus frame-src for those hosts only; Next applies the LAST
 // matching header of a key, so this entry replaces the global CSP on that
 // path alone and every other route keeps the string above byte for byte.
+//
+// Card payment (25/11/2026): the PayPlus hosted fields — the card number,
+// expiry and CVV — are frames served by PayPlus's API host
+// (<host>/api/hosted-field/…, payplus-hosted-fields 1.5.0): restapi. in
+// production, restapidev. in the sandbox. Exactly those two origins, frames
+// only. The SDK itself is bundled from npm and served by us (script-src stays
+// 'self'); its calls are covered by the existing connect-src.
 const CHIP_ORDER_CSP = `${
   SECURITY_HEADERS.find((h) => h.key === "Content-Security-Policy")!.value
-}; frame-src 'self' https://meshulam.co.il https://*.meshulam.co.il`;
+}; frame-src 'self' https://meshulam.co.il https://*.meshulam.co.il https://restapi.payplus.co.il https://restapidev.payplus.co.il`;
 
 const nextConfig: NextConfig = {
   // Produce a standalone server bundle at .next/standalone/ for systemd deployment.
@@ -40,6 +47,11 @@ const nextConfig: NextConfig = {
   // puppeteer-core has dynamic requires that break when webpack-bundled — keep it
   // external so it is required at runtime from node_modules (traced into standalone).
   serverExternalPackages: ["puppeteer-core"],
+  // The font the card-field frames of /chip-order load (card-font/route.ts
+  // reads it from disk at runtime) must travel with the standalone build.
+  outputFileTracingIncludes: {
+    "/api/public/chip-order/card-font": ["./src/fonts/inter/inter-latin-wght-normal.woff2"],
+  },
   // Browser only: the client bundle has no process.env, so instrumentation-client.ts
   // gets the build environment's SENTRY_DSN inlined under its OWN names. Never
   // list SENTRY_DSN / SENTRY_ENVIRONMENT themselves here — `env` inlines into the

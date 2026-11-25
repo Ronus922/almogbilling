@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { categoryKind, filterNav, NAV_CATEGORIES, type NavCategory } from '@/components/app-shell/nav';
 import { hasPermission } from '@/lib/permissions/check';
 import {
-  DEFAULT_VIEWER,
+  DEFAULT_MANAGER, DEFAULT_VIEWER,
   type Action, type ModulePermission, type Role,
 } from '@/lib/permissions/constants';
 
@@ -33,13 +33,28 @@ describe('nav category kind — decided after the permission filter', () => {
       ops: 'panel',
       purchasing: 'panel',
       portal: 'panel',
-      security: 'link:/visitors',
+      // Three items ("סריקת כניסה", "מסירת צ׳יפים" since 25/11/2026, "צ׳יפים") — a panel.
+      security: 'panel',
       settings: 'link:/settings',
     });
   });
 
-  it('the guard sees one category, "אבטחה", and it is a link to /visitors', () => {
-    expect(kinds('guard', canOf('guard', []))).toEqual({ security: 'link:/visitors' });
+  it('the guard sees one category, "אבטחה" — a panel of two items since the pickup screen (25/11/2026)', () => {
+    // Until 25/11/2026 the guard held one item and the category was a direct link to /visitors;
+    // "מסירת צ׳יפים" is a second role screen, so the rail button now opens the panel.
+    expect(kinds('guard', canOf('guard', []))).toEqual({ security: 'panel' });
+    // …whatever matrix rows are handed in (here: rows that grant the chips module): the guard
+    // holds no module, so "צ׳יפים" itself never joins.
+    expect(kinds('guard', canOf('guard', DEFAULT_MANAGER))).toEqual({ security: 'panel' });
+  });
+
+  it('"אבטחה" with its role screens is a panel; with the chips module alone it is a link to /chips', () => {
+    expect(kinds('admin', canOf('admin', [])).security).toBe('panel');
+    // A matrix role never sees the visitor scan or the pickup screen (both are role grants): the
+    // chips module alone leaves "אבטחה" one item, so the rail button is the link to /chips.
+    const onlyChips: Can = (m, a) => m === 'chips' && a === 'view';
+    expect(kinds('viewer', onlyChips)).toEqual({ security: 'link:/chips' });
+    expect(kinds('manager', onlyChips)).toEqual({ home: 'link:/overview', security: 'link:/chips' });
   });
 
   it('a multi-item category that permissions cut down to one item becomes a link with that item', () => {

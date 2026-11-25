@@ -1,16 +1,45 @@
 /* ─────────────────────────────────────────────────────────────────────
    Chip issue window (IssueChipSheet, opened from /chips) — DECLARED
-   EXCEPTION (DESIGN.md "מודול צ׳יפים" (ו), 20/11/2026). Ported from
-   ref/chip-order/chip-issue-admin.html: the reference wins over DESIGN.md
-   for this window.
+   EXCEPTION (DESIGN.md "מודול צ׳יפים" (ו), v2 of 24/11/2026). Ported 1:1 from
+   ref/chip-order/chip-issue-admin-v2.html: the reference wins over DESIGN.md
+   for this window, and every value below is the reference's own — except the
+   WIDTH OF THE PANEL (Ronen, 24/11/2026, third round): 60% of the viewport,
+   never under the reference's 780px, and the whole screen where even 780px
+   do not fit. See `.ci-panel` at the end of the file.
 
    SCOPE RULE: every class is `ci-*` and every token `--ci-*`, under `.ci-skin`
-   (the SheetContent). Nothing here may reach another screen. Mobile first:
-   one column by default, the reference's grids from 641px (its 640px break).
+   (the SheetContent). Nothing here may reach another screen.
+
+   BREAKPOINTS: the reference's two — max-width 700px and 540px — and no other;
+   the layout moves at these two widths only. One more media query sits at the
+   end of the file and moves no layout: on a TOUCH phone the fields are 16px,
+   because iOS zooms the page into a focused field that is smaller.
+
+   NOTHING STICKS OUT: the body has no overflow-x guard (the reference has
+   none). A section, a block and the transaction card clip (`overflow: hidden`,
+   the reference's), so what could be wider than its box — a long name, mail,
+   address, chip number or server message — breaks into lines instead.
+
+   WHAT IS NOT IN THE REFERENCE and is drawn in its language: the apartment
+   picker of the window without an order, the lease row, a number waiting to be
+   saved (amber dashed row), a taken number (red row), the "קודם" tag, the
+   error states, the skeleton — and an invisible 44px hit area (`::after`)
+   around every control the reference draws smaller than that.
+
+   RECEPTION (25/11/2026) — the window without an order collects what the
+   public order form collects, and is not in the reference either: the orderer
+   fields, a renter's lease, the payment of the new chips (the price breakdown
+   and the blue total bar are the PUBLIC PAGE's own — chip-order-page.css,
+   `.cr-brk` / `.cr-total` — in this window's tokens), and what earlier saves
+   left on a block. The fee row ("עמלת הנפקה", "החיוב בוצע") is gone.
    ───────────────────────────────────────────────────────────────────── */
 
 @layer components {
   .ci-skin {
+    /* The width of the panel — the ONE place to change it: a share of the
+       viewport and the floor under it (the reference's fixed 780px). */
+    --ci-panel-w: 60vw;
+    --ci-panel-min: 780px;
     --ci-border: #e8eaf2;
     --ci-border-strong: #d9ddea;
     --ci-ink: #1a2233;
@@ -29,24 +58,28 @@
     --ci-amber-border: #f2e2b5;
     --ci-red-soft: #feefef;
     --ci-red-ink: #b01b20;
-    --ci-violet-soft: #f3eeff;
-    --ci-violet-ink: #5b32c4;
     --ci-navy: #141a2e;
-    background: #fff;
-    color: var(--ci-ink);
     font-family: "Heebo", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
   .ci-skin a { color: var(--ci-brand); font-weight: 700; text-decoration: none; }
   .ci-skin a:hover { color: var(--ci-brand-dark); }
+  /* Every number, phone, email, date and price. */
   .ci-num { font-family: "Inter", "Heebo", sans-serif; font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
+  /* Tabular numerals on every element that shows a number and sets its own
+     `font`. The shorthand resets the numerals, and writing tabular-nums next to
+     it in the same rule does not help: the CSS minifier moves that declaration
+     IN FRONT of the shorthand (seen in the built file). So it lives here, in a
+     rule of its own that outranks every `font` rule below. */
+  .ci-skin.ci-panel :is(
+    .ci-num, .ci-avnum, .ci-qtybox, .ci-pnum, .ci-cnum, .ci-cnumedit, .ci-aptno, .ci-aprice,
+    .ci-fld input, .ci-fld textarea, .ci-invwho span, .ci-aqty b, .ci-invlines b, .ci-invtotal b
+  ) { font-variant-numeric: tabular-nums; }
 
   /* Header */
-  .ci-head { background: var(--ci-brand); padding: 18px 16px; display: flex; align-items: center; gap: 14px; flex: none; }
-  @media (min-width: 641px) { .ci-head { padding: 18px 22px; } }
-  .ci-head .ci-mic { width: 42px; height: 42px; border-radius: 12px; background: rgba(255, 255, 255, .18); display: grid; place-items: center; color: #fff; flex: none; }
-  .ci-head h2 { color: #fff; font: 800 19px "Heebo", sans-serif; margin: 0; }
-  .ci-head p { color: #d6ddff; font: 500 12.5px "Heebo", sans-serif; margin: 2px 0 0; }
+  .ci-head { background: var(--ci-brand); padding: 18px 22px; display: flex; align-items: center; gap: 14px; flex: none; }
+  .ci-mic { width: 42px; height: 42px; border-radius: 12px; background: rgba(255, 255, 255, .18); display: grid; place-items: center; color: #fff; flex: none; }
+  .ci-head p { color: #d6ddff; font-size: 12.5px; font-weight: 500; margin: 2px 0 0; }
   .ci-close {
     position: relative; width: 36px; height: 36px; border: 0; border-radius: 10px; background: rgba(255, 255, 255, .14);
     color: #fff; display: grid; place-items: center; cursor: pointer; transition: background .15s; flex: none;
@@ -55,29 +88,30 @@
   .ci-close:hover { background: rgba(255, 255, 255, .26); }
   .ci-close:disabled { opacity: .6; cursor: default; }
 
-  .ci-body { padding: 16px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; flex: 1; scrollbar-width: thin; }
-  @media (min-width: 641px) { .ci-body { padding: 20px; } }
+  /* Body — it scrolls down only; nothing in it may scroll sideways. */
+  .ci-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; flex: 1; min-height: 0; scrollbar-width: thin; }
 
   /* Sections */
-  .ci-sec { border: 1px solid var(--ci-border); border-radius: 14px; overflow: visible; flex: none; }
-  .ci-shead { display: flex; align-items: center; gap: 11px; padding: 14px 16px; border-bottom: 1px solid var(--ci-border); background: #fbfcfe; border-radius: 14px 14px 0 0; }
+  .ci-sec { border: 1px solid var(--ci-border); border-radius: 14px; overflow: hidden; flex: none; }
+  .ci-shead { display: flex; align-items: center; gap: 11px; padding: 14px 16px; border-bottom: 1px solid var(--ci-border); background: #fbfcfe; }
   .ci-sic { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; flex: none; background: var(--ci-brand-soft); color: var(--ci-brand-ink); }
   .ci-sic.ci-green { background: var(--ci-green-soft); color: var(--ci-green-ink); }
-  .ci-shead b { font: 800 14.5px "Heebo", sans-serif; }
+  .ci-shead b { font-size: 14.5px; font-weight: 800; }
   .ci-shead small { display: block; font: 500 12px "Heebo", sans-serif; color: var(--ci-soft); margin-top: 1px; }
-  .ci-sbody { padding: 12px; }
-  @media (min-width: 641px) { .ci-sbody { padding: 16px; } }
+  .ci-sbody { padding: 16px; }
 
   /* Fields */
   .ci-fld { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   .ci-fld > label, .ci-fld > .ci-lbl { font: 600 12.5px "Heebo", sans-serif; color: var(--ci-muted); }
   .ci-fld > .ci-lbl.ci-strong { font: 800 13.5px "Heebo", sans-serif; color: var(--ci-ink); }
   .ci-req { color: #d8484d; }
+  /* The reference's own cascade: a `.num` input keeps Heebo (its PNG shows it)
+     and takes the direction of `.num`. */
   .ci-fld input, .ci-fld textarea {
     border: 1px solid transparent; border-radius: 10px; background: var(--ci-field); padding: 0 14px; height: 42px;
-    font: 600 16px "Heebo", sans-serif; color: var(--ci-ink); width: 100%; transition: border-color .15s, box-shadow .15s, background .15s;
+    font: 600 14px "Heebo", sans-serif; color: var(--ci-ink); width: 100%;
+    transition: border-color .15s, box-shadow .15s, background .15s;
   }
-  @media (min-width: 641px) { .ci-fld input, .ci-fld textarea { font-size: 14px; } }
   .ci-fld textarea { height: auto; min-height: 72px; padding: 11px 14px; resize: vertical; font-weight: 500; line-height: 1.55; }
   .ci-fld input::placeholder, .ci-fld textarea::placeholder { color: var(--ci-ghost); font-weight: 500; }
   .ci-fld input:focus, .ci-fld textarea:focus { outline: 0; background: #fff; border-color: var(--ci-brand); box-shadow: 0 0 0 3px var(--ci-brand-soft); }
@@ -85,9 +119,9 @@
   .ci-fld input.ci-ltr { direction: ltr; text-align: start; }
   .ci-fld input.ci-ro { background: #fff; border: 1px solid var(--ci-border-strong); }
   .ci-fld input.ci-bad { border-color: #f87171; background: #fef2f2; }
-  .ci-err { font: 600 12px "Heebo", sans-serif; color: #dc2626; }
+  .ci-err { font: 600 12px "Heebo", sans-serif; color: #dc2626; overflow-wrap: anywhere; }
 
-  /* Apartment picker (no-order mode) */
+  /* Apartment picker (the window without an order) */
   .ci-aptbtn {
     display: flex; align-items: center; gap: 10px; height: 46px; border: 1px solid var(--ci-border-strong); border-radius: 11px;
     background: #fff; padding-inline: 14px; font: 700 14.5px "Heebo", sans-serif; color: var(--ci-ink); cursor: pointer; width: 100%;
@@ -101,14 +135,14 @@
   .ci-aptbtn:disabled { opacity: .6; cursor: default; }
 
   /* Holder blocks */
-  .ci-block { border: 1px solid var(--ci-border); border-radius: 13px; background: #fdfdff; overflow: visible; }
+  .ci-block { border: 1px solid var(--ci-border); border-radius: 13px; background: #fdfdff; overflow: hidden; }
   .ci-block + .ci-block { margin-top: 12px; }
-  .ci-bhead { display: flex; align-items: center; gap: 11px; padding: 13px 15px; border-bottom: 1px solid var(--ci-border); flex-wrap: wrap; }
+  .ci-bhead { display: flex; align-items: center; gap: 10px; padding: 13px 15px; border-bottom: 1px solid var(--ci-border); flex-wrap: wrap; }
   .ci-avnum { width: 30px; height: 30px; border-radius: 9px; background: var(--ci-brand-soft); color: var(--ci-brand-ink); display: grid; place-items: center; font: 700 13px "Inter", sans-serif; flex: none; }
-  .ci-bhead > b { font: 800 14.5px "Heebo", sans-serif; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ci-bhead > b { font-size: 14.5px; font-weight: 800; min-width: 0; overflow-wrap: anywhere; }
   .ci-rolechip { font: 700 11px "Heebo", sans-serif; color: var(--ci-brand-ink); background: var(--ci-brand-soft); border-radius: 999px; padding: 3px 10px; }
   .ci-rolechip.ci-renter { background: var(--ci-amber-soft); color: var(--ci-amber-ink); }
-  .ci-rolechip.ci-other { background: var(--ci-violet-soft); color: var(--ci-violet-ink); }
+  .ci-rolechip.ci-other { background: var(--ci-field); color: var(--ci-muted); }
   .ci-meta { font: 600 11.5px "Heebo", sans-serif; color: var(--ci-soft); }
   .ci-bdel {
     position: relative; margin-inline-start: auto; width: 32px; height: 32px; border: 0; border-radius: 8px; background: none;
@@ -117,78 +151,85 @@
   .ci-bdel::after { content: ""; position: absolute; inset: -6px; }
   .ci-bdel:hover:not(:disabled) { background: var(--ci-red-soft); color: var(--ci-red-ink); }
   .ci-bdel:disabled { opacity: .35; cursor: not-allowed; }
-  .ci-bbody { padding: 12px; }
-  @media (min-width: 641px) { .ci-bbody { padding: 15px; } }
+  .ci-bbody { padding: 15px; }
 
-  .ci-seg { display: flex; flex-wrap: wrap; background: #f7f8fc; border: 1px solid var(--ci-border); border-radius: 10px; padding: 4px; gap: 4px; min-height: 42px; max-width: 220px; }
-  .ci-seg.ci-wide { max-width: 440px; }
-  .ci-seg button {
-    flex: 1; min-height: 32px; border: 0; border-radius: 7px; background: none; font: 700 13px "Heebo", sans-serif;
-    color: var(--ci-muted); cursor: pointer; transition: background .15s, color .15s; padding-inline: 8px; white-space: nowrap;
+  /* "אני" — four separate buttons */
+  .ci-roleseg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-width: 420px; }
+  .ci-roleseg button {
+    position: relative; height: 40px; border: 1px solid var(--ci-border-strong); border-radius: 10px; background: #fff;
+    font: 700 13px "Heebo", sans-serif; color: var(--ci-muted); cursor: pointer; display: flex; align-items: center;
+    justify-content: center; transition: all .14s;
   }
-  .ci-seg button.ci-on { background: var(--ci-brand); color: #fff; box-shadow: 0 2px 8px rgba(61, 90, 254, .3); }
-  .ci-seg button:disabled:not(.ci-on) { opacity: .45; cursor: not-allowed; }
+  .ci-roleseg button::after { content: ""; position: absolute; inset: -2px 0; }
+  .ci-roleseg button:hover:not(:disabled) { border-color: var(--ci-brand); }
+  .ci-roleseg button.ci-on { background: var(--ci-brand); border-color: var(--ci-brand); color: #fff; box-shadow: 0 2px 8px rgba(61, 90, 254, .3); }
+  .ci-roleseg button:disabled:not(.ci-on) { opacity: .45; cursor: not-allowed; }
   .ci-hint { font: 600 11.5px "Heebo", sans-serif; color: var(--ci-soft); margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
 
-  .ci-mainrow, .ci-frow, .ci-leaserow { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px; }
-  .ci-frow { margin-top: 14px; }
-  @media (min-width: 641px) {
-    .ci-mainrow { grid-template-columns: 1.5fr 1fr .8fr; }
-    .ci-mainrow.ci-two { grid-template-columns: 1fr 1fr; }
-    .ci-frow, .ci-leaserow { grid-template-columns: 1fr 1fr; }
-  }
+  .ci-mainrow { display: grid; grid-template-columns: 2fr 1fr .8fr; gap: 12px; margin-top: 14px; }
   .ci-qtybox { display: flex; align-items: center; justify-content: center; border: 1px solid var(--ci-border-strong); border-radius: 10px; height: 42px; font: 700 15px "Inter", sans-serif; background: #fff; }
+  .ci-frow, .ci-leaserow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
   .ci-leaserow { font: 600 13px "Heebo", sans-serif; color: var(--ci-muted); align-items: center; }
   .ci-leaserow a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
 
   .ci-note {
     display: flex; gap: 9px; align-items: flex-start; background: var(--ci-amber-soft); border: 1px solid var(--ci-amber-border);
-    border-radius: 10px; padding: 10px 13px; font: 500 12.5px/1.5 "Heebo", sans-serif; color: var(--ci-amber-ink); margin-top: 12px;
+    border-radius: 10px; padding: 10px 13px; font: 500 12.5px/1.5 "Heebo", sans-serif; color: var(--ci-amber-ink); margin-top: 14px;
   }
   .ci-note svg { flex: none; margin-top: 1px; }
+  /* "עדכן בכרטיס הדייר" — always ONE line. */
+  .ci-regwrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
   .ci-ghostbtn {
-    min-height: 44px; border: 1px solid var(--ci-border-strong); border-radius: 10px; background: #fff;
+    position: relative; height: 38px; border: 1px solid var(--ci-border-strong); border-radius: 10px; background: #fff;
     font: 700 12.5px "Heebo", sans-serif; color: var(--ci-brand-ink); cursor: pointer; display: inline-flex; align-items: center;
-    gap: 7px; padding-inline: 14px; transition: all .14s; margin-top: 12px;
+    gap: 7px; padding-inline: 14px; transition: all .14s; margin-top: 12px; white-space: nowrap; flex: none;
   }
+  .ci-ghostbtn::after { content: ""; position: absolute; inset: -3px 0; }
+  .ci-ghostbtn svg { flex: none; }
   .ci-ghostbtn:hover:not(:disabled) { border-color: var(--ci-brand); background: var(--ci-brand-soft); }
   .ci-ghostbtn:disabled { opacity: .5; cursor: not-allowed; }
 
   /* Chip allocation */
   .ci-chipsec { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--ci-border); }
-  .ci-cshead { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-bottom: 10px; }
-  .ci-cshead b { font: 800 13.5px "Heebo", sans-serif; }
+  .ci-cshead { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .ci-cshead b { font: 800 13.5px "Heebo", sans-serif; min-width: 0; overflow-wrap: anywhere; }
   .ci-cshead small { font: 500 12px "Heebo", sans-serif; color: var(--ci-soft); }
-  .ci-alloc { margin-inline-start: auto; font: 700 11px "Heebo", sans-serif; border-radius: 999px; padding: 3px 10px; background: var(--ci-amber-soft); color: var(--ci-amber-ink); }
+  .ci-alloc { margin-inline-start: auto; font: 700 11px "Heebo", sans-serif; border-radius: 999px; padding: 3px 10px; background: var(--ci-amber-soft); color: var(--ci-amber-ink); flex: none; }
   .ci-alloc.ci-full { background: var(--ci-green-soft); color: var(--ci-green-ink); }
-  .ci-addrow { display: flex; flex-wrap: wrap; gap: 9px; }
-  .ci-addrow .ci-fld { flex: 1 1 160px; }
+  .ci-addrow { display: grid; grid-template-columns: 1fr auto auto; gap: 9px; }
   .ci-kindseg { display: flex; background: var(--ci-field); border-radius: 10px; padding: 4px; gap: 4px; height: 42px; flex: none; }
   .ci-kindseg button {
-    border: 0; border-radius: 7px; background: none; font: 700 12px "Heebo", sans-serif; color: var(--ci-muted); cursor: pointer;
-    padding-inline: 13px; display: flex; align-items: center; gap: 6px; transition: all .14s;
+    position: relative; border: 0; border-radius: 7px; background: none; font: 700 12px "Heebo", sans-serif; color: var(--ci-muted);
+    cursor: pointer; padding-inline: 13px; display: flex; align-items: center; gap: 6px; transition: all .14s;
   }
+  .ci-kindseg button::after { content: ""; position: absolute; inset: -5px 0; }
   .ci-kindseg button.ci-on { background: #fff; color: var(--ci-brand-ink); box-shadow: 0 1px 4px rgba(16, 22, 40, .12); }
   .ci-addbtn {
-    height: 42px; border: 0; border-radius: 10px; background: var(--ci-brand); color: #fff; font: 700 13px "Heebo", sans-serif;
-    cursor: pointer; padding-inline: 18px; display: flex; align-items: center; gap: 7px; flex: none; transition: background .15s;
+    position: relative; height: 42px; border: 0; border-radius: 10px; background: var(--ci-brand); color: #fff;
+    font: 700 13px "Heebo", sans-serif; cursor: pointer; padding-inline: 18px; display: flex; align-items: center; gap: 7px;
+    flex: none; transition: background .15s;
   }
+  .ci-addbtn::after { content: ""; position: absolute; inset: -1px 0; }
   .ci-addbtn:hover { background: var(--ci-brand-dark); }
   .ci-addbtn:disabled { opacity: .4; cursor: default; }
   .ci-chiplist { display: flex; flex-direction: column; gap: 8px; margin-top: 11px; }
   .ci-chipempty { border: 1.5px dashed var(--ci-border-strong); border-radius: 10px; padding: 14px; text-align: center; font: 500 12.5px "Heebo", sans-serif; color: var(--ci-soft); }
-  .ci-chiprow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 11px; border: 1px solid var(--ci-border); border-radius: 10px; background: #fff; padding: 9px 13px; min-height: 46px; }
+  .ci-chiprow { display: flex; align-items: center; flex-wrap: wrap; gap: 11px; border: 1px solid var(--ci-border); border-radius: 10px; background: #fff; padding: 9px 13px; }
   .ci-chiprow.ci-pending { border-style: dashed; border-color: var(--ci-amber-border); background: var(--ci-amber-soft); }
   .ci-chiprow.ci-conflict { border-color: #e5484d; background: #fef0f0; }
+  .ci-pnum { font: 700 14px "Inter", sans-serif; min-width: 0; overflow-wrap: anywhere; text-align: right; }
   .ci-cnum {
-    border: 0; background: none; padding: 0; font: 700 14px "Inter", sans-serif; color: var(--ci-ink); cursor: pointer;
-    border-bottom: 1px dashed var(--ci-ghost); direction: ltr; unicode-bidi: isolate; min-height: 24px;
+    position: relative; border: 0; background: none; padding: 0; font: 700 14px "Inter", sans-serif;
+    color: var(--ci-ink); cursor: pointer; border-bottom: 1px dashed var(--ci-ghost); direction: ltr; unicode-bidi: isolate;
+    min-width: 0; overflow-wrap: anywhere; text-align: right;
   }
+  .ci-cnum::after { content: ""; position: absolute; inset: -13px -6px; }
   .ci-cnum:hover:not(:disabled) { color: var(--ci-brand-ink); border-color: var(--ci-brand-ink); }
   .ci-cnum:disabled { cursor: default; }
   .ci-cnumedit {
     height: 30px; width: 130px; border: 1.5px solid var(--ci-brand); border-radius: 7px; padding: 0 8px; background: #fff;
-    font: 700 14px "Inter", sans-serif; direction: ltr; color: var(--ci-ink); box-shadow: 0 0 0 3px var(--ci-brand-soft);
+    font: 700 14px "Inter", sans-serif; direction: ltr; color: var(--ci-ink);
+    box-shadow: 0 0 0 3px var(--ci-brand-soft); margin-block: -5px;
   }
   .ci-cnumedit:focus { outline: 0; }
   .ci-kind { font: 600 11.5px "Heebo", sans-serif; color: var(--ci-soft); display: flex; align-items: center; gap: 5px; }
@@ -198,9 +239,9 @@
   .ci-tag-mini.ci-red { background: #fff; color: var(--ci-red-ink); }
   .ci-tgl {
     position: relative; margin-inline-start: auto; display: flex; align-items: center; gap: 8px; font: 600 11.5px "Heebo", sans-serif;
-    color: var(--ci-soft); cursor: pointer; border: 0; background: none; padding: 0; min-height: 32px;
+    color: var(--ci-soft); cursor: pointer; border: 0; background: none; padding: 0;
   }
-  .ci-tgl::after { content: ""; position: absolute; inset: -6px -4px; }
+  .ci-tgl::after { content: ""; position: absolute; inset: -12px -4px; }
   .ci-tgl:disabled { cursor: default; opacity: .6; }
   .ci-sw { width: 36px; height: 21px; border-radius: 999px; background: var(--ci-border-strong); position: relative; transition: background .15s; flex: none; }
   .ci-sw::after {
@@ -210,13 +251,14 @@
   .ci-chiprow:not(.ci-off) .ci-sw { background: var(--ci-green-ink); }
   .ci-chiprow:not(.ci-off) .ci-sw::after { translate: -15px 0; }
   .ci-rm {
-    position: relative; margin-inline-start: auto; width: 28px; height: 28px; border: 1px solid var(--ci-amber-border); border-radius: 8px;
+    position: relative; margin-inline-start: auto; width: 21px; height: 21px; border: 1px solid var(--ci-amber-border); border-radius: 7px;
     background: #fff; color: var(--ci-amber-ink); display: grid; place-items: center; cursor: pointer;
   }
-  .ci-rm::after { content: ""; position: absolute; inset: -8px; }
+  .ci-rm::after { content: ""; position: absolute; inset: -12px; }
   .ci-rm:hover { background: #e5484d; border-color: #e5484d; color: #fff; }
   .ci-chiphint { display: flex; align-items: center; gap: 7px; font: 500 11.5px "Heebo", sans-serif; color: var(--ci-ghost); margin-top: 9px; }
-  .ci-warn { font: 600 12px "Heebo", sans-serif; color: var(--ci-amber-ink); margin-top: 8px; }
+  .ci-chiphint svg { flex: none; }
+  .ci-warn { font: 600 12px "Heebo", sans-serif; color: var(--ci-amber-ink); margin-top: 8px; overflow-wrap: anywhere; }
 
   .ci-addowner {
     width: 100%; border: 1.5px dashed #cfd7ff; background: var(--ci-brand-soft); color: var(--ci-brand-ink); border-radius: 12px;
@@ -228,81 +270,253 @@
 
   /* Transaction */
   .ci-inv { border: 1px solid var(--ci-border); border-radius: 12px; overflow: hidden; background: #fff; }
-  .ci-invhead { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; padding: 11px 14px; background: #fbfcfe; border-bottom: 1px solid var(--ci-border); font: 800 13px "Heebo", sans-serif; }
+  .ci-invhead { display: flex; align-items: center; gap: 9px; padding: 11px 14px; background: #fbfcfe; border-bottom: 1px solid var(--ci-border); font: 800 13px "Heebo", sans-serif; flex-wrap: wrap; }
+  .ci-invhead > svg { color: var(--ci-green-ink); flex: none; }
   .ci-invhead .ci-num { font: 700 12.5px "Inter", sans-serif; color: var(--ci-muted); }
   .ci-tag { font: 700 11px "Heebo", sans-serif; border-radius: 999px; padding: 3px 10px; display: inline-flex; align-items: center; gap: 5px; }
   .ci-tag.ci-amber { background: var(--ci-amber-soft); color: var(--ci-amber-ink); }
   .ci-tag.ci-red { background: var(--ci-red-soft); color: var(--ci-red-ink); }
   .ci-tag.ci-green { background: var(--ci-green-soft); color: var(--ci-green-ink); }
-  .ci-tag.ci-brand { background: var(--ci-brand-soft); color: var(--ci-brand-ink); }
   .ci-tag.ci-solid { background: var(--ci-green-ink); color: #fff; }
-  .ci-invwho { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; padding: 14px; border-bottom: 1px solid var(--ci-border); background: #fbfcfe; }
-  @media (min-width: 641px) { .ci-invwho { grid-template-columns: repeat(4, 1fr); } }
-  .ci-invwho > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-  .ci-invwho span { font: 600 11px "Heebo", sans-serif; color: var(--ci-soft); }
-  .ci-invwho b { font: 600 13px "Heebo", sans-serif; color: var(--ci-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ci-invwho b.ci-wrap { white-space: normal; }
-  .ci-invwho b.ci-num { font: 700 12.5px "Inter", sans-serif; }
+  .ci-tag.ci-grey { background: var(--ci-field); color: var(--ci-muted); }
+  .ci-tag.ci-brand { background: var(--ci-brand-soft); color: var(--ci-brand-ink); }
+  .ci-invwho { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px 18px; padding: 14px; border-bottom: 1px solid var(--ci-border); background: #fbfcfe; text-align: start; }
+  .ci-invwho > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; align-items: flex-start; text-align: start; }
+  /* As the reference: EVERY span in the grid takes the label's size, weight and
+     color — also a tag, and the two numbers of "שויכו X מתוך Y". */
+  .ci-invwho span { font: 600 11px "Heebo", sans-serif; color: var(--ci-soft); text-align: start; }
+  .ci-invwho span.ci-num { font-family: "Inter", "Heebo", sans-serif; }
+  .ci-invwho b { font: 600 13px "Heebo", sans-serif; color: var(--ci-ink); overflow-wrap: anywhere; text-align: start; }
+  /* `right`, not the reference's `start`: the value is LTR, so `start` would
+     push the lines of a long, wrapped email to the left edge of its cell —
+     and the grid is aligned to the right. One line looks the same either way. */
+  .ci-invwho b.ci-num { font: 700 12.5px "Inter", sans-serif; text-align: right; direction: ltr; unicode-bidi: isolate; }
   .ci-invwho b.ci-late { color: var(--ci-red-ink); }
   .ci-invapts { padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; border-bottom: 1px solid var(--ci-border); }
-  .ci-invapt { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; border: 1px solid var(--ci-border); border-radius: 11px; padding: 10px 13px; background: #fff; }
-  @media (min-width: 641px) { .ci-invapt { flex-wrap: nowrap; } }
+  .ci-invapt { display: flex; align-items: center; gap: 12px; border: 1px solid var(--ci-border); border-radius: 11px; padding: 10px 13px; background: #fff; }
   .ci-aptno { min-width: 44px; height: 38px; padding-inline: 6px; border-radius: 9px; background: var(--ci-brand-soft); color: var(--ci-brand-ink); display: grid; place-items: center; font: 700 13px "Inter", sans-serif; flex: none; }
   .ci-who { min-width: 0; flex: 1; }
   .ci-who b { display: block; font: 700 13.5px "Heebo", sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ci-who small { font: 500 11.5px "Heebo", sans-serif; color: var(--ci-soft); }
+  .ci-who small { font: 500 11.5px "Heebo", sans-serif; color: var(--ci-soft); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ci-role { font: 700 10.5px "Heebo", sans-serif; border-radius: 999px; padding: 3px 9px; flex: none; background: var(--ci-brand-soft); color: var(--ci-brand-ink); }
   .ci-role.ci-renter { background: var(--ci-amber-soft); color: var(--ci-amber-ink); }
+  .ci-role.ci-other { background: var(--ci-field); color: var(--ci-muted); }
   .ci-aqty { font: 600 12px "Heebo", sans-serif; color: var(--ci-soft); flex: none; }
   .ci-aqty b { font: 700 13px "Inter", sans-serif; color: var(--ci-ink); }
-  .ci-aprice { font: 700 14px "Inter", sans-serif; flex: none; min-width: 52px; text-align: left; }
+  .ci-aprice { font: 700 14px "Inter", sans-serif; flex: none; min-width: 60px; text-align: left; }
   .ci-invlines { padding: 4px 14px; }
   .ci-invlines > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px dashed var(--ci-border); font: 600 13px "Heebo", sans-serif; color: var(--ci-muted); }
   .ci-invlines > div:last-child { border-bottom: 0; }
   .ci-invlines span .ci-num { font: 700 12.5px "Inter", sans-serif; color: var(--ci-ink); }
-  .ci-invlines b { font: 700 14px "Inter", sans-serif; color: var(--ci-ink); }
-  .ci-invtotal { display: flex; align-items: center; justify-content: space-between; background: var(--ci-navy); color: #fff; padding: 13px 16px; }
+  .ci-invlines > div > b { font: 700 14px "Inter", sans-serif; color: var(--ci-ink); flex: none; }
+  .ci-invtotal { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--ci-navy); color: #fff; padding: 13px 16px; }
   .ci-invtotal span { font: 700 13.5px "Heebo", sans-serif; }
-  .ci-invtotal b { font: 800 20px "Inter", sans-serif; }
+  .ci-invtotal b { font: 800 20px "Inter", sans-serif; flex: none; }
   .ci-invtotal span small { display: block; font: 600 11.5px "Heebo", sans-serif; color: #aeb6d8; margin-top: 3px; }
   .ci-oact { display: flex; gap: 9px; padding: 12px 14px; border-top: 1px solid var(--ci-border); background: #fbfcfe; flex-wrap: wrap; }
   .ci-btn {
-    min-height: 44px; border-radius: 10px; font: 700 12.5px "Heebo", sans-serif; cursor: pointer; padding-inline: 15px;
-    display: inline-flex; align-items: center; gap: 7px; transition: all .14s; border: 1px solid transparent;
+    position: relative; height: 38px; border-radius: 10px; font: 700 12.5px "Heebo", sans-serif; cursor: pointer; padding-inline: 15px;
+    display: inline-flex; align-items: center; gap: 7px; transition: all .14s; border: 1px solid transparent; white-space: nowrap;
   }
+  .ci-btn::after { content: ""; position: absolute; inset: -3px 0; }
   .ci-btn.ci-primary { background: var(--ci-brand); color: #fff; border: 0; }
   .ci-btn.ci-primary:hover:not(:disabled) { background: var(--ci-brand-dark); }
-  .ci-btn.ci-green { background: var(--ci-green-ink); color: #fff; border: 0; }
   .ci-btn.ci-line { background: #fff; border-color: var(--ci-border-strong); color: var(--ci-muted); }
   .ci-btn.ci-line:hover:not(:disabled) { border-color: var(--ci-ink); color: var(--ci-ink); }
-  .ci-btn.ci-danger { background: #fff; border-color: #f3c9ca; color: var(--ci-red-ink); }
+  .ci-btn.ci-danger { background: #fff; border-color: #f3c9ca; color: var(--ci-red-ink); margin-inline-start: auto; }
   .ci-btn.ci-danger:hover:not(:disabled) { background: var(--ci-red-soft); }
   .ci-btn:disabled { opacity: .45; cursor: not-allowed; }
+  /* The stage the order is in right now: drawn as the reference draws the
+     button, and not a button to press. */
+  .ci-btn.ci-cur:disabled { opacity: 1; cursor: default; }
+  /* Why "מוכן לאיסוף" cannot be pressed right now — a line under the buttons
+     that is always on the screen (not in the reference; a tooltip alone says
+     nothing on a touch screen). Amber while a chip is still missing, quiet
+     once the order has moved on. */
+  .ci-reason {
+    display: flex; align-items: flex-start; gap: 7px; padding: 0 14px 12px; background: #fbfcfe; margin: 0;
+    font: 600 12.5px/1.5 "Heebo", sans-serif; color: var(--ci-amber-ink); overflow-wrap: anywhere;
+  }
+  .ci-reason svg { flex: none; margin-top: 3px; }
+  .ci-reason.ci-quiet { color: var(--ci-soft); }
   .ci-actnote { padding: 0 14px 12px; background: #fbfcfe; font: 600 12px "Heebo", sans-serif; color: var(--ci-soft); margin: 0; }
 
-  .ci-feegrid { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: end; }
-  @media (min-width: 641px) { .ci-feegrid { grid-template-columns: 1fr auto; } }
-  .ci-chk { display: flex; align-items: center; gap: 9px; height: 42px; cursor: pointer; font: 600 13px "Heebo", sans-serif; color: var(--ci-muted); }
-  .ci-chk input { width: 19px; height: 19px; accent-color: var(--ci-brand); cursor: pointer; }
+  .ci-notefld { margin-top: 14px; }
+  /* The window is 60% of the viewport now, and the note is the one place where
+     somebody reads sentences: its box grows with the window like every field,
+     but a line of it stays as long as it is in the reference — 676px (the
+     706px field of the 780px panel, less its border and its two 14px
+     paddings). The rest of a wider box is padding at the far end, so the box
+     itself stays aligned with the rows above it. */
+  .ci-notefld textarea { padding-inline-end: max(14px, calc(100% - 692px)); }
 
-  .ci-alert { border: 1px solid #f87171; background: #fef2f2; border-radius: 12px; padding: 12px 14px; font: 600 13.5px "Heebo", sans-serif; color: #b91c1c; }
+  /* ── Reception: the window without an order (25/11/2026) ───────────────── */
+
+  /* Name · phone · email, in a holder block and in "פרטי המזמין". */
+  .ci-ordrow { display: grid; grid-template-columns: 1.35fr 1fr 1.35fr; gap: 12px; }
+  .ci-ordrow.ci-inblock { margin-top: 14px; }
+  /* The current residential address: street and number · city · zip. */
+  .ci-addrrow { display: grid; grid-template-columns: 2fr 1fr .8fr; gap: 12px; margin-top: 14px; }
+
+  /* A renter's lease: the file, and its end date. */
+  .ci-leasegrid { display: grid; grid-template-columns: 1.7fr 1fr; gap: 12px; margin-top: 14px; align-items: start; }
+  .ci-leasectl { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; min-height: 42px; }
+  .ci-leasectl a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 13px; }
+  .ci-leaseok { display: inline-flex; align-items: center; gap: 6px; font: 700 13px "Heebo", sans-serif; color: var(--ci-green-ink); }
+  .ci-leasename { font: 600 12.5px "Heebo", sans-serif; color: var(--ci-muted); min-width: 0; overflow-wrap: anywhere; }
+  /* The file input covers its label and is never seen: the label is the control. */
+  .ci-upl, .ci-linkbtn { position: relative; cursor: pointer; }
+  .ci-fld .ci-upl input, .ci-fld .ci-linkbtn input {
+    position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; opacity: 0; cursor: pointer;
+  }
+  .ci-upl {
+    display: inline-flex; align-items: center; gap: 8px; height: 42px; padding-inline: 16px; border-radius: 10px;
+    border: 1.5px dashed var(--ci-border-strong); background: #fff; font: 700 13px "Heebo", sans-serif; color: var(--ci-brand-ink);
+    transition: border-color .15s, background .15s;
+  }
+  .ci-upl::after { content: ""; position: absolute; inset: -1px 0; }
+  .ci-upl:hover { border-color: var(--ci-brand); background: var(--ci-brand-soft); }
+  .ci-upl:focus-within, .ci-linkbtn:focus-within { outline: 2px solid var(--ci-brand); outline-offset: 2px; }
+  .ci-linkbtn {
+    display: inline-flex; align-items: center; border: 0; background: none; padding: 0; border-radius: 4px;
+    font: 700 12.5px "Heebo", sans-serif; color: var(--ci-brand-ink);
+  }
+  .ci-linkbtn::after { content: ""; position: absolute; inset: -13px -5px; }
+  .ci-linkbtn:hover { color: var(--ci-brand-dark); text-decoration: underline; }
+  .ci-upl.ci-dis, .ci-linkbtn.ci-dis, .ci-linkbtn:disabled { opacity: .5; cursor: default; pointer-events: none; }
+
+  /* The amount of the save — the public page's breakdown and total bar. */
+  .ci-brk { border: 1px solid var(--ci-border); border-radius: 12px; background: #fff; overflow: hidden; }
+  .ci-brkh, .ci-brkr { display: grid; grid-template-columns: minmax(0, 1fr) 70px 90px 90px; gap: 10px; align-items: center; padding: 10px 15px; }
+  .ci-brkh { background: #fafbff; border-bottom: 1px solid var(--ci-border); font: 700 11.5px "Heebo", sans-serif; color: var(--ci-soft); }
+  .ci-brkr { font: 600 13px "Heebo", sans-serif; color: var(--ci-ink); }
+  .ci-brk .ci-c { text-align: center; font: 600 13px "Inter", sans-serif; color: var(--ci-muted); }
+  .ci-brk .ci-t { text-align: left; font: 700 13.5px "Inter", sans-serif; color: var(--ci-ink); }
+  .ci-brkh .ci-c, .ci-brkh .ci-t { font: 700 11.5px "Heebo", sans-serif; color: var(--ci-soft); }
+  .ci-paytotal {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #2149ba; color: #fff;
+    border-radius: 13px; padding: 14px 18px;
+  }
+  .ci-brk + .ci-paytotal { margin-top: 10px; }
+  .ci-paytotal span { font: 700 14.5px "Heebo", sans-serif; }
+  .ci-paytotal span small { display: block; font: 600 11.5px "Heebo", sans-serif; color: #c9d6ff; margin-top: 3px; }
+  .ci-paytotal b { font: 800 22px "Inter", sans-serif; flex: none; }
+
+  /* How it is paid — nothing is chosen until the manager chooses. */
+  .ci-payfld { margin-top: 14px; }
+  .ci-payseg { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .ci-payseg.ci-three { grid-template-columns: repeat(3, 1fr); }
+  .ci-payseg button {
+    display: flex; align-items: center; gap: 10px; min-height: 60px; padding: 10px 13px; border: 1px solid var(--ci-border-strong);
+    border-radius: 11px; background: #fff; cursor: pointer; text-align: start; transition: all .14s; min-width: 0;
+  }
+  .ci-payseg button:hover:not(:disabled) { border-color: var(--ci-brand); }
+  .ci-payic { width: 30px; height: 30px; border-radius: 9px; background: var(--ci-field); color: var(--ci-muted); display: grid; place-items: center; flex: none; }
+  .ci-paytxt { min-width: 0; }
+  .ci-paytxt b { display: block; font: 800 13.5px "Heebo", sans-serif; color: var(--ci-ink); }
+  .ci-paytxt small { display: block; font: 500 11.5px/1.4 "Heebo", sans-serif; color: var(--ci-soft); margin-top: 2px; overflow-wrap: anywhere; }
+  .ci-payseg button.ci-on { border-color: var(--ci-brand); background: var(--ci-brand-soft); box-shadow: inset 0 0 0 1px var(--ci-brand); }
+  .ci-payseg button.ci-on .ci-payic { background: var(--ci-brand); color: #fff; }
+  .ci-payseg button.ci-on .ci-paytxt small { color: var(--ci-brand-ink); font-weight: 700; }
+  .ci-payseg button:disabled { cursor: not-allowed; }
+  .ci-payseg button:disabled:not(.ci-on) { opacity: .5; }
+  /* "אשראי" — not active yet: drawn, never pressed. */
+  .ci-payseg button.ci-soon { border-style: dashed; background: #fbfcfe; }
+  .ci-payhint { font: 500 12px/1.5 "Heebo", sans-serif; color: var(--ci-soft); margin: 9px 0 0; }
+  .ci-reason.ci-flat { padding: 0; background: none; margin-top: 9px; }
+
+  /* What an earlier save left on a block — read only. */
+  .ci-recs { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .ci-rec { border: 1px solid var(--ci-border); border-radius: 10px; background: #fbfcfe; padding: 9px 12px; }
+  .ci-rechead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+  .ci-rechead > b { font: 800 12.5px "Heebo", sans-serif; }
+  .ci-rechead > .ci-num { font: 600 12px "Inter", sans-serif; color: var(--ci-soft); }
+  .ci-recqty { margin-inline-start: auto; font: 600 11.5px "Heebo", sans-serif; color: var(--ci-soft); flex: none; }
+  .ci-rec p { margin: 6px 0 0; font: 500 12px/1.55 "Heebo", sans-serif; color: var(--ci-muted); overflow-wrap: anywhere; }
+  .ci-rec p > span:first-child { font-weight: 700; color: var(--ci-soft); }
+  .ci-recby { color: var(--ci-soft); }
+
+  /* A closed order is read only — said once, above its blocks. */
+  .ci-info {
+    display: flex; gap: 9px; align-items: flex-start; background: var(--ci-brand-soft); border: 1px solid #d5dcff;
+    border-radius: 10px; padding: 10px 13px; font: 500 12.5px/1.5 "Heebo", sans-serif; color: var(--ci-brand-ink); margin: 0 0 12px;
+  }
+  .ci-info svg { flex: none; margin-top: 2px; }
+
+  /* Extra chips of a web order (25/11/2026) — the reception's payment section,
+     shown under the transaction card for the chips beyond what was paid
+     online. The note above it explains what is being paid for. */
+  .ci-extrapay { margin-top: 14px; border: 1px solid var(--ci-border-strong); border-radius: 13px; padding: 14px; background: #fff; }
+  .ci-extrapay .ci-info { margin-bottom: 12px; }
+
+  .ci-alert { border: 1px solid #f87171; background: #fef2f2; border-radius: 12px; padding: 12px 14px; font: 600 13.5px "Heebo", sans-serif; color: #b91c1c; overflow-wrap: anywhere; }
   .ci-skel { height: 180px; border-radius: 13px; background: #f3f5fc; animation: ci-pulse 1.4s ease-in-out infinite; }
   @keyframes ci-pulse { 50% { opacity: .55; } }
 
-  /* Footer */
-  .ci-foot { background: #fff; border-top: 1px solid var(--ci-border); box-shadow: 0 -8px 30px rgba(16, 22, 40, .08); padding: 14px 16px max(14px, env(safe-area-inset-bottom)); flex: none; display: flex; gap: 10px; justify-content: flex-start; }
-  @media (min-width: 641px) { .ci-foot { padding-inline: 20px; } }
+  /* Footer — "שמור שינויים" at the left edge, "סגור" right beside it. */
+  .ci-foot {
+    background: #fff; border-top: 1px solid var(--ci-border); box-shadow: 0 -8px 30px rgba(16, 22, 40, .08);
+    padding: 14px 20px max(14px, env(safe-area-inset-bottom)); flex: none; display: flex; gap: 10px; justify-content: flex-end;
+  }
   .ci-save {
     height: 46px; border: 0; border-radius: 11px; background: var(--ci-brand); color: #fff; font: 800 14.5px "Heebo", sans-serif;
-    cursor: pointer; padding-inline: 28px; display: flex; align-items: center; gap: 9px; box-shadow: 0 4px 14px rgba(61, 90, 254, .3); transition: background .15s;
+    cursor: pointer; padding-inline: 28px; display: flex; align-items: center; gap: 9px; box-shadow: 0 4px 14px rgba(61, 90, 254, .3);
+    transition: background .15s; white-space: nowrap;
   }
   .ci-save:hover:not(:disabled) { background: var(--ci-brand-dark); }
   .ci-save:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
   .ci-cancel {
     height: 46px; border: 1px solid var(--ci-border-strong); border-radius: 11px; background: #fff; color: var(--ci-muted);
-    font: 700 14px "Heebo", sans-serif; cursor: pointer; padding-inline: 22px; transition: all .14s;
+    font: 700 14px "Heebo", sans-serif; cursor: pointer; padding-inline: 22px; transition: all .14s; white-space: nowrap;
   }
   .ci-cancel:hover:not(:disabled) { border-color: var(--ci-ink); color: var(--ci-ink); }
   .ci-spin { animation: ci-spin 1s linear infinite; }
   @keyframes ci-spin { to { transform: rotate(360deg); } }
+
+  /* The reference's two breakpoints. */
+  @media (max-width: 700px) {
+    .ci-invwho { grid-template-columns: 1fr 1fr; }
+    .ci-mainrow { grid-template-columns: 1fr 1fr; }
+    .ci-mainrow > .ci-fld:first-child { grid-column: 1 / -1; }
+    .ci-roleseg { max-width: none; }
+    .ci-ordrow, .ci-addrrow { grid-template-columns: 1fr 1fr; }
+    .ci-ordrow > .ci-fld:last-child, .ci-addrrow > .ci-fld:first-child { grid-column: 1 / -1; }
+  }
+  @media (max-width: 540px) {
+    .ci-frow, .ci-leaserow, .ci-addrow, .ci-ordrow, .ci-addrrow, .ci-leasegrid, .ci-payseg, .ci-payseg.ci-three { grid-template-columns: 1fr; }
+    .ci-ordrow > .ci-fld:last-child, .ci-addrrow > .ci-fld:first-child { grid-column: auto; }
+    /* Down to a 320px screen: the item's name takes what is left and wraps. */
+    .ci-brkh, .ci-brkr { grid-template-columns: minmax(0, 1fr) 38px 58px 66px; gap: 6px; padding: 10px; }
+    .ci-roleseg { grid-template-columns: 1fr 1fr; }
+    .ci-invapt { flex-wrap: wrap; }
+    .ci-btn.ci-danger { margin-inline-start: 0; }
+  }
+
+  /* Not a layout breakpoint — the iOS zoom floor. iOS zooms the page into a
+     focused field under 16px and stays zoomed. The app's own floor
+     (responsive.css) covers every screen under 768px and a phone on its side;
+     here both branches also ask for a touch screen, so a desktop window of any
+     width keeps the reference's 14px. */
+  @media (max-width: 767.98px) and (pointer: coarse), (max-height: 480px) and (pointer: coarse) {
+    .ci-fld input, .ci-fld textarea, .ci-cnumedit { font-size: 16px; }
+  }
+}
+
+/* The panel itself. The Sheet primitive styles its popup with utilities
+   (text-sm, a text color, shadow-2xl) and a utility beats every class of
+   `@layer components` — so these few declarations sit in the utilities layer,
+   after Tailwind's own, where they win by source order. */
+@layer utilities {
+  .ci-panel {
+    /* 60vw from a 1300px viewport up (1366 → 820px, 1440 → 864px, 1920 →
+       1152px), 780px under it, the whole screen under 780px. The layout inside
+       still moves at the reference's two breakpoints only (700px and 540px of
+       the VIEWPORT) — and at those widths the panel is the screen. */
+    width: min(max(var(--ci-panel-w), var(--ci-panel-min)), 100%);
+    max-width: none;
+    box-shadow: 12px 0 60px rgba(16, 22, 40, .25);
+    color: var(--ci-ink);
+    font-size: 16px;
+    line-height: normal;
+  }
 }

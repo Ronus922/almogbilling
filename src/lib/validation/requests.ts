@@ -9,6 +9,7 @@ import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legal
 import { validatePhone } from '@/lib/validation';
 import { CHIP_RESIDENT_ROLES } from '@/lib/constants/chips';
 import { CHIP_ORDER_APT_LIMIT_MESSAGE, CHIP_ORDER_LIMITS } from '@/lib/chipOrders/model';
+import { isPickupPersonKey } from '@/lib/chipOrders/pickup';
 import { WHATSAPP_ATTACHMENT_LIMITS, WHATSAPP_MESSAGE_MAX_FILES } from '@/lib/constants/whatsappAttachments';
 import { FINANCE_RECEIPT_LIMITS } from '@/lib/constants/finance';
 import { SUPPLIERS_LANE_ID } from '@/lib/constants/workItems';
@@ -16,7 +17,7 @@ import { DECISION_TYPES } from '@/lib/decisions';
 import { isIsoDate, isMonthKey } from '@/lib/finance/period';
 import { cleanPhoneField } from '@/lib/whatsapp';
 import { WHATSAPP_SEND_MAX_RECIPIENTS } from '@/lib/whatsapp-recipients';
-import type { ChipHolderUpdate, ChipResidentRole } from '@/lib/types/chips';
+import type { ChipHolderUpdate, ChipLeaseRef, ChipResidentRole } from '@/lib/types/chips';
 import type { SupplierContactInput } from '@/lib/types/suppliers';
 
 // POST /api/auth/login
@@ -101,6 +102,103 @@ export const legalContactBodySchema = z
     return normalized.value;
   });
 
+// ── The issue window without an order ("הנפק צ׳יפ", 25/11/2026) ─────────────
+// What the window collects besides the chip numbers: the holder's email, a
+// renter's lease and its end date (per block), who ordered, and how the new
+// chips are paid. Every one of them is optional on the manager's side.
+
+/** A lease already uploaded through POST /api/chips/leases — a save carries
+ *  only this reference. The key is the bare `<uuid>.<ext>` that route makes. */
+const CHIP_LEASE_KEY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(pdf|jpg|jpeg|png|webp)$/;
+const chipLeaseRefSchema = z
+  .object({
+    key: z.string().regex(CHIP_LEASE_KEY_RE, 'קובץ החוזה אינו תקין'),
+    name: z.string().trim().min(1, 'קובץ החוזה אינו תקין').max(200, 'שם הקובץ ארוך מדי'),
+    mime: z.string().trim().max(100).nullable().optional(),
+    size: z.number().int().positive().max(CHIP_ORDER_LIMITS.leaseFileBytes).nullable().optional(),
+  })
+  .transform((l): ChipLeaseRef => ({ key: l.key, name: l.name, mime: l.mime || null, size: l.size ?? null }));
+
+const chipOptionalEmail = z
+  .union([z.literal(''), z.string().trim().toLowerCase().email('כתובת מייל לא תקינה').max(254, 'כתובת מייל לא תקינה')])
+  .nullable();
+
+// A day that exists: JavaScript reads 2027-02-30 as the 2nd of March, and
+// Postgres refuses it — so the value must come back from a Date as it went in.
+const chipDay = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'תאריך לא תקין')
+  .refine((v) => {
+    const at = new Date(`${v}T00:00:00Z`);
+    return !Number.isNaN(at.getTime()) && at.toISOString().slice(0, 10) === v;
+  }, 'תאריך לא תקין');
+
+/** The 25/11/2026 fields of ONE group of POST /api/chips (`groups[]`): the
+ *  rest of a group is validated by the route as it always was. */
+export const chipGroupDetailsSchema = z
+  .object({
+    holder_email: chipOptionalEmail.optional(),
+    lease: chipLeaseRefSchema.nullable().optional(),
+    lease_end_date: chipDay.nullable().optional(),
+    /** The window's block — the groups of one person share it. */
+    block: z.number().int().min(0).max(999).nullable().optional(),
+  })
+  .transform((g) => ({
+    holder_email: g.holder_email || null,
+    lease: g.lease ?? null,
+    lease_end_date: g.lease_end_date ?? null,
+    block: g.block ?? null,
+  }));
+
+/** `orderer` + `payment` of POST /api/chips. The amount is what the window
+ *  SHOWED; the server computes the real one and refuses a save where the two
+ *  differ. "אשראי" is not a value here — it is not active. */
+export const chipReceptionSchema = z
+  .object({
+    orderer: z
+      .object({
+        name: z.string().trim().max(120, 'שם המזמין ארוך מדי').nullable().optional(),
+        phone: z.string().trim().max(40, 'מספר הטלפון ארוך מדי').nullable().optional(),
+        email: chipOptionalEmail.optional(),
+        street: z.string().trim().max(200, 'הכתובת ארוכה מדי').nullable().optional(),
+        city: z.string().trim().max(100, 'שם העיר ארוך מדי').nullable().optional(),
+        zip: z.string().trim().max(20, 'מיקוד — 7 ספרות').nullable().optional(),
+      })
+      .nullable()
+      .optional(),
+    payment: z
+      .object({
+        method: z.enum(['cash_transfer', 'none'], { error: 'אמצעי התשלום אינו תקין' }),
+        amount: z.number({ error: 'סכום לא תקין' }).min(0, 'סכום לא תקין').max(10_000_000, 'סכום לא תקין'),
+      })
+      .nullable()
+      .optional(),
+  })
+  .transform((b, ctx) => {
+    const o = b.orderer ?? {};
+    const bad = (field: string, message: string) => ctx.addIssue({ code: 'custom', path: ['orderer', field], message });
+    // The name has no minimum here: it defaults to the first chip holder's,
+    // and a guest may be known by one letter. An ORDER needs two — the save
+    // refuses a payment recorded under a shorter name.
+    const name = o.name || null;
+    let phone: string | null = null;
+    if (o.phone) {
+      const v = validatePhone(o.phone);
+      if (v.valid) phone = v.normalized;
+      else bad('phone', v.error ?? 'מספר טלפון לא תקין');
+    }
+    const street = o.street || null;
+    if (street && street.length < 2) bad('street', 'הכתובת קצרה מדי');
+    const city = o.city || null;
+    if (city && city.length < 2) bad('city', 'שם העיר קצר מדי');
+    const zip = o.zip || null;
+    if (zip && !/^\d{7}$/.test(zip)) bad('zip', 'מיקוד — 7 ספרות');
+    return {
+      orderer: { name, phone, email: o.email || null, street, city, zip },
+      payment: b.payment ?? null,
+    };
+  });
+
 // POST /api/chips — `updates`: holder-snapshot edits of chips ALREADY saved on
 // the contact, applied inside the issue transaction. Only the fields present
 // are written; phone is normalized here so the db layer stores one format.
@@ -116,9 +214,16 @@ const chipHolderUpdateSchema = z
         'invalid_resident_role',
       )
       .optional(),
+    // 25/11/2026: the block's email, lease (null = taken off) and lease end date.
+    holder_email: chipOptionalEmail.optional(),
+    lease: chipLeaseRefSchema.nullable().optional(),
+    lease_end_date: chipDay.nullable().optional(),
   })
   .transform((u, ctx): ChipHolderUpdate => {
     const out: ChipHolderUpdate = { id: u.id };
+    if (u.holder_email !== undefined) out.holder_email = u.holder_email || null;
+    if (u.lease !== undefined) out.lease = u.lease;
+    if (u.lease_end_date !== undefined) out.lease_end_date = u.lease_end_date;
     if (u.holder_name !== undefined) out.holder_name = u.holder_name || null;
     if (u.holder_phone !== undefined) {
       if (!u.holder_phone) {
@@ -555,6 +660,13 @@ export const chipOrderTestFinishBodySchema = z.object({
   trackingToken: z.string().regex(/^[A-Za-z0-9_-]{32,64}$/),
 });
 
+/** POST /api/public/chip-order/payplus/session and …/status — the card payment
+ *  of an order the browser just created. The tracking token is the only thing
+ *  the browser sends: the amount is never read from it. */
+export const chipOrderCardBodySchema = z.object({
+  trackingToken: z.string().regex(/^[A-Za-z0-9_-]{32,64}$/),
+});
+
 /** POST /api/chip-orders/items/[itemId]/registry — "עדכן בכרטיס הדייר": the
  *  holder block's name and phone, as typed in the issue window. */
 export const chipOrderRegistryBodySchema = z.object({
@@ -566,8 +678,8 @@ export const chipOrderRegistryBodySchema = z.object({
 });
 
 /** POST /api/chip-orders/[id]/holders — "שמור שינויים" of the order window
- *  (20/11/2026): every person block (edits + new chip numbers), the order's
- *  internal note, and the window-global fee fields. */
+ *  (20/11/2026): every person block (edits + new chip numbers) and the
+ *  order's internal note. (The window-global fee fields left on 25/11/2026.) */
 export const chipOrderWindowSaveSchema = z.object({
   holders: z.array(z.object({
     id: z.uuid().nullable(),
@@ -585,11 +697,40 @@ export const chipOrderWindowSaveSchema = z.object({
   /** Staff holders removed in the window (only one with no chips is removed). */
   removed_holder_ids: z.array(z.uuid()).max(40).optional(),
   note: z.string().max(2000, 'ההערה ארוכה מדי').nullable().optional(),
-  issuance_fee: z.number().min(0, 'סכום לא תקין').max(100_000, 'סכום לא תקין').nullable().optional(),
-  fee_charged: z.boolean().optional(),
+  /** 25/11/2026 — how the EXTRA chips of the save are settled (new numbers
+   *  beyond what an apartment line paid for online), as at the reception:
+   *  cash or a transfer makes a reception order, "ללא חיוב" makes none. The
+   *  amount is what the window SHOWED; the server computes the real one.
+   *  "אשראי" is not a value here — it is not active. */
+  extra_payment: z
+    .object({
+      method: z.enum(['cash_transfer', 'none'], { error: 'אמצעי התשלום אינו תקין' }),
+      amount: z.number({ error: 'סכום לא תקין' }).min(0, 'סכום לא תקין').max(10_000_000, 'סכום לא תקין'),
+    })
+    .nullable()
+    .optional(),
 });
 
 /** POST /api/chip-orders/[id]/reject */
 export const chipOrderRejectBodySchema = z.object({
   reason: z.string({ error: 'נדרשת סיבת דחייה' }).trim().min(2, 'נדרשת סיבת דחייה').max(500, 'הסיבה ארוכה מדי'),
+});
+
+/** POST /api/chip-orders/[id]/cancel — "בטל הזמנת קבלה" (25/11/2026). */
+export const chipOrderCancelBodySchema = z.object({
+  reason: z.string({ error: 'נדרשת סיבת ביטול' }).trim().min(2, 'נדרשת סיבת ביטול').max(500, 'הסיבה ארוכה מדי'),
+});
+
+/** POST /api/chip-pickup/[id]/handover — "נמסר" of the guard's pickup screen:
+ *  the person of the order who showed an ID (a holder line id, or the
+ *  orderer). Required here; whether it is a person of THIS order is checked
+ *  against the database, never against the request. */
+export const chipPickupHandoverBodySchema = z.object({
+  person: z.string({ error: 'יש לבחור מי אסף את הצ׳יפים' }).trim().refine(isPickupPersonKey, 'יש לבחור מי אסף את הצ׳יפים'),
+});
+
+/** POST /api/chip-orders/[id]/collected — "נאסף" of the management: the same
+ *  person, OPTIONAL (a bare POST, as before, names nobody). */
+export const chipOrderCollectedBodySchema = z.object({
+  person: z.string().trim().refine(isPickupPersonKey, 'האדם שנבחר אינו חלק מההזמנה').nullable().optional(),
 });

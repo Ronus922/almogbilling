@@ -121,6 +121,11 @@ describe('the stage of one apartment — the Orders tab and the "פרטי הזמ
     expect(chipOrderStageLabel('partial', 2, 3)).toBe('שויכו 2 מתוך 3');
     expect(chipOrderStageLabel('assigned', 3, 3)).toBe('שויך');
     expect(chipOrderStageLabel('ready', 3, 3)).toBe('מוכן לאיסוף');
+    // A collected order (in the tab only when it was made at the reception):
+    // "נאסף", whatever its chips say — a chip disabled later reopens nothing.
+    expect(chipOrderStage('collected', 2, 2)).toBe('collected');
+    expect(chipOrderStage('collected', 0, 2)).toBe('collected');
+    expect(chipOrderStageLabel('collected', 2, 2)).toBe('נאסף');
   });
 
   it('open = still in the Orders tab: paid (and legacy approved) or ready', () => {

@@ -4,9 +4,23 @@
    (#debtors-print-root). On screen it is hidden; in print we hide every
    other direct child of <body> (the app shell: sidebar, header, toolbar,
    pagination, toasts) and show only the print root.
+
+   A second print-only table lives here since 24/11/2026: the lists of /chips
+   — "הזמנות", and since 25/11/2026 "צ׳יפים" too (PrintableChipList, #chips-print-root),
+   with the same look through the shared `.app-print-*` classes.
+
+   DO NOT TOUCH THE HIDE RULE BELOW. Its specificity (1,0,1) is a contract:
+   the debtor card's own print page (app/debtors/[id]/print, also what
+   GET /api/debtors/[id]/pdf renders) shows its root with
+   `body > div#debtor-detail-print` (1,0,2), which wins by specificity
+   alone. One more `:not(#id)` in the hide rule outranks that page and it
+   prints blank — measured on 24/11/2026. A new print root is revealed the
+   same way that page does it: by a selector of its own that outranks the
+   hide rule.
    ───────────────────────────────────────────────────────────────────── */
 
-#debtors-print-root {
+#debtors-print-root,
+#chips-print-root {
   display: none;
 }
 
@@ -25,27 +39,42 @@
     margin: 0;
   }
 
-  .debtors-print-head {
+  /* (1,0,2) — outranks the hide rule above, which matches this root too. */
+  body > div#chips-print-root {
+    display: block !important;
+    direction: rtl;
+    font-family: 'Heebo', system-ui, sans-serif;
+    color: #1a2233;
+    padding: 0;
+    margin: 0;
+  }
+
+  .debtors-print-head,
+  .app-print-head {
     margin-bottom: 12px;
   }
-  .debtors-print-head h1 {
+  .debtors-print-head h1,
+  .app-print-head h1 {
     margin: 0 0 4px;
     font-size: 20px;
     font-weight: 800;
   }
-  .debtors-print-meta {
+  .debtors-print-meta,
+  .app-print-meta {
     display: flex;
     gap: 18px;
     font-size: 12px;
     color: #5b6479;
   }
 
-  .debtors-print-table {
+  .debtors-print-table,
+  .app-print-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 12px;
   }
-  .debtors-print-table th {
+  .debtors-print-table th,
+  .app-print-table th {
     background: #f1f5f9;
     color: #334155;
     font-weight: 700;
@@ -53,23 +82,28 @@
     padding: 6px 8px;
     border: 1px solid #e2e8f0;
   }
-  .debtors-print-table td {
+  .debtors-print-table td,
+  .app-print-table td {
     text-align: right;
     padding: 5px 8px;
     border: 1px solid #eef2f7;
   }
-  .debtors-print-table td.num {
+  .debtors-print-table td.num,
+  .app-print-table td.num {
     font-variant-numeric: tabular-nums;
   }
-  .debtors-print-table td.ltr {
+  .debtors-print-table td.ltr,
+  .app-print-table td.ltr {
     direction: ltr;
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
-  .debtors-print-table thead {
+  .debtors-print-table thead,
+  .app-print-table thead {
     display: table-header-group; /* repeat header on each printed page */
   }
-  .debtors-print-table tr {
+  .debtors-print-table tr,
+  .app-print-table tr {
     break-inside: avoid;
   }
 

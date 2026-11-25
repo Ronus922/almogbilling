@@ -12,6 +12,13 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   not_open: { status: 409, message: 'ההזמנה כבר נאספה או נדחתה' },
   nothing_to_write: { status: 400, message: 'אין שם או טלפון לעדכן' },
   invalid_phone: { status: 400, message: 'מספר הטלפון אינו תקין לרשימת הדיירים' },
+  // The hand-over (25/11/2026): who collected must be a person of the order.
+  collector_required: { status: 400, message: 'יש לבחור מי אסף את הצ׳יפים' },
+  collector_not_in_order: { status: 400, message: 'האדם שנבחר אינו חלק מההזמנה — רעננו את הרשימה ובחרו שוב' },
+  no_active_chips: { status: 409, message: 'להזמנה אין צ׳יפים פעילים למסירה — יש לפנות להנהלה' },
+  // "בטל הזמנת קבלה" (25/11/2026).
+  not_reception: { status: 409, message: 'אפשר לבטל כך רק הזמנת קבלה — הזמנה מהאתר נדחית בכפתור „דחה”' },
+  not_cancellable: { status: 409, message: 'הזמנת הקבלה כבר בוטלה' },
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
