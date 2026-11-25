@@ -26,14 +26,21 @@
 //     their numbers fixed — those are the chip's own actions, not the order's.
 //   · "שמור שינויים" — ONE request, one transaction (POST
 //     /api/chip-orders/[id]/holders): holder edits, staff holders, new numbers
-//     (linked to the order line AND the holder line), the note. The window
-//     STAYS OPEN afterwards (24/11/2026), reloaded on what is saved now.
+//     (linked to the order line AND the holder line), the note.
 //   · "מוכן לאיסוף" is ONE CLICK (24/11/2026): it may be pressed as soon as
 //     every ordered chip is covered — by a saved chip or by a number still
 //     waiting in the window — and it saves the window first (the same request
 //     as "שמור שינויים") and only then marks the order ready. A save that
 //     fails marks nothing. The server's own rule did not move: an order is
 //     ready only when all its chips are issued.
+//   · A COMPLETED ACTION CLOSES THE WINDOW (25/11/2026, Ronen): "שמור
+//     שינויים", "מוכן לאיסוף" and "נאסף" each close it once they went
+//     through; the success message is on the page, and the rows behind the
+//     window are loaded again — the row shows the new status and its next
+//     step ("נאסף" for a ready order). From 24/11/2026 the window stayed open
+//     after a save and after "מוכן לאיסוף", and every order needed a second
+//     action to close it. A save or a mark that fails keeps the window open,
+//     with its error.
 //   · EXTRA CHIPS (25/11/2026). A new number beyond the quantity an apartment
 //     line paid for online is an extra chip, and it has to be settled: the
 //     payment section of the reception appears for the extras only — "אשראי"
@@ -493,10 +500,10 @@ export function OrderIssueSheet({
     }
   }
 
-  /** "שמור שינויים": save, say so, and stay — the window reloads on what is
-   *  stored now (24/11/2026; until then a save closed it). If the order cannot
-   *  be loaded again the window closes, rather than show saved numbers as if
-   *  they were still waiting. */
+  /** "שמור שינויים": save, say so, and close the window (25/11/2026, Ronen;
+   *  from 24/11/2026 it stayed open). The message is on the page, and the
+   *  rows behind the window are loaded again. A save that fails keeps the
+   *  window open, with its error. */
   async function save() {
     if (!canSubmit) return;
     setSubmitting(true);
@@ -505,15 +512,18 @@ export function OrderIssueSheet({
       if (n === null) return;
       toast.success(n > 1 ? `${n} צ׳יפים הונפקו` : n === 1 ? 'הצ׳יפ הונפק' : 'השינויים נשמרו');
       onIssued();
-      if (!(await refreshNow(true))) onOpenChange(false);
+      onOpenChange(false);
     } finally {
       setSubmitting(false);
     }
   }
 
   /** "מוכן לאיסוף" in one click: save whatever the window holds, THEN mark
-   *  the order ready. A save that fails marks nothing — its error is shown as
-   *  on any save. The window stays open on the new status, "נאסף" next. */
+   *  the order ready, then close the window (25/11/2026, Ronen) — the message
+   *  is on the page, and the row behind shows the order ready, with "נאסף".
+   *  A save that fails marks nothing — its error is shown as on any save, and
+   *  the window stays open. A mark that fails keeps the window open too, on
+   *  the order as it is stored now. */
   async function markReady() {
     if (!win || !canReady) return;
     setSubmitting(true);
@@ -534,20 +544,21 @@ export function OrderIssueSheet({
       } catch {
         failed = 'הפעולה נכשלה';
       }
-      if (failed) {
-        toast.error(issued !== null ? `השינויים נשמרו, אבל ההזמנה לא סומנה מוכנה: ${failed}` : failed);
-      } else {
+      onIssued();
+      if (!failed) {
         toast.success(
           'סומן מוכן לאיסוף — נשלחה הודעה למזמין',
           issued ? { description: issued === 1 ? 'הצ׳יפ הונפק ונשמר' : `${issued} צ׳יפים הונפקו ונשמרו` } : undefined,
         );
+        onOpenChange(false);
+        return;
       }
-      onIssued();
-      // Something was stored (the save, the status or both) → the order as
-      // stored; a refusal with nothing saved → a plain reload. If what was
-      // stored cannot be loaded, the window closes rather than show an order
-      // that is no longer true.
-      const stored = issued !== null || !failed;
+      toast.error(issued !== null ? `השינויים נשמרו, אבל ההזמנה לא סומנה מוכנה: ${failed}` : failed);
+      // The window stays open. A save that went through → the order as
+      // stored; nothing saved → a plain reload. If what was stored cannot be
+      // loaded, the window closes rather than show saved numbers as if they
+      // were still waiting.
+      const stored = issued !== null;
       const loaded = await refreshNow(stored);
       if (!loaded && stored) onOpenChange(false);
     } finally {

@@ -395,7 +395,11 @@ const OPEN_SQL = `('paid', 'approved', 'ready')`;
  *  order is collected or rejected — EXCEPT a reception order (25/11/2026),
  *  which is collected the moment it is made and stays in the tab, after the
  *  open orders, newest first, tagged "קבלה" — also once it was cancelled
- *  (stored `rejected`, shown "בוטל"). Test orders come with is_test;
+ *  (stored `rejected`, shown "בוטל"). The open orders are ONE group, newest
+ *  payment first, whatever their stage (25/11/2026): a ready order keeps the
+ *  place it had. Until then every paid order came before every ready one, so
+ *  after "מוכן לאיסוף" the order's row jumped down, and the row left in its
+ *  place was another order, still waiting. Test orders come with is_test;
  *  the screen badges them and keeps them out of every count. `people` — the people of
  *  the apartment line (the search, the Excel file and the print view of the
  *  tab, 24/11/2026): the names of its holder lines, in the order of the
@@ -426,7 +430,7 @@ export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id
       where o.status in ${OPEN_SQL} or (o.source = 'reception' and o.status in ('collected', 'rejected'))
-      order by case o.status when 'collected' then 2 when 'rejected' then 2 when 'ready' then 1 else 0 end,
+      order by case when o.status in ('collected', 'rejected') then 1 else 0 end,
                o.paid_at desc nulls last, o.order_number desc, i.created_at`,
     [PICKUP_ORDERER_KEY],
   );

@@ -97,8 +97,8 @@ export function ChipsPageClient({
   const [unfinishedTests, setUnfinishedTests] = useState(0);
   const [ordersLoading, setOrdersLoading] = useState(false);
   // The loading skeleton is for the FIRST load only. Every later load — after a
-  // quick status button of a row, after a save in the issue window (which now
-  // stays open) — swaps the rows in place, with no flash of an empty table.
+  // quick status button of a row, after an action in the issue window — swaps
+  // the rows in place, with no flash of an empty table.
   const ordersLoaded = useRef(false);
   // The rows are reloaded after every change, and two changes may follow each
   // other closely (a chip switched, then "מוכן לאיסוף"): only the newest answer

@@ -73,6 +73,10 @@ import { StorageStub } from './visitors-stubs';
 //     close button; and a lease that was uploaded and never saved is swept 24
 //     hours later by the hourly purge, while an attached one never is. The
 //     guard's pickup screen has a file of its own (e2e/chip-pickup.spec.ts).
+//   · 25/11/2026, evening (Ronen, after testing on production): in the window
+//     of an order, "שמור שינויים", "מוכן לאיסוף" and "נאסף" close the window
+//     once they went through (a failure keeps it open); and a ready order keeps
+//     its row's place, with "נאסף" — also a test order, at every width.
 // Real orders are seeded straight into the DB (paid = what Grow's verified
 // callback leaves); fixtures are numeric apartments, removed by exact ids.
 // Supabase Storage is the in-process stand-in of visitors-stubs.ts (CI runs
@@ -103,6 +107,7 @@ const APT_MGR = `993${tag}9`; // the reception: issued by a manager, not an admi
 const APT_NOORD = `995${tag}1`; // the look of the window without an order
 const APT_EXTRA = `995${tag}2`; // round six: extra chips of a web order, and cancelling their reception order
 const APT_LEASE = `995${tag}3`; // round six: the sweep of leases nobody saved
+const APT_RDY = `995${tag}4`; // 25/11/2026: a test order marked ready in the window keeps its row
 const APT_LIMIT_MSG = 'ניתן להזמין עד 10 כרטיסים לדירה בהזמנה אחת. לכמות גדולה יותר יש לפנות להנהלת הבניין.';
 const PUB_NOTE = 'אני מבקש למסור את הכרטיסים לשכן מדירה 5';
 const P_OWNER = '+972539300001';
@@ -183,9 +188,55 @@ async function seedPaidOrder(rows: SeedRow[], unit = 50): Promise<{ id: string; 
   return { id: order.id, orderNumber: order.order_number, items };
 }
 
+/** A paid TEST-mode order — what the test link leaves once it is paid: one
+ *  apartment, one owner, one chip, paid `ago` before now (an interval). */
+async function seedTestOrder(apt: string, name: string, phone: string, ago: string): Promise<{ id: string; orderNumber: number; item: string }> {
+  const o = await pool.query<{ id: string; order_number: number }>(
+    `insert into public.chip_orders
+       (full_name, phone_e164, email, address, role, status, total, tracking_token, paid_at, due_at, is_test, phone_verified)
+     values ($1, $2, 'test.e2e@example.test', 'רחוב בדיקה 1, חיפה 3300000', 'owner', 'paid', 50, $3,
+             now() - $4::interval, now() + interval '3 days', true, false)
+     returning id, order_number`,
+    [name, phone, randomBytes(32).toString('base64url'), ago],
+  );
+  const order = o.rows[0]!;
+  made.orders.push(order.id);
+  const i = await pool.query<{ id: string }>(
+    `insert into public.chip_order_items
+       (order_id, contact_id, apartment_number, chips_count, unit_price, threshold, price_above, line_total, match_status)
+     values ($1, $2, $3, 1, 50, 1, 50, 50, 'unassigned') returning id`,
+    [order.id, made.contacts[apt], apt],
+  );
+  await pool.query(
+    `insert into public.chip_order_holders (order_id, item_id, position, source, role, full_name, phone, chips_count)
+     values ($1, $2, 0, 'order', 'owner', $3, $4, 1)`,
+    [order.id, i.rows[0]!.id, name, phone],
+  );
+  return { id: order.id, orderNumber: order.order_number, item: i.rows[0]!.id };
+}
+
 /** The window's apartment rows in /chips → "הזמנות". */
 function orderRow(page: Page, text: string): Locator {
   return page.getByTestId('chip-orders-table').getByTestId('chip-order-row').filter({ hasText: text });
+}
+
+/** Where the row of an apartment sits in the Orders table (0 = the top). */
+function rowIndex(page: Page, apt: string): Promise<number> {
+  return page.getByTestId('chip-orders-table').getByTestId('chip-order-row')
+    .evaluateAll((rows, a) => rows.findIndex((r) => (r.textContent ?? '').includes(a)), apt);
+}
+
+/** Where an apartment line of an order sits in the Orders tab (0 = the top,
+ *  -1 = not listed). For rows that look alike — the same person, apartment
+ *  and date: the tab draws the rows in the order the list API returns them
+ *  (the tests switch on, the search empty). */
+async function apiRowIndex(page: Page, itemId: string): Promise<number> {
+  const data = (await (await page.request.get('/api/chip-orders')).json()) as { items: { item_id: string }[] };
+  return data.items.findIndex((r) => r.item_id === itemId);
+}
+
+function tableRow(page: Page, index: number): Locator {
+  return page.getByTestId('chip-orders-table').getByTestId('chip-order-row').nth(index);
 }
 
 function issueWindow(page: Page): Locator {
@@ -397,7 +448,7 @@ function fieldSizes(issue: Locator): Promise<string[]> {
 }
 
 test.beforeAll(async () => {
-  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2, APT_T1, APT_T2, APT_CH, APT_REC, APT_MGR, APT_NOORD, APT_EXTRA, APT_LEASE]) {
+  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2, APT_T1, APT_T2, APT_CH, APT_REC, APT_MGR, APT_NOORD, APT_EXTRA, APT_LEASE, APT_RDY]) {
     const c = await pool.query<{ id: string }>(`insert into public.contacts (apartment_number) values ($1) returning id`, [apt]);
     made.contacts[apt] = c.rows[0]!.id;
   }
@@ -670,7 +721,7 @@ test.describe.serial('staff: the issue window', () => {
     expect((await pool.query(`select count(*)::int as n from public.chip_reception_records where contact_id = $1`, [made.contacts[APT]])).rows[0].n).toBe(1);
   });
 
-  test('a paid order: one block per person, the renter, one price line, chips per block, the counter, "הוסף בעל צ׳יפ" outside the paid quantity; "שמור שינויים" keeps the window open; "מוכן לאיסוף" in ONE click saves what is waiting and marks the order ready → collected', async ({ page }) => {
+  test('a paid order: one block per person, the renter, one price line, chips per block, the counter, "הוסף בעל צ׳יפ" outside the paid quantity; "שמור שינויים" saves and closes the window; "מוכן לאיסוף" in ONE click saves what is waiting, marks the order ready and closes the window — the rows offer "נאסף" where they were; "נאסף" in the window closes it too', async ({ page }) => {
     await page.goto('/chips?view=orders');
     const row = orderRow(page, APT);
     await expect(row.filter({ hasText: APT_B })).toHaveCount(0);
@@ -724,20 +775,22 @@ test.describe.serial('staff: the issue window', () => {
     // A number still waiting in the window already counts toward "ready".
     await expect(reason).toHaveText('יש לשייך את כל הצ׳יפים שהוזמנו — חסרים 2 צ׳יפים');
 
-    // "שמור שינויים" saves and STAYS (until 24/11/2026 it closed the window):
-    // a success message, and the window reloaded on what is stored now.
+    // "שמור שינויים" saves and CLOSES the window (25/11/2026, Ronen — from
+    // 24/11/2026 it stayed open, and every order needed a second action): the
+    // success message is on the page, and the row behind the window followed.
     await saveBtn.click();
+    await expect(issue).toHaveCount(0);
     await expect(toast(page, '2 צ׳יפים הונפקו')).toBeVisible();
+    expect(await savedNumbers()).toEqual([`E2E${tag}1`, `E2E${tag}2`]);
+    await expect(orderRow(page, APT).first().getByTestId('chip-order-stage')).toHaveText('שויכו 2 מתוך 3');
+    // Opened again: the order as stored — the two numbers are saved chips.
+    await row.first().click();
     await expect(owner.getByRole('button', { name: `השבת את E2E${tag}1` })).toBeVisible(); // a saved chip: it has the switch
     await expect(issue.getByText('ממתין לשמירה')).toHaveCount(0);
     await expect(saveBtn).toBeDisabled(); // nothing is left to save
-    await expect(issue).toBeVisible();
     await expect(section.getByTestId('chip-order-progress')).toHaveText('2 מתוך 4');
     await expect(readyBtn).toBeDisabled();
     await expect(reason).toHaveText('יש לשייך את כל הצ׳יפים שהוזמנו — חסרים 2 צ׳יפים');
-    expect(await savedNumbers()).toEqual([`E2E${tag}1`, `E2E${tag}2`]);
-    // The row behind the window followed, in place.
-    await expect(orderRow(page, APT).first().getByTestId('chip-order-stage')).toHaveText('שויכו 2 מתוך 3');
 
     await renter.getByRole('radio', { name: 'אפליקציה' }).click();
     await addChip(renter, `E2E${tag}3`);
@@ -783,12 +836,20 @@ test.describe.serial('staff: the issue window', () => {
     expect(await savedNumbers()).toEqual([`E2E${tag}1`, `E2E${tag}2`]);
     expect(await status()).toBe('paid');
 
-    // ONE click: the window is saved, then the order is marked ready — and the
-    // window stays open, on the new status.
+    // ONE click: the window is saved, the order is marked ready — and the
+    // window closes (25/11/2026). The message is on the page; both rows of the
+    // order show the new status, with "נאסף" as their quick step, in the place
+    // they had.
+    const places = [await rowIndex(page, APT), await rowIndex(page, APT_B)];
     await readyBtn.click();
+    await expect(issue).toHaveCount(0);
     await expect(toast(page, 'סומן מוכן לאיסוף — נשלחה הודעה למזמין')).toBeVisible();
-    await expect(issue).toBeVisible();
     expect(await status()).toBe('ready');
+    for (const apt of [APT, APT_B]) {
+      await expect(orderRow(page, apt).getByTestId('chip-order-stage')).toHaveText('מוכן לאיסוף');
+      await expect(orderRow(page, apt).getByTestId('chip-order-row-collected')).toBeEnabled();
+    }
+    expect([await rowIndex(page, APT), await rowIndex(page, APT_B)]).toEqual(places);
     const chips = (await pool.query<{ chip_number: string; chip_type: string; order_item_id: string; full_name: string; source: string; chips_count: number }>(
       `select c.chip_number, c.chip_type, c.order_item_id, h.full_name, h.source, h.chips_count
          from public.chips c join public.chip_order_holders h on h.id = c.order_holder_id
@@ -805,11 +866,12 @@ test.describe.serial('staff: the issue window', () => {
     expect((await pool.query(`select owner_name, owner_phone from public.contacts where id = $1`, [made.contacts[APT]])).rows[0])
       .toEqual({ owner_name: null, owner_phone: null });
 
-    // The window, reloaded: nothing is waiting, all four are linked, the staff
-    // holder is a saved block. The three buttons stay: the stage the order is
-    // in now is a mark, the next step is the one button to press, and there is
-    // no way back or to reject. There is no "בטיפול" — the system has no such
-    // status.
+    // The window, opened again: nothing is waiting, all four are linked, the
+    // staff holder is a saved block. The three buttons stay: the stage the
+    // order is in now is a mark, the next step is the one button to press, and
+    // there is no way back or to reject. There is no "בטיפול" — the system has
+    // no such status.
+    await row.first().click();
     await expect(issue.getByText('ממתין לשמירה')).toHaveCount(0);
     await expect(blocks).toHaveCount(4);
     await expect(section.getByTestId('chip-order-progress')).toHaveText('4 מתוך 4');
@@ -852,6 +914,7 @@ test.describe.serial('staff: the issue window', () => {
     expect(await status()).toBe('ready'); // nothing happened yet
     await collect.getByRole('button', { name: 'סמן כנאסף' }).click();
     await expect(issue).toHaveCount(0);
+    await expect(toast(page, 'סומן כנאסף')).toBeVisible();
     await expect.poll(status).toBe('collected');
     expect((await pool.query(`select collected_by_name, handed_over_via from public.chip_orders where id = $1`, [order.id])).rows[0])
       .toEqual({ collected_by_name: 'שרה שוכרת', handed_over_via: 'management' });
@@ -891,6 +954,8 @@ test.describe.serial('staff: the issue window', () => {
     // order still paid, no chip, no message, no audit row. The refused number
     // left the box and became a row of its own, in red, with an X — so the
     // line under the buttons points at something that is really there.
+    // A failed save keeps the window open, with its error.
+    await expect(issue).toBeVisible();
     await expect(issue.locator('.ci-alert')).toContainText(`מספר צ׳יפ E2E${tag}1 כבר פעיל במערכת`);
     await expect(block.locator('.ci-chiprow.ci-conflict')).toContainText(`E2E${tag}1`);
     await expect(block.getByText('מספר תפוס')).toBeVisible();
@@ -919,14 +984,13 @@ test.describe.serial('staff: the issue window', () => {
     await expect(reason).toHaveText('יש לשייך את כל הצ׳יפים שהוזמנו — חסר צ׳יפ אחד');
     await addChip(block, `TK${tag}1`);
     await readyBtn.click();
-    await expect.poll(status).toBe('ready');
-    await expect(readyBtn).toHaveAttribute('aria-current', 'step');
-    expect(await linked()).toEqual([`TK${tag}1`]);
-    await expect(block.getByRole('button', { name: `השבת את TK${tag}1` })).toBeVisible();
-    await issue.getByTestId('chip-issue-close').click();
+    // Done — and the window closes by itself (25/11/2026); the refusals above kept it open.
     await expect(issue).toHaveCount(0);
+    await expect.poll(status).toBe('ready');
+    expect(await linked()).toEqual([`TK${tag}1`]);
     // The row followed: ready, with "נאסף" as its quick step.
     await expect(orderRow(page, APT_TAKEN).getByTestId('chip-order-stage')).toHaveText('מוכן לאיסוף');
+    await expect(orderRow(page, APT_TAKEN).getByTestId('chip-order-row-collected')).toBeEnabled();
   });
 
   test('an order made before 21/11/2026 keeps the two price lines it was sold with, in one block from the order', async ({ page }) => {
@@ -1623,6 +1687,7 @@ test.describe.serial('staff: extra chips of a web order, and cancelling the rece
     await expect(save).toBeEnabled();
 
     await save.click();
+    await expect(issue).toHaveCount(0); // a save closes the window (25/11/2026)
     const made1 = await expect.poll(async () => (await receptionOrder()).length).toBe(1).then(receptionOrder);
     const rec = made1[0]!;
     await expect(toast(page, `נרשם תשלום על צ׳יפ נוסף אחד — הזמנת קבלה ${rec.order_number}`)).toBeVisible();
@@ -1640,7 +1705,9 @@ test.describe.serial('staff: extra chips of a web order, and cancelling the rece
       .toEqual([{ chip_number: second }]);
     expect((await pool.query(`select count(*)::int as n from public.chip_order_notifications where order_id = any($1::uuid[])`, [[rec.id, web.id]])).rows[0].n).toBe(0);
 
-    // The window, reloaded: the order holds what it paid for, and the paid extra is shown in the person's block.
+    // The window, opened again: the order holds what it paid for, and the paid extra is shown in the person's block.
+    await webRow(page).click();
+    await expect(block.getByTestId('chip-alloc-counter')).toBeVisible();
     await expect(extra).toHaveCount(0);
     await expect(block.getByTestId('chip-alloc-counter')).toHaveText('שויכו 1 מתוך 1');
     await expect(block.getByRole('button', { name: `השבת את ${second}` })).toBeVisible();
@@ -1927,9 +1994,7 @@ test.describe('staff: the Orders tab', () => {
     await rowA.click();
     await addChip(blocks.nth(0), `RW${tag}1`);
     await issue.getByTestId('chip-issue-save').click();
-    await expect(issue.getByTestId('chip-issue-save')).toBeDisabled();
-    await issue.getByTestId('chip-issue-close').click();
-    await expect(issue).toHaveCount(0);
+    await expect(issue).toHaveCount(0); // a save closes the window (25/11/2026)
     await expect(rowA.getByTestId('chip-order-stage')).toHaveText('שויך');
     await expect(rowA.getByTestId('chip-order-row-ready')).toHaveCount(0);
     await expect(rowA.getByTestId('chip-order-row-waiting')).toContainText('בהמתנה');
@@ -1938,8 +2003,6 @@ test.describe('staff: the Orders tab', () => {
     await rowB.click();
     await addChip(blocks.nth(1), `RW${tag}2`);
     await issue.getByTestId('chip-issue-save').click();
-    await expect(issue.getByTestId('chip-issue-save')).toBeDisabled();
-    await issue.getByTestId('chip-issue-close').click();
     await expect(issue).toHaveCount(0);
 
     // Every chip of the order is issued and saved: only now the button is
@@ -1997,6 +2060,81 @@ test.describe('staff: the Orders tab', () => {
     await expect.poll(() => audits('collected')).toBe(1);
     // No message goes out on "נאסף".
     expect((await pool.query(`select count(*)::int as n from public.chip_order_notifications where order_id = $1 and kind <> 'ready'`, [o.id])).rows[0].n).toBe(0);
+    await page.setViewportSize({ width: 1280, height: 720 });
+  });
+
+  // Ronen, 25/11/2026, on production: a TEST order — its chip issued and
+  // "מוכן לאיסוף" pressed inside the window — and back in the table the row he
+  // looked at offered no "נאסף". The order's row WAS there, ready, with its
+  // "נאסף"; it was no longer where it had been. The tab listed every paid
+  // order before every ready one, so the order jumped below the older test
+  // orders of the same person that still waited for a chip, and the row now
+  // in its place — the same name, apartment and date — was one of those,
+  // "בהמתנה". The open orders now keep one order, by when they were paid.
+  test('a test order marked ready inside the window: the window closes and the row stays where it was, now with "נאסף" — at every width the table is drawn and on a phone card — and "נאסף" from the row needs no window', async ({ page }) => {
+    const NAME = 'נועה בדיקה';
+    const PHONE = '+972539300061';
+    const older = [await seedTestOrder(APT_RDY, NAME, PHONE, '2 hours'), await seedTestOrder(APT_RDY, NAME, PHONE, '1 hour')];
+    const o = await seedTestOrder(APT_RDY, NAME, PHONE, '1 minute');
+    const status = async () => (await pool.query(`select status from public.chip_orders where id = $1`, [o.id])).rows[0].status;
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/chips?view=orders');
+    await expect(orderRow(page, APT_RDY)).toHaveCount(3);
+    const place = await apiRowIndex(page, o.item);
+    const olderPlaces = [await apiRowIndex(page, older[0]!.item), await apiRowIndex(page, older[1]!.item)];
+    const row = tableRow(page, place);
+    // Three rows that look alike; this one is the newest, waiting for its chip.
+    await expect(row).toContainText(NAME);
+    await expect(row.getByTestId('chip-order-test-badge')).toHaveText('בדיקה');
+    await expect(row.getByTestId('chip-order-row-waiting')).toBeVisible();
+
+    await row.click();
+    const issue = issueWindow(page);
+    const section = issue.getByTestId('chip-order-section');
+    await expect(section).toContainText(String(o.orderNumber));
+    await addChip(issue.getByTestId('chip-holder-block'), `RD${tag}1`);
+    await section.getByRole('button', { name: 'מוכן לאיסוף' }).click();
+    await expect(issue).toHaveCount(0);
+    await expect(toast(page, 'סומן מוכן לאיסוף — נשלחה הודעה למזמין')).toBeVisible();
+    expect(await status()).toBe('ready');
+    // The same row, in the same place: ready, and "נאסף" is its next step.
+    // The two older orders still wait, where they were.
+    await expect(row.getByTestId('chip-order-stage')).toHaveText('מוכן לאיסוף');
+    await expect(row.getByTestId('chip-order-row-collected')).toBeEnabled();
+    expect(await apiRowIndex(page, o.item)).toBe(place);
+    for (const p of olderPlaces) await expect(tableRow(page, p).getByTestId('chip-order-row-waiting')).toBeVisible();
+
+    // Every width the table is drawn at (640px and up; narrower is the phone
+    // card): the button is on the screen, inside the card, no sideways scroll.
+    for (const width of [1280, 1024, 800, 640]) {
+      await page.setViewportSize({ width, height: 800 });
+      const btn = row.getByTestId('chip-order-row-collected');
+      await expect(btn, `"נאסף" at ${width}px`).toBeVisible();
+      const b = (await btn.boundingBox())!;
+      const card = (await page.getByTestId('chip-orders-table').locator('..').boundingBox())!;
+      expect(b.x, `"נאסף" inside the card at ${width}px`).toBeGreaterThanOrEqual(card.x - 0.5);
+      expect(b.x + b.width, `"נאסף" inside the card at ${width}px`).toBeLessThanOrEqual(card.x + card.width + 0.5);
+      await noSideScroll(page);
+    }
+    // A phone: the card carries the same button, 44px tall.
+    await page.setViewportSize({ width: 390, height: 844 });
+    const phoneButton = page.getByTestId('chip-order-card').nth(place).getByTestId('chip-order-row-collected');
+    await expect(phoneButton).toBeVisible();
+    expect((await phoneButton.boundingBox())!.height, 'a 44px touch target on a phone').toBeGreaterThanOrEqual(44);
+    await page.setViewportSize({ width: 1280, height: 800 });
+
+    // "נאסף" from the row: asked first, and no window opens.
+    await row.getByTestId('chip-order-row-collected').click();
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toContainText(`לסמן את הזמנה ${o.orderNumber} כנאספה?`);
+    await expect(issue).toHaveCount(0);
+    await dialog.getByRole('button', { name: 'סמן כנאסף' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(toast(page, 'סומן כנאסף')).toBeVisible();
+    await expect.poll(status).toBe('collected');
+    await expect.poll(() => apiRowIndex(page, o.item)).toBe(-1);
+    await expect(orderRow(page, APT_RDY)).toHaveCount(2);
+    for (const x of older) expect(await apiRowIndex(page, x.item)).toBeGreaterThanOrEqual(0);
     await page.setViewportSize({ width: 1280, height: 720 });
   });
 
@@ -2665,13 +2803,15 @@ test.describe.serial('test mode', () => {
     await expect(owner.getByTestId('chip-alloc-counter')).toHaveText('שויכו 7 מתוך 7');
     await renter.getByRole('radio', { name: 'אפליקציה' }).click();
     await addChip(renter, `T${tag}8`, 'button');
-    // The save keeps the window open (24/11/2026), reloaded: nothing waits any
-    // more, and the row behind it followed.
+    // The save closes the window (25/11/2026) and the row behind it followed;
+    // opened again, nothing waits any more.
     await issue.getByTestId('chip-issue-save').click();
-    await expect(issue.getByTestId('chip-issue-save')).toBeDisabled();
-    await expect(issue.getByText('ממתין לשמירה')).toHaveCount(0);
+    await expect(issue).toHaveCount(0);
     await expect(row.getByTestId('chip-order-stage')).toHaveText('שויך');
+    await row.click();
     await expect(owner.getByTestId('chip-alloc-counter')).toHaveText('שויכו 7 מתוך 7');
+    await expect(issue.getByText('ממתין לשמירה')).toHaveCount(0);
+    await expect(issue.getByTestId('chip-issue-save')).toBeDisabled();
     page.once('dialog', (d) => void d.accept());
     await owner.getByRole('button', { name: `השבת את T${tag}1` }).click();
     await expect(owner.getByTestId('chip-alloc-counter')).toHaveText('שויכו 6 מתוך 7');

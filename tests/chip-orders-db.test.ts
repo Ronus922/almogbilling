@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import { Pool, type PoolClient } from 'pg';
 import { requireSeededAdmin } from './db-fixtures';
 
@@ -199,6 +200,38 @@ d('chip orders on the DB', () => {
       { contact_id: ids.owned, groups: [{ resident_role: 'owner', holder_name: 'דנה כהן', chip_type: 'physical', numbers: [`A${tag}6`], order_item_id: owned }] },
       admin,
     )).rejects.toThrow('order_not_open');
+  });
+
+  // 25/11/2026 (Ronen, on production): "מוכן לאיסוף" pressed in the window,
+  // and back in the table the row in the order's place was another order. A
+  // ready order used to sort after every paid one, so its row jumped down.
+  it('a ready order keeps its place in the Orders tab: the open orders are one group, newest payment first, whatever their stage', async () => {
+    const paidAt = async (at: string) => {
+      const o = await pool.query<{ id: string }>(
+        `insert into public.chip_orders
+           (full_name, phone_e164, email, address, role, status, total, tracking_token, paid_at, due_at, is_test, phone_verified)
+         values ('דנה כהן', $1, 'a@b.test', 'x y', 'owner', 'paid', 50, $2, $3::timestamptz, $3::timestamptz + interval '3 days', true, false)
+         returning id`,
+        [PHONE, randomBytes(32).toString('base64url'), at],
+      );
+      made.orders.push(o.rows[0]!.id);
+      await pool.query(
+        `insert into public.chip_order_items (order_id, contact_id, apartment_number, chips_count, unit_price, threshold, price_above, line_total, match_status)
+         values ($1, $2, $3, 1, 50, 1, 50, 50, 'unassigned')`,
+        [o.rows[0]!.id, ids.empty, apt.empty],
+      );
+      return o.rows[0]!.id;
+    };
+    const older = await paidAt('2026-11-20T08:00:00Z');
+    const newer = await paidAt('2026-11-20T09:00:00Z');
+    const listed = async () => (await db.listOpenChipOrderRows())
+      .filter((r) => r.order_id === older || r.order_id === newer)
+      .map((r) => [r.order_id, r.status]);
+    expect(await listed()).toEqual([[newer, 'paid'], [older, 'paid']]);
+    await pool.query(`update public.chip_orders set status = 'ready', ready_at = now() where id = $1`, [newer]);
+    expect(await listed()).toEqual([[newer, 'ready'], [older, 'paid']]);
+    // Out of the way of the tests below (the ids are this test's own).
+    for (const id of [older, newer]) await pool.query(`delete from public.chip_orders where id = $1`, [id]);
   });
 
   it('a chip issued without an order line is untouched by all this', async () => {
