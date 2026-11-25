@@ -1,6 +1,8 @@
 'use client';
 
-// /chips → "הזמנות": the OPEN chip orders residents placed on /chip-order,
+// /chips → "הזמנות": the OPEN chip orders residents placed on /chip-order —
+// and, after them, the orders made at the reception (25/11/2026: tagged
+// "קבלה", collected the moment they are made, nothing left to do on them) —
 // ONE ROW PER APARTMENT of an order (13/11/2026). Chips-skin table on desktop,
 // cards on a phone — the same anatomy as ChipsTable. A row opens the EXISTING
 // issue window (IssueChipSheet) on that apartment, with the orderer's holder
@@ -42,13 +44,12 @@ import {
   AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
-import { e164ToLocal } from '@/lib/portal/phone';
 import {
-  CHIP_ORDER_ROLE_LABEL, chipOrderStage, isChipOrderOverdue, type ChipOrderRow,
+  CHIP_ORDER_PERSON_ROLE_LABEL, chipOrderStage, isChipOrderOverdue, type ChipOrderRow,
 } from '@/lib/chipOrders/model';
 import {
-  CHIP_ORDERS_EXPORT, CHIP_ORDER_WAITING_LABEL, chipOrderRowAction, chipOrderRowTags, filterChipOrderRows, searchHitPeople,
-  summarizeChipOrders, type ChipOrderRowAction,
+  CHIP_ORDERS_EXPORT, CHIP_ORDER_WAITING_LABEL, chipOrderRowAction, chipOrderRowPhone, chipOrderRowTags, filterChipOrderRows,
+  searchHitPeople, summarizeChipOrders, type ChipOrderRowAction,
 } from '@/lib/chipOrders/orderRows';
 import { ChipListExports } from './ChipListExports';
 import { CHIPS_SEARCH_INPUT, ChipsToolbar } from './ChipsToolbar';
@@ -120,11 +121,14 @@ function OrdererName({ name, onOpen, className }: { name: string; onOpen?: () =>
 
 /** The orderer's column: the name, and under it the role and the phone. */
 function Orderer({ row, onOpen, nameClass }: { row: ChipOrderRow; onOpen?: () => void; nameClass: string }) {
+  // A reception order may have no phone (nothing there is required).
+  const phone = chipOrderRowPhone(row);
   return (
     <>
       <OrdererName name={row.full_name} onOpen={onOpen} className={cn('truncate font-bold text-[var(--chip-ink)]', nameClass)} />
       <span className="truncate text-[12.5px] font-semibold text-[var(--chip-ink-muted)]">
-        {CHIP_ORDER_ROLE_LABEL[row.role]} · <span className="chip-num">{e164ToLocal(row.phone_e164)}</span>
+        {CHIP_ORDER_PERSON_ROLE_LABEL[row.role] ?? row.role}
+        {phone && <> · <span className="chip-num">{phone}</span></>}
       </span>
     </>
   );
@@ -139,6 +143,20 @@ function RowAction({
   wide: boolean;
   onAsk: (step: StatusStep) => void;
 }) {
+  // The order is collected already — a reception order, paid and handed over in
+  // one go: nothing to press. A label like "בהמתנה", not a button; the row
+  // under it still opens the window.
+  if (action.kind === 'done') {
+    return (
+      <span
+        className="inline-flex h-[24px] items-center gap-1 whitespace-nowrap rounded-[7px] border border-[var(--chip-border)] bg-[var(--chip-hover)] px-2.5 text-[12px] font-bold text-[var(--chip-ink-muted)]"
+        data-testid="chip-order-row-done"
+      >
+        <CheckCheck className="h-3.5 w-3.5" />
+        נאסף
+      </span>
+    );
+  }
   // Chips are still missing: nothing to press. A label, not a button — and it
   // does not hold the click, so the row under it opens the issue window, which
   // is where the missing chips are issued.
@@ -339,7 +357,7 @@ export function ChipOrdersPanel({
             <Inbox className="h-5 w-5" />
           </span>
           <p className="text-[15px] font-bold text-[var(--chip-ink)]">אין הזמנות פתוחות</p>
-          <p className="text-[13px] font-medium text-[var(--chip-ink-soft)]">הזמנה מופיעה כאן אחרי שהתשלום אושר, ויוצאת כשהיא נאספת או נדחית.</p>
+          <p className="text-[13px] font-medium text-[var(--chip-ink-soft)]">הזמנה מהאתר מופיעה כאן אחרי שהתשלום אושר, ויוצאת כשהיא נאספת או נדחית. הזמנה שנרשמה בקבלה נשארת ברשימה.</p>
         </div>
       ) : visible.length === 0 ? (
         // Search-empty is not table-empty (as in the chips tab).

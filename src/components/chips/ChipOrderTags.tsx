@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, ConciergeBell } from 'lucide-react';
 import { CHIP_ORDER_TAG_LABEL, type ChipOrderTag } from '@/lib/chipOrders/orderRows';
 import { ChipOrderTestBadge, ChipOrderUnverifiedPhoneBadge } from './ChipOrderStatusPill';
 
@@ -23,7 +23,25 @@ function ChipOrderNotifyFailedBadge() {
   );
 }
 
+/** "קבלה" — an order made at the reception (25/11/2026): the staff issued the
+ *  chips in the issue window and recorded a payment received there. Brand
+ *  blue, so it reads as where the order came from — neither a status nor a
+ *  warning. */
+function ChipOrderReceptionBadge() {
+  return (
+    <span
+      data-testid="chip-order-reception-badge"
+      title="הזמנה שנרשמה בקבלה — שולמה ונמסרה במקום"
+      className="inline-flex h-[24px] shrink-0 items-center gap-1 whitespace-nowrap rounded-[7px] border border-[var(--chip-brand-border)] bg-[var(--chip-brand-soft)] px-2.5 text-[12px] font-bold text-[var(--chip-brand-ink)]"
+    >
+      <ConciergeBell className="h-3.5 w-3.5" />
+      {CHIP_ORDER_TAG_LABEL.reception}
+    </span>
+  );
+}
+
 const TAG_BADGE: Record<ChipOrderTag, ComponentType> = {
+  reception: ChipOrderReceptionBadge,
   test: ChipOrderTestBadge,
   phone_unverified: ChipOrderUnverifiedPhoneBadge,
   notify_failed: ChipOrderNotifyFailedBadge,

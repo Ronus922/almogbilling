@@ -3,7 +3,6 @@
 --
 
 
-
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -1813,10 +1812,10 @@ CREATE TABLE public.chip_order_holders (
     CONSTRAINT chip_order_holders_full_name_check CHECK (((length(btrim(full_name)) >= 2) AND (length(btrim(full_name)) <= 120))),
     CONSTRAINT chip_order_holders_lease_file_size_check CHECK (((lease_file_size IS NULL) OR (lease_file_size > 0))),
     CONSTRAINT chip_order_holders_lease_pair_check CHECK (((lease_file_key IS NULL) = (lease_file_name IS NULL))),
-    CONSTRAINT chip_order_holders_order_row_check CHECK (((source = 'staff'::text) OR ((chips_count >= 1) AND (phone IS NOT NULL)))),
+    CONSTRAINT chip_order_holders_order_row_check CHECK (((source = 'staff'::text) OR ((source = 'order'::text) AND (chips_count >= 1) AND (phone IS NOT NULL)) OR ((source = 'reception'::text) AND (chips_count >= 1)))),
     CONSTRAINT chip_order_holders_phone_check CHECK (((phone IS NULL) OR ((length(btrim(phone)) >= 5) AND (length(btrim(phone)) <= 32)))),
     CONSTRAINT chip_order_holders_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text, 'other'::text, 'staff'::text]))),
-    CONSTRAINT chip_order_holders_source_check CHECK ((source = ANY (ARRAY['order'::text, 'staff'::text])))
+    CONSTRAINT chip_order_holders_source_check CHECK ((source = ANY (ARRAY['order'::text, 'staff'::text, 'reception'::text])))
 );
 
 
@@ -1892,9 +1891,9 @@ CREATE TABLE public.chip_orders (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     order_number integer NOT NULL,
     full_name text NOT NULL,
-    phone_e164 text NOT NULL,
-    email text NOT NULL,
-    address text NOT NULL,
+    phone_e164 text,
+    email text,
+    address text,
     role text NOT NULL,
     status text DEFAULT 'pending_payment'::text NOT NULL,
     total numeric(10,2) NOT NULL,
@@ -1925,20 +1924,28 @@ CREATE TABLE public.chip_orders (
     address_zip text,
     renter_terms_accepted_at timestamp with time zone,
     internal_note text,
-    CONSTRAINT chip_orders_address_check CHECK (((length(btrim(address)) >= 2) AND (length(btrim(address)) <= 300))),
+    source text DEFAULT 'web'::text NOT NULL,
+    payment_method text,
+    payment_recorded_by uuid,
+    payment_recorded_by_name text,
+    payment_recorded_at timestamp with time zone,
+    CONSTRAINT chip_orders_address_check CHECK ((((source = 'reception'::text) AND (address IS NULL)) OR ((address IS NOT NULL) AND ((length(btrim(address)) >= 2) AND (length(btrim(address)) <= 300))))),
     CONSTRAINT chip_orders_address_city_check CHECK (((address_city IS NULL) OR ((length(btrim(address_city)) >= 2) AND (length(btrim(address_city)) <= 100)))),
     CONSTRAINT chip_orders_address_street_check CHECK (((address_street IS NULL) OR ((length(btrim(address_street)) >= 2) AND (length(btrim(address_street)) <= 200)))),
     CONSTRAINT chip_orders_address_zip_check CHECK (((address_zip IS NULL) OR (address_zip ~ '^[0-9]{7}$'::text))),
-    CONSTRAINT chip_orders_email_check CHECK (((length(btrim(email)) >= 3) AND (length(btrim(email)) <= 254))),
+    CONSTRAINT chip_orders_email_check CHECK ((((source = 'reception'::text) AND (email IS NULL)) OR ((email IS NOT NULL) AND ((length(btrim(email)) >= 3) AND (length(btrim(email)) <= 254))))),
     CONSTRAINT chip_orders_full_name_check CHECK (((length(btrim(full_name)) >= 2) AND (length(btrim(full_name)) <= 120))),
     CONSTRAINT chip_orders_internal_note_check CHECK (((internal_note IS NULL) OR (length(internal_note) <= 2000))),
-    CONSTRAINT chip_orders_paid_fields_check CHECK (((status = 'pending_payment'::text) OR ((paid_at IS NOT NULL) AND ((grow_transaction_id IS NOT NULL) OR is_test)))),
-    CONSTRAINT chip_orders_phone_e164_check CHECK ((phone_e164 ~ '^\+9725[0-9]{8}$'::text)),
+    CONSTRAINT chip_orders_paid_fields_check CHECK (((status = 'pending_payment'::text) OR ((paid_at IS NOT NULL) AND ((grow_transaction_id IS NOT NULL) OR is_test OR (source = 'reception'::text))))),
+    CONSTRAINT chip_orders_payment_method_check CHECK (((payment_method IS NULL) OR (payment_method = 'cash_transfer'::text))),
+    CONSTRAINT chip_orders_phone_e164_check CHECK ((((source = 'reception'::text) AND ((phone_e164 IS NULL) OR ((length(btrim(phone_e164)) >= 5) AND (length(btrim(phone_e164)) <= 32)))) OR ((source <> 'reception'::text) AND (phone_e164 IS NOT NULL) AND (phone_e164 ~ '^\+9725[0-9]{8}$'::text)))),
     CONSTRAINT chip_orders_phone_verified_check CHECK ((phone_verified OR is_test)),
+    CONSTRAINT chip_orders_reception_check CHECK (((source <> 'reception'::text) OR ((NOT is_test) AND (grow_process_id IS NULL) AND (grow_transaction_id IS NULL) AND (payment_method IS NOT NULL) AND (payment_recorded_at IS NOT NULL) AND (payment_recorded_by_name IS NOT NULL)))),
     CONSTRAINT chip_orders_refund_not_required_check CHECK (((refund_status IS DISTINCT FROM 'not_required'::text) OR is_test)),
     CONSTRAINT chip_orders_refund_status_check CHECK (((refund_status IS NULL) OR (refund_status = ANY (ARRAY['refunded'::text, 'manual_required'::text, 'not_required'::text])))),
     CONSTRAINT chip_orders_reject_reason_check CHECK (((status <> 'rejected'::text) OR ((reject_reason IS NOT NULL) AND (length(btrim(reject_reason)) > 0)))),
-    CONSTRAINT chip_orders_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text]))),
+    CONSTRAINT chip_orders_role_check CHECK (((role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text])) OR ((source = 'reception'::text) AND (role = ANY (ARRAY['other'::text, 'staff'::text]))))),
+    CONSTRAINT chip_orders_source_check CHECK ((source = ANY (ARRAY['web'::text, 'reception'::text]))),
     CONSTRAINT chip_orders_status_check CHECK ((status = ANY (ARRAY['pending_payment'::text, 'paid'::text, 'approved'::text, 'ready'::text, 'collected'::text, 'rejected'::text]))),
     CONSTRAINT chip_orders_test_no_grow_check CHECK (((NOT is_test) OR ((grow_process_id IS NULL) AND (grow_transaction_id IS NULL) AND (invoice_url IS NULL)))),
     CONSTRAINT chip_orders_total_check CHECK ((total > (0)::numeric)),
@@ -1996,6 +2003,27 @@ COMMENT ON COLUMN public.chip_orders.internal_note IS 'The staff''s internal not
 
 
 --
+-- Name: COLUMN chip_orders.source; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.source IS 'Where the order was made: ''web'' = the public page /chip-order; ''reception'' = the staff issued the chips in the issue window ("הנפק צ׳יפ") and recorded a payment received at the reception. A reception order is created paid and collected, sends no message to anyone, and is never a test order.';
+
+
+--
+-- Name: COLUMN chip_orders.payment_method; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.payment_method IS 'How a reception order was paid: ''cash_transfer'' = cash or a bank transfer, confirmed as received by whoever recorded it. NULL on a web order (paid through the clearing provider, or a test order).';
+
+
+--
+-- Name: COLUMN chip_orders.payment_recorded_by_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.payment_recorded_by_name IS 'Who recorded the payment of a reception order (the name at that moment; payment_recorded_by is the user, NULL once the user is deleted). The amount is `total`, the time payment_recorded_at.';
+
+
+--
 -- Name: chip_orders_order_number_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -2007,6 +2035,43 @@ ALTER TABLE public.chip_orders ALTER COLUMN order_number ADD GENERATED ALWAYS AS
     NO MAXVALUE
     CACHE 1
 );
+
+
+--
+-- Name: chip_reception_records; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.chip_reception_records (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    contact_id uuid NOT NULL,
+    apartment_number text NOT NULL,
+    orderer_name text,
+    orderer_phone text,
+    orderer_email text,
+    address_street text,
+    address_city text,
+    address_zip text,
+    chips_count integer NOT NULL,
+    unit_price numeric(10,2) NOT NULL,
+    created_by uuid,
+    created_by_name text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chip_reception_records_address_city_check CHECK (((address_city IS NULL) OR ((length(btrim(address_city)) >= 2) AND (length(btrim(address_city)) <= 100)))),
+    CONSTRAINT chip_reception_records_address_street_check CHECK (((address_street IS NULL) OR ((length(btrim(address_street)) >= 2) AND (length(btrim(address_street)) <= 200)))),
+    CONSTRAINT chip_reception_records_address_zip_check CHECK (((address_zip IS NULL) OR (address_zip ~ '^[0-9]{7}$'::text))),
+    CONSTRAINT chip_reception_records_chips_count_check CHECK ((chips_count >= 1)),
+    CONSTRAINT chip_reception_records_orderer_email_check CHECK (((orderer_email IS NULL) OR ((length(btrim(orderer_email)) >= 3) AND (length(btrim(orderer_email)) <= 254)))),
+    CONSTRAINT chip_reception_records_orderer_name_check CHECK (((orderer_name IS NULL) OR ((length(btrim(orderer_name)) >= 1) AND (length(btrim(orderer_name)) <= 120)))),
+    CONSTRAINT chip_reception_records_orderer_phone_check CHECK (((orderer_phone IS NULL) OR ((length(btrim(orderer_phone)) >= 5) AND (length(btrim(orderer_phone)) <= 32)))),
+    CONSTRAINT chip_reception_records_unit_price_check CHECK ((unit_price >= (0)::numeric))
+);
+
+
+--
+-- Name: TABLE chip_reception_records; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.chip_reception_records IS 'Chips issued at the reception WITHOUT a charge ("ללא חיוב": a guest, staff, a replacement) — one row per save of the issue window. No order is created for such a save; this row keeps who ordered (all optional), how many chips, the price per chip that was not charged, and who issued them. A paid reception issue is a chip order (chip_orders.source = ''reception'') instead.';
 
 
 --
@@ -2043,15 +2108,39 @@ CREATE TABLE public.chips (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     order_item_id uuid,
     order_holder_id uuid,
+    holder_email text,
+    lease_file_key text,
+    lease_file_name text,
+    lease_file_mime text,
+    lease_file_size integer,
+    lease_end_date date,
+    reception_record_id uuid,
     CONSTRAINT chips_app_invite_status_check CHECK (((app_invite_status IS NULL) OR (app_invite_status = ANY (ARRAY['pending'::text, 'active'::text, 'expired'::text])))),
     CONSTRAINT chips_app_platform_check CHECK (((app_platform IS NULL) OR (app_platform = ANY (ARRAY['ios'::text, 'android'::text, 'unknown'::text])))),
     CONSTRAINT chips_chip_type_check CHECK ((chip_type = ANY (ARRAY['physical'::text, 'app'::text]))),
     CONSTRAINT chips_deactivation_reason_check CHECK (((deactivation_reason IS NULL) OR (deactivation_reason = ANY (ARRAY['lost'::text, 'stolen'::text, 'damaged'::text, 'returned'::text, 'moved_out'::text, 'unknown'::text])))),
+    CONSTRAINT chips_holder_email_check CHECK (((holder_email IS NULL) OR ((length(btrim(holder_email)) >= 3) AND (length(btrim(holder_email)) <= 254)))),
     CONSTRAINT chips_holder_identity_check CHECK ((((resident_role = ANY (ARRAY['other'::text, 'staff'::text])) AND (holder_name IS NOT NULL)) OR ((resident_role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text])) AND (contact_id IS NOT NULL)))),
     CONSTRAINT chips_inactive_requires_reason CHECK (((status = 'active'::text) OR (deactivation_reason IS NOT NULL))),
+    CONSTRAINT chips_lease_file_size_check CHECK (((lease_file_size IS NULL) OR (lease_file_size > 0))),
+    CONSTRAINT chips_lease_pair_check CHECK (((lease_file_key IS NULL) = (lease_file_name IS NULL))),
     CONSTRAINT chips_resident_role_check CHECK (((resident_role IS NULL) OR (resident_role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text, 'staff'::text, 'other'::text])))),
     CONSTRAINT chips_status_check CHECK ((status = ANY (ARRAY['active'::text, 'inactive'::text])))
 );
+
+
+--
+-- Name: COLUMN chips.issuance_fee; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chips.issuance_fee IS 'History: the "עמלת הנפקה (₪)" field of the issue window, removed 25/11/2026. Not written since — what a chip cost is on its order (chip_orders.total) or on its reception record.';
+
+
+--
+-- Name: COLUMN chips.fee_charged; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chips.fee_charged IS 'History: the "החיוב בוצע" checkbox of the issue window, removed 25/11/2026. Not written since.';
 
 
 --
@@ -2066,6 +2155,27 @@ COMMENT ON COLUMN public.chips.order_item_id IS 'The chip-order line this chip w
 --
 
 COMMENT ON COLUMN public.chips.order_holder_id IS 'The chip-order holder line (person) this chip was issued for. NULL for every chip issued outside an order and for chips of orders made before 20/11/2026.';
+
+
+--
+-- Name: COLUMN chips.holder_email; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chips.holder_email IS 'The holder''s email as typed in the issue window — a snapshot, like holder_name and holder_phone. NULL for every chip issued before 25/11/2026.';
+
+
+--
+-- Name: COLUMN chips.lease_file_key; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chips.lease_file_key IS 'A renter''s lease attached in the issue window: the object key in the private bucket chip-order-leases (served only through /api/files). The same key sits on every chip of that person.';
+
+
+--
+-- Name: COLUMN chips.reception_record_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chips.reception_record_id IS 'The no-charge reception record this chip was issued under (chip_reception_records). NULL for a chip of an order and for every chip issued before 25/11/2026.';
 
 
 --
@@ -4897,6 +5007,14 @@ ALTER TABLE ONLY public.chip_orders
 
 
 --
+-- Name: chip_reception_records chip_reception_records_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_reception_records
+    ADD CONSTRAINT chip_reception_records_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: chips chips_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5998,10 +6116,24 @@ CREATE UNIQUE INDEX chip_orders_grow_process_id_idx ON public.chip_orders USING 
 
 
 --
+-- Name: chip_orders_reception_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chip_orders_reception_idx ON public.chip_orders USING btree (paid_at DESC) WHERE (source = 'reception'::text);
+
+
+--
 -- Name: chip_orders_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX chip_orders_status_idx ON public.chip_orders USING btree (status, created_at DESC);
+
+
+--
+-- Name: chip_reception_records_contact_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chip_reception_records_contact_idx ON public.chip_reception_records USING btree (contact_id, created_at DESC);
 
 
 --
@@ -6030,6 +6162,13 @@ CREATE INDEX chips_holder_idx ON public.chips USING btree (contact_id, resident_
 --
 
 CREATE INDEX chips_holder_name_trgm_idx ON public.chips USING gin (holder_name public.gin_trgm_ops);
+
+
+--
+-- Name: chips_lease_file_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chips_lease_file_key_idx ON public.chips USING btree (lease_file_key) WHERE (lease_file_key IS NOT NULL);
 
 
 --
@@ -6072,6 +6211,13 @@ CREATE INDEX chips_order_item_idx ON public.chips USING btree (order_item_id) WH
 --
 
 CREATE INDEX chips_pending_sync ON public.chips USING btree (id) WHERE ((status = 'inactive'::text) AND (controller_synced = false));
+
+
+--
+-- Name: chips_reception_record_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chips_reception_record_idx ON public.chips USING btree (reception_record_id) WHERE (reception_record_id IS NOT NULL);
 
 
 --
@@ -7689,6 +7835,30 @@ ALTER TABLE ONLY public.chip_order_notifications
 
 
 --
+-- Name: chip_orders chip_orders_payment_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_orders
+    ADD CONSTRAINT chip_orders_payment_recorded_by_fkey FOREIGN KEY (payment_recorded_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: chip_reception_records chip_reception_records_contact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_reception_records
+    ADD CONSTRAINT chip_reception_records_contact_id_fkey FOREIGN KEY (contact_id) REFERENCES public.contacts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: chip_reception_records chip_reception_records_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_reception_records
+    ADD CONSTRAINT chip_reception_records_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: chips chips_contact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7726,6 +7896,14 @@ ALTER TABLE ONLY public.chips
 
 ALTER TABLE ONLY public.chips
     ADD CONSTRAINT chips_order_item_id_fkey FOREIGN KEY (order_item_id) REFERENCES public.chip_order_items(id) ON DELETE SET NULL;
+
+
+--
+-- Name: chips chips_reception_record_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chips
+    ADD CONSTRAINT chips_reception_record_id_fkey FOREIGN KEY (reception_record_id) REFERENCES public.chip_reception_records(id) ON DELETE SET NULL;
 
 
 --
@@ -8821,7 +8999,6 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 
 
-
 --
 -- Dbmate schema migrations
 --
@@ -8971,5 +9148,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261112222606'),
     ('20261113133131'),
     ('20261113220605'),
-    ('20261120222746')
+    ('20261120222746'),
+    ('20261125064322')
 ;

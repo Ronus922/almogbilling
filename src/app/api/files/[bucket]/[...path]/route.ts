@@ -262,8 +262,15 @@ async function describeStoredFile(bucket: PrivateBucket, path: string): Promise<
        limit 1`,
       [path],
     );
-    if (!row) return orphan;
-    return { ...base, fileName: row.lease_file_name, entityType: 'chip_order', entityId: row.order_id, documentId: row.id };
+    if (row) return { ...base, fileName: row.lease_file_name, entityType: 'chip_order', entityId: row.order_id, documentId: row.id };
+    // A lease attached in the issue window ("הנפק צ׳יפ", 25/11/2026) sits on
+    // the renter's chips — the apartment is the parent.
+    const chip = await queryOne<{ id: string; contact_id: string; lease_file_name: string | null }>(
+      `select id, contact_id, lease_file_name from public.chips where lease_file_key = $1 order by issued_at limit 1`,
+      [path],
+    );
+    if (!chip) return orphan;
+    return { ...base, fileName: chip.lease_file_name, entityType: 'contact', entityId: chip.contact_id, documentId: chip.id };
   }
   // issue-attachments: bare paths `<issueId>/<uuid>.<ext>`, no display name — the
   // prefix IS the parent (enforced at upload by buildObjectKey / isPathUnderIssue).

@@ -15,7 +15,15 @@
 //   · "הוסף בעל צ׳יפ" adds a person (a staff holder: never priced, never part
 //     of the paid quantity). A block that has chips cannot be removed; a person
 //     of the order cannot be removed at all (paid).
-//   · "פירוט עסקה והערות" — the order (OrderTransaction) + fee + internal note.
+//   · "פירוט עסקה והערות" — the order (OrderTransaction) + the internal note.
+//     (The fee fields — "עמלת הנפקה (₪)", "החיוב בוצע" — left the window on
+//     25/11/2026, in both modes.)
+//   · A CLOSED order — collected or rejected — is read only: its people and
+//     its note cannot be edited and no number can be added (the server refuses
+//     such a save anyway). That is how a RECEPTION order always opens: it was
+//     paid at the reception and handed over on the spot, so it is collected
+//     the moment it is made. The chips themselves can still be switched and
+//     their numbers fixed — those are the chip's own actions, not the order's.
 //   · "שמור שינויים" — ONE request, one transaction (POST
 //     /api/chip-orders/[id]/holders): holder edits, staff holders, new numbers
 //     (linked to the order line AND the holder line), the note. The window
@@ -35,12 +43,12 @@ import { validatePhone } from '@/lib/validation';
 import { cn } from '@/lib/utils';
 import { e164ToLocal } from '@/lib/portal/phone';
 import { MAX_CHIPS_PER_GROUP } from '@/lib/chips/issueGroups';
-import type { ChipOrderRole, ChipOrderWindow, ChipOrderWindowChip, ChipOrderWindowHolder } from '@/lib/chipOrders/model';
+import { isOpenChipOrder, type ChipOrderRole, type ChipOrderWindow, type ChipOrderWindowChip, type ChipOrderWindowHolder } from '@/lib/chipOrders/model';
 import { missingChipsText } from '@/lib/chipOrders/orderRows';
 import type { ChipResidentRole, ChipType } from '@/lib/types/chips';
 import { HolderRegistryButton } from '../ChipOrderSection';
 import {
-  AmberNote, ChipAllocation, DiscardDialog, HolderBlock, IssueSheetFrame, IssueSheetFooter, PlusIco, ROLE_SHORT, RoleSegment,
+  AlertIco, AmberNote, ChipAllocation, DiscardDialog, HolderBlock, IssueSheetFrame, IssueSheetFooter, PlusIco, ROLE_SHORT, RoleSegment,
   Section, UsersIco, WalletIco, useChipQuickActions, type PendingChip,
 } from './parts';
 import { OrderTransaction } from './OrderTransaction';
@@ -124,8 +132,6 @@ export function OrderIssueSheet({
   removedRef.current = removed;
   const [note, setNote] = useState('');
   const [noteOrig, setNoteOrig] = useState('');
-  const [fee, setFee] = useState('');
-  const [feeCharged, setFeeCharged] = useState(false);
   const [conflict, setConflict] = useState<{ blockKey: number; number: string } | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -154,8 +160,6 @@ export function OrderIssueSheet({
     setRemoved([]);
     setNote('');
     setNoteOrig('');
-    setFee('');
-    setFeeCharged(false);
     setConflict(null);
     setServerError(null);
     setSubmitting(false);
@@ -178,8 +182,6 @@ export function OrderIssueSheet({
       setNote(w.order.internal_note ?? '');
       setNoteOrig(w.order.internal_note ?? '');
       setRemoved([]);
-      setFee('');
-      setFeeCharged(false);
       setConflict(null);
       setServerError(null);
       setDirty(false);
@@ -241,7 +243,9 @@ export function OrderIssueSheet({
 
   const totalPending = useMemo(() => blocks.reduce((s, b) => s + effectivePending(b).length, 0), [blocks]);
   const noteChanged = note.trim() !== noteOrig.trim();
-  const feeError = fee.trim() && !(Number.isFinite(Number(fee)) && Number(fee) >= 0) ? 'סכום לא תקין' : null;
+  // Collected or rejected: nothing of the ORDER can change any more.
+  const closed = !!win && !isOpenChipOrder(win.order.status);
+  const frozen = submitting || closed;
 
   function blockInvalid(b: Block): string | null {
     const pending = effectivePending(b);
@@ -249,7 +253,8 @@ export function OrderIssueSheet({
     if (!touched) return null;
     if (b.name.trim().length < 2) return 'נדרש שם מלא';
     if (b.phone.trim() && !validatePhone(b.phone).valid) return validatePhone(b.phone).error ?? 'מספר טלפון לא תקין';
-    if (!b.phone.trim() && b.source !== 'staff') return 'נדרש טלפון';
+    // A person of a web order always has a phone; at the reception it is optional.
+    if (!b.phone.trim() && (b.source === 'order' || b.source === 'legacy')) return 'נדרש טלפון';
     if (b.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email.trim())) return 'כתובת מייל לא תקינה';
     return null;
   }
@@ -259,7 +264,7 @@ export function OrderIssueSheet({
   // An immediate action on a chip (the switch, a number fix) is its own
   // request: nothing is saved over it while it is still running.
   const idle = !submitting && quick.busyId === null;
-  const canSubmit = !!win && changes > 0 && blocksValid && !feeError && idle && canEditOrders;
+  const canSubmit = !!win && !closed && changes > 0 && blocksValid && idle && canEditOrders;
 
   // ── "מוכן לאיסוף" in one click ───────────────────────────────────────────
   // The order may be marked ready once EVERY apartment line is covered — the
@@ -287,7 +292,6 @@ export function OrderIssueSheet({
     : refused ? 'יש להסיר או להחליף את מספר הצ׳יפ התפוס שמסומן באדום'
     : missing > 0 ? `יש לשייך את כל הצ׳יפים שהוזמנו — ${missingChipsText(missing)}`
     : !blocksValid ? 'יש לתקן את הפרטים המסומנים באדום בבעלי הצ׳יפ'
-    : feeError ? 'סכום עמלת ההנפקה אינו תקין'
     : null;
   const canReady = assigning && readyReason === null && idle && canEditOrders;
 
@@ -375,8 +379,6 @@ export function OrderIssueSheet({
           })),
           removed_holder_ids: removed,
           ...(noteChanged ? { note: note.trim() || null } : {}),
-          issuance_fee: fee.trim() ? Number(fee) : null,
-          fee_charged: feeCharged,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -489,6 +491,17 @@ export function OrderIssueSheet({
             loadError ? null : <div className="ci-skel" />
           ) : (
             <>
+              {closed && (
+                <p className="ci-info" role="status" data-testid="chip-order-closed-note">
+                  <AlertIco size={14} />
+                  <span>
+                    {win.order.source === 'reception'
+                      ? 'הזמנת קבלה: שולמה ונמסרה במקום, ולכן היא סגורה — הפרטים לקריאה בלבד.'
+                      : 'ההזמנה סגורה — הפרטים לקריאה בלבד.'}
+                    {' '}את הצ׳יפים עצמם אפשר להשבית, להחזיר לפעיל ולתקן מספר. צ׳יפים נוספים מנפיקים ב„הנפק צ׳יפ”.
+                  </span>
+                </p>
+              )}
               {blocks.map((b, bi) => {
                 const apt = aptOf(b.itemId);
                 const firstName = b.name.trim().split(/\s+/)[0] || null;
@@ -506,15 +519,15 @@ export function OrderIssueSheet({
                     role={b.role}
                     apartment={apt}
                     onRemove={() => removeHolder(b)}
-                    removeDisabled={submitting || hasChips || paidLine}
+                    removeDisabled={frozen || hasChips || paidLine}
                     removeTitle={paidLine ? 'בעל צ׳יפ מההזמנה ששולמה — לא מסירים' : hasChips ? 'לבעל הצ׳יפ יש צ׳יפים — אי אפשר להסיר' : 'הסרה'}
                   >
-                    <RoleSegment options={ROLE_OPTIONS} value={b.role} disabled={submitting}
+                    <RoleSegment options={ROLE_OPTIONS} value={b.role} disabled={frozen}
                       onChange={(v) => patch(b.key, { role: v as ChipResidentRole })} />
                     <div className="ci-mainrow">
                       <div className="ci-fld">
                         <label htmlFor={`oh-name-${b.key}`}>שם מלא</label>
-                        <input id={`oh-name-${b.key}`} type="text" value={b.name} disabled={submitting} placeholder="שם מלא"
+                        <input id={`oh-name-${b.key}`} type="text" value={b.name} disabled={frozen} placeholder="שם מלא"
                           onChange={(e) => patch(b.key, { name: e.target.value })} />
                       </div>
                       <div className="ci-fld">
@@ -529,13 +542,13 @@ export function OrderIssueSheet({
                     <div className="ci-frow">
                       <div className="ci-fld">
                         <label htmlFor={`oh-phone-${b.key}`}>טלפון נייד</label>
-                        <input id={`oh-phone-${b.key}`} type="tel" inputMode="tel" value={b.phone} disabled={submitting}
+                        <input id={`oh-phone-${b.key}`} type="tel" inputMode="tel" value={b.phone} disabled={frozen}
                           className={cn('ci-num ci-ltr', phoneBad && 'ci-bad')}
                           onChange={(e) => patch(b.key, { phone: e.target.value })} onBlur={() => patch(b.key, { phoneTouched: true })} />
                       </div>
                       <div className="ci-fld">
                         <label htmlFor={`oh-email-${b.key}`}>מייל</label>
-                        <input id={`oh-email-${b.key}`} type="email" inputMode="email" value={b.email} disabled={submitting}
+                        <input id={`oh-email-${b.key}`} type="email" inputMode="email" value={b.email} disabled={frozen}
                           className="ci-num ci-ltr" onChange={(e) => patch(b.key, { email: e.target.value })} />
                       </div>
                     </div>
@@ -552,10 +565,11 @@ export function OrderIssueSheet({
                         <span>סיום חוזה: <span className="ci-num">{b.lease.end ? DATE_ONLY.format(new Date(`${b.lease.end}T12:00:00Z`)) : '—'}</span></span>
                       </div>
                     )}
-                    {b.source !== 'staff' && (b.role === 'owner' || b.role === 'tenant' || b.role === 'operator') && (
+                    {!closed && b.source !== 'staff' && (b.role === 'owner' || b.role === 'tenant' || b.role === 'operator') && (
                       <AmberNote>שינוי השם או הטלפון כאן חל על בעל הצ׳יפ בהזמנה ועל הצ׳יפים שלו — מרשם הדיירים לא מתעדכן.</AmberNote>
                     )}
-                    {registryRole && (
+                    {/* Writing to the tenants list is offered only while the order is open (the server's rule). */}
+                    {registryRole && !closed && (
                       <HolderRegistryButton
                         itemId={b.itemId}
                         apartmentNumber={apt}
@@ -579,7 +593,7 @@ export function OrderIssueSheet({
                       numType={b.numType}
                       onNumType={(t) => patch(b.key, { numType: t })}
                       onAdd={() => addNumber(b)}
-                      addBlocked={b.pending.length >= MAX_PENDING_PER_BLOCK || !canEditOrders}
+                      addBlocked={b.pending.length >= MAX_PENDING_PER_BLOCK || !canEditOrders || closed}
                       saved={b.chips}
                       existing={b.existing}
                       pending={b.pending}
@@ -600,7 +614,7 @@ export function OrderIssueSheet({
                   </HolderBlock>
                 );
               })}
-              <button type="button" className="ci-addowner" onClick={addHolder} disabled={submitting || !canEditOrders}>
+              <button type="button" className="ci-addowner" onClick={addHolder} disabled={frozen || !canEditOrders}>
                 <PlusIco size={15} />
                 הוסף בעל צ׳יפ
               </button>
@@ -618,21 +632,9 @@ export function OrderIssueSheet({
               onGone={() => { onIssued(); onOpenChange(false); }}
               onModalChange={setModalOpen}
             />
-            <div className="ci-feegrid">
-              <div className="ci-fld">
-                <label htmlFor="order-fee">עמלת הנפקה (₪)</label>
-                <input id="order-fee" type="text" inputMode="decimal" dir="ltr" placeholder="0" value={fee} disabled={submitting}
-                  className={cn('ci-num ci-ltr', feeError && 'ci-bad')} onChange={(e) => { setDirty(true); setFee(e.target.value); }} />
-                {feeError && <span className="ci-err">⚠️ {feeError}</span>}
-              </div>
-              <label className="ci-chk">
-                <input type="checkbox" checked={feeCharged} disabled={submitting} onChange={(e) => { setDirty(true); setFeeCharged(e.target.checked); }} />
-                החיוב בוצע
-              </label>
-            </div>
             <div className="ci-fld ci-notefld">
               <label htmlFor="order-note">הערה</label>
-              <textarea id="order-note" value={note} disabled={submitting} maxLength={2000} placeholder="הערות פנימיות על ההנפקה..."
+              <textarea id="order-note" value={note} disabled={frozen} maxLength={2000} placeholder="הערות פנימיות על ההנפקה..."
                 onChange={(e) => { setDirty(true); setNote(e.target.value); }} />
             </div>
           </Section>

@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import ExcelJS from 'exceljs';
 import type { ChipOrderRow } from '@/lib/chipOrders/model';
 import {
-  CHIP_ORDERS_EXPORT, CHIP_ORDER_TAG_LABEL, CHIP_ORDER_WAITING_LABEL, chipOrderRowAction, chipOrderRowPeople, chipOrderRowStatusText,
-  chipOrderRowTags, filterChipOrderRows, missingChipsText, searchHitPeople, summarizeChipOrders, type ChipOrderTag,
+  CHIP_ORDERS_EXPORT, CHIP_ORDER_TAG_LABEL, CHIP_ORDER_WAITING_LABEL, chipOrderRowAction, chipOrderRowPeople, chipOrderRowPhone,
+  chipOrderRowStatusText, chipOrderRowTags, countOpenChipOrderRows, filterChipOrderRows, missingChipsText, searchHitPeople,
+  summarizeChipOrders, type ChipOrderTag,
 } from '@/lib/chipOrders/orderRows';
 import { EXPORT_MONEY_FMT, buildListWorkbook, exportDate, exportDateTime } from '@/lib/export/list-export';
 
@@ -12,13 +13,15 @@ import { EXPORT_MONEY_FMT, buildListWorkbook, exportDate, exportDateTime } from 
 // action column of a row (decided from ALL the rows of its order: a row waits
 // while chips are missing, and only then offers "מוכן לאיסוף"), and the Excel
 // file, read back from the real workbook. A row is one apartment of an order.
+// 25/11/2026: an order made at the reception stays in the tab although it is
+// collected — tagged "קבלה", status "נאסף", nothing to press, never counted.
 
 const NOW = new Date('2026-11-24T10:00:00Z');
 
 function row(over: Partial<ChipOrderRow>): ChipOrderRow {
   return {
     item_id: 'i1', order_id: 'o1', order_number: 1042, contact_id: 'c1', apartment_number: '12',
-    full_name: 'דנה כהן', phone_e164: '+972539300001', role: 'owner', status: 'paid',
+    full_name: 'דנה כהן', phone_e164: '+972539300001', role: 'owner', source: 'web', status: 'paid',
     chips_count: 2, chips_linked: 0, line_total: 100, people: ['דנה כהן'],
     paid_at: '2026-11-23T08:00:00Z', due_at: '2026-11-26T08:00:00Z', created_at: '2026-11-23T07:30:00Z',
     has_failed_notification: false, is_test: false, phone_verified: true,
@@ -81,6 +84,14 @@ describe('the tags of a row', () => {
     expect(chipOrderRowTags(row({ is_test: true, phone_verified: false, has_failed_notification: true }))).toEqual(all);
     expect(all.map((t) => CHIP_ORDER_TAG_LABEL[t])).toEqual(['בדיקה', 'טלפון לא אומת', 'הודעה נכשלה']);
   });
+
+  it('an order made at the reception is tagged "קבלה" — and a web order never is', () => {
+    expect(chipOrderRowTags(row({ source: 'reception', status: 'collected' }))).toEqual(['reception']);
+    expect(CHIP_ORDER_TAG_LABEL.reception).toBe('קבלה');
+    expect(chipOrderRowTags(row({ source: 'web', status: 'collected' }))).toEqual([]);
+    // A row that came without `source` (a tab left open across a rollback) is a web order.
+    expect(chipOrderRowTags({ is_test: false, phone_verified: true, has_failed_notification: false })).toEqual([]);
+  });
 });
 
 describe('the action column of a row', () => {
@@ -118,12 +129,28 @@ describe('the action column of a row', () => {
     expect(chipOrderRowAction(full[2]!, s.get('o2'))).toEqual({ kind: 'ready' });
   });
 
-  it('a ready order offers "נאסף"; a legacy "approved" still waits for its chips; a closed order offers nothing', () => {
+  it('a ready order offers "נאסף"; a legacy "approved" still waits for its chips; a rejected order offers nothing', () => {
     const s = summarizeChipOrders(two);
     expect(chipOrderRowAction({ order_id: 'o1', status: 'ready' }, s.get('o1'))).toEqual({ kind: 'collected' });
     expect(chipOrderRowAction({ order_id: 'o2', status: 'approved' }, s.get('o2'))).toEqual({ kind: 'waiting', missing: 'חסר צ׳יפ אחד' });
-    expect(chipOrderRowAction({ order_id: 'o1', status: 'collected' }, s.get('o1'))).toBeNull();
     expect(chipOrderRowAction({ order_id: 'o1', status: 'rejected' }, s.get('o1'))).toBeNull();
+  });
+
+  it('a collected order — a reception order, paid and handed over in one go — has nothing to press: a plain "נאסף"', () => {
+    const reception = [row({ item_id: 'r', order_id: 'o9', source: 'reception', status: 'collected', chips_count: 2, chips_linked: 2 })];
+    expect(chipOrderRowAction(reception[0]!, summarizeChipOrders(reception).get('o9'))).toEqual({ kind: 'done' });
+    // …whatever its chips say: a chip disabled later does not reopen the order.
+    expect(chipOrderRowAction({ order_id: 'o9', status: 'collected' }, { missing: 1, apartments: ['12'] })).toEqual({ kind: 'done' });
+  });
+
+  it('the badge on the tab counts what still waits for someone: never a test order, never a collected one', () => {
+    expect(countOpenChipOrderRows([
+      row({}),
+      row({ status: 'ready' }),
+      row({ is_test: true }),
+      row({ source: 'reception', status: 'collected' }),
+    ])).toBe(2);
+    expect(countOpenChipOrderRows([row({ source: 'reception', status: 'collected' })])).toBe(0);
   });
 });
 
@@ -143,6 +170,15 @@ describe('the Orders tab as a file: Excel, the print view and the PDF share thes
     expect(chipOrderRowStatusText(row({ chips_linked: 1, due_at: '2026-11-24T09:00:00Z' }), NOW)).toBe('שויכו 1 מתוך 2 · באיחור');
     // A ready order is never late.
     expect(chipOrderRowStatusText(row({ status: 'ready', chips_linked: 2, due_at: '2026-11-24T09:00:00Z' }), NOW)).toBe('מוכן לאיסוף');
+    // A reception order is collected — whatever its chips say now, and with no due date to be late for.
+    expect(chipOrderRowStatusText(row({ source: 'reception', status: 'collected', chips_linked: 2, due_at: null }), NOW)).toBe('נאסף');
+    expect(chipOrderRowStatusText(row({ source: 'reception', status: 'collected', chips_linked: 0, due_at: null }), NOW)).toBe('נאסף');
+  });
+
+  it('the orderer\'s phone: an Israeli mobile in its local form, any other number as it is, and none at all', () => {
+    expect(chipOrderRowPhone(row({}))).toBe('0539300001');
+    expect(chipOrderRowPhone(row({ phone_e164: '048500184' }))).toBe('048500184'); // a reception order may hold a landline
+    expect(chipOrderRowPhone(row({ phone_e164: null }))).toBe('');
   });
 
   it('the people of a row; a row that came without any names whoever ordered', () => {
@@ -154,7 +190,8 @@ describe('the Orders tab as a file: Excel, the print view and the PDF share thes
     expect(CHIP_ORDERS_EXPORT.columns.map((c) => c.header)).toEqual([
       'מס׳ הזמנה', 'תאריך הזמנה', 'שם המזמין', 'טלפון', 'תגיות', 'דירה', 'בעלי הצ׳יפ', 'כמות', 'סה״כ (₪)', 'סטטוס', 'יעד להכנה', 'הזמנת בדיקה',
     ]);
-    expect(CHIP_ORDERS_EXPORT).toMatchObject({ title: 'הזמנות צ׳יפים פתוחות', sheet: 'הזמנות צ׳יפים', file: 'chip-orders' });
+    // "הזמנות צ׳יפים", not "… פתוחות": the tab lists the reception orders too, and those are collected.
+    expect(CHIP_ORDERS_EXPORT).toMatchObject({ title: 'הזמנות צ׳יפים', sheet: 'הזמנות צ׳יפים', file: 'chip-orders' });
   });
 
   it('the workbook: one line per row on the screen, numbers as numbers, text as text, the tags in words', async () => {
@@ -164,6 +201,11 @@ describe('the Orders tab as a file: Excel, the print view and the PDF share thes
         item_id: 'b', order_number: 1043, apartment_number: '14', full_name: '=HYPERLINK("http://x","y")', phone_e164: '+447911123456',
         people: [], status: 'ready', chips_count: 1, chips_linked: 1, line_total: 50, due_at: null,
         is_test: true, phone_verified: false, has_failed_notification: true,
+      }),
+      // An order made at the reception for a guest who left no phone.
+      row({
+        item_id: 'c', order_number: 1044, apartment_number: '20', full_name: 'אורח בדיקה', phone_e164: null, role: 'other',
+        source: 'reception', status: 'collected', people: ['אורח בדיקה'], chips_count: 2, chips_linked: 2, line_total: 100, due_at: null,
       }),
     ];
     const wb = new ExcelJS.Workbook();
@@ -184,7 +226,11 @@ describe('the Orders tab as a file: Excel, the print view and the PDF share thes
     expect(cells(3)).toEqual([
       1043, '23/11/2026', formula, '\'+447911123456', 'בדיקה, טלפון לא אומת, הודעה נכשלה', '14', formula, 1, 50, 'מוכן לאיסוף', null, 'כן',
     ]);
-    expect(ws.rowCount).toBe(3);
+    // The reception order: tagged "קבלה", collected, a blank phone and a blank due date.
+    expect(cells(4)).toEqual([
+      1044, '23/11/2026', 'אורח בדיקה', null, 'קבלה', '20', 'אורח בדיקה', 2, 100, 'נאסף', null, 'לא',
+    ]);
+    expect(ws.rowCount).toBe(4);
     // The apartment stays text ("012" keeps its zero); the amount is a number with two decimals.
     expect(ws.getRow(2).getCell(6).type).toBe(ExcelJS.ValueType.String);
     expect(ws.getRow(2).getCell(9).type).toBe(ExcelJS.ValueType.Number);

@@ -6,7 +6,21 @@
 // issuance snapshot only surfaces as "הונפק בשם: X" when the name changed.
 // Snapshot roles (other/staff): the snapshot IS the identity (no registry row).
 
-import type { ChipResidentRole, ChipWithHolder } from '@/lib/types/chips';
+import type { ChipLeaseRef, ChipResidentRole, ChipWithHolder } from '@/lib/types/chips';
+
+/** The email, the lease and its end date as a person's chips hold them
+ *  (25/11/2026) — the first chip that has each. What the holder's block of the
+ *  issue window is seeded with, and what the holder's own panel shows. */
+export function chipHolderDetails(
+  chips: Pick<ChipWithHolder, 'holder_email' | 'lease_file_key' | 'lease_file_name' | 'lease_end_date'>[],
+): { email: string | null; lease: ChipLeaseRef | null; leaseEnd: string | null } {
+  const leased = chips.find((c) => c.lease_file_key && c.lease_file_name);
+  return {
+    email: chips.find((c) => c.holder_email)?.holder_email ?? null,
+    lease: leased ? { key: leased.lease_file_key as string, name: leased.lease_file_name as string, mime: null, size: null } : null,
+    leaseEnd: (leased?.lease_end_date ?? chips.find((c) => c.lease_end_date)?.lease_end_date) ?? null,
+  };
+}
 
 export interface ChipHolderView {
   /** Display name — live registry name for registry roles, snapshot otherwise. */

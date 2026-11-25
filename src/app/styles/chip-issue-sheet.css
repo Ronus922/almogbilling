@@ -25,6 +25,13 @@
    saved (amber dashed row), a taken number (red row), the "קודם" tag, the
    error states, the skeleton — and an invisible 44px hit area (`::after`)
    around every control the reference draws smaller than that.
+
+   RECEPTION (25/11/2026) — the window without an order collects what the
+   public order form collects, and is not in the reference either: the orderer
+   fields, a renter's lease, the payment of the new chips (the price breakdown
+   and the blue total bar are the PUBLIC PAGE's own — chip-order-page.css,
+   `.cr-brk` / `.cr-total` — in this window's tokens), and what earlier saves
+   left on a block. The fee row ("עמלת הנפקה", "החיוב בוצע") is gone.
    ───────────────────────────────────────────────────────────────────── */
 
 @layer components {
@@ -271,6 +278,8 @@
   .ci-tag.ci-red { background: var(--ci-red-soft); color: var(--ci-red-ink); }
   .ci-tag.ci-green { background: var(--ci-green-soft); color: var(--ci-green-ink); }
   .ci-tag.ci-solid { background: var(--ci-green-ink); color: #fff; }
+  .ci-tag.ci-grey { background: var(--ci-field); color: var(--ci-muted); }
+  .ci-tag.ci-brand { background: var(--ci-brand-soft); color: var(--ci-brand-ink); }
   .ci-invwho { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px 18px; padding: 14px; border-bottom: 1px solid var(--ci-border); background: #fbfcfe; text-align: start; }
   .ci-invwho > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; align-items: flex-start; text-align: start; }
   /* As the reference: EVERY span in the grid takes the label's size, weight and
@@ -332,8 +341,6 @@
   .ci-reason.ci-quiet { color: var(--ci-soft); }
   .ci-actnote { padding: 0 14px 12px; background: #fbfcfe; font: 600 12px "Heebo", sans-serif; color: var(--ci-soft); margin: 0; }
 
-  .ci-feegrid { display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: end; }
-  .ci-inv + .ci-feegrid { margin-top: 14px; }
   .ci-notefld { margin-top: 14px; }
   /* The window is 60% of the viewport now, and the note is the one place where
      somebody reads sentences: its box grows with the window like every field,
@@ -342,8 +349,99 @@
      paddings). The rest of a wider box is padding at the far end, so the box
      itself stays aligned with the rows above it. */
   .ci-notefld textarea { padding-inline-end: max(14px, calc(100% - 692px)); }
-  .ci-chk { display: flex; align-items: center; gap: 9px; height: 42px; cursor: pointer; font: 600 13px "Heebo", sans-serif; color: var(--ci-muted); white-space: nowrap; }
-  .ci-chk input { width: 19px; height: 19px; accent-color: var(--ci-brand); cursor: pointer; }
+
+  /* ── Reception: the window without an order (25/11/2026) ───────────────── */
+
+  /* Name · phone · email, in a holder block and in "פרטי המזמין". */
+  .ci-ordrow { display: grid; grid-template-columns: 1.35fr 1fr 1.35fr; gap: 12px; }
+  .ci-ordrow.ci-inblock { margin-top: 14px; }
+  /* The current residential address: street and number · city · zip. */
+  .ci-addrrow { display: grid; grid-template-columns: 2fr 1fr .8fr; gap: 12px; margin-top: 14px; }
+
+  /* A renter's lease: the file, and its end date. */
+  .ci-leasegrid { display: grid; grid-template-columns: 1.7fr 1fr; gap: 12px; margin-top: 14px; align-items: start; }
+  .ci-leasectl { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; min-height: 42px; }
+  .ci-leasectl a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 13px; }
+  .ci-leaseok { display: inline-flex; align-items: center; gap: 6px; font: 700 13px "Heebo", sans-serif; color: var(--ci-green-ink); }
+  .ci-leasename { font: 600 12.5px "Heebo", sans-serif; color: var(--ci-muted); min-width: 0; overflow-wrap: anywhere; }
+  /* The file input covers its label and is never seen: the label is the control. */
+  .ci-upl, .ci-linkbtn { position: relative; cursor: pointer; }
+  .ci-fld .ci-upl input, .ci-fld .ci-linkbtn input {
+    position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; opacity: 0; cursor: pointer;
+  }
+  .ci-upl {
+    display: inline-flex; align-items: center; gap: 8px; height: 42px; padding-inline: 16px; border-radius: 10px;
+    border: 1.5px dashed var(--ci-border-strong); background: #fff; font: 700 13px "Heebo", sans-serif; color: var(--ci-brand-ink);
+    transition: border-color .15s, background .15s;
+  }
+  .ci-upl::after { content: ""; position: absolute; inset: -1px 0; }
+  .ci-upl:hover { border-color: var(--ci-brand); background: var(--ci-brand-soft); }
+  .ci-upl:focus-within, .ci-linkbtn:focus-within { outline: 2px solid var(--ci-brand); outline-offset: 2px; }
+  .ci-linkbtn {
+    display: inline-flex; align-items: center; border: 0; background: none; padding: 0; border-radius: 4px;
+    font: 700 12.5px "Heebo", sans-serif; color: var(--ci-brand-ink);
+  }
+  .ci-linkbtn::after { content: ""; position: absolute; inset: -13px -5px; }
+  .ci-linkbtn:hover { color: var(--ci-brand-dark); text-decoration: underline; }
+  .ci-upl.ci-dis, .ci-linkbtn.ci-dis, .ci-linkbtn:disabled { opacity: .5; cursor: default; pointer-events: none; }
+
+  /* The amount of the save — the public page's breakdown and total bar. */
+  .ci-brk { border: 1px solid var(--ci-border); border-radius: 12px; background: #fff; overflow: hidden; }
+  .ci-brkh, .ci-brkr { display: grid; grid-template-columns: minmax(0, 1fr) 70px 90px 90px; gap: 10px; align-items: center; padding: 10px 15px; }
+  .ci-brkh { background: #fafbff; border-bottom: 1px solid var(--ci-border); font: 700 11.5px "Heebo", sans-serif; color: var(--ci-soft); }
+  .ci-brkr { font: 600 13px "Heebo", sans-serif; color: var(--ci-ink); }
+  .ci-brk .ci-c { text-align: center; font: 600 13px "Inter", sans-serif; color: var(--ci-muted); }
+  .ci-brk .ci-t { text-align: left; font: 700 13.5px "Inter", sans-serif; color: var(--ci-ink); }
+  .ci-brkh .ci-c, .ci-brkh .ci-t { font: 700 11.5px "Heebo", sans-serif; color: var(--ci-soft); }
+  .ci-paytotal {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #2149ba; color: #fff;
+    border-radius: 13px; padding: 14px 18px;
+  }
+  .ci-brk + .ci-paytotal { margin-top: 10px; }
+  .ci-paytotal span { font: 700 14.5px "Heebo", sans-serif; }
+  .ci-paytotal span small { display: block; font: 600 11.5px "Heebo", sans-serif; color: #c9d6ff; margin-top: 3px; }
+  .ci-paytotal b { font: 800 22px "Inter", sans-serif; flex: none; }
+
+  /* How it is paid — nothing is chosen until the manager chooses. */
+  .ci-payfld { margin-top: 14px; }
+  .ci-payseg { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .ci-payseg.ci-three { grid-template-columns: repeat(3, 1fr); }
+  .ci-payseg button {
+    display: flex; align-items: center; gap: 10px; min-height: 60px; padding: 10px 13px; border: 1px solid var(--ci-border-strong);
+    border-radius: 11px; background: #fff; cursor: pointer; text-align: start; transition: all .14s; min-width: 0;
+  }
+  .ci-payseg button:hover:not(:disabled) { border-color: var(--ci-brand); }
+  .ci-payic { width: 30px; height: 30px; border-radius: 9px; background: var(--ci-field); color: var(--ci-muted); display: grid; place-items: center; flex: none; }
+  .ci-paytxt { min-width: 0; }
+  .ci-paytxt b { display: block; font: 800 13.5px "Heebo", sans-serif; color: var(--ci-ink); }
+  .ci-paytxt small { display: block; font: 500 11.5px/1.4 "Heebo", sans-serif; color: var(--ci-soft); margin-top: 2px; overflow-wrap: anywhere; }
+  .ci-payseg button.ci-on { border-color: var(--ci-brand); background: var(--ci-brand-soft); box-shadow: inset 0 0 0 1px var(--ci-brand); }
+  .ci-payseg button.ci-on .ci-payic { background: var(--ci-brand); color: #fff; }
+  .ci-payseg button.ci-on .ci-paytxt small { color: var(--ci-brand-ink); font-weight: 700; }
+  .ci-payseg button:disabled { cursor: not-allowed; }
+  .ci-payseg button:disabled:not(.ci-on) { opacity: .5; }
+  /* "אשראי" — not active yet: drawn, never pressed. */
+  .ci-payseg button.ci-soon { border-style: dashed; background: #fbfcfe; }
+  .ci-payhint { font: 500 12px/1.5 "Heebo", sans-serif; color: var(--ci-soft); margin: 9px 0 0; }
+  .ci-reason.ci-flat { padding: 0; background: none; margin-top: 9px; }
+
+  /* What an earlier save left on a block — read only. */
+  .ci-recs { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .ci-rec { border: 1px solid var(--ci-border); border-radius: 10px; background: #fbfcfe; padding: 9px 12px; }
+  .ci-rechead { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+  .ci-rechead > b { font: 800 12.5px "Heebo", sans-serif; }
+  .ci-rechead > .ci-num { font: 600 12px "Inter", sans-serif; color: var(--ci-soft); }
+  .ci-recqty { margin-inline-start: auto; font: 600 11.5px "Heebo", sans-serif; color: var(--ci-soft); flex: none; }
+  .ci-rec p { margin: 6px 0 0; font: 500 12px/1.55 "Heebo", sans-serif; color: var(--ci-muted); overflow-wrap: anywhere; }
+  .ci-rec p > span:first-child { font-weight: 700; color: var(--ci-soft); }
+  .ci-recby { color: var(--ci-soft); }
+
+  /* A closed order is read only — said once, above its blocks. */
+  .ci-info {
+    display: flex; gap: 9px; align-items: flex-start; background: var(--ci-brand-soft); border: 1px solid #d5dcff;
+    border-radius: 10px; padding: 10px 13px; font: 500 12.5px/1.5 "Heebo", sans-serif; color: var(--ci-brand-ink); margin: 0 0 12px;
+  }
+  .ci-info svg { flex: none; margin-top: 2px; }
 
   .ci-alert { border: 1px solid #f87171; background: #fef2f2; border-radius: 12px; padding: 12px 14px; font: 600 13.5px "Heebo", sans-serif; color: #b91c1c; overflow-wrap: anywhere; }
   .ci-skel { height: 180px; border-radius: 13px; background: #f3f5fc; animation: ci-pulse 1.4s ease-in-out infinite; }
@@ -375,9 +473,14 @@
     .ci-mainrow { grid-template-columns: 1fr 1fr; }
     .ci-mainrow > .ci-fld:first-child { grid-column: 1 / -1; }
     .ci-roleseg { max-width: none; }
+    .ci-ordrow, .ci-addrrow { grid-template-columns: 1fr 1fr; }
+    .ci-ordrow > .ci-fld:last-child, .ci-addrrow > .ci-fld:first-child { grid-column: 1 / -1; }
   }
   @media (max-width: 540px) {
-    .ci-frow, .ci-leaserow, .ci-feegrid, .ci-addrow { grid-template-columns: 1fr; }
+    .ci-frow, .ci-leaserow, .ci-addrow, .ci-ordrow, .ci-addrrow, .ci-leasegrid, .ci-payseg, .ci-payseg.ci-three { grid-template-columns: 1fr; }
+    .ci-ordrow > .ci-fld:last-child, .ci-addrrow > .ci-fld:first-child { grid-column: auto; }
+    /* Down to a 320px screen: the item's name takes what is left and wraps. */
+    .ci-brkh, .ci-brkr { grid-template-columns: minmax(0, 1fr) 38px 58px 66px; gap: 6px; padding: 10px; }
     .ci-roleseg { grid-template-columns: 1fr 1fr; }
     .ci-invapt { flex-wrap: wrap; }
     .ci-btn.ci-danger { margin-inline-start: 0; }

@@ -8,6 +8,7 @@ import type {
   ChipsKpis,
   ChipListFilters,
   ChipDeactivationReason,
+  ChipLeaseRef,
   ChipResidentRole,
   ChipWithHolder,
   IssueChipsInput,
@@ -52,6 +53,8 @@ const CHIP_COLUMNS = `
   controller_synced, controller_synced_at,
   app_platform, app_invite_status, app_expires_at,
   issuance_fee::float8 as issuance_fee, fee_charged, limit_override_reason, notes,
+  holder_email, lease_file_key, lease_file_name, to_char(lease_end_date, 'YYYY-MM-DD') as lease_end_date,
+  order_item_id, reception_record_id,
   created_at, updated_at`;
 
 // ── Read-time holder resolution (074) ────────────────────────────────────
@@ -69,6 +72,8 @@ const CHIP_COLUMNS_QUALIFIED = `
   ch.controller_synced, ch.controller_synced_at,
   ch.app_platform, ch.app_invite_status, ch.app_expires_at,
   ch.issuance_fee::float8 as issuance_fee, ch.fee_charged, ch.limit_override_reason, ch.notes,
+  ch.holder_email, ch.lease_file_key, ch.lease_file_name, to_char(ch.lease_end_date, 'YYYY-MM-DD') as lease_end_date,
+  ch.order_item_id, ch.reception_record_id,
   ch.created_at, ch.updated_at`;
 
 const CHIP_HOLDER_SELECT = `
@@ -112,11 +117,14 @@ async function selectChipWithHolder(
 // Fields a PATCH may touch. status is NEVER writable — it only moves through
 // deactivateChip / reactivateChip. chip_number is writable as a CORRECTION
 // only (applyChipPatch guards the active-number collision explicitly).
+// issuance_fee / fee_charged left this list on 25/11/2026 with the two fields
+// of the issue window: the columns keep what they hold, and nothing writes
+// them any more (what a chip cost is on its order or on its reception record).
 const CHIP_WRITABLE = new Set([
   'chip_number',
   'contact_id', 'resident_role', 'holder_name', 'holder_phone',
   'app_platform', 'app_invite_status', 'app_expires_at',
-  'issuance_fee', 'fee_charged', 'limit_override_reason', 'notes',
+  'limit_override_reason', 'notes',
 ]);
 
 /** Append one chip_events row (the log is append-only — never UPDATE/DELETE). */
@@ -429,7 +437,7 @@ export async function issueChipGroupsInTx(
   // save is still all-or-nothing. Every edited chip must belong to this
   // contact — the window never edits across apartments.
   const updated: ChipWithHolder[] = [];
-  for (const { id, ...patch } of updates) {
+  for (const { id, holder_email, lease, lease_end_date, ...patch } of updates) {
     const owner = (
       await client.query<{ contact_id: string }>(
         `select contact_id from public.chips where id = $1`,
@@ -438,7 +446,11 @@ export async function issueChipGroupsInTx(
     ).rows[0];
     if (!owner) throw new Error('chip_not_found');
     if (owner.contact_id !== input.contact_id) throw new Error('chip_not_in_contact');
-    const row = await applyChipPatch(client, id, patch, actor);
+    let row = await applyChipPatch(client, id, patch, actor);
+    // The block's email, lease and lease end date (25/11/2026).
+    if (await applyChipHolderDetails(client, id, { holder_email, lease, lease_end_date }, actor)) {
+      row = await selectChipWithHolder(client, id);
+    }
     if (row) updated.push(row);
   }
 
@@ -507,8 +519,10 @@ export async function issueChipGroupsInTx(
              (chip_number, chip_type, contact_id, apartment_number, resident_role,
               holder_name, holder_phone, issued_by, issued_by_name,
               app_platform, app_invite_status, app_expires_at,
-              issuance_fee, fee_charged, notes, order_item_id, order_holder_id)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+              issuance_fee, fee_charged, notes, order_item_id, order_holder_id,
+              holder_email, lease_file_key, lease_file_name, lease_file_mime, lease_file_size, lease_end_date,
+              reception_record_id)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
            returning ${CHIP_COLUMNS}`,
           [
             num, group.chip_type, input.contact_id, contact.apartment_number,
@@ -518,6 +532,10 @@ export async function issueChipGroupsInTx(
             fee, feeCharged,
             input.notes ?? null, orderItemId,
             group.order_holder_id ?? null,
+            group.holder_email?.trim() || null,
+            group.lease?.key ?? null, group.lease?.name ?? null, group.lease?.mime ?? null, group.lease?.size ?? null,
+            group.lease_end_date ?? null,
+            group.reception_record_id ?? null,
           ],
         );
         chip = r.rows[0];
@@ -539,6 +557,7 @@ export async function issueChipGroupsInTx(
           holder_phone: chip.holder_phone,
           ...(orderItemId ? { order_item_id: orderItemId } : {}),
           ...(group.order_holder_id ? { order_holder_id: group.order_holder_id } : {}),
+          ...(group.reception_record_id ? { reception_record_id: group.reception_record_id } : {}),
         },
       });
       created.push(await selectChipWithHolder(client, chip.id));
@@ -771,6 +790,63 @@ async function applyChipPatch(
     await insertChipEvent(client, id, 'note', actor, { newValue: diff });
   }
   return selectChipWithHolder(client, id);
+}
+
+/**
+ * The holder details the issue window added on 25/11/2026 — the email, a
+ * renter's lease and its end date — written to ONE saved chip, inside the
+ * save's transaction. `undefined` = untouched; a null lease = taken off the
+ * chip (the stored object stays in the bucket). Kept OUT of CHIP_WRITABLE on
+ * purpose: PATCH /api/chips/:id takes a raw body, and a storage key must never
+ * be settable there. What changed lands in one 'note' event — the lease by its
+ * readable name, never by its key. Returns whether anything was written.
+ */
+async function applyChipHolderDetails(
+  client: PoolClient,
+  id: string,
+  details: { holder_email?: string | null; lease?: ChipLeaseRef | null; lease_end_date?: string | null },
+  actor: { id: string; name: string },
+): Promise<boolean> {
+  if (details.holder_email === undefined && details.lease === undefined && details.lease_end_date === undefined) return false;
+  const cur = (
+    await client.query<{ holder_email: string | null; lease_file_key: string | null; lease_end_date: string | null }>(
+      `select holder_email, lease_file_key, to_char(lease_end_date, 'YYYY-MM-DD') as lease_end_date
+         from public.chips where id = $1 for update`,
+      [id],
+    )
+  ).rows[0];
+  if (!cur) return false;
+
+  const set: string[] = [];
+  const vals: unknown[] = [id];
+  const diff: Record<string, unknown> = {};
+  const put = (column: string, value: unknown) => {
+    vals.push(value);
+    set.push(`${column} = $${vals.length}`); // column names are literals of this function only
+  };
+  if (details.holder_email !== undefined) {
+    const email = details.holder_email?.trim() || null;
+    if (email !== cur.holder_email) {
+      put('holder_email', email);
+      diff.holder_email = email;
+    }
+  }
+  if (details.lease !== undefined && (details.lease?.key ?? null) !== cur.lease_file_key) {
+    const lease = details.lease;
+    put('lease_file_key', lease?.key ?? null);
+    put('lease_file_name', lease?.name ?? null);
+    put('lease_file_mime', lease?.mime ?? null);
+    put('lease_file_size', lease?.size ?? null);
+    diff.lease_file_name = lease?.name ?? null;
+  }
+  if (details.lease_end_date !== undefined && (details.lease_end_date ?? null) !== cur.lease_end_date) {
+    put('lease_end_date', details.lease_end_date ?? null);
+    diff.lease_end_date = details.lease_end_date ?? null;
+  }
+  if (set.length === 0) return false;
+  await client.query(`update public.chips set ${set.join(', ')} where id = $1`, vals);
+  await insertChipEvent(client, id, 'note', actor, { newValue: diff });
+  return true;
 }
 
 /** PATCH /api/chips/:id — one chip, its own transaction. */

@@ -17,8 +17,8 @@ import { ChipOrdersPanel } from './ChipOrdersPanel';
 import { ChipListExports } from './ChipListExports';
 import { CHIPS_SEARCH_INPUT, ChipsToolbar } from './ChipsToolbar';
 import { CHIPS_EXPORT } from '@/lib/chips/exportColumns';
-import { e164ToLocal } from '@/lib/portal/phone';
 import type { ChipOrderRow } from '@/lib/chipOrders/model';
+import { chipOrderRowPhone, countOpenChipOrderRows } from '@/lib/chipOrders/orderRows';
 
 // List filter tabs — labels per the chips product spec (ChipTab values).
 const TABS: { value: ChipTab; label: string }[] = [
@@ -130,8 +130,9 @@ export function ChipsPageClient({
   }, [fetchOrders]);
 
   // Open rows (one per apartment of an open order); test orders are never
-  // counted (13/11/2026).
-  const openOrdersInProgress = orders.filter((o) => !o.is_test).length;
+  // counted (13/11/2026), and neither is a reception order — it is collected
+  // the moment it is made, so nothing waits on it (25/11/2026).
+  const openOrdersInProgress = countOpenChipOrderRows(orders);
 
   function switchView(next: 'chips' | 'orders') {
     setView(next);
@@ -149,7 +150,7 @@ export function ChipsPageClient({
       contactId: row.contact_id,
       apartmentNumber: row.apartment_number,
       holderName: row.full_name,
-      holderPhone: e164ToLocal(row.phone_e164),
+      holderPhone: chipOrderRowPhone(row) || null,
       orderItemId: row.item_id,
     });
   }
@@ -500,6 +501,8 @@ export function ChipsPageClient({
         onOpenChange={(o: boolean) => {
           if (!o) setHolderPanel(null);
         }}
+        canViewLeases={canManageOrders}
+        canSeeReception={canEdit}
         onChipClick={
           canEdit
             ? (chip: ChipWithHolder) => {

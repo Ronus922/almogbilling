@@ -31,7 +31,9 @@ function chip(over: Partial<ChipWithHolder>): ChipWithHolder {
     issued_by: 'u1', issued_by_name: 'מנהל בדיקה', deactivated_at: null, deactivated_by: null, deactivated_by_name: null,
     deactivation_reason: null, controller_synced: false, controller_synced_at: null, app_platform: null,
     app_invite_status: null, app_expires_at: null, issuance_fee: null, fee_charged: false, limit_override_reason: null,
-    notes: null, created_at: '2026-11-23T22:30:00Z', updated_at: '2026-11-23T22:30:00Z',
+    notes: null, holder_email: null, lease_file_key: null, lease_file_name: null, lease_end_date: null,
+    order_item_id: null, reception_record_id: null,
+    created_at: '2026-11-23T22:30:00Z', updated_at: '2026-11-23T22:30:00Z',
     live_holder_name: 'דנה כהן', live_holder_phone: '0539300001', holder_chip_count: 1,
     ...over,
   };
@@ -40,7 +42,7 @@ function chip(over: Partial<ChipWithHolder>): ChipWithHolder {
 function order(over: Partial<ChipOrderRow>): ChipOrderRow {
   return {
     item_id: 'i1', order_id: 'o1', order_number: 1042, contact_id: 'k1', apartment_number: '12',
-    full_name: 'דנה כהן', phone_e164: '+972539300001', role: 'owner', status: 'paid',
+    full_name: 'דנה כהן', phone_e164: '+972539300001', role: 'owner', source: 'web', status: 'paid',
     chips_count: 2, chips_linked: 1, line_total: 100, people: ['דנה כהן', 'שרה לוי'],
     paid_at: '2026-11-23T08:00:00Z', due_at: '2026-11-26T08:00:00Z', created_at: '2026-11-23T07:30:00Z',
     has_failed_notification: false, is_test: false, phone_verified: true,
@@ -189,7 +191,7 @@ describe('the PDF file of a list', () => {
     const lines = painted.map((p) => p.text);
 
     // The title is the tab's; the date stands in its reading order.
-    expect(lines).toContain(rev('הזמנות צ׳יפים פתוחות'));
+    expect(lines).toContain(rev('הזמנות צ׳יפים'));
     expect(lines).toContain(`24/11/2026 12:00 ${rev('תאריך הפקה:')}`);
     // What the file holds, one line, right to left: the count first (right-most).
     expect(lines).toContain(`${rev('סינון: "דנה"')} · ${rev('שורות')} 2 ${rev('סה״כ')}`);

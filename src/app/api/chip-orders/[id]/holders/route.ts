@@ -15,7 +15,9 @@ export const dynamic = 'force-dynamic';
 // numbers linked to the order line and the holder line) and the internal note,
 // in ONE transaction. Issuing chips is chips:edit; doing it for an order is
 // also chips_orders_manage:edit — the same two guards the issue window had.
-// No limit of active chips per apartment (21/11/2026).
+// No limit of active chips per apartment (21/11/2026). The window's fee fields
+// ("עמלת הנפקה", "החיוב בוצע") were removed on 25/11/2026: a body that still
+// carries them is accepted and they are ignored.
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   let actor: Actor;
   try {
@@ -40,8 +42,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         holders: body.data.holders.map((h) => ({ ...h, email: h.email || null })),
         removedHolderIds: body.data.removed_holder_ids ?? [],
         note: body.data.note,
-        issuance_fee: body.data.issuance_fee ?? null,
-        fee_charged: body.data.fee_charged ?? false,
       },
       { id: actor.id, name: actor.full_name ?? actor.username },
     );

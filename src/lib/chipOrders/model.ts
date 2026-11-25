@@ -48,6 +48,21 @@ export const CHIP_ORDER_ROLE_LABEL: Record<ChipOrderRole, string> = {
   operator: 'מפעיל',
 };
 
+/** Where an order was made (25/11/2026): the public page, or the reception —
+ *  the staff issued the chips in the issue window and recorded a payment. */
+export type ChipOrderSource = 'web' | 'reception';
+
+/** The role an ORDER carries. A web order is placed by an owner, a renter or
+ *  an operator; a reception order may also be placed for a guest (`other`) or
+ *  for staff — the roles of the issue window. */
+export type ChipOrderPersonRole = ChipResidentRole;
+
+export const CHIP_ORDER_PERSON_ROLE_LABEL: Record<ChipOrderPersonRole, string> = {
+  ...CHIP_ORDER_ROLE_LABEL,
+  other: 'אורח',
+  staff: 'צוות',
+};
+
 export const CHIP_ORDER_STATUS_LABEL: Record<ChipOrderStatus, string> = {
   pending_payment: 'ממתין לתשלום',
   paid: 'שולם, בהכנה',
@@ -244,10 +259,13 @@ export function isChipOrderOverdue(
 //    section in the issue window) ──────────────────────────────────────────
 
 /** awaiting "ממתין לשיוך" · partial "שויכו X מתוך Y" · assigned "שויך" ·
- *  ready "מוכן לאיסוף" (the order's own status). X counts ACTIVE chips only. */
-export type ChipOrderStage = 'awaiting' | 'partial' | 'assigned' | 'ready';
+ *  ready "מוכן לאיסוף" · collected "נאסף" (the last two are the order's own
+ *  status). X counts ACTIVE chips only. A collected order is in the Orders tab
+ *  only when it is a reception order — paid and handed over in one go. */
+export type ChipOrderStage = 'awaiting' | 'partial' | 'assigned' | 'ready' | 'collected';
 
 export function chipOrderStage(status: ChipOrderStatus, linked: number, ordered: number): ChipOrderStage {
+  if (status === 'collected') return 'collected';
   if (status === 'ready') return 'ready';
   if (linked <= 0) return 'awaiting';
   return linked >= ordered ? 'assigned' : 'partial';
@@ -259,13 +277,15 @@ export function chipOrderStageLabel(stage: ChipOrderStage, linked: number, order
     case 'partial': return `שויכו ${linked} מתוך ${ordered}`;
     case 'assigned': return 'שויך';
     case 'ready': return 'מוכן לאיסוף';
+    case 'collected': return 'נאסף';
   }
 }
 
 // ── Shapes the staff screen reads ──────────────────────────────────────────
 
 /** One row of /chips → "הזמנות": ONE APARTMENT of an open order (13/11/2026;
- *  until then a row was a whole order). */
+ *  until then a row was a whole order) — or of a reception order, which stays
+ *  in the tab although it is collected (25/11/2026). */
 export interface ChipOrderRow {
   item_id: string;
   order_id: string;
@@ -273,8 +293,11 @@ export interface ChipOrderRow {
   contact_id: string;
   apartment_number: string;
   full_name: string;
-  phone_e164: string;
-  role: ChipOrderRole;
+  /** Null only on a reception order whose orderer left no phone. */
+  phone_e164: string | null;
+  role: ChipOrderPersonRole;
+  /** 'reception' — tagged "קבלה"; paid at the reception, collected at once. */
+  source: ChipOrderSource;
   status: ChipOrderStatus;
   /** Chips this apartment ordered. */
   chips_count: number;
@@ -372,6 +395,8 @@ export interface ChipOrderWindowItem {
 
 /** One block of the window = one person.
  *   'order'  — a row of the public page (chip_order_holders, part of the paid quantity);
+ *   'reception' — a person of a reception order (part of what was paid; the
+ *              phone is optional there);
  *   'staff'  — a holder the staff added (chip_order_holders, chips_count 0, never priced);
  *   'legacy' — an order made before 20/11/2026 has no holder lines: one block per
  *              apartment, built from the order's own name and phone (stored as a
@@ -379,7 +404,7 @@ export interface ChipOrderWindowItem {
 export interface ChipOrderWindowHolder {
   id: string | null;
   item_id: string;
-  source: 'order' | 'staff' | 'legacy';
+  source: 'order' | 'reception' | 'staff' | 'legacy';
   role: ChipResidentRole;
   full_name: string;
   phone: string | null;
@@ -399,18 +424,25 @@ export interface ChipOrderWindowOrder {
   id: string;
   order_number: number;
   status: ChipOrderStatus;
-  role: ChipOrderRole;
+  role: ChipOrderPersonRole;
+  source: ChipOrderSource;
   is_test: boolean;
   phone_verified: boolean;
   full_name: string;
-  phone_e164: string;
-  email: string;
-  address: string;
+  /** Phone, email and address are null only where a reception order has none. */
+  phone_e164: string | null;
+  email: string | null;
+  address: string | null;
   total: number;
   paid_at: string | null;
   due_at: string | null;
   created_at: string;
   internal_note: string | null;
+  /** A reception order: how it was paid ('cash_transfer'), who recorded the
+   *  payment and when. All null on a web order. */
+  payment_method: string | null;
+  payment_recorded_by_name: string | null;
+  payment_recorded_at: string | null;
 }
 
 /** What the issue window loads for an Orders-tab row (20/11/2026). */

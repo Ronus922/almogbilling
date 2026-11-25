@@ -4,6 +4,7 @@ import {
   CHIP_ORDER_PHONE_UNVERIFIED_LABEL, CHIP_ORDER_TEST_LABEL, chipOrderStage, chipOrderStageLabel, isChipOrderOverdue,
   type ChipOrderRow,
 } from './model';
+import { CHIP_ORDER_RECEPTION_LABEL } from './reception';
 
 // The Orders tab of /chips (24/11/2026) — the pure, client-safe half of what
 // the tab does with its rows: the search, the tags of a row, what the action
@@ -45,21 +46,24 @@ export function searchHitPeople(row: Searchable, query: string): string[] {
 
 // ── The tags of a row ("תגיות") ────────────────────────────────────────────
 
-/** What a row is flagged with, in the order the tags are shown: a test-mode
- *  order, a phone nobody proved (a test order made with "דלג על אימות"), and a
- *  message to the orderer that failed to go out. */
-export type ChipOrderTag = 'test' | 'phone_unverified' | 'notify_failed';
+/** What a row is flagged with, in the order the tags are shown: an order made
+ *  at the reception ("קבלה", 25/11/2026 — paid there and handed over on the
+ *  spot), a test-mode order, a phone nobody proved (a test order made with
+ *  "דלג על אימות"), and a message to the orderer that failed to go out. */
+export type ChipOrderTag = 'reception' | 'test' | 'phone_unverified' | 'notify_failed';
 
 export const CHIP_ORDER_TAG_LABEL: Record<ChipOrderTag, string> = {
+  reception: CHIP_ORDER_RECEPTION_LABEL,
   test: CHIP_ORDER_TEST_LABEL,
   phone_unverified: CHIP_ORDER_PHONE_UNVERIFIED_LABEL,
   notify_failed: 'הודעה נכשלה',
 };
 
-export function chipOrderRowTags(
-  row: Pick<ChipOrderRow, 'is_test' | 'phone_verified' | 'has_failed_notification'>,
-): ChipOrderTag[] {
+type Tagged = Pick<ChipOrderRow, 'is_test' | 'phone_verified' | 'has_failed_notification'> & Partial<Pick<ChipOrderRow, 'source'>>;
+
+export function chipOrderRowTags(row: Tagged): ChipOrderTag[] {
   const tags: ChipOrderTag[] = [];
+  if (row.source === 'reception') tags.push('reception');
   if (row.is_test) tags.push('test');
   if (!row.phone_verified) tags.push('phone_unverified');
   if (row.has_failed_notification) tags.push('notify_failed');
@@ -102,11 +106,15 @@ export function missingChipsText(missing: number): string {
  *                  "מוכן לאיסוף" read as if the order were ready (25/11/2026);
  *    · ready     — every chip of the whole order is issued and saved (the
  *                  server's own rule): the button "מוכן לאיסוף";
- *    · collected — the order is ready: the button "נאסף". */
+ *    · collected — the order is ready: the button "נאסף";
+ *    · done      — the order is collected already (a reception order: paid
+ *                  and handed over in one go): nothing left to do. A plain
+ *                  label, "נאסף" — not a button. */
 export type ChipOrderRowAction =
   | { kind: 'waiting'; missing: string }
   | { kind: 'ready' }
-  | { kind: 'collected' };
+  | { kind: 'collected' }
+  | { kind: 'done' };
 
 /** The label of a row that waits for its chips. */
 export const CHIP_ORDER_WAITING_LABEL = 'בהמתנה';
@@ -116,6 +124,7 @@ export function chipOrderRowAction(
   summary: ChipOrderSummary | undefined,
 ): ChipOrderRowAction | null {
   if (row.status === 'ready') return { kind: 'collected' };
+  if (row.status === 'collected') return { kind: 'done' };
   if (row.status !== 'paid' && row.status !== 'approved') return null;
   const missing = summary?.missing ?? 0;
   if (missing === 0) return { kind: 'ready' };
@@ -142,22 +151,37 @@ export function chipOrderRowStatusText(
 }
 
 /** The tags of a row in words, as the three exports write them. */
-export function chipOrderRowTagsText(row: Pick<ChipOrderRow, 'is_test' | 'phone_verified' | 'has_failed_notification'>): string {
+export function chipOrderRowTagsText(row: Tagged): string {
   return chipOrderRowTags(row).map((t) => CHIP_ORDER_TAG_LABEL[t]).join(', ');
+}
+
+/** The orderer's phone as the tab shows it — an Israeli mobile in its local
+ *  form. A reception order may have none. */
+export function chipOrderRowPhone(row: Pick<ChipOrderRow, 'phone_e164'>): string {
+  return row.phone_e164 ? e164ToLocal(row.phone_e164) : '';
+}
+
+/** Rows that still wait for someone — what the badge on the tab counts. A
+ *  test order is never counted, and neither is an order that is collected
+ *  already (a reception order stays in the tab, but nothing is left to do). */
+export function countOpenChipOrderRows(rows: Pick<ChipOrderRow, 'is_test' | 'status'>[]): number {
+  return rows.filter((r) => !r.is_test && r.status !== 'collected').length;
 }
 
 /** The Orders tab as a file — its names, and its columns right to left. The
  *  amount is the apartment line's own (the lines of one order add up to what
- *  the order paid), so a column of the file can be summed. */
+ *  the order paid), so a column of the file can be summed. The title says
+ *  "orders", not "open orders", since 25/11/2026: the tab also lists the
+ *  reception orders, which are collected (tagged "קבלה", status "נאסף"). */
 export const CHIP_ORDERS_EXPORT: ListExport<ChipOrderRow> = {
-  title: 'הזמנות צ׳יפים פתוחות',
+  title: 'הזמנות צ׳יפים',
   sheet: 'הזמנות צ׳יפים',
   file: 'chip-orders',
   columns: [
     { header: 'מס׳ הזמנה', kind: 'number', width: 12, get: (r) => r.order_number },
     { header: 'תאריך הזמנה', kind: 'ltr', width: 13, get: (r) => exportDate(r.created_at) },
     { header: 'שם המזמין', kind: 'text', width: 24, get: (r) => r.full_name },
-    { header: 'טלפון', kind: 'ltr', width: 15, get: (r) => e164ToLocal(r.phone_e164) },
+    { header: 'טלפון', kind: 'ltr', width: 15, get: (r) => chipOrderRowPhone(r) },
     { header: 'תגיות', kind: 'text', width: 24, get: (r) => chipOrderRowTagsText(r) },
     { header: 'דירה', kind: 'ltr', width: 9, get: (r) => r.apartment_number },
     { header: 'בעלי הצ׳יפ', kind: 'text', width: 34, get: (r) => chipOrderRowPeople(r).join(', ') },

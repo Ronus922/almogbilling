@@ -45,6 +45,7 @@ import {
   CHIP_ORDER_PHONE_UNVERIFIED_LABEL, CHIP_ORDER_TEST_LABEL, chipOrderStage, chipOrderStageLabel, formatIlsAfter,
   isChipOrderOverdue, type ChipOrderWindow,
 } from '@/lib/chipOrders/model';
+import { CHIP_ORDER_RECEPTION_LABEL, RECEPTION_PAYMENT_LABEL } from '@/lib/chipOrders/reception';
 import { e164ToLocal } from '@/lib/portal/phone';
 import { AlertIco, CheckIco, Ico, ROLE_SHORT, TrashIco, roleTone } from './parts';
 
@@ -115,6 +116,9 @@ export function OrderTransaction({
   // own: a row another user (or tab) already closed still opens this window.
   const collected = o.status === 'collected';
   const rejected = o.status === 'rejected';
+  // Paid at the reception and handed over on the spot (25/11/2026): the order
+  // was collected the moment it was made. No clearing, no message to anyone.
+  const reception = o.source === 'reception';
 
   // Price lines from the order's own snapshot (per apartment). An order since
   // 21/11/2026 has one flat price (price_above = unit_price) → ONE line; an
@@ -153,13 +157,13 @@ export function OrderTransaction({
     }
   }
 
-  const stageTag = stage === 'ready' ? 'ci-solid' : stage === 'assigned' ? 'ci-green' : 'ci-amber';
+  const stageTag = stage === 'ready' ? 'ci-solid' : stage === 'collected' ? 'ci-grey' : stage === 'assigned' ? 'ci-green' : 'ci-amber';
   // Why "מוכן לאיסוף" cannot be pressed — a visible line, not only a tooltip.
   // Amber while something is still missing; quiet once the order moved on.
   const readyNote: { text: string; quiet: boolean } | null = assigning
     ? (readyAction.reason ? { text: readyAction.reason, quiet: false } : null)
     : ready ? { text: 'ההזמנה כבר מוכנה לאיסוף — השלב הבא: „נאסף”', quiet: true }
-      : collected ? { text: 'ההזמנה כבר נאספה', quiet: true }
+      : collected ? { text: reception ? 'הזמנת קבלה: שולמה ונמסרה במקום — ההזמנה סגורה' : 'ההזמנה כבר נאספה', quiet: true }
         : rejected ? { text: 'ההזמנה נדחתה', quiet: true }
           : null;
 
@@ -168,14 +172,16 @@ export function OrderTransaction({
       <div className="ci-invhead">
         <Ico size={15}><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z" /><path d="M16 8h-6a2 2 0 0 0 0 4h4a2 2 0 0 1 0 4H8" /></Ico>
         פירוט עסקה · הזמנה <span className="ci-num">{o.order_number}</span>
+        {reception && <span className="ci-tag ci-brand" data-testid="chip-order-reception-tag">{CHIP_ORDER_RECEPTION_LABEL}</span>}
         {o.is_test && <span className="ci-tag ci-amber"><FlaskIco />{CHIP_ORDER_TEST_LABEL}</span>}
         {!o.phone_verified && <span className="ci-tag ci-red">{CHIP_ORDER_PHONE_UNVERIFIED_LABEL}</span>}
       </div>
       <div className="ci-invwho">
         <div><span>שם המזמין</span><b>{o.full_name}</b></div>
-        <div><span>טלפון נייד</span><b className="ci-num">{phoneView(o.phone_e164)}</b></div>
-        <div><span>מייל</span><b className="ci-num">{o.email}</b></div>
-        <div><span>כתובת מגורים</span><b>{o.address}</b></div>
+        {/* A reception order may have no phone, email or address — nothing there is required. */}
+        <div><span>טלפון נייד</span>{o.phone_e164 ? <b className="ci-num">{phoneView(o.phone_e164)}</b> : <b>—</b>}</div>
+        <div><span>מייל</span>{o.email ? <b className="ci-num">{o.email}</b> : <b>—</b>}</div>
+        <div><span>כתובת מגורים</span><b>{o.address ?? '—'}</b></div>
         <div>
           <span>סטטוס</span>
           <b>
@@ -192,6 +198,21 @@ export function OrderTransaction({
           <span>שויכו</span>
           <b data-testid="chip-order-progress"><span className="ci-num">{linked}</span> מתוך <span className="ci-num">{ordered}</span></b>
         </div>
+        {reception && (
+          <>
+            <div>
+              <span>אמצעי תשלום</span>
+              <b data-testid="chip-order-payment-method">{o.payment_method === 'cash_transfer' ? RECEPTION_PAYMENT_LABEL.cash_transfer : o.payment_method ?? '—'}</b>
+            </div>
+            <div>
+              <span>התשלום נרשם על ידי</span>
+              <b data-testid="chip-order-payment-by">
+                {o.payment_recorded_by_name ?? '—'}
+                {o.payment_recorded_at && <> · <span className="ci-num">{DUE.format(new Date(o.payment_recorded_at))}</span></>}
+              </b>
+            </div>
+          </>
+        )}
       </div>
       <div className="ci-invapts">
         {win.items.map((i) => {

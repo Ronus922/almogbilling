@@ -64,8 +64,32 @@ export interface Chip {
   fee_charged: boolean;
   limit_override_reason: string | null;
   notes: string | null;
+  /** The holder's email as typed in the issue window (25/11/2026) — a snapshot,
+   *  like holder_name / holder_phone. */
+  holder_email: string | null;
+  /** A renter's lease attached in the issue window: its object key in the
+   *  private bucket chip-order-leases (opened only through /api/files), its
+   *  readable name and its end date (YYYY-MM-DD). The same lease sits on every
+   *  chip of that person. */
+  lease_file_key: string | null;
+  lease_file_name: string | null;
+  lease_end_date: string | null;
+  /** The chip-order line this chip was issued for — a web order, or a
+   *  reception order ("הנפק צ׳יפ" with a recorded payment). */
+  order_item_id: string | null;
+  /** The no-charge reception record this chip was issued under. */
+  reception_record_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** A lease already uploaded to Storage (POST /api/chips/leases) — what a save
+ *  of the issue window stores on the holder's chips. */
+export interface ChipLeaseRef {
+  key: string;
+  name: string;
+  mime: string | null;
+  size: number | null;
 }
 
 /** One row of a chip's append-only audit trail (chip_events). */
@@ -144,6 +168,18 @@ export interface IssueChipGroup {
    *  NEW chips are issued for (chips.order_holder_id). Set only by the order
    *  window's save (never read from a request body). */
   order_holder_id?: string | null;
+  /** The reception window (25/11/2026): the holder's email, a renter's lease
+   *  and its end date — stored on every NEW chip of the group. */
+  holder_email?: string | null;
+  lease?: ChipLeaseRef | null;
+  lease_end_date?: string | null;
+  /** The window's block this group came from. A block with cards AND app
+   *  chips is sent as two groups; a reception order keeps ONE holder line per
+   *  block. Absent = the group stands alone. */
+  block?: number | null;
+  /** The no-charge reception record of these NEW chips. Set only by the
+   *  reception save (never read from a request body). */
+  reception_record_id?: string | null;
 }
 
 /** Holder-snapshot edit of ONE existing chip, sent by the issue window when
@@ -154,6 +190,10 @@ export interface ChipHolderUpdate {
   holder_name?: string | null;
   holder_phone?: string | null;
   resident_role?: ChipResidentRole;
+  /** 25/11/2026: the block's email, lease (null = removed) and lease end date. */
+  holder_email?: string | null;
+  lease?: ChipLeaseRef | null;
+  lease_end_date?: string | null;
 }
 
 /** Payload for saving the issue window — one apartment, zero or more holder

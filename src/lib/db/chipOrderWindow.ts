@@ -20,6 +20,11 @@ import type { ChipHolderUpdate, ChipResidentRole, ChipType, IssueChipGroup } fro
 interface ChipRow extends ChipOrderWindowChip {
   live_phone: string | null;
   issued_at: string;
+  /** A lease attached in the issue window (a reception order keeps the file
+   *  on the person's chips, not on the holder line). */
+  lease_file_key: string | null;
+  lease_file_name: string | null;
+  lease_end_date: string | null;
 }
 
 const e164 = (p: string | null | undefined): string | null => (p ? toPortalE164(p) : null);
@@ -28,8 +33,9 @@ const e164 = (p: string | null | undefined): string | null => (p ? toPortalE164(
  *  the line does not exist or its order was never paid. */
 export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindow | null> {
   const order = await queryOne<ChipOrderWindowOrder>(
-    `select o.id, o.order_number, o.status, o.role, o.is_test, o.phone_verified, o.full_name, o.phone_e164, o.email,
-            o.address, o.total::float8 as total, o.paid_at, o.due_at, o.created_at, o.internal_note
+    `select o.id, o.order_number, o.status, o.role, o.source, o.is_test, o.phone_verified, o.full_name, o.phone_e164, o.email,
+            o.address, o.total::float8 as total, o.paid_at, o.due_at, o.created_at, o.internal_note,
+            o.payment_method, o.payment_recorded_by_name, o.payment_recorded_at
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id
       where i.id = $1 and o.status <> 'pending_payment'`,
@@ -52,7 +58,7 @@ export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindo
     )
   ).rows;
   const holderRows = (
-    await query<Omit<ChipOrderWindowHolder, 'chips' | 'existing'> & { source: 'order' | 'staff' }>(
+    await query<Omit<ChipOrderWindowHolder, 'chips' | 'existing'> & { source: 'order' | 'reception' | 'staff' }>(
       `select h.id, h.item_id, h.source, h.role, h.full_name, h.phone, h.email, h.chips_count,
               h.lease_file_key, h.lease_file_name, to_char(h.lease_end_date, 'YYYY-MM-DD') as lease_end_date
          from public.chip_order_holders h
@@ -65,6 +71,7 @@ export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindo
     await query<ChipRow>(
       `select ch.id, ch.chip_number, ch.chip_type, ch.status, ch.contact_id, ch.order_item_id, ch.order_holder_id,
               ch.resident_role, ch.holder_name, ch.holder_phone, ch.issued_at,
+              ch.lease_file_key, ch.lease_file_name, to_char(ch.lease_end_date, 'YYYY-MM-DD') as lease_end_date,
               case ch.resident_role when 'owner' then c.owner_phone when 'tenant' then c.tenant_phone
                                     when 'operator' then c.operator_phone else null end as live_phone
          from public.chips ch
@@ -98,8 +105,15 @@ export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindo
     for (const c of chips) {
       if (c.contact_id !== item.contact_id) continue;
       const byHolder = c.order_holder_id ? blocks.find((b) => b.id === c.order_holder_id) : undefined;
-      if (byHolder) byHolder.chips.push(strip(c));
-      else if (!c.order_holder_id && c.order_item_id === item.id) blocks[0].chips.push(strip(c));
+      if (byHolder) {
+        byHolder.chips.push(strip(c));
+        // A reception order: the person's lease is on the chips.
+        if (!byHolder.lease_file_key && c.lease_file_key) {
+          byHolder.lease_file_key = c.lease_file_key;
+          byHolder.lease_file_name = c.lease_file_name;
+          byHolder.lease_end_date = byHolder.lease_end_date ?? c.lease_end_date;
+        }
+      } else if (!c.order_holder_id && c.order_item_id === item.id) blocks[0].chips.push(strip(c));
     }
     holders.push(...blocks);
   }
@@ -151,8 +165,6 @@ export interface WindowSaveInput {
   removedHolderIds?: string[];
   /** undefined = untouched. */
   note?: string | null;
-  issuance_fee?: number | null;
-  fee_charged?: boolean;
 }
 
 /** A number another chip holds — `holderIndex` is the block's index in the
@@ -345,8 +357,6 @@ export async function saveChipOrderWindow(
             contact_id: contactId,
             groups: b.groups,
             updates: b.updates,
-            issuance_fee: input.issuance_fee ?? null,
-            fee_charged: input.fee_charged === true,
             notes: null,
           },
           actor,

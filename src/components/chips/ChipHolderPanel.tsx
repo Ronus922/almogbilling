@@ -6,10 +6,17 @@
 // ISSUE WINDOW of the chip's apartment — the only place chips are managed.
 // Chips-skin (declared exception — extended from the ref palette; shell
 // structure per DESIGN.md §12 Sheet).
+//
+// 25/11/2026 (issuing at the reception): what the issue window stored with the
+// person's chips is shown again HERE too, read only, under the chips — the
+// email, a renter's lease ("צפייה בחוזה" only for whoever may open leases) and
+// its end date, and the reception saves the chips came from (who ordered, and
+// whether it was paid or free; these come from the reception context, which
+// asks for chips:edit — a view-only user sees the first three alone).
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { KeyRound, Phone, User, X } from 'lucide-react';
+import { ExternalLink, FileText, KeyRound, Phone, User, X } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import type { ChipResidentRole, ChipWithHolder } from '@/lib/types/chips';
@@ -19,6 +26,12 @@ import {
   RESIDENT_ROLE_LABEL,
 } from '@/lib/constants/chips';
 import { formatPhoneDisplay } from '@/lib/phone';
+import { chipHolderDetails } from '@/lib/chips/holder';
+import { formatIlsAfter } from '@/lib/chipOrders/model';
+import {
+  RECEPTION_PAYMENT_LABEL, receptionRecordsOf, type ReceptionContext, type ReceptionRecordView,
+} from '@/lib/chipOrders/reception';
+import { e164ToLocal } from '@/lib/portal/phone';
 
 export interface HolderRef {
   contactId: string;
@@ -44,6 +57,8 @@ export function ChipHolderPanel({
   open,
   onOpenChange,
   onChipClick,
+  canViewLeases = false,
+  canSeeReception = false,
 }: {
   holder: HolderRef | null;
   open: boolean;
@@ -51,9 +66,15 @@ export function ChipHolderPanel({
   /** Row click → the issue window of that chip's apartment. Absent for
    *  view-only users: rows are then inert. */
   onChipClick?: (chip: ChipWithHolder) => void;
+  /** chips_orders_manage:view — the rule of every lease: "צפייה בחוזה" is a
+   *  link only for whoever may open it. */
+  canViewLeases?: boolean;
+  /** chips:edit — may read the reception saves of the apartment. */
+  canSeeReception?: boolean;
 }) {
   const [items, setItems] = useState<ChipWithHolder[]>([]);
   const [loading, setLoading] = useState(false);
+  const [records, setRecords] = useState<ReceptionRecordView[]>([]);
 
   useEffect(() => {
     if (!open || !holder) return;
@@ -79,12 +100,29 @@ export function ChipHolderPanel({
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+    // The reception saves of the apartment — best effort: without them the
+    // panel is what it always was.
+    if (canSeeReception) {
+      fetch(`/api/chips/reception?contact_id=${holder.contactId}`, { credentials: 'include' })
+        .then((res) => (res.ok ? (res.json() as Promise<ReceptionContext>) : null))
+        .then((data) => {
+          if (!cancelled) setRecords(Array.isArray(data?.records) ? data.records : []);
+        })
+        .catch(() => {
+          if (!cancelled) setRecords([]);
+        });
+    }
     return () => {
       cancelled = true;
     };
-  }, [open, holder]);
+  }, [open, holder, canSeeReception]);
 
   const activeCount = items.filter((c) => c.status === 'active').length;
+  // What was stored with this person's chips, and the saves they came from
+  // (matched to THESE chips — records of another person stay out).
+  const details = chipHolderDetails(items);
+  const saves = receptionRecordsOf(items, records);
+  const hasDetails = !loading && (details.email !== null || details.lease !== null || details.leaseEnd !== null || saves.length > 0);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -220,6 +258,99 @@ export function ChipHolderPanel({
                 )}
               </div>
             </div>
+
+            {hasDetails && (
+              <div className="overflow-hidden rounded-[16px] border border-[var(--chip-border)] bg-[var(--chip-panel)]" data-testid="chip-holder-details">
+                <div className="flex items-center gap-[11px] border-b border-[var(--chip-border)] px-5 py-[14px]">
+                  <span className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[10px] bg-[var(--chip-brand-soft)] text-[var(--chip-brand)]">
+                    <FileText className="h-[19px] w-[19px]" />
+                  </span>
+                  <h2 className="flex-1 text-start text-[15.5px] font-extrabold tracking-[-0.01em] text-[var(--chip-ink)]">
+                    פרטים שנשמרו בהנפקה
+                  </h2>
+                </div>
+                <div className="flex flex-col gap-3 p-4">
+                  {(details.email || details.lease || details.leaseEnd) && (
+                    <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-start sm:grid-cols-3">
+                      {details.email && (
+                        <div className="min-w-0">
+                          <dt className="text-[12px] font-bold text-[var(--chip-ink-soft)]">מייל</dt>
+                          <dd className="text-[13.5px] font-semibold text-[var(--chip-ink)] [overflow-wrap:anywhere]"><span className="chip-num">{details.email}</span></dd>
+                        </div>
+                      )}
+                      {details.lease && (
+                        <div className="min-w-0">
+                          <dt className="text-[12px] font-bold text-[var(--chip-ink-soft)]">חוזה שכירות</dt>
+                          <dd className="text-[13.5px] font-semibold text-[var(--chip-ink)] [overflow-wrap:anywhere]">
+                            {canViewLeases ? (
+                              <a
+                                href={`/api/files/chip-order-leases/${details.lease.key}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                data-testid="chip-holder-lease-link"
+                                className="inline-flex min-h-11 items-center gap-1.5 font-bold text-[var(--chip-brand)] hover:text-[var(--chip-brand-hover)]"
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                                צפייה בחוזה
+                              </a>
+                            ) : (
+                              <span data-testid="chip-holder-lease-attached">צורף · {details.lease.name}</span>
+                            )}
+                          </dd>
+                        </div>
+                      )}
+                      {details.leaseEnd && (
+                        <div className="min-w-0">
+                          <dt className="text-[12px] font-bold text-[var(--chip-ink-soft)]">תאריך סיום חוזה</dt>
+                          <dd className="text-[13.5px] font-semibold text-[var(--chip-ink)]"><span className="chip-num">{formatDate(`${details.leaseEnd}T12:00:00Z`)}</span></dd>
+                        </div>
+                      )}
+                    </dl>
+                  )}
+                  {saves.map((r) => {
+                    // A phone and an email are isolated left-to-right runs: side by side in
+                    // a right-to-left line they would otherwise trade places.
+                    const who: { text: string; ltr: boolean }[] = [
+                      { text: r.orderer_name ?? '', ltr: false },
+                      { text: r.orderer_phone ? e164ToLocal(r.orderer_phone) : '', ltr: true },
+                      { text: r.orderer_email ?? '', ltr: true },
+                      { text: r.address ?? '', ltr: false },
+                    ].filter((part) => part.text !== '');
+                    return (
+                      <div key={r.ref} className="rounded-[11px] border border-[var(--chip-border)] bg-[var(--chip-panel-alt)] px-[13px] py-[10px] text-start" data-testid="chip-holder-reception-record">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <span className="text-[13px] font-extrabold text-[var(--chip-ink)]">
+                            {r.kind === 'order' ? <>הזמנת קבלה <span className="chip-num">{r.order_number}</span></> : 'הנפקה בקבלה'}
+                          </span>
+                          <span className="chip-num text-[12px] text-[var(--chip-ink-soft)]">{formatDate(r.created_at)}</span>
+                          <span
+                            className={cn(
+                              'inline-flex h-[22px] items-center rounded-[6px] px-2 text-[11px] font-bold',
+                              r.kind === 'order' ? 'bg-[var(--chip-green-soft)] text-[var(--chip-green-ink)]' : 'bg-[var(--chip-hover)] text-[var(--chip-ink-muted)]',
+                            )}
+                          >
+                            {r.kind === 'order'
+                              ? <>שולם <span className="chip-num px-1">{formatIlsAfter(r.amount)}</span> · {RECEPTION_PAYMENT_LABEL.cash_transfer}</>
+                              : RECEPTION_PAYMENT_LABEL.none}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[12.5px] font-medium text-[var(--chip-ink-muted)] [overflow-wrap:anywhere]">
+                          מזמין:{' '}
+                          {who.length === 0
+                            ? 'לא נרשמו פרטים'
+                            : who.map((part, i) => (
+                                <span key={i}>
+                                  {i > 0 && ' · '}
+                                  {part.ltr ? <span className="chip-num">{part.text}</span> : part.text}
+                                </span>
+                              ))}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </SheetContent>

@@ -4,6 +4,7 @@
 
 import type {
   ChipHolderUpdate,
+  ChipLeaseRef,
   ChipResidentRole,
   IssueChipGroup,
   IssueChipsInput,
@@ -79,6 +80,11 @@ export interface HolderSnapshot {
   name: string | null;
   phone: string | null;
   role: ChipResidentRole | null;
+  /** 25/11/2026 — the block's email, a renter's lease and its end date
+   *  (YYYY-MM-DD). A field absent from the CURRENT snapshot is not compared. */
+  email?: string | null;
+  lease?: ChipLeaseRef | null;
+  leaseEnd?: string | null;
 }
 
 /**
@@ -99,6 +105,10 @@ export function holderUpdatesForBlock(
   if ((current.name ?? null) !== (orig.name ?? null)) patch.holder_name = current.name ?? null;
   if ((current.phone ?? null) !== (orig.phone ?? null)) patch.holder_phone = current.phone ?? null;
   if (current.role !== orig.role) patch.resident_role = current.role;
+  if (current.email !== undefined && (current.email ?? null) !== (orig.email ?? null)) patch.holder_email = current.email ?? null;
+  // A lease is the stored object: the same key = the same lease.
+  if (current.lease !== undefined && (current.lease?.key ?? null) !== (orig.lease?.key ?? null)) patch.lease = current.lease ?? null;
+  if (current.leaseEnd !== undefined && (current.leaseEnd ?? null) !== (orig.leaseEnd ?? null)) patch.lease_end_date = current.leaseEnd ?? null;
   if (Object.keys(patch).length === 0) return [];
   return savedChipIds.map((id) => ({ id, ...patch }));
 }

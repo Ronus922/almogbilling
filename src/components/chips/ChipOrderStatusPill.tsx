@@ -26,12 +26,14 @@ export function ChipOrderStatusPill({ status }: { status: ChipOrderStatus }) {
 }
 
 // ממתין לשיוך = amber (the old "paid") · שויכו X מתוך Y = brand · שויך = green
-// soft · מוכן לאיסוף = solid green, so "ready" stands out from "assigned".
+// soft · מוכן לאיסוף = solid green, so "ready" stands out from "assigned" ·
+// נאסף = grey: done, nothing waits (a reception order, 25/11/2026).
 const STAGE_TONE: Record<ChipOrderStage, string> = {
   awaiting: 'border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] text-[var(--chip-amber-ink)]',
   partial: 'border-[var(--chip-brand-border)] bg-[var(--chip-brand-soft)] text-[var(--chip-brand-ink)]',
   assigned: 'border-[var(--chip-green-border)] bg-[var(--chip-green-soft)] text-[var(--chip-green-ink)]',
   ready: 'border-[var(--chip-green)] bg-[var(--chip-green)] text-white',
+  collected: 'border-[var(--chip-border)] bg-[var(--chip-hover)] text-[var(--chip-ink-muted)]',
 };
 
 /** The stage of one apartment of an order, plus "באיחור" past the due date. */

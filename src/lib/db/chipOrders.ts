@@ -13,6 +13,7 @@ import {
   priceLine,
   type ChipOrderMatchStatus,
   type ChipOrderNotifyKind,
+  type ChipOrderPersonRole,
   type ChipOrderRefundStatus,
   type ChipOrderRole,
   type ChipOrderRow,
@@ -387,8 +388,10 @@ const OPEN_SQL = `('paid', 'approved', 'ready')`;
 
 /** The Orders tab: ONE ROW PER APARTMENT of every open order (paid — being
  *  assigned — or ready). pending_payment never shows; a row leaves once its
- *  order is collected or rejected. Test orders come with is_test; the screen
- *  badges them and keeps them out of every count. `people` — the people of
+ *  order is collected or rejected — EXCEPT a reception order (25/11/2026),
+ *  which is collected the moment it is made and stays in the tab, after the
+ *  open orders, newest first, tagged "קבלה". Test orders come with is_test;
+ *  the screen badges them and keeps them out of every count. `people` — the people of
  *  the apartment line (the search, the Excel file and the print view of the
  *  tab, 24/11/2026): the names of its holder lines, in the order of the
  *  window's blocks. A line with no holder line of the order itself — an order
@@ -397,11 +400,11 @@ const OPEN_SQL = `('paid', 'approved', 'ready')`;
 export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
   const r = await query<ChipOrderRow>(
     `select i.id as item_id, o.id as order_id, o.order_number, i.contact_id, i.apartment_number,
-            o.full_name, o.phone_e164, o.role, o.status, i.chips_count,
+            o.full_name, o.phone_e164, o.role, o.source, o.status, i.chips_count,
             (select count(*)::int from public.chips c where c.order_item_id = i.id and c.status = 'active') as chips_linked,
             i.line_total::float8 as line_total,
             (case when exists (select 1 from public.chip_order_holders h
-                                where h.item_id = i.id and h.source = 'order')
+                                where h.item_id = i.id and h.source in ('order', 'reception'))
                   then array[]::text[] else array[o.full_name] end)
             || array(select h.full_name from public.chip_order_holders h
                       where h.item_id = i.id order by h.position, h.created_at, h.id) as people,
@@ -411,8 +414,9 @@ export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
             o.is_test, o.phone_verified
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id
-      where o.status in ${OPEN_SQL}
-      order by case o.status when 'ready' then 1 else 0 end, o.paid_at desc nulls last, o.order_number desc, i.created_at`,
+      where o.status in ${OPEN_SQL} or (o.source = 'reception' and o.status = 'collected')
+      order by case o.status when 'collected' then 2 when 'ready' then 1 else 0 end,
+               o.paid_at desc nulls last, o.order_number desc, i.created_at`,
   );
   return r.rows;
 }
@@ -468,10 +472,10 @@ const REGISTRY_COLS: Record<ChipOrderRole, { name: string; phone: string }> = {
   operator: { name: 'operator_name', phone: 'operator_phone' },
 };
 
-async function lockOrder(client: PoolClient, id: string): Promise<{ status: ChipOrderStatus; role: ChipOrderRole } | null> {
+async function lockOrder(client: PoolClient, id: string): Promise<{ status: ChipOrderStatus; role: ChipOrderPersonRole } | null> {
   return (
     (
-      await client.query<{ status: ChipOrderStatus; role: ChipOrderRole }>(
+      await client.query<{ status: ChipOrderStatus; role: ChipOrderPersonRole }>(
         `select status, role from public.chip_orders where id = $1 for update`,
         [id],
       )
@@ -507,6 +511,9 @@ export async function writeOrderHolderToRegistry(
     if (!order) return null;
     if (!isOpenChipOrder(order.status)) throw new ChipOrderStateError('not_open');
     const role = roleOverride ?? order.role;
+    // Only a role the tenants list has a slot for (a reception order may be a
+    // guest's; it is closed by then anyway — the check above).
+    if (role !== 'owner' && role !== 'tenant' && role !== 'operator') throw new ChipOrderStateError('nothing_to_write');
     const cols = REGISTRY_COLS[role];
     const body: Record<string, unknown> = {};
     if (values.name?.trim()) body[cols.name] = values.name.trim();
