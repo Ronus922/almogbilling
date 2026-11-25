@@ -13,7 +13,7 @@ vi.mock('@sentry/nextjs', () => ({ init }));
 vi.mock('@/lib/logger', () => ({ logger: { info } }));
 vi.mock('@sentry/nextjs/config', () => ({ withSentryConfig: (config: unknown) => config }));
 
-import { sentryRuntimeOptions } from '@/lib/sentry-options';
+import { dropSensitiveRequestData, sentryRuntimeOptions } from '@/lib/sentry-options';
 
 const DSN = 'https://publickey123@o1.ingest.de.sentry.io/42';
 
@@ -63,7 +63,16 @@ describe('sentry.server.config — init from the live environment at boot', () =
       environment: 'production',
       tracesSampleRate: 0.1,
       sendDefaultPii: false,
+      // The body and the secret headers of a public chip-order request are dropped from every event (25/11/2026).
+      beforeSend: expect.any(Function),
+      beforeSendTransaction: expect.any(Function),
     });
+    // Both hooks are the scrubber (the module was re-imported, so not the same function object).
+    const passed = init.mock.calls[0]![0] as Record<'beforeSend' | 'beforeSendTransaction', (e: unknown) => unknown>;
+    for (const hook of [passed.beforeSend, passed.beforeSendTransaction]) {
+      expect(hook({ request: { url: '/api/public/chip-order/payplus/callback', data: { secret: 1 } } }))
+        .toEqual({ request: { url: '/api/public/chip-order/payplus/callback' } });
+    }
     expect(info).toHaveBeenCalledTimes(1);
     expect(info).toHaveBeenCalledWith({ environment: 'production', tracesSampleRate: 0.1 }, 'Sentry initialized');
     const logged = JSON.stringify(info.mock.calls);
@@ -117,5 +126,32 @@ describe('next.config.ts — no build-time copy of the server DSN', () => {
     const read = [...source.matchAll(/process\.env\.([A-Z_]+)/g)].map((m) => m[1]).filter((k) => k !== 'NODE_ENV');
     expect(read).toEqual(expect.arrayContaining(['SENTRY_CLIENT_DSN', 'SENTRY_CLIENT_ENVIRONMENT']));
     for (const key of read) expect(config.env ?? {}).toHaveProperty(key);
+  });
+});
+
+describe('dropSensitiveRequestData — a public chip-order request never leaves its body or its secret headers in an event', () => {
+  const body = { transaction: { uid: 'tx' }, data: { card_information: { expiry_month: '05', identification_number: '000000018' } } };
+
+  it('drops the body of the PayPlus callback, the session, the status and the order routes — and the two secret headers', () => {
+    for (const url of [
+      'https://example.test/api/public/chip-order/payplus/callback',
+      'http://localhost:3003/api/public/chip-order/payplus/session',
+      '/api/public/chip-order/payplus/status?x=1',
+      'https://example.test/api/public/chip-order',
+    ]) {
+      const event = dropSensitiveRequestData({
+        request: { url, data: structuredClone(body), method: 'POST', headers: { 'X-Chip-Order-Test': 'secret-token', hash: 'sig', 'user-agent': 'PayPlus' } },
+      });
+      expect(event.request).toEqual({ url, method: 'POST', headers: { 'user-agent': 'PayPlus' } });
+      const text = JSON.stringify(event);
+      for (const never of ['000000018', 'secret-token', 'sig"']) expect(text).not.toContain(never);
+    }
+  });
+
+  it('leaves every other request, and an event with no request, as they are', () => {
+    const other = { request: { url: 'https://example.test/api/health', data: { a: 1 }, headers: { hash: 'x' } } };
+    expect(dropSensitiveRequestData(structuredClone(other))).toEqual(other);
+    const plain: { message: string; request?: { url?: string } } = { message: 'x' };
+    expect(dropSensitiveRequestData(plain)).toEqual({ message: 'x' });
   });
 });

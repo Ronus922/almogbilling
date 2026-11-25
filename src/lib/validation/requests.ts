@@ -660,6 +660,13 @@ export const chipOrderTestFinishBodySchema = z.object({
   trackingToken: z.string().regex(/^[A-Za-z0-9_-]{32,64}$/),
 });
 
+/** POST /api/public/chip-order/payplus/session and …/status — the card payment
+ *  of an order the browser just created. The tracking token is the only thing
+ *  the browser sends: the amount is never read from it. */
+export const chipOrderCardBodySchema = z.object({
+  trackingToken: z.string().regex(/^[A-Za-z0-9_-]{32,64}$/),
+});
+
 /** POST /api/chip-orders/items/[itemId]/registry — "עדכן בכרטיס הדייר": the
  *  holder block's name and phone, as typed in the issue window. */
 export const chipOrderRegistryBodySchema = z.object({

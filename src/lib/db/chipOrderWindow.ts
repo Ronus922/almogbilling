@@ -46,6 +46,8 @@ export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindo
             o.payment_method, o.payment_recorded_by_name, o.payment_recorded_at,
             o.collected_at, o.collected_by_name, o.handed_over_by_name, o.handed_over_via,
             o.rejected_at, o.reject_reason, o.cancelled_by_name,
+            o.card_status, o.card_env, o.card_paid_amount::float8 as card_paid_amount, o.card_paid_at,
+            o.card_approval_number, o.card_last4,
             (select x.order_number from public.chip_orders x where x.id = o.extra_of_order_id) as extra_of_order_number
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id

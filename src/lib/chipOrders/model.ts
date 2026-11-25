@@ -484,6 +484,15 @@ export interface ChipOrderWindowOrder {
   cancelled_by_name: string | null;
   /** A reception order made for extra chips of a web order: that order's number. */
   extra_of_order_number: number | null;
+  /** The card payment of a web order (PayPlus hosted fields, 25/11/2026): what
+   *  the processor confirmed. All null on an order that was not paid by card.
+   *  `card_env` 'sandbox' = a test card on a test order — no money moved. */
+  card_status: 'started' | 'paid' | 'failed' | null;
+  card_env: 'sandbox' | 'production' | null;
+  card_paid_amount: number | null;
+  card_paid_at: string | null;
+  card_approval_number: string | null;
+  card_last4: string | null;
 }
 
 /** A reception order made for extra chips of the order the window shows. */

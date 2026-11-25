@@ -80,6 +80,16 @@ const PUBLIC = new Set([
   // the typed phone into a skip cookie that the submit honours together with
   // the same token, for a TEST order stored phone_verified = false.
   'src/app/api/public/chip-order/otp/skip/route.ts',
+  // Card payment through PayPlus hosted fields (25/11/2026). No session, by
+  // design: the order page has no login. `session` and `status` need the
+  // current test-link token while PayPlus runs in sandbox, name the order by
+  // its tracking token, are rate limited, and never read an amount from the
+  // browser. `callback` is called by PayPlus and is refused (401) unless the
+  // request is validated the way PayPlus documents it: user-agent "PayPlus"
+  // and a `hash` header = HMAC-SHA256 of the body under our secret key.
+  'src/app/api/public/chip-order/payplus/session/route.ts',
+  'src/app/api/public/chip-order/payplus/status/route.ts',
+  'src/app/api/public/chip-order/payplus/callback/route.ts',
 ]);
 
 run('check-api-auth', async () => {
@@ -202,7 +212,9 @@ run('check-api-auth', async () => {
   const DYNAMIC_LOAD = /\bimport\s*\(|\brequire\s*\(/;
   const CHIP_ROUTE = /^src\/app\/api\/(chips\/|chip-orders\/|contacts\/\[id\]\/chips\/|settings\/chip-orders\/|cron\/chip-orders-purge\/)/;
   // …and not by folder alone: ANY route that loads a chip module is a chip route.
-  const TOUCHES_CHIPS = /from\s+['"]@\/lib\/(db\/(chips|chipOrders|chipOrderWindow|chipReception|chipPickup|chipLeaseUploads)|chipOrders\/(cleanup|testMode|server)|storage\/chipOrderLeaseStorage)['"]/;
+  // The card-payment modules count too (25/11/2026): a route that loads the
+  // PayPlus client or the card DB layer is a chip route like any other.
+  const TOUCHES_CHIPS = /from\s+['"]@\/lib\/(db\/(chips|chipOrders|chipOrderWindow|chipReception|chipPickup|chipLeaseUploads|chipOrderCard)|chipOrders\/(cleanup|testMode|server|cardPayment)|payplus\/client|storage\/chipOrderLeaseStorage)['"]/;
   const CHIP_STRONG = /\bawait\s+require(Permission|AnyPermission|Admin)\(|CRON_SECRET/;
   /** The body of a function declared in `src` — from its name to the brace
    *  that closes it (null when it is not found). */
@@ -282,6 +294,47 @@ run('check-api-auth', async () => {
     // A mention in a comment is not a use.
     .filter((f) => /\brequireChipPickup\b/.test(stripComments(readFileSync(join(root, f), 'utf8'))));
   for (const f of elsewhere) fail(`${f} — requireChipPickup שמור לנתיבי /api/chip-pickup בלבד`);
+  // The three public card-payment routes (PayPlus, 25/11/2026) have no
+  // session by design, so each one's own gate is pinned here — it must be
+  // CALLED (awaited where it is async), not merely imported:
+  //   session, status — the current test-link token AND the card-step
+  //                     configuration (sandbox = test orders only);
+  //   callback        — PayPlus's signature check, and nothing applied before it.
+  const CARD_DIR = 'src/app/api/public/chip-order/payplus/';
+  const cardRoute = (name) => {
+    const rel = `${CARD_DIR}${name}/route.ts`;
+    let src = '';
+    try { src = stripComments(readFileSync(join(root, rel), 'utf8')); } catch { fail(`${rel} — הנתיב חסר`); }
+    return { rel, src };
+  };
+  for (const name of ['session', 'status']) {
+    const { rel, src } = cardRoute(name);
+    if (!/\bawait\s+isTestRequest\(req\)/.test(src)) fail(`${rel} — חייב לבדוק את טוקן הבדיקה (await isTestRequest(req))`);
+    if (!/\bcardStepConfig\(\)/.test(src)) fail(`${rel} — חייב לעבור דרך cardStepConfig() (sandbox = הזמנות בדיקה בלבד)`);
+    if (/\bpayplusConfig\(/.test(src)) fail(`${rel} — אסור לקרוא ל-payplusConfig() ישירות (עוקף את cardStepConfig)`);
+    if (/\b(amount|total|price|sum)\b[^\n]*\bbody\.data\b|\bbody\.data\.(amount|total|price|sum)\b/.test(src)) fail(`${rel} — סכום לא נקרא מהבקשה`);
+  }
+  {
+    const { rel, src } = cardRoute('callback');
+    const verify = src.search(/\bverifyPayPlusCallback\(/);
+    const apply = src.search(/\bapplyPayPlusTransaction\(/);
+    if (verify < 0) fail(`${rel} — חייב לאמת את החתימה של PayPlus (verifyPayPlusCallback)`);
+    if (apply >= 0 && (verify < 0 || apply < verify)) fail(`${rel} — applyPayPlusTransaction לפני אימות החתימה`);
+    if (!/if\s*\(\s*!checked\.ok\s*\)/.test(src)) fail(`${rel} — חייב לדחות בקשה שהחתימה שלה לא אומתה (if (!checked.ok))`);
+  }
+  // Only those three routes may mark an order paid by card, and the browser
+  // side never loads the PayPlus client (its keys are server-only).
+  const cardUsers = execFileSync('bash', ['-c', "cd '" + root + "' && /usr/bin/grep -rlE \"recordCardPayment|applyPayPlusTransaction|lookupCardPayment\" src --include=*.ts --include=*.tsx || true"], { encoding: 'utf8' })
+    .trim().split('\n').filter(Boolean)
+    .filter((f) => !f.startsWith(CARD_DIR) && f !== 'src/lib/db/chipOrderCard.ts' && f !== 'src/lib/chipOrders/cardPayment.ts')
+    // A mention in a comment is not a use.
+    .filter((f) => /\b(recordCardPayment|applyPayPlusTransaction|lookupCardPayment)\b/.test(stripComments(readFileSync(join(root, f), 'utf8'))));
+  for (const f of cardUsers) fail(`${f} — סימון הזמנה כ„שולם בכרטיס” שמור לשלושת נתיבי ${CARD_DIR}`);
+  const clientLoaders = execFileSync('bash', ['-c', "cd '" + root + "' && /usr/bin/grep -rlE \"from ['\\\"]@/lib/payplus/client['\\\"]\" src --include=*.ts --include=*.tsx || true"], { encoding: 'utf8' })
+    .trim().split('\n').filter(Boolean)
+    .filter((f) => /^['"]use client['"]/m.test(readFileSync(join(root, f), 'utf8')));
+  for (const f of clientLoaders) fail(`${f} — רכיב דפדפן טוען את לקוח PayPlus (המפתחות בצד השרת בלבד)`);
+
   // The lease files of the orders (a renter's contract) keep their own guard —
   // a module permission the guard does not hold.
   if (!/'chip-order-leases':\s*\(\)\s*=>\s*requirePermission\('chips_orders_manage',\s*'view'\)/.test(filesRoute)) {

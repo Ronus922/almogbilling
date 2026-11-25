@@ -1806,6 +1806,27 @@ COMMENT ON TABLE public.chip_lease_uploads IS 'One row per lease file that the i
 
 
 --
+-- Name: chip_order_card_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.chip_order_card_sessions (
+    page_request_uid text NOT NULL,
+    order_id uuid NOT NULL,
+    env text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chip_order_card_sessions_env_check CHECK ((env = ANY (ARRAY['sandbox'::text, 'production'::text]))),
+    CONSTRAINT chip_order_card_sessions_page_request_uid_check CHECK (((length(page_request_uid) >= 8) AND (length(page_request_uid) <= 80)))
+);
+
+
+--
+-- Name: TABLE chip_order_card_sessions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.chip_order_card_sessions IS 'Card payment sessions (PayPlus page requests) this server opened for chip orders. A charge counts for an order only when it names one of that order''s sessions.';
+
+
+--
 -- Name: chip_order_holders; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1966,11 +1987,33 @@ CREATE TABLE public.chip_orders (
     cancelled_by uuid,
     cancelled_by_name text,
     extra_of_order_id uuid,
+    card_provider text,
+    card_env text,
+    card_status text,
+    card_page_request_uid text,
+    card_session_at timestamp with time zone,
+    card_transaction_uid text,
+    card_paid_amount numeric(10,2),
+    card_paid_at timestamp with time zone,
+    card_approval_number text,
+    card_last4 text,
+    card_failure_reason text,
+    card_failed_at timestamp with time zone,
     CONSTRAINT chip_orders_address_check CHECK ((((source = 'reception'::text) AND (address IS NULL)) OR ((address IS NOT NULL) AND ((length(btrim(address)) >= 2) AND (length(btrim(address)) <= 300))))),
     CONSTRAINT chip_orders_address_city_check CHECK (((address_city IS NULL) OR ((length(btrim(address_city)) >= 2) AND (length(btrim(address_city)) <= 100)))),
     CONSTRAINT chip_orders_address_street_check CHECK (((address_street IS NULL) OR ((length(btrim(address_street)) >= 2) AND (length(btrim(address_street)) <= 200)))),
     CONSTRAINT chip_orders_address_zip_check CHECK (((address_zip IS NULL) OR (address_zip ~ '^[0-9]{7}$'::text))),
     CONSTRAINT chip_orders_cancelled_check CHECK ((((cancelled_by_name IS NULL) AND (cancelled_by IS NULL)) OR ((cancelled_by_name IS NOT NULL) AND (source = 'reception'::text) AND (status = 'rejected'::text) AND (rejected_at IS NOT NULL) AND (reject_reason IS NOT NULL)))),
+    CONSTRAINT chip_orders_card_env_check CHECK (((card_env IS NULL) OR (card_env = ANY (ARRAY['sandbox'::text, 'production'::text])))),
+    CONSTRAINT chip_orders_card_env_test_check CHECK ((((card_env IS DISTINCT FROM 'sandbox'::text) OR is_test) AND ((card_env IS DISTINCT FROM 'production'::text) OR (NOT is_test)))),
+    CONSTRAINT chip_orders_card_failure_check CHECK ((((card_failure_reason IS NULL) OR ((length(card_failure_reason) >= 1) AND (length(card_failure_reason) <= 300))) AND ((card_failure_reason IS NULL) = (card_failed_at IS NULL)) AND ((card_failure_reason IS NULL) OR (card_status = 'failed'::text)) AND ((card_status IS DISTINCT FROM 'failed'::text) OR (card_failure_reason IS NOT NULL)))),
+    CONSTRAINT chip_orders_card_last4_check CHECK (((card_last4 IS NULL) OR (card_last4 ~ '^[0-9]{4}$'::text))),
+    CONSTRAINT chip_orders_card_paid_check CHECK ((((NOT (card_status IS DISTINCT FROM 'paid'::text)) AND (card_transaction_uid IS NOT NULL) AND (card_paid_at IS NOT NULL) AND (card_paid_amount IS NOT NULL) AND (card_paid_amount = total) AND (status <> 'pending_payment'::text)) OR ((card_status IS DISTINCT FROM 'paid'::text) AND (card_transaction_uid IS NULL) AND (card_paid_at IS NULL) AND (card_paid_amount IS NULL) AND (card_approval_number IS NULL) AND (card_last4 IS NULL)))),
+    CONSTRAINT chip_orders_card_provider_check CHECK (((card_provider IS NULL) OR (card_provider = 'payplus'::text))),
+    CONSTRAINT chip_orders_card_session_check CHECK ((((card_status IS NULL) AND (card_provider IS NULL) AND (card_env IS NULL) AND (card_page_request_uid IS NULL) AND (card_session_at IS NULL)) OR ((card_status IS NOT NULL) AND (card_provider IS NOT NULL) AND (card_env IS NOT NULL) AND (card_page_request_uid IS NOT NULL) AND (card_session_at IS NOT NULL)))),
+    CONSTRAINT chip_orders_card_status_check CHECK (((card_status IS NULL) OR (card_status = ANY (ARRAY['started'::text, 'paid'::text, 'failed'::text])))),
+    CONSTRAINT chip_orders_card_text_check CHECK ((((card_approval_number IS NULL) OR ((length(card_approval_number) >= 1) AND (length(card_approval_number) <= 40))) AND ((card_transaction_uid IS NULL) OR ((length(card_transaction_uid) >= 8) AND (length(card_transaction_uid) <= 80))) AND ((card_page_request_uid IS NULL) OR ((length(card_page_request_uid) >= 8) AND (length(card_page_request_uid) <= 80))))),
+    CONSTRAINT chip_orders_card_web_check CHECK (((card_status IS NULL) OR (source = 'web'::text))),
     CONSTRAINT chip_orders_collected_by_name_check CHECK (((collected_by_name IS NULL) OR ((length(btrim(collected_by_name)) >= 1) AND (length(btrim(collected_by_name)) <= 120)))),
     CONSTRAINT chip_orders_email_check CHECK ((((source = 'reception'::text) AND (email IS NULL)) OR ((email IS NOT NULL) AND ((length(btrim(email)) >= 3) AND (length(btrim(email)) <= 254))))),
     CONSTRAINT chip_orders_extra_of_check CHECK (((extra_of_order_id IS NULL) OR ((source = 'reception'::text) AND (extra_of_order_id <> id)))),
@@ -2098,6 +2141,27 @@ COMMENT ON COLUMN public.chip_orders.cancelled_by_name IS 'Who cancelled a RECEP
 --
 
 COMMENT ON COLUMN public.chip_orders.extra_of_order_id IS 'A reception order made for EXTRA chips of a web order: chips added in that order''s window beyond the quantity paid online, and paid in cash or by transfer. Points at the web order, whose own lines and total never change. NULL on every other order.';
+
+
+--
+-- Name: COLUMN chip_orders.card_env; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.card_env IS 'The processor environment of the card session. sandbox only on a test order, production never on one (chip_orders_card_env_test_check).';
+
+
+--
+-- Name: COLUMN chip_orders.card_status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.card_status IS 'Card payment (PayPlus hosted fields): started / paid / failed. NULL = no card session was ever opened for the order.';
+
+
+--
+-- Name: COLUMN chip_orders.card_last4; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.card_last4 IS 'The last four digits of the card that paid. The card number, its expiry and the CVV are never stored.';
 
 
 --
@@ -5036,6 +5100,14 @@ ALTER TABLE ONLY public.chip_lease_uploads
 
 
 --
+-- Name: chip_order_card_sessions chip_order_card_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_order_card_sessions
+    ADD CONSTRAINT chip_order_card_sessions_pkey PRIMARY KEY (page_request_uid);
+
+
+--
 -- Name: chip_order_holders chip_order_holders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6145,6 +6217,13 @@ CREATE INDEX chip_lease_uploads_uploaded_at_idx ON public.chip_lease_uploads USI
 
 
 --
+-- Name: chip_order_card_sessions_order_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chip_order_card_sessions_order_idx ON public.chip_order_card_sessions USING btree (order_id, created_at DESC);
+
+
+--
 -- Name: chip_order_holders_extra_of_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6205,6 +6284,20 @@ CREATE INDEX chip_order_items_order_idx ON public.chip_order_items USING btree (
 --
 
 CREATE INDEX chip_order_notifications_order_idx ON public.chip_order_notifications USING btree (order_id, created_at);
+
+
+--
+-- Name: chip_orders_card_page_request_uid_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX chip_orders_card_page_request_uid_key ON public.chip_orders USING btree (card_page_request_uid) WHERE (card_page_request_uid IS NOT NULL);
+
+
+--
+-- Name: chip_orders_card_transaction_uid_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX chip_orders_card_transaction_uid_key ON public.chip_orders USING btree (card_transaction_uid) WHERE (card_transaction_uid IS NOT NULL);
 
 
 --
@@ -7909,6 +8002,14 @@ ALTER TABLE ONLY public.chip_lease_uploads
 
 
 --
+-- Name: chip_order_card_sessions chip_order_card_sessions_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_order_card_sessions
+    ADD CONSTRAINT chip_order_card_sessions_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.chip_orders(id) ON DELETE CASCADE;
+
+
+--
 -- Name: chip_order_holders chip_order_holders_extra_of_holder_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9305,5 +9406,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261113220605'),
     ('20261120222746'),
     ('20261125064322'),
-    ('20261125090836')
+    ('20261125090836'),
+    ('20261125130957')
 ;

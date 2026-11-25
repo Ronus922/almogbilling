@@ -26,9 +26,16 @@ const SECURITY_HEADERS = [
 // Same policy plus frame-src for those hosts only; Next applies the LAST
 // matching header of a key, so this entry replaces the global CSP on that
 // path alone and every other route keeps the string above byte for byte.
+//
+// Card payment (25/11/2026): the PayPlus hosted fields — the card number,
+// expiry and CVV — are frames served by PayPlus's API host
+// (<host>/api/hosted-field/…, payplus-hosted-fields 1.5.0): restapi. in
+// production, restapidev. in the sandbox. Exactly those two origins, frames
+// only. The SDK itself is bundled from npm and served by us (script-src stays
+// 'self'); its calls are covered by the existing connect-src.
 const CHIP_ORDER_CSP = `${
   SECURITY_HEADERS.find((h) => h.key === "Content-Security-Policy")!.value
-}; frame-src 'self' https://meshulam.co.il https://*.meshulam.co.il`;
+}; frame-src 'self' https://meshulam.co.il https://*.meshulam.co.il https://restapi.payplus.co.il https://restapidev.payplus.co.il`;
 
 const nextConfig: NextConfig = {
   // Produce a standalone server bundle at .next/standalone/ for systemd deployment.

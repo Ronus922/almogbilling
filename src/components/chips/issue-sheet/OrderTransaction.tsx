@@ -140,6 +140,8 @@ export function OrderTransaction({
   // Paid at the reception and handed over on the spot (25/11/2026): the order
   // was collected the moment it was made. No clearing, no message to anyone.
   const reception = o.source === 'reception';
+  // Paid by card: the processor confirmed a charge (PayPlus, 25/11/2026).
+  const cardPaid = o.card_status === 'paid';
 
   // Price lines from the order's own snapshot (per apartment). An order since
   // 21/11/2026 has one flat price (price_above = unit_price) → ONE line; an
@@ -231,7 +233,27 @@ export function OrderTransaction({
             {overdue && <> <span className="ci-tag ci-red">באיחור</span></>}
           </b>
         </div>
-        <div><span>סכום ששולם</span>{o.is_test ? <b>בדיקה, ללא חיוב</b> : <b className="ci-num">{formatIlsAfter(o.total)}</b>}</div>
+        {/* The amount actually paid. A card payment shows what the processor
+            confirmed; a test order that never met a card stays "no charge". */}
+        <div>
+          <span>סכום ששולם</span>
+          {cardPaid
+            ? <b data-testid="chip-order-paid-amount"><span className="ci-num">{formatIlsAfter(o.card_paid_amount ?? o.total)}</span>{o.card_env === 'sandbox' && <> · כרטיס בדיקה, ללא חיוב אמיתי</>}</b>
+            : o.is_test ? <b data-testid="chip-order-paid-amount">בדיקה, ללא חיוב</b> : <b className="ci-num" data-testid="chip-order-paid-amount">{formatIlsAfter(o.total)}</b>}
+        </div>
+        {cardPaid && (
+          <div>
+            <span>סטטוס תשלום</span>
+            <b data-testid="chip-order-card-payment">
+              <span className={cn('ci-tag', o.card_env === 'sandbox' ? 'ci-amber' : 'ci-green')}>
+                {o.card_env === 'sandbox' ? 'שולם באשראי · סביבת בדיקות' : 'שולם באשראי'}
+              </span>
+              {o.card_last4 && <> · כרטיס <span className="ci-num">••••{o.card_last4}</span></>}
+              {o.card_approval_number && <> · אישור <span className="ci-num">{o.card_approval_number}</span></>}
+              {o.card_paid_at && <> · <span className="ci-num">{DUE.format(new Date(o.card_paid_at))}</span></>}
+            </b>
+          </div>
+        )}
         <div>
           <span>יעד להכנה</span>
           <b className={cn('ci-num', overdue && 'ci-late')}>{o.due_at ? DUE.format(new Date(o.due_at)) : '—'}</b>

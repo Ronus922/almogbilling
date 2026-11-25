@@ -25,6 +25,16 @@
 // always did: after the pay button, before the payment. In test mode (a valid
 // test link) the pay button ends with "סיים הזמנת בדיקה" on the server — no
 // Grow, no charge — and the confirmation screen.
+//
+// Card payment (25/11/2026, `cardPayment`): the card section holds PayPlus's
+// hosted fields (PayPlusCardFields). They can only be mounted for an order
+// that exists, so the flow has two presses: "המשך לתשלום" validates, verifies
+// the phone and SAVES the order (awaiting payment); the fields then open in
+// place, the rest of the form locks, and "תשלום מאובטח" charges the card.
+// A refused charge shows a Hebrew line and leaves everything as typed; an
+// expired session or one out of attempts is reopened from the same button.
+// The confirmation screen appears only after the SERVER says the order is
+// paid (it hears it from PayPlus) — never because the SDK said so.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -36,6 +46,8 @@ import {
   CHIP_ORDER_APT_LIMIT_MESSAGE, CHIP_ORDER_LIMITS, CHIP_ORDER_TEST_HEADER, LEASE_FILE_ACCEPT, formatIlsAfter, priceLine,
 } from '@/lib/chipOrders/model';
 import { leaseFileProblem } from '@/lib/chipOrders/lease';
+import { CARD_TEXT, cardFailureMessage, cardHolderPhone, sdkSaysRefused } from '@/lib/chipOrders/card';
+import { PayPlusCardFields, type CardFieldsEvent, type CardFieldsHandle } from './PayPlusCardFields';
 import { ApartmentCombo } from './ApartmentCombo';
 import { ChipOrderConfirmation, type ConfirmedRow } from './ChipOrderConfirmation';
 
@@ -57,7 +69,25 @@ interface Row {
   end: string;
 }
 
-type Step = 'form' | 'otp' | 'paying' | 'done';
+type Step = 'form' | 'otp' | 'paying' | 'card' | 'done';
+
+/** The card step: fields opening → ready to type → a charge in flight → the
+ *  server confirming it. 'closed' = no usable session (not opened yet, expired,
+ *  out of attempts); 'unverified' = sent, and no confirmation arrived yet. */
+type CardPhase = 'closed' | 'opening' | 'ready' | 'paying' | 'verifying' | 'unverified';
+interface SavedOrder { trackingToken: string; orderNumber: number; total: number }
+const CARD_BUSY: readonly CardPhase[] = ['opening', 'paying', 'verifying'];
+const CARD_BUTTON: Record<Exclude<CardPhase, 'ready'>, string> = {
+  closed: CARD_TEXT.renew,
+  opening: 'פותחים את התשלום…',
+  paying: 'מבצעים את התשלום…',
+  verifying: 'מאמתים את התשלום…',
+  unverified: 'בדיקה חוזרת של התשלום',
+};
+/** Rounds of "was it paid?" after the SDK reported a charge, 2.5s apart — and
+ *  the shorter wait of a re-check the customer asked for. */
+const CARD_VERIFY_ROUNDS = 14;
+const CARD_RECHECK_ROUNDS = 4;
 
 // Grow's payment iframe posts from one of these (R/postmessage).
 const GROW_ORIGINS = ['https://meshulam.co.il', 'https://secure.meshulam.co.il', 'https://sandbox.meshulam.co.il'];
@@ -110,13 +140,16 @@ function Err({ msg }: { msg?: string }) {
 }
 
 export function ChipOrderForm({
-  apartments, pricing, termsText, testToken = null,
+  apartments, pricing, termsText, testToken = null, cardPayment = false,
 }: {
   apartments: string[];
   pricing: Pricing;
   termsText: string;
   /** Test mode: the token of the test link (the server checked it). */
   testToken?: string | null;
+  /** The payment step is the card (PayPlus hosted fields) — today only behind
+   *  the test link, while PayPlus runs in sandbox. */
+  cardPayment?: boolean;
 }) {
   const router = useRouter();
   const testHeaders: Record<string, string> = testToken ? { [CHIP_ORDER_TEST_HEADER]: testToken } : {};
@@ -150,6 +183,15 @@ export function ChipOrderForm({
   const [testOrder, setTestOrder] = useState<{ trackingToken: string; orderNumber: number; total: number } | null>(null);
   const [done, setDone] = useState<{ orderNumber: number; total: number; rows: ConfirmedRow[] } | null>(null);
   const [payNote, setPayNote] = useState<string | null>(null);
+
+  // Card payment (PayPlus hosted fields)
+  const cardRef = useRef<CardFieldsHandle>(null);
+  const cardSection = useRef<HTMLElement>(null);
+  const cardDead = useRef<'expired' | 'attempts' | null>(null);
+  const [cardOrder, setCardOrder] = useState<SavedOrder | null>(null);
+  const [cardPhase, setCardPhase] = useState<CardPhase>('closed');
+  const [cardNote, setCardNote] = useState<string | null>(null);
+  const [secure3d, setSecure3d] = useState(false);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -185,7 +227,13 @@ export function ChipOrderForm({
   const totalQty = rows.reduce((s, r) => s + r.qty, 0);
   const total = priceLine(totalQty, pricing).lineTotal;
   const hasRenter = rows.some((r) => r.role === 'tenant');
-  const locked = step === 'otp' || busy;
+  const cardBusy = CARD_BUSY.includes(cardPhase);
+  // The one line under the card fields: what is happening to them now.
+  const cardHint = secure3d ? CARD_TEXT.secure3d
+    : cardPhase === 'opening' ? CARD_TEXT.loading
+      : cardPhase === 'verifying' ? CARD_TEXT.verifying
+        : cardNote ?? (cardOrder ? null : CARD_TEXT.idle);
+  const locked = step === 'otp' || step === 'card' || busy;
 
   function patchRow(key: number, patch: Partial<Row>) {
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -320,6 +368,137 @@ export function ChipOrderForm({
     setStep('done');
   }
 
+  // ── Card payment ─────────────────────────────────────────────────────────
+  async function cardApi(path: 'session' | 'status', trackingToken: string) {
+    const res = await fetch(`/api/public/chip-order/payplus/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...testHeaders },
+      body: JSON.stringify({ trackingToken }),
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    return { res, data };
+  }
+
+  function onCardEvent(e: CardFieldsEvent) {
+    if (e.type === 'secure3d') {
+      setSecure3d(e.open);
+    } else if (e.type === 'dead') {
+      cardDead.current = e.why;
+      setCardNote(e.why === 'expired' ? CARD_TEXT.expired : CARD_TEXT.noAttempts);
+      // A charge in flight ends with its own result; an idle session closes now.
+      setCardPhase((p) => (p === 'ready' ? 'closed' : p));
+    }
+  }
+
+  /** Opens a payment session for the SAVED order and mounts the card fields. */
+  async function openCard(o: SavedOrder): Promise<void> {
+    setStep('card');
+    setCardPhase('opening');
+    setCardNote(null);
+    setServerError(null);
+    setSecure3d(false);
+    cardDead.current = null;
+    try {
+      const { res, data } = await cardApi('session', o.trackingToken);
+      if (data.state === 'paid') {
+        // An earlier attempt turned out to be approved: nothing more to pay.
+        await verifyCard(o);
+        return;
+      }
+      const { page_request_uid: uid, hosted_fields_uuid: uuid, origin } = data;
+      if (!res.ok || data.ok !== true || typeof uid !== 'string' || typeof uuid !== 'string' || typeof origin !== 'string') {
+        throw new Error(typeof data.message === 'string' ? data.message : CARD_TEXT.openFailed);
+      }
+      try {
+        await cardRef.current?.open({ page_request_uid: uid, hosted_fields_uuid: uuid, origin }, cardHolderPhone(toPortalE164(phone)));
+      } catch {
+        throw new Error(CARD_TEXT.sdkFailed);
+      }
+      setCardPhase('ready');
+      requestAnimationFrame(() => cardSection.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+    } catch (err) {
+      setCardPhase('closed');
+      setServerError((err as Error).message);
+    }
+  }
+
+  /** "Was it paid?" — asked of OUR server, which hears it from PayPlus. Only
+   *  its "paid" shows the confirmation screen. Returns 'paid', or what the
+   *  last answer said about a charge: 'no' only when PayPlus itself ruled one
+   *  out, 'unknown' otherwise. */
+  async function askPaid(o: SavedOrder, rounds: number): Promise<'paid' | 'no' | 'unknown'> {
+    let charged: 'no' | 'unknown' = 'unknown';
+    for (let i = 0; i < rounds; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, 2500));
+      try {
+        const { res, data } = await cardApi('status', o.trackingToken);
+        if (res.ok && data.state === 'paid') {
+          cardRef.current?.close();
+          setCardOrder(null);
+          setDone({ orderNumber: o.orderNumber, total: o.total, rows: confirmedRows() });
+          setStep('done');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          return 'paid';
+        }
+        charged = res.ok && data.charged === 'no' ? 'no' : 'unknown';
+      } catch {
+        // A network hiccup: the next round asks again.
+        charged = 'unknown';
+      }
+    }
+    return charged;
+  }
+
+  /** After a charge that may have gone through: wait for the server's word.
+   *  No confirmation in time → the customer may pay again ONLY when PayPlus
+   *  ruled a charge out; otherwise only a re-check is offered. */
+  async function verifyCard(o: SavedOrder, rounds = CARD_VERIFY_ROUNDS): Promise<void> {
+    setCardPhase('verifying');
+    setCardNote(null);
+    setServerError(null);
+    const answer = await askPaid(o, rounds);
+    if (answer === 'paid') return;
+    if (answer === 'no') {
+      setCardNote(CARD_TEXT.notCharged);
+      setCardPhase(cardDead.current ? 'closed' : 'ready');
+      return;
+    }
+    setCardPhase('unverified');
+    setCardNote(CARD_TEXT.unverified);
+  }
+
+  /** The button of the card step: reopen a dead session, re-check a charge
+   *  that was not confirmed yet, or charge the card. */
+  async function payCard(): Promise<void> {
+    if (!cardOrder || cardBusy) return;
+    if (cardPhase === 'closed') return openCard(cardOrder);
+    if (cardPhase === 'unverified') return verifyCard(cardOrder, CARD_RECHECK_ROUNDS);
+    setServerError(null);
+    setCardNote(null);
+    setCardPhase('paying');
+    const reply = await cardRef.current?.pay();
+    if (reply == null) {
+      // Our own fields (holder name / ID) stopped it; nothing was sent.
+      setCardPhase('ready');
+      return;
+    }
+    // Only a definite refusal is shown as one. A success, a timeout, or a
+    // reply this page does not understand → the server is asked first.
+    if (!sdkSaysRefused(reply)) return verifyCard(cardOrder);
+    // Refused — and still one question to the server before the button comes
+    // back, in case PayPlus holds an approved charge of this order after all.
+    setCardPhase('verifying');
+    if ((await askPaid(cardOrder, 1)) === 'paid') return;
+    // Everything typed stays; the order goes on waiting for payment.
+    setServerError(cardFailureMessage(reply));
+    if (cardDead.current) {
+      setCardNote(cardDead.current === 'expired' ? CARD_TEXT.expired : CARD_TEXT.noAttempts);
+      setCardPhase('closed');
+    } else {
+      setCardPhase('ready');
+    }
+  }
+
   async function submitOrder(): Promise<void> {
     const fd = new FormData();
     fd.append(
@@ -347,7 +526,7 @@ export function ChipOrderForm({
     rows.forEach((r, i) => { if (r.role === 'tenant' && r.file) fd.append(`lease_${i}`, r.file); });
     const res = await fetch('/api/public/chip-order', { method: 'POST', body: fd, headers: testHeaders });
     const data = (await res.json().catch(() => ({}))) as {
-      ok?: boolean; message?: string; needsOtp?: boolean; test?: boolean; trackingToken?: string;
+      ok?: boolean; message?: string; needsOtp?: boolean; test?: boolean; trackingToken?: string; cardPayment?: boolean;
       paymentUrl?: string; trackUrl?: string; orderNumber?: number; total?: number;
     };
     if (res.status === 401 && data.needsOtp) {
@@ -357,6 +536,12 @@ export function ChipOrderForm({
     }
     if (res.ok && data.ok && data.test && data.trackingToken) {
       const t = { trackingToken: data.trackingToken, orderNumber: data.orderNumber ?? 0, total: data.total ?? total };
+      if (data.cardPayment) {
+        // The order is saved and awaits payment: the card fields open for it.
+        setCardOrder(t);
+        await openCard(t);
+        return;
+      }
       setTestOrder(t);
       await finishTestOrder(t);
       return;
@@ -368,6 +553,10 @@ export function ChipOrderForm({
   }
 
   async function onPay() {
+    if (cardOrder) {
+      await payCard();
+      return;
+    }
     setServerError(null);
     // A test order already created whose finish failed: only finish it again.
     if (testOrder) {
@@ -648,49 +837,67 @@ export function ChipOrderForm({
         </div>
       </section>
 
-      {/* אישור ותשלום — UI ONLY: no name, never read, never sent. */}
-      <section className="cr-card" data-testid="chip-order-card-fields">
+      {/* אישור ותשלום. With card payment: PayPlus's hosted fields, opened for
+          the saved order. Without it (no processor configured): the same
+          inputs as UI ONLY — no name, never read, never sent. */}
+      <section className="cr-card" data-testid="chip-order-card-fields" ref={cardSection}>
         <div className="cr-chead">
           <span className="cr-cic cr-green"><ShieldIcon /></span>
           <div><b>אישור ותשלום</b><small>תשלום מאובטח בכרטיס אשראי</small></div>
         </div>
         <div className="cr-cbody cr-cbody-tight">
-          <div className="cr-frow">
-            <div className="cr-fld cr-cardfld">
-              <label htmlFor="co-ccnum">מספר כרטיס <span className="cr-req">*</span></label>
-              <CardIcon />
-              <input id="co-ccnum" type="text" inputMode="numeric" autoComplete="off" placeholder="0000 0000 0000 0000" maxLength={19}
-                className="cr-num cr-ltr" disabled={locked}
-                onInput={(e) => {
-                  const t = e.currentTarget;
-                  t.value = t.value.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim();
-                }} />
-            </div>
-            <div className="cr-fld">
-              <label htmlFor="co-ccid">ת&quot;ז בעל הכרטיס <span className="cr-req">*</span></label>
-              <input id="co-ccid" type="text" inputMode="numeric" autoComplete="off" placeholder="9 ספרות" maxLength={9} className="cr-num cr-ltr" disabled={locked} />
-            </div>
-          </div>
-          <div className="cr-paygrid">
-            <div className="cr-fld">
-              <label htmlFor="co-ccname">שם בעל הכרטיס <span className="cr-req">*</span></label>
-              <input id="co-ccname" type="text" autoComplete="off" placeholder="כפי שמופיע על הכרטיס" disabled={locked} />
-            </div>
-            <div className="cr-fld">
-              <label htmlFor="co-ccexp">תוקף <span className="cr-req">*</span></label>
-              <input id="co-ccexp" type="text" inputMode="numeric" autoComplete="off" placeholder="MM/YY" maxLength={5} className="cr-num cr-ltr" disabled={locked}
-                onInput={(e) => {
-                  const t = e.currentTarget;
-                  let v = t.value.replace(/\D/g, '').slice(0, 4);
-                  if (v.length > 2) v = `${v.slice(0, 2)}/${v.slice(2)}`;
-                  t.value = v;
-                }} />
-            </div>
-            <div className="cr-fld">
-              <label htmlFor="co-cccvv">CVV <span className="cr-req">*</span></label>
-              <input id="co-cccvv" type="password" inputMode="numeric" autoComplete="off" placeholder="•••" maxLength={4} className="cr-num cr-ltr" disabled={locked} />
-            </div>
-          </div>
+          {cardPayment ? (
+            <>
+              {cardOrder && (
+                <p className="cr-ppinfo" data-testid="chip-order-card-order">
+                  הזמנה <span className="cr-num">{cardOrder.orderNumber}</span> נשמרה וממתינה לתשלום — סה&quot;כ{' '}
+                  <span className="cr-num">{formatIlsAfter(cardOrder.total)}</span>
+                </p>
+              )}
+              <PayPlusCardFields ref={cardRef} active={cardPhase === 'ready' || cardPhase === 'paying'} onEvent={onCardEvent} />
+              {cardHint && <p className="cr-pphint" role="status" data-testid="chip-order-card-hint">{cardHint}</p>}
+              {secure3d && <div className="cr-3ds-backdrop" aria-hidden="true" />}
+            </>
+          ) : (
+            <>
+              <div className="cr-frow">
+                <div className="cr-fld cr-cardfld">
+                  <label htmlFor="co-ccnum">מספר כרטיס <span className="cr-req">*</span></label>
+                  <CardIcon />
+                  <input id="co-ccnum" type="text" inputMode="numeric" autoComplete="off" placeholder="0000 0000 0000 0000" maxLength={19}
+                    className="cr-num cr-ltr" disabled={locked}
+                    onInput={(e) => {
+                      const t = e.currentTarget;
+                      t.value = t.value.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim();
+                    }} />
+                </div>
+                <div className="cr-fld">
+                  <label htmlFor="co-ccid">ת&quot;ז בעל הכרטיס <span className="cr-req">*</span></label>
+                  <input id="co-ccid" type="text" inputMode="numeric" autoComplete="off" placeholder="9 ספרות" maxLength={9} className="cr-num cr-ltr" disabled={locked} />
+                </div>
+              </div>
+              <div className="cr-paygrid">
+                <div className="cr-fld">
+                  <label htmlFor="co-ccname">שם בעל הכרטיס <span className="cr-req">*</span></label>
+                  <input id="co-ccname" type="text" autoComplete="off" placeholder="כפי שמופיע על הכרטיס" disabled={locked} />
+                </div>
+                <div className="cr-fld">
+                  <label htmlFor="co-ccexp">תוקף <span className="cr-req">*</span></label>
+                  <input id="co-ccexp" type="text" inputMode="numeric" autoComplete="off" placeholder="MM/YY" maxLength={5} className="cr-num cr-ltr" disabled={locked}
+                    onInput={(e) => {
+                      const t = e.currentTarget;
+                      let v = t.value.replace(/\D/g, '').slice(0, 4);
+                      if (v.length > 2) v = `${v.slice(0, 2)}/${v.slice(2)}`;
+                      t.value = v;
+                    }} />
+                </div>
+                <div className="cr-fld">
+                  <label htmlFor="co-cccvv">CVV <span className="cr-req">*</span></label>
+                  <input id="co-cccvv" type="password" inputMode="numeric" autoComplete="off" placeholder="•••" maxLength={4} className="cr-num cr-ltr" disabled={locked} />
+                </div>
+              </div>
+            </>
+          )}
           <div className="cr-secure">
             <LockIcon size={14} sw={2.2} />
             הפרטים מוצפנים ומאובטחים — העסקה מבוצעת בתקן PCI-DSS
@@ -760,7 +967,7 @@ export function ChipOrderForm({
             </div>
           )}
 
-          {testToken && (step === 'otp' || codeAsked) && !testOrder && (
+          {testToken && (step === 'otp' || codeAsked) && !testOrder && !cardOrder && (
             <div className="cr-skip">
               <p>מצב בדיקה: אפשר להמשיך בלי קוד. ההזמנה תסומן „טלפון לא אומת”.</p>
               <button type="button" disabled={busy} onClick={() => void skipVerification()} data-testid="chip-order-skip-verification">
@@ -769,11 +976,13 @@ export function ChipOrderForm({
             </div>
           )}
 
-          <button type="submit" className="cr-submit" disabled={busy || !agree || (hasRenter && !agreeRent)} data-testid="chip-order-pay">
-            {busy ? <Loader2 className="h-[17px] w-[17px] cr-spin" /> : <LockIcon />}
+          <button type="submit" className="cr-submit" disabled={busy || cardBusy || !agree || (hasRenter && !agreeRent)} data-testid="chip-order-pay">
+            {busy || cardBusy ? <Loader2 className="h-[17px] w-[17px] cr-spin" /> : <LockIcon />}
             {step === 'otp'
               ? <span>אימות והמשך לתשלום</span>
-              : <span>תשלום מאובטח — <b className="cr-num">{formatIlsAfter(total)}</b></span>}
+              : step === 'card' && cardPhase !== 'ready'
+                ? <span>{CARD_BUTTON[cardPhase]}</span>
+                : <span>{cardPayment && step !== 'card' ? 'המשך לתשלום' : 'תשלום מאובטח'} — <b className="cr-num">{formatIlsAfter(cardOrder?.total ?? total)}</b></span>}
           </button>
           {(errors.agree || errors.agreeRent) && <p className="cr-err mt-2">{errors.agree ?? errors.agreeRent}</p>}
         </div>

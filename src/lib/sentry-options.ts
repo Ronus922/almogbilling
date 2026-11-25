@@ -38,3 +38,42 @@ export function sentryRuntimeOptions(env: SentryRuntimeEnv): SentryRuntimeOption
     sendDefaultPii: false,
   };
 }
+
+// ── Request data that must never leave the server ──────────────────────────
+// The SDK's HTTP integration keeps the body of an incoming request (up to
+// 10KB) on the request's scope and attaches it to every event sent while that
+// request is handled — an error, a logger.error, a sampled transaction —
+// whatever `sendDefaultPii` says. On the public chip-order API that body is
+// PayPlus's callback (the card's expiry, its BIN, the holder's ID number), an
+// order form, or an order's tracking token; and two of its headers are
+// secrets of the flow: the test-link token and the callback's signature. For
+// these paths the body and the two headers are dropped from the event before
+// it is sent (25/11/2026).
+
+const SCRUBBED_PATHS = ['/api/public/chip-order'];
+const SCRUBBED_HEADERS = ['x-chip-order-test', 'hash'];
+
+interface EventWithRequest {
+  request?: { url?: string; data?: unknown; headers?: Record<string, unknown> };
+}
+
+/** `beforeSend` / `beforeSendTransaction`: the same event, without the request
+ *  body and the two headers when the request was to one of the paths above. */
+export function dropSensitiveRequestData<T extends EventWithRequest>(event: T): T {
+  const req = event.request;
+  if (!req) return event;
+  let path = req.url ?? '';
+  try {
+    path = new URL(path, 'http://localhost').pathname;
+  } catch {
+    // Not a URL: matched as the text it is.
+  }
+  if (!SCRUBBED_PATHS.some((p) => path.includes(p))) return event;
+  delete req.data;
+  if (req.headers) {
+    for (const name of Object.keys(req.headers)) {
+      if (SCRUBBED_HEADERS.includes(name.toLowerCase())) delete req.headers[name];
+    }
+  }
+  return event;
+}

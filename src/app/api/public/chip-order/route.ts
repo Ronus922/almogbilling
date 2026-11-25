@@ -15,6 +15,7 @@ import {
   callbackSignature, chipOrdersOpen, readSkippedPhone, readVerifiedPhone, CHIP_ORDER_PUBLIC_HEADERS as H,
 } from '@/lib/chipOrders/server';
 import { isTestRequest } from '@/lib/chipOrders/testMode';
+import { cardStepConfig } from '@/lib/chipOrders/cardPayment';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,6 +41,11 @@ export const dynamic = 'force-dynamic';
 // unchanged, the order is created is_test, and Grow is never called — the
 // answer carries the tracking token for "סיים הזמנת בדיקה"
 // (/api/public/chip-order/test-finish).
+//
+// Card payment (25/11/2026): while PayPlus is configured in sandbox, the test
+// order's payment step is the sandbox card instead — the answer says so
+// (`cardPayment`), and the page opens a payment session for the saved order
+// (/api/public/chip-order/payplus/session). A real order is not affected.
 //
 // "דלג על אימות (מצב בדיקה)" (13/11/2026): in test mode ONLY, the phone may
 // carry the sealed SKIP cookie (/api/public/chip-order/otp/skip) instead of the
@@ -192,7 +198,10 @@ export async function POST(req: Request) {
   const track = `${base}/chip-order/track/${order.trackingToken}`;
   if (test) {
     return NextResponse.json(
-      { ok: true, test: true, orderNumber: order.orderNumber, total: order.total, trackingToken: order.trackingToken, trackUrl: track },
+      {
+        ok: true, test: true, orderNumber: order.orderNumber, total: order.total, trackingToken: order.trackingToken, trackUrl: track,
+        cardPayment: cardStepConfig() !== null,
+      },
       { status: 201, headers: H },
     );
   }
