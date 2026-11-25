@@ -128,3 +128,42 @@ export const CARD_TEXT = {
   nameRequired: 'נדרש שם בעל הכרטיס, כפי שמופיע על הכרטיס',
   idInvalid: 'מספר תעודת זהות לא תקין',
 } as const;
+
+// The text inside the processor's frames, matched to the form's own digit
+// inputs (.cr-fld input.cr-num): Inter 600, tabular digits, #1a2233, the ghost
+// placeholder, left-to-right — 16px on a phone and 14px from 621px, like the
+// inputs. The box around the text is the page's (.cr-hf).
+//
+// What the real frame does with this text (read on the sandbox, 25/11/2026):
+//   - it is parsed, re-printed and set as a <style> of the frame — with every
+//     quotation mark turned into &#34;, which the browser then reads as an
+//     invalid value and drops the whole declaration. So: NO quotation marks,
+//     anywhere (family names bare, url() bare);
+//   - the frame's own rule for the input is `html main #hosted-fld` (color,
+//     padding, border); a weaker selector loses to it, so ours is longer;
+//   - a media query inside a frame sees the FRAME's width, so the size is
+//     decided here, from the page's width, when the fields are opened;
+//   - the frame is another origin: it can use the page's font only through an
+//     @font-face that names a URL answering with a CORS header — the card-font
+//     route. Until that file arrives (or if it does not) the digits show in
+//     the fallback family, same size and weight.
+//
+// The font is named only from a public https origin: the style travels in the
+// frame's ADDRESS, and the filter in front of PayPlus answers 403 to an address
+// that holds a localhost URL (seen 25/11/2026) — the frames then never load.
+const FIELD = 'html body main #hosted-fld';
+const PUBLIC_HTTPS_ORIGIN = /^https:\/\/(?:[a-z0-9-]+\.)+[a-z]{2,}$/i;
+export function hostedFieldsCss(pageOrigin: string, wide: boolean, withFont = true): string {
+  const size = wide ? 14 : 16;
+  const font = withFont && PUBLIC_HTTPS_ORIGIN.test(pageOrigin)
+    ? `@font-face{font-family:Inter;font-style:normal;font-weight:100 900;font-display:swap;src:url(${pageOrigin}/api/public/chip-order/card-font)}`
+    : '';
+  return [
+    font,
+    'html,body{margin:0;padding:0;height:100%;background:transparent;overflow:hidden}',
+    'main{display:block;margin:0;padding:0;height:100%}',
+    `${FIELD},${FIELD}:disabled{box-sizing:border-box;width:100%;height:100%;margin:0;padding:0 14px;border:0;outline:0;border-radius:0;background:transparent;box-shadow:none;-webkit-appearance:none;appearance:none;direction:ltr;text-align:left;font-family:Inter,Heebo,Arial,sans-serif;font-size:${size}px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:0;line-height:normal;color:#1a2233}`,
+    `${FIELD}::placeholder{color:#b4bacb;font-weight:500;opacity:1}`,
+    `${FIELD}:focus{outline:0;box-shadow:none}`,
+  ].join('');
+}

@@ -12,7 +12,11 @@ import { env } from '@/env';
 //       `refURL_origin` (the origin of the page that mounts the fields), and
 //       the reply then carries `hosted_fields_uuid` next to `page_request_uid`.
 //   PaymentPages/ipn           R/post_paymentpages-ipn — the server-side
-//       lookup of a payment page request (what happened on it).
+//       lookup of a payment page request (what happened on it). Its reply is
+//       FLAT (data.transaction_uid, data.type "Charge", data.status_code …),
+//       and a session without a transaction answers HTTP 200 with
+//       results.status "error" / "can-not-find-payment_request_uid" — both
+//       seen on the sandbox on 25/11/2026, neither is in the reference.
 //   The callback               R/validate-requests-received-from-payplus —
 //       header `user-agent: PayPlus` and header `hash` = base64 of
 //       HMAC-SHA256(secret key, the JSON body).
@@ -243,7 +247,12 @@ const statusCodeOf = (v: unknown): string | null => {
 export function readPayPlusTransaction(payload: unknown): PayPlusTransaction | null {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
   const p = payload as Record<string, unknown>;
-  const t = p.transaction && typeof p.transaction === 'object' ? obj(p.transaction) : p;
+  // Two shapes exist. The CALLBACK nests the transaction ({ transaction_type,
+  // transaction: {...}, data: {...} }); the LOOKUP's reply (and the SDK's) is
+  // flat ({ transaction_uid, type: "Charge", status_code, ... } — seen on the
+  // sandbox, 25/11/2026).
+  const nested = Boolean(p.transaction) && typeof p.transaction === 'object' && !Array.isArray(p.transaction);
+  const t = nested ? obj(p.transaction) : p;
   const uid = str(t.uid) ?? str(t.transaction_uid);
   const statusCode = statusCodeOf(t.status_code);
   const amount = typeof t.amount === 'number' ? t.amount : typeof t.amount === 'string' && t.amount.trim() ? Number(t.amount) : NaN;
@@ -252,9 +261,12 @@ export function readPayPlusTransaction(payload: unknown): PayPlusTransaction | n
   const four = str(card.four_digits) ?? str(t.four_digits);
   const payments = obj(t.payments).number_of_payments ?? t.number_of_payments;
   const pageRequestUid = str(t.payment_request_uid) ?? str(t.page_request_uid);
-  // The KIND of transaction is transaction_type ("Charge"). transaction.type is
-  // something else (where it was made — "internal_page") and is never read as the kind.
-  const type = str(p.transaction_type) ?? str(t.transaction_type);
+  // The KIND of transaction ("Charge"). Nested shape: transaction_type —
+  // transaction.type there is something else (where it was made,
+  // "internal_page") and is never read as the kind. Flat shape: `type`.
+  const type = nested
+    ? str(p.transaction_type) ?? str(t.transaction_type)
+    : str(t.transaction_type) ?? str(t.type);
   const paymentsCount = typeof payments === 'number' ? payments : typeof payments === 'string' && payments.trim() ? Number(payments) : NaN;
   return {
     uid,
@@ -334,6 +346,9 @@ export type PayPlusLookup =
   /** PayPlus refused or was not understood — this says NOTHING about a charge. */
   | { kind: 'unknown'; status: number; message: string };
 
+/** PaymentPages/ipn, for a payment session without any transaction. */
+const NO_TRANSACTION_YET = 'can-not-find-payment_request_uid';
+
 /**
  * What PayPlus knows about a payment session (PaymentPages/ipn). The caller
  * picks the approved charge of the right amount. 'unknown' is never read as
@@ -351,6 +366,11 @@ export async function lookupPaymentRequest(cfg: PayPlusConfig, pageRequestUid: s
   const j = obj(json);
   const results = obj(j.results);
   if (typeof results.status === 'string' && results.status !== 'success') {
+    // PayPlus's answer for a payment session nothing was charged on — an open
+    // page nobody paid yet, and an attempt its own field checks refused (seen
+    // on the sandbox, 25/11/2026: HTTP 200, status "error", this description).
+    // It IS an answer: no transaction exists on that session.
+    if (str(results.description) === NO_TRANSACTION_YET) return { kind: 'transactions', transactions: [] };
     return { kind: 'unknown', status: 200, message: safeText(cfg, str(results.description) ?? results.status) };
   }
   const out: PayPlusTransaction[] = [];

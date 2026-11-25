@@ -28,7 +28,7 @@
 // server's, from PayPlus itself (the form asks /payplus/status).
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { CARD_TEXT, isValidIsraeliId, type CardSession } from '@/lib/chipOrders/card';
+import { CARD_TEXT, hostedFieldsCss, isValidIsraeliId, type CardSession } from '@/lib/chipOrders/card';
 
 /** The part of the SDK this component uses (payplus-hosted-fields 1.5.0). */
 interface FieldTarget {
@@ -103,24 +103,10 @@ const BLOCK_HTML = [
   '<div class="cr-pp-recaptcha"><span id="pp-recaptcha"></span></div>',
 ].join('');
 
-// The text inside the processor's frames, matched to the form's own inputs
-// (.cr-fld input): weight 600, #1a2233, the ghost placeholder, left-to-right
-// digits — 16px on a phone and 14px from 621px, like the inputs. A media query
-// inside a frame sees the FRAME's width, so the size is decided here, from the
-// page's width, when the fields are opened. The box around the text is ours.
-const FONT = 'Heebo, "Segoe UI", Arial, sans-serif';
-function hostedFieldsCss(): string {
-  const size = window.matchMedia('(min-width: 621px)').matches ? 14 : 16;
-  return [
-    'html,body{margin:0;padding:0;height:100%;background:transparent;overflow:hidden}',
-    'form,div{margin:0;padding:0;height:100%;border:0;background:transparent}',
-    `input{box-sizing:border-box;width:100%;height:100%;margin:0;padding:0 14px;border:0;outline:0;border-radius:0;background:transparent;box-shadow:none;-webkit-appearance:none;appearance:none;direction:ltr;text-align:left;font:600 ${size}px ${FONT};font-variant-numeric:tabular-nums;letter-spacing:0;color:#1a2233}`,
-    'input::placeholder{color:#b4bacb;font-weight:500;opacity:1}',
-    'input:focus{outline:0;box-shadow:none}',
-  ].join('');
-}
-
 const INIT_TIMEOUT_MS = 25_000;
+/** The first try, with the font in the style: the frames answer within a
+ *  second or two; past this the page tries again without the font. */
+const STYLED_INIT_TIMEOUT_MS = 12_000;
 const SUBMIT_TIMEOUT_MS = 75_000;
 
 const isPayPlusHost = (host: string) => host === 'payplus.co.il' || host.endsWith('.payplus.co.il');
@@ -322,73 +308,95 @@ export const PayPlusCardFields = forwardRef<CardFieldsHandle, {
       // A new session after an expired / exhausted one: what was typed into
       // our own two fields stays (the processor's frames start empty).
       const typed = { name: el<HTMLInputElement>('#pp-name')?.value ?? '', id: el<HTMLInputElement>('#pp-id')?.value ?? '' };
-      closeLive();
-      resetBlock();
-      const nameInput = el<HTMLInputElement>('#pp-name');
-      const idInput = el<HTMLInputElement>('#pp-id');
-      if (nameInput) nameInput.value = typed.name;
-      if (idInput) idInput.value = typed.id;
-      installMessageGuard();
-      liveOrigin = '';
-      await loadSdk();
-      if (!box.current) throw new Error('unmounted');
-      const phone = el<HTMLInputElement>('#pp-phone');
-      if (phone) phone.value = holderPhone;
+      const wide = window.matchMedia('(min-width: 621px)').matches;
+      const styled = hostedFieldsCss(window.location.origin, wide, true);
+      const plain = hostedFieldsCss(window.location.origin, wide, false);
 
-      // The origin comes from OUR session route; anything but a PayPlus API host is refused here too.
-      const sessionOrigin = new URL(session.origin);
-      if (sessionOrigin.protocol !== 'https:' || !isPayPlusHost(sessionOrigin.hostname)) throw new Error('bad_origin');
-      liveOrigin = sessionOrigin.origin;
-      const { sdk, detach } = createSdk();
-      const started = Date.now();
-      const state = { sdk, detach, unlisten: () => {}, expiresAt: started + 30 * 60_000, secure3d: false };
-      const handlers: [string, (e: Event) => void][] = [
-        ['pp_submitProcess', (e) => { if (live.current === state) onEventRef.current({ type: 'busy', value: (e as CustomEvent).detail === true }); }],
-        ['pp_noAttemptedRemaining', () => { if (live.current === state) onEventRef.current({ type: 'dead', why: 'attempts' }); }],
-        ['pp_pageExpired', () => {
-          // An older instance's timer cannot be cancelled; only this session's own expiry counts.
-          if (live.current === state && Date.now() >= state.expiresAt - 5_000) onEventRef.current({ type: 'dead', why: 'expired' });
-        }],
-        ['pp_secure3dsWindow', (e) => {
-          if (live.current !== state) return;
-          state.secure3d = (e as CustomEvent).detail === true;
-          onEventRef.current({ type: 'secure3d', open: state.secure3d });
-        }],
-      ];
-      for (const [name, fn] of handlers) window.addEventListener(name, fn);
-      state.unlisten = () => { for (const [name, fn] of handlers) window.removeEventListener(name, fn); };
-      live.current = state;
-
-      try {
-        sdk.SetMainFields({
-          cc: { elmSelector: '#pp-cc', wrapperElmSelector: '#pp-cc-wrap', config: { placeholder: '0000 0000 0000 0000' } },
-          expiry: { elmSelector: '#pp-expiry', wrapperElmSelector: '#pp-expiry-wrap', config: { placeholder: 'MM/YY' } },
-          expirym: { elmSelector: '#pp-expirym', wrapperElmSelector: '#pp-expiry-split-wrap', config: { placeholder: 'MM' } },
-          expiryy: { elmSelector: '#pp-expiryy', wrapperElmSelector: '#pp-expiry-split-wrap', config: { placeholder: 'YY' } },
-          cvv: { elmSelector: '#pp-cvv', wrapperElmSelector: '#pp-cvv-wrap', config: { placeholder: '•••' } },
-        })
-          .AddField('card_holder_id', '#pp-id', '#pp-id-wrap')
-          .AddField('card_holder_name', '#pp-name', '#pp-name-wrap')
-          .AddField('card_holder_phone', '#pp-phone', '#pp-phone-wrap')
-          .SetRecaptcha('#pp-recaptcha');
-        sdk.SetHostedFieldsStyles(hostedFieldsCss());
-        // The 3-D Secure window is laid out by our own stylesheet (it must fit a phone).
-        sdk.SetConfig('Secure3Ds.ResetStyle', true);
-
-        await new Promise<void>((resolve, reject) => {
-          const timer = window.setTimeout(() => reject(new Error('sdk_timeout')), INIT_TIMEOUT_MS);
-          sdk.InitPaymentPage.then((data) => {
-            const minutes = Number((data as { data?: { page_expiration_time?: unknown } } | null)?.data?.page_expiration_time);
-            if (Number.isFinite(minutes) && minutes > 0) state.expiresAt = started + minutes * 60_000;
-            // The SDK builds the rest of its frames in its own callback, which runs after this one.
-            window.setTimeout(() => { window.clearTimeout(timer); resolve(); }, 0);
-          });
-          sdk.CreatePaymentPage(session).catch((e: unknown) => { window.clearTimeout(timer); reject(e instanceof Error ? e : new Error('sdk_failed')); });
-        });
-      } catch (e) {
-        if (live.current === state) closeLive();
+      const mount = async (css: string, timeoutMs: number) => {
+        closeLive();
         resetBlock();
-        throw e;
+        const nameInput = el<HTMLInputElement>('#pp-name');
+        const idInput = el<HTMLInputElement>('#pp-id');
+        if (nameInput) nameInput.value = typed.name;
+        if (idInput) idInput.value = typed.id;
+        installMessageGuard();
+        liveOrigin = '';
+        await loadSdk();
+        if (!box.current) throw new Error('unmounted');
+        const phone = el<HTMLInputElement>('#pp-phone');
+        if (phone) phone.value = holderPhone;
+
+        // The origin comes from OUR session route; anything but a PayPlus API host is refused here too.
+        const sessionOrigin = new URL(session.origin);
+        if (sessionOrigin.protocol !== 'https:' || !isPayPlusHost(sessionOrigin.hostname)) throw new Error('bad_origin');
+        liveOrigin = sessionOrigin.origin;
+        const { sdk, detach } = createSdk();
+        const started = Date.now();
+        const state = { sdk, detach, unlisten: () => {}, expiresAt: started + 30 * 60_000, secure3d: false };
+        const handlers: [string, (e: Event) => void][] = [
+          ['pp_submitProcess', (e) => { if (live.current === state) onEventRef.current({ type: 'busy', value: (e as CustomEvent).detail === true }); }],
+          ['pp_noAttemptedRemaining', () => { if (live.current === state) onEventRef.current({ type: 'dead', why: 'attempts' }); }],
+          ['pp_pageExpired', () => {
+            // An older instance's timer cannot be cancelled; only this session's own expiry counts.
+            if (live.current === state && Date.now() >= state.expiresAt - 5_000) onEventRef.current({ type: 'dead', why: 'expired' });
+          }],
+          ['pp_secure3dsWindow', (e) => {
+            if (live.current !== state) return;
+            state.secure3d = (e as CustomEvent).detail === true;
+            onEventRef.current({ type: 'secure3d', open: state.secure3d });
+          }],
+        ];
+        for (const [name, fn] of handlers) window.addEventListener(name, fn);
+        state.unlisten = () => { for (const [name, fn] of handlers) window.removeEventListener(name, fn); };
+        live.current = state;
+
+        try {
+          sdk.SetMainFields({
+            cc: { elmSelector: '#pp-cc', wrapperElmSelector: '#pp-cc-wrap', config: { placeholder: '0000 0000 0000 0000' } },
+            expiry: { elmSelector: '#pp-expiry', wrapperElmSelector: '#pp-expiry-wrap', config: { placeholder: 'MM/YY' } },
+            expirym: { elmSelector: '#pp-expirym', wrapperElmSelector: '#pp-expiry-split-wrap', config: { placeholder: 'MM' } },
+            expiryy: { elmSelector: '#pp-expiryy', wrapperElmSelector: '#pp-expiry-split-wrap', config: { placeholder: 'YY' } },
+            cvv: { elmSelector: '#pp-cvv', wrapperElmSelector: '#pp-cvv-wrap', config: { placeholder: '•••' } },
+          })
+            .AddField('card_holder_id', '#pp-id', '#pp-id-wrap')
+            .AddField('card_holder_name', '#pp-name', '#pp-name-wrap')
+            .AddField('card_holder_phone', '#pp-phone', '#pp-phone-wrap')
+            .SetRecaptcha('#pp-recaptcha');
+          sdk.SetHostedFieldsStyles(css);
+          // The 3-D Secure window is laid out by our own stylesheet (it must fit a phone).
+          sdk.SetConfig('Secure3Ds.ResetStyle', true);
+
+          await new Promise<void>((resolve, reject) => {
+            const timer = window.setTimeout(() => reject(new Error('sdk_timeout')), timeoutMs);
+            sdk.InitPaymentPage.then((data) => {
+              const minutes = Number((data as { data?: { page_expiration_time?: unknown } } | null)?.data?.page_expiration_time);
+              if (Number.isFinite(minutes) && minutes > 0) state.expiresAt = started + minutes * 60_000;
+              // The SDK builds the rest of its frames in its own callback, which runs after this one.
+              window.setTimeout(() => { window.clearTimeout(timer); resolve(); }, 0);
+            });
+            sdk.CreatePaymentPage(session).catch((e: unknown) => { window.clearTimeout(timer); reject(e instanceof Error ? e : new Error('sdk_failed')); });
+          });
+        } catch (e) {
+          if (live.current === state) closeLive();
+          resetBlock();
+          throw e;
+        }
+      };
+
+      if (styled === plain) {
+        await mount(plain, INIT_TIMEOUT_MS);
+      } else {
+        try {
+          await mount(styled, STYLED_INIT_TIMEOUT_MS);
+        } catch (e) {
+          // The frames did not come up. One cause is ours to rule out: the
+          // style travels in each frame's address, and with the font it holds
+          // a URL — a filter in front of the processor may refuse an address
+          // like that (it refuses one that names localhost). Once more,
+          // without the font: the digits then show in the fallback family.
+          if (!(e instanceof Error) || e.message !== 'sdk_timeout' || !box.current) throw e;
+          await mount(plain, INIT_TIMEOUT_MS);
+        }
       }
       for (const id of ['pp-id', 'pp-name'] as const) {
         const input = el<HTMLInputElement>(`#${id}`);

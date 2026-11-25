@@ -90,6 +90,10 @@ const PUBLIC = new Set([
   'src/app/api/public/chip-order/payplus/session/route.ts',
   'src/app/api/public/chip-order/payplus/status/route.ts',
   'src/app/api/public/chip-order/payplus/callback/route.ts',
+  // One static font file (OFL) for the processor's card-field frames: they are
+  // another origin, and a font crosses origins only with a CORS header. Reads
+  // no input, returns no data.
+  'src/app/api/public/chip-order/card-font/route.ts',
 ]);
 
 run('check-api-auth', async () => {
@@ -313,6 +317,15 @@ run('check-api-auth', async () => {
     if (!/\bcardStepConfig\(\)/.test(src)) fail(`${rel} — חייב לעבור דרך cardStepConfig() (sandbox = הזמנות בדיקה בלבד)`);
     if (/\bpayplusConfig\(/.test(src)) fail(`${rel} — אסור לקרוא ל-payplusConfig() ישירות (עוקף את cardStepConfig)`);
     if (/\b(amount|total|price|sum)\b[^\n]*\bbody\.data\b|\bbody\.data\.(amount|total|price|sum)\b/.test(src)) fail(`${rel} — סכום לא נקרא מהבקשה`);
+  }
+  {
+    // The font route answers one static file: it reads nothing of the request
+    // and imports nothing of the application.
+    const rel = 'src/app/api/public/chip-order/card-font/route.ts';
+    let src = '';
+    try { src = stripComments(readFileSync(join(root, rel), 'utf8')); } catch { fail(`${rel} — הנתיב חסר`); }
+    if (/from\s+'@\//.test(src)) fail(`${rel} — קובץ פונט סטטי: אסור לייבא מודולים של האפליקציה`);
+    if (/\bGET\s*\(\s*\w/.test(src) || /\b(POST|PUT|PATCH|DELETE)\b/.test(src)) fail(`${rel} — GET בלבד, בלי קריאת הבקשה`);
   }
   {
     const { rel, src } = cardRoute('callback');

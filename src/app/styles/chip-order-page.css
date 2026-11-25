@@ -370,9 +370,11 @@
     font: 500 16px "Inter", "Heebo", sans-serif; color: var(--cr-ghost); white-space: nowrap; user-select: none;
   }
   @media (min-width: 621px) { .cr-hf span.cr-hf-ph { font-size: 14px; } }
-  /* The card icon sits at the start of the number, as on the input it replaces
-     (above the box, which — unlike an input — is a positioned element). */
-  .cr-cardfld .cr-hf { padding-inline-start: 28px; }
+  /* The card number, laid out like the input it replaces (.cr-cardfld input,
+     left-to-right with padding-inline-start 42px): the box is left-to-right
+     and gives 28px, the text inside brings its own 14px. The icon stays where
+     it was, above the box (which — unlike an input — is a positioned element). */
+  .cr-cardfld .cr-hf { direction: ltr; padding-inline-start: 28px; }
   .cr-cardfld > svg { z-index: 1; }
   .cr-ppbox[data-state="idle"] .cr-hf { opacity: .65; }
   /* Two expiry layouts are drawn; the SDK keeps the one its payment page uses.

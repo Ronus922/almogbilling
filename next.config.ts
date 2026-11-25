@@ -47,6 +47,11 @@ const nextConfig: NextConfig = {
   // puppeteer-core has dynamic requires that break when webpack-bundled — keep it
   // external so it is required at runtime from node_modules (traced into standalone).
   serverExternalPackages: ["puppeteer-core"],
+  // The font the card-field frames of /chip-order load (card-font/route.ts
+  // reads it from disk at runtime) must travel with the standalone build.
+  outputFileTracingIncludes: {
+    "/api/public/chip-order/card-font": ["./src/fonts/inter/inter-latin-wght-normal.woff2"],
+  },
   // Browser only: the client bundle has no process.env, so instrumentation-client.ts
   // gets the build environment's SENTRY_DSN inlined under its OWN names. Never
   // list SENTRY_DSN / SENTRY_ENVIRONMENT themselves here — `env` inlines into the

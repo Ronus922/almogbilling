@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardFailureMessage, cardHolderPhone, isValidIsraeliId, sdkSaysRefused } from '@/lib/chipOrders/card';
+import { cardFailureMessage, cardHolderPhone, isValidIsraeliId, sdkSaysRefused, hostedFieldsCss } from '@/lib/chipOrders/card';
 
 // Card payment of /chip-order — the pure part the form uses: the holder's ID
 // check, the phone 3-D Secure needs, what the customer reads when a charge is
@@ -68,5 +68,68 @@ describe('sdkSaysRefused — only a definite refusal is one', () => {
     ]) {
       expect(sdkSaysRefused(reply), JSON.stringify(reply)).toBe(false);
     }
+  });
+});
+
+// The two replies the SDK really gives (the sandbox, 25/11/2026) — their shape,
+// with invented values.
+describe('the SDK replies seen on the sandbox', () => {
+  const approved = {
+    status: 'success', redirect: false, type: 'credit-card', openStyle: '_top',
+    data: { transaction_uid: 'bbbbbbbb-1111-2222-3333-444444444444', type: 'Charge', status: 'approved', status_code: '000', amount: 50, more_info: '1271' },
+  };
+  const fieldRefused = {
+    success: false, status: 'reject', status_code: 999996, message: 'credit-card-number-is-incorrect', redirect: false, number_of_tries: 1,
+    errors: [{ field: 'cc', message: 'credit-card-number-is-incorrect', fldType: 'hosted_field' }],
+  };
+
+  it('an approved charge carries no `success` key — it is not a refusal, the server is asked', () => {
+    expect(sdkSaysRefused(approved)).toBe(false);
+  });
+
+  it('a number the card field itself refuses is a definite refusal, with the line about the card number', () => {
+    expect(sdkSaysRefused(fieldRefused)).toBe(true);
+    expect(cardFailureMessage(fieldRefused)).toBe('מספר הכרטיס שגוי.');
+  });
+});
+
+describe('hostedFieldsCss — the style handed to the card-field frames', () => {
+  const css = hostedFieldsCss('https://example.test', true);
+
+  it('holds no quotation mark: the frame escapes them and the declaration is then dropped', () => {
+    expect(css).not.toMatch(/["'`]/);
+    expect(css).not.toContain('&');
+  });
+
+  it('addresses the frame\'s own input with a selector stronger than the frame\'s rule', () => {
+    expect(css).toContain('html body main #hosted-fld,html body main #hosted-fld:disabled{');
+    expect(css).toContain('html body main #hosted-fld::placeholder{');
+  });
+
+  it('matches the form\'s digit inputs: Inter 600, tabular digits, the ink and ghost colors, 14px padding', () => {
+    for (const part of ['font-family:Inter,Heebo,Arial,sans-serif', 'font-weight:600', 'font-variant-numeric:tabular-nums', 'color:#1a2233', 'padding:0 14px', 'direction:ltr', 'color:#b4bacb']) {
+      expect(css).toContain(part);
+    }
+  });
+
+  it('16px on a phone (no zoom on iOS), 14px from 621px — like the inputs', () => {
+    expect(hostedFieldsCss('https://example.test', true)).toContain('font-size:14px');
+    expect(hostedFieldsCss('https://example.test', false)).toContain('font-size:16px');
+  });
+
+  it('names the font of the page by a URL of the page\'s own origin, bare', () => {
+    expect(css).toContain('@font-face{font-family:Inter;');
+    expect(css).toContain('src:url(https://example.test/api/public/chip-order/card-font)}');
+  });
+
+  it('names no font from an origin that is not public https (the filter in front of PayPlus refuses such a frame), or when asked not to', () => {
+    for (const origin of ['http://localhost:3102', 'https://localhost', 'http://example.test', 'https://example.test:8443', 'https://127.0.0.1']) {
+      const out = hostedFieldsCss(origin, true);
+      expect(out).not.toContain('@font-face');
+      expect(out).not.toContain('url(');
+      expect(out).toContain('html body main #hosted-fld');
+    }
+    expect(hostedFieldsCss('https://example.test', true, false)).not.toContain('@font-face');
+    expect(hostedFieldsCss('https://example.test', true, false)).toBe(hostedFieldsCss('http://localhost:3102', true));
   });
 });

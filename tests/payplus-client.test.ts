@@ -306,6 +306,58 @@ describe('lookupPaymentRequest — the server-side lookup', () => {
     expect(await lookupPaymentRequest(payplusConfig()!, UID)).toEqual({ kind: 'transactions', transactions: [] });
   });
 
+  // The reply PaymentPages/ipn really gives (the sandbox, 25/11/2026) — its
+  // shape with invented values: flat, the kind in `type`.
+  const REAL_REPLY = {
+    results: { status: 'success', code: 0, description: 'operation has been success' },
+    data: {
+      transaction_uid: 'bbbbbbbb-1111-2222-3333-444444444444', page_request_uid: UID, is_multiple_transaction: false,
+      type: 'Charge', method: 'credit-card', number: 'AbCdEf1234', date: '2026-11-25 18:02:00', status: 'approved',
+      status_code: '000', status_description: 'ok', amount: 50, currency: 'ILS', credit_terms: 'regular',
+      number_of_payments: 1, approval_num: '0000001A', more_info: '1271', four_digits: '9844',
+      expiry_month: '05', expiry_year: '30', identification_number: '123456782', card_bin: '532614',
+      card_holder_name: 'Test Holder', token_uid: 'cccccccc-1111-2222-3333-444444444444', customer_email: 'x@example.com',
+    },
+  };
+
+  it('reads the real (flat) reply: the kind is `type`, and it is an approved charge', async () => {
+    setEnv('sandbox');
+    fetchMock.mockResolvedValueOnce(reply(200, REAL_REPLY));
+    const found = await lookupPaymentRequest(payplusConfig()!, UID);
+    expect(found.kind).toBe('transactions');
+    if (found.kind !== 'transactions') return;
+    expect(found.transactions).toHaveLength(1);
+    const tx = found.transactions[0]!;
+    expect(tx).toEqual({
+      uid: 'bbbbbbbb-1111-2222-3333-444444444444', pageRequestUid: UID, type: 'charge', statusCode: '000', amount: 50,
+      currency: 'ILS', approvalNumber: '0000001A', moreInfo: '1271', payments: 1, last4: '9844', statusDescription: 'ok',
+    });
+    expect(isApprovedCharge(tx)).toBe(true);
+    // Nothing else of the card or its holder is carried on.
+    for (const never of ['123456782', '532614', 'Test Holder', 'cccccccc-1111', 'x@example.com', 'expiry']) {
+      expect(JSON.stringify(found)).not.toContain(never);
+    }
+  });
+
+  it('a flat reply of another kind (a refund, a card check) is not an approved charge', async () => {
+    setEnv('sandbox');
+    for (const kind of ['Refund', 'Approval', 'Check']) {
+      fetchMock.mockResolvedValueOnce(reply(200, { ...REAL_REPLY, data: { ...REAL_REPLY.data, type: kind } }));
+      const found = await lookupPaymentRequest(payplusConfig()!, UID);
+      if (found.kind !== 'transactions') throw new Error('expected transactions');
+      expect(isApprovedCharge(found.transactions[0]!)).toBe(false);
+    }
+  });
+
+  it('"can-not-find-payment_request_uid" is PayPlus saying the session has no transaction — an empty list', async () => {
+    setEnv('sandbox');
+    fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'error', code: 1, description: 'can-not-find-payment_request_uid' }, data: {} }));
+    expect(await lookupPaymentRequest(payplusConfig()!, UID)).toEqual({ kind: 'transactions', transactions: [] });
+    // Only that exact answer: the same words on a refused request stay "unknown".
+    fetchMock.mockResolvedValueOnce(reply(403, { results: { status: 'error', description: 'can-not-find-payment_request_uid' } }));
+    expect((await lookupPaymentRequest(payplusConfig()!, UID)).kind).toBe('unknown');
+  });
+
   it('a refusal, an error or an unreadable answer is "unknown" — never "nothing was charged"', async () => {
     setEnv('sandbox');
     fetchMock.mockResolvedValueOnce(reply(403, { message: `API_KEY / SECRET_KEY ARE NOT ALLOWED FROM THIS IP (203.0.113.9) ${DEV.secret}` }));
