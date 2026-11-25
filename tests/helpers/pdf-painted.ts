@@ -11,6 +11,8 @@ import { inflateSync } from 'node:zlib';
 
 export interface Painted {
   page: number;
+  /** The font the line is drawn with — its resource name in the file (F15…). */
+  font: string;
   /** Where the line starts, in points from the page's left / bottom edge. */
   x: number;
   y: number;
@@ -83,7 +85,7 @@ export function paintedText(pdf: Buffer): Painted[] {
         text = '';
         for (let i = 0; i < tj[1]!.length; i += 4) text += map.get(parseInt(tj[1]!.slice(i, i + 4), 16)) ?? '\uFFFD';
       }
-      out.push({ page, x, y, text });
+      out.push({ page, font, x, y, text });
     }
   }
   return out;

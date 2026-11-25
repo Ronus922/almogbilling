@@ -84,10 +84,13 @@ const RULE: Rgb = [226, 232, 240];
 
 // ── Text the embedded fonts can draw ───────────────────────────────────────
 
-/** The glyphs BOTH embedded subsets carry — the ranges written at the top of
- *  pdf-heebo.ts: basic Latin, the middle dot, Hebrew with its points, geresh
- *  and gershayim, ₪, the two dashes and the ellipsis. */
-const DRAWABLE = /^[\u0020-\u007E\u00B7\u05B0-\u05EA\u05F3\u05F4\u20AA\u2013\u2014\u2026]$/;
+/** The glyphs BOTH embedded subsets really carry — read from the fonts' own
+ *  maps, not from the ranges they were cut with (Heebo has no glyph for a few
+ *  points inside its Hebrew range): basic Latin, the middle dot, the Hebrew
+ *  letters and the points Heebo draws, geresh and gershayim, ₪, the two dashes
+ *  and the ellipsis. tests/chip-list-export.test.ts paints every one of them
+ *  with both fonts, so this class cannot drift away from the font files. */
+const DRAWABLE = /^[\u0020-\u007E\u00B7\u05B0-\u05BC\u05BE\u05BF\u05C1\u05C2\u05C7\u05D0-\u05EA\u05F3\u05F4\u20AA\u2013\u2014\u2026]$/;
 /** Typography the subsets lack, written with what they have. */
 const PLAIN: Record<string, string> = {
   '\u201E': '"', '\u201C': '"', '\u201D': '"', '\u00AB': '"', '\u00BB': '"', // low, curly and angle double quotes
@@ -98,8 +101,10 @@ const PLAIN: Record<string, string> = {
 };
 /** A Hebrew letter or point — the line it stands in reads right to left. */
 const HEBREW = /[\u0590-\u05FF]/;
-/** Marks that only steer a browser's bidi, and zero-width characters. */
-const INVISIBLE = /^[\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]$/;
+/** What is left out without a trace: the marks that only steer a browser's
+ *  bidi, zero-width characters, and the three Hebrew points Heebo cannot draw
+ *  (meteg and the two dots) — a missing point never changes a name. */
+const INVISIBLE = /^[\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF\u05BD\u05C4\u05C5]$/;
 
 /**
  * A text made only of glyphs the embedded fonts hold. Typographic quotes and

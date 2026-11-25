@@ -149,9 +149,15 @@ async function pickApartment(page: Page, apt: string) {
   await page.locator('[data-slot="popover-content"]').getByRole('button').filter({ hasText: apt }).first().click();
 }
 
-/** Type a number into a block's chip field and add it (Enter or "הוסף"). */
+/** Type a number into a block's chip field and add it (Enter or "הוסף"). The
+ *  field is clicked first, as a person does: right after a control of the
+ *  window was removed from under the focus (the X of a red number), the
+ *  window's focus trap is still moving the focus, and an Enter sent in that
+ *  instant lands elsewhere — the number then stays in the field (seen once,
+ *  25/11/2026). */
 async function addChip(block: Locator, number: string, how: 'enter' | 'button' = 'enter') {
   const input = block.getByLabel(/^מספר צ׳יפ/);
+  await input.click();
   await input.fill(number);
   if (how === 'enter') await input.press('Enter');
   else await block.getByRole('button', { name: 'הוסף', exact: true }).click();
@@ -280,7 +286,7 @@ function exportButtons(page: Page, prefix: 'chips' | 'chip-orders') {
       looks: [...new Set(buttons.map(look))],
       // The group closes the toolbar's far-end group, right after the search box.
       lastInToolbar: end.lastElementChild === group && end.parentElement!.lastElementChild === end,
-      afterSearch: group.previousElementSibling?.querySelector('input') !== null,
+      afterSearch: Boolean(group.previousElementSibling?.querySelector('input')),
     };
   });
 }
@@ -1193,6 +1199,15 @@ test.describe('staff: the Orders tab', () => {
       await page.setViewportSize({ width: 1024, height: 800 });
       expect(await offItsHeader(table), 'at 1024px').toEqual([]);
       await noSideScroll(page);
+      // At its minimum width the table still holds its columns: the floors of
+      // the columns, with the row's gaps and padding, fit inside every row —
+      // no last column sticking out past the row's own line. (The root font
+      // is 17px: a "12px" gap is 12.75px.)
+      expect(await table.evaluate((el) => el.scrollWidth > el.parentElement!.clientWidth), 'the table scrolls inside its card at 1024').toBe(true);
+      expect(
+        await table.evaluate((root) => [...root.children].map((row) => row.scrollWidth - row.clientWidth)),
+        'no row is wider than the table',
+      ).toEqual(await table.evaluate((root) => [...root.children].map(() => 0)));
       // The three number columns are centred under their headers, the text
       // columns start at the header's start edge.
       const aligns = await heads.evaluateAll((els) => els.map((el) => getComputedStyle(el).textAlign));

@@ -114,6 +114,37 @@ describe('text the embedded fonts can draw', () => {
     expect(pdfText('שורה\tראשונה\nשנייה')).toBe('שורה ראשונה שנייה');
     // Another script and an emoji: one "?" per character — never an empty name.
     expect(pdfText(`${String.fromCodePoint(0x418, 0x432, 0x430, 0x43d)} ${String.fromCodePoint(0x1f600)}`)).toBe('???? ?');
+    // Inside the Hebrew block too: a point Heebo cannot draw (meteg) is left
+    // out, a sign it cannot draw (sof pasuq) and a code that is no character
+    // at all are a "?" — the letters around them stay.
+    expect(pdfText(`א${String.fromCodePoint(0x5bd)}ב`)).toBe('אב');
+    expect(pdfText(`א${String.fromCodePoint(0x5c3)}ב${String.fromCodePoint(0x5c8)}`)).toBe('א?ב?');
+  });
+
+  it('every character it lets through is really painted — by the regular font and by the bold one', async () => {
+    // jsPDF leaves out, without a word, a character its font has no glyph for.
+    // So: every character pdfText keeps, drawn once as a header (bold) and
+    // once as a cell (regular), and read back from the file.
+    const kept: string[] = [];
+    for (let code = 0x21; code <= 0xffff; code++) {
+      if (code >= 0xd800 && code <= 0xdfff) continue; // surrogates are no characters
+      const ch = String.fromCodePoint(code);
+      if (pdfText(ch) === ch) kept.push(ch);
+    }
+    expect(kept.length).toBeGreaterThan(130);
+    const text = Array.from({ length: Math.ceil(kept.length / 10) }, (_, i) => kept.slice(i * 10, i * 10 + 10).join('')).join(' ');
+    const file = await buildListPdf({ title: 'T', date: 'D', meta: [], columns: [{ header: text }], rows: [[text]] });
+    const painted = paintedText(Buffer.from(file.bytes));
+    expect(painted.every((p) => p.text !== null)).toBe(true);
+    // The title is bold, the page number regular: the two fonts of the file.
+    const bold = painted.find((p) => p.text === 'T')!.font;
+    const regular = painted.find((p) => p.text === `1 ${rev('מתוך')} 1 ${rev('עמוד')}`)!.font;
+    expect(bold).not.toBe(regular);
+    for (const [name, font] of [['bold', bold], ['regular', regular]] as const) {
+      const drawn = new Set(painted.filter((p) => p.font === font).flatMap((p) => Array.from(p.text ?? '')));
+      const lost = kept.filter((ch) => !drawn.has(ch)).map((ch) => `U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`);
+      expect(lost, `characters the ${name} font does not draw`).toEqual([]);
+    }
   });
 });
 

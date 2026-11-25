@@ -65,10 +65,13 @@ import { ChipOrderTags } from './ChipOrderTags';
 // columns of that row alone. And a column has ONE alignment, written once in
 // COL and worn by its header cell and by its body cells alike: text columns
 // from the start edge, the three number columns centred.
-// The floors add up to the table's minimum width: 900px with the action
-// column, 738px without it (the table keeps its 760px).
-const COLS = 'grid-cols-[minmax(150px,1.5fr)_minmax(132px,1fr)_72px_56px_92px_minmax(128px,1.2fr)]';
-const COLS_ACT = 'grid-cols-[minmax(150px,1.5fr)_minmax(132px,1fr)_72px_56px_92px_minmax(128px,1.2fr)_150px]';
+// The floors, with the row's gaps and padding, must fit the table's minimum
+// width — or the last column sticks out of the row. The root font is 17px, so
+// gap-3 is 12.75px and px-6 is 25.5px (not 12 and 24): with the action column
+// 772 + 6 × 12.75 + 2 × 25.5 = 899.5px, inside the table's 900px; without it
+// 622 + 5 × 12.75 + 51 = 736.75px, inside its 760px.
+const COLS = 'grid-cols-[minmax(146px,1.5fr)_minmax(130px,1fr)_72px_56px_92px_minmax(126px,1.2fr)]';
+const COLS_ACT = 'grid-cols-[minmax(146px,1.5fr)_minmax(130px,1fr)_72px_56px_92px_minmax(126px,1.2fr)_150px]';
 const COL = {
   orderer: 'text-start',
   tags: 'text-start',
