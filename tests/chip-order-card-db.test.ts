@@ -204,7 +204,10 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
     await pool.end();
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Every test opens payment sessions from one address; the hourly ceiling
+    // per address belongs to the test that checks it, not to the whole file.
+    await pool.query(`delete from public.auth_rate_limits where bucket = $1`, [`chip-order:card-session:ip:${IP}`]);
     config = SANDBOX;
     afterQueue.length = 0;
     createHostedFieldsSession.mockClear();
@@ -392,6 +395,78 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
     const audit = (await pool.query(`select metadata from public.audit_log where entity_id = $1 and action = 'paid'`, [o.id])).rows[0].metadata;
     expect(audit).toMatchObject({ source: 'payplus_callback', provider: 'payplus', env: 'sandbox', transaction_uid: payload.transaction.uid });
     expect(JSON.stringify(audit)).not.toContain('000000018');
+  });
+
+  // PayPlus's hosted-fields notice does not say which payment session it went
+  // through (seen on the sandbox, 25/11/2026). It is then only a signal.
+  it('a valid callback that names NO session makes the server ask PayPlus about the order\'s own sessions — and that answer pays it, once', async () => {
+    const o = await makeOrder({ isTest: true });
+    const session = await sessionOf(o);
+    const payload = notice(o, null);
+    lookupPaymentRequest.mockClear();
+    lookupPaymentRequest.mockImplementation(async (_cfg, uid) => (uid === session ? { kind: 'transactions', transactions: [reported(o, { uid: payload.transaction.uid })] } : NOTHING));
+
+    expect((await callback(payload)).status).toBe(200);
+    expect(lookupPaymentRequest.mock.calls.map((c) => c[1])).toEqual([session]);
+    expect(await auditCount(o.id, 'paid')).toBe(1);
+    expect(afterQueue).toHaveLength(1);
+    await runAfter();
+    expect(await rowOf(o.id)).toMatchObject({ status: 'paid', card_status: 'paid', card_transaction_uid: payload.transaction.uid, card_page_request_uid: session, card_last4: '9844' });
+    expect(notifyChipOrder).toHaveBeenCalledTimes(1);
+    const audit = (await pool.query(`select metadata from public.audit_log where entity_id = $1 and action = 'paid'`, [o.id])).rows[0].metadata;
+    expect(audit).toMatchObject({ source: 'payplus_lookup', env: 'sandbox', transaction_uid: payload.transaction.uid });
+
+    // The same notice again, and the order page's own check at the same time: nothing more.
+    for (let i = 0; i < 2; i++) expect((await callback(payload)).status).toBe(200);
+    expect(afterQueue).toHaveLength(0);
+    expect(notifyChipOrder).toHaveBeenCalledTimes(1);
+    expect(await auditCount(o.id, 'paid')).toBe(1);
+    expect(await auditCount(o.id, 'card_payment_anomaly')).toBe(0);
+  });
+
+  it('…and when PayPlus reports nothing on the order\'s sessions, the notice pays nothing (an anomaly, recorded once)', async () => {
+    const o = await makeOrder({ isTest: true });
+    await sessionOf(o);
+    const payload = notice(o, null, { uid: `tx-${RUN}-nosession` });
+    for (let i = 0; i < 3; i++) expect((await callback(payload)).status).toBe(200);
+    expect((await rowOf(o.id)).status).toBe('pending_payment');
+    expect(afterQueue).toHaveLength(0);
+    expect(await auditCount(o.id, 'card_payment_anomaly')).toBe(1);
+    expect(await auditCount(o.id, 'paid')).toBe(0);
+  });
+
+  it('…and when PayPlus cannot be asked right then, the answer is 503 and nothing changed — the notice may come again', async () => {
+    const o = await makeOrder({ isTest: true });
+    const session = await sessionOf(o);
+    const payload = notice(o, null);
+    lookupPaymentRequest.mockResolvedValue({ kind: 'unknown', status: 0, message: 'no reply' });
+    expect((await callback(payload)).status).toBe(503);
+    expect((await rowOf(o.id)).status).toBe('pending_payment');
+    expect(await auditCount(o.id, 'card_payment_anomaly')).toBe(0);
+    // PayPlus sends it again, and this time it can be asked.
+    lookupPaymentRequest.mockImplementation(async (_cfg, uid) => (uid === session ? { kind: 'transactions', transactions: [reported(o, { uid: payload.transaction.uid })] } : NOTHING));
+    expect((await callback(payload)).status).toBe(200);
+    expect((await rowOf(o.id)).status).toBe('paid');
+    expect(afterQueue).toHaveLength(1);
+  });
+
+  it('a session-less notice never reaches a real order, an unknown order number, or an order without a session', async () => {
+    const real = await makeOrder({ isTest: false });
+    const bare = await makeOrder({ isTest: true });
+    lookupPaymentRequest.mockClear();
+    // Whatever PayPlus would say, it is not even asked: no sandbox session exists for these.
+    lookupPaymentRequest.mockResolvedValue({ kind: 'transactions', transactions: [reported(real)] });
+    expect((await callback(notice(real, null))).status).toBe(200);
+    expect((await callback(notice(bare, null))).status).toBe(200);
+    expect((await callback({ ...notice(bare, null), transaction: { ...notice(bare, null).transaction, more_info: '999999999' } })).status).toBe(200);
+    expect(lookupPaymentRequest).not.toHaveBeenCalled();
+    for (const order of [real, bare]) {
+      const row = await rowOf(order.id);
+      expect(row.status).toBe('pending_payment');
+      expect(row.card_transaction_uid).toBeNull();
+    }
+    expect(afterQueue).toHaveLength(0);
+    expect(notifyChipOrder).not.toHaveBeenCalled();
   });
 
   it('twenty copies of the callback at the same moment: one transition, one message, one audit row', async () => {

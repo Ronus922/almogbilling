@@ -1,7 +1,7 @@
 import { NextResponse, after } from 'next/server';
 import { logger } from '@/lib/logger';
-import { payplusConfig, readPayPlusTransaction, verifyPayPlusCallback } from '@/lib/payplus/client';
-import { applyPayPlusTransaction } from '@/lib/chipOrders/cardPayment';
+import { payloadFieldNames, payplusConfig, readPayPlusTransaction, verifyPayPlusCallback } from '@/lib/payplus/client';
+import { applyPayPlusCallback } from '@/lib/chipOrders/cardPayment';
 import { notifyChipOrder } from '@/lib/chipOrders/notify';
 
 export const runtime = 'nodejs';
@@ -19,9 +19,14 @@ export const dynamic = 'force-dynamic';
 // the answer tells a stranger nothing. The two headers are looked at before a
 // byte of the body is read, and the body is read up to 64KB and no further.
 //
-// A validated notice is applied through applyPayPlusTransaction, which:
+// A validated notice is applied through applyPayPlusCallback, which:
 //   - finds the order by the order number we put in more_info, AND requires
-//     the transaction to name a payment session this server opened for it;
+//     the transaction to belong to a payment session this server opened for
+//     it. PayPlus's hosted-fields notice does not name its session (seen on
+//     the sandbox, 25/11/2026): such a notice only makes the server ASK
+//     PayPlus about the order's own sessions, and what PayPlus answers there
+//     is what gets applied. If PayPlus cannot be asked right then, the answer
+//     is 503 — nothing changed, and PayPlus may send the notice again;
 //   - marks it paid only for an approved charge of EXACTLY the order's total,
 //     on an order of the processor's own environment (a sandbox charge never
 //     touches a real order);
@@ -81,7 +86,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, ignored: 'unreadable' });
   }
 
-  const applied = await applyPayPlusTransaction(cfg, tx, 'payplus_callback');
+  if (tx.pageRequestUid === null) {
+    // Which fields the notice has — their names only, never a value.
+    logger.warn('[chip-order] payplus callback names no payment session — asking PayPlus', { fields: payloadFieldNames(checked.body) });
+  }
+  const applied = await applyPayPlusCallback(cfg, tx);
+  if (applied.kind === 'unconfirmed') return NextResponse.json({ ok: false, error: 'not confirmed yet' }, { status: 503 });
   if (applied.kind === 'paid' && applied.transitioned) {
     after(() => notifyChipOrder(applied.orderId, 'paid'));
   }

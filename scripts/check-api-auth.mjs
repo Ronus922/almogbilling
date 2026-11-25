@@ -330,18 +330,19 @@ run('check-api-auth', async () => {
   {
     const { rel, src } = cardRoute('callback');
     const verify = src.search(/\bverifyPayPlusCallback\(/);
-    const apply = src.search(/\bapplyPayPlusTransaction\(/);
+    const apply = src.search(/\bapplyPayPlus(Transaction|Callback)\(/);
     if (verify < 0) fail(`${rel} — חייב לאמת את החתימה של PayPlus (verifyPayPlusCallback)`);
-    if (apply >= 0 && (verify < 0 || apply < verify)) fail(`${rel} — applyPayPlusTransaction לפני אימות החתימה`);
+    if (apply < 0) fail(`${rel} — חייב להחיל את ההודעה דרך applyPayPlusCallback`);
+    if (apply >= 0 && (verify < 0 || apply < verify)) fail(`${rel} — החלת ההודעה לפני אימות החתימה`);
     if (!/if\s*\(\s*!checked\.ok\s*\)/.test(src)) fail(`${rel} — חייב לדחות בקשה שהחתימה שלה לא אומתה (if (!checked.ok))`);
   }
   // Only those three routes may mark an order paid by card, and the browser
   // side never loads the PayPlus client (its keys are server-only).
-  const cardUsers = execFileSync('bash', ['-c', "cd '" + root + "' && /usr/bin/grep -rlE \"recordCardPayment|applyPayPlusTransaction|lookupCardPayment\" src --include=*.ts --include=*.tsx || true"], { encoding: 'utf8' })
+  const cardUsers = execFileSync('bash', ['-c', "cd '" + root + "' && /usr/bin/grep -rlE \"recordCardPayment|applyPayPlusTransaction|applyPayPlusCallback|lookupCardPayment\" src --include=*.ts --include=*.tsx || true"], { encoding: 'utf8' })
     .trim().split('\n').filter(Boolean)
     .filter((f) => !f.startsWith(CARD_DIR) && f !== 'src/lib/db/chipOrderCard.ts' && f !== 'src/lib/chipOrders/cardPayment.ts')
     // A mention in a comment is not a use.
-    .filter((f) => /\b(recordCardPayment|applyPayPlusTransaction|lookupCardPayment)\b/.test(stripComments(readFileSync(join(root, f), 'utf8'))));
+    .filter((f) => /\b(recordCardPayment|applyPayPlusTransaction|applyPayPlusCallback|lookupCardPayment)\b/.test(stripComments(readFileSync(join(root, f), 'utf8'))));
   for (const f of cardUsers) fail(`${f} — סימון הזמנה כ„שולם בכרטיס” שמור לשלושת נתיבי ${CARD_DIR}`);
   const clientLoaders = execFileSync('bash', ['-c', "cd '" + root + "' && /usr/bin/grep -rlE \"from ['\\\"]@/lib/payplus/client['\\\"]\" src --include=*.ts --include=*.tsx || true"], { encoding: 'utf8' })
     .trim().split('\n').filter(Boolean)

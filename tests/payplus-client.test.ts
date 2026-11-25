@@ -11,7 +11,7 @@ vi.mock('@/env', () => ({ env: fakeEnv }));
 
 const {
   PayPlusApiError, createHostedFieldsSession, hostedFieldsRequestBody, isApprovedCharge, lookupPaymentRequest,
-  payplusConfig, readPayPlusTransaction, verifyPayPlusCallback,
+  payloadFieldNames, payplusConfig, readPayPlusTransaction, verifyPayPlusCallback,
 } = await import('@/lib/payplus/client');
 
 const DEV = { api: 'dev-api-key-000111', secret: 'dev-secret-key-222333', page: '11111111-2222-3333-4444-555555555555' };
@@ -281,6 +281,29 @@ describe('readPayPlusTransaction — a whitelist of fields', () => {
     expect(tx.last4).toBeNull();
     const flat = readPayPlusTransaction({ transaction_uid: 'tx-flat-0001', transaction_type: 'Charge', status_code: '000', amount: '150.00', currency_code: 'ils', approval_num: '77', more_info: 1009, page_request_uid: 'aaaaaaaa-1111-2222-3333-444444444444' })!;
     expect(flat).toMatchObject({ uid: 'tx-flat-0001', type: 'charge', amount: 150, currency: 'ILS', approvalNumber: '77', moreInfo: '1009', pageRequestUid: 'aaaaaaaa-1111-2222-3333-444444444444' });
+  });
+});
+
+describe('the payment session of a nested (callback) payload, and the names-only view of a payload', () => {
+  const base = { transaction_type: 'Charge', transaction: { uid: 'tx-000777', status_code: '000', amount: 50, more_info: '1009' } };
+  const UID = 'aaaaaaaa-1111-2222-3333-444444444444';
+
+  it('is found wherever PayPlus puts it — and is null when the notice does not carry it', () => {
+    expect(readPayPlusTransaction(base)!.pageRequestUid).toBeNull();
+    expect(readPayPlusTransaction({ ...base, transaction: { ...base.transaction, payment_request_uid: UID } })!.pageRequestUid).toBe(UID);
+    expect(readPayPlusTransaction({ ...base, transaction: { ...base.transaction, payment_page_request_uid: UID } })!.pageRequestUid).toBe(UID);
+    expect(readPayPlusTransaction({ ...base, page_request_uid: UID })!.pageRequestUid).toBe(UID);
+    expect(readPayPlusTransaction({ ...base, data: { page_request_uid: UID } })!.pageRequestUid).toBe(UID);
+  });
+
+  it('payloadFieldNames lists names only — no value of the payload appears', () => {
+    const payload = { ...base, data: { card_information: { four_digits: '9844', identification_number: '123456782', expiry_month: '05' }, items: [{ name: 'secret item', price: 50 }] }, 'weird key!': 1 };
+    const names = payloadFieldNames(payload);
+    expect(names).toEqual(expect.arrayContaining(['transaction_type', 'transaction', 'transaction.uid', 'data.card_information', 'data.card_information.identification_number', 'data.items', 'data.items[].name', '<key>']));
+    const text = JSON.stringify(names);
+    for (const value of ['123456782', '9844', 'tx-000777', 'secret item', 'weird key', 'Charge', '1009']) expect(text).not.toContain(value);
+    expect(payloadFieldNames(null)).toEqual([]);
+    expect(payloadFieldNames(Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`k${i}`, 1]))).length).toBe(150);
   });
 });
 

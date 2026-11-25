@@ -260,7 +260,13 @@ export function readPayPlusTransaction(payload: unknown): PayPlusTransaction | n
   const card = Object.keys(obj(obj(p.data).card_information)).length > 0 ? obj(obj(p.data).card_information) : obj(t.card_information);
   const four = str(card.four_digits) ?? str(t.four_digits);
   const payments = obj(t.payments).number_of_payments ?? t.number_of_payments;
-  const pageRequestUid = str(t.payment_request_uid) ?? str(t.page_request_uid);
+  // The payment session. The lookup's reply names it (page_request_uid); the
+  // hosted-fields callback seen on the sandbox (25/11/2026) does not name it
+  // under `transaction` — every place it may sit is looked at, and a notice
+  // without it is confirmed through the lookup (applyPayPlusCallback).
+  const d = obj(p.data);
+  const pageRequestUid = str(t.payment_request_uid) ?? str(t.page_request_uid) ?? str(t.payment_page_request_uid)
+    ?? (nested ? str(p.payment_request_uid) ?? str(p.page_request_uid) ?? str(d.payment_request_uid) ?? str(d.page_request_uid) : null);
   // The KIND of transaction ("Charge"). Nested shape: transaction_type —
   // transaction.type there is something else (where it was made,
   // "internal_page") and is never read as the kind. Flat shape: `type`.
@@ -281,6 +287,29 @@ export function readPayPlusTransaction(payload: unknown): PayPlusTransaction | n
     last4: four && /^\d{4}$/.test(four) ? four : null,
     statusDescription: str(t.status_description),
   };
+}
+
+/** The NAMES of a payload's fields, three levels deep — for a log line that
+ *  must show what PayPlus sent without showing any of it. Values are never
+ *  read; a name that is not a plain identifier is replaced. */
+export function payloadFieldNames(payload: unknown, depth = 3, max = 150): string[] {
+  const out: string[] = [];
+  const walk = (node: unknown, prefix: string, level: number) => {
+    if (!node || typeof node !== 'object' || out.length >= max) return;
+    if (Array.isArray(node)) {
+      if (node.length > 0) walk(node[0], `${prefix}[]`, level);
+      return;
+    }
+    for (const key of Object.keys(node as Record<string, unknown>)) {
+      if (out.length >= max) return;
+      const name = /^[A-Za-z0-9_]{1,40}$/.test(key) ? key : '<key>';
+      const path = prefix ? `${prefix}.${name}` : name;
+      out.push(path);
+      if (level < depth) walk((node as Record<string, unknown>)[key], path, level + 1);
+    }
+  };
+  walk(payload, '', 1);
+  return out;
 }
 
 /** An approved regular charge: PayPlus says "Charge" and status 000. A payload

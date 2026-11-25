@@ -57,6 +57,12 @@ export async function getCardOrderByToken(trackingToken: string): Promise<CardOr
   return queryOne<CardOrder>(`${CARD_ORDER_SQL} where o.tracking_token = $1`, [trackingToken]);
 }
 
+/** The order a processor notice names by its number (the more_info we sent). */
+export async function getCardOrderByNumber(orderNumber: number): Promise<CardOrder | null> {
+  if (!Number.isSafeInteger(orderNumber) || orderNumber <= 0) return null;
+  return queryOne<CardOrder>(`${CARD_ORDER_SQL} where o.order_number = $1`, [orderNumber]);
+}
+
 /**
  * Stores the payment session that was just opened for the order: a row of
  * chip_order_card_sessions, and the order's "latest session". Only while the

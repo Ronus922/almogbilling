@@ -2,7 +2,7 @@ import 'server-only';
 import { logger } from '@/lib/logger';
 import { queryOne } from '@/lib/db';
 import { writeAudit } from '@/lib/db/audit';
-import { listRecentCardSessions, recordCardFailure, recordCardPayment, type CardOrder } from '@/lib/db/chipOrderCard';
+import { getCardOrderByNumber, listRecentCardSessions, recordCardFailure, recordCardPayment, type CardOrder } from '@/lib/db/chipOrderCard';
 import {
   isApprovedCharge, lookupPaymentRequest, payplusConfig, type PayPlusConfig, type PayPlusTransaction,
 } from '@/lib/payplus/client';
@@ -186,4 +186,49 @@ export async function lookupCardPayment(
     }
   }
   return unknown ? { kind: 'unknown' } : { kind: 'not_charged', refused };
+}
+
+/** What a validated callback led to. `unconfirmed` — PayPlus could not be
+ *  asked just now: the caller answers with an error so the notice is sent again. */
+export type AppliedCallback = AppliedTransaction | { kind: 'unconfirmed' };
+
+/**
+ * A callback whose signature was checked.
+ *
+ * When it names the payment session it went through, it is applied as it is
+ * (applyPayPlusTransaction). PayPlus's hosted-fields notice does NOT name one
+ * (seen on the sandbox, 25/11/2026) — and the order number alone pays nothing.
+ * So such a notice is only a signal: the server asks PayPlus itself about the
+ * payment sessions it opened for that order, and applies what PayPlus answers
+ * there — the same lookup the order page triggers. The charge is then bound
+ * to one of the order's own sessions by the question that was asked, not by
+ * anything the notice says.
+ */
+export async function applyPayPlusCallback(cfg: PayPlusConfig, tx: PayPlusTransaction): Promise<AppliedCallback> {
+  if (tx.pageRequestUid !== null) return applyPayPlusTransaction(cfg, tx, 'payplus_callback');
+  if (!tx.moreInfo || !/^\d{1,9}$/.test(tx.moreInfo)) return { kind: 'ignored', why: 'no_order_number' };
+  if (tx.type !== null && tx.type !== 'charge') return { kind: 'ignored', why: `type_${tx.type}` };
+  const orderNumber = Number(tx.moreInfo);
+  const order = await getCardOrderByNumber(orderNumber);
+  if (!order) {
+    if (tx.statusCode === '000') logger.error('[chip-order] approved payplus charge for an unknown order number', { orderNumber, source: 'payplus_callback', env: cfg.mode });
+    return { kind: 'ignored', why: 'unknown_order' };
+  }
+  let found: CardLookup;
+  try {
+    found = await lookupCardPayment(cfg, order);
+  } catch (e) {
+    logger.warn('[chip-order] payplus lookup failed after a callback', { orderId: order.id, message: (e as Error).name });
+    found = { kind: 'unknown' };
+  }
+  if (found.kind === 'paid') return { kind: 'paid', orderId: found.orderId, transitioned: found.transitioned };
+  if (found.kind === 'unknown') return { kind: 'unconfirmed' };
+  if (found.refused) return { kind: 'failed' };
+  if (tx.statusCode === '000') {
+    // PayPlus signed an approved charge that carries this order's number, yet
+    // reports nothing on any session this server opened for the order.
+    logger.error('[chip-order] card charge that names no payment session of the order — refused', { orderNumber, source: 'payplus_callback' });
+    await auditAnomalyOnce(order.id, 'no_session', tx, cfg, 'payplus_callback');
+  }
+  return { kind: 'ignored', why: 'no_session' };
 }
