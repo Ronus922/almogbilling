@@ -36,7 +36,7 @@
 
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, Check, CheckCheck, FlaskConical, Hourglass, Inbox, Loader2, Search } from 'lucide-react';
+import { AlertTriangle, Ban, Check, CheckCheck, FlaskConical, Hourglass, Inbox, Loader2, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -48,9 +48,11 @@ import {
   CHIP_ORDER_PERSON_ROLE_LABEL, chipOrderStage, isChipOrderOverdue, type ChipOrderRow,
 } from '@/lib/chipOrders/model';
 import {
-  CHIP_ORDERS_EXPORT, CHIP_ORDER_WAITING_LABEL, chipOrderRowAction, chipOrderRowPhone, chipOrderRowTags, filterChipOrderRows,
-  searchHitPeople, summarizeChipOrders, type ChipOrderRowAction,
+  CHIP_ORDERS_EXPORT, CHIP_ORDER_WAITING_LABEL, chipOrderCollectors, chipOrderRowAction, chipOrderRowPhone, chipOrderRowTags,
+  filterChipOrderRows, searchHitPeople, summarizeChipOrders, type ChipOrderRowAction,
 } from '@/lib/chipOrders/orderRows';
+import { CHIP_ORDER_CANCELLED_LABEL } from '@/lib/chipOrders/model';
+import { CollectorPicker } from './CollectorPicker';
 import { ChipListExports } from './ChipListExports';
 import { CHIPS_SEARCH_INPUT, ChipsToolbar } from './ChipsToolbar';
 import { ChipOrderStagePill } from './ChipOrderStatusPill';
@@ -157,6 +159,19 @@ function RowAction({
       </span>
     );
   }
+  // A reception order that was cancelled ("בטל הזמנת קבלה"): it stays in the
+  // tab with its status. A label; the row under it still opens the window.
+  if (action.kind === 'cancelled') {
+    return (
+      <span
+        className="inline-flex h-[24px] items-center gap-1 whitespace-nowrap rounded-[7px] border border-[var(--chip-red-border)] bg-[var(--chip-red-soft)] px-2.5 text-[12px] font-bold text-[var(--chip-red-ink)]"
+        data-testid="chip-order-row-cancelled"
+      >
+        <Ban className="h-3.5 w-3.5" />
+        {CHIP_ORDER_CANCELLED_LABEL}
+      </span>
+    );
+  }
   // Chips are still missing: nothing to press. A label, not a button — and it
   // does not hold the click, so the row under it opens the issue window, which
   // is where the missing chips are issued.
@@ -225,6 +240,8 @@ export function ChipOrdersPanel({
   const [ask, setAsk] = useState<{ step: StatusStep; row: ChipOrderRow } | null>(null);
   const [askOpen, setAskOpen] = useState(false);
   const [acting, setActing] = useState(false);
+  // "נאסף": who collected — one of the people of the order. Optional here.
+  const [collector, setCollector] = useState<string | null>(null);
 
   const tests = useMemo(() => items.filter((o) => o.is_test), [items]);
   // The status belongs to the whole order: what a row may do is read from ALL
@@ -261,7 +278,13 @@ export function ChipOrdersPanel({
     if (!ask) return;
     setActing(true);
     try {
-      const res = await fetch(`/api/chip-orders/${ask.row.order_id}/${ask.step}`, { method: 'POST', credentials: 'include' });
+      const named = ask.step === 'collected' && collector !== null;
+      const res = await fetch(`/api/chip-orders/${ask.row.order_id}/${ask.step}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: named ? { 'Content-Type': 'application/json' } : undefined,
+        body: named ? JSON.stringify({ person: collector }) : undefined,
+      });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(data.error === 'not_found' ? 'ההזמנה לא נמצאה' : data.error ?? 'הפעולה נכשלה');
       toast.success(ask.step === 'ready' ? 'סומן מוכן לאיסוף — נשלחה הודעה למזמין' : 'סומן כנאסף');
@@ -278,9 +301,11 @@ export function ChipOrdersPanel({
   const rowProps = (o: ChipOrderRow) => (onOpen ? { onClick: () => onOpen(o) } : {});
 
   const actionOf = (o: ChipOrderRow) => (canEdit ? chipOrderRowAction(o, summaries.get(o.order_id)) : null);
-  const askFor = (o: ChipOrderRow) => (step: StatusStep) => { setAsk({ step, row: o }); setAskOpen(true); };
+  const askFor = (o: ChipOrderRow) => (step: StatusStep) => { setAsk({ step, row: o }); setCollector(null); setAskOpen(true); };
   const cols = canEdit ? COLS_ACT : COLS;
   const askApartments = ask ? summaries.get(ask.row.order_id)?.apartments ?? [] : [];
+  // The people of the WHOLE order (all its apartment rows) — who may have collected it.
+  const askCollectors = ask?.step === 'collected' ? chipOrderCollectors(items, ask.row.order_id) : [];
 
   return (
     // mb-16 with the action column: the card is the LAST thing on the page, and
@@ -418,7 +443,7 @@ export function ChipOrdersPanel({
                     </span>
                     <span data-col="status" className={cn(COL.status, 'min-w-0')}>
                       <ChipOrderStagePill
-                        stage={chipOrderStage(o.status, o.chips_linked, o.chips_count)}
+                        stage={chipOrderStage(o.status, o.chips_linked, o.chips_count, o.source)}
                         linked={o.chips_linked}
                         ordered={o.chips_count}
                         overdue={isChipOrderOverdue(o)}
@@ -470,7 +495,7 @@ export function ChipOrdersPanel({
                   )}
                   <span>
                     <ChipOrderStagePill
-                      stage={chipOrderStage(o.status, o.chips_linked, o.chips_count)}
+                      stage={chipOrderStage(o.status, o.chips_linked, o.chips_count, o.source)}
                       linked={o.chips_linked}
                       ordered={o.chips_count}
                       overdue={isChipOrderOverdue(o)}
@@ -498,6 +523,20 @@ export function ChipOrdersPanel({
               {askApartments.length > 1 && ` הסימון חל על ההזמנה כולה — דירות ${askApartments.join(', ')}.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {askCollectors.length > 0 && (
+            <div className="flex flex-col gap-2" data-testid="chip-order-row-collector">
+              <span className="text-[13px] font-bold text-[var(--chip-ink)]">מי אסף את הצ׳יפים? <span className="font-semibold text-[var(--chip-ink-muted)]">(לא חובה)</span></span>
+              <CollectorPicker
+                people={askCollectors}
+                value={collector}
+                onChange={setCollector}
+                disabled={acting}
+                optional
+                showApartment={askApartments.length > 1}
+                testId="chip-order-row-collector-option"
+              />
+            </div>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={acting} className="h-11 px-4">ביטול</AlertDialogCancel>
             <Button

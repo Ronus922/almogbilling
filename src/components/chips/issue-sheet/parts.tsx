@@ -337,7 +337,7 @@ export interface PendingChip {
 export function ChipAllocation({
   title, sub, assigned, of, firstName,
   numInput, onNumInput, numType, onNumType, onAdd, addBlocked,
-  saved, existing, pending, conflictNumber, dupHint, disabled,
+  saved, existing, extras, pending, conflictNumber, dupHint, disabled,
   quick, onToggle, onCommitNumber, onRemovePending,
 }: {
   title: string;
@@ -357,6 +357,9 @@ export function ChipAllocation({
   saved: SavedChipLike[];
   /** Earlier chips of the same person (order mode) — tagged "קודם". */
   existing?: SavedChipLike[];
+  /** Extra chips added for the person beyond what the order paid for, and
+   *  paid at the reception (order mode) — tagged "נוסף · קבלה". */
+  extras?: SavedChipLike[];
   pending: PendingChip[];
   conflictNumber?: string | null;
   dupHint?: string | null;
@@ -367,8 +370,9 @@ export function ChipAllocation({
   onRemovePending: (n: string) => void;
 }) {
   const full = of !== null ? assigned >= of && of > 0 : assigned > 0;
-  const rows: { chip: SavedChipLike; earlier: boolean }[] = [
+  const rows: { chip: SavedChipLike; earlier: boolean; extra?: boolean }[] = [
     ...saved.map((c) => ({ chip: c, earlier: false })),
+    ...(extras ?? []).map((c) => ({ chip: c, earlier: false, extra: true })),
     ...(existing ?? []).map((c) => ({ chip: c, earlier: true })),
   ];
   return (
@@ -414,7 +418,7 @@ export function ChipAllocation({
           <div className="ci-chipempty">עדיין לא הונפקו צ׳יפים ל{firstName ?? 'בעל הצ׳יפ'}</div>
         ) : (
           <>
-            {rows.map(({ chip: raw, earlier }) => {
+            {rows.map(({ chip: raw, earlier, extra }) => {
               const chip = quick.view(raw);
               const on = chip.status === 'active';
               const busy = quick.busyId === chip.id;
@@ -441,6 +445,7 @@ export function ChipAllocation({
                   )}
                   <span className="ci-kind">{chip.chip_type === 'app' ? <AppIco /> : <CardIco />}{chip.chip_type === 'app' ? 'אפליקציה' : 'כרטיס'}</span>
                   {earlier && <span className="ci-tag-mini" title="צ׳יפ קודם של אותו אדם בדירה — לא חלק מההזמנה">קודם</span>}
+                  {extra && <span className="ci-tag-mini" title="צ׳יפ שנוסף מעבר לכמות ששולמה באתר, ושולם בקבלה — שייך להזמנת קבלה נפרדת" data-testid="chip-extra-tag">נוסף · קבלה</span>}
                   <button type="button" className="ci-tgl" aria-pressed={on} aria-label={on ? `השבת את ${chip.chip_number}` : `החזר לפעיל את ${chip.chip_number}`}
                     disabled={disabled || quick.busyId !== null} onClick={() => onToggle(raw)}>
                     {busy ? <Loader2 className="ci-spin h-3.5 w-3.5" /> : on ? 'פעיל' : 'מושבת'}

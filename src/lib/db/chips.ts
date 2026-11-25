@@ -577,37 +577,50 @@ export async function deactivateChip(
   opts: { reason: ChipDeactivationReason; note?: string | null; controllerSynced?: boolean },
   actor: { id: string; name: string },
 ): Promise<ChipWithHolder | null> {
-  return withTransaction(async (client) => {
-    const cur = (
-      await client.query<Chip>(
-        `select ${CHIP_COLUMNS} from public.chips where id = $1 for update`,
-        [id],
-      )
-    ).rows[0];
-    if (!cur) return null;
-    if (cur.status !== 'active') throw new ChipStateError();
+  return withTransaction((client) => deactivateChipInTx(client, id, opts, actor));
+}
 
-    const synced = opts.controllerSynced === true;
-    await client.query(
-      `update public.chips
-          set status = 'inactive',
-              deactivated_at = now(),
-              deactivated_by = $2,
-              deactivated_by_name = $3,
-              deactivation_reason = $4,
-              controller_synced = $5::boolean,
-              controller_synced_at = case when $5::boolean then now() else null end
-        where id = $1`,
-      [id, actor.id, actor.name, opts.reason, synced],
-    );
+/**
+ * The body of deactivateChip on a transaction the CALLER owns — cancelling a
+ * reception order (25/11/2026) disables every chip of the order together with
+ * the order's own change, all-or-nothing. Same rule, same chip event, same
+ * errors as deactivateChip.
+ */
+export async function deactivateChipInTx(
+  client: PoolClient,
+  id: string,
+  opts: { reason: ChipDeactivationReason; note?: string | null; controllerSynced?: boolean },
+  actor: { id: string; name: string },
+): Promise<ChipWithHolder | null> {
+  const cur = (
+    await client.query<Chip>(
+      `select ${CHIP_COLUMNS} from public.chips where id = $1 for update`,
+      [id],
+    )
+  ).rows[0];
+  if (!cur) return null;
+  if (cur.status !== 'active') throw new ChipStateError();
 
-    await insertChipEvent(client, id, 'deactivated', actor, {
-      oldValue: { status: 'active' },
-      newValue: { status: 'inactive', deactivation_reason: opts.reason, note: opts.note ?? null },
-      reason: opts.reason,
-    });
-    return selectChipWithHolder(client, id);
+  const synced = opts.controllerSynced === true;
+  await client.query(
+    `update public.chips
+        set status = 'inactive',
+            deactivated_at = now(),
+            deactivated_by = $2,
+            deactivated_by_name = $3,
+            deactivation_reason = $4,
+            controller_synced = $5::boolean,
+            controller_synced_at = case when $5::boolean then now() else null end
+      where id = $1`,
+    [id, actor.id, actor.name, opts.reason, synced],
+  );
+
+  await insertChipEvent(client, id, 'deactivated', actor, {
+    oldValue: { status: 'active' },
+    newValue: { status: 'inactive', deactivation_reason: opts.reason, note: opts.note ?? null },
+    reason: opts.reason,
   });
+  return selectChipWithHolder(client, id);
 }
 
 /**
@@ -796,7 +809,9 @@ async function applyChipPatch(
  * The holder details the issue window added on 25/11/2026 — the email, a
  * renter's lease and its end date — written to ONE saved chip, inside the
  * save's transaction. `undefined` = untouched; a null lease = taken off the
- * chip (the stored object stays in the bucket). Kept OUT of CHIP_WRITABLE on
+ * chip (the stored object is not deleted here — the hourly purge deletes a
+ * file the window uploaded once nothing saved points at it and it is 24 hours
+ * old; see chipLeaseUploads.ts). Kept OUT of CHIP_WRITABLE on
  * purpose: PATCH /api/chips/:id takes a raw body, and a storage key must never
  * be settable there. What changed lands in one 'note' event — the lease by its
  * readable name, never by its key. Returns whether anything was written.

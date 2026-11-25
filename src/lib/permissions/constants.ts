@@ -27,7 +27,7 @@ export const ROLES: RoleMeta[] = [
   { value: 'maintenance', label: 'עובד אחזקה',  description: 'עובד שטח — משימות ותקלות בלבד',            level: 1 },
   // The lowest rank (08/11/2026): below viewer. Not a matrix role and not an
   // elevated one — see GUARD_ROLE below.
-  { value: 'guard',       label: 'שומר',        description: 'מסך „סריקת כניסה” בלבד — אין הרשאות נוספות', level: 0 },
+  { value: 'guard',       label: 'שומר',        description: 'מסכי „סריקת כניסה” ו„מסירת צ׳יפים” בלבד — אין הרשאות נוספות', level: 0 },
 ];
 
 /** Every role value, in ROLES order. Derive from here — never re-list the union. */
@@ -356,3 +356,13 @@ export const VISITOR_CREATE_ROLES: readonly Role[] = ['super_admin', 'admin', 'g
 
 // Who may edit EVERY field of a row and delete it (the photo goes with it).
 export const VISITOR_MANAGE_ROLES: readonly Role[] = ['super_admin', 'admin'];
+
+// ── The guard's pickup screen ("מסירת צ׳יפים", 25/11/2026) ───────────────────
+// Residents collect their chips from the guard in the lobby, against an ID
+// that matches one of the people of the order. Who may open that screen, read
+// the orders that are READY for pickup (nothing else of an order — see
+// src/lib/db/chipPickup.ts) and mark one handed over: the guard, and the two
+// roles that already handle the orders. By ROLE, never the matrix, exactly
+// like the visitor scan — the guard holds no module, so it reaches /chips, the
+// issue window and every other chip endpoint no more than it did before.
+export const CHIP_PICKUP_ROLES: readonly Role[] = ['super_admin', 'admin', 'guard'];

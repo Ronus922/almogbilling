@@ -30,6 +30,17 @@
 // whenever the button cannot be pressed, the reason is a line of text under
 // the row, always on the screen — a tooltip alone says nothing on a touch
 // screen, and nobody hovers over a greyed button to find out why.
+//
+// 25/11/2026 (round six):
+//   · "נאסף" asks first, and MAY name who collected — one of the people of the
+//     order (optional here; on the guard's pickup screen it is required). A
+//     closed order says who collected, who handed over, where and when;
+//   · a RECEPTION order (cash or transfer) can be cancelled — "בטל הזמנת
+//     קבלה", admin and super admin only, with a required reason: its chips are
+//     disabled (never deleted), nobody is notified, and the order stays in the
+//     table as "בוטל";
+//   · extra chips that were added to this order and paid at the reception are
+//     listed under the total (each is a reception order of its own).
 
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -42,11 +53,13 @@ import {
 } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import {
-  CHIP_ORDER_PHONE_UNVERIFIED_LABEL, CHIP_ORDER_TEST_LABEL, chipOrderStage, chipOrderStageLabel, formatIlsAfter,
-  isChipOrderOverdue, type ChipOrderWindow,
+  CHIP_ORDER_CANCELLED_LABEL, CHIP_ORDER_PHONE_UNVERIFIED_LABEL, CHIP_ORDER_TEST_LABEL, chipOrderStage, chipOrderStageLabel,
+  formatIlsAfter, isChipOrderOverdue, type ChipOrderWindow,
 } from '@/lib/chipOrders/model';
-import { CHIP_ORDER_RECEPTION_LABEL, RECEPTION_PAYMENT_LABEL } from '@/lib/chipOrders/reception';
+import { PICKUP_ORDERER_KEY } from '@/lib/chipOrders/pickup';
+import { CHIP_ORDER_EXTRA_LABEL, CHIP_ORDER_RECEPTION_LABEL, RECEPTION_PAYMENT_LABEL } from '@/lib/chipOrders/reception';
 import { e164ToLocal } from '@/lib/portal/phone';
+import { CollectorPicker, type CollectorOption } from '../CollectorPicker';
 import { AlertIco, CheckIco, Ico, ROLE_SHORT, TrashIco, roleTone } from './parts';
 
 const DUE = new Intl.DateTimeFormat('he-IL', {
@@ -85,7 +98,7 @@ const CheckAllIco = () => <Ico size={13} sw={2}><path d="M20 7 10 17l-6-6" /><pa
 const FlaskIco = () => <Ico size={11} sw={2.2} join={false}><path d="M10 2v6L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8V2M8.5 2h7" /></Ico>;
 
 export function OrderTransaction({
-  win, readyAction, canEditOrders, disabled, onGone, onModalChange,
+  win, readyAction, canEditOrders, canCancelReception = false, disabled, onGone, onModalChange,
 }: {
   win: ChipOrderWindow;
   /** "מוכן לאיסוף" of an order that is being assigned: whether it may be
@@ -94,6 +107,8 @@ export function OrderTransaction({
   readyAction: { can: boolean; busy: boolean; reason: string | null; run: () => void };
   /** chips_orders_manage:edit — the order's buttons. */
   canEditOrders: boolean;
+  /** Admin / super admin — "בטל הזמנת קבלה" (the server asks again, by role). */
+  canCancelReception?: boolean;
   disabled: boolean;
   /** The order left the open list (collected / rejected / deleted). */
   onGone: () => void;
@@ -103,12 +118,18 @@ export function OrderTransaction({
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // "נאסף": asked first; who collected is optional.
+  const [collectOpen, setCollectOpen] = useState(false);
+  const [collector, setCollector] = useState<string | null>(null);
+  // "בטל הזמנת קבלה": a reason is required.
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
 
   const o = win.order;
   const ordered = win.items.reduce((s, i) => s + i.chips_count, 0);
   const linked = win.items.reduce((s, i) => s + Math.min(i.chips_linked, i.chips_count), 0);
   const linkedAll = win.items.reduce((s, i) => s + i.chips_linked, 0);
-  const stage = chipOrderStage(o.status, linkedAll, ordered);
+  const stage = chipOrderStage(o.status, linkedAll, ordered, o.source);
   const overdue = isChipOrderOverdue(o);
   const assigning = o.status === 'paid' || o.status === 'approved';
   const ready = o.status === 'ready';
@@ -134,11 +155,23 @@ export function OrderTransaction({
   const first = win.items[0];
   const tiered = above > 0 && win.items.some((i) => i.price_above !== i.unit_price);
 
-  function setModal(kind: 'reject' | 'delete', open: boolean) {
+  function setModal(kind: 'reject' | 'delete' | 'collect' | 'cancel', open: boolean) {
     if (kind === 'reject') setRejectOpen(open);
-    else setDeleteOpen(open);
+    else if (kind === 'delete') setDeleteOpen(open);
+    else if (kind === 'collect') setCollectOpen(open);
+    else setCancelOpen(open);
     onModalChange(open);
   }
+
+  // Who may be named as the person who collected: the people of the order,
+  // each once (a block with no holder line of its own is the orderer's).
+  const aptOf = (itemId: string) => win.items.find((i) => i.id === itemId)?.apartment_number ?? '';
+  const collectors: CollectorOption[] = [];
+  for (const h of win.holders) {
+    const key = h.id ?? PICKUP_ORDERER_KEY;
+    if (!collectors.some((c) => c.key === key)) collectors.push({ key, name: h.full_name, apartment: aptOf(h.item_id) });
+  }
+  const cancelled = reception && rejected;
 
   /** "נאסף", "דחה" and "מחק הזמנת בדיקה" — each takes the order out of the
    *  open list, so the window closes after it. */
@@ -157,14 +190,18 @@ export function OrderTransaction({
     }
   }
 
-  const stageTag = stage === 'ready' ? 'ci-solid' : stage === 'collected' ? 'ci-grey' : stage === 'assigned' ? 'ci-green' : 'ci-amber';
+  const stageTag = stage === 'ready' ? 'ci-solid'
+    : stage === 'collected' ? 'ci-grey'
+      : stage === 'assigned' ? 'ci-green'
+        : stage === 'rejected' || stage === 'cancelled' ? 'ci-red'
+          : 'ci-amber';
   // Why "מוכן לאיסוף" cannot be pressed — a visible line, not only a tooltip.
   // Amber while something is still missing; quiet once the order moved on.
   const readyNote: { text: string; quiet: boolean } | null = assigning
     ? (readyAction.reason ? { text: readyAction.reason, quiet: false } : null)
     : ready ? { text: 'ההזמנה כבר מוכנה לאיסוף — השלב הבא: „נאסף”', quiet: true }
       : collected ? { text: reception ? 'הזמנת קבלה: שולמה ונמסרה במקום — ההזמנה סגורה' : 'ההזמנה כבר נאספה', quiet: true }
-        : rejected ? { text: 'ההזמנה נדחתה', quiet: true }
+        : rejected ? { text: reception ? 'הזמנת הקבלה בוטלה — הצ׳יפים שלה הושבתו' : 'ההזמנה נדחתה', quiet: true }
           : null;
 
   return (
@@ -173,6 +210,11 @@ export function OrderTransaction({
         <Ico size={15}><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z" /><path d="M16 8h-6a2 2 0 0 0 0 4h4a2 2 0 0 1 0 4H8" /></Ico>
         פירוט עסקה · הזמנה <span className="ci-num">{o.order_number}</span>
         {reception && <span className="ci-tag ci-brand" data-testid="chip-order-reception-tag">{CHIP_ORDER_RECEPTION_LABEL}</span>}
+        {o.extra_of_order_number != null && (
+          <span className="ci-tag ci-grey" data-testid="chip-order-extra-tag">
+            {CHIP_ORDER_EXTRA_LABEL} להזמנה <span className="ci-num">{o.extra_of_order_number}</span>
+          </span>
+        )}
         {o.is_test && <span className="ci-tag ci-amber"><FlaskIco />{CHIP_ORDER_TEST_LABEL}</span>}
         {!o.phone_verified && <span className="ci-tag ci-red">{CHIP_ORDER_PHONE_UNVERIFIED_LABEL}</span>}
       </div>
@@ -210,6 +252,37 @@ export function OrderTransaction({
                 {o.payment_recorded_by_name ?? '—'}
                 {o.payment_recorded_at && <> · <span className="ci-num">{DUE.format(new Date(o.payment_recorded_at))}</span></>}
               </b>
+            </div>
+          </>
+        )}
+        {/* The hand-over (25/11/2026): who collected, who handed over, where and when. */}
+        {o.handed_over_via && (
+          <>
+            <div>
+              <span>נאסף על ידי</span>
+              <b data-testid="chip-order-collected-by">{o.collected_by_name ?? 'לא צוין'}</b>
+            </div>
+            <div>
+              <span>נמסר על ידי</span>
+              <b data-testid="chip-order-handed-by">
+                {o.handed_over_by_name ?? '—'} · {o.handed_over_via === 'pickup' ? 'מסך מסירת הצ׳יפים' : 'ההנהלה'}
+                {o.collected_at && <> · <span className="ci-num">{DUE.format(new Date(o.collected_at))}</span></>}
+              </b>
+            </div>
+          </>
+        )}
+        {cancelled && (
+          <>
+            <div>
+              <span>בוטלה על ידי</span>
+              <b data-testid="chip-order-cancelled-by">
+                {o.cancelled_by_name ?? '—'}
+                {o.rejected_at && <> · <span className="ci-num">{DUE.format(new Date(o.rejected_at))}</span></>}
+              </b>
+            </div>
+            <div>
+              <span>סיבת הביטול</span>
+              <b data-testid="chip-order-cancel-reason">{o.reject_reason ?? '—'}</b>
             </div>
           </>
         )}
@@ -265,6 +338,21 @@ export function OrderTransaction({
         <span>סה&quot;כ לתשלום<small>{ordered} כרטיסים להנפקה · {win.items.length === 1 ? 'דירה אחת' : `${win.items.length} דירות`}</small></span>
         <b className="ci-num">{formatIlsAfter(o.total)}</b>
       </div>
+      {/* Extra chips that were added to this order and paid at the reception —
+          each a reception order of its own; this order's total is unchanged. */}
+      {(win.extra_orders ?? []).length > 0 && (
+        <div className="ci-invlines" data-testid="chip-order-extra-orders">
+          {win.extra_orders.map((x) => (
+            <div key={x.order_number}>
+              <span>
+                {CHIP_ORDER_EXTRA_LABEL} ששולמו בקבלה — הזמנת קבלה <b className="ci-num">{x.order_number}</b> · <b className="ci-num">{x.chips_count}</b> {x.chips_count === 1 ? 'צ׳יפ' : 'צ׳יפים'}
+                {x.status === 'rejected' && <> · <span className="ci-tag ci-red">{CHIP_ORDER_CANCELLED_LABEL}</span></>}
+              </span>
+              <b className="ci-num">{formatIlsAfter(x.total)}</b>
+            </div>
+          ))}
+        </div>
+      )}
       {canEditOrders && (
         <>
           <div className="ci-oact" data-testid="chip-order-actions">
@@ -290,17 +378,26 @@ export function OrderTransaction({
               disabled={disabled || busy !== null || !ready}
               aria-current={collected ? 'step' : undefined}
               title={ready ? undefined : collected ? 'ההזמנה נאספה — זה השלב שלה כרגע' : rejected ? 'ההזמנה נדחתה' : 'אפשר לסמן „נאסף” רק אחרי „מוכן לאיסוף”'}
-              onClick={() => void act('collected', () => postJson(`/api/chip-orders/${o.id}/collected`), 'סומן כנאסף')}>
+              onClick={() => { setCollector(null); setModal('collect', true); }}>
               {busy === 'collected' ? <Loader2 className="ci-spin h-3.5 w-3.5" /> : <CheckAllIco />}
               נאסף
             </button>
             <button type="button" className={cn('ci-btn ci-line', rejected && 'ci-cur')}
               disabled={disabled || busy !== null || !assigning}
               aria-current={rejected ? 'step' : undefined}
-              title={assigning ? undefined : rejected ? 'ההזמנה נדחתה — זה השלב שלה כרגע' : collected ? 'ההזמנה כבר נאספה' : 'אפשר לדחות הזמנה רק לפני „מוכן לאיסוף”'}
+              title={assigning ? undefined : cancelled ? 'הזמנת הקבלה בוטלה — זה השלב שלה כרגע' : rejected ? 'ההזמנה נדחתה — זה השלב שלה כרגע' : collected ? 'ההזמנה כבר נאספה' : 'אפשר לדחות הזמנה רק לפני „מוכן לאיסוף”'}
               onClick={() => setModal('reject', true)}>
-              דחה
+              {cancelled ? CHIP_ORDER_CANCELLED_LABEL : 'דחה'}
             </button>
+            {/* A reception order is real and collected the moment it is made:
+                cancelling it is its only way back. Admin and super admin. */}
+            {reception && collected && canCancelReception && (
+              <button type="button" className="ci-btn ci-danger" disabled={disabled || busy !== null}
+                onClick={() => { setCancelReason(''); setModal('cancel', true); }} data-testid="chip-order-cancel-reception">
+                <TrashIco size={13} />
+                בטל הזמנת קבלה
+              </button>
+            )}
             {o.is_test && (
               <button type="button" className="ci-btn ci-danger" disabled={disabled || busy !== null} onClick={() => setModal('delete', true)}
                 data-testid="chip-order-delete-test">
@@ -352,6 +449,85 @@ export function OrderTransaction({
             >
               {busy === 'reject' && <Loader2 className="h-4 w-4 animate-spin" />}
               {o.is_test ? 'דחה' : 'דחה והחזר תשלום'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={collectOpen} onOpenChange={(v) => { if (!busy) setModal('collect', v); }}>
+        <AlertDialogContent dir="rtl" data-testid="chip-order-collect-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>לסמן את הזמנה {o.order_number} כנאספה?</AlertDialogTitle>
+            <AlertDialogDescription>
+              ההזמנה תצא מרשימת ההזמנות הפתוחות. לא נשלחת הודעה למזמין.
+              {win.items.length > 1 && ' הסימון חל על ההזמנה כולה — כל הדירות שבה.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {collectors.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <span className="text-[13px] font-bold">מי אסף את הצ׳יפים? <span className="font-semibold text-muted-foreground">(לא חובה)</span></span>
+              <CollectorPicker
+                people={collectors}
+                value={collector}
+                onChange={setCollector}
+                disabled={busy !== null}
+                optional
+                showApartment={win.items.length > 1}
+                testId="chip-order-collect-option"
+              />
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy !== null} className="h-11 px-4">ביטול</AlertDialogCancel>
+            <Button
+              type="button"
+              disabled={busy !== null}
+              onClick={async () => {
+                const ok = await act(
+                  'collected',
+                  () => postJson(`/api/chip-orders/${o.id}/collected`, collector ? { person: collector } : undefined),
+                  'סומן כנאסף',
+                );
+                if (ok) setModal('collect', false);
+              }}
+              className="h-11 gap-2 px-4"
+            >
+              {busy === 'collected' && <Loader2 className="h-4 w-4 animate-spin" />}
+              סמן כנאסף
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={cancelOpen} onOpenChange={(v) => { if (!busy) setModal('cancel', v); }}>
+        <AlertDialogContent dir="rtl" className="p-6" data-testid="chip-order-cancel-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>לבטל את הזמנת הקבלה {o.order_number}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              ההזמנה תסומן „{CHIP_ORDER_CANCELLED_LABEL}” ותישאר בטבלה. הצ׳יפים שלה יושבתו (הם לא נמחקים, ואפשר להחזיר כל אחד לפעיל). לא נשלחת הודעה ללקוח, והחזר הכסף — אם שולם — נעשה מחוץ למערכת. אי אפשר לבטל את הביטול.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Textarea
+            value={cancelReason}
+            onChange={(e) => setCancelReason(e.target.value)}
+            placeholder="סיבת הביטול (חובה)"
+            maxLength={500}
+            className="min-h-[96px] px-3 py-2"
+            aria-label="סיבת הביטול"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy !== null} className="h-11 px-4">חזרה</AlertDialogCancel>
+            <Button
+              type="button"
+              disabled={busy !== null || cancelReason.trim().length < 2}
+              onClick={async () => {
+                const ok = await act('cancel', () => postJson(`/api/chip-orders/${o.id}/cancel`, { reason: cancelReason.trim() }), 'הזמנת הקבלה בוטלה — הצ׳יפים שלה הושבתו');
+                if (ok) { setModal('cancel', false); setCancelReason(''); }
+              }}
+              className="h-11 gap-2 bg-destructive px-4 text-white hover:bg-destructive/90"
+            >
+              {busy === 'cancel' && <Loader2 className="h-4 w-4 animate-spin" />}
+              בטל הזמנת קבלה
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

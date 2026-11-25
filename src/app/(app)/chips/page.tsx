@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { hasPermission } from '@/lib/permissions/check';
+import { isElevatedRole } from '@/lib/permissions/constants';
 import { ChipsPageClient } from '@/components/chips/ChipsPageClient';
 
 export const runtime = 'nodejs';
@@ -19,6 +20,9 @@ export default async function ChipsPage() {
   const canEditOrders = hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'edit');
 
   const canWriteContacts = hasPermission(actor.role, actor.permissions, 'contacts', 'edit');
+  // "בטל הזמנת קבלה" — admin and super admin, by ROLE (the route asks again:
+  // requireAdmin). A manager who may record a payment may not cancel it.
+  const canCancelReception = isElevatedRole(actor.role);
 
   return (
     <ChipsPageClient
@@ -26,6 +30,7 @@ export default async function ChipsPage() {
       canManageOrders={canManageOrders}
       canEditOrders={canEditOrders}
       canWriteContacts={canWriteContacts}
+      canCancelReception={canCancelReception}
     />
   );
 }

@@ -24,7 +24,9 @@ import { join } from 'node:path';
 //   requireVisitor{View,Create,Edit,Manage} = the VISITOR_*_ROLES allowlists of the
 //     visitor-scan screen (08/11/2026); requireNonGuardActor / requireGuardActor =
 //     "signed in, and not / only the single-screen guard" (src/lib/auth/actor.ts).
-const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|AssistantAccess|CanManageRole|DriveConnector|PortalSession|PortalFinanceAccess|UserDeleteAccess|PurchasingAny|PurchasingType|PurchasingSettings|NonGuardActor|GuardActor|VisitorView|VisitorCreate|VisitorEdit|VisitorManage)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREENAPI_WEBHOOK_TOKEN/;
+//   requireChipPickup = the CHIP_PICKUP_ROLES allowlist of the guard's pickup
+//     screen (25/11/2026): the two routes under /api/chip-pickup and no other.
+const GUARD = /require(Actor|Admin|SuperAdmin|Permission|AnyPermission|NotificationsAccess|AssistantAccess|CanManageRole|DriveConnector|PortalSession|PortalFinanceAccess|UserDeleteAccess|PurchasingAny|PurchasingType|PurchasingSettings|NonGuardActor|GuardActor|VisitorView|VisitorCreate|VisitorEdit|VisitorManage|ChipPickup)|getCurrentActor|getSession|CRM_CRON_SECRET|BILLING_CRON_SECRET|GREENAPI_WEBHOOK_TOKEN/;
 
 // Routes that are legitimately public (pre-auth flows + health + public media).
 // Keep tiny and justified — each is unauthenticated BY DESIGN.
@@ -104,7 +106,7 @@ run('check-api-auth', async () => {
   //    or check a permission itself (hasPermission). /api/auth/me is the
   //    caller's own identity and is exempt. Found by the API crawl in
   //    e2e/visitors.spec.ts: /api/contacts, /api/contacts/[id], /api/settings/billing.
-  const STRONG = /require(Permission|AnyPermission|Admin|SuperAdmin|CanManageRole|UserDeleteAccess|Purchasing\w*|DriveConnector|PortalSession|PortalFinanceAccess|Visitor\w+|GuardActor|NonGuardActor|NotificationsAccess|AssistantAccess)\b|CRON_SECRET|WEBHOOK_TOKEN/;
+  const STRONG = /require(Permission|AnyPermission|Admin|SuperAdmin|CanManageRole|UserDeleteAccess|Purchasing\w*|DriveConnector|PortalSession|PortalFinanceAccess|Visitor\w+|GuardActor|NonGuardActor|NotificationsAccess|AssistantAccess|ChipPickup)\b|CRON_SECRET|WEBHOOK_TOKEN/;
   const WEAK = /getSession\(|getCurrentActor\(|requireActor\(/;
   const REFUSES_GUARD = /isGuardRole|NonGuardActor|hasPermission\(/;
   const SESSION_ONLY_OK = new Set(['src/app/api/auth/me/route.ts']);
@@ -160,4 +162,132 @@ run('check-api-auth', async () => {
   const filesRoute = stripComments(readFileSync(join(root, 'src/app/api/files/[bucket]/[...path]/route.ts'), 'utf8'));
   if (!/'visitor-ids':\s*\(\)\s*=>\s*requireVisitorView\(\)/.test(filesRoute)) fail("src/app/api/files — הבאקט visitor-ids חייב להישען על requireVisitorView()");
   ok(`${visitorHandlers} handlers של סריקת כניסה נשענים על requireVisitor*; הקבצים של visitor-ids על requireVisitorView`);
+
+  // ── The guard's pickup screen ("מסירת צ׳יפים", 25/11/2026) gives the guard a
+  //    way INTO the chips module, so it is fenced from both sides:
+  //      · every handler under /api/chip-pickup calls requireChipPickup() — the
+  //        role allowlist — and never a bare "anyone signed in" check;
+  //      · those routes read an order ONLY through the narrow module
+  //        (lib/db/chipPickup) and write through the one hand-over function:
+  //        none of the wide chip modules — which carry prices, payment details,
+  //        emails, addresses, leases and notes — may be imported there, so a
+  //        later edit cannot widen what the guard is sent;
+  //      · requireChipPickup() appears in NO other route: the allowlist that
+  //        admits the guard must not become the gate of anything else;
+  //      · every other chip route keeps a guard the guard cannot pass — a
+  //        module permission, the admin roles, or the cron secret.
+  const PICKUP_DIR = 'src/app/api/chip-pickup/';
+  // The call itself, awaited: `requireChipPickup()` without `await` returns a
+  // promise nobody reads, and guards nothing.
+  const PICKUP_GUARD = /\bawait\s+requireChipPickup\(\)/;
+  // What a pickup route may import — an ALLOW list of modules and of the names
+  // taken from each (null = any name). Anything else is refused, so no module
+  // reaches the guard's routes without a change to this list.
+  const PICKUP_IMPORTS = new Map([
+    ['next/server', null],
+    ['@/lib/auth/actor', ['requireChipPickup', 'Actor']],
+    ['@/lib/auth/apiGuard', ['authErrorResponse']],
+    ['@/lib/auth/rateLimit', ['checkRateLimit']],
+    ['@/lib/http/body', ['parseJsonBody']],
+    ['@/lib/validation/requests', ['chipPickupHandoverBodySchema']],
+    ['@/lib/db/chipPickup', ['listReadyPickupOrders']],
+    ['@/lib/db/chipOrders', ['markChipOrderCollected']],
+    ['@/lib/chipOrders/routeErrors', ['badOrderId', 'chipOrderErrorResponse']],
+  ]);
+  const IMPORT_FROM = /import\s+(?:type\s+)?([^;'"]*?)\s+from\s+['"]([^'"]+)['"]/g;
+  const IMPORT_BARE = /import\s+['"]([^'"]+)['"]/g;
+  // Ways a handler could exist without the split below seeing it, or a module
+  // could be loaded without an import statement.
+  const HIDDEN_HANDLER = /export\s*\{|export\s*\*|export\s+default\b/;
+  const DYNAMIC_LOAD = /\bimport\s*\(|\brequire\s*\(/;
+  const CHIP_ROUTE = /^src\/app\/api\/(chips\/|chip-orders\/|contacts\/\[id\]\/chips\/|settings\/chip-orders\/|cron\/chip-orders-purge\/)/;
+  // …and not by folder alone: ANY route that loads a chip module is a chip route.
+  const TOUCHES_CHIPS = /from\s+['"]@\/lib\/(db\/(chips|chipOrders|chipOrderWindow|chipReception|chipPickup|chipLeaseUploads)|chipOrders\/(cleanup|testMode|server)|storage\/chipOrderLeaseStorage)['"]/;
+  const CHIP_STRONG = /\bawait\s+require(Permission|AnyPermission|Admin)\(|CRON_SECRET/;
+  /** The body of a function declared in `src` — from its name to the brace
+   *  that closes it (null when it is not found). */
+  const functionBody = (src, fn) => {
+    const at = src.search(new RegExp(`function\\s+${fn}\\s*\\(`));
+    if (at < 0) return null;
+    let i = src.indexOf('(', at);
+    for (let depth = 0; i < src.length; i++) {
+      if (src[i] === '(') depth++;
+      else if (src[i] === ')' && --depth === 0) break;
+    }
+    const open = src.indexOf('{', i);
+    if (open < 0) return null;
+    for (let depth = 0, j = open; j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}' && --depth === 0) return src.slice(at, j + 1);
+    }
+    return null;
+  };
+  let pickupHandlers = 0;
+  let chipHandlers = 0;
+  for (const rel of files) {
+    const src = stripComments(readFileSync(join(root, rel), 'utf8'));
+    const parts = src.split(HANDLER_SPLIT).filter((p) => HANDLER_HEAD.test(p.slice(0, 120)));
+    if (rel.startsWith(PICKUP_DIR)) {
+      if (HIDDEN_HANDLER.test(src)) fail(`${rel} — נתיב של מסירת צ׳יפים מייצא handler בצורה שהבדיקה לא קוראת (export { … } / export * / export default)`);
+      if (DYNAMIC_LOAD.test(src)) fail(`${rel} — נתיב של מסירת צ׳יפים טוען מודול בלי import רגיל (import() / require())`);
+      if (parts.length === 0) { fail(`${rel} — נתיב של מסירת צ׳יפים בלי handler שהבדיקה מזהה`); continue; }
+      for (const body of parts) {
+        pickupHandlers++;
+        const name = /(GET|POST|PUT|PATCH|DELETE)/.exec(body.slice(0, 120))?.[1] ?? '?';
+        if (!PICKUP_GUARD.test(body) || WEAK.test(body)) fail(`${rel} ${name} — חייב await requireChipPickup() (שומר/אדמין/סופר אדמין) ולא אימות "מחובר" גורף`);
+      }
+      for (const m of src.matchAll(IMPORT_BARE)) fail(`${rel} — import בלי שמות (${m[1]}) אסור בנתיב של מסירת צ׳יפים`);
+      for (const m of src.matchAll(IMPORT_FROM)) {
+        const [, clause, mod] = m;
+        if (!PICKUP_IMPORTS.has(mod)) { fail(`${rel} — הייבוא מ-${mod} אינו ברשימה המותרת לנתיבי מסירת צ׳יפים (מסך המסירה קורא הזמנה רק דרך lib/db/chipPickup)`); continue; }
+        const allowed = PICKUP_IMPORTS.get(mod);
+        if (allowed === null) continue;
+        const braces = /^\{([\s\S]*)\}$/.exec(clause.trim());
+        if (!braces) { fail(`${rel} — מ-${mod} מייבאים בשמות בלבד ({ … }), לא default ולא * as`); continue; }
+        const names = braces[1].split(',').map((n) => n.trim().replace(/^type\s+/, '')).filter(Boolean);
+        for (const n of names) {
+          if (/\sas\s/.test(n)) fail(`${rel} — ייבוא בשם אחר (${n}) אסור בנתיב של מסירת צ׳יפים`);
+          else if (!allowed.includes(n)) fail(`${rel} — מ-${mod} מותר לייבא רק ${allowed.join(', ')} (נמצא: ${n})`);
+        }
+      }
+      continue;
+    }
+    // The name itself — however it is imported, renamed or called.
+    if (/\brequireChipPickup\b/.test(src)) fail(`${rel} — requireChipPickup שמור לנתיבי /api/chip-pickup בלבד`);
+    if (PUBLIC.has(rel)) continue; // the public order page: no session at all, by design
+    if (CHIP_ROUTE.test(rel) || TOUCHES_CHIPS.test(src)) {
+      if (HIDDEN_HANDLER.test(src)) fail(`${rel} — נתיב צ׳יפים מייצא handler בצורה שהבדיקה לא קוראת (export { … } / export * / export default)`);
+      if (parts.length === 0) { fail(`${rel} — נתיב צ׳יפים בלי handler שהבדיקה מזהה`); continue; }
+      // A handler may reach its guard through a helper of the same file (the
+      // test-mode route's `guard(action)`): a function declared before the
+      // handlers whose OWN body holds the strong guard.
+      const preamble = src.split(HANDLER_SPLIT)[0] ?? '';
+      const helpers = [...preamble.matchAll(/(?:async\s+)?function\s+(\w+)\s*\(/g)]
+        .map((m) => m[1])
+        .filter((fn) => CHIP_STRONG.test(functionBody(preamble, fn) ?? ''));
+      if (WEAK.test(src)) fail(`${rel} — נתיב צ׳יפים עם אימות "מחובר" גורף (getSession / getCurrentActor / requireActor)`);
+      for (const body of parts) {
+        chipHandlers++;
+        const name = /(GET|POST|PUT|PATCH|DELETE)/.exec(body.slice(0, 120))?.[1] ?? '?';
+        const guarded = CHIP_STRONG.test(body) || helpers.some((fn) => new RegExp(`\\bawait\\s+${fn}\\(`).test(body));
+        if (!guarded) fail(`${rel} ${name} — נתיב צ׳יפים חייב הרשאת מודול / תפקיד אדמין / סוד cron (השומר לא עובר אף אחד מהם)`);
+      }
+    }
+  }
+  // The name outside the routes too: a page, a server action or a library
+  // function must not take the guard's allowlist for its own gate.
+  const elsewhere = execFileSync('bash', ['-c', "cd '" + root + "' && /usr/bin/grep -rlw requireChipPickup src --include=*.ts --include=*.tsx || true"], { encoding: 'utf8' })
+    .trim().split('\n').filter(Boolean)
+    .filter((f) => !f.startsWith(PICKUP_DIR) && f !== 'src/lib/auth/actor.ts')
+    // A mention in a comment is not a use.
+    .filter((f) => /\brequireChipPickup\b/.test(stripComments(readFileSync(join(root, f), 'utf8'))));
+  for (const f of elsewhere) fail(`${f} — requireChipPickup שמור לנתיבי /api/chip-pickup בלבד`);
+  // The lease files of the orders (a renter's contract) keep their own guard —
+  // a module permission the guard does not hold.
+  if (!/'chip-order-leases':\s*\(\)\s*=>\s*requirePermission\('chips_orders_manage',\s*'view'\)/.test(filesRoute)) {
+    fail("src/app/api/files — הבאקט chip-order-leases חייב להישען על requirePermission('chips_orders_manage', 'view')");
+  }
+  if (pickupHandlers === 0) fail('לא נמצאו handlers של מסירת צ׳יפים — האם הנתיב השתנה?');
+  if (chipHandlers === 0) fail('לא נמצאו handlers של מודול הצ׳יפים — האם הנתיב השתנה?');
+  ok(`${pickupHandlers} handlers של מסירת צ׳יפים נשענים על requireChipPickup וקוראים רק דרך המודול הצר; ${chipHandlers} handlers אחרים של צ׳יפים סגורים לשומר`);
 });

@@ -34,6 +34,13 @@
 //     as "שמור שינויים") and only then marks the order ready. A save that
 //     fails marks nothing. The server's own rule did not move: an order is
 //     ready only when all its chips are issued.
+//   · EXTRA CHIPS (25/11/2026). A new number beyond the quantity an apartment
+//     line paid for online is an extra chip, and it has to be settled: the
+//     payment section of the reception appears for the extras only — "אשראי"
+//     (disabled), "מזומן או העברה" (the save makes a reception order for those
+//     chips) or "ללא חיוב" (no order). The web order and its total never
+//     change. Extra chips that were paid at the reception show in the person's
+//     block, tagged, and are not part of the order's count.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -45,6 +52,9 @@ import { e164ToLocal } from '@/lib/portal/phone';
 import { MAX_CHIPS_PER_GROUP } from '@/lib/chips/issueGroups';
 import { isOpenChipOrder, type ChipOrderRole, type ChipOrderWindow, type ChipOrderWindowChip, type ChipOrderWindowHolder } from '@/lib/chipOrders/model';
 import { missingChipsText } from '@/lib/chipOrders/orderRows';
+import {
+  extraChipsOf, receptionAmount, receptionMethodInForce, receptionPaymentReason, type ReceptionContext, type ReceptionPaymentMethod,
+} from '@/lib/chipOrders/reception';
 import type { ChipResidentRole, ChipType } from '@/lib/types/chips';
 import { HolderRegistryButton } from '../ChipOrderSection';
 import {
@@ -52,6 +62,7 @@ import {
   Section, UsersIco, WalletIco, useChipQuickActions, type PendingChip,
 } from './parts';
 import { OrderTransaction } from './OrderTransaction';
+import { ReceptionPayment } from './reception';
 import type { IssueChipSheetProps } from '../IssueChipSheet';
 
 const DATE_ONLY = new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -77,6 +88,8 @@ interface Block {
   lease: { key: string | null; name: string | null; end: string | null };
   chips: ChipOrderWindowChip[];
   existing: ChipOrderWindowChip[];
+  /** Extra chips added for this person and paid at the reception. */
+  extras: ChipOrderWindowChip[];
   pending: PendingChip[];
   numInput: string;
   numType: ChipType;
@@ -96,7 +109,7 @@ function fromHolder(h: ChipOrderWindowHolder, key: number): Block {
   return {
     key, id: h.id, itemId: h.item_id, source: h.source, role: h.role, name: snap.name, phone: snap.phone, email: snap.email,
     qty: h.chips_count, lease: { key: h.lease_file_key, name: h.lease_file_name, end: h.lease_end_date },
-    chips: h.chips, existing: h.existing, pending: [], numInput: '', numType: 'physical', dupHint: null, phoneTouched: false,
+    chips: h.chips, existing: h.existing, extras: h.extras ?? [], pending: [], numInput: '', numType: 'physical', dupHint: null, phoneTouched: false,
     orig: snap,
   };
 }
@@ -120,7 +133,7 @@ async function fetchWindow(orderItemId: string): Promise<ChipOrderWindow> {
 }
 
 export function OrderIssueSheet({
-  open, onOpenChange, onIssued, canEditOrders = false, canWriteContacts = false, orderItemId,
+  open, onOpenChange, onIssued, canEditOrders = false, canWriteContacts = false, canCancelReception = false, orderItemId,
 }: IssueChipSheetProps & { orderItemId: string }) {
   const [win, setWin] = useState<ChipOrderWindow | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -140,6 +153,13 @@ export function OrderIssueSheet({
   const [dirty, setDirty] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  // The extra chips of the save (beyond what was paid online): the price per
+  // chip of /settings and whether "אשראי" is drawn (GET /api/chips/reception),
+  // the method that was chosen, and the sum it confirmed.
+  const [pricing, setPricing] = useState<Pick<ReceptionContext, 'unit_price' | 'card_option'> | null>(null);
+  const [pricingTick, setPricingTick] = useState(0);
+  const [method, setMethod] = useState<ReceptionPaymentMethod | null>(null);
+  const [confirmedAmount, setConfirmedAmount] = useState<number | null>(null);
   /** Only the newest load of the order may land (a reload after an immediate
    *  action must never overwrite the reload that follows a save). */
   const loadSeq = useRef(0);
@@ -168,7 +188,25 @@ export function OrderIssueSheet({
     setConfirmCloseOpen(false);
     setModalOpen(false);
     setVersion(0);
+    setPricing(null);
+    setMethod(null);
+    setConfirmedAmount(null);
   }, [open]);
+
+  // The price per chip — loaded when the window opens, and again after the
+  // server said the sum moved. Without it the section says so and a paid save
+  // cannot go; "ללא חיוב" still can.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    fetch('/api/chips/reception', { credentials: 'include' })
+      .then((res) => (res.ok ? (res.json() as Promise<ReceptionContext>) : null))
+      .then((data) => {
+        if (!cancelled && data) setPricing({ unit_price: data.unit_price, card_option: data.card_option });
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [open, pricingTick]);
 
   // What a load puts on the screen. A SOFT load (after an immediate action —
   // the switch, a number fix, "עדכן בכרטיס הדייר") keeps the local edits, the
@@ -185,6 +223,8 @@ export function OrderIssueSheet({
       setConflict(null);
       setServerError(null);
       setDirty(false);
+      setMethod(null);
+      setConfirmedAmount(null);
     }
     setBlocks((prev) => {
       const hidden = fresh ? [] : removedRef.current;
@@ -192,7 +232,7 @@ export function OrderIssueSheet({
       const out: Block[] = [];
       for (const f of loaded) {
         const old = prev.find((p) => identity(p) === identity({ ...f, key: -1 }));
-        if (old && !fresh) out.push({ ...old, id: f.id, source: f.source, qty: f.qty, lease: f.lease, chips: f.chips, existing: f.existing });
+        if (old && !fresh) out.push({ ...old, id: f.id, source: f.source, qty: f.qty, lease: f.lease, chips: f.chips, existing: f.existing, extras: f.extras });
         else out.push({ ...f, key: old?.key ?? seq.current++ });
       }
       // Staff holders added in this window and not saved yet stay.
@@ -264,7 +304,28 @@ export function OrderIssueSheet({
   // An immediate action on a chip (the switch, a number fix) is its own
   // request: nothing is saved over it while it is still running.
   const idle = !submitting && quick.busyId === null;
-  const canSubmit = !!win && !closed && changes > 0 && blocksValid && idle && canEditOrders;
+
+  // ── The extra chips of this save ─────────────────────────────────────────
+  // New numbers beyond what an apartment line paid for online — per line, as
+  // the server counts them: the line's active chips, then the numbers waiting.
+  const extraChips = extraChipsOf(items.map((i) => {
+    let linked = 0;
+    let added = 0;
+    for (const b of blocks) {
+      if (b.itemId !== i.id) continue;
+      linked += b.chips.filter((c) => c.order_item_id === i.id && quick.view(c).status === 'active').length;
+      added += effectivePending(b).length;
+    }
+    return { ordered: i.chips_count, linked, added };
+  }));
+  const unitPrice = pricing?.unit_price ?? null;
+  const extraAmount = unitPrice === null ? null : receptionAmount(extraChips, unitPrice);
+  // "מזומן או העברה" confirms the sum that was on the screen when it was
+  // chosen: once the sum is another one, the choice no longer stands.
+  const methodNow = receptionMethodInForce({ method, amount: extraAmount, confirmedAmount });
+  const payReason = receptionPaymentReason({ newChips: extraChips, method, amount: extraAmount, confirmedAmount, what: 'extra' });
+
+  const canSubmit = !!win && !closed && changes > 0 && blocksValid && idle && canEditOrders && payReason === null;
 
   // ── "מוכן לאיסוף" in one click ───────────────────────────────────────────
   // The order may be marked ready once EVERY apartment line is covered — the
@@ -292,6 +353,7 @@ export function OrderIssueSheet({
     : refused ? 'יש להסיר או להחליף את מספר הצ׳יפ התפוס שמסומן באדום'
     : missing > 0 ? `יש לשייך את כל הצ׳יפים שהוזמנו — ${missingChipsText(missing)}`
     : !blocksValid ? 'יש לתקן את הפרטים המסומנים באדום בבעלי הצ׳יפ'
+    : payReason !== null ? payReason
     : null;
   const canReady = assigning && readyReason === null && idle && canEditOrders;
 
@@ -319,7 +381,7 @@ export function OrderIssueSheet({
     setDirty(true);
     setBlocks((prev) => [...prev, {
       key: seq.current++, id: null, itemId: win.clicked_item_id, source: 'staff', role: 'tenant', name: '', phone: '', email: '',
-      qty: 0, lease: { key: null, name: null, end: null }, chips: [], existing: [], pending: [], numInput: '', numType: 'physical',
+      qty: 0, lease: { key: null, name: null, end: null }, chips: [], existing: [], extras: [], pending: [], numInput: '', numType: 'physical',
       dupHint: null, phoneTouched: false, orig: null,
     }]);
   }
@@ -333,7 +395,7 @@ export function OrderIssueSheet({
 
   function numberInWindow(n: string, exceptChipId?: string): boolean {
     return blocks.some((b) => b.pending.some((p) => p.number === n)
-      || [...b.chips, ...b.existing].some((c) => c.id !== exceptChipId && c.chip_number === n));
+      || [...b.chips, ...b.existing, ...b.extras].some((c) => c.id !== exceptChipId && c.chip_number === n));
   }
 
   function addNumber(b: Block) {
@@ -379,12 +441,30 @@ export function OrderIssueSheet({
           })),
           removed_holder_ids: removed,
           ...(noteChanged ? { note: note.trim() || null } : {}),
+          // How the extra chips are settled. The amount is what the window
+          // shows; the server computes its own and refuses a save where the
+          // two differ.
+          ...(extraChips > 0 && methodNow
+            ? { extra_payment: { method: methodNow, amount: methodNow === 'cash_transfer' ? extraAmount ?? 0 : 0 } }
+            : {}),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
-        issued?: number; error?: string; chip_number?: string; holder_index?: number | null;
+        issued?: number; error?: string; chip_number?: string; holder_index?: number | null; code?: string;
+        extra?: { chips: number; method: ReceptionPaymentMethod; order: { order_number: number; total: number } | null } | null;
       };
       if (!res.ok) {
+        // The server counted the extra chips, or their sum, differently from
+        // this window — the price per chip was changed, or a chip of the order
+        // was added / disabled elsewhere meanwhile. Nothing was saved: load
+        // the price and the order's chips again (the numbers waiting here are
+        // kept), and ask for the payment again.
+        if (data.code === 'amount_mismatch' || data.code === 'payment_required') {
+          setMethod(null);
+          setConfirmedAmount(null);
+          setPricingTick((t) => t + 1);
+          reload();
+        }
         if (res.status === 409 && data.chip_number) {
           const b = typeof data.holder_index === 'number' ? sent[data.holder_index] : undefined;
           if (b) {
@@ -402,6 +482,9 @@ export function OrderIssueSheet({
         }
         setServerError(data.error ?? 'השמירה נכשלה');
         return null;
+      }
+      if (data.extra?.order) {
+        toast.success(`נרשם תשלום על ${data.extra.chips === 1 ? 'צ׳יפ נוסף אחד' : `${data.extra.chips} צ׳יפים נוספים`} — הזמנת קבלה ${data.extra.order.order_number}`);
       }
       return data.issued ?? 0;
     } catch {
@@ -475,7 +558,7 @@ export function OrderIssueSheet({
 
   // ── Render ───────────────────────────────────────────────────────────────
 
-  const allChips = blocks.flatMap((b) => [...b.chips, ...b.existing]);
+  const allChips = blocks.flatMap((b) => [...b.chips, ...b.existing, ...b.extras]);
 
   return (
     <>
@@ -496,7 +579,9 @@ export function OrderIssueSheet({
                   <AlertIco size={14} />
                   <span>
                     {win.order.source === 'reception'
-                      ? 'הזמנת קבלה: שולמה ונמסרה במקום, ולכן היא סגורה — הפרטים לקריאה בלבד.'
+                      ? win.order.status === 'rejected'
+                        ? 'הזמנת הקבלה בוטלה, והצ׳יפים שלה הושבתו — הפרטים לקריאה בלבד.'
+                        : 'הזמנת קבלה: שולמה ונמסרה במקום, ולכן היא סגורה — הפרטים לקריאה בלבד.'
                       : 'ההזמנה סגורה — הפרטים לקריאה בלבד.'}
                     {' '}את הצ׳יפים עצמם אפשר להשבית, להחזיר לפעיל ולתקן מספר. צ׳יפים נוספים מנפיקים ב„הנפק צ׳יפ”.
                   </span>
@@ -506,7 +591,9 @@ export function OrderIssueSheet({
                 const apt = aptOf(b.itemId);
                 const firstName = b.name.trim().split(/\s+/)[0] || null;
                 const activeLinked = b.chips.filter((c) => quick.view(c).status === 'active').length;
-                const hasChips = b.chips.length > 0;
+                // Paid extras count too: they sit on a reception order, and
+                // would lose their person with the block.
+                const hasChips = b.chips.length > 0 || b.extras.length > 0;
                 const paidLine = b.source !== 'staff';
                 const invalid = blockInvalid(b);
                 const phoneBad = b.phoneTouched && b.phone.trim() && !validatePhone(b.phone).valid;
@@ -596,6 +683,7 @@ export function OrderIssueSheet({
                       addBlocked={b.pending.length >= MAX_PENDING_PER_BLOCK || !canEditOrders || closed}
                       saved={b.chips}
                       existing={b.existing}
+                      extras={b.extras}
                       pending={b.pending}
                       conflictNumber={conflict?.blockKey === b.key ? conflict.number : null}
                       dupHint={b.dupHint}
@@ -607,7 +695,7 @@ export function OrderIssueSheet({
                     />
                     {paidLine && activeLinked + b.pending.length > b.qty && (
                       <p className="ci-warn">
-                        נוספו יותר צ׳יפים ממה שהוזמן (<span className="ci-num">{activeLinked + b.pending.length}</span> מתוך <span className="ci-num">{b.qty}</span>). אפשר לשמור — הם יקושרו גם הם להזמנה.
+                        נוספו יותר צ׳יפים ממה שהוזמן (<span className="ci-num">{activeLinked + b.pending.length}</span> מתוך <span className="ci-num">{b.qty}</span>). אם הדירה כולה עברה את הכמות ששולמה באתר — על הצ׳יפים הנוספים בוחרים אמצעי תשלום, בסעיף „פירוט עסקה והערות”.
                       </p>
                     )}
                     {invalid && <p className="ci-err mt-2">⚠️ {invalid}</p>}
@@ -628,10 +716,39 @@ export function OrderIssueSheet({
               win={win}
               readyAction={{ can: canReady, busy: readyBusy, reason: readyReason, run: () => void markReady() }}
               canEditOrders={canEditOrders}
+              canCancelReception={canCancelReception}
               disabled={submitting}
               onGone={() => { onIssued(); onOpenChange(false); }}
               onModalChange={setModalOpen}
             />
+            {/* The extra chips of this save — beyond what was paid online. The
+                same payment section as at the reception, for the extras only. */}
+            {extraChips > 0 && !closed && (
+              <div className="ci-extrapay" data-testid="chip-order-extra-payment">
+                <p className="ci-info" role="status">
+                  <AlertIco size={14} />
+                  <span>
+                    {extraChips === 1 ? 'נוסף צ׳יפ אחד' : <>נוספו <span className="ci-num">{extraChips}</span> צ׳יפים</>} מעבר לכמות ששולמה באתר.
+                    {' '}ההזמנה מהאתר והסכום שלה לא משתנים — „מזומן או העברה” רושם על הצ׳יפים הנוספים הזמנת קבלה נפרדת, ו„ללא חיוב” לא רושם הזמנה.
+                  </span>
+                </p>
+                <ReceptionPayment
+                  newChips={extraChips}
+                  unitPrice={unitPrice}
+                  method={methodNow}
+                  onMethod={(m) => {
+                    setDirty(true);
+                    setServerError(null);
+                    setMethod(m);
+                    setConfirmedAmount(m === 'cash_transfer' ? extraAmount : null);
+                  }}
+                  cardOption={pricing?.card_option ?? false}
+                  disabled={submitting || !canEditOrders}
+                  reason={payReason}
+                  cashOff={win.order.is_test ? 'בהזמנת בדיקה לא נרשם תשלום' : null}
+                />
+              </div>
+            )}
             <div className="ci-fld ci-notefld">
               <label htmlFor="order-note">הערה</label>
               <textarea id="order-note" value={note} disabled={frozen} maxLength={2000} placeholder="הערות פנימיות על ההנפקה..."

@@ -22,7 +22,7 @@ function row(over: Partial<ChipOrderRow>): ChipOrderRow {
   return {
     item_id: 'i1', order_id: 'o1', order_number: 1042, contact_id: 'c1', apartment_number: '12',
     full_name: 'דנה כהן', phone_e164: '+972539300001', role: 'owner', source: 'web', status: 'paid',
-    chips_count: 2, chips_linked: 0, line_total: 100, people: ['דנה כהן'],
+    chips_count: 2, chips_linked: 0, line_total: 100, people: ['דנה כהן'], people_keys: ['h1'], extra_of_order_number: null,
     paid_at: '2026-11-23T08:00:00Z', due_at: '2026-11-26T08:00:00Z', created_at: '2026-11-23T07:30:00Z',
     has_failed_notification: false, is_test: false, phone_verified: true,
     ...over,

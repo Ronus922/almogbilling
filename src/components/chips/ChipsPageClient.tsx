@@ -73,6 +73,7 @@ export function ChipsPageClient({
   canManageOrders = false,
   canEditOrders = false,
   canWriteContacts = false,
+  canCancelReception = false,
 }: {
   canEdit: boolean;
   /** chips_orders_manage:view — shows the "הזמנות" view (12/11/2026). Without
@@ -81,6 +82,8 @@ export function ChipsPageClient({
   canEditOrders?: boolean;
   /** contacts:edit — "עדכן בכרטיס הדייר" in the orderer's holder block. */
   canWriteContacts?: boolean;
+  /** Admin / super admin, by role — "בטל הזמנת קבלה" in a reception order's window. */
+  canCancelReception?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -491,6 +494,7 @@ export function ChipsPageClient({
         }}
         canEditOrders={canEditOrders}
         canWriteContacts={canWriteContacts}
+        canCancelReception={canCancelReception}
       />
 
       {/* Holder view — all chips of one person (name → numbers); a chip row

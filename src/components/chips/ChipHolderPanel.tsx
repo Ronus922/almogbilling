@@ -126,8 +126,13 @@ export function ChipHolderPanel({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
+      {/* ONE close button — the white X of the header, where every side panel
+          has it (DESIGN §12). The Sheet's own built-in X is switched off: left
+          on, it sat as a small grey X on top of the header's (25/11/2026). */}
       <SheetContent
         side="left"
+        dir="rtl"
+        showCloseButton={false}
         className="chips-skin w-full max-w-full p-0 sm:w-[92vw] md:w-[80vw] lg:w-[55vw] lg:min-w-[720px] flex flex-col gap-0 overflow-hidden bg-[var(--chip-bg)]"
       >
         {/* Header — ref gradient (115deg, #2B3FB8 → #3D5AFE 62% → #5872FF) */}
@@ -159,6 +164,7 @@ export function ChipHolderPanel({
               type="button"
               onClick={() => onOpenChange(false)}
               aria-label="סגור"
+              data-testid="chip-holder-close"
               className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center rounded-[11px] border border-white/25 bg-white/12 text-white transition-colors hover:bg-white/22"
             >
               <X className="h-[18px] w-[18px]" strokeWidth={2.4} />
@@ -326,12 +332,16 @@ export function ChipHolderPanel({
                           <span
                             className={cn(
                               'inline-flex h-[22px] items-center rounded-[6px] px-2 text-[11px] font-bold',
-                              r.kind === 'order' ? 'bg-[var(--chip-green-soft)] text-[var(--chip-green-ink)]' : 'bg-[var(--chip-hover)] text-[var(--chip-ink-muted)]',
+                              r.cancelled
+                                ? 'bg-[var(--chip-red-soft)] text-[var(--chip-red-ink)]'
+                                : r.kind === 'order' ? 'bg-[var(--chip-green-soft)] text-[var(--chip-green-ink)]' : 'bg-[var(--chip-hover)] text-[var(--chip-ink-muted)]',
                             )}
                           >
-                            {r.kind === 'order'
-                              ? <>שולם <span className="chip-num px-1">{formatIlsAfter(r.amount)}</span> · {RECEPTION_PAYMENT_LABEL.cash_transfer}</>
-                              : RECEPTION_PAYMENT_LABEL.none}
+                            {r.cancelled
+                              ? <>ההזמנה בוטלה · <span className="chip-num px-1">{formatIlsAfter(r.amount)}</span></>
+                              : r.kind === 'order'
+                                ? <>שולם <span className="chip-num px-1">{formatIlsAfter(r.amount)}</span> · {RECEPTION_PAYMENT_LABEL.cash_transfer}</>
+                                : RECEPTION_PAYMENT_LABEL.none}
                           </span>
                         </div>
                         <p className="mt-1 text-[12.5px] font-medium text-[var(--chip-ink-muted)] [overflow-wrap:anywhere]">

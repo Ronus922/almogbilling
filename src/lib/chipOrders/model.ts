@@ -259,17 +259,30 @@ export function isChipOrderOverdue(
 //    section in the issue window) ──────────────────────────────────────────
 
 /** awaiting "ממתין לשיוך" · partial "שויכו X מתוך Y" · assigned "שויך" ·
- *  ready "מוכן לאיסוף" · collected "נאסף" (the last two are the order's own
- *  status). X counts ACTIVE chips only. A collected order is in the Orders tab
- *  only when it is a reception order — paid and handed over in one go. */
-export type ChipOrderStage = 'awaiting' | 'partial' | 'assigned' | 'ready' | 'collected';
+ *  ready "מוכן לאיסוף" · collected "נאסף" · rejected "נדחה" · cancelled "בוטל"
+ *  (the last four are the order's own status). X counts ACTIVE chips only. A
+ *  collected order is in the Orders tab only when it is a reception order —
+ *  paid and handed over in one go. `cancelled` is a RECEPTION order that was
+ *  cancelled (25/11/2026): stored with the status `rejected`, shown "בוטל",
+ *  and it stays in the tab; `rejected` is a web order that was rejected. */
+export type ChipOrderStage = 'awaiting' | 'partial' | 'assigned' | 'ready' | 'collected' | 'rejected' | 'cancelled';
 
-export function chipOrderStage(status: ChipOrderStatus, linked: number, ordered: number): ChipOrderStage {
+export function chipOrderStage(
+  status: ChipOrderStatus,
+  linked: number,
+  ordered: number,
+  source: ChipOrderSource = 'web',
+): ChipOrderStage {
+  if (status === 'rejected') return source === 'reception' ? 'cancelled' : 'rejected';
   if (status === 'collected') return 'collected';
   if (status === 'ready') return 'ready';
   if (linked <= 0) return 'awaiting';
   return linked >= ordered ? 'assigned' : 'partial';
 }
+
+/** A reception order that was cancelled ("בטל הזמנת קבלה") — the label of its
+ *  status everywhere it shows. */
+export const CHIP_ORDER_CANCELLED_LABEL = 'בוטל';
 
 export function chipOrderStageLabel(stage: ChipOrderStage, linked: number, ordered: number): string {
   switch (stage) {
@@ -278,6 +291,8 @@ export function chipOrderStageLabel(stage: ChipOrderStage, linked: number, order
     case 'assigned': return 'שויך';
     case 'ready': return 'מוכן לאיסוף';
     case 'collected': return 'נאסף';
+    case 'rejected': return 'נדחה';
+    case 'cancelled': return CHIP_ORDER_CANCELLED_LABEL;
   }
 }
 
@@ -309,6 +324,12 @@ export interface ChipOrderRow {
    *  order of the window's blocks; a line with no holder line of the order
    *  itself (an order made before 20/11/2026) starts with whoever ordered. */
   people: string[];
+  /** What names each of `people` when the order is marked collected (same
+   *  order, same length): the holder line id, or 'orderer'. */
+  people_keys: string[];
+  /** A reception order made for EXTRA chips of a web order (chips added in
+   *  that order's window beyond what was paid online): the web order's number. */
+  extra_of_order_number: number | null;
   paid_at: string | null;
   due_at: string | null;
   created_at: string;
@@ -415,6 +436,10 @@ export interface ChipOrderWindowHolder {
   lease_end_date: string | null;
   /** Chips issued for THIS person of this order. */
   chips: ChipOrderWindowChip[];
+  /** Extra chips added for this person beyond what the order paid for, and
+   *  paid at the reception (25/11/2026): they belong to a reception order of
+   *  their own. Shown in the block, never part of the order's count. */
+  extras: ChipOrderWindowChip[];
   /** The same person's earlier chips in this apartment (matched by phone) —
    *  shown in the block; not part of the order's count. */
   existing: ChipOrderWindowChip[];
@@ -443,6 +468,31 @@ export interface ChipOrderWindowOrder {
   payment_method: string | null;
   payment_recorded_by_name: string | null;
   payment_recorded_at: string | null;
+  /** The hand-over (25/11/2026): when the order was marked collected, the
+   *  person who showed an ID (optional when the management marks it), who
+   *  marked it and where — the guard's pickup screen or the management's own
+   *  screens. All null on an order collected before then, and on a reception
+   *  order. */
+  collected_at: string | null;
+  collected_by_name: string | null;
+  handed_over_by_name: string | null;
+  handed_over_via: 'pickup' | 'management' | null;
+  /** A rejected web order / a cancelled reception order: when, and why. */
+  rejected_at: string | null;
+  reject_reason: string | null;
+  /** Who cancelled a reception order. Null on a web order. */
+  cancelled_by_name: string | null;
+  /** A reception order made for extra chips of a web order: that order's number. */
+  extra_of_order_number: number | null;
+}
+
+/** A reception order made for extra chips of the order the window shows. */
+export interface ChipOrderExtraOrder {
+  order_number: number;
+  chips_count: number;
+  total: number;
+  /** `rejected` = it was cancelled. */
+  status: ChipOrderStatus;
 }
 
 /** What the issue window loads for an Orders-tab row (20/11/2026). */
@@ -454,4 +504,6 @@ export interface ChipOrderWindow {
   clicked_item_id: string;
   /** Every line has all its chips (active) — "מוכן לאיסוף" may go. */
   order_all_linked: boolean;
+  /** Reception orders made for extra chips of this order, oldest first. */
+  extra_orders: ChipOrderExtraOrder[];
 }

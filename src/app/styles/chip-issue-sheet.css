@@ -443,6 +443,12 @@
   }
   .ci-info svg { flex: none; margin-top: 2px; }
 
+  /* Extra chips of a web order (25/11/2026) — the reception's payment section,
+     shown under the transaction card for the chips beyond what was paid
+     online. The note above it explains what is being paid for. */
+  .ci-extrapay { margin-top: 14px; border: 1px solid var(--ci-border-strong); border-radius: 13px; padding: 14px; background: #fff; }
+  .ci-extrapay .ci-info { margin-bottom: 12px; }
+
   .ci-alert { border: 1px solid #f87171; background: #fef2f2; border-radius: 12px; padding: 12px 14px; font: 600 13.5px "Heebo", sans-serif; color: #b91c1c; overflow-wrap: anywhere; }
   .ci-skel { height: 180px; border-radius: 13px; background: #f3f5fc; animation: ci-pulse 1.4s ease-in-out infinite; }
   @keyframes ci-pulse { 50% { opacity: .55; } }

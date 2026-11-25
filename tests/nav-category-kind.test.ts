@@ -33,23 +33,25 @@ describe('nav category kind — decided after the permission filter', () => {
       ops: 'panel',
       purchasing: 'panel',
       portal: 'panel',
-      // Two items since 24/11/2026 ("סריקת כניסה" + "צ׳יפים") — a panel for whoever sees both.
+      // Three items ("סריקת כניסה", "מסירת צ׳יפים" since 25/11/2026, "צ׳יפים") — a panel.
       security: 'panel',
       settings: 'link:/settings',
     });
   });
 
-  it('the guard sees one category, "אבטחה", and it is a link to /visitors', () => {
-    expect(kinds('guard', canOf('guard', []))).toEqual({ security: 'link:/visitors' });
+  it('the guard sees one category, "אבטחה" — a panel of two items since the pickup screen (25/11/2026)', () => {
+    // Until 25/11/2026 the guard held one item and the category was a direct link to /visitors;
+    // "מסירת צ׳יפים" is a second role screen, so the rail button now opens the panel.
+    expect(kinds('guard', canOf('guard', []))).toEqual({ security: 'panel' });
     // …whatever matrix rows are handed in (here: rows that grant the chips module): the guard
-    // holds no module, so "צ׳יפים" never joins and the category stays a link.
-    expect(kinds('guard', canOf('guard', DEFAULT_MANAGER))).toEqual({ security: 'link:/visitors' });
+    // holds no module, so "צ׳יפים" itself never joins.
+    expect(kinds('guard', canOf('guard', DEFAULT_MANAGER))).toEqual({ security: 'panel' });
   });
 
-  it('"אבטחה" with both items is a panel; with the chips module alone it is a link to /chips', () => {
+  it('"אבטחה" with its role screens is a panel; with the chips module alone it is a link to /chips', () => {
     expect(kinds('admin', canOf('admin', [])).security).toBe('panel');
-    // A matrix role never sees the visitor scan (it is a role grant): the chips module alone
-    // leaves "אבטחה" one item, so the rail button is the link to /chips.
+    // A matrix role never sees the visitor scan or the pickup screen (both are role grants): the
+    // chips module alone leaves "אבטחה" one item, so the rail button is the link to /chips.
     const onlyChips: Can = (m, a) => m === 'chips' && a === 'view';
     expect(kinds('viewer', onlyChips)).toEqual({ security: 'link:/chips' });
     expect(kinds('manager', onlyChips)).toEqual({ home: 'link:/overview', security: 'link:/chips' });

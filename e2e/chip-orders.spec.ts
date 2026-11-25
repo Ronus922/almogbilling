@@ -1,5 +1,5 @@
 import { test, expect, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import ExcelJS from 'exceljs';
 import { Pool } from 'pg';
 import { readFileSync } from 'node:fs';
@@ -63,6 +63,16 @@ import { StorageStub } from './visitors-stubs';
 //     come back on the block). Editing saved chips needs no payment. A
 //     manager — not an admin — issues with the same permission and never sees
 //     "אשראי".
+//   · 25/11/2026, round six (Ronen): a number beyond the quantity an apartment
+//     paid for online is an EXTRA chip — the reception's payment section
+//     appears for the extras only ("מזומן או העברה" makes a reception order
+//     for them, "ללא חיוב" makes none; the web order and its total never
+//     change); "נאסף" asks first and may name who collected; a reception order
+//     can be cancelled by an admin ("בטל הזמנת קבלה", a reason required — its
+//     chips are disabled, the row stays as "בוטל"); the holder panel has ONE
+//     close button; and a lease that was uploaded and never saved is swept 24
+//     hours later by the hourly purge, while an attached one never is. The
+//     guard's pickup screen has a file of its own (e2e/chip-pickup.spec.ts).
 // Real orders are seeded straight into the DB (paid = what Grow's verified
 // callback leaves); fixtures are numeric apartments, removed by exact ids.
 // Supabase Storage is the in-process stand-in of visitors-stubs.ts (CI runs
@@ -91,6 +101,8 @@ const APT_CH = `993${tag}7`; // the chips tab: print / Excel / PDF
 const APT_REC = `993${tag}8`; // the reception: a paid issue — a renter with a lease, and a guest
 const APT_MGR = `993${tag}9`; // the reception: issued by a manager, not an admin
 const APT_NOORD = `995${tag}1`; // the look of the window without an order
+const APT_EXTRA = `995${tag}2`; // round six: extra chips of a web order, and cancelling their reception order
+const APT_LEASE = `995${tag}3`; // round six: the sweep of leases nobody saved
 const APT_LIMIT_MSG = 'ניתן להזמין עד 10 כרטיסים לדירה בהזמנה אחת. לכמות גדולה יותר יש לפנות להנהלת הבניין.';
 const PUB_NOTE = 'אני מבקש למסור את הכרטיסים לשכן מדירה 5';
 const P_OWNER = '+972539300001';
@@ -385,14 +397,14 @@ function fieldSizes(issue: Locator): Promise<string[]> {
 }
 
 test.beforeAll(async () => {
-  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2, APT_T1, APT_T2, APT_CH, APT_REC, APT_MGR, APT_NOORD]) {
+  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2, APT_T1, APT_T2, APT_CH, APT_REC, APT_MGR, APT_NOORD, APT_EXTRA, APT_LEASE]) {
     const c = await pool.query<{ id: string }>(`insert into public.contacts (apartment_number) values ($1) returning id`, [apt]);
     made.contacts[apt] = c.rows[0]!.id;
   }
   // The reception's apartments have a renter in the tenants list: a registry
   // role can be picked in the window only when the list knows its name and
   // phone. (A renter, not an owner — an owner's phone would join the portal.)
-  for (const apt of [APT_REC, APT_NOORD]) {
+  for (const apt of [APT_REC, APT_NOORD, APT_LEASE]) {
     await pool.query(`update public.contacts set tenant_name = 'שוכר קבלה', tenant_phone = '0539300011' where id = $1`, [made.contacts[apt]]);
   }
   await storage.start(Number(storageUrl.port || 54321));
@@ -413,6 +425,11 @@ test.afterAll(async () => {
     [contactIds],
   );
   for (const { id } of reception.rows) await pool.query(`delete from public.chip_orders where id = $1`, [id]);
+  // The lease registry rows of the files this file put in the stand-in Storage
+  // (kept or removed since) — by their exact keys.
+  const leaseKeys = [...new Set([...storage.keys('chip-order-leases'), ...storage.removed.filter((k) => k.startsWith('chip-order-leases/'))])]
+    .map((k) => k.slice('chip-order-leases/'.length));
+  for (const key of leaseKeys) await pool.query(`delete from public.chip_lease_uploads where object_key = $1`, [key]);
   for (const id of contactIds) await pool.query(`delete from public.chip_reception_records where contact_id = $1`, [id]);
   for (const id of contactIds) await pool.query(`delete from public.contacts where id = $1`, [id]);
   for (const c of contexts) await c.close().catch(() => undefined);
@@ -450,7 +467,8 @@ test('the menu: "צ׳יפים" sits under "אבטחה", next to "סריקת כנ
   await expect(panel).toHaveAttribute('data-nav-panel', 'security');
   await expect(category('אבטחה')).toHaveAttribute('data-nav-kind', 'panel');
   await expect(category('אבטחה')).toHaveAttribute('data-selected', 'true');
-  expect(await items()).toEqual(['סריקת כניסה', 'צ׳יפים']);
+  // "מסירת צ׳יפים" — the guard's pickup screen — joined on 25/11/2026 (e2e/chip-pickup.spec.ts).
+  expect(await items()).toEqual(['סריקת כניסה', 'מסירת צ׳יפים', 'צ׳יפים']);
   await expect(panel.locator('a[aria-current="page"]')).toHaveText('צ׳יפים');
   await category('כספים').click();
   await expect(panel).toHaveAttribute('data-nav-panel', 'finance');
@@ -732,8 +750,30 @@ test.describe.serial('staff: the issue window', () => {
     await expect(blocks).toHaveCount(4);
     const staff = blocks.nth(3);
     await staff.getByLabel('שם מלא').fill('עובד צוות');
+    // Until this number the window held nothing beyond what was paid online:
+    // no payment section.
+    await expect(issue.getByTestId('chip-order-extra-payment')).toHaveCount(0);
     await addChip(staff, `E2E${tag}5`);
     await expect(staff.getByTestId('chip-alloc-counter')).toHaveText('שויכו 1');
+
+    // 25/11/2026 — EXTRA CHIPS. The apartment paid online for three chips; this
+    // is its fourth. A chip beyond the paid quantity has to be settled: the
+    // payment section of the reception appears for it alone, nothing is chosen,
+    // and neither the save nor "מוכן לאיסוף" goes until something is.
+    const price = await unitPrice();
+    const extra = issue.getByTestId('chip-order-extra-payment');
+    await expect(extra).toContainText('נוסף צ׳יפ אחד מעבר לכמות ששולמה באתר');
+    await expect(extra.getByTestId('chip-reception-breakdown')).toContainText(`${price}₪`);
+    await expect(extra.getByTestId('chip-reception-total')).toHaveText(`${price}₪`);
+    await expect(extra.getByTestId('chip-pay-card')).toBeDisabled(); // drawn for an admin, never pressed
+    await expect(extra.getByTestId('chip-pay-cash')).toHaveAttribute('aria-checked', 'false');
+    await expect(extra.getByTestId('chip-pay-none')).toHaveAttribute('aria-checked', 'false');
+    await expect(readyBtn).toBeDisabled();
+    await expect(saveBtn).toBeDisabled();
+    await expect(reason).toHaveText('יש לבחור אמצעי תשלום לצ׳יפים שנוספו מעבר לכמות ששולמה');
+    // "ללא חיוב": no order is made for the extra chip — it stays on this order.
+    await extra.getByTestId('chip-pay-none').click();
+    await expect(extra.getByTestId('chip-reception-total')).toHaveText('0₪');
 
     // Every ordered chip is covered now — two saved, two still waiting — so
     // "מוכן לאיסוף" is on, and the line under the buttons is gone. Nothing of
@@ -791,9 +831,30 @@ test.describe.serial('staff: the issue window', () => {
       `select count(*)::int as n from public.audit_log where entity_type = 'chip_order' and entity_id = $1 and action = 'ready'`, [order.id],
     )).rows[0].n).toBe(1);
 
+    // "ללא חיוב" made no order of the reception — and the web order's total did not move.
+    expect((await pool.query(`select count(*)::int as n from public.chip_orders where extra_of_order_id = $1`, [order.id])).rows[0].n).toBe(0);
+    expect((await pool.query(`select total::float8 as t from public.chip_orders where id = $1`, [order.id])).rows[0].t).toBe(200);
+    await expect(issue.getByTestId('chip-order-extra-payment')).toHaveCount(0); // nothing waits any more
+
+    // "נאסף" asks first (25/11/2026), and MAY name who collected — one of the
+    // people of the order, each once. Optional here; the guard must choose.
     await section.getByRole('button', { name: 'נאסף', exact: true }).click();
+    const collect = page.getByTestId('chip-order-collect-confirm');
+    await expect(collect).toContainText(`לסמן את הזמנה ${order.orderNumber} כנאספה?`);
+    await expect(collect).toContainText('הסימון חל על ההזמנה כולה');
+    const who = collect.getByTestId('chip-order-collect-option');
+    await expect(who).toHaveCount(4);
+    await expect(who.nth(1)).toContainText('שרה שוכרת');
+    for (const o of await who.all()) await expect(o).toHaveAttribute('aria-checked', 'false');
+    await expect(collect.getByRole('button', { name: 'סמן כנאסף' })).toBeEnabled(); // nobody has to be named
+    await who.nth(1).click();
+    await expect(who.nth(1)).toHaveAttribute('aria-checked', 'true');
+    expect(await status()).toBe('ready'); // nothing happened yet
+    await collect.getByRole('button', { name: 'סמן כנאסף' }).click();
     await expect(issue).toHaveCount(0);
     await expect.poll(status).toBe('collected');
+    expect((await pool.query(`select collected_by_name, handed_over_via from public.chip_orders where id = $1`, [order.id])).rows[0])
+      .toEqual({ collected_by_name: 'שרה שוכרת', handed_over_via: 'management' });
     await expect(orderRow(page, APT)).toHaveCount(0);
     await expect(orderRow(page, APT_B)).toHaveCount(0);
 
@@ -1256,10 +1317,14 @@ test.describe('staff: issuing at the reception', () => {
     await expect(section.getByTestId('chip-order-progress')).toHaveText('3 מתוך 3');
     await expect(section.getByTestId('chip-order-payment-method')).toHaveText('מזומן או העברה');
     await expect(section.getByTestId('chip-order-payment-by')).toContainText(recordedBy);
-    // The status row: "נאסף" is where it stands, and nothing can be pressed.
+    // The status row: "נאסף" is where it stands, and none of the three status
+    // buttons can be pressed. The one thing an admin can still do to an order
+    // of the reception is cancel it (25/11/2026 — its own test, further down).
     const actions = issue.getByTestId('chip-order-actions');
     await expect(actions.locator('[aria-current="step"]')).toHaveText('נאסף');
-    for (const button of await actions.getByRole('button').all()) await expect(button).toBeDisabled();
+    await expect(actions.getByRole('button')).toHaveText(['מוכן לאיסוף', 'נאסף', 'דחה', 'בטל הזמנת קבלה']);
+    for (const name of ['מוכן לאיסוף', 'נאסף', 'דחה']) await expect(actions.getByRole('button', { name, exact: true })).toBeDisabled();
+    await expect(actions.getByTestId('chip-order-cancel-reception')).toBeEnabled();
     await expect(section.getByTestId('chip-order-ready-reason')).toHaveText('הזמנת קבלה: שולמה ונמסרה במקום — ההזמנה סגורה');
     // One block per person, with what the reception stored — and none of it editable.
     await expect(issue.getByTestId('chip-order-closed-note')).toContainText('הזמנת קבלה');
@@ -1481,6 +1546,316 @@ test.describe('staff: issuing at the reception', () => {
 // The Orders tab itself (24/11/2026): the action column of a row, the table's
 // columns, the search, and the three export buttons — which the chips tab
 // carries too. Orders of its own.
+test.describe.serial('staff: extra chips of a web order, and cancelling the reception order they made', () => {
+  let web: Awaited<ReturnType<typeof seedPaidOrder>>;
+  let managerId = '';
+  const first = `XT${tag}1`;
+  const second = `XT${tag}2`;
+  const third = `XT${tag}3`;
+  const extraRow = (page: Page) => orderRow(page, APT_EXTRA).filter({ has: page.getByTestId('chip-order-extra-badge') });
+  const webRow = (page: Page) => orderRow(page, APT_EXTRA).filter({ hasNot: page.getByTestId('chip-order-extra-badge') });
+  const receptionOrder = async () => (await pool.query<{
+    id: string; order_number: number; source: string; status: string; total: number; payment_method: string; is_test: boolean;
+    full_name: string; reject_reason: string | null; cancelled_by_name: string | null;
+  }>(
+    `select id, order_number, source, status, total::float8 as total, payment_method, is_test, full_name, reject_reason, cancelled_by_name
+       from public.chip_orders where extra_of_order_id = $1`, [web.id])).rows;
+  const chipStatus = async (number: string) => (await pool.query<{ status: string }>(`select status from public.chips where chip_number = $1`, [number])).rows[0]?.status;
+
+  test.beforeAll(async () => {
+    web = await seedPaidOrder([{ apt: APT_EXTRA, role: 'owner', name: 'גלית תוספת', phone: '+972539300041', qty: 1 }]);
+    // A manager who holds every chips permission the matrix can grant — still not an admin.
+    const u = await pool.query<{ id: string }>(
+      `insert into public.users (username, email, password_hash, full_name, role, is_active)
+       values ($1, $1, 'x', $2, 'manager', true) returning id`, [`chip-mgr-orders-${tag}@billing.local`, `מנהל הזמנות ${tag}`]);
+    managerId = u.rows[0]!.id;
+    made.users.push(managerId);
+    for (const mod of ['chips', 'chips_orders_manage']) {
+      await pool.query(`insert into public.user_permissions (user_id, module, can_view, can_edit) values ($1, $2, true, true)`, [managerId, mod]);
+    }
+  });
+
+  test.afterAll(async () => {
+    if (managerId) await pool.query(`delete from public.user_permissions where user_id = $1`, [managerId]);
+  });
+
+  test('a number beyond the paid quantity is an extra chip: the reception\'s payment section for it alone, nothing chosen; "מזומן או העברה" confirms a sum and makes a reception order for the extra — the web order and its total do not change', async ({ page }) => {
+    const price = await unitPrice();
+    await page.goto('/chips?view=orders');
+    await webRow(page).click();
+    const issue = issueWindow(page);
+    const block = issue.getByTestId('chip-holder-block');
+    const section = issue.getByTestId('chip-order-section');
+    const save = issue.getByTestId('chip-issue-save');
+    const extra = issue.getByTestId('chip-order-extra-payment');
+
+    // Inside what the apartment paid for: no payment section, as always.
+    await addChip(block, first);
+    await expect(extra).toHaveCount(0);
+    await expect(save).toBeEnabled();
+
+    // One more: it is beyond the paid quantity.
+    await addChip(block, second);
+    await expect(extra).toContainText('נוסף צ׳יפ אחד מעבר לכמות ששולמה באתר');
+    await expect(extra).toContainText('ההזמנה מהאתר והסכום שלה לא משתנים');
+    await expect(extra.getByTestId('chip-reception-breakdown')).toContainText('כרטיס בקרת כניסה');
+    await expect(extra.getByTestId('chip-reception-total')).toHaveText(`${price}₪`);
+    // The same three methods as at the reception, none chosen; "אשראי" is drawn and off.
+    await expect(extra.getByRole('radio')).toHaveText([/^אשראי/, /^מזומן או העברה/, /^ללא חיוב/]);
+    await expect(extra.getByTestId('chip-pay-card')).toBeDisabled();
+    for (const id of ['chip-pay-cash', 'chip-pay-none']) await expect(extra.getByTestId(id)).toHaveAttribute('aria-checked', 'false');
+    await expect(save).toBeDisabled();
+    await expect(extra.getByTestId('chip-reception-reason')).toHaveText('יש לבחור אמצעי תשלום לצ׳יפים שנוספו מעבר לכמות ששולמה');
+
+    // "מזומן או העברה" is the confirmation of the sum on the screen…
+    await extra.getByTestId('chip-pay-cash').click();
+    await expect(extra.getByTestId('chip-pay-cash')).toContainText(`אישור: התקבלו ${price}₪`);
+    await expect(save).toBeEnabled();
+    // …so a sum that moves takes the choice back.
+    await addChip(block, third);
+    await expect(extra).toContainText('נוספו 2 צ׳יפים מעבר לכמות ששולמה באתר');
+    await expect(extra.getByTestId('chip-pay-cash')).toHaveAttribute('aria-checked', 'false');
+    await expect(extra.getByTestId('chip-reception-reason')).toContainText('הסכום לתשלום השתנה');
+    await expect(save).toBeDisabled();
+    await block.getByRole('button', { name: `הסר את המספר ${third} מהרשימה` }).click();
+    await expect(extra.getByTestId('chip-reception-total')).toHaveText(`${price}₪`);
+    await extra.getByTestId('chip-pay-cash').click();
+    await expect(save).toBeEnabled();
+
+    await save.click();
+    const made1 = await expect.poll(async () => (await receptionOrder()).length).toBe(1).then(receptionOrder);
+    const rec = made1[0]!;
+    await expect(toast(page, `נרשם תשלום על צ׳יפ נוסף אחד — הזמנת קבלה ${rec.order_number}`)).toBeVisible();
+    // An order of the reception, for the extra chip only: paid, collected, never a test order.
+    expect(rec).toMatchObject({ source: 'reception', status: 'collected', total: price, payment_method: 'cash_transfer', is_test: false, full_name: 'גלית תוספת' });
+    // The web order: the same line, quantity and total.
+    expect((await pool.query(
+      `select o.total::float8 as total, o.status, i.chips_count, i.line_total::float8 as line_total,
+              (select count(*)::int from public.chips c where c.order_item_id = i.id and c.status = 'active') as linked
+         from public.chip_orders o join public.chip_order_items i on i.order_id = o.id where o.id = $1`, [web.id])).rows)
+      .toEqual([{ total: 50, status: 'paid', chips_count: 1, line_total: 50, linked: 1 }]);
+    // The extra chip belongs to the reception order.
+    expect((await pool.query(
+      `select c.chip_number from public.chips c join public.chip_order_items i on i.id = c.order_item_id where i.order_id = $1`, [rec.id])).rows)
+      .toEqual([{ chip_number: second }]);
+    expect((await pool.query(`select count(*)::int as n from public.chip_order_notifications where order_id = any($1::uuid[])`, [[rec.id, web.id]])).rows[0].n).toBe(0);
+
+    // The window, reloaded: the order holds what it paid for, and the paid extra is shown in the person's block.
+    await expect(extra).toHaveCount(0);
+    await expect(block.getByTestId('chip-alloc-counter')).toHaveText('שויכו 1 מתוך 1');
+    await expect(block.getByRole('button', { name: `השבת את ${second}` })).toBeVisible();
+    await expect(block.getByTestId('chip-extra-tag')).toHaveText('נוסף · קבלה');
+    await expect(section.getByTestId('chip-order-progress')).toHaveText('1 מתוך 1');
+    await expect(section.getByTestId('chip-order-extra-orders')).toContainText(`הזמנת קבלה ${rec.order_number}`);
+    await expect(section.getByTestId('chip-order-extra-orders')).toContainText(`${price}₪`);
+    await expect(section).toContainText('כרטיס בקרת כניסה — 1×50₪');
+    await noSideScroll(page);
+    await issue.getByTestId('chip-issue-close').click();
+    await expect(issue).toHaveCount(0);
+
+    // The Orders tab: the reception order of the extras, tagged — after the open order.
+    await expect(extraRow(page)).toHaveCount(1);
+    await expect(extraRow(page).getByTestId('chip-order-reception-badge')).toHaveText('קבלה');
+    await expect(extraRow(page).getByTestId('chip-order-extra-badge')).toHaveText('צ׳יפים נוספים');
+    await expect(extraRow(page).getByTestId('chip-order-stage')).toHaveText('נאסף');
+    await expect(webRow(page).getByTestId('chip-order-stage')).toHaveText('שויך');
+
+    // Ready: the guard's pickup list carries BOTH chips under the person — the extra is handed over with the order.
+    expect((await page.request.post(`/api/chip-orders/${web.id}/ready`)).status()).toBe(200);
+    const pickup = (await (await page.request.get('/api/chip-pickup')).json()) as { orders: { id: string; total: number; people: { name: string; chips: { number: string }[] }[] }[] };
+    const mine = pickup.orders.find((o) => o.id === web.id)!;
+    expect(mine.total).toBe(2);
+    expect(mine.people.map((p) => [p.name, p.chips.map((c) => c.number)])).toEqual([['גלית תוספת', [first, second]]]);
+  });
+
+  test('"בטל הזמנת קבלה": admin only, a reason required — the order becomes "בוטל" and stays in the table, its chip is disabled (never deleted), nobody is notified', async ({ page, browser }) => {
+    const rec = (await receptionOrder())[0]!;
+
+    // A manager — with every chips permission — sees the order, and no way to cancel it.
+    const manager = await pageAs(browser, managerId);
+    await manager.goto('/chips?view=orders');
+    await extraRow(manager).click();
+    const managerWindow = issueWindow(manager);
+    await expect(managerWindow.getByTestId('chip-order-reception-tag')).toHaveText('קבלה');
+    await expect(managerWindow.getByTestId('chip-order-cancel-reception')).toHaveCount(0);
+    await expect(managerWindow.getByTestId('chip-order-actions').getByRole('button')).toHaveText(['מוכן לאיסוף', 'נאסף', 'דחה']);
+    expect((await manager.request.post(`/api/chip-orders/${rec.id}/cancel`, { data: { reason: 'ניסיון של מנהל' } })).status()).toBe(403);
+    expect((await receptionOrder())[0]!.status).toBe('collected');
+
+    await page.goto('/chips?view=orders');
+    await extraRow(page).click();
+    const issue = issueWindow(page);
+    const section = issue.getByTestId('chip-order-section');
+    await expect(section.getByTestId('chip-order-extra-tag')).toHaveText(`צ׳יפים נוספים להזמנה ${web.orderNumber}`);
+    await section.getByTestId('chip-order-cancel-reception').click();
+    const dialog = page.getByTestId('chip-order-cancel-confirm');
+    await expect(dialog).toContainText(`לבטל את הזמנת הקבלה ${rec.order_number}?`);
+    await expect(dialog).toContainText('הצ׳יפים שלה יושבתו');
+    await expect(dialog).toContainText('לא נשלחת הודעה ללקוח');
+    const confirm = dialog.getByRole('button', { name: 'בטל הזמנת קבלה' });
+    // No reason, no cancellation.
+    await expect(confirm).toBeDisabled();
+    await dialog.getByLabel('סיבת הביטול').fill('נ');
+    await expect(confirm).toBeDisabled();
+    // Backing out changes nothing.
+    await dialog.getByRole('button', { name: 'חזרה' }).click();
+    await expect(dialog).toHaveCount(0);
+    expect((await receptionOrder())[0]!.status).toBe('collected');
+    expect(await chipStatus(second)).toBe('active');
+
+    await section.getByTestId('chip-order-cancel-reception').click();
+    await dialog.getByLabel('סיבת הביטול').fill('נרשם בטעות');
+    await confirm.click();
+    await expect(toast(page, 'הזמנת הקבלה בוטלה')).toBeVisible();
+    await expect(issue).toHaveCount(0);
+
+    const after = (await receptionOrder())[0]!;
+    expect(after).toMatchObject({ status: 'rejected', reject_reason: 'נרשם בטעות' });
+    expect(after.cancelled_by_name).toBeTruthy();
+    // Its chip is disabled, not deleted; the web order's own chip is untouched.
+    expect(await chipStatus(second)).toBe('inactive');
+    expect(await chipStatus(first)).toBe('active');
+    expect((await pool.query(`select count(*)::int as n from public.chip_order_notifications where order_id = $1`, [rec.id])).rows[0].n).toBe(0);
+    expect((await pool.query(
+      `select action, metadata->>'reason' as reason from public.audit_log where entity_type = 'chip_order' and entity_id = $1 and action = 'reception_cancelled'`, [rec.id])).rows)
+      .toEqual([{ action: 'reception_cancelled', reason: 'נרשם בטעות' }]);
+
+    // The row stays in the table, with its status — and nothing to press.
+    await expect(extraRow(page)).toHaveCount(1);
+    await expect(extraRow(page).getByTestId('chip-order-stage')).toHaveText('בוטל');
+    await expect(extraRow(page).getByTestId('chip-order-row-cancelled')).toHaveText('בוטל');
+    // It opens read only, and says who cancelled and why — with no way to cancel again.
+    await extraRow(page).click();
+    await expect(issue.getByTestId('chip-order-closed-note')).toContainText('הזמנת הקבלה בוטלה');
+    await expect(section.getByTestId('chip-order-cancel-reason')).toHaveText('נרשם בטעות');
+    await expect(section.getByTestId('chip-order-cancelled-by')).toBeVisible();
+    await expect(section.getByTestId('chip-order-cancel-reception')).toHaveCount(0);
+    await expect(section.getByTestId('chip-order-ready-reason')).toContainText('הזמנת הקבלה בוטלה');
+    expect((await page.request.post(`/api/chip-orders/${rec.id}/cancel`, { data: { reason: 'פעם שנייה' } })).status()).toBe(409);
+    await issue.getByTestId('chip-issue-close').click();
+    await expect(issue).toHaveCount(0);
+
+    // The pickup list of the web order no longer carries the cancelled extra.
+    const pickup = (await (await page.request.get('/api/chip-pickup')).json()) as { orders: { id: string; total: number }[] };
+    expect(pickup.orders.find((o) => o.id === web.id)!.total).toBe(1);
+    // A web order is never cancelled this way.
+    expect((await page.request.post(`/api/chip-orders/${web.id}/cancel`, { data: { reason: 'הזמנה מהאתר' } })).status()).toBe(409);
+  });
+
+  test('the holder panel has ONE close button — the white X of the header — and it closes the panel', async ({ page }) => {
+    await page.goto('/chips');
+    await page.getByPlaceholder('חפש לפי מספר צ׳יפ, מספר דירה או שם דייר').fill(first);
+    await expect(page.getByRole('button', { name: 'גלית תוספת', exact: true })).toHaveCount(1);
+    await page.getByRole('button', { name: 'גלית תוספת', exact: true }).click();
+    const panel = page.getByRole('dialog').filter({ hasText: 'הצ׳יפים של גלית תוספת' });
+    await expect(panel).toBeVisible();
+    // The shared Sheet's own built-in X is off: it used to sit, small and grey, on top of the header's.
+    await expect(panel.locator('[data-slot="sheet-close"]')).toHaveCount(0);
+    const close = panel.getByRole('button', { name: /^(סגור|Close)$/ });
+    await expect(close).toHaveCount(1);
+    await expect(close).toHaveAttribute('data-testid', 'chip-holder-close');
+    const box = (await close.boundingBox())!;
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    await close.click();
+    await expect(panel).toHaveCount(0);
+  });
+});
+
+test.describe('staff: leases nobody saved', () => {
+  test('a lease that was uploaded and never saved is swept by the hourly purge once it is 24 hours old — one that is attached to a chip never is, and neither is a fresh one', async ({ page, request }) => {
+    const secret = process.env.BILLING_CRON_SECRET ?? '';
+    expect(secret, 'BILLING_CRON_SECRET must be set for the purge route').not.toBe('');
+    const bucket = 'chip-order-leases';
+    const keysNow = () => storage.keys(bucket).map((k) => k.slice(bucket.length + 1));
+    const registered = async (key: string) => (await pool.query(`select 1 from public.chip_lease_uploads where object_key = $1`, [key])).rowCount === 1;
+
+    /** Opens the window on the apartment and uploads a lease in the renter's
+     *  block — a first one ("צרף חוזה"), or over the one the block already
+     *  shows ("החלף"); returns the new file's key. */
+    async function uploadLease(how: 'attach' | 'replace'): Promise<string> {
+      const before = new Set(keysNow());
+      await page.getByRole('button', { name: 'הנפק צ׳יפ' }).click();
+      await pickApartment(page, APT_LEASE);
+      const renter = issueWindow(page).getByTestId('chip-holder-block');
+      if (how === 'attach') await renter.getByRole('radio', { name: 'שוכר' }).click();
+      const box = renter.getByTestId('chip-lease-box');
+      await box.getByLabel(how === 'attach' ? 'צרף חוזה שכירות' : 'החלף את קובץ החוזה')
+        .setInputFiles({ name: 'lease.pdf', mimeType: 'application/pdf', buffer: PDF });
+      let added: string[] = [];
+      await expect.poll(() => { added = keysNow().filter((k) => !before.has(k)); return added.length; }).toBe(1);
+      await expect(box.getByTestId('chip-lease-link')).toHaveAttribute('href', `/api/files/${bucket}/${added[0]}`);
+      return added[0]!;
+    }
+    async function leaveWithoutSaving() {
+      const issue = issueWindow(page);
+      await issue.getByTestId('chip-issue-close').click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'צא ללא שמירה' }).click();
+      await expect(issue).toHaveCount(0);
+    }
+
+    await page.goto('/chips');
+    // 1. Uploaded, and the window is closed without a save.
+    const abandoned = await uploadLease('attach');
+    await leaveWithoutSaving();
+    // 2. Uploaded and SAVED with a chip (no charge).
+    const attached = await uploadLease('attach');
+    const issue = issueWindow(page);
+    await addChip(issue.getByTestId('chip-holder-block'), `LP${tag}1`);
+    await issue.getByTestId('chip-reception-payment').getByTestId('chip-pay-none').click();
+    await issue.getByTestId('chip-issue-save').click();
+    await expect(issue).toHaveCount(0);
+    expect((await pool.query(`select lease_file_key from public.chips where chip_number = $1`, [`LP${tag}1`])).rows[0].lease_file_key).toBe(attached);
+    // 3. A moment ago: the saved lease is REPLACED in the window, and the window is left without a save.
+    const fresh = await uploadLease('replace');
+    await leaveWithoutSaving();
+    // The chip still carries the lease that was saved.
+    expect((await pool.query(`select lease_file_key from public.chips where chip_number = $1`, [`LP${tag}1`])).rows[0].lease_file_key).toBe(attached);
+    // Every upload has its row in the registry.
+    for (const key of [abandoned, attached, fresh]) expect(await registered(key), key).toBe(true);
+
+    // A day goes by for the first two.
+    await pool.query(`update public.chip_lease_uploads set uploaded_at = now() - interval '25 hours' where object_key = any($1::text[])`, [[abandoned, attached]]);
+    // A file of the same bucket that THIS database never recorded — a lease of
+    // the public order page, or one another database's instance put there.
+    const foreign = `${randomUUID()}.pdf`;
+    storage.objects.set(`${bucket}/${foreign}`, { contentType: 'application/pdf', bytes: PDF });
+    expect(await registered(foreign)).toBe(false);
+
+    // The purge is the cron route's, behind its secret.
+    expect((await request.post('/api/cron/chip-orders-purge', { headers: { 'x-cron-secret': 'not-the-secret' } })).status()).toBe(401);
+    for (const key of [abandoned, attached, fresh]) expect(keysNow()).toContain(key);
+    const run = await request.post('/api/cron/chip-orders-purge', { headers: { 'x-cron-secret': secret } });
+    expect(run.status(), await run.text()).toBe(200);
+    const body = (await run.json()) as { ok: boolean; leases: { deleted: number; fileFailed: number } };
+    expect(body.ok).toBe(true);
+    expect(body.leases).toMatchObject({ fileFailed: 0 });
+    expect(body.leases.deleted).toBeGreaterThanOrEqual(1);
+    // The sweep works from its own rows alone: a file it has no row for stays.
+    expect(keysNow()).toContain(foreign);
+    storage.objects.delete(`${bucket}/${foreign}`);
+
+    // Only the lease nobody saved is gone — the file and its row.
+    expect(keysNow()).not.toContain(abandoned);
+    expect(await registered(abandoned)).toBe(false);
+    expect(keysNow()).toContain(attached);
+    expect(await registered(attached)).toBe(true);
+    expect(keysNow()).toContain(fresh);
+    expect(await registered(fresh)).toBe(true);
+    // The attached lease still opens.
+    expect((await page.request.get(`/api/files/${bucket}/${attached}`)).status()).toBe(200);
+    // A second run finds nothing more of ours to delete.
+    const again = (await (await request.post('/api/cron/chip-orders-purge', { headers: { 'x-cron-secret': secret } })).json()) as { leases: { deleted: number } };
+    expect(again.leases.deleted).toBe(0);
+    expect(keysNow()).toContain(attached);
+
+    // The stand-in Storage goes back to what the later tests expect to find in
+    // it (they count the bucket's files): both files this test left there.
+    storage.objects.delete(`${bucket}/${fresh}`);
+    storage.objects.delete(`${bucket}/${attached}`);
+  });
+});
+
 test.describe('staff: the Orders tab', () => {
   test('the action column of a row: a plain "בהמתנה" with what is missing — no button — until every chip of the ORDER is issued; then "מוכן לאיסוף" and "נאסף" ask first, never open the window, and the rows follow in place — also on a phone card', async ({ page }) => {
     const o = await seedPaidOrder([

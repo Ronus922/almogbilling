@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { filterNav, findActive, NAV_CATEGORIES } from '@/components/app-shell/nav';
-import { canOpenUsersScreen, canViewVisitors, hasPermission } from '@/lib/permissions/check';
+import { canHandOverChips, canOpenUsersScreen, canViewVisitors, hasPermission } from '@/lib/permissions/check';
 import {
   DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER,
   type Action, type ModulePermission, type Role,
@@ -13,6 +13,9 @@ import { PURCHASING_MODULES } from '@/lib/purchasing/access';
 // it stood before the change (labels left out on purpose: they are the one thing that moved).
 // 24/11/2026 (Ronen): "צ׳יפים" moved from "כספים" to "אבטחה" — the item alone, with the same href
 // and the same `chips` module gate, so the parity below still holds item by item.
+// 25/11/2026 (Ronen): "מסירת צ׳יפים" (/chip-pickup) — a NEW item of "אבטחה", the guard's pickup
+// screen, gated by role (CHIP_PICKUP_ROLES) exactly like the visitor scan. It is listed in OLD so
+// the item-by-item comparison keeps covering every item of the menu.
 
 type Can = (module: string, action: Action) => boolean;
 interface OldItem {
@@ -25,6 +28,7 @@ interface OldItem {
 const OLD: OldItem[] = [
   { href: '/overview', visible: (role) => role !== 'viewer' && role !== 'guard' },
   { href: '/visitors', visible: (role) => canViewVisitors(role) },
+  { href: '/chip-pickup', visible: (role) => canHandOverChips(role) },
   { href: '/dashboard', module: 'dashboard' },
   { href: '/contacts', module: 'contacts' },
   { href: '/messages', module: 'whatsapp_chat' },
@@ -108,7 +112,7 @@ describe('nav rail — the categories', () => {
       { id: 'ops', label: 'תפעול', title: 'תפעול ואחזקה', description: 'תקלות, משימות ולו"ז', pinned: false, items: ['תקלות', 'משימות', 'תזכורות', 'יומן', 'ניהול אזורים'] },
       { id: 'purchasing', label: 'רכש', title: 'רכש וספקים', description: 'הצעות מחיר, הזמנות ומסמכים', pinned: false, items: ['בקשות והזמנות', 'ספקים', 'מסמכים'] },
       { id: 'portal', label: 'פורטל', title: 'פורטל בעלי דירות', description: 'שקיפות והרשאות לבעלי הדירות', pinned: false, items: ['החלטות ופרוטוקולים', 'התחברויות לפורטל', 'משתמשים'] },
-      { id: 'security', label: 'אבטחה', title: 'אבטחה וביטחון', description: 'בקרת כניסה ומעקב', pinned: false, items: ['סריקת כניסה', 'צ׳יפים'] },
+      { id: 'security', label: 'אבטחה', title: 'אבטחה וביטחון', description: 'בקרת כניסה ומעקב', pinned: false, items: ['סריקת כניסה', 'מסירת צ׳יפים', 'צ׳יפים'] },
       { id: 'settings', label: 'הגדרות', title: 'הגדרות', description: 'הגדרות מערכת', pinned: true, items: ['הגדרות כלליות'] },
     ]);
   });
@@ -124,6 +128,7 @@ describe('nav rail — the categories', () => {
     expect(byHref('/suppliers')).toBe('purchasing');
     expect(byHref('/documents')).toBe('purchasing');
     expect(byHref('/visitors')).toBe('security');
+    expect(byHref('/chip-pickup')).toBe('security');
   });
 
   it('a category with no permitted item is absent — the guard sees only security, the viewer only finance', () => {
@@ -135,8 +140,11 @@ describe('nav rail — the categories', () => {
     // and "כספים" no longer lists it for anyone.
     const security = (role: Role, perms: ModulePermission[]) =>
       filterNav(role, (m, a) => hasPermission(role, perms, m, a)).categories.find((c) => c.id === 'security')?.items.map((i) => i.href);
-    expect(security('guard', [])).toEqual(['/visitors']);
-    expect(security('admin', [])).toEqual(['/visitors', '/chips']);
+    // The guard: the visitor scan and the pickup screen — never "צ׳יפים" itself.
+    expect(security('guard', [])).toEqual(['/visitors', '/chip-pickup']);
+    expect(security('guard', DEFAULT_MANAGER)).toEqual(['/visitors', '/chip-pickup']);
+    expect(security('admin', [])).toEqual(['/visitors', '/chip-pickup', '/chips']);
+    // A manager holds the chips module, and neither of the two role screens.
     expect(security('manager', DEFAULT_MANAGER)).toEqual(['/chips']);
     expect(security('viewer', DEFAULT_VIEWER)).toBeUndefined();
     for (const role of ['admin', 'manager'] as const) {

@@ -3,6 +3,7 @@
 --
 
 
+
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -1786,6 +1787,25 @@ CREATE TABLE public.chip_events (
 
 
 --
+-- Name: chip_lease_uploads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.chip_lease_uploads (
+    object_key text NOT NULL,
+    uploaded_by uuid,
+    uploaded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chip_lease_uploads_object_key_check CHECK ((object_key ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,10}$'::text))
+);
+
+
+--
+-- Name: TABLE chip_lease_uploads; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.chip_lease_uploads IS 'One row per lease file that the issue window uploaded (POST /api/chips/leases) to the private bucket chip-order-leases (key = <uuid>.<ext>). The hourly purge (POST /api/cron/chip-orders-purge) deletes such a file once it is 24 hours old and no chip_order_items / chip_order_holders / chips row points at it, and its row with it; a file that is attached is never deleted, and neither is a file with no row here (the purge never lists the bucket). A save that attaches a lease locks its row first.';
+
+
+--
 -- Name: chip_order_holders; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1807,8 +1827,10 @@ CREATE TABLE public.chip_order_holders (
     lease_end_date date,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    extra_of_holder_id uuid,
     CONSTRAINT chip_order_holders_chips_count_check CHECK (((chips_count >= 0) AND (chips_count <= 50))),
     CONSTRAINT chip_order_holders_email_check CHECK (((email IS NULL) OR ((length(btrim(email)) >= 3) AND (length(btrim(email)) <= 254)))),
+    CONSTRAINT chip_order_holders_extra_of_check CHECK (((extra_of_holder_id IS NULL) OR ((source = 'reception'::text) AND (extra_of_holder_id <> id)))),
     CONSTRAINT chip_order_holders_full_name_check CHECK (((length(btrim(full_name)) >= 2) AND (length(btrim(full_name)) <= 120))),
     CONSTRAINT chip_order_holders_lease_file_size_check CHECK (((lease_file_size IS NULL) OR (lease_file_size > 0))),
     CONSTRAINT chip_order_holders_lease_pair_check CHECK (((lease_file_key IS NULL) = (lease_file_name IS NULL))),
@@ -1824,6 +1846,13 @@ CREATE TABLE public.chip_order_holders (
 --
 
 COMMENT ON TABLE public.chip_order_holders IS 'One person of a chip order (a row of /chip-order, or a holder the staff added in the issue window). Price stays on chip_order_items (per apartment); a renter row keeps its lease here.';
+
+
+--
+-- Name: COLUMN chip_order_holders.extra_of_holder_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_order_holders.extra_of_holder_id IS 'On a holder line of a reception order made for extra chips of a web order: the person of the WEB order these chips were added for. The pickup screen and the web order''s window list the chips under that person.';
 
 
 --
@@ -1929,12 +1958,25 @@ CREATE TABLE public.chip_orders (
     payment_recorded_by uuid,
     payment_recorded_by_name text,
     payment_recorded_at timestamp with time zone,
+    collected_by_name text,
+    collected_holder_id uuid,
+    handed_over_by uuid,
+    handed_over_by_name text,
+    handed_over_via text,
+    cancelled_by uuid,
+    cancelled_by_name text,
+    extra_of_order_id uuid,
     CONSTRAINT chip_orders_address_check CHECK ((((source = 'reception'::text) AND (address IS NULL)) OR ((address IS NOT NULL) AND ((length(btrim(address)) >= 2) AND (length(btrim(address)) <= 300))))),
     CONSTRAINT chip_orders_address_city_check CHECK (((address_city IS NULL) OR ((length(btrim(address_city)) >= 2) AND (length(btrim(address_city)) <= 100)))),
     CONSTRAINT chip_orders_address_street_check CHECK (((address_street IS NULL) OR ((length(btrim(address_street)) >= 2) AND (length(btrim(address_street)) <= 200)))),
     CONSTRAINT chip_orders_address_zip_check CHECK (((address_zip IS NULL) OR (address_zip ~ '^[0-9]{7}$'::text))),
+    CONSTRAINT chip_orders_cancelled_check CHECK ((((cancelled_by_name IS NULL) AND (cancelled_by IS NULL)) OR ((cancelled_by_name IS NOT NULL) AND (source = 'reception'::text) AND (status = 'rejected'::text) AND (rejected_at IS NOT NULL) AND (reject_reason IS NOT NULL)))),
+    CONSTRAINT chip_orders_collected_by_name_check CHECK (((collected_by_name IS NULL) OR ((length(btrim(collected_by_name)) >= 1) AND (length(btrim(collected_by_name)) <= 120)))),
     CONSTRAINT chip_orders_email_check CHECK ((((source = 'reception'::text) AND (email IS NULL)) OR ((email IS NOT NULL) AND ((length(btrim(email)) >= 3) AND (length(btrim(email)) <= 254))))),
+    CONSTRAINT chip_orders_extra_of_check CHECK (((extra_of_order_id IS NULL) OR ((source = 'reception'::text) AND (extra_of_order_id <> id)))),
     CONSTRAINT chip_orders_full_name_check CHECK (((length(btrim(full_name)) >= 2) AND (length(btrim(full_name)) <= 120))),
+    CONSTRAINT chip_orders_handed_over_via_check CHECK (((handed_over_via IS NULL) OR (handed_over_via = ANY (ARRAY['pickup'::text, 'management'::text])))),
+    CONSTRAINT chip_orders_handover_check CHECK ((((handed_over_via IS NULL) AND (handed_over_by_name IS NULL) AND (collected_by_name IS NULL) AND (collected_holder_id IS NULL)) OR ((handed_over_via IS NOT NULL) AND (handed_over_by_name IS NOT NULL) AND (status = 'collected'::text) AND ((handed_over_via <> 'pickup'::text) OR (collected_by_name IS NOT NULL))))),
     CONSTRAINT chip_orders_internal_note_check CHECK (((internal_note IS NULL) OR (length(internal_note) <= 2000))),
     CONSTRAINT chip_orders_paid_fields_check CHECK (((status = 'pending_payment'::text) OR ((paid_at IS NOT NULL) AND ((grow_transaction_id IS NOT NULL) OR is_test OR (source = 'reception'::text))))),
     CONSTRAINT chip_orders_payment_method_check CHECK (((payment_method IS NULL) OR (payment_method = 'cash_transfer'::text))),
@@ -2021,6 +2063,41 @@ COMMENT ON COLUMN public.chip_orders.payment_method IS 'How a reception order wa
 --
 
 COMMENT ON COLUMN public.chip_orders.payment_recorded_by_name IS 'Who recorded the payment of a reception order (the name at that moment; payment_recorded_by is the user, NULL once the user is deleted). The amount is `total`, the time payment_recorded_at.';
+
+
+--
+-- Name: COLUMN chip_orders.collected_by_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.collected_by_name IS 'Who collected the chips: the person of the order who showed an ID, by name as it stood at that moment. Required on the guard''s pickup screen, optional when the management marks the order collected. NULL on every order collected before 25/11/2026 and on a reception order.';
+
+
+--
+-- Name: COLUMN chip_orders.collected_holder_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.collected_holder_id IS 'The holder line (chip_order_holders) of whoever collected. NULL when the collector is the orderer of an order made before 20/11/2026 (no holder lines), or when nobody was named.';
+
+
+--
+-- Name: COLUMN chip_orders.handed_over_via; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.handed_over_via IS 'Where the order was marked collected: ''pickup'' = the guard''s pickup screen (/chip-pickup); ''management'' = the orders table or the issue window. handed_over_by is the user (NULL once deleted), handed_over_by_name the name at that moment, collected_at the time.';
+
+
+--
+-- Name: COLUMN chip_orders.cancelled_by_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.cancelled_by_name IS 'Who cancelled a RECEPTION order ("בטל הזמנת קבלה", admin / super admin). The cancellation is status ''rejected'' with rejected_at and reject_reason (the required reason); its chips are disabled, never deleted. NULL on every web order, rejected or not.';
+
+
+--
+-- Name: COLUMN chip_orders.extra_of_order_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.extra_of_order_id IS 'A reception order made for EXTRA chips of a web order: chips added in that order''s window beyond the quantity paid online, and paid in cash or by transfer. Points at the web order, whose own lines and total never change. NULL on every other order.';
 
 
 --
@@ -4951,6 +5028,14 @@ ALTER TABLE ONLY public.chip_events
 
 
 --
+-- Name: chip_lease_uploads chip_lease_uploads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_lease_uploads
+    ADD CONSTRAINT chip_lease_uploads_pkey PRIMARY KEY (object_key);
+
+
+--
 -- Name: chip_order_holders chip_order_holders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6053,6 +6138,20 @@ CREATE INDEX chip_events_chip_idx ON public.chip_events USING btree (chip_id, cr
 
 
 --
+-- Name: chip_lease_uploads_uploaded_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chip_lease_uploads_uploaded_at_idx ON public.chip_lease_uploads USING btree (uploaded_at);
+
+
+--
+-- Name: chip_order_holders_extra_of_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chip_order_holders_extra_of_idx ON public.chip_order_holders USING btree (extra_of_holder_id) WHERE (extra_of_holder_id IS NOT NULL);
+
+
+--
 -- Name: chip_order_holders_item_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6106,6 +6205,13 @@ CREATE INDEX chip_order_items_order_idx ON public.chip_order_items USING btree (
 --
 
 CREATE INDEX chip_order_notifications_order_idx ON public.chip_order_notifications USING btree (order_id, created_at);
+
+
+--
+-- Name: chip_orders_extra_of_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chip_orders_extra_of_idx ON public.chip_orders USING btree (extra_of_order_id) WHERE (extra_of_order_id IS NOT NULL);
 
 
 --
@@ -7795,6 +7901,22 @@ ALTER TABLE ONLY public.chip_events
 
 
 --
+-- Name: chip_lease_uploads chip_lease_uploads_uploaded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_lease_uploads
+    ADD CONSTRAINT chip_lease_uploads_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: chip_order_holders chip_order_holders_extra_of_holder_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_order_holders
+    ADD CONSTRAINT chip_order_holders_extra_of_holder_id_fkey FOREIGN KEY (extra_of_holder_id) REFERENCES public.chip_order_holders(id) ON DELETE SET NULL;
+
+
+--
 -- Name: chip_order_holders chip_order_holders_item_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7832,6 +7954,38 @@ ALTER TABLE ONLY public.chip_order_items
 
 ALTER TABLE ONLY public.chip_order_notifications
     ADD CONSTRAINT chip_order_notifications_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.chip_orders(id) ON DELETE CASCADE;
+
+
+--
+-- Name: chip_orders chip_orders_cancelled_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_orders
+    ADD CONSTRAINT chip_orders_cancelled_by_fkey FOREIGN KEY (cancelled_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: chip_orders chip_orders_collected_holder_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_orders
+    ADD CONSTRAINT chip_orders_collected_holder_id_fkey FOREIGN KEY (collected_holder_id) REFERENCES public.chip_order_holders(id) ON DELETE SET NULL;
+
+
+--
+-- Name: chip_orders chip_orders_extra_of_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_orders
+    ADD CONSTRAINT chip_orders_extra_of_order_id_fkey FOREIGN KEY (extra_of_order_id) REFERENCES public.chip_orders(id) ON DELETE SET NULL;
+
+
+--
+-- Name: chip_orders chip_orders_handed_over_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_orders
+    ADD CONSTRAINT chip_orders_handed_over_by_fkey FOREIGN KEY (handed_over_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -8999,6 +9153,7 @@ ALTER TABLE ONLY public.whatsapp_templates
 --
 
 
+
 --
 -- Dbmate schema migrations
 --
@@ -9149,5 +9304,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261113133131'),
     ('20261113220605'),
     ('20261120222746'),
-    ('20261125064322')
+    ('20261125064322'),
+    ('20261125090836')
 ;

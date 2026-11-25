@@ -47,7 +47,16 @@ const made = { contacts: [] as string[], orders: [] as string[] };
 const ids: Record<string, string> = {};
 let admin: { id: string; name: string };
 const num = (n: number) => `R${tag}${n}`;
-const lease = () => ({ key: `${randomUUID()}.pdf`, name: 'חוזה שכירות.pdf', mime: 'application/pdf', size: 2048 });
+const madeLeases: string[] = [];
+/** A lease as POST /api/chips/leases leaves it: the file's reference, and its
+ *  row in the lease registry (25/11/2026) — a save refuses a key that has
+ *  none, since that is what a purged file looks like. */
+async function lease() {
+  const ref = { key: `${randomUUID()}.pdf`, name: 'חוזה שכירות.pdf', mime: 'application/pdf', size: 2048 };
+  await pool.query(`insert into public.chip_lease_uploads (object_key, uploaded_by) values ($1, $2)`, [ref.key, admin.id]);
+  madeLeases.push(ref.key);
+  return ref;
+}
 const PRICE = 50;
 
 const one = async <T extends Record<string, unknown>>(sql: string, params: unknown[]) => (await pool.query<T>(sql, params)).rows[0] as T;
@@ -90,11 +99,12 @@ d('issuing a chip at the reception, on the DB', () => {
     for (const id of made.contacts) await pool.query(`delete from public.chip_reception_records where contact_id = $1`, [id]);
     for (const id of made.contacts) await pool.query(`delete from public.audit_log where metadata->>'source' = 'reception' and metadata->>'contact_id' = $1`, [id]);
     for (const id of made.contacts) await pool.query(`delete from public.contacts where id = $1`, [id]);
+    for (const key of madeLeases) await pool.query(`delete from public.chip_lease_uploads where object_key = $1`, [key]);
     await pool.end();
   });
 
   it('cash or transfer: ONE order of the reception — paid, collected, its payment on record, one holder line per block, the chips linked to both; nobody is notified', async () => {
-    const rentersLease = lease();
+    const rentersLease = await lease();
     const res = await reception.saveReceptionWindow(
       {
         contact_id: ids.paid!,
@@ -201,7 +211,7 @@ d('issuing a chip at the reception, on the DB', () => {
     expect(w.items[0]).toMatchObject({ chips_count: 4, chips_linked: 4 });
 
     // It is closed: a save of that window is refused.
-    await expect(win.saveChipOrderWindow(orderId, { holders: [], note: 'אחר כך' }, admin)).rejects.toMatchObject({ message: 'not_open' });
+    await expect(win.saveChipOrderWindow(orderId, { holders: [], note: 'אחר כך' }, admin, PRICE)).rejects.toMatchObject({ message: 'not_open' });
 
     // What the block of the chips shows again.
     const records = await reception.listReceptionRecords(ids.paid!);
@@ -494,7 +504,7 @@ d('issuing a chip at the reception, on the DB', () => {
 
   it('editing saved chips alone needs no payment: the email, the lease and its end date reach the chip, with one event that never names the storage key', async () => {
     const chip = await one<{ id: string }>(`select id from public.chips where chip_number = $1`, [num(30)]);
-    const newLease = lease();
+    const newLease = await lease();
     const res = await reception.saveReceptionWindow(
       {
         contact_id: ids.edge!,

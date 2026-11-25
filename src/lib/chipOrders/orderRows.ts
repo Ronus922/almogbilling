@@ -4,7 +4,7 @@ import {
   CHIP_ORDER_PHONE_UNVERIFIED_LABEL, CHIP_ORDER_TEST_LABEL, chipOrderStage, chipOrderStageLabel, isChipOrderOverdue,
   type ChipOrderRow,
 } from './model';
-import { CHIP_ORDER_RECEPTION_LABEL } from './reception';
+import { CHIP_ORDER_EXTRA_LABEL, CHIP_ORDER_RECEPTION_LABEL } from './reception';
 
 // The Orders tab of /chips (24/11/2026) — the pure, client-safe half of what
 // the tab does with its rows: the search, the tags of a row, what the action
@@ -50,20 +50,24 @@ export function searchHitPeople(row: Searchable, query: string): string[] {
  *  at the reception ("קבלה", 25/11/2026 — paid there and handed over on the
  *  spot), a test-mode order, a phone nobody proved (a test order made with
  *  "דלג על אימות"), and a message to the orderer that failed to go out. */
-export type ChipOrderTag = 'reception' | 'test' | 'phone_unverified' | 'notify_failed';
+export type ChipOrderTag = 'reception' | 'extra' | 'test' | 'phone_unverified' | 'notify_failed';
 
 export const CHIP_ORDER_TAG_LABEL: Record<ChipOrderTag, string> = {
   reception: CHIP_ORDER_RECEPTION_LABEL,
+  // A reception order made for extra chips of a web order (25/11/2026).
+  extra: CHIP_ORDER_EXTRA_LABEL,
   test: CHIP_ORDER_TEST_LABEL,
   phone_unverified: CHIP_ORDER_PHONE_UNVERIFIED_LABEL,
   notify_failed: 'הודעה נכשלה',
 };
 
-type Tagged = Pick<ChipOrderRow, 'is_test' | 'phone_verified' | 'has_failed_notification'> & Partial<Pick<ChipOrderRow, 'source'>>;
+type Tagged = Pick<ChipOrderRow, 'is_test' | 'phone_verified' | 'has_failed_notification'>
+  & Partial<Pick<ChipOrderRow, 'source' | 'extra_of_order_number'>>;
 
 export function chipOrderRowTags(row: Tagged): ChipOrderTag[] {
   const tags: ChipOrderTag[] = [];
   if (row.source === 'reception') tags.push('reception');
+  if (row.extra_of_order_number != null) tags.push('extra');
   if (row.is_test) tags.push('test');
   if (!row.phone_verified) tags.push('phone_unverified');
   if (row.has_failed_notification) tags.push('notify_failed');
@@ -109,22 +113,27 @@ export function missingChipsText(missing: number): string {
  *    · collected — the order is ready: the button "נאסף";
  *    · done      — the order is collected already (a reception order: paid
  *                  and handed over in one go): nothing left to do. A plain
- *                  label, "נאסף" — not a button. */
+ *                  label, "נאסף" — not a button;
+ *    · cancelled — a reception order that was cancelled (it stays in the tab):
+ *                  a plain label, "בוטל". */
 export type ChipOrderRowAction =
   | { kind: 'waiting'; missing: string }
   | { kind: 'ready' }
   | { kind: 'collected' }
-  | { kind: 'done' };
+  | { kind: 'done' }
+  | { kind: 'cancelled' };
 
 /** The label of a row that waits for its chips. */
 export const CHIP_ORDER_WAITING_LABEL = 'בהמתנה';
 
 export function chipOrderRowAction(
-  row: Pick<ChipOrderRow, 'order_id' | 'status'>,
+  row: Pick<ChipOrderRow, 'order_id' | 'status'> & Partial<Pick<ChipOrderRow, 'source'>>,
   summary: ChipOrderSummary | undefined,
 ): ChipOrderRowAction | null {
   if (row.status === 'ready') return { kind: 'collected' };
   if (row.status === 'collected') return { kind: 'done' };
+  // Only a reception order stays in the tab once it is rejected (= cancelled).
+  if (row.status === 'rejected') return row.source === 'reception' ? { kind: 'cancelled' } : null;
   if (row.status !== 'paid' && row.status !== 'approved') return null;
   const missing = summary?.missing ?? 0;
   if (missing === 0) return { kind: 'ready' };
@@ -143,10 +152,10 @@ export function chipOrderRowPeople(row: Pick<ChipOrderRow, 'people' | 'full_name
 
 /** The row's stage as the tab shows it, in words: the pill, and "באיחור". */
 export function chipOrderRowStatusText(
-  row: Pick<ChipOrderRow, 'status' | 'chips_linked' | 'chips_count' | 'due_at'>,
+  row: Pick<ChipOrderRow, 'status' | 'chips_linked' | 'chips_count' | 'due_at'> & Partial<Pick<ChipOrderRow, 'source'>>,
   now: Date = new Date(),
 ): string {
-  const stage = chipOrderStageLabel(chipOrderStage(row.status, row.chips_linked, row.chips_count), row.chips_linked, row.chips_count);
+  const stage = chipOrderStageLabel(chipOrderStage(row.status, row.chips_linked, row.chips_count, row.source), row.chips_linked, row.chips_count);
   return isChipOrderOverdue(row, now) ? `${stage} · באיחור` : stage;
 }
 
@@ -162,10 +171,35 @@ export function chipOrderRowPhone(row: Pick<ChipOrderRow, 'phone_e164'>): string
 }
 
 /** Rows that still wait for someone — what the badge on the tab counts. A
- *  test order is never counted, and neither is an order that is collected
- *  already (a reception order stays in the tab, but nothing is left to do). */
+ *  test order is never counted, and neither is an order that is closed
+ *  already (a reception order stays in the tab — collected, or cancelled —
+ *  but nothing is left to do). */
 export function countOpenChipOrderRows(rows: Pick<ChipOrderRow, 'is_test' | 'status'>[]): number {
-  return rows.filter((r) => !r.is_test && r.status !== 'collected').length;
+  return rows.filter((r) => !r.is_test && r.status !== 'collected' && r.status !== 'rejected').length;
+}
+
+/** Who may be named as the person who collected an order — its people over
+ *  ALL its apartment rows, each once, in the order of the rows. `key` is what
+ *  the server is told (a holder line id, or the orderer). */
+export function chipOrderCollectors(
+  rows: Pick<ChipOrderRow, 'order_id' | 'apartment_number' | 'people' | 'people_keys'>[],
+  orderId: string,
+): { key: string; name: string; apartment: string }[] {
+  const out: { key: string; name: string; apartment: string }[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    if (r.order_id !== orderId) continue;
+    // A row that came without the keys (a tab left open across a deploy)
+    // offers nobody: naming the collector is optional here.
+    const keys = r.people_keys ?? [];
+    keys.forEach((key, i) => {
+      const name = r.people[i];
+      if (!name || seen.has(key)) return;
+      seen.add(key);
+      out.push({ key, name, apartment: r.apartment_number });
+    });
+  }
+  return out;
 }
 
 /** The Orders tab as a file — its names, and its columns right to left. The

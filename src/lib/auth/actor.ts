@@ -4,7 +4,7 @@ import { getSession, type SessionUser } from './session';
 import { AuthorizationError } from './errors';
 import {
   hasPermission, canManageRole, canUseAssistant, canDeleteUsers, canUseNotifications,
-  canViewVisitors, canCreateVisitorScan, canEditVisitorNotes, canManageVisitorScans,
+  canViewVisitors, canCreateVisitorScan, canEditVisitorNotes, canManageVisitorScans, canHandOverChips,
 } from '@/lib/permissions/check';
 import { isGuardRole, isMatrixRole } from '@/lib/permissions/constants';
 import type { Action, ModulePermission, Role } from '@/lib/permissions/constants';
@@ -166,6 +166,15 @@ export async function requireVisitorEdit(): Promise<Actor> {
 export async function requireVisitorManage(): Promise<Actor> {
   const actor = await requireActor();
   if (!canManageVisitorScans(actor.role)) throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
+  return actor;
+}
+
+// ── The guard's pickup screen ("מסירת צ׳יפים") — by ROLE, see CHIP_PICKUP_ROLES ─
+/** The two routes of /chip-pickup and nothing else: the narrow list of the
+ *  orders that are ready, and the hand-over of one of them. */
+export async function requireChipPickup(): Promise<Actor> {
+  const actor = await requireActor();
+  if (!canHandOverChips(actor.role)) throw new AuthorizationError('אין הרשאה לבצע את הפעולה');
   return actor;
 }
 

@@ -169,7 +169,7 @@ export function LeaseField({
 // ── The payment of the new chips ────────────────────────────────────────────
 
 export function ReceptionPayment({
-  newChips, unitPrice, method, onMethod, cardOption, disabled, reason,
+  newChips, unitPrice, method, onMethod, cardOption, disabled, reason, cashOff = null,
 }: {
   /** NEW chips in this save — the only thing that is paid for. */
   newChips: number;
@@ -182,13 +182,16 @@ export function ReceptionPayment({
   disabled: boolean;
   /** Why the save cannot go yet, as far as the payment goes. */
   reason: string | null;
+  /** "מזומן או העברה" cannot be chosen here, and why (the extra chips of a
+   *  test order: no payment is recorded for a test). */
+  cashOff?: string | null;
 }) {
   const amount = unitPrice === null ? null : receptionAmount(newChips, unitPrice);
   const free = method === 'none';
   const due = free ? 0 : amount;
   const off = disabled || newChips === 0;
-  const option = (m: ReceptionPaymentMethod, icon: ReactNode, sub: ReactNode, testId: string) => (
-    <button type="button" role="radio" aria-checked={method === m} className={cn(method === m && 'ci-on')} disabled={off}
+  const option = (m: ReceptionPaymentMethod, icon: ReactNode, sub: ReactNode, testId: string, optionOff = false) => (
+    <button type="button" role="radio" aria-checked={method === m} className={cn(method === m && 'ci-on')} disabled={off || optionOff}
       onClick={() => onMethod(m)} data-testid={testId}>
       <span className="ci-payic">{method === m ? <CheckIco /> : icon}</span>
       <span className="ci-paytxt"><b>{RECEPTION_PAYMENT_LABEL[m]}</b><small>{sub}</small></span>
@@ -231,10 +234,13 @@ export function ReceptionPayment({
           {option(
             'cash_transfer',
             <CashIco />,
-            method === 'cash_transfer' && amount !== null && newChips > 0
-              ? <>אישור: התקבלו <span className="ci-num">{formatIlsAfter(amount)}</span></>
-              : 'הסכום התקבל במלואו בקבלה',
+            cashOff
+              ? cashOff
+              : method === 'cash_transfer' && amount !== null && newChips > 0
+                ? <>אישור: התקבלו <span className="ci-num">{formatIlsAfter(amount)}</span></>
+                : 'הסכום התקבל במלואו בקבלה',
             'chip-pay-cash',
+            cashOff !== null,
           )}
           {option('none', <FreeIco />, 'אורח, צוות או החלפה', 'chip-pay-none')}
         </div>
@@ -270,10 +276,12 @@ export function ReceptionRecords({ records }: { records: ReceptionRecordView[] }
                 {r.kind === 'order' ? <>הזמנת קבלה <span className="ci-num">{r.order_number}</span></> : 'הנפקה בקבלה'}
               </b>
               <span className="ci-num">{DAY.format(new Date(r.created_at))}</span>
-              <span className={cn('ci-tag', r.kind === 'order' ? 'ci-green' : 'ci-grey')}>
-                {r.kind === 'order'
-                  ? <>שולם <span className="ci-num">{formatIlsAfter(r.amount)}</span> · {RECEPTION_PAYMENT_LABEL.cash_transfer}</>
-                  : RECEPTION_PAYMENT_LABEL.none}
+              <span className={cn('ci-tag', r.cancelled ? 'ci-red' : r.kind === 'order' ? 'ci-green' : 'ci-grey')}>
+                {r.cancelled
+                  ? <>ההזמנה בוטלה · <span className="ci-num">{formatIlsAfter(r.amount)}</span></>
+                  : r.kind === 'order'
+                    ? <>שולם <span className="ci-num">{formatIlsAfter(r.amount)}</span> · {RECEPTION_PAYMENT_LABEL.cash_transfer}</>
+                    : RECEPTION_PAYMENT_LABEL.none}
               </span>
               <span className="ci-recqty"><span className="ci-num">{r.chips_count}</span> {r.chips_count === 1 ? 'צ׳יפ' : 'צ׳יפים'}</span>
             </div>

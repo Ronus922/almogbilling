@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
-import { hasPermission } from '@/lib/permissions/check';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listChips, ChipNumberTakenError } from '@/lib/db/chips';
 import { ReceptionError, saveReceptionWindow, type ReceptionSaveInput } from '@/lib/db/chipReception';
@@ -186,12 +185,13 @@ function coerceGroup(
     return { ok: false, error: `${details.error.issues[0]?.message ?? 'פרטי בעל הצ׳יפ אינם תקינים'} (בלוק ${index + 1})` };
   }
 
-  // Chip orders (13/11/2026): the order line of this group's NEW chips.
-  let orderItemId: string | null = null;
+  // The chips of an ORDER are issued from the order's own window
+  // (POST /api/chip-orders/[id]/holders) and nowhere else (25/11/2026): that
+  // save is where a chip beyond the quantity paid online must be settled.
+  // A group that names an order line here would link new chips to the order
+  // with no payment asked — refused. No screen sends it.
   if (rec.order_item_id !== undefined && rec.order_item_id !== null) {
-    const raw = typeof rec.order_item_id === 'string' ? rec.order_item_id.trim() : '';
-    if (!UUID_RE.test(raw)) return { ok: false, error: 'invalid_order_item_id' };
-    orderItemId = raw;
+    return { ok: false, error: 'צ׳יפים של הזמנה מנפיקים מחלון ההזמנה' };
   }
 
   return {
@@ -205,7 +205,6 @@ function coerceGroup(
       app_platform: appPlatform.value,
       app_invite_status: appInviteStatus.value,
       app_expires_at: coerceText(rec.app_expires_at),
-      order_item_id: orderItemId,
       ...details.data,
     },
   };
@@ -291,11 +290,6 @@ export async function POST(req: NextRequest) {
       const parsed = coerceGroup((bodyRec.groups[i] ?? {}) as Record<string, unknown>, i);
       if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
       groups.push(parsed.group);
-    }
-    // Chip orders: issuing for an order line is part of handling the order —
-    // chips:edit alone is not enough for it.
-    if (groups.some((g) => g.order_item_id) && !hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'edit')) {
-      return NextResponse.json({ error: 'אין הרשאה לשייך צ׳יפים להזמנה' }, { status: 403 });
     }
     input = {
       contact_id: contactId,
@@ -417,6 +411,11 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: `שם ארוך מדי — עד ${HOLDER_NAME_MAX} תווים`, code: err.code }, { status: 400 });
         case 'lease_in_use':
           return NextResponse.json({ error: 'קובץ החוזה שייך להזמנה אחרת — יש לצרף את החוזה מחדש', code: err.code }, { status: 400 });
+        case 'lease_missing':
+          return NextResponse.json(
+            { error: 'קובץ החוזה לא נמצא בין הקבצים שהועלו בחלון — יש לצרף את החוזה מחדש', code: err.code },
+            { status: 400 },
+          );
       }
     }
     if (err instanceof ChipNumberTakenError) {

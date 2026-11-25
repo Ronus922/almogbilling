@@ -183,22 +183,25 @@ test('the same button again closes the panel, any button opens it, the choice su
 });
 
 test('who sees what: the guard only "אבטחה", the viewer no "ראשי" and no "משתמשים", the admin "משתמשים" under "פורטל"', async ({ browser }) => {
-  // — the guard: one category, a direct link — no panel, no aria-expanded — no settings, and a
-  //   logout that is labelled for screen readers.
+  // — the guard: one category. Until 25/11/2026 it held one item and was a direct link to
+  //   /visitors; "מסירת צ׳יפים" (the pickup screen) is a second role screen, so it is a panel of
+  //   exactly these two — "צ׳יפים" itself never joins (a module the guard cannot hold). No
+  //   settings, and a logout that is labelled for screen readers.
   const guard = await sessionFor(browser, people.guard.id);
   await guard.goto('/');
   await expect(guard).toHaveURL(/\/visitors$/);
   expect(await railLabels(guard)).toEqual(['אבטחה']);
-  const guardLink = railButton(guard, 'אבטחה');
-  await expect(guardLink).toHaveAttribute('data-nav-kind', 'link');
-  await expect(guardLink).toHaveAttribute('href', '/visitors');
-  await expect(guardLink).toHaveAttribute('aria-current', 'page');
-  await expect(guardLink).not.toHaveAttribute('aria-expanded');
-  await expect(panel(guard)).toHaveCount(0); // no panel at all
-  await expect(guard.locator('aside').first()).toHaveCSS('width', '72px');
-  await guardLink.click(); // a link to the page you are on — still no panel
-  await expect(panel(guard)).toHaveCount(0);
-  await expect(guard).toHaveURL(/\/visitors$/);
+  const guardCategory = railButton(guard, 'אבטחה');
+  await expect(guardCategory).toHaveAttribute('data-nav-kind', 'panel');
+  await expect(guardCategory).not.toHaveAttribute('href');
+  if ((await panel(guard).count()) === 0 || (await panel(guard).getAttribute('data-state')) !== 'open') await guardCategory.click();
+  await expect(panel(guard)).toHaveAttribute('data-nav-panel', 'security');
+  expect(await panelItems(panel(guard)).allInnerTexts()).toEqual(['סריקת כניסה', 'מסירת צ׳יפים']);
+  await expect(panel(guard).locator('a[aria-current="page"]')).toHaveText('סריקת כניסה');
+  await expect(guard).toHaveURL(/\/visitors$/); // a panel category does not navigate
+  await panel(guard).locator('a[data-nav-item="/chip-pickup"]').click();
+  await expect(guard).toHaveURL(/\/chip-pickup$/);
+  await expect(guard.locator('aside a[href="/chips"]')).toHaveCount(0);
   await expect(guard.locator('aside a[href="/settings"]')).toHaveCount(0);
   await expect(guard.locator('aside').getByRole('button', { name: 'התנתק' })).toBeVisible();
 
@@ -225,7 +228,7 @@ test('who sees what: the guard only "אבטחה", the viewer no "ראשי" and n
   const kinds = await railButtons(admin).evaluateAll((els) => els.map((e) => e.getAttribute('data-nav-kind')));
   expect(kinds).toEqual(['link', 'panel', 'panel', 'panel', 'panel', 'panel', 'panel', 'panel', 'link']);
   await railButton(admin, 'אבטחה').click();
-  expect(await panelItems(panel(admin)).allInnerTexts()).toEqual(['סריקת כניסה', 'צ׳יפים']);
+  expect(await panelItems(panel(admin)).allInnerTexts()).toEqual(['סריקת כניסה', 'מסירת צ׳יפים', 'צ׳יפים']);
   expect(new URL(admin.url()).pathname).toBe('/overview'); // a panel category does not navigate
   await railButton(admin, 'כספים').click();
   expect(await panelItems(panel(admin)).allInnerTexts()).toEqual(['ניהול חיובים', 'ניהול סטטוס חיובים', 'סקירה חודשית', 'סעיפים והגדרות']);

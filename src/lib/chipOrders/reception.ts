@@ -33,6 +33,10 @@ export const RECEPTION_CARD_PENDING_TEXT = 'יופעל לאחר חיבור הס�
 /** The tag of a reception order — the Orders tab and the order's window. */
 export const CHIP_ORDER_RECEPTION_LABEL = 'קבלה';
 
+/** The tag of a reception order that was made for EXTRA chips of a web order
+ *  — chips added in that order's window beyond the quantity paid online. */
+export const CHIP_ORDER_EXTRA_LABEL = 'צ׳יפים נוספים';
+
 /** The storage ceiling of one apartment line of an order (the CHECK of
  *  chip_order_items / chip_order_holders) — what one PAID save may issue. */
 export const RECEPTION_MAX_PAID_CHIPS = 50;
@@ -113,6 +117,9 @@ export interface ReceptionRecordView {
   amount: number;
   /** Who issued / recorded the payment. */
   by_name: string | null;
+  /** A reception order that was cancelled afterwards ("בטל הזמנת קבלה"): its
+   *  chips were disabled, and the payment no longer stands. */
+  cancelled: boolean;
 }
 
 // ── The window's own forms ─────────────────────────────────────────────────
@@ -161,6 +168,15 @@ export function ordererProblems(
   return out;
 }
 
+/** The EXTRA chips of a save of a web order's window: new numbers beyond what
+ *  an apartment line paid for online. A line that ordered `ordered` chips and
+ *  holds `linked` active ones still has room for `ordered - linked`; every new
+ *  number past that room is extra. Summed over the lines. The server counts
+ *  the same way (saveChipOrderWindow) — this is what the window shows. */
+export function extraChipsOf(lines: { ordered: number; linked: number; added: number }[]): number {
+  return lines.reduce((sum, l) => sum + Math.max(0, l.added - Math.max(0, l.ordered - l.linked)), 0);
+}
+
 /** "מזומן או העברה" is the confirmation of a SUM — the one that was on the
  *  screen when it was chosen. Once the sum is another one (a chip was added or
  *  removed, the price moved) it confirms nothing, and the choice no longer
@@ -187,9 +203,16 @@ export function receptionPaymentReason(input: {
   amount: number | null;
   /** The sum that was confirmed when "מזומן או העברה" was chosen. */
   confirmedAmount?: number | null;
+  /** What is being paid for: the new chips of a reception save (default), or
+   *  the EXTRA chips of a web order's window — beyond what was paid online. */
+  what?: 'new' | 'extra';
 }): string | null {
   if (input.newChips === 0) return null;
-  if (input.method === null) return 'יש לבחור אמצעי תשלום כדי להנפיק את הצ׳יפים החדשים';
+  if (input.method === null) {
+    return input.what === 'extra'
+      ? 'יש לבחור אמצעי תשלום לצ׳יפים שנוספו מעבר לכמות ששולמה'
+      : 'יש לבחור אמצעי תשלום כדי להנפיק את הצ׳יפים החדשים';
+  }
   if (input.method === 'none') return null;
   if (receptionMethodInForce({ method: input.method, amount: input.amount, confirmedAmount: input.confirmedAmount ?? null }) === null) {
     return 'הסכום לתשלום השתנה — יש לבחור שוב „מזומן או העברה” כדי לאשר את הסכום החדש';

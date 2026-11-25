@@ -35,7 +35,7 @@
 //       change that.
 //   Run under tsx (imports .ts source). Pure — no DB.
 import { run, fail, ok } from './_check-lib.mjs';
-import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone, canDeleteUsers, canGrantModule, canOpenUsersScreen, canBulkChangeLegalStatus, canViewVisitors, canCreateVisitorScan, canEditVisitorNotes, canManageVisitorScans, canUseNotifications, hasAnyAccess } from '../src/lib/permissions/check.ts';
+import { hasPermission, canManageRole, canUseAssistant, canSeeReporterPhone, canDeleteUsers, canGrantModule, canOpenUsersScreen, canBulkChangeLegalStatus, canViewVisitors, canCreateVisitorScan, canEditVisitorNotes, canManageVisitorScans, canUseNotifications, hasAnyAccess, canHandOverChips } from '../src/lib/permissions/check.ts';
 import { canPurchasingSettings } from '../src/lib/purchasing/access.ts';
 import { DEFAULT_MANAGER, DEFAULT_VIEWER, DEFAULT_WORKER, MODULES, ROLE_VALUES, isMatrixRole } from '../src/lib/permissions/constants.ts';
 import { homePathFor } from '../src/lib/auth/home.ts';
@@ -230,4 +230,17 @@ run('check-rbac', async () => {
     t(`סריקת כניסה: ${role} ${manages ? 'עורך הכול ומוחק' : 'לא עורך שדות ולא מוחק'}`, canManageVisitorScans(role) === manages);
   }
   t('סריקת כניסה: תפקיד עתידי נחסם בכל פעולה', [canViewVisitors, canCreateVisitorScan, canEditVisitorNotes, canManageVisitorScans].every((f) => f('resident') === false));
+
+  // The guard's pickup screen ("מסירת צ׳יפים", 25/11/2026) — a role allowlist of
+  // its own (guard / admin / super admin). It opens ONE narrow screen; it gives
+  // the guard no chips module.
+  for (const role of ROLE_VALUES) {
+    const hands = role === 'guard' || role === 'admin' || role === 'super_admin';
+    t(`מסירת צ׳יפים: ${role} ${hands ? 'מוסר' : 'אין גישה בכלל'}`, canHandOverChips(role) === hands);
+  }
+  t('מסירת צ׳יפים: תפקיד עתידי נחסם', canHandOverChips('resident') === false);
+  t('מסירת צ׳יפים: לשומר עדיין אין אף מודול של צ׳יפים', ['chips', 'chips_orders_manage'].every((m) =>
+    hasPermission('guard', [{ module: m, canView: true, canEdit: true }], m, 'view') === false
+    && hasPermission('guard', [{ module: m, canView: true, canEdit: true }], m, 'edit') === false));
+  t('מסירת צ׳יפים: מנהל עם צ׳יפים מלאים עדיין לא מוסר (לפי תפקיד, לא לפי מטריצה)', canHandOverChips('manager') === false);
 });

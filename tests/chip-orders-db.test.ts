@@ -193,7 +193,7 @@ d('chip orders on the DB', () => {
       admin,
     );
     made.chips.push(...extra.items.map((c) => c.id));
-    expect(await db.markChipOrderCollected(ids.order)).toBe(true);
+    expect(await db.markChipOrderCollected(ids.order, admin, { via: 'management' })).toMatchObject({ collector_name: null });
     expect(await rowsOf(ids.order)).toEqual([]);
     await expect(issueChipGroups(
       { contact_id: ids.owned, groups: [{ resident_role: 'owner', holder_name: 'דנה כהן', chip_type: 'physical', numbers: [`A${tag}6`], order_item_id: owned }] },

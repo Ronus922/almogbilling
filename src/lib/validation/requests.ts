@@ -9,6 +9,7 @@ import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legal
 import { validatePhone } from '@/lib/validation';
 import { CHIP_RESIDENT_ROLES } from '@/lib/constants/chips';
 import { CHIP_ORDER_APT_LIMIT_MESSAGE, CHIP_ORDER_LIMITS } from '@/lib/chipOrders/model';
+import { isPickupPersonKey } from '@/lib/chipOrders/pickup';
 import { WHATSAPP_ATTACHMENT_LIMITS, WHATSAPP_MESSAGE_MAX_FILES } from '@/lib/constants/whatsappAttachments';
 import { FINANCE_RECEIPT_LIMITS } from '@/lib/constants/finance';
 import { SUPPLIERS_LANE_ID } from '@/lib/constants/workItems';
@@ -689,9 +690,40 @@ export const chipOrderWindowSaveSchema = z.object({
   /** Staff holders removed in the window (only one with no chips is removed). */
   removed_holder_ids: z.array(z.uuid()).max(40).optional(),
   note: z.string().max(2000, 'ההערה ארוכה מדי').nullable().optional(),
+  /** 25/11/2026 — how the EXTRA chips of the save are settled (new numbers
+   *  beyond what an apartment line paid for online), as at the reception:
+   *  cash or a transfer makes a reception order, "ללא חיוב" makes none. The
+   *  amount is what the window SHOWED; the server computes the real one.
+   *  "אשראי" is not a value here — it is not active. */
+  extra_payment: z
+    .object({
+      method: z.enum(['cash_transfer', 'none'], { error: 'אמצעי התשלום אינו תקין' }),
+      amount: z.number({ error: 'סכום לא תקין' }).min(0, 'סכום לא תקין').max(10_000_000, 'סכום לא תקין'),
+    })
+    .nullable()
+    .optional(),
 });
 
 /** POST /api/chip-orders/[id]/reject */
 export const chipOrderRejectBodySchema = z.object({
   reason: z.string({ error: 'נדרשת סיבת דחייה' }).trim().min(2, 'נדרשת סיבת דחייה').max(500, 'הסיבה ארוכה מדי'),
+});
+
+/** POST /api/chip-orders/[id]/cancel — "בטל הזמנת קבלה" (25/11/2026). */
+export const chipOrderCancelBodySchema = z.object({
+  reason: z.string({ error: 'נדרשת סיבת ביטול' }).trim().min(2, 'נדרשת סיבת ביטול').max(500, 'הסיבה ארוכה מדי'),
+});
+
+/** POST /api/chip-pickup/[id]/handover — "נמסר" of the guard's pickup screen:
+ *  the person of the order who showed an ID (a holder line id, or the
+ *  orderer). Required here; whether it is a person of THIS order is checked
+ *  against the database, never against the request. */
+export const chipPickupHandoverBodySchema = z.object({
+  person: z.string({ error: 'יש לבחור מי אסף את הצ׳יפים' }).trim().refine(isPickupPersonKey, 'יש לבחור מי אסף את הצ׳יפים'),
+});
+
+/** POST /api/chip-orders/[id]/collected — "נאסף" of the management: the same
+ *  person, OPTIONAL (a bare POST, as before, names nobody). */
+export const chipOrderCollectedBodySchema = z.object({
+  person: z.string().trim().refine(isPickupPersonKey, 'האדם שנבחר אינו חלק מההזמנה').nullable().optional(),
 });

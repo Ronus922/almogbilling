@@ -175,6 +175,9 @@ export interface IssueChipSheetProps {
   canEditOrders?: boolean;
   /** contacts:edit — "עדכן בכרטיס הדייר" (the server checks it again). */
   canWriteContacts?: boolean;
+  /** Admin / super admin — "בטל הזמנת קבלה" in the window of a reception
+   *  order (the server checks the role again). */
+  canCancelReception?: boolean;
 }
 
 export function IssueChipSheet(props: IssueChipSheetProps) {

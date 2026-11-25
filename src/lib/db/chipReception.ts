@@ -6,6 +6,7 @@ import { toPortalE164 } from '@/lib/portal/phone';
 import { isSnapshotRole } from '@/lib/chips/holder';
 import { writeAuditInTx } from '@/lib/db/audit';
 import { issueChipGroupsInTx } from '@/lib/db/chips';
+import { lockLeasesForAttach } from '@/lib/db/chipLeaseUploads';
 import { priceLine } from '@/lib/chipOrders/model';
 import {
   RECEPTION_MAX_PAID_CHIPS, composeReceptionAddress, receptionAmount, sameAmount,
@@ -46,7 +47,13 @@ export type ReceptionErrorCode =
   /** …and of no more than the order tables hold. */
   | 'name_too_long'
   /** The lease named by the save belongs to an order of the public page. */
-  | 'lease_in_use';
+  | 'lease_in_use'
+  /** The lease named by the save is no longer in Storage: it was uploaded more
+   *  than 24 hours ago, never saved, and the purge deleted it. */
+  | 'lease_missing'
+  /** "מזומן או העברה" for the extra chips of a TEST order: a test order records
+   *  no payment and makes no real order. */
+  | 'test_order_payment';
 
 /** The longest name an order and its holder lines store. */
 const ORDER_NAME_MAX = 120;
@@ -130,6 +137,11 @@ async function assertLeasesFree(client: PoolClient, input: IssueChipsInput): Pro
     [keys],
   );
   if ((taken.rowCount ?? 0) > 0) throw new ReceptionError('lease_in_use');
+  // …and one whose file is still there. The rows of the named files stay
+  // locked until this save commits, so the hourly purge of unsaved leases
+  // cannot delete a file the save is attaching (chipLeaseUploads.ts).
+  const gone = await lockLeasesForAttach(client, keys);
+  if (gone.length > 0) throw new ReceptionError('lease_missing');
 }
 
 /**
@@ -324,13 +336,14 @@ export async function listReceptionRecords(contactId: string): Promise<Reception
     `select 'record' as kind, r.id as ref, null::integer as order_number, r.created_at,
             r.orderer_name, r.orderer_phone, r.orderer_email,
             nullif(concat_ws(', ', r.address_street, nullif(concat_ws(' ', r.address_city, r.address_zip), '')), '') as address,
-            r.chips_count, 0::float8 as amount, r.created_by_name as by_name
+            r.chips_count, 0::float8 as amount, r.created_by_name as by_name, false as cancelled
        from public.chip_reception_records r
       where r.contact_id = $1
      union all
      select 'order' as kind, i.id as ref, o.order_number, o.created_at,
             o.full_name, o.phone_e164, o.email, o.address,
-            i.chips_count, i.line_total::float8 as amount, o.payment_recorded_by_name as by_name
+            i.chips_count, i.line_total::float8 as amount, o.payment_recorded_by_name as by_name,
+            (o.status = 'rejected') as cancelled
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id
       where i.contact_id = $1 and o.source = 'reception'

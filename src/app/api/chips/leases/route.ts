@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { checkRateLimit } from '@/lib/auth/rateLimit';
-import { uploadChipOrderLease } from '@/lib/storage/chipOrderLeaseStorage';
+import { removeChipOrderLeases, uploadChipOrderLease } from '@/lib/storage/chipOrderLeaseStorage';
+import { recordLeaseUpload } from '@/lib/db/chipLeaseUploads';
 import { isLeaseError, readLease } from '@/lib/chipOrders/lease';
 import { CHIP_ORDER_LIMITS } from '@/lib/chipOrders/model';
 import { logger } from '@/lib/logger';
@@ -23,12 +24,16 @@ const MAX_BODY_BYTES = CHIP_ORDER_LIMITS.leaseFileBytes + 64 * 1024;
 // rule as every lease there (chips_orders_manage:view).
 //
 // The answer is a reference, not a link: the window sends it back with the
-// save, which writes it on the holder's chips. A file uploaded and never saved
-// stays in the bucket unreferenced (the bucket is not swept by the Storage GC).
+// save, which writes it on the holder's chips. Every upload is recorded
+// (chip_lease_uploads): a file that is uploaded and never saved — the window
+// was closed, or the file was replaced — is deleted by the hourly purge 24
+// hours after its upload; a file that is attached is never deleted
+// (src/lib/chipOrders/cleanup.ts). An upload that could not be recorded is
+// taken back, so no file sits in the bucket unknown to the purge.
 //
 // A ceiling of 30 uploads an hour per user: a lease is attached once per
 // renter, so nobody at the reception comes near it, and it bounds how much an
-// account can pour into a bucket nothing sweeps.
+// account can pour into the bucket between two purges.
 export async function POST(req: Request) {
   let actor: Actor;
   try {
@@ -64,6 +69,12 @@ export async function POST(req: Request) {
     // The key takes its extension from the file's own name; the name kept for
     // display is the same one cut to 200 characters, which may have lost it.
     const up = await uploadChipOrderLease(read.bytes, file.name, read.mime);
+    try {
+      await recordLeaseUpload(up.objectKey, actor.id);
+    } catch (err) {
+      await removeChipOrderLeases([up.objectKey]);
+      throw err;
+    }
     const lease: ChipLeaseRef = { key: up.objectKey, name: read.name, mime: read.mime, size: up.sizeBytes };
     return NextResponse.json({ lease }, { status: 201 });
   } catch (err) {
