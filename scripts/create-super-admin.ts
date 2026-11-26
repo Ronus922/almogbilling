@@ -1,4 +1,8 @@
-// Usage: npx tsx scripts/create-super-admin.ts <email> "<full_name>" <password>
+// Usage: npx tsx scripts/create-super-admin.ts <email> "<full_name>"
+//   The password is NOT an argument (26/11/2026 — a command line is readable by
+//   every local account and stays in the shell history): it is asked for,
+//   hidden, or read from stdin:
+//   read -rs PW; printf '%s' "$PW" | npx tsx scripts/create-super-admin.ts <email> "<full_name>"; unset PW
 //
 // Creates a super_admin user. Username is set to the email address (the
 // post-Slice-6 convention). Run on the host with access to DIRECT_URL.
@@ -7,16 +11,20 @@ loadEnv({ path: '.env.local' });
 
 import { Client } from 'pg';
 import bcrypt from 'bcryptjs';
+import { readSecret } from './lib/read-secret';
 
-const [emailArg, fullNameArg, passwordArg] = process.argv.slice(2);
-if (!emailArg || !fullNameArg || !passwordArg) {
-  console.error('Usage: npx tsx scripts/create-super-admin.ts <email> "<full_name>" <password>');
+const [emailArg, fullNameArg, ...extra] = process.argv.slice(2);
+if (extra.length > 0) {
+  console.error('The password is not taken from the command line — run without it; it is asked for (hidden) or read from stdin.');
+  process.exit(1);
+}
+if (!emailArg || !fullNameArg) {
+  console.error('Usage: npx tsx scripts/create-super-admin.ts <email> "<full_name>"   (password: hidden prompt or stdin)');
   process.exit(1);
 }
 
 const email = emailArg.trim().toLowerCase();
 const full_name = fullNameArg.trim();
-const password = passwordArg;
 
 if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
   console.error('Invalid email');
@@ -24,10 +32,6 @@ if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
 }
 if (full_name.length < 2 || full_name.length > 80) {
   console.error('full_name must be 2-80 chars');
-  process.exit(1);
-}
-if (password.length < 8) {
-  console.error('Password must be at least 8 chars');
   process.exit(1);
 }
 
@@ -38,6 +42,11 @@ if (!connectionString) {
 }
 
 async function main() {
+  const password = await readSecret('Password: ');
+  if (password.length < 8) {
+    console.error('Password must be at least 8 chars');
+    process.exit(1);
+  }
   const password_hash = await bcrypt.hash(password, 10);
   const client = new Client({ connectionString });
   await client.connect();

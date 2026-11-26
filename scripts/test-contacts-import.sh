@@ -16,9 +16,13 @@ DB_URL="${DIRECT_URL:-${DATABASE_URL:-}}"
 BASE="http://127.0.0.1:${PORT:-3003}"
 XLSX_FILE="/tmp/test-contacts-import-$$.xlsx"
 APTS="('970001','970002','970003','970099')"
-SID=""; SID_HASH=""
+SID=""; SID_HASH=""; COOKIE_HDR=""
 
 if [[ -z "$DB_URL" ]]; then echo "FATAL: no DIRECT_URL/DATABASE_URL in env"; exit 1; fi
+# The DB password → PGPASSWORD; psql gets the URL without it (scripts/lib/pg-url.sh) —
+# a command line is readable by every local account.
+. scripts/lib/pg-url.sh
+pg_url_split "$DB_URL"; DB_URL="$PG_URL"
 
 pass=0; fail=0
 check() { if [[ "$2" == "$3" ]]; then echo "  ✓ $1 → $2"; pass=$((pass+1)); else echo "  ✗ $1 → got $2, expected $3"; fail=$((fail+1)); fi; }
@@ -27,6 +31,7 @@ cleanup() {
   [[ -n "$SID_HASH" ]] && psql "$DB_URL" -tAc "delete from public.sessions where id = '$SID_HASH';" >/dev/null 2>&1 || true
   psql "$DB_URL" -tAc "delete from public.contacts where apartment_number in $APTS;" >/dev/null 2>&1 || true
   rm -f "$XLSX_FILE" 2>/dev/null || true
+  [[ -n "$COOKIE_HDR" ]] && rm -f "$COOKIE_HDR" || true
 }
 trap cleanup EXIT
 
@@ -37,7 +42,10 @@ SID="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
 # DB stores only the SHA-256 hash of the session id (security wave 4); the cookie keeps the raw id.
 SID_HASH="$(printf '%s' "$SID" | sha256sum | cut -d' ' -f1)"
 psql "$DB_URL" -tAc "insert into public.sessions (id, user_id, expires_at, remember) values ('$SID_HASH', '$ADMIN_ID', now() + interval '10 minutes', false);" >/dev/null
-COOKIE="almog_sid=$SID"
+# The session id is a credential: curl reads the Cookie header from a 600 file
+# (-H @file), never from its command line.
+COOKIE_HDR="$(mktemp)"; chmod 600 "$COOKIE_HDR"
+printf 'Cookie: almog_sid=%s\n' "$SID" > "$COOKIE_HDR"
 
 # clean slate + pre-seed the clobber row (970099 with a real owner_phone)
 psql "$DB_URL" -tAc "delete from public.contacts where apartment_number in $APTS;" >/dev/null
@@ -66,7 +74,7 @@ const rows = [
 echo "built workbook: $XLSX_FILE"
 
 # --- POST the import --------------------------------------------------------
-POST=$(curl -s -w $'\n%{http_code}' -X POST "$BASE/api/contacts/import" -H "Cookie: $COOKIE" -F "file=@$XLSX_FILE")
+POST=$(curl -s -w $'\n%{http_code}' -X POST "$BASE/api/contacts/import" -H @"$COOKIE_HDR" -F "file=@$XLSX_FILE")
 CODE=$(tail -n1 <<<"$POST"); JSON=$(sed '$d' <<<"$POST")
 check "POST status" "$CODE" "201"
 RUNID=$(grep -o '"runId":"[^"]*"' <<<"$JSON" | head -1 | sed 's/"runId":"//; s/"//')
@@ -76,7 +84,7 @@ echo "  runId: $RUNID"
 # --- poll status ------------------------------------------------------------
 STATUS=""; SJSON=""
 for _ in $(seq 1 60); do
-  SJSON=$(curl -s "$BASE/api/contacts/import/status/$RUNID" -H "Cookie: $COOKIE")
+  SJSON=$(curl -s "$BASE/api/contacts/import/status/$RUNID" -H @"$COOKIE_HDR")
   STATUS=$(grep -o '"status":"[^"]*"' <<<"$SJSON" | head -1 | sed 's/"status":"//; s/"//')
   case "$STATUS" in running|parsing|processing) sleep 0.5 ;; *) break ;; esac
 done

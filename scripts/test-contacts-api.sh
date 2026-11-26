@@ -20,10 +20,14 @@ set -a; [ -f .env ] && . ./.env; [ -f .env.local ] && . ./.env.local; set +a
 DB_URL="${DIRECT_URL:-${DATABASE_URL:-}}"
 BASE="http://127.0.0.1:${PORT:-3003}"
 TEST_APT="990042"          # sentinel apartment number for this test
-COOKIE=""                  # session id we mint
+COOKIE_HDR=""              # the Cookie header (the session id we mint), in a 600 file
 SID=""; SID_HASH=""
 
 if [[ -z "$DB_URL" ]]; then echo "FATAL: no DIRECT_URL/DATABASE_URL in env"; exit 1; fi
+# The DB password → PGPASSWORD; psql gets the URL without it (scripts/lib/pg-url.sh) —
+# a command line is readable by every local account.
+. scripts/lib/pg-url.sh
+pg_url_split "$DB_URL"; DB_URL="$PG_URL"
 
 pass=0; fail=0
 check() { # check <label> <actual> <expected>
@@ -34,6 +38,7 @@ check() { # check <label> <actual> <expected>
 cleanup() {
   [[ -n "$SID_HASH" ]] && psql "$DB_URL" -tAc "delete from public.sessions where id = '$SID_HASH';" >/dev/null 2>&1 || true
   psql "$DB_URL" -tAc "delete from public.contacts where apartment_number = '$TEST_APT';" >/dev/null 2>&1 || true
+  [[ -n "$COOKIE_HDR" ]] && rm -f "$COOKIE_HDR" || true
 }
 trap cleanup EXIT
 
@@ -45,7 +50,10 @@ SID="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
 # DB stores only the SHA-256 hash of the session id (security wave 4); the cookie keeps the raw id.
 SID_HASH="$(printf '%s' "$SID" | sha256sum | cut -d' ' -f1)"
 psql "$DB_URL" -tAc "insert into public.sessions (id, user_id, expires_at, remember) values ('$SID_HASH', '$ADMIN_ID', now() + interval '10 minutes', false);" >/dev/null
-COOKIE="almog_sid=$SID"
+# The session id is a credential: curl reads the Cookie header from a 600 file
+# (-H @file), never from its command line.
+COOKIE_HDR="$(mktemp)"; chmod 600 "$COOKIE_HDR"
+printf 'Cookie: almog_sid=%s\n' "$SID" > "$COOKIE_HDR"
 echo "  ✓ session minted for admin $ADMIN_ID"
 
 # pre-clean any leftover test contact from a previous failed run
@@ -54,10 +62,10 @@ psql "$DB_URL" -tAc "delete from public.contacts where apartment_number = '$TEST
 req() { # req METHOD PATH [json-body]  → prints "BODY\nCODE"
   local m="$1" p="$2" b="${3:-}"
   if [[ -n "$b" ]]; then
-    curl -s -w $'\n%{http_code}' -X "$m" "$BASE$p" -H "Cookie: $COOKIE" \
+    curl -s -w $'\n%{http_code}' -X "$m" "$BASE$p" -H @"$COOKIE_HDR" \
       -H 'Content-Type: application/json' -d "$b"
   else
-    curl -s -w $'\n%{http_code}' -X "$m" "$BASE$p" -H "Cookie: $COOKIE"
+    curl -s -w $'\n%{http_code}' -X "$m" "$BASE$p" -H @"$COOKIE_HDR"
   fi
 }
 
@@ -101,9 +109,9 @@ grep -q "\"$TEST_APT\"" <<<"$PJSON" && check "apartment immutable" "yes" "yes" |
 
 # --- 5) DELETE /api/contacts/[id] -------------------------------------------
 echo "5) DELETE /api/contacts/$CID"
-DEL=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/contacts/$CID" -H "Cookie: $COOKIE")
+DEL=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/contacts/$CID" -H @"$COOKIE_HDR")
 check "status" "$DEL" "204"
-DEL2=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/contacts/$CID" -H "Cookie: $COOKIE")
+DEL2=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/contacts/$CID" -H @"$COOKIE_HDR")
 check "delete again → 404" "$DEL2" "404"
 
 # --- 6) GET list again (test contact gone) ----------------------------------

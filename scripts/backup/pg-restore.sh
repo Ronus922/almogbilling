@@ -4,8 +4,14 @@
 #
 # Starts a THROWAWAY Postgres container (same image as production), replays the
 # dump into it and prints `select count(*)` from the verification tables. The
-# container is removed on exit unless --keep is given (then connect on
-# $RESTORE_PORT to inspect it).
+# container is removed on exit unless --keep is given (then inspect it with
+# `docker exec -it <container> psql -U postgres`; with --keep only, its port is
+# also published on 127.0.0.1:$RESTORE_PORT).
+#
+# The container holds a full copy of production data (26/11/2026): its password
+# is random, reaches docker through the environment (never its command line),
+# and is never printed; without --keep no port is published at all — every
+# step below goes through `docker exec`.
 #
 #   scripts/backup/pg-restore.sh /var/backups/supabase/daily/proj_billing-20260905-030000.sql.gz
 #   scripts/backup/pg-restore.sh --keep /var/backups/supabase/daily/cluster-20260905-030000.sql.gz
@@ -20,7 +26,7 @@
 # Env (all optional):
 #   PG_IMAGE          supabase/postgres:15.8.1.085   (match production)
 #   RESTORE_CONTAINER billing-restore-<pid>
-#   RESTORE_PORT      55440                          (5432-5434/55432 are taken on this host)
+#   RESTORE_PORT      55440, --keep only             (5432-5434/55432 are taken on this host)
 #   RESTORE_DB        database name inside the dump  (derived from filename)
 #   VERIFY_TABLES     "public.debtors public.users public.app_settings"
 #
@@ -35,7 +41,7 @@ PG_IMAGE="${PG_IMAGE:-supabase/postgres:15.8.1.085}"
 RESTORE_CONTAINER="${RESTORE_CONTAINER:-billing-restore-$$}"
 RESTORE_PORT="${RESTORE_PORT:-55440}"
 VERIFY_TABLES="${VERIFY_TABLES:-public.debtors public.users public.app_settings}"
-PGPASS="restore-only-$$"
+PGPASS="$(openssl rand -hex 24)"
 BASE="$(basename "$FILE" .sql.gz)"
 
 log()  { printf '%s [pg-restore] %s\n' "$(date '+%F %T')" "$*"; }
@@ -43,7 +49,7 @@ fail() { printf '%s [pg-restore] ERROR: %s\n' "$(date '+%F %T')" "$*" >&2; }
 
 cleanup() {
   if (( KEEP )); then
-    log "container ${RESTORE_CONTAINER} kept — psql postgresql://postgres:${PGPASS}@127.0.0.1:${RESTORE_PORT}/${RESTORE_DB:-postgres}"
+    log "container ${RESTORE_CONTAINER} kept — docker exec -it ${RESTORE_CONTAINER} psql -U postgres -d ${RESTORE_DB:-postgres} (published on 127.0.0.1:${RESTORE_PORT})"
   else
     docker rm -f "$RESTORE_CONTAINER" >/dev/null 2>&1 || true
   fi
@@ -60,9 +66,12 @@ else
 fi
 
 gzip -t "$FILE"
-log "starting ${PG_IMAGE} as ${RESTORE_CONTAINER} on 127.0.0.1:${RESTORE_PORT}"
-docker run -d --name "$RESTORE_CONTAINER" -p "127.0.0.1:${RESTORE_PORT}:5432" \
-  -e POSTGRES_PASSWORD="$PGPASS" -e POSTGRES_HOST=/var/run/postgresql \
+PUBLISH=()
+(( KEEP )) && PUBLISH=(-p "127.0.0.1:${RESTORE_PORT}:5432")
+log "starting ${PG_IMAGE} as ${RESTORE_CONTAINER}$( (( KEEP )) && printf ' on 127.0.0.1:%s' "$RESTORE_PORT" )"
+# `-e POSTGRES_PASSWORD` with no value: docker takes it from its own environment.
+POSTGRES_PASSWORD="$PGPASS" docker run -d --name "$RESTORE_CONTAINER" "${PUBLISH[@]}" \
+  -e POSTGRES_PASSWORD -e POSTGRES_HOST=/var/run/postgresql \
   -e POSTGRES_USER=supabase_admin -e POSTGRES_DB=postgres \
   "$PG_IMAGE" postgres -D /etc/postgresql >/dev/null
 

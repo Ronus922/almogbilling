@@ -9,6 +9,11 @@
 //   (3) No obvious key patterns (service_role JWT, sk-ant-…, private key) in
 //       tracked code.
 // Never prints a secret value — only the offending KEY name + file.
+// Never puts one on a command line either (26/11/2026): a process's argv is
+// readable by every local account (`ps`, /proc/<pid>/cmdline), so every value
+// reaches `git grep` on its stdin (`-f -`), never as `-e <value>`.
+// tests/no-secrets-on-argv.test.ts runs this file with a canary secret and
+// fails if the canary shows up in the argv of any process it starts.
 import { run, repoRoot, loadEnv, readRuntimeSecrets, fail, ok, info } from './_check-lib.mjs';
 import { execFileSync } from 'node:child_process';
 
@@ -27,17 +32,24 @@ function tracked(root) {
 
 // git grep exits 1 for "no match"; anything else means it did not scan, and
 // reading that as "no match" would pass the check without checking. Built from
-// status + stderr only: err.message holds the command line, i.e. the secret value.
+// status + stderr only — never err.message (the command line), on principle.
 function gitGrepError(err) {
   const stderr = String(err.stderr ?? '').trim();
   return new Error(`git grep נכשל (exit ${err.status ?? err.code})${stderr ? ': ' + stderr : ''} — הבדיקה לא סרקה`);
 }
 
 // git grep for a fixed string; returns matching files (empty on no match).
+// The string is a SECRET value: it goes to git on stdin as its one pattern
+// line (`-f -`), never on the command line. One value per call, so a hit names
+// its key. The values are single lines (parseEnvText splits on newlines) and at
+// least 12 characters, so the pattern list is never empty — an empty pattern
+// line would match every file.
 function grepFixed(root, needle) {
+  if (!needle || /[\r\n]/.test(needle)) throw new Error('grepFixed: a pattern must be one non-empty line');
   try {
-    return execFileSync('git', ['-C', root, 'grep', '-l', '-F', '-e', needle], { encoding: 'utf8' })
-      .trim().split('\n').filter(Boolean);
+    return execFileSync('git', ['-C', root, 'grep', '-l', '-F', '-f', '-'], {
+      encoding: 'utf8', input: needle, stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim().split('\n').filter(Boolean);
   } catch (err) {
     if (err.status === 1) return []; // exit 1 = no match
     throw gitGrepError(err);

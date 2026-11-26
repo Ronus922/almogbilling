@@ -10,7 +10,9 @@
 -- (is_archived=true) so their rows still exist → only genuinely-missing entities
 -- are treated as orphans. Idempotent: re-running finds 0.
 --
--- Run: psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f scripts/cleanup-orphan-notifications.sql
+-- Run (the password stays off the command line — scripts/lib/pg-url.sh):
+--   . scripts/lib/pg-url.sh; pg_url_split "$DIRECT_URL"
+--   psql "$PG_URL" -v ON_ERROR_STOP=1 -f scripts/cleanup-orphan-notifications.sql
 
 \echo '=== BEFORE: orphaned task/issue notifications ==='
 select lower(source_entity_type) as et, count(*) as orphaned

@@ -22,7 +22,11 @@ fi
 # the check turns red immediately instead of waiting out the grace period.
 ping_hc() {
   [[ -n "${HEALTHCHECK_REMINDERS_URL:-}" ]] || return 0
-  curl -fsS -m 10 --retry 3 -o /dev/null "${HEALTHCHECK_REMINDERS_URL}$1" || true
+  # The ping URL is the check's credential: curl reads it on stdin (-K -), never
+  # from its command line, like the secret below.
+  local u="${HEALTHCHECK_REMINDERS_URL}$1"
+  u="${u//\\/\\\\}"; u="${u//\"/\\\"}"
+  printf 'url = "%s"\n' "$u" | curl -fsS -m 10 --retry 3 -o /dev/null -K - || true
 }
 
 # --fail → non-zero exit on HTTP >= 400 so systemd records a failed run.
