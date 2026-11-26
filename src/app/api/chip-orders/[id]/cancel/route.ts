@@ -4,31 +4,35 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { chipOrderCancelBodySchema } from '@/lib/validation/requests';
 import { badOrderId, chipOrderErrorResponse } from '@/lib/chipOrders/routeErrors';
-import { runReceptionCancel } from '@/lib/chipOrders/receptionCancel';
+import { runCancelAndCredit } from '@/lib/chipOrders/receptionCancel';
+import { notifyChipOrder } from '@/lib/chipOrders/notify';
 import { getReceptionCancelPreview } from '@/lib/db/chipReceptionCancel';
 import { processDueDocuments } from '@/lib/chipOrders/documents';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// /api/chip-orders/[id]/cancel — "ביטול וזיכוי" of a RECEPTION order
-// (27/11/2026; "בטל הזמנת קבלה" before). ADMIN AND SUPER ADMIN ONLY, by role
-// (requireAdmin): a reception order records money that was received, so
-// undoing one is not part of issuing chips — a manager who may record a
-// payment may not cancel it, and the guard never reaches it.
+// /api/chip-orders/[id]/cancel — "ביטול וזיכוי" (27/11/2026): the one way
+// back for EVERY order — a reception order ("בטל הזמנת קבלה" before) and a
+// web order the card paid ("זיכוי" before). ADMIN AND SUPER ADMIN ONLY, by
+// role (requireAdmin): an order records money that was received, so undoing
+// one is not part of issuing chips — a manager who may record a payment may
+// not cancel it, and the guard never reaches it.
 //
 // GET  — what the confirmation states: the amount, how it was paid, where the
-//        credit document is emailed, the chips the cancellation disables, and
-//        the steps so far (which one failed, and why).
+//        credit document is emailed, the chips the cancellation disables, a
+//        cancellation PayPlus showed (payplus_reversal), and the steps so far
+//        (which one failed, and why).
 // POST — runs the steps in order (src/lib/chipOrders/receptionCancel.ts): the
-//        refund in PayPlus (a card; skipped — and recorded — when PayPlus
-//        already shows it cancelled or refunded), the credit document in
-//        Morning, then the order cancelled and its chips disabled (never
-//        deleted). A failed step answers 200 with `ok: false`, the step and
-//        its words (the order shows them); POST again = the remaining steps
-//        only. The reason is required the first time.
-// A web order is refused here — it is rejected through "דחה", or refunded
-// with "זיכוי". No message goes to the customer (Morning emails the credit).
+//        refund in PayPlus (a card — the one refund of the module; skipped,
+//        and recorded, when PayPlus already shows it cancelled or refunded),
+//        the credit document in Morning, then the order cancelled and its
+//        chips disabled (never deleted). A failed step answers 200 with
+//        `ok: false`, the step and its words (the order shows them); POST
+//        again = the remaining steps only. The reason is required the first
+//        time. A reception order: no message to anyone (Morning emails the
+//        credit). A web order: once done, the orderer gets the "זוכתה"
+//        message (email + WhatsApp), as "זיכוי" sent it.
 
 async function admin(): Promise<Actor | NextResponse> {
   try {
@@ -65,13 +69,18 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!body.ok) return body.response;
   try {
     const by = { id: actor.id, name: actor.full_name ?? actor.username };
-    const run = await runReceptionCancel(id, body.data.reason ?? null, by);
+    const run = await runCancelAndCredit(id, body.data.reason ?? null, by);
     if (!run) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-    // Whatever else is due in the queue (never this order's steps — they ran).
-    after(() => processDueDocuments().then(() => undefined));
+    const chipsDisabled = run.chipsDisabled;
+    after(async () => {
+      // Whatever else is due in the queue (never this order's steps — they ran).
+      await processDueDocuments();
+      if (run.kind === 'done' && run.source === 'web') await notifyChipOrder(id, 'refunded', { chipsDisabled });
+    });
     return NextResponse.json({
       ok: run.kind === 'done',
       order_number: run.orderNumber,
+      source: run.source,
       failed_step: run.failedStep,
       message: run.message,
       refund: run.refund,

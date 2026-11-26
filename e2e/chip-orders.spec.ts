@@ -125,6 +125,9 @@ const APT_TRANSFER = `995${tag}5`; // 26/11/2026: "העברה בנקאית" at t
 const APT_LEGACY = `995${tag}6`; // 26/11/2026: a reception order recorded before the split ("מזומן או העברה")
 const APT_CARD = `995${tag}7`; // 26/11/2026: a test order paid with the sandbox card
 const APT_CONTACT = `995${tag}8`; // 26/11/2026: the contact box of the public form
+const APT_WEBCX = `995${tag}9`; // 27/11/2026: "ביטול וזיכוי" of a web order the card paid
+const APT_REV = `996${tag}1`; // 27/11/2026: a web order PayPlus showed cancelled
+const APT_TAB = `996${tag}2`; // 27/11/2026: "ביטול וזיכוי" in a contact's chips tab
 const APT_LIMIT_MSG = 'ניתן להזמין עד 10 כרטיסים לדירה בהזמנה אחת. לכמות גדולה יותר יש לפנות להנהלת הבניין.';
 const PUB_NOTE = 'אני מבקש למסור את הכרטיסים לשכן מדירה 5';
 /** The contact card's box (26/11/2026): the contact details are the first row's. */
@@ -468,7 +471,7 @@ function fieldSizes(issue: Locator): Promise<string[]> {
 }
 
 test.beforeAll(async () => {
-  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2, APT_T1, APT_T2, APT_CH, APT_REC, APT_MGR, APT_NOORD, APT_EXTRA, APT_LEASE, APT_RDY, APT_TRANSFER, APT_LEGACY, APT_CARD, APT_CONTACT]) {
+  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2, APT_T1, APT_T2, APT_CH, APT_REC, APT_MGR, APT_NOORD, APT_EXTRA, APT_LEASE, APT_RDY, APT_TRANSFER, APT_LEGACY, APT_CARD, APT_CONTACT, APT_WEBCX, APT_REV, APT_TAB]) {
     const c = await pool.query<{ id: string }>(`insert into public.contacts (apartment_number) values ($1) returning id`, [apt]);
     made.contacts[apt] = c.rows[0]!.id;
   }
@@ -1444,7 +1447,6 @@ test.describe('staff: issuing at the reception', () => {
     await expect(section.getByTestId('chip-order-document')).toContainText(`${3 * price}₪`);
     await expect(section.getByTestId('chip-order-document')).toContainText('ממתינה לחיבור מורנינג');
     await expect(section.getByTestId('chip-order-documents-retry')).toHaveCount(0);
-    await expect(section.getByTestId('chip-order-refund-button')).toHaveCount(0); // a reception order is cancelled, never refunded here
     // The status row: "נאסף" is where it stands, and none of the three status
     // buttons can be pressed. The one thing an admin can still do to an order
     // of the reception is cancel it (25/11/2026 — its own test, further down).
@@ -1838,8 +1840,8 @@ test.describe('staff: payments and documents', () => {
       await expect(documents.getByTestId('chip-order-document')).toHaveCount(0);
       await expect(documents.getByTestId('chip-order-documents-retry')).toHaveCount(0);
       expect((await pool.query(`select count(*)::int as n from public.chip_order_documents where order_id = $1`, [card.id])).rows[0].n).toBe(0);
-      // An admin may refund a card payment ("זיכוי" — not pressed here: it needs PayPlus).
-      await expect(issue.getByTestId('chip-order-refund-button')).toBeVisible();
+      // An admin may give a card payment back ("ביטול וזיכוי", 27/11/2026 — its own test further down).
+      await expect(issue.getByTestId('chip-order-cancel-reception')).toHaveText('ביטול וזיכוי');
       await expect(issue.getByTestId('chip-order-refund')).toHaveCount(0); // no refund yet
       await issue.getByTestId('chip-issue-close').click();
       await expect(issue).toHaveCount(0);
@@ -2037,9 +2039,8 @@ test.describe.serial('staff: extra chips of a web order, and cancelling the rece
     await expect(managerWindow.getByTestId('chip-order-actions').getByRole('button')).toHaveText(['מוכן לאיסוף', 'נאסף', 'דחה']);
     expect((await manager.request.post(`/api/chip-orders/${rec.id}/cancel`, { data: { reason: 'ניסיון של מנהל' } })).status()).toBe(403);
     expect((await manager.request.get(`/api/chip-orders/${rec.id}/cancel`)).status()).toBe(403);
-    // Nor a refund, nor a new try at a document (26/11/2026): admin and super admin only.
-    await expect(managerWindow.getByTestId('chip-order-refund-button')).toHaveCount(0);
-    expect((await manager.request.post(`/api/chip-orders/${web.id}/refund`, { data: { reason: 'ניסיון של מנהל' } })).status()).toBe(403);
+    // Nor "ביטול וזיכוי" of a web order, nor a new try at a document: admin and super admin only.
+    expect((await manager.request.post(`/api/chip-orders/${web.id}/cancel`, { data: { reason: 'ניסיון של מנהל' } })).status()).toBe(403);
     expect((await manager.request.post(`/api/chip-orders/${rec.id}/documents/retry`)).status()).toBe(403);
     expect((await receptionOrder())[0]!.status).toBe('collected');
 
@@ -2156,7 +2157,7 @@ test.describe.serial('staff: extra chips of a web order, and cancelling the rece
     // The pickup list of the web order no longer carries the cancelled extra.
     const pickup = (await (await page.request.get('/api/chip-pickup')).json()) as { orders: { id: string; total: number }[] };
     expect(pickup.orders.find((o) => o.id === web.id)!.total).toBe(1);
-    // A web order is never cancelled this way.
+    // A web order no card paid is never cancelled this way (one the card paid is — its own test below).
     expect((await page.request.post(`/api/chip-orders/${web.id}/cancel`, { data: { reason: 'הזמנה מהאתר' } })).status()).toBe(409);
   });
 
@@ -3479,5 +3480,227 @@ test.describe.serial('test mode', () => {
     await pub.goto(new URL(state.link).pathname + new URL(state.link).search);
     await expect(pub.getByTestId('chip-order-closed')).toBeVisible();
     await ctx.close();
+  });
+});
+
+
+// ── 27/11/2026: one way back for every order, and what PayPlus reports ──────
+// "ביטול וזיכוי" of a WEB order the card paid (it replaced "זיכוי"): CI has no
+// PayPlus values, so the refund step stops with its words — the order says so
+// everywhere — and once PayPlus shows the money returned (stood in for here, as
+// the step records it) "נסה שוב" finishes the rest. A cancellation PayPlus
+// showed after a callback (payplus_reversal_*, set as the callback sets it)
+// puts "בוטל ב-PayPlus — נדרש ביטול וזיכוי" on the row and in the window, and
+// one click finishes it. And the issue window of a contact's chips tab offers
+// "ביטול וזיכוי" on a reception order's line, as the window of /chips does.
+test.describe.serial('"ביטול וזיכוי" of every order, and a cancellation PayPlus showed', () => {
+  let managerId = '';
+  const debtors: string[] = [];
+
+  /** A web order a card paid — as recordCardPayment leaves it — with one line of `apt`. */
+  async function cardOrder(apt: string, name: string, phone: string, opts: { test: boolean; status?: string; reversal?: 'cancelled' | null }) {
+    const o = (await pool.query<{ id: string; order_number: number; tx: string }>(
+      `insert into public.chip_orders
+         (full_name, phone_e164, email, address, role, status, total, tracking_token, paid_at, due_at, is_test, phone_verified,
+          address_street, address_city, address_zip, collected_at,
+          card_provider, card_env, card_status, card_page_request_uid, card_session_at, card_transaction_uid,
+          card_paid_amount, card_paid_at, card_approval_number, card_last4, payplus_reversal_at, payplus_reversal_kind)
+       values ($1, $2, 'cancel.e2e@example.test', 'רחוב בדיקה 2, חיפה 3300000', 'owner', $3, 50, $4,
+               now(), now() + interval '3 days', $5, $6, 'רחוב בדיקה 2', 'חיפה', '3300000',
+               case when $3 = 'collected' then now() end,
+               'payplus', $7, 'paid', $8, now(), $9, 50, now(), '0123456', '9844',
+               case when $10::text is not null then now() end, $10::text)
+       returning id, order_number, card_transaction_uid as tx`,
+      [name, phone, opts.status ?? 'paid', randomBytes(32).toString('base64url'), opts.test, opts.test ? null : true,
+        opts.test ? 'sandbox' : 'production', `e2e-pr-${tag}-${randomUUID()}`, `e2e-tx-${tag}-${randomUUID()}`, opts.reversal ?? null],
+    )).rows[0]!;
+    const item = (await pool.query<{ id: string }>(
+      `insert into public.chip_order_items
+         (order_id, contact_id, apartment_number, chips_count, unit_price, threshold, price_above, line_total, match_status)
+       values ($1, $2, $3, 1, 50, 1, 50, 50, 'matched') returning id`,
+      [o.id, made.contacts[apt], apt],
+    )).rows[0]!;
+    await pool.query(
+      `insert into public.chip_order_holders (order_id, item_id, position, source, role, full_name, phone, chips_count)
+       values ($1, $2, 0, 'order', 'owner', $3, $4, 1)`,
+      [o.id, item.id, name, phone],
+    );
+    return o;
+  }
+  const state = async (id: string) => (await pool.query<{
+    status: string; reject_reason: string | null; cancel_failed_step: string | null; cancel_completed: boolean;
+    refund_requested_at: Date | null; refunded_at: Date | null; payplus_reversal_kind: string | null;
+  }>(
+    `select status, reject_reason, cancel_failed_step, cancel_completed_at is not null as cancel_completed,
+            refund_requested_at, refunded_at, payplus_reversal_kind from public.chip_orders where id = $1`, [id])).rows[0]!;
+
+  test.beforeAll(async () => {
+    const u = await pool.query<{ id: string }>(
+      `insert into public.users (username, email, password_hash, full_name, role, is_active)
+       values ($1, $1, 'x', $2, 'manager', true) returning id`, [`chip-mgr-cancel-${tag}@billing.local`, `מנהל ביטול ${tag}`]);
+    managerId = u.rows[0]!.id;
+    made.users.push(managerId);
+    for (const mod of ['chips', 'chips_orders_manage']) {
+      await pool.query(`insert into public.user_permissions (user_id, module, can_view, can_edit) values ($1, $2, true, true)`, [managerId, mod]);
+    }
+    // The debtors screen too (a contact's chips tab lives there), read only.
+    await pool.query(`insert into public.user_permissions (user_id, module, can_view, can_edit) values ($1, 'dashboard', true, false)`, [managerId]);
+  });
+
+  test.afterAll(async () => {
+    for (const id of debtors) await pool.query(`delete from public.debtors where id = $1`, [id]);
+    if (managerId) await pool.query(`delete from public.user_permissions where user_id = $1`, [managerId]);
+  });
+
+  test('a web order the card paid: "ביטול וזיכוי" (admins only) in its window — the refund step stops with its words, the order says so in the window and on the row, and "נסה שוב" finishes the rest once PayPlus shows the money back: the order closed, not offered again', async ({ page, browser }) => {
+    const o = await cardOrder(APT_WEBCX, 'נגה ביטול', '+972539300071', { test: true });
+
+    // A manager with every chips permission: no "ביטול וזיכוי", and the route says 403.
+    const manager = await pageAs(browser, managerId);
+    await manager.goto('/chips?view=orders');
+    await orderRow(manager, APT_WEBCX).click();
+    await expect(issueWindow(manager).getByTestId('chip-order-section')).toBeVisible();
+    await expect(issueWindow(manager).getByTestId('chip-order-cancel-reception')).toHaveCount(0);
+    expect((await manager.request.post(`/api/chip-orders/${o.id}/cancel`, { data: { reason: 'ניסיון של מנהל' } })).status()).toBe(403);
+
+    await page.goto('/chips?view=orders');
+    const row = orderRow(page, APT_WEBCX);
+    // An ordinary paid web order: the action is in its window, not on the row.
+    await expect(row.getByTestId('chip-order-row-cancel')).toHaveCount(0);
+    await row.click();
+    const issue = issueWindow(page);
+    const section = issue.getByTestId('chip-order-section');
+    const button = section.getByTestId('chip-order-cancel-reception');
+    await expect(button).toHaveText('ביטול וזיכוי');
+    await button.click();
+    const dialog = page.getByTestId('reception-cancel-dialog');
+    await expect(dialog).toContainText(`ביטול וזיכוי — הזמנה ${o.order_number}`);
+    await expect(dialog.getByTestId('reception-cancel-amount')).toHaveText('50₪');
+    await expect(dialog.getByTestId('reception-cancel-step-refund')).toContainText('דרך PayPlus (סביבת הבדיקות');
+    await expect(dialog.getByTestId('reception-cancel-step-refund')).toContainText('לא יישלח זיכוי נוסף');
+    await expect(dialog.getByTestId('reception-cancel-step-credit')).toContainText('הזמנת בדיקה — לא מופק מסמך במורנינג');
+    await expect(dialog).toContainText('ההזמנה תסומן „נדחתה”');
+    await expect(dialog).toContainText('המזמין יקבל מייל ווואטסאפ על הזיכוי');
+    const confirm = dialog.getByTestId('reception-cancel-run');
+    await expect(confirm).toBeDisabled();
+    await dialog.getByLabel('סיבת הביטול').fill('הלקוח ביטל');
+    await confirm.click();
+    // No PayPlus values here: the refund is not sent — and the run says so.
+    await expect(toast(page, 'הביטול נעצר בשלב: הזיכוי ב-PayPlus')).toBeVisible();
+    await expect(dialog.getByTestId('reception-cancel-failed')).toContainText('PayPlus אינו מוגדר בשרת לסביבה של ההזמנה');
+    await expect(dialog.getByTestId('reception-cancel-failed')).toContainText('לא יישלח זיכוי שני');
+    await expect(confirm).toHaveText('נסה שוב');
+    await dialog.getByRole('button', { name: 'חזרה' }).click();
+    expect(await state(o.id)).toMatchObject({ status: 'paid', cancel_failed_step: 'refund', refund_requested_at: null, refunded_at: null, cancel_completed: false });
+    await expect(section.getByTestId('chip-order-cancel-stopped')).toContainText('הביטול נעצר: הזיכוי ב-PayPlus');
+    await expect(button).toHaveText('המשך ביטול וזיכוי');
+    await issue.getByTestId('chip-issue-close').click();
+    await expect(issue).toHaveCount(0);
+    await page.reload();
+    await expect(row.getByTestId('chip-order-row-cancel')).toHaveText('המשך ביטול');
+    await expect(row.getByTestId('chip-order-row-cancel-stopped')).toHaveText('הביטול נעצר: הזיכוי ב-PayPlus');
+
+    // PayPlus shows the charge cancelled — recorded as the refund step records it.
+    await pool.query(
+      `update public.chip_orders
+          set refunded_at = now(), refunded_amount = 50, refund_status = 'refunded', refund_via = 'payplus',
+              refund_transaction_uid = 'cancelled:' || card_transaction_uid, refund_note = 'העסקה בוטלה ישירות בממשק PayPlus'
+        where id = $1`, [o.id]);
+    await row.getByTestId('chip-order-row-cancel').click();
+    await expect(dialog.getByTestId('reception-cancel-step-refund')).toContainText('הכסף הוחזר — בממשק PayPlus');
+    await expect(dialog).toContainText('סיבת הביטול: הלקוח ביטל');
+    await confirm.click();
+    await expect(toast(page, `הזמנה ${o.order_number} בוטלה וזוכתה`)).toBeVisible();
+    await expect(dialog).toHaveCount(0);
+    expect(await state(o.id)).toMatchObject({ status: 'rejected', reject_reason: 'הלקוח ביטל', cancel_failed_step: null, cancel_completed: true });
+    // Finished: the row stays (a refunded web order), with nothing left to press.
+    await page.reload();
+    await expect(row.getByTestId('chip-order-stage')).toHaveText('נדחה');
+    await expect(row.getByTestId('chip-order-row-cancel')).toHaveCount(0);
+    await row.click();
+    await expect(section.getByTestId('chip-order-cancel-reception')).toHaveCount(0);
+    await expect(section.getByTestId('chip-order-cancel-stopped')).toHaveCount(0);
+    expect((await page.request.post(`/api/chip-orders/${o.id}/cancel`, { data: {} })).status()).toBe(409);
+  });
+
+  test('a cancellation PayPlus showed: "בוטל ב-PayPlus — נדרש ביטול וזיכוי" on the row (also of a collected order) and in the window — everyone sees it, an admin finishes it with one click, a manager is told who does', async ({ page, browser }) => {
+    const o = await cardOrder(APT_REV, 'יעל ביטול', '+972539300072', { test: false, status: 'collected', reversal: 'cancelled' });
+    const WARNING = 'בוטל ב-PayPlus — נדרש ביטול וזיכוי';
+
+    const manager = await pageAs(browser, managerId);
+    await manager.goto('/chips?view=orders');
+    const mRow = orderRow(manager, APT_REV);
+    await expect(mRow.getByTestId('chip-order-payplus-reversal')).toHaveText(WARNING);
+    await expect(mRow.getByTestId('chip-order-row-cancel')).toHaveCount(0);
+    await mRow.click();
+    const mBanner = issueWindow(manager).getByTestId('chip-order-payplus-reversal');
+    await expect(mBanner).toContainText(WARNING);
+    await expect(mBanner).toContainText('PayPlus מראה שהעסקה בוטלה ישירות בממשק PayPlus');
+    await expect(mBanner).toContainText('מנהל מערכת משלים ב„ביטול וזיכוי”');
+
+    await page.goto('/chips?view=orders');
+    const row = orderRow(page, APT_REV);
+    await expect(row.getByTestId('chip-order-payplus-reversal')).toHaveText(WARNING);
+    await expect(row.getByTestId('chip-order-stage')).toHaveText('נאסף');
+    await noSideScroll(page);
+    // The one click: "ביטול וזיכוי" on the row itself.
+    await expect(row.getByTestId('chip-order-row-cancel')).toHaveText('ביטול וזיכוי');
+    await row.getByTestId('chip-order-row-cancel').click();
+    const dialog = page.getByTestId('reception-cancel-dialog');
+    await expect(dialog.getByTestId('reception-cancel-payplus-reversal')).toContainText(WARNING);
+    await expect(dialog.getByTestId('reception-cancel-payplus-reversal')).toContainText('בלי לשלוח זיכוי נוסף');
+    await dialog.getByRole('button', { name: 'חזרה' }).click();
+    await expect(dialog).toHaveCount(0);
+    await row.click();
+    const banner = issueWindow(page).getByTestId('chip-order-payplus-reversal');
+    await expect(banner).toContainText('„ביטול וזיכוי” ירשום זאת, יפיק את מסמך הזיכוי וישלים את ההזמנה — בלי לשלוח זיכוי נוסף.');
+    await expect(issueWindow(page).getByTestId('chip-order-section').getByTestId('chip-order-cancel-reception')).toHaveText('ביטול וזיכוי');
+    expect(await state(o.id)).toMatchObject({ status: 'collected', payplus_reversal_kind: 'cancelled', refunded_at: null });
+  });
+
+  test('a contact\'s chips tab: its issue window offers "ביטול וזיכוי" on a paid reception order\'s line — to an admin, not to a manager — as the window of /chips does', async ({ page, browser }) => {
+    const price = await unitPrice();
+    const number = `TB${tag}1`;
+    const saved = await page.request.post('/api/chips', {
+      data: {
+        contact_id: made.contacts[APT_TAB],
+        groups: [{ resident_role: 'other', holder_name: 'אורח לשונית', chip_type: 'physical', numbers: [number], block: 0 }],
+        orderer: { name: 'אורח לשונית', phone: '0539300073', email: null, street: null, city: null, zip: null },
+        payment: { method: 'cash', amount: price },
+      },
+    });
+    expect(saved.status()).toBe(201);
+    const rec = (await pool.query<{ order_number: number }>(
+      `select o.order_number from public.chip_orders o join public.chip_order_items i on i.order_id = o.id
+        where i.contact_id = $1 and o.source = 'reception'`, [made.contacts[APT_TAB]])).rows[0]!;
+    const debtor = (await pool.query<{ id: string }>(
+      `insert into public.debtors (id, apartment_number, owner_name, phone_owner, total_debt, management_fees, hot_water_debt, contact_id)
+       values ($1, $2, 'דייר לשונית', '0539300073', 100, 100, 0, $3) returning id`,
+      [randomUUID(), APT_TAB, made.contacts[APT_TAB]],
+    )).rows[0]!;
+    debtors.push(debtor.id);
+
+    const openTab = async (p: Page) => {
+      await p.goto(`/dashboard?apt=${APT_TAB}`);
+      await p.getByRole('row').filter({ hasText: APT_TAB }).first().click();
+      await p.getByRole('button', { name: 'צ׳יפים', exact: true }).click();
+      await p.getByRole('button', { name: 'הנפק צ׳יפ' }).click();
+      const issue = issueWindow(p);
+      await expect(issue.getByTestId('chip-reception-records')).toContainText(`הזמנת קבלה ${rec.order_number}`);
+      return issue;
+    };
+    const issue = await openTab(page);
+    const cancelLine = issue.getByTestId('chip-reception-record-cancel');
+    await expect(cancelLine).toHaveText('ביטול וזיכוי');
+    await cancelLine.click();
+    const dialog = page.getByTestId('reception-cancel-dialog');
+    await expect(dialog).toContainText(`ביטול וזיכוי — הזמנת קבלה ${rec.order_number}`);
+    await expect(dialog.getByTestId('reception-cancel-step-refund')).toContainText('מחזירים ידנית במזומן');
+    await dialog.getByRole('button', { name: 'חזרה' }).click();
+    await expect(dialog).toHaveCount(0);
+
+    const manager = await pageAs(browser, managerId);
+    const mIssue = await openTab(manager);
+    await expect(mIssue.getByTestId('chip-reception-record-cancel')).toHaveCount(0);
   });
 });

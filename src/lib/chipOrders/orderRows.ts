@@ -5,6 +5,7 @@ import {
   type ChipOrderRow,
 } from './model';
 import { CHIP_ORDER_EXTRA_LABEL, CHIP_ORDER_RECEPTION_LABEL } from './reception';
+import { PAYPLUS_REVERSAL_LABEL } from './receptionCancelText';
 
 // The Orders tab of /chips (24/11/2026) — the pure, client-safe half of what
 // the tab does with its rows: the search, the tags of a row, what the action
@@ -54,11 +55,13 @@ export function searchHitPeople(row: Searchable, query: string): string[] {
  *  at the reception ("קבלה", 25/11/2026 — paid there and handed over on the
  *  spot), a test-mode order, a phone nobody proved (a test order made with
  *  "דלג על אימות" — only `phone_verified === false`: NULL is an order from a
- *  form with no code step, 26/11/2026), and a message to the orderer that
- *  failed to go out. */
-export type ChipOrderTag = 'reception' | 'extra' | 'test' | 'phone_unverified' | 'notify_failed';
+ *  form with no code step, 26/11/2026), a message to the orderer that
+ *  failed to go out, and — first, in red — a paid order PayPlus shows
+ *  cancelled or refunded that waits for "ביטול וזיכוי" (27/11/2026). */
+export type ChipOrderTag = 'payplus_reversed' | 'reception' | 'extra' | 'test' | 'phone_unverified' | 'notify_failed';
 
 export const CHIP_ORDER_TAG_LABEL: Record<ChipOrderTag, string> = {
+  payplus_reversed: PAYPLUS_REVERSAL_LABEL,
   reception: CHIP_ORDER_RECEPTION_LABEL,
   // A reception order made for extra chips of a web order (25/11/2026).
   extra: CHIP_ORDER_EXTRA_LABEL,
@@ -68,10 +71,11 @@ export const CHIP_ORDER_TAG_LABEL: Record<ChipOrderTag, string> = {
 };
 
 type Tagged = Pick<ChipOrderRow, 'is_test' | 'phone_verified' | 'has_failed_notification'>
-  & Partial<Pick<ChipOrderRow, 'source' | 'extra_of_order_number'>>;
+  & Partial<Pick<ChipOrderRow, 'source' | 'extra_of_order_number' | 'payplus_reversal_kind'>>;
 
 export function chipOrderRowTags(row: Tagged): ChipOrderTag[] {
   const tags: ChipOrderTag[] = [];
+  if (row.payplus_reversal_kind) tags.push('payplus_reversed');
   if (row.source === 'reception') tags.push('reception');
   if (row.extra_of_order_number != null) tags.push('extra');
   if (row.is_test) tags.push('test');
@@ -133,11 +137,12 @@ export type ChipOrderRowAction =
 export const CHIP_ORDER_WAITING_LABEL = 'בהמתנה';
 
 export function chipOrderRowAction(
-  row: Pick<ChipOrderRow, 'order_id' | 'status'> & Partial<Pick<ChipOrderRow, 'source' | 'refund_in_flight'>>,
+  row: Pick<ChipOrderRow, 'order_id' | 'status'> & Partial<Pick<ChipOrderRow, 'source' | 'refund_in_flight' | 'payplus_reversal_kind'>>,
   summary: ChipOrderSummary | undefined,
 ): ChipOrderRowAction | null {
-  // A "זיכוי" waiting for PayPlus's answer: nothing moves the order on.
-  if (row.refund_in_flight && (row.status === 'paid' || row.status === 'approved' || row.status === 'ready')) return null;
+  // A refund waiting for PayPlus's answer, or a charge PayPlus shows cancelled
+  // (27/11/2026): nothing moves the order on.
+  if ((row.refund_in_flight || row.payplus_reversal_kind) && (row.status === 'paid' || row.status === 'approved' || row.status === 'ready')) return null;
   if (row.status === 'ready') return { kind: 'collected' };
   if (row.status === 'collected') return { kind: 'done' };
   // A rejected reception order is a cancelled one. A rejected WEB order stays

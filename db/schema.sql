@@ -2084,11 +2084,15 @@ CREATE TABLE public.chip_orders (
     cancel_failed_step text,
     cancel_error text,
     cancel_running_until timestamp with time zone,
+    cancel_completed_at timestamp with time zone,
+    payplus_reversal_at timestamp with time zone,
+    payplus_reversal_kind text,
     CONSTRAINT chip_orders_address_check CHECK ((((source = 'reception'::text) AND (address IS NULL)) OR ((address IS NOT NULL) AND ((length(btrim(address)) >= 2) AND (length(btrim(address)) <= 300))))),
     CONSTRAINT chip_orders_address_city_check CHECK (((address_city IS NULL) OR ((length(btrim(address_city)) >= 2) AND (length(btrim(address_city)) <= 100)))),
     CONSTRAINT chip_orders_address_street_check CHECK (((address_street IS NULL) OR ((length(btrim(address_street)) >= 2) AND (length(btrim(address_street)) <= 200)))),
     CONSTRAINT chip_orders_address_zip_check CHECK (((address_zip IS NULL) OR (address_zip ~ '^[0-9]{7}$'::text))),
-    CONSTRAINT chip_orders_cancel_request_check CHECK ((((cancel_requested_at IS NULL) AND (cancel_requested_by IS NULL) AND (cancel_requested_by_name IS NULL) AND (cancel_request_reason IS NULL) AND (cancel_failed_step IS NULL) AND (cancel_error IS NULL) AND (cancel_running_until IS NULL)) OR ((cancel_requested_at IS NOT NULL) AND (source = 'reception'::text) AND (cancel_requested_by_name IS NOT NULL) AND (length(cancel_requested_by_name) <= 120) AND (cancel_request_reason IS NOT NULL) AND ((length(btrim(cancel_request_reason)) >= 2) AND (length(btrim(cancel_request_reason)) <= 500))))),
+    CONSTRAINT chip_orders_cancel_completed_check CHECK (((cancel_completed_at IS NULL) OR ((cancel_requested_at IS NOT NULL) AND (status = ANY (ARRAY['rejected'::text, 'collected'::text])) AND (cancel_failed_step IS NULL)))),
+    CONSTRAINT chip_orders_cancel_request_check CHECK ((((cancel_requested_at IS NULL) AND (cancel_requested_by IS NULL) AND (cancel_requested_by_name IS NULL) AND (cancel_request_reason IS NULL) AND (cancel_failed_step IS NULL) AND (cancel_error IS NULL) AND (cancel_running_until IS NULL)) OR ((cancel_requested_at IS NOT NULL) AND (cancel_requested_by_name IS NOT NULL) AND (length(cancel_requested_by_name) <= 120) AND (cancel_request_reason IS NOT NULL) AND ((length(btrim(cancel_request_reason)) >= 2) AND (length(btrim(cancel_request_reason)) <= 500))))),
     CONSTRAINT chip_orders_cancel_step_check CHECK ((((cancel_failed_step IS NULL) OR (cancel_failed_step = ANY (ARRAY['refund'::text, 'credit'::text, 'cancel'::text]))) AND ((cancel_failed_step IS NULL) = (cancel_error IS NULL)) AND ((cancel_error IS NULL) OR ((length(cancel_error) >= 1) AND (length(cancel_error) <= 500))))),
     CONSTRAINT chip_orders_cancelled_check CHECK ((((cancelled_by_name IS NULL) AND (cancelled_by IS NULL)) OR ((cancelled_by_name IS NOT NULL) AND (source = 'reception'::text) AND (status = 'rejected'::text) AND (rejected_at IS NOT NULL) AND (reject_reason IS NOT NULL)))),
     CONSTRAINT chip_orders_card_env_check CHECK (((card_env IS NULL) OR (card_env = ANY (ARRAY['sandbox'::text, 'production'::text])))),
@@ -2110,6 +2114,7 @@ CREATE TABLE public.chip_orders (
     CONSTRAINT chip_orders_internal_note_check CHECK (((internal_note IS NULL) OR (length(internal_note) <= 2000))),
     CONSTRAINT chip_orders_paid_fields_check CHECK (((status = 'pending_payment'::text) OR ((paid_at IS NOT NULL) AND ((grow_transaction_id IS NOT NULL) OR is_test OR (source = 'reception'::text) OR (NOT (card_status IS DISTINCT FROM 'paid'::text)))))),
     CONSTRAINT chip_orders_payment_method_check CHECK (((payment_method IS NULL) OR (payment_method = ANY (ARRAY['cash_transfer'::text, 'cash'::text, 'bank_transfer'::text, 'card'::text])))),
+    CONSTRAINT chip_orders_payplus_reversal_check CHECK ((((payplus_reversal_at IS NULL) = (payplus_reversal_kind IS NULL)) AND ((payplus_reversal_kind IS NULL) OR (payplus_reversal_kind = ANY (ARRAY['cancelled'::text, 'refunded'::text, 'partial'::text]))) AND ((payplus_reversal_at IS NULL) OR (card_status = 'paid'::text)))),
     CONSTRAINT chip_orders_phone_e164_check CHECK ((((source = 'reception'::text) AND ((phone_e164 IS NULL) OR ((length(btrim(phone_e164)) >= 5) AND (length(btrim(phone_e164)) <= 32)))) OR ((source <> 'reception'::text) AND (phone_e164 IS NOT NULL) AND (phone_e164 ~ '^\+9725[0-9]{8}$'::text)))),
     CONSTRAINT chip_orders_phone_verified_check CHECK ((phone_verified OR is_test)),
     CONSTRAINT chip_orders_reception_check CHECK (((source <> 'reception'::text) OR (((NOT is_test) OR ((payment_method = 'card'::text) AND (card_env IS DISTINCT FROM 'production'::text))) AND (grow_process_id IS NULL) AND (grow_transaction_id IS NULL) AND (payment_method IS NOT NULL) AND (payment_recorded_at IS NOT NULL) AND (payment_recorded_by_name IS NOT NULL)))),
@@ -9579,5 +9584,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261125222603'),
     ('20261125223806'),
     ('20261125224435'),
-    ('20261126220000')
+    ('20261126220000'),
+    ('20261126225119')
 ;

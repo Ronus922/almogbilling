@@ -509,8 +509,12 @@ export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
                      where n.order_id = o.id and n.status = 'failed') as has_failed_notification,
             o.is_test, o.phone_verified,
             o.payment_method, o.card_status, o.card_env, o.refund_status, o.refunded_amount::float8 as refunded_amount,
-            (o.refund_requested_at is not null and o.refund_requested_at > now() - interval '10 minutes') as refund_in_flight,
+            -- A refund call with no answer recorded (27/11/2026: it is never
+            -- sent again, so it stays "on its way" until PayPlus shows it).
+            (o.refund_requested_at is not null and o.refunded_at is null) as refund_in_flight,
             o.cancel_failed_step, o.cancel_error,
+            case when o.cancel_completed_at is null then o.payplus_reversal_kind end as payplus_reversal_kind,
+            (o.cancel_completed_at is not null) as cancel_completed,
             (select json_build_object('status', d.status, 'number', d.morning_docs->0->>'number', 'url', d.morning_docs->0->>'url')
                from public.chip_order_documents d
               where d.order_id = o.id and d.kind = 'invoice'
@@ -519,6 +523,9 @@ export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
        join public.chip_orders o on o.id = i.order_id
       where o.status in ${OPEN_SQL} or (o.source = 'reception' and o.status in ('collected', 'rejected'))
          or (o.source = 'web' and o.refunded_at is not null)
+         -- A web order PayPlus shows cancelled, or whose "ביטול וזיכוי" started
+         -- (27/11/2026): it waits for an admin, also once it was collected.
+         or (o.source = 'web' and o.card_status = 'paid' and (o.payplus_reversal_at is not null or o.cancel_requested_at is not null))
       order by case when o.status in ('collected', 'rejected') then 1 else 0 end,
                o.paid_at desc nulls last, o.order_number desc, i.created_at`,
     [PICKUP_ORDERER_KEY],
@@ -637,12 +644,23 @@ export async function writeOrderHolderToRegistry(
   });
 }
 
+/** A signed callback made PayPlus show this order's charge cancelled or
+ *  refunded, and "ביטול וזיכוי" has not finished it (27/11/2026). */
+async function reversedInPayPlus(client: PoolClient, id: string): Promise<boolean> {
+  const r = await client.query(
+    `select 1 from public.chip_orders where id = $1 and payplus_reversal_at is not null and cancel_completed_at is null`, [id]);
+  return (r.rowCount ?? 0) > 0;
+}
+
 /** paid → ready, only when every line has all its chips linked (ACTIVE). */
 export async function markChipOrderReady(id: string): Promise<boolean | null> {
   return withTransaction(async (client) => {
     const order = await lockOrder(client, id);
     if (!order) return null;
     if (order.status !== 'paid' && order.status !== 'approved') throw new ChipOrderStateError('not_assigning');
+    // PayPlus showed the charge cancelled / refunded (27/11/2026): the money
+    // went back — nothing moves the order on until "ביטול וזיכוי".
+    if (await reversedInPayPlus(client, id)) throw new ChipOrderStateError('payplus_reversed');
     const missing = (
       await client.query<{ missing: number }>(
         `select count(*)::int as missing
@@ -733,6 +751,7 @@ export async function markChipOrderCollected(
     ).rows[0];
     if (!order) return null;
     if (order.status !== 'ready') throw new ChipOrderStateError('not_ready');
+    if (await reversedInPayPlus(client, id)) throw new ChipOrderStateError('payplus_reversed');
     const key = opts.collector?.trim() || null;
     if (!key && opts.via === 'pickup') throw new ChipOrderStateError('collector_required');
     const collector = key ? await resolveCollector(client, id, order.full_name, key) : null;
@@ -837,7 +856,12 @@ export async function cancelReceptionOrder(
       `update public.chip_orders
           set status = 'rejected', rejected_at = now(), reject_reason = $2,
               cancelled_by = $3, cancelled_by_name = $4,
-              cancel_failed_step = null, cancel_error = null, cancel_running_until = null, updated_at = now()
+              cancel_failed_step = null, cancel_error = null, cancel_running_until = null,
+              -- The run of "ביטול וזיכוי" is finished (27/11/2026), and a
+              -- warning of a cancellation seen in PayPlus is settled by it.
+              cancel_completed_at = case when cancel_requested_at is not null then now() end,
+              payplus_reversal_at = null, payplus_reversal_kind = null,
+              updated_at = now()
         where id = $1`,
       [id, reason, by.id, by.name],
     );
@@ -845,7 +869,8 @@ export async function cancelReceptionOrder(
     // document is credited here, in the same transaction (26/11/2026) — only
     // when the order HAS a document (orders recorded before 26/11/2026, as
     // "מזומן או העברה", have none). A card is refunded through PayPlus by the
-    // caller (refundCardOrder), which queues that credit itself.
+    // step before (refundCharge, src/lib/chipOrders/refund.ts), which queues
+    // that credit itself.
     if (order.payment_method === 'cash' || order.payment_method === 'bank_transfer') {
       const invoice = await getInvoiceRowOfOrderInTx(client, id);
       if (invoice) {
@@ -926,8 +951,11 @@ export async function rejectChipOrder(id: string, reason: string): Promise<Rejec
 }
 
 export async function setChipOrderRefund(id: string, status: ChipOrderRefundStatus, note: string | null): Promise<void> {
+  // A refund that was recorded meanwhile (27/11/2026 — an admin's "ביטול
+  // וזיכוי" running at the same moment) is never overwritten.
   await query(
-    `update public.chip_orders set refund_status = $2, refund_note = $3, updated_at = now() where id = $1`,
+    `update public.chip_orders set refund_status = $2, refund_note = $3, updated_at = now()
+      where id = $1 and refunded_at is null`,
     [id, status, note ? note.slice(0, 500) : null],
   );
 }

@@ -89,7 +89,6 @@ const { POST: statusRoute } = await import('@/app/api/chips/reception/card/statu
 const { POST: chipsRoute } = await import('@/app/api/chips/route');
 const { POST: cancelRoute } = await import('@/app/api/chip-orders/[id]/cancel/route');
 const { POST: rejectRoute } = await import('@/app/api/chip-orders/[id]/reject/route');
-const { POST: refundRoute } = await import('@/app/api/chip-orders/[id]/refund/route');
 const { POST: callbackRoute } = await import('@/app/api/public/chip-order/payplus/callback/route');
 const { listPendingOrdersWithSessions } = await import('@/lib/db/chipOrderCard');
 
@@ -211,7 +210,6 @@ async function saveByCard(numbers: string[], token: string, opts: { apt?: string
 }
 const cancel = (orderId: string, reason: string) => cancelRoute(json(`/api/chip-orders/${orderId}/cancel`, { reason }), { params: Promise.resolve({ id: orderId }) });
 const reject = (orderId: string, reason: string) => rejectRoute(json(`/api/chip-orders/${orderId}/reject`, { reason }), { params: Promise.resolve({ id: orderId }) });
-const refund = (orderId: string, reason: string) => refundRoute(json(`/api/chip-orders/${orderId}/refund`, { reason }), { params: Promise.resolve({ id: orderId }) });
 const sign = (body: string, key: string) => createHmac('sha256', key).update(body).digest('base64');
 function callback(payload: unknown, env: 'sandbox' | 'production') {
   const body = JSON.stringify(payload);
@@ -533,7 +531,7 @@ d('"אשראי" at the reception — the card order, its payment, the save onto 
   // Regression (review, 26/11): "דחה" is a manager permission and refunds no
   // reception order — it must never close one (only "בטל הזמנת קבלה", admins
   // only, which refunds the card with it).
-  it('"דחה" never closes a reception order — also one a card PAID whose chips were never issued: 409 for a manager and an admin, the order unchanged, no refund call; "זיכוי" refuses it too until it is cancelled', async () => {
+  it('"דחה" never closes a reception order — also one a card PAID whose chips were never issued: 409 for a manager and an admin, the order unchanged, no refund call', async () => {
     const { row } = await paidTestOrder(1);
     track(row.id);
     sent.length = 0;
@@ -545,8 +543,6 @@ d('"אשראי" at the reception — the card order, its payment, the save onto 
       expect((await res.json()).error).toContain('ביטול וזיכוי');
     }
     as('super');
-    const refused = await refund(row.id, 'ניסיון זיכוי');
-    expect(refused.status).toBe(409);
     const token = (await pool.query(`select tracking_token as t from public.chip_orders where id = $1`, [row.id])).rows[0].t as string;
     expect(await byToken(token)).toMatchObject({ status: 'paid', card_status: 'paid', refund_status: null, refunded_at: null, cancelled_by: null });
     expect(callsTo('Transactions/RefundByTransactionUID')).toEqual([]);
@@ -597,6 +593,9 @@ d('"אשראי" at the reception — the card order, its payment, the save onto 
       data: { card_information: { four_digits: '4580' } },
     };
     expect((await callback(notice, 'production')).status).toBe(200);
+    // The same notice again — for an order that is paid now: PayPlus is asked
+    // what it shows (27/11/2026, read only) — the charge, nothing returned.
+    ipn.set(o.session.page_request_uid, charged({ number: row.order_number, total: 3 * PRICE }, o.session.page_request_uid, tx));
     expect((await callback(notice, 'production')).status).toBe(200);
     row = await byToken(o.token);
     expect(row).toMatchObject({ status: 'paid', card_status: 'paid', card_env: 'production', card_transaction_uid: tx, due_at: null });

@@ -57,15 +57,24 @@ type Lookup = { kind: 'transactions'; transactions: unknown[] } | { kind: 'unkno
 const NOTHING: Lookup = { kind: 'transactions', transactions: [] };
 const lookupPaymentRequest = vi.fn<(cfg: unknown, uid: string) => Promise<Lookup>>(async () => NOTHING);
 const disablePaymentRequest = vi.fn<(cfg: { mode: string }, uid: string) => Promise<boolean>>(async () => true);
+// Transactions/View (read only) — what a callback for an order that is
+// ALREADY paid makes the server ask (27/11/2026): here, always the charge as
+// it is (not cancelled), and no refund of the order.
+const viewTransactions = vi.fn(async (_cfg: unknown, by: { transactionUid: string } | { moreInfo: string }) => (
+  'transactionUid' in by
+    ? { kind: 'transactions' as const, transactions: [{ uid: by.transactionUid, type: 'charge', statusCode: '000', amount: 0, cancelled: false, moreInfo: null }] }
+    : { kind: 'transactions' as const, transactions: [] }
+));
 vi.mock('@/lib/payplus/client', async (orig) => ({
   ...(await orig<typeof import('@/lib/payplus/client')>()),
   payplusConfigFor: (mode: 'sandbox' | 'production') => (mode === 'sandbox' ? sandboxConfig : productionConfig),
   createHostedFieldsSession,
   lookupPaymentRequest,
   disablePaymentRequest,
+  viewTransactions,
 }));
 // Nothing here may reach the network: a PayPlus call that is not one of the
-// three stubs above lands here, is recorded, and fails.
+// four stubs above lands here, is recorded, and fails.
 const networkCalls: string[] = [];
 const PHONE = '+972539400077';
 const afterQueue: (() => unknown)[] = [];

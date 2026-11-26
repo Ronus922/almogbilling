@@ -2,9 +2,8 @@ import { NextResponse, after } from 'next/server';
 import { logger } from '@/lib/logger';
 import { payloadFieldNames, payplusConfigFor, readPayPlusTransaction, verifyPayPlusCallback, type PayPlusConfig, type PayPlusMode } from '@/lib/payplus/client';
 import { applyPayPlusCallback } from '@/lib/chipOrders/cardPayment';
-import { afterOrderPaid, notifyChipOrder } from '@/lib/chipOrders/notify';
-import { applyPayPlusRefundNotice } from '@/lib/chipOrders/refund';
-import { processDueDocuments } from '@/lib/chipOrders/documents';
+import { afterOrderPaid } from '@/lib/chipOrders/notify';
+import { applyPayPlusRefundNotice, checkPaidOrderReversal, noticeOrderNumber } from '@/lib/chipOrders/refund';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,6 +34,16 @@ export const dynamic = 'force-dynamic';
 //   - is idempotent — the same notice again changes nothing and sends nothing.
 // The audit row is written with the transition, in one transaction; the
 // "received & paid" message follows only the call that made it.
+//
+// A NOTICE FOR AN ORDER THAT IS ALREADY PAID (27/11/2026): a cancellation made
+// in the PayPlus dashboard arrives looking exactly like the original charge
+// (seen live 26/11/2026), a refund made there as a "Refund" — so after any
+// validated notice that did not just pay the order, PayPlus is asked what it
+// shows now (checkPaidOrderReversal, read only). Cancelled or refunded there
+// and not on the order → NOTHING is recorded and NO Morning document is
+// issued: the order carries "בוטל ב-PayPlus — נדרש ביטול וזיכוי" (the Orders
+// tab and the order's window) and every admin is told, so one click on
+// "ביטול וזיכוי" finishes it. PayPlus not answering → 503 (sent again).
 //
 // WHICH SECRET (26/11/2026): the sandbox and production have separate keys.
 // The callback URL we hand PayPlus names its environment (?env=sandbox |
@@ -109,19 +118,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, ignored: 'unreadable' });
   }
 
-  // A REFUND PayPlus reports (made in its dashboard, or ours echoed back —
-  // 26/11/2026): recorded once per refund id, with its credit document.
+  // A REFUND PayPlus reports (made in its dashboard, or ours echoed back):
+  // never recorded from the notice — the order it names is checked.
   if (tx.type !== null && tx.type.includes('refund')) {
     const refund = await applyPayPlusRefundNotice(cfg, tx);
     if (refund.kind === 'later') return NextResponse.json({ ok: false, error: 'not applied yet' }, { status: 503 });
-    if (refund.kind === 'recorded') {
-      const refundedOrderId = refund.orderId;
-      after(async () => {
-        await processDueDocuments();
-        // A refund PayPlus reported disables no chip — the message says nothing about them.
-        await notifyChipOrder(refundedOrderId, 'refunded', { chipsDisabled: 0 });
-      });
-    }
     return NextResponse.json({ ok: true });
   }
 
@@ -133,6 +134,14 @@ export async function POST(req: Request) {
   if (applied.kind === 'unconfirmed') return NextResponse.json({ ok: false, error: 'not confirmed yet' }, { status: 503 });
   if (applied.kind === 'paid' && applied.transitioned) {
     after(() => afterOrderPaid(applied.orderId));
+    return NextResponse.json({ ok: true });
+  }
+  // Not a payment that just happened: the order may have been paid before —
+  // what does PayPlus show for it now?
+  const orderNumber = noticeOrderNumber(tx.moreInfo);
+  if (orderNumber !== null) {
+    const seen = await checkPaidOrderReversal(cfg, orderNumber);
+    if (seen.kind === 'later') return NextResponse.json({ ok: false, error: 'not checked yet' }, { status: 503 });
   }
   return NextResponse.json({ ok: true });
 }

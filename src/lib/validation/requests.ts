@@ -710,13 +710,8 @@ export const chipOrderRejectBodySchema = z.object({
   reason: z.string({ error: 'נדרשת סיבת דחייה' }).trim().min(2, 'נדרשת סיבת דחייה').max(500, 'הסיבה ארוכה מדי'),
 });
 
-/** POST /api/chip-orders/[id]/refund — "זיכוי" of a web order paid by card (26/11/2026). */
-export const chipOrderRefundBodySchema = z.object({
-  reason: z.string({ error: 'נדרשת סיבת זיכוי' }).trim().min(2, 'נדרשת סיבת זיכוי').max(500, 'הסיבה ארוכה מדי'),
-});
-
-/** POST /api/chip-orders/[id]/cancel — "ביטול וזיכוי" of a reception order
- *  (27/11/2026; "בטל הזמנת קבלה" before). The reason is required the first
+/** POST /api/chip-orders/[id]/cancel — "ביטול וזיכוי" of any order
+ *  (27/11/2026; "בטל הזמנת קבלה" and "זיכוי" before). The reason is required the first
  *  time; a retry of the remaining steps keeps the reason it was started with
  *  (one sent again is ignored). */
 export const chipOrderCancelBodySchema = z.object({

@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getCurrentActor } from '@/lib/auth/actor';
 import { canBulkChangeLegalStatus, hasAnyAccess, hasPermission } from '@/lib/permissions/check';
+import { isElevatedRole } from '@/lib/permissions/constants';
 import {
   getDashboardKpis,
   getTabCounts,
@@ -67,6 +68,9 @@ export default async function DashboardPage({
   const canBulkStatus = canBulkChangeLegalStatus(actor.role);
   const canViewChips = hasPermission(actor.role, actor.permissions, 'chips', 'view');
   const canEditChips = hasPermission(actor.role, actor.permissions, 'chips', 'edit');
+  // "ביטול וזיכוי" of a paid reception order in the apartment's issue window
+  // (27/11/2026) — admin and super admin by ROLE, as on /chips (the route asks again).
+  const canAdminChipOrders = isElevatedRole(actor.role);
   // Owners portal ("פורטל בעלי דירות") — the roster + login-log tabs of the
   // apartment card. `portal_manage` is admin / super_admin only (deny by default
   // for every matrix role), so a manager sees neither tab.
@@ -115,6 +119,7 @@ export default async function DashboardPage({
           canBulkStatus={canBulkStatus}
           canViewChips={canViewChips}
           canEditChips={canEditChips}
+          canAdminChipOrders={canAdminChipOrders}
           canViewPortal={canViewPortal}
           canEditPortal={canEditPortal}
         />

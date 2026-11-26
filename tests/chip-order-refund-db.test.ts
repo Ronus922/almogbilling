@@ -1,25 +1,29 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Pool, type PoolClient } from 'pg';
 import { requireSeededAdmin } from './db-fixtures';
 
-// Refunds of card-paid chip orders through PayPlus (26/11/2026), against a
+// THE refund of the chip module (27/11/2026) — one implementation, used
+// everywhere a card payment goes back — and what PayPlus reports, against a
 // throwaway database (WA_TEST_DATABASE_URL), never prod:
-//   - "זיכוי" (POST /api/chip-orders/[id]/refund) is admins' only, needs a
-//     reason, and refunds the FULL charge through
-//     Transactions/RefundByTransactionUID in the order's own environment —
-//     once: a second press, or two at the same moment, never make a second call;
-//   - PayPlus's answer is recorded with the order, its chips, the Morning credit
-//     row (never for a test order) and the audit row, in one transaction; the
-//     customer of a web order is told ("refunded");
-//   - PayPlus refusing → manual_required with its words; no answer → unknown,
-//     kept in flight for ten minutes, admins alerted;
-//   - "דחה" of a card-paid order refunds through the same engine;
-//   - a refund PayPlus REPORTS (a signed callback, transaction_type Refund) is
-//     recorded once per refund id.
-// PayPlus is never called: fetch is a stub that answers by URL path and
-// refuses anything else. Email and WhatsApp senders are stubbed; the rows
-// they record are real. Rows are removed by the exact ids made here.
+//   - "ביטול וזיכוי" of a WEB order (POST /api/chip-orders/[id]/cancel — it
+//     replaced "זיכוי"): admins only, a reason the first time; PayPlus is asked
+//     FIRST (Transactions/View, read only), then ONE refund, the Morning credit
+//     (330 + a negative 400, issued now), then the order rejected, its chips
+//     disabled, the run finished; the orderer is told ("refunded");
+//   - a refund that got no answer is NEVER sent again — not at once, not after
+//     ten minutes (the gap of the old "זיכוי"); PayPlus showing it lets the
+//     retry finish; a refusal is shown, and a retry runs the remaining steps;
+//   - "דחה" of a web order the card paid runs the same steps;
+//   - a signed callback for an order that is ALREADY paid makes the server ask
+//     PayPlus: a cancellation (it looks like the original charge) or a refund
+//     (a "Refund" notice) made in the dashboard is NOT recorded and gets NO
+//     Morning document — the order carries "בוטל ב-PayPlus — נדרש ביטול
+//     וזיכוי" (rows + window), every admin is told once, and "ביטול וזיכוי"
+//     finishes it without sending a refund.
+// PayPlus and Morning are stubs that answer by URL; anything else is refused.
+// Email and WhatsApp senders are stubbed; the rows they record are real. Rows
+// are removed by the exact ids made here.
 
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
 const d = describe.skipIf(!TEST_URL);
@@ -67,23 +71,6 @@ vi.mock('@/lib/whatsapp', async (orig) => ({
   sendWhatsAppMessage: vi.fn(async () => { throw new Error('no WhatsApp in this test'); }),
 }));
 
-// recordRefund as it is — except when a test makes its next call fail (a
-// database error right after PayPlus confirmed a refund).
-const rr = vi.hoisted(() => ({ failNext: false }));
-vi.mock('@/lib/db/chipOrderRefund', async (orig) => {
-  const real = await orig<typeof import('@/lib/db/chipOrderRefund')>();
-  return {
-    ...real,
-    recordRefund: async (...args: Parameters<typeof real.recordRefund>) => {
-      if (rr.failNext) {
-        rr.failNext = false;
-        throw new Error('Connection terminated unexpectedly');
-      }
-      return real.recordRefund(...args);
-    },
-  };
-});
-
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
 const RUN = String(Date.now()).slice(-8);
@@ -93,6 +80,8 @@ const APP_URL = 'https://chips.example.test';
 const DEV = { api: 'dev-api-key-refund-test', secret: 'dev-secret-key-refund-test', page: '11111111-2222-3333-4444-555555555555' };
 const PROD = { api: 'prod-api-key-refund-test', secret: 'prod-secret-key-refund-test', page: '99999999-8888-7777-6666-555555555555' };
 const ORIGIN = { sandbox: 'https://restapidev.payplus.co.il', production: 'https://restapi.payplus.co.il' } as const;
+const MORNING_TOKEN = 'https://api.morning.co/idp/v1/oauth/token';
+const MORNING_API = 'https://api.greeninvoice.co.il/api/v1';
 const PHONE = '+972539500072';
 const EMAIL = 'refund-test@example.test';
 const APT = `982${tag}1`;
@@ -100,55 +89,124 @@ const APT = `982${tag}1`;
 const orders = await import('@/lib/db/chipOrders');
 const { setCardSession, recordCardPayment } = await import('@/lib/db/chipOrderCard');
 const { issueChipGroups } = await import('@/lib/db/chips');
-const { applyPayPlusRefundNotice } = await import('@/lib/chipOrders/refund');
-const { payplusConfigFor, readPayPlusTransaction } = await import('@/lib/payplus/client');
-const { DEFAULT_CHIP_ORDER_SETTINGS, CHIP_ORDER_REFUND_LABEL } = await import('@/lib/chipOrders/model');
-const { POST: refundRoute } = await import('@/app/api/chip-orders/[id]/refund/route');
+const { getChipOrderWindow } = await import('@/lib/db/chipOrderWindow');
+const { listReadyPickupOrders } = await import('@/lib/db/chipPickup');
+const { DEFAULT_CHIP_ORDER_SETTINGS } = await import('@/lib/chipOrders/model');
+const { chipOrderRowTags, CHIP_ORDER_TAG_LABEL } = await import('@/lib/chipOrders/orderRows');
+const cancelRoute = await import('@/app/api/chip-orders/[id]/cancel/route');
 const { POST: rejectRoute } = await import('@/app/api/chip-orders/[id]/reject/route');
 const { POST: callbackRoute } = await import('@/app/api/public/chip-order/payplus/callback/route');
+const { processDueDocuments } = await import('@/lib/chipOrders/documents');
+const { __resetMorningTokenForTests } = await import('@/lib/morning/client');
+const { __resetMorningProfileForTests } = await import('@/lib/chipOrders/documents');
 
 const SETTINGS = { ...DEFAULT_CHIP_ORDER_SETTINGS, unitPrice: PRICE };
 const made = { contact: '', orders: [] as string[], users: [] as string[] };
-const unmatchedUids: string[] = [];
 const users: Record<string, { id: string; username: string; email: string | null; full_name: string | null; role: string }> = {};
 const as = (key: string | null) => { h.user = key ? users[key]! : null; };
 let admin: { id: string; name: string };
 
-// ── PayPlus, as a stub that answers by URL path ─────────────────────────────
+// ── PayPlus and Morning, as stubs that answer by URL ────────────────────────
 
-interface Sent { origin: string; path: string; apiKey: string | null; secretKey: string | null; body: Record<string, unknown> }
-const sent: Sent[] = [];
-const elsewhere: string[] = [];
 const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+interface Call { host: 'payplus' | 'morning'; origin: string; path: string; apiKey: string | null; body: Record<string, unknown> }
+const calls: Call[] = [];
+const elsewhere: string[] = [];
 let refundSeq = 0;
-/** PayPlus refunded: data.transaction carries the refund's own uid. */
-const REFUNDED = (body: Record<string, unknown>) => {
-  refundSeq += 1;
-  return reply(200, {
-    results: { status: 'success', code: 0, description: 'operation has been success' },
-    data: { transaction: { uid: `rf-${RUN}-${refundSeq}`, number: 'R0001', type: 'internal_page', status_code: '000', amount: body.amount, currency: 'ILS', approval_number: '0654321', more_info: body.more_info } },
-  });
+let morningSeq = 0;
+/** What PayPlus answers — set per test. */
+const pp = {
+  /** Charges PayPlus shows as cancelled (transaction_is_cancelled). */
+  cancelled: new Set<string>(),
+  /** Refund transactions Transactions/View finds by more_info. */
+  refundsByMoreInfo: new Map<string, { uid: string; amount: number }[]>(),
+  /** Transactions/View does not answer (HTTP 500). */
+  viewDown: false,
+  /** The refund call: 'ok' | 'refused' | 'no_answer'. */
+  refund: 'ok' as 'ok' | 'refused' | 'no_answer',
 };
-let refundAnswer: (body: Record<string, unknown>) => Response | Promise<Response> = REFUNDED;
+const morningDocs: { type: number; emails: unknown; linked: unknown }[] = [];
+/** The charge of each payment session (what PaymentPages/ipn reports for it). */
+const sessionTx = new Map<string, { tx: string; amount: number }>();
+
 const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
   const url = new URL(input instanceof Request ? input.url : String(input));
   const headers = new Headers(init?.headers);
   const body = (init?.body ? JSON.parse(String(init.body)) : {}) as Record<string, unknown>;
+  if (url.href === MORNING_TOKEN) {
+    calls.push({ host: 'morning', origin: url.origin, path: 'token', apiKey: null, body: {} });
+    return reply(200, { accessToken: 'morning-test-token', tokenType: 'Bearer', expiresAt: Math.floor(Date.now() / 1000) + 3600 });
+  }
+  if (url.href.startsWith(MORNING_API)) {
+    const path = url.href.slice(MORNING_API.length);
+    calls.push({ host: 'morning', origin: url.origin, path, apiKey: null, body });
+    if (path === '/businesses/me') return reply(200, { type: 2, exemption: false, name: 'בניין בדיקה' });
+    if (path === '/documents/info?type=320') return reply(200, { exemption: false, vatRate: 0.18 });
+    if (path === '/documents/types?lang=he') return reply(200, [{ id: 320 }, { id: 330 }, { id: 400 }]);
+    if (path === '/documents/search') return reply(200, { items: [] });
+    if (path === '/documents' && init?.method === 'POST') {
+      morningSeq += 1;
+      const client = (body.client ?? {}) as Record<string, unknown>;
+      morningDocs.push({ type: Number(body.type), emails: client.emails, linked: body.linkedDocumentIds });
+      return reply(200, { id: randomUUID(), number: 60000 + morningSeq, type: body.type, url: { origin: `https://docs.example.test/${morningSeq}` } });
+    }
+    return reply(404, { errorMessage: `no stub for ${path}` });
+  }
   if (url.origin !== ORIGIN.sandbox && url.origin !== ORIGIN.production) {
     elsewhere.push(url.href);
     throw new TypeError(`no network in this test: ${url.href}`);
   }
-  sent.push({ origin: url.origin, path: url.pathname, apiKey: headers.get('api-key'), secretKey: headers.get('secret-key'), body });
-  if (url.pathname === '/api/v1.0/Transactions/RefundByTransactionUID') return refundAnswer(body);
+  const path = url.pathname.replace('/api/v1.0/', '');
+  calls.push({ host: 'payplus', origin: url.origin, path, apiKey: headers.get('api-key'), body });
+  if (path === 'PaymentPages/ipn') {
+    // The session's charge only — nothing PayPlus links to it here.
+    return reply(200, {
+      results: { status: 'success', code: 0, description: 'operation has been success' },
+      data: {
+        transaction_uid: sessionTx.get(String(body.payment_request_uid))?.tx ?? `charge-of-${String(body.payment_request_uid)}`,
+        type: 'Charge', status_code: '000', amount: sessionTx.get(String(body.payment_request_uid))?.amount ?? PRICE, currency: 'ILS',
+        more_info: undefined,
+      },
+    });
+  }
+  if (path === 'Transactions/View') {
+    if (pp.viewDown) return reply(500, { message: 'down in this test' });
+    if (typeof body.transaction_uid === 'string') {
+      const uid = body.transaction_uid;
+      return reply(200, {
+        results: { status: 'success', code: 0, description: 'operation has been success' },
+        data: [{ transaction: { transaction_uid: uid, transaction_type: 'Charge', status_code: '000', transaction_is_cancelled: pp.cancelled.has(uid), amount: PRICE, more_info: 'x' }, data: {} }],
+      });
+    }
+    const mi = String(body.more_info);
+    const list = pp.refundsByMoreInfo.get(mi) ?? [];
+    if (list.length === 0) return reply(200, { results: { status: 'error', code: 1, description: 'no transactions' }, data: {} });
+    return reply(200, {
+      results: { status: 'success', code: 0, description: 'operation has been success' },
+      data: list.map((r) => ({ transaction: { transaction_uid: r.uid, transaction_type: 'Refund', status_code: '000', transaction_is_cancelled: false, amount: r.amount, more_info: mi }, data: {} })),
+    });
+  }
+  if (path === 'Transactions/RefundByTransactionUID') {
+    if (pp.refund === 'no_answer') throw new TypeError('fetch failed');
+    if (pp.refund === 'refused') {
+      return reply(200, { results: { status: 'error', code: 1, description: 'הזיכוי נדחה על ידי חברת האשראי' }, data: { transaction: { status_code: '004' } } });
+    }
+    refundSeq += 1;
+    return reply(200, {
+      results: { status: 'success', code: 0, description: 'operation has been success' },
+      data: { transaction: { uid: `rf-${RUN}-${refundSeq}`, status_code: '000', amount: body.amount, currency: 'ILS', approval_number: '0654321', more_info: body.more_info } },
+    });
+  }
   throw new Error(`unexpected PayPlus path in a test: ${url.pathname}`);
 });
-const refundCalls = (tx?: string) => sent.filter((s) => s.path === '/api/v1.0/Transactions/RefundByTransactionUID' && (!tx || s.body.transaction_uid === tx));
+const payplus = (path: string) => calls.filter((c) => c.host === 'payplus' && c.path === path);
+const refundCalls = (tx?: string) => payplus('Transactions/RefundByTransactionUID').filter((c) => !tx || c.body.transaction_uid === tx);
 
 // ── Orders ──────────────────────────────────────────────────────────────────
 
-interface Made { id: string; number: number; trackingToken: string; total: number; tx: string; itemId: string }
+interface Made { id: string; number: number; total: number; tx: string; itemId: string }
 let seq = 0;
-/** An order paid by card — PayPlus's confirmed charge applied straight to the DB. */
+/** A web order paid by card — PayPlus's confirmed charge applied straight to the DB. */
 async function paidOrder(opts: { isTest?: boolean; chips?: number } = {}): Promise<Made> {
   const isTest = opts.isTest ?? false;
   const o = await orders.createChipOrder({
@@ -163,11 +221,12 @@ async function paidOrder(opts: { isTest?: boolean; chips?: number } = {}): Promi
   const session = `${RUN}-4ef0-4ef0-8ef0-${String(seq).padStart(12, '0')}`;
   expect(await setCardSession(o.id, { env, pageRequestUid: session, amount: o.total })).toBe(true);
   const tx = `tx-${RUN}-rf-${seq}`;
+  sessionTx.set(session, { tx, amount: o.total });
   expect(await recordCardPayment({
     env, orderNumber: o.orderNumber, transactionUid: tx, pageRequestUid: session, amount: o.total, approvalNumber: '0012345', last4: '9844',
   }, 'payplus_callback')).toEqual({ kind: 'paid', orderId: o.id });
   const itemId = (await pool.query<{ id: string }>(`select id from public.chip_order_items where order_id = $1`, [o.id])).rows[0]!.id;
-  return { id: o.id, number: o.orderNumber, trackingToken: o.trackingToken, total: o.total, tx, itemId };
+  return { id: o.id, number: o.orderNumber, total: o.total, tx, itemId };
 }
 let chipSeq = 0;
 /** `n` active chips issued onto the order's line. */
@@ -180,16 +239,17 @@ async function issueChips(o: Made, n: number): Promise<string[]> {
   return r.items.map((c) => c.id);
 }
 
-const refund = (orderId: string, body: unknown) => refundRoute(
-  new Request(`http://localhost/api/chip-orders/${orderId}/refund`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
-  { params: Promise.resolve({ id: orderId }) },
-);
-const reject = (orderId: string, body: unknown) => rejectRoute(
-  new Request(`http://localhost/api/chip-orders/${orderId}/reject`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
-  { params: Promise.resolve({ id: orderId }) },
-);
+const json = (path: string, body: unknown) => new Request(`http://localhost${path}`, {
+  method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+});
+const cancel = (orderId: string, body: Record<string, unknown>) =>
+  cancelRoute.POST(json(`/api/chip-orders/${orderId}/cancel`, body), { params: Promise.resolve({ id: orderId }) });
+const preview = (orderId: string) =>
+  cancelRoute.GET(new Request(`http://localhost/api/chip-orders/${orderId}/cancel`), { params: Promise.resolve({ id: orderId }) });
+const reject = (orderId: string, body: unknown) =>
+  rejectRoute(json(`/api/chip-orders/${orderId}/reject`, body), { params: Promise.resolve({ id: orderId }) });
 const sign = (body: string, key: string) => createHmac('sha256', key).update(body).digest('base64');
-function callback(payload: unknown, env: 'sandbox' | 'production') {
+function callback(payload: unknown, env: 'sandbox' | 'production' = 'production') {
   const body = JSON.stringify(payload);
   return callbackRoute(new Request(`http://localhost/api/public/chip-order/payplus/callback?env=${env}`, {
     method: 'POST',
@@ -197,6 +257,13 @@ function callback(payload: unknown, env: 'sandbox' | 'production') {
     body,
   }));
 }
+/** What a cancellation made in the PayPlus dashboard sends: the ORIGINAL
+ *  charge's notice, again (seen live 26/11/2026 — Charge, 000, no session). */
+const cancelNotice = (o: Made) => ({
+  transaction_type: 'Charge',
+  transaction: { uid: o.tx, type: 'internal_page', status_code: '000', amount: o.total, currency: 'ILS', approval_number: '0012345', more_info: String(o.number) },
+  data: { card_information: { four_digits: '9844' } },
+});
 /** A refund PayPlus reports (the callback's nested shape). */
 const refundNotice = (uid: string, amount: number, moreInfo: string | null) => ({
   transaction_type: 'Refund',
@@ -208,19 +275,23 @@ const refundNotice = (uid: string, amount: number, moreInfo: string | null) => (
 });
 
 interface OrderRow {
-  status: string; reject_reason: string | null; rejected_at: Date | null; refunded_at: Date | null; refunded_amount: number | null;
-  refund_transaction_uid: string | null; refund_via: string | null; refunded_by: string | null; refunded_by_name: string | null;
-  refund_reason: string | null; refund_status: string | null; refund_note: string | null; refund_requested_at: Date | null;
+  status: string; reject_reason: string | null; refunded_at: Date | null; refunded_amount: number | null;
+  refund_transaction_uid: string | null; refund_via: string | null; refunded_by: string | null; refund_reason: string | null;
+  refund_status: string | null; refund_note: string | null; refund_requested_at: Date | null;
+  cancel_failed_step: string | null; cancel_error: string | null; cancel_completed_at: Date | null; cancel_request_reason: string | null;
+  payplus_reversal_at: Date | null; payplus_reversal_kind: string | null;
 }
 const rowOf = async (id: string): Promise<OrderRow> => (await pool.query<OrderRow>(
-  `select status, reject_reason, rejected_at, refunded_at, refunded_amount::float8 as refunded_amount, refund_transaction_uid, refund_via,
-          refunded_by, refunded_by_name, refund_reason, refund_status, refund_note, refund_requested_at
+  `select status, reject_reason, refunded_at, refunded_amount::float8 as refunded_amount, refund_transaction_uid, refund_via,
+          refunded_by, refund_reason, refund_status, refund_note, refund_requested_at,
+          cancel_failed_step, cancel_error, cancel_completed_at, cancel_request_reason, payplus_reversal_at, payplus_reversal_kind
      from public.chip_orders where id = $1`, [id],
 )).rows[0]!;
 const docsOf = async (orderId: string) => (await pool.query<{
-  id: string; kind: string; payment_key: string; credit_of: string | null; amount: number; payment_method: string; status: string; details: Record<string, unknown>;
+  kind: string; status: string; payment_key: string; credit_of: string | null; amount: number; email_status: string | null; numbers: string[];
 }>(
-  `select id, kind, payment_key, credit_of, amount::float8 as amount, payment_method, status, details
+  `select kind, status, payment_key, credit_of, amount::float8 as amount, email_status,
+          coalesce((select array_agg(x->>'number') from jsonb_array_elements(morning_docs) x), '{}') as numbers
      from public.chip_order_documents where order_id = $1 order by created_at`, [orderId],
 )).rows;
 const audits = async (orderId: string, action: string) => (await pool.query<{ actor_user_id: string | null; metadata: Record<string, unknown> }>(
@@ -228,23 +299,30 @@ const audits = async (orderId: string, action: string) => (await pool.query<{ ac
   [orderId, action],
 )).rows;
 const messagesOf = async (orderId: string) => (await pool.query<{ kind: string; channel: string; status: string }>(
-  `select kind, channel, status from public.chip_order_notifications where order_id = $1 order by channel, created_at`, [orderId],
+  `select kind, channel, status from public.chip_order_notifications where order_id = $1 order by created_at, channel`, [orderId],
 )).rows;
-const chipRows = async (ids: string[]) => (await pool.query<{ status: string; deactivated_by: string | null; deactivation_reason: string | null }>(
-  `select status, deactivated_by, deactivation_reason from public.chips where id = any($1::uuid[]) order by chip_number`, [ids],
-)).rows;
+const chipRows = async (ids: string[]) => (await pool.query<{ status: string }>(
+  `select status from public.chips where id = any($1::uuid[]) order by chip_number`, [ids],
+)).rows.map((r) => r.status);
 const activeAdmins = async () => (await pool.query<{ id: string }>(
   `select id from public.users where is_active = true and role in ('super_admin', 'admin') order by id`,
 )).rows.map((r) => r.id);
-const alertsLike = async (pattern: string) => (await pool.query<{ user_id: string; title: string; source_entity_id: string | null }>(
-  `select user_id, title, source_entity_id from public.notifications where type = 'chip_order_alert' and dedupe_key like $1 order by user_id`, [pattern],
+const alertsLike = async (pattern: string) => (await pool.query<{ user_id: string; title: string }>(
+  `select user_id, title from public.notifications where type = 'chip_order_alert' and dedupe_key like $1 order by user_id`, [pattern],
 )).rows;
 const runAfter = async () => { for (const fn of afterQueue.splice(0)) await fn(); };
+/** Handed over by the management — as markChipOrderCollected leaves it (the handover check). */
+const collect = (o: Made) => pool.query(
+  `update public.chip_orders set status = 'collected', collected_at = now(), handed_over_via = 'management',
+          handed_over_by = $2, handed_over_by_name = 'e2e-admin'
+    where id = $1`, [o.id, admin.id]);
+/** The paid order's invoice, issued by the Morning stub — as after a real payment. */
+async function invoiceIssued(o: Made) {
+  await processDueDocuments(10, o.id);
+  expect((await docsOf(o.id)).map((x) => [x.kind, x.status])).toEqual([['invoice', 'issued']]);
+}
 
-d('refunds of card-paid chip orders through PayPlus', () => {
-  let r1: Made;
-  let r1Chips: string[] = [];
-
+d('the one refund of the chip module — web orders, "דחה", and what PayPlus reports', () => {
   beforeAll(async () => {
     vi.stubGlobal('fetch', fetchMock);
     pool = new Pool({ connectionString: TEST_URL });
@@ -272,8 +350,8 @@ d('refunds of card-paid chip orders through PayPlus', () => {
     if (!pool) return;
     const notificationIds = (await pool.query<{ id: string }>(
       `select id from public.notifications
-        where type = 'chip_order_alert' and (source_entity_id = any($1::uuid[]) or dedupe_key like any($2::text[]))`,
-      [made.orders, unmatchedUids.map((u) => `chip_refund_unmatched:${u}:%`)],
+        where type = 'chip_order_alert' and (source_entity_id = any($1::uuid[]) or dedupe_key like $2)`,
+      [made.orders, `chip_refund_unmatched:rf-unmatched-${RUN}%`],
     )).rows.map((r) => r.id);
     for (const id of notificationIds) await pool.query(`delete from public.notifications where id = $1`, [id]);
     const chipIds = (await pool.query<{ id: string }>(`select id from public.chips where contact_id = $1`, [made.contact])).rows.map((r) => r.id);
@@ -298,16 +376,21 @@ d('refunds of card-paid chip orders through PayPlus', () => {
 
   beforeEach(() => {
     for (const k of Object.keys(fakeEnv)) delete fakeEnv[k];
-    // Morning is not connected here: credit rows are queued and wait.
     Object.assign(fakeEnv, {
       APP_URL,
       PAYPLUS_MODE: 'production',
       PAYPLUS_DEV_API_KEY: DEV.api, PAYPLUS_DEV_SECRET_KEY: DEV.secret, PAYPLUS_DEV_PAGE_UID: DEV.page,
       PAYPLUS_PROD_API_KEY: PROD.api, PAYPLUS_PROD_SECRET_KEY: PROD.secret, PAYPLUS_PROD_PAGE_UID: PROD.page,
+      MORNING_API_KEY_ID: 'morning-id-refund-test', MORNING_API_KEY_SECRET: 'morning-secret-refund-test',
     });
-    refundAnswer = REFUNDED;
-    rr.failNext = false;
-    sent.length = 0;
+    __resetMorningTokenForTests();
+    __resetMorningProfileForTests();
+    pp.cancelled.clear();
+    pp.refundsByMoreInfo.clear();
+    pp.viewDown = false;
+    pp.refund = 'ok';
+    calls.length = 0;
+    morningDocs.length = 0;
     afterQueue.length = 0;
     sendWithRetry.mockClear();
     h.user = null;
@@ -315,399 +398,340 @@ d('refunds of card-paid chip orders through PayPlus', () => {
 
   // ── Who, and with what ───────────────────────────────────────────────────
 
-  it('admins only: a manager with every chips permission gets 403, nobody signed in 401 — PayPlus is not called and nothing changes', async () => {
-    r1 = await paidOrder({ chips: 2 });
+  it('"ביטול וזיכוי" of a web order is admins\' only: a manager with every chips permission gets 403, nobody signed in 401; a reason the first time (400); an unknown order 404 — PayPlus is never called', async () => {
+    const o = await paidOrder();
     for (const [key, status] of [['manager', 403], [null, 401]] as const) {
       as(key);
-      expect((await refund(r1.id, { reason: 'ניסיון זיכוי' })).status, String(key)).toBe(status);
+      expect((await cancel(o.id, { reason: 'ניסיון' })).status, String(key)).toBe(status);
+      expect((await preview(o.id)).status, String(key)).toBe(status);
     }
-    expect(refundCalls()).toEqual([]);
-    expect(await rowOf(r1.id)).toMatchObject({ status: 'paid', refunded_at: null, refund_requested_at: null, refund_status: null });
-  });
-
-  it('a reason is required (400); an unknown order is 404 — PayPlus is not called', async () => {
     as('super');
-    for (const body of [{}, { reason: '' }, { reason: ' א ' }, { reason: 5 }]) expect((await refund(r1.id, body)).status, JSON.stringify(body)).toBe(400);
-    expect((await refund('00000000-0000-4000-8000-0000000000ab', { reason: 'לא קיימת' })).status).toBe(404);
-    expect((await refund('not-an-id', { reason: 'לא קיימת' })).status).toBe(404);
+    expect((await cancel(o.id, {})).status).toBe(400);
+    expect((await cancel('00000000-0000-4000-8000-0000000000ab', { reason: 'לא קיימת' })).status).toBe(404);
+    expect(payplus('Transactions/View')).toEqual([]);
     expect(refundCalls()).toEqual([]);
-    expect((await rowOf(r1.id)).refund_requested_at).toBeNull();
+    expect(await rowOf(o.id)).toMatchObject({ status: 'paid', refunded_at: null, refund_requested_at: null, cancel_failed_step: null, cancel_request_reason: null });
   });
 
   // ── The refund ───────────────────────────────────────────────────────────
 
-  it('a production card-paid order: ONE RefundByTransactionUID call (its transaction, the amount charged, no PayPlus invoice) — then the order, its chips, the credit row, the audit row and the message', async () => {
-    r1Chips = await issueChips(r1, 2);
-    const [invoice] = await docsOf(r1.id);
-    expect(invoice).toMatchObject({ kind: 'invoice', payment_key: `card:${r1.tx}`, status: 'pending' });
-
+  it('a web order with chips: PayPlus asked FIRST (read only), ONE refund, the Morning credit (330 + 400, emailed), then the order rejected, its chips disabled, the run finished — and the orderer told', async () => {
+    const o = await paidOrder({ chips: 2 });
+    await invoiceIssued(o);
+    const chips = await issueChips(o, 2);
     as('super');
-    const res = await refund(r1.id, { reason: '  הלקוח ביקש לבטל  ' });
+    const p = (await (await preview(o.id)).json()) as { source: string; amount: number; email: string; chips: string[]; cancellable: boolean; payplus_reversal: unknown };
+    expect(p).toMatchObject({ source: 'web', amount: o.total, email: EMAIL, cancellable: true, payplus_reversal: null });
+    expect(p.chips).toHaveLength(2);
+    calls.length = 0;
+
+    const res = await cancel(o.id, { reason: '  הלקוח ביקש לבטל  ' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, kind: 'refunded', full: true, closed: true, chipsDisabled: 2 });
+    const run = (await res.json()) as { ok: boolean; source: string; refund: string; credit_numbers: string[]; credit_email: { status: string; to: string }; chips_disabled: number };
+    expect(run).toMatchObject({ ok: true, source: 'web', refund: 'refunded', chips_disabled: 2, credit_email: { status: 'sent', to: EMAIL } });
+    expect(run.credit_numbers).toHaveLength(2);
+    // The order of the calls: every question to PayPlus BEFORE the one refund.
+    const pay = calls.filter((c) => c.host === 'payplus').map((c) => c.path);
+    expect(pay.at(-1)).toBe('Transactions/RefundByTransactionUID');
+    expect(pay.filter((x) => x === 'Transactions/RefundByTransactionUID')).toHaveLength(1);
+    expect(pay.slice(0, -1).every((x) => x === 'Transactions/View' || x === 'PaymentPages/ipn')).toBe(true);
+    expect(payplus('Transactions/View')[0]!.body).toEqual({ transaction_uid: o.tx });
+    const call = refundCalls(o.tx)[0]!;
+    expect(call).toMatchObject({ origin: ORIGIN.production, apiKey: PROD.api });
+    expect(call.body).toMatchObject({ transaction_uid: o.tx, amount: o.total, more_info: `refund:${o.number}` });
 
-    expect(refundCalls()).toHaveLength(1);
-    const call = refundCalls()[0]!;
-    expect(call).toMatchObject({ origin: ORIGIN.production, apiKey: PROD.api, secretKey: PROD.secret });
-    expect(call.body).toEqual({ transaction_uid: r1.tx, amount: r1.total, more_info: `refund:${r1.number}`, initial_invoice: false });
-    const refundUid = `rf-${RUN}-${refundSeq}`;
-
-    const row = await rowOf(r1.id);
+    const row = await rowOf(o.id);
     expect(row).toMatchObject({
-      status: 'rejected', reject_reason: 'הלקוח ביקש לבטל', refunded_amount: r1.total, refund_transaction_uid: refundUid,
-      refund_via: 'admin', refunded_by: users.super!.id, refunded_by_name: 'e2e-admin', refund_reason: 'הלקוח ביקש לבטל',
-      refund_status: 'refunded', refund_note: null, refund_requested_at: null,
+      status: 'rejected', reject_reason: 'הלקוח ביקש לבטל', refunded_amount: o.total, refund_via: 'admin', refunded_by: admin.id,
+      refund_status: 'refunded', refund_reason: 'הלקוח ביקש לבטל', refund_requested_at: null, cancel_failed_step: null,
     });
-    expect(row.refunded_at).not.toBeNull();
-    expect(row.rejected_at).not.toBeNull();
-
-    // Its active chips are disabled — never deleted — by whoever refunded.
-    expect(await chipRows(r1Chips)).toEqual([
-      { status: 'inactive', deactivated_by: users.super!.id, deactivation_reason: 'unknown' },
-      { status: 'inactive', deactivated_by: users.super!.id, deactivation_reason: 'unknown' },
-    ]);
-    const note = (await pool.query(`select new_value->>'note' as note from public.chip_events where chip_id = $1 and event_type = 'deactivated'`, [r1Chips[0]])).rows[0].note;
-    expect(note).toBe(`זיכוי הזמנה ${r1.number}`);
-
-    // ONE credit row, crediting the invoice row.
-    const rows = await docsOf(r1.id);
-    expect(rows).toHaveLength(2);
-    expect(rows[1]).toMatchObject({ kind: 'credit', payment_key: `refund:${refundUid}`, credit_of: invoice!.id, amount: r1.total, payment_method: 'card', status: 'pending' });
-    expect(rows[1]!.details).toMatchObject({ refund_uid: refundUid, via: 'admin' });
-
-    expect(await audits(r1.id, 'refunded')).toEqual([{
-      actor_user_id: users.super!.id,
-      metadata: {
-        via: 'admin', refund_uid: refundUid, amount: r1.total, total_refunded: r1.total, full: true, closed: true,
-        chips_disabled: 2, reason: 'הלקוח ביקש לבטל', env: 'production',
-      },
-    }]);
-
-    // The customer is told after the answer.
-    expect(await messagesOf(r1.id)).toEqual([]);
-    expect(afterQueue).toHaveLength(1);
+    expect(row.cancel_completed_at).toBeInstanceOf(Date);
+    expect(await chipRows(chips)).toEqual(['inactive', 'inactive']);
+    const docs = await docsOf(o.id);
+    expect(docs.map((x) => [x.kind, x.status, x.email_status])).toEqual([['invoice', 'issued', 'sent'], ['credit', 'issued', 'sent']]);
+    expect(morningDocs.map((x) => x.type)).toEqual([320, 330, 400]);
+    expect((await audits(o.id, 'cancel_credit_started'))).toHaveLength(1);
+    expect((await audits(o.id, 'cancel_credit_done'))[0]!.metadata).toMatchObject({ source: 'web', chips_disabled: 2, status_before: 'paid' });
+    // The orderer is told, as "זיכוי" told them.
     await runAfter();
-    expect(await messagesOf(r1.id)).toEqual([
-      { kind: 'refunded', channel: 'email', status: 'sent' },
-      { kind: 'refunded', channel: 'whatsapp', status: 'skipped' },
-    ]);
-    const mail = sendWithRetry.mock.calls.find((c) => c[0].to === EMAIL)![0];
-    expect(mail.subject).toContain('זוכתה');
-    expect(mail.subject).toContain(`הזמנה ${r1.number}`);
-    expect(mail.text).toContain(`₪${r1.total}`);
-    expect(mail.text).toContain('ההזמנה בוטלה.');
+    expect(sendWithRetry.mock.calls.some((c) => c[0].to === EMAIL)).toBe(true);
+    expect((await messagesOf(o.id)).filter((m) => m.kind === 'refunded').length).toBeGreaterThan(0);
+
+    // Done once: again → 409, and no PayPlus call at all.
+    calls.length = 0;
+    expect((await cancel(o.id, { reason: 'שוב' })).status).toBe(409);
+    expect(calls.filter((c) => c.host === 'payplus')).toEqual([]);
+    const after = (await (await preview(o.id)).json()) as { cancellable: boolean };
+    expect(after.cancellable).toBe(false);
   });
 
-  it('a second "זיכוי" → 409 already_refunded — and NO second PayPlus call', async () => {
+  it('two presses at the same moment → exactly ONE refund call; the other is refused (409)', async () => {
+    const o = await paidOrder();
+    await invoiceIssued(o);
     as('super');
-    const res = await refund(r1.id, { reason: 'שוב' });
-    expect(res.status).toBe(409);
-    expect((await res.json()).error).toBe('ההזמנה כבר זוכתה');
-    expect(refundCalls()).toEqual([]);
-    expect((await docsOf(r1.id)).filter((r) => r.kind === 'credit')).toHaveLength(1);
-    expect(await audits(r1.id, 'refunded')).toHaveLength(1);
-    expect(afterQueue).toHaveLength(0);
-  });
-
-  it('two "זיכוי" at the same moment → exactly ONE PayPlus call; the other is refused (409)', async () => {
-    const o = await paidOrder({ chips: 1 });
-    refundAnswer = async (body) => { await new Promise((r) => setTimeout(r, 150)); return REFUNDED(body); };
-    as('super');
-    const answers = await Promise.all([refund(o.id, { reason: 'לחיצה כפולה' }), refund(o.id, { reason: 'לחיצה כפולה' })]);
+    const answers = await Promise.all([cancel(o.id, { reason: 'לחיצה כפולה' }), cancel(o.id, { reason: 'לחיצה כפולה' })]);
     expect(answers.map((r) => r.status).sort()).toEqual([200, 409]);
     expect(refundCalls(o.tx)).toHaveLength(1);
-    expect((await docsOf(o.id)).filter((r) => r.kind === 'credit')).toHaveLength(1);
-    expect(await audits(o.id, 'refunded')).toHaveLength(1);
-    expect(await rowOf(o.id)).toMatchObject({ refund_status: 'refunded', refund_requested_at: null });
+    expect((await rowOf(o.id)).status).toBe('rejected');
   });
 
-  it('a COLLECTED order stays collected: refunded, its chips disabled, the reason kept on the refund (not as a rejection)', async () => {
+  it('a COLLECTED web order (handed over): the same steps — refunded, credited, its chips disabled — and it stays collected, finished', async () => {
     const o = await paidOrder({ chips: 1 });
+    await invoiceIssued(o);
     const chips = await issueChips(o, 1);
-    await pool.query(`update public.chip_orders set status = 'collected', ready_at = now(), collected_at = now() where id = $1`, [o.id]);
+    await collect(o);
     as('super');
-    const res = await refund(o.id, { reason: 'החזרת צ׳יפ' });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, kind: 'refunded', full: true, closed: false, chipsDisabled: 1 });
-    expect(await rowOf(o.id)).toMatchObject({
-      status: 'collected', reject_reason: null, rejected_at: null, refund_reason: 'החזרת צ׳יפ', refund_status: 'refunded', refund_via: 'admin',
-    });
-    expect((await chipRows(chips))[0]!.status).toBe('inactive');
-    await runAfter();
-    expect((await messagesOf(o.id)).map((m) => m.kind)).toEqual(['refunded', 'refunded']);
-    expect(sendWithRetry.mock.calls.find((c) => c[0].to === EMAIL)![0].text).toContain('הצ׳יפים של ההזמנה הושבתו.');
-  });
-
-  it('PayPlus REFUSES → manual_required with its words; nothing is recorded or closed; a later "זיכוי" goes through', async () => {
-    const o = await paidOrder({ chips: 1 });
-    refundAnswer = () => reply(200, { results: { status: 'error', code: 1, description: 'הזיכוי נדחה על ידי חברת האשראי' }, data: { transaction: { status_code: '004' } } });
-    as('super');
-    let res = await refund(o.id, { reason: 'ביטול' });
-    expect(res.status).toBe(502);
-    const body = await res.json();
-    expect(body).toMatchObject({ ok: false, kind: 'manual_required' });
-    expect(body.note).toBe('PayPlus סירב לזיכוי: הזיכוי נדחה על ידי חברת האשראי (קוד 004)');
-    expect(await rowOf(o.id)).toMatchObject({
-      status: 'paid', refunded_at: null, refund_status: 'manual_required', refund_note: body.note, refund_requested_at: null, refund_transaction_uid: null,
-    });
-    expect((await docsOf(o.id)).filter((r) => r.kind === 'credit')).toEqual([]);
-    expect(await audits(o.id, 'refunded')).toEqual([]);
-    expect(afterQueue).toHaveLength(0);
-
-    // A refusal by HTTP status (4xx) is a refusal too.
-    refundAnswer = () => reply(422, { message: 'amount is bigger than the original transaction' });
-    res = await refund(o.id, { reason: 'ביטול' });
-    expect(res.status).toBe(502);
-    expect((await res.json()).note).toContain('amount is bigger than the original transaction');
-    expect((await rowOf(o.id)).refund_requested_at).toBeNull();
-
-    // Not in flight: a later press is sent, and records.
-    refundAnswer = REFUNDED;
-    res = await refund(o.id, { reason: 'ביטול' });
-    expect(res.status).toBe(200);
-    expect(await rowOf(o.id)).toMatchObject({ status: 'rejected', refund_status: 'refunded', refund_note: null });
-    expect(refundCalls(o.tx)).toHaveLength(3);
-  });
-
-  it('NO answer → the outcome is UNKNOWN: kept in flight (a press within ten minutes → 409, no second call), every admin alerted; after ten minutes a person may press again', async () => {
-    const o = await paidOrder({ chips: 1 });
-    refundAnswer = () => { throw new TypeError('fetch failed'); };
-    as('super');
-    let res = await refund(o.id, { reason: 'ביטול' });
-    expect(res.status).toBe(502);
-    const body = await res.json();
-    expect(body).toMatchObject({ ok: false, kind: 'unknown' });
-    expect(body.note).toContain('לא התקבלה תשובה מ-PayPlus');
+    const run = (await (await cancel(o.id, { reason: 'החזרת צ׳יפ' })).json()) as { ok: boolean; chips_disabled: number };
+    expect(run).toMatchObject({ ok: true, chips_disabled: 1 });
+    expect(await chipRows(chips)).toEqual(['inactive']);
     const row = await rowOf(o.id);
-    expect(row).toMatchObject({ status: 'paid', refunded_at: null, refund_status: 'manual_required', refund_note: body.note });
-    expect(row.refund_requested_at).not.toBeNull();
-    const alerts = await alertsLike(`chip_refund_unknown:${o.id}:%`);
-    expect(alerts.map((a) => a.user_id).sort()).toEqual(await activeAdmins());
-    expect(alerts[0]!.title).toContain(`הזמנה ${o.number}`);
+    expect(row).toMatchObject({ status: 'collected', refund_status: 'refunded', refund_reason: 'החזרת צ׳יפ', reject_reason: null });
+    expect(row.cancel_completed_at).toBeInstanceOf(Date);
+    expect((await audits(o.id, 'cancel_credit_done'))[0]!.metadata).toMatchObject({ status_before: 'collected', closed: false });
+    expect((await cancel(o.id, {})).status).toBe(409);
+  });
 
-    // Pressed again at once: refused, and PayPlus is not asked a second time.
-    refundAnswer = REFUNDED;
-    res = await refund(o.id, { reason: 'ביטול' });
-    expect(res.status).toBe(409);
-    expect((await res.json()).error).toContain('כבר נשלחה ל-PayPlus');
+  it('a web order refunded in full before 27/11/2026 (the old "זיכוי") is not run again — 409, nothing sent', async () => {
+    const o = await paidOrder();
+    await pool.query(
+      `update public.chip_orders set refunded_at = now(), refunded_amount = total, refund_status = 'refunded', refund_via = 'admin',
+              refund_transaction_uid = $2 where id = $1`, [o.id, `rf-old-${RUN}`]);
+    as('super');
+    expect((await cancel(o.id, { reason: 'שוב' })).status).toBe(409);
+    expect(calls.filter((c) => c.host === 'payplus')).toEqual([]);
+  });
+
+  it('PayPlus REFUSES → the run stops at the refund with PayPlus\'s words (nothing recorded, nothing closed); "נסה שוב" sends the refund once and finishes', async () => {
+    const o = await paidOrder();
+    await invoiceIssued(o);
+    as('super');
+    pp.refund = 'refused';
+    let run = (await (await cancel(o.id, { reason: 'ביטול' })).json()) as { ok: boolean; failed_step: string; message: string };
+    expect(run).toMatchObject({ ok: false, failed_step: 'refund' });
+    expect(run.message).toContain('הזיכוי נדחה על ידי חברת האשראי');
+    expect(await rowOf(o.id)).toMatchObject({ status: 'paid', refunded_at: null, refund_status: 'manual_required', refund_requested_at: null, cancel_failed_step: 'refund' });
+    expect((await docsOf(o.id)).map((x) => x.kind)).toEqual(['invoice']);
     expect(refundCalls(o.tx)).toHaveLength(1);
-    expect((await docsOf(o.id)).filter((r) => r.kind === 'credit')).toEqual([]);
+    // The window and the row say where it stopped.
+    const win = (await getChipOrderWindow(o.itemId))!;
+    expect(win.order).toMatchObject({ cancel_failed_step: 'refund', cancel_completed: false });
+    expect((await orders.listOpenChipOrderRows()).find((r) => r.order_id === o.id)).toMatchObject({ cancel_failed_step: 'refund' });
 
-    // Ten minutes on, with no answer recorded, a person may try again.
-    await pool.query(`update public.chip_orders set refund_requested_at = now() - interval '11 minutes' where id = $1`, [o.id]);
-    res = await refund(o.id, { reason: 'ביטול' });
-    expect(res.status).toBe(200);
+    pp.refund = 'ok';
+    run = (await (await cancel(o.id, {})).json()) as { ok: boolean; failed_step: string; message: string };
+    expect(run.ok).toBe(true);
     expect(refundCalls(o.tx)).toHaveLength(2);
-    expect(await rowOf(o.id)).toMatchObject({ refund_status: 'refunded', refund_requested_at: null });
+    expect(await rowOf(o.id)).toMatchObject({ status: 'rejected', refund_status: 'refunded', cancel_failed_step: null, cancel_request_reason: 'ביטול' });
   });
 
-  it('a TEST order paid in the sandbox is refunded through the SANDBOX (its keys) — and never gets a document row', async () => {
-    const t = await paidOrder({ isTest: true, chips: 2 });
-    expect(await docsOf(t.id)).toEqual([]);
+  it('NO answer to the refund → stopped, kept "sent"; a retry — at once, and after ten minutes — NEVER sends a second refund; once PayPlus shows ours, the retry records it and finishes', async () => {
+    const o = await paidOrder();
+    await invoiceIssued(o);
     as('super');
-    const res = await refund(t.id, { reason: 'בדיקת זיכוי' });
-    expect(res.status).toBe(200);
-    expect(refundCalls(t.tx)).toHaveLength(1);
-    expect(refundCalls(t.tx)[0]).toMatchObject({ origin: ORIGIN.sandbox, apiKey: DEV.api, secretKey: DEV.secret });
-    expect(refundCalls(t.tx)[0]!.body).toMatchObject({ amount: t.total, initial_invoice: false });
-    expect(await rowOf(t.id)).toMatchObject({ status: 'rejected', refund_status: 'refunded', refunded_amount: t.total });
-    expect(await docsOf(t.id)).toEqual([]);
-    expect((await audits(t.id, 'refunded'))[0]!.metadata).toMatchObject({ env: 'sandbox' });
-  });
-
-  it('"דחה" of a card-paid order refunds through the same engine (via reject), with its credit row and the rejection message', async () => {
-    const o = await paidOrder({ chips: 1 });
-    const [invoice] = await docsOf(o.id);
-    as('super');
-    const res = await reject(o.id, { reason: 'אין מלאי צ׳יפים' });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, refund_status: 'refunded', refund_label: CHIP_ORDER_REFUND_LABEL.refunded, refund_note: null });
+    pp.refund = 'no_answer';
+    let run = (await (await cancel(o.id, { reason: 'ביטול' })).json()) as { ok: boolean; failed_step: string; message: string };
+    expect(run).toMatchObject({ ok: false, failed_step: 'refund' });
+    expect((await rowOf(o.id)).refund_requested_at).toBeInstanceOf(Date);
     expect(refundCalls(o.tx)).toHaveLength(1);
-    expect(refundCalls(o.tx)[0]!.body).toMatchObject({ amount: o.total, initial_invoice: false });
-    expect(await rowOf(o.id)).toMatchObject({
-      status: 'rejected', reject_reason: 'אין מלאי צ׳יפים', refund_via: 'reject', refund_status: 'refunded', refunded_by: users.super!.id,
-      refunded_amount: o.total,
-    });
-    const credit = (await docsOf(o.id)).filter((r) => r.kind === 'credit');
-    expect(credit).toHaveLength(1);
-    expect(credit[0]).toMatchObject({ credit_of: invoice!.id, payment_method: 'card', amount: o.total });
-    await runAfter();
-    expect((await audits(o.id, 'rejected'))[0]!.metadata).toMatchObject({ reason: 'אין מלאי צ׳יפים', refund_status: 'refunded' });
-    expect((await messagesOf(o.id)).map((m) => m.kind)).toEqual(['rejected', 'rejected']);
+    expect((await alertsLike(`chip_refund_unknown:${o.id}:%`)).map((a) => a.user_id)).toEqual(await activeAdmins());
+    // The window: still "on its way", whatever the time.
+    expect((await getChipOrderWindow(o.itemId))!.order.refund_in_flight).toBe(true);
 
-    // PayPlus refusing the refund of a rejection: the rejection stands, the refund is for a person.
-    const o2 = await paidOrder({ chips: 1 });
-    refundAnswer = () => reply(200, { results: { status: 'error', description: 'סירוב' }, data: { transaction: { status_code: '033' } } });
-    const res2 = await reject(o2.id, { reason: 'אין מלאי צ׳יפים' });
-    expect(res2.status).toBe(200);
-    expect(await res2.json()).toMatchObject({ ok: true, refund_status: 'manual_required', refund_note: expect.stringContaining('סירוב') });
-    expect(await rowOf(o2.id)).toMatchObject({ status: 'rejected', refund_status: 'manual_required', refunded_at: null });
-    expect((await docsOf(o2.id)).filter((r) => r.kind === 'credit')).toEqual([]);
+    pp.refund = 'ok';
+    // At once: the call may still be answered — wait.
+    run = (await (await cancel(o.id, {})).json()) as { ok: boolean; failed_step: string; message: string };
+    expect(run).toMatchObject({ ok: false, failed_step: 'refund' });
+    expect(run.message).toContain('ממתינה לתשובה');
+    // A minute later: PayPlus shows nothing → never sent again.
+    await pool.query(`update public.chip_orders set refund_requested_at = now() - interval '1 minute' where id = $1`, [o.id]);
+    run = (await (await cancel(o.id, {})).json()) as { ok: boolean; failed_step: string; message: string };
+    expect(run).toMatchObject({ ok: false, failed_step: 'refund' });
+    expect(run.message).toContain('לא נשלח זיכוי נוסף');
+    // Eleven minutes later (the old "זיכוי" sent a second refund here): still never.
+    await pool.query(`update public.chip_orders set refund_requested_at = now() - interval '11 minutes' where id = $1`, [o.id]);
+    run = (await (await cancel(o.id, {})).json()) as { ok: boolean; failed_step: string; message: string };
+    expect(run).toMatchObject({ ok: false, failed_step: 'refund' });
+    expect(refundCalls(o.tx)).toHaveLength(1);
+    expect((await getChipOrderWindow(o.itemId))!.order.refund_in_flight).toBe(true);
+
+    // PayPlus shows our refund (more_info "refund:<n>"); its own notice is not
+    // taken for a refund made in the dashboard — no warning.
+    pp.refundsByMoreInfo.set(`refund:${o.number}`, [{ uid: `rf-ours-${RUN}`, amount: o.total }]);
+    expect((await callback(refundNotice(`rf-ours-${RUN}`, o.total, `refund:${o.number}`))).status).toBe(200);
+    expect((await rowOf(o.id)).payplus_reversal_kind).toBeNull();
+    // "נסה שוב" → recorded as ours, finished.
+    run = (await (await cancel(o.id, {})).json()) as { ok: boolean; failed_step: string; message: string };
+    expect(run.ok).toBe(true);
+    expect(refundCalls(o.tx)).toHaveLength(1);
+    const row = await rowOf(o.id);
+    expect(row).toMatchObject({ status: 'rejected', refund_transaction_uid: `rf-ours-${RUN}`, refund_via: 'admin', refund_status: 'refunded' });
+    expect(row.refund_note).toContain('נמצא ב-PayPlus');
   });
 
-  // ── Refunds PayPlus reports (the callback) ───────────────────────────────
-
-  it('a signed Refund notice (000, more_info = the order number) is recorded ONCE — via payplus, with its credit row; the same notice again changes nothing', async () => {
-    const o = await paidOrder({ chips: 2 });
-    const [invoice] = await docsOf(o.id);
-    const uid = `rfn-${RUN}-full`;
-    const notice = refundNotice(uid, o.total, String(o.number));
-    expect((await callback(notice, 'production')).status).toBe(200);
-    const row = await rowOf(o.id);
-    expect(row).toMatchObject({
-      status: 'rejected', reject_reason: 'זיכוי', refunded_amount: o.total, refund_transaction_uid: uid, refund_via: 'payplus',
-      refunded_by: null, refunded_by_name: null, refund_status: 'refunded', refund_requested_at: null,
-    });
-    const credit = (await docsOf(o.id)).filter((r) => r.kind === 'credit');
-    expect(credit).toHaveLength(1);
-    expect(credit[0]).toMatchObject({ payment_key: `refund:${uid}`, credit_of: invoice!.id, amount: o.total, payment_method: 'card' });
-    expect(credit[0]!.details).toMatchObject({ via: 'payplus', refund_uid: uid });
-    expect(await audits(o.id, 'refunded')).toHaveLength(1);
-    expect((await audits(o.id, 'refunded'))[0]!.actor_user_id).toBeNull();
-    // A production refund made outside the system: every admin is told (its chips were not disabled).
-    expect((await alertsLike(`chip_refund_payplus:${uid}:%`)).map((a) => a.user_id).sort()).toEqual(await activeAdmins());
-    expect(afterQueue).toHaveLength(1);
-    await runAfter();
-    expect((await messagesOf(o.id)).map((m) => m.kind)).toEqual(['refunded', 'refunded']);
-
-    for (let i = 0; i < 2; i++) expect((await callback(notice, 'production')).status).toBe(200);
-    expect((await docsOf(o.id)).filter((r) => r.kind === 'credit')).toHaveLength(1);
-    expect(await audits(o.id, 'refunded')).toHaveLength(1);
-    expect(afterQueue).toHaveLength(0);
-    expect((await rowOf(o.id)).refunded_amount).toBe(o.total);
+  it('PayPlus cannot be asked → nothing is sent; the run stops at the refund', async () => {
+    const o = await paidOrder();
+    as('super');
+    pp.viewDown = true;
+    const run = (await (await cancel(o.id, { reason: 'ביטול' })).json()) as { ok: boolean; failed_step: string; message: string };
+    expect(run).toMatchObject({ ok: false, failed_step: 'refund' });
+    expect(run.message).toContain('לא נשלח זיכוי');
     expect(refundCalls()).toEqual([]);
+    expect((await rowOf(o.id)).refund_requested_at).toBeNull();
   });
 
-  it('the notice of OUR OWN refund (its uid is on the order) → "already": nothing new', async () => {
-    const own = (await rowOf(r1.id)).refund_transaction_uid!;
-    const tx = readPayPlusTransaction(refundNotice(own, r1.total, String(r1.number)))!;
-    expect(await applyPayPlusRefundNotice(payplusConfigFor('production')!, tx)).toEqual({ kind: 'already' });
-    expect((await callback(refundNotice(own, r1.total, String(r1.number)), 'production')).status).toBe(200);
-    expect((await docsOf(r1.id)).filter((r) => r.kind === 'credit')).toHaveLength(1);
-    expect(await audits(r1.id, 'refunded')).toHaveLength(1);
-    expect(afterQueue).toHaveLength(0);
-  });
-
-  it('a notice that names no order → ignored, and ONE alert per admin (a repeat alerts nobody again)', async () => {
-    const uid = `rfn-${RUN}-nonum`;
-    unmatchedUids.push(uid);
-    const tx = readPayPlusTransaction(refundNotice(uid, 55, null))!;
-    expect(await applyPayPlusRefundNotice(payplusConfigFor('production')!, tx)).toEqual({ kind: 'ignored', why: 'no_order_number' });
-    expect((await callback(refundNotice(uid, 55, null), 'production')).status).toBe(200);
-    const alerts = await alertsLike(`chip_refund_unmatched:${uid}:%`);
-    expect(alerts.map((a) => a.user_id).sort()).toEqual(await activeAdmins());
-    expect(alerts[0]).toMatchObject({ source_entity_id: null });
-    expect(afterQueue).toHaveLength(0);
-  });
-
-  it('a notice while OUR refund of that order is in flight → 503 (PayPlus sends it again), nothing recorded; once it is not in flight, it records', async () => {
-    const o = await paidOrder({ chips: 1 });
-    await pool.query(`update public.chip_orders set refund_requested_at = now() where id = $1`, [o.id]);
-    const notice = refundNotice(`rfn-${RUN}-inflight`, o.total, String(o.number));
-    const res = await callback(notice, 'production');
-    expect(res.status).toBe(503);
-    expect(await res.json()).toMatchObject({ ok: false });
-    expect(await rowOf(o.id)).toMatchObject({ refunded_at: null, refund_status: null });
-    expect((await docsOf(o.id)).filter((r) => r.kind === 'credit')).toEqual([]);
-
-    await pool.query(`update public.chip_orders set refund_requested_at = null where id = $1`, [o.id]);
-    expect((await callback(notice, 'production')).status).toBe(200);
-    expect(await rowOf(o.id)).toMatchObject({ refund_via: 'payplus', refund_status: 'refunded' });
-  });
-
-  // Regression (review, 26/11): our refund call got NO answer (the outcome is
-  // unknown, kept in flight for ten minutes). PayPlus's own signed notice of
-  // that refund, arriving after the call is over, is recorded at once — it was
-  // refused (503) for the rest of the window, and PayPlus's resending is not
-  // documented.
-  it('our "זיכוי" got no answer → PayPlus\'s own notice of that refund, once the call is over, is RECORDED (not 503); a notice that does not fit what is left still waits', async () => {
-    const o = await paidOrder({ chips: 1 });
-    refundAnswer = () => { throw new TypeError('fetch failed'); };
+  it('a TEST order paid in the sandbox is refunded through the SANDBOX (its keys) — and never gets a document', async () => {
+    const t = await paidOrder({ isTest: true });
     as('super');
-    const res = await refund(o.id, { reason: 'ביטול' });
-    expect(res.status).toBe(502);
-    expect((await res.json()).kind).toBe('unknown');
-    expect((await rowOf(o.id)).refund_requested_at).not.toBeNull();
-    // The call is long over (PayPlus's timeout is 20 seconds); still in flight.
-    await pool.query(`update public.chip_orders set refund_requested_at = now() - interval '2 minutes' where id = $1`, [o.id]);
+    const run = (await (await cancel(t.id, { reason: 'בדיקת זיכוי' })).json()) as { ok: boolean; credit_numbers: string[] };
+    expect(run).toMatchObject({ ok: true, credit_numbers: [] });
+    expect(refundCalls(t.tx)[0]).toMatchObject({ origin: ORIGIN.sandbox, apiKey: DEV.api });
+    expect(await docsOf(t.id)).toEqual([]);
+    expect((await rowOf(t.id)).status).toBe('rejected');
+  });
 
-    // More than was charged: not that refund — it waits, nothing is recorded.
-    expect((await callback(refundNotice(`rfn-${RUN}-unk-big`, o.total + 1, String(o.number)), 'production')).status).toBe(503);
-    expect(await rowOf(o.id)).toMatchObject({ refunded_at: null, refund_status: 'manual_required' });
+  // ── "דחה" ────────────────────────────────────────────────────────────────
 
-    const uid = `rfn-${RUN}-unk`;
-    expect((await callback(refundNotice(uid, o.total, `refund:${o.number}`), 'production')).status).toBe(200);
-    expect(await rowOf(o.id)).toMatchObject({
-      refunded_amount: o.total, refund_transaction_uid: uid, refund_status: 'refunded', refund_note: null, refund_requested_at: null,
-    });
-    const credit = (await docsOf(o.id)).filter((r) => r.kind === 'credit');
-    expect(credit).toHaveLength(1);
-    expect(credit[0]).toMatchObject({ payment_key: `refund:${uid}`, amount: o.total, payment_method: 'card' });
-    // Recorded: a second "זיכוי" is refused, PayPlus is not asked again.
-    refundAnswer = REFUNDED;
-    expect((await refund(o.id, { reason: 'שוב' })).status).toBe(409);
+  it('"דחה" of a card-paid web order (a manager) runs the same steps: PayPlus asked first, one refund, the credit — and the rejection message', async () => {
+    const o = await paidOrder();
+    await invoiceIssued(o);
+    as('manager');
+    const res = await reject(o.id, { reason: 'אין מלאי' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, refund_status: 'refunded', failed_step: null });
+    expect(payplus('Transactions/View').length).toBeGreaterThan(0);
     expect(refundCalls(o.tx)).toHaveLength(1);
-  });
-
-  // Regression (review, 26/11): PayPlus refunded, then recording it threw.
-  it('PayPlus REFUNDED but recording it failed → never a 500: manual_required naming the refund, kept in flight, every admin alerted — no second refund call', async () => {
-    const o = await paidOrder({ chips: 1 });
-    rr.failNext = true;
-    as('super');
-    const res = await refund(o.id, { reason: 'ביטול' });
-    expect(res.status).toBe(502);
-    const body = await res.json();
-    expect(body).toMatchObject({ ok: false, kind: 'manual_required' });
-    const refundUid = `rf-${RUN}-${refundSeq}`;
-    expect(body.note).toContain(refundUid);
-    expect(body.note).toContain('אין לזכות שוב');
     const row = await rowOf(o.id);
-    expect(row).toMatchObject({ refunded_at: null, refund_status: 'manual_required', refund_note: body.note });
-    expect(row.refund_requested_at).not.toBeNull();
-    const alerts = await alertsLike(`chip_refund_unrecorded:${refundUid}:%`);
-    expect(alerts.map((a) => a.user_id).sort()).toEqual(await activeAdmins());
-    expect(alerts[0]!.title).toContain(`הזמנה ${o.number}`);
-    // Pressed again: refused — PayPlus is not asked a second time.
-    expect((await refund(o.id, { reason: 'ביטול' })).status).toBe(409);
+    expect(row).toMatchObject({ status: 'rejected', reject_reason: 'אין מלאי', refund_via: 'reject', refund_status: 'refunded', refunded_by: users.manager!.id });
+    expect(row.cancel_completed_at).toBeInstanceOf(Date);
+    expect((await docsOf(o.id)).map((x) => [x.kind, x.status])).toEqual([['invoice', 'issued'], ['credit', 'issued']]);
+    await runAfter();
+    expect((await messagesOf(o.id)).some((m) => m.kind === 'rejected')).toBe(true);
+  });
+
+  it('"דחה" while PayPlus does not answer: the order is rejected and stops at the refund (manual_required, the step shown); an admin\'s "המשך" finishes it — one refund in all', async () => {
+    const o = await paidOrder();
+    await invoiceIssued(o);
+    as('manager');
+    pp.viewDown = true;
+    const res = await reject(o.id, { reason: 'אין מלאי' });
+    expect(await res.json()).toMatchObject({ ok: true, refund_status: 'manual_required', failed_step: 'refund' });
+    expect(await rowOf(o.id)).toMatchObject({ status: 'rejected', cancel_failed_step: 'refund', refund_status: 'manual_required' });
+    expect(refundCalls()).toEqual([]);
+    expect((await orders.listOpenChipOrderRows()).find((r) => r.order_id === o.id)).toMatchObject({ status: 'rejected', cancel_failed_step: 'refund' });
+    pp.viewDown = false;
+    as('super');
+    const run = (await (await cancel(o.id, {})).json()) as { ok: boolean };
+    expect(run.ok).toBe(true);
     expect(refundCalls(o.tx)).toHaveLength(1);
-    // PayPlus's own notice of that refund then records it.
-    await pool.query(`update public.chip_orders set refund_requested_at = now() - interval '2 minutes' where id = $1`, [o.id]);
-    expect((await callback(refundNotice(refundUid, o.total, `refund:${o.number}`), 'production')).status).toBe(200);
-    expect(await rowOf(o.id)).toMatchObject({ refund_transaction_uid: refundUid, refund_status: 'refunded', refund_requested_at: null });
+    expect(await rowOf(o.id)).toMatchObject({ status: 'rejected', reject_reason: 'אין מלאי', refund_status: 'refunded', refund_via: 'admin' });
   });
 
-  it('two PARTIAL refunds reported for a production order add up; the second closes it; each is recorded once', async () => {
-    const o = await paidOrder({ chips: 3 }); // 120
-    const a = refundNotice(`rfn-${RUN}-pa`, 30, String(o.number));
-    const b = refundNotice(`rfn-${RUN}-pb`, o.total - 30, String(o.number));
-    expect((await callback(a, 'production')).status).toBe(200);
-    expect(await rowOf(o.id)).toMatchObject({ status: 'paid', refund_status: 'partial', refunded_amount: 30 });
-    expect((await callback(b, 'production')).status).toBe(200);
-    expect(await rowOf(o.id)).toMatchObject({ status: 'rejected', refund_status: 'refunded', refunded_amount: o.total });
-    // The second notice again: its credit row says it was recorded.
-    expect((await callback(b, 'production')).status).toBe(200);
-    expect(await rowOf(o.id)).toMatchObject({ refunded_amount: o.total });
-    const credits = (await docsOf(o.id)).filter((r) => r.kind === 'credit');
-    expect(credits.map((c) => [c.payment_key, c.amount])).toEqual([[`refund:rfn-${RUN}-pa`, 30], [`refund:rfn-${RUN}-pb`, o.total - 30]]);
-    expect(await audits(o.id, 'refunded')).toHaveLength(2);
+  // ── What PayPlus reports ─────────────────────────────────────────────────
+
+  it('a cancellation in the PayPlus DASHBOARD (its notice looks like the charge): PayPlus is asked, NOTHING is recorded, NO Morning document — the order says "בוטל ב-PayPlus — נדרש ביטול וזיכוי", every admin is told once; "ביטול וזיכוי" sends no refund and finishes it', async () => {
+    const o = await paidOrder({ chips: 1 });
+    await invoiceIssued(o);
+    const chips = await issueChips(o, 1);
+    await collect(o);
+    pp.cancelled.add(o.tx);
+    expect((await callback(cancelNotice(o))).status).toBe(200);
+    let row = await rowOf(o.id);
+    expect(row).toMatchObject({ status: 'collected', payplus_reversal_kind: 'cancelled', refunded_at: null, refund_status: null });
+    expect(row.payplus_reversal_at).toBeInstanceOf(Date);
+    expect((await docsOf(o.id)).map((x) => x.kind)).toEqual(['invoice']);
+    expect(await audits(o.id, 'payplus_reversal_seen')).toHaveLength(1);
+    expect((await alertsLike(`chip_payplus_reversal:${o.id}:%`)).map((a) => a.user_id)).toEqual(await activeAdmins());
+    expect((await alertsLike(`chip_payplus_reversal:${o.id}:%`))[0]!.title).toContain('בוטל ב-PayPlus — נדרש ביטול וזיכוי');
+    expect(refundCalls()).toEqual([]);
+    await runAfter();
+    expect(await messagesOf(o.id)).toEqual([]);
+    // The same notice again: nothing new.
+    expect((await callback(cancelNotice(o))).status).toBe(200);
+    expect(await audits(o.id, 'payplus_reversal_seen')).toHaveLength(1);
+
+    // The collected web order is in the Orders tab, with the warning tag; the window says it too.
+    const r = (await orders.listOpenChipOrderRows()).find((x) => x.order_id === o.id)!;
+    expect(r).toMatchObject({ payplus_reversal_kind: 'cancelled', cancel_completed: false });
+    expect(chipOrderRowTags(r)[0]).toBe('payplus_reversed');
+    expect(CHIP_ORDER_TAG_LABEL.payplus_reversed).toBe('בוטל ב-PayPlus — נדרש ביטול וזיכוי');
+    expect((await getChipOrderWindow(o.itemId))!.order).toMatchObject({ payplus_reversal_kind: 'cancelled' });
+    as('super');
+    expect(((await (await preview(o.id)).json()) as { payplus_reversal: string }).payplus_reversal).toBe('cancelled');
+
+    // One click: no refund sent, the credit issued, the order closed, the warning gone.
+    const run = (await (await cancel(o.id, { reason: 'בוטל ב-PayPlus' })).json()) as { ok: boolean; refund: string; chips_disabled: number };
+    expect(run).toMatchObject({ ok: true, refund: 'outside', chips_disabled: 1 });
+    expect(refundCalls()).toEqual([]);
+    row = await rowOf(o.id);
+    expect(row).toMatchObject({ status: 'collected', refund_via: 'payplus', refund_transaction_uid: `cancelled:${o.tx}`, payplus_reversal_kind: null, payplus_reversal_at: null });
+    expect(await chipRows(chips)).toEqual(['inactive']);
+    expect((await docsOf(o.id)).map((x) => [x.kind, x.status])).toEqual([['invoice', 'issued'], ['credit', 'issued']]);
+    expect((await getChipOrderWindow(o.itemId))!.order.payplus_reversal_kind).toBeNull();
+    // A later notice of the finished order changes nothing.
+    calls.length = 0;
+    expect((await callback(cancelNotice(o))).status).toBe(200);
+    expect(payplus('Transactions/View')).toEqual([]);
   });
 
-  // Regression (found 25/11 night run): a TEST order has no credit document row
-  // and refund_transaction_uid keeps only the FIRST refund's id — recordRefund
-  // also checks the order's 'refunded' audit rows for the refund id.
-  it('a TEST order — the same SECOND partial refund notice, delivered twice, is recorded only once', async () => {
-    const t = await paidOrder({ isTest: true, chips: 3 }); // 120
-    const a = refundNotice(`rfn-${RUN}-ta`, 20, String(t.number));
-    const b = refundNotice(`rfn-${RUN}-tb`, 30, String(t.number));
-    expect((await callback(a, 'sandbox')).status).toBe(200);
-    expect((await callback(b, 'sandbox')).status).toBe(200);
-    expect(await rowOf(t.id)).toMatchObject({ refund_status: 'partial', refunded_amount: 50 });
-    expect((await callback(b, 'sandbox')).status).toBe(200);
-    expect(await audits(t.id, 'refunded')).toHaveLength(2);
-    expect((await rowOf(t.id)).refunded_amount).toBe(50);
+  it('a REFUND made in the PayPlus dashboard ("Refund" notice, the order number): not recorded, no document — the warning; a PARTIAL one says so; our own refund echoed back changes nothing', async () => {
+    const full = await paidOrder();
+    await invoiceIssued(full);
+    pp.refundsByMoreInfo.set(String(full.number), [{ uid: `rf-dash-${RUN}-1`, amount: full.total }]);
+    expect((await callback(refundNotice(`rf-dash-${RUN}-1`, full.total, String(full.number)))).status).toBe(200);
+    expect(await rowOf(full.id)).toMatchObject({ status: 'paid', payplus_reversal_kind: 'refunded', refunded_at: null, refund_transaction_uid: null });
+    expect((await docsOf(full.id)).map((x) => x.kind)).toEqual(['invoice']);
+
+    const part = await paidOrder();
+    await invoiceIssued(part);
+    pp.refundsByMoreInfo.set(String(part.number), [{ uid: `rf-dash-${RUN}-2`, amount: 10 }]);
+    expect((await callback(refundNotice(`rf-dash-${RUN}-2`, 10, String(part.number)))).status).toBe(200);
+    expect(await rowOf(part.id)).toMatchObject({ payplus_reversal_kind: 'partial', refunded_at: null });
+
+    // Ours: refunded through "ביטול וזיכוי", then its own notice arrives.
+    const ours = await paidOrder();
+    await invoiceIssued(ours);
+    as('super');
+    expect(((await (await cancel(ours.id, { reason: 'ביטול' })).json()) as { ok: boolean }).ok).toBe(true);
+    const uid = (await rowOf(ours.id)).refund_transaction_uid!;
+    calls.length = 0;
+    expect((await callback(refundNotice(uid, ours.total, `refund:${ours.number}`))).status).toBe(200);
+    expect(calls.filter((c) => c.host === 'payplus')).toEqual([]);
+    expect((await rowOf(ours.id)).payplus_reversal_kind).toBeNull();
   });
 
-  it('no request of this file ever left for anywhere but the PayPlus stub', () => {
+  it('while the warning stands nothing moves the order on: "מוכן לאיסוף" and "נאסף" are refused (payplus_reversed), and the guard\'s pickup list leaves it out', async () => {
+    const o = await paidOrder({ chips: 1 });
+    await issueChips(o, 1);
+    pp.cancelled.add(o.tx);
+    expect((await callback(cancelNotice(o))).status).toBe(200);
+    expect((await rowOf(o.id)).payplus_reversal_kind).toBe('cancelled');
+    await expect(orders.markChipOrderReady(o.id)).rejects.toThrow('payplus_reversed');
+    // Ready already when PayPlus showed it: never handed over.
+    await pool.query(`update public.chip_orders set status = 'ready', ready_at = now() where id = $1`, [o.id]);
+    expect((await listReadyPickupOrders()).some((x) => x.id === o.id)).toBe(false);
+    await expect(orders.markChipOrderCollected(o.id, admin, { via: 'management' })).rejects.toThrow('payplus_reversed');
+    // The row offers no quick step.
+    const r = (await orders.listOpenChipOrderRows()).find((x) => x.order_id === o.id)!;
+    expect((await import('@/lib/chipOrders/orderRows')).chipOrderRowAction(r, undefined)).toBeNull();
+  });
+
+  it('a notice for a paid order PayPlus still shows charged → nothing; PayPlus cannot be asked → 503 (sent again), nothing changed', async () => {
+    const o = await paidOrder();
+    expect((await callback(cancelNotice(o))).status).toBe(200);
+    expect(await rowOf(o.id)).toMatchObject({ payplus_reversal_kind: null, refunded_at: null });
+    pp.viewDown = true;
+    expect((await callback(cancelNotice(o))).status).toBe(503);
+    expect(await rowOf(o.id)).toMatchObject({ payplus_reversal_kind: null });
+  });
+
+  it('a "Refund" notice that names no order → ignored, and ONE alert per admin', async () => {
+    const uid = `rf-unmatched-${RUN}`;
+    expect((await callback(refundNotice(uid, 25, null))).status).toBe(200);
+    expect((await callback(refundNotice(uid, 25, null))).status).toBe(200);
+    expect((await alertsLike(`chip_refund_unmatched:${uid}:%`)).map((a) => a.user_id)).toEqual(await activeAdmins());
+  });
+
+  it('no request of this file ever left for anywhere but the PayPlus and Morning stubs', () => {
     expect(elsewhere).toEqual([]);
   });
 });

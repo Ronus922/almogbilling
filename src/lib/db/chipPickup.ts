@@ -45,6 +45,8 @@ export async function listReadyPickupOrders(): Promise<PickupOrder[]> {
       `select id, order_number, is_test, full_name
          from public.chip_orders
         where status = 'ready'
+          -- PayPlus showed it cancelled / refunded (27/11/2026): nothing to hand over.
+          and (payplus_reversal_at is null or cancel_completed_at is not null)
         order by ready_at nulls last, order_number
         limit $1`,
       [READY_LIMIT],

@@ -18,17 +18,15 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   no_active_chips: { status: 409, message: 'להזמנה אין צ׳יפים פעילים למסירה — יש לפנות להנהלה' },
   // "בטל הזמנת קבלה" (25/11/2026).
   not_reception: { status: 409, message: 'אפשר לבטל כך רק הזמנת קבלה — הזמנה מהאתר נדחית בכפתור „דחה”' },
-  not_cancellable: { status: 409, message: 'הזמנת הקבלה כבר בוטלה' },
+  not_cancellable: { status: 409, message: 'אי אפשר לבצע „ביטול וזיכוי” להזמנה במצבה הנוכחי' },
   // Refunds (26/11/2026).
   not_card_paid: { status: 409, message: 'אפשר לזכות דרך PayPlus רק הזמנה ששולמה בכרטיס' },
-  already_refunded: { status: 409, message: 'ההזמנה כבר זוכתה' },
-  refund_in_progress: { status: 409, message: 'בקשת זיכוי להזמנה הזו כבר נשלחה ל-PayPlus — נסו שוב בעוד כמה דקות' },
-  not_refundable: { status: 409, message: 'אי אפשר לזכות את ההזמנה במצבה הנוכחי' },
-  not_web_order: { status: 409, message: 'הזמנת קבלה מזוכה דרך „ביטול וזיכוי”' },
+  not_web_order: { status: 409, message: 'הזמנת קבלה מבטלים ב„ביטול וזיכוי”' },
   // "ביטול וזיכוי" (27/11/2026).
-  already_cancelled: { status: 409, message: 'הזמנת הקבלה כבר בוטלה' },
+  already_cancelled: { status: 409, message: 'ההזמנה כבר בוטלה וזוכתה' },
   cancel_in_progress: { status: 409, message: '„ביטול וזיכוי” כבר רץ להזמנה הזו — נסו שוב בעוד כמה דקות' },
   reason_required: { status: 400, message: 'נדרשת סיבת ביטול' },
+  payplus_reversed: { status: 409, message: 'PayPlus מראה שהחיוב בוטל או זוכה — ההזמנה לא מתקדמת עד „ביטול וזיכוי” של מנהל מערכת' },
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

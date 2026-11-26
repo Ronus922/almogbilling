@@ -195,8 +195,9 @@ test.describe.serial('the guard\'s pickup screen', () => {
     for (const url of ['/api/chips', '/api/chip-orders', '/api/chips/kpis', '/api/chips/reception', '/api/settings/chip-orders']) {
       expect((await page.request.get(url)).status(), url).toBe(403);
     }
-    // And the money of an order (26/11/2026): no refund, no document's retry — admin only.
-    expect((await page.request.post(`/api/chip-orders/${ready.id}/refund`, { data: { reason: 'ניסיון של שומר' } })).status()).toBe(403);
+    // And the money of an order: no "ביטול וזיכוי" (27/11/2026 — the one way a refund is made), no document's retry — admin only.
+    expect((await page.request.post(`/api/chip-orders/${ready.id}/cancel`, { data: { reason: 'ניסיון של שומר' } })).status()).toBe(403);
+    expect((await page.request.get(`/api/chip-orders/${ready.id}/cancel`)).status()).toBe(403);
     expect((await page.request.post(`/api/chip-orders/${ready.id}/documents/retry`)).status()).toBe(403);
     // The pickup screen never names a payment, a refund or an invoice.
     await page.goto('/chip-pickup');

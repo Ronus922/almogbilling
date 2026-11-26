@@ -348,15 +348,21 @@ export interface ChipOrderRow {
   card_env?: 'sandbox' | 'production' | null;
   refund_status?: ChipOrderRefundStatus | null;
   refunded_amount?: number | null;
-  /** A "זיכוי" waiting for PayPlus's answer (10 minutes, like the window). */
+  /** A refund waiting for PayPlus's answer (never sent again, 27/11/2026). */
   refund_in_flight?: boolean;
   /** The order's Morning document (its first payment document), or null when
    *  none is queued (a test order, a no-charge save, an order before 26/11/2026). */
   invoice_doc?: { status: 'pending' | 'issuing' | 'issued' | 'failed'; number: string | null; url: string | null } | null;
-  /** "ביטול וזיכוי" of a reception order stopped at this step (27/11/2026),
-   *  with its words. Null when it never ran, or finished. */
+  /** "ביטול וזיכוי" stopped at this step (27/11/2026), with its words. Null
+   *  when it never ran, or finished. */
   cancel_failed_step?: 'refund' | 'credit' | 'cancel' | null;
   cancel_error?: string | null;
+  /** PayPlus showed the charge cancelled / refunded after a callback, and the
+   *  order records no such refund (27/11/2026): "בוטל ב-PayPlus — נדרש ביטול
+   *  וזיכוי". Null once "ביטול וזיכוי" finished. */
+  payplus_reversal_kind?: 'cancelled' | 'refunded' | 'partial' | null;
+  /** "ביטול וזיכוי" finished — nothing is left to run. */
+  cancel_completed?: boolean;
 }
 
 /** One "פרטי הזמנה" section of the issue window: an OPEN order of the same
@@ -523,13 +529,22 @@ export interface ChipOrderWindowOrder {
   refunded_by_name: string | null;
   refund_via: 'admin' | 'reject' | 'reception_cancel' | 'payplus' | null;
   refund_reason: string | null;
-  /** A refund was sent to PayPlus and its answer is not recorded yet. */
+  /** A refund was sent to PayPlus and its answer is not recorded yet — it
+   *  is never sent again (27/11/2026); "ביטול וזיכוי" asks PayPlus. */
   refund_in_flight: boolean;
   /** The order's Morning documents, oldest first (26/11/2026). */
   documents: ChipOrderDocumentView[];
   /** "ביטול וזיכוי" (27/11/2026) stopped at this step, with its words. */
   cancel_failed_step: 'refund' | 'credit' | 'cancel' | null;
   cancel_error: string | null;
+  /** PayPlus showed the charge cancelled / refunded after a callback (see
+   *  ChipOrderRow.payplus_reversal_kind), and when it was first seen. */
+  payplus_reversal_kind: 'cancelled' | 'refunded' | 'partial' | null;
+  payplus_reversal_at: string | null;
+  /** "ביטול וזיכוי" finished. */
+  cancel_completed: boolean;
+  /** "ביטול וזיכוי" was started on it (it may have stopped at a step). */
+  cancel_requested: boolean;
 }
 
 /** One Morning document row of an order, as the window shows it. */

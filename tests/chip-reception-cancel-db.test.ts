@@ -18,7 +18,7 @@ import type { Role } from '@/lib/permissions/constants';
 //   · the money goes back by hand; the order's Morning invoice is credited in
 //     the same transaction (26/11/2026) — an order recorded before that, as
 //     "מזומן או העברה", has no document and gets no credit;
-//   · it cannot be done twice, and never to a web order.
+//   · it cannot be done twice, and never to a web order no card paid.
 // 27/11/2026 — "ביטול וזיכוי": the route now runs the steps in order (the
 // refund, the credit document, the cancellation). Cash and a transfer go back
 // by hand; the CREDIT DOCUMENT is issued before the order is cancelled — here
@@ -310,9 +310,11 @@ d('cancelling a reception order, on the DB and through its route', () => {
     expect(await trail(first.id)).toHaveLength(1);
     expect((await orderRow(first.id)).reject_reason).toBe('נרשם בטעות על הדירה הלא נכונה');
 
+    // A web order that no card paid (27/11/2026: "ביטול וזיכוי" is the way
+    // back of a web order the card paid) is refused too.
     const web = await cancel(webOrderId, { reason: 'הזמנה מהאתר' });
     expect(web.status).toBe(409);
-    expect((await web.json() as { error: string }).error).toMatch(/הזמנת קבלה/);
+    expect((await web.json() as { error: string }).error).toMatch(/ששולמה בכרטיס/);
     expect((await orderRow(webOrderId)).status).toBe('paid');
 
     expect((await cancel('00000000-0000-4000-8000-0000000000aa', { reason: 'לא קיימת' })).status).toBe(404);

@@ -1,10 +1,28 @@
-// "ביטול וזיכוי" of a reception order (27/11/2026) — the words, shared by the
-// confirmation (src/components/chips/ReceptionCancelDialog.tsx), the three
-// places that open it, and the tests. No I/O.
+// "ביטול וזיכוי" (27/11/2026) — the words, shared by the confirmation
+// (src/components/chips/ReceptionCancelDialog.tsx), the places that open it,
+// the server and the tests. No I/O.
 
 import { formatIlsAfter } from './model';
 
 export const RECEPTION_CANCEL_LABEL = 'ביטול וזיכוי';
+
+/** A paid order whose charge PayPlus shows cancelled / refunded (a signed
+ *  callback, then PayPlus asked) while the order records no such refund. */
+export const PAYPLUS_REVERSAL_LABEL = 'בוטל ב-PayPlus — נדרש ביטול וזיכוי';
+
+/** What PayPlus showed, in a sentence (the order's window and the confirmation). */
+export const PAYPLUS_REVERSAL_TEXT: Record<'cancelled' | 'refunded' | 'partial', string> = {
+  cancelled: 'PayPlus מראה שהעסקה בוטלה ישירות בממשק PayPlus. ההזמנה עוד לא רושמת זאת, ולא הופק עליו מסמך זיכוי במורנינג.',
+  refunded: 'PayPlus מראה שהעסקה זוכתה ישירות בממשק PayPlus. ההזמנה עוד לא רושמת זאת, ולא הופק עליו מסמך זיכוי במורנינג.',
+  partial: 'PayPlus מראה זיכוי חלקי של העסקה ישירות בממשק PayPlus. ההזמנה עוד לא רושמת אותו, ולא הופק עליו מסמך זיכוי במורנינג.',
+};
+
+/** What "ביטול וזיכוי" will do with it (for an admin). */
+export const PAYPLUS_REVERSAL_NEXT: Record<'cancelled' | 'refunded' | 'partial', string> = {
+  cancelled: '„ביטול וזיכוי” ירשום זאת, יפיק את מסמך הזיכוי וישלים את ההזמנה — בלי לשלוח זיכוי נוסף.',
+  refunded: '„ביטול וזיכוי” ירשום זאת, יפיק את מסמך הזיכוי וישלים את ההזמנה — בלי לשלוח זיכוי נוסף.',
+  partial: 'את היתרה מזכים בממשק PayPlus, ואז „ביטול וזיכוי” ירשום את הזיכויים וישלים את ההזמנה — מכאן לא יישלח זיכוי.',
+};
 
 export type ReceptionCancelStep = 'refund' | 'credit' | 'cancel';
 
@@ -19,6 +37,8 @@ export const RECEPTION_CANCEL_STEP_LABEL: Record<ReceptionCancelStep, string> = 
 export interface ReceptionCancelPreviewView {
   order_id: string;
   order_number: number;
+  /** 'web' — "ביטול וזיכוי" of a web order (27/11/2026); 'reception' — of a reception order. */
+  source: 'web' | 'reception';
   status: string;
   is_test: boolean;
   amount: number;
@@ -41,6 +61,8 @@ export interface ReceptionCancelPreviewView {
   refund_note: string | null;
   credit_numbers: string[];
   refund_unanswered: boolean;
+  /** PayPlus showed the charge cancelled / refunded after a callback. */
+  payplus_reversal: 'cancelled' | 'refunded' | 'partial' | null;
   cancellable: boolean;
 }
 

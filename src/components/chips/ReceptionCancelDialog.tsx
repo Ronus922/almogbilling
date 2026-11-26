@@ -1,10 +1,13 @@
 'use client';
 
-// "ביטול וזיכוי" of a reception order (27/11/2026) — ONE confirmation, opened
-// from the three places a paid reception order is seen (admin and super admin
+// "ביטול וזיכוי" (27/11/2026) — ONE confirmation, the one way back of every
+// order: a paid reception order, and a web order the card paid (it replaced
+// "זיכוי"). Opened from every place the order is seen (admin and super admin
 // only; the route asks the role again):
-//   · the order's line in the issue window of the apartment (ReceptionRecords);
-//   · its row in the Orders tab (ChipOrdersPanel);
+//   · a reception order's line in the issue window of the apartment
+//     (ReceptionRecords — from /chips and from a contact's chips tab);
+//   · its row in the Orders tab (ChipOrdersPanel — a web order there when
+//     PayPlus showed it cancelled, or a run of it stopped);
 //   · the order's own window (OrderTransaction).
 // The confirmation loads what the server knows (GET /api/chip-orders/[id]/
 // cancel) and states, in the order the steps run: how the money goes back
@@ -28,7 +31,9 @@ import {
 import { cn } from '@/lib/utils';
 import { formatIlsAfter } from '@/lib/chipOrders/model';
 import {
-  RECEPTION_CANCEL_LABEL, RECEPTION_CANCEL_STEP_LABEL, receptionCancelMoneyText, type ReceptionCancelPreviewView,
+  PAYPLUS_REVERSAL_LABEL, PAYPLUS_REVERSAL_NEXT, PAYPLUS_REVERSAL_TEXT, RECEPTION_CANCEL_LABEL, RECEPTION_CANCEL_STEP_LABEL,
+  receptionCancelMoneyText,
+  type ReceptionCancelPreviewView,
 } from '@/lib/chipOrders/receptionCancelText';
 
 interface RunAnswer {
@@ -137,6 +142,7 @@ function CancelDialogBody({ orderId, open, onOpenChange, onChanged }: DialogProp
   }
 
   const money = p ? receptionCancelMoneyText(p) : '';
+  const web = p?.source === 'web';
   const refundDone = p?.refunded === true;
   const creditDone = (p?.credit_numbers.length ?? 0) > 0;
 
@@ -145,7 +151,7 @@ function CancelDialogBody({ orderId, open, onOpenChange, onChanged }: DialogProp
       <AlertDialogContent dir="rtl" className="p-6" data-testid="reception-cancel-dialog">
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {p ? `${RECEPTION_CANCEL_LABEL} — הזמנת קבלה ${p.order_number}` : RECEPTION_CANCEL_LABEL}
+            {p ? `${RECEPTION_CANCEL_LABEL} — ${web ? 'הזמנה' : 'הזמנת קבלה'} ${p.order_number}` : RECEPTION_CANCEL_LABEL}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {p ? (
@@ -153,6 +159,13 @@ function CancelDialogBody({ orderId, open, onOpenChange, onChanged }: DialogProp
             ) : loadError ?? 'טוען…'}
           </AlertDialogDescription>
         </AlertDialogHeader>
+
+        {p && p.payplus_reversal && !p.refunded && (
+          <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[13px] leading-relaxed text-amber-900" data-testid="reception-cancel-payplus-reversal">
+            <b>{PAYPLUS_REVERSAL_LABEL}</b>
+            <p className="mt-1">{PAYPLUS_REVERSAL_TEXT[p.payplus_reversal]} {PAYPLUS_REVERSAL_NEXT[p.payplus_reversal]}</p>
+          </div>
+        )}
 
         {p && p.failed_step && (
           <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-[13px] leading-relaxed text-red-900" data-testid="reception-cancel-failed">
@@ -187,7 +200,12 @@ function CancelDialogBody({ orderId, open, onOpenChange, onChanged }: DialogProp
                       </>
                     )}
             </li>
-            <li>ההזמנה תסומן „בוטלה” ותישאר בטבלת ההזמנות.</li>
+            <li>
+              {!web ? 'ההזמנה תסומן „בוטלה” ותישאר בטבלת ההזמנות.'
+                : p.status === 'collected' ? 'ההזמנה נמסרה — היא נשארת „נאספה”, מסומנת „זוכה”, ונשארת בטבלת ההזמנות.'
+                  : p.status === 'rejected' ? 'ההזמנה כבר נדחתה — היא נשארת „נדחה”, מסומנת „זוכה”.'
+                    : 'ההזמנה תסומן „נדחתה” ותישאר בטבלת ההזמנות.'}
+            </li>
             <li data-testid="reception-cancel-step-chips">
               {p.chips.length === 0 ? 'לא הונפקו להזמנה צ׳יפים פעילים.' : (
                 <span className="block rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900" data-testid="reception-cancel-chips">
@@ -205,7 +223,11 @@ function CancelDialogBody({ orderId, open, onOpenChange, onChanged }: DialogProp
         )}
 
         {p && (
-          <p className="text-[12.5px] text-slate-600">לא נשלחת הודעה ללקוח, מלבד מסמך הזיכוי של מורנינג. אי אפשר לבטל את הביטול.</p>
+          <p className="text-[12.5px] text-slate-600">
+            {web
+              ? `בסיום המזמין יקבל מייל ווואטסאפ על הזיכוי (הסיבה לא נשלחת אליו)${p.is_test ? '' : ', ומורנינג ישלח לו את מסמך הזיכוי'}. אי אפשר לבטל את הביטול.`
+              : 'לא נשלחת הודעה ללקוח, מלבד מסמך הזיכוי של מורנינג. אי אפשר לבטל את הביטול.'}
+          </p>
         )}
 
         {p && !resuming && (

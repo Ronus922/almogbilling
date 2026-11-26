@@ -288,11 +288,15 @@ function RowAction({
   );
 }
 
-/** A paid reception order "ביטול וזיכוי" may act on (27/11/2026): collected,
- *  or paid by card with its chips never saved. */
-function receptionCancellable(o: ChipOrderRow): boolean {
-  if (o.source !== 'reception') return false;
-  return o.status === 'collected' || (o.status === 'paid' && o.payment_method === 'card' && o.card_status === 'paid');
+/** A row "ביטול וזיכוי" is offered on (27/11/2026): a paid reception order —
+ *  collected, or paid by card with its chips never saved — and a web order the
+ *  card paid that waits for it: PayPlus showed it cancelled or refunded, or a
+ *  run of it stopped. (Any other web order offers it in its window.) */
+function rowCancellable(o: ChipOrderRow): boolean {
+  if (o.source === 'reception') {
+    return o.status === 'collected' || (o.status === 'paid' && o.payment_method === 'card' && o.card_status === 'paid');
+  }
+  return o.card_status === 'paid' && !o.cancel_completed && (!!o.payplus_reversal_kind || !!o.cancel_failed_step);
 }
 
 /** "ביטול וזיכוי" in a row's action column / on a phone card (admin and super
@@ -331,8 +335,8 @@ export function ChipOrdersPanel({
 }: {
   items: ChipOrderRow[];
   loading: boolean;
-  /** Admin / super admin, by role — "ביטול וזיכוי" of a paid reception order
-   *  (the route asks the role again). */
+  /** Admin / super admin, by role — "ביטול וזיכוי" (the route asks the role
+   *  again). */
   canAdmin?: boolean;
   /** Morning has a key: a queued invoice is "בהפקה"; without one it is
    *  "ממתינה לחיבור מורנינג" (GET /api/chip-orders). */
@@ -361,7 +365,7 @@ export function ChipOrdersPanel({
   const [collector, setCollector] = useState<string | null>(null);
   // "ביטול וזיכוי": the order its confirmation is open for.
   const [cancelOf, setCancelOf] = useState<string | null>(null);
-  const cancelFor = (o: ChipOrderRow) => (canAdmin && receptionCancellable(o) ? () => setCancelOf(o.order_id) : null);
+  const cancelFor = (o: ChipOrderRow) => (canAdmin && rowCancellable(o) ? () => setCancelOf(o.order_id) : null);
 
   const tests = useMemo(() => items.filter((o) => o.is_test), [items]);
   // The status belongs to the whole order: what a row may do is read from ALL
@@ -597,7 +601,7 @@ export function ChipOrdersPanel({
                         data-col="action"
                         className={cn(COL.action, ACT_CELL, '-my-[12px] bg-[var(--chip-panel)] py-[12px] transition-colors', onOpen && 'group-hover:bg-[var(--chip-hover)]')}
                       >
-                        {/* A collected reception order: "ביטול וזיכוי" in place of the "נאסף" label (the status column says it). */}
+                        {/* A collected order: "ביטול וזיכוי" in place of the "נאסף" label (the status column says it). */}
                         {(() => {
                           const cancel = cancelFor(o);
                           if (cancel && action?.kind === 'done') return <RowCancel row={o} wide={false} onOpen={cancel} />;

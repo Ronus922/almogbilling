@@ -165,6 +165,15 @@ const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit
     }
     if (path === '/documents/search' && init?.method === 'POST') return reply(200, { total: morning.search.length, items: morning.search });
   }
+  // PayPlus, read only (27/11/2026): a callback for an order that is ALREADY
+  // paid makes the server ask what PayPlus shows — here the charge as it is.
+  if (/^https:\/\/restapi(dev)?\.payplus\.co\.il$/.test(url.origin)) {
+    if (url.pathname === '/api/v1.0/Transactions/View' && typeof body?.transaction_uid === 'string') {
+      return reply(200, { results: { status: 'success', code: 0 }, data: [{ transaction: { transaction_uid: body.transaction_uid, transaction_type: 'Charge', status_code: '000', transaction_is_cancelled: false, amount: 0 }, data: {} }] });
+    }
+    if (url.pathname === '/api/v1.0/Transactions/View') return reply(200, { results: { status: 'error', code: 1, description: 'no transactions' }, data: {} });
+    if (url.pathname === '/api/v1.0/PaymentPages/ipn') return reply(200, { results: { status: 'success', code: 0 }, data: { transaction_uid: 'x', type: 'Charge', status_code: '000' } });
+  }
   elsewhere.push(url.href);
   throw new TypeError(`no network in this test: ${url.href}`);
 });

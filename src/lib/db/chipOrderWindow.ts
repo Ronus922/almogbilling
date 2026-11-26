@@ -53,10 +53,10 @@ export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindo
             o.card_approval_number, o.card_last4,
             o.refund_status, o.refund_note, o.refunded_amount::float8 as refunded_amount, o.refunded_at,
             o.refunded_by_name, o.refund_via, o.refund_reason,
-            -- The same ten minutes beginRefund honours: after them the outcome
-            -- is "unknown" (refund_note says to check PayPlus) and "זיכוי" is offered again.
-            (o.refund_requested_at is not null and o.refunded_at is null
-              and o.refund_requested_at > now() - interval '10 minutes') as refund_in_flight,
+            -- A refund call with no answer recorded: never sent again
+            -- (27/11/2026) — it stays "on its way" until PayPlus shows it
+            -- ("ביטול וזיכוי" asks PayPlus, refund_note says what to check).
+            (o.refund_requested_at is not null and o.refunded_at is null) as refund_in_flight,
             coalesce((select json_agg(json_build_object(
                         'kind', d.kind, 'status', d.status, 'amount', d.amount::float8,
                         'number', d.morning_docs->0->>'number', 'url', d.morning_docs->0->>'url',
@@ -65,6 +65,9 @@ export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindo
                         'email_status', d.email_status, 'email_to', d.email_to) order by d.created_at)
                         from public.chip_order_documents d where d.order_id = o.id), '[]'::json) as documents,
             o.cancel_failed_step, o.cancel_error,
+            case when o.cancel_completed_at is null then o.payplus_reversal_kind end as payplus_reversal_kind,
+            o.payplus_reversal_at, (o.cancel_completed_at is not null) as cancel_completed,
+            (o.cancel_requested_at is not null) as cancel_requested,
             (select x.order_number from public.chip_orders x where x.id = o.extra_of_order_id) as extra_of_order_number
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id
