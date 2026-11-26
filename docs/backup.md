@@ -9,7 +9,7 @@
 | `scripts/backup/pg-backup.sh` | שני dumps דרך `docker exec supabase-db`: `cluster-<stamp>.sql.gz` (`pg_dumpall`) + `proj_billing-<stamp>.sql.gz` (`pg_dump`). gzip, כתיבה ל-`.part` ואז rename אטומי, בדיקת `gzip -t` וגודל מינימלי, שמירת 7 ימים, ping ל-`$HEALTHCHECK_BACKUP_URL` (ו-`/fail` בכישלון). |
 | `scripts/backup/assert-storage-snapshot.sh` | שומר ההזמנה: מוודא שקיים snapshot עם tag `storage` מ-26 השעות האחרונות, אחרת exit 1. רץ כ-`ExecStartPre=+` של `billing-storage-cleanup.service` (כ-root, כדי שהסודות של B2 לא ייכנסו לתהליך ה-GC). |
 | `scripts/backup/restic-push.sh` | **שני** snapshots לאותו repo: `$BACKUP_DIR` (tag `supabase-daily`) ואז `$STORAGE_DIR` (tag `storage`), ואז `forget --group-by host,paths --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune`. ללא `RESTIC_REPOSITORY` — מדלג (exit 0) ומדפיס הודעה. |
-| `scripts/backup/pg-restore.sh <file>` | מרים Postgres זמני (אותו image), משחזר לתוכו ומדפיס `count(*)` מטבלאות אימות. הקונטיינר נמחק בסיום (`--keep` משאיר אותו). |
+| `scripts/backup/pg-restore.sh <file>` | מרים Postgres זמני (אותו image), משחזר לתוכו ומדפיס `count(*)` מטבלאות אימות. הקונטיינר נמחק בסיום (`--keep` משאיר אותו; נכנסים אליו ב-`docker exec -it <container> psql -U postgres`). מ-26/11/2026: הסיסמה של הקונטיינר אקראית, עוברת ל-docker בסביבה ולא בשורת הפקודה ולא מודפסת, ופורט נפתח (`127.0.0.1:$RESTORE_PORT`) רק עם `--keep`. |
 | `deploy/systemd/billing-backup.service` + `.timer` | הרצה יומית ב-03:00 (`Persistent=true`), `EnvironmentFile=-/etc/billing/backup.env`. |
 | `deploy/systemd/backup.env.example` | שמות המשתנים ל-`/etc/billing/backup.env`. |
 
