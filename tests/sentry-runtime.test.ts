@@ -135,6 +135,9 @@ describe('dropSensitiveRequestData — a public chip-order request never leaves 
   it('drops the body of the PayPlus callback, the session, the status and the order routes — and the two secret headers', () => {
     for (const url of [
       'https://example.test/api/public/chip-order/payplus/callback',
+      // The callback URL names its environment since 26/11/2026.
+      'https://example.test/api/public/chip-order/payplus/callback?env=production',
+      'https://example.test/api/public/chip-order/payplus/callback?env=sandbox',
       'http://localhost:3003/api/public/chip-order/payplus/session',
       '/api/public/chip-order/payplus/status?x=1',
       'https://example.test/api/public/chip-order',

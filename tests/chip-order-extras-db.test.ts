@@ -7,11 +7,13 @@ import { Pool, type PoolClient } from 'pg';
 // for a quantity; a new number beyond it is an extra chip, and the save of the
 // order's window must say how the extras are settled — with the rules of
 // issuing at the reception:
-//   · no payment named → the save is refused, nothing is stored;
-//   · cash or a transfer → a RECEPTION order for those chips only (paid,
-//     collected, nobody notified, its payment on record and audited), linked
-//     back to the web order and to the person the chips were added for. The
-//     amount is the server's; a save whose amount differs is refused;
+//   · no payment named (or the card, which extras do not take) → the save is
+//     refused, nothing is stored;
+//   · cash ('cash') or a bank transfer ('bank_transfer', 26/11/2026) → a
+//     RECEPTION order for those chips only (paid, collected, nobody notified,
+//     its payment on record and audited, ONE Morning invoice row queued with
+//     it), linked back to the web order and to the person the chips were added
+//     for. The amount is the server's; a save whose amount differs is refused;
 //   · no charge → no order; the extras stay on the web order's own line;
 //   · the web order — its lines, its quantity, its total — never changes;
 //   · a number that only fills the place of a disabled chip is not extra;
@@ -113,6 +115,10 @@ const extrasOf = async (webId: string) => (await pool.query<{
 const chipOf = (number: string) => one<{ id: string; status: string; order_item_id: string | null; order_holder_id: string | null; holder_name: string | null }>(
   `select id, status, order_item_id, order_holder_id, holder_name from public.chips where chip_number = $1`, [number]);
 const chipsNumbered = (numbers: string[]) => count(`select count(*) as n from public.chips where chip_number = any($1::text[])`, [numbers]);
+/** The Morning document rows of an order, oldest first. */
+const documentsOf = async (orderId: string) => (await pool.query<{ id: string; kind: string; payment_key: string; amount: number; payment_method: string; status: string; credit_of: string | null }>(
+  `select id, kind, payment_key, amount::float8 as amount, payment_method, status, credit_of
+     from public.chip_order_documents where order_id = $1 order by created_at`, [orderId])).rows;
 
 d('extra chips added to a web order, on the DB', () => {
   let order: Awaited<ReturnType<typeof seedOrder>>; // apartment 1: an owner (2) and a renter (1) → the line paid for 3
@@ -149,6 +155,9 @@ d('extra chips added to a web order, on the DB', () => {
     const all = (await pool.query<{ id: string }>(
       `select distinct o.id from public.chip_orders o join public.chip_order_items i on i.order_id = o.id where i.contact_id = any($1::uuid[])`, [contactIds])).rows;
     for (const o of all) {
+      // Document rows block deleting their order (FK restrict): credits first, then the rest — by the order's id.
+      await pool.query(`delete from public.chip_order_documents where order_id = $1 and credit_of is not null`, [o.id]);
+      await pool.query(`delete from public.chip_order_documents where order_id = $1`, [o.id]);
       await pool.query(`delete from public.audit_log where entity_type = 'chip_order' and entity_id = $1`, [o.id]);
       await pool.query(`delete from public.chip_orders where id = $1`, [o.id]);
     }
@@ -170,30 +179,39 @@ d('extra chips added to a web order, on the DB', () => {
     }, admin, PRICE).catch((e) => e);
     expect(err).toBeInstanceOf(ReceptionError);
     expect(err).toMatchObject({ code: 'payment_required', expectedAmount: PRICE });
+    // The card is not a way to settle extras (the window offers cash, a transfer or no charge).
+    const byCard = await win.saveChipOrderWindow(order.id, {
+      holders: [block(order, 0, [num(2)]), block(order, 1, [num(3), num(4)])],
+      extraPayment: { method: 'card', amount: PRICE },
+    }, admin, PRICE).catch((e) => e);
+    expect(byCard).toBeInstanceOf(ReceptionError);
+    expect(byCard).toMatchObject({ code: 'payment_required', expectedAmount: PRICE });
     expect(await chipsNumbered([num(2), num(3), num(4)])).toBe(0);
     expect(await extrasOf(order.id)).toEqual([]);
     expect((await one<{ internal_note: string | null }>(`select internal_note from public.chip_orders where id = $1`, [order.id])).internal_note).toBeNull();
   });
 
-  it('"מזומן או העברה" with a sum that is not extras × the price is refused with the right sum, and nothing is stored', async () => {
-    for (const amount of [0, PRICE * 2, PRICE - 0.01]) {
-      const err = await win.saveChipOrderWindow(order.id, {
-        holders: [block(order, 0, [num(2)]), block(order, 1, [num(3), num(4)])],
-        extraPayment: { method: 'cash_transfer', amount },
-      }, admin, PRICE).catch((e) => e);
-      expect(err, String(amount)).toMatchObject({ code: 'amount_mismatch', expectedAmount: PRICE });
+  it('"מזומן" or "העברה בנקאית" with a sum that is not extras × the price is refused with the right sum, and nothing is stored', async () => {
+    for (const method of ['cash', 'bank_transfer'] as const) {
+      for (const amount of [0, PRICE * 2, PRICE - 0.01]) {
+        const err = await win.saveChipOrderWindow(order.id, {
+          holders: [block(order, 0, [num(2)]), block(order, 1, [num(3), num(4)])],
+          extraPayment: { method, amount },
+        }, admin, PRICE).catch((e) => e);
+        expect(err, `${method} ${amount}`).toMatchObject({ code: 'amount_mismatch', expectedAmount: PRICE });
+      }
     }
     expect(await chipsNumbered([num(2), num(3), num(4)])).toBe(0);
     expect(await extrasOf(order.id)).toEqual([]);
   });
 
-  it('"מזומן או העברה": a reception order for the extra chip ONLY — paid, collected, on record, audited, nobody notified — and the web order does not change', async () => {
+  it('"מזומן": a reception order for the extra chip ONLY — paid, collected, on record, audited, its invoice queued, nobody notified — and the web order does not change', async () => {
     const before = await webOrder(order.id);
     const res = await win.saveChipOrderWindow(order.id, {
       holders: [block(order, 0, [num(2)]), block(order, 1, [num(3), num(4)])],
-      extraPayment: { method: 'cash_transfer', amount: PRICE },
+      extraPayment: { method: 'cash', amount: PRICE },
     }, admin, PRICE);
-    expect(res).toMatchObject({ issued: 3, extra: { chips: 1, method: 'cash_transfer', order: { total: PRICE } } });
+    expect(res).toMatchObject({ issued: 3, extra: { chips: 1, method: 'cash', order: { total: PRICE } } });
 
     // The web order: the same lines, quantity, people and total.
     expect(await webOrder(order.id)).toEqual(before);
@@ -208,7 +226,7 @@ d('extra chips added to a web order, on the DB', () => {
     const x = extras[0]!;
     made.orders.push(x.id);
     expect(x).toMatchObject({
-      source: 'reception', status: 'collected', total: PRICE, is_test: false, payment_method: 'cash_transfer', payment_recorded_by: admin.id,
+      source: 'reception', status: 'collected', total: PRICE, is_test: false, payment_method: 'cash', payment_recorded_by: admin.id,
       // Whoever placed the web order is who the chips were added for.
       full_name: 'דנה תוספת', phone_e164: '+972539311001', email: 'web-extra@example.test', address: 'רחוב התוספת 3, חיפה 3300000',
     });
@@ -228,8 +246,15 @@ d('extra chips added to a web order, on the DB', () => {
     expect(trail.map((t) => t.action)).toEqual(['created', 'payment_recorded']);
     expect(trail[1]).toMatchObject({
       actor_user_id: admin.id,
-      metadata: { source: 'web_order_extra', extra_of_order: order.orderNumber, order_number: x.order_number, chips: 1, unit_price: PRICE, method: 'cash_transfer', amount: PRICE },
+      metadata: { source: 'web_order_extra', extra_of_order: order.orderNumber, order_number: x.order_number, chips: 1, unit_price: PRICE, method: 'cash', amount: PRICE },
     });
+    // ONE Morning invoice row for the payment, queued in the same transaction — on the
+    // reception order, never on the web order.
+    expect(res!.extra!.order!.id).toBe(x.id);
+    expect(await documentsOf(x.id)).toMatchObject([
+      { kind: 'invoice', payment_key: `reception:${x.id}`, amount: PRICE, payment_method: 'cash', status: 'pending', credit_of: null },
+    ]);
+    expect(await documentsOf(order.id)).toEqual([]);
   });
 
   it('the order can be marked ready on what it paid for; its window and the pickup screen list the paid extra under the person', async () => {
@@ -261,9 +286,18 @@ d('extra chips added to a web order, on the DB', () => {
     ]);
   });
 
-  it('cancelling the reception order disables exactly the extra chip — the web order and its chips are untouched, and the pickup screen drops it', async () => {
+  it('cancelling the reception order disables exactly the extra chip and credits its invoice — the web order and its chips are untouched, and the pickup screen drops it', async () => {
     const x = (await extrasOf(order.id))[0]!;
-    expect(await orders.cancelReceptionOrder(x.id, 'התוספת בוטלה', admin)).toMatchObject({ chips_disabled: 1 });
+    expect(await orders.cancelReceptionOrder(x.id, 'התוספת בוטלה', admin)).toEqual({
+      order_number: x.order_number, chips_disabled: 1, payment_method: 'cash', card_paid: false,
+    });
+    // The cash goes back by hand; the order's invoice is credited in the same transaction.
+    const [invoice, credit] = await documentsOf(x.id);
+    expect(invoice).toMatchObject({ kind: 'invoice', payment_key: `reception:${x.id}` });
+    expect(credit).toMatchObject({
+      kind: 'credit', payment_key: `cancel:${x.id}`, amount: PRICE, payment_method: 'cash', status: 'pending', credit_of: invoice!.id,
+    });
+    expect(await documentsOf(x.id)).toHaveLength(2);
     expect((await chipOf(num(4))).status).toBe('inactive');
     for (const n of [num(1), num(2), num(3)]) expect((await chipOf(n)).status).toBe('active');
     expect((await webOrder(order.id)).status).toBe('ready');
@@ -307,11 +341,16 @@ d('extra chips added to a web order, on the DB', () => {
     // Apartment 3 gets 1 (inside) + 1 extra; apartment 4 gets 3: 1 inside + 2 extra → 3 extras in all.
     const res = await win.saveChipOrderWindow(two.id, {
       holders: [block(two, 0, [num(20), num(21)]), block(two, 1, [num(22), num(23)]), block(two, 1, [num(24)], 'app')],
-      extraPayment: { method: 'cash_transfer', amount: 3 * PRICE },
+      extraPayment: { method: 'bank_transfer', amount: 3 * PRICE },
     }, admin, PRICE);
-    expect(res).toMatchObject({ issued: 5, extra: { chips: 3, method: 'cash_transfer', order: { total: 3 * PRICE } } });
+    expect(res).toMatchObject({ issued: 5, extra: { chips: 3, method: 'bank_transfer', order: { total: 3 * PRICE } } });
     const extras = await extrasOf(two.id);
     expect(extras).toHaveLength(1);
+    // A bank transfer is stored as one — and its ONE invoice says so, for the whole sum.
+    expect(extras[0]!.payment_method).toBe('bank_transfer');
+    expect(await documentsOf(extras[0]!.id)).toMatchObject([
+      { kind: 'invoice', payment_key: `reception:${extras[0]!.id}`, amount: 3 * PRICE, payment_method: 'bank_transfer', status: 'pending', credit_of: null },
+    ]);
     const lines = (await pool.query<{ apartment_number: string; chips_count: number; line_total: number }>(
       `select apartment_number, chips_count, line_total::float8 as line_total from public.chip_order_items where order_id = $1 order by apartment_number`, [extras[0]!.id])).rows;
     expect(lines).toEqual([
@@ -330,15 +369,20 @@ d('extra chips added to a web order, on the DB', () => {
     expect(await webOrder(two.id)).toMatchObject({ total: 2 * PRICE, chips: 2, lines: 2, holders: 2 });
   });
 
-  it('a taken number refuses the whole save: no chip, and no reception order left behind', async () => {
+  it('a taken number refuses the whole save: no chip, and no reception order — nor its document — left behind', async () => {
     const ordersBefore = (await extrasOf(two.id)).length;
+    const docsBefore = await count(
+      `select count(*) as n from public.chip_order_documents d join public.chip_orders o on o.id = d.order_id where o.extra_of_order_id = $1`, [two.id]);
     const err = await win.saveChipOrderWindow(two.id, {
       holders: [block(two, 0, [num(30), num(1)])], // num(1) is active on another apartment
-      extraPayment: { method: 'cash_transfer', amount: 2 * PRICE },
+      extraPayment: { method: 'cash', amount: 2 * PRICE },
     }, admin, PRICE).catch((e) => e);
     expect(err).toBeInstanceOf(win.WindowChipConflictError);
     expect(await chipsNumbered([num(30)])).toBe(0);
     expect(await extrasOf(two.id)).toHaveLength(ordersBefore);
+    expect(await count(
+      `select count(*) as n from public.chip_order_documents d join public.chip_orders o on o.id = d.order_id where o.extra_of_order_id = $1`, [two.id],
+    )).toBe(docsBefore);
   });
 
   // ── What the review of 25/11/2026 found ──────────────────────────────────
@@ -353,7 +397,7 @@ d('extra chips added to a web order, on the DB', () => {
     // The window believed one chip was extra (it had loaded an older state) and confirmed its price.
     const err = await win.saveChipOrderWindow(split.id, {
       holders: [block(split, 0, [num(40)])],
-      extraPayment: { method: 'cash_transfer', amount: PRICE },
+      extraPayment: { method: 'bank_transfer', amount: PRICE },
     }, admin, PRICE).catch((e) => e);
     expect(err).toBeInstanceOf(ReceptionError);
     expect(err).toMatchObject({ code: 'amount_mismatch', expectedAmount: 0 });
@@ -365,9 +409,9 @@ d('extra chips added to a web order, on the DB', () => {
     // One save: Dana (ordered 2) gets three numbers, Sara (ordered 1) gets one. The line paid for 3.
     const res = await win.saveChipOrderWindow(split.id, {
       holders: [block(split, 0, [num(40), num(41), num(42)]), block(split, 1, [num(43)])],
-      extraPayment: { method: 'cash_transfer', amount: PRICE },
+      extraPayment: { method: 'cash', amount: PRICE },
     }, admin, PRICE);
-    expect(res).toMatchObject({ issued: 4, extra: { chips: 1, method: 'cash_transfer', order: { total: PRICE } } });
+    expect(res).toMatchObject({ issued: 4, extra: { chips: 1, method: 'cash', order: { total: PRICE } } });
     const webLine = split.items[APT(5)];
     // Dana's first two and Sara's one are the order's own chips…
     expect(await chipOf(num(40))).toMatchObject({ order_item_id: webLine, order_holder_id: split.holders[0] });
@@ -397,9 +441,9 @@ d('extra chips added to a web order, on the DB', () => {
     // The line is full (3 of 3): a new holder's number is extra, paid in cash.
     const res = await win.saveChipOrderWindow(split.id, {
       holders: [{ id: null, item_id: split.items[APT(5)]!, role: 'other', full_name: 'מטפלת פיצול', phone: null, email: null, new_chips: [{ number: num(44), chip_type: 'physical' }] }],
-      extraPayment: { method: 'cash_transfer', amount: PRICE },
+      extraPayment: { method: 'cash', amount: PRICE },
     }, admin, PRICE);
-    expect(res).toMatchObject({ issued: 1, extra: { chips: 1, method: 'cash_transfer' } });
+    expect(res).toMatchObject({ issued: 1, extra: { chips: 1, method: 'cash' } });
     const staff = await one<{ id: string }>(`select id from public.chip_order_holders where order_id = $1 and source = 'staff'`, [split.id]);
     // Its chip sits on the reception order, not on this line…
     expect(await count(`select count(*) as n from public.chips where order_holder_id = $1`, [staff.id])).toBe(0);
@@ -412,16 +456,18 @@ d('extra chips added to a web order, on the DB', () => {
     expect(w.holders.find((h) => h.id === staff.id)!.extras.map((c) => c.chip_number)).toEqual([num(44)]);
   });
 
-  it('a TEST order records no payment: "מזומן או העברה" for its extras is refused and makes no real order; "ללא חיוב" goes through', async () => {
+  it('a TEST order records no payment: "מזומן" / "העברה בנקאית" for its extras is refused and makes no real order; "ללא חיוב" goes through', async () => {
     const test = await seedOrder([{ apt: APT(6), role: 'owner', name: 'בדיקה תוספת', phone: '+972539311007', qty: 1 }]);
     // A test order never went through Grow.
     await pool.query(`update public.chip_orders set is_test = true, grow_process_id = null, grow_transaction_id = null where id = $1`, [test.id]);
-    const err = await win.saveChipOrderWindow(test.id, {
-      holders: [block(test, 0, [num(50), num(51)])],
-      extraPayment: { method: 'cash_transfer', amount: PRICE },
-    }, admin, PRICE).catch((e) => e);
-    expect(err).toBeInstanceOf(ReceptionError);
-    expect(err).toMatchObject({ code: 'test_order_payment' });
+    for (const method of ['cash', 'bank_transfer'] as const) {
+      const err = await win.saveChipOrderWindow(test.id, {
+        holders: [block(test, 0, [num(50), num(51)])],
+        extraPayment: { method, amount: PRICE },
+      }, admin, PRICE).catch((e) => e);
+      expect(err, method).toBeInstanceOf(ReceptionError);
+      expect(err, method).toMatchObject({ code: 'test_order_payment' });
+    }
     expect(await chipsNumbered([num(50), num(51)])).toBe(0);
     expect(await extrasOf(test.id)).toEqual([]);
     expect(await count(`select count(*) as n from public.chip_orders where source = 'reception' and full_name = 'בדיקה תוספת'`, [])).toBe(0);

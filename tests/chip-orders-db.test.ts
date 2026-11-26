@@ -11,7 +11,11 @@ import { requireSeededAdmin } from './db-fixtures';
 // apartment, the issue window's context (same phone, open orders only),
 // "עדכן בכרטיס הדייר" as the ONLY write to the tenants list, ready only when
 // every chip is linked, the reject path, and the OTP purpose wall between the
-// order page and the owners portal.
+// order page and the owners portal (the shared OTP library keeps the
+// 'chip_order' purpose).
+// A real order is paid the way it is since 26/11/2026: an approved PayPlus
+// charge (production) on a payment session of the order — recordCardPayment,
+// the one place an order becomes paid by card.
 // Fixtures are numeric apartments far from the seed, removed by exact ids.
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
 const d = describe.skipIf(!TEST_URL);
@@ -30,6 +34,7 @@ vi.mock('@/lib/db', () => ({
 }));
 
 const db = await import('@/lib/db/chipOrders');
+const { recordCardPayment, setCardSession } = await import('@/lib/db/chipOrderCard');
 const { issueChipGroups, deactivateChip } = await import('@/lib/db/chips');
 const { issueCode, verifyCode } = await import('@/lib/db/portal/otp');
 const { DEFAULT_CHIP_ORDER_SETTINGS } = await import('@/lib/chipOrders/model');
@@ -40,6 +45,32 @@ const PHONE = '+972539200001';
 const made = { contacts: [] as string[], orders: [] as string[], chips: [] as string[], otp: [] as string[] };
 let admin: { id: string; name: string };
 const ids: Record<string, string> = {};
+
+/** A payment session of a REAL order (production), opened for its total. */
+let sessions = 0;
+async function openCardSession(orderId: string): Promise<{ session: string; orderNumber: number; total: number }> {
+  const o = (await pool.query<{ order_number: number; total: number }>(
+    `select order_number, total::float8 as total from public.chip_orders where id = $1`, [orderId],
+  )).rows[0]!;
+  sessions += 1;
+  const session = `db-${tag}-session-${sessions}`;
+  expect(await setCardSession(orderId, { env: 'production', pageRequestUid: session, amount: o.total })).toBe(true);
+  return { session, orderNumber: o.order_number, total: o.total };
+}
+/** PayPlus reported an approved charge of the order's total on that session. */
+async function payByCard(orderId: string, transactionUid = `tx-db-${tag}-${orderId.slice(0, 8)}`, at?: Date) {
+  const s = await openCardSession(orderId);
+  return recordCardPayment({
+    env: 'production', orderNumber: s.orderNumber, transactionUid, pageRequestUid: s.session,
+    amount: s.total, approvalNumber: '0012345', last4: '4242',
+  }, 'payplus_callback', at);
+}
+/** A document row of an order (Morning, 26/11/2026) blocks deleting it: gone
+ *  first, by the order's id. Absent on a database without that table. */
+async function dropDocumentsOf(orderId: string) {
+  await pool.query(`delete from public.chip_order_documents where order_id = $1`, [orderId])
+    .catch((e: { code?: string }) => { if (e.code !== '42P01') throw e; });
+}
 
 d('chip orders on the DB', () => {
   beforeAll(async () => {
@@ -65,7 +96,11 @@ d('chip orders on the DB', () => {
       await pool.query(`delete from public.chip_events where chip_id = $1`, [id]);
       await pool.query(`delete from public.chips where id = $1`, [id]);
     }
-    for (const id of made.orders) await pool.query(`delete from public.chip_orders where id = $1`, [id]);
+    for (const id of made.orders) {
+      await dropDocumentsOf(id);
+      await pool.query(`delete from public.audit_log where entity_type = 'chip_order' and entity_id = $1`, [id]);
+      await pool.query(`delete from public.chip_orders where id = $1`, [id]);
+    }
     for (const id of made.otp) await pool.query(`delete from public.portal_otp_codes where id = $1`, [id]);
     for (const id of made.contacts) await pool.query(`delete from public.contacts where id = $1`, [id]);
     await pool.end();
@@ -118,14 +153,24 @@ d('chip orders on the DB', () => {
   });
 
   it('marks paid exactly once; the due date runs from the payment (72 working hours); one row per apartment', async () => {
-    await db.setOrderGrowProcess(ids.order, `p${tag}`, 'tok');
+    const s = await openCardSession(ids.order);
+    const charge = (transactionUid: string) => ({
+      env: 'production' as const, orderNumber: s.orderNumber, transactionUid, pageRequestUid: s.session,
+      amount: s.total, approvalNumber: 'a1', last4: '4242',
+    });
     const sunday = new Date('2026-11-15T08:00:00Z');
-    expect(await db.markChipOrderPaid(ids.order, { transactionId: 't1', transactionToken: 'tt', asmachta: 'a1' }, sunday)).toBe(true);
-    expect(await db.markChipOrderPaid(ids.order, { transactionId: 't2', transactionToken: 'tt', asmachta: 'a2' })).toBe(false);
-    const o = (await pool.query(`select status, grow_transaction_id, paid_at, due_at, approved_at from public.chip_orders where id = $1`, [ids.order])).rows[0];
-    expect(o).toMatchObject({ status: 'paid', grow_transaction_id: 't1', approved_at: null });
+    const t1 = `tx-db-${tag}-first`;
+    expect(await recordCardPayment(charge(t1), 'payplus_callback', sunday)).toEqual({ kind: 'paid', orderId: ids.order });
+    // The same charge again changes nothing; a second charge is not a second payment.
+    expect(await recordCardPayment(charge(t1), 'payplus_lookup')).toEqual({ kind: 'already_paid', orderId: ids.order });
+    expect(await recordCardPayment(charge(`tx-db-${tag}-second`), 'payplus_callback')).toEqual({ kind: 'duplicate_charge', orderId: ids.order });
+    const o = (await pool.query(
+      `select status, card_status, card_transaction_uid, card_page_request_uid, paid_at, due_at, approved_at from public.chip_orders where id = $1`, [ids.order],
+    )).rows[0];
+    expect(o).toMatchObject({ status: 'paid', card_status: 'paid', card_transaction_uid: t1, card_page_request_uid: s.session, approved_at: null });
     expect(new Date(o.paid_at).toISOString()).toBe('2026-11-15T08:00:00.000Z');
     expect(new Date(o.due_at).toISOString()).toBe('2026-11-18T08:00:00.000Z');
+    expect((await pool.query(`select count(*)::int as n from public.audit_log where entity_type = 'chip_order' and entity_id = $1 and action = 'paid'`, [ids.order])).rows[0].n).toBe(1);
     const rows = await rowsOf(ids.order);
     expect(rows.map((r) => r.apartment_number).sort()).toEqual([apt.owned, apt.empty, apt.rented].sort());
     expect(rows.find((r) => r.apartment_number === apt.owned)).toMatchObject({ chips_count: 3, chips_linked: 0, status: 'paid', contact_id: ids.owned });
@@ -134,7 +179,8 @@ d('chip orders on the DB', () => {
     // whoever ordered.
     expect(rows.find((r) => r.apartment_number === apt.owned)).toMatchObject({ line_total: 150, people: ['דנה כהן'] });
     const ctx = await db.getChipOrderSheetContext(await itemOf(ids.order, apt.owned));
-    expect(JSON.stringify(ctx)).not.toContain('tok'); // the process token never reaches the screen
+    // The processor's references never reach the screen.
+    for (const never of [t1, s.session]) expect(JSON.stringify(ctx)).not.toContain(never);
   });
 
   it('a paid order is assigned at once (no approval): only the group that carries the line is linked, more than ordered is allowed, and the tenants list is untouched', async () => {
@@ -252,7 +298,7 @@ d('chip orders on the DB', () => {
         DEFAULT_CHIP_ORDER_SETTINGS,
       );
       made.orders.push(o.id);
-      await db.markChipOrderPaid(o.id, { transactionId: `t-${o.id}`, transactionToken: 'tt', asmachta: null });
+      expect((await payByCard(o.id)).kind).toBe('paid');
       return o.id;
     };
     const first = await mk(PHONE, 'דנה כהן', [{ apartmentNumber: apt.owned, chipsCount: 1 }, { apartmentNumber: apt.empty, chipsCount: 1 }]);
@@ -277,7 +323,7 @@ d('chip orders on the DB', () => {
       DEFAULT_CHIP_ORDER_SETTINGS,
     );
     made.orders.push(o.id);
-    await db.markChipOrderPaid(o.id, { transactionId: 't5', transactionToken: 'tt5', asmachta: null });
+    expect((await payByCard(o.id)).kind).toBe('paid');
     const item = await itemOf(o.id, apt.rented);
     const before = await contactRow(ids.rented);
     await expect(db.writeOrderHolderToRegistry(item, { name: '  ', phone: null })).rejects.toThrow('nothing_to_write');
@@ -305,7 +351,7 @@ d('chip orders on the DB', () => {
       DEFAULT_CHIP_ORDER_SETTINGS,
     );
     made.orders.push(o.id);
-    await db.markChipOrderPaid(o.id, { transactionId: 't4', transactionToken: 'tt4', asmachta: null });
+    expect((await payByCard(o.id)).kind).toBe('paid');
     const item = await itemOf(o.id, apt.empty);
     const first = await issueChipGroups(
       { contact_id: ids.empty, groups: [{ resident_role: 'other', holder_name: 'רונית לוי', chip_type: 'physical', numbers: [`R${tag}1`], order_item_id: item }] },
@@ -322,7 +368,8 @@ d('chip orders on the DB', () => {
     expect((await rowsOf(o.id))[0]).toMatchObject({ chips_count: 1, chips_linked: 1 });
     await deactivateChip(replacement.items[0]!.id, { reason: 'returned' }, admin);
     await expect(db.markChipOrderReady(o.id)).rejects.toThrow('chips_missing');
-    expect(await db.rejectChipOrder(o.id, 'בדיקה')).toMatchObject({ total: 50, grow_transaction_id: 't4' });
+    // A card-paid order carries no Grow reference; the refund is done in PayPlus.
+    expect(await db.rejectChipOrder(o.id, 'בדיקה')).toMatchObject({ total: 50, grow_transaction_id: null, is_test: false });
   });
 
   it('a tenant order: document_review, lease stored; reject keeps the reason and records the refund state', async () => {
@@ -337,12 +384,12 @@ d('chip orders on the DB', () => {
       DEFAULT_CHIP_ORDER_SETTINGS,
     );
     made.orders.push(o.id);
-    await db.markChipOrderPaid(o.id, { transactionId: 't3', transactionToken: 'tt3', asmachta: null });
+    expect((await payByCard(o.id)).kind).toBe('paid');
     const item = (await pool.query(`select match_status, lease_file_name from public.chip_order_items where order_id = $1`, [o.id])).rows[0];
     expect(item).toMatchObject({ match_status: 'document_review', lease_file_name: 'חוזה.pdf' });
     const rej = await db.rejectChipOrder(o.id, 'החוזה לא בתוקף');
-    expect(rej).toMatchObject({ total: 50, grow_transaction_id: 't3', grow_transaction_token: 'tt3' });
-    await db.setChipOrderRefund(o.id, 'manual_required', 'Grow 110: ממתין לאישור');
+    expect(rej).toMatchObject({ total: 50, grow_transaction_id: null, grow_transaction_token: null, is_test: false });
+    await db.setChipOrderRefund(o.id, 'manual_required', 'נדרש זיכוי ידני ב-PayPlus');
     const after = (await pool.query(`select status, reject_reason, refund_status from public.chip_orders where id = $1`, [o.id])).rows[0];
     expect(after).toMatchObject({ status: 'rejected', reject_reason: 'החוזה לא בתוקף', refund_status: 'manual_required' });
     expect(await rowsOf(o.id)).toEqual([]);

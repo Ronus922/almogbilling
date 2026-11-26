@@ -43,11 +43,13 @@
 //     with its error.
 //   · EXTRA CHIPS (25/11/2026). A new number beyond the quantity an apartment
 //     line paid for online is an extra chip, and it has to be settled: the
-//     payment section of the reception appears for the extras only — "אשראי"
-//     (disabled), "מזומן או העברה" (the save makes a reception order for those
-//     chips) or "ללא חיוב" (no order). The web order and its total never
-//     change. Extra chips that were paid at the reception show in the person's
-//     block, tagged, and are not part of the order's count.
+//     payment section of the reception appears for the extras only — "מזומן"
+//     or "העברה בנקאית" (26/11/2026: two options, until then one "מזומן או
+//     העברה"; the save makes a reception order for those chips) or "ללא חיוב"
+//     (no order). No "אשראי" here: the server takes no card for extras. The
+//     web order and its total never change. Extra chips that were paid at the
+//     reception show in the person's block, tagged, and are not part of the
+//     order's count.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -60,7 +62,8 @@ import { MAX_CHIPS_PER_GROUP } from '@/lib/chips/issueGroups';
 import { isOpenChipOrder, type ChipOrderRole, type ChipOrderWindow, type ChipOrderWindowChip, type ChipOrderWindowHolder } from '@/lib/chipOrders/model';
 import { missingChipsText } from '@/lib/chipOrders/orderRows';
 import {
-  extraChipsOf, receptionAmount, receptionMethodInForce, receptionPaymentReason, type ReceptionContext, type ReceptionPaymentMethod,
+  RECEPTION_CONFIRMED_METHODS, extraChipsOf, receptionAmount, receptionMethodInForce, receptionPaymentReason,
+  type ReceptionContext, type ReceptionPaymentMethod,
 } from '@/lib/chipOrders/reception';
 import type { ChipResidentRole, ChipType } from '@/lib/types/chips';
 import { HolderRegistryButton } from '../ChipOrderSection';
@@ -140,7 +143,7 @@ async function fetchWindow(orderItemId: string): Promise<ChipOrderWindow> {
 }
 
 export function OrderIssueSheet({
-  open, onOpenChange, onIssued, canEditOrders = false, canWriteContacts = false, canCancelReception = false, orderItemId,
+  open, onOpenChange, onIssued, canEditOrders = false, canWriteContacts = false, canAdminOrders = false, orderItemId,
 }: IssueChipSheetProps & { orderItemId: string }) {
   const [win, setWin] = useState<ChipOrderWindow | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -161,9 +164,9 @@ export function OrderIssueSheet({
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   // The extra chips of the save (beyond what was paid online): the price per
-  // chip of /settings and whether "אשראי" is drawn (GET /api/chips/reception),
-  // the method that was chosen, and the sum it confirmed.
-  const [pricing, setPricing] = useState<Pick<ReceptionContext, 'unit_price' | 'card_option'> | null>(null);
+  // chip of /settings (GET /api/chips/reception), the method that was chosen,
+  // and the sum it confirmed.
+  const [pricing, setPricing] = useState<Pick<ReceptionContext, 'unit_price'> | null>(null);
   const [pricingTick, setPricingTick] = useState(0);
   const [method, setMethod] = useState<ReceptionPaymentMethod | null>(null);
   const [confirmedAmount, setConfirmedAmount] = useState<number | null>(null);
@@ -209,7 +212,7 @@ export function OrderIssueSheet({
     fetch('/api/chips/reception', { credentials: 'include' })
       .then((res) => (res.ok ? (res.json() as Promise<ReceptionContext>) : null))
       .then((data) => {
-        if (!cancelled && data) setPricing({ unit_price: data.unit_price, card_option: data.card_option });
+        if (!cancelled && data) setPricing({ unit_price: data.unit_price });
       })
       .catch(() => undefined);
     return () => { cancelled = true; };
@@ -327,8 +330,8 @@ export function OrderIssueSheet({
   }));
   const unitPrice = pricing?.unit_price ?? null;
   const extraAmount = unitPrice === null ? null : receptionAmount(extraChips, unitPrice);
-  // "מזומן או העברה" confirms the sum that was on the screen when it was
-  // chosen: once the sum is another one, the choice no longer stands.
+  // "מזומן" / "העברה בנקאית" confirm the sum that was on the screen when it
+  // was chosen: once the sum is another one, the choice no longer stands.
   const methodNow = receptionMethodInForce({ method, amount: extraAmount, confirmedAmount });
   const payReason = receptionPaymentReason({ newChips: extraChips, method, amount: extraAmount, confirmedAmount, what: 'extra' });
 
@@ -452,13 +455,13 @@ export function OrderIssueSheet({
           // shows; the server computes its own and refuses a save where the
           // two differ.
           ...(extraChips > 0 && methodNow
-            ? { extra_payment: { method: methodNow, amount: methodNow === 'cash_transfer' ? extraAmount ?? 0 : 0 } }
+            ? { extra_payment: { method: methodNow, amount: RECEPTION_CONFIRMED_METHODS.includes(methodNow) ? extraAmount ?? 0 : 0 } }
             : {}),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         issued?: number; error?: string; chip_number?: string; holder_index?: number | null; code?: string;
-        extra?: { chips: number; method: ReceptionPaymentMethod; order: { order_number: number; total: number } | null } | null;
+        extra?: { chips: number; method: ReceptionPaymentMethod; order: { id?: string; order_number: number; total: number } | null } | null;
       };
       if (!res.ok) {
         // The server counted the extra chips, or their sum, differently from
@@ -727,9 +730,10 @@ export function OrderIssueSheet({
               win={win}
               readyAction={{ can: canReady, busy: readyBusy, reason: readyReason, run: () => void markReady() }}
               canEditOrders={canEditOrders}
-              canCancelReception={canCancelReception}
+              canAdminOrders={canAdminOrders}
               disabled={submitting}
               onGone={() => { onIssued(); onOpenChange(false); }}
+              onReload={() => { reload(); onIssued(); }}
               onModalChange={setModalOpen}
             />
             {/* The extra chips of this save — beyond what was paid online. The
@@ -740,7 +744,7 @@ export function OrderIssueSheet({
                   <AlertIco size={14} />
                   <span>
                     {extraChips === 1 ? 'נוסף צ׳יפ אחד' : <>נוספו <span className="ci-num">{extraChips}</span> צ׳יפים</>} מעבר לכמות ששולמה באתר.
-                    {' '}ההזמנה מהאתר והסכום שלה לא משתנים — „מזומן או העברה” רושם על הצ׳יפים הנוספים הזמנת קבלה נפרדת, ו„ללא חיוב” לא רושם הזמנה.
+                    {' '}ההזמנה מהאתר והסכום שלה לא משתנים — „מזומן” או „העברה בנקאית” רושמים על הצ׳יפים הנוספים הזמנת קבלה נפרדת, ו„ללא חיוב” לא רושם הזמנה.
                   </span>
                 </p>
                 <ReceptionPayment
@@ -751,9 +755,10 @@ export function OrderIssueSheet({
                     setDirty(true);
                     setServerError(null);
                     setMethod(m);
-                    setConfirmedAmount(m === 'cash_transfer' ? extraAmount : null);
+                    setConfirmedAmount(RECEPTION_CONFIRMED_METHODS.includes(m) ? extraAmount : null);
                   }}
-                  cardOption={pricing?.card_option ?? false}
+                  // No "אשראי" for extra chips: the server takes cash, a transfer or no charge here.
+                  cardOption={false}
                   disabled={submitting || !canEditOrders}
                   reason={payReason}
                   cashOff={win.order.is_test ? 'בהזמנת בדיקה לא נרשם תשלום' : null}

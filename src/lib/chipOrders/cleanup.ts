@@ -1,12 +1,12 @@
 import 'server-only';
 import { logger } from '@/lib/logger';
-import { isGrowConfigured } from '@/lib/grow/client';
 import {
   deleteChipOrderWithLeases, listStaleUnpaidOrders, listTestOrderIds, type OrderDeleteOutcome,
 } from '@/lib/db/chipOrders';
+import { listPendingOrdersWithSessions } from '@/lib/db/chipOrderCard';
 import { removeChipOrderLeasesStrict } from '@/lib/storage/chipOrderLeaseStorage';
 import { listStaleUnattachedLeases, purgeLeaseIfUnattached } from '@/lib/db/chipLeaseUploads';
-import { confirmChipOrderPayment } from './payment';
+import { lookupCardPayment, lookupConfigFor } from './cardPayment';
 
 // Removing chip orders that must not stay (13/11/2026):
 //   - the hourly purge of real orders that were never paid (POST
@@ -15,6 +15,26 @@ import { confirmChipOrderPayment } from './payment';
 //     הזמנות הבדיקה").
 // Both delete the lease files FIRST and the row after; a file Storage refuses
 // keeps its order for the next attempt. A paid order is never deleted.
+//
+// BEFORE AN UNPAID ORDER IS DELETED, PAYPLUS IS ASKED (26/11/2026): every
+// payment session the order ever had is looked up in PayPlus. An approved
+// charge there pays the order instead (and its message goes out); PayPlus not
+// configured for that environment, or not answering, keeps the order for a
+// later run. An order of the former processor (Grow, removed 26/11/2026) can
+// no longer be checked and is never deleted here. Nor is an order whose
+// sessions one lookup cannot cover (more than PURGE_LOOKUP_MAX_SESSIONS, or one
+// older than the lookup's week): "not charged" on part of its sessions is
+// never read as "not charged" — it is kept, counted unverifiable. An order
+// whose payment page was opened in the last 45 minutes is not touched at all
+// (that page may still be charged — listStaleUnpaidOrders and the locked
+// re-check of deleteChipOrderWithLeases).
+//
+// The same run RECONCILES (26/11/2026): an order still waiting for payment —
+// a web order or a reception card order — whose payment session is between
+// 10 minutes and 48 hours old is looked up in PayPlus, newest session first
+// (up to 50 a run) — a charge whose callback was lost while the customer
+// closed the page (or the window was closed) is found within the hour, not
+// only when the order is purged.
 //
 // The same hourly run also sweeps the leases nobody saved (25/11/2026): a
 // lease that was uploaded in the issue window and never saved — the window was
@@ -25,16 +45,23 @@ import { confirmChipOrderPayment } from './payment';
 /** An unpaid order is purged this long after it was created. */
 export const UNPAID_ORDER_TTL_HOURS = 48;
 
+/** Before a purge: every session the order had (no order lives longer than
+ *  the TTL plus a run; a week is a generous bound). */
+const PURGE_LOOKUP_MINUTES = 7 * 24 * 60;
+const PURGE_LOOKUP_MAX_SESSIONS = 25;
+
 export interface PurgeResult {
   /** Unpaid real orders older than the TTL that the run looked at. */
   scanned: number;
   deleted: number;
-  /** Grow says the order WAS paid — moved to "paid" (the regular status). */
+  /** PayPlus says the order WAS paid — moved to "paid" (the regular status). */
   movedToPaid: number;
-  /** Orders that have a Grow process while Grow is not configured — kept. */
-  skippedGrowUnavailable: number;
-  /** Grow did not answer (or answered an error) — kept for the next run. */
-  skippedGrowError: number;
+  /** The order cannot be checked now (PayPlus of its environment not
+   *  configured, an order of the former processor, or sessions one lookup
+   *  cannot cover — more than 25, or older than a week) — kept. */
+  skippedUnverifiable: number;
+  /** PayPlus did not answer (or answered something unreadable) — kept for the next run. */
+  skippedLookupError: number;
   /** Storage refused a lease file — kept for the next run. */
   fileFailed: number;
   /** Changed under the run (paid or deleted meanwhile) or an unexpected error. */
@@ -45,14 +72,13 @@ export interface PurgeResult {
 
 /**
  * Deletes every REAL order still unpaid 48 hours after it was created, with
- * its apartment lines, its messages and its lease files. An order that has a
- * Grow payment process is first checked against Grow's API: paid → it moves
- * to "paid" instead (and is reported for its message); Grow not configured or
- * not answering → kept for a later run. Test orders are never touched here.
+ * its apartment lines, its messages and its lease files — after PayPlus was
+ * asked about every payment session it had (see the header). Test orders are
+ * never touched here.
  */
 export async function purgeUnpaidChipOrders(): Promise<PurgeResult> {
   const r: PurgeResult = {
-    scanned: 0, deleted: 0, movedToPaid: 0, skippedGrowUnavailable: 0, skippedGrowError: 0,
+    scanned: 0, deleted: 0, movedToPaid: 0, skippedUnverifiable: 0, skippedLookupError: 0,
     fileFailed: 0, skippedOther: 0, paidOrderIds: [],
   };
   const candidates = await listStaleUnpaidOrders(UNPAID_ORDER_TTL_HOURS);
@@ -60,18 +86,31 @@ export async function purgeUnpaidChipOrders(): Promise<PurgeResult> {
   for (const o of candidates) {
     try {
       if (o.grow_process_id) {
-        if (!isGrowConfigured()) {
-          r.skippedGrowUnavailable++;
+        r.skippedUnverifiable++;
+        continue;
+      }
+      if (o.sessions > 0) {
+        const cfg = lookupConfigFor(o.card_env ?? 'production');
+        if (!cfg) {
+          r.skippedUnverifiable++;
           continue;
         }
-        const check = await confirmChipOrderPayment(o.id, 'purge');
-        if (check.kind === 'paid') {
+        const found = await lookupCardPayment(cfg, o, PURGE_LOOKUP_MAX_SESSIONS, PURGE_LOOKUP_MINUTES);
+        if (found.kind === 'paid') {
           r.movedToPaid++;
-          if (check.transitioned) r.paidOrderIds.push(o.id);
+          if (found.transitioned) r.paidOrderIds.push(found.orderId);
           continue;
         }
-        if (check.kind !== 'not_paid') {
-          r.skippedGrowError++;
+        if (found.kind === 'unknown') {
+          r.skippedLookupError++;
+          continue;
+        }
+        // Nothing charged on the sessions that were asked about — but a
+        // session the lookup did not reach (older than its window, or past its
+        // limit) is not ruled out: kept, never "not charged".
+        if (found.checked < o.sessions) {
+          r.skippedUnverifiable++;
+          logger.warn('[chip-orders] purge: sessions beyond one lookup — order kept', { orderId: o.id, sessions: o.sessions, checked: found.checked });
           continue;
         }
       }
@@ -88,6 +127,52 @@ export async function purgeUnpaidChipOrders(): Promise<PurgeResult> {
   }
   const { paidOrderIds, ...counts } = r;
   logger.info('[chip-orders] unpaid purge', { ...counts, paid: paidOrderIds.length });
+  return r;
+}
+
+/** The reconciliation sweep: sessions at least this old (a customer may still
+ *  be paying in a younger one), and no older than the purge TTL. */
+const RECONCILE_MIN_MINUTES = 10;
+const RECONCILE_MAX_MINUTES = UNPAID_ORDER_TTL_HOURS * 60;
+const RECONCILE_MAX_PER_RUN = 50;
+
+export interface ReconcileResult {
+  scanned: number;
+  movedToPaid: number;
+  unknown: number;
+  paidOrderIds: string[];
+}
+
+/** Looks up in PayPlus the orders (web and reception card orders) that still
+ *  wait for payment and had a payment session 10 minutes to 48 hours ago (both
+ *  environments; the sandbox only while it is configured), newest session
+ *  first, and applies what PayPlus reports. */
+export async function reconcilePendingCardOrders(): Promise<ReconcileResult> {
+  const r: ReconcileResult = { scanned: 0, movedToPaid: 0, unknown: 0, paidOrderIds: [] };
+  for (const mode of ['production', 'sandbox'] as const) {
+    const cfg = lookupConfigFor(mode);
+    if (!cfg) continue;
+    const orders = await listPendingOrdersWithSessions(mode, RECONCILE_MIN_MINUTES, RECONCILE_MAX_MINUTES, RECONCILE_MAX_PER_RUN);
+    for (const o of orders) {
+      r.scanned++;
+      try {
+        const found = await lookupCardPayment(cfg, o, PURGE_LOOKUP_MAX_SESSIONS, RECONCILE_MAX_MINUTES + 60);
+        if (found.kind === 'paid') {
+          r.movedToPaid++;
+          if (found.transitioned) r.paidOrderIds.push(found.orderId);
+        } else if (found.kind === 'unknown') {
+          r.unknown++;
+        }
+      } catch (err) {
+        r.unknown++;
+        logger.warn('[chip-orders] reconcile: order skipped', { orderId: o.id, error: (err as Error).name });
+      }
+    }
+  }
+  if (r.scanned > 0) {
+    const { paidOrderIds, ...counts } = r;
+    logger.info('[chip-orders] card reconcile', { ...counts, paid: paidOrderIds.length });
+  }
   return r;
 }
 

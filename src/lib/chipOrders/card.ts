@@ -2,6 +2,8 @@
 // show, and the checks that need no server). No 'server-only' here: the public
 // order form imports it.
 
+import { formatIlsAfter } from './model';
+
 export type CardEnv = 'sandbox' | 'production';
 export type CardStatus = 'started' | 'paid' | 'failed';
 
@@ -53,6 +55,14 @@ export function cardHolderPhone(e164: string | null | undefined): string {
 
 const GENERAL_FAILURE = 'התשלום לא אושר. אפשר לבדוק את פרטי הכרטיס ולנסות שוב, או לנסות כרטיס אחר.';
 
+// A wallet button (Google Pay / Apple Pay) ends with the same kind of reply,
+// plus two of its own: the SDK's "{apple,google}-pay-not-available", and a
+// sheet the customer closed. Checked first, and only for a wallet reply.
+const WALLET_FAILURE_BY_CODE: [RegExp, string][] = [
+  [/(?:apple|google)[-_ ]?pay[-_ ]not[-_ ]available/i, 'התשלום בארנק אינו זמין כרגע — אפשר לשלם בכרטיס'],
+  [/cancel/i, 'התשלום בארנק לא הושלם. אפשר לנסות שוב או לשלם בכרטיס.'],
+];
+
 const FAILURE_BY_CODE: [RegExp, string][] = [
   [/recaptcha/i, 'האימות האוטומטי („אני לא רובוט”) לא הושלם. יש לסמן את התיבה ולנסות שוב.'],
   [/expir/i, 'תוקף הכרטיס שגוי או שהכרטיס פג תוקף.'],
@@ -71,9 +81,11 @@ const FAILURE_BY_CODE: [RegExp, string][] = [
  *  is shown, and the customer is not told the card was not charged. */
 const AMBIGUOUS = /timeout|timed[-_ ]out|network|unavailable|try[-_ ]again[-_ ]later|pending|in[-_ ]process/i;
 
-/** The Hebrew line for a refused attempt, from whatever the SDK returned. */
-export function cardFailureMessage(response: unknown): string {
+/** The Hebrew line for a refused attempt, from whatever the SDK returned —
+ *  `via` the card fields (default) or a wallet button. */
+export function cardFailureMessage(response: unknown, via: 'card' | 'wallet' = 'card'): string {
   const all = replyTexts(response);
+  if (via === 'wallet') for (const [re, he] of WALLET_FAILURE_BY_CODE) if (re.test(all)) return he;
   for (const [re, he] of FAILURE_BY_CODE) if (re.test(all)) return he;
   return GENERAL_FAILURE;
 }
@@ -113,8 +125,35 @@ export function sdkSaysRefused(response: unknown): boolean {
   return r.success === false && !AMBIGUOUS.test(replyTexts(response));
 }
 
+/**
+ * The SDK's answer says the payment page itself is gone: PayPlus refused the
+ * submit because the page request expired or was disabled (seen in the real
+ * sandbox, 26/11/2026: `{message: "not-authorize-page-expired"}`, after
+ * PaymentPages/Disable). Nothing can be charged through that page — the form
+ * asks the server once, then opens a NEW session on the next press.
+ */
+export function sdkSaysPageExpired(response: unknown): boolean {
+  if (!response || typeof response !== 'object') return false;
+  const message = (response as Record<string, unknown>).message;
+  return typeof message === 'string' && /page[-_ ]?expired|page[-_ ]?killed|not-authorize-page/i.test(message);
+}
+
 export const CARD_TEXT = {
-  idle: 'פרטי הכרטיס יוזנו בשלב הבא, אחרי אימות הטלפון.',
+  /** Under the card boxes before the order is saved (they are not typeable yet). */
+  idle: 'שדות הכרטיס ייפתחו מיד כשכל הפרטים שלמעלה יושלמו',
+  /** The test link with no PayPlus sandbox configured (CI): the boxes never open. */
+  testNoCard: 'מצב בדיקה בלי סליקה: שדות הכרטיס לא נפתחים, ולחיצה על התשלום מסיימת את הזמנת הבדיקה בלי חיוב.',
+  /** The pay button opened the fields (they were not open yet) and stopped there. */
+  typeCard: 'שדות הכרטיס פתוחים — יש להזין את פרטי הכרטיס וללחוץ שוב על התשלום.',
+  /** The fields were opened again for another order (the same amount). */
+  reopened: 'שדות הכרטיס נפתחו מחדש — יש להזין שוב את פרטי הכרטיס.',
+  saving: 'שומרים…',
+  saveFailed: 'שמירת ההזמנה נכשלה. נסו שוב.',
+  saveOffline: 'שמירת ההזמנה נכשלה. בדקו את החיבור לאינטרנט ונסו שוב.',
+  walletPaying: 'התשלום בארנק הדיגיטלי מתבצע — יש להשלים אותו בחלון שנפתח.',
+  /** The transparent button over the wallet row while it may not charge. */
+  walletGate: 'השלמת הפרטים לפני תשלום',
+  walletDivider: 'או תשלום בכרטיס אשראי',
   loading: 'פותחים את שדות התשלום המאובטחים…',
   verifying: 'מאמתים את התשלום מול חברת הסליקה…',
   unverified: 'התשלום נשלח, אבל עדיין לא התקבל עליו אישור מחברת הסליקה. אין צורך לשלם שוב — ברגע שיגיע האישור תישלח אליך הודעה. אפשר גם לבדוק שוב בעוד רגע.',
@@ -128,6 +167,12 @@ export const CARD_TEXT = {
   nameRequired: 'נדרש שם בעל הכרטיס, כפי שמופיע על הכרטיס',
   idInvalid: 'מספר תעודת זהות לא תקין',
 } as const;
+
+/** Under the card fields after they were opened again because the order's
+ *  total changed: the processor's frames start empty. */
+export function cardAmountChangedHint(total: number): string {
+  return `הסכום עודכן ל-${formatIlsAfter(total)} — יש להזין שוב את פרטי הכרטיס`;
+}
 
 // The text inside the processor's frames, matched to the form's own digit
 // inputs (.cr-fld input.cr-num): Inter 600, tabular digits, #1a2233, the ghost

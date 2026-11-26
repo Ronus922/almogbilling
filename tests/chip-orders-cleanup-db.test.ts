@@ -6,11 +6,19 @@ import { requireSeededAdmin } from './db-fixtures';
 // (WA_TEST_DATABASE_URL), never prod:
 //   - the hourly purge of REAL orders still unpaid 48 hours after creation
 //     (49h → deleted with its lease files, files first; 47h → kept; paid a
-//     month ago → kept; a test order → kept; a Grow process with Grow off or
-//     failing → kept; Grow says paid → moved to paid; Storage refusing → kept);
+//     month ago → kept; a test order → kept; an order of the former processor
+//     (Grow) → never deleted; a card session that cannot be checked → kept;
+//     Storage refusing → kept);
 //   - "מחק את כל הזמנות הבדיקה": test orders go, a real order stays, a chip
 //     issued for a test order stays in the chips module (order_item_id → NULL).
-// Grow, Storage and the notifications are mocked; every row is real.
+// PayPlus is not configured here (payplusConfigFor answers null) — the lookups
+// before a purge are tests/chip-order-live-card-db.test.ts — except in the
+// tests that turn it on (`pp.on`): its lookup then answers "nothing charged"
+// for every session and records what it was asked about. Those pin the rules
+// of 26/11 (review): an order whose payment page may still be open is never
+// purged, an order with sessions one lookup cannot cover is never read as
+// "not charged", and an approved charge for an order the purge deleted alerts
+// the admins. Storage and the notifications are mocked; every row is real.
 // Fixtures are numeric apartments far from the seed, removed by exact ids.
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
 const d = describe.skipIf(!TEST_URL);
@@ -28,14 +36,23 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
-const grow = { configured: false, paid: false, fail: false };
-vi.mock('@/lib/grow/client', () => ({
-  isGrowConfigured: () => grow.configured,
-  getPaymentProcessInfo: async () => {
-    if (grow.fail) throw new Error('grow is down');
-    return { transactions: [] };
+// Neither PayPlus environment is configured in this file — unless a test sets
+// pp.on; the lookup never leaves the process.
+const pp = vi.hoisted(() => ({ on: false, asked: [] as string[] }));
+vi.mock('@/lib/payplus/client', async (orig) => ({
+  ...(await orig<typeof import('@/lib/payplus/client')>()),
+  payplusConfigFor: (mode: 'sandbox' | 'production') =>
+    (pp.on ? { mode, origin: 'https://payplus.invalid', apiKey: 'cleanup-test-key', secretKey: 'cleanup-test-secret', pageUid: 'cleanup-test-page' } : null),
+  lookupPaymentRequest: async (_cfg: unknown, pageRequestUid: string) => {
+    pp.asked.push(pageRequestUid);
+    return { kind: 'transactions', transactions: [] };
   },
-  findPaidTransaction: () => (grow.paid ? { transactionId: 'tx-paid', transactionToken: 'tt-paid', asmachta: '777' } : null),
+}));
+// The admins' alerts — recorded here, not written.
+const createNotification = vi.fn<(n: { type: string; priority?: string; dedupeKey?: string; sourceEntityId?: string }) => Promise<undefined>>(async () => undefined);
+vi.mock('@/services/notifications', async (orig) => ({
+  ...(await orig<typeof import('@/services/notifications')>()),
+  createNotification,
 }));
 
 /** Every Storage removal: the keys, and whether the order row still existed
@@ -49,10 +66,13 @@ vi.mock('@/lib/storage/chipOrderLeaseStorage', () => ({
     return storage.ok;
   },
 }));
-vi.mock('@/lib/chipOrders/notify', () => ({ notifyChipOrder: vi.fn(async () => undefined) }));
+vi.mock('@/lib/chipOrders/notify', () => ({ notifyChipOrder: vi.fn(async () => undefined), afterOrderPaid: vi.fn(async () => undefined) }));
 
 const db = await import('@/lib/db/chipOrders');
+const { setCardSession } = await import('@/lib/db/chipOrderCard');
 const { purgeUnpaidChipOrders, deleteAllTestChipOrders, deleteTestChipOrder } = await import('@/lib/chipOrders/cleanup');
+const { applyPayPlusCallback } = await import('@/lib/chipOrders/cardPayment');
+const { readPayPlusTransaction } = await import('@/lib/payplus/client');
 const { issueChipGroups } = await import('@/lib/db/chips');
 const { DEFAULT_CHIP_ORDER_SETTINGS } = await import('@/lib/chipOrders/model');
 
@@ -80,6 +100,14 @@ async function order(opts: { hoursAgo: number; lease?: boolean; isTest?: boolean
 }
 const exists = async (id: string) => ((await pool.query(`select 1 from public.chip_orders where id = $1`, [id])).rowCount ?? 0) > 0;
 const statusOf = async (id: string) => (await pool.query<{ status: string }>(`select status from public.chip_orders where id = $1`, [id])).rows[0]?.status;
+/** Ages every payment session of the order — and its latest-session stamp — to `minutes` ago. */
+async function sessionsAgo(id: string, minutes: number) {
+  await pool.query(`update public.chip_order_card_sessions set created_at = now() - make_interval(mins => $2) where order_id = $1`, [id, minutes]);
+  await pool.query(`update public.chip_orders set card_session_at = now() - make_interval(mins => $2) where id = $1`, [id, minutes]);
+}
+const activeAdmins = async () => (await pool.query<{ id: string }>(
+  `select id from public.users where is_active = true and role in ('super_admin', 'admin')`,
+)).rows.length;
 
 d('chip orders — hourly purge of unpaid orders, and deleting test orders', () => {
   beforeAll(async () => {
@@ -95,9 +123,11 @@ d('chip orders — hourly purge of unpaid orders, and deleting test orders', () 
   });
 
   beforeEach(() => {
-    Object.assign(grow, { configured: false, paid: false, fail: false });
     storage.ok = true;
     removals.length = 0;
+    pp.on = false;
+    pp.asked.length = 0;
+    createNotification.mockClear();
   });
 
   afterAll(async () => {
@@ -138,34 +168,102 @@ d('chip orders — hourly purge of unpaid orders, and deleting test orders', () 
     expect(removals.flatMap((x) => x.keys).filter((k) => keptKeys.includes(k))).toEqual([]);
   });
 
-  it('a Grow process: Grow off or failing → kept; Grow says unpaid → deleted; Grow says paid → moved to paid', async () => {
-    const withProcess = async () => {
-      const id = await order({ hoursAgo: 50 });
-      await pool.query(`update public.chip_orders set grow_process_id = $2, grow_process_token = 'tok' where id = $1`, [id, `p-${id}`]);
-      return id;
-    };
-    const a = await withProcess();
-    let r = await purgeUnpaidChipOrders();
-    expect(r.skippedGrowUnavailable).toBeGreaterThanOrEqual(1);
-    expect(await statusOf(a)).toBe('pending_payment');
+  it('an order of the former processor (a Grow process) can no longer be checked — it is never deleted, run after run', async () => {
+    const id = await order({ hoursAgo: 50 });
+    await pool.query(`update public.chip_orders set grow_process_id = $2, grow_process_token = 'tok' where id = $1`, [id, `p-${id}`]);
+    for (let run = 0; run < 2; run++) {
+      const r = await purgeUnpaidChipOrders();
+      expect(r.skippedUnverifiable).toBeGreaterThanOrEqual(1);
+      expect(r.paidOrderIds).not.toContain(id);
+      expect(await statusOf(id)).toBe('pending_payment');
+    }
+  });
 
-    grow.configured = true;
-    grow.fail = true;
-    r = await purgeUnpaidChipOrders();
-    expect(r.skippedGrowError).toBeGreaterThanOrEqual(1);
-    expect(await statusOf(a)).toBe('pending_payment');
+  it('an unpaid order that had a card session is kept while PayPlus of its environment is not configured', async () => {
+    const id = await order({ hoursAgo: 50 });
+    expect(await setCardSession(id, { env: 'production', pageRequestUid: `cleanup-${tag}-session-1`, amount: 50 })).toBe(true);
+    await sessionsAgo(id, 120); // its page expired long ago
+    const r = await purgeUnpaidChipOrders();
+    expect(r.skippedUnverifiable).toBeGreaterThanOrEqual(1);
+    expect(await exists(id)).toBe(true);
+    expect(await statusOf(id)).toBe('pending_payment');
+  });
 
-    grow.fail = false;
-    grow.paid = true;
-    r = await purgeUnpaidChipOrders();
-    expect(r.paidOrderIds).toContain(a);
-    expect(await statusOf(a)).toBe('paid');
+  it('an order whose payment page was opened in the last 45 minutes is NOT purged: not a candidate, and the delete itself refuses it under the row lock — once the page expired, it is looked up and purged', async () => {
+    const id = await order({ hoursAgo: 50 });
+    const session = `cleanup-${tag}-open-1`;
+    expect(await setCardSession(id, { env: 'production', pageRequestUid: session, amount: 50 })).toBe(true);
+    pp.on = true;
+    expect((await db.listStaleUnpaidOrders(48)).map((o) => o.id)).not.toContain(id);
+    await purgeUnpaidChipOrders();
+    expect(await exists(id)).toBe(true);
+    expect(pp.asked).not.toContain(session);
+    // Straight at the delete (a page opened between the purge's lookup and its delete): refused.
+    expect(await db.deleteChipOrderWithLeases(id, 'unpaid', async () => true)).toBe('not_found');
+    expect(await exists(id)).toBe(true);
+    // 46 minutes on the page has expired: a candidate again — asked about, nothing charged, deleted.
+    await sessionsAgo(id, 46);
+    expect((await db.listStaleUnpaidOrders(48)).map((o) => o.id)).toContain(id);
+    await purgeUnpaidChipOrders();
+    expect(pp.asked).toContain(session);
+    expect(await exists(id)).toBe(false);
+  });
 
-    const b = await withProcess();
-    grow.paid = false;
-    r = await purgeUnpaidChipOrders();
-    expect(await exists(b)).toBe(false);
-    expect(await statusOf(a)).toBe('paid');
+  it('PayPlus says "nothing charged", yet an order with sessions one lookup cannot cover — more than 25, or one older than its week — is KEPT (unverifiable), run after run; a covered one is deleted', async () => {
+    const many = await order({ hoursAgo: 50 });
+    for (let i = 1; i <= 26; i++) {
+      expect(await setCardSession(many, { env: 'production', pageRequestUid: `cleanup-${tag}-many-${String(i).padStart(2, '0')}`, amount: 50 })).toBe(true);
+    }
+    await sessionsAgo(many, 120);
+    const ancient = await order({ hoursAgo: 24 * 9 });
+    expect(await setCardSession(ancient, { env: 'production', pageRequestUid: `cleanup-${tag}-ancient-1`, amount: 50 })).toBe(true);
+    await sessionsAgo(ancient, 8 * 24 * 60);
+    const covered = await order({ hoursAgo: 50 });
+    expect(await setCardSession(covered, { env: 'production', pageRequestUid: `cleanup-${tag}-covered-1`, amount: 50 })).toBe(true);
+    await sessionsAgo(covered, 120);
+
+    pp.on = true;
+    const r = await purgeUnpaidChipOrders();
+    expect(await exists(covered)).toBe(false);
+    expect(await exists(many)).toBe(true);
+    expect(await exists(ancient)).toBe(true);
+    expect(r.skippedUnverifiable).toBeGreaterThanOrEqual(2);
+    // The newest 25 sessions of `many` were asked about — the 26th could not be; the week-old one was not reached at all.
+    expect(pp.asked.filter((u) => u.startsWith(`cleanup-${tag}-many-`))).toHaveLength(25);
+    expect(pp.asked).not.toContain(`cleanup-${tag}-ancient-1`);
+    expect(pp.asked).toContain(`cleanup-${tag}-covered-1`);
+    await purgeUnpaidChipOrders();
+    expect(await exists(many)).toBe(true);
+    expect(await exists(ancient)).toBe(true);
+    expect(await statusOf(many)).toBe('pending_payment');
+  });
+
+  it('an APPROVED production charge for an order that no longer exists (the purge deleted it) alerts every active admin — not a log line only; a refused charge, or the sandbox, alerts nobody', async () => {
+    const gone = await order({ hoursAgo: 50 });
+    const number = (await pool.query<{ n: number }>(`select order_number as n from public.chip_orders where id = $1`, [gone])).rows[0]!.n;
+    expect(await db.deleteChipOrderWithLeases(gone, 'unpaid', async () => true)).toBe('deleted');
+    const charge = (uid: string, statusCode: string, session: string | null) => readPayPlusTransaction({
+      transaction_type: 'Charge',
+      transaction: {
+        uid, ...(session ? { payment_request_uid: session } : {}), type: 'internal_page', status_code: statusCode,
+        amount: 50, currency: 'ILS', approval_number: '0012345', more_info: String(number),
+      },
+    })!;
+    const production = { mode: 'production', origin: 'https://payplus.invalid', apiKey: 'k', secretKey: 's', pageUid: 'p' } as const;
+    // The hosted-fields notice (no session named), and one that names a session.
+    expect(await applyPayPlusCallback(production, charge(`cleanup-${tag}-late-1`, '000', null))).toEqual({ kind: 'ignored', why: 'unknown_order' });
+    expect(await applyPayPlusCallback(production, charge(`cleanup-${tag}-late-2`, '000', `cleanup-${tag}-late-session`))).toEqual({ kind: 'ignored', why: 'unknown_order' });
+    const admins = await activeAdmins();
+    expect(admins).toBeGreaterThanOrEqual(1);
+    const keys = createNotification.mock.calls.map((c) => c[0].dedupeKey ?? '');
+    expect(keys.filter((k) => k.startsWith(`chip_card_unknown_order:cleanup-${tag}-late-1:`))).toHaveLength(admins);
+    expect(keys.filter((k) => k.startsWith(`chip_card_unknown_order:cleanup-${tag}-late-2:`))).toHaveLength(admins);
+    expect(createNotification.mock.calls[0]![0]).toMatchObject({ type: 'chip_order_alert', priority: 'high' });
+
+    createNotification.mockClear();
+    await applyPayPlusCallback(production, charge(`cleanup-${tag}-late-3`, '033', null));
+    await applyPayPlusCallback({ ...production, mode: 'sandbox' }, charge(`cleanup-${tag}-late-4`, '000', null));
+    expect(createNotification).not.toHaveBeenCalled();
   });
 
   it('Storage refusing a lease keeps the order for the next run, and the run goes on', async () => {
@@ -220,6 +318,8 @@ d('chip orders — hourly purge of unpaid orders, and deleting test orders', () 
     await expect(pool.query(`update public.chip_orders set grow_process_id = 'x' where id = $1`, [t])).rejects.toThrow(/chip_orders_test_no_grow_check/);
     const real = await order({ hoursAgo: 1 });
     await expect(pool.query(`update public.chip_orders set refund_status = 'not_required' where id = $1`, [real])).rejects.toThrow(/chip_orders_refund_not_required_check/);
+    // A real web order is "paid" only with a Grow transaction or a card charge the
+    // processor confirmed (card_status 'paid') — never with neither (card_status NULL).
     await expect(pool.query(`update public.chip_orders set status = 'paid', paid_at = now() where id = $1`, [real])).rejects.toThrow(/chip_orders_paid_fields_check/);
   });
 });

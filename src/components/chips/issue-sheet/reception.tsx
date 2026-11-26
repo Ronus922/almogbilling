@@ -15,7 +15,9 @@
 //                         amount of this save, read only — new chips × the
 //                         price per chip of /settings, drawn as the public
 //                         page draws its breakdown — and how it is paid.
-//                         Nothing is selected by default;
+//                         Nothing is selected by default. 26/11/2026: "מזומן"
+//                         and "העברה בנקאית" are two options (until then one,
+//                         "מזומן או העברה"); "אשראי" stays drawn disabled;
 //   · ReceptionRecords  — what an earlier save left: the block's chips say
 //                         again who ordered them and how they were settled.
 //
@@ -26,7 +28,7 @@ import { ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LEASE_FILE_ACCEPT, formatIlsAfter } from '@/lib/chipOrders/model';
 import {
-  RECEPTION_CARD_PENDING_TEXT, RECEPTION_PAYMENT_LABEL, receptionAmount,
+  RECEPTION_CARD_PENDING_TEXT, RECEPTION_PAYMENT_LABEL, STORED_PAYMENT_LABEL, receptionAmount,
   type OrdererFields, type ReceptionPaymentMethod, type ReceptionRecordView,
 } from '@/lib/chipOrders/reception';
 import { e164ToLocal } from '@/lib/portal/phone';
@@ -39,6 +41,7 @@ export const UserIco = () => <Ico><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4
 const UploadIco = () => <Ico size={15} sw={2}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m17 8-5-5-5 5M12 3v12" /></Ico>;
 const CardPayIco = () => <Ico size={16}><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" /></Ico>;
 const CashIco = () => <Ico size={16}><rect x="2" y="6" width="20" height="12" rx="2" /><circle cx="12" cy="12" r="2.5" /><path d="M6 12h.01M18 12h.01" /></Ico>;
+const BankIco = () => <Ico size={16}><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 14v3M12 14v3M16 14v3" /></Ico>;
 const FreeIco = () => <Ico size={16}><circle cx="12" cy="12" r="10" /><path d="m4.9 4.9 14.2 14.2" /></Ico>;
 
 // ── Who ordered ─────────────────────────────────────────────────────────────
@@ -169,7 +172,8 @@ export function LeaseField({
 // ── The payment of the new chips ────────────────────────────────────────────
 
 export function ReceptionPayment({
-  newChips, unitPrice, method, onMethod, cardOption, disabled, reason, cashOff = null,
+  newChips, unitPrice, method, onMethod, cardOption, cardLive = false, cardTest = false, cardPanel = null, lockedTo = null,
+  disabled, reason, cashOff = null,
 }: {
   /** NEW chips in this save — the only thing that is paid for. */
   newChips: number;
@@ -177,21 +181,41 @@ export function ReceptionPayment({
   unitPrice: number | null;
   method: ReceptionPaymentMethod | null;
   onMethod: (m: ReceptionPaymentMethod) => void;
-  /** "אשראי" is drawn — disabled; the server says so for admin / super admin. */
+  /** "אשראי" is drawn — the server says so for admin / super admin only. Never
+   *  for the extra chips of a web order (the server takes no card there). */
   cardOption: boolean;
+  /** "אשראי" charges for real (live charging armed) … */
+  cardLive?: boolean;
+  /** … or can be used in the PayPlus sandbox (test mode). Neither = drawn
+   *  disabled, "יופעל לאחר חיבור הסליקה" (26/11/2026). */
+  cardTest?: boolean;
+  /** The card payment itself (ReceptionCardPanel) — under the methods while
+   *  "אשראי" is the choice. */
+  cardPanel?: ReactNode;
+  /** A card payment went through: the method can no longer be changed. */
+  lockedTo?: ReceptionPaymentMethod | null;
   disabled: boolean;
   /** Why the save cannot go yet, as far as the payment goes. */
   reason: string | null;
-  /** "מזומן או העברה" cannot be chosen here, and why (the extra chips of a
-   *  test order: no payment is recorded for a test). */
+  /** "מזומן" and "העברה בנקאית" cannot be chosen here, and why (the extra
+   *  chips of a test order: no payment is recorded for a test). */
   cashOff?: string | null;
 }) {
   const amount = unitPrice === null ? null : receptionAmount(newChips, unitPrice);
   const free = method === 'none';
   const due = free ? 0 : amount;
   const off = disabled || newChips === 0;
+  /** The line under a received-sum option: once it is chosen, the sum it confirms. */
+  const received = (m: 'cash' | 'bank_transfer', idle: string): ReactNode => (
+    cashOff
+      ? cashOff
+      : method === m && amount !== null && newChips > 0
+        ? <>אישור: התקבלו <span className="ci-num">{formatIlsAfter(amount)}</span></>
+        : idle
+  );
   const option = (m: ReceptionPaymentMethod, icon: ReactNode, sub: ReactNode, testId: string, optionOff = false) => (
-    <button type="button" role="radio" aria-checked={method === m} className={cn(method === m && 'ci-on')} disabled={off || optionOff}
+    <button type="button" role="radio" aria-checked={method === m} className={cn(method === m && 'ci-on')}
+      disabled={off || optionOff || (lockedTo !== null && lockedTo !== m)}
       onClick={() => onMethod(m)} data-testid={testId}>
       <span className="ci-payic">{method === m ? <CheckIco /> : icon}</span>
       <span className="ci-paytxt"><b>{RECEPTION_PAYMENT_LABEL[m]}</b><small>{sub}</small></span>
@@ -222,28 +246,25 @@ export function ReceptionPayment({
         <span className="ci-lbl ci-strong" id="pay-method-label">
           אמצעי תשלום{newChips > 0 && <> <span className="ci-req">*</span></>}
         </span>
-        <div className={cn('ci-payseg', cardOption && 'ci-three')} role="radiogroup" aria-labelledby="pay-method-label">
-          {cardOption && (
-            // Not active yet: no clearing is connected. Drawn so the option is
-            // known to be coming — never pressed, and no card field anywhere.
-            <button type="button" role="radio" aria-checked={false} disabled className="ci-soon" data-testid="chip-pay-card">
-              <span className="ci-payic"><CardPayIco /></span>
-              <span className="ci-paytxt"><b>{RECEPTION_PAYMENT_LABEL.card}</b><small>{RECEPTION_CARD_PENDING_TEXT}</small></span>
-            </button>
-          )}
-          {option(
-            'cash_transfer',
-            <CashIco />,
-            cashOff
-              ? cashOff
-              : method === 'cash_transfer' && amount !== null && newChips > 0
-                ? <>אישור: התקבלו <span className="ci-num">{formatIlsAfter(amount)}</span></>
-                : 'הסכום התקבל במלואו בקבלה',
-            'chip-pay-cash',
-            cashOff !== null,
-          )}
+        {/* Three options, four with "אשראי" — in one row; two per row under a
+            700px screen and one under 540px (chip-issue-sheet.css). */}
+        <div className={cn('ci-payseg', cardOption ? 'ci-four' : 'ci-three')} role="radiogroup" aria-labelledby="pay-method-label">
+          {cardOption && (cardLive || cardTest)
+            // 26/11/2026: a real option — PayPlus in the window (receptionCard.tsx).
+            ? option('card', <CardPayIco />, cardLive ? 'חיוב בכרטיס דרך PayPlus' : 'מצב בדיקה בלבד — ללא חיוב', 'chip-pay-card')
+            : cardOption && (
+              // No clearing is armed: drawn so the option is known to be
+              // coming — never pressed, and no card field anywhere.
+              <button type="button" role="radio" aria-checked={false} disabled className="ci-soon" data-testid="chip-pay-card">
+                <span className="ci-payic"><CardPayIco /></span>
+                <span className="ci-paytxt"><b>{RECEPTION_PAYMENT_LABEL.card}</b><small>{RECEPTION_CARD_PENDING_TEXT}</small></span>
+              </button>
+            )}
+          {option('cash', <CashIco />, received('cash', 'הסכום התקבל במלואו בקבלה'), 'chip-pay-cash', cashOff !== null)}
+          {option('bank_transfer', <BankIco />, received('bank_transfer', 'הסכום הועבר במלואו לחשבון'), 'chip-pay-transfer', cashOff !== null)}
           {option('none', <FreeIco />, 'אורח, צוות או החלפה', 'chip-pay-none')}
         </div>
+        {cardPanel}
         {newChips === 0 ? (
           <p className="ci-payhint">אמצעי תשלום נבחר רק כשמנפיקים צ׳יפים חדשים. עריכת צ׳יפים קיימים אינה דורשת תשלום.</p>
         ) : reason && (
@@ -269,6 +290,8 @@ export function ReceptionRecords({ records }: { records: ReceptionRecordView[] }
     <div className="ci-recs" data-testid="chip-reception-records">
       {records.map((r) => {
         const who = [r.orderer_name, phoneView(r.orderer_phone), r.orderer_email, r.address].filter(Boolean) as string[];
+        // How it was paid, as stored ("מזומן או העברה" for an order recorded before the split).
+        const paidBy = r.payment_method ? STORED_PAYMENT_LABEL[r.payment_method] ?? null : null;
         return (
           <div key={r.ref} className="ci-rec">
             <div className="ci-rechead">
@@ -280,7 +303,7 @@ export function ReceptionRecords({ records }: { records: ReceptionRecordView[] }
                 {r.cancelled
                   ? <>ההזמנה בוטלה · <span className="ci-num">{formatIlsAfter(r.amount)}</span></>
                   : r.kind === 'order'
-                    ? <>שולם <span className="ci-num">{formatIlsAfter(r.amount)}</span> · {RECEPTION_PAYMENT_LABEL.cash_transfer}</>
+                    ? <>שולם <span className="ci-num">{formatIlsAfter(r.amount)}</span>{paidBy && <> · {paidBy}</>}</>
                     : RECEPTION_PAYMENT_LABEL.none}
               </span>
               <span className="ci-recqty"><span className="ci-num">{r.chips_count}</span> {r.chips_count === 1 ? 'צ׳יפ' : 'צ׳יפים'}</span>

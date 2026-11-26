@@ -3,10 +3,12 @@ import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { chipOrderRejectBodySchema } from '@/lib/validation/requests';
-import { rejectChipOrder, setChipOrderRefund } from '@/lib/db/chipOrders';
+import { ChipOrderStateError, rejectChipOrder, setChipOrderRefund } from '@/lib/db/chipOrders';
+import { queryOne } from '@/lib/db';
 import { writeAudit } from '@/lib/db/audit';
-import { isGrowConfigured, refundTransaction } from '@/lib/grow/client';
 import { notifyChipOrder } from '@/lib/chipOrders/notify';
+import { refundCardOrder } from '@/lib/chipOrders/refund';
+import { processDueDocuments } from '@/lib/chipOrders/documents';
 import { badOrderId, chipOrderErrorResponse } from '@/lib/chipOrders/routeErrors';
 import { CHIP_ORDER_REFUND_LABEL, type ChipOrderRefundStatus } from '@/lib/chipOrders/model';
 import { logger } from '@/lib/logger';
@@ -14,14 +16,14 @@ import { logger } from '@/lib/logger';
 export const runtime = 'nodejs';
 
 // POST /api/chip-orders/[id]/reject (chips_orders_manage:edit) — "דחה" with a
-// reason. The status changes first (committed), then a FULL refund is asked of
-// Grow (refundTransaction, R/refund-transaction). Grow answering anything but
-// success — e.g. 110 "already paid out, waiting for Grow's approval", no
-// balance, refunds not enabled — leaves refund_status = manual_required with
-// Grow's own message, shown on the order. The rejection message (email +
-// WhatsApp) goes out after the refund outcome is known, so it states it.
-// A TEST order (13/11/2026) was never charged: Grow is not asked at all and
-// the refund status is not_required ("לא נדרש (בדיקה)").
+// reason. The status changes first (committed); then the refund:
+//   - paid BY CARD → a full refund through PayPlus (refundCardOrder, in the
+//     order's environment: a test order is refunded in the sandbox), recorded
+//     with its Morning credit document (never for a test order);
+//   - a test order that was never charged → not_required ("לא נדרש (בדיקה)");
+//   - anything else → manual_required (returned by hand).
+// The rejection message (email + WhatsApp) goes out after the outcome is
+// known, so it states it.
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   let actor: Actor;
   try {
@@ -46,26 +48,48 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   let refund: { status: ChipOrderRefundStatus; note: string | null };
-  if (rejected.is_test) {
-    refund = { status: 'not_required', note: null };
-  } else if (!rejected.grow_transaction_id || !rejected.grow_transaction_token || !isGrowConfigured()) {
-    refund = { status: 'manual_required', note: 'אין פרטי עסקה של Grow להזמנה — נדרש זיכוי ידני' };
+  if (rejected.card_status === 'paid') {
+    try {
+      const r = await refundCardOrder(id, {
+        via: 'reject', reason: body.data.reason, by: { id: actor.id, name: actor.full_name ?? actor.username },
+        statuses: ['rejected'], closeOpen: false, disableChips: false,
+      });
+      refund = r?.kind === 'refunded'
+        ? { status: r.full ? 'refunded' : 'partial', note: null }
+        : { status: 'manual_required', note: r?.note ?? 'הזיכוי לא בוצע' };
+    } catch (err) {
+      if (err instanceof ChipOrderStateError && err.message === 'already_refunded') {
+        // Refunded before (e.g. in the PayPlus dashboard, maybe partly): the
+        // refund on record stays as it is — never overwritten here.
+        const current = await queryOne<{ refund_status: ChipOrderRefundStatus | null }>(
+          `select refund_status from public.chip_orders where id = $1`, [id],
+        );
+        refund = current?.refund_status === 'partial'
+          ? { status: 'partial', note: 'זוכה חלקית ב-PayPlus — את היתרה יש לזכות ידנית' }
+          : { status: current?.refund_status ?? 'refunded', note: null };
+        if (refund.status === 'partial') await setChipOrderRefund(id, 'partial', refund.note).catch(() => {});
+      } else if (err instanceof ChipOrderStateError && err.message === 'refund_in_progress') {
+        // An earlier "זיכוי" is still waiting for PayPlus's answer — it may have
+        // gone through. Never claim it was not sent.
+        refund = { status: 'manual_required', note: 'בקשת זיכוי קודמת ממתינה לתשובה מ-PayPlus — יש לבדוק ב-PayPlus לפני כל זיכוי נוסף' };
+        await setChipOrderRefund(id, refund.status, refund.note).catch(() => {});
+      } else {
+        logger.error('[chip-orders] reject: refund failed to start', { orderId: id, err });
+        refund = { status: 'manual_required', note: 'הזיכוי לא נשלח ל-PayPlus — נדרש זיכוי ידני' };
+        await setChipOrderRefund(id, refund.status, refund.note).catch(() => {});
+      }
+    }
   } else {
-    const r = await refundTransaction({
-      transactionId: rejected.grow_transaction_id,
-      transactionToken: rejected.grow_transaction_token,
-      refundSum: rejected.total,
-    });
-    refund = r.kind === 'refunded'
-      ? { status: 'refunded', note: null }
-      : { status: 'manual_required', note: `Grow${r.code !== null ? ` ${r.code}` : ''}: ${r.message}` };
-  }
-  try {
-    await setChipOrderRefund(id, refund.status, refund.note);
-  } catch (err) {
-    // The rejection is committed and Grow has answered — losing the record must
-    // not hide that outcome from the person who pressed the button.
-    logger.error('[chip-orders] refund outcome not recorded', { orderId: id, refund, err });
+    refund = rejected.is_test
+      ? { status: 'not_required', note: null }
+      : { status: 'manual_required', note: 'ההזמנה לא שולמה בכרטיס דרך המערכת — נדרש זיכוי ידני' };
+    try {
+      await setChipOrderRefund(id, refund.status, refund.note);
+    } catch (err) {
+      // The rejection is committed — losing the record must not hide the
+      // outcome from the person who pressed the button.
+      logger.error('[chip-orders] refund outcome not recorded', { orderId: id, refund, err });
+    }
   }
 
   after(async () => {
@@ -76,6 +100,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       entityId: id,
       metadata: { reason: body.data.reason, refund_status: refund.status, refund_note: refund.note },
     });
+    await processDueDocuments();
     await notifyChipOrder(id, 'rejected');
   });
   return NextResponse.json({ ok: true, refund_status: refund.status, refund_label: CHIP_ORDER_REFUND_LABEL[refund.status], refund_note: refund.note });

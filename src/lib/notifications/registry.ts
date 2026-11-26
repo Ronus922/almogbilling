@@ -26,6 +26,7 @@ export type NotificationType =
   | 'system_announcement'
   | 'chip_issued'
   | 'chip_deactivated_lost'
+  | 'chip_order_alert'
   | 'smtp_auth_failed'
   | 'purchasing_quote_received'
   | 'purchasing_quotes_complete'
@@ -70,6 +71,11 @@ export const NOTIFICATION_REGISTRY: Record<NotificationType, NotificationRegistr
   // In-app ONLY: chip lifecycle events surface in the bell; no email/WhatsApp.
   chip_issued:               { icon: KeyRound,      tone: 'info',    sourceModule: 'chips',         defaultPriority: 'normal', channels: ['inapp'] },
   chip_deactivated_lost:     { icon: KeyRound,      tone: 'warning', sourceModule: 'chips',         defaultPriority: 'high',   channels: ['inapp'] },
+  // Chip-order payments (26/11/2026): an invoice Morning did not issue after
+  // its retries, or a charge that did not fit its order (twice, wrong amount,
+  // a refund PayPlus reported that matches no order). Bell + e-mail to every
+  // active admin — each needs a person.
+  chip_order_alert:          { icon: AlertTriangle, tone: 'danger',  sourceModule: 'chips',         defaultPriority: 'high',   channels: ['inapp', 'email'] },
   // In-app ONLY — by design AND by construction. This is the "email is broken"
   // alert (SMTP rejected the App Password), so it must never try to email. Its
   // sole producer, notifyAdminsOfSmtpAuthFailure (src/lib/email/authAlert.ts),
@@ -100,6 +106,7 @@ const NOTIFICATION_TYPE_LABEL: Record<NotificationType, string> = {
   system_announcement: 'הודעת מערכת',
   chip_issued: 'צ׳יפ הונפק',
   chip_deactivated_lost: 'צ׳יפ אבד או נגנב',
+  chip_order_alert: 'התראת תשלום / חשבונית',
   smtp_auth_failed: 'כישלון אימות SMTP',
   purchasing_quote_received: 'התקבלה הצעת מחיר',
   purchasing_quotes_complete: 'כל הספקים הגישו הצעה',
@@ -126,6 +133,7 @@ export const DEFAULT_TITLE: Record<NotificationType, string> = {
   system_announcement: 'הודעת מערכת',
   chip_issued: 'צ׳יפ חדש הונפק',
   chip_deactivated_lost: 'צ׳יפ הושבת — אבד או נגנב',
+  chip_order_alert: 'נדרש טיפול בתשלום או בחשבונית של הזמנת צ׳יפים',
   smtp_auth_failed: 'שליחת מייל נכשלה',
   purchasing_quote_received: 'התקבלה הצעת מחיר',
   purchasing_quotes_complete: 'כל הספקים הגישו הצעה',

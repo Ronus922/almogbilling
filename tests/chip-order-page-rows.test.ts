@@ -60,10 +60,30 @@ describe('chipOrderSubmitSchema — the rows shape', () => {
     expect(chipOrderSubmitSchema.safeParse({ ...base, addressZip: '123456' }).success).toBe(false);
     expect(chipOrderSubmitSchema.safeParse({ ...base, addressZip: '12345678' }).success).toBe(false);
   });
-  it('street, city and the "details are correct" box are required', () => {
+  it('street and city are required', () => {
     expect(chipOrderSubmitSchema.safeParse({ ...base, addressStreet: '' }).success).toBe(false);
     expect(chipOrderSubmitSchema.safeParse({ ...base, addressCity: '' }).success).toBe(false);
-    expect(chipOrderSubmitSchema.safeParse({ ...base, acceptTerms: false }).success).toBe(false);
+  });
+  it('the agreement boxes gate the PAYMENT, not the save (26/11/2026): unticked or absent still saves', () => {
+    const { acceptTerms: _ticked, ...withoutBox } = base;
+    void _ticked;
+    expect(chipOrderSubmitSchema.safeParse({ ...base, acceptTerms: false }).success).toBe(true);
+    expect(chipOrderSubmitSchema.safeParse(withoutBox).success).toBe(true);
+    expect(chipOrderSubmitSchema.safeParse({ ...base, acceptTerms: 'yes' }).success).toBe(false);
+  });
+  it('a re-save names the order by its tracking token; a renter row may keep its lease by key', () => {
+    const token = 'A'.repeat(43);
+    expect(chipOrderSubmitSchema.safeParse({ ...base, trackingToken: token }).success).toBe(true);
+    for (const bad of ['short', 'x'.repeat(65), `${'A'.repeat(42)}!`]) {
+      expect(chipOrderSubmitSchema.safeParse({ ...base, trackingToken: bad }).success).toBe(false);
+    }
+    const key = '0f8fad5b-d9cb-469f-a165-70867728950e.pdf';
+    const renter = { ...base.rows[0], role: 'tenant', leaseEndDate: '2030-01-01' };
+    expect(chipOrderSubmitSchema.safeParse({ ...base, trackingToken: token, rows: [{ ...renter, leaseKey: key }] }).success).toBe(true);
+    // A key is a bare stored object name — never a path or anything else.
+    for (const bad of ['../other-order/lease.pdf', 'lease.pdf', `${key}/x`, '0F8FAD5B-D9CB-469F-A165-70867728950E.pdf']) {
+      expect(chipOrderSubmitSchema.safeParse({ ...base, rows: [{ ...renter, leaseKey: bad }] }).success).toBe(false);
+    }
   });
   it('a row needs a full name and a phone; its email is optional but checked', () => {
     expect(chipOrderSubmitSchema.safeParse({ ...base, rows: [{ ...base.rows[0], fullName: 'ישראל' }] }).success).toBe(false);

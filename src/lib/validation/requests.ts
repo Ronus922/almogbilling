@@ -168,8 +168,11 @@ export const chipReceptionSchema = z
       .optional(),
     payment: z
       .object({
-        method: z.enum(['cash_transfer', 'none'], { error: 'אמצעי התשלום אינו תקין' }),
+        method: z.enum(['cash', 'bank_transfer', 'card', 'none'], { error: 'אמצעי התשלום אינו תקין — רעננו את הדף' }),
         amount: z.number({ error: 'סכום לא תקין' }).min(0, 'סכום לא תקין').max(10_000_000, 'סכום לא תקין'),
+        /** method 'card' (26/11/2026): the tracking token of the reception
+         *  order the window's card payment paid — the save issues onto it. */
+        card_token: z.string().regex(/^[A-Za-z0-9_-]{32,64}$/).optional(),
       })
       .nullable()
       .optional(),
@@ -575,26 +578,6 @@ const chipOrderPhone = z
   .min(9, 'מספר טלפון לא תקין')
   .max(20, 'מספר טלפון לא תקין');
 
-/** POST /api/public/chip-order/otp/request */
-export const chipOrderOtpRequestBodySchema = z.object({
-  phone: chipOrderPhone,
-  channel: z.enum(['whatsapp']).optional(),
-});
-
-/** POST /api/public/chip-order/otp/skip — "דלג על אימות (מצב בדיקה)". */
-export const chipOrderOtpSkipBodySchema = z.object({
-  phone: chipOrderPhone,
-});
-
-/** POST /api/public/chip-order/otp/verify */
-export const chipOrderOtpVerifyBodySchema = z.object({
-  phone: chipOrderPhone,
-  code: z
-    .string({ error: 'הקוד חייב להכיל 6 ספרות' })
-    .trim()
-    .regex(/^\d{6}$/, 'הקוד חייב להכיל 6 ספרות'),
-});
-
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'תאריך לא תקין');
 
 /** The JSON part ("order") of POST /api/public/chip-order (multipart — the
@@ -619,8 +602,13 @@ export const chipOrderSubmitSchema = z.object({
   addressStreet: z.string({ error: 'נדרשת כתובת מגורים' }).trim().min(2, 'נדרשת כתובת מגורים').max(200, 'הכתובת ארוכה מדי'),
   addressCity: z.string({ error: 'נדרשת עיר' }).trim().min(2, 'נדרשת עיר').max(100, 'שם העיר ארוך מדי'),
   addressZip: z.string({ error: 'מיקוד — 7 ספרות' }).trim().regex(/^\d{7}$/, 'מיקוד — 7 ספרות'),
-  acceptTerms: z.literal(true, { error: 'נדרש לאשר שהפרטים נכונים' }),
-  /** Required (true) when at least one row is a renter — the route checks it. */
+  /** The order the same browser saved before (26/11/2026: the form saves its
+   *  order as soon as the details are complete, and saves it again when they
+   *  change before the payment). Absent = a new order. */
+  trackingToken: z.string().regex(/^[A-Za-z0-9_-]{32,64}$/).optional(),
+  /** The agreement boxes sit under the payment fields and gate the PAYMENT
+   *  (the pay button, the wallet buttons) — not the save. Recorded when ticked. */
+  acceptTerms: z.boolean().optional(),
   acceptRenterTerms: z.boolean().optional(),
   rows: z
     .array(
@@ -633,6 +621,10 @@ export const chipOrderSubmitSchema = z.object({
         phone: chipOrderPhone,
         email: z.union([z.literal(''), chipOrderEmail]).optional(),
         leaseEndDate: isoDay.nullable().optional(),
+        /** A renter row of an order saved before keeps the lease the server
+         *  already holds for it (the key it answered with) instead of sending
+         *  the file again. The server accepts only a key of THAT order. */
+        leaseKey: z.string().regex(/^[0-9a-f-]{36}(\.[a-z0-9]{1,10})?$/, 'invalid_lease_key').optional(),
       }),
     )
     .min(1, 'נדרשת לפחות שורה אחת')
@@ -643,7 +635,8 @@ export const chipOrderSubmitSchema = z.object({
 
 /** PUT /api/settings/chip-orders — one flat price per chip (21/11/2026). */
 export const chipOrderSettingsBodySchema = z.object({
-  // > 0: a free chip would make a ₪0 order, which Grow cannot charge (and the DB refuses).
+  // ≥ ₪1: a free chip would make a ₪0 order, which no processor charges (and the DB refuses).
+  // ₪1 is allowed on purpose — the first real charge is a ₪1 test (26/11/2026).
   unitPrice: z.number({ error: 'מחיר לא תקין' }).min(1, 'המחיר חייב להיות לפחות ₪1').max(10_000, 'מחיר לא תקין'),
   pickupText: z.string().trim().max(500, 'הטקסט ארוך מדי'),
   termsText: z.string().trim().max(4000, 'הטקסט ארוך מדי'),
@@ -699,12 +692,13 @@ export const chipOrderWindowSaveSchema = z.object({
   note: z.string().max(2000, 'ההערה ארוכה מדי').nullable().optional(),
   /** 25/11/2026 — how the EXTRA chips of the save are settled (new numbers
    *  beyond what an apartment line paid for online), as at the reception:
-   *  cash or a transfer makes a reception order, "ללא חיוב" makes none. The
-   *  amount is what the window SHOWED; the server computes the real one.
-   *  "אשראי" is not a value here — it is not active. */
+   *  cash or a bank transfer (26/11/2026: two options) makes a reception
+   *  order, "ללא חיוב" makes none. The amount is what the window SHOWED; the
+   *  server computes the real one. "אשראי" is not a value here — card payment
+   *  at the reception is the issue window's ("הנפק צ׳יפ"). */
   extra_payment: z
     .object({
-      method: z.enum(['cash_transfer', 'none'], { error: 'אמצעי התשלום אינו תקין' }),
+      method: z.enum(['cash', 'bank_transfer', 'none'], { error: 'אמצעי התשלום אינו תקין — רעננו את הדף' }),
       amount: z.number({ error: 'סכום לא תקין' }).min(0, 'סכום לא תקין').max(10_000_000, 'סכום לא תקין'),
     })
     .nullable()
@@ -714,6 +708,11 @@ export const chipOrderWindowSaveSchema = z.object({
 /** POST /api/chip-orders/[id]/reject */
 export const chipOrderRejectBodySchema = z.object({
   reason: z.string({ error: 'נדרשת סיבת דחייה' }).trim().min(2, 'נדרשת סיבת דחייה').max(500, 'הסיבה ארוכה מדי'),
+});
+
+/** POST /api/chip-orders/[id]/refund — "זיכוי" of a web order paid by card (26/11/2026). */
+export const chipOrderRefundBodySchema = z.object({
+  reason: z.string({ error: 'נדרשת סיבת זיכוי' }).trim().min(2, 'נדרשת סיבת זיכוי').max(500, 'הסיבה ארוכה מדי'),
 });
 
 /** POST /api/chip-orders/[id]/cancel — "בטל הזמנת קבלה" (25/11/2026). */

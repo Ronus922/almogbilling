@@ -34,11 +34,13 @@ export function isOpenChipOrder(status: ChipOrderStatus): boolean {
 export type ChipOrderMatchStatus = 'matched' | 'review' | 'unassigned' | 'document_review';
 
 /** not_required — a rejected TEST order: nothing was charged, Grow is never asked. */
-export type ChipOrderRefundStatus = 'refunded' | 'manual_required' | 'not_required';
+/** 'partial' (26/11/2026): part of the charge was refunded in the PayPlus dashboard. */
+export type ChipOrderRefundStatus = 'refunded' | 'manual_required' | 'not_required' | 'partial';
 
 /** The three messages an orderer gets (the "approved" message went with the
  *  approval step, 13/11/2026; old rows of that kind stay in the history). */
-export type ChipOrderNotifyKind = 'paid' | 'ready' | 'rejected';
+/** 'refunded' (26/11/2026): the order was refunded through PayPlus ("זיכוי"). */
+export type ChipOrderNotifyKind = 'paid' | 'ready' | 'rejected' | 'refunded';
 
 export const CHIP_ORDER_ROLES: readonly ChipOrderRole[] = ['owner', 'tenant', 'operator'];
 
@@ -83,6 +85,7 @@ export const CHIP_ORDER_REFUND_LABEL: Record<ChipOrderRefundStatus, string> = {
   refunded: 'זוכה במלואו',
   manual_required: 'דורש זיכוי ידני',
   not_required: 'לא נדרש (בדיקה)',
+  partial: 'זוכה חלקית',
 };
 
 /** The label of a test order — the badge in /chips and the prefix of every
@@ -145,8 +148,6 @@ export const CHIP_ORDER_LIMITS = {
   maxRequestBytes: 41 * 1024 * 1024,
   /** All the leases of one order together. */
   maxLeaseBytesTotal: 40 * 1024 * 1024,
-  /** Chip-order codes sent per day, all phones together (an SMS costs money). */
-  otpPerDay: 300,
   maxPrice: 10_000,
 } as const;
 
@@ -336,8 +337,22 @@ export interface ChipOrderRow {
   has_failed_notification: boolean;
   /** A test-mode order — shown with a "בדיקה" badge, never counted. */
   is_test: boolean;
-  /** False = the phone code was skipped in test mode — "טלפון לא אומת". */
-  phone_verified: boolean;
+  /** False = the phone code was skipped in test mode — "טלפון לא אומת".
+   *  NULL = the order form had no code step (every order from 26/11/2026). */
+  phone_verified: boolean | null;
+  /** How a reception order was paid: 'cash' | 'bank_transfer' | 'card' |
+   *  'cash_transfer' (before 26/11/2026). NULL on a web order. */
+  payment_method?: string | null;
+  /** 'paid' when the processor confirmed a card charge. */
+  card_status?: string | null;
+  card_env?: 'sandbox' | 'production' | null;
+  refund_status?: ChipOrderRefundStatus | null;
+  refunded_amount?: number | null;
+  /** A "זיכוי" waiting for PayPlus's answer (10 minutes, like the window). */
+  refund_in_flight?: boolean;
+  /** The order's Morning document (its first payment document), or null when
+   *  none is queued (a test order, a no-charge save, an order before 26/11/2026). */
+  invoice_doc?: { status: 'pending' | 'issuing' | 'issued' | 'failed'; number: string | null; url: string | null } | null;
 }
 
 /** One "פרטי הזמנה" section of the issue window: an OPEN order of the same
@@ -365,7 +380,8 @@ export interface ChipOrderSection {
   due_at: string | null;
   created_at: string;
   is_test: boolean;
-  phone_verified: boolean;
+  /** NULL = the order form had no code step (26/11/2026) — no tag. */
+  phone_verified: boolean | null;
   /** The order's OTHER apartments (an order may cover several). */
   other_apartments: string[];
   /** Every line of the order has all its chips (active) — "מוכן לאיסוף". */
@@ -452,7 +468,8 @@ export interface ChipOrderWindowOrder {
   role: ChipOrderPersonRole;
   source: ChipOrderSource;
   is_test: boolean;
-  phone_verified: boolean;
+  /** NULL = the order form had no code step (26/11/2026) — no tag; only false is "טלפון לא אומת". */
+  phone_verified: boolean | null;
   full_name: string;
   /** Phone, email and address are null only where a reception order has none. */
   phone_e164: string | null;
@@ -493,6 +510,29 @@ export interface ChipOrderWindowOrder {
   card_paid_at: string | null;
   card_approval_number: string | null;
   card_last4: string | null;
+  /** The refund (26/11/2026): its state, PayPlus's words when it failed, how
+   *  much went back, when, by whom, from where, and why. */
+  refund_status: ChipOrderRefundStatus | null;
+  refund_note: string | null;
+  refunded_amount: number | null;
+  refunded_at: string | null;
+  refunded_by_name: string | null;
+  refund_via: 'admin' | 'reject' | 'reception_cancel' | 'payplus' | null;
+  refund_reason: string | null;
+  /** A refund was sent to PayPlus and its answer is not recorded yet. */
+  refund_in_flight: boolean;
+  /** The order's Morning documents, oldest first (26/11/2026). */
+  documents: ChipOrderDocumentView[];
+}
+
+/** One Morning document row of an order, as the window shows it. */
+export interface ChipOrderDocumentView {
+  kind: 'invoice' | 'credit';
+  status: 'pending' | 'issuing' | 'issued' | 'failed';
+  amount: number;
+  number: string | null;
+  url: string | null;
+  last_error: string | null;
 }
 
 /** A reception order made for extra chips of the order the window shows. */
@@ -506,6 +546,9 @@ export interface ChipOrderExtraOrder {
 
 /** What the issue window loads for an Orders-tab row (20/11/2026). */
 export interface ChipOrderWindow {
+  /** Morning has a key (26/11/2026): a queued document is being issued; without
+   *  one it waits ("חשבונית ממתינה לחיבור מורנינג"). */
+  documents_connected: boolean;
   order: ChipOrderWindowOrder;
   items: ChipOrderWindowItem[];
   holders: ChipOrderWindowHolder[];

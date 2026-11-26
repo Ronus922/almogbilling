@@ -5,10 +5,14 @@ import { requireSeededAdmin } from './db-fixtures';
 
 // Issuing a chip at the reception (25/11/2026) on the DB, against a throwaway
 // database (WA_TEST_DATABASE_URL), never prod. "הנפק צ׳יפ" — the issue window
-// with no order — settles the NEW chips of a save in one of two ways:
-//   · cash or a bank transfer → a chip order of its own (source 'reception'),
-//     linked to its people and chips exactly like a web order, born paid and
-//     stored collected, with the payment on record and no message to anyone;
+// with no order — settles the NEW chips of a save (the card — paid first, in
+// its own flow — is not tested here):
+//   · cash ('cash') or a bank transfer ('bank_transfer', 26/11/2026 — until
+//     then one option, stored 'cash_transfer') → a chip order of its own
+//     (source 'reception'), linked to its people and chips exactly like a web
+//     order, born paid and stored collected, with the payment on record, ONE
+//     Morning invoice row queued in the same transaction, and no message to
+//     anyone;
 //   · no charge → no order at all; the details are kept on a reception record.
 // And: a payment method is required for new chips only, the amount is the
 // server's (chips × the price it was handed), a refused save leaves nothing
@@ -43,7 +47,17 @@ const { EMPTY_RECEPTION_ORDERER } = await import('@/lib/chipOrders/reception');
 
 const tag = String(Date.now()).slice(-6);
 const apt = { paid: `994${tag}1`, free: `994${tag}2`, edge: `994${tag}3`, web: `994${tag}4` };
+/** `orders` — rows this file inserted straight, with no apartment line (removed by these ids). */
 const made = { contacts: [] as string[], orders: [] as string[] };
+/** The Morning document rows of an order, oldest first. */
+const documentsOf = async (orderId: string) => (await pool.query(
+  `select kind, payment_key, amount::float8 as amount, payment_method, status, credit_of
+     from public.chip_order_documents where order_id = $1 order by created_at`, [orderId])).rows;
+/** Document rows block deleting their order (FK restrict): credits first, then the rest — by the order's id. */
+async function dropDocumentsOf(orderId: string) {
+  await pool.query(`delete from public.chip_order_documents where order_id = $1 and credit_of is not null`, [orderId]);
+  await pool.query(`delete from public.chip_order_documents where order_id = $1`, [orderId]);
+}
 const ids: Record<string, string> = {};
 let admin: { id: string; name: string };
 const num = (n: number) => `R${tag}${n}`;
@@ -95,7 +109,10 @@ d('issuing a chip at the reception, on the DB', () => {
     const mine = (await pool.query<{ id: string }>(
       `select distinct o.id from public.chip_orders o join public.chip_order_items i on i.order_id = o.id where i.contact_id = any($1::uuid[])`,
       [made.contacts])).rows;
-    for (const o of mine) await pool.query(`delete from public.chip_orders where id = $1`, [o.id]);
+    for (const id of [...mine.map((o) => o.id), ...made.orders]) {
+      await dropDocumentsOf(id);
+      await pool.query(`delete from public.chip_orders where id = $1`, [id]);
+    }
     for (const id of made.contacts) await pool.query(`delete from public.chip_reception_records where contact_id = $1`, [id]);
     for (const id of made.contacts) await pool.query(`delete from public.audit_log where metadata->>'source' = 'reception' and metadata->>'contact_id' = $1`, [id]);
     for (const id of made.contacts) await pool.query(`delete from public.contacts where id = $1`, [id]);
@@ -103,7 +120,7 @@ d('issuing a chip at the reception, on the DB', () => {
     await pool.end();
   });
 
-  it('cash or transfer: ONE order of the reception — paid, collected, its payment on record, one holder line per block, the chips linked to both; nobody is notified', async () => {
+  it('cash: ONE order of the reception — paid, collected, its payment on record, its Morning invoice queued, one holder line per block, the chips linked to both; nobody is notified', async () => {
     const rentersLease = await lease();
     const res = await reception.saveReceptionWindow(
       {
@@ -119,15 +136,19 @@ d('issuing a chip at the reception, on the DB', () => {
       },
       {
         orderer: { name: 'משלם בדיקה', phone: '0539322229', email: 'pay@example.test', street: 'הרצל 5', city: 'חיפה', zip: '3303105' },
-        payment: { method: 'cash_transfer', amount: 200 },
+        payment: { method: 'cash', amount: 200 },
       },
       PRICE,
       admin,
     );
     expect(res.record).toBeNull();
     expect(res.items).toHaveLength(4);
-    expect(res.order).toMatchObject({ total: 200, chips: 4, unit_price: PRICE });
+    expect(res.order).toMatchObject({ total: 200, chips: 4, unit_price: PRICE, method: 'cash' });
     const orderId = res.order!.id;
+    // The Morning document of the payment, queued in the save's own transaction: ONE invoice row.
+    expect(await documentsOf(orderId)).toEqual([
+      { kind: 'invoice', payment_key: `reception:${orderId}`, amount: 200, payment_method: 'cash', status: 'pending', credit_of: null },
+    ]);
 
     const o = await one<Record<string, unknown>>(
       `select source, status, full_name, phone_e164, email, address, address_street, address_city, address_zip, role, total::float8 as total,
@@ -140,7 +161,7 @@ d('issuing a chip at the reception, on the DB', () => {
       source: 'reception', status: 'collected', full_name: 'משלם בדיקה', phone_e164: '+972539322229', email: 'pay@example.test',
       address: 'הרצל 5, חיפה 3303105', address_street: 'הרצל 5', address_city: 'חיפה', address_zip: '3303105',
       role: 'other', total: 200, is_test: false, phone_verified: true,
-      payment_method: 'cash_transfer', payment_recorded_by: admin.id, payment_recorded_by_name: admin.name, internal_note: 'נמסר לשומר',
+      payment_method: 'cash', payment_recorded_by: admin.id, payment_recorded_by_name: admin.name, internal_note: 'נמסר לשומר',
       grow_process_id: null, grow_transaction_id: null, invoice_url: null, due_at: null,
       paid: true, ready: true, collected: true, recorded: true, token: true,
     });
@@ -192,17 +213,18 @@ d('issuing a chip at the reception, on the DB', () => {
     ]);
     expect(trail[1]!.metadata).toEqual({
       source: 'reception', contact_id: ids.paid, apartment_number: apt.paid, chips: 4, unit_price: PRICE,
-      order_number: res.order!.order_number, method: 'cash_transfer', amount: 200,
+      order_number: res.order!.order_number, method: 'cash', amount: 200,
     });
     expect(JSON.stringify(trail)).not.toMatch(/משלם|אורח|שוכר|0539322/);
 
     // The window of that order: its people, the renter's lease read from the chips, the payment.
     const w = (await win.getChipOrderWindow(itemId))!;
     expect(w.order).toMatchObject({
-      source: 'reception', status: 'collected', payment_method: 'cash_transfer', payment_recorded_by_name: admin.name,
+      source: 'reception', status: 'collected', payment_method: 'cash', payment_recorded_by_name: admin.name,
       full_name: 'משלם בדיקה', total: 200, internal_note: 'נמסר לשומר',
     });
     expect(w.order.payment_recorded_at).toBeTruthy();
+    expect(w.order.documents).toEqual([expect.objectContaining({ kind: 'invoice', status: 'pending', amount: 200, number: null, url: null })]);
     expect(w.holders.map((h) => [h.source, h.full_name, h.chips_count, h.chips.length])).toEqual([
       ['reception', 'אורח ראשון', 3, 3],
       ['reception', 'שוכר רשום', 1, 1],
@@ -219,6 +241,7 @@ d('issuing a chip at the reception, on the DB', () => {
     expect(records[0]).toMatchObject({
       kind: 'order', ref: itemId, order_number: res.order!.order_number, orderer_name: 'משלם בדיקה', orderer_phone: '+972539322229',
       orderer_email: 'pay@example.test', address: 'הרצל 5, חיפה 3303105', chips_count: 4, amount: 200, by_name: admin.name,
+      cancelled: false, payment_method: 'cash',
     });
   });
 
@@ -313,14 +336,14 @@ d('issuing a chip at the reception, on the DB', () => {
     const group = { resident_role: 'other' as const, holder_name: 'סכום שגוי', chip_type: 'physical' as const, numbers: [num(21), num(22)] };
     await expect(reception.saveReceptionWindow(
       { contact_id: ids.edge!, groups: [group] },
-      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash_transfer', amount: 150 } },
+      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash', amount: 150 } },
       PRICE,
       admin,
     )).rejects.toMatchObject({ code: 'amount_mismatch', expectedAmount: 100 });
     // The price went up while the window was open: the old sum is not the sum any more.
     await expect(reception.saveReceptionWindow(
       { contact_id: ids.edge!, groups: [group] },
-      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash_transfer', amount: 100 } },
+      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'bank_transfer', amount: 100 } },
       70,
       admin,
     )).rejects.toMatchObject({ code: 'amount_mismatch', expectedAmount: 140 });
@@ -331,7 +354,7 @@ d('issuing a chip at the reception, on the DB', () => {
   it('a save that costs nothing cannot be "paid"; more chips than one order line holds cannot either; a one-letter name makes no order', async () => {
     await expect(reception.saveReceptionWindow(
       { contact_id: ids.edge!, groups: [{ resident_role: 'other', holder_name: 'חינם בטעות', chip_type: 'physical', numbers: [num(23)] }] },
-      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash_transfer', amount: 0 } },
+      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'bank_transfer', amount: 0 } },
       0,
       admin,
     )).rejects.toMatchObject({ code: 'nothing_to_charge' });
@@ -345,14 +368,14 @@ d('issuing a chip at the reception, on the DB', () => {
           { resident_role: 'other', holder_name: 'הרבה צ׳יפים', chip_type: 'app', numbers: many.map((n) => `${n}A`), block: 0 },
         ],
       },
-      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash_transfer', amount: 52 * PRICE } },
+      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash', amount: 52 * PRICE } },
       PRICE,
       admin,
     )).rejects.toMatchObject({ code: 'too_many_chips' });
 
     await expect(reception.saveReceptionWindow(
       { contact_id: ids.edge!, groups: [{ resident_role: 'other', holder_name: 'א', chip_type: 'physical', numbers: [num(24)] }] },
-      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash_transfer', amount: PRICE } },
+      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash', amount: PRICE } },
       PRICE,
       admin,
     )).rejects.toMatchObject({ code: 'name_too_short' });
@@ -367,14 +390,19 @@ d('issuing a chip at the reception, on the DB', () => {
         contact_id: ids.edge!,
         groups: [{ resident_role: 'other', holder_name: 'מספר תפוס', chip_type: 'physical', numbers: [num(25), num(1)] }], // num(1) is active on another apartment
       },
-      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash_transfer', amount: 100 } },
+      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'bank_transfer', amount: 100 } },
       PRICE,
       admin,
     )).rejects.toMatchObject({ name: 'ChipNumberTakenError', chipNumber: num(1), groupIndex: 0 });
     expect(await chipsOf(ids.edge!)).toBe(0);
     expect(await ordersOf(ids.edge!)).toBe(0);
-    // Every refusal above rolled its whole transaction back: no trail of a save that never was.
+    // Every refusal above rolled its whole transaction back: no trail of a save that never was,
+    // and no document of a payment that never was.
     expect(await trailOf(ids.edge!)).toEqual([]);
+    expect(await count(
+      `select count(*) as n from public.chip_order_documents d join public.chip_order_items i on i.order_id = d.order_id where i.contact_id = $1`,
+      [ids.edge],
+    )).toBe(0);
   });
 
   it('two people cannot hide under one block number: groups are one person only when role, name and phone agree', async () => {
@@ -388,7 +416,7 @@ d('issuing a chip at the reception, on the DB', () => {
           { resident_role: 'other', holder_name: 'שני בבלוק', holder_phone: '0539322502', chip_type: 'physical', numbers: [num(42)], block: 7 },
         ],
       },
-      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash_transfer', amount: 3 * PRICE } },
+      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'bank_transfer', amount: 3 * PRICE } },
       PRICE,
       admin,
     );
@@ -399,6 +427,12 @@ d('issuing a chip at the reception, on the DB', () => {
       { full_name: 'ראשון בבלוק', chips_count: 2, numbers: [num(40), num(41)] },
       { full_name: 'שני בבלוק', chips_count: 1, numbers: [num(42)] },
     ]);
+    // A bank transfer is stored as one — and its document says so (Morning needs the real payment type).
+    expect(res.order).toMatchObject({ method: 'bank_transfer', total: 3 * PRICE });
+    expect(await one(`select payment_method from public.chip_orders where id = $1`, [res.order!.id])).toEqual({ payment_method: 'bank_transfer' });
+    expect(await documentsOf(res.order!.id)).toEqual([
+      { kind: 'invoice', payment_key: `reception:${res.order!.id}`, amount: 3 * PRICE, payment_method: 'bank_transfer', status: 'pending', credit_of: null },
+    ]);
     // …and each of them is checked: a one-letter name behind a shared block number is refused.
     await expect(reception.saveReceptionWindow(
       {
@@ -408,7 +442,7 @@ d('issuing a chip at the reception, on the DB', () => {
           { resident_role: 'other', holder_name: 'ב', chip_type: 'physical', numbers: [num(44)], block: 1 },
         ],
       },
-      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash_transfer', amount: 2 * PRICE } },
+      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash', amount: 2 * PRICE } },
       PRICE,
       admin,
     )).rejects.toMatchObject({ code: 'name_too_short' });
@@ -417,7 +451,7 @@ d('issuing a chip at the reception, on the DB', () => {
   it('a name longer than an order stores is refused with a reason — never a failed insert; a registry phone the tables would refuse is left out', async () => {
     await expect(reception.saveReceptionWindow(
       { contact_id: ids.web!, groups: [{ resident_role: 'other', holder_name: 'א'.repeat(121), chip_type: 'physical', numbers: [num(45)] }] },
-      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash_transfer', amount: PRICE } },
+      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash', amount: PRICE } },
       PRICE,
       admin,
     )).rejects.toMatchObject({ code: 'name_too_long' });
@@ -426,7 +460,7 @@ d('issuing a chip at the reception, on the DB', () => {
     await pool.query(`update public.contacts set tenant_phone = '12' where id = $1`, [ids.web]);
     const res = await reception.saveReceptionWindow(
       { contact_id: ids.web!, groups: [{ resident_role: 'tenant', chip_type: 'physical', numbers: [num(46)] }] },
-      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash_transfer', amount: PRICE } },
+      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash', amount: PRICE } },
       PRICE,
       admin,
     );
@@ -473,7 +507,7 @@ d('issuing a chip at the reception, on the DB', () => {
   it('an orderer who left nothing: the order takes the first chip holder\'s name, and has no phone, email or address', async () => {
     const res = await reception.saveReceptionWindow(
       { contact_id: ids.edge!, groups: [{ resident_role: 'owner', chip_type: 'physical', numbers: [num(30)] }] },
-      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash_transfer', amount: PRICE } },
+      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash', amount: PRICE } },
       PRICE,
       admin,
     );
@@ -491,7 +525,7 @@ d('issuing a chip at the reception, on the DB', () => {
     expect(street).toHaveLength(200);
     const res = await reception.saveReceptionWindow(
       { contact_id: ids.edge!, groups: [{ resident_role: 'other', holder_name: 'כתובת ארוכה', chip_type: 'physical', numbers: [num(31)] }] },
-      { orderer: { ...EMPTY_RECEPTION_ORDERER, street, city, zip: '3303105' }, payment: { method: 'cash_transfer', amount: PRICE } },
+      { orderer: { ...EMPTY_RECEPTION_ORDERER, street, city, zip: '3303105' }, payment: { method: 'bank_transfer', amount: PRICE } },
       PRICE,
       admin,
     );
@@ -576,22 +610,33 @@ d('issuing a chip at the reception, on the DB', () => {
     // …and a phone that is no Israeli mobile, as before.
     await expect(pool.query(`${base} values ('בדיקה אחת', 'owner', 'paid', 50, $1, now(), 'web', '048500184', 'a@example.test', 'כתובת 1', null, null, null, false, 'x')`, [token()]))
       .rejects.toMatchObject({ code: '23514', constraint: 'chip_orders_phone_e164_check' });
-    // A web order "paid" with no Grow transaction — refused, as before (only a test order or a reception order may be).
+    // A web order "paid" with no Grow transaction and no confirmed card charge — refused, as before (only a test
+    // order, a reception order, or — since 26/11/2026 — a card charge the processor confirmed, card_status 'paid').
     await expect(pool.query(`${base} values ('בדיקה אחת', 'owner', 'paid', 50, $1, now(), 'web', '+972539322400', 'a@example.test', 'כתובת 1', null, null, null, false, null)`, [token()]))
       .rejects.toMatchObject({ code: '23514', constraint: 'chip_orders_paid_fields_check' });
     // A web order for a guest — refused: only the reception issues for a guest.
     await expect(pool.query(`${base} values ('בדיקה אחת', 'other', 'paid', 50, $1, now(), 'web', '+972539322400', 'a@example.test', 'כתובת 1', null, null, null, false, 'x')`, [token()]))
       .rejects.toMatchObject({ code: '23514', constraint: 'chip_orders_role_check' });
-    // A reception order with no payment on record, or marked as a test — refused.
+    // A reception order with no payment on record, or marked as a test — refused. Only a CARD
+    // payment of the sandbox may be a test (26/11/2026); cash or a transfer never is.
     await expect(pool.query(`${base} values ('בדיקה אחת', 'owner', 'collected', 50, $1, now(), 'reception', null, null, null, null, null, null, false, null)`, [token()]))
       .rejects.toMatchObject({ code: '23514', constraint: 'chip_orders_reception_check' });
-    await expect(pool.query(`${base} values ('בדיקה אחת', 'owner', 'collected', 50, $1, now(), 'reception', null, null, null, 'cash_transfer', 'מנהל', now(), true, null)`, [token()]))
-      .rejects.toMatchObject({ code: '23514', constraint: 'chip_orders_reception_check' });
+    for (const method of ['cash', 'bank_transfer', 'cash_transfer']) {
+      await expect(pool.query(`${base} values ('בדיקה אחת', 'owner', 'collected', 50, $1, now(), 'reception', null, null, null, $2, 'מנהל', now(), true, null)`, [token(), method]))
+        .rejects.toMatchObject({ code: '23514', constraint: 'chip_orders_reception_check' });
+    }
     // …or carrying a Grow transaction.
-    await expect(pool.query(`${base} values ('בדיקה אחת', 'owner', 'collected', 50, $1, now(), 'reception', null, null, null, 'cash_transfer', 'מנהל', now(), false, 'grow-x')`, [token()]))
+    await expect(pool.query(`${base} values ('בדיקה אחת', 'owner', 'collected', 50, $1, now(), 'reception', null, null, null, 'cash', 'מנהל', now(), false, 'grow-x')`, [token()]))
       .rejects.toMatchObject({ code: '23514', constraint: 'chip_orders_reception_check' });
     // And a payment method nobody knows.
-    await expect(pool.query(`${base} values ('בדיקה אחת', 'owner', 'collected', 50, $1, now(), 'reception', null, null, null, 'card', 'מנהל', now(), false, null)`, [token()]))
+    await expect(pool.query(`${base} values ('בדיקה אחת', 'owner', 'collected', 50, $1, now(), 'reception', null, null, null, 'cheque', 'מנהל', now(), false, null)`, [token()]))
       .rejects.toMatchObject({ code: '23514', constraint: 'chip_orders_payment_method_check' });
+    // The value of the orders recorded before the split still stands in the table (shown "מזומן או העברה").
+    const legacy = await one<{ id: string }>(
+      `${base} values ('בדיקה אחת', 'owner', 'collected', 50, $1, now(), 'reception', null, null, null, 'cash_transfer', 'מנהל', now(), false, null) returning id`,
+      [token()],
+    );
+    made.orders.push(legacy.id);
+    expect(await one(`select payment_method from public.chip_orders where id = $1`, [legacy.id])).toEqual({ payment_method: 'cash_transfer' });
   });
 });

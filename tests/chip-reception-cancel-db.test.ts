@@ -5,7 +5,7 @@ import type { Role } from '@/lib/permissions/constants';
 
 // "בטל הזמנת קבלה" (25/11/2026) on the DB and through its route, against a
 // throwaway database (WA_TEST_DATABASE_URL), never prod. A reception order —
-// cash or a transfer — is real: it has no test mode and is collected the
+// cash or a bank transfer — is real: it has no test mode and is collected the
 // moment it is made, so cancelling is its only way back.
 //   · admin and super admin ONLY, by role — a manager who may record a payment
 //     at the reception may not cancel it, whatever the matrix grants;
@@ -15,9 +15,13 @@ import type { Role } from '@/lib/permissions/constants';
 //   · every ACTIVE chip of the order is disabled — never deleted — with a chip
 //     event each; a chip that was already disabled is left as it was;
 //   · nobody is notified, and the audit row is written in the same transaction;
+//   · the money goes back by hand; the order's Morning invoice is credited in
+//     the same transaction (26/11/2026) — an order recorded before that, as
+//     "מזומן או העברה", has no document and gets no credit;
 //   · it cannot be done twice, and never to a web order.
-// Only the session is mocked. Fixtures are numeric apartments far from the
-// seed, removed by exact ids.
+// Only the session is mocked, and the after() hook (the document issuer it
+// queues is never run here — nothing reaches Morning; fetch refuses anything).
+// Fixtures are numeric apartments far from the seed, removed by exact ids.
 
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
 const d = describe.skipIf(!TEST_URL);
@@ -42,6 +46,13 @@ vi.mock('@/lib/auth/session', async (orig) => ({
   ...(await orig<typeof import('@/lib/auth/session')>()),
   getSession: async () => (h.user ? { sid: 'test', user: h.user } : null),
 }));
+/** What the route defers past its answer — recorded, never run. */
+const afterQueue: (() => unknown)[] = [];
+vi.mock('next/server', async (orig) => ({
+  ...(await orig<typeof import('next/server')>()),
+  after: (fn: () => unknown) => { afterQueue.push(fn); },
+}));
+const networkCalls: string[] = [];
 
 const { requireSeededAdmin } = await import('./db-fixtures');
 const orders = await import('@/lib/db/chipOrders');
@@ -70,17 +81,21 @@ function cancel(orderId: string, body: unknown) {
   );
 }
 
-/** An order of the reception: `numbers` issued to one guest, paid in cash. */
-async function receptionOrder(apt: string, numbers: string[]) {
+/** An order of the reception: `numbers` issued to one guest, paid in cash (or by a bank transfer). */
+async function receptionOrder(apt: string, numbers: string[], method: 'cash' | 'bank_transfer' = 'cash') {
   const r = await saveReceptionWindow(
     { contact_id: made.contacts[apt]!, groups: [{ resident_role: 'other', holder_name: 'אורח קבלה', chip_type: 'physical', numbers }] },
-    { orderer: { ...EMPTY_RECEPTION_ORDERER, name: 'משלם בקבלה' }, payment: { method: 'cash_transfer', amount: numbers.length * PRICE } },
+    { orderer: { ...EMPTY_RECEPTION_ORDERER, name: 'משלם בקבלה' }, payment: { method, amount: numbers.length * PRICE } },
     PRICE,
     actor('manager'),
   );
   made.orders.push(r.order!.id);
   return { id: r.order!.id, orderNumber: r.order!.order_number, chipIds: r.items.map((c) => c.id) };
 }
+/** The Morning document rows of an order, oldest first. */
+const documentsOf = async (orderId: string) => (await pool.query<{ id: string; kind: string; payment_key: string; amount: number; payment_method: string; status: string; credit_of: string | null }>(
+  `select id, kind, payment_key, amount::float8 as amount, payment_method, status, credit_of
+     from public.chip_order_documents where order_id = $1 order by created_at`, [orderId])).rows;
 
 const orderRow = (id: string) => one<{
   status: string; source: string; total: number; rejected_at: Date | null; reject_reason: string | null;
@@ -102,6 +117,10 @@ d('cancelling a reception order, on the DB and through its route', () => {
   let webOrderId = '';
 
   beforeAll(async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      networkCalls.push(String(input instanceof Request ? input.url : input));
+      throw new TypeError('no network in this test');
+    }));
     pool = new Pool({ connectionString: TEST_URL });
     pool.on('error', () => {});
     const seeded = await requireSeededAdmin(pool);
@@ -119,11 +138,11 @@ d('cancelling a reception order, on the DB and through its route', () => {
     for (const mod of ['chips', 'chips_orders_manage']) {
       await pool.query(`insert into public.user_permissions (user_id, module, can_view, can_edit) values ($1, $2, true, true)`, [users.manager!.id, mod]);
     }
-    for (let i = 1; i <= 3; i++) {
+    for (let i = 1; i <= 4; i++) {
       made.contacts[APT(i)] = (await one<{ id: string }>(`insert into public.contacts (apartment_number, owner_name) values ($1, 'בעלים רשום') returning id`, [APT(i)])).id;
     }
     first = await receptionOrder(APT(1), [num(1), num(2), num(3)]);
-    second = await receptionOrder(APT(2), [num(4)]);
+    second = await receptionOrder(APT(2), [num(4)], 'bank_transfer');
     // A paid web order, for the refusal.
     const o = await one<{ id: string }>(
       `insert into public.chip_orders (full_name, phone_e164, email, address, role, status, total, tracking_token, paid_at, due_at, grow_process_id, grow_transaction_id)
@@ -138,6 +157,7 @@ d('cancelling a reception order, on the DB and through its route', () => {
   });
 
   afterAll(async () => {
+    vi.unstubAllGlobals();
     if (!pool) return;
     const contactIds = Object.values(made.contacts);
     const rows = (await pool.query<{ id: string }>(`select id from public.chips where contact_id = any($1::uuid[])`, [contactIds])).rows;
@@ -146,6 +166,9 @@ d('cancelling a reception order, on the DB and through its route', () => {
       await pool.query(`delete from public.chips where id = $1`, [c.id]);
     }
     for (const id of made.orders) {
+      // Document rows block deleting their order (FK restrict): credits first, then the rest — by the order's id.
+      await pool.query(`delete from public.chip_order_documents where order_id = $1 and credit_of is not null`, [id]);
+      await pool.query(`delete from public.chip_order_documents where order_id = $1`, [id]);
       await pool.query(`delete from public.audit_log where entity_type = 'chip_order' and entity_id = $1`, [id]);
       await pool.query(`delete from public.chip_orders where id = $1`, [id]);
     }
@@ -179,9 +202,21 @@ d('cancelling a reception order, on the DB and through its route', () => {
     const eventsBefore = await count(`select count(*) as n from public.chip_events where chip_id = any($1::uuid[])`, [first.chipIds]);
 
     as('admin');
+    afterQueue.length = 0;
     const res = await cancel(first.id, { reason: '  נרשם בטעות על הדירה הלא נכונה  ' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, chips_disabled: 2 });
+    // Cash goes back by hand: no processor refund.
+    expect(await res.json()).toEqual({ ok: true, chips_disabled: 2, payment_method: 'cash', refund: null });
+    // The issuing of the documents is deferred past the answer (not run here).
+    expect(afterQueue).toHaveLength(1);
+
+    // The order's invoice is credited in the same transaction: ONE credit row, of the whole sum.
+    const [invoice, credit, ...more] = await documentsOf(first.id);
+    expect(more).toEqual([]);
+    expect(invoice).toMatchObject({ kind: 'invoice', payment_key: `reception:${first.id}`, amount: 3 * PRICE, payment_method: 'cash', credit_of: null });
+    expect(credit).toMatchObject({
+      kind: 'credit', payment_key: `cancel:${first.id}`, amount: 3 * PRICE, payment_method: 'cash', status: 'pending', credit_of: invoice!.id,
+    });
 
     const o = await orderRow(first.id);
     expect(o).toMatchObject({
@@ -212,7 +247,7 @@ d('cancelling a reception order, on the DB and through its route', () => {
       actor_user_id: users.admin!.id,
       metadata: {
         source: 'reception', order_number: first.orderNumber, reason: 'נרשם בטעות על הדירה הלא נכונה', amount: 3 * PRICE,
-        chips_disabled: 2, chips_left_moved: 0,
+        chips_disabled: 2, chips_left_moved: 0, payment_method: 'cash',
       },
     }]);
   });
@@ -231,8 +266,10 @@ d('cancelling a reception order, on the DB and through its route', () => {
     expect(w.order.rejected_at).not.toBeNull();
     const records = await listReceptionRecords(made.contacts[APT(1)]!);
     expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({ kind: 'order', order_number: first.orderNumber, cancelled: true });
-    expect((await listReceptionRecords(made.contacts[APT(2)]!))[0]).toMatchObject({ cancelled: false });
+    expect(records[0]).toMatchObject({ kind: 'order', order_number: first.orderNumber, cancelled: true, payment_method: 'cash' });
+    expect((await listReceptionRecords(made.contacts[APT(2)]!))[0]).toMatchObject({ cancelled: false, payment_method: 'bank_transfer' });
+    // The order that stands keeps its one invoice, uncredited.
+    expect((await documentsOf(second.id)).map((x) => [x.kind, x.payment_method, x.amount])).toEqual([['invoice', 'bank_transfer', PRICE]]);
   });
 
   it('it cannot be done twice, never to a web order, and an unknown order is 404', async () => {
@@ -270,10 +307,28 @@ d('cancelling a reception order, on the DB and through its route', () => {
     as('admin');
     const res = await cancel(third.id, { reason: 'בוטלה אחרי העברת צ׳יפ' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, chips_disabled: 1 });
+    expect(await res.json()).toEqual({ ok: true, chips_disabled: 1, payment_method: 'cash', refund: null });
     const rows = await chipRows(third.chipIds);
     expect(rows.map((c) => c.status)).toEqual(['inactive', 'active']);
     expect((await trail(third.id))[0]!.metadata).toMatchObject({ chips_disabled: 1, chips_left_moved: 1 });
     expect((await orderRow(third.id)).status).toBe('rejected');
+  });
+
+  it('an order recorded before 26/11/2026 ("מזומן או העברה", no document) is cancelled with no credit row', async () => {
+    const legacy = await receptionOrder(APT(4), [num(9)]);
+    // What such an order looks like: the old method, and no Morning document.
+    await pool.query(`delete from public.chip_order_documents where order_id = $1`, [legacy.id]);
+    await pool.query(`update public.chip_orders set payment_method = 'cash_transfer' where id = $1`, [legacy.id]);
+    as('super');
+    const res = await cancel(legacy.id, { reason: 'הזמנה ישנה' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, chips_disabled: 1, payment_method: 'cash_transfer', refund: null });
+    expect(await documentsOf(legacy.id)).toEqual([]);
+    expect((await orderRow(legacy.id)).status).toBe('rejected');
+    expect((await trail(legacy.id))[0]!.metadata).toMatchObject({ payment_method: 'cash_transfer', chips_disabled: 1 });
+  });
+
+  it('no request of this file ever left for the network', () => {
+    expect(networkCalls).toEqual([]);
   });
 });

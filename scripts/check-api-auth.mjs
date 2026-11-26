@@ -61,30 +61,22 @@ const PUBLIC = new Set([
   'src/app/api/public/quote/[token]/logo/route.ts',
   'src/app/api/public/quote/[token]/files/[fileId]/route.ts',
   // Chip orders (/chip-order, 12/11/2026) — a resident with no account orders
-  // chips. OTP request / verify = the portal's own OTP (purpose 'chip_order'),
-  // rate-limited per IP and per phone; the submit needs the sealed
-  // "phone verified" cookie, and creates an UNPAID order only. The two Grow
-  // callbacks carry our HMAC of the order id, and payment is confirmed only
-  // through Grow's API. None of them returns resident data.
-  'src/app/api/public/chip-order/otp/request/route.ts',
-  'src/app/api/public/chip-order/otp/verify/route.ts',
+  // chips. ONE form, no phone code (26/11/2026): the submit creates — or, with
+  // the tracking token of an order the same browser saved, replaces — an
+  // UNPAID order only; rate-limited per network and per phone; it never reads
+  // a price from the browser and returns no resident data. An order becomes
+  // paid only from PayPlus (the routes below).
   'src/app/api/public/chip-order/route.ts',
-  'src/app/api/public/chip-order/grow/notify/route.ts',
-  'src/app/api/public/chip-order/grow/invoice/route.ts',
   // Test mode (13/11/2026): "סיים הזמנת בדיקה" — 403 without the CURRENT
   // test-link token (hashed in app_settings, constant-time compare); it can
-  // only mark a TEST order (is_test) paid, never a real one.
+  // only mark a TEST order (is_test) paid, never a real one — and only while
+  // the PayPlus sandbox is not configured.
   'src/app/api/public/chip-order/test-finish/route.ts',
-  // "דלג על אימות (מצב בדיקה)" (13/11/2026) — 403 without the CURRENT
-  // test-link token, also when the page is open to the public. It only seals
-  // the typed phone into a skip cookie that the submit honours together with
-  // the same token, for a TEST order stored phone_verified = false.
-  'src/app/api/public/chip-order/otp/skip/route.ts',
   // Card payment through PayPlus hosted fields (25/11/2026). No session, by
-  // design: the order page has no login. `session` and `status` need the
-  // current test-link token while PayPlus runs in sandbox, name the order by
-  // its tracking token, are rate limited, and never read an amount from the
-  // browser. `callback` is called by PayPlus and is refused (401) unless the
+  // design: the order page has no login. `session` and `status` name the order
+  // by its tracking token, pay a TEST order only in the sandbox (the test-link
+  // token) and a REAL order only in production while real charging is armed,
+  // are rate limited, and never read an amount from the browser. `callback` is called by PayPlus and is refused (401) unless the
   // request is validated the way PayPlus documents it: user-agent "PayPlus"
   // and a `hash` header = HMAC-SHA256 of the body under our secret key.
   'src/app/api/public/chip-order/payplus/session/route.ts',
@@ -301,8 +293,9 @@ run('check-api-auth', async () => {
   // The three public card-payment routes (PayPlus, 25/11/2026) have no
   // session by design, so each one's own gate is pinned here — it must be
   // CALLED (awaited where it is async), not merely imported:
-  //   session, status — the current test-link token AND the card-step
-  //                     configuration (sandbox = test orders only);
+  //   session, status — the test-link token decides the environment: the
+  //                     sandbox for a test order, production (armed) for a
+  //                     real one — never a key set picked any other way;
   //   callback        — PayPlus's signature check, and nothing applied before it.
   const CARD_DIR = 'src/app/api/public/chip-order/payplus/';
   const cardRoute = (name) => {
@@ -314,8 +307,11 @@ run('check-api-auth', async () => {
   for (const name of ['session', 'status']) {
     const { rel, src } = cardRoute(name);
     if (!/\bawait\s+isTestRequest\(req\)/.test(src)) fail(`${rel} — חייב לבדוק את טוקן הבדיקה (await isTestRequest(req))`);
-    if (!/\bcardStepConfig\(\)/.test(src)) fail(`${rel} — חייב לעבור דרך cardStepConfig() (sandbox = הזמנות בדיקה בלבד)`);
-    if (/\bpayplusConfig\(/.test(src)) fail(`${rel} — אסור לקרוא ל-payplusConfig() ישירות (עוקף את cardStepConfig)`);
+    const gated = name === 'session'
+      ? /\bcardConfigFor\(test\)/.test(src)
+      : /\btest\s*\?\s*testCardConfig\(\)\s*:\s*lookupConfigFor\('production'\)/.test(src);
+    if (!gated) fail(`${rel} — הסביבה חייבת להיגזר מטוקן הבדיקה (sandbox להזמנת בדיקה, production להזמנה אמיתית)`);
+    if (/\bpayplusConfigFor\(/.test(src)) fail(`${rel} — אסור לבחור סט מפתחות ישירות (payplusConfigFor)`);
     if (/\b(amount|total|price|sum)\b[^\n]*\bbody\.data\b|\bbody\.data\.(amount|total|price|sum)\b/.test(src)) fail(`${rel} — סכום לא נקרא מהבקשה`);
   }
   {
@@ -334,16 +330,34 @@ run('check-api-auth', async () => {
     if (verify < 0) fail(`${rel} — חייב לאמת את החתימה של PayPlus (verifyPayPlusCallback)`);
     if (apply < 0) fail(`${rel} — חייב להחיל את ההודעה דרך applyPayPlusCallback`);
     if (apply >= 0 && (verify < 0 || apply < verify)) fail(`${rel} — החלת ההודעה לפני אימות החתימה`);
-    if (!/if\s*\(\s*!checked\.ok\s*\)/.test(src)) fail(`${rel} — חייב לדחות בקשה שהחתימה שלה לא אומתה (if (!checked.ok))`);
+    if (!/if\s*\(\s*!checked\.ok\b[^)]*\)\s*\{[\s\S]{0,400}?return\s+unauthorized\(\)/.test(src)) fail(`${rel} — חייב לדחות בקשה שהחתימה שלה לא אומתה (if (!checked.ok …) { … return unauthorized() })`);
   }
-  // Only those three routes may mark an order paid by card, and the browser
-  // side never loads the PayPlus client (its keys are server-only).
+  // Only these may mark an order paid by card: the three card routes, and the
+  // places that ASK PayPlus (lookupCardPayment) before something irreversible —
+  // the submit before it changes the total of an order that had a session, the
+  // hourly purge before it deletes and its reconciliation sweep, and the
+  // tracking page. Every one of them applies only what PayPlus itself reports.
+  // The browser side never loads the PayPlus client (its keys are server-only).
+  const CARD_APPLIERS = new Set([
+    'src/lib/db/chipOrderCard.ts',
+    'src/lib/chipOrders/cardPayment.ts',
+    'src/lib/chipOrders/cleanup.ts',
+    'src/app/api/public/chip-order/route.ts',
+    'src/app/chip-order/track/[token]/page.tsx',
+    // A refund PayPlus reports before the charge's own notice was applied:
+    // the order's sessions are asked first (refund.ts, applyPayPlusRefundNotice).
+    'src/lib/chipOrders/refund.ts',
+    // "אשראי" at the reception (26/11/2026): admin-only routes (requireAdmin)
+    // that open the session of a reception order and ask PayPlus about it.
+    'src/app/api/chips/reception/card/route.ts',
+    'src/app/api/chips/reception/card/status/route.ts',
+  ]);
   const cardUsers = execFileSync('bash', ['-c', "cd '" + root + "' && /usr/bin/grep -rlE \"recordCardPayment|applyPayPlusTransaction|applyPayPlusCallback|lookupCardPayment\" src --include=*.ts --include=*.tsx || true"], { encoding: 'utf8' })
     .trim().split('\n').filter(Boolean)
-    .filter((f) => !f.startsWith(CARD_DIR) && f !== 'src/lib/db/chipOrderCard.ts' && f !== 'src/lib/chipOrders/cardPayment.ts')
+    .filter((f) => !f.startsWith(CARD_DIR) && !CARD_APPLIERS.has(f))
     // A mention in a comment is not a use.
     .filter((f) => /\b(recordCardPayment|applyPayPlusTransaction|applyPayPlusCallback|lookupCardPayment)\b/.test(stripComments(readFileSync(join(root, f), 'utf8'))));
-  for (const f of cardUsers) fail(`${f} — סימון הזמנה כ„שולם בכרטיס” שמור לשלושת נתיבי ${CARD_DIR}`);
+  for (const f of cardUsers) fail(`${f} — סימון הזמנה כ„שולם בכרטיס” שמור לנתיבי ${CARD_DIR} ולמקומות שבודקים מול PayPlus (CARD_APPLIERS)`);
   const clientLoaders = execFileSync('bash', ['-c', "cd '" + root + "' && /usr/bin/grep -rlE \"from ['\\\"]@/lib/payplus/client['\\\"]\" src --include=*.ts --include=*.tsx || true"], { encoding: 'utf8' })
     .trim().split('\n').filter(Boolean)
     .filter((f) => /^['"]use client['"]/m.test(readFileSync(join(root, f), 'utf8')));

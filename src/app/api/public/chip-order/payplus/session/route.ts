@@ -7,13 +7,13 @@ import { appUrl } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { getChipOrderSettings } from '@/lib/db/appSettings';
 import { agorot, getCardOrderByToken, setCardSession } from '@/lib/db/chipOrderCard';
-import { createHostedFieldsSession, PayPlusApiError } from '@/lib/payplus/client';
+import { createHostedFieldsSession, disablePaymentRequest, PayPlusApiError } from '@/lib/payplus/client';
 import { priceLine } from '@/lib/chipOrders/model';
 import { cardHolderPhone, type CardSession } from '@/lib/chipOrders/card';
-import { cardStepConfig, lookupCardPayment, orderMayPayByCard } from '@/lib/chipOrders/cardPayment';
-import { notifyChipOrder } from '@/lib/chipOrders/notify';
+import { cardConfigFor, lookupCardPayment, orderMayPayByCard } from '@/lib/chipOrders/cardPayment';
+import { afterOrderPaid } from '@/lib/chipOrders/notify';
 import { isTestRequest } from '@/lib/chipOrders/testMode';
-import { CHIP_ORDER_PUBLIC_HEADERS as H } from '@/lib/chipOrders/server';
+import { chipOrdersOpen, CHIP_ORDER_PUBLIC_HEADERS as H } from '@/lib/chipOrders/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,12 +23,13 @@ export const dynamic = 'force-dynamic';
 // payment. The browser sends the order's tracking token and nothing else.
 //
 // PUBLIC BY DESIGN (the order page has no login), gated like the page itself:
-//   - while PayPlus runs in sandbox the request must carry the CURRENT
-//     test-link token, and the order must be a TEST order — a real order gets
-//     no session here, whatever the browser sends;
-//   - the order is found by its tracking token (32 random bytes; here the
-//     capability to pay the order — today it is held only by the browser that
-//     created the test order) and must still be pending_payment;
+//   - with the CURRENT test-link token: the sandbox (always), and only for a
+//     TEST order;
+//   - without it: production, only while real charging is armed and the page
+//     is open (cardPayment.ts / server.ts), and only for a REAL order — a
+//     session's environment is always the order's kind;
+//   - the order is found by its tracking token (32 random bytes — held by the
+//     browser that saved the order) and must still be pending_payment;
 //   - flat ceilings per IP and per order.
 // THE AMOUNT IS COMPUTED HERE: all chips of the saved order × the price of the
 // settings, and it must equal the total frozen on the order — otherwise no
@@ -48,13 +49,12 @@ const err = (status: number, message: string, extra: Record<string, unknown> = {
   NextResponse.json({ ok: false, message, ...extra }, { status, headers: H });
 
 export async function POST(req: Request) {
-  // Sandbox = test orders only: without the test link this route does not exist.
   const test = await isTestRequest(req);
-  const cfg = cardStepConfig();
-  if (!cfg || !test) return err(403, 'ההזמנות ייפתחו בקרוב.');
+  const cfg = cardConfigFor(test);
+  if (!cfg || (!test && !chipOrdersOpen(await getChipOrderSettings()))) return err(403, 'ההזמנות ייפתחו בקרוב.');
 
   const ip = getClientIp(req);
-  const ipLimit = await checkRateLimit(`chip-order:card-session:ip:${ip}`, { max: 30, windowSec: 3600 });
+  const ipLimit = await checkRateLimit(`chip-order:card-session:ip:${ip}`, { max: 60, windowSec: 3600 });
   if (!ipLimit.allowed) return err(429, 'יותר מדי ניסיונות תשלום מהמכשיר הזה. נסו שוב מאוחר יותר.');
 
   const body = await parseJsonBody(req, chipOrderCardBodySchema);
@@ -63,7 +63,7 @@ export async function POST(req: Request) {
   const order = await getCardOrderByToken(body.data.trackingToken);
   if (!order || !orderMayPayByCard(cfg, order)) return err(409, 'ההזמנה אינה ממתינה לתשלום.');
 
-  const orderLimit = await checkRateLimit(`chip-order:card-session:order:${order.id}`, { max: 8, windowSec: 1800 });
+  const orderLimit = await checkRateLimit(`chip-order:card-session:order:${order.id}`, { max: 20, windowSec: 1800 });
   if (!orderLimit.allowed) return err(429, 'נפתחו יותר מדי חלונות תשלום להזמנה הזו. נסו שוב בעוד כחצי שעה.');
 
   // The price of the settings × the chips of the saved order — and the total
@@ -72,7 +72,8 @@ export async function POST(req: Request) {
   const amount = priceLine(order.chips, settings).lineTotal;
   if (order.chips <= 0 || amount <= 0 || agorot(amount) !== agorot(order.total)) {
     logger.warn('[chip-order] card session refused: the order total is not chips × the configured price', { orderId: order.id });
-    return err(409, 'מחיר הכרטיס השתנה מאז שנשמרה ההזמנה. יש לשלוח הזמנה חדשה.');
+    // The form saves the order again (priced anew) and asks once more.
+    return err(409, 'מחיר הכרטיס עודכן מאז שנשמרה ההזמנה.', { state: 'price_changed' });
   }
   if (!order.email) return err(409, 'ההזמנה אינה ממתינה לתשלום.');
 
@@ -88,13 +89,16 @@ export async function POST(req: Request) {
     if (earlier.kind === 'paid') {
       if (earlier.transitioned) {
         const paidOrderId = earlier.orderId;
-        after(() => notifyChipOrder(paidOrderId, 'paid'));
+        after(() => afterOrderPaid(paidOrderId));
       }
       return err(409, 'ההזמנה כבר שולמה.', { state: 'paid' });
     }
     if (earlier.kind === 'unknown') {
       return err(502, 'לא ניתן לבדוק כרגע את ניסיון התשלום הקודם, ולכן לא נפתח חלון תשלום חדש. נסו שוב בעוד כמה דקות.');
     }
+    // Nothing was charged on it: the previous session is killed, so the only
+    // live way to pay the order is the one opened now.
+    await disablePaymentRequest(cfg, order.card_page_request_uid);
   }
 
   const base = appUrl();
@@ -104,7 +108,7 @@ export async function POST(req: Request) {
       amount,
       orderNumber: order.order_number,
       pageOrigin: new URL(base).origin,
-      callbackUrl: `${base}/api/public/chip-order/payplus/callback`,
+      callbackUrl: `${base}/api/public/chip-order/payplus/callback?env=${cfg.mode}`,
       customer: { name: order.full_name, email: order.email, phone: cardHolderPhone(order.phone_e164) || null },
     });
   } catch (e) {
@@ -115,15 +119,25 @@ export async function POST(req: Request) {
     return err(502, 'לא ניתן לפתוח את התשלום כרגע. נסו שוב בעוד כמה דקות.');
   }
 
-  // Stored only while the order still waits; otherwise the session is dropped.
-  if (!(await setCardSession(order.id, { env: cfg.mode, pageRequestUid: session.pageRequestUid }))) {
+  // Stored only while the order still waits, at THIS amount; otherwise the
+  // page request just opened is disabled and never handed out.
+  if (!(await setCardSession(order.id, { env: cfg.mode, pageRequestUid: session.pageRequestUid, amount }))) {
+    await disablePaymentRequest(cfg, session.pageRequestUid);
+    const now = await getCardOrderByToken(body.data.trackingToken);
+    if (now && orderMayPayByCard(cfg, now) && agorot(now.total) !== agorot(amount)) {
+      // The order was saved with another total meanwhile: the form saves it
+      // again and asks once more.
+      return err(409, 'סכום ההזמנה השתנה בזמן פתיחת התשלום.', { state: 'price_changed' });
+    }
     return err(409, 'ההזמנה אינה ממתינה לתשלום.');
   }
-  const answer: CardSession & { ok: true } = {
+  const answer: CardSession & { ok: true; amount: number } = {
     ok: true,
     page_request_uid: session.pageRequestUid,
     hosted_fields_uuid: session.hostedFieldsUuid,
     origin: cfg.origin,
+    // What this session charges — the page re-opens a session when the order's total moves.
+    amount,
   };
   return NextResponse.json(answer, { headers: H });
 }

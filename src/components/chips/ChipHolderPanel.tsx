@@ -29,7 +29,7 @@ import { formatPhoneDisplay } from '@/lib/phone';
 import { chipHolderDetails } from '@/lib/chips/holder';
 import { formatIlsAfter } from '@/lib/chipOrders/model';
 import {
-  RECEPTION_PAYMENT_LABEL, receptionRecordsOf, type ReceptionContext, type ReceptionRecordView,
+  RECEPTION_PAYMENT_LABEL, STORED_PAYMENT_LABEL, receptionRecordsOf, type ReceptionContext, type ReceptionRecordView,
 } from '@/lib/chipOrders/reception';
 import { e164ToLocal } from '@/lib/portal/phone';
 
@@ -322,6 +322,8 @@ export function ChipHolderPanel({
                       { text: r.orderer_email ?? '', ltr: true },
                       { text: r.address ?? '', ltr: false },
                     ].filter((part) => part.text !== '');
+                    // How it was paid, as stored ("מזומן או העברה" for an order recorded before the split).
+                    const paidBy = r.payment_method ? STORED_PAYMENT_LABEL[r.payment_method] ?? null : null;
                     return (
                       <div key={r.ref} className="rounded-[11px] border border-[var(--chip-border)] bg-[var(--chip-panel-alt)] px-[13px] py-[10px] text-start" data-testid="chip-holder-reception-record">
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -340,7 +342,7 @@ export function ChipHolderPanel({
                             {r.cancelled
                               ? <>ההזמנה בוטלה · <span className="chip-num px-1">{formatIlsAfter(r.amount)}</span></>
                               : r.kind === 'order'
-                                ? <>שולם <span className="chip-num px-1">{formatIlsAfter(r.amount)}</span> · {RECEPTION_PAYMENT_LABEL.cash_transfer}</>
+                                ? <>שולם <span className="chip-num px-1">{formatIlsAfter(r.amount)}</span>{paidBy && <> · {paidBy}</>}</>
                                 : RECEPTION_PAYMENT_LABEL.none}
                           </span>
                         </div>

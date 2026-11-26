@@ -1,6 +1,8 @@
 import 'server-only';
 import { query, queryOne, withTransaction } from '@/lib/db';
 import { writeAuditInTx } from '@/lib/db/audit';
+import { enqueueDocumentInTx } from '@/lib/db/chipOrderDocuments';
+import { israelDate } from '@/lib/morning/documents';
 import { chipOrderDueAt, type ChipOrderStatus } from '@/lib/chipOrders/model';
 import type { CardEnv, CardStatus } from '@/lib/chipOrders/card';
 
@@ -17,8 +19,9 @@ const TOKEN_RE = /^[A-Za-z0-9_-]{32,64}$/;
 
 /** A session is asked about for this long after it was opened: the page
  *  request lives 30 minutes (PAGE_EXPIRY_MINUTES), plus a margin for a charge
- *  that was submitted at the last moment. */
-const SESSION_LOOKUP_MINUTES = 45;
+ *  that was submitted at the last moment. For as long, the order's payment
+ *  page may still be charged — the purge leaves such an order alone. */
+export const SESSION_LOOKUP_MINUTES = 45;
 
 /** Money as whole agorot — two amounts are the same only when these are. */
 export const agorot = (n: number): number => Math.round(n * 100);
@@ -66,15 +69,16 @@ export async function getCardOrderByNumber(orderNumber: number): Promise<CardOrd
 /**
  * Stores the payment session that was just opened for the order: a row of
  * chip_order_card_sessions, and the order's "latest session". Only while the
- * order still waits for payment, and only on an order of the session's own
- * kind: the sandbox on a test order, production on a real one (the database
- * refuses anything else as well). A new session clears the failure of the
- * previous attempt. False = the order no longer waits (or is not of that
- * kind) — nothing was stored and the session must not be used.
+ * order still waits for payment, only on an order of the session's own kind:
+ * the sandbox on a test order, production on a real one (the database refuses
+ * anything else as well), and only while the order's total is still the
+ * session's amount (a save that changed it while the session was being opened
+ * wins). A new session clears the failure of the previous attempt. False =
+ * nothing was stored: the session must not be used — the caller disables it.
  */
 export async function setCardSession(
   orderId: string,
-  s: { env: CardEnv; pageRequestUid: string },
+  s: { env: CardEnv; pageRequestUid: string; amount: number },
 ): Promise<boolean> {
   return withTransaction(async (client) => {
     const r = await client.query(
@@ -82,29 +86,72 @@ export async function setCardSession(
           set card_provider = 'payplus', card_env = $2, card_status = 'started',
               card_page_request_uid = $3, card_session_at = now(),
               card_failure_reason = null, card_failed_at = null, updated_at = now()
-        where id = $1 and status = 'pending_payment' and source = 'web'
-          and is_test = ($2 = 'sandbox')`,
-      [orderId, s.env, s.pageRequestUid],
+        where id = $1 and status = 'pending_payment' and source in ('web', 'reception')
+          and (source = 'web' or payment_method = 'card')
+          and is_test = ($2 = 'sandbox')
+          and round(total * 100) = round($4::numeric * 100)`,
+      [orderId, s.env, s.pageRequestUid, s.amount],
     );
     if ((r.rowCount ?? 0) === 0) return false;
     await client.query(
-      `insert into public.chip_order_card_sessions (page_request_uid, order_id, env) values ($1, $2, $3)`,
-      [s.pageRequestUid, orderId, s.env],
+      `insert into public.chip_order_card_sessions (page_request_uid, order_id, env, amount) values ($1, $2, $3, $4)`,
+      [s.pageRequestUid, orderId, s.env, s.amount],
     );
     return true;
   });
 }
 
 /** The order's recent payment sessions of an environment, newest first — the
- *  ones a charge may still arrive on. */
-export async function listRecentCardSessions(orderId: string, env: CardEnv, limit: number): Promise<string[]> {
+ *  ones a charge may still arrive on (by default: opened in the last
+ *  SESSION_LOOKUP_MINUTES). The purge and the reconciliation sweep pass a far
+ *  wider window: before an order is deleted, EVERY session it ever had is asked about. */
+export async function listRecentCardSessions(
+  orderId: string,
+  env: CardEnv,
+  limit: number,
+  withinMinutes: number = SESSION_LOOKUP_MINUTES,
+): Promise<string[]> {
   const r = await query<{ page_request_uid: string }>(
     `select page_request_uid from public.chip_order_card_sessions
       where order_id = $1 and env = $2 and created_at > now() - make_interval(mins => $3)
       order by created_at desc limit $4`,
-    [orderId, env, SESSION_LOOKUP_MINUTES, limit],
+    [orderId, env, withinMinutes, limit],
   );
   return r.rows.map((row) => row.page_request_uid);
+}
+
+/** Orders that still wait for payment — web orders and reception card orders
+ *  alike — and had a payment session of `env` that was opened between
+ *  `minMinutes` and `maxMinutes` ago: the candidates of the reconciliation
+ *  sweep (a charge whose callback was lost while the page or the window was
+ *  closed). NEWEST session first: a lost charge is most likely recent, and the
+ *  same abandoned orders do not take every run's places (an order the sweep no
+ *  longer reaches is still looked up by the purge before it is deleted). */
+export async function listPendingOrdersWithSessions(
+  env: CardEnv,
+  minMinutes: number,
+  maxMinutes: number,
+  limit: number,
+): Promise<{ id: string; order_number: number }[]> {
+  const r = await query<{ id: string; order_number: number }>(
+    `select o.id, o.order_number
+       from public.chip_orders o
+      where o.status = 'pending_payment' and o.source in ('web', 'reception') and o.card_env = $1 and o.card_status <> 'paid'
+        and exists (select 1 from public.chip_order_card_sessions s
+                     where s.order_id = o.id and s.env = $1
+                       and s.created_at < now() - make_interval(mins => $2)
+                       and s.created_at > now() - make_interval(mins => $3))
+      order by o.card_session_at desc nulls last
+      limit $4`,
+    [env, minMinutes, maxMinutes, limit],
+  );
+  return r.rows;
+}
+
+/** How many payment sessions the order ever had (any environment). */
+export async function countCardSessions(orderId: string): Promise<number> {
+  const r = await queryOne<{ n: number }>(`select count(*)::int as n from public.chip_order_card_sessions where order_id = $1`, [orderId]);
+  return r?.n ?? 0;
 }
 
 export interface CardCharge {
@@ -165,7 +212,7 @@ export async function recordCardPayment(
       )
     ).rows[0];
     if (!o) return { kind: 'unknown_order' } as const;
-    if (o.source !== 'web' || o.is_test !== (charge.env === 'sandbox') || (o.card_env !== null && o.card_env !== charge.env)) {
+    if ((o.source !== 'web' && o.source !== 'reception') || o.is_test !== (charge.env === 'sandbox') || (o.card_env !== null && o.card_env !== charge.env)) {
       return { kind: 'wrong_environment', orderId: o.id } as const;
     }
     const ours = charge.pageRequestUid
@@ -179,9 +226,12 @@ export async function recordCardPayment(
     if (o.status !== 'pending_payment') return { kind: 'duplicate_charge', orderId: o.id } as const;
     if (agorot(charge.amount) !== agorot(o.total)) return { kind: 'amount_mismatch', orderId: o.id, expected: o.total } as const;
 
+    // A web order starts its 72 working hours now; a reception order (paid at
+    // the desk, 26/11/2026) has no due date — its chips are issued by the save
+    // that follows, on the spot.
     await client.query(
       `update public.chip_orders
-          set status = 'paid', paid_at = $2, due_at = $3,
+          set status = 'paid', paid_at = $2, due_at = case when source = 'reception' then null else $3::timestamptz end,
               card_status = 'paid', card_transaction_uid = $4, card_paid_amount = total, card_paid_at = $2,
               card_approval_number = $5, card_last4 = $6, card_page_request_uid = $7,
               card_failure_reason = null, card_failed_at = null, updated_at = now()
@@ -199,6 +249,18 @@ export async function recordCardPayment(
         amount: charge.amount, approval_number: charge.approvalNumber,
       },
     });
+    // The Morning document of the payment, queued with it (26/11/2026). A test
+    // order (the sandbox) never gets one — enqueueDocumentInTx refuses it too.
+    if (charge.env === 'production' && !o.is_test) {
+      await enqueueDocumentInTx(client, {
+        orderId: o.id,
+        kind: 'invoice',
+        paymentKey: `card:${charge.transactionUid}`,
+        amount: o.total,
+        method: 'card',
+        details: { last4: charge.last4, approval_number: charge.approvalNumber, date: israelDate(now), provider: 'payplus' },
+      });
+    }
     return { kind: 'paid', orderId: o.id } as const;
   });
 }
@@ -218,7 +280,7 @@ export async function recordCardFailure(
   const r = await query(
     `update public.chip_orders o
         set card_status = 'failed', card_failure_reason = $4, card_failed_at = now(), updated_at = now()
-      where o.order_number = $1 and o.status = 'pending_payment' and o.source = 'web'
+      where o.order_number = $1 and o.status = 'pending_payment' and o.source in ('web', 'reception')
         and o.card_env = $2 and o.card_status <> 'paid'
         and exists (select 1 from public.chip_order_card_sessions s
                      where s.page_request_uid = $3 and s.order_id = o.id and s.env = $2)`,

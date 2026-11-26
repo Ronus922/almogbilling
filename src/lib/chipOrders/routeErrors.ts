@@ -19,6 +19,12 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   // "בטל הזמנת קבלה" (25/11/2026).
   not_reception: { status: 409, message: 'אפשר לבטל כך רק הזמנת קבלה — הזמנה מהאתר נדחית בכפתור „דחה”' },
   not_cancellable: { status: 409, message: 'הזמנת הקבלה כבר בוטלה' },
+  // Refunds (26/11/2026).
+  not_card_paid: { status: 409, message: 'אפשר לזכות דרך PayPlus רק הזמנה ששולמה בכרטיס' },
+  already_refunded: { status: 409, message: 'ההזמנה כבר זוכתה' },
+  refund_in_progress: { status: 409, message: 'בקשת זיכוי להזמנה הזו כבר נשלחה ל-PayPlus — נסו שוב בעוד כמה דקות' },
+  not_refundable: { status: 409, message: 'אי אפשר לזכות את ההזמנה במצבה הנוכחי' },
+  not_web_order: { status: 409, message: 'הזמנת קבלה מזוכה דרך „בטל הזמנת קבלה”' },
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -2,6 +2,8 @@
 
 // /chip-order — the public order form, redesigned 20/11/2026 after
 // ref/chip-order/chip-purchase-page-v2.html (DESIGN.md declared exception).
+// ONE FORM since 26/11/2026 (Ronen): every part is on the screen from the
+// start, there is no phone code, and one button pays.
 //
 //   · ההזמנה — one row per PERSON who will hold chips (role owner / renter,
 //     full name, apartment, quantity, phone, email). Several rows may share an
@@ -12,32 +14,43 @@
 //     CHIP_ORDER_LIMITS.maxChipsPerApartment chips over all its rows (21/11
 //     noon): the plus button past it, or a submit past it, shows the message
 //     next to the quantity instead; the server refuses it too.
-//   · פרטי התקשרות — the orderer's phone (the code goes there), email, the
-//     current address (street + number, city, 7-digit zip) and an optional
-//     "הערות" (≤ 500), stored as the order's note — the issue window's "הערה".
-//   · אישור ותשלום — card fields drawn as in the reference but UI ONLY: no
-//     `name`, never read, never sent, never stored. The processor's hosted
-//     fields will replace them. With Grow configured (the page open to the
-//     public) the existing Grow iframe step follows the phone code, unchanged.
+//   · פרטי התקשרות — the orderer's phone, email, the current address (street
+//     + number, city, 7-digit zip) and an optional "הערות" (≤ 500), stored as
+//     the order's note — the issue window's "הערה".
+//   · אישור ותשלום — the wallet buttons (Google Pay / Apple Pay, each only
+//     where the device and the account offer it) above PayPlus's hosted card
+//     fields (PayPlusCardFields).
 //   · the agreement card — "the details are correct", plus the renter
-//     commitment when a renter row exists, and the pay button.
-// The phone code step (SMS, WhatsApp fallback, test-mode skip) sits where it
-// always did: after the pay button, before the payment. In test mode (a valid
-// test link) the pay button ends with "סיים הזמנת בדיקה" on the server — no
-// Grow, no charge — and the confirmation screen.
+//     commitment when a renter row exists, and the one pay button.
 //
-// Card payment (25/11/2026, `cardPayment`): the card section holds PayPlus's
-// hosted fields (PayPlusCardFields). They can only be mounted for an order
-// that exists, so the flow has two presses: "המשך לתשלום" validates, verifies
-// the phone and SAVES the order (awaiting payment); the fields then open in
-// place, the rest of the form locks, and "תשלום מאובטח" charges the card.
+// Card payment (`cardPayment`). A payment session can only be opened for an
+// order that exists, at the amount the server computed for it. So the order
+// is SAVED by itself (awaiting payment) shortly after the last change, once
+// the details are complete and valid — the agreement boxes gate the payment,
+// not the save — and saved again (the same order, by its tracking token)
+// whenever they change. After a save the card fields open for it; when the
+// saved total moves, they are opened again for the new amount (the
+// processor's frames start empty, and the page says so). Until the first
+// save the card boxes are drawn but cannot be typed into. The total and the
+// pay button show what will be charged: the server prices every save, at the
+// price per chip of /settings NOW — once saved, its price is the one shown,
+// and when it is not the page's, the new amount is said before any charge.
+// The pay button checks everything (and scrolls to the first problem), saves
+// what was not saved yet, and charges through the hosted fields — unless that
+// save changed the amount, or the fields were not open yet: then they open,
+// and the button stops there. The wallet buttons are live only when the pay
+// button would charge at once (complete, saved, agreed, nothing in flight);
+// a tap on them before that shows what is missing.
 // A refused charge shows a Hebrew line and leaves everything as typed; an
 // expired session or one out of attempts is reopened from the same button.
 // The confirmation screen appears only after the SERVER says the order is
 // paid (it hears it from PayPlus) — never because the SDK said so.
+//
+// Without card payment (the test link where no PayPlus sandbox is configured
+// — CI): nothing is saved before the button, which saves the order and ends
+// it on the server ("סיים הזמנת בדיקה" — no charge), then the confirmation.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -46,7 +59,9 @@ import {
   CHIP_ORDER_APT_LIMIT_MESSAGE, CHIP_ORDER_LIMITS, CHIP_ORDER_TEST_HEADER, LEASE_FILE_ACCEPT, formatIlsAfter, priceLine,
 } from '@/lib/chipOrders/model';
 import { leaseFileProblem } from '@/lib/chipOrders/lease';
-import { CARD_TEXT, cardFailureMessage, cardHolderPhone, sdkSaysRefused } from '@/lib/chipOrders/card';
+import {
+  CARD_TEXT, cardAmountChangedHint, cardFailureMessage, cardHolderPhone, sdkSaysPageExpired, sdkSaysRefused,
+} from '@/lib/chipOrders/card';
 import { PayPlusCardFields, type CardFieldsEvent, type CardFieldsHandle } from './PayPlusCardFields';
 import { ApartmentCombo } from './ApartmentCombo';
 import { ChipOrderConfirmation, type ConfirmedRow } from './ChipOrderConfirmation';
@@ -69,31 +84,77 @@ interface Row {
   end: string;
 }
 
-type Step = 'form' | 'otp' | 'paying' | 'card' | 'done';
+/** Everything the form holds: what a save sends, and the agreement boxes. */
+interface FormValues {
+  rows: Row[];
+  phone: string;
+  email: string;
+  street: string;
+  city: string;
+  zip: string;
+  note: string;
+  agree: boolean;
+  agreeRent: boolean;
+}
 
-/** The card step: fields opening → ready to type → a charge in flight → the
- *  server confirming it. 'closed' = no usable session (not opened yet, expired,
- *  out of attempts); 'unverified' = sent, and no confirmation arrived yet. */
-type CardPhase = 'closed' | 'opening' | 'ready' | 'paying' | 'verifying' | 'unverified';
-interface SavedOrder { trackingToken: string; orderNumber: number; total: number }
-const CARD_BUSY: readonly CardPhase[] = ['opening', 'paying', 'verifying'];
-const CARD_BUTTON: Record<Exclude<CardPhase, 'ready'>, string> = {
-  closed: CARD_TEXT.renew,
+/** The order as the server saved it last. */
+interface SavedOrder {
+  trackingToken: string;
+  orderNumber: number;
+  /** What the server priced it at — what a payment session charges. */
+  total: number;
+  /** The server's price per chip: that total over the chips (one flat price,
+   *  re-read from /settings on every save — it may not be the page's). */
+  unitPrice: number;
+  /** What that save sent (contentHash): anything else is a change to save. */
+  hash: string;
+  /** The lease the server holds for a renter row (by the row's key) — sent
+   *  as its key instead of the file while the row keeps that same file. */
+  leases: Map<number, { file: File; key: string }>;
+  /** The orderer's phone as the processor wants it (3-D Secure). */
+  holderPhone: string;
+  /** The rows as saved — the confirmation's summary. */
+  confirmed: ConfirmedRow[];
+}
+
+/** The payment session the card fields are mounted for. */
+interface LiveSession {
+  trackingToken: string;
+  amount: number;
+}
+
+/** The card section: no session yet → opening one → ready → a charge in
+ *  flight (card or wallet) → the server confirming it. 'unverified' = sent
+ *  and not confirmed yet; 'closed' = the session died (expired, out of
+ *  attempts) or could not be opened — the button opens a new one. */
+type CardPhase = 'none' | 'opening' | 'ready' | 'paying' | 'verifying' | 'unverified' | 'closed';
+/** The button waits. */
+const PHASE_BUSY: readonly CardPhase[] = ['opening', 'paying', 'verifying'];
+/** A charge may be under way: the form is locked and nothing is saved. */
+const PHASE_LOCKED: readonly CardPhase[] = ['paying', 'verifying', 'unverified'];
+const CARD_BUTTON: Partial<Record<CardPhase, string>> = {
   opening: 'פותחים את התשלום…',
   paying: 'מבצעים את התשלום…',
   verifying: 'מאמתים את התשלום…',
   unverified: 'בדיקה חוזרת של התשלום',
+  closed: CARD_TEXT.renew,
 };
 /** Rounds of "was it paid?" after the SDK reported a charge, 2.5s apart — and
  *  the shorter wait of a re-check the customer asked for. */
 const CARD_VERIFY_ROUNDS = 14;
 const CARD_RECHECK_ROUNDS = 4;
+/** The automatic save waits this long after the last change. */
+const AUTOSAVE_MS = 900;
 
-// Grow's payment iframe posts from one of these (R/postmessage).
-const GROW_ORIGINS = ['https://meshulam.co.il', 'https://secure.meshulam.co.il', 'https://sandbox.meshulam.co.il'];
-const PAID_ACTIONS = ['payment', 'bit_payment', 'apple_payment', 'google_payment'];
 const APT_MAX = CHIP_ORDER_LIMITS.maxChipsPerApartment;
 const NOTE_MAX = CHIP_ORDER_LIMITS.customerNoteMax;
+/** The server's rule for a person's name (chipOrderSubmitSchema). */
+const NAME_LETTERS = /^[\p{L}\p{M}\s'׳"״.\-]+$/u;
+/** The agreement boxes: they gate the payment, not the save. */
+const BOX_KEYS = new Set(['agree', 'agreeRent']);
+
+/** Two sums are the same to the agora. */
+const sameAmount = (a: number, b: number) => Math.round(a * 100) === Math.round(b * 100);
 
 function todayIso(): string {
   const d = new Date();
@@ -111,6 +172,121 @@ function newRow(key: number, from?: Row): Row {
 const groupKey = (r: Row) => (r.apt ? `a:${r.apt}` : `r:${r.key}`);
 
 const isEmail = (v: string) => z.email().safeParse(v.trim().toLowerCase()).success;
+
+/** Every problem of the form, by field ('agree' / 'agreeRent' = the boxes). */
+function formErrors(v: FormValues, today: string): Record<string, string> {
+  const e: Record<string, string> = {};
+  const perGroup = new Map<string, number>();
+  for (const r of v.rows) perGroup.set(groupKey(r), (perGroup.get(groupKey(r)) ?? 0) + r.qty);
+  for (const r of v.rows) {
+    const name = r.name.trim();
+    if (name.split(/\s+/).filter(Boolean).length < 2) e[`name_${r.key}`] = 'נדרש שם מלא — שם פרטי ושם משפחה';
+    else if (!NAME_LETTERS.test(name)) e[`name_${r.key}`] = 'השם יכול להכיל אותיות בלבד';
+    if (!r.apt) e[`apt_${r.key}`] = 'נדרש לבחור דירה';
+    if ((perGroup.get(groupKey(r)) ?? 0) > APT_MAX) e[`qty_${r.key}`] = CHIP_ORDER_APT_LIMIT_MESSAGE;
+    if (!toPortalE164(r.phone)) e[`phone_${r.key}`] = 'נדרש מספר טלפון נייד';
+    if (r.email.trim() && !isEmail(r.email)) e[`email_${r.key}`] = 'כתובת מייל לא תקינה';
+    if (r.role === 'tenant') {
+      if (!r.file) e[`file_${r.key}`] = 'נדרש לצרף חוזה או הסכם ניהול';
+      else {
+        const p = leaseFileProblem(r.file);
+        if (p) e[`file_${r.key}`] = p;
+      }
+      if (!r.end) e[`end_${r.key}`] = 'נדרש תאריך סיום חוזה';
+      else if (r.end < today) e[`end_${r.key}`] = 'תאריך סיום החוזה כבר עבר';
+    }
+  }
+  const leaseBytes = v.rows.reduce((s, r) => s + (r.role === 'tenant' ? r.file?.size ?? 0 : 0), 0);
+  const lastRenter = [...v.rows].reverse().find((r) => r.role === 'tenant');
+  if (leaseBytes > CHIP_ORDER_LIMITS.maxLeaseBytesTotal && lastRenter) e[`file_${lastRenter.key}`] = 'כל הקבצים יחד עד 40MB בהזמנה אחת';
+  const e164 = toPortalE164(v.phone);
+  if (!e164 || !e164.startsWith('+9725')) e.phone = 'נדרש מספר טלפון נייד ישראלי';
+  if (!isEmail(v.email)) e.email = 'כתובת מייל לא תקינה';
+  if (v.street.trim().length < 2) e.street = 'נדרשת כתובת מגורים';
+  if (v.city.trim().length < 2) e.city = 'נדרשת עיר';
+  if (!/^\d{7}$/.test(v.zip.trim())) e.zip = 'מיקוד — 7 ספרות';
+  if (!v.agree) e.agree = 'נדרש לאשר שהפרטים נכונים';
+  if (v.rows.some((r) => r.role === 'tenant') && !v.agreeRent) e.agreeRent = 'נדרש לאשר את התחייבות השוכר';
+  return e;
+}
+
+/** The "order" part of a save, as the server reads it (chipOrderSubmitSchema). */
+function orderBody(v: FormValues) {
+  const hasRenter = v.rows.some((r) => r.role === 'tenant');
+  return {
+    phone: v.phone,
+    email: v.email.trim(),
+    addressStreet: v.street.trim(),
+    addressCity: v.city.trim(),
+    addressZip: v.zip.trim(),
+    note: v.note.trim(),
+    acceptTerms: v.agree,
+    acceptRenterTerms: hasRenter ? v.agreeRent : false,
+    rows: v.rows.map((r) => ({
+      role: r.role,
+      fullName: r.name.trim(),
+      apartment: r.apt,
+      chipsCount: r.qty,
+      phone: r.phone,
+      email: r.email.trim(),
+      leaseEndDate: r.role === 'tenant' ? r.end || null : null,
+    })),
+  };
+}
+
+// A lease file counts by identity: the same File object = the same lease.
+const fileIds = new WeakMap<File, number>();
+let fileSeq = 0;
+function fileId(f: File): number {
+  let id = fileIds.get(f);
+  if (id === undefined) {
+    fileSeq += 1;
+    id = fileSeq;
+    fileIds.set(f, id);
+  }
+  return id;
+}
+
+/** What a save would send, as one string — a change in it is a new save. */
+function contentHash(v: FormValues): string {
+  return `${JSON.stringify(orderBody(v))}|${v.rows.map((r) => (r.role === 'tenant' && r.file ? fileId(r.file) : 0)).join(',')}`;
+}
+
+// A refused save's problems (zod issues of the server) → the form's fields.
+const ROW_FIELD: Record<string, string> = {
+  fullName: 'name', apartment: 'apt', chipsCount: 'qty', phone: 'phone', email: 'email', leaseEndDate: 'end', leaseKey: 'file',
+};
+const TOP_FIELD: Record<string, string> = {
+  phone: 'phone', email: 'email', addressStreet: 'street', addressCity: 'city', addressZip: 'zip',
+};
+function issueErrors(issues: unknown, rowKeys: number[]): Record<string, string> | null {
+  if (!Array.isArray(issues)) return null;
+  const out: Record<string, string> = {};
+  for (const issue of issues) {
+    if (!issue || typeof issue !== 'object') continue;
+    const { path, message } = issue as { path?: unknown; message?: unknown };
+    if (!Array.isArray(path) || typeof message !== 'string') continue;
+    const [first, index, field] = path as unknown[];
+    if (first === 'rows' && typeof index === 'number' && typeof field === 'string' && ROW_FIELD[field] && rowKeys[index] !== undefined) {
+      out[`${ROW_FIELD[field]}_${rowKeys[index]}`] ??= message;
+    } else if (typeof first === 'string' && TOP_FIELD[first]) {
+      out[TOP_FIELD[first]] ??= message;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** The answer of POST /api/public/chip-order. */
+interface SaveAnswer {
+  ok?: boolean;
+  message?: string;
+  state?: string;
+  issues?: unknown;
+  trackingToken?: string;
+  orderNumber?: number;
+  total?: number;
+  leaseKeys?: (string | null)[];
+}
 
 // ── Icons of the reference (inline, as drawn there) ─────────────────────────
 function Svg({ size = 17, sw = 1.9, children }: { size?: number; sw?: number; children: React.ReactNode }) {
@@ -133,28 +309,28 @@ const TrashIcon = () => (
 );
 const UploadIcon = () => <Svg size={15}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" /></Svg>;
 const PlusIcon = () => <Svg size={15} sw={2.4}><path d="M12 5v14M5 12h14" /></Svg>;
-const CardIcon = () => <Svg><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" /></Svg>;
 
 function Err({ msg }: { msg?: string }) {
   return msg ? <span className="cr-err">{msg}</span> : null;
 }
 
 export function ChipOrderForm({
-  apartments, pricing, termsText, testToken = null, cardPayment = false,
+  apartments, pricing, termsText, testToken = null, cardPayment = false, receiptByEmail = false,
 }: {
   apartments: string[];
   pricing: Pricing;
   termsText: string;
   /** Test mode: the token of the test link (the server checked it). */
   testToken?: string | null;
-  /** The payment step is the card (PayPlus hosted fields) — today only behind
-   *  the test link, while PayPlus runs in sandbox. */
+  /** The payment is the card (PayPlus hosted fields) and the wallet buttons —
+   *  the sandbox behind the test link, production once real charging is armed. */
   cardPayment?: boolean;
+  /** "הקבלה תישלח למייל לאחר התשלום" (under the form and the confirmation) —
+   *  only when a receipt really goes out by email. */
+  receiptByEmail?: boolean;
 }) {
-  const router = useRouter();
   const testHeaders: Record<string, string> = testToken ? { [CHIP_ORDER_TEST_HEADER]: testToken } : {};
   const seq = useRef(1);
-  const [step, setStep] = useState<Step>('form');
   const [rows, setRows] = useState<Row[]>([newRow(0)]);
   const [openCombo, setOpenCombo] = useState<number | null>(null);
   const [phone, setPhone] = useState('');
@@ -165,57 +341,64 @@ export function ChipOrderForm({
   const [note, setNote] = useState('');
   const [agree, setAgree] = useState(false);
   const [agreeRent, setAgreeRent] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // What the fields show: every problem, live, once the pay button (or the
+  // wallet row) was pressed; before that only the quantity limit of the plus
+  // button and what the server refused a save for.
+  const [attempted, setAttempted] = useState(false);
+  const [qtyErrors, setQtyErrors] = useState<Record<string, string>>({});
+  const [refused, setRefused] = useState<{ hash: string; errors: Record<string, string> } | null>(null);
+  /** Above the pay button: what the button ran into. */
   const [serverError, setServerError] = useState<string | null>(null);
+  /** In the payment section: an automatic save that failed. */
+  const [saveError, setSaveError] = useState<string | null>(null);
+  /** The pay button is saving / ending the order. */
   const [busy, setBusy] = useState(false);
-
-  // Phone code
-  const [code, setCode] = useState('');
-  const [otpInfo, setOtpInfo] = useState<string | null>(null);
-  const [verifiedPhone, setVerifiedPhone] = useState<string | null>(null);
-  const [cooldown, setCooldown] = useState(0);
-  const [otpChannel, setOtpChannel] = useState<'sms' | 'whatsapp' | null>(null);
-  const [offerWhatsApp, setOfferWhatsApp] = useState(false);
-  const [codeAsked, setCodeAsked] = useState(false);
-
-  // Payment / result
-  const [payment, setPayment] = useState<{ url: string; trackUrl: string; orderNumber: number; total: number } | null>(null);
-  const [testOrder, setTestOrder] = useState<{ trackingToken: string; orderNumber: number; total: number } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSavedState] = useState<SavedOrder | null>(null);
+  /** The content whose automatic save failed — not saved again by itself. */
+  const [failedHash, setFailedHash] = useState<string | null>(null);
   const [done, setDone] = useState<{ orderNumber: number; total: number; rows: ConfirmedRow[] } | null>(null);
-  const [payNote, setPayNote] = useState<string | null>(null);
 
-  // Card payment (PayPlus hosted fields)
+  // Card payment (PayPlus hosted fields + the wallet buttons)
   const cardRef = useRef<CardFieldsHandle>(null);
   const cardSection = useRef<HTMLElement>(null);
   const cardDead = useRef<'expired' | 'attempts' | null>(null);
-  const [cardOrder, setCardOrder] = useState<SavedOrder | null>(null);
-  const [cardPhase, setCardPhase] = useState<CardPhase>('closed');
+  /** The last card charge ended with no answer from the SDK (its re-check keeps that rule). */
+  const lastTimedOut = useRef(false);
+  const [phase, setPhaseState] = useState<CardPhase>('none');
+  const [session, setSessionState] = useState<LiveSession | null>(null);
   const [cardNote, setCardNote] = useState<string | null>(null);
   const [secure3d, setSecure3d] = useState(false);
+  // The same, for the async flows (a closure holds the render it was made in).
+  const phaseRef = useRef<CardPhase>('none');
+  const sessionRef = useRef<LiveSession | null>(null);
+  const savedRef = useRef<SavedOrder | null>(null);
+  /** Saves run one after another; this is where the last one ends. */
+  const saveChain = useRef<Promise<unknown>>(Promise.resolve());
+  /** The order of the charge in flight (card or wallet). */
+  const payOrder = useRef<SavedOrder | null>(null);
+  /** The pay button is saving: an automatic save leaves the fields to it. */
+  const pressing = useRef(false);
+  /** The order was saved again while its fields were opening: look after. */
+  const reopenWanted = useRef(false);
 
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [cooldown]);
+  const values: FormValues = { rows, phone, email, street, city, zip, note, agree, agreeRent };
+  const valuesRef = useRef(values);
+  useEffect(() => { valuesRef.current = values; });
 
-  // Grow's postMessage: a completed payment goes to the tracking page.
-  useEffect(() => {
-    if (step !== 'paying' || !payment) return;
-    function onMessage(ev: MessageEvent) {
-      if (!GROW_ORIGINS.includes(ev.origin)) return;
-      const data = (ev.data ?? {}) as { action?: string; status?: number | string };
-      if (data.action && PAID_ACTIONS.includes(data.action) && (data.action !== 'payment' || Number(data.status) === 1)) {
-        router.push(`${new URL(payment!.trackUrl).pathname}?paid=1`);
-      } else if (data.action === 'close') {
-        setPayNote('חלון התשלום נסגר. אפשר לחזור אליו כל עוד לא עברו 10 דקות.');
-      } else if (data.action === 'failed_to_load_page') {
-        setPayNote('דף התשלום לא נטען. רעננו את הדף ונסו שוב.');
-      }
-    }
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [step, payment, router]);
+  function setPhase(p: CardPhase) {
+    phaseRef.current = p;
+    setPhaseState(p);
+  }
+  function setSession(s: LiveSession | null) {
+    sessionRef.current = s;
+    setSessionState(s);
+  }
+  function setSaved(s: SavedOrder) {
+    savedRef.current = s;
+    setSavedState(s);
+  }
 
   // Chips per apartment (all its rows) — for the per-apartment maximum.
   const perGroup = useMemo(() => {
@@ -223,17 +406,39 @@ export function ChipOrderForm({
     for (const r of rows) m.set(groupKey(r), (m.get(groupKey(r)) ?? 0) + r.qty);
     return m;
   }, [rows]);
-  // One flat price: every chip of the order × the unit price.
   const totalQty = rows.reduce((s, r) => s + r.qty, 0);
-  const total = priceLine(totalQty, pricing).lineTotal;
   const hasRenter = rows.some((r) => r.role === 'tenant');
-  const cardBusy = CARD_BUSY.includes(cardPhase);
-  // The one line under the card fields: what is happening to them now.
-  const cardHint = secure3d ? CARD_TEXT.secure3d
-    : cardPhase === 'opening' ? CARD_TEXT.loading
-      : cardPhase === 'verifying' ? CARD_TEXT.verifying
-        : cardNote ?? (cardOrder ? null : CARD_TEXT.idle);
-  const locked = step === 'otp' || step === 'card' || busy;
+  const problems = formErrors(values, todayIso());
+  const detailsValid = Object.keys(problems).every((k) => BOX_KEYS.has(k));
+  const formValid = Object.keys(problems).length === 0;
+  const hash = contentHash(values);
+  const dirty = saved === null || saved.hash !== hash;
+  // What the button charges. One flat price: every chip of the order × the
+  // price per chip — the SERVER's once the order was saved (it prices every
+  // save anew, and the office may have changed it since this page loaded),
+  // the page's until then. Saved and unchanged since → exactly the saved total.
+  const unitPrice = saved?.unitPrice ?? pricing.unitPrice;
+  const total = saved && !dirty ? saved.total : priceLine(totalQty, { unitPrice }).lineTotal;
+  const locked = busy || PHASE_LOCKED.includes(phase);
+  const errors: Record<string, string> = {
+    ...(attempted ? problems : {}),
+    ...(refused?.hash === hash ? refused.errors : {}),
+    ...qtyErrors,
+  };
+  // The wallet buttons charge at once, with no hook: live only when the pay
+  // button would charge at once too.
+  const walletsArmed = cardPayment && phase === 'ready' && !busy && !saving && !dirty && formValid
+    && saved !== null && session !== null && session.trackingToken === saved.trackingToken && session.amount === saved.total;
+
+  // ── The automatic save (card payment only) ───────────────────────────────
+  const autoSave = cardPayment && done === null && detailsValid && dirty && !busy && !saving
+    && !PHASE_LOCKED.includes(phase) && failedHash !== hash;
+  const onAutoSave = useEffectEvent(() => { void saveOrder(values, 'auto'); });
+  useEffect(() => {
+    if (!autoSave) return;
+    const t = window.setTimeout(() => onAutoSave(), AUTOSAVE_MS);
+    return () => window.clearTimeout(t);
+  }, [autoSave, hash]);
 
   function patchRow(key: number, patch: Partial<Row>) {
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -242,7 +447,7 @@ export function ChipOrderForm({
   /** Clears the quantity message of every row of r's apartment. */
   function clearQtyErrors(r: Row) {
     const keys = rows.filter((x) => groupKey(x) === groupKey(r)).map((x) => `qty_${x.key}`);
-    setErrors((prev) => {
+    setQtyErrors((prev) => {
       if (!keys.some((k) => prev[k])) return prev;
       const next = { ...prev };
       for (const k of keys) delete next[k];
@@ -252,7 +457,7 @@ export function ChipOrderForm({
 
   function addChip(r: Row) {
     if ((perGroup.get(groupKey(r)) ?? 0) + 1 > APT_MAX) {
-      setErrors((prev) => ({ ...prev, [`qty_${r.key}`]: CHIP_ORDER_APT_LIMIT_MESSAGE }));
+      setQtyErrors((prev) => ({ ...prev, [`qty_${r.key}`]: CHIP_ORDER_APT_LIMIT_MESSAGE }));
       return;
     }
     clearQtyErrors(r);
@@ -275,150 +480,229 @@ export function ChipOrderForm({
     if (role === 'owner' && !rows.some((r) => r.key !== key && r.role === 'tenant')) setAgreeRent(false);
   }
 
-  function validate(): boolean {
-    const e: Record<string, string> = {};
-    const today = todayIso();
-    for (const r of rows) {
-      if (r.name.trim().split(/\s+/).filter(Boolean).length < 2) e[`name_${r.key}`] = 'נדרש שם מלא — שם פרטי ושם משפחה';
-      if (!r.apt) e[`apt_${r.key}`] = 'נדרש לבחור דירה';
-      if ((perGroup.get(groupKey(r)) ?? 0) > APT_MAX) e[`qty_${r.key}`] = CHIP_ORDER_APT_LIMIT_MESSAGE;
-      if (!toPortalE164(r.phone)) e[`phone_${r.key}`] = 'נדרש מספר טלפון נייד';
-      if (r.email.trim() && !isEmail(r.email)) e[`email_${r.key}`] = 'כתובת מייל לא תקינה';
-      if (r.role === 'tenant') {
-        if (!r.file) e[`file_${r.key}`] = 'נדרש לצרף חוזה או הסכם ניהול';
-        else {
-          const p = leaseFileProblem(r.file);
-          if (p) e[`file_${r.key}`] = p;
-        }
-        if (!r.end) e[`end_${r.key}`] = 'נדרש תאריך סיום חוזה';
-        else if (r.end < today) e[`end_${r.key}`] = 'תאריך סיום החוזה כבר עבר';
-      }
-    }
-    const leaseBytes = rows.reduce((s, r) => s + (r.role === 'tenant' ? r.file?.size ?? 0 : 0), 0);
-    const lastRenter = [...rows].reverse().find((r) => r.role === 'tenant');
-    if (leaseBytes > CHIP_ORDER_LIMITS.maxLeaseBytesTotal && lastRenter) e[`file_${lastRenter.key}`] = 'כל הקבצים יחד עד 40MB בהזמנה אחת';
-    const e164 = toPortalE164(phone);
-    if (!e164 || !e164.startsWith('+9725')) e.phone = 'נדרש מספר טלפון נייד ישראלי';
-    if (!isEmail(email)) e.email = 'כתובת מייל לא תקינה';
-    if (street.trim().length < 2) e.street = 'נדרשת כתובת מגורים';
-    if (city.trim().length < 2) e.city = 'נדרשת עיר';
-    if (!/^\d{7}$/.test(zip.trim())) e.zip = 'מיקוד — 7 ספרות';
-    if (!agree) e.agree = 'נדרש לאשר שהפרטים נכונים';
-    if (hasRenter && !agreeRent) e.agreeRent = 'נדרש לאשר את התחייבות השוכר';
-    setErrors(e);
-    if (Object.keys(e).length > 0) {
-      requestAnimationFrame(() => {
-        document.querySelector('.cr-skin .cr-bad')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      });
-      return false;
-    }
-    return true;
+  /** Every problem on the screen, the first one scrolled to. */
+  function check(): boolean {
+    setAttempted(true);
+    if (formValid) return true;
+    requestAnimationFrame(() => {
+      document.querySelector('.cr-skin .cr-bad')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+    return false;
   }
 
-  async function requestCode(channel?: 'whatsapp') {
-    setBusy(true);
-    setServerError(null);
-    setCodeAsked(true);
+  // ── Saving the order ─────────────────────────────────────────────────────
+  /** Saves the order — a new one, or the saved one updated. One save at a
+   *  time. Resolves with the saved order, or null (the reason is shown). */
+  function saveOrder(v: FormValues, trigger: 'auto' | 'press'): Promise<SavedOrder | null> {
+    const run = saveChain.current.then(() => postOrder(v, trigger, {}));
+    saveChain.current = run.catch(() => null);
+    return run;
+  }
+
+  /** The saved order for the form as it is: after the save in flight, and
+   *  saved again when something changed since (or `force`). */
+  async function savedFor(v: FormValues, trigger: 'auto' | 'press', force = false): Promise<SavedOrder | null> {
+    await saveChain.current;
+    const s = savedRef.current;
+    if (s && !force && s.hash === contentHash(v)) return s;
+    return saveOrder(v, trigger);
+  }
+
+  async function postOrder(
+    v: FormValues, trigger: 'auto' | 'press', opts: { fresh?: boolean; resendLeases?: boolean; retried?: boolean },
+  ): Promise<SavedOrder | null> {
+    const prev = opts.fresh ? null : savedRef.current;
+    const sentHash = contentHash(v);
+    const body = orderBody(v);
+    // A renter row that keeps the file the server already holds sends its key.
+    const sentRows = body.rows.map((r, i) => {
+      const row = v.rows[i];
+      const held = prev && !opts.resendLeases && row.role === 'tenant' && row.file ? prev.leases.get(row.key) : undefined;
+      return held && held.file === row.file ? { ...r, leaseKey: held.key } : r;
+    });
+    const fd = new FormData();
+    fd.append('order', JSON.stringify({ ...body, rows: sentRows, ...(prev ? { trackingToken: prev.trackingToken } : {}) }));
+    v.rows.forEach((row, i) => {
+      if (row.role === 'tenant' && row.file && !('leaseKey' in sentRows[i])) fd.append(`lease_${i}`, row.file);
+    });
+
+    const fail = (message: string | null): null => {
+      // The same content is not saved again by itself — the next change or press does.
+      setFailedHash(sentHash);
+      if (trigger === 'auto') {
+        setSaveError(message);
+      } else if (message) {
+        setServerError(message);
+      } else {
+        // Refused on its fields: they show why.
+        requestAnimationFrame(() => {
+          document.querySelector('.cr-skin .cr-bad')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        });
+      }
+      return null;
+    };
+
+    setSaving(true);
     try {
-      const res = await fetch('/api/public/chip-order/otp/request', {
+      let res: Response;
+      try {
+        res = await fetch('/api/public/chip-order', { method: 'POST', body: fd, headers: testHeaders });
+      } catch {
+        return fail(CARD_TEXT.saveOffline);
+      }
+      const data = (await res.json().catch(() => ({}))) as SaveAnswer;
+      if (res.ok && data.ok && typeof data.trackingToken === 'string') {
+        const leases = new Map<number, { file: File; key: string }>();
+        (data.leaseKeys ?? []).forEach((key, i) => {
+          const row = v.rows[i];
+          if (key && row?.role === 'tenant' && row.file) leases.set(row.key, { file: row.file, key });
+        });
+        const chips = v.rows.reduce((s, r) => s + r.qty, 0);
+        const priced = typeof data.total === 'number' ? data.total : priceLine(chips, pricing).lineTotal;
+        const order: SavedOrder = {
+          trackingToken: data.trackingToken,
+          orderNumber: data.orderNumber ?? 0,
+          total: priced,
+          unitPrice: chips > 0 ? priced / chips : pricing.unitPrice,
+          hash: sentHash,
+          leases,
+          holderPhone: cardHolderPhone(toPortalE164(v.phone)),
+          confirmed: v.rows.map((r) => ({ apartment: r.apt, name: r.name.trim(), role: r.role, qty: r.qty })),
+        };
+        setSaved(order);
+        setSaveError(null);
+        setFailedHash(null);
+        setRefused(null);
+        if (cardPayment && trigger === 'auto' && !pressing.current) void syncSession(order);
+        return order;
+      }
+      // A lease the server held is gone: every file goes again, once.
+      if (data.state === 'lease_missing' && !opts.retried) return await postOrder(v, trigger, { ...opts, resendLeases: true, retried: true });
+      // The saved order cannot change any more: a new order, once.
+      if (data.state === 'not_pending' && prev && !opts.retried) return await postOrder(v, trigger, { ...opts, fresh: true, retried: true });
+      // It was paid meanwhile: with card payment the server's status check
+      // shows the confirmation; a test order without one was ended already.
+      if (data.state === 'paid' && prev) {
+        if (cardPayment) void verifyCard(prev);
+        else setDone({ orderNumber: prev.orderNumber, total: prev.total, rows: prev.confirmed });
+        return null;
+      }
+      const onFields = issueErrors(data.issues, v.rows.map((r) => r.key));
+      if (onFields) setRefused({ hash: sentHash, errors: onFields });
+      return fail(onFields ? null : data.message ?? CARD_TEXT.saveFailed);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** "סיים הזמנת בדיקה" on the server (a test order, no PayPlus sandbox) → the confirmation. */
+  async function finishTestOrder(order: SavedOrder): Promise<void> {
+    let res: Response;
+    try {
+      res = await fetch('/api/public/chip-order/test-finish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...testHeaders },
-        body: JSON.stringify({ phone, ...(channel ? { channel } : {}) }),
+        body: JSON.stringify({ trackingToken: order.trackingToken }),
       });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string; channel?: string; retryAfterSec?: number };
-      if (!res.ok || !data.ok) {
-        if (data.retryAfterSec) setCooldown(data.retryAfterSec);
-        // A send that failed outright (not a ceiling) may still go out on
-        // WhatsApp once the resend cooldown it started is over; a request
-        // refused only by that cooldown keeps the button (13/11/2026).
-        const cooldownOnly = res.status === 429 && Boolean(data.retryAfterSec);
-        setOfferWhatsApp((prev) =>
-          res.status === 502 ? channel !== 'whatsapp' : cooldownOnly && (prev || channel === 'whatsapp'),
-        );
-        throw new Error(data.message ?? 'שליחת הקוד נכשלה');
-      }
-      setOfferWhatsApp(false);
-      setOtpChannel(data.channel === 'sms' ? 'sms' : 'whatsapp');
-      setOtpInfo(data.channel === 'sms' ? 'שלחנו קוד בן 6 ספרות ב-SMS.' : 'שלחנו קוד בן 6 ספרות בוואטסאפ.');
-      setCooldown(45);
-      setCode('');
-      setStep('otp');
-    } catch (err) {
-      setServerError((err as Error).message);
-    } finally {
-      setBusy(false);
+    } catch {
+      throw new Error('סיום הזמנת הבדיקה נכשל. בדקו את החיבור לאינטרנט ונסו שוב.');
     }
-  }
-
-  function confirmedRows(): ConfirmedRow[] {
-    return rows.map((r) => ({ apartment: r.apt, name: r.name.trim(), role: r.role, qty: r.qty }));
-  }
-
-  /** "סיים הזמנת בדיקה" on the server (test order only) → the confirmation. */
-  async function finishTestOrder(t: { trackingToken: string; orderNumber: number; total: number }): Promise<void> {
-    const res = await fetch('/api/public/chip-order/test-finish', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...testHeaders },
-      body: JSON.stringify({ trackingToken: t.trackingToken }),
-    });
     const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
     if (!res.ok || !data.ok) throw new Error(data.message ?? 'סיום הזמנת הבדיקה נכשל');
-    setTestOrder(null);
-    setDone({ orderNumber: t.orderNumber, total: t.total, rows: confirmedRows() });
-    setStep('done');
+    setDone({ orderNumber: order.orderNumber, total: order.total, rows: order.confirmed });
   }
 
   // ── Card payment ─────────────────────────────────────────────────────────
   async function cardApi(path: 'session' | 'status', trackingToken: string) {
-    const res = await fetch(`/api/public/chip-order/payplus/${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...testHeaders },
-      body: JSON.stringify({ trackingToken }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`/api/public/chip-order/payplus/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...testHeaders },
+        body: JSON.stringify({ trackingToken }),
+      });
+    } catch {
+      throw new Error(CARD_TEXT.openFailed);
+    }
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     return { res, data };
   }
 
-  function onCardEvent(e: CardFieldsEvent) {
-    if (e.type === 'secure3d') {
-      setSecure3d(e.open);
-    } else if (e.type === 'dead') {
-      cardDead.current = e.why;
-      setCardNote(e.why === 'expired' ? CARD_TEXT.expired : CARD_TEXT.noAttempts);
-      // A charge in flight ends with its own result; an idle session closes now.
-      setCardPhase((p) => (p === 'ready' ? 'closed' : p));
+  /** After an automatic save: the card fields follow the saved order — opened
+   *  the first time, opened again when its total (or the order) changed. */
+  async function syncSession(order: SavedOrder): Promise<void> {
+    const p = phaseRef.current;
+    if (p === 'opening') {
+      reopenWanted.current = true;
+      return;
     }
+    // A charge may be under way, or the session died: the pay button decides.
+    if (p !== 'none' && p !== 'ready') return;
+    const s = sessionRef.current;
+    if (p === 'ready' && s && s.trackingToken === order.trackingToken && s.amount === order.total) return;
+    const hint = p === 'ready' && s ? (s.amount !== order.total ? cardAmountChangedHint(order.total) : CARD_TEXT.reopened)
+      // The first time: priced at another price per chip than the page was loaded with — the new amount is said.
+      : sameAmount(order.unitPrice, pricing.unitPrice) ? null : cardAmountChangedHint(order.total);
+    await openCard(order, { hint });
   }
 
-  /** Opens a payment session for the SAVED order and mounts the card fields. */
-  async function openCard(o: SavedOrder): Promise<void> {
-    setStep('card');
-    setCardPhase('opening');
-    setCardNote(null);
-    setServerError(null);
+  /** Opens a payment session for the SAVED order and mounts the fields. */
+  async function openCard(order: SavedOrder, opts: { hint?: string | null; fromPress?: boolean; repriced?: boolean }): Promise<void> {
+    setPhase('opening');
+    setSession(null);
+    setCardNote(opts.hint ?? null);
     setSecure3d(false);
     cardDead.current = null;
     try {
-      const { res, data } = await cardApi('session', o.trackingToken);
+      const { res, data } = await cardApi('session', order.trackingToken);
       if (data.state === 'paid') {
         // An earlier attempt turned out to be approved: nothing more to pay.
-        await verifyCard(o);
+        await verifyCard(order);
         return;
       }
-      const { page_request_uid: uid, hosted_fields_uuid: uuid, origin } = data;
+      if (data.state === 'price_changed' && !opts.repriced) {
+        // The price per chip changed since the save: saved again (the server
+        // prices it anew), and the session asked for once more.
+        const again = await savedFor(valuesRef.current, 'press', true);
+        if (!again) {
+          setPhase('closed');
+          setCardNote(null);
+          return;
+        }
+        // The new amount is said under the fields before anything is charged.
+        const hint = sameAmount(again.total, order.total) ? opts.hint : cardAmountChangedHint(again.total);
+        await openCard(again, { ...opts, hint, repriced: true });
+        return;
+      }
+      const { page_request_uid: uid, hosted_fields_uuid: uuid, origin, amount } = data;
       if (!res.ok || data.ok !== true || typeof uid !== 'string' || typeof uuid !== 'string' || typeof origin !== 'string') {
         throw new Error(typeof data.message === 'string' ? data.message : CARD_TEXT.openFailed);
       }
       try {
-        await cardRef.current?.open({ page_request_uid: uid, hosted_fields_uuid: uuid, origin }, cardHolderPhone(toPortalE164(phone)));
+        await cardRef.current?.open({ page_request_uid: uid, hosted_fields_uuid: uuid, origin }, order.holderPhone);
       } catch {
         throw new Error(CARD_TEXT.sdkFailed);
       }
-      setCardPhase('ready');
-      requestAnimationFrame(() => cardSection.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+      setSession({ trackingToken: order.trackingToken, amount: typeof amount === 'number' ? amount : order.total });
+      setPhase('ready');
+      if (opts.fromPress) requestAnimationFrame(() => cardSection.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
     } catch (err) {
-      setCardPhase('closed');
-      setServerError((err as Error).message);
+      // Fields of an earlier session (another amount) never stay typeable.
+      cardRef.current?.close();
+      setPhase('closed');
+      const message = (err as Error).message;
+      if (opts.fromPress) {
+        setCardNote(null);
+        setServerError(message);
+      } else {
+        setCardNote(message);
+      }
+    } finally {
+      if (reopenWanted.current) {
+        reopenWanted.current = false;
+        const latest = savedRef.current;
+        if (latest && phaseRef.current === 'ready') void syncSession(latest);
+      }
     }
   }
 
@@ -426,21 +710,21 @@ export function ChipOrderForm({
    *  its "paid" shows the confirmation screen. Returns 'paid', or what the
    *  last answer said about a charge: 'no' only when PayPlus itself ruled one
    *  out, 'unknown' otherwise. */
-  async function askPaid(o: SavedOrder, rounds: number): Promise<'paid' | 'no' | 'unknown'> {
+  async function askPaid(order: SavedOrder, rounds: number): Promise<'paid' | 'no' | 'unknown'> {
     let charged: 'no' | 'unknown' = 'unknown';
     for (let i = 0; i < rounds; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, 2500));
       try {
-        const { res, data } = await cardApi('status', o.trackingToken);
+        const { res, data } = await cardApi('status', order.trackingToken);
         if (res.ok && data.state === 'paid') {
           cardRef.current?.close();
-          setCardOrder(null);
-          setDone({ orderNumber: o.orderNumber, total: o.total, rows: confirmedRows() });
-          setStep('done');
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          setSession(null);
+          setDone({ orderNumber: order.orderNumber, total: order.total, rows: order.confirmed });
           return 'paid';
         }
-        charged = res.ok && data.charged === 'no' ? 'no' : 'unknown';
+        // Only an answer for which the server asked PayPlus changes the verdict
+        // (it asks once per 4 s; the rounds in between keep the last one).
+        if (!res.ok || data.looked !== false) charged = res.ok && data.charged === 'no' ? 'no' : 'unknown';
       } catch {
         // A network hiccup: the next round asks again.
         charged = 'unknown';
@@ -452,215 +736,177 @@ export function ChipOrderForm({
   /** After a charge that may have gone through: wait for the server's word.
    *  No confirmation in time → the customer may pay again ONLY when PayPlus
    *  ruled a charge out; otherwise only a re-check is offered. */
-  async function verifyCard(o: SavedOrder, rounds = CARD_VERIFY_ROUNDS): Promise<void> {
-    setCardPhase('verifying');
+  async function verifyCard(order: SavedOrder, rounds = CARD_VERIFY_ROUNDS, timedOut = false): Promise<void> {
+    setPhase('verifying');
     setCardNote(null);
     setServerError(null);
-    const answer = await askPaid(o, rounds);
+    const answer = await askPaid(order, rounds);
     if (answer === 'paid') return;
     if (answer === 'no') {
-      setCardNote(CARD_TEXT.notCharged);
-      setCardPhase(cardDead.current ? 'closed' : 'ready');
+      // The SDK never answered and PayPlus ruled a charge out: that session is
+      // unusable (disabled or expired at PayPlus without its event) — the
+      // button opens a new one instead of sending into the dead one again.
+      if (timedOut) cardDead.current ??= 'expired';
+      setCardNote(timedOut ? CARD_TEXT.expired : CARD_TEXT.notCharged);
+      setPhase(cardDead.current || !sessionRef.current ? 'closed' : 'ready');
       return;
     }
-    setCardPhase('unverified');
+    setPhase('unverified');
     setCardNote(CARD_TEXT.unverified);
   }
 
-  /** The button of the card step: reopen a dead session, re-check a charge
-   *  that was not confirmed yet, or charge the card. */
-  async function payCard(): Promise<void> {
-    if (!cardOrder || cardBusy) return;
-    if (cardPhase === 'closed') return openCard(cardOrder);
-    if (cardPhase === 'unverified') return verifyCard(cardOrder, CARD_RECHECK_ROUNDS);
+  /** What a charge (card or wallet) answered → the server, or a refusal. */
+  async function settle(order: SavedOrder, reply: unknown, via: 'card' | 'wallet'): Promise<void> {
+    // Only a definite refusal is shown as one. A success, a timeout, or a
+    // reply this page does not understand → the server is asked first.
+    if (sdkSaysPageExpired(reply)) {
+      // The page request is gone at PayPlus: one question to the server, then
+      // a new session from the button (the details stay; the card is retyped).
+      setPhase('verifying');
+      if ((await askPaid(order, 1)) === 'paid') return;
+      cardDead.current = 'expired';
+      setServerError(null);
+      setCardNote(CARD_TEXT.expired);
+      setPhase('closed');
+      return;
+    }
+    lastTimedOut.current = reply === 'timeout';
+    if (!sdkSaysRefused(reply)) return verifyCard(order, CARD_VERIFY_ROUNDS, reply === 'timeout');
+    // Refused — and still one question to the server before the button comes
+    // back, in case PayPlus holds an approved charge of this order after all.
+    setPhase('verifying');
+    if ((await askPaid(order, 1)) === 'paid') return;
+    // Everything typed stays; the order goes on waiting for payment.
+    setServerError(cardFailureMessage(reply, via));
+    if (cardDead.current || !sessionRef.current) {
+      setCardNote(cardDead.current === 'expired' ? CARD_TEXT.expired : cardDead.current === 'attempts' ? CARD_TEXT.noAttempts : null);
+      setPhase('closed');
+    } else {
+      setCardNote(null);
+      setPhase('ready');
+    }
+  }
+
+  async function payCard(order: SavedOrder): Promise<void> {
     setServerError(null);
     setCardNote(null);
-    setCardPhase('paying');
+    payOrder.current = order;
+    setPhase('paying');
     const reply = await cardRef.current?.pay();
     if (reply == null) {
       // Our own fields (holder name / ID) stopped it; nothing was sent.
-      setCardPhase('ready');
+      setPhase(cardDead.current ? 'closed' : 'ready');
       return;
     }
-    // Only a definite refusal is shown as one. A success, a timeout, or a
-    // reply this page does not understand → the server is asked first.
-    if (!sdkSaysRefused(reply)) return verifyCard(cardOrder);
-    // Refused — and still one question to the server before the button comes
-    // back, in case PayPlus holds an approved charge of this order after all.
-    setCardPhase('verifying');
-    if ((await askPaid(cardOrder, 1)) === 'paid') return;
-    // Everything typed stays; the order goes on waiting for payment.
-    setServerError(cardFailureMessage(reply));
-    if (cardDead.current) {
-      setCardNote(cardDead.current === 'expired' ? CARD_TEXT.expired : CARD_TEXT.noAttempts);
-      setCardPhase('closed');
-    } else {
-      setCardPhase('ready');
-    }
+    await settle(order, reply, 'card');
   }
 
-  async function submitOrder(): Promise<void> {
-    const fd = new FormData();
-    fd.append(
-      'order',
-      JSON.stringify({
-        phone,
-        email: email.trim(),
-        addressStreet: street.trim(),
-        addressCity: city.trim(),
-        addressZip: zip.trim(),
-        note: note.trim(),
-        acceptTerms: agree,
-        acceptRenterTerms: hasRenter ? agreeRent : false,
-        rows: rows.map((r) => ({
-          role: r.role,
-          fullName: r.name.trim(),
-          apartment: r.apt,
-          chipsCount: r.qty,
-          phone: r.phone,
-          email: r.email.trim(),
-          leaseEndDate: r.role === 'tenant' ? r.end || null : null,
-        })),
-      }),
-    );
-    rows.forEach((r, i) => { if (r.role === 'tenant' && r.file) fd.append(`lease_${i}`, r.file); });
-    const res = await fetch('/api/public/chip-order', { method: 'POST', body: fd, headers: testHeaders });
-    const data = (await res.json().catch(() => ({}))) as {
-      ok?: boolean; message?: string; needsOtp?: boolean; test?: boolean; trackingToken?: string; cardPayment?: boolean;
-      paymentUrl?: string; trackUrl?: string; orderNumber?: number; total?: number;
-    };
-    if (res.status === 401 && data.needsOtp) {
-      setVerifiedPhone(null);
-      await requestCode();
-      return;
-    }
-    if (res.ok && data.ok && data.test && data.trackingToken) {
-      const t = { trackingToken: data.trackingToken, orderNumber: data.orderNumber ?? 0, total: data.total ?? total };
-      if (data.cardPayment) {
-        // The order is saved and awaits payment: the card fields open for it.
-        setCardOrder(t);
-        await openCard(t);
-        return;
+  function onCardEvent(e: CardFieldsEvent) {
+    if (e.type === 'secure3d') {
+      setSecure3d(e.open);
+    } else if (e.type === 'dead') {
+      cardDead.current = e.why;
+      setCardNote(e.why === 'expired' ? CARD_TEXT.expired : CARD_TEXT.noAttempts);
+      // A charge in flight ends with its own result; an idle session closes now.
+      if (phaseRef.current === 'ready') {
+        setSession(null);
+        setPhase('closed');
       }
-      setTestOrder(t);
-      await finishTestOrder(t);
-      return;
+    } else if (e.type === 'wallet-start') {
+      // Armed only when everything is saved: the charge is for the saved order.
+      payOrder.current = savedRef.current;
+      setServerError(null);
+      setCardNote(CARD_TEXT.walletPaying);
+      setPhase('paying');
+    } else {
+      // A wallet's result (or a card result that came after pay() gave up).
+      const order = payOrder.current ?? savedRef.current;
+      if (!order || phaseRef.current === 'verifying') return;
+      void settle(order, e.reply, 'wallet');
     }
-    if (!res.ok || !data.ok || !data.paymentUrl || !data.trackUrl) throw new Error(data.message ?? 'שליחת ההזמנה נכשלה');
-    setPayment({ url: data.paymentUrl, trackUrl: data.trackUrl, orderNumber: data.orderNumber ?? 0, total: data.total ?? total });
-    setStep('paying');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  async function onPay() {
-    if (cardOrder) {
-      await payCard();
-      return;
-    }
+  // ── The pay button ───────────────────────────────────────────────────────
+  async function onPay(): Promise<void> {
+    // `pressing` also stops a second press of the same moment (before `busy` renders).
+    if (busy || done || pressing.current) return;
+    const p = phaseRef.current;
+    if (PHASE_BUSY.includes(p)) return;
     setServerError(null);
-    // A test order already created whose finish failed: only finish it again.
-    if (testOrder) {
-      setBusy(true);
-      try { await finishTestOrder(testOrder); } catch (err) { setServerError((err as Error).message); } finally { setBusy(false); }
+    if (p === 'unverified') {
+      const order = payOrder.current ?? savedRef.current;
+      if (order) await verifyCard(order, CARD_RECHECK_ROUNDS, lastTimedOut.current);
       return;
     }
-    if (!validate()) return;
-    const e164 = toPortalE164(phone);
-    if (verifiedPhone && verifiedPhone === e164) {
-      setBusy(true);
-      try { await submitOrder(); } catch (err) { setServerError((err as Error).message); } finally { setBusy(false); }
-      return;
-    }
-    await requestCode();
-  }
-
-  async function onVerify() {
-    if (!/^\d{6}$/.test(code)) {
-      setServerError('הקוד חייב להכיל 6 ספרות');
-      return;
-    }
+    if (!check()) return;
+    pressing.current = true;
     setBusy(true);
-    setServerError(null);
+    let order: SavedOrder | null = null;
     try {
-      const res = await fetch('/api/public/chip-order/otp/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...testHeaders },
-        body: JSON.stringify({ phone, code }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
-      if (!res.ok || !data.ok) throw new Error(data.message ?? 'האימות נכשל');
-      setVerifiedPhone(toPortalE164(phone));
-      await submitOrder();
+      // A dead session: the order is saved again first (it may have been closed since).
+      order = await savedFor(values, 'press', p === 'closed');
+      if (order && !cardPayment) await finishTestOrder(order);
     } catch (err) {
       setServerError((err as Error).message);
+      order = null;
     } finally {
+      pressing.current = false;
       setBusy(false);
     }
+    if (!order || !cardPayment) return;
+    // The button showed another amount than the order was saved at (the price
+    // per chip changed since): nothing is charged before the new one is said.
+    const moved = !sameAmount(order.total, total);
+    // A live session of exactly this order and amount → the charge.
+    const s = sessionRef.current;
+    const now = phaseRef.current;
+    if (!moved && now === 'ready' && s && s.trackingToken === order.trackingToken && s.amount === order.total) {
+      await payCard(order);
+      return;
+    }
+    // Already opening, or a payment check runs: nothing to start here.
+    if (now === 'opening' || PHASE_LOCKED.includes(now)) return;
+    // The fields open for this order and amount, and the button stops here:
+    // the processor's frames are empty until the card is typed into them.
+    const hint = moved || (now === 'ready' && s && s.amount !== order.total) ? cardAmountChangedHint(order.total)
+      : now === 'ready' && s ? CARD_TEXT.reopened : CARD_TEXT.typeCard;
+    await openCard(order, { hint, fromPress: true });
   }
 
-  // "דלג על אימות (מצב בדיקה)" — test link only; the server checks the token
-  // again on the submit, and the order is stored "טלפון לא אומת".
-  async function skipVerification() {
-    setServerError(null);
-    if (!validate()) return;
-    setBusy(true);
-    try {
-      const res = await fetch('/api/public/chip-order/otp/skip', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...testHeaders },
-        body: JSON.stringify({ phone }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
-      if (!res.ok || !data.ok) throw new Error(data.message ?? 'הדילוג על האימות נכשל');
-      setOfferWhatsApp(false);
-      setVerifiedPhone(toPortalE164(phone));
-      await submitOrder();
-    } catch (err) {
-      setServerError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
+  /** A tap on the wallet row while it may not charge: what is missing shows;
+   *  complete but not saved → saved now (the fields follow the save). */
+  function onWalletGate() {
+    if (busy || done || PHASE_BUSY.includes(phase) || PHASE_LOCKED.includes(phase)) return;
+    if (!check()) return;
+    if (dirty || saving) void savedFor(values, 'auto');
+    else if (phase === 'closed') void onPay();
   }
 
   // ── Confirmation ─────────────────────────────────────────────────────────
-  if (step === 'done' && done) {
+  if (done) {
     return (
       <>
         <ChipOrderConfirmation orderNumber={done.orderNumber} rows={done.rows} total={done.total} />
-        <p className="cr-foot">הקבלה תישלח למייל לאחר התשלום</p>
+        {receiptByEmail && <p className="cr-foot">הקבלה תישלח למייל לאחר התשלום</p>}
       </>
     );
   }
 
-  // ── Grow's payment page (the page open to the public, Grow configured) ────
-  if (step === 'paying' && payment) {
-    return (
-      <section className="cr-card">
-        <div className="cr-chead">
-          <span className="cr-cic cr-green"><ShieldIcon /></span>
-          <div>
-            <b>תשלום — הזמנה <span className="cr-num">{payment.orderNumber}</span></b>
-            <small>סה&quot;כ לתשלום <span className="cr-num">{formatIlsAfter(payment.total)}</span></small>
-          </div>
-        </div>
-        <div className="cr-cbody flex flex-col gap-3">
-          <iframe src={payment.url} title="תשלום מאובטח" allow="payment" className="cr-payframe" data-testid="chip-order-payment" />
-          {payNote && <p role="status" className="cr-note">{payNote}</p>}
-          <p className="cr-secure">
-            <LockIcon size={14} sw={2.2} />
-            התשלום מתבצע בדף המאובטח של Grow. החשבונית / הקבלה תופק ותישלח אליך מ-Grow.
-          </p>
-        </div>
-      </section>
-    );
-  }
+  // The one line under the card fields: what is happening to them now.
+  const cardHint = !cardPayment ? CARD_TEXT.testNoCard
+    : secure3d ? CARD_TEXT.secure3d
+      : phase === 'opening' ? CARD_TEXT.loading
+        : phase === 'verifying' ? CARD_TEXT.verifying
+          : cardNote ?? (phase === 'none' ? CARD_TEXT.idle : null);
+  const buttonBusy = busy || PHASE_BUSY.includes(phase);
+  const buttonText = CARD_BUTTON[phase];
 
   // ── The form ─────────────────────────────────────────────────────────────
   return (
     <form
       className="flex flex-col gap-4"
       noValidate
-      onSubmit={(e) => { e.preventDefault(); void (step === 'otp' ? onVerify() : onPay()); }}
+      onSubmit={(e) => { e.preventDefault(); void onPay(); }}
     >
       <section className="cr-intro">
         <p>דיירים יקרים,</p>
@@ -697,7 +943,7 @@ export function ChipOrderForm({
                   <div className="cr-mainrow">
                     <div className="cr-fld">
                       <label htmlFor={`co-name-${r.key}`}>שם מלא <span className="cr-req">*</span></label>
-                      <input id={`co-name-${r.key}`} type="text" value={r.name} placeholder="שם המזמין" autoComplete="name" disabled={locked}
+                      <input id={`co-name-${r.key}`} type="text" value={r.name} placeholder="שם המזמין" autoComplete="name" maxLength={120} disabled={locked}
                         className={cn(errors[`name_${r.key}`] && 'cr-bad')} onChange={(e) => patchRow(r.key, { name: e.target.value })} />
                       <Err msg={errors[`name_${r.key}`]} />
                     </div>
@@ -728,13 +974,13 @@ export function ChipOrderForm({
                   <div className="cr-perow">
                     <div className="cr-fld">
                       <label htmlFor={`co-phone-${r.key}`}>טלפון נייד <span className="cr-req">*</span></label>
-                      <input id={`co-phone-${r.key}`} type="tel" inputMode="tel" autoComplete="tel" value={r.phone} disabled={locked}
+                      <input id={`co-phone-${r.key}`} type="tel" inputMode="tel" autoComplete="tel" value={r.phone} maxLength={20} disabled={locked}
                         className={cn('cr-num cr-ltr', errors[`phone_${r.key}`] && 'cr-bad')} onChange={(e) => patchRow(r.key, { phone: e.target.value })} />
                       <Err msg={errors[`phone_${r.key}`]} />
                     </div>
                     <div className="cr-fld">
                       <label htmlFor={`co-email-${r.key}`}>מייל</label>
-                      <input id={`co-email-${r.key}`} type="email" inputMode="email" autoComplete="email" value={r.email} disabled={locked}
+                      <input id={`co-email-${r.key}`} type="email" inputMode="email" autoComplete="email" value={r.email} maxLength={254} disabled={locked}
                         className={cn('cr-num cr-ltr', errors[`email_${r.key}`] && 'cr-bad')} onChange={(e) => patchRow(r.key, { email: e.target.value })} />
                       <Err msg={errors[`email_${r.key}`]} />
                     </div>
@@ -769,14 +1015,13 @@ export function ChipOrderForm({
               הוספת דירה
             </button>
           )}
-          {errors.rows && <p className="cr-err mt-2">{errors.rows}</p>}
           {totalQty > 0 && (
             <div className="cr-brk" data-testid="chip-order-breakdown">
               <div className="cr-bh"><span>פריט</span><span className="cr-c">כמות</span><span className="cr-c">מחיר ליחידה</span><span className="cr-t">סה&quot;כ</span></div>
               <div className="cr-br">
                 <span>כרטיס בקרת כניסה</span>
                 <span className="cr-c cr-num">{totalQty}</span>
-                <span className="cr-c cr-num">{formatIlsAfter(pricing.unitPrice)}</span>
+                <span className="cr-c cr-num">{formatIlsAfter(unitPrice)}</span>
                 <span className="cr-t cr-num">{formatIlsAfter(total)}</span>
               </div>
             </div>
@@ -798,13 +1043,13 @@ export function ChipOrderForm({
           <div className="cr-contact">
             <div className="cr-fld">
               <label htmlFor="co-phone">טלפון נייד <span className="cr-req">*</span></label>
-              <input id="co-phone" type="tel" inputMode="tel" autoComplete="tel" required value={phone} disabled={locked}
+              <input id="co-phone" type="tel" inputMode="tel" autoComplete="tel" required value={phone} maxLength={20} disabled={locked}
                 className={cn('cr-num cr-ltr', errors.phone && 'cr-bad')} onChange={(e) => setPhone(e.target.value)} />
               <Err msg={errors.phone} />
             </div>
             <div className="cr-fld">
               <label htmlFor="co-email">מייל <span className="cr-req">*</span></label>
-              <input id="co-email" type="email" inputMode="email" autoComplete="email" required value={email} disabled={locked}
+              <input id="co-email" type="email" inputMode="email" autoComplete="email" required value={email} maxLength={254} disabled={locked}
                 className={cn('cr-num cr-ltr', errors.email && 'cr-bad')} onChange={(e) => setEmail(e.target.value)} />
               <Err msg={errors.email} />
             </div>
@@ -812,13 +1057,13 @@ export function ChipOrderForm({
           <div className="cr-addrrow">
             <div className="cr-fld">
               <label htmlFor="co-street">כתובת מגורים נוכחית (רחוב ומספר בית) <span className="cr-req">*</span></label>
-              <input id="co-street" type="text" required placeholder="לדוגמה: דוד אלעזר 10" autoComplete="street-address" value={street} disabled={locked}
+              <input id="co-street" type="text" required placeholder="לדוגמה: דוד אלעזר 10" autoComplete="street-address" value={street} maxLength={200} disabled={locked}
                 className={cn(errors.street && 'cr-bad')} onChange={(e) => setStreet(e.target.value)} />
               <Err msg={errors.street} />
             </div>
             <div className="cr-fld">
               <label htmlFor="co-city">עיר <span className="cr-req">*</span></label>
-              <input id="co-city" type="text" required placeholder="חיפה" autoComplete="address-level2" value={city} disabled={locked}
+              <input id="co-city" type="text" required placeholder="חיפה" autoComplete="address-level2" value={city} maxLength={100} disabled={locked}
                 className={cn(errors.city && 'cr-bad')} onChange={(e) => setCity(e.target.value)} />
               <Err msg={errors.city} />
             </div>
@@ -837,75 +1082,42 @@ export function ChipOrderForm({
         </div>
       </section>
 
-      {/* אישור ותשלום. With card payment: PayPlus's hosted fields, opened for
-          the saved order. Without it (no processor configured): the same
-          inputs as UI ONLY — no name, never read, never sent. */}
+      {/* אישור ותשלום — the wallet buttons and PayPlus's hosted card fields,
+          live once the order is saved. Before that (and in the test mode
+          without a PayPlus sandbox) the boxes are drawn but not typeable. */}
       <section className="cr-card" data-testid="chip-order-card-fields" ref={cardSection}>
         <div className="cr-chead">
           <span className="cr-cic cr-green"><ShieldIcon /></span>
           <div><b>אישור ותשלום</b><small>תשלום מאובטח בכרטיס אשראי</small></div>
         </div>
         <div className="cr-cbody cr-cbody-tight">
-          {cardPayment ? (
-            <>
-              {cardOrder && (
-                <p className="cr-ppinfo" data-testid="chip-order-card-order">
-                  הזמנה <span className="cr-num">{cardOrder.orderNumber}</span> נשמרה וממתינה לתשלום — סה&quot;כ{' '}
-                  <span className="cr-num">{formatIlsAfter(cardOrder.total)}</span>
-                </p>
+          {(saving || saved) && (
+            <p className="cr-ppinfo" role="status" data-testid="chip-order-saved">
+              {saving || !saved ? CARD_TEXT.saving : (
+                <>
+                  הזמנה <span className="cr-num">{saved.orderNumber}</span> נשמרה וממתינה לתשלום — סה&quot;כ{' '}
+                  <span className="cr-num">{formatIlsAfter(saved.total)}</span>
+                </>
               )}
-              <PayPlusCardFields ref={cardRef} active={cardPhase === 'ready' || cardPhase === 'paying'} onEvent={onCardEvent} />
-              {cardHint && <p className="cr-pphint" role="status" data-testid="chip-order-card-hint">{cardHint}</p>}
-              {secure3d && <div className="cr-3ds-backdrop" aria-hidden="true" />}
-            </>
-          ) : (
-            <>
-              <div className="cr-frow">
-                <div className="cr-fld cr-cardfld">
-                  <label htmlFor="co-ccnum">מספר כרטיס <span className="cr-req">*</span></label>
-                  <CardIcon />
-                  <input id="co-ccnum" type="text" inputMode="numeric" autoComplete="off" placeholder="0000 0000 0000 0000" maxLength={19}
-                    className="cr-num cr-ltr" disabled={locked}
-                    onInput={(e) => {
-                      const t = e.currentTarget;
-                      t.value = t.value.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim();
-                    }} />
-                </div>
-                <div className="cr-fld">
-                  <label htmlFor="co-ccid">ת&quot;ז בעל הכרטיס <span className="cr-req">*</span></label>
-                  <input id="co-ccid" type="text" inputMode="numeric" autoComplete="off" placeholder="9 ספרות" maxLength={9} className="cr-num cr-ltr" disabled={locked} />
-                </div>
-              </div>
-              <div className="cr-paygrid">
-                <div className="cr-fld">
-                  <label htmlFor="co-ccname">שם בעל הכרטיס <span className="cr-req">*</span></label>
-                  <input id="co-ccname" type="text" autoComplete="off" placeholder="כפי שמופיע על הכרטיס" disabled={locked} />
-                </div>
-                <div className="cr-fld">
-                  <label htmlFor="co-ccexp">תוקף <span className="cr-req">*</span></label>
-                  <input id="co-ccexp" type="text" inputMode="numeric" autoComplete="off" placeholder="MM/YY" maxLength={5} className="cr-num cr-ltr" disabled={locked}
-                    onInput={(e) => {
-                      const t = e.currentTarget;
-                      let v = t.value.replace(/\D/g, '').slice(0, 4);
-                      if (v.length > 2) v = `${v.slice(0, 2)}/${v.slice(2)}`;
-                      t.value = v;
-                    }} />
-                </div>
-                <div className="cr-fld">
-                  <label htmlFor="co-cccvv">CVV <span className="cr-req">*</span></label>
-                  <input id="co-cccvv" type="password" inputMode="numeric" autoComplete="off" placeholder="•••" maxLength={4} className="cr-num cr-ltr" disabled={locked} />
-                </div>
-              </div>
-            </>
+            </p>
           )}
+          {saveError && <p role="alert" className="cr-alert cr-alert-top" data-testid="chip-order-save-error">{saveError}</p>}
+          <PayPlusCardFields
+            ref={cardRef}
+            active={phase === 'ready' || phase === 'paying'}
+            onEvent={onCardEvent}
+            wallets={{ armed: walletsArmed, onGate: onWalletGate }}
+          />
+          {cardHint && <p className="cr-pphint" role="status" data-testid="chip-order-card-hint">{cardHint}</p>}
+          {secure3d && <div className="cr-3ds-backdrop" aria-hidden="true" />}
           <div className="cr-secure">
             <LockIcon size={14} sw={2.2} />
-            הפרטים מוצפנים ומאובטחים — העסקה מבוצעת בתקן PCI-DSS
+            הפרטים מוצפנים ומאובטחים — העסקה מבוצעת בתקן PCI‑DSS
           </div>
         </div>
       </section>
 
-      {/* Agreement + the phone code + pay */}
+      {/* Agreement + pay */}
       <section className="cr-card">
         <div className="cr-cbody">
           {termsText.trim() && (
@@ -914,80 +1126,29 @@ export function ChipOrderForm({
               <p>{termsText}</p>
             </details>
           )}
-          <label className="cr-agree">
+          <label className={cn('cr-agree', errors.agree && 'cr-bad')}>
             <input type="checkbox" checked={agree} disabled={locked} onChange={(e) => setAgree(e.target.checked)} />
             <span>אני מאשר שהפרטים שמסרתי הינם נכונים.</span>
           </label>
           {hasRenter && (
-            <label className="cr-agree">
+            <label className={cn('cr-agree', errors.agreeRent && 'cr-bad')}>
               <input type="checkbox" checked={agreeRent} disabled={locked} onChange={(e) => setAgreeRent(e.target.checked)} />
               <span>השוכר מתחייב להחזיר את הכרטיס ולא לעשות בו שימוש לאחר סיום תקופת השכירות.</span>
             </label>
           )}
 
-          {step === 'otp' && (
-            <div className="cr-otp">
-              <p>{otpInfo ?? 'שלחנו קוד אימות לטלפון.'}</p>
-              <input
-                className="cr-code"
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                aria-label="קוד אימות"
-                placeholder="______"
-                autoFocus
-              />
-              <div className="cr-links">
-                <button type="button" className="cr-link" disabled={busy || cooldown > 0} onClick={() => void requestCode()}>
-                  {cooldown > 0 ? `שליחה חוזרת בעוד ${cooldown} שניות` : 'שליחת קוד חדש'}
-                </button>
-                {otpChannel === 'sms' && (
-                  <button type="button" className="cr-link" disabled={busy || cooldown > 0} onClick={() => void requestCode('whatsapp')}>
-                    שליחה בוואטסאפ במקום
-                  </button>
-                )}
-                <button type="button" className="cr-link cr-muted" disabled={busy} onClick={() => { setStep('form'); setCode(''); }}>
-                  חזרה לעריכת הפרטים
-                </button>
-              </div>
-            </div>
-          )}
+          {serverError && <div role="alert" className="cr-alert">{serverError}</div>}
 
-          {serverError && (
-            <div role="alert" className="cr-alert">
-              {serverError}
-              {offerWhatsApp && (
-                <button type="button" className="cr-link" disabled={busy || cooldown > 0} onClick={() => void requestCode('whatsapp')}
-                  data-testid="chip-order-otp-whatsapp-fallback">
-                  {cooldown > 0 ? `שליחת הקוד בוואטסאפ במקום — בעוד ${cooldown} שניות` : 'שליחת הקוד בוואטסאפ במקום'}
-                </button>
-              )}
-            </div>
-          )}
-
-          {testToken && (step === 'otp' || codeAsked) && !testOrder && !cardOrder && (
-            <div className="cr-skip">
-              <p>מצב בדיקה: אפשר להמשיך בלי קוד. ההזמנה תסומן „טלפון לא אומת”.</p>
-              <button type="button" disabled={busy} onClick={() => void skipVerification()} data-testid="chip-order-skip-verification">
-                דלג על אימות (מצב בדיקה)
-              </button>
-            </div>
-          )}
-
-          <button type="submit" className="cr-submit" disabled={busy || cardBusy || !agree || (hasRenter && !agreeRent)} data-testid="chip-order-pay">
-            {busy || cardBusy ? <Loader2 className="h-[17px] w-[17px] cr-spin" /> : <LockIcon />}
-            {step === 'otp'
-              ? <span>אימות והמשך לתשלום</span>
-              : step === 'card' && cardPhase !== 'ready'
-                ? <span>{CARD_BUTTON[cardPhase]}</span>
-                : <span>{cardPayment && step !== 'card' ? 'המשך לתשלום' : 'תשלום מאובטח'} — <b className="cr-num">{formatIlsAfter(cardOrder?.total ?? total)}</b></span>}
+          <button type="submit" className="cr-submit" disabled={buttonBusy || !agree || (hasRenter && !agreeRent)} data-testid="chip-order-pay">
+            {buttonBusy ? <Loader2 className="h-[17px] w-[17px] cr-spin" /> : <LockIcon />}
+            {buttonText
+              ? <span>{buttonText}</span>
+              : <span>תשלום מאובטח — <b className="cr-num">{formatIlsAfter(total)}</b></span>}
           </button>
           {(errors.agree || errors.agreeRent) && <p className="cr-err mt-2">{errors.agree ?? errors.agreeRent}</p>}
         </div>
       </section>
-      <p className="cr-foot">הקבלה תישלח למייל לאחר התשלום</p>
+      {receiptByEmail && <p className="cr-foot">הקבלה תישלח למייל לאחר התשלום</p>}
     </form>
   );
 }

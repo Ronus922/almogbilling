@@ -1814,6 +1814,8 @@ CREATE TABLE public.chip_order_card_sessions (
     order_id uuid NOT NULL,
     env text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    amount numeric(10,2),
+    CONSTRAINT chip_order_card_sessions_amount_check CHECK (((amount IS NULL) OR (amount > (0)::numeric))),
     CONSTRAINT chip_order_card_sessions_env_check CHECK ((env = ANY (ARRAY['sandbox'::text, 'production'::text]))),
     CONSTRAINT chip_order_card_sessions_page_request_uid_check CHECK (((length(page_request_uid) >= 8) AND (length(page_request_uid) <= 80)))
 );
@@ -1824,6 +1826,71 @@ CREATE TABLE public.chip_order_card_sessions (
 --
 
 COMMENT ON TABLE public.chip_order_card_sessions IS 'Card payment sessions (PayPlus page requests) this server opened for chip orders. A charge counts for an order only when it names one of that order''s sessions.';
+
+
+--
+-- Name: COLUMN chip_order_card_sessions.amount; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_order_card_sessions.amount IS 'The amount this payment session was opened for (the server computed it from the saved order). NULL on sessions opened before 26/11/2026.';
+
+
+--
+-- Name: chip_order_documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.chip_order_documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    order_id uuid NOT NULL,
+    kind text NOT NULL,
+    payment_key text NOT NULL,
+    ref text NOT NULL,
+    amount numeric(10,2) NOT NULL,
+    payment_method text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    claimed_at timestamp with time zone,
+    last_error text,
+    credit_of uuid,
+    details jsonb DEFAULT '{}'::jsonb NOT NULL,
+    morning_docs jsonb DEFAULT '[]'::jsonb NOT NULL,
+    issued_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chip_order_documents_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT chip_order_documents_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT chip_order_documents_claim_check CHECK (((status = 'issuing'::text) = (claimed_at IS NOT NULL))),
+    CONSTRAINT chip_order_documents_credit_check CHECK (((credit_of IS NULL) OR (kind = 'credit'::text))),
+    CONSTRAINT chip_order_documents_error_check CHECK (((last_error IS NULL) OR (length(last_error) <= 500))),
+    CONSTRAINT chip_order_documents_issued_check CHECK ((((status = 'issued'::text) = (issued_at IS NOT NULL)) AND ((status <> 'issued'::text) OR (jsonb_array_length(morning_docs) > 0)))),
+    CONSTRAINT chip_order_documents_key_check CHECK (((length(payment_key) >= 6) AND (length(payment_key) <= 160))),
+    CONSTRAINT chip_order_documents_kind_check CHECK ((kind = ANY (ARRAY['invoice'::text, 'credit'::text]))),
+    CONSTRAINT chip_order_documents_method_check CHECK ((payment_method = ANY (ARRAY['card'::text, 'cash'::text, 'bank_transfer'::text]))),
+    CONSTRAINT chip_order_documents_ref_check CHECK ((ref ~ '^[A-Z0-9]{6,16}$'::text)),
+    CONSTRAINT chip_order_documents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'issuing'::text, 'issued'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: TABLE chip_order_documents; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.chip_order_documents IS 'Morning documents of chip orders (26/11/2026): one row per payment (kind invoice) or refund (kind credit), written with the money movement; issued asynchronously and idempotently by src/lib/chipOrders/documents.ts. Never for a test order.';
+
+
+--
+-- Name: COLUMN chip_order_documents.payment_key; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_order_documents.payment_key IS 'One document per payment, ever: card:<processor transaction>, reception:<order id>, refund:<processor refund>, cancel:<order id>.';
+
+
+--
+-- Name: COLUMN chip_order_documents.morning_docs; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_order_documents.morning_docs IS 'What Morning answered: [{type, id, number, url}] — the documents issued for this row, in order.';
 
 
 --
@@ -1928,7 +1995,7 @@ CREATE TABLE public.chip_order_notifications (
     error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT chip_order_notifications_channel_check CHECK ((channel = ANY (ARRAY['email'::text, 'whatsapp'::text]))),
-    CONSTRAINT chip_order_notifications_kind_check CHECK ((kind = ANY (ARRAY['paid'::text, 'approved'::text, 'ready'::text, 'rejected'::text]))),
+    CONSTRAINT chip_order_notifications_kind_check CHECK ((kind = ANY (ARRAY['paid'::text, 'approved'::text, 'ready'::text, 'rejected'::text, 'refunded'::text]))),
     CONSTRAINT chip_order_notifications_status_check CHECK ((status = ANY (ARRAY['sent'::text, 'failed'::text, 'skipped'::text])))
 );
 
@@ -1968,7 +2035,7 @@ CREATE TABLE public.chip_orders (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     is_test boolean DEFAULT false NOT NULL,
-    phone_verified boolean DEFAULT true NOT NULL,
+    phone_verified boolean DEFAULT true,
     address_street text,
     address_city text,
     address_zip text,
@@ -1999,6 +2066,14 @@ CREATE TABLE public.chip_orders (
     card_last4 text,
     card_failure_reason text,
     card_failed_at timestamp with time zone,
+    refund_requested_at timestamp with time zone,
+    refunded_at timestamp with time zone,
+    refunded_amount numeric(10,2),
+    refund_transaction_uid text,
+    refunded_by uuid,
+    refunded_by_name text,
+    refund_via text,
+    refund_reason text,
     CONSTRAINT chip_orders_address_check CHECK ((((source = 'reception'::text) AND (address IS NULL)) OR ((address IS NOT NULL) AND ((length(btrim(address)) >= 2) AND (length(btrim(address)) <= 300))))),
     CONSTRAINT chip_orders_address_city_check CHECK (((address_city IS NULL) OR ((length(btrim(address_city)) >= 2) AND (length(btrim(address_city)) <= 100)))),
     CONSTRAINT chip_orders_address_street_check CHECK (((address_street IS NULL) OR ((length(btrim(address_street)) >= 2) AND (length(btrim(address_street)) <= 200)))),
@@ -2013,7 +2088,7 @@ CREATE TABLE public.chip_orders (
     CONSTRAINT chip_orders_card_session_check CHECK ((((card_status IS NULL) AND (card_provider IS NULL) AND (card_env IS NULL) AND (card_page_request_uid IS NULL) AND (card_session_at IS NULL)) OR ((card_status IS NOT NULL) AND (card_provider IS NOT NULL) AND (card_env IS NOT NULL) AND (card_page_request_uid IS NOT NULL) AND (card_session_at IS NOT NULL)))),
     CONSTRAINT chip_orders_card_status_check CHECK (((card_status IS NULL) OR (card_status = ANY (ARRAY['started'::text, 'paid'::text, 'failed'::text])))),
     CONSTRAINT chip_orders_card_text_check CHECK ((((card_approval_number IS NULL) OR ((length(card_approval_number) >= 1) AND (length(card_approval_number) <= 40))) AND ((card_transaction_uid IS NULL) OR ((length(card_transaction_uid) >= 8) AND (length(card_transaction_uid) <= 80))) AND ((card_page_request_uid IS NULL) OR ((length(card_page_request_uid) >= 8) AND (length(card_page_request_uid) <= 80))))),
-    CONSTRAINT chip_orders_card_web_check CHECK (((card_status IS NULL) OR (source = 'web'::text))),
+    CONSTRAINT chip_orders_card_web_check CHECK (((card_status IS NULL) OR (source = ANY (ARRAY['web'::text, 'reception'::text])))),
     CONSTRAINT chip_orders_collected_by_name_check CHECK (((collected_by_name IS NULL) OR ((length(btrim(collected_by_name)) >= 1) AND (length(btrim(collected_by_name)) <= 120)))),
     CONSTRAINT chip_orders_email_check CHECK ((((source = 'reception'::text) AND (email IS NULL)) OR ((email IS NOT NULL) AND ((length(btrim(email)) >= 3) AND (length(btrim(email)) <= 254))))),
     CONSTRAINT chip_orders_extra_of_check CHECK (((extra_of_order_id IS NULL) OR ((source = 'reception'::text) AND (extra_of_order_id <> id)))),
@@ -2021,13 +2096,17 @@ CREATE TABLE public.chip_orders (
     CONSTRAINT chip_orders_handed_over_via_check CHECK (((handed_over_via IS NULL) OR (handed_over_via = ANY (ARRAY['pickup'::text, 'management'::text])))),
     CONSTRAINT chip_orders_handover_check CHECK ((((handed_over_via IS NULL) AND (handed_over_by_name IS NULL) AND (collected_by_name IS NULL) AND (collected_holder_id IS NULL)) OR ((handed_over_via IS NOT NULL) AND (handed_over_by_name IS NOT NULL) AND (status = 'collected'::text) AND ((handed_over_via <> 'pickup'::text) OR (collected_by_name IS NOT NULL))))),
     CONSTRAINT chip_orders_internal_note_check CHECK (((internal_note IS NULL) OR (length(internal_note) <= 2000))),
-    CONSTRAINT chip_orders_paid_fields_check CHECK (((status = 'pending_payment'::text) OR ((paid_at IS NOT NULL) AND ((grow_transaction_id IS NOT NULL) OR is_test OR (source = 'reception'::text))))),
-    CONSTRAINT chip_orders_payment_method_check CHECK (((payment_method IS NULL) OR (payment_method = 'cash_transfer'::text))),
+    CONSTRAINT chip_orders_paid_fields_check CHECK (((status = 'pending_payment'::text) OR ((paid_at IS NOT NULL) AND ((grow_transaction_id IS NOT NULL) OR is_test OR (source = 'reception'::text) OR (NOT (card_status IS DISTINCT FROM 'paid'::text)))))),
+    CONSTRAINT chip_orders_payment_method_check CHECK (((payment_method IS NULL) OR (payment_method = ANY (ARRAY['cash_transfer'::text, 'cash'::text, 'bank_transfer'::text, 'card'::text])))),
     CONSTRAINT chip_orders_phone_e164_check CHECK ((((source = 'reception'::text) AND ((phone_e164 IS NULL) OR ((length(btrim(phone_e164)) >= 5) AND (length(btrim(phone_e164)) <= 32)))) OR ((source <> 'reception'::text) AND (phone_e164 IS NOT NULL) AND (phone_e164 ~ '^\+9725[0-9]{8}$'::text)))),
     CONSTRAINT chip_orders_phone_verified_check CHECK ((phone_verified OR is_test)),
-    CONSTRAINT chip_orders_reception_check CHECK (((source <> 'reception'::text) OR ((NOT is_test) AND (grow_process_id IS NULL) AND (grow_transaction_id IS NULL) AND (payment_method IS NOT NULL) AND (payment_recorded_at IS NOT NULL) AND (payment_recorded_by_name IS NOT NULL)))),
+    CONSTRAINT chip_orders_reception_check CHECK (((source <> 'reception'::text) OR (((NOT is_test) OR ((payment_method = 'card'::text) AND (card_env IS DISTINCT FROM 'production'::text))) AND (grow_process_id IS NULL) AND (grow_transaction_id IS NULL) AND (payment_method IS NOT NULL) AND (payment_recorded_at IS NOT NULL) AND (payment_recorded_by_name IS NOT NULL)))),
+    CONSTRAINT chip_orders_refund_amount_check CHECK (((refunded_amount IS NULL) OR ((refunded_amount > (0)::numeric) AND (refunded_amount <= total)))),
     CONSTRAINT chip_orders_refund_not_required_check CHECK (((refund_status IS DISTINCT FROM 'not_required'::text) OR is_test)),
-    CONSTRAINT chip_orders_refund_status_check CHECK (((refund_status IS NULL) OR (refund_status = ANY (ARRAY['refunded'::text, 'manual_required'::text, 'not_required'::text])))),
+    CONSTRAINT chip_orders_refund_status_check CHECK (((refund_status IS NULL) OR (refund_status = ANY (ARRAY['refunded'::text, 'manual_required'::text, 'not_required'::text, 'partial'::text])))),
+    CONSTRAINT chip_orders_refund_text_check CHECK ((((refund_reason IS NULL) OR ((length(btrim(refund_reason)) >= 2) AND (length(btrim(refund_reason)) <= 500))) AND ((refunded_by_name IS NULL) OR (length(refunded_by_name) <= 120)) AND ((refund_transaction_uid IS NULL) OR ((length(refund_transaction_uid) >= 8) AND (length(refund_transaction_uid) <= 80))))),
+    CONSTRAINT chip_orders_refund_via_check CHECK (((refund_via IS NULL) OR (refund_via = ANY (ARRAY['admin'::text, 'reject'::text, 'reception_cancel'::text, 'payplus'::text])))),
+    CONSTRAINT chip_orders_refunded_check CHECK ((((refunded_at IS NULL) = (refunded_amount IS NULL)) AND ((refunded_at IS NULL) OR COALESCE((refund_status = ANY (ARRAY['refunded'::text, 'partial'::text])), false)) AND ((refunded_by_name IS NULL) OR (refunded_at IS NOT NULL)))),
     CONSTRAINT chip_orders_reject_reason_check CHECK (((status <> 'rejected'::text) OR ((reject_reason IS NOT NULL) AND (length(btrim(reject_reason)) > 0)))),
     CONSTRAINT chip_orders_role_check CHECK (((role = ANY (ARRAY['owner'::text, 'tenant'::text, 'operator'::text])) OR ((source = 'reception'::text) AND (role = ANY (ARRAY['other'::text, 'staff'::text]))))),
     CONSTRAINT chip_orders_source_check CHECK ((source = ANY (ARRAY['web'::text, 'reception'::text]))),
@@ -2070,7 +2149,7 @@ COMMENT ON COLUMN public.chip_orders.is_test IS 'A test order (test mode, /chip-
 -- Name: COLUMN chip_orders.phone_verified; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.chip_orders.phone_verified IS 'False only on a test order created with "דלג על אימות (מצב בדיקה)" — the phone code was skipped. A real order is always true (chip_orders_phone_verified_check).';
+COMMENT ON COLUMN public.chip_orders.phone_verified IS 'Did the orderer''s phone pass a code? NULL = the order form had no code step (every order from 26/11/2026). True = verified by a code, false = a test order made with "דלג על אימות (מצב בדיקה)" (both until 26/11/2026). A real order is never false (chip_orders_phone_verified_check).';
 
 
 --
@@ -2098,7 +2177,7 @@ COMMENT ON COLUMN public.chip_orders.source IS 'Where the order was made: ''web'
 -- Name: COLUMN chip_orders.payment_method; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.chip_orders.payment_method IS 'How a reception order was paid: ''cash_transfer'' = cash or a bank transfer, confirmed as received by whoever recorded it. NULL on a web order (paid through the clearing provider, or a test order).';
+COMMENT ON COLUMN public.chip_orders.payment_method IS 'How a reception order was paid: ''cash'', ''bank_transfer'' (both confirmed as received by whoever recorded them), ''card'' (PayPlus at the reception, from 26/11/2026), or ''cash_transfer'' (cash or a bank transfer, recorded before 26/11/2026). NULL on a web order.';
 
 
 --
@@ -2162,6 +2241,13 @@ COMMENT ON COLUMN public.chip_orders.card_status IS 'Card payment (PayPlus hoste
 --
 
 COMMENT ON COLUMN public.chip_orders.card_last4 IS 'The last four digits of the card that paid. The card number, its expiry and the CVV are never stored.';
+
+
+--
+-- Name: COLUMN chip_orders.refund_via; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.refund_via IS 'Where the refund came from: admin ("זיכוי"), reject ("דחה"), reception_cancel ("בטל הזמנת קבלה"), payplus (made in the PayPlus dashboard, reported by its callback).';
 
 
 --
@@ -5108,6 +5194,30 @@ ALTER TABLE ONLY public.chip_order_card_sessions
 
 
 --
+-- Name: chip_order_documents chip_order_documents_payment_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_order_documents
+    ADD CONSTRAINT chip_order_documents_payment_key_key UNIQUE (payment_key);
+
+
+--
+-- Name: chip_order_documents chip_order_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_order_documents
+    ADD CONSTRAINT chip_order_documents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: chip_order_documents chip_order_documents_ref_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_order_documents
+    ADD CONSTRAINT chip_order_documents_ref_key UNIQUE (ref);
+
+
+--
 -- Name: chip_order_holders chip_order_holders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6224,6 +6334,20 @@ CREATE INDEX chip_order_card_sessions_order_idx ON public.chip_order_card_sessio
 
 
 --
+-- Name: chip_order_documents_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chip_order_documents_due_idx ON public.chip_order_documents USING btree (next_attempt_at) WHERE (status = ANY (ARRAY['pending'::text, 'issuing'::text]));
+
+
+--
+-- Name: chip_order_documents_order_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX chip_order_documents_order_idx ON public.chip_order_documents USING btree (order_id);
+
+
+--
 -- Name: chip_order_holders_extra_of_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6319,6 +6443,13 @@ CREATE UNIQUE INDEX chip_orders_grow_process_id_idx ON public.chip_orders USING 
 --
 
 CREATE INDEX chip_orders_reception_idx ON public.chip_orders USING btree (paid_at DESC) WHERE (source = 'reception'::text);
+
+
+--
+-- Name: chip_orders_refund_tx_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX chip_orders_refund_tx_key ON public.chip_orders USING btree (refund_transaction_uid) WHERE (refund_transaction_uid IS NOT NULL);
 
 
 --
@@ -8010,6 +8141,22 @@ ALTER TABLE ONLY public.chip_order_card_sessions
 
 
 --
+-- Name: chip_order_documents chip_order_documents_credit_of_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_order_documents
+    ADD CONSTRAINT chip_order_documents_credit_of_fkey FOREIGN KEY (credit_of) REFERENCES public.chip_order_documents(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: chip_order_documents chip_order_documents_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_order_documents
+    ADD CONSTRAINT chip_order_documents_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.chip_orders(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: chip_order_holders chip_order_holders_extra_of_holder_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9407,5 +9554,9 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261120222746'),
     ('20261125064322'),
     ('20261125090836'),
-    ('20261125130957')
+    ('20261125130957'),
+    ('20261125220847'),
+    ('20261125222603'),
+    ('20261125223806'),
+    ('20261125224435')
 ;

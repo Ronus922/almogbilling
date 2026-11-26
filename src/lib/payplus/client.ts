@@ -47,12 +47,11 @@ export interface PayPlusConfig {
   pageUid: string;
 }
 
-/** The configuration of the mode PAYPLUS_MODE names — null when the mode is
- *  unset or any of ITS three values is missing (the other mode's values are
- *  never used as a fallback). */
-export function payplusConfig(): PayPlusConfig | null {
-  const mode = env.PAYPLUS_MODE;
-  if (mode !== 'sandbox' && mode !== 'production') return null;
+/** The configuration of ONE environment — its own three values only (the
+ *  other environment's values are never a fallback), or null when any of them
+ *  is missing. Whether a configuration may be USED for an order is not decided
+ *  here: see src/lib/chipOrders/cardPayment.ts (testCardConfig / liveCardConfig). */
+export function payplusConfigFor(mode: PayPlusMode): PayPlusConfig | null {
   const apiKey = mode === 'sandbox' ? env.PAYPLUS_DEV_API_KEY : env.PAYPLUS_PROD_API_KEY;
   const secretKey = mode === 'sandbox' ? env.PAYPLUS_DEV_SECRET_KEY : env.PAYPLUS_PROD_SECRET_KEY;
   const pageUid = mode === 'sandbox' ? env.PAYPLUS_DEV_PAGE_UID : env.PAYPLUS_PROD_PAGE_UID;
@@ -129,7 +128,10 @@ export interface HostedFieldsSessionInput {
   pageOrigin: string;
   /** Our public callback URL. */
   callbackUrl: string;
-  customer: { name: string; email: string; phone: string | null };
+  /** The payer as the order knows them. Without an email (an order made at
+   *  the reception may have none) no customer is sent — the docs make the
+   *  object optional, and require name + email when it is sent. */
+  customer: { name: string; email: string | null; phone: string | null };
 }
 
 export interface HostedFieldsSession {
@@ -157,10 +159,14 @@ export function hostedFieldsRequestBody(cfg: PayPlusConfig, input: HostedFieldsS
     create_token: false,
     // No invoice / receipt from PayPlus: documents are a separate, later step.
     initial_invoice: false,
-    // Card only — no Bit, no wallets, no other tab.
+    // The card, and the wallets the SDK can draw next to the hosted fields
+    // (SetGooglePay / SetApplePay — 26/11/2026). The SDK shows a wallet button
+    // only when the page request's payment_methods carry it AND (Apple) the
+    // device can pay with it; a wallet the account does not have is simply not
+    // shown. No bit: it exists only on PayPlus's own payment page, not in
+    // hosted fields (docs/chip-orders.md, "bit").
     charge_default: 'credit-card',
-    hide_other_charge_methods: true,
-    allowed_charge_methods: ['credit-card'],
+    allowed_charge_methods: ['credit-card', 'google-pay', 'apple-pay'],
     expiry_datetime: String(PAGE_EXPIRY_MINUTES),
     more_info: String(input.orderNumber),
     refURL_callback: input.callbackUrl,
@@ -168,11 +174,15 @@ export function hostedFieldsRequestBody(cfg: PayPlusConfig, input: HostedFieldsS
     // Hosted fields (PayPlus's sample, payment.php).
     hosted_fields: true,
     refURL_origin: input.pageOrigin,
-    customer: {
-      customer_name: input.customer.name,
-      email: input.customer.email,
-      ...(input.customer.phone ? { phone: input.customer.phone } : {}),
-    },
+    ...(input.customer.email
+      ? {
+        customer: {
+          customer_name: input.customer.name,
+          email: input.customer.email,
+          ...(input.customer.phone ? { phone: input.customer.phone } : {}),
+        },
+      }
+      : {}),
   };
 }
 
@@ -199,6 +209,92 @@ export async function createHostedFieldsSession(cfg: PayPlusConfig, input: Hoste
     throw new PayPlusApiError(endpoint, 200, 'the reply carries no hosted_fields_uuid (hosted fields not enabled for this payment page?)');
   }
   return { pageRequestUid, hostedFieldsUuid };
+}
+
+/**
+ * PaymentPages/Disable/{page_request_uid} (docs: "Payment Request UID you would
+ * like to disable") — a payment session whose amount no longer matches its
+ * order is killed, so nothing more can be charged through it. Best-effort: the
+ * caller has already ruled out a charge on it, and a charge that slipped
+ * through anyway is refused by the amount check (and flagged).
+ */
+export async function disablePaymentRequest(cfg: PayPlusConfig, pageRequestUid: string): Promise<boolean> {
+  if (!UID_RE.test(pageRequestUid)) return false;
+  try {
+    const json = obj(await post(cfg, `/PaymentPages/Disable/${encodeURIComponent(pageRequestUid)}`, {}));
+    // The documented reply is "{}"; an explicit results.status other than
+    // "success" is a refusal.
+    const status = obj(json.results).status;
+    return status === undefined || status === 'success';
+  } catch {
+    return false;
+  }
+}
+
+// ── Refunds ────────────────────────────────────────────────────────────────
+
+export type PayPlusRefund =
+  /** PayPlus refunded: its own id of the refund transaction. */
+  | { kind: 'refunded'; refundUid: string; approvalNumber: string | null; amount: number }
+  /** PayPlus answered and refused (the card company, the account, the amount). */
+  | { kind: 'refused'; statusCode: string | null; message: string }
+  /** No usable answer (network, timeout, a reply this code cannot read): the
+   *  refund may or may not have happened — never retried blindly. */
+  | { kind: 'unknown'; status: number; message: string };
+
+/**
+ * Transactions/RefundByTransactionUID (docs: required transaction_uid and
+ * amount — "not more then the original"; more_info; initial_invoice). The
+ * amount is in shekels, as charged. initial_invoice: false — the documents are
+ * ours (Morning), never PayPlus's. Success = results.status "success" AND
+ * data.transaction.status_code "000" (what PayPlus's own plugins test); the
+ * refund's id is data.transaction.uid. PayPlus documents no idempotency for
+ * this call: the caller guards against a second refund (one refund per order,
+ * recorded before the call).
+ */
+export async function refundByTransactionUid(
+  cfg: PayPlusConfig,
+  r: { transactionUid: string; amount: number; moreInfo: string },
+): Promise<PayPlusRefund> {
+  const endpoint = '/Transactions/RefundByTransactionUID';
+  let json: unknown;
+  try {
+    json = await post(cfg, endpoint, {
+      transaction_uid: r.transactionUid,
+      amount: r.amount,
+      more_info: r.moreInfo.slice(0, 100),
+      initial_invoice: false,
+    });
+  } catch (e) {
+    if (e instanceof PayPlusApiError) {
+      // A 4xx is PayPlus refusing the request — it did not refund. No reply /
+      // a 5xx: unknown.
+      return e.status >= 400 && e.status < 500
+        ? { kind: 'refused', statusCode: null, message: e.message }
+        : { kind: 'unknown', status: e.status, message: e.message };
+    }
+    throw e;
+  }
+  const j = obj(json);
+  const results = obj(j.results);
+  const t = obj(obj(j.data).transaction);
+  const statusCode = statusCodeOf(t.status_code);
+  const uid = str(t.uid) ?? str(t.transaction_uid);
+  if (results.status === 'success' && statusCode === '000' && uid && uid.length >= 8 && uid.length <= 80) {
+    const amount = typeof t.amount === 'number' ? t.amount : Number(t.amount);
+    return { kind: 'refunded', refundUid: uid, approvalNumber: str(t.approval_number), amount: Number.isFinite(amount) ? amount : r.amount };
+  }
+  // "success" without a refund transaction this code can read (no status code,
+  // or an approval with no usable uid): PayPlus may well have refunded — that
+  // is UNKNOWN, never a refusal (a refusal would allow a second refund at once).
+  if (results.status === 'success' && (statusCode === null || statusCode === '000')) {
+    return { kind: 'unknown', status: 200, message: 'a success reply without a readable refund transaction' };
+  }
+  if (typeof results.status === 'string' || statusCode !== null) {
+    const said = str(results.description) ?? str(t.status_description) ?? (statusCode ? `קוד ${statusCode}` : 'refused');
+    return { kind: 'refused', statusCode, message: safeText(cfg, said) };
+  }
+  return { kind: 'unknown', status: 200, message: 'unreadable reply' };
 }
 
 // ── A transaction, as PayPlus reports it ───────────────────────────────────

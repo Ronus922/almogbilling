@@ -8,8 +8,8 @@ import { CHIP_ORDER_EXTRA_LABEL, CHIP_ORDER_RECEPTION_LABEL } from './reception'
 
 // The Orders tab of /chips (24/11/2026) — the pure, client-safe half of what
 // the tab does with its rows: the search, the tags of a row, what the action
-// column of a row offers, and the columns of the Excel file, of the print view
-// and of the PDF file.
+// column of a row offers, how a row was paid and where its invoice stands, and
+// the columns of the Excel file, of the print view and of the PDF file.
 //
 // A ROW IS ONE APARTMENT OF AN ORDER, and everything here keeps that shape:
 // the search filters rows, and the three exports hold one line per row on the
@@ -18,19 +18,23 @@ import { CHIP_ORDER_EXTRA_LABEL, CHIP_ORDER_RECEPTION_LABEL } from './reception'
 
 // ── Search ─────────────────────────────────────────────────────────────────
 
-type Searchable = Pick<ChipOrderRow, 'apartment_number' | 'full_name' | 'people'>;
+type Searchable = Pick<ChipOrderRow, 'order_number' | 'apartment_number' | 'full_name' | 'people'>;
 
 const fold = (s: string) => s.toLocaleLowerCase('he').trim();
 
-/** The tab's search: by apartment number and by name — the orderer's and the
- *  names of the people of the row. Like the search of the chips tab: the text
- *  is split into words, every word must be found, each in any of the fields. */
+/** The tab's search: by order number, by apartment number and by name — the
+ *  orderer's and the names of the people of the row. Like the search of the
+ *  chips tab: the text is split into words, every word must be found, each in
+ *  any of the fields. A word made of digits also finds the ORDER whose number
+ *  starts with it (26/11/2026 — "10" finds order 1042, never 2104), the rule
+ *  of the guard's pickup screen; the apartment keeps its own rule. */
 export function filterChipOrderRows<T extends Searchable>(rows: T[], query: string): T[] {
   const words = fold(query).split(/\s+/).filter(Boolean);
   if (words.length === 0) return rows;
   return rows.filter((r) => {
     const fields = [r.apartment_number, r.full_name, ...r.people].map(fold);
-    return words.every((w) => fields.some((f) => f.includes(w)));
+    const order = String(r.order_number);
+    return words.every((w) => fields.some((f) => f.includes(w)) || (/^\d+$/.test(w) && order.startsWith(w)));
   });
 }
 
@@ -49,7 +53,9 @@ export function searchHitPeople(row: Searchable, query: string): string[] {
 /** What a row is flagged with, in the order the tags are shown: an order made
  *  at the reception ("קבלה", 25/11/2026 — paid there and handed over on the
  *  spot), a test-mode order, a phone nobody proved (a test order made with
- *  "דלג על אימות"), and a message to the orderer that failed to go out. */
+ *  "דלג על אימות" — only `phone_verified === false`: NULL is an order from a
+ *  form with no code step, 26/11/2026), and a message to the orderer that
+ *  failed to go out. */
 export type ChipOrderTag = 'reception' | 'extra' | 'test' | 'phone_unverified' | 'notify_failed';
 
 export const CHIP_ORDER_TAG_LABEL: Record<ChipOrderTag, string> = {
@@ -69,7 +75,7 @@ export function chipOrderRowTags(row: Tagged): ChipOrderTag[] {
   if (row.source === 'reception') tags.push('reception');
   if (row.extra_of_order_number != null) tags.push('extra');
   if (row.is_test) tags.push('test');
-  if (!row.phone_verified) tags.push('phone_unverified');
+  if (row.phone_verified === false) tags.push('phone_unverified');
   if (row.has_failed_notification) tags.push('notify_failed');
   return tags;
 }
@@ -127,18 +133,114 @@ export type ChipOrderRowAction =
 export const CHIP_ORDER_WAITING_LABEL = 'בהמתנה';
 
 export function chipOrderRowAction(
-  row: Pick<ChipOrderRow, 'order_id' | 'status'> & Partial<Pick<ChipOrderRow, 'source'>>,
+  row: Pick<ChipOrderRow, 'order_id' | 'status'> & Partial<Pick<ChipOrderRow, 'source' | 'refund_in_flight'>>,
   summary: ChipOrderSummary | undefined,
 ): ChipOrderRowAction | null {
+  // A "זיכוי" waiting for PayPlus's answer: nothing moves the order on.
+  if (row.refund_in_flight && (row.status === 'paid' || row.status === 'approved' || row.status === 'ready')) return null;
   if (row.status === 'ready') return { kind: 'collected' };
   if (row.status === 'collected') return { kind: 'done' };
-  // Only a reception order stays in the tab once it is rejected (= cancelled).
+  // A rejected reception order is a cancelled one. A rejected WEB order stays
+  // in the tab only when it was refunded (26/11/2026): readable, with its
+  // "זוכה" in the payment column, and nothing to press.
   if (row.status === 'rejected') return row.source === 'reception' ? { kind: 'cancelled' } : null;
   if (row.status !== 'paid' && row.status !== 'approved') return null;
   const missing = summary?.missing ?? 0;
   if (missing === 0) return { kind: 'ready' };
   const several = (summary?.apartments.length ?? 1) > 1;
   return { kind: 'waiting', missing: several ? `${missingChipsText(missing)} בהזמנה` : missingChipsText(missing) };
+}
+
+// ── How a row was paid ("תשלום", 26/11/2026) ──────────────────────────────
+
+/** One short word for how an order was paid — the "תשלום" column, the phone
+ *  card and the three exports. "ללא חיוב" is never an order (a no-charge save
+ *  makes a reception RECORD, not an order), but the label stays available. */
+export type ChipOrderPaymentKind =
+  | 'refunded' | 'partial' | 'test' | 'card' | 'card_test' | 'cash' | 'bank_transfer' | 'cash_transfer' | 'none';
+
+export const CHIP_ORDER_PAYMENT_LABEL: Record<ChipOrderPaymentKind, string> = {
+  refunded: 'זוכה',
+  partial: 'זוכה חלקית',
+  test: 'בדיקה, ללא חיוב',
+  card: 'אשראי',
+  card_test: 'אשראי · בדיקה',
+  cash: 'מזומן',
+  bank_transfer: 'העברה',
+  // A reception order recorded before the two were split (26/11/2026).
+  cash_transfer: 'מזומן או העברה',
+  none: 'ללא חיוב',
+};
+
+type Paid = Pick<ChipOrderRow, 'is_test'>
+  & Partial<Pick<ChipOrderRow, 'payment_method' | 'card_status' | 'card_env' | 'refund_status'>>;
+
+/** How a row was paid, first rule that holds: a refund (full / part); a test
+ *  order no card paid; a card the processor confirmed (the sandbox = a test
+ *  card); the method a reception order recorded. Null = nothing to say (a web
+ *  order of the former processor, or a row from an older build) — "—". */
+export function chipOrderRowPayment(row: Paid): ChipOrderPaymentKind | null {
+  if (row.refund_status === 'refunded') return 'refunded';
+  if (row.refund_status === 'partial') return 'partial';
+  const card = row.card_status === 'paid';
+  if (row.is_test && !card) return 'test';
+  if (card) return row.card_env === 'sandbox' ? 'card_test' : 'card';
+  switch (row.payment_method) {
+    case 'cash': return 'cash';
+    case 'bank_transfer': return 'bank_transfer';
+    case 'cash_transfer': return 'cash_transfer';
+    default: return null;
+  }
+}
+
+/** The payment of a row in words — "—" when there is nothing to say. */
+export function chipOrderRowPaymentText(row: Paid): string {
+  const kind = chipOrderRowPayment(row);
+  return kind ? CHIP_ORDER_PAYMENT_LABEL[kind] : '—';
+}
+
+// ── Where a Morning document stands ("חשבונית", 26/11/2026) ────────────────
+
+export const CHIP_ORDER_DOC_TEXT = {
+  /** Queued, and Morning has no key yet — it is issued once Morning is connected. */
+  waitingMorning: 'ממתינה לחיבור מורנינג',
+  /** Queued (or being issued) with Morning connected. */
+  issuing: 'בהפקה',
+  failed: 'לא הופקה',
+} as const;
+
+export type ChipOrderDocState =
+  | { kind: 'issued'; number: string | null; url: string | null }
+  | { kind: 'waiting'; text: string }
+  | { kind: 'failed'; text: string }
+  | { kind: 'none' };
+
+/** Only an https link is ever drawn: the address comes from Morning, and an
+ *  `href` must never carry anything a browser would run. */
+export function safeDocumentUrl(url: string | null | undefined): string | null {
+  return url && /^https:\/\/[^\s"'<>]+$/i.test(url) ? url : null;
+}
+
+/** One Morning document as the tab and the order's window show it: issued →
+ *  its number (and its link); still queued → "בהפקה", or "ממתינה לחיבור
+ *  מורנינג" while Morning has no key (`connected`); failed → "לא הופקה". */
+export function chipOrderDocState(
+  doc: { status: 'pending' | 'issuing' | 'issued' | 'failed'; number: string | null; url: string | null } | null | undefined,
+  connected: boolean,
+): ChipOrderDocState {
+  if (!doc) return { kind: 'none' };
+  if (doc.status === 'issued') return { kind: 'issued', number: doc.number?.trim() || null, url: safeDocumentUrl(doc.url) };
+  if (doc.status === 'failed') return { kind: 'failed', text: CHIP_ORDER_DOC_TEXT.failed };
+  return { kind: 'waiting', text: connected ? CHIP_ORDER_DOC_TEXT.issuing : CHIP_ORDER_DOC_TEXT.waitingMorning };
+}
+
+/** The invoice of a row — its order's first payment document. A test order
+ *  never has one. */
+export function chipOrderRowDocument(
+  row: Pick<ChipOrderRow, 'is_test'> & Partial<Pick<ChipOrderRow, 'invoice_doc'>>,
+  connected: boolean,
+): ChipOrderDocState {
+  return row.is_test ? { kind: 'none' } : chipOrderDocState(row.invoice_doc, connected);
 }
 
 // ── Excel, print and PDF: one column model ─────────────────────────────────
@@ -202,11 +304,19 @@ export function chipOrderCollectors(
   return out;
 }
 
+/** The invoice number of a row, as the three exports write it — the number
+ *  of an issued document, else an empty cell. */
+export function chipOrderRowDocumentNumber(row: Pick<ChipOrderRow, 'is_test'> & Partial<Pick<ChipOrderRow, 'invoice_doc'>>): string {
+  const doc = chipOrderRowDocument(row, true);
+  return doc.kind === 'issued' ? doc.number ?? '' : '';
+}
+
 /** The Orders tab as a file — its names, and its columns right to left. The
  *  amount is the apartment line's own (the lines of one order add up to what
  *  the order paid), so a column of the file can be summed. The title says
  *  "orders", not "open orders", since 25/11/2026: the tab also lists the
- *  reception orders, which are collected (tagged "קבלה", status "נאסף"). */
+ *  reception orders, which are collected (tagged "קבלה", status "נאסף").
+ *  26/11/2026: how the order was paid, and its invoice number, after the sum. */
 export const CHIP_ORDERS_EXPORT: ListExport<ChipOrderRow> = {
   title: 'הזמנות צ׳יפים',
   sheet: 'הזמנות צ׳יפים',
@@ -221,6 +331,14 @@ export const CHIP_ORDERS_EXPORT: ListExport<ChipOrderRow> = {
     { header: 'בעלי הצ׳יפ', kind: 'text', width: 34, get: (r) => chipOrderRowPeople(r).join(', ') },
     { header: 'כמות', kind: 'number', width: 8, get: (r) => r.chips_count },
     { header: 'סה״כ (₪)', kind: 'money', width: 11, get: (r) => r.line_total },
+    {
+      header: 'תשלום', kind: 'text', width: 16,
+      get: (r) => {
+        const kind = chipOrderRowPayment(r);
+        return kind ? CHIP_ORDER_PAYMENT_LABEL[kind] : '';
+      },
+    },
+    { header: 'חשבונית', kind: 'ltr', width: 12, get: (r) => chipOrderRowDocumentNumber(r) },
     { header: 'סטטוס', kind: 'text', width: 22, get: (r, now) => chipOrderRowStatusText(r, now) },
     { header: 'יעד להכנה', kind: 'ltr', width: 18, get: (r) => (r.due_at ? exportDateTime(r.due_at) : '') },
     { header: 'הזמנת בדיקה', kind: 'text', width: 13, get: (r) => (r.is_test ? 'כן' : 'לא') },

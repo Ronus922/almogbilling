@@ -1,8 +1,9 @@
 import { notFound } from 'next/navigation';
 import { after } from 'next/server';
 import { checkRateLimit } from '@/lib/auth/rateLimit';
-import { afterChipOrderPaid, confirmChipOrderPayment } from '@/lib/chipOrders/payment';
-import { CalendarClock, CheckCircle2, MapPin, XCircle } from 'lucide-react';
+import { lookupCardPayment, lookupConfigFor } from '@/lib/chipOrders/cardPayment';
+import { afterOrderPaid } from '@/lib/chipOrders/notify';
+import { CalendarClock, CheckCircle2, FileText, MapPin, XCircle } from 'lucide-react';
 import { env } from '@/env';
 import { getChipOrderSettings } from '@/lib/db/appSettings';
 import { getChipOrderTrackView } from '@/lib/db/chipOrders';
@@ -17,8 +18,9 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // /chip-order/track/<token> — PUBLIC, reached by the link in every message.
-// The token is 32 random bytes; the page shows the status, the due date and
-// the pickup details ONLY — no name, phone, apartment or amount.
+// The token is 32 random bytes; the page shows the status, the due date, the
+// pickup details and — once Morning issued it (26/11/2026) — the link to the
+// order's invoice / receipt ONLY — no name, phone, apartment or amount.
 
 // Three steps since 13/11/2026 — there is no approval step any more; a legacy
 // 'approved' row reads as paid.
@@ -39,16 +41,18 @@ export default async function ChipOrderTrackPage({
   const sp = await searchParams;
   let view = await getChipOrderTrackView(token);
   if (!view) notFound();
-  // Right after the payment iframe reported success, Grow's server callback may
-  // be late (or blocked): ask Grow directly — the same check the callback runs —
-  // at most once per 15 seconds per order while the page refreshes itself.
-  if (view.status === 'pending_payment' && sp.paid === '1') {
+  // An order that still waits for payment but had a card payment session:
+  // PayPlus's callback may have been lost (the customer closed the page). Ask
+  // PayPlus about the order's own sessions — the same lookup the order page
+  // runs — at most once per 15 seconds per order.
+  if (view.status === 'pending_payment' && view.card_env) {
     const slot = await checkRateLimit(`chip-order:reconcile:${view.id}`, { max: 1, windowSec: 15 });
-    if (slot.allowed) {
-      const check = await confirmChipOrderPayment(view.id, 'track_page');
-      if (check.kind === 'paid') {
-        const orderId = view.id;
-        if (check.transitioned) after(() => afterChipOrderPaid(orderId, 'track_page'));
+    const cfg = lookupConfigFor(view.card_env);
+    if (slot.allowed && cfg) {
+      const found = await lookupCardPayment(cfg, { id: view.id, order_number: view.order_number }, 8, 48 * 60).catch(() => null);
+      if (found?.kind === 'paid') {
+        const orderId = found.orderId;
+        if (found.transitioned) after(() => afterOrderPaid(orderId));
         view = (await getChipOrderTrackView(token)) ?? view;
       }
     }
@@ -106,6 +110,15 @@ export default async function ChipOrderTrackPage({
           <p className="flex items-start gap-2 text-[14.5px] font-semibold">
             <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-[var(--chip-green)]" />
             {settings?.pickupText.trim() ? `מקום ושעות האיסוף: ${settings.pickupText.trim()}` : 'הצ׳יפים מוכנים לאיסוף במשרד חברת הניהול.'}
+          </p>
+        )}
+
+        {view.invoice_url && /^https:\/\//.test(view.invoice_url) && view.status !== 'pending_payment' && (
+          <p className="flex items-start gap-2 text-[14.5px] font-semibold" data-testid="chip-order-track-document">
+            <FileText className="mt-0.5 h-5 w-5 shrink-0 text-[var(--chip-brand)]" />
+            <a href={view.invoice_url} target="_blank" rel="noopener noreferrer" className="text-[var(--chip-brand)] underline underline-offset-2">
+              החשבונית / הקבלה של ההזמנה
+            </a>
           </p>
         )}
 

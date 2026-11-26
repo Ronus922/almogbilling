@@ -340,6 +340,33 @@
   .ci-reason svg { flex: none; margin-top: 3px; }
   .ci-reason.ci-quiet { color: var(--ci-soft); }
   .ci-actnote { padding: 0 14px 12px; background: #fbfcfe; font: 600 12px "Heebo", sans-serif; color: var(--ci-soft); margin: 0; }
+  /* "זיכוי" sits next to "מחק הזמנת בדיקה" (a test order the sandbox card
+     paid): only the first of two danger buttons takes the far end. */
+  .ci-btn.ci-danger + .ci-btn.ci-danger { margin-inline-start: 0; }
+
+  /* "פירוט עסקה" — the payment, the refund and the order's documents
+     (26/11/2026): a block each under the details grid — a small heading over
+     the grid's own three columns. */
+  .ci-invblk { border-bottom: 1px solid var(--ci-border); background: #fff; }
+  .ci-invblkh { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 14px 0; font: 800 12.5px "Heebo", sans-serif; color: var(--ci-ink); }
+  .ci-invblkh > svg { color: var(--ci-soft); flex: none; }
+  .ci-invblk .ci-invwho { background: none; border-bottom: 0; padding-top: 10px; }
+  .ci-invblk .ci-reason { background: none; }
+  .ci-invnote { margin: 0; padding: 8px 14px 12px; font: 500 12.5px/1.5 "Heebo", sans-serif; color: var(--ci-soft); }
+  .ci-docs { padding: 4px 14px 6px; }
+  .ci-doc { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 9px 0; border-bottom: 1px dashed var(--ci-border); font: 600 13px "Heebo", sans-serif; color: var(--ci-muted); }
+  .ci-doc:last-child { border-bottom: 0; }
+  .ci-doc > b { font-weight: 800; color: var(--ci-ink); }
+  .ci-doc > .ci-num { font: 700 12.5px "Inter", sans-serif; color: var(--ci-ink); }
+  .ci-doclink, .ci-docstate { margin-inline-start: auto; }
+  .ci-doclink { position: relative; display: inline-flex; align-items: center; gap: 5px; font: 700 13px "Inter", sans-serif; border-radius: 4px; }
+  /* A 44px hit area around the document number. */
+  .ci-doclink::after { content: ""; position: absolute; inset: -13px -8px; }
+  .ci-doclink:focus-visible { outline: 2px solid var(--ci-brand); outline-offset: 2px; }
+  .ci-docstate { font: 700 12.5px "Heebo", sans-serif; color: var(--ci-muted); }
+  .ci-docstate.ci-fail { color: var(--ci-red-ink); }
+  .ci-docerr { flex-basis: 100%; font: 500 12px/1.5 "Heebo", sans-serif; color: var(--ci-red-ink); overflow-wrap: anywhere; }
+  .ci-docact { padding: 0 14px 12px; }
 
   .ci-notefld { margin-top: 14px; }
   /* The window is 60% of the viewport now, and the note is the one place where
@@ -406,6 +433,9 @@
   .ci-payfld { margin-top: 14px; }
   .ci-payseg { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
   .ci-payseg.ci-three { grid-template-columns: repeat(3, 1fr); }
+  /* 26/11/2026: "מזומן" and "העברה בנקאית" are two options — four with
+     "אשראי" (one row; two per row under a 700px screen, below). */
+  .ci-payseg.ci-four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .ci-payseg button {
     display: flex; align-items: center; gap: 10px; min-height: 60px; padding: 10px 13px; border: 1px solid var(--ci-border-strong);
     border-radius: 11px; background: #fff; cursor: pointer; text-align: start; transition: all .14s; min-width: 0;
@@ -423,6 +453,35 @@
   /* "אשראי" — not active yet: drawn, never pressed. */
   .ci-payseg button.ci-soon { border-style: dashed; background: #fbfcfe; }
   .ci-payhint { font: 500 12px/1.5 "Heebo", sans-serif; color: var(--ci-soft); margin: 9px 0 0; }
+
+  /* "אשראי" at the reception (26/11/2026) — the card payment under the methods
+     (receptionCard.tsx). */
+  .ci-cardpay { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .ci-cardpay > .ci-reason.ci-flat { margin-top: 0; }
+  /* The test mode — amber, like the strip of the public page in test mode. */
+  .ci-cardtest {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px;
+    background: var(--ci-amber-soft); border: 1px solid var(--ci-amber-border); border-radius: 11px; padding: 8px 13px; color: var(--ci-amber-ink);
+  }
+  .ci-cardtest-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .ci-cardtest-txt b { font: 800 13px "Heebo", sans-serif; }
+  .ci-cardtest-txt small { font: 500 12px/1.45 "Heebo", sans-serif; }
+  /* The processor's fields: the public page's own skin (PayPlusCardFields and
+     its .cr-* boxes), without that page's box around it. */
+  .ci-crbox.cr-skin { min-height: 0; background: none; }
+  .ci-crbox .cr-ppbox > div > .cr-frow:first-child { margin-top: 0; }
+  .ci-cardact { display: flex; }
+  .ci-btn.ci-cardcharge { height: 44px; padding-inline: 22px; font-size: 14px; }
+  /* Paid: the card part is locked — what was charged, and for which order. */
+  .ci-cardpaid {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border: 1px solid #bfe8cf; border-radius: 11px;
+    padding: 11px 13px; background: var(--ci-green-soft); color: var(--ci-green-ink);
+  }
+  .ci-cardpaid p { margin: 0; display: flex; align-items: flex-start; gap: 8px; font: 700 13.5px/1.5 "Heebo", sans-serif; }
+  .ci-cardpaid p svg { flex: none; margin-top: 3px; }
+  .ci-cardpaid small { font: 500 12px "Heebo", sans-serif; }
+  .ci-cardpaid.ci-test { border-color: var(--ci-amber-border); background: var(--ci-amber-soft); color: var(--ci-amber-ink); }
+  .ci-cardpaid .ci-btn.ci-danger { margin-inline-start: 0; }
   .ci-reason.ci-flat { padding: 0; background: none; margin-top: 9px; }
 
   /* What an earlier save left on a block — read only. */
@@ -481,9 +540,10 @@
     .ci-roleseg { max-width: none; }
     .ci-ordrow, .ci-addrrow { grid-template-columns: 1fr 1fr; }
     .ci-ordrow > .ci-fld:last-child, .ci-addrrow > .ci-fld:first-child { grid-column: 1 / -1; }
+    .ci-payseg.ci-four { grid-template-columns: 1fr 1fr; }
   }
   @media (max-width: 540px) {
-    .ci-frow, .ci-leaserow, .ci-addrow, .ci-ordrow, .ci-addrrow, .ci-leasegrid, .ci-payseg, .ci-payseg.ci-three { grid-template-columns: 1fr; }
+    .ci-frow, .ci-leaserow, .ci-addrow, .ci-ordrow, .ci-addrrow, .ci-leasegrid, .ci-payseg, .ci-payseg.ci-three, .ci-payseg.ci-four { grid-template-columns: 1fr; }
     .ci-ordrow > .ci-fld:last-child, .ci-addrrow > .ci-fld:first-child { grid-column: auto; }
     /* Down to a 320px screen: the item's name takes what is left and wraps. */
     .ci-brkh, .ci-brkr { grid-template-columns: minmax(0, 1fr) 38px 58px 66px; gap: 6px; padding: 10px; }

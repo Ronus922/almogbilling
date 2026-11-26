@@ -203,23 +203,32 @@ describe('the PDF file of a list', () => {
     for (const asIs of ['0539300001', '+447911123456', '23/11/2026', '26/11/2026 10:00', '1042', '52.5', '100', '7']) {
       expect(lines, asIs).toContain(asIs);
     }
+    // Since 26/11/2026 (the payment and invoice columns — 14 in all) a cell may
+    // break on whole words, so a text is looked for in the line that holds it.
+    const hasText = (s: string) => lines.some((l) => l !== null && l.includes(s));
     // A number inside a Hebrew line keeps its digits and its place in the sentence.
-    expect(lines).toContain(`2 ${rev('מתוך')} 1 ${rev('שויכו')}`);
+    expect(hasText(`1 ${rev('שויכו')}`), 'שויכו 1').toBe(true);
+    expect(hasText(`2 ${rev('מתוך')}`), 'מתוך 2').toBe(true);
     // An English name inside the Hebrew table reads left to right.
-    expect(lines).toContain('Yossi Mizrahi');
+    expect(hasText('Yossi')).toBe(true);
+    expect(hasText('Mizrahi')).toBe(true);
+    expect(hasText(rev('Yossi'))).toBe(false);
     // The tags in words; a cell with nothing to say is a dash.
-    expect(lines).toContain(`${rev('טלפון לא אומת')} ,${rev('בדיקה')}`);
+    expect(hasText(` ,${rev('בדיקה')}`), 'בדיקה,').toBe(true);
+    expect(hasText(rev('אומת')), 'אומת').toBe(true);
     expect(lines).toContain('—');
 
     // Right to left: the first column is the right-most, every next one further left.
-    // (The header row = the lines on the baseline of one of its labels.)
+    // (The header row = the lines on the baseline of one of its labels — a
+    // header that breaks has its FIRST words there, the end of its visual form.)
     const headY = painted.find((p) => p.text === rev('שם המזמין'))!.y;
     const headRow = painted.filter((p) => Math.abs(p.y - headY) < 0.01);
     expect(headRow).toHaveLength(CHIP_ORDERS_EXPORT.columns.length);
     const headerX = CHIP_ORDERS_EXPORT.columns.map((c) => {
-      const hit = headRow.find((p) => p.text === toVisual(c.header)); // "סה״כ (₪)": the sign and the brackets are not plain Hebrew
-      expect(hit, c.header).toBeTruthy();
-      return hit!.x;
+      // "סה״כ (₪)": the sign and the brackets are not plain Hebrew
+      const hits = headRow.filter((p) => p.text !== null && p.text !== '' && toVisual(c.header).endsWith(p.text));
+      expect(hits, c.header).toHaveLength(1);
+      return hits[0]!.x;
     });
     expect([...headerX].sort((a, b) => b - a)).toEqual(headerX);
 

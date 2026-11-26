@@ -33,10 +33,19 @@
 //   · every value sits under its header — see the note above COLS;
 //   · the toolbar and its three buttons — "הדפסה", "ייצוא לאקסל",
 //     "הורדה ל-PDF" — are the chips tab's too (ChipsToolbar, ChipListExports).
+// 26/11/2026 (card payments, Morning documents):
+//   · "מס׳ הזמנה" is the first column, and the search finds an order by the
+//     start of its number;
+//   · "תשלום" — how the order was paid, one short word (chipOrderRowPayment);
+//   · "חשבונית" — the invoice number as a link (a new tab; the row does not
+//     open), or where the document stands ("בהפקה", "ממתינה לחיבור מורנינג",
+//     "לא הופקה" in red);
+//   · a WEB order that was refunded stays in the tab — readable, nothing to
+//     press.
 
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, Ban, Check, CheckCheck, FlaskConical, Hourglass, Inbox, Loader2, Search } from 'lucide-react';
+import { AlertTriangle, Ban, Check, CheckCheck, ExternalLink, FlaskConical, Hourglass, Inbox, Loader2, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -48,8 +57,9 @@ import {
   CHIP_ORDER_PERSON_ROLE_LABEL, chipOrderStage, isChipOrderOverdue, type ChipOrderRow,
 } from '@/lib/chipOrders/model';
 import {
-  CHIP_ORDERS_EXPORT, CHIP_ORDER_WAITING_LABEL, chipOrderCollectors, chipOrderRowAction, chipOrderRowPhone, chipOrderRowTags,
-  filterChipOrderRows, searchHitPeople, summarizeChipOrders, type ChipOrderRowAction,
+  CHIP_ORDERS_EXPORT, CHIP_ORDER_PAYMENT_LABEL, CHIP_ORDER_WAITING_LABEL, chipOrderCollectors, chipOrderRowAction,
+  chipOrderRowDocument, chipOrderRowPayment, chipOrderRowPhone, chipOrderRowTags, filterChipOrderRows, searchHitPeople,
+  summarizeChipOrders, type ChipOrderDocState, type ChipOrderRowAction,
 } from '@/lib/chipOrders/orderRows';
 import { CHIP_ORDER_CANCELLED_LABEL } from '@/lib/chipOrders/model';
 import { CollectorPicker } from './CollectorPicker';
@@ -58,7 +68,8 @@ import { CHIPS_SEARCH_INPUT, ChipsToolbar } from './ChipsToolbar';
 import { ChipOrderStagePill } from './ChipOrderStatusPill';
 import { ChipOrderTags } from './ChipOrderTags';
 
-// מזמין · תגיות · דירה · כמות · תאריך הזמנה · סטטוס (· פעולה — with chips_orders_manage:edit)
+// מס׳ הזמנה · מזמין · תגיות · דירה · כמות · תאריך הזמנה · תשלום · חשבונית · סטטוס
+// (· פעולה — with chips_orders_manage:edit)
 //
 // A VALUE SITS UNDER ITS HEADER (25/11/2026). The header row and every body
 // row are grids of their own, so they agree on the columns only if no track
@@ -67,20 +78,28 @@ import { ChipOrderTags } from './ChipOrderTags';
 // floor is its content: one long name or a wide button would then push the
 // columns of that row alone. And a column has ONE alignment, written once in
 // COL and worn by its header cell and by its body cells alike: text columns
-// from the start edge, the three number columns centred.
+// from the start edge, the four number columns centred.
 // The floors, with the row's gaps and padding, must fit the table's minimum
 // width — or the last column sticks out of the row. The root font is 17px, so
-// gap-3 is 12.75px and px-6 is 25.5px (not 12 and 24): with the action column
-// 772 + 6 × 12.75 + 2 × 25.5 = 899.5px, inside the table's 900px; without it
-// 622 + 5 × 12.75 + 51 = 736.75px, inside its 760px.
-const COLS = 'grid-cols-[minmax(146px,1.5fr)_minmax(130px,1fr)_72px_56px_92px_minmax(126px,1.2fr)]';
-const COLS_ACT = 'grid-cols-[minmax(146px,1.5fr)_minmax(130px,1fr)_72px_56px_92px_minmax(126px,1.2fr)_150px]';
+// gap-3 is 12.75px and px-6 is 25.5px (not 12 and 24). 26/11/2026, three more
+// tracks — the order number 64px ("מס׳ הזמנה" is 50px wide in its 12px bold,
+// a five-digit number 35px), the payment 88px (its longest word, "בדיקה, ללא
+// חיוב", is 81px) and the invoice 96px ("ממתינה לחיבור מורנינג" breaks into
+// two lines): with the action column 1020 + 9 × 12.75 + 2 × 25.5 = 1185.75px,
+// inside the table's 1186px; without it 870 + 8 × 12.75 + 51 = 1023px, inside
+// its 1024px. (The sticky action column keeps the next step in sight where the
+// card is narrower.)
+const COLS = 'grid-cols-[64px_minmax(146px,1.5fr)_minmax(130px,1fr)_72px_56px_92px_minmax(88px,0.8fr)_minmax(96px,0.8fr)_minmax(126px,1.2fr)]';
+const COLS_ACT = 'grid-cols-[64px_minmax(146px,1.5fr)_minmax(130px,1fr)_72px_56px_92px_minmax(88px,0.8fr)_minmax(96px,0.8fr)_minmax(126px,1.2fr)_150px]';
 const COL = {
+  number: 'text-center',
   orderer: 'text-start',
   tags: 'text-start',
   apartment: 'text-center',
   quantity: 'text-center',
   date: 'text-center',
+  payment: 'text-start',
+  invoice: 'text-start',
   status: 'text-start',
   action: 'text-start',
 } as const;
@@ -88,14 +107,15 @@ type Col = keyof typeof COL;
 
 const HEAD_CELL = 'text-[12px] font-bold uppercase tracking-[0.02em] text-[var(--chip-ink-soft)]';
 // The action column stays in sight: where the card is narrower than the table
-// (a 1024–1280px window with the menu panel open) the table scrolls sideways
-// inside the card, and this cell holds on to the card's far edge instead of
-// leaving with the rest. Its box reaches through the row's own padding
-// (-me-6 / pe-6), so nothing shows between it and the edge. Only while the
-// card really is narrower than the table (900px) the cell carries a hairline
-// and a soft shadow on its start side — what scrolls under it reads as under.
+// (most windows with the menu panel open, since 26/11/2026) the table scrolls
+// sideways inside the card, and this cell holds on to the card's far edge
+// instead of leaving with the rest. Its box reaches through the row's own
+// padding (-me-6 / pe-6), so nothing shows between it and the edge. Only
+// while the card really is narrower than the table (1186px) the cell carries
+// a hairline and a soft shadow on its start side — what scrolls under it
+// reads as under.
 const ACT_CELL =
-  'sticky end-0 z-[1] -me-6 self-stretch pe-6 ps-3 flex items-center @max-[899px]:border-s @max-[899px]:border-[var(--chip-border)] @max-[899px]:shadow-[10px_0_14px_-12px_rgba(20,27,52,0.28)]';
+  'sticky end-0 z-[1] -me-6 self-stretch pe-6 ps-3 flex items-center @max-[1185px]:border-s @max-[1185px]:border-[var(--chip-border)] @max-[1185px]:shadow-[10px_0_14px_-12px_rgba(20,27,52,0.28)]';
 
 const DATE = new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: '2-digit' });
 
@@ -133,6 +153,57 @@ function Orderer({ row, onOpen, nameClass }: { row: ChipOrderRow; onOpen?: () =>
         {phone && <> · <span className="chip-num">{phone}</span></>}
       </span>
     </>
+  );
+}
+
+/** How the order was paid — one short word; a refund reads in red. */
+function PaymentLabel({ row }: { row: ChipOrderRow }) {
+  const kind = chipOrderRowPayment(row);
+  if (!kind) return <span className="text-[var(--chip-ink-soft)]" data-testid="chip-order-row-payment">—</span>;
+  const refund = kind === 'refunded' || kind === 'partial';
+  return (
+    <span
+      data-testid="chip-order-row-payment"
+      className={cn('text-[13px]', refund ? 'font-bold text-[var(--chip-red-ink)]' : 'font-semibold text-[var(--chip-ink-muted)]')}
+    >
+      {CHIP_ORDER_PAYMENT_LABEL[kind]}
+    </span>
+  );
+}
+
+/** Where the order's invoice stands: its number as a link (a new tab — the
+ *  row under it must not open), or the state in words. The link's hit area
+ *  reaches 44px around the number. */
+function InvoiceState({ state }: { state: ChipOrderDocState }) {
+  if (state.kind === 'issued') {
+    const label = state.number ?? 'הופקה';
+    if (!state.url) return <span className="chip-num text-[13px] font-bold text-[var(--chip-ink)]" data-testid="chip-order-row-invoice">{label}</span>;
+    return (
+      <a
+        href={state.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        title="פתיחת החשבונית בלשונית חדשה"
+        data-testid="chip-order-invoice-link"
+        className="relative inline-flex items-center gap-1 rounded-[4px] text-[13px] font-bold text-[var(--chip-brand-ink)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--chip-brand)] after:absolute after:-inset-x-2 after:-inset-y-[13px] after:content-['']"
+      >
+        <span className="chip-num">{label}</span>
+        <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      </a>
+    );
+  }
+  if (state.kind === 'none') return <span className="text-[var(--chip-ink-soft)]" data-testid="chip-order-row-invoice">—</span>;
+  return (
+    <span
+      data-testid="chip-order-row-invoice"
+      className={cn(
+        'text-[12.5px] leading-[1.35]',
+        state.kind === 'failed' ? 'font-bold text-[var(--chip-red-ink)]' : 'font-semibold text-[var(--chip-ink-muted)]',
+      )}
+    >
+      {state.text}
+    </span>
   );
 }
 
@@ -216,10 +287,13 @@ function RowAction({
 }
 
 export function ChipOrdersPanel({
-  items, loading, onOpen, canEdit = false, unfinishedTests = 0, onChanged,
+  items, loading, onOpen, canEdit = false, unfinishedTests = 0, onChanged, documentsConnected = false,
 }: {
   items: ChipOrderRow[];
   loading: boolean;
+  /** Morning has a key: a queued invoice is "בהפקה"; without one it is
+   *  "ממתינה לחיבור מורנינג" (GET /api/chip-orders). */
+  documentsConnected?: boolean;
   /** Opens the issue window on the row's apartment; absent = rows are not
    *  clickable (no chips:edit). */
   onOpen?: (row: ChipOrderRow) => void;
@@ -322,8 +396,11 @@ export function ChipOrdersPanel({
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="חפש לפי דירה או שם"
-            aria-label="חיפוש בהזמנות לפי מספר דירה או שם"
+            // "חפש לפי מספר הזמנה, דירה או שם" does not fit the box — 280px on
+            // a desktop, and a phone's 16px field at 320px — so the words of
+            // the fields alone; the label says it in full.
+            placeholder="מס׳ הזמנה, דירה או שם"
+            aria-label="חיפוש בהזמנות לפי מספר הזמנה, מספר דירה או שם"
             data-testid="chip-orders-search"
             className={CHIPS_SEARCH_INPUT}
           />
@@ -382,7 +459,7 @@ export function ChipOrdersPanel({
             <Inbox className="h-5 w-5" />
           </span>
           <p className="text-[15px] font-bold text-[var(--chip-ink)]">אין הזמנות פתוחות</p>
-          <p className="text-[13px] font-medium text-[var(--chip-ink-soft)]">הזמנה מהאתר מופיעה כאן אחרי שהתשלום אושר, ויוצאת כשהיא נאספת או נדחית. הזמנה שנרשמה בקבלה נשארת ברשימה.</p>
+          <p className="text-[13px] font-medium text-[var(--chip-ink-soft)]">הזמנה מהאתר מופיעה כאן אחרי שהתשלום אושר, ויוצאת כשהיא נאספת או נדחית. הזמנה שנרשמה בקבלה, והזמנה שזוכתה, נשארות ברשימה.</p>
         </div>
       ) : visible.length === 0 ? (
         // Search-empty is not table-empty (as in the chips tab).
@@ -391,19 +468,22 @@ export function ChipOrdersPanel({
             <Search className="h-5 w-5" />
           </span>
           <p className="text-[15px] font-bold text-[var(--chip-ink)]">אין הזמנות עבור „{query.trim()}”</p>
-          <p className="text-[13px] font-medium text-[var(--chip-ink-soft)]">החיפוש מכסה מספר דירה, שם המזמין ושמות בעלי הצ׳יפ שבהזמנה.</p>
+          <p className="text-[13px] font-medium text-[var(--chip-ink-soft)]">החיפוש מכסה מספר הזמנה (מתחילתו), מספר דירה, שם המזמין ושמות בעלי הצ׳יפ שבהזמנה.</p>
         </div>
       ) : (
         <>
           {/* Desktop table */}
           <div className="@container hidden overflow-x-auto sm:block">
-            <div className={canEdit ? 'min-w-[900px]' : 'min-w-[760px]'} data-testid="chip-orders-table">
+            <div className={canEdit ? 'min-w-[1186px]' : 'min-w-[1024px]'} data-testid="chip-orders-table">
               <div data-testid="chip-orders-head" className={cn('grid items-center gap-3 border-b border-[var(--chip-border)] bg-[var(--chip-panel-alt)] px-6 py-[13px]', cols)}>
+                <Head col="number">מס׳ הזמנה</Head>
                 <Head col="orderer">מזמין</Head>
                 <Head col="tags">תגיות</Head>
                 <Head col="apartment">דירה</Head>
                 <Head col="quantity">כמות</Head>
                 <Head col="date">תאריך הזמנה</Head>
+                <Head col="payment">תשלום</Head>
+                <Head col="invoice">חשבונית</Head>
                 <Head col="status">סטטוס</Head>
                 {canEdit && <Head col="action" className={cn(ACT_CELL, '-my-[13px] bg-[var(--chip-panel-alt)] py-[13px]')}>פעולה</Head>}
               </div>
@@ -421,6 +501,9 @@ export function ChipOrdersPanel({
                       cols,
                     )}
                   >
+                    <span data-col="number" className={cn(COL.number, 'text-[14px] font-bold text-[var(--chip-ink-muted)]')}>
+                      <span className="chip-num">{o.order_number}</span>
+                    </span>
                     <span data-col="orderer" className={cn(COL.orderer, 'flex min-w-0 flex-col gap-[2px]')}>
                       <Orderer row={o} onOpen={onOpen && (() => onOpen(o))} nameClass="text-[14.5px]" />
                       {hits.length > 0 && (
@@ -440,6 +523,12 @@ export function ChipOrdersPanel({
                     </span>
                     <span data-col="date" className={cn(COL.date, 'text-[13px] font-semibold text-[var(--chip-ink-muted)]')}>
                       <span className="chip-num">{DATE.format(new Date(o.created_at))}</span>
+                    </span>
+                    <span data-col="payment" className={cn(COL.payment, 'min-w-0')}>
+                      <PaymentLabel row={o} />
+                    </span>
+                    <span data-col="invoice" className={cn(COL.invoice, 'min-w-0')}>
+                      <InvoiceState state={chipOrderRowDocument(o, documentsConnected)} />
                     </span>
                     <span data-col="status" className={cn(COL.status, 'min-w-0')}>
                       <ChipOrderStagePill
@@ -463,7 +552,7 @@ export function ChipOrdersPanel({
             </div>
           </div>
 
-          {/* Phone cards — the same facts, top to bottom: who, the tags, what was ordered, where it stands, the next step. */}
+          {/* Phone cards — the same facts, top to bottom: who, the tags, what was ordered, how it was paid, where it stands, the next step. */}
           <div className="space-y-2 p-4 sm:hidden">
             {visible.map((o) => {
               const action = actionOf(o);
@@ -487,12 +576,16 @@ export function ChipOrdersPanel({
                       <ChipOrderTags tags={tags} />
                     </span>
                   )}
-                  <span className="text-[12.5px] font-semibold text-[var(--chip-ink-muted)]">
-                    דירה <span className="chip-num">{o.apartment_number}</span> · {o.chips_count} צ׳יפים · {DATE.format(new Date(o.created_at))}
+                  <span className="text-[12.5px] font-semibold text-[var(--chip-ink-muted)] [overflow-wrap:anywhere]">
+                    הזמנה <span className="chip-num">{o.order_number}</span> · דירה <span className="chip-num">{o.apartment_number}</span> · {o.chips_count} צ׳יפים · {DATE.format(new Date(o.created_at))}
                   </span>
                   {hits.length > 0 && (
                     <span className="text-[12px] font-semibold text-[var(--chip-brand-ink)]">בעל צ׳יפ בהזמנה: {hits.join(', ')}</span>
                   )}
+                  <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] font-semibold text-[var(--chip-ink-muted)]" data-testid="chip-order-card-money">
+                    <span>תשלום: <PaymentLabel row={o} /></span>
+                    <span>חשבונית: <InvoiceState state={chipOrderRowDocument(o, documentsConnected)} /></span>
+                  </span>
                   <span>
                     <ChipOrderStagePill
                       stage={chipOrderStage(o.status, o.chips_linked, o.chips_count, o.source)}
