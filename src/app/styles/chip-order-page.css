@@ -111,6 +111,8 @@
   /* DESIGN.md error state */
   .cr-fld .cr-bad, .cr-fld input.cr-bad { border-color: #f87171; background: #fef2f2; }
   .cr-err { font: 600 12.5px "Heebo", sans-serif; color: #dc2626; }
+  /* "חובה — לשם תישלח הקבלה" beside the first row's email while the contact box is ticked. */
+  .cr-lblnote { font-weight: 500; color: var(--cr-soft); }
 
   .cr-mainrow { display: grid; grid-template-columns: 1fr; gap: 12px; }
   .cr-segfld { max-width: 240px; margin-bottom: 14px; }
@@ -258,6 +260,9 @@
   .cr-agree span { font: 500 13.5px "Heebo", sans-serif; color: var(--cr-muted); }
   /* A box that must be ticked before paying (DESIGN.md error colour). */
   .cr-agree.cr-bad input { outline: 2px solid #f87171; outline-offset: 2px; }
+  /* The contact box ticked: where the messages and the receipt go (the first row's phone and email). */
+  .cr-sameline { margin: 0; font: 500 13.5px/1.6 "Heebo", sans-serif; color: var(--cr-muted); overflow-wrap: anywhere; }
+  .cr-sameline bdi { font-weight: 600; color: var(--cr-ink); }
 
   .cr-submit {
     width: 100%; height: 52px; border: 0; border-radius: 13px; background: var(--cr-brand); color: #fff;

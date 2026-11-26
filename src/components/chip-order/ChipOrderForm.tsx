@@ -16,7 +16,12 @@
 //     next to the quantity instead; the server refuses it too.
 //   · פרטי התקשרות — the orderer's phone, email, the current address (street
 //     + number, city, 7-digit zip) and an optional "הערות" (≤ 500), stored as
-//     the order's note — the issue window's "הערה".
+//     the order's note — the issue window's "הערה". Since 26/11/2026 (Ronen)
+//     a box, ticked by default, takes the phone and email from the FIRST
+//     person row (a read-only line instead of the two inputs; the first row's
+//     email is then required); unticked, the inputs come back prefilled with
+//     that row's values. The order is saved with them exactly as before
+//     (src/lib/chipOrders/contact.ts).
 //   · אישור ותשלום — the wallet buttons (Google Pay / Apple Pay, each only
 //     where the device and the account offer it) above PayPlus's hosted card
 //     fields (PayPlusCardFields).
@@ -51,7 +56,6 @@
 // it on the server ("סיים הזמנת בדיקה" — no charge), then the confirmation.
 
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
-import { z } from 'zod';
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toPortalE164 } from '@/lib/portal/phone';
@@ -59,6 +63,7 @@ import {
   CHIP_ORDER_APT_LIMIT_MESSAGE, CHIP_ORDER_LIMITS, CHIP_ORDER_TEST_HEADER, LEASE_FILE_ACCEPT, formatIlsAfter, priceLine,
 } from '@/lib/chipOrders/model';
 import { leaseFileProblem } from '@/lib/chipOrders/lease';
+import { CONTACT_TEXT, contactErrors, contactFieldKey, isEmail } from '@/lib/chipOrders/contact';
 import {
   CARD_TEXT, cardAmountChangedHint, cardFailureMessage, cardHolderPhone, sdkSaysPageExpired, sdkSaysRefused,
 } from '@/lib/chipOrders/card';
@@ -87,8 +92,12 @@ interface Row {
 /** Everything the form holds: what a save sends, and the agreement boxes. */
 interface FormValues {
   rows: Row[];
+  /** The orderer's phone and email as the order is saved with them — the
+   *  first row's while `sameContact`, the contact card's own inputs otherwise. */
   phone: string;
   email: string;
+  /** "פרטי ההתקשרות זהים לפרטי השורה הראשונה" (ticked by default). */
+  sameContact: boolean;
   street: string;
   city: string;
   zip: string;
@@ -171,8 +180,6 @@ function newRow(key: number, from?: Row): Row {
 /** Rows without an apartment yet count as their own group. */
 const groupKey = (r: Row) => (r.apt ? `a:${r.apt}` : `r:${r.key}`);
 
-const isEmail = (v: string) => z.email().safeParse(v.trim().toLowerCase()).success;
-
 /** Every problem of the form, by field ('agree' / 'agreeRent' = the boxes). */
 function formErrors(v: FormValues, today: string): Record<string, string> {
   const e: Record<string, string> = {};
@@ -199,9 +206,9 @@ function formErrors(v: FormValues, today: string): Record<string, string> {
   const leaseBytes = v.rows.reduce((s, r) => s + (r.role === 'tenant' ? r.file?.size ?? 0 : 0), 0);
   const lastRenter = [...v.rows].reverse().find((r) => r.role === 'tenant');
   if (leaseBytes > CHIP_ORDER_LIMITS.maxLeaseBytesTotal && lastRenter) e[`file_${lastRenter.key}`] = 'כל הקבצים יחד עד 40MB בהזמנה אחת';
-  const e164 = toPortalE164(v.phone);
-  if (!e164 || !e164.startsWith('+9725')) e.phone = 'נדרש מספר טלפון נייד ישראלי';
-  if (!isEmail(v.email)) e.email = 'כתובת מייל לא תקינה';
+  // The contact rules — on the first row's fields while they ARE its details
+  // (the row's own message, when it has one, comes first).
+  for (const [field, msg] of Object.entries(contactErrors(v, v.sameContact, v.rows[0]?.key))) e[field] ??= msg;
   if (v.street.trim().length < 2) e.street = 'נדרשת כתובת מגורים';
   if (v.city.trim().length < 2) e.city = 'נדרשת עיר';
   if (!/^\d{7}$/.test(v.zip.trim())) e.zip = 'מיקוד — 7 ספרות';
@@ -257,9 +264,9 @@ const ROW_FIELD: Record<string, string> = {
   fullName: 'name', apartment: 'apt', chipsCount: 'qty', phone: 'phone', email: 'email', leaseEndDate: 'end', leaseKey: 'file',
 };
 const TOP_FIELD: Record<string, string> = {
-  phone: 'phone', email: 'email', addressStreet: 'street', addressCity: 'city', addressZip: 'zip',
+  addressStreet: 'street', addressCity: 'city', addressZip: 'zip',
 };
-function issueErrors(issues: unknown, rowKeys: number[]): Record<string, string> | null {
+function issueErrors(issues: unknown, rowKeys: number[], sameContact: boolean): Record<string, string> | null {
   if (!Array.isArray(issues)) return null;
   const out: Record<string, string> = {};
   for (const issue of issues) {
@@ -269,6 +276,9 @@ function issueErrors(issues: unknown, rowKeys: number[]): Record<string, string>
     const [first, index, field] = path as unknown[];
     if (first === 'rows' && typeof index === 'number' && typeof field === 'string' && ROW_FIELD[field] && rowKeys[index] !== undefined) {
       out[`${ROW_FIELD[field]}_${rowKeys[index]}`] ??= message;
+    } else if (first === 'phone' || first === 'email') {
+      // The contact details: on the first row's field while they are its own.
+      out[contactFieldKey(first, sameContact, rowKeys[0])] ??= message;
     } else if (typeof first === 'string' && TOP_FIELD[first]) {
       out[TOP_FIELD[first]] ??= message;
     }
@@ -333,8 +343,10 @@ export function ChipOrderForm({
   const seq = useRef(1);
   const [rows, setRows] = useState<Row[]>([newRow(0)]);
   const [openCombo, setOpenCombo] = useState<number | null>(null);
-  const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
+  // The contact card's own phone and email — used only while the box is not ticked.
+  const [ownPhone, setPhone] = useState('');
+  const [ownEmail, setEmail] = useState('');
+  const [sameContact, setSameContactState] = useState(true);
   const [street, setStreet] = useState('');
   const [city, setCity] = useState('');
   const [zip, setZip] = useState('');
@@ -383,7 +395,13 @@ export function ChipOrderForm({
   /** The order was saved again while its fields were opening: look after. */
   const reopenWanted = useRef(false);
 
-  const values: FormValues = { rows, phone, email, street, city, zip, note, agree, agreeRent };
+  // The phone and email the order is saved with: the first row's while the
+  // contact box is ticked (they follow every edit of it), the card's own otherwise.
+  // (Inline on purpose: a helper call here makes the React-hooks lint reject
+  // the component's existing hoisted save functions.)
+  const phone = sameContact ? (rows[0]?.phone ?? '') : ownPhone;
+  const email = sameContact ? (rows[0]?.email ?? '') : ownEmail;
+  const values: FormValues = { rows, phone, email, sameContact, street, city, zip, note, agree, agreeRent };
   const valuesRef = useRef(values);
   useEffect(() => { valuesRef.current = values; });
 
@@ -473,6 +491,16 @@ export function ChipOrderForm({
     const key = seq.current++;
     setRows((prev) => [...prev, newRow(key, prev[prev.length - 1])]);
     setOpenCombo(key);
+  }
+
+  /** The contact box. Unticked → the two inputs come back filled with the
+   *  first row's phone and email (the customer changes them from there). */
+  function setSameContact(on: boolean) {
+    if (!on) {
+      setPhone(rows[0]?.phone ?? '');
+      setEmail(rows[0]?.email ?? '');
+    }
+    setSameContactState(on);
   }
 
   function setRole(key: number, role: Role) {
@@ -587,7 +615,7 @@ export function ChipOrderForm({
         else setDone({ orderNumber: prev.orderNumber, total: prev.total, rows: prev.confirmed });
         return null;
       }
-      const onFields = issueErrors(data.issues, v.rows.map((r) => r.key));
+      const onFields = issueErrors(data.issues, v.rows.map((r) => r.key), v.sameContact);
       if (onFields) setRefused({ hash: sentHash, errors: onFields });
       return fail(onFields ? null : data.message ?? CARD_TEXT.saveFailed);
     } finally {
@@ -979,7 +1007,16 @@ export function ChipOrderForm({
                       <Err msg={errors[`phone_${r.key}`]} />
                     </div>
                     <div className="cr-fld">
-                      <label htmlFor={`co-email-${r.key}`}>מייל</label>
+                      {/* The first row's email is the receipt's while the contact box is ticked: required. */}
+                      <label htmlFor={`co-email-${r.key}`}>
+                        מייל
+                        {sameContact && i === 0 && (
+                          <>
+                            {' '}<span className="cr-req">*</span>{' '}
+                            <span className="cr-lblnote" data-testid="chip-order-first-email-note">{CONTACT_TEXT.emailNote}</span>
+                          </>
+                        )}
+                      </label>
                       <input id={`co-email-${r.key}`} type="email" inputMode="email" autoComplete="email" value={r.email} maxLength={254} disabled={locked}
                         className={cn('cr-num cr-ltr', errors[`email_${r.key}`] && 'cr-bad')} onChange={(e) => patchRow(r.key, { email: e.target.value })} />
                       <Err msg={errors[`email_${r.key}`]} />
@@ -1040,20 +1077,34 @@ export function ChipOrderForm({
           <div><b>פרטי התקשרות</b><small>לעדכון כשהצ&apos;יפים מוכנים ולשליחת הקבלה</small></div>
         </div>
         <div className="cr-cbody">
-          <div className="cr-contact">
-            <div className="cr-fld">
-              <label htmlFor="co-phone">טלפון נייד <span className="cr-req">*</span></label>
-              <input id="co-phone" type="tel" inputMode="tel" autoComplete="tel" required value={phone} maxLength={20} disabled={locked}
-                className={cn('cr-num cr-ltr', errors.phone && 'cr-bad')} onChange={(e) => setPhone(e.target.value)} />
-              <Err msg={errors.phone} />
+          <label className="cr-agree">
+            <input type="checkbox" checked={sameContact} disabled={locked} onChange={(e) => setSameContact(e.target.checked)} />
+            <span>{CONTACT_TEXT.sameAsFirst}</span>
+          </label>
+          {sameContact ? (
+            // Where the messages and the receipt go — the first row's, as typed there.
+            <p className="cr-sameline" data-testid="chip-order-contact-same">
+              {CONTACT_TEXT.sentTo}{' '}
+              <bdi className="cr-num" data-testid="chip-order-contact-same-phone">{phone.trim() || '—'}</bdi>
+              {' · '}
+              <bdi className="cr-num" data-testid="chip-order-contact-same-email">{email.trim() || '—'}</bdi>
+            </p>
+          ) : (
+            <div className="cr-contact">
+              <div className="cr-fld">
+                <label htmlFor="co-phone">טלפון נייד <span className="cr-req">*</span></label>
+                <input id="co-phone" type="tel" inputMode="tel" autoComplete="tel" required value={ownPhone} maxLength={20} disabled={locked}
+                  className={cn('cr-num cr-ltr', errors.phone && 'cr-bad')} onChange={(e) => setPhone(e.target.value)} />
+                <Err msg={errors.phone} />
+              </div>
+              <div className="cr-fld">
+                <label htmlFor="co-email">מייל <span className="cr-req">*</span></label>
+                <input id="co-email" type="email" inputMode="email" autoComplete="email" required value={ownEmail} maxLength={254} disabled={locked}
+                  className={cn('cr-num cr-ltr', errors.email && 'cr-bad')} onChange={(e) => setEmail(e.target.value)} />
+                <Err msg={errors.email} />
+              </div>
             </div>
-            <div className="cr-fld">
-              <label htmlFor="co-email">מייל <span className="cr-req">*</span></label>
-              <input id="co-email" type="email" inputMode="email" autoComplete="email" required value={email} maxLength={254} disabled={locked}
-                className={cn('cr-num cr-ltr', errors.email && 'cr-bad')} onChange={(e) => setEmail(e.target.value)} />
-              <Err msg={errors.email} />
-            </div>
-          </div>
+          )}
           <div className="cr-addrrow">
             <div className="cr-fld">
               <label htmlFor="co-street">כתובת מגורים נוכחית (רחוב ומספר בית) <span className="cr-req">*</span></label>

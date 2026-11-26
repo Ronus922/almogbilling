@@ -124,8 +124,11 @@ const APT_RDY = `995${tag}4`; // 25/11/2026: a test order marked ready in the wi
 const APT_TRANSFER = `995${tag}5`; // 26/11/2026: "העברה בנקאית" at the reception
 const APT_LEGACY = `995${tag}6`; // 26/11/2026: a reception order recorded before the split ("מזומן או העברה")
 const APT_CARD = `995${tag}7`; // 26/11/2026: a test order paid with the sandbox card
+const APT_CONTACT = `995${tag}8`; // 26/11/2026: the contact box of the public form
 const APT_LIMIT_MSG = 'ניתן להזמין עד 10 כרטיסים לדירה בהזמנה אחת. לכמות גדולה יותר יש לפנות להנהלת הבניין.';
 const PUB_NOTE = 'אני מבקש למסור את הכרטיסים לשכן מדירה 5';
+/** The contact card's box (26/11/2026): the contact details are the first row's. */
+const CONTACT_SAME = 'פרטי ההתקשרות זהים לפרטי השורה הראשונה';
 const P_OWNER = '+972539300001';
 const P_RENTER = '+972539300002';
 const made = { contacts: {} as Record<string, string>, orders: [] as string[], users: [] as string[], leases: [] as string[] };
@@ -465,7 +468,7 @@ function fieldSizes(issue: Locator): Promise<string[]> {
 }
 
 test.beforeAll(async () => {
-  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2, APT_T1, APT_T2, APT_CH, APT_REC, APT_MGR, APT_NOORD, APT_EXTRA, APT_LEASE, APT_RDY, APT_TRANSFER, APT_LEGACY, APT_CARD]) {
+  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2, APT_T1, APT_T2, APT_CH, APT_REC, APT_MGR, APT_NOORD, APT_EXTRA, APT_LEASE, APT_RDY, APT_TRANSFER, APT_LEGACY, APT_CARD, APT_CONTACT]) {
     const c = await pool.query<{ id: string }>(`insert into public.contacts (apartment_number) values ($1) returning id`, [apt]);
     made.contacts[apt] = c.rows[0]!.id;
   }
@@ -2926,7 +2929,12 @@ test.describe.serial('test mode', () => {
     for (const title of ['ההזמנה', 'פרטי התקשרות', 'אישור ותשלום']) {
       await expect(page.locator('.cr-chead b').filter({ hasText: title })).toBeVisible();
     }
-    await expect(page.locator('#co-phone')).toBeVisible();
+    // The contact details are the first row's from the start (26/11/2026): the box is
+    // ticked, and the card shows a read-only line instead of its phone and email inputs.
+    await expect(page.getByRole('checkbox', { name: CONTACT_SAME })).toBeChecked();
+    await expect(page.locator('#co-phone')).toHaveCount(0);
+    await expect(page.locator('#co-email')).toHaveCount(0);
+    await expect(page.getByTestId('chip-order-contact-same')).toHaveText('העדכונים והקבלה יישלחו אל: — · —');
     await expect(page.getByRole('checkbox', { name: /הפרטים שמסרתי הינם נכונים/ })).toBeVisible();
     await expect(page.getByTestId('chip-order-pay')).toHaveText(/^תשלום מאובטח — /);
     await expect(page.getByLabel('קוד אימות')).toHaveCount(0);
@@ -3005,8 +3013,9 @@ test.describe.serial('test mode', () => {
     await expect(brk).not.toContainText('נוסף');
     await expect(page.getByTestId('chip-order-total')).toHaveText(`${8 * PRICE}₪`);
 
-    await page.locator('#co-phone').fill(phoneDigits);
-    await page.locator('#co-email').fill('test-mode.e2e@example.test');
+    // Nothing typed twice: the contact line shows the FIRST row's phone and email.
+    await expect(page.getByTestId('chip-order-contact-same-phone')).toHaveText(phoneDigits);
+    await expect(page.getByTestId('chip-order-contact-same-email')).toHaveText('test-mode.e2e@example.test');
     await page.locator('#co-street').fill('רחוב בדיקה 2');
     await page.locator('#co-city').fill('חיפה');
     await page.locator('#co-zip').fill('3300000');
@@ -3053,10 +3062,12 @@ test.describe.serial('test mode', () => {
     expect(posted[0]).not.toContain('"trackingToken"');
     expect(other).toEqual([]);
 
-    const row = (await pool.query<{ id: string; order_number: number; is_test: boolean; status: string; total: number; grow_process_id: string | null; rt: boolean; address_zip: string; internal_note: string | null; phone_verified: boolean | null }>(
-      `select id, order_number, is_test, status, total::float8 as total, grow_process_id, renter_terms_accepted_at is not null as rt, address_zip, internal_note, phone_verified
+    const row = (await pool.query<{ id: string; order_number: number; is_test: boolean; status: string; total: number; grow_process_id: string | null; rt: boolean; address_zip: string; internal_note: string | null; phone_verified: boolean | null; email: string | null; full_name: string }>(
+      `select id, order_number, is_test, status, total::float8 as total, grow_process_id, renter_terms_accepted_at is not null as rt, address_zip, internal_note, phone_verified, email, full_name
          from public.chip_orders where phone_e164 = $1 order by created_at desc limit 1`, [phoneE164],
     )).rows[0]!;
+    // The orderer is stored exactly as before: the first row's name, and the contact phone + email.
+    expect(row).toMatchObject({ email: 'test-mode.e2e@example.test', full_name: 'בודק בדיקה' });
     state.orderId = row.id;
     state.orderNumber = row.order_number;
     // phone_verified NULL = an order made with no phone code step (26/11/2026).
@@ -3206,8 +3217,8 @@ test.describe.serial('test mode', () => {
     await pub.getByLabel('חיפוש לפי מספר דירה').fill(APT_SKIP);
     await pub.getByLabel('חיפוש לפי מספר דירה').press('Enter');
     await first.getByLabel('טלפון נייד').fill(skipPhone);
-    await pub.locator('#co-phone').fill(skipPhone);
-    await pub.locator('#co-email').fill('skip.e2e@example.test');
+    // The contact box is ticked: the receipt's email is the first row's.
+    await first.getByLabel('מייל').fill('skip.e2e@example.test');
     await pub.locator('#co-street').fill('רחוב בדיקה 3');
     await pub.locator('#co-city').fill('חיפה');
     await pub.locator('#co-zip').fill('3300000');
@@ -3217,7 +3228,8 @@ test.describe.serial('test mode', () => {
     const kept = async () => {
       await expect(first.getByLabel('שם מלא')).toHaveValue('בודק דילוג');
       await expect(first.getByRole('button', { name: 'דירה, שורה 1' })).toHaveText(`דירה ${APT_SKIP}`);
-      await expect(pub.locator('#co-email')).toHaveValue('skip.e2e@example.test');
+      await expect(first.getByLabel('מייל')).toHaveValue('skip.e2e@example.test');
+      await expect(pub.getByTestId('chip-order-contact-same-email')).toHaveText('skip.e2e@example.test');
       await expect(pub.locator('#co-zip')).toHaveValue('3300000');
       await expect(pub.getByRole('checkbox', { name: /הפרטים שמסרתי הינם נכונים/ })).toBeChecked();
       await expect(pay).toBeEnabled();
@@ -3271,6 +3283,112 @@ test.describe.serial('test mode', () => {
     await expect(listRow).toHaveCount(0);
     expect((await pool.query(`select status, refund_status, reject_reason from public.chip_orders where id = $1`, [skipState.orderId])).rows[0])
       .toEqual({ status: 'rejected', refund_status: 'not_required', reject_reason: 'בדיקת דחייה' });
+  });
+
+  test('the contact box: ticked by default, the line follows the first row and its email is required; unticked → the inputs come back prefilled, and the order keeps the contact\'s own phone and email', async ({ browser }) => {
+    const stamp = String(Date.now()).slice(-5);
+    const rowDigits = `05396${stamp}`;
+    const rowDigits2 = `05398${stamp}`;
+    const ownDigits = `05397${stamp}`;
+    const ownE164 = `+972${ownDigits.slice(1)}`;
+    const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 390, height: 844 } });
+    const pub = await ctx.newPage();
+    const saves: string[] = [];
+    pub.on('request', (r) => {
+      if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/public/chip-order') saves.push(r.postDataBuffer()?.toString('latin1') ?? '');
+    });
+    await pub.goto(new URL(state.link).pathname + new URL(state.link).search);
+    await expect(pub.getByTestId('chip-order-test-banner')).toBeVisible();
+    const box = pub.getByRole('checkbox', { name: CONTACT_SAME });
+    const line = pub.getByTestId('chip-order-contact-same');
+    const linePhone = pub.getByTestId('chip-order-contact-same-phone');
+    const lineEmail = pub.getByTestId('chip-order-contact-same-email');
+    const first = pub.getByTestId('chip-order-line').nth(0);
+    const firstEmailLabel = first.locator('label[for^="co-email-"]');
+    const firstEmailField = first.locator('.cr-fld').filter({ has: pub.locator('input[type="email"]') });
+
+    // 1. Ticked by default: no contact inputs, a read-only line, and the first
+    //    row's email marked required — said next to it.
+    await expect(box).toBeChecked();
+    await expect(pub.locator('#co-phone')).toHaveCount(0);
+    await expect(pub.locator('#co-email')).toHaveCount(0);
+    await expect(firstEmailLabel.locator('.cr-req')).toHaveText('*');
+    await expect(pub.getByTestId('chip-order-first-email-note')).toHaveText('חובה — לשם תישלח הקבלה');
+
+    await first.getByLabel('שם מלא').fill('בודק קשר');
+    await first.getByRole('button', { name: 'דירה, שורה 1' }).click();
+    await pub.getByLabel('חיפוש לפי מספר דירה').fill(APT_CONTACT);
+    await pub.getByLabel('חיפוש לפי מספר דירה').press('Enter');
+    await first.getByLabel('טלפון נייד').fill(rowDigits);
+    await expect(linePhone).toHaveText(rowDigits);
+    await expect(lineEmail).toHaveText('—');
+    // A second row does not move the line: it is the FIRST row's.
+    await pub.getByRole('button', { name: 'הוספת דירה' }).click();
+    const second = pub.getByTestId('chip-order-line').nth(1);
+    await pub.getByLabel('חיפוש לפי מספר דירה').fill(APT_CONTACT);
+    await pub.getByLabel('חיפוש לפי מספר דירה').press('Enter');
+    await second.getByLabel('טלפון נייד').fill(rowDigits2);
+    await second.getByLabel('מייל').fill('second.row.e2e@example.test');
+    await expect(linePhone).toHaveText(rowDigits);
+    await expect(lineEmail).toHaveText('—');
+    await expect(second.locator('label[for^="co-email-"] .cr-req')).toHaveCount(0); // only the first row's is required
+    await pub.locator('#co-street').fill('רחוב בדיקה 4');
+    await pub.locator('#co-city').fill('חיפה');
+    await pub.locator('#co-zip').fill('3300000');
+    await pub.getByRole('checkbox', { name: /הפרטים שמסרתי הינם נכונים/ }).check();
+
+    // 2. The first row has no email: the press stops on THAT field, nothing is saved.
+    await pub.getByTestId('chip-order-pay').click();
+    await expect(firstEmailField.locator('.cr-err')).toHaveText('נדרש מייל — אליו תישלח הקבלה');
+    await expect(first.getByLabel('מייל')).toHaveClass(/cr-bad/);
+    await expect(second.locator('.cr-err')).toHaveCount(0);
+    expect(saves).toHaveLength(0);
+    // Typed in the row: the message goes, and the line follows.
+    await first.getByLabel('מייל').fill('row.contact.e2e@example.test');
+    await expect(firstEmailField.locator('.cr-err')).toHaveCount(0);
+    await expect(lineEmail).toHaveText('row.contact.e2e@example.test');
+    // The line follows a later edit of the row too.
+    await first.getByLabel('טלפון נייד').fill(rowDigits.slice(0, 3) + '-' + rowDigits.slice(3));
+    await expect(linePhone).toHaveText(rowDigits.slice(0, 3) + '-' + rowDigits.slice(3));
+
+    // 3. Unticked: the two inputs come back filled with the first row's values,
+    //    the line goes, and the row's email is optional again.
+    await box.uncheck();
+    await expect(line).toHaveCount(0);
+    await expect(pub.locator('#co-phone')).toHaveValue(rowDigits.slice(0, 3) + '-' + rowDigits.slice(3));
+    await expect(pub.locator('#co-email')).toHaveValue('row.contact.e2e@example.test');
+    await expect(firstEmailLabel.locator('.cr-req')).toHaveCount(0);
+    await expect(pub.getByTestId('chip-order-first-email-note')).toHaveCount(0);
+    // Ticked again → the row's values; unticked once more → prefilled again.
+    await box.check();
+    await expect(linePhone).toHaveText(rowDigits.slice(0, 3) + '-' + rowDigits.slice(3));
+    await box.uncheck();
+    // Free to change, and no longer following the row.
+    await pub.locator('#co-phone').fill(ownDigits);
+    await pub.locator('#co-email').fill('own.contact.e2e@example.test');
+    await first.getByLabel('מייל').fill('');
+    await first.getByLabel('טלפון נייד').fill(rowDigits);
+    await expect(pub.locator('#co-phone')).toHaveValue(ownDigits);
+    await expect(pub.locator('#co-email')).toHaveValue('own.contact.e2e@example.test');
+    await pub.getByTestId('chip-order-pay').click();
+    await expect(pub.getByTestId('chip-order-confirmation')).toBeVisible();
+    expect(saves).toHaveLength(1);
+
+    // 4. Stored exactly as before: the orderer = the first row's name + the
+    //    contact phone and email; each row keeps its own phone and email.
+    const row = (await pool.query<{ id: string; full_name: string; email: string | null; is_test: boolean; status: string }>(
+      `select id, full_name, email, is_test, status from public.chip_orders where phone_e164 = $1 order by created_at desc limit 1`, [ownE164],
+    )).rows[0]!;
+    made.orders.push(row.id);
+    expect(row).toMatchObject({ full_name: 'בודק קשר', email: 'own.contact.e2e@example.test', is_test: true, status: 'paid' });
+    const holders = (await pool.query<{ full_name: string; phone: string | null; email: string | null }>(
+      `select full_name, phone, email from public.chip_order_holders where order_id = $1 order by position`, [row.id],
+    )).rows;
+    expect(holders.map((h) => [h.phone, h.email])).toEqual([
+      [`+972${rowDigits.slice(1)}`, null],
+      [`+972${rowDigits2.slice(1)}`, 'second.row.e2e@example.test'],
+    ]);
+    await ctx.close();
   });
 
   test('switching test mode off kills the link', async ({ page, browser }) => {
