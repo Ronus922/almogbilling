@@ -715,9 +715,12 @@ export const chipOrderRefundBodySchema = z.object({
   reason: z.string({ error: 'נדרשת סיבת זיכוי' }).trim().min(2, 'נדרשת סיבת זיכוי').max(500, 'הסיבה ארוכה מדי'),
 });
 
-/** POST /api/chip-orders/[id]/cancel — "בטל הזמנת קבלה" (25/11/2026). */
+/** POST /api/chip-orders/[id]/cancel — "ביטול וזיכוי" of a reception order
+ *  (27/11/2026; "בטל הזמנת קבלה" before). The reason is required the first
+ *  time; a retry of the remaining steps keeps the reason it was started with
+ *  (one sent again is ignored). */
 export const chipOrderCancelBodySchema = z.object({
-  reason: z.string({ error: 'נדרשת סיבת ביטול' }).trim().min(2, 'נדרשת סיבת ביטול').max(500, 'הסיבה ארוכה מדי'),
+  reason: z.string({ error: 'נדרשת סיבת ביטול' }).trim().min(2, 'נדרשת סיבת ביטול').max(500, 'הסיבה ארוכה מדי').optional(),
 });
 
 /** POST /api/chip-pickup/[id]/handover — "נמסר" of the guard's pickup screen:

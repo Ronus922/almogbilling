@@ -24,7 +24,11 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   already_refunded: { status: 409, message: 'ההזמנה כבר זוכתה' },
   refund_in_progress: { status: 409, message: 'בקשת זיכוי להזמנה הזו כבר נשלחה ל-PayPlus — נסו שוב בעוד כמה דקות' },
   not_refundable: { status: 409, message: 'אי אפשר לזכות את ההזמנה במצבה הנוכחי' },
-  not_web_order: { status: 409, message: 'הזמנת קבלה מזוכה דרך „בטל הזמנת קבלה”' },
+  not_web_order: { status: 409, message: 'הזמנת קבלה מזוכה דרך „ביטול וזיכוי”' },
+  // "ביטול וזיכוי" (27/11/2026).
+  already_cancelled: { status: 409, message: 'הזמנת הקבלה כבר בוטלה' },
+  cancel_in_progress: { status: 409, message: '„ביטול וזיכוי” כבר רץ להזמנה הזו — נסו שוב בעוד כמה דקות' },
+  reason_required: { status: 400, message: 'נדרשת סיבת ביטול' },
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

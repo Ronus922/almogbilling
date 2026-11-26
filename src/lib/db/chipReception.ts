@@ -7,7 +7,7 @@ import { isSnapshotRole } from '@/lib/chips/holder';
 import { writeAuditInTx } from '@/lib/db/audit';
 import { issueChipGroupsInTx } from '@/lib/db/chips';
 import { lockLeasesForAttach } from '@/lib/db/chipLeaseUploads';
-import { enqueueDocumentInTx } from '@/lib/db/chipOrderDocuments';
+import { enqueueDocumentInTx, releaseHeldInvoiceInTx } from '@/lib/db/chipOrderDocuments';
 import { israelDate } from '@/lib/morning/documents';
 import { priceLine } from '@/lib/chipOrders/model';
 import {
@@ -249,14 +249,20 @@ export async function saveReceptionWindow(
         // THIS apartment, THESE chips, THIS amount.
         const paid = payment.card_token && /^[A-Za-z0-9_-]{32,64}$/.test(payment.card_token)
           ? (
-            await client.query<{ id: string; order_number: number; total: number; status: string; source: string; payment_method: string | null; card_status: string | null; is_test: boolean }>(
-              `select id, order_number, total::float8 as total, status, source, payment_method, card_status, is_test
+            await client.query<{
+              id: string; order_number: number; total: number; status: string; source: string; payment_method: string | null;
+              card_status: string | null; is_test: boolean; undoing: boolean;
+            }>(
+              `select id, order_number, total::float8 as total, status, source, payment_method, card_status, is_test,
+                      (refunded_at is not null or refund_requested_at is not null or cancel_requested_at is not null) as undoing
                  from public.chip_orders where tracking_token = $1 for update`,
               [payment.card_token],
             )
           ).rows[0]
           : undefined;
-        if (!paid || paid.source !== 'reception' || paid.payment_method !== 'card' || paid.card_status !== 'paid' || paid.status !== 'paid') {
+        // (27/11/2026) An order "ביטול וזיכוי" was started on — or refunded —
+        // while this window stayed open takes no chips.
+        if (!paid || paid.source !== 'reception' || paid.payment_method !== 'card' || paid.card_status !== 'paid' || paid.status !== 'paid' || paid.undoing) {
           throw new ReceptionError('card_not_paid');
         }
         if (paid.is_test) throw new ReceptionError('test_card_payment');
@@ -284,6 +290,9 @@ export async function saveReceptionWindow(
             input.notes?.trim() || null,
           ],
         );
+        // The invoice of the charge waited for these details (the email
+        // Morning sends it to — 27/11/2026): it is due now.
+        await releaseHeldInvoiceInTx(client, paid.id);
         orderId = paid.id;
         orderNumber = paid.order_number;
         itemId = line[0].id;
@@ -424,14 +433,15 @@ export async function listReceptionRecords(contactId: string): Promise<Reception
             r.orderer_name, r.orderer_phone, r.orderer_email,
             nullif(concat_ws(', ', r.address_street, nullif(concat_ws(' ', r.address_city, r.address_zip), '')), '') as address,
             r.chips_count, 0::float8 as amount, r.created_by_name as by_name, false as cancelled,
-            null::text as payment_method
+            null::text as payment_method, null::uuid as order_id, null::text as cancel_failed_step, null::text as cancel_error
        from public.chip_reception_records r
       where r.contact_id = $1
      union all
      select 'order' as kind, i.id as ref, o.order_number, o.created_at,
             o.full_name, o.phone_e164, o.email, o.address,
             i.chips_count, i.line_total::float8 as amount, o.payment_recorded_by_name as by_name,
-            (o.status = 'rejected') as cancelled, o.payment_method
+            (o.status = 'rejected') as cancelled, o.payment_method, o.id as order_id,
+            o.cancel_failed_step, o.cancel_error
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id
       -- A card payment that was never completed is not a save of the window.

@@ -19,8 +19,13 @@ import type { Role } from '@/lib/permissions/constants';
 //     the same transaction (26/11/2026) — an order recorded before that, as
 //     "מזומן או העברה", has no document and gets no credit;
 //   · it cannot be done twice, and never to a web order.
-// Only the session is mocked, and the after() hook (the document issuer it
-// queues is never run here — nothing reaches Morning; fetch refuses anything).
+// 27/11/2026 — "ביטול וזיכוי": the route now runs the steps in order (the
+// refund, the credit document, the cancellation). Cash and a transfer go back
+// by hand; the CREDIT DOCUMENT is issued before the order is cancelled — here
+// by a stand-in for the Morning issuer that marks the order's due rows issued
+// (the real issuer against a Morning stub: tests/chip-reception-cancel-refund-db.test.ts).
+// Only the session is mocked, and the after() hook (never run here — nothing
+// reaches Morning; fetch refuses anything).
 // Fixtures are numeric apartments far from the seed, removed by exact ids.
 
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
@@ -53,6 +58,26 @@ vi.mock('next/server', async (orig) => ({
   after: (fn: () => unknown) => { afterQueue.push(fn); },
 }));
 const networkCalls: string[] = [];
+/** The Morning issuer, stood in for: the order's due rows are "issued" with a
+ *  made-up document — what Morning would answer. */
+const issuer = vi.hoisted(() => ({ runs: [] as (string | null)[] }));
+vi.mock('@/lib/chipOrders/documents', async (orig) => ({
+  ...(await orig<typeof import('@/lib/chipOrders/documents')>()),
+  processDueDocuments: async (_limit?: number, orderId: string | null = null) => {
+    issuer.runs.push(orderId);
+    if (orderId) {
+      await pool.query(
+        `update public.chip_order_documents
+            set status = 'issued', issued_at = now(), claimed_at = null, email_status = 'no_email',
+                morning_docs = jsonb_build_array(jsonb_build_object('type', case when kind = 'credit' then 330 else 320 end,
+                  'id', gen_random_uuid()::text, 'number', (90000 + floor(random() * 9000))::int::text, 'url', null))
+          where order_id = $1 and status = 'pending' and next_attempt_at <= now()`,
+        [orderId],
+      );
+    }
+    return { claimed: 0, issued: 0, retried: 0, failed: 0, postponed: 0, idle: null };
+  },
+}));
 
 const { requireSeededAdmin } = await import('./db-fixtures');
 const orders = await import('@/lib/db/chipOrders');
@@ -205,17 +230,21 @@ d('cancelling a reception order, on the DB and through its route', () => {
     afterQueue.length = 0;
     const res = await cancel(first.id, { reason: '  נרשם בטעות על הדירה הלא נכונה  ' });
     expect(res.status).toBe(200);
-    // Cash goes back by hand: no processor refund.
-    expect(await res.json()).toEqual({ ok: true, chips_disabled: 2, payment_method: 'cash', refund: null });
-    // The issuing of the documents is deferred past the answer (not run here).
+    // Cash goes back by hand: no processor refund. The credit document was
+    // issued BEFORE the order was cancelled (the issuer ran for this order).
+    const body = await res.json();
+    expect(body).toMatchObject({ ok: true, chips_disabled: 2, refund: 'by_hand', failed_step: null, message: null });
+    expect(body.credit_numbers).toHaveLength(1);
+    expect(issuer.runs).toContain(first.id);
+    // What else is due in the queue is issued past the answer (not run here).
     expect(afterQueue).toHaveLength(1);
 
-    // The order's invoice is credited in the same transaction: ONE credit row, of the whole sum.
+    // The order's invoice is credited: ONE credit row, of the whole sum.
     const [invoice, credit, ...more] = await documentsOf(first.id);
     expect(more).toEqual([]);
     expect(invoice).toMatchObject({ kind: 'invoice', payment_key: `reception:${first.id}`, amount: 3 * PRICE, payment_method: 'cash', credit_of: null });
     expect(credit).toMatchObject({
-      kind: 'credit', payment_key: `cancel:${first.id}`, amount: 3 * PRICE, payment_method: 'cash', status: 'pending', credit_of: invoice!.id,
+      kind: 'credit', payment_key: `cancel:${first.id}`, amount: 3 * PRICE, payment_method: 'cash', status: 'issued', credit_of: invoice!.id,
     });
 
     const o = await orderRow(first.id);
@@ -248,6 +277,7 @@ d('cancelling a reception order, on the DB and through its route', () => {
       metadata: {
         source: 'reception', order_number: first.orderNumber, reason: 'נרשם בטעות על הדירה הלא נכונה', amount: 3 * PRICE,
         chips_disabled: 2, chips_left_moved: 0, payment_method: 'cash',
+        steps: { refund: 'by_hand', credit_numbers: body.credit_numbers, credit_email: 'no_email' },
       },
     }]);
   });
@@ -307,7 +337,7 @@ d('cancelling a reception order, on the DB and through its route', () => {
     as('admin');
     const res = await cancel(third.id, { reason: 'בוטלה אחרי העברת צ׳יפ' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, chips_disabled: 1, payment_method: 'cash', refund: null });
+    expect(await res.json()).toMatchObject({ ok: true, chips_disabled: 1, refund: 'by_hand' });
     const rows = await chipRows(third.chipIds);
     expect(rows.map((c) => c.status)).toEqual(['inactive', 'active']);
     expect((await trail(third.id))[0]!.metadata).toMatchObject({ chips_disabled: 1, chips_left_moved: 1 });
@@ -322,7 +352,7 @@ d('cancelling a reception order, on the DB and through its route', () => {
     as('super');
     const res = await cancel(legacy.id, { reason: 'הזמנה ישנה' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, chips_disabled: 1, payment_method: 'cash_transfer', refund: null });
+    expect(await res.json()).toMatchObject({ ok: true, chips_disabled: 1, refund: 'by_hand', credit_numbers: [], credit_email: null });
     expect(await documentsOf(legacy.id)).toEqual([]);
     expect((await orderRow(legacy.id)).status).toBe('rejected');
     expect((await trail(legacy.id))[0]!.metadata).toMatchObject({ payment_method: 'cash_transfer', chips_disabled: 1 });

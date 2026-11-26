@@ -366,6 +366,11 @@
   .ci-docstate { font: 700 12.5px "Heebo", sans-serif; color: var(--ci-muted); }
   .ci-docstate.ci-fail { color: var(--ci-red-ink); }
   .ci-docerr { flex-basis: 100%; font: 500 12px/1.5 "Heebo", sans-serif; color: var(--ci-red-ink); overflow-wrap: anywhere; }
+  /* Where Morning emailed the document, and every number of a credit (330 +
+     the receipt) — 27/11/2026. */
+  .ci-docmail { flex-basis: 100%; font: 500 12px/1.5 "Heebo", sans-serif; color: var(--ci-soft); overflow-wrap: anywhere; }
+  /* "ביטול וזיכוי" stopped at a step: red, under the order's buttons. */
+  .ci-reason.ci-stop { color: var(--ci-red-ink); }
   .ci-docact { padding: 0 14px 12px; }
 
   .ci-notefld { margin-top: 14px; }
@@ -494,6 +499,12 @@
   .ci-rec p { margin: 6px 0 0; font: 500 12px/1.55 "Heebo", sans-serif; color: var(--ci-muted); overflow-wrap: anywhere; }
   .ci-rec p > span:first-child { font-weight: 700; color: var(--ci-soft); }
   .ci-recby { color: var(--ci-soft); }
+  /* "ביטול וזיכוי" on a paid reception order's line (27/11/2026, admin and
+     super admin): the button, and — when an earlier run stopped — which step
+     stopped it. The confirmation is a shared AlertDialog (ReceptionCancelDialog). */
+  .ci-recact { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-top: 8px; }
+  .ci-recact .ci-btn.ci-danger { margin-inline-start: 0; }
+  .ci-recstop { font: 600 12px/1.5 "Heebo", sans-serif; color: var(--ci-red-ink); overflow-wrap: anywhere; }
 
   /* A closed order is read only — said once, above its blocks. */
   .ci-info {

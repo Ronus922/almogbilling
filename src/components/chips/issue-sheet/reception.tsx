@@ -23,7 +23,7 @@
 //
 // Styles: app/styles/chip-issue-sheet.css ("Reception").
 
-import type { ChangeEvent, ReactNode } from 'react';
+import { useState, type ChangeEvent, type ReactNode } from 'react';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LEASE_FILE_ACCEPT, formatIlsAfter } from '@/lib/chipOrders/model';
@@ -33,6 +33,8 @@ import {
 } from '@/lib/chipOrders/reception';
 import { e164ToLocal } from '@/lib/portal/phone';
 import type { ChipLeaseRef } from '@/lib/types/chips';
+import { RECEPTION_CANCEL_LABEL, receptionCancelStoppedText } from '@/lib/chipOrders/receptionCancelText';
+import { ReceptionCancelDialog } from '../ReceptionCancelDialog';
 import { AlertIco, CheckIco, Ico } from './parts';
 
 const DAY = new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -283,11 +285,29 @@ export function ReceptionPayment({
 const phoneView = (p: string | null) => (p ? e164ToLocal(p) : '');
 
 /** The reception saves a block's chips came from: when, how they were settled,
- *  and the orderer details that were stored with them. Read only. */
-export function ReceptionRecords({ records }: { records: ReceptionRecordView[] }) {
+ *  and the orderer details that were stored with them. Read only — except
+ *  "ביטול וזיכוי" on a paid reception order (27/11/2026), for admin and super
+ *  admin (`canCancel`; the route asks the role again). */
+export function ReceptionRecords({
+  records, canCancel = false, onChanged,
+}: {
+  records: ReceptionRecordView[];
+  canCancel?: boolean;
+  /** A reception order of these lines was cancelled, or its cancel stopped. */
+  onChanged?: () => void;
+}) {
+  const [cancelOf, setCancelOf] = useState<string | null>(null);
   if (records.length === 0) return null;
   return (
     <div className="ci-recs" data-testid="chip-reception-records">
+      {cancelOf && (
+        <ReceptionCancelDialog
+          orderId={cancelOf}
+          open
+          onOpenChange={(v) => { if (!v) setCancelOf(null); }}
+          onChanged={() => onChanged?.()}
+        />
+      )}
       {records.map((r) => {
         const who = [r.orderer_name, phoneView(r.orderer_phone), r.orderer_email, r.address].filter(Boolean) as string[];
         // How it was paid, as stored ("מזומן או העברה" for an order recorded before the split).
@@ -321,6 +341,19 @@ export function ReceptionRecords({ records }: { records: ReceptionRecordView[] }
                   ))}
               {r.by_name && <span className="ci-recby"> · נרשם ע״י {r.by_name}</span>}
             </p>
+            {canCancel && r.kind === 'order' && !r.cancelled && r.order_id && (
+              <div className="ci-recact">
+                <button type="button" className="ci-btn ci-danger" onClick={() => setCancelOf(r.order_id)}
+                  data-testid="chip-reception-record-cancel">
+                  {r.cancel_failed_step ? 'המשך ביטול וזיכוי' : RECEPTION_CANCEL_LABEL}
+                </button>
+                {r.cancel_failed_step && (
+                  <span className="ci-recstop" role="status" data-testid="chip-reception-record-cancel-stopped">
+                    {receptionCancelStoppedText(r.cancel_failed_step)}{r.cancel_error ? ` — ${r.cancel_error}` : ''}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         );
       })}

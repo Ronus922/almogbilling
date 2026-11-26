@@ -62,7 +62,9 @@ import {
   summarizeChipOrders, type ChipOrderDocState, type ChipOrderRowAction,
 } from '@/lib/chipOrders/orderRows';
 import { CHIP_ORDER_CANCELLED_LABEL } from '@/lib/chipOrders/model';
+import { RECEPTION_CANCEL_LABEL, receptionCancelStoppedText } from '@/lib/chipOrders/receptionCancelText';
 import { CollectorPicker } from './CollectorPicker';
+import { ReceptionCancelDialog } from './ReceptionCancelDialog';
 import { ChipListExports } from './ChipListExports';
 import { CHIPS_SEARCH_INPUT, ChipsToolbar } from './ChipsToolbar';
 import { ChipOrderStagePill } from './ChipOrderStatusPill';
@@ -286,11 +288,52 @@ function RowAction({
   );
 }
 
+/** A paid reception order "ביטול וזיכוי" may act on (27/11/2026): collected,
+ *  or paid by card with its chips never saved. */
+function receptionCancellable(o: ChipOrderRow): boolean {
+  if (o.source !== 'reception') return false;
+  return o.status === 'collected' || (o.status === 'paid' && o.payment_method === 'card' && o.card_status === 'paid');
+}
+
+/** "ביטול וזיכוי" in a row's action column / on a phone card (admin and super
+ *  admin). The click stops here: the row behind it opens the issue window. */
+function RowCancel({ row, wide, onOpen }: { row: ChipOrderRow; wide: boolean; onOpen: () => void }) {
+  const stopped = row.cancel_failed_step ?? null;
+  return (
+    <span
+      className={cn('inline-flex flex-col items-start gap-1', wide && 'w-full')}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        onClick={onOpen}
+        data-testid="chip-order-row-cancel"
+        className={cn(
+          'relative inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] border border-[var(--chip-red-border)] bg-white px-3 text-[13px] font-bold text-[var(--chip-red-ink)] transition-colors hover:bg-[var(--chip-red-soft)]',
+          wide ? 'h-11 w-full' : "h-9 after:absolute after:inset-x-0 after:-inset-y-1 after:content-['']",
+        )}
+      >
+        <Ban className="h-4 w-4" />
+        {stopped ? 'המשך ביטול' : RECEPTION_CANCEL_LABEL}
+      </button>
+      {stopped && (
+        <span data-testid="chip-order-row-cancel-stopped" className="text-[11.5px] font-semibold leading-[1.35] text-[var(--chip-red-ink)]">
+          {receptionCancelStoppedText(stopped)}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function ChipOrdersPanel({
-  items, loading, onOpen, canEdit = false, unfinishedTests = 0, onChanged, documentsConnected = false,
+  items, loading, onOpen, canEdit = false, canAdmin = false, unfinishedTests = 0, onChanged, documentsConnected = false,
 }: {
   items: ChipOrderRow[];
   loading: boolean;
+  /** Admin / super admin, by role — "ביטול וזיכוי" of a paid reception order
+   *  (the route asks the role again). */
+  canAdmin?: boolean;
   /** Morning has a key: a queued invoice is "בהפקה"; without one it is
    *  "ממתינה לחיבור מורנינג" (GET /api/chip-orders). */
   documentsConnected?: boolean;
@@ -316,6 +359,9 @@ export function ChipOrdersPanel({
   const [acting, setActing] = useState(false);
   // "נאסף": who collected — one of the people of the order. Optional here.
   const [collector, setCollector] = useState<string | null>(null);
+  // "ביטול וזיכוי": the order its confirmation is open for.
+  const [cancelOf, setCancelOf] = useState<string | null>(null);
+  const cancelFor = (o: ChipOrderRow) => (canAdmin && receptionCancellable(o) ? () => setCancelOf(o.order_id) : null);
 
   const tests = useMemo(() => items.filter((o) => o.is_test), [items]);
   // The status belongs to the whole order: what a row may do is read from ALL
@@ -388,6 +434,14 @@ export function ChipOrdersPanel({
     // last row rises above it (the same room the paging control of other
     // screens leaves under itself).
     <div className={cn('overflow-hidden rounded-[16px] border border-[var(--chip-border)] bg-[var(--chip-panel)]', canEdit && 'mb-16')}>
+      {cancelOf && (
+        <ReceptionCancelDialog
+          orderId={cancelOf}
+          open
+          onOpenChange={(v) => { if (!v) setCancelOf(null); }}
+          onChanged={() => void onChanged?.()}
+        />
+      )}
       {/* Toolbar: the test-orders controls (only while there are any) · search · print · Excel · PDF */}
       <ChipsToolbar
         searchWidth="@min-[1140px]:w-[280px]"
@@ -543,7 +597,17 @@ export function ChipOrdersPanel({
                         data-col="action"
                         className={cn(COL.action, ACT_CELL, '-my-[12px] bg-[var(--chip-panel)] py-[12px] transition-colors', onOpen && 'group-hover:bg-[var(--chip-hover)]')}
                       >
-                        {action && <RowAction action={action} wide={false} onAsk={askFor(o)} />}
+                        {/* A collected reception order: "ביטול וזיכוי" in place of the "נאסף" label (the status column says it). */}
+                        {(() => {
+                          const cancel = cancelFor(o);
+                          if (cancel && action?.kind === 'done') return <RowCancel row={o} wide={false} onOpen={cancel} />;
+                          return (
+                            <>
+                              {action && <RowAction action={action} wide={false} onAsk={askFor(o)} />}
+                              {cancel && <RowCancel row={o} wide={false} onOpen={cancel} />}
+                            </>
+                          );
+                        })()}
                       </span>
                     )}
                   </div>
@@ -594,7 +658,16 @@ export function ChipOrdersPanel({
                       overdue={isChipOrderOverdue(o)}
                     />
                   </span>
-                  {action && <RowAction action={action} wide onAsk={askFor(o)} />}
+                  {(() => {
+                    const cancel = cancelFor(o);
+                    if (cancel && action?.kind === 'done') return <RowCancel row={o} wide onOpen={cancel} />;
+                    return (
+                      <>
+                        {action && <RowAction action={action} wide onAsk={askFor(o)} />}
+                        {cancel && <RowCancel row={o} wide onOpen={cancel} />}
+                      </>
+                    );
+                  })()}
                 </div>
               );
             })}

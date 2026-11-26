@@ -154,11 +154,11 @@ export async function applyPayPlusRefundNotice(cfg: PayPlusConfig, tx: PayPlusTr
     return { kind: 'ignored', why: 'no_order_number' };
   }
   const order = await queryOne<{
-    id: string; order_number: number; is_test: boolean; card_env: string | null; card_status: string | null; status: string;
+    id: string; order_number: number; is_test: boolean; card_env: string | null; card_status: string | null; status: string; source: string;
     card_paid_amount: number | null; refunded_amount: number | null; card_transaction_uid: string | null; card_approval_number: string | null;
     in_flight: boolean; call_running: boolean;
   }>(
-    `select id, order_number, is_test, card_env, card_status, status,
+    `select id, order_number, is_test, card_env, card_status, status, source,
             card_paid_amount::float8 as card_paid_amount, refunded_amount::float8 as refunded_amount,
             card_transaction_uid, card_approval_number,
             (refund_requested_at is not null and refund_requested_at > now() - interval '10 minutes') as in_flight,
@@ -191,7 +191,10 @@ export async function applyPayPlusRefundNotice(cfg: PayPlusConfig, tx: PayPlusTr
     if (found.kind !== 'paid') return found.kind === 'unknown' ? { kind: 'later' } : { kind: 'ignored', why: 'order_not_paid' };
   }
   const rec = await recordRefund(order.id, {
-    refundUid: tx.uid, amount, via: 'payplus', by: null, reason: null, closeOpen: true, disableChips: false,
+    refundUid: tx.uid, amount, via: 'payplus', by: null, reason: null,
+    // A reception order is cancelled only by "ביטול וזיכוי" (27/11/2026) — its
+    // credit, its chips and its trail; the refund is recorded on it here.
+    closeOpen: order.source !== 'reception', disableChips: false,
   });
   if (rec.kind === 'already') return { kind: 'already' };
   if (rec.kind === 'refused') {

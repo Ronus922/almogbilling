@@ -353,6 +353,10 @@ export interface ChipOrderRow {
   /** The order's Morning document (its first payment document), or null when
    *  none is queued (a test order, a no-charge save, an order before 26/11/2026). */
   invoice_doc?: { status: 'pending' | 'issuing' | 'issued' | 'failed'; number: string | null; url: string | null } | null;
+  /** "ביטול וזיכוי" of a reception order stopped at this step (27/11/2026),
+   *  with its words. Null when it never ran, or finished. */
+  cancel_failed_step?: 'refund' | 'credit' | 'cancel' | null;
+  cancel_error?: string | null;
 }
 
 /** One "פרטי הזמנה" section of the issue window: an OPEN order of the same
@@ -523,6 +527,9 @@ export interface ChipOrderWindowOrder {
   refund_in_flight: boolean;
   /** The order's Morning documents, oldest first (26/11/2026). */
   documents: ChipOrderDocumentView[];
+  /** "ביטול וזיכוי" (27/11/2026) stopped at this step, with its words. */
+  cancel_failed_step: 'refund' | 'credit' | 'cancel' | null;
+  cancel_error: string | null;
 }
 
 /** One Morning document row of an order, as the window shows it. */
@@ -533,6 +540,12 @@ export interface ChipOrderDocumentView {
   number: string | null;
   url: string | null;
   last_error: string | null;
+  /** Every Morning document of the row (a credit: 330 and the receipt). */
+  numbers?: string[];
+  /** Whether Morning was asked to email it (27/11/2026): `sent` (to
+   *  `email_to`), `no_email` (the order has none), null = not recorded. */
+  email_status?: 'sent' | 'no_email' | null;
+  email_to?: string | null;
 }
 
 /** A reception order made for extra chips of the order the window shows. */

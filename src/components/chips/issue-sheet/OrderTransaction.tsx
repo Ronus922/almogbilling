@@ -79,7 +79,9 @@ import { chipOrderDocState } from '@/lib/chipOrders/orderRows';
 import { PICKUP_ORDERER_KEY } from '@/lib/chipOrders/pickup';
 import { CHIP_ORDER_EXTRA_LABEL, CHIP_ORDER_RECEPTION_LABEL, STORED_PAYMENT_LABEL } from '@/lib/chipOrders/reception';
 import { e164ToLocal } from '@/lib/portal/phone';
+import { RECEPTION_CANCEL_LABEL, receptionCancelStoppedText } from '@/lib/chipOrders/receptionCancelText';
 import { CollectorPicker, type CollectorOption } from '../CollectorPicker';
+import { ReceptionCancelDialog } from '../ReceptionCancelDialog';
 import { AlertIco, CheckIco, Ico, ROLE_SHORT, TrashIco, roleTone } from './parts';
 
 const DUE = new Intl.DateTimeFormat('he-IL', {
@@ -187,9 +189,8 @@ export function OrderTransaction({
   // "נאסף": asked first; who collected is optional.
   const [collectOpen, setCollectOpen] = useState(false);
   const [collector, setCollector] = useState<string | null>(null);
-  // "בטל הזמנת קבלה": a reason is required.
+  // "ביטול וזיכוי" (27/11/2026): the shared confirmation (ReceptionCancelDialog).
   const [cancelOpen, setCancelOpen] = useState(false);
-  const [cancelReason, setCancelReason] = useState('');
   // "זיכוי": a reason is required.
   const [refundOpen, setRefundOpen] = useState(false);
   const [refundReason, setRefundReason] = useState('');
@@ -214,8 +215,6 @@ export function OrderTransaction({
   // A test card in PayPlus's sandbox — no money moved.
   const sandbox = o.card_env === 'sandbox';
   const paidAmount = cardPaid ? o.card_paid_amount ?? o.total : o.total;
-  // The order has a Morning invoice — a cancellation credits it.
-  const hasInvoice = (o.documents ?? []).some((d) => d.kind === 'invoice');
   // "זיכוי" (26/11/2026): a web order the card paid, not refunded yet and with
   // no refund on its way — in any status; a reception card order only once it
   // was cancelled (its refund then failed). Admin and super admin only.
@@ -284,25 +283,6 @@ export function OrderTransaction({
     const detail = data.refund_label ? `זיכוי: ${data.refund_label}${data.refund_note ? ` — ${data.refund_note}` : ''}` : undefined;
     if (data.refund_status === 'manual_required') toast.warning('ההזמנה נדחתה — הזיכוי לא בוצע אוטומטית', { description: detail });
     else toast.success('ההזמנה נדחתה', detail ? { description: detail } : undefined);
-  }
-
-  /** "בטל הזמנת קבלה" — the toast says where the money stands. */
-  function afterCancel(data: ActionAnswer) {
-    const title = 'הזמנת הקבלה בוטלה — הצ׳יפים שלה הושבתו';
-    const refund = data.refund ?? null;
-    if (refund?.kind === 'refunded') {
-      toast.success(title, { description: refund.full ? 'זוכה במלואו לכרטיס דרך PayPlus' : 'זוכה חלקית לכרטיס דרך PayPlus' });
-    } else if (refund) {
-      toast.warning('הזמנת הקבלה בוטלה, אבל הזיכוי בכרטיס לא בוצע', { description: refund.note });
-    } else {
-      const method = data.payment_method ?? o.payment_method;
-      const by = method === 'cash' ? 'במזומן' : method === 'bank_transfer' ? 'בהעברה' : null;
-      toast.success(title, {
-        description: by
-          ? `את הכסף מחזירים ידנית ${by}${hasInvoice ? '; חשבונית זיכוי תופק במורנינג' : ''}`
-          : 'את הכסף — אם שולם — מחזירים ידנית, מחוץ למערכת',
-      });
-    }
   }
 
   /** "זיכוי" after the confirmation. Refunded → the window closes (the row
@@ -400,12 +380,6 @@ export function OrderTransaction({
     : o.is_test
       ? 'הזמנת בדיקה: היא תסומן „נדחה” (לא היה חיוב — הזיכוי „לא נדרש (בדיקה)”). המזמין יקבל מייל ווואטסאפ עם הסיבה.'
       : 'ההזמנה תסומן „נדחה”. היא לא שולמה בכרטיס דרך המערכת, ולכן את הכסף מחזירים ידנית (הזיכוי יסומן „דורש זיכוי ידני”). המזמין יקבל מייל ווואטסאפ עם הסיבה ומצב הזיכוי.';
-
-  const cancelMoney = cardPaid
-    ? 'יבוצע זיכוי מלא לכרטיס דרך PayPlus.'
-    : o.payment_method === 'cash' || o.payment_method === 'bank_transfer'
-      ? `את הכסף מחזירים ידנית ${o.payment_method === 'cash' ? 'במזומן' : 'בהעברה'}${hasInvoice ? '; תופק חשבונית זיכוי במורנינג' : ''}.`
-      : 'החזר הכסף — אם שולם — נעשה ידנית, מחוץ למערכת.';
 
   const refundText = sandbox || o.is_test
     ? `יבוצע זיכוי מלא של ${formatIlsAfter(paidAmount)} לכרטיס הבדיקה, בסביבת הבדיקות של PayPlus (אין כסף אמיתי), והצ׳יפים הפעילים של ההזמנה יושבתו. בהזמנת בדיקה לא מופקת חשבונית זיכוי. הפעולה אינה הפיכה.`
@@ -582,6 +556,16 @@ export function OrderTransaction({
                   ) : state.kind === 'none' ? null : (
                     <span className={cn('ci-docstate', state.kind === 'failed' && 'ci-fail')}>{state.text}</span>
                   )}
+                  {d.status === 'issued' && (d.numbers?.length ?? 0) > 1 && (
+                    <small className="ci-docmail">מסמכים <span className="ci-num">{d.numbers!.join(', ')}</span></small>
+                  )}
+                  {d.status === 'issued' && d.email_status && (
+                    <small className="ci-docmail" data-testid="chip-order-document-email">
+                      {d.email_status === 'sent'
+                        ? <>מורנינג שלח למייל <span className="ci-num" dir="ltr">{d.email_to}</span></>
+                        : 'לא נשלח במייל — אין מייל בהזמנה'}
+                    </small>
+                  )}
                   {d.status === 'failed' && d.last_error && <small className="ci-docerr">{d.last_error}</small>}
                 </div>
               );
@@ -712,14 +696,16 @@ export function OrderTransaction({
               </button>
             )}
             {/* A reception order is real and collected the moment it is made:
-                cancelling it is its only way back. Admin and super admin. Also
-                a reception order the card PAID whose chips were never saved
-                (the window was closed after the payment): cancel = refund. */}
+                "ביטול וזיכוי" (27/11/2026) is its only way back — the refund,
+                the credit document, then the order cancelled and its chips
+                disabled. Admin and super admin. Also a reception order the card
+                PAID whose chips were never saved (the window was closed after
+                the payment). */}
             {reception && (collected || (o.status === 'paid' && cardPaid)) && canAdminOrders && (
               <button type="button" className="ci-btn ci-danger" disabled={disabled || busy !== null}
-                onClick={() => { setCancelReason(''); setModal('cancel', true); }} data-testid="chip-order-cancel-reception">
+                onClick={() => setModal('cancel', true)} data-testid="chip-order-cancel-reception">
                 <TrashIco size={13} />
-                בטל הזמנת קבלה
+                {o.cancel_failed_step ? 'המשך ביטול וזיכוי' : RECEPTION_CANCEL_LABEL}
               </button>
             )}
             {o.is_test && (
@@ -730,6 +716,12 @@ export function OrderTransaction({
               </button>
             )}
           </div>
+          {reception && o.cancel_failed_step && o.status !== 'rejected' && (
+            <p className="ci-reason ci-stop" role="status" data-testid="chip-order-cancel-stopped">
+              <AlertIco size={13} />
+              <span>{receptionCancelStoppedText(o.cancel_failed_step)}{o.cancel_error ? ` — ${o.cancel_error}` : ''}</span>
+            </p>
+          )}
           {readyNote && (
             <p className={cn('ci-reason', readyNote.quiet && 'ci-quiet')} role="status" data-testid="chip-order-ready-reason">
               <AlertIco size={13} />
@@ -819,39 +811,14 @@ export function OrderTransaction({
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={cancelOpen} onOpenChange={(v) => { if (!busy) setModal('cancel', v); }}>
-        <AlertDialogContent dir="rtl" className="p-6" data-testid="chip-order-cancel-confirm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>לבטל את הזמנת הקבלה {o.order_number}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              ההזמנה תסומן „{CHIP_ORDER_CANCELLED_LABEL}” ותישאר בטבלה. הצ׳יפים שלה יושבתו (הם לא נמחקים, ואפשר להחזיר כל אחד לפעיל). {cancelMoney} לא נשלחת הודעה ללקוח. אי אפשר לבטל את הביטול.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <Textarea
-            value={cancelReason}
-            onChange={(e) => setCancelReason(e.target.value)}
-            placeholder="סיבת הביטול (חובה)"
-            maxLength={500}
-            className="min-h-[96px] px-3 py-2"
-            aria-label="סיבת הביטול"
-          />
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy !== null} className="h-11 px-4">חזרה</AlertDialogCancel>
-            <Button
-              type="button"
-              disabled={busy !== null || cancelReason.trim().length < 2}
-              onClick={async () => {
-                const ok = await act('cancel', () => postJson(`/api/chip-orders/${o.id}/cancel`, { reason: cancelReason.trim() }), afterCancel);
-                if (ok) { setModal('cancel', false); setCancelReason(''); }
-              }}
-              className="h-11 gap-2 bg-destructive px-4 text-white hover:bg-destructive/90"
-            >
-              {busy === 'cancel' && <Loader2 className="h-4 w-4 animate-spin" />}
-              בטל הזמנת קבלה
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {canAdminOrders && reception && (
+        <ReceptionCancelDialog
+          orderId={o.id}
+          open={cancelOpen}
+          onOpenChange={(v) => setModal('cancel', v)}
+          onChanged={(result) => (result === 'done' ? onGone() : onReload())}
+        />
+      )}
 
       <AlertDialog open={refundOpen} onOpenChange={(v) => { if (!busy) setModal('refund', v); }}>
         <AlertDialogContent dir="rtl" className="p-6" data-testid="chip-order-refund-confirm">

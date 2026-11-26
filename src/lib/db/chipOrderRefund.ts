@@ -82,6 +82,9 @@ export interface RecordRefund {
   closeOpen: boolean;
   /** Its active chips are disabled (needs `by`). */
   disableChips: boolean;
+  /** Kept on the order as refund_note (27/11/2026): a refund made in PayPlus
+   *  directly, found before "ביטול וזיכוי" — the order says so. */
+  note?: string | null;
 }
 
 export type RecordedRefund =
@@ -158,7 +161,7 @@ export async function recordRefund(orderId: string, r: RecordRefund): Promise<Re
               refunded_at = coalesce(refunded_at, now()),
               refunded_amount = $2,
               refund_transaction_uid = coalesce(refund_transaction_uid, $3),
-              refund_status = $4, refund_note = null,
+              refund_status = $4, refund_note = $10,
               refund_via = coalesce(refund_via, $5),
               refunded_by = coalesce(refunded_by, $6), refunded_by_name = coalesce(refunded_by_name, $7),
               refund_reason = coalesce(refund_reason, $8),
@@ -168,7 +171,7 @@ export async function recordRefund(orderId: string, r: RecordRefund): Promise<Re
               updated_at = now()
         where id = $1`,
       [orderId, after, r.refundUid, full ? 'refunded' : 'partial', r.via, r.by?.id ?? null, r.by?.name?.slice(0, 120) ?? null,
-        r.reason, close],
+        r.reason, close, r.note?.slice(0, 500) ?? null],
     );
     // The credit document (never for a test order — enqueueDocumentInTx refuses it).
     if (o.card_env === 'production' && !o.is_test) {
@@ -191,6 +194,7 @@ export async function recordRefund(orderId: string, r: RecordRefund): Promise<Re
       metadata: {
         via: r.via, refund_uid: r.refundUid, amount: r.amount, total_refunded: after, full, closed: close,
         chips_disabled: chipsDisabled, reason: r.reason, env: o.card_env,
+        ...(r.note ? { note: r.note } : {}),
       },
     });
     return { kind: 'recorded', chipsDisabled, full, closed: close, orderNumber: o.order_number } as const;

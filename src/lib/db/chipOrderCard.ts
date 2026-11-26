@@ -17,6 +17,11 @@ import type { CardEnv, CardStatus } from '@/lib/chipOrders/card';
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{32,64}$/;
 
+/** How long the invoice of a reception card payment waits for the window's
+ *  "שמור" (which completes the orderer and releases it) before it is issued
+ *  with what the order has. */
+export const RECEPTION_INVOICE_HOLD_MINUTES = 30;
+
 /** A session is asked about for this long after it was opened: the page
  *  request lives 30 minutes (PAGE_EXPIRY_MINUTES), plus a margin for a charge
  *  that was submitted at the last moment. For as long, the order's payment
@@ -259,6 +264,11 @@ export async function recordCardPayment(
         amount: o.total,
         method: 'card',
         details: { last4: charge.last4, approval_number: charge.approvalNumber, date: israelDate(now), provider: 'payplus' },
+        // A card paid in the reception window (27/11/2026): the orderer's
+        // details — the email Morning sends the document to — reach the order
+        // only with the window's "שמור", seconds or minutes after the charge.
+        // The invoice waits for that save (which releases it), at most this.
+        ...(o.source === 'reception' ? { delayMinutes: RECEPTION_INVOICE_HOLD_MINUTES } : {}),
       });
     }
     return { kind: 'paid', orderId: o.id } as const;

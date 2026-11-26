@@ -45,6 +45,11 @@ export interface EnqueueDocument {
   details?: Record<string, unknown>;
   /** kind 'credit': the invoice row it cancels (null when none exists). */
   creditOf?: string | null;
+  /** Not before this many minutes (27/11/2026): the invoice of a card payment
+   *  made in the reception window waits for that window's "שמור", which
+   *  completes the orderer's details — the email Morning sends it to. The save
+   *  (and "ביטול וזיכוי") release it at once; otherwise it is issued then. */
+  delayMinutes?: number;
 }
 
 /**
@@ -56,11 +61,12 @@ export async function enqueueDocumentInTx(client: PoolClient, e: EnqueueDocument
   const o = (await client.query<{ is_test: boolean }>(`select is_test from public.chip_orders where id = $1`, [e.orderId])).rows[0];
   if (!o || o.is_test) return null;
   const r = await client.query<{ id: string }>(
-    `insert into public.chip_order_documents (order_id, kind, payment_key, ref, amount, payment_method, details, credit_of)
-     values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+    `insert into public.chip_order_documents (order_id, kind, payment_key, ref, amount, payment_method, details, credit_of, next_attempt_at)
+     values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, now() + make_interval(mins => $9))
      on conflict (payment_key) do nothing
      returning id`,
-    [e.orderId, e.kind, e.paymentKey, newRef(), e.amount, e.method, JSON.stringify(e.details ?? {}), e.creditOf ?? null],
+    [e.orderId, e.kind, e.paymentKey, newRef(), e.amount, e.method, JSON.stringify(e.details ?? {}), e.creditOf ?? null,
+      Math.max(0, Math.floor(e.delayMinutes ?? 0))],
   );
   return r.rows[0]?.id ?? null;
 }
@@ -103,13 +109,15 @@ export interface ClaimedDocument {
  *  than `staleMinutes` is claimed again, marked `recovering` — and so is a row
  *  with the error of an earlier attempt (a timeout, or a reply that could not
  *  be read, may come after Morning created the document). */
-export async function claimDueDocuments(limit: number, staleMinutes = 10): Promise<ClaimedDocument[]> {
+export async function claimDueDocuments(limit: number, staleMinutes = 10, orderId: string | null = null): Promise<ClaimedDocument[]> {
   const r = await query<ClaimedDocument>(
     `with picked as (
        select id, status as was from public.chip_order_documents
-        where (status = 'pending' and next_attempt_at <= now())
-           or (status = 'issuing' and claimed_at < now() - make_interval(mins => $2))
-        order by next_attempt_at
+        where ((status = 'pending' and next_attempt_at <= now())
+           or (status = 'issuing' and claimed_at < now() - make_interval(mins => $2)))
+          and ($3::uuid is null or order_id = $3::uuid)
+        -- An invoice before the credit that cancels it (both due at once).
+        order by next_attempt_at, created_at
         limit $1
         for update skip locked
      )
@@ -121,7 +129,7 @@ export async function claimDueDocuments(limit: number, staleMinutes = 10): Promi
                d.attempts, d.credit_of, d.details, d.morning_docs, d.created_at,
                (picked.was = 'issuing' or d.last_error is not null) as recovering,
                d.claimed_at::text as claim`,
-    [limit, staleMinutes],
+    [limit, staleMinutes, orderId],
   );
   return r.rows;
 }
@@ -143,14 +151,15 @@ export async function renewDocumentClaim(id: string, claim: string): Promise<str
 }
 
 /** Is anything due now? (cheap — the triggers call it before claiming). */
-export async function hasDueDocuments(staleMinutes = 10): Promise<boolean> {
+export async function hasDueDocuments(staleMinutes = 10, orderId: string | null = null): Promise<boolean> {
   const r = await queryOne<{ due: boolean }>(
     `select exists (
        select 1 from public.chip_order_documents
-        where (status = 'pending' and next_attempt_at <= now())
-           or (status = 'issuing' and claimed_at < now() - make_interval(mins => $1))
+        where ((status = 'pending' and next_attempt_at <= now())
+           or (status = 'issuing' and claimed_at < now() - make_interval(mins => $1)))
+          and ($2::uuid is null or order_id = $2::uuid)
      ) as due`,
-    [staleMinutes],
+    [staleMinutes, orderId],
   );
   return r?.due === true;
 }
@@ -163,18 +172,26 @@ export async function recordDocumentProgress(id: string, docs: IssuedMorningDoc[
   );
 }
 
+/** Whether Morning was asked to email a document (27/11/2026): to the address
+ *  on the request (`sent`), or not at all — the order has no email
+ *  (`no_email`). Undefined = not known (a document found again in Morning
+ *  after a crash): nothing is recorded. */
+export type DocumentEmail = { status: 'sent'; to: string } | { status: 'no_email' };
+
 /** Issued. An invoice's first document is mirrored onto the order
  *  (invoice_number / invoice_url) — the number and link the order shows. */
-export async function markDocumentIssued(id: string, docs: IssuedMorningDoc[]): Promise<void> {
+export async function markDocumentIssued(id: string, docs: IssuedMorningDoc[], email?: DocumentEmail): Promise<void> {
   await withTransaction(async (client) => {
     const row = (
       await client.query<{ order_id: string; kind: DocKind }>(
         `update public.chip_order_documents
             set status = 'issued', issued_at = now(), claimed_at = null, last_error = null,
-                morning_docs = $2::jsonb, updated_at = now()
+                morning_docs = $2::jsonb,
+                email_status = coalesce($3, email_status), email_to = case when $3 is null then email_to else $4 end,
+                updated_at = now()
           where id = $1 and status = 'issuing'
           returning order_id, kind`,
-        [id, JSON.stringify(docs)],
+        [id, JSON.stringify(docs), email?.status ?? null, email?.status === 'sent' ? email.to.slice(0, 254) : null],
       )
     ).rows[0];
     if (row?.kind === 'invoice' && docs[0]) {
@@ -224,6 +241,31 @@ export async function failDocument(id: string, error: string): Promise<boolean> 
  *  their attempts reset. Their last_error stays: the next claim marks them
  *  `recovering`, so Morning is searched before anything is posted again (the
  *  failed attempt may have created the document). Returns how many. */
+/** "ביטול וזיכוי" (27/11/2026): every document of the order that waits is
+ *  due NOW — an invoice held for the reception window's save, a row waiting
+ *  out its backoff — and a failed one goes back to the queue (as "הפק חשבונית
+ *  שוב" does: attempts reset, Morning searched first). Returns how many. */
+export async function releaseDocumentsOfOrder(orderId: string): Promise<number> {
+  const r = await query(
+    `update public.chip_order_documents
+        set status = 'pending', next_attempt_at = now(),
+            attempts = case when status = 'failed' then 0 else attempts end, updated_at = now()
+      where order_id = $1 and (status = 'failed' or (status = 'pending' and next_attempt_at > now()))`,
+    [orderId],
+  );
+  return r.rowCount ?? 0;
+}
+
+/** The reception window's "שמור" completed the orderer of a card-paid order:
+ *  its held invoice is due now (inside the save's transaction). */
+export async function releaseHeldInvoiceInTx(client: PoolClient, orderId: string): Promise<void> {
+  await client.query(
+    `update public.chip_order_documents set next_attempt_at = now(), updated_at = now()
+      where order_id = $1 and kind = 'invoice' and status = 'pending' and next_attempt_at > now()`,
+    [orderId],
+  );
+}
+
 export async function retryFailedDocuments(orderId: string): Promise<number> {
   const r = await query(
     `update public.chip_order_documents
@@ -284,6 +326,10 @@ export interface OrderDocumentSummary {
   url: string | null;
   last_error: string | null;
   attempts: number;
+  /** Every Morning document of the row (a credit has two: 330 + 400). */
+  numbers: string[];
+  email_status: 'sent' | 'no_email' | null;
+  email_to: string | null;
 }
 
 /** The documents of these orders, oldest first, keyed by order id. */
@@ -292,7 +338,9 @@ export async function listDocumentsOfOrders(orderIds: string[]): Promise<Map<str
   if (orderIds.length === 0) return out;
   const r = await query<OrderDocumentSummary & { order_id: string }>(
     `select order_id, kind, status, amount::float8 as amount,
-            morning_docs->0->>'number' as number, morning_docs->0->>'url' as url, last_error, attempts
+            morning_docs->0->>'number' as number, morning_docs->0->>'url' as url, last_error, attempts,
+            coalesce((select array_agg(x->>'number') from jsonb_array_elements(morning_docs) x), '{}') as numbers,
+            email_status, email_to
        from public.chip_order_documents where order_id = any($1::uuid[])
       order by created_at`,
     [orderIds],

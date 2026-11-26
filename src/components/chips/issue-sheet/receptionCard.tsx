@@ -418,18 +418,19 @@ export function ReceptionCardPanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: TEXT.testCancelReason }),
       });
-      const data = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        refund?: { kind: 'refunded'; full: boolean } | { kind: 'manual_required' | 'unknown'; note: string } | null;
-      };
+      // "ביטול וזיכוי" (27/11/2026): the refund comes first — a refund that did
+      // not go through stops the run there, and the order stays paid (the card
+      // stays on screen; pressing again runs what is left — never a second refund).
+      const data = (await res.json().catch(() => ({}))) as { error?: string; ok?: boolean; message?: string | null };
       if (!res.ok) throw new Error(data.error ?? 'הביטול נכשל');
-      const r = data.refund ?? null;
-      const outcome = r?.kind === 'refunded'
-        ? `הזמנת הבדיקה ${c.orderNumber} בוטלה וזוכתה ${r.full ? 'במלואה' : 'חלקית'} בסביבת הבדיקות.`
-        : r ? `הזמנת הבדיקה ${c.orderNumber} בוטלה, אבל הזיכוי לא בוצע: ${r.note}`
-          : `הזמנת הבדיקה ${c.orderNumber} בוטלה.`;
-      if (r && r.kind !== 'refunded') toast.warning(outcome);
-      else toast.success(outcome);
+      if (!data.ok) {
+        const stopped = `הזמנת הבדיקה ${c.orderNumber} לא בוטלה — הזיכוי בסביבת הבדיקות לא בוצע: ${data.message ?? 'נסו שוב'}`;
+        toast.warning(stopped);
+        setError(stopped);
+        return;
+      }
+      const outcome = `הזמנת הבדיקה ${c.orderNumber} בוטלה וזוכתה במלואה בסביבת הבדיקות.`;
+      toast.success(outcome);
       onCard(null);
       openedKey.current = null;
       setError(null);

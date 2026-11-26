@@ -203,7 +203,7 @@ export function IssueChipSheet(props: IssueChipSheetProps) {
 
 // ── The window WITHOUT an order ─────────────────────────────────────────────
 
-function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChipSheetProps) {
+function RegistryIssueSheet({ open, onOpenChange, initial, onIssued, canAdminOrders = false }: IssueChipSheetProps) {
   // Contact selection
   const [contactId, setContactId] = useState<string | null>(null);
   const [contactLabel, setContactLabel] = useState('');
@@ -1077,7 +1077,13 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
                       onCommitNumber={() => void quick.commitNumber(allSaved, (n, id) => numberExistsInWindow(n, id), submitting)}
                       onRemovePending={(n) => removePending(block, n)}
                     />
-                    <ReceptionRecords records={recordsOf(block)} />
+                    {/* "ביטול וזיכוי" on a paid reception order's line (27/11/2026) —
+                        admin and super admin; afterwards the chips and the line load again. */}
+                    <ReceptionRecords
+                      records={recordsOf(block)}
+                      canCancel={canAdminOrders}
+                      onChanged={() => { setChipsVersion((v) => v + 1); onIssued(); }}
+                    />
                     {invalid && <p className="ci-err mt-2">⚠️ {invalid}</p>}
                   </HolderBlock>
                 );

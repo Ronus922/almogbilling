@@ -120,10 +120,32 @@ let generatedSeq = 0;
 let refundSeq = 0;
 /** PayPlus refuses the next refunds (the card company declined) while true. */
 let refundRefused = false;
+/** Morning (27/11/2026): "ביטול וזיכוי" issues the credit before it cancels.
+ *  A stub that issues every document; what it was sent is kept. */
+const MORNING = { token: 'https://api.morning.co/idp/v1/oauth/token', api: 'https://api.greeninvoice.co.il/api/v1' };
+const morningDocs: { type: number; emails: unknown }[] = [];
+let morningSeq = 0;
+function morningAnswer(url: URL, init: RequestInit | undefined, body: Record<string, unknown>): Response | null {
+  if (url.href === MORNING.token) return reply(200, { accessToken: 'morning-test-token', tokenType: 'Bearer', expiresAt: Math.floor(Date.now() / 1000) + 3600 });
+  if (!url.href.startsWith(MORNING.api)) return null;
+  const path = url.href.slice(MORNING.api.length);
+  if (path === '/businesses/me') return reply(200, { type: 2, exemption: false });
+  if (path === '/documents/info?type=320') return reply(200, { exemption: false, vatRate: 0.18 });
+  if (path === '/documents/types?lang=he') return reply(200, [{ id: 320 }, { id: 330 }, { id: 400 }]);
+  if (path === '/documents/search') return reply(200, { items: [] });
+  if (path === '/documents' && init?.method === 'POST') {
+    morningSeq += 1;
+    morningDocs.push({ type: Number(body.type), emails: (body.client as Record<string, unknown> | undefined)?.emails });
+    return reply(200, { id: `${RUN}-0000-4000-8000-${String(morningSeq).padStart(12, '0')}`, number: 60000 + morningSeq, url: { origin: `https://docs.example.test/${morningSeq}` } });
+  }
+  return reply(404, { errorMessage: `no stub for ${path}` });
+}
 const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
   const url = new URL(input instanceof Request ? input.url : String(input));
   const headers = new Headers(init?.headers);
   const body = (init?.body ? JSON.parse(String(init.body)) : {}) as Record<string, unknown>;
+  const morning = morningAnswer(url, init, body);
+  if (morning) return morning;
   if (url.origin !== ORIGIN.sandbox && url.origin !== ORIGIN.production) {
     elsewhere.push(url.href);
     throw new TypeError(`no network in this test: ${url.href}`);
@@ -139,6 +161,16 @@ const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit
     return answer ? answer() : reply(500, { message: 'no answer set for this session in the test' });
   }
   if (url.pathname.startsWith('/api/v1.0/PaymentPages/Disable/')) return reply(200, { results: { status: 'success', code: 0 } });
+  // "ביטול וזיכוי" asks first (read only): the charge is there, nothing returned.
+  if (url.pathname === '/api/v1.0/Transactions/View') {
+    if (typeof body.transaction_uid === 'string') {
+      return reply(200, {
+        results: { status: 'success', code: 0 },
+        data: [{ transaction: { transaction_uid: body.transaction_uid, transaction_type: 'Charge', status_code: '000', transaction_is_cancelled: false, amount: 1 }, data: {} }],
+      });
+    }
+    return reply(200, { results: { status: 'error', code: 1, description: 'no transactions' }, data: {} });
+  }
   if (url.pathname === '/api/v1.0/Transactions/RefundByTransactionUID') {
     if (refundRefused) {
       return reply(200, { results: { status: 'error', code: 1, description: 'הזיכוי נדחה על ידי חברת האשראי' }, data: { transaction: { status_code: '004' } } });
@@ -482,9 +514,12 @@ d('"אשראי" at the reception — the card order, its payment, the save onto 
     sent.length = 0;
     const res = await cancel(row.id, 'החלון נסגר לפני ההנפקה');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
-      ok: true, chips_disabled: 0, payment_method: 'card', refund: { kind: 'refunded', full: true, closed: false, chipsDisabled: 0 },
+    expect(await res.json()).toMatchObject({
+      ok: true, failed_step: null, chips_disabled: 0, refund: 'refunded', credit_numbers: [], credit_email: null,
     });
+    // PayPlus is asked first (read only), in the sandbox.
+    expect(callsTo('Transactions/View').every((c) => c.origin === ORIGIN.sandbox)).toBe(true);
+    expect(callsTo('Transactions/View').length).toBeGreaterThan(0);
     expect(callsTo('Transactions/RefundByTransactionUID')).toHaveLength(1);
     expect(callsTo('Transactions/RefundByTransactionUID')[0]).toMatchObject({ origin: ORIGIN.sandbox, apiKey: DEV.api });
     expect(callsTo('Transactions/RefundByTransactionUID')[0]!.body).toEqual({ transaction_uid: tx, amount: PRICE, more_info: `refund:${row.order_number}`, initial_invoice: false });
@@ -507,7 +542,7 @@ d('"אשראי" at the reception — the card order, its payment, the save onto 
       as(key);
       const res = await reject(row.id, 'ניסיון דחייה');
       expect(res.status, key).toBe(409);
-      expect((await res.json()).error).toContain('בטל הזמנת קבלה');
+      expect((await res.json()).error).toContain('ביטול וזיכוי');
     }
     as('super');
     const refused = await refund(row.id, 'ניסיון זיכוי');
@@ -615,13 +650,19 @@ d('"אשראי" at the reception — the card order, its payment, the save onto 
     live = { o, row, tx, numbers };
   });
 
-  it('"בטל הזמנת קבלה" of that paid card order: refunded through PayPlus (production) with ONE credit row crediting its invoice; its chips disabled; nobody messaged', async () => {
+  it('"ביטול וזיכוי" of that paid card order: refunded through PayPlus (production), its invoice and the credit issued in Morning to the orderer\'s email, then its chips disabled; nobody messaged', async () => {
+    fakeEnv.MORNING_API_KEY_ID = 'morning-test-id';
+    fakeEnv.MORNING_API_KEY_SECRET = 'morning-test-secret';
+    morningDocs.length = 0;
+    // What PayPlus says of the session (read first): the charge, nothing returned.
+    ipn.set(live.o.session.page_request_uid, charged({ number: live.row.order_number, total: live.row.total }, live.o.session.page_request_uid, live.tx));
     const [invoice] = await docsOf(live.row.id);
     const res = await cancel(live.row.id, 'החזרת התשלום בקבלה');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
-      ok: true, chips_disabled: 3, payment_method: 'card', refund: { kind: 'refunded', full: true, closed: false, chipsDisabled: 0 },
-    });
+    const body = await res.json();
+    expect(body).toMatchObject({ ok: true, chips_disabled: 3, refund: 'refunded', credit_email: { status: 'sent', to: ORDERER.email } });
+    // The invoice (still waiting — no key until now) first, then 330 + 400, every one to the orderer.
+    expect(morningDocs).toEqual([{ type: 320, emails: [ORDERER.email] }, { type: 330, emails: [ORDERER.email] }, { type: 400, emails: [ORDERER.email] }]);
     const refunds = callsTo('Transactions/RefundByTransactionUID');
     expect(refunds).toHaveLength(1);
     expect(refunds[0]).toMatchObject({ origin: ORIGIN.production, apiKey: PROD.api, secretKey: PROD.secret });
@@ -635,7 +676,9 @@ d('"אשראי" at the reception — the card order, its payment, the save onto 
     expect((await chipsOf(row.id)).map((c) => c.status)).toEqual(['inactive', 'inactive', 'inactive']);
     const docs = await docsOf(row.id);
     expect(docs).toHaveLength(2);
-    expect(docs[1]).toMatchObject({ kind: 'credit', payment_key: `refund:rf-${RUN}-rc-${refundSeq}`, credit_of: invoice!.id, amount: 3 * PRICE, payment_method: 'card' });
+    expect(docs[1]).toMatchObject({
+      kind: 'credit', payment_key: `refund:rf-${RUN}-rc-${refundSeq}`, credit_of: invoice!.id, amount: 3 * PRICE, payment_method: 'card', status: 'issued',
+    });
     // A card is credited by its refund — never by a "cancel:" credit as well.
     expect(docs.some((x) => x.payment_key === `cancel:${row.id}`)).toBe(false);
     await runAfter();
@@ -645,11 +688,12 @@ d('"אשראי" at the reception — the card order, its payment, the save onto 
     expect(callsTo('Transactions/RefundByTransactionUID')).toHaveLength(1);
   });
 
-  // Regression (review, 26/11): the cancel commits first; when its PayPlus
-  // refund then fails, the order is cancelled and can be cancelled no more —
-  // "זיכוי" must still refund it, with its credit document.
-  it('a REAL reception card order whose refund PayPlus REFUSED during "בטל הזמנת קבלה" is refunded afterwards by "זיכוי" (admins only) — with ONE credit row crediting its invoice', async () => {
+  // 27/11/2026: the refund comes FIRST — a refund PayPlus refuses stops
+  // "ביטול וזיכוי" there, the order not cancelled; the retry runs what is left.
+  it('a REAL reception card order whose refund PayPlus REFUSES: "ביטול וזיכוי" stops at the refund (nothing cancelled, no credit); the retry refunds it, credits it in Morning and cancels it — two refund calls, never a third', async () => {
     fakeEnv.PAYPLUS_LIVE_CHARGING = 'on';
+    fakeEnv.MORNING_API_KEY_ID = 'morning-test-id';
+    fakeEnv.MORNING_API_KEY_SECRET = 'morning-test-secret';
     const o = await opened(cardBody({ new_chips: 1, test: false }));
     let row = await byToken(o.token);
     track(row.id);
@@ -665,40 +709,39 @@ d('"אשראי" at the reception — the card order, its payment, the save onto 
     await runAfter();
     const [invoice] = await docsOf(row.id);
     expect(invoice).toMatchObject({ kind: 'invoice', payment_key: `card:${tx}` });
+    ipn.set(o.session.page_request_uid, charged({ number: row.order_number, total: row.total }, o.session.page_request_uid, tx));
 
-    // Paid, chips never issued, cancelled — PayPlus refuses the refund.
+    // Paid, chips never issued — PayPlus refuses the refund.
     refundRefused = true;
-    const res = await cancel(row.id, 'ביטול בקבלה');
+    let res = await cancel(row.id, 'ביטול בקבלה');
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toMatchObject({ ok: true, chips_disabled: 0, payment_method: 'card', refund: { kind: 'manual_required' } });
-    expect(body.refund.note).toContain('PayPlus סירב לזיכוי');
+    let body = await res.json();
+    expect(body).toMatchObject({ ok: false, failed_step: 'refund', refund: 'none' });
+    expect(body.message).toContain('PayPlus סירב לזיכוי');
     row = await byToken(o.token);
-    expect(row).toMatchObject({ status: 'rejected', refund_status: 'manual_required', refunded_at: null });
+    expect(row).toMatchObject({ status: 'paid', refund_status: 'manual_required', refunded_at: null, cancelled_by: null });
     expect(await docsOf(row.id)).toHaveLength(1);
-    expect((await cancel(row.id, 'שוב')).status).toBe(409);
 
-    // "זיכוי" — admins only — refunds it now.
+    // The retry — no reason needed again — refunds, credits and cancels.
     refundRefused = false;
     as('manager');
-    expect((await refund(row.id, 'החזר לאחר ביטול')).status).toBe(403);
+    expect((await cancelRoute(json(`/api/chip-orders/${row.id}/cancel`, {}), { params: Promise.resolve({ id: row.id }) })).status).toBe(403);
     as('super');
-    const done = await refund(row.id, 'החזר לאחר ביטול');
-    expect(done.status).toBe(200);
-    expect(await done.json()).toEqual({ ok: true, kind: 'refunded', full: true, closed: false, chipsDisabled: 0 });
+    res = await cancelRoute(json(`/api/chip-orders/${row.id}/cancel`, {}), { params: Promise.resolve({ id: row.id }) });
+    body = await res.json();
+    expect(body).toMatchObject({ ok: true, refund: 'refunded', chips_disabled: 0 });
     const refunds = callsTo('Transactions/RefundByTransactionUID');
     expect(refunds).toHaveLength(2);
-    expect(refunds[1]).toMatchObject({ origin: ORIGIN.production, apiKey: PROD.api });
     expect(refunds[1]!.body).toEqual({ transaction_uid: tx, amount: PRICE, more_info: `refund:${row.order_number}`, initial_invoice: false });
     row = await byToken(o.token);
-    expect(row).toMatchObject({ status: 'rejected', refund_via: 'admin', refund_status: 'refunded', refunded_amount: PRICE });
+    expect(row).toMatchObject({ status: 'rejected', refund_via: 'reception_cancel', refund_status: 'refunded', refunded_amount: PRICE, cancelled_by: users.super!.id });
     const docs = await docsOf(row.id);
     expect(docs).toHaveLength(2);
-    expect(docs[1]).toMatchObject({ kind: 'credit', payment_key: `refund:rf-${RUN}-rc-${refundSeq}`, credit_of: invoice!.id, amount: PRICE, payment_method: 'card' });
+    expect(docs[1]).toMatchObject({ kind: 'credit', payment_key: `refund:rf-${RUN}-rc-${refundSeq}`, credit_of: invoice!.id, amount: PRICE, status: 'issued' });
     await runAfter();
     expect(await messagesOf(row.id)).toBe(0);
-    // Refunded once.
-    expect((await refund(row.id, 'שוב')).status).toBe(409);
+    // Done once.
+    expect((await cancel(row.id, 'שוב')).status).toBe(409);
     expect(callsTo('Transactions/RefundByTransactionUID')).toHaveLength(2);
   });
 

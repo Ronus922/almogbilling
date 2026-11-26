@@ -374,6 +374,7 @@ export function ChipsPageClient({
           loading={ordersLoading}
           onOpen={canEdit ? openOrderRow : undefined}
           canEdit={canEditOrders}
+          canAdmin={canAdminOrders}
           unfinishedTests={unfinishedTests}
           onChanged={fetchOrders}
           documentsConnected={documentsConnected}

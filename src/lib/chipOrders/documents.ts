@@ -3,7 +3,7 @@ import { logger } from '@/lib/logger';
 import { alertChipOrderAdmins } from './alerts';
 import {
   claimDueDocuments, failDocument, getDocumentSource, hasDueDocuments, markDocumentIssued, postponeDocument,
-  recordDocumentProgress, renewDocumentClaim, rescheduleDocument, type ClaimedDocument, type IssuedMorningDoc,
+  recordDocumentProgress, renewDocumentClaim, rescheduleDocument, type ClaimedDocument, type DocumentEmail, type IssuedMorningDoc,
 } from '@/lib/db/chipOrderDocuments';
 import {
   createDocument, morningConfig, MorningApiError, readBusinessProfile, searchDocuments,
@@ -113,6 +113,15 @@ function clientOf(o: { full_name: string; email: string | null; phone_e164: stri
   return { name: o.full_name, email: o.email, phone, street: o.address_street, city: o.address_city, zip: o.address_zip };
 }
 
+/** What Morning is asked to do with the document's email (27/11/2026). The
+ *  request carries client.emails = [the order's email] — Morning sends the
+ *  download link there, with the PDF attached (`attachment: true`; Morning's
+ *  OpenAPI 2.0.0, CreateDocumentRequest). An order with no email: the
+ *  document is issued without one, and that is recorded on its row. */
+function emailOf(c: DocClient): DocumentEmail {
+  return c.email ? { status: 'sent', to: c.email } : { status: 'no_email' };
+}
+
 function detailsDate(details: Record<string, unknown>, fallback: string): string {
   const d = details.date;
   return typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : fallback;
@@ -163,7 +172,7 @@ async function issueOne(cfg: MorningConfig, choice: DocTypeChoice & { docType: M
       apartments, client, lines, amount: row.amount, payment, ref: row.ref, date: today,
     });
     const issued = await createDocument(cfg, body);
-    await markDocumentIssued(row.id, [issued]);
+    await markDocumentIssued(row.id, [issued], emailOf(client));
     return 'issued';
   }
 
@@ -183,15 +192,21 @@ async function issueOne(cfg: MorningConfig, choice: DocTypeChoice & { docType: M
     apartments, client, lines, amount: row.amount, payment, ref: row.ref, date: today,
   });
   const done: IssuedMorningDoc[] = [...row.morning_docs];
+  let posted = false;
   for (let k = done.length; k < bodies.length; k++) {
     const type = Number(bodies[k].type);
     let issued: IssuedMorningDoc | null = null;
     if (search) issued = await findLost(cfg, row, type, client.name);
-    issued ??= await createDocument(cfg, bodies[k]);
+    if (!issued) {
+      issued = await createDocument(cfg, bodies[k]);
+      posted = true;
+    }
     done.push(issued);
     await recordDocumentProgress(row.id, done);
   }
-  await markDocumentIssued(row.id, done);
+  // The email is recorded when this run posted a document of the row (both
+  // carry the same client); one only found again in Morning says nothing new.
+  await markDocumentIssued(row.id, done, posted ? emailOf(client) : undefined);
   return 'issued';
 }
 
@@ -207,21 +222,26 @@ export interface ProcessResult {
 
 /**
  * Issues what is due. Safe to call from anywhere, any number of times at once
- * (rows are claimed with SKIP LOCKED). Never throws.
+ * (rows are claimed with SKIP LOCKED). Never throws. `orderId` = only that
+ * order's rows ("ביטול וזיכוי" issues its credit document before it goes on).
  */
-export async function processDueDocuments(limit = CLAIM_LIMIT): Promise<ProcessResult> {
+export async function processDueDocuments(limit = CLAIM_LIMIT, orderId: string | null = null): Promise<ProcessResult> {
   const r: ProcessResult = { claimed: 0, issued: 0, retried: 0, failed: 0, postponed: 0, idle: null };
   try {
     const cfg = morningConfig();
     if (!cfg) return { ...r, idle: 'no_key' };
-    if (!(await hasDueDocuments())) return r;
+    if (!(await hasDueDocuments(10, orderId))) return r;
     const status = await morningStatus();
     const choice = status.choice;
     if (!choice?.docType) {
       logger.warn('[chip-docs] documents wait: no document type', { reason: status.error ?? choice?.reason ?? 'unknown' });
       return { ...r, idle: 'no_document_type' };
     }
-    const rows = await claimDueDocuments(limit);
+    const rows = await claimDueDocuments(limit, 10, orderId);
+    // An invoice before the credit that cancels it, then oldest first (the
+    // claim's RETURNING keeps no order): a credit claimed with its own invoice
+    // would otherwise wait 10 minutes for it ("ביטול וזיכוי" issues both at once).
+    rows.sort((a, b) => (a.kind === b.kind ? new Date(a.created_at).getTime() - new Date(b.created_at).getTime() : a.kind === 'invoice' ? -1 : 1));
     r.claimed = rows.length;
     for (const row of rows) {
       // A batch is worked one row at a time; a row claimed with the batch may

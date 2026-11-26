@@ -60,8 +60,11 @@ export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindo
             coalesce((select json_agg(json_build_object(
                         'kind', d.kind, 'status', d.status, 'amount', d.amount::float8,
                         'number', d.morning_docs->0->>'number', 'url', d.morning_docs->0->>'url',
-                        'last_error', d.last_error) order by d.created_at)
+                        'last_error', d.last_error,
+                        'numbers', coalesce((select json_agg(x->>'number') from jsonb_array_elements(d.morning_docs) x), '[]'::json),
+                        'email_status', d.email_status, 'email_to', d.email_to) order by d.created_at)
                         from public.chip_order_documents d where d.order_id = o.id), '[]'::json) as documents,
+            o.cancel_failed_step, o.cancel_error,
             (select x.order_number from public.chip_orders x where x.id = o.extra_of_order_id) as extra_of_order_number
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id

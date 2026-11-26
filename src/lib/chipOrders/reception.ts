@@ -148,6 +148,12 @@ export interface ReceptionRecordView {
    *  'cash_transfer' before 26/11/2026 — STORED_PAYMENT_LABEL). Null on a
    *  no-charge record. */
   payment_method: string | null;
+  /** A reception order's id ("ביטול וזיכוי" acts on it). Null on a record. */
+  order_id: string | null;
+  /** "ביטול וזיכוי" was started and stopped at this step (27/11/2026), with
+   *  its words — the line says so and offers to go on. Null otherwise. */
+  cancel_failed_step: 'refund' | 'credit' | 'cancel' | null;
+  cancel_error: string | null;
 }
 
 // ── The window's own forms ─────────────────────────────────────────────────

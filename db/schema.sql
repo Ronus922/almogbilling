@@ -1858,10 +1858,13 @@ CREATE TABLE public.chip_order_documents (
     issued_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    email_status text,
+    email_to text,
     CONSTRAINT chip_order_documents_amount_check CHECK ((amount > (0)::numeric)),
     CONSTRAINT chip_order_documents_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT chip_order_documents_claim_check CHECK (((status = 'issuing'::text) = (claimed_at IS NOT NULL))),
     CONSTRAINT chip_order_documents_credit_check CHECK (((credit_of IS NULL) OR (kind = 'credit'::text))),
+    CONSTRAINT chip_order_documents_email_check CHECK ((((email_status IS NULL) AND (email_to IS NULL)) OR ((email_status = 'no_email'::text) AND (email_to IS NULL)) OR ((email_status = 'sent'::text) AND (email_to IS NOT NULL) AND ((length(email_to) >= 3) AND (length(email_to) <= 254))))),
     CONSTRAINT chip_order_documents_error_check CHECK (((last_error IS NULL) OR (length(last_error) <= 500))),
     CONSTRAINT chip_order_documents_issued_check CHECK ((((status = 'issued'::text) = (issued_at IS NOT NULL)) AND ((status <> 'issued'::text) OR (jsonb_array_length(morning_docs) > 0)))),
     CONSTRAINT chip_order_documents_key_check CHECK (((length(payment_key) >= 6) AND (length(payment_key) <= 160))),
@@ -2074,10 +2077,19 @@ CREATE TABLE public.chip_orders (
     refunded_by_name text,
     refund_via text,
     refund_reason text,
+    cancel_requested_at timestamp with time zone,
+    cancel_requested_by uuid,
+    cancel_requested_by_name text,
+    cancel_request_reason text,
+    cancel_failed_step text,
+    cancel_error text,
+    cancel_running_until timestamp with time zone,
     CONSTRAINT chip_orders_address_check CHECK ((((source = 'reception'::text) AND (address IS NULL)) OR ((address IS NOT NULL) AND ((length(btrim(address)) >= 2) AND (length(btrim(address)) <= 300))))),
     CONSTRAINT chip_orders_address_city_check CHECK (((address_city IS NULL) OR ((length(btrim(address_city)) >= 2) AND (length(btrim(address_city)) <= 100)))),
     CONSTRAINT chip_orders_address_street_check CHECK (((address_street IS NULL) OR ((length(btrim(address_street)) >= 2) AND (length(btrim(address_street)) <= 200)))),
     CONSTRAINT chip_orders_address_zip_check CHECK (((address_zip IS NULL) OR (address_zip ~ '^[0-9]{7}$'::text))),
+    CONSTRAINT chip_orders_cancel_request_check CHECK ((((cancel_requested_at IS NULL) AND (cancel_requested_by IS NULL) AND (cancel_requested_by_name IS NULL) AND (cancel_request_reason IS NULL) AND (cancel_failed_step IS NULL) AND (cancel_error IS NULL) AND (cancel_running_until IS NULL)) OR ((cancel_requested_at IS NOT NULL) AND (source = 'reception'::text) AND (cancel_requested_by_name IS NOT NULL) AND (length(cancel_requested_by_name) <= 120) AND (cancel_request_reason IS NOT NULL) AND ((length(btrim(cancel_request_reason)) >= 2) AND (length(btrim(cancel_request_reason)) <= 500))))),
+    CONSTRAINT chip_orders_cancel_step_check CHECK ((((cancel_failed_step IS NULL) OR (cancel_failed_step = ANY (ARRAY['refund'::text, 'credit'::text, 'cancel'::text]))) AND ((cancel_failed_step IS NULL) = (cancel_error IS NULL)) AND ((cancel_error IS NULL) OR ((length(cancel_error) >= 1) AND (length(cancel_error) <= 500))))),
     CONSTRAINT chip_orders_cancelled_check CHECK ((((cancelled_by_name IS NULL) AND (cancelled_by IS NULL)) OR ((cancelled_by_name IS NOT NULL) AND (source = 'reception'::text) AND (status = 'rejected'::text) AND (rejected_at IS NOT NULL) AND (reject_reason IS NOT NULL)))),
     CONSTRAINT chip_orders_card_env_check CHECK (((card_env IS NULL) OR (card_env = ANY (ARRAY['sandbox'::text, 'production'::text])))),
     CONSTRAINT chip_orders_card_env_test_check CHECK ((((card_env IS DISTINCT FROM 'sandbox'::text) OR is_test) AND ((card_env IS DISTINCT FROM 'production'::text) OR (NOT is_test)))),
@@ -8205,6 +8217,14 @@ ALTER TABLE ONLY public.chip_order_notifications
 
 
 --
+-- Name: chip_orders chip_orders_cancel_requested_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_orders
+    ADD CONSTRAINT chip_orders_cancel_requested_by_fkey FOREIGN KEY (cancel_requested_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: chip_orders chip_orders_cancelled_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9558,5 +9578,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261125220847'),
     ('20261125222603'),
     ('20261125223806'),
-    ('20261125224435')
+    ('20261125224435'),
+    ('20261126220000')
 ;

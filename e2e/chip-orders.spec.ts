@@ -1374,9 +1374,12 @@ test.describe('staff: issuing at the reception', () => {
     await expect(row.locator('[data-col="tags"]').getByTestId('chip-order-reception-badge')).toHaveText('קבלה');
     await expect(row.locator('[data-col="tags"]').locator('[data-testid^="chip-order-"]')).toHaveCount(1); // never "בדיקה": test rules do not apply
     await expect(row.getByTestId('chip-order-stage')).toHaveText('נאסף');
+    // Nothing to move on (the status column says "נאסף"); for an admin the one
+    // thing on the row is "ביטול וזיכוי" (27/11/2026), in place of the label.
     const action = row.locator('[data-col="action"]');
-    await expect(action.getByTestId('chip-order-row-done')).toHaveText('נאסף');
-    await expect(action.getByRole('button')).toHaveCount(0);
+    await expect(action.getByTestId('chip-order-row-cancel')).toHaveText('ביטול וזיכוי');
+    await expect(action.getByTestId('chip-order-row-done')).toHaveCount(0);
+    await expect(action.getByRole('button')).toHaveCount(1);
     // It waits for nobody: the badge on the tab counts the open rows only.
     const open = (await pool.query<{ n: number }>(
       `select count(*)::int as n from public.chip_order_items i join public.chip_orders o on o.id = i.order_id
@@ -1447,7 +1450,7 @@ test.describe('staff: issuing at the reception', () => {
     // of the reception is cancel it (25/11/2026 — its own test, further down).
     const actions = issue.getByTestId('chip-order-actions');
     await expect(actions.locator('[aria-current="step"]')).toHaveText('נאסף');
-    await expect(actions.getByRole('button')).toHaveText(['מוכן לאיסוף', 'נאסף', 'דחה', 'בטל הזמנת קבלה']);
+    await expect(actions.getByRole('button')).toHaveText(['מוכן לאיסוף', 'נאסף', 'דחה', 'ביטול וזיכוי']);
     for (const name of ['מוכן לאיסוף', 'נאסף', 'דחה']) await expect(actions.getByRole('button', { name, exact: true })).toBeDisabled();
     await expect(actions.getByTestId('chip-order-cancel-reception')).toBeEnabled();
     await expect(section.getByTestId('chip-order-ready-reason')).toHaveText('הזמנת קבלה: שולמה ונמסרה במקום — ההזמנה סגורה');
@@ -1487,6 +1490,19 @@ test.describe('staff: issuing at the reception', () => {
     await expect(kept).toContainText(`שולם ${3 * price}₪ · מזומן`);
     await expect(kept).not.toContainText('מזומן או העברה');
     await expect(kept).toContainText('מזמין: אבא משלם · 0539300011 · payer.e2e@example.test · הרצל 5, חיפה 3303105');
+    // 27/11/2026: the paid order's line itself offers "ביטול וזיכוי" (admins) —
+    // its confirmation states the sum, how the money goes back, where the
+    // credit goes, and the chips it disables. Backing out changes nothing.
+    await kept.getByTestId('chip-reception-record-cancel').first().click();
+    const confirm = page.getByTestId('reception-cancel-dialog');
+    await expect(confirm).toContainText(`ביטול וזיכוי — הזמנת קבלה ${order.order_number}`);
+    await expect(confirm.getByTestId('reception-cancel-amount')).toHaveText(`${3 * price}₪`);
+    await expect(confirm.getByTestId('reception-cancel-step-refund')).toContainText('מחזירים ידנית במזומן');
+    await expect(confirm.getByTestId('reception-cancel-email')).toHaveText('payer.e2e@example.test');
+    await expect(confirm.getByTestId('reception-cancel-chips')).toContainText('להזמנה הונפקו 3 צ׳יפים פעילים — כולם יושבתו');
+    await confirm.getByRole('button', { name: 'חזרה' }).click();
+    await expect(confirm).toHaveCount(0);
+    expect((await pool.query(`select status from public.chip_orders where id = $1`, [order.id])).rows[0].status).toBe('collected');
     await issue.getByTestId('chip-issue-close').click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'צא ללא שמירה' }).click();
     await expect(issue).toHaveCount(0);
@@ -2006,35 +2022,46 @@ test.describe.serial('staff: extra chips of a web order, and cancelling the rece
     expect(mine.people.map((p) => [p.name, p.chips.map((c) => c.number)])).toEqual([['גלית תוספת', [first, second]]]);
   });
 
-  test('"בטל הזמנת קבלה": admin only, a reason required — the order becomes "בוטל" and stays in the table, its chip is disabled (never deleted), nobody is notified', async ({ page, browser }) => {
+  test('"ביטול וזיכוי": admin only, a reason required; the steps in order — the credit document BEFORE the order is cancelled: with no Morning it stops there (the chip still active, the row says so), and "נסה שוב" finishes — the order "בוטל" stays in the table, its chip disabled (never deleted), nobody notified', async ({ page, browser }) => {
     const rec = (await receptionOrder())[0]!;
+    const price = await unitPrice();
 
     // A manager — with every chips permission — sees the order, and no way to cancel it.
     const manager = await pageAs(browser, managerId);
     await manager.goto('/chips?view=orders');
+    await expect(extraRow(manager).getByTestId('chip-order-row-cancel')).toHaveCount(0);
     await extraRow(manager).click();
     const managerWindow = issueWindow(manager);
     await expect(managerWindow.getByTestId('chip-order-reception-tag')).toHaveText('קבלה');
     await expect(managerWindow.getByTestId('chip-order-cancel-reception')).toHaveCount(0);
     await expect(managerWindow.getByTestId('chip-order-actions').getByRole('button')).toHaveText(['מוכן לאיסוף', 'נאסף', 'דחה']);
     expect((await manager.request.post(`/api/chip-orders/${rec.id}/cancel`, { data: { reason: 'ניסיון של מנהל' } })).status()).toBe(403);
+    expect((await manager.request.get(`/api/chip-orders/${rec.id}/cancel`)).status()).toBe(403);
     // Nor a refund, nor a new try at a document (26/11/2026): admin and super admin only.
     await expect(managerWindow.getByTestId('chip-order-refund-button')).toHaveCount(0);
     expect((await manager.request.post(`/api/chip-orders/${web.id}/refund`, { data: { reason: 'ניסיון של מנהל' } })).status()).toBe(403);
     expect((await manager.request.post(`/api/chip-orders/${rec.id}/documents/retry`)).status()).toBe(403);
     expect((await receptionOrder())[0]!.status).toBe('collected');
 
+    // The admin: "ביטול וזיכוי" on the row of the Orders tab.
     await page.goto('/chips?view=orders');
-    await extraRow(page).click();
-    const issue = issueWindow(page);
-    const section = issue.getByTestId('chip-order-section');
-    await expect(section.getByTestId('chip-order-extra-tag')).toHaveText(`צ׳יפים נוספים להזמנה ${web.orderNumber}`);
-    await section.getByTestId('chip-order-cancel-reception').click();
-    const dialog = page.getByTestId('chip-order-cancel-confirm');
-    await expect(dialog).toContainText(`לבטל את הזמנת הקבלה ${rec.order_number}?`);
-    await expect(dialog).toContainText('הצ׳יפים שלה יושבתו');
+    const rowCancel = extraRow(page).getByTestId('chip-order-row-cancel');
+    await expect(rowCancel).toHaveText('ביטול וזיכוי');
+    const box = (await rowCancel.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(36);
+    await rowCancel.click();
+    const dialog = page.getByTestId('reception-cancel-dialog');
+    await expect(dialog).toContainText(`ביטול וזיכוי — הזמנת קבלה ${rec.order_number}`);
+    await expect(dialog.getByTestId('reception-cancel-amount')).toHaveText(`${price}₪`);
+    await expect(dialog.getByTestId('reception-cancel-step-refund')).toContainText('מחזירים ידנית במזומן');
+    await expect(dialog.getByTestId('reception-cancel-step-credit')).toContainText('מסמך זיכוי במורנינג');
+    // The chip issued to the order is named — it will be disabled, not deleted.
+    await expect(dialog.getByTestId('reception-cancel-chips')).toContainText('להזמנה הונפק צ׳יפ פעיל אחד — הוא יושבת');
+    await expect(dialog.getByTestId('reception-cancel-chips')).toContainText(second);
+    await expect(dialog.getByTestId('reception-cancel-chips')).not.toContainText(first);
     await expect(dialog).toContainText('לא נשלחת הודעה ללקוח');
-    const confirm = dialog.getByRole('button', { name: 'בטל הזמנת קבלה' });
+    const confirm = dialog.getByTestId('reception-cancel-run');
+    await expect(confirm).toHaveText(`ביטול וזיכוי ${price}₪`);
     // No reason, no cancellation.
     await expect(confirm).toBeDisabled();
     await dialog.getByLabel('סיבת הביטול').fill('נ');
@@ -2045,10 +2072,54 @@ test.describe.serial('staff: extra chips of a web order, and cancelling the rece
     expect((await receptionOrder())[0]!.status).toBe('collected');
     expect(await chipStatus(second)).toBe('active');
 
-    await section.getByTestId('chip-order-cancel-reception').click();
+    // Run it: cash goes back by hand; the credit document comes NEXT — and CI has
+    // no Morning key, so the run stops there, before anything is cancelled.
+    await rowCancel.click();
     await dialog.getByLabel('סיבת הביטול').fill('נרשם בטעות');
     await confirm.click();
-    await expect(toast(page, 'הזמנת הקבלה בוטלה')).toBeVisible();
+    await expect(toast(page, 'הביטול נעצר בשלב: מסמך הזיכוי במורנינג')).toBeVisible();
+    await expect(dialog.getByTestId('reception-cancel-failed')).toContainText('הביטול נעצר בשלב: מסמך הזיכוי במורנינג');
+    await expect(dialog.getByTestId('reception-cancel-failed')).toContainText('מורנינג לא מחובר');
+    await expect(dialog.getByTestId('reception-cancel-failed')).toContainText('לא יישלח זיכוי שני');
+    await expect(confirm).toHaveText('נסה שוב');
+    await expect(dialog.getByLabel('סיבת הביטול')).toHaveCount(0);
+    await expect(dialog).toContainText('סיבת הביטול: נרשם בטעות');
+    await dialog.getByRole('button', { name: 'חזרה' }).click();
+    await expect(dialog).toHaveCount(0);
+    const now = (await receptionOrder())[0]!;
+    expect(now).toMatchObject({ status: 'collected', reject_reason: null, cancelled_by_name: null });
+    expect(await chipStatus(second)).toBe('active');
+    const docs = async () => (await pool.query<{ kind: string; status: string; payment_key: string }>(
+      `select kind, status, payment_key from public.chip_order_documents where order_id = $1 order by created_at`, [rec.id])).rows;
+    expect(await docs()).toEqual([
+      { kind: 'invoice', status: 'pending', payment_key: `reception:${rec.id}` },
+      { kind: 'credit', status: 'pending', payment_key: `cancel:${rec.id}` },
+    ]);
+    // The row and the order's window say where it stopped, and offer to go on.
+    await expect(extraRow(page).getByTestId('chip-order-row-cancel')).toHaveText('המשך ביטול');
+    await expect(extraRow(page).getByTestId('chip-order-row-cancel-stopped')).toHaveText('הביטול נעצר: מסמך הזיכוי במורנינג');
+
+    // Morning answers (what its issuer records — stood in for here): both documents issued.
+    await pool.query(
+      `update public.chip_order_documents
+          set status = 'issued', issued_at = now(), email_status = 'no_email',
+              morning_docs = case when kind = 'invoice'
+                then jsonb_build_array(jsonb_build_object('type', 320, 'id', 'e2e-inv', 'number', 'E2E-320', 'url', null))
+                else jsonb_build_array(jsonb_build_object('type', 330, 'id', 'e2e-330', 'number', 'E2E-330', 'url', null),
+                                       jsonb_build_object('type', 400, 'id', 'e2e-400', 'number', 'E2E-400', 'url', null)) end
+        where order_id = $1`, [rec.id]);
+
+    // "נסה שוב" from the order's window: the remaining steps only.
+    await extraRow(page).click();
+    const issue = issueWindow(page);
+    const section = issue.getByTestId('chip-order-section');
+    await expect(section.getByTestId('chip-order-extra-tag')).toHaveText(`צ׳יפים נוספים להזמנה ${web.orderNumber}`);
+    await expect(section.getByTestId('chip-order-cancel-stopped')).toContainText('הביטול נעצר: מסמך הזיכוי במורנינג');
+    await expect(section.getByTestId('chip-order-cancel-reception')).toHaveText('המשך ביטול וזיכוי');
+    await section.getByTestId('chip-order-cancel-reception').click();
+    await expect(dialog.getByTestId('reception-cancel-step-credit')).toContainText('E2E-330, E2E-400');
+    await confirm.click();
+    await expect(toast(page, `הזמנה ${rec.order_number} בוטלה וזוכתה`)).toBeVisible();
     await expect(issue).toHaveCount(0);
 
     const after = (await receptionOrder())[0]!;
@@ -2061,17 +2132,22 @@ test.describe.serial('staff: extra chips of a web order, and cancelling the rece
     expect((await pool.query(
       `select action, metadata->>'reason' as reason from public.audit_log where entity_type = 'chip_order' and entity_id = $1 and action = 'reception_cancelled'`, [rec.id])).rows)
       .toEqual([{ action: 'reception_cancelled', reason: 'נרשם בטעות' }]);
+    expect((await pool.query(
+      `select metadata->>'step' as step from public.audit_log where entity_type = 'chip_order' and entity_id = $1 and action = 'reception_cancel_failed'`, [rec.id])).rows)
+      .toEqual([{ step: 'credit' }]);
 
     // The row stays in the table, with its status — and nothing to press.
     await expect(extraRow(page)).toHaveCount(1);
     await expect(extraRow(page).getByTestId('chip-order-stage')).toHaveText('בוטל');
     await expect(extraRow(page).getByTestId('chip-order-row-cancelled')).toHaveText('בוטל');
+    await expect(extraRow(page).getByTestId('chip-order-row-cancel')).toHaveCount(0);
     // It opens read only, and says who cancelled and why — with no way to cancel again.
     await extraRow(page).click();
     await expect(issue.getByTestId('chip-order-closed-note')).toContainText('הזמנת הקבלה בוטלה');
     await expect(section.getByTestId('chip-order-cancel-reason')).toHaveText('נרשם בטעות');
     await expect(section.getByTestId('chip-order-cancelled-by')).toBeVisible();
     await expect(section.getByTestId('chip-order-cancel-reception')).toHaveCount(0);
+    await expect(section.getByTestId('chip-order-cancel-stopped')).toHaveCount(0);
     await expect(section.getByTestId('chip-order-ready-reason')).toContainText('הזמנת הקבלה בוטלה');
     expect((await page.request.post(`/api/chip-orders/${rec.id}/cancel`, { data: { reason: 'פעם שנייה' } })).status()).toBe(409);
     await issue.getByTestId('chip-issue-close').click();
@@ -2241,13 +2317,14 @@ test.describe('staff: the Orders tab', () => {
     // leaves room under itself.
     await page.locator('main').evaluate((el) => el.scrollTo(0, el.scrollHeight));
     // (Whatever the last row holds: since 25/11/2026 it may be an order of the
-    // reception, whose action is the plain label "נאסף" — or "בוטל" for one
-    // that was cancelled, which stays in the tab.)
+    // reception, whose action is the plain label "נאסף" — "ביטול וזיכוי" for an
+    // admin since 27/11/2026 — or "בוטל" for one that was cancelled, which stays
+    // in the tab. The lowest of them is measured.)
     const lastAction = (await table.getByTestId('chip-order-row').last()
       .locator([
         '[data-testid="chip-order-row-waiting"]', '[data-testid="chip-order-row-ready"]', '[data-testid="chip-order-row-collected"]',
-        '[data-testid="chip-order-row-done"]', '[data-testid="chip-order-row-cancelled"]',
-      ].join(', ')).boundingBox())!;
+        '[data-testid="chip-order-row-done"]', '[data-testid="chip-order-row-cancelled"]', '[data-testid="chip-order-row-cancel"]',
+      ].join(', ')).last().boundingBox())!;
     const floating = (await page.locator('[data-agent-fab]').boundingBox())!;
     expect(lastAction.y + lastAction.height, 'the last row\'s action ends above the floating button').toBeLessThanOrEqual(floating.y);
     await page.locator('main').evaluate((el) => el.scrollTo(0, 0));

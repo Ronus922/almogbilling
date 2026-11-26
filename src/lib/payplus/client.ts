@@ -516,3 +516,76 @@ export async function lookupPaymentRequest(cfg: PayPlusConfig, pageRequestUid: s
   }
   return { kind: 'transactions', transactions: out };
 }
+
+// ── Transactions/View (read only, 27/11/2026) ──────────────────────────────
+
+/** One transaction as Transactions/View reports it — a whitelist of fields;
+ *  nothing of the card is read. */
+export interface PayPlusViewedTransaction {
+  uid: string;
+  /** Lower-cased: 'charge', 'refund', … */
+  type: string | null;
+  statusCode: string | null;
+  amount: number;
+  /** transaction_is_cancelled — the charge was CANCELLED (voided the same
+   *  day, before the deposit) in full: no money moved. */
+  cancelled: boolean;
+  moreInfo: string | null;
+}
+
+export type PayPlusView =
+  | { kind: 'transactions'; transactions: PayPlusViewedTransaction[] }
+  /** PayPlus refused or was not understood — this says NOTHING about the charge. */
+  | { kind: 'unknown'; status: number; message: string };
+
+/** Transactions/View's answer when nothing matches. */
+const VIEW_NO_TRANSACTIONS = 'no transactions';
+
+/**
+ * Transactions/View (docs.payplus.co.il R/post_transactions-view): the
+ * transactions of a transaction uid, or of a more_info. READ ONLY — it moves
+ * no money. Its reply (seen in production, 26/11/2026) is
+ * { results: { status }, data: [ { transaction: { transaction_uid,
+ * transaction_type, status_code, transaction_is_cancelled, amount, more_info,
+ * … }, data: { … } } ] }.
+ */
+export async function viewTransactions(
+  cfg: PayPlusConfig,
+  by: { transactionUid: string } | { moreInfo: string },
+): Promise<PayPlusView> {
+  const endpoint = '/Transactions/View';
+  let json: unknown;
+  try {
+    json = await post(cfg, endpoint, 'transactionUid' in by ? { transaction_uid: by.transactionUid } : { more_info: by.moreInfo });
+  } catch (e) {
+    if (e instanceof PayPlusApiError) return { kind: 'unknown', status: e.status, message: e.message };
+    throw e;
+  }
+  const j = obj(json);
+  const results = obj(j.results);
+  if (results.status !== 'success') {
+    // Nothing matched: HTTP 200, status "error", "no transactions" (seen in
+    // production, 26/11/2026). It IS an answer — there are none.
+    if (str(results.description) === VIEW_NO_TRANSACTIONS) return { kind: 'transactions', transactions: [] };
+    return { kind: 'unknown', status: 200, message: safeText(cfg, str(results.description) ?? str(results.status) ?? 'unreadable reply') };
+  }
+  // No transaction found: an empty list, or no list at all.
+  const list = Array.isArray(j.data) ? j.data.slice(0, 50) : [];
+  const out: PayPlusViewedTransaction[] = [];
+  for (const entry of list) {
+    const t = obj(obj(entry).transaction);
+    const uid = str(t.transaction_uid) ?? str(t.uid);
+    const amount = typeof t.amount === 'number' ? t.amount : typeof t.amount === 'string' && t.amount.trim() ? Number(t.amount) : NaN;
+    if (!uid || uid.length < 8 || uid.length > 80 || !Number.isFinite(amount)) continue;
+    const type = str(t.transaction_type) ?? str(t.type);
+    out.push({
+      uid,
+      type: type ? type.toLowerCase().slice(0, 30) : null,
+      statusCode: statusCodeOf(t.status_code),
+      amount,
+      cancelled: t.transaction_is_cancelled === true || t.transaction_is_cancelled === 'true' || t.transaction_is_cancelled === 1,
+      moreInfo: str(t.more_info),
+    });
+  }
+  return { kind: 'transactions', transactions: out };
+}

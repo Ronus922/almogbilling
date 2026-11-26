@@ -417,7 +417,9 @@ d('Morning documents of chip orders — the queue, the issuer, and every point t
     const item = (await pool.query<{ id: string }>(`select id from public.chip_order_items where order_id = $1`, [p1.id])).rows[0]!.id;
     const w = (await getChipOrderWindow(item))!;
     expect(w.documents_connected).toBe(false);
-    expect(w.order.documents).toEqual([{ kind: 'invoice', status: 'pending', amount: 3 * PRICE, number: null, url: null, last_error: null }]);
+    expect(w.order.documents).toEqual([{
+      kind: 'invoice', status: 'pending', amount: 3 * PRICE, number: null, url: null, last_error: null, numbers: [], email_status: null, email_to: null,
+    }]);
     expect((await orderRow(p1.id)).invoice_number).toBeNull();
   });
 
@@ -472,7 +474,11 @@ d('Morning documents of chip orders — the queue, the issuer, and every point t
     const item = (await pool.query<{ id: string }>(`select id from public.chip_order_items where order_id = $1`, [p1.id])).rows[0]!.id;
     const w = (await getChipOrderWindow(item))!;
     expect(w.documents_connected).toBe(true);
-    expect(w.order.documents).toEqual([{ kind: 'invoice', status: 'issued', amount: 3 * PRICE, number: doc.number, url: doc.url, last_error: null }]);
+    // 27/11/2026: Morning was asked to email it — the order's email is on the request.
+    expect(w.order.documents).toEqual([{
+      kind: 'invoice', status: 'issued', amount: 3 * PRICE, number: doc.number, url: doc.url, last_error: null,
+      numbers: [doc.number], email_status: 'sent', email_to: 'docs-test@example.test',
+    }]);
 
     // Again: nothing more is sent, nothing changes.
     sent.length = 0;

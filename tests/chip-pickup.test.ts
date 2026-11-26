@@ -174,9 +174,10 @@ describe('a reception order that was cancelled', () => {
     expect(chipOrderRowTags(row({ status: 'collected' }))).toEqual(['reception']);
   });
 
-  it('cancelling needs a reason of at least two letters', () => {
+  it('cancelling needs a reason of at least two letters — when one is sent (a retry of "ביטול וזיכוי" sends none: the server keeps the first)', () => {
     expect(chipOrderCancelBodySchema.safeParse({ reason: 'נרשם בטעות' }).success).toBe(true);
-    for (const bad of [{}, { reason: '' }, { reason: ' א ' }, { reason: 'x'.repeat(501) }]) {
+    expect(chipOrderCancelBodySchema.safeParse({}).success).toBe(true);
+    for (const bad of [{ reason: '' }, { reason: ' א ' }, { reason: 'x'.repeat(501) }]) {
       expect(chipOrderCancelBodySchema.safeParse(bad).success).toBe(false);
     }
   });

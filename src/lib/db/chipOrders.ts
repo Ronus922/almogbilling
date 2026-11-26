@@ -510,6 +510,7 @@ export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
             o.is_test, o.phone_verified,
             o.payment_method, o.card_status, o.card_env, o.refund_status, o.refunded_amount::float8 as refunded_amount,
             (o.refund_requested_at is not null and o.refund_requested_at > now() - interval '10 minutes') as refund_in_flight,
+            o.cancel_failed_step, o.cancel_error,
             (select json_build_object('status', d.status, 'number', d.morning_docs->0->>'number', 'url', d.morning_docs->0->>'url')
                from public.chip_order_documents d
               where d.order_id = o.id and d.kind = 'invoice'
@@ -800,6 +801,8 @@ export async function cancelReceptionOrder(
   id: string,
   reason: string,
   by: { id: string; name: string },
+  /** "ביטול וזיכוי" (27/11/2026): what its earlier steps did, for the audit row. */
+  steps?: Record<string, unknown>,
 ): Promise<{ order_number: number; chips_disabled: number; payment_method: string | null; card_paid: boolean } | null> {
   return withTransaction(async (client) => {
     const order = (
@@ -833,7 +836,8 @@ export async function cancelReceptionOrder(
     await client.query(
       `update public.chip_orders
           set status = 'rejected', rejected_at = now(), reject_reason = $2,
-              cancelled_by = $3, cancelled_by_name = $4, updated_at = now()
+              cancelled_by = $3, cancelled_by_name = $4,
+              cancel_failed_step = null, cancel_error = null, cancel_running_until = null, updated_at = now()
         where id = $1`,
       [id, reason, by.id, by.name],
     );
@@ -865,6 +869,7 @@ export async function cancelReceptionOrder(
         source: 'reception', order_number: order.order_number, reason,
         amount: order.total, chips_disabled: chips.length,
         chips_left_moved: active.length - chips.length, payment_method: order.payment_method,
+        ...(steps ? { steps } : {}),
       },
     });
     return {
