@@ -19,8 +19,19 @@ export interface ChipOrderMessageInput {
   /** Rejected only. */
   rejectReason?: string | null;
   refundStatus?: ChipOrderRefundStatus | null;
-  /** Grow's invoice / receipt — linked, never copied. */
+  /** Refunded only — how much went back. */
+  refundedAmount?: number | null;
+  /** Refunded only — the order was closed with the refund (it was not collected yet). */
+  closedByRefund?: boolean;
+  /** Refunded only — the refund disabled chips of the order. A refund PayPlus
+   *  reported (made in its dashboard) disables none: then nothing is said
+   *  about the chips. */
+  chipsDisabled?: boolean;
+  /** The Morning document's link, when it was issued already — linked, never copied. */
   invoiceUrl?: string | null;
+  /** The receipt will reach the customer by email (Morning is connected and
+   *  the order has an email) — the message says so only when it is true. */
+  receiptByEmail?: boolean;
   /** A test-mode order: every message starts with "[בדיקה]", never mentions an
    *  invoice, and a rejection says nothing was charged. */
   isTest?: boolean;
@@ -30,7 +41,7 @@ export interface ChipOrderMessage {
   subject: string;
   /** Paragraphs, in order. */
   lines: string[];
-  /** The only URLs an email may turn into links: ours and Grow's document.
+  /** The only URLs an email may turn into links: ours and Morning's document.
    *  Anything URL-like the resident typed (a name) stays plain text. */
   links: string[];
 }
@@ -53,7 +64,7 @@ export function chipOrderMessage(m: ChipOrderMessageInput): ChipOrderMessage {
           'נעדכן אותך כשהצ׳יפים יהיו מוכנים לאיסוף.',
           ...(test
             ? []
-            : invoiceUrl ? [`החשבונית / הקבלה: ${invoiceUrl}`] : ['החשבונית / הקבלה נשלחת אליך בנפרד מחברת הסליקה.']),
+            : invoiceUrl ? [`החשבונית / הקבלה: ${invoiceUrl}`] : m.receiptByEmail ? ['החשבונית / הקבלה תישלח אליך במייל בנפרד.'] : []),
           `מעקב אחרי ההזמנה: ${m.trackUrl}`,
         ],
       };
@@ -64,6 +75,18 @@ export function chipOrderMessage(m: ChipOrderMessageInput): ChipOrderMessage {
           `שלום ${m.fullName},`,
           `הצ׳יפים של ${ref} מוכנים לאיסוף.`,
           ...(m.pickupText?.trim() ? [`מקום ושעות האיסוף: ${m.pickupText.trim()}`] : []),
+          `מעקב אחרי ההזמנה: ${m.trackUrl}`,
+        ],
+      };
+    case 'refunded':
+      return {
+        subject: `הזמנת הצ׳יפים זוכתה — הזמנה ${m.orderNumber}`,
+        lines: [
+          `שלום ${m.fullName},`,
+          test
+            ? `${ref} זוכתה (הזמנת בדיקה — לא בוצע חיוב אמיתי).`
+            : `${ref} זוכתה: ${m.refundedAmount ? `₪${m.refundedAmount}` : 'התשלום'} הוחזר לכרטיס שבו שילמת. ההחזר יופיע בחשבון לפי מועדי חברת האשראי.`,
+          ...(m.closedByRefund ? ['ההזמנה בוטלה.'] : m.chipsDisabled ? ['הצ׳יפים של ההזמנה הושבתו.'] : []),
           `מעקב אחרי ההזמנה: ${m.trackUrl}`,
         ],
       };

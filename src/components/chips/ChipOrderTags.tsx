@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { AlertTriangle, ConciergeBell, PlusCircle } from 'lucide-react';
+import { AlertTriangle, ConciergeBell, PlusCircle, RotateCcw } from 'lucide-react';
 import { CHIP_ORDER_TAG_LABEL, type ChipOrderTag } from '@/lib/chipOrders/orderRows';
 import { ChipOrderTestBadge, ChipOrderUnverifiedPhoneBadge } from './ChipOrderStatusPill';
 
@@ -56,7 +56,26 @@ function ChipOrderExtraBadge() {
   );
 }
 
+/** "בוטל ב-PayPlus — נדרש ביטול וזיכוי" (27/11/2026) — a paid order PayPlus
+ *  shows cancelled or refunded (a signed callback, then PayPlus asked) that
+ *  records no such refund: nothing was recorded and no Morning document went
+ *  out — an admin finishes it with "ביטול וזיכוי". Red, the first tag; the
+ *  only tag whose words may wrap (they are a sentence). */
+function ChipOrderPayPlusReversalBadge() {
+  return (
+    <span
+      data-testid="chip-order-payplus-reversal"
+      title="PayPlus מראה שהחיוב בוטל או זוכה — יש להשלים ב„ביטול וזיכוי”"
+      className="inline-flex min-h-[24px] max-w-full items-center gap-1 rounded-[7px] border border-[var(--chip-red-border)] bg-[var(--chip-red-soft)] px-2.5 py-0.5 text-[12px] font-bold leading-[1.3] text-[var(--chip-red-ink)]"
+    >
+      <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+      <span className="min-w-0">{CHIP_ORDER_TAG_LABEL.payplus_reversed}</span>
+    </span>
+  );
+}
+
 const TAG_BADGE: Record<ChipOrderTag, ComponentType> = {
+  payplus_reversed: ChipOrderPayPlusReversalBadge,
   reception: ChipOrderReceptionBadge,
   extra: ChipOrderExtraBadge,
   test: ChipOrderTestBadge,

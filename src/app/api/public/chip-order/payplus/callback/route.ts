@@ -1,8 +1,9 @@
 import { NextResponse, after } from 'next/server';
 import { logger } from '@/lib/logger';
-import { payloadFieldNames, payplusConfig, readPayPlusTransaction, verifyPayPlusCallback } from '@/lib/payplus/client';
+import { payloadFieldNames, payplusConfigFor, readPayPlusTransaction, verifyPayPlusCallback, type PayPlusConfig, type PayPlusMode } from '@/lib/payplus/client';
 import { applyPayPlusCallback } from '@/lib/chipOrders/cardPayment';
-import { notifyChipOrder } from '@/lib/chipOrders/notify';
+import { afterOrderPaid } from '@/lib/chipOrders/notify';
+import { applyPayPlusRefundNotice, checkPaidOrderReversal, noticeOrderNumber } from '@/lib/chipOrders/refund';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,6 +35,23 @@ export const dynamic = 'force-dynamic';
 // The audit row is written with the transition, in one transaction; the
 // "received & paid" message follows only the call that made it.
 //
+// A NOTICE FOR AN ORDER THAT IS ALREADY PAID (27/11/2026): a cancellation made
+// in the PayPlus dashboard arrives looking exactly like the original charge
+// (seen live 26/11/2026), a refund made there as a "Refund" — so after any
+// validated notice that did not just pay the order, PayPlus is asked what it
+// shows now (checkPaidOrderReversal, read only). Cancelled or refunded there
+// and not on the order → NOTHING is recorded and NO Morning document is
+// issued: the order carries "בוטל ב-PayPlus — נדרש ביטול וזיכוי" (the Orders
+// tab and the order's window) and every admin is told, so one click on
+// "ביטול וזיכוי" finishes it. PayPlus not answering → 503 (sent again).
+//
+// WHICH SECRET (26/11/2026): the sandbox and production have separate keys.
+// The callback URL we hand PayPlus names its environment (?env=sandbox |
+// production); the notice is validated with THAT environment's secret only,
+// and applied under that environment (a sandbox notice can never touch a real
+// order, and the database refuses it too). A notice without the parameter (a
+// session opened before 26/11/2026) is tried against each configured secret.
+//
 // The body also carries the card's expiry, its BIN and the holder's ID number.
 // Only a whitelist of fields is read (readPayPlusTransaction); the body is
 // never stored and never logged (and never sent with a Sentry event —
@@ -61,22 +79,36 @@ async function readBody(req: Request, max: number): Promise<Buffer | null> {
   return Buffer.concat(chunks);
 }
 
+function candidateConfigs(req: Request): PayPlusConfig[] {
+  const named = new URL(req.url).searchParams.get('env');
+  const modes: PayPlusMode[] = named === 'sandbox' || named === 'production' ? [named] : named === null ? ['sandbox', 'production'] : [];
+  return modes.map((m) => payplusConfigFor(m)).filter((c): c is PayPlusConfig => c !== null);
+}
+
 export async function POST(req: Request) {
-  const cfg = payplusConfig();
+  const candidates = candidateConfigs(req);
   const userAgent = req.headers.get('user-agent');
   const hash = req.headers.get('hash');
   // Cheap refusals first: nothing is read for a caller that is plainly not PayPlus.
-  if (!cfg || userAgent !== 'PayPlus' || !hash) return unauthorized();
+  if (candidates.length === 0 || userAgent !== 'PayPlus' || !hash) return unauthorized();
   const declared = Number(req.headers.get('content-length') ?? 'NaN');
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return unauthorized();
 
   const raw = await readBody(req, MAX_BODY_BYTES).catch(() => null);
   if (!raw) return unauthorized();
 
-  const checked = verifyPayPlusCallback(cfg.secretKey, raw, { userAgent, hash });
-  if (!checked.ok) {
+  let cfg: PayPlusConfig | null = null;
+  let checked: ReturnType<typeof verifyPayPlusCallback> = { ok: false, reason: 'bad_hash' };
+  for (const candidate of candidates) {
+    checked = verifyPayPlusCallback(candidate.secretKey, raw, { userAgent, hash });
+    if (checked.ok) {
+      cfg = candidate;
+      break;
+    }
+  }
+  if (!checked.ok || !cfg) {
     // Why it failed — never the hash, the body or a key.
-    logger.warn('[chip-order] payplus callback rejected', { reason: checked.reason, bytes: raw.byteLength });
+    logger.warn('[chip-order] payplus callback rejected', { reason: checked.ok ? 'bad_hash' : checked.reason, bytes: raw.byteLength });
     return unauthorized();
   }
 
@@ -86,6 +118,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, ignored: 'unreadable' });
   }
 
+  // A REFUND PayPlus reports (made in its dashboard, or ours echoed back):
+  // never recorded from the notice — the order it names is checked.
+  if (tx.type !== null && tx.type.includes('refund')) {
+    const refund = await applyPayPlusRefundNotice(cfg, tx);
+    if (refund.kind === 'later') return NextResponse.json({ ok: false, error: 'not applied yet' }, { status: 503 });
+    return NextResponse.json({ ok: true });
+  }
+
   if (tx.pageRequestUid === null) {
     // Which fields the notice has — their names only, never a value.
     logger.warn('[chip-order] payplus callback names no payment session — asking PayPlus', { fields: payloadFieldNames(checked.body) });
@@ -93,7 +133,15 @@ export async function POST(req: Request) {
   const applied = await applyPayPlusCallback(cfg, tx);
   if (applied.kind === 'unconfirmed') return NextResponse.json({ ok: false, error: 'not confirmed yet' }, { status: 503 });
   if (applied.kind === 'paid' && applied.transitioned) {
-    after(() => notifyChipOrder(applied.orderId, 'paid'));
+    after(() => afterOrderPaid(applied.orderId));
+    return NextResponse.json({ ok: true });
+  }
+  // Not a payment that just happened: the order may have been paid before —
+  // what does PayPlus show for it now?
+  const orderNumber = noticeOrderNumber(tx.moreInfo);
+  if (orderNumber !== null) {
+    const seen = await checkPaidOrderReversal(cfg, orderNumber);
+    if (seen.kind === 'later') return NextResponse.json({ ok: false, error: 'not checked yet' }, { status: 503 });
   }
   return NextResponse.json({ ok: true });
 }

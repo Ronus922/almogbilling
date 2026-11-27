@@ -25,6 +25,9 @@ interface Props {
   contactId: string | null;
   apartmentNumber: string;
   canEditChips: boolean;
+  /** Admin / super admin, by role — "ביטול וזיכוי" of a paid reception order
+   *  on its line in the issue window (27/11/2026), as on /chips. */
+  canAdminOrders?: boolean;
 }
 
 interface ChipsPayload {
@@ -51,7 +54,7 @@ const ROLE_PILL: Record<ChipResidentRole, string> = {
   other: 'bg-[var(--chip-hover)] text-[var(--chip-ink-muted)]',
 };
 
-export function ChipsTab({ contactId, apartmentNumber, canEditChips }: Props) {
+export function ChipsTab({ contactId, apartmentNumber, canEditChips, canAdminOrders = false }: Props) {
   const [chips, setChips] = useState<ChipsPayload | null>(null);
   const [residents, setResidents] = useState<ContactResidents | null>(null);
   const [loading, setLoading] = useState(false);
@@ -210,6 +213,7 @@ export function ChipsTab({ contactId, apartmentNumber, canEditChips }: Props) {
         onOpenChange={setIssueOpen}
         initial={{ contactId, apartmentNumber }}
         onIssued={() => setReloadKey((k) => k + 1)}
+        canAdminOrders={canAdminOrders}
       />
     </div>
   );

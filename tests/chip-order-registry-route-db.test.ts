@@ -10,8 +10,8 @@ import type { ModulePermission, Role } from '@/lib/permissions/constants';
 //   · handling orders (chips_orders_manage:edit) is required as well;
 //   · with both, exactly the block's name + phone land in the slot of the
 //     order's role, audited;
-//   · nothing else writes: paying the order and issuing its chips leave the
-//     tenants list as it was.
+//   · nothing else writes: paying the order (an approved card charge,
+//     recordCardPayment) and issuing its chips leave the tenants list as it was.
 // The session is mocked (a manager with the permissions under test); the
 // permission check itself is the real hasPermission. Fixtures are a numeric
 // apartment far from the seed, removed by exact ids.
@@ -55,6 +55,7 @@ vi.mock('next/server', async (orig) => ({
 const { requireSeededAdmin } = await import('./db-fixtures');
 const { POST: writeRegistry } = await import('@/app/api/chip-orders/items/[itemId]/registry/route');
 const db = await import('@/lib/db/chipOrders');
+const { recordCardPayment, setCardSession } = await import('@/lib/db/chipOrderCard');
 const { issueChipGroups } = await import('@/lib/db/chips');
 const { DEFAULT_CHIP_ORDER_SETTINGS } = await import('@/lib/chipOrders/model');
 
@@ -101,14 +102,28 @@ d('"עדכן בכרטיס הדייר" route', () => {
       await pool.query(`delete from public.chip_events where chip_id = $1`, [id]);
       await pool.query(`delete from public.chips where id = $1`, [id]);
     }
-    if (made.order) await pool.query(`delete from public.chip_orders where id = $1`, [made.order]);
+    if (made.order) {
+      // A document row of the order (Morning, 26/11/2026) blocks deleting it — by the order's id.
+      await pool.query(`delete from public.chip_order_documents where order_id = $1`, [made.order])
+        .catch((e: { code?: string }) => { if (e.code !== '42P01') throw e; });
+      await pool.query(`delete from public.audit_log where entity_type = 'chip_order' and entity_id = $1`, [made.order]);
+      await pool.query(`delete from public.chip_orders where id = $1`, [made.order]);
+    }
     if (made.contact) await pool.query(`delete from public.contacts where id = $1`, [made.contact]);
     await pool.end();
   });
 
-  it('paying the order and issuing its chips write nothing to the tenants list', async () => {
+  it('paying the order (its card charge) and issuing its chips write nothing to the tenants list', async () => {
     const before = await contact();
-    await db.markChipOrderPaid(made.order, { transactionId: `t${tag}`, transactionToken: 'tt', asmachta: null });
+    const o = (await pool.query<{ order_number: number; total: number }>(
+      `select order_number, total::float8 as total from public.chip_orders where id = $1`, [made.order],
+    )).rows[0]!;
+    const session = `registry-${tag}-session`;
+    expect(await setCardSession(made.order, { env: 'production', pageRequestUid: session, amount: o.total })).toBe(true);
+    expect(await recordCardPayment({
+      env: 'production', orderNumber: o.order_number, transactionUid: `tx-registry-${tag}`, pageRequestUid: session,
+      amount: o.total, approvalNumber: null, last4: null,
+    }, 'payplus_callback')).toEqual({ kind: 'paid', orderId: made.order });
     const r = await issueChipGroups(
       { contact_id: made.contact, groups: [{ resident_role: 'owner', holder_name: 'מזמינה חדשה', holder_phone: '0539500001', chip_type: 'physical', numbers: [`G${tag}1`], order_item_id: itemId }] },
       { id: adminId, name: 'e2e-admin' },

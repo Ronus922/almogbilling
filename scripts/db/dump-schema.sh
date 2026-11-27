@@ -8,7 +8,9 @@
 #   PG_CONTAINER=<docker container>   → docker exec <container> pg_dump -U $PG_USER -d <db>
 #                                      (same pg_dump version as the server; used for
 #                                       db/schema.sql and for the production diff)
-#   otherwise                         → local pg_dump "$DATABASE_URL"
+#   otherwise                         → local pg_dump on the URL — its password
+#                                      in PGPASSWORD, never on the command line
+#                                      (scripts/lib/pg-url.sh)
 # Version-dependent noise is stripped (\restrict tokens, "Dumped by/from" lines,
 # transaction_timeout), so dumps from different pg_dump majors still diff cleanly.
 #
@@ -27,20 +29,23 @@ if [[ -z "$DB_NAME" ]]; then
   DB_NAME="$(printf '%s' "$DATABASE_URL" | sed -E 's#^[a-z]+://[^/]+/([^?]+).*#\1#')"
 fi
 PG_USER="${PG_USER:-postgres}"
+# shellcheck source=../lib/pg-url.sh
+. scripts/lib/pg-url.sh
+pg_url_split "$DATABASE_URL"   # → PG_URL (no password) + PGPASSWORD
 FLAGS=(--schema-only --no-owner --no-privileges --schema=public --encoding=UTF8)
 
 run_pg_dump() {
   if [[ -n "${PG_CONTAINER:-}" ]]; then
     docker exec "$PG_CONTAINER" pg_dump -U "$PG_USER" -d "$DB_NAME" "${FLAGS[@]}"
   else
-    pg_dump "$DATABASE_URL" "${FLAGS[@]}"
+    pg_dump "$PG_URL" "${FLAGS[@]}"
   fi
 }
 run_psql() {
   if [[ -n "${PG_CONTAINER:-}" ]]; then
     docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$DB_NAME" -tAc "$1"
   else
-    psql "$DATABASE_URL" -tAc "$1"
+    psql "$PG_URL" -tAc "$1"
   fi
 }
 

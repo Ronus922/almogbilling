@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CHIP_ORDER_RECEPTION_LABEL, RECEPTION_CARD_PENDING_TEXT, RECEPTION_MAX_PAID_CHIPS, RECEPTION_PAYMENT_LABEL,
-  RECEPTION_PAYMENT_METHODS, composeReceptionAddress, looksLikeEmail, ordererProblems, receptionAmount, receptionMethodInForce,
-  receptionPaymentReason, receptionRecordsOf, sameAmount, type OrdererFields, type ReceptionRecordView,
+  CHIP_ORDER_RECEPTION_LABEL, RECEPTION_CARD_PENDING_TEXT, RECEPTION_CONFIRMED_METHODS, RECEPTION_MAX_PAID_CHIPS, RECEPTION_PAYMENT_LABEL,
+  RECEPTION_PAYMENT_METHODS, STORED_PAYMENT_LABEL, composeReceptionAddress, looksLikeEmail, ordererProblems, receptionAmount,
+  receptionMethodInForce, receptionPaymentReason, receptionRecordsOf, sameAmount, type OrdererFields, type ReceptionPaymentMethod,
+  type ReceptionRecordView,
 } from '@/lib/chipOrders/reception';
 import { chipHolderDetails } from '@/lib/chips/holder';
-import { chipGroupDetailsSchema, chipHolderUpdatesSchema, chipReceptionSchema } from '@/lib/validation/requests';
+import { chipGroupDetailsSchema, chipHolderUpdatesSchema, chipOrderWindowSaveSchema, chipReceptionSchema } from '@/lib/validation/requests';
 import { validatePhone } from '@/lib/validation';
 
 // Issuing a chip at the reception (25/11/2026) — the pure half: the payment
@@ -13,6 +14,9 @@ import { validatePhone } from '@/lib/validation';
 // chips × the price per chip of /settings), the orderer details (every field
 // optional), why a save of new chips cannot go yet, and what the server
 // accepts of `orderer`, `payment`, a block's email and a renter's lease.
+// 26/11/2026: "מזומן או העברה" is two methods, "מזומן" and "העברה בנקאית"
+// (an order recorded before keeps "מזומן או העברה" — STORED_PAYMENT_LABEL),
+// and "אשראי" is a method the server knows (a payment OF a sum).
 
 const phoneProblem = (p: string) => {
   const v = validatePhone(p);
@@ -22,11 +26,19 @@ const EMPTY: OrdererFields = { name: '', phone: '', email: '', street: '', city:
 const KEY = '11111111-1111-4111-8111-111111111111.pdf';
 
 describe('the payment methods of the reception window', () => {
-  it('two methods a save can carry — "אשראי" is a label only, it is not active', () => {
-    expect(RECEPTION_PAYMENT_METHODS).toEqual(['cash_transfer', 'none']);
-    expect(RECEPTION_PAYMENT_LABEL).toEqual({ card: 'אשראי', cash_transfer: 'מזומן או העברה', none: 'ללא חיוב' });
+  it('four methods a save can carry — cash and a bank transfer are two (26/11/2026)', () => {
+    expect(RECEPTION_PAYMENT_METHODS).toEqual(['cash', 'bank_transfer', 'card', 'none']);
+    expect(RECEPTION_PAYMENT_LABEL).toEqual({ card: 'אשראי', cash: 'מזומן', bank_transfer: 'העברה בנקאית', none: 'ללא חיוב' });
+    // The methods that are a received SUM the manager confirms by choosing them.
+    expect(RECEPTION_CONFIRMED_METHODS).toEqual(['cash', 'bank_transfer']);
     expect(RECEPTION_CARD_PENDING_TEXT).toBe('יופעל לאחר חיבור הסליקה');
     expect(CHIP_ORDER_RECEPTION_LABEL).toBe('קבלה');
+  });
+
+  it('a STORED method in words — the one recorded before the split is shown as it was', () => {
+    expect(STORED_PAYMENT_LABEL).toEqual({ cash: 'מזומן', bank_transfer: 'העברה בנקאית', card: 'אשראי', cash_transfer: 'מזומן או העברה' });
+    // "ללא חיוב" is never a stored method: a no-charge save makes no order.
+    expect(STORED_PAYMENT_LABEL.none).toBeUndefined();
   });
 
   it('the amount: new chips × the price per chip, agorot-safe', () => {
@@ -47,12 +59,14 @@ describe('the payment methods of the reception window', () => {
 });
 
 describe('why a save of new chips cannot go yet', () => {
-  const reason = (newChips: number, method: 'cash_transfer' | 'none' | null, amount: number | null) =>
+  const reason = (newChips: number, method: ReceptionPaymentMethod | null, amount: number | null) =>
     receptionPaymentReason({ newChips, method, amount });
 
   it('no new chip — nothing to pay for, whatever is chosen', () => {
     expect(reason(0, null, 0)).toBeNull();
-    expect(reason(0, 'cash_transfer', 0)).toBeNull();
+    expect(reason(0, 'cash', 0)).toBeNull();
+    expect(reason(0, 'bank_transfer', 0)).toBeNull();
+    expect(reason(0, 'card', 0)).toBeNull();
     expect(reason(0, null, null)).toBeNull();
   });
 
@@ -66,29 +80,50 @@ describe('why a save of new chips cannot go yet', () => {
     expect(reason(200, 'none', 10_000)).toBeNull(); // the ceiling is of a PAID save only
   });
 
-  it('"מזומן או העברה" confirms a SUM: when the sum on the screen is another one, the choice no longer stands', () => {
-    const cash = 'cash_transfer' as const;
-    // Chosen at 100 and still 100: it stands.
-    expect(receptionMethodInForce({ method: cash, amount: 100, confirmedAmount: 100 })).toBe(cash);
-    expect(receptionPaymentReason({ newChips: 2, method: cash, amount: 100, confirmedAmount: 100 })).toBeNull();
-    // A third chip was added after 100 was confirmed: nothing is confirmed any more.
-    expect(receptionMethodInForce({ method: cash, amount: 150, confirmedAmount: 100 })).toBeNull();
-    expect(receptionPaymentReason({ newChips: 3, method: cash, amount: 150, confirmedAmount: 100 }))
-      .toBe('הסכום לתשלום השתנה — יש לבחור שוב „מזומן או העברה” כדי לאשר את הסכום החדש');
-    // …and back to two chips: the sum that was confirmed is the sum again.
-    expect(receptionMethodInForce({ method: cash, amount: 100, confirmedAmount: 100.004 })).toBe(cash);
+  it('"מזומן" and "העברה בנקאית" each confirm a SUM: when the sum on the screen is another one, the choice no longer stands', () => {
+    for (const method of ['cash', 'bank_transfer'] as const) {
+      // Chosen at 100 and still 100: it stands.
+      expect(receptionMethodInForce({ method, amount: 100, confirmedAmount: 100 })).toBe(method);
+      expect(receptionPaymentReason({ newChips: 2, method, amount: 100, confirmedAmount: 100 })).toBeNull();
+      // A third chip was added after 100 was confirmed: nothing is confirmed any more.
+      expect(receptionMethodInForce({ method, amount: 150, confirmedAmount: 100 })).toBeNull();
+      expect(receptionPaymentReason({ newChips: 3, method, amount: 150, confirmedAmount: 100 }))
+        .toBe('הסכום לתשלום השתנה — יש לבחור שוב את אמצעי התשלום כדי לאשר את הסכום החדש');
+      // …and back to two chips: the sum that was confirmed is the sum again.
+      expect(receptionMethodInForce({ method, amount: 100, confirmedAmount: 100.004 })).toBe(method);
+      // The price could not be loaded: the choice is kept until there is a sum to hold it to.
+      expect(receptionMethodInForce({ method, amount: null, confirmedAmount: 100 })).toBe(method);
+    }
     // "ללא חיוב" confirms no sum, and nothing chosen stays nothing.
     expect(receptionMethodInForce({ method: 'none', amount: 150, confirmedAmount: 100 })).toBe('none');
     expect(receptionMethodInForce({ method: null, amount: 150, confirmedAmount: 100 })).toBeNull();
     expect(receptionPaymentReason({ newChips: 3, method: 'none', amount: 150, confirmedAmount: 100 })).toBeNull();
   });
 
-  it('"מזומן או העברה" needs a real sum the window knows, within one order line', () => {
-    expect(reason(2, 'cash_transfer', 100)).toBeNull();
-    expect(reason(2, 'cash_transfer', null)).toContain('המחיר לצ׳יפ לא נטען');
-    expect(reason(2, 'cash_transfer', 0)).toContain('ללא חיוב');
-    expect(reason(RECEPTION_MAX_PAID_CHIPS, 'cash_transfer', 2500)).toBeNull();
-    expect(reason(RECEPTION_MAX_PAID_CHIPS + 1, 'cash_transfer', 2550)).toContain(`עד ${RECEPTION_MAX_PAID_CHIPS} צ׳יפים`);
+  it('"מזומן" / "העברה בנקאית" need a real sum the window knows, within one order line', () => {
+    for (const method of ['cash', 'bank_transfer'] as const) {
+      expect(reason(2, method, 100)).toBeNull();
+      expect(reason(2, method, null)).toContain('המחיר לצ׳יפ לא נטען');
+      expect(reason(2, method, 0)).toContain('ללא חיוב');
+      expect(reason(RECEPTION_MAX_PAID_CHIPS, method, 2500)).toBeNull();
+      expect(reason(RECEPTION_MAX_PAID_CHIPS + 1, method, 2550)).toContain(`עד ${RECEPTION_MAX_PAID_CHIPS} צ׳יפים`);
+    }
+  });
+
+  it('"אשראי" is a payment OF a sum: nothing goes before the card paid, and the sum it paid must be the sum now', () => {
+    // Chosen, not paid yet (no sum the card paid).
+    expect(receptionPaymentReason({ newChips: 2, method: 'card', amount: 100 })).toBe('יש להשלים את התשלום באשראי לפני השמירה');
+    expect(receptionPaymentReason({ newChips: 2, method: 'card', amount: 100, confirmedAmount: null })).toBe('יש להשלים את התשלום באשראי לפני השמירה');
+    // Paid 100 for two chips, still two: it stands.
+    expect(receptionMethodInForce({ method: 'card', amount: 100, confirmedAmount: 100 })).toBe('card');
+    expect(receptionPaymentReason({ newChips: 2, method: 'card', amount: 100, confirmedAmount: 100 })).toBeNull();
+    // A chip was added after the card paid: the card's sum is not the sum now.
+    expect(receptionMethodInForce({ method: 'card', amount: 150, confirmedAmount: 100 })).toBeNull();
+    expect(receptionPaymentReason({ newChips: 3, method: 'card', amount: 150, confirmedAmount: 100 }))
+      .toBe('הסכום שנגבה באשראי אינו הסכום לתשלום עכשיו — יש להחזיר את מספר הצ׳יפים, או לבטל את ההזמנה (זיכוי)');
+    // The ceiling of a paid save holds for a card too.
+    expect(receptionPaymentReason({ newChips: RECEPTION_MAX_PAID_CHIPS + 1, method: 'card', amount: 2550, confirmedAmount: 2550 }))
+      .toContain(`עד ${RECEPTION_MAX_PAID_CHIPS} צ׳יפים`);
   });
 });
 
@@ -131,6 +166,7 @@ describe('what a block and a holder show again', () => {
   const record = (ref: string, kind: 'record' | 'order'): ReceptionRecordView => ({
     kind, ref, order_number: kind === 'order' ? 1042 : null, created_at: '2026-11-25T08:00:00Z', orderer_name: 'דנה כהן', orderer_phone: null,
     orderer_email: null, address: null, chips_count: 1, amount: kind === 'order' ? 50 : 0, by_name: 'מנהל', cancelled: false,
+    payment_method: kind === 'order' ? 'cash' : null, order_id: null, cancel_failed_step: null, cancel_error: null,
   });
 
   it('the email, the lease and its end date of a person: the first chip that has each', () => {
@@ -163,17 +199,32 @@ describe('what the server accepts: `orderer` and `payment` of POST /api/chips', 
   it('blanks are nothing; the phone is normalised and the email lower-cased', () => {
     const r = chipReceptionSchema.parse({
       orderer: { name: '  דנה כהן ', phone: '052-123 4567', email: ' Dana@Example.TEST ', street: '', city: '  ', zip: null },
-      payment: { method: 'cash_transfer', amount: 100 },
+      payment: { method: 'cash', amount: 100 },
     });
     expect(r.orderer).toEqual({ name: 'דנה כהן', phone: '0521234567', email: 'dana@example.test', street: null, city: null, zip: null });
-    expect(r.payment).toEqual({ method: 'cash_transfer', amount: 100 });
+    expect(r.payment).toEqual({ method: 'cash', amount: 100 });
+    expect(chipReceptionSchema.parse({ payment: { method: 'bank_transfer', amount: 150 } }).payment).toEqual({ method: 'bank_transfer', amount: 150 });
   });
 
-  it('"אשראי" is not a method the server knows, and a sum is never negative', () => {
-    expect(chipReceptionSchema.safeParse({ payment: { method: 'card', amount: 100 } }).success).toBe(false);
-    expect(chipReceptionSchema.safeParse({ payment: { method: 'cash_transfer', amount: -1 } }).success).toBe(false);
-    expect(chipReceptionSchema.safeParse({ payment: { method: 'cash_transfer' } }).success).toBe(false);
+  it('the four methods of 26/11/2026 — the old "cash_transfer" is refused (a tab from before the split reloads), and a sum is never negative', () => {
+    for (const method of ['cash', 'bank_transfer', 'card', 'none']) {
+      expect(chipReceptionSchema.safeParse({ payment: { method, amount: 100 } }).success, method).toBe(true);
+    }
+    const legacy = chipReceptionSchema.safeParse({ payment: { method: 'cash_transfer', amount: 100 } });
+    expect(legacy.success).toBe(false);
+    expect(legacy.error?.issues[0]?.message).toBe('אמצעי התשלום אינו תקין — רעננו את הדף');
+    expect(chipReceptionSchema.safeParse({ payment: { method: 'cash', amount: -1 } }).success).toBe(false);
+    expect(chipReceptionSchema.safeParse({ payment: { method: 'bank_transfer' } }).success).toBe(false);
     expect(chipReceptionSchema.safeParse({ payment: { method: 'none', amount: 0 } }).success).toBe(true);
+  });
+
+  it('the extra chips of a web order: cash, a bank transfer or no charge — never a card, never the old value', () => {
+    const extra = (method: string) => chipOrderWindowSaveSchema.safeParse({ holders: [], extra_payment: { method, amount: 50 } }).success;
+    expect(extra('cash')).toBe(true);
+    expect(extra('bank_transfer')).toBe(true);
+    expect(extra('none')).toBe(true);
+    expect(extra('card')).toBe(false);
+    expect(extra('cash_transfer')).toBe(false);
   });
 
   it('a value that is there must be storable — each refusal names its field', () => {

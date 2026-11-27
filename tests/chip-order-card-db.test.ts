@@ -5,18 +5,22 @@ import { requireSeededAdmin } from './db-fixtures';
 
 // Card payment of a chip order through PayPlus (25/11/2026), against a
 // throwaway database (WA_TEST_DATABASE_URL), never prod. PayPlus itself is not
-// called: its two network functions are stubbed; the signature check and the
-// reading of a transaction are the real ones, and every row is real.
+// called: its three network functions are stubbed (and fetch refuses anything
+// that slips past them); the signature check and the reading of a transaction
+// are the real ones, and every row is real.
 //
-// What must hold:
+// What must hold (the test link — the sandbox; real orders in production are
+// tests/chip-order-live-card-db.test.ts):
 //   - a payment session opens only for a TEST order that still waits for
-//     payment (PayPlus in sandbox), with the amount computed on the server;
+//     payment, always with the sandbox values, with the amount computed on
+//     the server;
 //   - an order becomes paid only from a callback whose signature is valid, or
 //     from the server's own lookup — once, however often it is repeated — and
 //     only for a charge that names a payment session THIS server opened for
 //     that order (the order number alone pays nothing);
-//   - the lookup asks about every recent session of the order, and no new
-//     session is opened while an earlier one may hold a charge;
+//   - the lookup asks about every recent session of the order, no new session
+//     is opened while an earlier one may hold a charge, and an earlier one
+//     nothing was charged on is disabled before the next opens;
 //   - a sandbox charge never marks a real order paid (route, UPDATE and CHECK);
 //   - "סיים הזמנת בדיקה" is closed while the card step is on.
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
@@ -38,7 +42,10 @@ vi.mock('@/lib/db', () => ({
 // Synthetic key material — never a real PayPlus value.
 const SECRET = 'test-secret-key-for-callbacks';
 const SANDBOX = { mode: 'sandbox' as const, origin: 'https://restapidev.payplus.co.il', apiKey: 'test-api-key', secretKey: SECRET, pageUid: '11111111-2222-3333-4444-555555555555' };
-let config: typeof SANDBOX | { mode: 'production'; origin: string; apiKey: string; secretKey: string; pageUid: string } | null = SANDBOX;
+const PRODUCTION = { mode: 'production' as const, origin: 'https://restapi.payplus.co.il', apiKey: 'test-prod-api-key', secretKey: 'test-prod-secret-key', pageUid: '99999999-8888-7777-6666-555555555555' };
+// What payplusConfigFor answers for each environment (null = its values are not set).
+let sandboxConfig: typeof SANDBOX | null = SANDBOX;
+let productionConfig: typeof PRODUCTION | null = null;
 let sessionSeq = 0;
 interface SessionInput { amount: number; orderNumber: number; callbackUrl: string; pageOrigin: string }
 const createHostedFieldsSession = vi.fn<(cfg: unknown, input: SessionInput) => Promise<{ pageRequestUid: string; hostedFieldsUuid: string }>>(async () => {
@@ -49,32 +56,37 @@ const createHostedFieldsSession = vi.fn<(cfg: unknown, input: SessionInput) => P
 type Lookup = { kind: 'transactions'; transactions: unknown[] } | { kind: 'unknown'; status: number; message: string };
 const NOTHING: Lookup = { kind: 'transactions', transactions: [] };
 const lookupPaymentRequest = vi.fn<(cfg: unknown, uid: string) => Promise<Lookup>>(async () => NOTHING);
+const disablePaymentRequest = vi.fn<(cfg: { mode: string }, uid: string) => Promise<boolean>>(async () => true);
+// Transactions/View (read only) — what a callback for an order that is
+// ALREADY paid makes the server ask (27/11/2026): here, always the charge as
+// it is (not cancelled), and no refund of the order.
+const viewTransactions = vi.fn(async (_cfg: unknown, by: { transactionUid: string } | { moreInfo: string }) => (
+  'transactionUid' in by
+    ? { kind: 'transactions' as const, transactions: [{ uid: by.transactionUid, type: 'charge', statusCode: '000', amount: 0, cancelled: false, moreInfo: null }] }
+    : { kind: 'transactions' as const, transactions: [] }
+));
 vi.mock('@/lib/payplus/client', async (orig) => ({
   ...(await orig<typeof import('@/lib/payplus/client')>()),
-  payplusConfig: () => config,
+  payplusConfigFor: (mode: 'sandbox' | 'production') => (mode === 'sandbox' ? sandboxConfig : productionConfig),
   createHostedFieldsSession,
   lookupPaymentRequest,
+  disablePaymentRequest,
+  viewTransactions,
 }));
-vi.mock('@/lib/grow/client', async (orig) => ({
-  ...(await orig<typeof import('@/lib/grow/client')>()),
-  isGrowConfigured: () => false,
-}));
-vi.mock('@/lib/portal/send', () => ({
-  sendPortalCode: vi.fn(async () => ({ ok: true })),
-  alertManagerAboutLockout: vi.fn(async () => undefined),
-}));
+// Nothing here may reach the network: a PayPlus call that is not one of the
+// four stubs above lands here, is recorded, and fails.
+const networkCalls: string[] = [];
 const PHONE = '+972539400077';
-vi.mock('@/lib/chipOrders/server', async (orig) => ({
-  ...(await orig<typeof import('@/lib/chipOrders/server')>()),
-  readVerifiedPhone: async () => PHONE,
-}));
 const afterQueue: (() => unknown)[] = [];
 vi.mock('next/server', async (orig) => ({
   ...(await orig<typeof import('next/server')>()),
   after: (fn: () => unknown) => { afterQueue.push(fn); },
 }));
 const notifyChipOrder = vi.fn<(orderId: string, kind: string) => Promise<undefined>>(async () => undefined);
-vi.mock('@/lib/chipOrders/notify', () => ({ notifyChipOrder }));
+// What follows an order turning paid. The real one issues the order's Morning
+// document first (not here), then sends the "received & paid" message.
+const afterOrderPaid = vi.fn(async (orderId: string) => { await notifyChipOrder(orderId, 'paid'); });
+vi.mock('@/lib/chipOrders/notify', () => ({ notifyChipOrder, afterOrderPaid }));
 
 const RUN = String(Date.now()).slice(-8);
 const testMode = await import('@/lib/chipOrders/testMode');
@@ -170,6 +182,10 @@ const reported = (o: Made, over: Record<string, unknown> = {}) => ({
 
 d('chip orders — card payment (PayPlus hosted fields)', () => {
   beforeAll(async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      networkCalls.push(String(input instanceof Request ? input.url : input));
+      throw new TypeError('no network in this test');
+    }));
     pool = new Pool({ connectionString: TEST_URL });
     pool.on('error', () => {});
     adminId = await requireSeededAdmin(pool);
@@ -189,6 +205,7 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
   });
 
   afterAll(async () => {
+    vi.unstubAllGlobals();
     if (!pool) return;
     for (const id of made.orders) {
       await pool.query(`delete from public.audit_log where entity_type = 'chip_order' and entity_id = $1`, [id]);
@@ -208,23 +225,25 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
     // Every test opens payment sessions from one address; the hourly ceiling
     // per address belongs to the test that checks it, not to the whole file.
     await pool.query(`delete from public.auth_rate_limits where bucket = $1`, [`chip-order:card-session:ip:${IP}`]);
-    config = SANDBOX;
+    sandboxConfig = SANDBOX;
+    productionConfig = null;
     afterQueue.length = 0;
     createHostedFieldsSession.mockClear();
     lookupPaymentRequest.mockReset();
     lookupPaymentRequest.mockResolvedValue(NOTHING);
+    disablePaymentRequest.mockClear();
     notifyChipOrder.mockClear();
   });
 
   // ── The session ──────────────────────────────────────────────────────────
 
-  it('no test link, PayPlus not configured, or PayPlus in production → no session and no hint', async () => {
+  it('no test link, or no sandbox values — the production values never pay a test order → no session and no hint', async () => {
     const o = await makeOrder({ isTest: true });
     expect((await post(sessionRoute, 'payplus/session', { trackingToken: o.trackingToken }, H(false))).status).toBe(403);
-    config = null;
+    sandboxConfig = null;
     expect((await openSession(o)).status).toBe(403);
-    // Production keys do not open card payment in this build — nothing may be charged for real yet.
-    config = { ...SANDBOX, mode: 'production', origin: 'https://restapi.payplus.co.il' };
+    // The production values are set, but a test order pays in the sandbox or not at all.
+    productionConfig = PRODUCTION;
     expect((await openSession(o)).status).toBe(403);
     expect((await askStatus(o)).status).toBe(403);
     expect(createHostedFieldsSession).not.toHaveBeenCalled();
@@ -246,8 +265,9 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
     const res = await post(sessionRoute, 'payplus/session', { trackingToken: o.trackingToken, amount: 1, total: 1, price: 0.01 });
     expect(res.status).toBe(200);
     const data = (await res.json()) as Record<string, unknown>;
-    expect(Object.keys(data).sort()).toEqual(['hosted_fields_uuid', 'ok', 'origin', 'page_request_uid']);
+    expect(Object.keys(data).sort()).toEqual(['amount', 'hosted_fields_uuid', 'ok', 'origin', 'page_request_uid']);
     expect(data.origin).toBe('https://restapidev.payplus.co.il');
+    expect(data.amount).toBe(3 * unitPrice);
     expect(JSON.stringify(data)).not.toContain(SECRET);
     expect(JSON.stringify(data)).not.toContain(SANDBOX.apiKey);
 
@@ -256,11 +276,17 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
     expect(input.amount).toBe(3 * unitPrice);
     expect(input.amount).toBe(o.total);
     expect(input.orderNumber).toBe(o.number);
-    expect(input.callbackUrl).toMatch(/\/api\/public\/chip-order\/payplus\/callback$/);
+    // The callback URL names the environment whose secret validates it.
+    expect(input.callbackUrl).toMatch(/\/api\/public\/chip-order\/payplus\/callback\?env=sandbox$/);
     expect(input.callbackUrl).not.toContain(o.trackingToken);
 
     const row = await rowOf(o.id);
     expect(row).toMatchObject({ status: 'pending_payment', card_status: 'started', card_env: 'sandbox', card_page_request_uid: data.page_request_uid });
+    // The session is on record with the amount it was opened for.
+    const stored = (await pool.query(
+      `select order_id, env, amount::float8 as amount from public.chip_order_card_sessions where page_request_uid = $1`, [data.page_request_uid],
+    )).rows;
+    expect(stored).toEqual([{ order_id: o.id, env: 'sandbox', amount: 3 * unitPrice }]);
   });
 
   it('refuses when the price of the settings no longer gives the total the order was saved with', async () => {
@@ -273,39 +299,51 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
     try {
       const res = await openSession(o);
       expect(res.status).toBe(409);
+      // The page saves the order again (priced anew) and asks once more.
+      expect(await res.json()).toMatchObject({ ok: false, state: 'price_changed' });
       expect(createHostedFieldsSession).not.toHaveBeenCalled();
     } finally {
       await pool.query(`update public.app_settings set value = value || $1::jsonb where key = 'chip_orders'`, [JSON.stringify({ unitPrice })]);
     }
   });
 
-  it('a flat ceiling per order: the ninth session in half an hour is refused', async () => {
+  it('a flat ceiling per order: the 21st session in half an hour is refused', async () => {
     const o = await makeOrder({ isTest: true });
-    for (let i = 0; i < 8; i++) expect((await openSession(o)).status).toBe(200);
+    for (let i = 0; i < 20; i++) expect((await openSession(o)).status).toBe(200);
     expect((await openSession(o)).status).toBe(429);
-    expect(createHostedFieldsSession).toHaveBeenCalledTimes(8);
+    expect(createHostedFieldsSession).toHaveBeenCalledTimes(20);
   });
 
-  it('a second session: PayPlus is asked about the first one before another is opened', async () => {
+  it('a second session: PayPlus is asked about the first one, which is disabled before another is opened', async () => {
     const o = await makeOrder({ isTest: true });
     const first = await sessionOf(o);
+    expect(disablePaymentRequest).not.toHaveBeenCalled(); // nothing to disable before the first
     createHostedFieldsSession.mockClear();
     lookupPaymentRequest.mockClear();
 
-    // Nothing was charged on the first → a second session is opened, and both are on record.
+    // Nothing was charged on the first → it is disabled, then a second session is opened, and both are on record.
     const second = await sessionOf(o);
     expect(lookupPaymentRequest.mock.calls.map((c) => c[1])).toEqual([first]);
+    expect(disablePaymentRequest.mock.calls.map((c) => [c[0].mode, c[1]])).toEqual([['sandbox', first]]);
+    const [asked] = lookupPaymentRequest.mock.invocationCallOrder;
+    const [killed] = disablePaymentRequest.mock.invocationCallOrder;
+    const [opened] = createHostedFieldsSession.mock.invocationCallOrder;
+    expect(asked!).toBeLessThan(killed!);
+    expect(killed!).toBeLessThan(opened!);
     expect(second).not.toBe(first);
     const stored = (await pool.query<{ page_request_uid: string }>(`select page_request_uid from public.chip_order_card_sessions where order_id = $1 order by created_at`, [o.id])).rows.map((r) => r.page_request_uid);
     expect(stored).toEqual([first, second]);
     expect((await rowOf(o.id)).card_page_request_uid).toBe(second);
 
-    // PayPlus cannot say what happened on the earlier sessions → no third session.
+    // PayPlus cannot say what happened on the earlier sessions → no third session,
+    // and nothing is disabled (the earlier one may hold a charge).
     createHostedFieldsSession.mockClear();
+    disablePaymentRequest.mockClear();
     lookupPaymentRequest.mockResolvedValue({ kind: 'unknown', status: 403, message: 'refused' });
     const blocked = await openSession(o);
     expect(blocked.status).toBe(502);
     expect(createHostedFieldsSession).not.toHaveBeenCalled();
+    expect(disablePaymentRequest).not.toHaveBeenCalled();
 
     // The FIRST session turns out to hold an approved charge (its callback was lost):
     // the order is paid from it, and no further session is opened.
@@ -314,6 +352,7 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ ok: false, state: 'paid' });
     expect(createHostedFieldsSession).not.toHaveBeenCalled();
+    expect(disablePaymentRequest).not.toHaveBeenCalled();
     await runAfter();
     expect(await rowOf(o.id)).toMatchObject({ status: 'paid', card_status: 'paid', card_page_request_uid: first });
     expect(notifyChipOrder).toHaveBeenCalledTimes(1);
@@ -345,9 +384,9 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
       method: 'POST', headers: { 'user-agent': 'PayPlus', hash: sign(huge), 'content-type': 'application/json' }, body: huge,
     }))).status).toBe(401);
     // The same 401 when PayPlus is not configured at all — the answer is no oracle.
-    config = null;
+    sandboxConfig = null;
     expect((await callback(payload)).status).toBe(401);
-    config = SANDBOX;
+    sandboxConfig = SANDBOX;
 
     const row = await rowOf(o.id);
     expect(row.status).toBe('pending_payment');
@@ -526,13 +565,20 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
               card_page_request_uid = $2, card_session_at = now() where id = $1`,
       [real.id, `${RUN}-dead-dead-dead-000000000001`],
     )).rejects.toThrow(/chip_orders_card_env_test_check/);
-    // …and a real web order cannot leave pending_payment on a card payment at all.
+    // …and a real web order cannot leave pending_payment on a card session
+    // nobody confirmed a charge on (since 26/11/2026 it may — but only with
+    // card_status 'paid', which chip_orders_card_paid_check ties to a charge).
+    await pool.query(
+      `update public.chip_orders set card_provider = 'payplus', card_env = 'production', card_status = 'started',
+              card_page_request_uid = $2, card_session_at = now() where id = $1`,
+      [real.id, `${RUN}-dead-dead-dead-000000000002`],
+    );
+    await expect(pool.query(`update public.chip_orders set status = 'paid', paid_at = now() where id = $1`, [real.id]))
+      .rejects.toThrow(/chip_orders_paid_fields_check/);
     await expect(pool.query(
-      `update public.chip_orders set status = 'paid', paid_at = now(), card_provider = 'payplus', card_env = 'production', card_status = 'paid',
-              card_page_request_uid = $2, card_session_at = now(), card_transaction_uid = $3, card_paid_amount = total, card_paid_at = now()
-        where id = $1`,
-      [real.id, `${RUN}-dead-dead-dead-000000000002`, `tx-${RUN}-forced`],
-    )).rejects.toThrow(/chip_orders_paid_fields_check/);
+      `update public.chip_orders set status = 'paid', paid_at = now(), card_status = 'paid', card_transaction_uid = $2 where id = $1`,
+      [real.id, `tx-${RUN}-forced`],
+    )).rejects.toThrow(/chip_orders_card_paid_check/);
     expect((await rowOf(real.id)).status).toBe('pending_payment');
   });
 
@@ -671,7 +717,11 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
 
   it('status: needs the test link, the order’s own token, and a card session of the order', async () => {
     const o = await makeOrder({ isTest: true });
+    // Without the test link the question is about a REAL order in production — not configured here.
     expect((await post(statusRoute, 'payplus/status', { trackingToken: o.trackingToken }, H(false))).status).toBe(403);
+    // …and when it is, a test order is still not answered there: the order must be of the request's kind.
+    productionConfig = PRODUCTION;
+    expect((await post(statusRoute, 'payplus/status', { trackingToken: o.trackingToken }, H(false))).status).toBe(409);
     expect((await askStatus(o)).status).toBe(409); // no session was opened for it
     expect((await post(statusRoute, 'payplus/status', { trackingToken: 'x'.repeat(43) })).status).toBe(409);
     expect((await post(statusRoute, 'payplus/status', { trackingToken: 'short' })).status).toBe(400);
@@ -686,7 +736,7 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
     expect(res.status).toBe(409);
     expect((await rowOf(o.id)).status).toBe('pending_payment');
 
-    config = null;
+    sandboxConfig = null;
     expect((await post(finishRoute, 'test-finish', { trackingToken: o.trackingToken })).status).toBe(200);
     await runAfter();
     const row = await rowOf(o.id);
@@ -694,12 +744,12 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
     expect(row.card_status).toBeNull();
   });
 
-  it('the submit answer says whether the payment step is the card', async () => {
+  it('the submit answer says whether the payment step is the card (the sandbox values, for a test order)', async () => {
     const submit = async () => {
       const fd = new FormData();
       fd.append('order', JSON.stringify({
         phone: '0539400077', email: 'card-test@example.test',
-        addressStreet: 'הרצל 1', addressCity: 'חיפה', addressZip: '3300000', acceptTerms: true,
+        addressStreet: 'הרצל 1', addressCity: 'חיפה', addressZip: '3300000',
         rows: [{ role: 'owner', fullName: 'דנה בדיקה', apartment: APT, chipsCount: 1, phone: '0539400077', email: '', leaseEndDate: null }],
       }));
       const encoded = new Response(fd);
@@ -716,7 +766,13 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
       return data;
     };
     expect((await submit()).cardPayment).toBe(true);
-    config = null;
+    // The production values do not give a test order a card step.
+    sandboxConfig = null;
+    productionConfig = PRODUCTION;
     expect((await submit()).cardPayment).toBe(false);
+  });
+
+  it('no request of this file ever left for the network', () => {
+    expect(networkCalls).toEqual([]);
   });
 });

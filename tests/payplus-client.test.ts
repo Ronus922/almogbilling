@@ -1,28 +1,40 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The PayPlus client (src/lib/payplus/client.ts): which keys and host a mode
-// picks, what generateLink is asked for, how a callback is validated, and that
-// neither key ever leaves the two request headers. No network: fetch is
-// stubbed. The key values below are synthetic.
+// The PayPlus client (src/lib/payplus/client.ts): which keys and host each
+// environment uses, what generateLink is asked for, how a callback is
+// validated, and that neither key ever leaves the two request headers — plus
+// the rules of WHO may pay by card in which environment
+// (src/lib/chipOrders/cardPayment.ts, server.ts; 26/11/2026). No network:
+// fetch is stubbed. The key values below are synthetic.
 
 const fakeEnv: Record<string, string | undefined> = {};
 vi.mock('@/env', () => ({ env: fakeEnv }));
 
 const {
-  PayPlusApiError, createHostedFieldsSession, hostedFieldsRequestBody, isApprovedCharge, lookupPaymentRequest,
-  payloadFieldNames, payplusConfig, readPayPlusTransaction, verifyPayPlusCallback,
+  PayPlusApiError, createHostedFieldsSession, disablePaymentRequest, hostedFieldsRequestBody, isApprovedCharge,
+  lookupPaymentRequest, payloadFieldNames, payplusConfigFor, readPayPlusTransaction, refundByTransactionUid, verifyPayPlusCallback,
 } = await import('@/lib/payplus/client');
+const {
+  cardChargingState, cardConfigFor, liveCardConfig, lookupConfigFor, orderMayPayByCard, testCardConfig,
+} = await import('@/lib/chipOrders/cardPayment');
+const { chipOrdersOpen } = await import('@/lib/chipOrders/server');
+const { DEFAULT_CHIP_ORDER_SETTINGS } = await import('@/lib/chipOrders/model');
 
 const DEV = { api: 'dev-api-key-000111', secret: 'dev-secret-key-222333', page: '11111111-2222-3333-4444-555555555555' };
 const PROD = { api: 'prod-api-key-444555', secret: 'prod-secret-key-666777', page: '99999999-8888-7777-6666-555555555555' };
+const DEV_KEYS = ['PAYPLUS_DEV_API_KEY', 'PAYPLUS_DEV_SECRET_KEY', 'PAYPLUS_DEV_PAGE_UID'] as const;
+const PROD_KEYS = ['PAYPLUS_PROD_API_KEY', 'PAYPLUS_PROD_SECRET_KEY', 'PAYPLUS_PROD_PAGE_UID'] as const;
 
-function setEnv(mode: string | undefined, opts: { dev?: boolean; prod?: boolean } = { dev: true, prod: true }) {
+function setEnv(mode: string | undefined, opts: { dev?: boolean; prod?: boolean; live?: string } = { dev: true, prod: true }) {
   for (const k of Object.keys(fakeEnv)) delete fakeEnv[k];
   if (mode) fakeEnv.PAYPLUS_MODE = mode;
+  if (opts.live) fakeEnv.PAYPLUS_LIVE_CHARGING = opts.live;
   if (opts.dev) Object.assign(fakeEnv, { PAYPLUS_DEV_API_KEY: DEV.api, PAYPLUS_DEV_SECRET_KEY: DEV.secret, PAYPLUS_DEV_PAGE_UID: DEV.page });
   if (opts.prod) Object.assign(fakeEnv, { PAYPLUS_PROD_API_KEY: PROD.api, PAYPLUS_PROD_SECRET_KEY: PROD.secret, PAYPLUS_PROD_PAGE_UID: PROD.page });
 }
+/** Real charging ARMED: production mode, both key sets, the switch on. */
+const armed = () => setEnv('production', { dev: true, prod: true, live: 'on' });
 
 const SESSION_INPUT = {
   amount: 150,
@@ -42,40 +54,151 @@ afterEach(() => vi.unstubAllGlobals());
 const reply = (status: number, body: unknown) =>
   new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-describe('payplusConfig — the mode picks the key set and the host', () => {
-  it('sandbox → the DEV values on restapidev', () => {
-    setEnv('sandbox');
-    expect(payplusConfig()).toEqual({
-      mode: 'sandbox', origin: 'https://restapidev.payplus.co.il', apiKey: DEV.api, secretKey: DEV.secret, pageUid: DEV.page,
-    });
+const SANDBOX_CFG = { mode: 'sandbox', origin: 'https://restapidev.payplus.co.il', apiKey: DEV.api, secretKey: DEV.secret, pageUid: DEV.page };
+const PRODUCTION_CFG = { mode: 'production', origin: 'https://restapi.payplus.co.il', apiKey: PROD.api, secretKey: PROD.secret, pageUid: PROD.page };
+
+describe('payplusConfigFor — each environment, with its own three values only', () => {
+  it('sandbox → the DEV values on restapidev, whatever PAYPLUS_MODE says', () => {
+    for (const mode of [undefined, 'sandbox', 'production']) {
+      setEnv(mode);
+      expect(payplusConfigFor('sandbox')).toEqual(SANDBOX_CFG);
+    }
   });
 
-  it('production → the PROD values on restapi', () => {
-    setEnv('production');
-    expect(payplusConfig()).toEqual({
-      mode: 'production', origin: 'https://restapi.payplus.co.il', apiKey: PROD.api, secretKey: PROD.secret, pageUid: PROD.page,
-    });
+  it('production → the PROD values on restapi, whatever PAYPLUS_MODE says', () => {
+    for (const mode of [undefined, 'sandbox', 'production']) {
+      setEnv(mode);
+      expect(payplusConfigFor('production')).toEqual(PRODUCTION_CFG);
+    }
   });
 
-  it('no mode, an unknown mode, or a missing value of the mode → not configured', () => {
-    setEnv(undefined);
-    expect(payplusConfig()).toBeNull();
-    setEnv('live');
-    expect(payplusConfig()).toBeNull();
+  it('the other environment\'s values are never a fallback; one missing value = that environment is not configured', () => {
     setEnv('sandbox', { prod: true });
-    expect(payplusConfig()).toBeNull(); // the PROD values are never a fallback for sandbox
+    expect(payplusConfigFor('sandbox')).toBeNull();
+    expect(payplusConfigFor('production')).toEqual(PRODUCTION_CFG);
     setEnv('production', { dev: true });
-    expect(payplusConfig()).toBeNull();
-    setEnv('sandbox');
-    delete fakeEnv.PAYPLUS_DEV_PAGE_UID;
-    expect(payplusConfig()).toBeNull();
+    expect(payplusConfigFor('production')).toBeNull();
+    expect(payplusConfigFor('sandbox')).toEqual(SANDBOX_CFG);
+    for (const key of DEV_KEYS) {
+      setEnv('sandbox');
+      delete fakeEnv[key];
+      expect(payplusConfigFor('sandbox')).toBeNull();
+      expect(payplusConfigFor('production')).toEqual(PRODUCTION_CFG);
+    }
+    for (const key of PROD_KEYS) {
+      setEnv('production');
+      delete fakeEnv[key];
+      expect(payplusConfigFor('production')).toBeNull();
+      expect(payplusConfigFor('sandbox')).toEqual(SANDBOX_CFG);
+    }
+    setEnv(undefined, {});
+    expect(payplusConfigFor('sandbox')).toBeNull();
+    expect(payplusConfigFor('production')).toBeNull();
+  });
+});
+
+describe('who may pay by card — the test link in the sandbox, a real order only while real charging is armed', () => {
+  it('real charging is armed only by PAYPLUS_MODE=production + the three PROD values + PAYPLUS_LIVE_CHARGING=on', () => {
+    armed();
+    expect(liveCardConfig()).toEqual(PRODUCTION_CFG);
+    // The switch is OFF by default: unset, or anything but 'on'.
+    armed();
+    delete fakeEnv.PAYPLUS_LIVE_CHARGING;
+    expect(liveCardConfig()).toBeNull();
+    armed();
+    fakeEnv.PAYPLUS_LIVE_CHARGING = 'off';
+    expect(liveCardConfig()).toBeNull();
+    // Not production mode.
+    for (const mode of [undefined, 'sandbox']) {
+      armed();
+      if (mode) fakeEnv.PAYPLUS_MODE = mode;
+      else delete fakeEnv.PAYPLUS_MODE;
+      expect(liveCardConfig()).toBeNull();
+    }
+    // A PROD value missing — and the DEV values never stand in for one.
+    for (const key of PROD_KEYS) {
+      armed();
+      delete fakeEnv[key];
+      expect(liveCardConfig()).toBeNull();
+    }
+    setEnv('production', { dev: true, live: 'on' });
+    expect(liveCardConfig()).toBeNull();
+  });
+
+  it('a TEST order always pays in the sandbox — whatever PAYPLUS_MODE and the switch say; no DEV values = no card step', () => {
+    for (const mode of [undefined, 'sandbox', 'production']) {
+      for (const live of [undefined, 'on', 'off']) {
+        setEnv(mode, { dev: true, prod: true, live });
+        expect(testCardConfig()).toEqual(SANDBOX_CFG);
+        expect(cardConfigFor(true)).toEqual(SANDBOX_CFG);
+      }
+    }
+    setEnv('production', { prod: true, live: 'on' });
+    expect(testCardConfig()).toBeNull();
+    expect(cardConfigFor(true)).toBeNull();
+    expect(cardConfigFor(false)).toEqual(PRODUCTION_CFG); // a real order is unaffected
+  });
+
+  it('a REAL order pays only with the armed production configuration', () => {
+    setEnv('production'); // the switch is not on
+    expect(cardConfigFor(false)).toBeNull();
+    armed();
+    expect(cardConfigFor(false)).toEqual(PRODUCTION_CFG);
+  });
+
+  it('a session is looked up with its own environment\'s values, whether or not new charges are armed', () => {
+    setEnv('sandbox'); // not armed
+    expect(cardConfigFor(false)).toBeNull();
+    expect(lookupConfigFor('production')).toEqual(PRODUCTION_CFG);
+    expect(lookupConfigFor('sandbox')).toEqual(SANDBOX_CFG);
+    setEnv(undefined, { dev: true });
+    expect(lookupConfigFor('production')).toBeNull();
+  });
+
+  it('the public page takes orders only while the /settings switch is on AND real charging is armed', () => {
+    const open = { ...DEFAULT_CHIP_ORDER_SETTINGS, ordersOpen: true };
+    const closed = { ...DEFAULT_CHIP_ORDER_SETTINGS, ordersOpen: false };
+    armed();
+    expect(chipOrdersOpen(open)).toBe(true);
+    expect(chipOrdersOpen(closed)).toBe(false);
+    setEnv('production'); // every value, but the switch is off (the default)
+    expect(chipOrdersOpen(open)).toBe(false);
+    setEnv('sandbox', { dev: true, prod: true, live: 'on' }); // the sandbox never opens the page
+    expect(chipOrdersOpen(open)).toBe(false);
+    setEnv(undefined, {});
+    expect(chipOrdersOpen(open)).toBe(false);
+  });
+
+  it('a session\'s environment must be the order\'s kind: the sandbox for a test order, production for a real one', () => {
+    setEnv('production');
+    const sandbox = payplusConfigFor('sandbox')!;
+    const production = payplusConfigFor('production')!;
+    const real = { is_test: false, source: 'web', status: 'pending_payment' as const };
+    const test = { ...real, is_test: true };
+    expect(orderMayPayByCard(sandbox, test)).toBe(true);
+    expect(orderMayPayByCard(sandbox, real)).toBe(false);
+    expect(orderMayPayByCard(production, real)).toBe(true);
+    expect(orderMayPayByCard(production, test)).toBe(false);
+    expect(orderMayPayByCard(production, { ...real, source: 'reception' })).toBe(false);
+    expect(orderMayPayByCard(production, { ...real, status: 'paid' })).toBe(false);
+  });
+
+  it('cardChargingState tells /settings what is set — never a key', () => {
+    armed();
+    const state = cardChargingState();
+    expect(state).toEqual({ mode: 'production', sandboxConfigured: true, productionConfigured: true, switchOn: true, live: true });
+    for (const secret of [DEV.api, DEV.secret, PROD.api, PROD.secret]) expect(JSON.stringify(state)).not.toContain(secret);
+    setEnv(undefined, { dev: true });
+    expect(cardChargingState()).toEqual({ mode: null, sandboxConfigured: true, productionConfigured: false, switchOn: false, live: false });
+    setEnv('production', { dev: true, live: 'on' }); // the switch alone arms nothing
+    expect(cardChargingState()).toMatchObject({ switchOn: true, live: false, productionConfigured: false });
   });
 });
 
 describe('generateLink — a regular charge, one payment, hosted fields', () => {
-  it('asks for J4, one payment, the order number in more_info, our callback, hosted fields', () => {
+  it('asks for J4, one payment, the order number in more_info, our callback, hosted fields — the card and the two wallets', () => {
     setEnv('sandbox');
-    const body = hostedFieldsRequestBody(payplusConfig()!, SESSION_INPUT);
+    const body = hostedFieldsRequestBody(payplusConfigFor('sandbox')!, SESSION_INPUT);
     expect(body).toMatchObject({
       payment_page_uid: DEV.page,
       charge_method: 1,
@@ -92,10 +215,14 @@ describe('generateLink — a regular charge, one payment, hosted fields', () => 
       send_failure_callback: true,
       hosted_fields: true,
       refURL_origin: 'https://example.test',
-      allowed_charge_methods: ['credit-card'],
+      charge_default: 'credit-card',
       sendEmailApproval: false,
       sendEmailFailure: false,
     });
+    // The card plus the wallets the SDK may draw next to the fields (26/11/2026);
+    // the other methods are no longer hidden — there is no flag for it any more.
+    expect(body.allowed_charge_methods).toEqual(['credit-card', 'google-pay', 'apple-pay']);
+    expect(body).not.toHaveProperty('hide_other_charge_methods');
     // Nothing of ours beyond the name, email and phone of whoever ordered.
     expect(body.customer).toEqual({ customer_name: 'דנה בדיקה', email: 'dana@example.test', phone: '972539400001' });
     expect(JSON.stringify(body)).not.toContain(DEV.api);
@@ -108,7 +235,7 @@ describe('generateLink — a regular charge, one payment, hosted fields', () => 
       results: { status: 'success', code: 0 },
       data: { page_request_uid: 'aaaaaaaa-1111-2222-3333-444444444444', hosted_fields_uuid: 'bbbbbbbb-1111-2222-3333-444444444444', payment_page_link: 'https://paymentsdev.payplus.co.il/x' },
     }));
-    const session = await createHostedFieldsSession(payplusConfig()!, SESSION_INPUT);
+    const session = await createHostedFieldsSession(payplusConfigFor('sandbox')!, SESSION_INPUT);
     expect(session).toEqual({ pageRequestUid: 'aaaaaaaa-1111-2222-3333-444444444444', hostedFieldsUuid: 'bbbbbbbb-1111-2222-3333-444444444444' });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -127,22 +254,24 @@ describe('generateLink — a regular charge, one payment, hosted fields', () => 
       results: { status: 'success' },
       data: { page_request_uid: 'aaaaaaaa-1111-2222-3333-444444444444', hosted_fields_uuid: 'bbbbbbbb-1111-2222-3333-444444444444' },
     }));
-    await createHostedFieldsSession(payplusConfig()!, SESSION_INPUT);
+    await createHostedFieldsSession(payplusConfigFor('production')!, SESSION_INPUT);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://restapi.payplus.co.il/api/v1.0/PaymentPages/generateLink');
     expect((init.headers as Record<string, string>)['api-key']).toBe(PROD.api);
+    expect((init.headers as Record<string, string>)['secret-key']).toBe(PROD.secret);
+    expect(JSON.parse(String(init.body))).toMatchObject({ payment_page_uid: PROD.page });
   });
 
   it('a reply without hosted_fields_uuid is an error (hosted fields not enabled), not a session', async () => {
     setEnv('sandbox');
     fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'success' }, data: { page_request_uid: 'aaaaaaaa-1111-2222-3333-444444444444' } }));
-    await expect(createHostedFieldsSession(payplusConfig()!, SESSION_INPUT)).rejects.toThrow(/hosted_fields_uuid/);
+    await expect(createHostedFieldsSession(payplusConfigFor('sandbox')!, SESSION_INPUT)).rejects.toThrow(/hosted_fields_uuid/);
   });
 
   it("PayPlus's refusal is carried as it was said — and never with a key in it", async () => {
     setEnv('sandbox');
     fetchMock.mockResolvedValueOnce(reply(403, { message: `API_KEY / SECRET_KEY ARE NOT ALLOWED FROM THIS IP (203.0.113.9) ${DEV.api} ${DEV.secret}` }));
-    const err = await createHostedFieldsSession(payplusConfig()!, SESSION_INPUT).catch((e: unknown) => e);
+    const err = await createHostedFieldsSession(payplusConfigFor('sandbox')!, SESSION_INPUT).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PayPlusApiError);
     const e = err as InstanceType<typeof PayPlusApiError>;
     expect(e.status).toBe(403);
@@ -155,9 +284,49 @@ describe('generateLink — a regular charge, one payment, hosted fields', () => 
   it('no reply at all is an error with status 0 and no request detail', async () => {
     setEnv('sandbox');
     fetchMock.mockRejectedValueOnce(Object.assign(new Error(`connect failed with secret-key ${DEV.secret}`), { name: 'TypeError' }));
-    const e = (await createHostedFieldsSession(payplusConfig()!, SESSION_INPUT).catch((x: unknown) => x)) as InstanceType<typeof PayPlusApiError>;
+    const e = (await createHostedFieldsSession(payplusConfigFor('sandbox')!, SESSION_INPUT).catch((x: unknown) => x)) as InstanceType<typeof PayPlusApiError>;
     expect(e.status).toBe(0);
     expect(e.message).not.toContain(DEV.secret);
+  });
+});
+
+describe('disablePaymentRequest — PaymentPages/Disable/<uid>, best-effort', () => {
+  const UID = 'aaaaaaaa-1111-2222-3333-444444444444';
+
+  it('POSTs an empty body to the environment\'s own host, the keys in the two headers only', async () => {
+    setEnv('sandbox');
+    fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'success', code: 0 } }));
+    expect(await disablePaymentRequest(payplusConfigFor('production')!, UID)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`https://restapi.payplus.co.il/api/v1.0/PaymentPages/Disable/${UID}`);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({});
+    const headers = init.headers as Record<string, string>;
+    expect(headers['api-key']).toBe(PROD.api);
+    expect(headers['secret-key']).toBe(PROD.secret);
+    expect(url).not.toContain(PROD.api);
+    expect(String(init.body)).not.toContain(PROD.secret);
+
+    fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'success' } }));
+    expect(await disablePaymentRequest(payplusConfigFor('sandbox')!, UID)).toBe(true);
+    expect(fetchMock.mock.calls[1]![0]).toBe(`https://restapidev.payplus.co.il/api/v1.0/PaymentPages/Disable/${UID}`);
+  });
+
+  it('never throws: a refusal or no reply at all is false', async () => {
+    setEnv('sandbox');
+    fetchMock.mockResolvedValueOnce(reply(404, { message: 'payment request not found' }));
+    expect(await disablePaymentRequest(payplusConfigFor('sandbox')!, UID)).toBe(false);
+    fetchMock.mockRejectedValueOnce(new TypeError('network'));
+    expect(await disablePaymentRequest(payplusConfigFor('sandbox')!, UID)).toBe(false);
+  });
+
+  it('a value that is not a payment request uid goes nowhere', async () => {
+    setEnv('sandbox');
+    for (const bad of ['', 'short', '../generateLink', `${UID}/x`, 'aaaaaaaa-1111-2222-3333-44444444444g', 'a'.repeat(65)]) {
+      expect(await disablePaymentRequest(payplusConfigFor('sandbox')!, bad)).toBe(false);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -313,7 +482,7 @@ describe('lookupPaymentRequest — the server-side lookup', () => {
     setEnv('sandbox');
     const tx = { uid: 'tx-000009', payment_request_uid: UID, status_code: '000', amount: 150, currency: 'ILS', more_info: '1009', transaction_type: 'Charge' };
     fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'success' }, data: { ...tx, related_transactions: [tx] } }));
-    const found = await lookupPaymentRequest(payplusConfig()!, UID);
+    const found = await lookupPaymentRequest(payplusConfigFor('sandbox')!, UID);
     expect(found.kind).toBe('transactions');
     if (found.kind !== 'transactions') return;
     expect(found.transactions).toHaveLength(1);
@@ -326,7 +495,7 @@ describe('lookupPaymentRequest — the server-side lookup', () => {
   it('PayPlus answered with no transaction → an empty list (nothing was charged)', async () => {
     setEnv('sandbox');
     fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'success' }, data: {} }));
-    expect(await lookupPaymentRequest(payplusConfig()!, UID)).toEqual({ kind: 'transactions', transactions: [] });
+    expect(await lookupPaymentRequest(payplusConfigFor('sandbox')!, UID)).toEqual({ kind: 'transactions', transactions: [] });
   });
 
   // The reply PaymentPages/ipn really gives (the sandbox, 25/11/2026) — its
@@ -346,7 +515,7 @@ describe('lookupPaymentRequest — the server-side lookup', () => {
   it('reads the real (flat) reply: the kind is `type`, and it is an approved charge', async () => {
     setEnv('sandbox');
     fetchMock.mockResolvedValueOnce(reply(200, REAL_REPLY));
-    const found = await lookupPaymentRequest(payplusConfig()!, UID);
+    const found = await lookupPaymentRequest(payplusConfigFor('sandbox')!, UID);
     expect(found.kind).toBe('transactions');
     if (found.kind !== 'transactions') return;
     expect(found.transactions).toHaveLength(1);
@@ -366,7 +535,7 @@ describe('lookupPaymentRequest — the server-side lookup', () => {
     setEnv('sandbox');
     for (const kind of ['Refund', 'Approval', 'Check']) {
       fetchMock.mockResolvedValueOnce(reply(200, { ...REAL_REPLY, data: { ...REAL_REPLY.data, type: kind } }));
-      const found = await lookupPaymentRequest(payplusConfig()!, UID);
+      const found = await lookupPaymentRequest(payplusConfigFor('sandbox')!, UID);
       if (found.kind !== 'transactions') throw new Error('expected transactions');
       expect(isApprovedCharge(found.transactions[0]!)).toBe(false);
     }
@@ -375,23 +544,61 @@ describe('lookupPaymentRequest — the server-side lookup', () => {
   it('"can-not-find-payment_request_uid" is PayPlus saying the session has no transaction — an empty list', async () => {
     setEnv('sandbox');
     fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'error', code: 1, description: 'can-not-find-payment_request_uid' }, data: {} }));
-    expect(await lookupPaymentRequest(payplusConfig()!, UID)).toEqual({ kind: 'transactions', transactions: [] });
+    expect(await lookupPaymentRequest(payplusConfigFor('sandbox')!, UID)).toEqual({ kind: 'transactions', transactions: [] });
     // Only that exact answer: the same words on a refused request stay "unknown".
     fetchMock.mockResolvedValueOnce(reply(403, { results: { status: 'error', description: 'can-not-find-payment_request_uid' } }));
-    expect((await lookupPaymentRequest(payplusConfig()!, UID)).kind).toBe('unknown');
+    expect((await lookupPaymentRequest(payplusConfigFor('sandbox')!, UID)).kind).toBe('unknown');
   });
 
   it('a refusal, an error or an unreadable answer is "unknown" — never "nothing was charged"', async () => {
     setEnv('sandbox');
     fetchMock.mockResolvedValueOnce(reply(403, { message: `API_KEY / SECRET_KEY ARE NOT ALLOWED FROM THIS IP (203.0.113.9) ${DEV.secret}` }));
-    const refused = await lookupPaymentRequest(payplusConfig()!, UID);
+    const refused = await lookupPaymentRequest(payplusConfigFor('sandbox')!, UID);
     expect(refused).toMatchObject({ kind: 'unknown', status: 403 });
     expect(JSON.stringify(refused)).not.toContain(DEV.secret);
     fetchMock.mockResolvedValueOnce(reply(422, { results: { status: 'error', description: 'x' } }));
-    expect((await lookupPaymentRequest(payplusConfig()!, UID)).kind).toBe('unknown');
+    expect((await lookupPaymentRequest(payplusConfigFor('sandbox')!, UID)).kind).toBe('unknown');
     fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'error', description: 'not found' } }));
-    expect(await lookupPaymentRequest(payplusConfig()!, UID)).toMatchObject({ kind: 'unknown', message: 'not found' });
+    expect(await lookupPaymentRequest(payplusConfigFor('sandbox')!, UID)).toMatchObject({ kind: 'unknown', message: 'not found' });
     fetchMock.mockRejectedValueOnce(new TypeError('network'));
-    expect(await lookupPaymentRequest(payplusConfig()!, UID)).toMatchObject({ kind: 'unknown', status: 0 });
+    expect(await lookupPaymentRequest(payplusConfigFor('sandbox')!, UID)).toMatchObject({ kind: 'unknown', status: 0 });
+  });
+});
+
+describe('refundByTransactionUid — refunded only on a readable approval; a "success" it cannot read is UNKNOWN, never "refused"', () => {
+  const ASK = { transactionUid: 'tx-refund-test-0001', amount: 80, moreInfo: 'refund:1042' };
+
+  it('the documented reply (results success + data.transaction 000 with its uid) → refunded', async () => {
+    setEnv('production');
+    fetchMock.mockResolvedValueOnce(reply(200, {
+      results: { status: 'success', code: 0 },
+      data: { transaction: { uid: 'rf-uid-00000001', status_code: '000', amount: 80, approval_number: '0654321' } },
+    }));
+    expect(await refundByTransactionUid(payplusConfigFor('production')!, ASK))
+      .toEqual({ kind: 'refunded', refundUid: 'rf-uid-00000001', approvalNumber: '0654321', amount: 80 });
+  });
+
+  it('"success" with no readable refund transaction (flat fields, or an approval without its uid) → unknown', async () => {
+    setEnv('production');
+    fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'success', code: 0 }, data: { transaction_uid: 'rf-flat-0000001', status_code: '000' } }));
+    expect(await refundByTransactionUid(payplusConfigFor('production')!, ASK)).toMatchObject({ kind: 'unknown', status: 200 });
+    fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'success', code: 0 }, data: { transaction: { status_code: '000', amount: 80 } } }));
+    expect(await refundByTransactionUid(payplusConfigFor('production')!, ASK)).toMatchObject({ kind: 'unknown', status: 200 });
+    fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'success', code: 0 } }));
+    expect(await refundByTransactionUid(payplusConfigFor('production')!, ASK)).toMatchObject({ kind: 'unknown', status: 200 });
+  });
+
+  it('a refusal stays a refusal: "success" with a declined code, an error status, or a 4xx; no reply / a 5xx is unknown', async () => {
+    setEnv('production');
+    fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'success' }, data: { transaction: { uid: 'rf-uid-00000002', status_code: '004' } } }));
+    expect(await refundByTransactionUid(payplusConfigFor('production')!, ASK)).toMatchObject({ kind: 'refused', statusCode: '004' });
+    fetchMock.mockResolvedValueOnce(reply(200, { results: { status: 'error', description: 'הזיכוי נדחה' } }));
+    expect(await refundByTransactionUid(payplusConfigFor('production')!, ASK)).toMatchObject({ kind: 'refused', message: 'הזיכוי נדחה' });
+    fetchMock.mockResolvedValueOnce(reply(422, { message: 'amount is bigger than the original transaction' }));
+    expect(await refundByTransactionUid(payplusConfigFor('production')!, ASK)).toMatchObject({ kind: 'refused' });
+    fetchMock.mockResolvedValueOnce(reply(502, 'bad gateway'));
+    expect(await refundByTransactionUid(payplusConfigFor('production')!, ASK)).toMatchObject({ kind: 'unknown', status: 502 });
+    fetchMock.mockRejectedValueOnce(new TypeError('network'));
+    expect(await refundByTransactionUid(payplusConfigFor('production')!, ASK)).toMatchObject({ kind: 'unknown', status: 0 });
   });
 });

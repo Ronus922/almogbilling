@@ -1,13 +1,20 @@
-// Usage: npx tsx scripts/create-first-user.ts <username> <email> <password>
+// Usage: npx tsx scripts/create-first-user.ts <username> <email>
+//   The password is NOT an argument (26/11/2026): asked for, hidden, or read from stdin —
+//   read -rs PW; printf '%s' "$PW" | npx tsx scripts/create-first-user.ts <username> <email>; unset PW
 import { config as loadEnv } from 'dotenv';
 loadEnv({ path: '.env.local' });
 
 import { Client } from 'pg';
 import bcrypt from 'bcryptjs';
+import { readSecret } from './lib/read-secret';
 
-const [username, email, password] = process.argv.slice(2);
-if (!username || !email || !password) {
-  console.error('Usage: npx tsx scripts/create-first-user.ts <username> <email> <password>');
+const [username, email, ...extra] = process.argv.slice(2);
+if (extra.length > 0) {
+  console.error('The password is not taken from the command line — run without it; it is asked for (hidden) or read from stdin.');
+  process.exit(1);
+}
+if (!username || !email) {
+  console.error('Usage: npx tsx scripts/create-first-user.ts <username> <email>   (password: hidden prompt or stdin)');
   process.exit(1);
 }
 
@@ -20,6 +27,11 @@ if (!connectionString) {
 }
 
 async function main() {
+  const password = await readSecret('Password: ');
+  if (!password) {
+    console.error('Empty password');
+    process.exit(1);
+  }
   const password_hash = await bcrypt.hash(password, 10);
   const client = new Client({ connectionString });
   await client.connect();

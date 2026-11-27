@@ -55,7 +55,10 @@ fail() { printf '%s [restic-push] ERROR: %s\n' "$(date '+%F %T')" "$*" >&2; }
 on_error() {
   fail "aborted at line $1"
   if [[ -n "${HEALTHCHECK_BACKUP_URL:-}" && "${BACKUP_RETRY_WRAPPED:-0}" != 1 ]]; then
-    curl -fsS -m 10 --retry 3 -o /dev/null "${HEALTHCHECK_BACKUP_URL}/fail" \
+    # The ping URL reaches curl on stdin (-K -), never on its command line (see pg-backup.sh).
+    local u="${HEALTHCHECK_BACKUP_URL}/fail"
+    u="${u//\\/\\\\}"; u="${u//\"/\\\"}"
+    printf 'url = "%s"\n' "$u" | curl -fsS -m 10 --retry 3 -o /dev/null -K - \
       || log "healthcheck ping/fail failed (non-fatal)"
   fi
   exit 1

@@ -17,6 +17,10 @@
 import { Client } from 'pg';
 import { createDecipheriv } from 'node:crypto';
 
+// An error message never carries the instance token (26/11/2026): it is in every
+// request URL, and a fetch error can quote the URL ("Failed to parse URL from …").
+const hideToken = (message: string, token: string) => (token ? message.split(token).join('•••') : message);
+
 interface EncBlob { iv: string; ct: string; tag: string }
 
 function decrypt(blob: EncBlob): string {
@@ -91,7 +95,7 @@ async function main() {
           }
         }
       } catch (e) {
-        console.log(`  ${tag}: receiveNotification FAILED: ${(e as Error).message}`);
+        console.log(`  ${tag}: receiveNotification FAILED: ${hideToken((e as Error).message, token)}`);
         failed = true;
         break;
       }
@@ -114,7 +118,7 @@ async function main() {
           break;
         }
       } catch (e) {
-        console.log(`  ${tag}: webhook replay FAILED: ${(e as Error).message} — stopping`);
+        console.log(`  ${tag}: webhook replay FAILED: ${hideToken((e as Error).message, token)} — stopping`);
         failed = true;
         break;
       }
@@ -125,7 +129,7 @@ async function main() {
           method: 'DELETE',
         });
       } catch (e) {
-        console.log(`  ${tag}: deleteNotification FAILED for ${recv.receiptId}: ${(e as Error).message} — stopping`);
+        console.log(`  ${tag}: deleteNotification FAILED for ${recv.receiptId}: ${hideToken((e as Error).message, token)} — stopping`);
         failed = true;
         break;
       }

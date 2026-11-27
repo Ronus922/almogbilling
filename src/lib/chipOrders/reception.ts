@@ -5,29 +5,49 @@ import { priceLine } from './model';
 // the amount of a save, the orderer details, and what a block shows again
 // about the save its chips came from.
 //
-// Three ways a save of NEW chips is settled:
-//   · card           — not active yet (no clearing is connected). The window
-//                      draws it disabled, for admin and super admin only, and
-//                      the server knows no such method;
-//   · cash_transfer  — cash or a bank transfer: the manager confirms the
-//                      amount was received. A chip order is created (source
-//                      'reception'), already paid and collected;
+// The ways a save of NEW chips is settled (26/11/2026):
+//   · card           — admin / super admin only: PayPlus hosted fields in the
+//                      window (the same server rules as the public page). The
+//                      card is charged FIRST, for the chips × price the server
+//                      computed — a reception order waits for it — and the save
+//                      then issues the chips onto that paid order. Real charges
+//                      only while live charging is armed; a sandbox TEST mode
+//                      makes a test order instead;
+//   · cash           — cash; and
+//   · bank_transfer  — a bank transfer: the manager confirms the amount was
+//                      received. A chip order is created (source 'reception'),
+//                      already paid and collected. (Until 26/11/2026 both were
+//                      one option, stored 'cash_transfer' — still shown as it was.)
 //   · none           — no charge (a guest, staff, a replacement): no order.
 // The amount is always computed on the server from the price in /settings;
 // the window sends the amount it showed, and a save whose amount moved in
 // between is refused instead of recording a sum nobody confirmed.
 
-export type ReceptionPaymentMethod = 'cash_transfer' | 'none';
+export type ReceptionPaymentMethod = 'cash' | 'bank_transfer' | 'card' | 'none';
 
-export const RECEPTION_PAYMENT_METHODS: readonly ReceptionPaymentMethod[] = ['cash_transfer', 'none'];
+/** The methods a save may name. 'card' needs the paid card order of the window. */
+export const RECEPTION_PAYMENT_METHODS: readonly ReceptionPaymentMethod[] = ['cash', 'bank_transfer', 'card', 'none'];
 
-export const RECEPTION_PAYMENT_LABEL: Record<ReceptionPaymentMethod | 'card', string> = {
+/** Methods that are a received SUM the manager confirms by choosing them. */
+export const RECEPTION_CONFIRMED_METHODS: readonly ReceptionPaymentMethod[] = ['cash', 'bank_transfer'];
+
+export const RECEPTION_PAYMENT_LABEL: Record<ReceptionPaymentMethod, string> = {
   card: 'אשראי',
-  cash_transfer: 'מזומן או העברה',
+  cash: 'מזומן',
+  bank_transfer: 'העברה בנקאית',
   none: 'ללא חיוב',
 };
 
-/** Under the disabled "אשראי" option. */
+/** How a STORED reception order was paid, for display — including the value
+ *  of the orders recorded before the split (26/11/2026). */
+export const STORED_PAYMENT_LABEL: Record<string, string> = {
+  cash: 'מזומן',
+  bank_transfer: 'העברה בנקאית',
+  card: 'אשראי',
+  cash_transfer: 'מזומן או העברה',
+};
+
+/** Under the "אשראי" option while card payment at the reception is not armed. */
 export const RECEPTION_CARD_PENDING_TEXT = 'יופעל לאחר חיבור הסליקה';
 
 /** The tag of a reception order — the Orders tab and the order's window. */
@@ -78,8 +98,12 @@ export function composeReceptionAddress(o: Pick<ReceptionOrderer, 'street' | 'ci
 export interface ReceptionContext {
   /** ₪ per chip, from /settings — the amount of a save is chips × this. */
   unit_price: number;
-  /** "אשראי" is drawn (disabled) — admin and super admin only. */
+  /** "אשראי" is drawn — admin and super admin only. */
   card_option: boolean;
+  /** "אשראי" charges for real (live charging is armed). */
+  card_live: boolean;
+  /** "אשראי" can be tried in the PayPlus sandbox (a test order; the sandbox is configured). */
+  card_test: boolean;
   /** The viewer may open a lease ("צפייה בחוזה") — the rule of every lease in
    *  the bucket: chips_orders_manage:view. Without it a block says the lease
    *  is attached, with no link. */
@@ -120,6 +144,16 @@ export interface ReceptionRecordView {
   /** A reception order that was cancelled afterwards ("בטל הזמנת קבלה"): its
    *  chips were disabled, and the payment no longer stands. */
   cancelled: boolean;
+  /** How a reception order was paid ('cash' | 'bank_transfer' | 'card', or
+   *  'cash_transfer' before 26/11/2026 — STORED_PAYMENT_LABEL). Null on a
+   *  no-charge record. */
+  payment_method: string | null;
+  /** A reception order's id ("ביטול וזיכוי" acts on it). Null on a record. */
+  order_id: string | null;
+  /** "ביטול וזיכוי" was started and stopped at this step (27/11/2026), with
+   *  its words — the line says so and offers to go on. Null otherwise. */
+  cancel_failed_step: 'refund' | 'credit' | 'cancel' | null;
+  cancel_error: string | null;
 }
 
 // ── The window's own forms ─────────────────────────────────────────────────
@@ -177,18 +211,20 @@ export function extraChipsOf(lines: { ordered: number; linked: number; added: nu
   return lines.reduce((sum, l) => sum + Math.max(0, l.added - Math.max(0, l.ordered - l.linked)), 0);
 }
 
-/** "מזומן או העברה" is the confirmation of a SUM — the one that was on the
- *  screen when it was chosen. Once the sum is another one (a chip was added or
- *  removed, the price moved) it confirms nothing, and the choice no longer
- *  stands until it is made again. "ללא חיוב" confirms no sum and always stands. */
+/** "מזומן" / "העברה בנקאית" are the confirmation of a SUM — the one that was
+ *  on the screen when it was chosen — and "אשראי" is a payment OF a sum. Once
+ *  the sum is another one (a chip was added or removed, the price moved) the
+ *  choice no longer stands until it is made again. "ללא חיוב" confirms no sum
+ *  and always stands. */
 export function receptionMethodInForce(input: {
   method: ReceptionPaymentMethod | null;
   /** chips × price now; null = the price could not be loaded. */
   amount: number | null;
-  /** The sum on the screen when "מזומן או העברה" was chosen. */
+  /** The sum on the screen when the method was chosen (cash / transfer), or
+   *  the sum the card paid (card). */
   confirmedAmount: number | null;
 }): ReceptionPaymentMethod | null {
-  if (input.method !== 'cash_transfer') return input.method;
+  if (input.method === null || input.method === 'none') return input.method;
   if (input.amount === null || input.confirmedAmount === null) return input.method;
   return sameAmount(input.amount, input.confirmedAmount) ? input.method : null;
 }
@@ -201,7 +237,7 @@ export function receptionPaymentReason(input: {
   method: ReceptionPaymentMethod | null;
   /** chips × price; null = the price could not be loaded. */
   amount: number | null;
-  /** The sum that was confirmed when "מזומן או העברה" was chosen. */
+  /** The sum that was confirmed (cash / transfer) or paid (card). */
   confirmedAmount?: number | null;
   /** What is being paid for: the new chips of a reception save (default), or
    *  the EXTRA chips of a web order's window — beyond what was paid online. */
@@ -214,8 +250,13 @@ export function receptionPaymentReason(input: {
       : 'יש לבחור אמצעי תשלום כדי להנפיק את הצ׳יפים החדשים';
   }
   if (input.method === 'none') return null;
+  if (input.method === 'card' && (input.confirmedAmount ?? null) === null) {
+    return 'יש להשלים את התשלום באשראי לפני השמירה';
+  }
   if (receptionMethodInForce({ method: input.method, amount: input.amount, confirmedAmount: input.confirmedAmount ?? null }) === null) {
-    return 'הסכום לתשלום השתנה — יש לבחור שוב „מזומן או העברה” כדי לאשר את הסכום החדש';
+    return input.method === 'card'
+      ? 'הסכום שנגבה באשראי אינו הסכום לתשלום עכשיו — יש להחזיר את מספר הצ׳יפים, או לבטל את ההזמנה (זיכוי)'
+      : 'הסכום לתשלום השתנה — יש לבחור שוב את אמצעי התשלום כדי לאשר את הסכום החדש';
   }
   if (input.amount === null) return 'המחיר לצ׳יפ לא נטען — סגרו את החלון ופתחו אותו שוב';
   if (input.amount <= 0) return 'אין סכום לגבייה — יש לבחור „ללא חיוב”';

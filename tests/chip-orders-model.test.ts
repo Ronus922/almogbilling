@@ -149,15 +149,28 @@ describe('assignToOrderLines — which order line a new number of the orderer\'s
   });
 });
 
-describe('chipOrderMessage — the three messages', () => {
+describe('chipOrderMessage — the four messages', () => {
   const base = { fullName: 'דנה כהן', orderNumber: 1001, apartments: ['1210'], trackUrl: 'https://x.test/chip-order/track/t' };
+  const DOC = 'https://docs.example.test/d/abc';
 
-  it('paid: tracking link, and the invoice link when Grow sent it', () => {
-    const m = chipOrderMessage({ ...base, kind: 'paid', invoiceUrl: 'https://meshulam.co.il/s/abc' });
+  it('paid: tracking link, and the link of its Morning document when it was issued already', () => {
+    const m = chipOrderMessage({ ...base, kind: 'paid', invoiceUrl: DOC });
     const text = chipOrderWhatsAppText(m);
     expect(m.subject).toContain('1001');
     expect(text).toContain(base.trackUrl);
-    expect(text).toContain('https://meshulam.co.il/s/abc');
+    expect(text).toContain(`החשבונית / הקבלה: ${DOC}`);
+    expect(m.links).toEqual([base.trackUrl, DOC]);
+  });
+
+  it('paid, no document yet: "it will reach you by email" only when it will (receiptByEmail) — and never "from the processor"', () => {
+    const byEmail = chipOrderWhatsAppText(chipOrderMessage({ ...base, kind: 'paid', receiptByEmail: true }));
+    expect(byEmail).toContain('החשבונית / הקבלה תישלח אליך במייל בנפרד.');
+    for (const receiptByEmail of [false, undefined]) {
+      const text = chipOrderWhatsAppText(chipOrderMessage({ ...base, kind: 'paid', receiptByEmail }));
+      expect(text).not.toContain('החשבונית');
+      expect(text).not.toContain('חברת הסליקה');
+    }
+    expect(byEmail).not.toContain('חברת הסליקה');
   });
 
   it('paid carries the due date (there is no separate "approved" message any more)', () => {
@@ -179,31 +192,65 @@ describe('chipOrderMessage — the three messages', () => {
     expect(manual).toContain('דורש זיכוי ידני');
   });
 
+  it('refunded: how much went back, to the card — and whether the order was closed or its chips disabled', () => {
+    const closed = chipOrderMessage({ ...base, kind: 'refunded', refundedAmount: 150, closedByRefund: true });
+    expect(closed.subject).toBe('הזמנת הצ׳יפים זוכתה — הזמנה 1001');
+    const text = chipOrderWhatsAppText(closed);
+    expect(text).toContain('זוכתה: ₪150 הוחזר לכרטיס שבו שילמת.');
+    expect(text).toContain('ההזמנה בוטלה.');
+    expect(text).toContain(base.trackUrl);
+    const disabled = chipOrderWhatsAppText(chipOrderMessage({ ...base, kind: 'refunded', refundedAmount: null, closedByRefund: false, chipsDisabled: true }));
+    expect(disabled).toContain('זוכתה: התשלום הוחזר לכרטיס');
+    expect(disabled).toContain('הצ׳יפים של ההזמנה הושבתו.');
+    expect(disabled).not.toContain('ההזמנה בוטלה.');
+  });
+
+  // Regression (review, 26/11): a refund made in the PayPlus dashboard of an
+  // order that stays open or collected disables no chip — the message must
+  // not say it did.
+  it('refunded with NO chip disabled (a refund PayPlus reported) and the order not closed: nothing is said about the chips', () => {
+    for (const chipsDisabled of [false, undefined]) {
+      const text = chipOrderWhatsAppText(chipOrderMessage({ ...base, kind: 'refunded', refundedAmount: 80, closedByRefund: false, chipsDisabled }));
+      expect(text).toContain('זוכתה: ₪80 הוחזר לכרטיס שבו שילמת.');
+      expect(text).not.toContain('הושבתו');
+      expect(text).not.toContain('ההזמנה בוטלה.');
+      expect(text).toContain(base.trackUrl);
+    }
+    // Closed by the refund: it says so, whatever the chips.
+    const closed = chipOrderWhatsAppText(chipOrderMessage({ ...base, kind: 'refunded', refundedAmount: 80, closedByRefund: true, chipsDisabled: false }));
+    expect(closed).toContain('ההזמנה בוטלה.');
+    expect(closed).not.toContain('הושבתו');
+  });
+
   it('names several apartments', () => {
     expect(chipOrderMessage({ ...base, apartments: ['1210', '520'], kind: 'paid' }).lines[1]).toContain('דירות 1210, 520');
   });
 
-  it('a test order: every message starts with [בדיקה], no invoice, and a rejection says nothing was charged', () => {
-    for (const kind of ['paid', 'ready', 'rejected'] as const) {
+  it('a test order: every message starts with [בדיקה], no invoice, and a rejection or a refund says nothing was charged', () => {
+    for (const kind of ['paid', 'ready', 'rejected', 'refunded'] as const) {
       const m = chipOrderMessage({ ...base, kind, isTest: true, rejectReason: 'בדיקה', refundStatus: 'not_required' });
       expect(m.subject.startsWith('[בדיקה] ')).toBe(true);
       expect(chipOrderWhatsAppText(m).startsWith('[בדיקה] ')).toBe(true);
     }
-    // Even if an invoice URL were somehow present, a test order never links one.
-    const paid = chipOrderMessage({ ...base, kind: 'paid', isTest: true, invoiceUrl: 'https://meshulam.co.il/s/abc' });
+    // Even if a document URL were somehow present, a test order never links one, nor promises one by email.
+    const paid = chipOrderMessage({ ...base, kind: 'paid', isTest: true, invoiceUrl: DOC, receiptByEmail: true });
     const text = chipOrderWhatsAppText(paid);
-    expect(text).not.toContain('meshulam');
+    expect(text).not.toContain(DOC);
     expect(text).not.toContain('החשבונית');
     expect(paid.links).toEqual([base.trackUrl]);
     const rejected = chipOrderWhatsAppText(chipOrderMessage({ ...base, kind: 'rejected', isTest: true, refundStatus: 'not_required' }));
     expect(rejected).toContain('לא בוצע חיוב');
     expect(rejected).not.toContain('Grow');
+    const refunded = chipOrderWhatsAppText(chipOrderMessage({ ...base, kind: 'refunded', isTest: true, refundedAmount: 50 }));
+    expect(refunded).toContain('הזמנת בדיקה — לא בוצע חיוב אמיתי');
+    expect(refunded).not.toContain('₪50');
   });
 
   it('a real order never carries the test mark', () => {
-    const m = chipOrderMessage({ ...base, kind: 'paid' });
+    const m = chipOrderMessage({ ...base, kind: 'paid', receiptByEmail: true });
     expect(m.subject).not.toContain('[בדיקה]');
-    expect(chipOrderWhatsAppText(m)).toContain('החשבונית');
+    expect(chipOrderWhatsAppText(m)).not.toContain('[בדיקה]');
+    expect(chipOrderWhatsAppText(m)).toContain('החשבונית / הקבלה תישלח אליך במייל בנפרד.');
   });
 });
 

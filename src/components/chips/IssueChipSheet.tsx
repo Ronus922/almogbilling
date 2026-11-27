@@ -28,6 +28,13 @@
 //     save makes a chip order, source 'reception', already paid and collected)
 //     or "ללא חיוב" (no order; the details are kept and shown again on the
 //     block). Editing saved chips alone asks for no payment.
+//     26/11/2026: "מזומן או העברה" is two options, "מזומן" and "העברה
+//     בנקאית" — each the confirmation of the sum on the screen, stored as its
+//     own method (an order recorded before keeps "מזומן או העברה"). "אשראי"
+//     (admins only) is a real card payment through PayPlus Hosted Fields
+//     (issue-sheet/receptionCard.tsx): the card is charged first, then the
+//     save puts the chips on the paid order; its sandbox test mode ends at the
+//     payment and never issues chips.
 //
 // Two actions are IMMEDIATE in both modes, never part of the save: the active
 // / disabled switch of a saved chip (switching off asks once) and the chip
@@ -39,6 +46,11 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { Check, ChevronsUpDown, Loader2, Plus, Search } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Button } from '@/components/ui/button';
+import {
+  AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useEscapeKey } from '@/lib/hooks/useEscapeKey';
 import { validatePhone } from '@/lib/validation';
 import { cn } from '@/lib/utils';
@@ -47,8 +59,9 @@ import { chipHolderDetails, isSnapshotRole, resolveChipHolder } from '@/lib/chip
 import { leaseFileProblem } from '@/lib/chipOrders/lease';
 import { formatIlsAfter } from '@/lib/chipOrders/model';
 import {
-  EMPTY_ORDERER_FIELDS, RECEPTION_PAYMENT_LABEL, looksLikeEmail, ordererProblems, receptionAmount, receptionMethodInForce,
-  receptionPaymentReason, receptionRecordsOf, type OrdererFields, type ReceptionContext, type ReceptionPaymentMethod,
+  EMPTY_ORDERER_FIELDS, RECEPTION_CONFIRMED_METHODS, RECEPTION_PAYMENT_LABEL, STORED_PAYMENT_LABEL, looksLikeEmail, ordererProblems,
+  receptionAmount, receptionMethodInForce, receptionPaymentReason, receptionRecordsOf, type OrdererFields, type ReceptionContext,
+  type ReceptionPaymentMethod,
 } from '@/lib/chipOrders/reception';
 import {
   MAX_CHIPS_PER_GROUP, holderUpdatesForBlock, type HolderSnapshot,
@@ -63,6 +76,7 @@ import {
 } from './issue-sheet/parts';
 import { OrderIssueSheet } from './issue-sheet/OrderIssueSheet';
 import { LeaseField, OrdererForm, ReceptionPayment, ReceptionRecords, UserIco } from './issue-sheet/reception';
+import { ReceptionCardPanel, receptionCardReason, type ReceptionCardState } from './issue-sheet/receptionCard';
 
 // ── Contact search item (GET /api/contacts/search) ─────────────────────────
 
@@ -175,9 +189,9 @@ export interface IssueChipSheetProps {
   canEditOrders?: boolean;
   /** contacts:edit — "עדכן בכרטיס הדייר" (the server checks it again). */
   canWriteContacts?: boolean;
-  /** Admin / super admin — "בטל הזמנת קבלה" in the window of a reception
-   *  order (the server checks the role again). */
-  canCancelReception?: boolean;
+  /** Admin / super admin — in an order's window: "בטל הזמנת קבלה", "זיכוי"
+   *  and "הפק חשבונית שוב" (each route checks the role again). */
+  canAdminOrders?: boolean;
 }
 
 export function IssueChipSheet(props: IssueChipSheetProps) {
@@ -189,7 +203,7 @@ export function IssueChipSheet(props: IssueChipSheetProps) {
 
 // ── The window WITHOUT an order ─────────────────────────────────────────────
 
-function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChipSheetProps) {
+function RegistryIssueSheet({ open, onOpenChange, initial, onIssued, canAdminOrders = false }: IssueChipSheetProps) {
   // Contact selection
   const [contactId, setContactId] = useState<string | null>(null);
   const [contactLabel, setContactLabel] = useState('');
@@ -206,9 +220,24 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
   const [orderer, setOrderer] = useState<OrdererFields>(EMPTY_ORDERER_FIELDS);
   const [ordererOwn, setOrdererOwn] = useState({ name: false, phone: false });
   // How the NEW chips of this save are paid — nothing is chosen by default.
-  // "מזומן או העברה" confirms a SUM: the one on the screen when it was chosen.
+  // "מזומן" / "העברה בנקאית" confirm a SUM: the one on the screen when it was chosen.
   const [method, setMethod] = useState<ReceptionPaymentMethod | null>(null);
   const [confirmedAmount, setConfirmedAmount] = useState<number | null>(null);
+  // "אשראי" (26/11/2026): the reception order the window's card payment pays,
+  // and whether the server saw it paid (receptionCard.tsx).
+  const [card, setCard] = useState<ReceptionCardState | null>(null);
+  // Closing after a REAL card payment that was not saved asks first — and so
+  // does closing while a card charge is in flight or not confirmed yet.
+  const [cardCloseOpen, setCardCloseOpen] = useState(false);
+  // A card charge in flight or not confirmed yet (the panel's 'paying' /
+  // 'verifying' / 'unverified'): until it settles the window holds still, as
+  // after a payment — no other method, no other apartment.
+  const [cardCharging, setCardCharging] = useState(false);
+  // The card panel the window listens to. Another apartment, another method or
+  // a reopening starts a new one, and what an earlier panel still reports (a
+  // late "paid", the end of its charge) is dropped.
+  const cardSessionRef = useRef(0);
+  const [cardSession, setCardSession] = useState(0);
   // The window as it is now: an apartment switch or a reopening starts block
   // keys over, so whatever was still on its way to the window before that (a
   // lease upload) no longer has a block to land on.
@@ -262,6 +291,11 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     setOrdererOwn({ name: false, phone: false });
     setMethod(null);
     setConfirmedAmount(null);
+    setCard(null);
+    setCardCharging(false);
+    cardSessionRef.current += 1;
+    setCardSession(cardSessionRef.current);
+    setCardCloseOpen(false);
     setReception(null);
     sessionRef.current += 1;
     setNotes('');
@@ -464,11 +498,18 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
   // server computes it again and refuses a save whose amount moved.
   const unitPrice = reception?.unit_price ?? null;
   const amount = unitPrice === null ? null : receptionAmount(totalPending, unitPrice);
-  // The choice that still stands: a chip added or removed after "מזומן או
-  // העברה" was chosen changes the sum, and the old confirmation is not a
-  // confirmation of the new one.
-  const methodNow = receptionMethodInForce({ method, amount, confirmedAmount });
-  const payReason = receptionPaymentReason({ newChips: totalPending, method, amount, confirmedAmount });
+  // The choice that still stands: a chip added or removed after "מזומן" or
+  // "העברה בנקאית" was chosen changes the sum, and the old confirmation is
+  // not a confirmation of the new one.
+  // "אשראי" stands once the server saw THIS window's card paid (not a test),
+  // for exactly the new chips it paid for; its sum is the one the card paid.
+  const cardPaidReal = card?.paid === true && !card.test;
+  const methodNow = method === 'card'
+    ? (receptionCardReason(card, totalPending) === null && totalPending > 0 ? 'card' : null)
+    : receptionMethodInForce({ method, amount, confirmedAmount });
+  const payReason = method === 'card'
+    ? receptionCardReason(card, totalPending) ?? receptionPaymentReason({ newChips: totalPending, method, amount: card?.amount ?? amount, confirmedAmount: card?.amount ?? null })
+    : receptionPaymentReason({ newChips: totalPending, method, amount, confirmedAmount });
   const leaseBusy = blocks.some((b) => b.leaseBusy);
 
   /** Per-block validity — only blocks that issue or edit something matter. */
@@ -492,17 +533,23 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     payReason === null &&
     (totalPending === 0 || Object.keys(ordererBad).length === 0) &&
     !leaseBusy &&
+    // A card charge in flight or unconfirmed: settle it first (the save would
+    // close the window past the card warning).
+    !cardCharging &&
     !submitting;
 
   // ── ESC layering (LIFO: confirm > number edit > picker > panel) ──────────
 
-  useEscapeKey(open && !confirmCloseOpen && !pickerOpen && !quick.edit, () => requestClose());
+  useEscapeKey(open && !confirmCloseOpen && !cardCloseOpen && !pickerOpen && !quick.edit, () => requestClose());
   useEscapeKey(open && pickerOpen && !confirmCloseOpen, () => setPickerOpen(false));
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
 
   function requestClose() {
     if (submitting) return;
-    if (dirty) setConfirmCloseOpen(true);
+    // A real charge whose chips were not saved — or a charge still in flight /
+    // not confirmed: said plainly, before anything else.
+    if (cardPaidReal || cardCharging) setCardCloseOpen(true);
+    else if (dirty) setConfirmCloseOpen(true);
     else onOpenChange(false);
   }
 
@@ -648,6 +695,8 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
   }
 
   function selectContact(id: string, apartmentNumber: string) {
+    // A card charge in flight or not confirmed holds the apartment (the picker is disabled too).
+    if (cardCharging) return;
     setDirty(true);
     setContactId(id);
     setContactLabel(apartmentNumber);
@@ -664,6 +713,10 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
     setOrdererOwn({ name: false, phone: false });
     setMethod(null);
     setConfirmedAmount(null);
+    setCard(null);
+    setCardCharging(false);
+    cardSessionRef.current += 1;
+    setCardSession(cardSessionRef.current);
     setReception(null);
     sessionRef.current += 1;
   }
@@ -726,14 +779,20 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
                   zip: ordererShown.zip.trim() || null,
                 },
                 // The amount is what the window SHOWED; the server computes its own.
-                payment: methodNow ? { method: methodNow, amount: methodNow === 'cash_transfer' ? amount ?? 0 : 0 } : null,
+                // "אשראי": the sum the CARD paid and the order it paid — the
+                // server checks both against what PayPlus confirmed.
+                payment: methodNow === 'card' && card
+                  ? { method: 'card', amount: card.amount, card_token: card.token }
+                  : methodNow
+                    ? { method: methodNow, amount: RECEPTION_CONFIRMED_METHODS.includes(methodNow) ? amount ?? 0 : 0 }
+                    : null,
               }
             : {}),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         items?: unknown[]; error?: string; code?: string; chip_number?: string; group_index?: number | null;
-        order?: { order_number: number; total: number } | null; record?: { id: string } | null;
+        order?: { order_number: number; total: number; method?: string | null } | null; record?: { id: string } | null;
       };
       if (!res.ok) {
         const msg = data.error ?? 'הנפקת הצ׳יפ נכשלה';
@@ -749,6 +808,9 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
           setConfirmedAmount(null);
           setChipsVersion((v) => v + 1);
           setServerError(msg);
+        } else if (data.code === 'card_not_paid' || data.code === 'card_amount_mismatch' || data.code === 'test_card_payment') {
+          // The card payment and the save disagree — said where the save is.
+          setServerError(msg);
         } else if (res.status === 400 || res.status === 422) {
           setServerError(msg);
         } else {
@@ -757,10 +819,13 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
         return;
       }
       const count = Array.isArray(data.items) ? data.items.length : 0;
+      // How the payment was recorded — the server's word for it (`order.method`),
+      // else the method the window sent.
+      const paidBy = data.order?.method ? STORED_PAYMENT_LABEL[data.order.method] : methodNow ? RECEPTION_PAYMENT_LABEL[methodNow] : null;
       toast.success(
         count > 1 ? `${count} צ׳יפים הונפקו` : count === 1 ? 'הצ׳יפ הונפק' : 'השינויים נשמרו',
         data.order
-          ? { description: `נרשם תשלום ${formatIlsAfter(data.order.total)} — ${RECEPTION_PAYMENT_LABEL.cash_transfer} · הזמנה ${data.order.order_number}` }
+          ? { description: `נרשם תשלום ${formatIlsAfter(data.order.total)}${paidBy ? ` — ${paidBy}` : ''} · הזמנה ${data.order.order_number}` }
           : data.record ? { description: RECEPTION_PAYMENT_LABEL.none } : undefined,
       );
       onIssued();
@@ -808,7 +873,7 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
                   if (!o) { setQuery(''); setCreateError(null); }
                 }}
               >
-                <PopoverTrigger id="chip-contact" disabled={submitting} className="ci-aptbtn">
+                <PopoverTrigger id="chip-contact" disabled={submitting || cardPaidReal || cardCharging} className="ci-aptbtn">
                   <BuildingIco />
                   <span className={cn('truncate', !contactId && 'text-[#b4bacb]')}>
                     {contactId ? <>דירה <span className="ci-num">{contactLabel}</span></> : 'בחר דירה או יחידה…'}
@@ -1012,7 +1077,13 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
                       onCommitNumber={() => void quick.commitNumber(allSaved, (n, id) => numberExistsInWindow(n, id), submitting)}
                       onRemovePending={(n) => removePending(block, n)}
                     />
-                    <ReceptionRecords records={recordsOf(block)} />
+                    {/* "ביטול וזיכוי" on a paid reception order's line (27/11/2026) —
+                        admin and super admin; afterwards the chips and the line load again. */}
+                    <ReceptionRecords
+                      records={recordsOf(block)}
+                      canCancel={canAdminOrders}
+                      onChanged={() => { setChipsVersion((v) => v + 1); onIssued(); }}
+                    />
                     {invalid && <p className="ci-err mt-2">⚠️ {invalid}</p>}
                   </HolderBlock>
                 );
@@ -1035,15 +1106,51 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
           <ReceptionPayment
             newChips={totalPending}
             unitPrice={unitPrice}
-            method={methodNow}
+            // "אשראי" stays chosen while its payment is under way (methodNow
+            // turns to it only once the server saw it paid).
+            method={method === 'card' ? 'card' : methodNow}
             onMethod={(m) => {
+              // A card payment that went through fixes the method (and a test
+              // payment is cancelled from its own panel first) — and so does a
+              // charge still in flight or not confirmed.
+              if (card?.paid || cardCharging) return;
               setDirty(true);
               setServerError(null);
               setMethod(m);
-              // What the manager confirms by choosing: the sum on the screen now.
-              setConfirmedAmount(m === 'cash_transfer' ? amount : null);
+              // A card session of another choice is left unpaid (its order is
+              // purged with the unpaid ones); what its panel still reports is dropped.
+              if (m !== 'card') {
+                setCard(null);
+                cardSessionRef.current += 1;
+                setCardSession(cardSessionRef.current);
+              }
+              // What the manager confirms by choosing cash or a transfer: the sum on the screen now.
+              setConfirmedAmount(RECEPTION_CONFIRMED_METHODS.includes(m) ? amount : null);
             }}
             cardOption={reception?.card_option ?? false}
+            cardLive={reception?.card_live ?? false}
+            cardTest={reception?.card_test ?? false}
+            lockedTo={card?.paid || cardCharging ? 'card' : null}
+            cardPanel={method === 'card' && contactId && (reception?.card_live || reception?.card_test) ? (
+              <ReceptionCardPanel
+                contactId={contactId}
+                newChips={totalPending}
+                amount={amount}
+                role={firstHolder?.role ?? 'other'}
+                orderer={ordererShown}
+                live={reception.card_live}
+                testAvailable={reception.card_test}
+                disabled={disabledAll}
+                card={card}
+                // Only the window's current panel is heard (`cardSession`).
+                onCard={(c) => {
+                  if (cardSession !== cardSessionRef.current) return;
+                  setCard(c);
+                  if (c?.paid) setServerError(null);
+                }}
+                onCharging={(on) => { if (cardSession === cardSessionRef.current) setCardCharging(on); }}
+              />
+            ) : null}
             disabled={disabledAll}
             reason={payReason}
           />
@@ -1059,6 +1166,31 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued }: IssueChip
 
       <DiscardDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}
         onDiscard={() => { setConfirmCloseOpen(false); onOpenChange(false); }} />
+
+      {/* Closing after a REAL card payment whose chips were not saved — or
+          while a card charge is in flight / not confirmed. */}
+      <AlertDialog open={cardCloseOpen} onOpenChange={setCardCloseOpen}>
+        <AlertDialogContent dir="rtl" className="p-6" data-testid="chip-reception-card-close">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{cardPaidReal ? 'לסגור בלי לשמור את הצ׳יפים?' : 'לסגור לפני שהחיוב באשראי אושר?'}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {cardPaidReal
+                ? 'התשלום בוצע אך הצ׳יפים לא נשמרו — ההזמנה נשארת בטבלת ההזמנות; משם אפשר לבטל ולזכות.'
+                : 'החיוב נשלח ועדיין לא התקבל עליו אישור. אם יאושר, ההזמנה תופיע בטבלת ההזמנות בלי צ׳יפים — משם אפשר לבטל ולזכות.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="h-11 px-4">חזרה לחלון</AlertDialogCancel>
+            <Button
+              type="button"
+              onClick={() => { setCardCloseOpen(false); onOpenChange(false); }}
+              className="h-11 bg-destructive px-4 text-white hover:bg-destructive/90"
+            >
+              סגור בלי לשמור
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

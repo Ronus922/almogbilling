@@ -25,15 +25,13 @@ export function ChipOrderMark({ size = 22 }: { size?: number }) {
 }
 
 export function ChipOrderShell({
-  subtitle, supportPhone, supportEmail, banner, notice, children,
+  subtitle, supportPhone, supportEmail, banner, children,
 }: {
   subtitle?: string;
   supportPhone?: string | null;
   supportEmail?: string | null;
   /** A strip pinned to the top of the viewport (test mode: "מצב בדיקה, אין חיוב"). */
   banner?: string;
-  /** A note above the cards (Grow's sandbox: "סביבת בדיקות…"). */
-  notice?: string;
   children: ReactNode;
 }) {
   return (
@@ -53,7 +51,6 @@ export function ChipOrderShell({
         </div>
       </header>
       <main className="cr-wrap">
-        {notice && <p role="status" className="cr-note">{notice}</p>}
         {children}
       </main>
       {(supportPhone || supportEmail) && (

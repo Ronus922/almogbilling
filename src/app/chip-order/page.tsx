@@ -6,8 +6,8 @@ import { chipOrdersOpen } from '@/lib/chipOrders/server';
 import { isValidTestToken } from '@/lib/chipOrders/testMode';
 import { CHIP_ORDER_TEST_BANNER } from '@/lib/chipOrders/model';
 import { CHIP_ORDER_TEST_CARD_BANNER } from '@/lib/chipOrders/card';
-import { cardStepConfig } from '@/lib/chipOrders/cardPayment';
-import { growMode } from '@/lib/grow/client';
+import { liveCardConfig, testCardConfig } from '@/lib/chipOrders/cardPayment';
+import { receiptsAreEmailed } from '@/lib/chipOrders/documents';
 import { ChipOrderShell } from '@/components/chip-order/ChipOrderShell';
 import { ChipOrderForm } from '@/components/chip-order/ChipOrderForm';
 
@@ -15,21 +15,20 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // /chip-order — PUBLIC (no login). Closed — "ההזמנות ייפתחו בקרוב" — until
-// Grow is configured AND the settings switch is on (chipOrdersOpen). Open: the
-// order form (20/11/2026 design) with the apartment NUMBERS of the registry
-// (never a name) and the one price per chip from the settings (21/11/2026 —
-// no threshold, no quantity limit); the price shown is recomputed by the
-// server on submit.
+// real card charging is armed AND the settings switch is on (chipOrdersOpen,
+// src/lib/chipOrders/server.ts). Open: ONE form (26/11/2026) — the people and
+// apartments, the contact block, the payment section (PayPlus hosted fields,
+// and the Google Pay / Apple Pay buttons where the device offers them), the
+// agreement boxes and one pay button. The apartment NUMBERS of the registry
+// only (never a name); one price per chip from the settings, recomputed by the
+// server on every save.
 //
 // Test mode (13/11/2026): /chip-order?test=<token> with the CURRENT token of
-// the test link (src/lib/chipOrders/testMode.ts) opens the form even without
-// Grow and with the switch off, under a pinned "מצב בדיקה, אין חיוב" strip,
-// and its payment step is "סיים הזמנת בדיקה". A missing or wrong token is
-// exactly the page above — no hint that test mode exists.
-//
-// Card payment (25/11/2026): while PayPlus is configured in sandbox, the
-// payment step of the TEST link is the sandbox card (PayPlus hosted fields)
-// instead of "סיים הזמנת בדיקה". Without the test link nothing changes.
+// the test link (src/lib/chipOrders/testMode.ts) opens the form even with the
+// switch off, under a pinned test strip, and pays with the PayPlus SANDBOX
+// (never a real charge). Without the sandbox values (CI) the payment step is
+// "סיים הזמנת בדיקה". A missing or wrong token is exactly the closed page —
+// no hint that test mode exists.
 export default async function ChipOrderPage({
   searchParams,
 }: {
@@ -60,13 +59,12 @@ export default async function ChipOrderPage({
   }
 
   const apartments = await listOrderableApartments();
-  // The sandbox card step exists only behind the test link.
-  const cardPayment = Boolean(testToken) && cardStepConfig() !== null;
+  // The test link pays with the sandbox; a real order with production (armed).
+  const cardPayment = testToken ? testCardConfig() !== null : liveCardConfig() !== null;
   return (
     <ChipOrderShell
       {...support}
       banner={testToken ? (cardPayment ? CHIP_ORDER_TEST_CARD_BANNER : CHIP_ORDER_TEST_BANNER) : undefined}
-      notice={!testToken && growMode() === 'sandbox' ? 'סביבת בדיקות — התשלום בכרטיס בדיקה, אין חיוב אמיתי.' : undefined}
     >
       <ChipOrderForm
         apartments={apartments}
@@ -74,6 +72,9 @@ export default async function ChipOrderPage({
         termsText={settings.termsText}
         testToken={testToken}
         cardPayment={cardPayment}
+        // Only where true: a REAL order (a test payment never gets a Morning
+        // document) and the Morning key in place — Morning emails the document.
+        receiptByEmail={!testToken && cardPayment && receiptsAreEmailed()}
       />
     </ChipOrderShell>
   );

@@ -6,11 +6,13 @@ import { requireSeededAdmin } from './db-fixtures';
 // (WA_TEST_DATABASE_URL), never prod. The token's life (made, hashed, checked
 // in constant time, replaced, killed) and the public routes behind it:
 //   - no token / a wrong token / a valid token after the switch went off → 403;
-//   - a valid token → the order is created is_test, Grow is never called;
+//   - a valid token → the order is created is_test, with no phone code
+//     (26/11/2026) and no processor call;
 //   - "סיים הזמנת בדיקה" marks only THAT test order paid — never a real one.
-// Grow is not configured here (no GROW_* env), so the page is "closed" for
-// everyone without the token — exactly production today. Grow's client, the
-// code sender and the after() hook are mocked; every row is real.
+// PayPlus is not configured here (payplusConfigFor answers null for both
+// environments — exactly CI), so the page is "closed" for everyone without the
+// token and a test order ends with "סיים הזמנת בדיקה". The after() hook is
+// mocked; every row is real.
 const TEST_URL = process.env.WA_TEST_DATABASE_URL;
 const d = describe.skipIf(!TEST_URL);
 
@@ -27,39 +29,31 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
-const createPaymentProcess = vi.fn(async () => ({ processId: 'p', processToken: 't', url: 'https://sandbox.meshulam.co.il/x' }));
-vi.mock('@/lib/grow/client', async (orig) => ({
-  ...(await orig<typeof import('@/lib/grow/client')>()),
-  createPaymentProcess,
-  isGrowConfigured: () => false,
+// Neither environment configured: no card step for anyone, and no request can
+// reach PayPlus (fetch refuses and records, below).
+vi.mock('@/lib/payplus/client', async (orig) => ({
+  ...(await orig<typeof import('@/lib/payplus/client')>()),
+  payplusConfigFor: () => null,
 }));
-vi.mock('@/lib/portal/send', () => ({
-  sendPortalCode: vi.fn(async () => ({ ok: true })),
-  alertManagerAboutLockout: vi.fn(async () => undefined),
-}));
+const networkCalls: string[] = [];
 const PHONE = '+972539400001';
-vi.mock('@/lib/chipOrders/server', async (orig) => ({
-  ...(await orig<typeof import('@/lib/chipOrders/server')>()),
-  // The OTP cookie is next/headers state; the submit only needs "this phone was verified".
-  readVerifiedPhone: async () => PHONE,
-}));
 const afterQueue: (() => unknown)[] = [];
 vi.mock('next/server', async (orig) => ({
   ...(await orig<typeof import('next/server')>()),
   after: (fn: () => unknown) => { afterQueue.push(fn); },
 }));
-vi.mock('@/lib/chipOrders/notify', () => ({ notifyChipOrder: vi.fn(async () => undefined) }));
+vi.mock('@/lib/chipOrders/notify', () => ({ notifyChipOrder: vi.fn(async () => undefined), afterOrderPaid: vi.fn(async () => undefined) }));
 
 const testMode = await import('@/lib/chipOrders/testMode');
-const { POST: otpRequest } = await import('@/app/api/public/chip-order/otp/request/route');
 const { POST: submit } = await import('@/app/api/public/chip-order/route');
 const { POST: finish } = await import('@/app/api/public/chip-order/test-finish/route');
 const db = await import('@/lib/db/chipOrders');
 const { DEFAULT_CHIP_ORDER_SETTINGS } = await import('@/lib/chipOrders/model');
+const { getChipOrderSettings } = await import('@/lib/db/appSettings');
 
 const tag = String(Date.now()).slice(-6);
 const APT = `993${tag}1`;
-const made = { contacts: [] as string[], orders: [] as string[], otpPhones: [PHONE] };
+const made = { contacts: [] as string[], orders: [] as string[] };
 let adminId = '';
 let hadTestRow = false;
 let savedTestRow: unknown = null;
@@ -90,15 +84,13 @@ const finishOrder = (trackingToken: string, token?: string) =>
     headers: { ...H(token), 'content-type': 'application/json' },
     body: JSON.stringify({ trackingToken }),
   }));
-const askCode = (token?: string) =>
-  otpRequest(new Request('http://localhost/api/public/chip-order/otp/request', {
-    method: 'POST',
-    headers: { ...H(token), 'content-type': 'application/json' },
-    body: JSON.stringify({ phone: '0539400001' }),
-  }));
 
 d('chip orders — test mode (link token + routes)', () => {
   beforeAll(async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      networkCalls.push(String(input instanceof Request ? input.url : input));
+      throw new TypeError('no network in this test');
+    }));
     pool = new Pool({ connectionString: TEST_URL });
     pool.on('error', () => {});
     adminId = await requireSeededAdmin(pool);
@@ -113,10 +105,10 @@ d('chip orders — test mode (link token + routes)', () => {
   });
 
   afterAll(async () => {
+    vi.unstubAllGlobals();
     if (!pool) return;
     for (const id of made.orders) await pool.query(`delete from public.chip_orders where id = $1`, [id]);
     for (const id of made.contacts) await pool.query(`delete from public.contacts where id = $1`, [id]);
-    await pool.query(`delete from public.portal_otp_codes where phone_e164 = any($1::text[])`, [made.otpPhones]);
     await pool.query(`delete from public.auth_rate_limits where bucket like $1 or bucket like $2`, [`%${ips.a}`, `%${PHONE}`]);
     if (hadTestRow) {
       await pool.query(`update public.app_settings set value = $1::jsonb where key = 'chip_orders_test_mode'`, [JSON.stringify(savedTestRow)]);
@@ -153,33 +145,32 @@ d('chip orders — test mode (link token + routes)', () => {
     const live = tokenOf((await testMode.issueTestLink(adminId)).link);
     const wrong = `${live.slice(0, -1)}${live.endsWith('A') ? 'B' : 'A'}`;
     for (const token of [undefined, wrong]) {
-      expect((await askCode(token)).status).toBe(403);
       expect((await submitOrder(token)).status).toBe(403);
       expect((await finishOrder('x'.repeat(43), token)).status).toBe(403);
     }
     await testMode.disableTestMode(adminId);
-    expect((await askCode(live)).status).toBe(403);
     expect((await submitOrder(live)).status).toBe(403);
     expect((await finishOrder('x'.repeat(43), live)).status).toBe(403);
   });
 
-  it('a valid token: the code goes out, the order is is_test, Grow is never called; finish marks it paid once', async () => {
+  it('a valid token: the order is is_test with no phone code and no processor call; finish marks it paid once', async () => {
     const token = tokenOf((await testMode.issueTestLink(adminId)).link);
-    expect((await askCode(token)).status).toBe(200);
+    const { unitPrice } = await getChipOrderSettings();
 
-    createPaymentProcess.mockClear();
     const res = await submitOrder(token);
     expect(res.status).toBe(201);
-    const data = (await res.json()) as { test?: boolean; trackingToken?: string; total?: number; paymentUrl?: string };
+    const data = (await res.json()) as { test?: boolean; trackingToken?: string; total?: number; paymentUrl?: string; cardPayment?: boolean };
     expect(data.test).toBe(true);
     expect(data.paymentUrl).toBeUndefined();
-    expect(data.total).toBe(2 * DEFAULT_CHIP_ORDER_SETTINGS.unitPrice);
-    expect(createPaymentProcess).not.toHaveBeenCalled();
-    const row = (await pool.query<{ id: string; is_test: boolean; status: string; grow_process_id: string | null }>(
-      `select id, is_test, status, grow_process_id from public.chip_orders where tracking_token = $1`, [data.trackingToken],
+    // No sandbox values here: the payment step is "סיים הזמנת בדיקה", not the card.
+    expect(data.cardPayment).toBe(false);
+    expect(data.total).toBe(2 * unitPrice);
+    const row = (await pool.query<{ id: string; is_test: boolean; status: string; grow_process_id: string | null; phone_verified: boolean | null }>(
+      `select id, is_test, status, grow_process_id, phone_verified from public.chip_orders where tracking_token = $1`, [data.trackingToken],
     )).rows[0]!;
     made.orders.push(row.id);
-    expect(row).toMatchObject({ is_test: true, status: 'pending_payment', grow_process_id: null });
+    // The form has no phone code step any more: NULL, not true / false.
+    expect(row).toMatchObject({ is_test: true, status: 'pending_payment', grow_process_id: null, phone_verified: null });
 
     afterQueue.length = 0;
     expect((await finishOrder(data.trackingToken!, token)).status).toBe(200);
@@ -203,5 +194,9 @@ d('chip orders — test mode (link token + routes)', () => {
     const r = (await pool.query(`select status, is_test from public.chip_orders where id = $1`, [real.id])).rows[0];
     expect(r).toEqual({ status: 'pending_payment', is_test: false });
     await testMode.disableTestMode(adminId);
+  });
+
+  it('no request of this file ever left for the network', () => {
+    expect(networkCalls).toEqual([]);
   });
 });

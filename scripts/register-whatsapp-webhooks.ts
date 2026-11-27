@@ -11,9 +11,15 @@
 // (registered as webhookUrlToken → `Authorization: Bearer`).
 
 import { Client } from 'pg';
-import { createDecipheriv } from 'node:crypto';
+import { createDecipheriv, createHash } from 'node:crypto';
 
 interface EncBlob { iv: string; ct: string; tag: string }
+
+// No part of a token is printed (26/11/2026): two tokens are told apart by a
+// short SHA-256 fingerprint, and an error message has the instance token (it is
+// in every request URL — e.g. "Failed to parse URL from …") replaced.
+const fingerprint = (secret: string) => (secret ? `sha256:${createHash('sha256').update(secret).digest('hex').slice(0, 8)}` : '<empty>');
+const hideToken = (message: string, token: string) => (token ? message.split(token).join('•••') : message);
 
 function decrypt(blob: EncBlob): string {
   const key = Buffer.from(process.env.SETTINGS_ENC_KEY ?? '', 'base64');
@@ -34,7 +40,7 @@ function webhookUrl(): string {
 
 async function main() {
   const url = webhookUrl();
-  console.log(`Webhook URL: ${url}  auth: header (webhookUrlToken ${webhookToken.slice(0, 4)}…, len ${webhookToken.length})\n`);
+  console.log(`Webhook URL: ${url}  auth: header (webhookUrlToken ${fingerprint(webhookToken)})\n`);
 
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
@@ -74,7 +80,7 @@ async function main() {
       });
       console.log(`  setSettings: HTTP ${res.status} ${(await res.text()).slice(0, 120)}`);
     } catch (e) {
-      console.log(`  setSettings FAILED: ${(e as Error).message}`);
+      console.log(`  setSettings FAILED: ${hideToken((e as Error).message, token)}`);
     }
 
     // 2. getSettings — verify what actually took (Green reboots ~5s after set).
@@ -84,10 +90,10 @@ async function main() {
       const s = JSON.parse(await res.text()) as Record<string, unknown>;
       const tok = typeof s.webhookUrlToken === 'string' ? s.webhookUrlToken : '';
       console.log(`  getSettings: webhookUrl=${s.webhookUrl as string} ` +
-        `webhookUrlToken=${tok ? `${tok.slice(0, 4)}…(len ${tok.length})` : '<empty>'} ` +
+        `webhookUrlToken=${fingerprint(tok)}${tok && tok === webhookToken ? ' (= ours)' : ''} ` +
         `incoming=${s.incomingWebhook} outMsg=${s.outgoingMessageWebhook} outApi=${s.outgoingAPIMessageWebhook} state=${s.stateWebhook}`);
     } catch (e) {
-      console.log(`  getSettings FAILED: ${(e as Error).message}`);
+      console.log(`  getSettings FAILED: ${hideToken((e as Error).message, token)}`);
     }
 
     // 3. getStateInstance — persist the live connection state.
@@ -104,7 +110,7 @@ async function main() {
         );
       }
     } catch (e) {
-      console.log(`  getStateInstance FAILED: ${(e as Error).message}`);
+      console.log(`  getStateInstance FAILED: ${hideToken((e as Error).message, token)}`);
     }
     console.log('');
   }

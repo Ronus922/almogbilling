@@ -16,27 +16,23 @@ const SECURITY_HEADERS = [
   {
     key: "Content-Security-Policy",
     value:
-      "default-src 'self'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' https:; font-src 'self' data:; frame-ancestors 'self'",
+      "default-src 'self'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' https:; font-src 'self' data:; frame-ancestors 'self'; frame-src 'self' https://*.payplus.co.il",
   },
 ];
 
-// /chip-order (12/11/2026) is the ONE page that embeds a third-party frame:
-// Grow's payment page (developers.grow.business R/the-process — an iframe of
-// the url createPaymentProcess returns, on meshulam.co.il / secure. / sandbox.).
-// Same policy plus frame-src for those hosts only; Next applies the LAST
-// matching header of a key, so this entry replaces the global CSP on that
-// path alone and every other route keeps the string above byte for byte.
-//
-// Card payment (25/11/2026): the PayPlus hosted fields — the card number,
-// expiry and CVV — are frames served by PayPlus's API host
-// (<host>/api/hosted-field/…, payplus-hosted-fields 1.5.0): restapi. in
-// production, restapidev. in the sandbox. Exactly those two origins, frames
-// only. The SDK itself is bundled from npm and served by us (script-src stays
-// 'self'); its calls are covered by the existing connect-src.
-const CHIP_ORDER_CSP = `${
-  SECURITY_HEADERS.find((h) => h.key === "Content-Security-Policy")!.value
-}; frame-src 'self' https://meshulam.co.il https://*.meshulam.co.il https://restapi.payplus.co.il https://restapidev.payplus.co.il`;
-
+// frame-src (26/11/2026): the PayPlus hosted fields — the card number, expiry
+// and CVV are frames served by PayPlus's API host (<host>/api/hosted-field/…,
+// payplus-hosted-fields 1.5.0): restapi. in production, restapidev. in the
+// sandbox. The same host serves the Google Pay / Apple Pay buttons (the SDK
+// draws each wallet as a PayPlus frame — it loads no Google or Apple script into
+// our page, so no Google / Apple origin is needed), the reCAPTCHA frame and the
+// 3-D Secure window (accepted only on an https PayPlus host — PayPlusCardFields
+// installMessageGuard). So: PayPlus origins only, frames only. The SDK itself
+// is bundled from npm and served by us (script-src stays 'self').
+// It is on EVERY page, not only /chip-order and /chips: the admin app is one
+// document across in-app (soft) navigation, so a /chips reached from the
+// sidebar or the tenant panel of /dashboard keeps the CSP of the page loaded
+// first — a /chips-only rule blocked the reception card there.
 const nextConfig: NextConfig = {
   // Produce a standalone server bundle at .next/standalone/ for systemd deployment.
   output: "standalone",
@@ -75,11 +71,11 @@ const nextConfig: NextConfig = {
         source,
         headers: [{ key: "Cache-Control", value: "private, no-store" }],
       })),
-      { source: "/chip-order", headers: [{ key: "Content-Security-Policy", value: CHIP_ORDER_CSP }] },
       // The order / tracking pages carry personal flow state — never cached.
       // And no Referer at all (13/11/2026): their URLs carry a secret (the test
       // link's ?test=<token>, the tracking token), which would otherwise ride
-      // on every request the page makes — into nginx's access log, and to Grow.
+      // on every request the page makes — into nginx's access log, and to the
+      // processor's frames.
       ...["/chip-order", "/chip-order/:path*"].map((source) => ({
         source,
         headers: [

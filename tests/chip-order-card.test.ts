@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardFailureMessage, cardHolderPhone, isValidIsraeliId, sdkSaysRefused, hostedFieldsCss } from '@/lib/chipOrders/card';
+import { cardFailureMessage, cardHolderPhone, isValidIsraeliId, sdkSaysPageExpired, sdkSaysRefused, hostedFieldsCss } from '@/lib/chipOrders/card';
 
 // Card payment of /chip-order — the pure part the form uses: the holder's ID
 // check, the phone 3-D Secure needs, what the customer reads when a charge is
@@ -50,6 +50,18 @@ describe('cardFailureMessage — always Hebrew, never the raw text', () => {
       expect(text).toMatch(HEBREW);
       expect(text).not.toContain('zz-unknown-code-17');
     }
+  });
+});
+
+describe('sdkSaysPageExpired — the page request is gone at PayPlus', () => {
+  it('the real sandbox answer after PaymentPages/Disable (26/11/2026) is an expired page', () => {
+    expect(sdkSaysPageExpired({ message: 'not-authorize-page-expired', data: { default_lang: 'he', font: 'VarelaRound' } })).toBe(true);
+  });
+  it('a refusal, a success, a timeout or nothing is not', () => {
+    expect(sdkSaysPageExpired({ success: false, message: 'card declined' })).toBe(false);
+    expect(sdkSaysPageExpired({ success: true })).toBe(false);
+    expect(sdkSaysPageExpired('timeout')).toBe(false);
+    expect(sdkSaysPageExpired(null)).toBe(false);
   });
 });
 

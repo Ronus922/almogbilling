@@ -11,6 +11,7 @@ import { e164ToChatId } from '@/lib/portal/phone';
 import { getChipOrderSettings } from '@/lib/db/appSettings';
 import { getOrderForNotify, recordChipOrderNotification } from '@/lib/db/chipOrders';
 import { chipOrderMessage, chipOrderWhatsAppText } from './messages';
+import { processDueDocuments, receiptsAreEmailed } from './documents';
 import type { ChipOrderNotifyKind } from './model';
 
 // A chip-order status message to the person who ordered, on BOTH channels:
@@ -84,10 +85,15 @@ async function viaWhatsApp(orderId: string, kind: ChipOrderNotifyKind, phoneE164
   }
 }
 
-export async function notifyChipOrder(orderId: string, kind: ChipOrderNotifyKind): Promise<void> {
+/** `facts.chipsDisabled` — 'refunded' only: how many chips the refund disabled
+ *  (a refund PayPlus reported disables none). */
+export async function notifyChipOrder(orderId: string, kind: ChipOrderNotifyKind, facts: { chipsDisabled?: number } = {}): Promise<void> {
   try {
     const order = await getOrderForNotify(orderId);
     if (!order) return;
+    // An order of the reception (cash, transfer, or a card at the desk —
+    // 26/11/2026) is paid and handed over in person: nobody is messaged.
+    if (order.source === 'reception') return;
     const settings = kind === 'ready' ? await getChipOrderSettings() : null;
     const msg = chipOrderMessage({
       kind,
@@ -99,7 +105,11 @@ export async function notifyChipOrder(orderId: string, kind: ChipOrderNotifyKind
       pickupText: settings?.pickupText ?? null,
       rejectReason: order.reject_reason,
       refundStatus: order.refund_status,
+      refundedAmount: order.refunded_amount,
+      closedByRefund: order.status === 'rejected',
+      chipsDisabled: (facts.chipsDisabled ?? 0) > 0,
       invoiceUrl: order.invoice_url,
+      receiptByEmail: !order.is_test && Boolean(order.email) && receiptsAreEmailed(),
       isTest: order.is_test,
     });
     await Promise.allSettled([
@@ -109,4 +119,13 @@ export async function notifyChipOrder(orderId: string, kind: ChipOrderNotifyKind
   } catch (err) {
     logger.error('[chip-orders] notify failed', { orderId, kind, err });
   }
+}
+
+/** What follows an order turning paid (by card, from any of the paths that
+ *  learn it from PayPlus): its Morning document is issued first, when Morning
+ *  is connected — so the message can link it — then the "received & paid"
+ *  message. Run it in after(); never throws. */
+export async function afterOrderPaid(orderId: string): Promise<void> {
+  await processDueDocuments().catch(() => undefined);
+  await notifyChipOrder(orderId, 'paid');
 }

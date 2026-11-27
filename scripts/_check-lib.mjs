@@ -64,13 +64,35 @@ export function dbUrl() {
   return process.env.DIRECT_URL || process.env.DATABASE_URL || null;
 }
 
+// psql gets the URL WITHOUT its password, and the password in PGPASSWORD
+// (26/11/2026): a command line is readable by every local account (`ps`,
+// /proc/<pid>/cmdline) and Node puts it into the message of a failed
+// execFileSync ("Command failed: psql <url> …"), which run() prints — the
+// environment is readable only by the same user and root. Exported for
+// tests/no-secrets-on-argv.test.ts.
+export function psqlConnection(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    // Not a URL (a keyword/value conninfo): passed on as it is.
+    return { target: url, env: process.env };
+  }
+  const password = decodeURIComponent(u.password);
+  if (!password) return { target: url, env: process.env };
+  u.password = '';
+  return { target: u.toString(), env: { ...process.env, PGPASSWORD: password } };
+}
+
 // Run one SQL statement, return trimmed stdout. Throws on psql error. stderr is
 // piped (not inherited) so a deliberately-triggered error (e.g. a unique
 // violation we're testing) doesn't leak ERROR text to the console.
 export function psql(sql, { url = dbUrl(), args = ['-tAc'] } = {}) {
   if (!url) throw new Error('no DB url (DIRECT_URL/DATABASE_URL) — is .env.local present?');
-  return execFileSync('psql', [url, ...args, sql], {
+  const { target, env } = psqlConnection(url);
+  return execFileSync('psql', [target, ...args, sql], {
     encoding: 'utf8',
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
 }
@@ -86,8 +108,10 @@ export function scalar(sql, opts) {
 // rows in stdout and from the error text in stderr.
 function psqlScript(script, url = dbUrl()) {
   if (!url) throw new Error('no DB url (DIRECT_URL/DATABASE_URL) — is .env.local present?');
-  const r = spawnSync('psql', [url, '-tA', '-v', 'ON_ERROR_STOP=0', '-f', '-'], {
+  const { target, env } = psqlConnection(url);
+  const r = spawnSync('psql', [target, '-tA', '-v', 'ON_ERROR_STOP=0', '-f', '-'], {
     encoding: 'utf8',
+    env,
     input: script,
     stdio: ['pipe', 'pipe', 'pipe'],
   });

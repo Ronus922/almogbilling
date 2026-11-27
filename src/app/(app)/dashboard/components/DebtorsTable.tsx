@@ -79,6 +79,7 @@ export function DebtorsTable({
   canBulkStatus,
   canViewChips,
   canEditChips,
+  canAdminChipOrders = false,
   canViewPortal,
   canEditPortal,
 }: {
@@ -94,6 +95,8 @@ export function DebtorsTable({
   canBulkStatus: boolean;
   canViewChips: boolean;
   canEditChips: boolean;
+  /** Admin / super admin, by role — "ביטול וזיכוי" in the chips tab's issue window. */
+  canAdminChipOrders?: boolean;
   canViewPortal: boolean;
   canEditPortal: boolean;
 }) {
@@ -646,6 +649,7 @@ export function DebtorsTable({
         canSendWhatsapp={canSendWhatsapp}
         canViewChips={canViewChips}
         canEditChips={canEditChips}
+        canAdminChipOrders={canAdminChipOrders}
         canViewPortal={canViewPortal}
         canEditPortal={canEditPortal}
         onOpenChange={(o) => {

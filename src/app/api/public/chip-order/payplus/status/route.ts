@@ -6,8 +6,8 @@ import { getClientIp } from '@/lib/http/clientIp';
 import { logger } from '@/lib/logger';
 import { getCardOrderByToken } from '@/lib/db/chipOrderCard';
 import type { CardPaymentState } from '@/lib/chipOrders/card';
-import { cardStepConfig, lookupCardPayment } from '@/lib/chipOrders/cardPayment';
-import { notifyChipOrder } from '@/lib/chipOrders/notify';
+import { lookupCardPayment, lookupConfigFor, testCardConfig } from '@/lib/chipOrders/cardPayment';
+import { afterOrderPaid } from '@/lib/chipOrders/notify';
 import { isTestRequest } from '@/lib/chipOrders/testMode';
 import { CHIP_ORDER_PUBLIC_HEADERS as H } from '@/lib/chipOrders/server';
 
@@ -17,8 +17,11 @@ export const dynamic = 'force-dynamic';
 // POST /api/public/chip-order/payplus/status — "was this order paid?", asked
 // by the order page after the processor's SDK reported a result.
 //
-// PUBLIC BY DESIGN, gated like the session route (the test link while PayPlus
-// runs in sandbox; the order's own tracking token). It answers from the
+// PUBLIC BY DESIGN, gated by the order's own tracking token and its kind: the
+// test link → a TEST order in the sandbox; otherwise a REAL order in
+// production. (Asking about a payment that is already under way does not need
+// the live switch to be on — a charge made before it went off must still be
+// found.) It answers from the
 // DATABASE — the state the signed callback wrote. When the order still waits,
 // the SERVER asks PayPlus about the order's own payment sessions (the lookup),
 // at most once every few seconds per order, and applies what PayPlus says.
@@ -38,8 +41,8 @@ const err = (status: number, message: string) =>
 
 export async function POST(req: Request) {
   const test = await isTestRequest(req);
-  const cfg = cardStepConfig();
-  if (!cfg || !test) return err(403, 'ההזמנות ייפתחו בקרוב.');
+  const cfg = test ? testCardConfig() : lookupConfigFor('production');
+  if (!cfg) return err(403, 'ההזמנות ייפתחו בקרוב.');
 
   const ipLimit = await checkRateLimit(`chip-order:card-status:ip:${getClientIp(req)}`, { max: 240, windowSec: 600 });
   if (!ipLimit.allowed) return err(429, 'יותר מדי בקשות. נסו שוב בעוד רגע.');
@@ -48,7 +51,7 @@ export async function POST(req: Request) {
   if (!body.ok) return body.response;
 
   const order = await getCardOrderByToken(body.data.trackingToken);
-  if (!order || !order.is_test || order.source !== 'web' || order.card_env !== cfg.mode) {
+  if (!order || order.is_test !== test || order.source !== 'web' || order.card_env !== cfg.mode) {
     return err(409, 'ההזמנה אינה ממתינה לתשלום.');
   }
   if (order.status !== 'pending_payment') {
@@ -59,12 +62,16 @@ export async function POST(req: Request) {
   // Still waiting: ask PayPlus — but not on every poll of the page.
   let charged: 'no' | 'unknown' = 'unknown';
   let refused = order.card_status === 'failed';
+  // `looked`: PayPlus was asked THIS time (one lookup per order per 4 s). The
+  // page keeps its last real verdict across the answers that did not ask.
+  let looked = false;
   const mayLookUp = await checkRateLimit(`chip-order:card-lookup:order:${order.id}`, { max: 1, windowSec: 4 });
   if (mayLookUp.allowed) {
     try {
+      looked = true;
       const found = await lookupCardPayment(cfg, order);
       if (found.kind === 'paid') {
-        if (found.transitioned) after(() => notifyChipOrder(found.orderId, 'paid'));
+        if (found.transitioned) after(() => afterOrderPaid(found.orderId));
         return answer('paid', { orderNumber: order.order_number });
       }
       if (found.kind === 'not_charged') {
@@ -78,5 +85,5 @@ export async function POST(req: Request) {
   // The callback may have landed while we were asking.
   const now = await getCardOrderByToken(body.data.trackingToken);
   if (now && now.status !== 'pending_payment' && now.card_status === 'paid') return answer('paid', { orderNumber: now.order_number });
-  return answer(refused ? 'failed' : 'pending', { charged });
+  return answer(refused ? 'failed' : 'pending', { charged, looked });
 }

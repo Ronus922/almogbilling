@@ -174,9 +174,10 @@ describe('a reception order that was cancelled', () => {
     expect(chipOrderRowTags(row({ status: 'collected' }))).toEqual(['reception']);
   });
 
-  it('cancelling needs a reason of at least two letters', () => {
+  it('cancelling needs a reason of at least two letters — when one is sent (a retry of "ביטול וזיכוי" sends none: the server keeps the first)', () => {
     expect(chipOrderCancelBodySchema.safeParse({ reason: 'נרשם בטעות' }).success).toBe(true);
-    for (const bad of [{}, { reason: '' }, { reason: ' א ' }, { reason: 'x'.repeat(501) }]) {
+    expect(chipOrderCancelBodySchema.safeParse({}).success).toBe(true);
+    for (const bad of [{ reason: '' }, { reason: ' א ' }, { reason: 'x'.repeat(501) }]) {
       expect(chipOrderCancelBodySchema.safeParse(bad).success).toBe(false);
     }
   });
@@ -212,8 +213,8 @@ describe('the extra chips of a web order — beyond what an apartment line paid 
       .toBe('יש לבחור אמצעי תשלום כדי להנפיק את הצ׳יפים החדשים');
     expect(receptionPaymentReason({ newChips: 0, method: null, amount: 0, what: 'extra' })).toBeNull();
     expect(receptionPaymentReason({ newChips: 2, method: 'none', amount: 100, what: 'extra' })).toBeNull();
-    expect(receptionPaymentReason({ newChips: 2, method: 'cash_transfer', amount: 100, confirmedAmount: 100, what: 'extra' })).toBeNull();
+    expect(receptionPaymentReason({ newChips: 2, method: 'cash', amount: 100, confirmedAmount: 100, what: 'extra' })).toBeNull();
     // The sum moved after it was confirmed: the choice no longer stands.
-    expect(receptionPaymentReason({ newChips: 3, method: 'cash_transfer', amount: 150, confirmedAmount: 100, what: 'extra' })).toMatch(/הסכום לתשלום השתנה/);
+    expect(receptionPaymentReason({ newChips: 3, method: 'bank_transfer', amount: 150, confirmedAmount: 100, what: 'extra' })).toMatch(/הסכום לתשלום השתנה/);
   });
 });

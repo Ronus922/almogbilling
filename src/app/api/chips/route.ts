@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from 'next/server';
+import { NextResponse, after, type NextRequest } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { listChips, ChipNumberTakenError } from '@/lib/db/chips';
@@ -6,6 +6,8 @@ import { ReceptionError, saveReceptionWindow, type ReceptionSaveInput } from '@/
 import { getChipOrderSettings } from '@/lib/db/appSettings';
 import { formatIlsAfter } from '@/lib/chipOrders/model';
 import { RECEPTION_MAX_PAID_CHIPS } from '@/lib/chipOrders/reception';
+import { isElevatedRole } from '@/lib/permissions/constants';
+import { processDueDocuments } from '@/lib/chipOrders/documents';
 import { legacyChipBodyToInput, MAX_CHIPS_PER_GROUP } from '@/lib/chips/issueGroups';
 import {
   CHIP_TABS,
@@ -264,6 +266,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: issues[0]?.message ?? 'invalid_body', issues }, { status: 400 });
   }
   const reception: ReceptionSaveInput = receptionParsed.data;
+  // "אשראי" at the reception is admin / super admin only (26/11/2026) — the
+  // same rule that decides who is shown the option (GET /api/chips/reception).
+  if (reception.payment?.method === 'card' && !isElevatedRole(actor.role)) {
+    return NextResponse.json({ error: 'תשלום באשראי בקבלה מותר למנהל מערכת בלבד' }, { status: 403 });
+  }
 
   let input: IssueChipsInput;
 
@@ -373,12 +380,15 @@ export async function POST(req: NextRequest) {
     for (const chip of items) {
       void notifyAdminsOfChipIssued(chip, chip.apartment_number, actor.id);
     }
+    // A recorded payment has its Morning document queued with it — give the
+    // queue a turn after the answer (26/11/2026).
+    if (order) after(() => processDueDocuments().then(() => undefined));
 
     return NextResponse.json(
       {
         items,
         updated,
-        order: order ? { id: order.id, order_number: order.order_number, total: order.total } : null,
+        order: order ? { id: order.id, order_number: order.order_number, total: order.total, method: order.method } : null,
         record: record ? { id: record.id } : null,
       },
       { status: items.length > 0 ? 201 : 200 },
@@ -416,6 +426,20 @@ export async function POST(req: NextRequest) {
             { error: 'קובץ החוזה לא נמצא בין הקבצים שהועלו בחלון — יש לצרף את החוזה מחדש', code: err.code },
             { status: 400 },
           );
+        case 'card_not_paid':
+          return NextResponse.json({ error: 'התשלום באשראי לא הושלם (או כבר שויך לצ׳יפים) — יש לשלם שוב', code: err.code }, { status: 409 });
+        case 'card_amount_mismatch':
+          return NextResponse.json(
+            {
+              error: `באשראי נגבו ${formatIlsAfter(err.expectedAmount ?? 0)} עבור מספר צ׳יפים אחר — יש להחזיר את מספר הצ׳יפים, או לבטל את התשלום (זיכוי) ולשלם שוב`,
+              code: err.code,
+            },
+            { status: 409 },
+          );
+        case 'test_order_payment':
+          return NextResponse.json({ error: 'בהזמנת בדיקה לא נרשם תשלום', code: err.code }, { status: 400 });
+        case 'test_card_payment':
+          return NextResponse.json({ error: 'תשלום בדיקה אינו מנפיק צ׳יפים — הבדיקה הסתיימה בתשלום', code: err.code }, { status: 400 });
       }
     }
     if (err instanceof ChipNumberTakenError) {

@@ -101,27 +101,37 @@ export const env = createEnv({
     // fails with their error 515 ("Unverified source").
     SMS_SENDER: optionalString,
 
-    // Chip orders (/chip-order) — Grow (formerly Meshulam) Light API
-    // (developers.grow.business). Both identifiers are issued by Grow support
-    // during onboarding, separately for the sandbox and for production. Unset
-    // (either one) = isGrowConfigured() is false and /chip-order stays closed
-    // ("ההזמנות ייפתחו בקרוב") whatever the settings switch says.
-    GROW_USER_ID: optionalString,
-    GROW_PAGE_CODE: optionalString,
-    // 'production' → secure.meshulam.co.il, 'sandbox' → sandbox.meshulam.co.il.
-    // Required for the page to open (no default — test payments on the live
-    // site must be a conscious choice).
-    GROW_ENV: z.enum(['production', 'sandbox']).optional(),
-
     // Chip orders — card payment through PayPlus hosted fields
     // (docs.payplus.co.il/reference/hosted-fields; src/lib/payplus/client.ts).
-    // PAYPLUS_MODE picks the key set AND the API host: 'sandbox' → the DEV
-    // keys on restapidev.payplus.co.il, 'production' → the PROD keys on
-    // restapi.payplus.co.il. Unset, or any of the mode's three values missing
-    // = no card payment anywhere (the order page behaves as it did before).
-    // In 'sandbox' only a TEST order can reach the payment step. The keys are
-    // server-only: never sent to a browser, never written to a log.
+    // Two SEPARATE key sets: the DEV values (restapidev.payplus.co.il, the
+    // sandbox) and the PROD values (restapi.payplus.co.il). Each one is used
+    // only for its own environment, never as the other's fallback:
+    //   - the test link of /settings ALWAYS pays with the sandbox (DEV values);
+    //   - a real order is charged for real only when ALL of these hold:
+    //     PAYPLUS_MODE=production, the three PROD values are set, and
+    //     PAYPLUS_LIVE_CHARGING=on (the explicit switch, off by default) — and
+    //     the public page opens only while the /settings switch is on as well.
+    // The keys are server-only: never sent to a browser, never written to a log.
     PAYPLUS_MODE: z.enum(['sandbox', 'production']).optional(),
+    // The live-charging switch: exactly 'on' arms real charges (with the three
+    // conditions above). Anything else, or unset = no real charge anywhere —
+    // the public page says "ההזמנות ייפתחו בקרוב" and the reception has no card.
+    // A free string on purpose: a typo ('ON', 'true') must leave charging OFF,
+    // never stop the service from starting.
+    PAYPLUS_LIVE_CHARGING: optionalString,
+
+    // Chip orders — invoices / receipts through the Morning (Green Invoice)
+    // API of the BUILDING's account (src/lib/morning/client.ts). A DEDICATED API
+    // key for this purpose (never the existing key named BLLINK). Either value
+    // missing = no document is attempted; the order shows "חשבונית ממתינה
+    // לחיבור מורנינג" and the queue waits. MORNING_ENV picks the API hosts:
+    // 'production' (default) or 'sandbox' (its own keys). A TEST order never
+    // gets a document, whatever is configured here.
+    MORNING_API_KEY_ID: optionalString,
+    MORNING_API_KEY_SECRET: optionalString,
+    // Free string (a typo must not stop the service): exactly 'sandbox' = the
+    // sandbox hosts, anything else = production.
+    MORNING_ENV: optionalString,
     PAYPLUS_DEV_API_KEY: optionalString,
     PAYPLUS_DEV_SECRET_KEY: optionalString,
     PAYPLUS_DEV_PAGE_UID: optionalString,

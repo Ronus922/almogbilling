@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import ExcelJS from 'exceljs';
 import type { ChipOrderRow } from '@/lib/chipOrders/model';
 import {
-  CHIP_ORDERS_EXPORT, CHIP_ORDER_TAG_LABEL, CHIP_ORDER_WAITING_LABEL, chipOrderRowAction, chipOrderRowPeople, chipOrderRowPhone,
-  chipOrderRowStatusText, chipOrderRowTags, countOpenChipOrderRows, filterChipOrderRows, missingChipsText, searchHitPeople,
-  summarizeChipOrders, type ChipOrderTag,
+  CHIP_ORDERS_EXPORT, CHIP_ORDER_DOC_TEXT, CHIP_ORDER_PAYMENT_LABEL, CHIP_ORDER_TAG_LABEL, CHIP_ORDER_WAITING_LABEL, chipOrderDocState,
+  chipOrderRowAction, chipOrderRowDocument, chipOrderRowDocumentNumber, chipOrderRowPayment, chipOrderRowPaymentText, chipOrderRowPeople,
+  chipOrderRowPhone, chipOrderRowStatusText, chipOrderRowTags, countOpenChipOrderRows, filterChipOrderRows, missingChipsText,
+  safeDocumentUrl, searchHitPeople, summarizeChipOrders, type ChipOrderTag,
 } from '@/lib/chipOrders/orderRows';
 import { EXPORT_MONEY_FMT, buildListWorkbook, exportDate, exportDateTime } from '@/lib/export/list-export';
 
@@ -15,6 +16,10 @@ import { EXPORT_MONEY_FMT, buildListWorkbook, exportDate, exportDateTime } from 
 // file, read back from the real workbook. A row is one apartment of an order.
 // 25/11/2026: an order made at the reception stays in the tab although it is
 // collected — tagged "קבלה", status "נאסף", nothing to press, never counted.
+// 26/11/2026: the order number is searched from its start; "תשלום" (how the
+// order was paid) and "חשבונית" (where its Morning document stands) are
+// columns of the tab and of the file; "טלפון לא אומת" only for a code step
+// that was skipped (false), never for an order with no code step (null).
 
 const NOW = new Date('2026-11-24T10:00:00Z');
 
@@ -66,6 +71,20 @@ describe('the search of the Orders tab', () => {
     expect(found('דנה רון')).toEqual([]);
   });
 
+  it('by order number — from its start, like the pickup screen (26/11/2026)', () => {
+    expect(found('1042')).toEqual(['a', 'b']); // every apartment row of order 1042
+    expect(found('1043')).toEqual(['c']);
+    expect(found('104')).toEqual(['a', 'b', 'c', 'd']); // 1042, 1043, 1044
+    expect(found('042')).toEqual([]); // the middle of an order number is no hit
+    expect(found('10420')).toEqual([]);
+    // Combined with a name or an apartment, every word must still be found.
+    expect(found('1042 14')).toEqual(['b']);
+    expect(found('1044 רון')).toEqual(['d']);
+    expect(found('1043 דנה')).toEqual([]);
+    // A digit word still finds an apartment that merely contains it, as before.
+    expect(found('12')).toEqual(['a', 'c']);
+  });
+
   it('a row found through a person says who: the people the search hit, never the orderer again', () => {
     expect(searchHitPeople(ROWS[0]!, 'שרה')).toEqual(['שרה לוי']);
     expect(searchHitPeople(ROWS[0]!, 'דנה')).toEqual([]);
@@ -83,6 +102,13 @@ describe('the tags of a row', () => {
     const all: ChipOrderTag[] = ['test', 'phone_unverified', 'notify_failed'];
     expect(chipOrderRowTags(row({ is_test: true, phone_verified: false, has_failed_notification: true }))).toEqual(all);
     expect(all.map((t) => CHIP_ORDER_TAG_LABEL[t])).toEqual(['בדיקה', 'טלפון לא אומת', 'הודעה נכשלה']);
+  });
+
+  it('"טלפון לא אומת" only when the code step was skipped — an order from a form with no code step (null) has no tag', () => {
+    expect(chipOrderRowTags(row({ phone_verified: false }))).toEqual(['phone_unverified']);
+    expect(chipOrderRowTags(row({ phone_verified: null }))).toEqual([]);
+    expect(chipOrderRowTags(row({ phone_verified: true }))).toEqual([]);
+    expect(chipOrderRowTags(row({ is_test: true, phone_verified: null }))).toEqual(['test']);
   });
 
   it('an order made at the reception is tagged "קבלה" — and a web order never is', () => {
@@ -121,6 +147,15 @@ describe('the action column of a row', () => {
     expect(CHIP_ORDER_WAITING_LABEL).toBe('בהמתנה');
   });
 
+  it('a "זיכוי" waiting for PayPlus\'s answer: no action on the row (26/11/2026)', () => {
+    const full = row({ item_id: 'f', order_id: 'o9', apartment_number: '30', chips_count: 1, chips_linked: 1 });
+    const s = summarizeChipOrders([full]);
+    expect(chipOrderRowAction(full, s.get('o9'))).toEqual({ kind: 'ready' });
+    expect(chipOrderRowAction({ ...full, refund_in_flight: true }, s.get('o9'))).toBeNull();
+    expect(chipOrderRowAction({ ...full, status: 'ready', refund_in_flight: true }, s.get('o9'))).toBeNull();
+    expect(chipOrderRowAction({ ...full, status: 'ready', refund_in_flight: false }, s.get('o9'))).toEqual({ kind: 'collected' });
+  });
+
   it('"מוכן לאיסוף" is offered only once every chip of the whole order is issued', () => {
     const full = two.map((r) => ({ ...r, chips_linked: r.chips_count }));
     const s = summarizeChipOrders(full);
@@ -143,6 +178,14 @@ describe('the action column of a row', () => {
     expect(chipOrderRowAction({ order_id: 'o9', status: 'collected' }, { missing: 1, apartments: ['12'] })).toEqual({ kind: 'done' });
   });
 
+  it('a refunded web order stays in the tab: rejected → nothing to press; collected → a plain "נאסף"', () => {
+    const refunded = row({ order_id: 'o7', status: 'rejected', card_status: 'paid', card_env: 'production', refund_status: 'refunded' });
+    expect(chipOrderRowAction(refunded, summarizeChipOrders([refunded]).get('o7'))).toBeNull();
+    const collected = row({ order_id: 'o8', status: 'collected', card_status: 'paid', refund_status: 'refunded' });
+    expect(chipOrderRowAction(collected, summarizeChipOrders([collected]).get('o8'))).toEqual({ kind: 'done' });
+    expect(countOpenChipOrderRows([refunded, collected])).toBe(0);
+  });
+
   it('the badge on the tab counts what still waits for someone: never a test order, never a collected one', () => {
     expect(countOpenChipOrderRows([
       row({}),
@@ -151,6 +194,87 @@ describe('the action column of a row', () => {
       row({ source: 'reception', status: 'collected' }),
     ])).toBe(2);
     expect(countOpenChipOrderRows([row({ source: 'reception', status: 'collected' })])).toBe(0);
+  });
+});
+
+describe('"תשלום" — how a row was paid, one short word', () => {
+  const pay = (over: Partial<ChipOrderRow>) => chipOrderRowPaymentText(row(over));
+
+  it('a refund comes first — full or part — whatever paid the order', () => {
+    expect(pay({ card_status: 'paid', card_env: 'production', refund_status: 'refunded' })).toBe('זוכה');
+    expect(pay({ card_status: 'paid', card_env: 'production', refund_status: 'partial' })).toBe('זוכה חלקית');
+    expect(pay({ is_test: true, card_status: 'paid', card_env: 'sandbox', refund_status: 'refunded' })).toBe('זוכה');
+    // A refund that has to be done by hand is no refund yet: the order still reads as paid.
+    expect(pay({ card_status: 'paid', card_env: 'production', refund_status: 'manual_required' })).toBe('אשראי');
+  });
+
+  it('a test order no card paid is "no charge"; a card the processor confirmed is "אשראי" — the sandbox says so', () => {
+    expect(pay({ is_test: true })).toBe('בדיקה, ללא חיוב');
+    expect(pay({ is_test: true, refund_status: 'not_required' })).toBe('בדיקה, ללא חיוב');
+    expect(pay({ is_test: true, card_status: 'paid', card_env: 'sandbox' })).toBe('אשראי · בדיקה');
+    expect(pay({ card_status: 'paid', card_env: 'production' })).toBe('אשראי');
+    // A card session that never paid is not a payment.
+    expect(pay({ card_status: 'failed', card_env: 'production' })).toBe('—');
+    expect(pay({ is_test: true, card_status: 'started', card_env: 'sandbox' })).toBe('בדיקה, ללא חיוב');
+  });
+
+  it('a reception order: the method it recorded — and the one recorded before the split, as it was', () => {
+    expect(pay({ source: 'reception', status: 'collected', payment_method: 'cash' })).toBe('מזומן');
+    expect(pay({ source: 'reception', status: 'collected', payment_method: 'bank_transfer' })).toBe('העברה');
+    expect(pay({ source: 'reception', status: 'collected', payment_method: 'cash_transfer' })).toBe('מזומן או העברה');
+    // A reception order that was cancelled keeps saying how it was paid.
+    expect(pay({ source: 'reception', status: 'rejected', payment_method: 'cash' })).toBe('מזומן');
+  });
+
+  it('nothing to say → "—": a web order of the former processor, a row from an older build, a method nobody knows', () => {
+    expect(pay({})).toBe('—');
+    expect(pay({ payment_method: 'something_new' })).toBe('—');
+    expect(chipOrderRowPayment({ is_test: false })).toBeNull();
+    // "ללא חיוב" is never an order, but its label stays available.
+    expect(CHIP_ORDER_PAYMENT_LABEL.none).toBe('ללא חיוב');
+  });
+});
+
+describe('"חשבונית" — where the Morning document of a row stands', () => {
+  const doc = (status: 'pending' | 'issuing' | 'issued' | 'failed', number: string | null = null, url: string | null = null) => ({ status, number, url });
+
+  it('issued → its number and its link', () => {
+    expect(chipOrderDocState(doc('issued', '10023', 'https://www.greeninvoice.co.il/d/abc'), true))
+      .toEqual({ kind: 'issued', number: '10023', url: 'https://www.greeninvoice.co.il/d/abc' });
+    // Whether Morning is connected now does not matter for a document already issued.
+    expect(chipOrderDocState(doc('issued', '10023', 'https://example.test/d'), false)).toMatchObject({ kind: 'issued', number: '10023' });
+  });
+
+  it('only an https link is ever drawn', () => {
+    expect(chipOrderDocState(doc('issued', '7', 'javascript:alert(1)'), true)).toEqual({ kind: 'issued', number: '7', url: null });
+    expect(safeDocumentUrl('http://example.test/d')).toBeNull();
+    expect(safeDocumentUrl('https://example.test/d"onmouseover=x')).toBeNull();
+    expect(safeDocumentUrl(null)).toBeNull();
+    expect(safeDocumentUrl('https://example.test/d/1?x=2')).toBe('https://example.test/d/1?x=2');
+  });
+
+  it('still queued → "בהפקה" while Morning is connected, "ממתינה לחיבור מורנינג" while it is not', () => {
+    expect(chipOrderDocState(doc('pending'), true)).toEqual({ kind: 'waiting', text: 'בהפקה' });
+    expect(chipOrderDocState(doc('issuing'), true)).toEqual({ kind: 'waiting', text: 'בהפקה' });
+    expect(chipOrderDocState(doc('pending'), false)).toEqual({ kind: 'waiting', text: 'ממתינה לחיבור מורנינג' });
+    expect(CHIP_ORDER_DOC_TEXT).toEqual({ waitingMorning: 'ממתינה לחיבור מורנינג', issuing: 'בהפקה', failed: 'לא הופקה' });
+  });
+
+  it('failed → "לא הופקה"; no document → nothing; a test order never has one', () => {
+    expect(chipOrderDocState(doc('failed'), true)).toEqual({ kind: 'failed', text: 'לא הופקה' });
+    expect(chipOrderDocState(null, true)).toEqual({ kind: 'none' });
+    expect(chipOrderRowDocument(row({}), true)).toEqual({ kind: 'none' }); // a row from an older build
+    expect(chipOrderRowDocument(row({ invoice_doc: null }), true)).toEqual({ kind: 'none' });
+    expect(chipOrderRowDocument(row({ is_test: true, invoice_doc: doc('issued', '1', 'https://x.test/1') }), true)).toEqual({ kind: 'none' });
+    expect(chipOrderRowDocument(row({ invoice_doc: doc('pending') }), false)).toEqual({ kind: 'waiting', text: 'ממתינה לחיבור מורנינג' });
+  });
+
+  it('the file holds the number of an issued document — nothing else', () => {
+    expect(chipOrderRowDocumentNumber(row({ invoice_doc: doc('issued', '10023', 'https://x.test/d') }))).toBe('10023');
+    expect(chipOrderRowDocumentNumber(row({ invoice_doc: doc('issued', null, 'https://x.test/d') }))).toBe('');
+    expect(chipOrderRowDocumentNumber(row({ invoice_doc: doc('failed') }))).toBe('');
+    expect(chipOrderRowDocumentNumber(row({ invoice_doc: doc('pending') }))).toBe('');
+    expect(chipOrderRowDocumentNumber(row({}))).toBe('');
   });
 });
 
@@ -186,9 +310,10 @@ describe('the Orders tab as a file: Excel, the print view and the PDF share thes
     expect(chipOrderRowPeople(row({ people: [], full_name: 'ותיק בדיקה' }))).toEqual(['ותיק בדיקה']);
   });
 
-  it('the columns, in order — the tags right after the orderer, as in the table', () => {
+  it('the columns, in order — the tags right after the orderer, as in the table; the payment and the invoice after the sum', () => {
     expect(CHIP_ORDERS_EXPORT.columns.map((c) => c.header)).toEqual([
-      'מס׳ הזמנה', 'תאריך הזמנה', 'שם המזמין', 'טלפון', 'תגיות', 'דירה', 'בעלי הצ׳יפ', 'כמות', 'סה״כ (₪)', 'סטטוס', 'יעד להכנה', 'הזמנת בדיקה',
+      'מס׳ הזמנה', 'תאריך הזמנה', 'שם המזמין', 'טלפון', 'תגיות', 'דירה', 'בעלי הצ׳יפ', 'כמות', 'סה״כ (₪)', 'תשלום', 'חשבונית',
+      'סטטוס', 'יעד להכנה', 'הזמנת בדיקה',
     ]);
     // "הזמנות צ׳יפים", not "… פתוחות": the tab lists the reception orders too, and those are collected.
     expect(CHIP_ORDERS_EXPORT).toMatchObject({ title: 'הזמנות צ׳יפים', sheet: 'הזמנות צ׳יפים', file: 'chip-orders' });
@@ -202,10 +327,18 @@ describe('the Orders tab as a file: Excel, the print view and the PDF share thes
         people: [], status: 'ready', chips_count: 1, chips_linked: 1, line_total: 50, due_at: null,
         is_test: true, phone_verified: false, has_failed_notification: true,
       }),
-      // An order made at the reception for a guest who left no phone.
+      // An order made at the reception for a guest who left no phone — paid in
+      // cash, its invoice issued.
       row({
         item_id: 'c', order_number: 1044, apartment_number: '20', full_name: 'אורח בדיקה', phone_e164: null, role: 'other',
         source: 'reception', status: 'collected', people: ['אורח בדיקה'], chips_count: 2, chips_linked: 2, line_total: 100, due_at: null,
+        payment_method: 'cash', invoice_doc: { status: 'issued', number: '10023', url: 'https://example.test/d/10023' },
+      }),
+      // A web order the card paid and that was refunded; its invoice failed.
+      row({
+        item_id: 'e', order_number: 1045, apartment_number: '30', status: 'rejected', chips_count: 1, chips_linked: 0, line_total: 50,
+        due_at: null, card_status: 'paid', card_env: 'production', refund_status: 'refunded', refunded_amount: 50,
+        invoice_doc: { status: 'failed', number: null, url: null },
       }),
     ];
     const wb = new ExcelJS.Workbook();
@@ -215,22 +348,29 @@ describe('the Orders tab as a file: Excel, the print view and the PDF share thes
     expect(ws.views[0]?.rightToLeft).toBe(true);
     const cells = (n: number) => CHIP_ORDERS_EXPORT.columns.map((_, i) => ws.getRow(n).getCell(i + 1).value);
     expect(cells(1)).toEqual(CHIP_ORDERS_EXPORT.columns.map((c) => c.header));
-    // An order with no tag: the tags cell is blank, not an empty text.
+    // An order with no tag: the tags cell is blank, not an empty text — and so
+    // are its payment (a row of the former processor) and its invoice (none).
     expect(cells(2)).toEqual([
-      1042, '23/11/2026', 'דנה כהן', '0539300001', null, '012', 'דנה כהן, שרה לוי', 3, 157.5, 'שויכו 1 מתוך 3', '26/11/2026 10:00', 'לא',
+      1042, '23/11/2026', 'דנה כהן', '0539300001', null, '012', 'דנה כהן, שרה לוי', 3, 157.5, null, null, 'שויכו 1 מתוך 3', '26/11/2026 10:00', 'לא',
     ]);
     // A name typed like a formula opens as text — also where it stands in for
     // the people of an order with no holder lines; a foreign phone keeps its
-    // "+" as text; no due date = a blank cell; the three tags in words.
+    // "+" as text; no due date = a blank cell; the three tags in words; a test
+    // order no card paid is "no charge".
     const formula = '\'=HYPERLINK("http://x","y")';
     expect(cells(3)).toEqual([
-      1043, '23/11/2026', formula, '\'+447911123456', 'בדיקה, טלפון לא אומת, הודעה נכשלה', '14', formula, 1, 50, 'מוכן לאיסוף', null, 'כן',
+      1043, '23/11/2026', formula, '\'+447911123456', 'בדיקה, טלפון לא אומת, הודעה נכשלה', '14', formula, 1, 50, 'בדיקה, ללא חיוב', null,
+      'מוכן לאיסוף', null, 'כן',
     ]);
-    // The reception order: tagged "קבלה", collected, a blank phone and a blank due date.
+    // The reception order: tagged "קבלה", paid in cash, its invoice number, collected, a blank phone and a blank due date.
     expect(cells(4)).toEqual([
-      1044, '23/11/2026', 'אורח בדיקה', null, 'קבלה', '20', 'אורח בדיקה', 2, 100, 'נאסף', null, 'לא',
+      1044, '23/11/2026', 'אורח בדיקה', null, 'קבלה', '20', 'אורח בדיקה', 2, 100, 'מזומן', '10023', 'נאסף', null, 'לא',
     ]);
-    expect(ws.rowCount).toBe(4);
+    // The refunded web order: "זוכה", and no invoice number (its document failed).
+    expect(cells(5)).toEqual([
+      1045, '23/11/2026', 'דנה כהן', '0539300001', null, '30', 'דנה כהן', 1, 50, 'זוכה', null, 'נדחה', null, 'לא',
+    ]);
+    expect(ws.rowCount).toBe(5);
     // The apartment stays text ("012" keeps its zero); the amount is a number with two decimals.
     expect(ws.getRow(2).getCell(6).type).toBe(ExcelJS.ValueType.String);
     expect(ws.getRow(2).getCell(9).type).toBe(ExcelJS.ValueType.Number);

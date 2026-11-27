@@ -16,12 +16,16 @@ set -a; [ -f .env ] && . ./.env; [ -f .env.local ] && . ./.env.local; set +a
 DB_URL="${DIRECT_URL:-${DATABASE_URL:-}}"
 BASE="http://127.0.0.1:${PORT:-3003}"
 [[ -z "$DB_URL" ]] && { echo "FATAL: no DB url"; exit 1; }
+# The DB password → PGPASSWORD; psql gets the URL without it (scripts/lib/pg-url.sh) —
+# a command line is readable by every local account.
+. scripts/lib/pg-url.sh
+pg_url_split "$DB_URL"; DB_URL="$PG_URL"
 
 # Cron secret lives in the root-only env file.
 CRON_SECRET="$(sudo grep -E '^BILLING_CRON_SECRET=' /etc/billing/billing.env | head -1 | cut -d= -f2-)"
 [[ -z "$CRON_SECRET" ]] && { echo "FATAL: no BILLING_CRON_SECRET"; exit 1; }
 
-SID=""; SID_HASH=""; TASK_ID=""; ASSIGNEE_ID=""
+SID=""; SID_HASH=""; TASK_ID=""; ASSIGNEE_ID=""; COOKIE_HDR=""
 pass=0; fail=0
 check() { if [[ "$2" == "$3" ]]; then echo "  ✓ $1 → $2"; pass=$((pass+1)); else echo "  ✗ $1 → got '$2', expected '$3'"; fail=$((fail+1)); fi; }
 nonzero() { if [[ "${2:-0}" -ge "${3:-1}" ]]; then echo "  ✓ $1 → $2"; pass=$((pass+1)); else echo "  ✗ $1 → got '$2', expected >= ${3:-1}"; fail=$((fail+1)); fi; }
@@ -30,6 +34,7 @@ cleanup() {
   [[ -n "$TASK_ID" ]] && psql "$DB_URL" -tAc "delete from public.tasks where id='$TASK_ID';" >/dev/null 2>&1 || true
   [[ -n "$ASSIGNEE_ID" ]] && psql "$DB_URL" -tAc "delete from public.notifications where user_id='$ASSIGNEE_ID' and source_module='tasks';" >/dev/null 2>&1 || true
   [[ -n "$SID_HASH" ]] && psql "$DB_URL" -tAc "delete from public.sessions where id='$SID_HASH';" >/dev/null 2>&1 || true
+  [[ -n "$COOKIE_HDR" ]] && rm -f "$COOKIE_HDR" || true
 }
 trap cleanup EXIT
 
@@ -43,10 +48,13 @@ SID="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
 # DB stores only the SHA-256 hash of the session id (security wave 4); the cookie keeps the raw id.
 SID_HASH="$(printf '%s' "$SID" | sha256sum | cut -d' ' -f1)"
 psql "$DB_URL" -tAc "insert into public.sessions (id,user_id,expires_at,remember) values ('$SID_HASH','$ADMIN_ID',now()+interval '10 minutes',false);" >/dev/null
-COOKIE="almog_sid=$SID"
+# The session id is a credential: curl reads the Cookie header from a 600 file
+# (-H @file), never from its command line.
+COOKIE_HDR="$(mktemp)"; chmod 600 "$COOKIE_HDR"
+printf 'Cookie: almog_sid=%s\n' "$SID" > "$COOKIE_HDR"
 echo "  ✓ admin=$ADMIN_ID assignee=$ASSIGNEE_ID"
 
-req() { local m="$1" p="$2" b="${3:-}"; if [[ -n "$b" ]]; then curl -s -w $'\n%{http_code}' -X "$m" "$BASE$p" -H "Cookie: $COOKIE" -H 'Content-Type: application/json' -d "$b"; else curl -s -w $'\n%{http_code}' -X "$m" "$BASE$p" -H "Cookie: $COOKIE"; fi; }
+req() { local m="$1" p="$2" b="${3:-}"; if [[ -n "$b" ]]; then curl -s -w $'\n%{http_code}' -X "$m" "$BASE$p" -H @"$COOKIE_HDR" -H 'Content-Type: application/json' -d "$b"; else curl -s -w $'\n%{http_code}' -X "$m" "$BASE$p" -H @"$COOKIE_HDR"; fi; }
 
 echo "1) create task (assigned to assignee)"
 RESP="$(req POST /api/tasks "{\"title\":\"בדיקת מערכת — משימה\",\"priority\":\"high\",\"assigned_to_user_id\":\"$ASSIGNEE_ID\",\"status\":\"open\"}")"
@@ -87,7 +95,8 @@ RCNT="$(psql "$DB_URL" -tAc "select count(*) from public.reminders where entity_
 nonzero "unsent reminder exists" "$RCNT" 1
 
 echo "7) run cron reminders engine (real secret)"
-CRESP="$(curl -s -w $'\n%{http_code}' -X POST -H "x-cron-secret: $CRON_SECRET" "$BASE/api/cron/reminders")"
+# The cron secret reaches curl on stdin (-H @-), never on its command line (as run-reminders.sh does).
+CRESP="$(printf 'x-cron-secret: %s' "$CRON_SECRET" | curl -s -w $'\n%{http_code}' -X POST -H @- "$BASE/api/cron/reminders")"
 CCODE="$(tail -1 <<<"$CRESP")"; CBODY="$(sed '$d' <<<"$CRESP")"
 check "cron status" "$CCODE" "200"
 echo "    cron body: $CBODY"
@@ -97,7 +106,7 @@ REMNOTIF="$(psql "$DB_URL" -tAc "select count(*) from public.notifications where
 nonzero "reminder notification created" "$REMNOTIF" 1
 
 echo "8) cron idempotency (second run should process 0 due)"
-CRESP2="$(curl -s -X POST -H "x-cron-secret: $CRON_SECRET" "$BASE/api/cron/reminders")"
+CRESP2="$(printf 'x-cron-secret: %s' "$CRON_SECRET" | curl -s -X POST -H @- "$BASE/api/cron/reminders")"
 echo "    cron2 body: $CRESP2"
 
 echo

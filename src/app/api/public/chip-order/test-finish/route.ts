@@ -7,23 +7,24 @@ import { appUrl } from '@/lib/config';
 import { markTestChipOrderPaid } from '@/lib/db/chipOrders';
 import { afterChipOrderPaid } from '@/lib/chipOrders/payment';
 import { isTestRequest } from '@/lib/chipOrders/testMode';
-import { cardStepConfig } from '@/lib/chipOrders/cardPayment';
+import { testCardConfig } from '@/lib/chipOrders/cardPayment';
 import { CHIP_ORDER_PUBLIC_HEADERS as H } from '@/lib/chipOrders/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // POST /api/public/chip-order/test-finish — "סיים הזמנת בדיקה" (test mode,
-// 13/11/2026). The payment step of a TEST order: the order becomes "paid,
-// awaiting review" with is_test and no Grow field, no invoice — then the
-// usual audit row and "received & paid" message (marked [בדיקה]).
+// 13/11/2026). The payment step of a TEST order while the PayPlus sandbox is
+// not configured (CI): the order becomes "paid" with is_test, no processor
+// field, no invoice — then the usual audit row and "received & paid" message
+// (marked [בדיקה]).
 //
 // PUBLIC BY DESIGN, and 403 unless the request carries the CURRENT test-link
 // token (switch on, latest link). The UPDATE is locked to is_test AND
 // pending_payment, matched by the order's tracking token — it can never touch
 // an order created without the test link.
 //
-// Card payment (25/11/2026): while PayPlus is configured in sandbox a test
+// Card payment (25/11/2026): while the PayPlus sandbox is configured a test
 // order is paid with the sandbox card, and becomes paid only from PayPlus (its
 // signed callback or our lookup). This shortcut is then closed — 409 — so
 // there is no way to mark an order paid from the browser.
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
   if (!(await isTestRequest(req))) {
     return NextResponse.json({ ok: false, message: 'ההזמנות ייפתחו בקרוב.' }, { status: 403, headers: H });
   }
-  if (cardStepConfig()) {
+  if (testCardConfig()) {
     return NextResponse.json({ ok: false, message: 'הזמנת בדיקה משולמת עכשיו בכרטיס בדיקה, בשלב התשלום של הטופס.' }, { status: 409, headers: H });
   }
   const limit = await checkRateLimit(`chip-order:test-finish:ip:${getClientIp(req)}`, { max: 20, windowSec: 3600 });

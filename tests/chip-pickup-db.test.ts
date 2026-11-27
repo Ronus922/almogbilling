@@ -52,7 +52,7 @@ vi.mock('next/server', async (orig) => ({
   ...(await orig<typeof import('next/server')>()),
   after: (fn: () => unknown) => { void fn; },
 }));
-vi.mock('@/lib/chipOrders/notify', () => ({ notifyChipOrder: vi.fn(async () => undefined) }));
+vi.mock('@/lib/chipOrders/notify', () => ({ notifyChipOrder: vi.fn(async () => undefined), afterOrderPaid: vi.fn(async () => undefined) }));
 
 const { requireSeededAdmin } = await import('./db-fixtures');
 const { issueChipGroups, deactivateChip } = await import('@/lib/db/chips');
@@ -266,7 +266,7 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
     // An order of the reception: collected the moment it is made.
     const r = await saveReceptionWindow(
       { contact_id: made.contacts[APT(9)]!, groups: [{ resident_role: 'other', holder_name: 'שולם בקבלה', chip_type: 'physical', numbers: [num(17)] }] },
-      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash_transfer', amount: 50 } },
+      { orderer: EMPTY_RECEPTION_ORDERER, payment: { method: 'cash', amount: 50 } },
       50,
       actor('admin'),
     );
@@ -283,6 +283,9 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
       await pool.query(`delete from public.chips where id = $1`, [c.id]);
     }
     for (const id of made.orders) {
+      // The reception order's Morning invoice row blocks deleting it (FK restrict) — by the order's id.
+      await pool.query(`delete from public.chip_order_documents where order_id = $1 and credit_of is not null`, [id]);
+      await pool.query(`delete from public.chip_order_documents where order_id = $1`, [id]);
       await pool.query(`delete from public.audit_log where entity_type = 'chip_order' and entity_id = $1`, [id]);
       await pool.query(`delete from public.chip_orders where id = $1`, [id]);
     }

@@ -10,6 +10,9 @@ import {
   type ChipOrderWindowItem, type ChipOrderWindowOrder,
 } from '@/lib/chipOrders/model';
 import { RECEPTION_MAX_PAID_CHIPS, receptionAmount, sameAmount, type ReceptionPaymentMethod } from '@/lib/chipOrders/reception';
+import { enqueueDocumentInTx } from '@/lib/db/chipOrderDocuments';
+import { morningConfig } from '@/lib/morning/client';
+import { israelDate } from '@/lib/morning/documents';
 import { MAX_CHIPS_PER_GROUP } from '@/lib/chips/issueGroups';
 import { writeAuditInTx } from '@/lib/db/audit';
 import { issueChipGroupsInTx, ChipNumberTakenError } from '@/lib/db/chips';
@@ -48,6 +51,23 @@ export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindo
             o.rejected_at, o.reject_reason, o.cancelled_by_name,
             o.card_status, o.card_env, o.card_paid_amount::float8 as card_paid_amount, o.card_paid_at,
             o.card_approval_number, o.card_last4,
+            o.refund_status, o.refund_note, o.refunded_amount::float8 as refunded_amount, o.refunded_at,
+            o.refunded_by_name, o.refund_via, o.refund_reason,
+            -- A refund call with no answer recorded: never sent again
+            -- (27/11/2026) — it stays "on its way" until PayPlus shows it
+            -- ("ביטול וזיכוי" asks PayPlus, refund_note says what to check).
+            (o.refund_requested_at is not null and o.refunded_at is null) as refund_in_flight,
+            coalesce((select json_agg(json_build_object(
+                        'kind', d.kind, 'status', d.status, 'amount', d.amount::float8,
+                        'number', d.morning_docs->0->>'number', 'url', d.morning_docs->0->>'url',
+                        'last_error', d.last_error,
+                        'numbers', coalesce((select json_agg(x->>'number') from jsonb_array_elements(d.morning_docs) x), '[]'::json),
+                        'email_status', d.email_status, 'email_to', d.email_to) order by d.created_at)
+                        from public.chip_order_documents d where d.order_id = o.id), '[]'::json) as documents,
+            o.cancel_failed_step, o.cancel_error,
+            case when o.cancel_completed_at is null then o.payplus_reversal_kind end as payplus_reversal_kind,
+            o.payplus_reversal_at, (o.cancel_completed_at is not null) as cancel_completed,
+            (o.cancel_requested_at is not null) as cancel_requested,
             (select x.order_number from public.chip_orders x where x.id = o.extra_of_order_id) as extra_of_order_number
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id
@@ -171,6 +191,7 @@ export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindo
   }
   const clicked = items.find((i) => i.id === itemId) ?? items[0];
   return {
+    documents_connected: morningConfig() !== null,
     order,
     items,
     holders,
@@ -214,7 +235,7 @@ export interface WindowSaveResult {
   updated: number;
   /** The extra chips of the save: how many, how they were settled, and the
    *  reception order a recorded payment made. Null = the save had none. */
-  extra: { chips: number; method: ReceptionPaymentMethod; order: { order_number: number; total: number } | null } | null;
+  extra: { chips: number; method: ReceptionPaymentMethod; order: { id: string; order_number: number; total: number } | null } | null;
 }
 
 /** A number another chip holds — `holderIndex` is the block's index in the
@@ -506,12 +527,14 @@ export async function saveChipOrderWindow(
       // (a chip of the line was disabled elsewhere meanwhile): refused, so the
       // window loads again — never saved with the payment silently dropped.
       const payment = input.extraPayment ?? null;
-      if (payment?.method === 'cash_transfer' && payment.amount > 0) throw new ReceptionError('amount_mismatch', 0);
+      if ((payment?.method === 'cash' || payment?.method === 'bank_transfer') && payment.amount > 0) throw new ReceptionError('amount_mismatch', 0);
     } else {
       const payment = input.extraPayment ?? null;
       const expected = receptionAmount(extraChips, unitPrice);
       if (!payment) throw new ReceptionError('payment_required', expected);
-      if (payment.method === 'cash_transfer') {
+      if (payment.method === 'card') throw new ReceptionError('payment_required', expected);
+      if (payment.method === 'cash' || payment.method === 'bank_transfer') {
+        const method = payment.method;
         // A test order records no payment, and makes no real order.
         if (order.is_test) throw new ReceptionError('test_order_payment');
         if (expected <= 0) throw new ReceptionError('nothing_to_charge');
@@ -527,13 +550,13 @@ export async function saveChipOrderWindow(
                (source, status, full_name, phone_e164, email, address, address_street, address_city, address_zip, role, total,
                 tracking_token, paid_at, payment_method, payment_recorded_by, payment_recorded_by_name, payment_recorded_at,
                 extra_of_order_id)
-             values ('reception', 'paid', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), 'cash_transfer', $11, $12, now(), $13)
+             values ('reception', 'paid', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), $14, $11, $12, now(), $13)
              returning id, order_number`,
             [
               // Whoever placed the web order is who these chips were added for.
               order.full_name, order.phone_e164, order.email, order.address,
               order.address_street, order.address_city, order.address_zip, order.role,
-              expected, randomBytes(32).toString('base64url'), actor.id, actor.name, orderId,
+              expected, randomBytes(32).toString('base64url'), actor.id, actor.name, orderId, method,
             ],
           )
         ).rows[0]!;
@@ -567,7 +590,7 @@ export async function saveChipOrderWindow(
           // The extra chips belong to the reception order's line and person.
           pushGroups(forContact(lot.item.contact_id), lot.holderIndex, lot.who, lot.chips, { order_item_id: line, order_holder_id: holder.id });
         }
-        extra = { chips: extraChips, method: 'cash_transfer', order: { order_number: created.order_number, total: expected } };
+        extra = { chips: extraChips, method, order: { id: created.id, order_number: created.order_number, total: expected } };
       } else {
         // No charge: no order. The extras stay on this order's own line.
         for (const lot of extraLots) {
@@ -621,8 +644,20 @@ export async function saveChipOrderWindow(
           action: 'payment_recorded',
           entityType: 'chip_order',
           entityId: extraOrderId,
-          metadata: { ...metadata, method: 'cash_transfer', amount: extra.order.total },
+          metadata: { ...metadata, method: extra.method, amount: extra.order.total },
         });
+        // Its Morning document, queued with the payment (26/11/2026). The web
+        // order is never a test order here (a test order records no payment).
+        if (extra.method === 'cash' || extra.method === 'bank_transfer') {
+          await enqueueDocumentInTx(client, {
+            orderId: extraOrderId,
+            kind: 'invoice',
+            paymentKey: `reception:${extraOrderId}`,
+            amount: extra.order.total,
+            method: extra.method,
+            details: { date: israelDate(), recorded_by: actor.name, extra_of_order: order.order_number },
+          });
+        }
       } else {
         await writeAuditInTx(client, {
           actorUserId: actor.id,

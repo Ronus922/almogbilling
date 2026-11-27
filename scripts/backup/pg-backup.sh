@@ -41,7 +41,12 @@ fail() { printf '%s [pg-backup] ERROR: %s\n' "$(date '+%F %T')" "$*" >&2; }
 ping_hc() {
   # $1 = "" (success) or "/fail"
   [[ -n "${HEALTHCHECK_BACKUP_URL:-}" ]] || return 0
-  curl -fsS -m 10 --retry 3 -o /dev/null "${HEALTHCHECK_BACKUP_URL}$1" \
+  # The ping URL is the check's only credential: curl reads it as a config line
+  # on stdin (-K -), never from its command line (readable by every local
+  # account through ps). Quotes and backslashes escaped for curl's config syntax.
+  local u="${HEALTHCHECK_BACKUP_URL}$1"
+  u="${u//\\/\\\\}"; u="${u//\"/\\\"}"
+  printf 'url = "%s"\n' "$u" | curl -fsS -m 10 --retry 3 -o /dev/null -K - \
     || log "healthcheck ping${1} failed (non-fatal)"
 }
 
