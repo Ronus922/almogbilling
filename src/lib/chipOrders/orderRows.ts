@@ -5,7 +5,7 @@ import {
   type ChipOrderRow,
 } from './model';
 import { CHIP_ORDER_EXTRA_LABEL, CHIP_ORDER_RECEPTION_LABEL } from './reception';
-import { PAYPLUS_REVERSAL_LABEL } from './receptionCancelText';
+import { CLOSED_BY_HAND_LABEL, PAYPLUS_REVERSAL_LABEL } from './receptionCancelText';
 
 // The Orders tab of /chips (24/11/2026) — the pure, client-safe half of what
 // the tab does with its rows: the search, the tags of a row, what the action
@@ -58,10 +58,12 @@ export function searchHitPeople(row: Searchable, query: string): string[] {
  *  form with no code step, 26/11/2026), a message to the orderer that
  *  failed to go out, and — first, in red — a paid order PayPlus shows
  *  cancelled or refunded that waits for "ביטול וזיכוי" (27/11/2026). */
-export type ChipOrderTag = 'payplus_reversed' | 'reception' | 'extra' | 'test' | 'phone_unverified' | 'notify_failed';
+export type ChipOrderTag = 'payplus_reversed' | 'closed_by_hand' | 'reception' | 'extra' | 'test' | 'phone_unverified' | 'notify_failed';
 
 export const CHIP_ORDER_TAG_LABEL: Record<ChipOrderTag, string> = {
   payplus_reversed: PAYPLUS_REVERSAL_LABEL,
+  // "סגירה ידנית" of a stuck "ביטול וזיכוי" (27/11/2026) — a permanent mark.
+  closed_by_hand: CLOSED_BY_HAND_LABEL,
   reception: CHIP_ORDER_RECEPTION_LABEL,
   // A reception order made for extra chips of a web order (25/11/2026).
   extra: CHIP_ORDER_EXTRA_LABEL,
@@ -71,11 +73,12 @@ export const CHIP_ORDER_TAG_LABEL: Record<ChipOrderTag, string> = {
 };
 
 type Tagged = Pick<ChipOrderRow, 'is_test' | 'phone_verified' | 'has_failed_notification'>
-  & Partial<Pick<ChipOrderRow, 'source' | 'extra_of_order_number' | 'payplus_reversal_kind'>>;
+  & Partial<Pick<ChipOrderRow, 'source' | 'extra_of_order_number' | 'payplus_reversal_kind' | 'closed_by_hand_step'>>;
 
 export function chipOrderRowTags(row: Tagged): ChipOrderTag[] {
   const tags: ChipOrderTag[] = [];
   if (row.payplus_reversal_kind) tags.push('payplus_reversed');
+  if (row.closed_by_hand_step) tags.push('closed_by_hand');
   if (row.source === 'reception') tags.push('reception');
   if (row.extra_of_order_number != null) tags.push('extra');
   if (row.is_test) tags.push('test');

@@ -143,7 +143,8 @@ async function fetchWindow(orderItemId: string): Promise<ChipOrderWindow> {
 }
 
 export function OrderIssueSheet({
-  open, onOpenChange, onIssued, canEditOrders = false, canWriteContacts = false, canAdminOrders = false, orderItemId,
+  open, onOpenChange, onIssued, canEditOrders = false, canWriteContacts = false, canAdminOrders = false, canCloseByHand = false,
+  orderItemId,
 }: IssueChipSheetProps & { orderItemId: string }) {
   const [win, setWin] = useState<ChipOrderWindow | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -731,6 +732,7 @@ export function OrderIssueSheet({
               readyAction={{ can: canReady, busy: readyBusy, reason: readyReason, run: () => void markReady() }}
               canEditOrders={canEditOrders}
               canAdminOrders={canAdminOrders}
+              canCloseByHand={canCloseByHand}
               disabled={submitting}
               onGone={() => { onIssued(); onOpenChange(false); }}
               onReload={() => { reload(); onIssued(); }}

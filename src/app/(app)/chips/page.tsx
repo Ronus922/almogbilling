@@ -24,6 +24,9 @@ export default async function ChipsPage() {
   // super admin, by ROLE (each route asks again: requireAdmin). A manager who
   // may record a payment may not undo or refund it.
   const canAdminOrders = isElevatedRole(actor.role);
+  // "סגירה ידנית" of a stuck "ביטול וזיכוי" (27/11/2026) — super admin only,
+  // by role (the route asks again).
+  const canCloseByHand = actor.role === 'super_admin';
 
   return (
     <ChipsPageClient
@@ -32,6 +35,7 @@ export default async function ChipsPage() {
       canEditOrders={canEditOrders}
       canWriteContacts={canWriteContacts}
       canAdminOrders={canAdminOrders}
+      canCloseByHand={canCloseByHand}
     />
   );
 }

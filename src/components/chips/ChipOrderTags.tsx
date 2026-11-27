@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { AlertTriangle, ConciergeBell, PlusCircle, RotateCcw } from 'lucide-react';
+import { AlertTriangle, ConciergeBell, Hand, PlusCircle, RotateCcw } from 'lucide-react';
 import { CHIP_ORDER_TAG_LABEL, type ChipOrderTag } from '@/lib/chipOrders/orderRows';
 import { ChipOrderTestBadge, ChipOrderUnverifiedPhoneBadge } from './ChipOrderStatusPill';
 
@@ -74,8 +74,25 @@ function ChipOrderPayPlusReversalBadge() {
   );
 }
 
+/** "נסגרה ידנית" (27/11/2026) — a super admin closed the order's stuck "ביטול
+ *  וזיכוי" by hand: nothing was sent to PayPlus or Morning for the step it
+ *  stopped at. Amber, for good — the window says who, when, why and which step. */
+function ChipOrderClosedByHandBadge() {
+  return (
+    <span
+      data-testid="chip-order-closed-by-hand-tag"
+      title="„ביטול וזיכוי” נסגר ידנית על ידי סופר אדמין — הפרטים בחלון ההזמנה"
+      className="inline-flex h-[24px] shrink-0 items-center gap-1 whitespace-nowrap rounded-[7px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] px-2.5 text-[12px] font-bold text-[var(--chip-amber-ink)]"
+    >
+      <Hand className="h-3.5 w-3.5" />
+      {CHIP_ORDER_TAG_LABEL.closed_by_hand}
+    </span>
+  );
+}
+
 const TAG_BADGE: Record<ChipOrderTag, ComponentType> = {
   payplus_reversed: ChipOrderPayPlusReversalBadge,
+  closed_by_hand: ChipOrderClosedByHandBadge,
   reception: ChipOrderReceptionBadge,
   extra: ChipOrderExtraBadge,
   test: ChipOrderTestBadge,

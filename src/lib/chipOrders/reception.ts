@@ -154,6 +154,8 @@ export interface ReceptionRecordView {
    *  its words — the line says so and offers to go on. Null otherwise. */
   cancel_failed_step: 'refund' | 'credit' | 'cancel' | null;
   cancel_error: string | null;
+  /** "סגירה ידנית" (27/11/2026): a super admin closed its stuck cancel by hand. */
+  closed_by_hand: boolean;
 }
 
 // ── The window's own forms ─────────────────────────────────────────────────

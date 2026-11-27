@@ -506,6 +506,17 @@ d('"אשראי" at the reception — the card order, its payment, the save onto 
     expect((await cancel((await byToken(waiting.token)).id, 'לא שולם')).status).toBe(409);
   });
 
+  it('a card order PayPlus showed cancelled while the window stayed open takes no chips (27/11/2026) → 409 card_not_paid', async () => {
+    const { o, row } = await paidTestOrder(1);
+    track(row.id);
+    await pool.query(`update public.chip_orders set payplus_reversal_at = now(), payplus_reversal_kind = 'cancelled' where id = $1`, [row.id]);
+    const numbers = chipNumbers(1);
+    const res = await saveByCard(numbers, o.token);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: 'card_not_paid' });
+    expect(await chipsByNumber(numbers)).toBe(0);
+  });
+
   it('a card order PAID whose chips were never issued (the window was closed) can be cancelled: refunded in the sandbox, nothing to disable, no document', async () => {
     const { row, tx } = await paidTestOrder(1);
     track(row.id);

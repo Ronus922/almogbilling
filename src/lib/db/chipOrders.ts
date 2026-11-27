@@ -515,6 +515,7 @@ export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
             o.cancel_failed_step, o.cancel_error,
             case when o.cancel_completed_at is null then o.payplus_reversal_kind end as payplus_reversal_kind,
             (o.cancel_completed_at is not null) as cancel_completed,
+            o.closed_by_hand_step,
             (select json_build_object('status', d.status, 'number', d.morning_docs->0->>'number', 'url', d.morning_docs->0->>'url')
                from public.chip_order_documents d
               where d.order_id = o.id and d.kind = 'invoice'

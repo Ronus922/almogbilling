@@ -51,6 +51,11 @@ export type ChargeState =
   | { kind: 'refunded'; refunds: { uid: string; amount: number; ours: boolean }[]; total: number }
   /** PayPlus shows the charge and nothing returned. */
   | { kind: 'charged' }
+  /** PayPlus holds ANOTHER live charge with the order's number (a duplicate
+   *  charge, 27/11/2026) AND a refund made in the dashboard that names only
+   *  the order number: nothing says which charge it returned — never taken
+   *  as this charge's refund. `charges` = the live charges PayPlus shows. */
+  | { kind: 'ambiguous'; charges: number }
   | { kind: 'unknown'; message: string };
 
 /**
@@ -62,6 +67,10 @@ export type ChargeState =
  *     ("<order number>");
  *   · PaymentPages/ipn of the charge's payment session with its related
  *     transactions — a refund PayPlus links to the session itself.
+ * A refund found by the bare order number only counts while PayPlus shows no
+ * other live charge with that number: with a second charge (the duplicate a
+ * customer paid, which the anomaly alert asks to refund in the dashboard)
+ * it may be that charge's refund — the answer is then `ambiguous` (27/11/2026).
  * Any of them unanswered → unknown (and nothing is sent). `sessionOptional`
  * (the warning of a callback only — never before a refund): the session's
  * own answer, when it gives none, does not make the whole answer unknown.
@@ -76,23 +85,59 @@ export async function payplusChargeState(
   const own = charge.transactions.find((t) => t.uid === o.transactionUid);
   if (!own) return { kind: 'unknown', message: 'PayPlus did not return the charge' };
   if (own.cancelled) return { kind: 'cancelled' };
+  // Refunds this charge owns for sure: ours ("refund:<n>", sent for this
+  // charge's uid), and — when its session holds no other charge — the ones
+  // PayPlus links to its own payment session.
   const refunds = new Map<string, { amount: number; ours: boolean }>();
+  // Refunds that cannot be tied to THIS charge: by the order number only (made
+  // in the dashboard), or linked to a session that holds another charge too.
+  const unattributed = new Map<string, number>();
+  // OTHER live charges with the order's number (27/11/2026): a duplicate.
+  const otherCharges = new Set<string>();
   for (const moreInfo of [`refund:${o.orderNumber}`, String(o.orderNumber)]) {
     const found = await viewTransactions(cfg, { moreInfo });
     if (found.kind === 'unknown') return { kind: 'unknown', message: found.message };
     for (const t of found.transactions) {
       if (t.uid === o.transactionUid || t.cancelled || t.moreInfo !== moreInfo) continue;
-      if (!t.type?.includes('refund') || t.statusCode !== '000') continue;
-      refunds.set(t.uid, { amount: Math.abs(t.amount), ours: moreInfo.startsWith('refund:') });
+      if (t.statusCode !== '000') continue;
+      if (t.type?.includes('charge') && !moreInfo.startsWith('refund:')) { otherCharges.add(t.uid); continue; }
+      if (!t.type?.includes('refund')) continue;
+      if (moreInfo.startsWith('refund:')) refunds.set(t.uid, { amount: Math.abs(t.amount), ours: true });
+      else unattributed.set(t.uid, Math.abs(t.amount));
     }
   }
   if (o.pageRequestUid) {
     const session = await lookupPaymentRequest(cfg, o.pageRequestUid);
     if (session.kind === 'unknown' && !opts.sessionOptional) return { kind: 'unknown', message: session.message };
-    for (const t of session.kind === 'unknown' ? [] : session.transactions) {
+    const sessionTx = session.kind === 'unknown' ? [] : session.transactions;
+    // A second approved charge on the SAME session (a double submit): a
+    // refund linked to that session may be either charge's.
+    const sessionOthers = sessionTx.filter((t) => t.uid !== o.transactionUid && t.statusCode === '000' && t.type?.includes('charge'));
+    for (const t of sessionOthers) otherCharges.add(t.uid);
+    for (const t of sessionTx) {
       if (t.uid === o.transactionUid || refunds.has(t.uid)) continue;
       if (!t.type?.includes('refund') || t.statusCode !== '000') continue;
-      refunds.set(t.uid, { amount: Math.abs(t.amount), ours: t.moreInfo === `refund:${o.orderNumber}` });
+      if (t.moreInfo === `refund:${o.orderNumber}`) {
+        unattributed.delete(t.uid);
+        refunds.set(t.uid, { amount: Math.abs(t.amount), ours: true });
+      } else if (sessionOthers.length === 0) {
+        // Linked to THIS charge's own session, which holds no other charge:
+        // this charge's — also when it names only the order number.
+        unattributed.delete(t.uid);
+        refunds.set(t.uid, { amount: Math.abs(t.amount), ours: false });
+      } else {
+        unattributed.set(t.uid, Math.abs(t.amount));
+      }
+    }
+  }
+  if (unattributed.size > 0) {
+    if (otherCharges.size > 0) {
+      // What surely went back for this charge covers it all → the rest is the
+      // other charge's business; otherwise nobody can tell — a person settles it.
+      const sure = [...refunds.values()].reduce((sum, r) => sum + Math.round(r.amount * 100), 0);
+      if (sure < Math.round(Math.abs(own.amount) * 100)) return { kind: 'ambiguous', charges: otherCharges.size + 1 };
+    } else {
+      for (const [uid, amount] of unattributed) refunds.set(uid, { amount, ours: false });
     }
   }
   if (refunds.size === 0) return { kind: 'charged' };
@@ -158,6 +203,13 @@ export async function refundCharge(
   }
   if (state.kind === 'unknown') {
     return { ok: false, message: 'לא ניתן לבדוק כרגע ב-PayPlus אם העסקה כבר זוכתה, ולכן לא נשלח זיכוי. נסו שוב בעוד כמה דקות.' };
+  }
+  if (state.kind === 'ambiguous') {
+    // Neither sent nor recorded: a person settles it in PayPlus (27/11/2026).
+    const note = `ב-PayPlus יש יותר מחיוב אחד להזמנה הזו (${state.charges} חיובים) וזיכוי שנעשה בממשק — אי אפשר לדעת לאיזה חיוב הוא שייך, ולכן לא נשלח זיכוי ולא נרשם זיכוי. בדקו בממשק PayPlus אם חיוב ההזמנה (מזהה ${o.card_transaction_uid}) זוכה; אם לא — זכו אותו שם.${o.refunded_at ? '' : ' אחר כך סופר אדמין סוגר את ההזמנה ב„סגירה ידנית”.'}`;
+    // An earlier call that got no answer keeps its mark: never sent again.
+    await recordRefundFailure(o.id, note, o.refund_requested_at !== null);
+    return { ok: false, message: note };
   }
   if (state.kind === 'cancelled' || state.kind === 'refunded') {
     const pieces = state.kind === 'cancelled'
@@ -320,6 +372,21 @@ export async function checkPaidOrderReversal(cfg: PayPlusConfig, orderNumber: nu
     return { kind: 'later' };
   }
   if (state.kind === 'charged') return { kind: 'none' };
+  // A second charge with the order's number and a dashboard refund that names
+  // only the number (27/11/2026): most likely the duplicate was refunded, as
+  // its alert asks — the order is NOT marked (its own charge may stand), and
+  // a person is told once to check it in PayPlus.
+  if (state.kind === 'ambiguous') {
+    if (cfg.mode === 'production') {
+      await alertChipOrderAdmins({
+        orderId: o.id,
+        title: `זיכוי ב-PayPlus להזמנה עם יותר מחיוב אחד — הזמנה ${o.order_number}`,
+        message: `PayPlus מראה ${state.charges} חיובים להזמנה ${o.order_number} וזיכוי שנעשה בממשק לפי מספר ההזמנה. הזיכוי לא שויך להזמנה וההזמנה לא סומנה. אם זוכה החיוב הכפול — אין צורך בפעולה נוספת. אם הלקוח ביקש לבטל — „ביטול וזיכוי” ייעצר ויבקש בדיקה בממשק PayPlus.`,
+        dedupeKey: `chip_payplus_ambiguous:${o.id}`,
+      }).catch(() => undefined);
+    }
+    return { kind: 'none' };
+  }
   // Only refunds this system sent (more_info "refund:<n>" — one whose answer
   // was lost): not something done in PayPlus. The order already says its
   // refund is on its way, and "ביטול וזיכוי" records it.

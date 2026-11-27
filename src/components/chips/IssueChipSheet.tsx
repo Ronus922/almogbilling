@@ -192,6 +192,9 @@ export interface IssueChipSheetProps {
   /** Admin / super admin — in an order's window: "בטל הזמנת קבלה", "זיכוי"
    *  and "הפק חשבונית שוב" (each route checks the role again). */
   canAdminOrders?: boolean;
+  /** Super admin — "סגירה ידנית" of a stuck "ביטול וזיכוי" in an order's
+   *  window (27/11/2026; the route checks the role again). */
+  canCloseByHand?: boolean;
 }
 
 export function IssueChipSheet(props: IssueChipSheetProps) {

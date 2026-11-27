@@ -24,6 +24,18 @@ export const PAYPLUS_REVERSAL_NEXT: Record<'cancelled' | 'refunded' | 'partial',
   partial: 'את היתרה מזכים בממשק PayPlus, ואז „ביטול וזיכוי” ירשום את הזיכויים וישלים את ההזמנה — מכאן לא יישלח זיכוי.',
 };
 
+/** "סגירה ידנית" (27/11/2026): a super admin closes a "ביטול וזיכוי" that is
+ *  stuck for good, by hand — nothing is sent to PayPlus or Morning. */
+export const CLOSED_BY_HAND_ACTION = 'סגירה ידנית';
+/** The permanent mark of an order closed that way (tag, window, line). */
+export const CLOSED_BY_HAND_LABEL = 'נסגרה ידנית';
+
+/** What closing by hand at each step leaves undone — the confirmation and the mark. */
+export const CLOSED_BY_HAND_SKIPPED: Record<'refund' | 'credit', string> = {
+  refund: 'הסגירה לא שולחת זיכוי ל-PayPlus ולא מפיקה מסמך זיכוי במורנינג — את הכסף ואת המסמך מטפלים ידנית.',
+  credit: 'הסגירה לא מפיקה את מסמך הזיכוי במורנינג — מפיקים אותו ידנית במורנינג.',
+};
+
 export type ReceptionCancelStep = 'refund' | 'credit' | 'cancel';
 
 /** The step a stopped "ביטול וזיכוי" stopped at, as the order names it. */

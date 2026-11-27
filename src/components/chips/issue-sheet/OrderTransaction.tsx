@@ -75,7 +75,7 @@ import {
 import { cn } from '@/lib/utils';
 import {
   CHIP_ORDER_CANCELLED_LABEL, CHIP_ORDER_PHONE_UNVERIFIED_LABEL, CHIP_ORDER_REFUND_LABEL, CHIP_ORDER_TEST_LABEL, chipOrderStage,
-  chipOrderStageLabel, formatIlsAfter, isChipOrderOverdue, type ChipOrderRefundStatus, type ChipOrderWindow,
+  chipOrderStageLabel, closeByHandStep, formatIlsAfter, isChipOrderOverdue, type ChipOrderRefundStatus, type ChipOrderWindow,
   type ChipOrderWindowOrder,
 } from '@/lib/chipOrders/model';
 import { chipOrderDocState } from '@/lib/chipOrders/orderRows';
@@ -83,8 +83,10 @@ import { PICKUP_ORDERER_KEY } from '@/lib/chipOrders/pickup';
 import { CHIP_ORDER_EXTRA_LABEL, CHIP_ORDER_RECEPTION_LABEL, STORED_PAYMENT_LABEL } from '@/lib/chipOrders/reception';
 import { e164ToLocal } from '@/lib/portal/phone';
 import {
-  PAYPLUS_REVERSAL_LABEL, PAYPLUS_REVERSAL_NEXT, PAYPLUS_REVERSAL_TEXT, RECEPTION_CANCEL_LABEL, receptionCancelStoppedText,
+  CLOSED_BY_HAND_ACTION, CLOSED_BY_HAND_LABEL, CLOSED_BY_HAND_SKIPPED, PAYPLUS_REVERSAL_LABEL, PAYPLUS_REVERSAL_NEXT,
+  PAYPLUS_REVERSAL_TEXT, RECEPTION_CANCEL_LABEL, RECEPTION_CANCEL_STEP_LABEL, receptionCancelStoppedText,
 } from '@/lib/chipOrders/receptionCancelText';
+import { CloseByHandDialog } from '../CloseByHandDialog';
 import { CollectorPicker, type CollectorOption } from '../CollectorPicker';
 import { ReceptionCancelDialog } from '../ReceptionCancelDialog';
 import { AlertIco, CheckIco, Ico, ROLE_SHORT, TrashIco, roleTone } from './parts';
@@ -159,7 +161,7 @@ const DocIco = () => <Ico size={14}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 
 const LinkIco = () => <Ico size={12} sw={2.2}><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></Ico>;
 
 export function OrderTransaction({
-  win, readyAction, canEditOrders, canAdminOrders = false, disabled, onGone, onReload, onModalChange,
+  win, readyAction, canEditOrders, canAdminOrders = false, canCloseByHand = false, disabled, onGone, onReload, onModalChange,
 }: {
   win: ChipOrderWindow;
   /** "מוכן לאיסוף" of an order that is being assigned: whether it may be
@@ -171,6 +173,9 @@ export function OrderTransaction({
   /** Admin / super admin, by role — "ביטול וזיכוי" and "הפק חשבונית שוב"
    *  (each route asks again: requireAdmin). */
   canAdminOrders?: boolean;
+  /** Super admin, by role — "סגירה ידנית" of a stuck "ביטול וזיכוי"
+   *  (27/11/2026; the route asks again). */
+  canCloseByHand?: boolean;
   disabled: boolean;
   /** The order left the open list (collected / rejected / deleted / refunded). */
   onGone: () => void;
@@ -189,6 +194,8 @@ export function OrderTransaction({
   const [collector, setCollector] = useState<string | null>(null);
   // "ביטול וזיכוי" (27/11/2026): the shared confirmation (ReceptionCancelDialog).
   const [cancelOpen, setCancelOpen] = useState(false);
+  // "סגירה ידנית" (27/11/2026): its confirmation (CloseByHandDialog).
+  const [closeOpen, setCloseOpen] = useState(false);
 
   const o = win.order;
   const ordered = win.items.reduce((s, i) => s + i.chips_count, 0);
@@ -225,6 +232,10 @@ export function OrderTransaction({
   // (27/11/2026): the money went back — nothing moves the order on either.
   const reversal = o.payplus_reversal_kind ?? null;
   const refundPending = o.refund_in_flight === true || reversal !== null;
+  // "סגירה ידנית" (27/11/2026): the step a stuck run may be closed at by hand
+  // (closeByHandStep — the server's own rule), or null.
+  const closeStep = closeByHandStep({ ...o, document_failed: o.documents.some((d) => d.status === 'failed') });
+  const closedByHand = o.closed_by_hand_at !== null;
   const PENDING_REFUND = reversal
     ? `${PAYPLUS_REVERSAL_LABEL} — ההזמנה לא מתקדמת עד „ביטול וזיכוי”`
     : 'בקשת זיכוי נשלחה ל-PayPlus בלי תשובה — ממשיכים ב„ביטול וזיכוי”';
@@ -243,10 +254,11 @@ export function OrderTransaction({
   const first = win.items[0];
   const tiered = above > 0 && win.items.some((i) => i.price_above !== i.unit_price);
 
-  function setModal(kind: 'reject' | 'delete' | 'collect' | 'cancel', open: boolean) {
+  function setModal(kind: 'reject' | 'delete' | 'collect' | 'cancel' | 'close', open: boolean) {
     if (kind === 'reject') setRejectOpen(open);
     else if (kind === 'delete') setDeleteOpen(open);
     else if (kind === 'collect') setCollectOpen(open);
+    else if (kind === 'close') setCloseOpen(open);
     else setCancelOpen(open);
     onModalChange(open);
   }
@@ -463,7 +475,7 @@ export function OrderTransaction({
               {o.refund_reason && <div><span>סיבת הזיכוי</span><b data-testid="chip-order-refund-reason">{o.refund_reason}</b></div>}
             </div>
           )}
-          {o.refund_in_flight && (
+          {o.refund_in_flight && !o.closed_by_hand_at && (
             <p className="ci-reason ci-quiet" role="status" data-testid="chip-order-refund-in-flight">
               <AlertIco size={13} />
               <span>בקשת זיכוי נשלחה ל-PayPlus ולא נרשמה עליה תשובה. היא לא תישלח שוב — „ביטול וזיכוי” בודק ב-PayPlus מה קרה וממשיך משם.</span>
@@ -523,7 +535,7 @@ export function OrderTransaction({
             })}
           </div>
         )}
-        {failedDocuments && canAdminOrders && (
+        {failedDocuments && canAdminOrders && !closedByHand && (
           <div className="ci-docact">
             <button type="button" className="ci-btn ci-line" disabled={disabled || busy !== null} onClick={() => void retryDocuments()}
               data-testid="chip-order-documents-retry">
@@ -613,6 +625,20 @@ export function OrderTransaction({
           </span>
         </div>
       )}
+      {/* Closed by hand (27/11/2026): for good, to everyone who opens the order. */}
+      {closedByHand && o.closed_by_hand_step && (
+        <p className="ci-reason" role="status" data-testid="chip-order-closed-by-hand">
+          <AlertIco size={13} />
+          <span>
+            <b>{CLOSED_BY_HAND_LABEL}</b>
+            {' — בשלב: '}{RECEPTION_CANCEL_STEP_LABEL[o.closed_by_hand_step]}
+            {' · '}{o.closed_by_hand_by_name ?? '—'}
+            {o.closed_by_hand_at ? <> · <span className="ci-num">{DUE.format(new Date(o.closed_by_hand_at))}</span></> : null}
+            {o.closed_by_hand_reason ? ` · סיבה: ${o.closed_by_hand_reason}` : ''}
+            {'. '}{CLOSED_BY_HAND_SKIPPED[o.closed_by_hand_step]}
+          </span>
+        </p>
+      )}
       {canEditOrders && (
         <>
           <div className="ci-oact" data-testid="chip-order-actions">
@@ -660,6 +686,13 @@ export function OrderTransaction({
                 onClick={() => setModal('cancel', true)} data-testid="chip-order-cancel-reception">
                 <TrashIco size={13} />
                 {o.cancel_failed_step ? 'המשך ביטול וזיכוי' : RECEPTION_CANCEL_LABEL}
+              </button>
+            )}
+            {/* "סגירה ידנית" (27/11/2026) — super admin, a run stuck for good. */}
+            {closeStep && canCloseByHand && (
+              <button type="button" className="ci-btn ci-line" disabled={disabled || busy !== null}
+                onClick={() => setModal('close', true)} data-testid="chip-order-close-by-hand">
+                {CLOSED_BY_HAND_ACTION}
               </button>
             )}
             {o.is_test && (
@@ -771,6 +804,18 @@ export function OrderTransaction({
           open={cancelOpen}
           onOpenChange={(v) => setModal('cancel', v)}
           onChanged={(result) => (result === 'done' ? onGone() : onReload())}
+        />
+      )}
+
+      {canCloseByHand && closeStep && (
+        <CloseByHandDialog
+          orderId={o.id}
+          orderNumber={o.order_number}
+          step={closeStep}
+          activeChips={linkedAll}
+          open={closeOpen}
+          onOpenChange={(v) => setModal('close', v)}
+          onClosed={onReload}
         />
       )}
 

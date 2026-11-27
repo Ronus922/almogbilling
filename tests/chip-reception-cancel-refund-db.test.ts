@@ -117,6 +117,9 @@ const pp = {
   refund: 'ok' as 'ok' | 'refused' | 'no_answer',
   /** Refunds PayPlus links to a payment session (PaymentPages/ipn, related transactions). */
   relatedBySession: new Map<string, { uid: string; amount: number; more_info: string }[]>(),
+  /** The charge each session paid with — PayPlus reports the ORDER'S OWN
+   *  charge uid for its session (seen in production, 26/11/2026). */
+  sessionCharge: new Map<string, string>(),
 };
 /** Morning refuses POST /documents (422) while true. */
 let morningRefuses = false;
@@ -162,7 +165,7 @@ const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit
     return reply(200, {
       results: { status: 'success', code: 0, description: 'operation has been success' },
       data: {
-        transaction_uid: `charge-of-${pru}`, page_request_uid: pru, type: 'Charge', status_code: '000', amount: PRICE, currency: 'ILS',
+        transaction_uid: pp.sessionCharge.get(pru) ?? `charge-of-${pru}`, page_request_uid: pru, type: 'Charge', status_code: '000', amount: PRICE, currency: 'ILS',
         related_transactions: related.map((r) => ({ transaction_uid: r.uid, type: 'Refund', status_code: '000', amount: r.amount, currency: 'ILS', more_info: r.more_info })),
       },
     });
@@ -234,6 +237,7 @@ async function liveCollectedOrder(opts: { chips?: number; email?: string | null;
   const o = (await res.json()) as { token: string; order_number: number; order_id: string; session: { page_request_uid: string } };
   orderIds.add(o.order_id);
   const tx = `tx-${RUN}-cx-${o.order_number}`;
+  pp.sessionCharge.set(o.session.page_request_uid, tx);
   expect((await callback({
     transaction_type: 'Charge',
     transaction: {

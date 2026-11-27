@@ -718,6 +718,12 @@ export const chipOrderCancelBodySchema = z.object({
   reason: z.string({ error: 'נדרשת סיבת ביטול' }).trim().min(2, 'נדרשת סיבת ביטול').max(500, 'הסיבה ארוכה מדי').optional(),
 });
 
+/** POST /api/chip-orders/[id]/close-by-hand — "סגירה ידנית" (27/11/2026): why
+ *  the stuck "ביטול וזיכוי" is closed by hand. Required. */
+export const chipOrderCloseByHandBodySchema = z.object({
+  reason: z.string({ error: 'נדרשת סיבה לסגירה הידנית' }).trim().min(2, 'נדרשת סיבה לסגירה הידנית').max(500, 'הסיבה ארוכה מדי'),
+});
+
 /** POST /api/chip-pickup/[id]/handover — "נמסר" of the guard's pickup screen:
  *  the person of the order who showed an ID (a holder line id, or the
  *  orderer). Required here; whether it is a person of THIS order is checked

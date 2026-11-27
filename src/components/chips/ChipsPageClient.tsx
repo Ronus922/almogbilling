@@ -74,6 +74,7 @@ export function ChipsPageClient({
   canEditOrders = false,
   canWriteContacts = false,
   canAdminOrders = false,
+  canCloseByHand = false,
 }: {
   canEdit: boolean;
   /** chips_orders_manage:view — shows the "הזמנות" view (12/11/2026). Without
@@ -85,6 +86,9 @@ export function ChipsPageClient({
   /** Admin / super admin, by role — in an order's window: "בטל הזמנת קבלה",
    *  "זיכוי" and "הפק חשבונית שוב" (each route asks again: requireAdmin). */
   canAdminOrders?: boolean;
+  /** Super admin, by role — "סגירה ידנית" of a stuck "ביטול וזיכוי"
+   *  (27/11/2026; the route asks again). */
+  canCloseByHand?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -503,6 +507,7 @@ export function ChipsPageClient({
         canEditOrders={canEditOrders}
         canWriteContacts={canWriteContacts}
         canAdminOrders={canAdminOrders}
+        canCloseByHand={canCloseByHand}
       />
 
       {/* Holder view — all chips of one person (name → numbers); a chip row

@@ -27,6 +27,11 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   cancel_in_progress: { status: 409, message: '„ביטול וזיכוי” כבר רץ להזמנה הזו — נסו שוב בעוד כמה דקות' },
   reason_required: { status: 400, message: 'נדרשת סיבת ביטול' },
   payplus_reversed: { status: 409, message: 'PayPlus מראה שהחיוב בוטל או זוכה — ההזמנה לא מתקדמת עד „ביטול וזיכוי” של מנהל מערכת' },
+  // "סגירה ידנית" (27/11/2026).
+  not_stuck: { status: 409, message: 'סגירה ידנית אפשרית רק כש„ביטול וזיכוי” נעצר בשלב מסמך הזיכוי, או בשלב הזיכוי ב-PayPlus כשנדרשת בדיקה ידנית' },
+  document_issuing: { status: 409, message: 'מסמך של ההזמנה נמצא כרגע בהפקה במורנינג — נסו שוב בעוד כמה דקות' },
+  // 27/11/2026: a chip works the moment it is issued.
+  order_undoing: { status: 409, message: 'הכסף של ההזמנה הוחזר או בדרך חזרה („ביטול וזיכוי”, או ביטול / זיכוי ב-PayPlus) — אי אפשר להנפיק לה צ׳יפים חדשים' },
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
