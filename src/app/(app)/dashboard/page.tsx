@@ -71,6 +71,12 @@ export default async function DashboardPage({
   // "ביטול וזיכוי" of a paid reception order in the apartment's issue window
   // (27/11/2026) — admin and super admin by ROLE, as on /chips (the route asks again).
   const canAdminChipOrders = isElevatedRole(actor.role);
+  // An order's window opened from that issue window ("פתח" on a web order,
+  // 27/11/2026) gets the same rights as on /chips: its buttons and saves with
+  // chips_orders_manage:edit — read only without it — and "סגירה ידנית" for
+  // the super admin (every route asks again).
+  const canEditChipOrders = hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'edit');
+  const canCloseChipOrdersByHand = actor.role === 'super_admin';
   // Owners portal ("פורטל בעלי דירות") — the roster + login-log tabs of the
   // apartment card. `portal_manage` is admin / super_admin only (deny by default
   // for every matrix role), so a manager sees neither tab.
@@ -120,6 +126,8 @@ export default async function DashboardPage({
           canViewChips={canViewChips}
           canEditChips={canEditChips}
           canAdminChipOrders={canAdminChipOrders}
+          canEditChipOrders={canEditChipOrders}
+          canCloseChipOrdersByHand={canCloseChipOrdersByHand}
           canViewPortal={canViewPortal}
           canEditPortal={canEditPortal}
         />

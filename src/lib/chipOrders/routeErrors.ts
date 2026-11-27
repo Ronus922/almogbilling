@@ -8,6 +8,8 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   chips_missing: { status: 409, message: 'עדיין לא שויכו כל הצ׳יפים שהוזמנו' },
   not_ready: { status: 409, message: 'אפשר לסמן "נאסף" רק הזמנה שמוכנה לאיסוף' },
   not_rejectable: { status: 409, message: 'אפשר לדחות רק הזמנה שעדיין בשיוך' },
+  // F3 (27/11/2026): a rejection of an order that took money refunds it.
+  refund_admin_only: { status: 403, message: 'רק אדמין או סופר אדמין יכולים לדחות הזמנה ששולמה — הדחייה מחזירה את הכסף' },
   chips_active: { status: 409, message: 'להזמנה שויכו צ׳יפים פעילים — יש להשבית אותם בחלון ההנפקה לפני הדחייה' },
   not_open: { status: 409, message: 'ההזמנה כבר נאספה או נדחתה' },
   nothing_to_write: { status: 400, message: 'אין שם או טלפון לעדכן' },

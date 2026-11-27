@@ -52,6 +52,12 @@ interface Props {
   /** Admin / super admin, by role — "ביטול וזיכוי" of a paid reception order in
    *  the chips tab's issue window (27/11/2026). Default false. */
   canAdminChipOrders?: boolean;
+  /** chips_orders_manage:edit — an order's window opened from the chips tab's
+   *  issue window ("פתח" on a web order) has its buttons and saves; without
+   *  it that window is read only, as on /chips (27/11/2026). Default false. */
+  canEditChipOrders?: boolean;
+  /** Super admin — "סגירה ידנית" in that order window. Default false. */
+  canCloseChipOrdersByHand?: boolean;
   /** portal_manage:view — without it BOTH owners-portal tabs are hidden. Default false. */
   canViewPortal?: boolean;
   /** portal_manage:edit — detach a portal phone link, release a lockout. Default false. */
@@ -72,6 +78,7 @@ const EMPTY_FIELDS: ContactFieldState = { suggestions: [], sources: {} };
 export function TenantDetailPanel({
   open, debtorId, canEdit, canChangeStatus, canSendWhatsapp,
   canViewChips = false, canEditChips = false, canAdminChipOrders = false,
+  canEditChipOrders = false, canCloseChipOrdersByHand = false,
   canViewPortal = false, canEditPortal = false, onOpenChange,
 }: Props) {
   const router = useRouter();
@@ -518,6 +525,9 @@ export function TenantDetailPanel({
                 apartmentNumber={tenant.apartment_number}
                 canEditChips={canEditChips}
                 canAdminOrders={canAdminChipOrders}
+                canEditOrders={canEditChipOrders}
+                canCloseByHand={canCloseChipOrdersByHand}
+                canWriteContacts={canEdit}
               />
             ) : activeTab === 'owners' ? (
               <OwnerPhonesTab

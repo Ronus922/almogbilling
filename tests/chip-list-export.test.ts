@@ -70,7 +70,11 @@ async function pdfOf(input: ListPdfInput, name: string) {
 
 describe('the chips tab as a file', () => {
   it('the columns the table shows — the holder, the apartment and the role side by side', () => {
-    expect(CHIPS_EXPORT.columns.map((c) => c.header)).toEqual(['מחזיק', 'דירה', 'תפקיד', 'מספר צ׳יפ', 'סוג', 'סטטוס', 'הונפק', 'מנפיק']);
+    // From 27/11/2026: the chip's order — its number and its three notes.
+    expect(CHIPS_EXPORT.columns.map((c) => c.header)).toEqual([
+      'מחזיק', 'דירה', 'תפקיד', 'מספר צ׳יפ', 'סוג', 'סטטוס', 'הונפק', 'מנפיק',
+      'מס׳ הזמנה', 'הערת המזמין', 'הערה לשומר', 'הערת מסירה',
+    ]);
     expect(CHIPS_EXPORT).toMatchObject({ title: 'צ׳יפים', sheet: 'צ׳יפים', file: 'chips' });
     expect(exportFileName('chips', 'pdf', new Date(2026, 10, 4))).toBe('chips_2026-11-04.pdf');
     expect(exportFileName('chips', 'xlsx', new Date(2026, 0, 31))).toBe('chips_2026-01-31.xlsx');
@@ -79,7 +83,14 @@ describe('the chips tab as a file', () => {
   it('the workbook: the live registry name, the words of the table, a chip number that stays text', async () => {
     const rows = [
       // The registry name changed since the chip was issued: the table shows the live one.
-      chip({ id: 'a', holder_name: 'דנה לוי', live_holder_name: 'דנה כהן' }),
+      // A chip of an order (27/11/2026): the order's number and its notes.
+      chip({
+        id: 'a', holder_name: 'דנה לוי', live_holder_name: 'דנה כהן',
+        order_ref: {
+          item_id: 'i', order_number: 1021, source: 'web', contact_id: 'c', apartment_number: '12', full_name: 'דנה כהן', phone_e164: null,
+          orderer_note: 'נא להתקשר לפני', guard_note: null, delivery_note: 'נמסר לבת', delivery_note_by_name: 'שומר', delivery_note_at: '2026-11-27T18:00:00Z',
+        },
+      }),
       // A guest has no registry row: the name the chip was issued on.
       chip({
         id: 'b', chip_number: '=1+1', chip_type: 'app', status: 'inactive', resident_role: 'other', apartment_number: '007',
@@ -93,10 +104,10 @@ describe('the chips tab as a file', () => {
     expect(ws.views[0]?.rightToLeft).toBe(true);
     const cells = (n: number) => CHIPS_EXPORT.columns.map((_, i) => ws.getRow(n).getCell(i + 1).value);
     expect(cells(1)).toEqual(CHIPS_EXPORT.columns.map((c) => c.header));
-    expect(cells(2)).toEqual(['דנה כהן', '12', 'בעל דירה', '0012345678', 'כרטיס', 'פעיל', '24/11/2026', 'מנהל בדיקה']);
+    expect(cells(2)).toEqual(['דנה כהן', '12', 'בעל דירה', '0012345678', 'כרטיס', 'פעיל', '24/11/2026', 'מנהל בדיקה', '1021', 'נא להתקשר לפני', null, 'נמסר לבת']);
     // "אורח" is the screen name of the stored role `other`; a chip number typed
     // like a formula opens as text; nobody on record issued it = a blank cell.
-    expect(cells(3)).toEqual(['אורח מזדמן', '007', 'אורח', '\'=1+1', 'אפליקציה', 'לא פעיל', '03/09/2026', null]);
+    expect(cells(3)).toEqual(['אורח מזדמן', '007', 'אורח', '\'=1+1', 'אפליקציה', 'לא פעיל', '03/09/2026', null, null, null, null, null]);
     expect(ws.rowCount).toBe(3);
     // The apartment and the chip number stay text: their leading zeros survive.
     expect(ws.getRow(2).getCell(2).type).toBe(ExcelJS.ValueType.String);

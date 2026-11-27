@@ -205,7 +205,7 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
     pool.on('error', () => {});
     const seeded = await requireSeededAdmin(pool);
     users.super = { id: seeded, username: 'e2e-admin', email: null, full_name: 'e2e-admin', role: 'super_admin' };
-    for (const [key, role] of [['admin', 'admin'], ['guard', 'guard'], ['manager', 'manager'], ['viewer', 'viewer'], ['cleaner', 'cleaner'], ['maintenance', 'maintenance']] as const) {
+    for (const [key, role] of [['admin', 'admin'], ['guard', 'guard'], ['manager', 'manager'], ['viewer', 'viewer'], ['cleaner', 'cleaner'], ['maintenance', 'maintenance'], ['ordersViewer', 'manager']] as const) {
       const username = `pk-${key}-${tag}`;
       const u = await one<{ id: string }>(
         `insert into public.users (username, email, password_hash, full_name, role, is_active)
@@ -218,6 +218,12 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
     // The manager holds EVERY chips permission the matrix can grant.
     for (const mod of ['chips', 'chips_orders_manage', 'contacts', 'settings']) {
       await pool.query(`insert into public.user_permissions (user_id, module, can_view, can_edit) values ($1, $2, true, true)`, [users.manager!.id, mod]);
+    }
+    // 2.4 (27/11/2026): issues chips and edits contacts, may only LOOK at chip
+    // orders — what reaches an order's window through "פתח" on a contact's
+    // chips tab, read only.
+    for (const [mod, edit] of [['chips', true], ['contacts', true], ['chips_orders_manage', false]] as const) {
+      await pool.query(`insert into public.user_permissions (user_id, module, can_view, can_edit) values ($1, $2, true, $3)`, [users.ordersViewer!.id, mod, edit]);
     }
     for (let i = 1; i <= 9; i++) {
       made.contacts[APT(i)] = (await one<{ id: string }>(
@@ -463,7 +469,7 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
       ['POST /api/chips/leases', () => leases.POST(req('/api/chips/leases', 'POST', {}))],
       ['GET /api/chips/reception', () => receptionCtx.GET(req(`/api/chips/reception?contact_id=${contactId}`))],
       ['GET /api/contacts/:id/chips', () => contactChips.GET(req(`/api/contacts/${contactId}/chips`), P({ id: contactId }))],
-      ['GET /api/chip-orders', () => orders.GET()],
+      ['GET /api/chip-orders', () => orders.GET(req('/api/chip-orders'))],
       ['DELETE /api/chip-orders/:id', () => order.DELETE(req(`/api/chip-orders/${id}`, 'DELETE'), P({ id }))],
       ['POST /api/chip-orders/:id/ready', () => readyRoute.POST(req(`/api/chip-orders/${id}/ready`, 'POST'), P({ id }))],
       // "הערה לשומר" (27/11/2026): never the guard's to write.
@@ -494,6 +500,49 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
     expect(await statusOf(receptionOrderId)).toBe('collected');
     expect((await one<{ status: string }>(`select status from public.chips where id = $1`, [chipId])).status).toBe('active');
   }, 60_000);
+
+  // 2.4 (Ronen, 27/11/2026): "פתח" on a contact's chips tab opens an order's
+  // window for a user who may only view chip orders — read only on the
+  // screen, and every write of that window is the server's to refuse.
+  it('2.4 — a user who issues chips but may only VIEW chip orders reads the order\'s window, and every write of it is refused (403) — nothing moves', async () => {
+    as('ordersViewer');
+    const id = main.id;
+    const itemId = main.items[APT(1)]!;
+    const req = (path: string, method = 'GET', body?: unknown) => new NextRequest(`http://local${path}`, {
+      method,
+      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const P = <T extends Record<string, string>>(params: T) => ({ params: Promise.resolve(params) });
+    const order = await import('@/app/api/chip-orders/[id]/route');
+    const readyRoute = await import('@/app/api/chip-orders/[id]/ready/route');
+    const reject = await import('@/app/api/chip-orders/[id]/reject/route');
+    const cancel = await import('@/app/api/chip-orders/[id]/cancel/route');
+    const closeByHand = await import('@/app/api/chip-orders/[id]/close-by-hand/route');
+    const retry = await import('@/app/api/chip-orders/[id]/documents/retry/route');
+    const guardNote = await import('@/app/api/chip-orders/[id]/guard-note/route');
+    const holders = await import('@/app/api/chip-orders/[id]/holders/route');
+    const item = await import('@/app/api/chip-orders/items/[itemId]/route');
+    const registry = await import('@/app/api/chip-orders/items/[itemId]/registry/route');
+    // It may read the window — the only call here that is not a write.
+    expect((await item.GET(req(`/api/chip-orders/items/${itemId}`), P({ itemId }))).status).toBe(200);
+    const writes: [string, () => Promise<Response>][] = [
+      ['POST /api/chip-orders/:id/holders', () => holders.POST(req(`/api/chip-orders/${id}/holders`, 'POST', { holders: [] }), P({ id }))],
+      ['POST /api/chip-orders/:id/ready', () => readyRoute.POST(req(`/api/chip-orders/${id}/ready`, 'POST'), P({ id }))],
+      ['POST /api/chip-orders/:id/collected', () => collect(id, { person: main.holders[0] })],
+      ['POST /api/chip-orders/:id/reject', () => reject.POST(req(`/api/chip-orders/${id}/reject`, 'POST', { reason: 'ניסיון' }), P({ id }))],
+      ['POST /api/chip-orders/:id/guard-note', () => guardNote.POST(req(`/api/chip-orders/${id}/guard-note`, 'POST', { guard_note: 'x' }), P({ id }))],
+      ['POST /api/chip-orders/items/:item/registry', () => registry.POST(req(`/api/chip-orders/items/${itemId}/registry`, 'POST', { name: 'x' }), P({ itemId }))],
+      ['GET /api/chip-orders/:id/cancel', () => cancel.GET(req(`/api/chip-orders/${id}/cancel`), P({ id }))],
+      ['POST /api/chip-orders/:id/cancel', () => cancel.POST(req(`/api/chip-orders/${id}/cancel`, 'POST', { reason: 'ניסיון' }), P({ id }))],
+      ['POST /api/chip-orders/:id/close-by-hand', () => closeByHand.POST(req(`/api/chip-orders/${id}/close-by-hand`, 'POST', { reason: 'ניסיון' }), P({ id }))],
+      ['POST /api/chip-orders/:id/documents/retry', () => retry.POST(req(`/api/chip-orders/${id}/documents/retry`, 'POST'), P({ id }))],
+      ['DELETE /api/chip-orders/:id', () => order.DELETE(req(`/api/chip-orders/${id}`, 'DELETE'), P({ id }))],
+    ];
+    const before = await one<{ status: string; guard_note: string | null; updated_at: Date }>(`select status, guard_note, updated_at from public.chip_orders where id = $1`, [id]);
+    for (const [name, call] of writes) expect((await call()).status, name).toBe(403);
+    expect(await one(`select status, guard_note, updated_at from public.chip_orders where id = $1`, [id])).toEqual(before);
+  });
 
   it('POST /api/chips no longer takes an order line: chips of an order are issued from the order\'s own window, where a chip beyond the paid quantity must be settled', async () => {
     as('admin');

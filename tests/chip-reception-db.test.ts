@@ -245,7 +245,7 @@ d('issuing a chip at the reception, on the DB', () => {
     });
   });
 
-  it('the Orders tab lists a reception order although it is collected — after every open order — and so a collected WEB order (27/11/2026)', async () => {
+  it('the Orders tab lists a reception order although it is collected — after every open order — while a collected WEB order leaves it (13/11/2026; Ronen again 27/11/2026, evening)', async () => {
     const web = await orders.createChipOrder(
       {
         fullName: 'מזמין מהאתר', phoneE164: '+972539322300', email: 'web@example.test', address: 'הרצל 1, חיפה 3300000', role: 'owner',
@@ -273,12 +273,13 @@ d('issuing a chip at the reception, on the DB', () => {
     const firstCollected = rows.findIndex((r) => r.status === 'collected');
     expect(rows.slice(firstCollected).every((r) => r.status === 'collected' || r.status === 'rejected')).toBe(true);
 
-    // A web order that is collected STAYS in the tab since 27/11/2026 (its
-    // delivery note is read there), among the closed ones; until then it left.
+    // A web order that is collected leaves the tab (it stayed for a few hours
+    // of 27/11/2026; Ronen: back to the 13/11/2026 rule). A test order has no
+    // Morning document, so nothing keeps it.
     await pool.query(`update public.chip_orders set status = 'collected', collected_at = now() where id = $1`, [web.id]);
-    const after = await orders.listOpenChipOrderRows();
-    expect(after.filter((r) => r.apartment_number === apt.web).map((r) => [r.source, r.status])).toEqual([['web', 'collected']]);
-    expect(after.findIndex((r) => r.apartment_number === apt.web)).toBeGreaterThanOrEqual(after.findIndex((r) => r.status === 'collected'));
+    expect((await orders.listOpenChipOrderRows()).some((r) => r.apartment_number === apt.web)).toBe(false);
+    // …and its number still finds it (the tab's search, 1.5).
+    expect((await orders.listChipOrderRowsByNumber(web.orderNumber)).map((r) => [r.apartment_number, r.status])).toEqual([[apt.web, 'collected']]);
   });
 
   it('no charge: NO order — a reception record keeps the details, and the chips point at it', async () => {

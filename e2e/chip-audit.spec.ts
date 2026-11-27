@@ -350,9 +350,16 @@ test.describe('chip audit 27/11/2026', () => {
       expect((await pool.query(`select status, handed_over_via, delivery_note, delivery_note_by from public.chip_orders where id = $1`, [order.id])).rows[0])
         .toEqual({ status: 'collected', handed_over_via: 'pickup', delivery_note: deliveryNote, delivery_note_by: people.guard.id });
 
-      // The staff see all three: the row (it stays in the tab, collected) and the window.
+      // The staff see all three: the row and the window. Delivered, the order
+      // left the tab (Ronen, 27/11/2026 evening) — its number brings it back,
+      // tagged "נמסרה".
+      const listed = (await (await page.request.get('/api/chip-orders')).json()) as { items: { order_id: string }[] };
+      expect(listed.items.some((r) => r.order_id === order.id)).toBe(false);
       await page.goto('/chips?view=orders');
+      await expect(page.getByTestId('chip-orders-search')).toBeVisible();
+      await page.getByTestId('chip-orders-search').fill(String(order.order_number));
       const done = orderRow(page, APT_PUB1);
+      await expect(done.getByTestId('chip-order-delivered-tag')).toHaveText('נמסרה');
       await done.getByTestId('chip-order-row-notes').click();
       const popup = page.getByTestId('chip-order-row-notes-popup');
       await expect(popup.getByTestId('chip-order-row-notes-orderer')).toContainText(ordererNote);

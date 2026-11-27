@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import type { Chip, ChipWithHolder, ChipsKpis, ChipTab } from '@/lib/types/chips';
+import type { Chip, ChipOrderRef, ChipWithHolder, ChipsKpis, ChipTab } from '@/lib/types/chips';
 import { isSnapshotRole, resolveChipHolder } from '@/lib/chips/holder';
 import { ChipsKpiRow } from './ChipsKpiRow';
 import { ChipsTable } from './ChipsTable';
@@ -168,6 +168,18 @@ export function ChipsPageClient({
       holderName: row.full_name,
       holderPhone: chipOrderRowPhone(row) || null,
       orderItemId: row.item_id,
+    });
+  }
+
+  /** A chip's order number in the chips tab (27/11/2026) — the same window an
+   *  Orders-tab row opens; a delivered order is reached this way. */
+  function openChipOrder(ref: ChipOrderRef) {
+    openIssueSheet({
+      contactId: ref.contact_id,
+      apartmentNumber: ref.apartment_number,
+      holderName: ref.full_name,
+      holderPhone: chipOrderRowPhone(ref) || null,
+      orderItemId: ref.item_id,
     });
   }
 
@@ -492,6 +504,7 @@ export function ChipsPageClient({
           onRowClick={canEdit ? (chip) => openIssueSheet(issueInitialFromChip(chip)) : undefined}
           onHolderClick={(chip) => setHolderPanel(holderRefFromChip(chip))}
           onHolderFilter={(chip) => setHolderFilter(holderRefFromChip(chip))}
+          onOrderOpen={canEdit ? openChipOrder : undefined}
         />
       </div>
       </>)}

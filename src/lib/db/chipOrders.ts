@@ -478,25 +478,10 @@ export async function recordChipOrderNotification(row: {
 
 const OPEN_SQL = `('paid', 'approved', 'ready')`;
 
-/** The Orders tab: ONE ROW PER APARTMENT of every open order (paid — being
- *  assigned — or ready). pending_payment never shows; a row leaves once its
- *  order is collected or rejected — EXCEPT a reception order (25/11/2026),
- *  which is collected the moment it is made and stays in the tab, after the
- *  open orders, newest first, tagged "קבלה" — also once it was cancelled
- *  (stored `rejected`, shown "בוטל"). The open orders are ONE group, newest
- *  payment first, whatever their stage (25/11/2026): a ready order keeps the
- *  place it had. Until then every paid order came before every ready one, so
- *  after "מוכן לאיסוף" the order's row jumped down, and the row left in its
- *  place was another order, still waiting. Test orders come with is_test;
- *  the screen badges them and keeps them out of every count. `people` — the people of
- *  the apartment line (the search, the Excel file and the print view of the
- *  tab, 24/11/2026): the names of its holder lines, in the order of the
- *  window's blocks. A line with no holder line of the order itself — an order
- *  made before 20/11/2026 — starts with whoever ordered, so the person who
- *  paid is never missing, also when the staff added somebody to it. */
-export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
-  const r = await query<ChipOrderRow>(
-    `select i.id as item_id, o.id as order_id, o.order_number, i.contact_id, i.apartment_number,
+/** The columns of an Orders-tab row ($1 = PICKUP_ORDERER_KEY) — shared by
+ *  the tab and by its lookup of one order by number. */
+const ORDER_ROW_SELECT = `
+    select i.id as item_id, o.id as order_id, o.order_number, i.contact_id, i.apartment_number,
             o.full_name, o.phone_e164, o.role, o.source, o.status, i.chips_count,
             (select count(*)::int from public.chips c where c.order_item_id = i.id and c.status = 'active') as chips_linked,
             i.line_total::float8 as line_total,
@@ -534,18 +519,67 @@ export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
               where d.order_id = o.id and d.kind = 'invoice'
               order by d.created_at limit 1) as invoice_doc
        from public.chip_order_items i
-       join public.chip_orders o on o.id = i.order_id
+       join public.chip_orders o on o.id = i.order_id`;
+
+/** A web order handed over ("נמסר" / "נאסף") that is not settled yet — what
+ *  keeps it in the Orders tab (Ronen, 27/11/2026, 1.4): PayPlus shows its
+ *  charge cancelled or refunded and "ביטול וזיכוי" has not finished it; its
+ *  "ביטול וזיכוי" (or a refund) started and has not finished — stopped on a
+ *  failed step, or with no answer yet; or one of its Morning documents is not
+ *  issued yet (waiting, being issued, or failed). "סגירה ידנית" settles all of
+ *  these for good. Once settled it leaves the tab, like every delivered order. */
+const DELIVERED_UNSETTLED_SQL = `(o.closed_by_hand_at is null and (
+           (o.payplus_reversal_at is not null and o.cancel_completed_at is null)
+        or (o.cancel_requested_at is not null and o.cancel_completed_at is null)
+        or (o.refund_requested_at is not null and o.refunded_at is null)
+        or (o.refund_status = 'manual_required' and o.refunded_at is null)
+        or exists (select 1 from public.chip_order_documents d where d.order_id = o.id and d.status <> 'issued')))`;
+
+/** The Orders tab: ONE ROW PER APARTMENT of every open order (paid — being
+ *  assigned — or ready). pending_payment never shows. A web order leaves the
+ *  tab once it is handed over ("נמסר" / "נאסף" — the 13/11/2026 rule, Ronen
+ *  again 27/11/2026: from then on it lives in the "צ׳יפים" tab, through its
+ *  chips) — unless it is not settled yet (DELIVERED_UNSETTLED_SQL); a web
+ *  order rejected leaves too, except one refunded or whose money PayPlus
+ *  shows going back. A reception order (25/11/2026) is collected the moment it
+ *  is made and stays in the tab, after the open orders, newest first, tagged
+ *  "קבלה" — also once it was cancelled (stored `rejected`, shown "בוטל"). The
+ *  open orders are ONE group, newest payment first, whatever their stage
+ *  (25/11/2026): a ready order keeps the place it had. Test orders come with
+ *  is_test; the screen badges them and keeps them out of every count.
+ *  `people` — the people of the apartment line (the search, the Excel file and
+ *  the print view of the tab, 24/11/2026): the names of its holder lines, in
+ *  the order of the window's blocks. A line with no holder line of the order
+ *  itself — an order made before 20/11/2026 — starts with whoever ordered, so
+ *  the person who paid is never missing, also when the staff added somebody
+ *  to it. */
+export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
+  const r = await query<ChipOrderRow>(
+    `${ORDER_ROW_SELECT}
       where o.status in ${OPEN_SQL} or (o.source = 'reception' and o.status in ('collected', 'rejected'))
-         -- A web order handed over (27/11/2026): it stays, after the open
-         -- orders — its delivery note is read in its row and its window.
-         or (o.source = 'web' and o.status = 'collected')
-         or (o.source = 'web' and o.refunded_at is not null)
-         -- A web order PayPlus shows cancelled, or whose "ביטול וזיכוי" started
-         -- (27/11/2026): it waits for an admin, also once it was collected.
-         or (o.source = 'web' and o.card_status = 'paid' and (o.payplus_reversal_at is not null or o.cancel_requested_at is not null))
+         or (o.source = 'web' and o.status = 'collected' and ${DELIVERED_UNSETTLED_SQL})
+         -- A web order closed without a hand-over: refunded, or PayPlus shows
+         -- it cancelled / its "ביטול וזיכוי" started (27/11/2026).
+         or (o.source = 'web' and o.status <> 'collected' and o.refunded_at is not null)
+         or (o.source = 'web' and o.status <> 'collected' and o.card_status = 'paid'
+             and (o.payplus_reversal_at is not null or o.cancel_requested_at is not null))
       order by case when o.status in ('collected', 'rejected') then 1 else 0 end,
                o.paid_at desc nulls last, o.order_number desc, i.created_at`,
     [PICKUP_ORDERER_KEY],
+  );
+  return r.rows;
+}
+
+/** The search of the Orders tab by an order NUMBER (Ronen, 27/11/2026, 1.5):
+ *  the rows of that order — one per apartment — whatever its stage, so a
+ *  delivered order that left the tab is still reached by its number. Never an
+ *  order that waits for payment. Empty when there is no such order. */
+export async function listChipOrderRowsByNumber(orderNumber: number): Promise<ChipOrderRow[]> {
+  const r = await query<ChipOrderRow>(
+    `${ORDER_ROW_SELECT}
+      where o.order_number = $2 and o.status <> 'pending_payment'
+      order by i.created_at`,
+    [PICKUP_ORDERER_KEY, orderNumber],
   );
   return r.rows;
 }
@@ -943,13 +977,27 @@ export interface RejectedOrder {
  *  after this commits (setChipOrderRefund records its outcome). A WEB order
  *  only: a reception order — also one a card paid whose chips were never
  *  issued — is undone by "בטל הזמנת קבלה" alone (admins only; its chips are
- *  disabled and its card refunded with it), never by "דחה". */
-export async function rejectChipOrder(id: string, reason: string): Promise<RejectedOrder | null> {
+ *  disabled and its card refunded with it), never by "דחה".
+ *  `mayRefund` (F3, Ronen 27/11/2026): only an admin or a super admin may
+ *  reject an order that took money — a rejection refunds it, exactly like
+ *  "ביטול וזיכוי". Without it only a TEST order that was never charged may be
+ *  rejected ('refund_admin_only' otherwise). Checked on the locked row, so a
+ *  charge that lands meanwhile is seen. */
+export async function rejectChipOrder(id: string, reason: string, opts: { mayRefund: boolean }): Promise<RejectedOrder | null> {
   return withTransaction(async (client) => {
     const order = await lockOrder(client, id);
     if (!order) return null;
     if (order.source === 'reception') throw new ChipOrderStateError('not_web_order');
     if (order.status !== 'paid' && order.status !== 'approved') throw new ChipOrderStateError('not_rejectable');
+    if (!opts.mayRefund) {
+      const money = (
+        await client.query<{ took_money: boolean }>(
+          `select (card_status is not distinct from 'paid' or not is_test) as took_money from public.chip_orders where id = $1`,
+          [id],
+        )
+      ).rows[0];
+      if (money?.took_money !== false) throw new ChipOrderStateError('refund_admin_only');
+    }
     // A refunded order must not leave working chips behind: active chips issued
     // for it are deactivated first (in the issue window), then the order rejected.
     const active = (

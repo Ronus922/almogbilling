@@ -204,7 +204,7 @@ const headersOf = (test: boolean, extra: Record<string, string> = {}): Record<st
   'x-real-ip': IP, ...(test ? { 'x-chip-order-test': token } : {}), ...extra,
 });
 
-interface RowIn { chipsCount: number; role?: 'owner' | 'tenant'; fullName?: string; apartment?: string; lease?: boolean; leaseKey?: string }
+interface RowIn { chipsCount: number; role?: 'owner' | 'tenant'; fullName?: string; apartment?: string; lease?: boolean; leaseFile?: File; leaseKey?: string }
 /** POST /api/public/chip-order — multipart, as the page sends it. */
 async function save(rows: RowIn[], opts: { test: boolean; trackingToken?: string; extra?: Record<string, unknown> }): Promise<Response> {
   const fd = new FormData();
@@ -219,7 +219,7 @@ async function save(rows: RowIn[], opts: { test: boolean; trackingToken?: string
     })),
     ...opts.extra,
   }));
-  rows.forEach((r, i) => { if (r.lease) fd.append(`lease_${i}`, new File([PDF], `lease-${i}.pdf`, { type: 'application/pdf' })); });
+  rows.forEach((r, i) => { if (r.lease) fd.append(`lease_${i}`, r.leaseFile ?? new File([PDF], `lease-${i}.pdf`, { type: 'application/pdf' })); });
   if (opts.trackingToken) updateBuckets.add(`chip-order:update:order:${createHash('sha256').update(opts.trackingToken).digest('hex').slice(0, 24)}`);
   const encoded = new Response(fd);
   const body = Buffer.from(await encoded.arrayBuffer());
@@ -548,6 +548,56 @@ d('chip orders — real card payment in production, the form without a phone cod
     expect(removedLeases).toContainEqual([keyA]);
     expect(removedLeases.flat()).not.toContain(keyB);
     expect((await holdersOf(a.id)).map((h) => h.lease_file_key)).toEqual([null]);
+  });
+
+  // 2.2 (Ronen, 27/11/2026): a lease reaches the server only with the order,
+  // when the resident continues to payment — never before, never alone.
+  it('2.2 — the lease travels with the order: a save of the details before the agreement keeps renter rows with no lease (nothing uploaded); no payment window opens while a renter lacks the lease (409 lease_required); the save that records the agreement must hold every lease — two renters in two apartments in ONE submit, each file checked again — and then the window opens', async () => {
+    await setSettings({ unitPrice: PRICE, ordersOpen: false });
+    const people = (extra: Partial<RowIn> = {}): RowIn[] => [
+      { role: 'tenant', chipsCount: 1, ...extra },
+      { role: 'tenant', chipsCount: 1, apartment: APT2, fullName: 'שרה בדיקה', ...extra },
+    ];
+    // The details, the boxes not ticked yet: accepted with no file.
+    const draft = await createdFrom(await save(people(), { test: true, extra: { acceptTerms: false } }));
+    expect(uploadChipOrderLease).not.toHaveBeenCalled();
+    expect(draft.leaseKeys).toEqual([null, null]);
+    expect((await holdersOf(draft.id)).map((h) => [h.apartment_number, h.lease_file_key])).toEqual([[APT1, null], [APT2, null]]);
+
+    // The agreement on the order (as a tab of an older page could leave it),
+    // the leases still missing: no payment window, PayPlus never asked.
+    await pool.query(`update public.chip_orders set terms_accepted_at = now(), renter_terms_accepted_at = now() where id = $1`, [draft.id]);
+    const refused = await openSession(draft, true);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ ok: false, state: 'lease_required', message: 'נדרש לצרף חוזה או הסכם ניהול לכל שוכר לפני התשלום.' });
+    expect(generated()).toEqual([]);
+
+    // The save that continues to payment without the files: refused, row by row.
+    let res = await save(people(), { test: true, trackingToken: draft.trackingToken, extra: { acceptRenterTerms: true } });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ ok: false, message: 'נדרש לצרף חוזה או הסכם ניהול (שורה 1).' });
+    // A file that is not what its name says: refused on the server too, nothing stored.
+    const fake = new File([Buffer.from('this is not a pdf at all')], 'lease.pdf', { type: 'application/pdf' });
+    res = await save([{ role: 'tenant', chipsCount: 1, lease: true }, { role: 'tenant', chipsCount: 1, apartment: APT2, fullName: 'שרה בדיקה', lease: true, leaseFile: fake }],
+      { test: true, trackingToken: draft.trackingToken, extra: { acceptRenterTerms: true } });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { message: string }).message).toContain('(שורה 2)');
+    expect(uploadChipOrderLease).not.toHaveBeenCalled();
+    expect((await holdersOf(draft.id)).map((h) => h.lease_file_key)).toEqual([null, null]);
+
+    // Both leases in ONE submit, with the agreement: each on its own row.
+    res = await save(people({ lease: true }), { test: true, trackingToken: draft.trackingToken, extra: { acceptRenterTerms: true } });
+    expect(res.status).toBe(200);
+    const keys = ((await res.json()) as { leaseKeys: (string | null)[] }).leaseKeys;
+    expect(keys).toHaveLength(2);
+    expect(keys.every((k) => typeof k === 'string' && /^[0-9a-f-]{36}\.pdf$/.test(k))).toBe(true);
+    expect(new Set(keys).size).toBe(2);
+    expect(uploadChipOrderLease).toHaveBeenCalledTimes(2);
+    expect((await holdersOf(draft.id)).map((h) => [h.apartment_number, h.lease_file_key])).toEqual([[APT1, keys[0]], [APT2, keys[1]]]);
+
+    // Every lease on the order: the window opens.
+    expect((await openSession(draft, true)).status).toBe(200);
+    expect(generated()).toHaveLength(1);
   });
 
   it('a new total on an order that had a payment session asks PayPlus first: no answer → 502 and nothing changes; nothing charged → that session is DISABLED and the save goes through; the same total → PayPlus is not asked', async () => {

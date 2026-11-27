@@ -602,17 +602,30 @@ d('the one refund of the chip module — web orders, "דחה", and what PayPlus 
 
   // ── "דחה" ────────────────────────────────────────────────────────────────
 
-  it('"דחה" of a card-paid web order (a manager) runs the same steps: PayPlus asked first, one refund, the credit — and the rejection message', async () => {
+  // F3 (Ronen, 27/11/2026): a rejection of an order that took money refunds
+  // it — admins and super admins only, exactly like "ביטול וזיכוי".
+  it('"דחה" of a card-paid web order is admins\' only: a manager with every chips permission gets 403 and NOTHING happens (still paid, PayPlus never asked, no audit); an admin\'s runs the same steps as "ביטול וזיכוי": PayPlus asked first, one refund, the credit — and the rejection message', async () => {
     const o = await paidOrder();
     await invoiceIssued(o);
     as('manager');
+    const refused = await reject(o.id, { reason: 'אין מלאי' });
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { error: string }).error).toBe('רק אדמין או סופר אדמין יכולים לדחות הזמנה ששולמה — הדחייה מחזירה את הכסף');
+    await runAfter();
+    expect(await rowOf(o.id)).toMatchObject({ status: 'paid', reject_reason: null, refund_status: null });
+    expect(payplus('Transactions/View')).toEqual([]);
+    expect(refundCalls()).toEqual([]);
+    expect((await pool.query(`select 1 from public.audit_log where entity_type = 'chip_order' and entity_id = $1 and action = 'rejected'`, [o.id])).rowCount).toBe(0);
+    expect((await messagesOf(o.id)).some((m) => m.kind === 'rejected')).toBe(false);
+
+    as('super');
     const res = await reject(o.id, { reason: 'אין מלאי' });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, refund_status: 'refunded', failed_step: null });
     expect(payplus('Transactions/View').length).toBeGreaterThan(0);
     expect(refundCalls(o.tx)).toHaveLength(1);
     const row = await rowOf(o.id);
-    expect(row).toMatchObject({ status: 'rejected', reject_reason: 'אין מלאי', refund_via: 'reject', refund_status: 'refunded', refunded_by: users.manager!.id });
+    expect(row).toMatchObject({ status: 'rejected', reject_reason: 'אין מלאי', refund_via: 'reject', refund_status: 'refunded', refunded_by: users.super!.id });
     expect(row.cancel_completed_at).toBeInstanceOf(Date);
     expect((await docsOf(o.id)).map((x) => [x.kind, x.status])).toEqual([['invoice', 'issued'], ['credit', 'issued']]);
     await runAfter();
@@ -622,7 +635,7 @@ d('the one refund of the chip module — web orders, "דחה", and what PayPlus 
   it('"דחה" while PayPlus does not answer: the order is rejected and stops at the refund (manual_required, the step shown); an admin\'s "המשך" finishes it — one refund in all', async () => {
     const o = await paidOrder();
     await invoiceIssued(o);
-    as('manager');
+    as('super');
     pp.viewDown = true;
     const res = await reject(o.id, { reason: 'אין מלאי' });
     expect(await res.json()).toMatchObject({ ok: true, refund_status: 'manual_required', failed_step: 'refund' });
@@ -635,6 +648,28 @@ d('the one refund of the chip module — web orders, "דחה", and what PayPlus 
     expect(run.ok).toBe(true);
     expect(refundCalls(o.tx)).toHaveLength(1);
     expect(await rowOf(o.id)).toMatchObject({ status: 'rejected', reject_reason: 'אין מלאי', refund_status: 'refunded', refund_via: 'admin' });
+  });
+
+  it('F3: a manager may still reject a TEST order that was never charged (nothing to refund — "לא נדרש (בדיקה)"), never one paid in the sandbox (that refunds the test card) nor a real one', async () => {
+    const t = await orders.createChipOrder({
+      fullName: 'דנה בדיקה', phoneE164: PHONE, email: EMAIL, address: 'הרצל 1, חיפה 3300000', role: 'owner',
+      rows: [{ role: 'owner', fullName: 'דנה בדיקה', apartmentNumber: APT, chipsCount: 1, phoneE164: PHONE, email: null, lease: null, leaseEndDate: null }],
+      addressParts: { street: 'הרצל 1', city: 'חיפה', zip: '3300000' },
+      ip: '198.51.100.8', isTest: true,
+    }, SETTINGS);
+    made.orders.push(t.id);
+    expect(await orders.markTestChipOrderPaid(t.trackingToken)).toBe(t.id);
+    as('manager');
+    const res = await reject(t.id, { reason: 'בדיקה' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, refund_status: 'not_required' });
+    expect(await rowOf(t.id)).toMatchObject({ status: 'rejected', refund_status: 'not_required' });
+    expect(refundCalls()).toEqual([]);
+    // Paid in the sandbox: a rejection would refund the test card — admins only.
+    const sandbox = await paidOrder({ isTest: true });
+    expect((await reject(sandbox.id, { reason: 'בדיקה' })).status).toBe(403);
+    expect((await rowOf(sandbox.id)).status).toBe('paid');
+    expect(refundCalls()).toEqual([]);
   });
 
   // ── What PayPlus reports ─────────────────────────────────────────────────

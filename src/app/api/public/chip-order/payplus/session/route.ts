@@ -6,7 +6,7 @@ import { getClientIp } from '@/lib/http/clientIp';
 import { appUrl } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { getChipOrderSettings } from '@/lib/db/appSettings';
-import { agorot, CONSENT_REQUIRED, consentMissing, getCardOrderByToken, setCardSession } from '@/lib/db/chipOrderCard';
+import { agorot, CONSENT_REQUIRED, consentMissing, getCardOrderByToken, LEASE_REQUIRED, leaseMissing, setCardSession } from '@/lib/db/chipOrderCard';
 import { createHostedFieldsSession, disablePaymentRequest, PayPlusApiError } from '@/lib/payplus/client';
 import { priceLine } from '@/lib/chipOrders/model';
 import { cardHolderPhone, type CardSession } from '@/lib/chipOrders/card';
@@ -64,6 +64,8 @@ export async function POST(req: Request) {
   if (!order || !orderMayPayByCard(cfg, order)) return err(409, 'ההזמנה אינה ממתינה לתשלום.');
   // Decision 3.5: the agreement boxes, recorded on the order, before any payment window.
   if (consentMissing(order)) return err(409, CONSENT_REQUIRED, { state: 'terms_required' });
+  // 2.2: every renter's lease is on the order before any payment window.
+  if (leaseMissing(order)) return err(409, LEASE_REQUIRED, { state: 'lease_required' });
 
   const orderLimit = await checkRateLimit(`chip-order:card-session:order:${order.id}`, { max: 20, windowSec: 1800 });
   if (!orderLimit.allowed) return err(429, 'נפתחו יותר מדי חלונות תשלום להזמנה הזו. נסו שוב בעוד כחצי שעה.');

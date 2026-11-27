@@ -55,6 +55,8 @@ export interface CardOrder {
    *  until both stand (consentMissing). */
   terms_accepted: boolean;
   renter_terms_ok: boolean;
+  /** Every renter row of the form holds its lease (2.2, 27/11/2026). */
+  leases_ok: boolean;
 }
 
 const CARD_ORDER_SQL = `
@@ -64,7 +66,10 @@ const CARD_ORDER_SQL = `
          o.card_status, o.card_env, o.card_page_request_uid, o.card_transaction_uid, o.card_failure_reason,
          o.terms_accepted_at is not null as terms_accepted,
          (o.renter_terms_accepted_at is not null
-           or not exists (select 1 from public.chip_order_holders h where h.order_id = o.id and h.role = 'tenant')) as renter_terms_ok
+           or not exists (select 1 from public.chip_order_holders h where h.order_id = o.id and h.role = 'tenant')) as renter_terms_ok,
+         not exists (select 1 from public.chip_order_holders h
+                      where h.order_id = o.id and h.source = 'order' and h.role in ('tenant', 'operator')
+                        and h.lease_file_key is null) as leases_ok
     from public.chip_orders o`;
 
 /** What the payment step answers while consentMissing. */
@@ -74,6 +79,16 @@ export const CONSENT_REQUIRED = 'יש לסמן את תיבות האישור שמ
  *  server's own check of what the page's pay button already demands. */
 export function consentMissing(order: Pick<CardOrder, 'source' | 'terms_accepted' | 'renter_terms_ok'>): boolean {
   return order.source === 'web' && (!order.terms_accepted || !order.renter_terms_ok);
+}
+
+/** What the payment step answers while leaseMissing. */
+export const LEASE_REQUIRED = 'נדרש לצרף חוזה או הסכם ניהול לכל שוכר לפני התשלום.';
+
+/** A web order with a renter row (of the form) that holds no lease (2.2,
+ *  27/11/2026): the form sends the files with the save that continues to
+ *  payment, and no payment window opens before every lease is on the order. */
+export function leaseMissing(order: Pick<CardOrder, 'source' | 'leases_ok'>): boolean {
+  return order.source === 'web' && !order.leases_ok;
 }
 
 /** The order behind a tracking token — the secret the browser that created the

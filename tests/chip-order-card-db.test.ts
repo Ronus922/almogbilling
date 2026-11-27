@@ -304,6 +304,15 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
     expect(await renter.json()).toMatchObject({ state: 'terms_required' });
     expect(createHostedFieldsSession).not.toHaveBeenCalled();
     await pool.query(`update public.chip_orders set renter_terms_accepted_at = now() where id = $1`, [o.id]);
+    // 2.2 (27/11/2026): and the renter's lease on the order.
+    const noLease = await openSession(o);
+    expect(noLease.status).toBe(409);
+    expect(await noLease.json()).toMatchObject({ state: 'lease_required' });
+    expect(createHostedFieldsSession).not.toHaveBeenCalled();
+    await pool.query(
+      `update public.chip_order_holders set lease_file_key = $2, lease_file_name = 'lease.pdf', lease_file_mime = 'application/pdf', lease_file_size = 1000 where order_id = $1`,
+      [o.id, `${crypto.randomUUID()}.pdf`],
+    );
     expect((await openSession(o)).status).toBe(200);
     expect(createHostedFieldsSession).toHaveBeenCalledTimes(1);
   });
@@ -756,6 +765,14 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
     expect((await rowOf(o.id)).status).toBe('pending_payment');
 
     sandboxConfig = null;
+    // 2.2 (27/11/2026): a renter row without its lease does not finish either.
+    await pool.query(`update public.chip_order_holders set role = 'tenant' where order_id = $1`, [o.id]);
+    await pool.query(`update public.chip_orders set renter_terms_accepted_at = now() where id = $1`, [o.id]);
+    const noLease = await post(finishRoute, 'test-finish', { trackingToken: o.trackingToken });
+    expect(noLease.status).toBe(409);
+    expect(await noLease.json()).toMatchObject({ ok: false, state: 'lease_required' });
+    expect((await rowOf(o.id)).status).toBe('pending_payment');
+    await pool.query(`update public.chip_order_holders set role = 'owner' where order_id = $1`, [o.id]);
     expect((await post(finishRoute, 'test-finish', { trackingToken: o.trackingToken })).status).toBe(200);
     await runAfter();
     const row = await rowOf(o.id);

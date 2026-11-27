@@ -42,8 +42,13 @@
 //     "לא הופקה" in red);
 //   · a WEB order that was refunded stays in the tab — readable, nothing to
 //     press.
+// 27/11/2026 (Ronen, evening):
+//   · a WEB order that was handed over leaves the tab (it lives in the
+//     "צ׳יפים" tab, through its chips) — unless something on it is not
+//     settled (listOpenChipOrderRows); the search finds it by its whole
+//     number, asked of the server, tagged "נמסרה".
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { AlertTriangle, Ban, Check, CheckCheck, ExternalLink, FlaskConical, Hourglass, Inbox, Loader2, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -395,12 +400,49 @@ export function ChipOrdersPanel({
   const [cancelOf, setCancelOf] = useState<string | null>(null);
   const cancelFor = (o: ChipOrderRow) => (canAdmin && rowCancellable(o) ? () => setCancelOf(o.order_id) : null);
 
+  // The search by an order NUMBER (27/11/2026, Ronen, 1.5): a handed-over
+  // order left the tab, so a number the tab does not hold is asked of the
+  // server (GET /api/chip-orders?number=); its rows join the list while the
+  // search names it, tagged "נמסרה". Only the newest answer lands.
+  const numberQuery = /^\d{1,9}$/.test(query.trim()) ? query.trim() : null;
+  const inTab = numberQuery !== null && items.some((o) => String(o.order_number) === numberQuery);
+  const [looked, setLooked] = useState<{ number: string; rows: ChipOrderRow[] } | null>(null);
+  useEffect(() => {
+    if (numberQuery === null || inTab) return;
+    const ctrl = new AbortController();
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(`/api/chip-orders?number=${numberQuery}`, { credentials: 'include', signal: ctrl.signal });
+          if (!res.ok) return;
+          const data = (await res.json()) as { items?: ChipOrderRow[] };
+          const rows = Array.isArray(data.items) ? data.items : [];
+          setLooked({
+            number: numberQuery,
+            rows: rows.map((r) => ({ ...r, people: Array.isArray(r.people) ? r.people : [], line_total: Number(r.line_total ?? 0) })),
+          });
+        } catch {
+          // Aborted by the next keystroke, or offline: the tab's own rows stay.
+        }
+      })();
+    }, 250);
+    return () => { ctrl.abort(); window.clearTimeout(t); };
+    // `items`: the order may have left the tab (or come back) since.
+  }, [numberQuery, inTab, items]);
+  const lookedRows = useMemo(
+    () => (looked && looked.number === numberQuery && !inTab ? looked.rows.filter((r) => !items.some((o) => o.item_id === r.item_id)) : []),
+    [looked, numberQuery, inTab, items],
+  );
+
   const tests = useMemo(() => items.filter((o) => o.is_test), [items]);
   // The status belongs to the whole order: what a row may do is read from ALL
   // the order's rows, also the ones the search or the tests switch hides.
-  const summaries = useMemo(() => summarizeChipOrders(items), [items]);
+  const summaries = useMemo(() => summarizeChipOrders([...items, ...lookedRows]), [items, lookedRows]);
   const shown = useMemo(() => items.filter((o) => showTests || !o.is_test), [items, showTests]);
-  const visible = useMemo(() => filterChipOrderRows(shown, query), [shown, query]);
+  const visible = useMemo(
+    () => [...filterChipOrderRows(shown, query), ...lookedRows.filter((o) => showTests || !o.is_test)],
+    [shown, query, lookedRows, showTests],
+  );
   const searching = query.trim() !== '';
   const testOrders = new Set(tests.map((o) => o.order_id)).size;
   const testCount = testOrders + unfinishedTests;

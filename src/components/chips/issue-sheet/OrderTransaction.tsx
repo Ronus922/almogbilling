@@ -161,6 +161,9 @@ const RefundIco = ({ size = 14 }: { size?: number }) => <Ico size={size}><path d
 const DocIco = () => <Ico size={14}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" /></Ico>;
 const LinkIco = () => <Ico size={12} sw={2.2}><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></Ico>;
 
+/** F3 (27/11/2026) — why "דחה" is greyed for a manager on an order that took money. */
+const REJECT_ADMIN_ONLY = 'רק אדמין או סופר אדמין יכולים לדחות הזמנה ששולמה — הדחייה מחזירה את הכסף';
+
 export function OrderTransaction({
   win, readyAction, canEditOrders, canAdminOrders = false, canCloseByHand = false, disabled, onGone, onReload, onModalChange,
 }: {
@@ -219,6 +222,10 @@ export function OrderTransaction({
   const cardPaid = o.card_status === 'paid';
   // A test card in PayPlus's sandbox — no money moved.
   const sandbox = o.card_env === 'sandbox';
+  // F3 (27/11/2026): "דחה" of an order that took money refunds it — admins
+  // only, like "ביטול וזיכוי" (the route asks again). Anyone with the order's
+  // buttons may reject a test order that was never charged.
+  const rejectAdminOnly = (cardPaid || !o.is_test) && !canAdminOrders;
   const paidAmount = cardPaid ? o.card_paid_amount ?? o.total : o.total;
   // "ביטול וזיכוי" (27/11/2026) — the one way back, admin and super admin:
   // a reception order collected, or paid by card with its chips never saved;
@@ -673,9 +680,10 @@ export function OrderTransaction({
             </button>
             {/* A reception order is never "rejected": "ביטול וזיכוי" (admins) cancels and refunds it. */}
             <button type="button" className={cn('ci-btn ci-line', rejected && 'ci-cur')}
-              disabled={disabled || busy !== null || !assigning || reception || refundPending}
+              disabled={disabled || busy !== null || !assigning || reception || refundPending || rejectAdminOnly}
               aria-current={rejected ? 'step' : undefined}
-              title={refundPending ? PENDING_REFUND : cancelled ? 'הזמנת הקבלה בוטלה — זה השלב שלה כרגע' : reception ? 'הזמנת קבלה מבטלים ב„ביטול וזיכוי”' : assigning ? undefined : rejected ? 'ההזמנה נדחתה — זה השלב שלה כרגע' : collected ? 'ההזמנה כבר נאספה' : 'אפשר לדחות הזמנה רק לפני „מוכן לאיסוף”'}
+              title={refundPending ? PENDING_REFUND : cancelled ? 'הזמנת הקבלה בוטלה — זה השלב שלה כרגע' : reception ? 'הזמנת קבלה מבטלים ב„ביטול וזיכוי”' : !assigning ? (rejected ? 'ההזמנה נדחתה — זה השלב שלה כרגע' : collected ? 'ההזמנה כבר נאספה' : 'אפשר לדחות הזמנה רק לפני „מוכן לאיסוף”') : rejectAdminOnly ? REJECT_ADMIN_ONLY : undefined}
+              data-testid="chip-order-reject"
               onClick={() => setModal('reject', true)}>
               {cancelled ? CHIP_ORDER_CANCELLED_LABEL : 'דחה'}
             </button>

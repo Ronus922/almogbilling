@@ -111,10 +111,12 @@ describe('the tags of a row', () => {
     expect(chipOrderRowTags(row({ is_test: true, phone_verified: null }))).toEqual(['test']);
   });
 
-  it('an order made at the reception is tagged "קבלה" — and a web order never is', () => {
+  it('an order made at the reception is tagged "קבלה" — and a web order never is; a web order handed over is tagged "נמסרה" (27/11/2026), a reception one never', () => {
     expect(chipOrderRowTags(row({ source: 'reception', status: 'collected' }))).toEqual(['reception']);
     expect(CHIP_ORDER_TAG_LABEL.reception).toBe('קבלה');
-    expect(chipOrderRowTags(row({ source: 'web', status: 'collected' }))).toEqual([]);
+    expect(chipOrderRowTags(row({ source: 'web', status: 'collected' }))).toEqual(['delivered']);
+    expect(CHIP_ORDER_TAG_LABEL.delivered).toBe('נמסרה');
+    expect(chipOrderRowTags(row({ source: 'web', status: 'ready' }))).toEqual([]);
     // A row that came without `source` (a tab left open across a rollback) is a web order.
     expect(chipOrderRowTags({ is_test: false, phone_verified: true, has_failed_notification: false })).toEqual([]);
   });

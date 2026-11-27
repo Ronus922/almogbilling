@@ -80,6 +80,8 @@ export function DebtorsTable({
   canViewChips,
   canEditChips,
   canAdminChipOrders = false,
+  canEditChipOrders = false,
+  canCloseChipOrdersByHand = false,
   canViewPortal,
   canEditPortal,
 }: {
@@ -97,6 +99,10 @@ export function DebtorsTable({
   canEditChips: boolean;
   /** Admin / super admin, by role — "ביטול וזיכוי" in the chips tab's issue window. */
   canAdminChipOrders?: boolean;
+  /** chips_orders_manage:edit — an order's window from the chips tab. */
+  canEditChipOrders?: boolean;
+  /** Super admin — "סגירה ידנית" in an order's window from the chips tab. */
+  canCloseChipOrdersByHand?: boolean;
   canViewPortal: boolean;
   canEditPortal: boolean;
 }) {
@@ -650,6 +656,8 @@ export function DebtorsTable({
         canViewChips={canViewChips}
         canEditChips={canEditChips}
         canAdminChipOrders={canAdminChipOrders}
+        canEditChipOrders={canEditChipOrders}
+        canCloseChipOrdersByHand={canCloseChipOrdersByHand}
         canViewPortal={canViewPortal}
         canEditPortal={canEditPortal}
         onOpenChange={(o) => {

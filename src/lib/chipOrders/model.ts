@@ -22,9 +22,10 @@ export type ChipOrderStatus =
   | 'rejected';
 
 /** Open = paid (assigning) or ready: chips may still be issued and notes
- *  written. A rejected web order leaves the Orders tab; a collected one stays
- *  there, after the open orders (27/11/2026 — its delivery note is read in
- *  its row). */
+ *  written. A web order leaves the Orders tab once it is rejected or handed
+ *  over (the 13/11/2026 rule, Ronen again 27/11/2026 evening — a delivered
+ *  order lives on in the "צ׳יפים" tab through its chips), unless something on
+ *  it is not settled yet (listOpenChipOrderRows). */
 const OPEN_CHIP_ORDER_STATUSES: readonly ChipOrderStatus[] = ['paid', 'approved', 'ready'];
 
 export function isOpenChipOrder(status: ChipOrderStatus): boolean {
@@ -264,8 +265,8 @@ export function isChipOrderOverdue(
 /** awaiting "ממתין לשיוך" · partial "שויכו X מתוך Y" · assigned "שויך" ·
  *  ready "מוכן לאיסוף" · collected "נאסף" · rejected "נדחה" · cancelled "בוטל"
  *  (the last four are the order's own status). X counts ACTIVE chips only. A
- *  collected order stays in the Orders tab (a reception order from
- *  25/11/2026, a web order from 27/11/2026). `cancelled` is a RECEPTION order that was
+ *  collected RECEPTION order stays in the Orders tab (25/11/2026); a collected
+ *  web order leaves it (27/11/2026 evening). `cancelled` is a RECEPTION order that was
  *  cancelled (25/11/2026): stored with the status `rejected`, shown "בוטל",
  *  and it stays in the tab; `rejected` is a web order that was rejected. */
 export type ChipOrderStage = 'awaiting' | 'partial' | 'assigned' | 'ready' | 'collected' | 'rejected' | 'cancelled';
@@ -302,8 +303,9 @@ export function chipOrderStageLabel(stage: ChipOrderStage, linked: number, order
 // ── Shapes the staff screen reads ──────────────────────────────────────────
 
 /** One row of /chips → "הזמנות": ONE APARTMENT of an open order (13/11/2026;
- *  until then a row was a whole order) — or of a collected one, which stays
- *  in the tab (a reception order from 25/11/2026, a web order from 27/11/2026). */
+ *  until then a row was a whole order) — or of a reception order, which stays
+ *  in the tab once collected (25/11/2026); a delivered web order only while
+ *  it is not settled, or when the search names its number (27/11/2026). */
 export interface ChipOrderRow {
   item_id: string;
   order_id: string;
