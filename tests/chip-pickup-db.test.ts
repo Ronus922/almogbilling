@@ -178,8 +178,10 @@ function collect(orderId: string, body?: unknown) {
 const orderRow = (orderId: string) => one<{
   status: string; collected_at: Date | null; collected_by_name: string | null; collected_holder_id: string | null;
   handed_over_by: string | null; handed_over_by_name: string | null; handed_over_via: string | null;
+  delivery_note: string | null; delivery_note_by: string | null; delivery_note_by_name: string | null; delivery_note_at: Date | null;
 }>(
-  `select status, collected_at, collected_by_name, collected_holder_id, handed_over_by, handed_over_by_name, handed_over_via
+  `select status, collected_at, collected_by_name, collected_holder_id, handed_over_by, handed_over_by_name, handed_over_via,
+          delivery_note, delivery_note_by, delivery_note_by_name, delivery_note_at
      from public.chip_orders where id = $1`,
   [orderId],
 );
@@ -317,6 +319,8 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
       is_test: false,
       apartments: [APT(1), APT(2)],
       total: 5,
+      orderer_note: null,
+      guard_note: null,
       people: [
         // The app chip is counted; its "number" (an identifier of the app account) is not sent.
         { key: main.holders[0], name: 'דנה מסירה', apartment: APT(1), chips: [{ number: num(1), type: 'physical' }, { number: null, type: 'app' }] },
@@ -340,12 +344,13 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
     expect(orders.find((x) => x.id === trial.id)!.is_test).toBe(true);
   });
 
-  it('the answer holds NOTHING else of an order: no price, amount, payment, email, phone, address, lease or note', async () => {
+  it('the answer holds NOTHING else of an order: no price, amount, payment, email, phone, address, lease or internal note', async () => {
     as('guard');
     const { orders, text } = await list();
-    // The exact shape — a field added to the answer later fails here.
+    // The exact shape — a field added to the answer later fails here. The two
+    // notes meant for the guard are part of it since 27/11/2026.
     for (const o of orders) {
-      expect(Object.keys(o).sort()).toEqual(['apartments', 'id', 'is_test', 'order_number', 'people', 'total']);
+      expect(Object.keys(o).sort()).toEqual(['apartments', 'guard_note', 'id', 'is_test', 'order_number', 'orderer_note', 'people', 'total']);
       for (const p of o.people) {
         expect(Object.keys(p).sort()).toEqual(['apartment', 'chips', 'key', 'name']);
         for (const c of p.chips) expect(Object.keys(c).sort()).toEqual(['number', 'type']);
@@ -360,9 +365,34 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
     ]) {
       expect(text, `the pickup answer must not carry ${secret}`).not.toContain(secret);
     }
-    for (const key of ['price', 'total_paid', 'amount', 'payment', 'email', 'phone', 'address', 'lease', 'note', 'grow', 'tracking', 'invoice']) {
-      expect(text.toLowerCase(), `the pickup answer must not carry a "${key}" field`).not.toMatch(new RegExp(`"[a-z_]*${key}[a-z_]*":`));
+    for (const key of ['price', 'total_paid', 'amount', 'payment', 'email', 'phone', 'address', 'lease', 'note', 'grow', 'tracking', 'invoice', 'refund']) {
+      // The orderer's note and the guard note are the guard's (27/11/2026); no other "…note…" field.
+      expect(text.toLowerCase(), `the pickup answer must not carry a "${key}" field`).not.toMatch(new RegExp(`"(?!orderer_note"|guard_note")[a-z_]*${key}[a-z_]*":`));
     }
+  });
+
+  // The three notes of an order (27/11/2026, Ronen): the guard sees the
+  // orderer's note and the guard note in full — never the staff's internal one.
+  it('notes — the guard sees "הערת המזמין" and "הערה לשומר" of a ready order in full; the staff\'s internal note never reaches the screen', async () => {
+    await pool.query(
+      `update public.chip_orders set orderer_note = $2, guard_note = $3, guard_note_by_name = 'בדיקה admin', guard_note_at = now() where id = $1`,
+      [main.id, `למסור למשה ${tag}\nבשעות הערב`, `להתקשר לפני ${tag}`],
+    );
+    as('guard');
+    const { orders, text } = await list();
+    const o = orders.find((x) => x.id === main.id)!;
+    expect(o.orderer_note).toBe(`למסור למשה ${tag}\nבשעות הערב`);
+    expect(o.guard_note).toBe(`להתקשר לפני ${tag}`);
+    expect(text).not.toContain(SECRET.note);
+    // An order without notes says so plainly.
+    expect(orders.find((x) => x.id === old.id)).toMatchObject({ orderer_note: null, guard_note: null });
+    await pool.query(`update public.chip_orders set orderer_note = null, guard_note = null, guard_note_by_name = null, guard_note_at = null where id = $1`, [main.id]);
+  });
+
+  it('notes — "נמסר" may carry a delivery note: over 500 characters is refused (400) and nothing moves', async () => {
+    as('guard');
+    expect((await hand(main.id, { person: main.holders[0], delivery_note: 'א'.repeat(501) })).status).toBe(400);
+    expect(await orderRow(main.id)).toMatchObject({ status: 'ready', delivery_note: null });
   });
 
   it('guard, admin and super admin get in; every other role is refused — also a manager who holds every chips permission; nobody signed in is 401', async () => {
@@ -404,6 +434,7 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
     const kpis = await import('@/app/api/chips/kpis/route');
     const holdersOfPerson = await import('@/app/api/chips/holders/[contactId]/[role]/route');
     const leases = await import('@/app/api/chips/leases/route');
+    const guardNote = await import('@/app/api/chip-orders/[id]/guard-note/route');
     const receptionCtx = await import('@/app/api/chips/reception/route');
     const contactChips = await import('@/app/api/contacts/[id]/chips/route');
     const orders = await import('@/app/api/chip-orders/route');
@@ -435,6 +466,8 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
       ['GET /api/chip-orders', () => orders.GET()],
       ['DELETE /api/chip-orders/:id', () => order.DELETE(req(`/api/chip-orders/${id}`, 'DELETE'), P({ id }))],
       ['POST /api/chip-orders/:id/ready', () => readyRoute.POST(req(`/api/chip-orders/${id}/ready`, 'POST'), P({ id }))],
+      // "הערה לשומר" (27/11/2026): never the guard's to write.
+      ['POST /api/chip-orders/:id/guard-note', () => guardNote.POST(req(`/api/chip-orders/${id}/guard-note`, 'POST', { guard_note: 'x' }), P({ id }))],
       ['POST /api/chip-orders/:id/collected', () => collect(id, { person: main.holders[0] })],
       ['POST /api/chip-orders/:id/reject', () => reject.POST(req(`/api/chip-orders/${id}/reject`, 'POST', { reason: 'ניסיון' }), P({ id }))],
       ['POST /api/chip-orders/:id/cancel', () => cancel.POST(req(`/api/chip-orders/${receptionOrderId}/cancel`, 'POST', { reason: 'ניסיון' }), P({ id: receptionOrderId }))],
@@ -512,9 +545,10 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
     for (const id of [waiting.id, gone.id]) expect(await trail(id)).toEqual([]);
   });
 
-  it('"נמסר": the order is collected — who handed over, when and who collected are on the order and in the audit log', async () => {
+  it('"נמסר": the order is collected — who handed over, when, who collected and the delivery note are on the order and in the audit log', async () => {
     as('guard');
-    const res = await hand(main.id, { person: main.holders[1] });
+    // "הערת מסירה" (27/11/2026): trimmed, line breaks kept, with the guard and the time.
+    const res = await hand(main.id, { person: main.holders[1], delivery_note: '  נמסר לבת של שרה\r\nהציגה ת״ז  ' });
     expect(res.status).toBe(200);
     // The answer carries nothing of the order.
     expect(await res.json()).toEqual({ ok: true });
@@ -527,13 +561,18 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
       handed_over_by: users.guard!.id,
       handed_over_by_name: 'בדיקה guard',
       handed_over_via: 'pickup',
+      delivery_note: 'נמסר לבת של שרה\nהציגה ת״ז',
+      delivery_note_by: users.guard!.id,
+      delivery_note_by_name: 'בדיקה guard',
     });
     expect(row.collected_at).not.toBeNull();
+    expect(row.delivery_note_at).not.toBeNull();
     expect(await trail(main.id)).toEqual([{
       action: 'collected',
       actor_user_id: users.guard!.id,
       metadata: {
         via: 'pickup', order_number: main.orderNumber, collector: 'holder', collector_holder_id: main.holders[1], collector_name: 'שרה מסירה',
+        delivery_note: 'נמסר לבת של שרה\nהציגה ת״ז',
       },
     }]);
     // Like the management's "נאסף", nobody is notified.
@@ -561,7 +600,8 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
       status: 'collected', collected_by_name: null, collected_holder_id: null,
       handed_over_by: users.admin!.id, handed_over_by_name: 'בדיקה admin', handed_over_via: 'management',
     });
-    expect((await trail(plain.id))[0]).toMatchObject({ action: 'collected', actor_user_id: users.admin!.id, metadata: { via: 'management', collector: null, collector_name: null } });
+    expect((await trail(plain.id))[0]).toMatchObject({ action: 'collected', actor_user_id: users.admin!.id, metadata: { via: 'management', collector: null, collector_name: null, delivery_note: null } });
+    expect(await orderRow(plain.id)).toMatchObject({ delivery_note: null, delivery_note_by_name: null, delivery_note_at: null });
   });
 
   it('the management MAY name who collected — and only a person of the order', async () => {
@@ -569,9 +609,11 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
     expect((await collect(trial.id, { person: main.holders[0] })).status).toBe(400);
     expect(await statusOf(trial.id)).toBe('ready');
     expect((await collect(trial.id, { person: 'שם שהוקלד' })).status).toBe(400);
-    expect((await collect(trial.id, { person: trial.holders[0] })).status).toBe(200);
+    expect((await collect(trial.id, { person: trial.holders[0], delivery_note: 'נמסר במשרד' })).status).toBe(200);
     expect(await orderRow(trial.id)).toMatchObject({
       status: 'collected', collected_by_name: 'הזמנת ניסיון', collected_holder_id: trial.holders[0], handed_over_via: 'management',
+      // "הערת מסירה" of the staff's "נאסף" (27/11/2026).
+      delivery_note: 'נמסר במשרד', delivery_note_by: users.super!.id,
     });
     // A manager who holds chips_orders_manage through the matrix may mark it too (the route's own permission)…
     as('manager');
@@ -602,6 +644,35 @@ d('the guard\'s pickup screen, on the DB and through its routes', () => {
     as('admin');
     expect((await collect(empty.id)).status).toBe(200);
     expect(await orderRow(empty.id)).toMatchObject({ status: 'collected', handed_over_via: 'management' });
+  });
+
+  it('notes — "הערה לשומר" through its own route (the reception window): written by staff, audited, only while the order is open; too long → 400', async () => {
+    const guardNoteRoute = await import('@/app/api/chip-orders/[id]/guard-note/route');
+    const write = (orderId: string, body: unknown) => guardNoteRoute.POST(
+      new Request(`http://local/api/chip-orders/${orderId}/guard-note`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      { params: Promise.resolve({ id: orderId }) },
+    );
+    as('admin');
+    const ok = await write(waiting.id, { guard_note: '  לא למסור בלי ת״ז  ' });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ ok: true, changed: true, guard_note: 'לא למסור בלי ת״ז' });
+    const row = await one<{ guard_note: string | null; guard_note_by: string | null; guard_note_by_name: string | null }>(
+      `select guard_note, guard_note_by, guard_note_by_name from public.chip_orders where id = $1`, [waiting.id]);
+    expect(row).toEqual({ guard_note: 'לא למסור בלי ת״ז', guard_note_by: users.admin!.id, guard_note_by_name: 'בדיקה admin' });
+    expect((await trail(waiting.id)).filter((t) => t.action === 'guard_note_set')).toEqual([
+      { action: 'guard_note_set', actor_user_id: users.admin!.id, metadata: { order_number: waiting.orderNumber, before: null, after: 'לא למסור בלי ת״ז' } },
+    ]);
+    expect((await write(waiting.id, { guard_note: 'א'.repeat(501) })).status).toBe(400);
+    // A body that does not name the note changes nothing (security review, 27/11/2026).
+    expect((await write(waiting.id, {})).status).toBe(400);
+    expect((await one<{ guard_note: string | null }>(`select guard_note from public.chip_orders where id = $1`, [waiting.id])).guard_note).toBe('לא למסור בלי ת״ז');
+    // Cleared with an empty note.
+    expect((await write(waiting.id, { guard_note: '' })).status).toBe(200);
+    expect((await one<{ guard_note: string | null }>(`select guard_note from public.chip_orders where id = $1`, [waiting.id])).guard_note).toBeNull();
+    // Handed over already: the note is history.
+    expect((await write(plain.id, { guard_note: 'מאוחר מדי' })).status).toBe(409);
+    as('guard');
+    expect((await write(waiting.id, { guard_note: 'שומר כותב' })).status).toBe(403);
   });
 
   it('a hand-over cannot be undone, so one user is held to a ceiling of them: past it "נמסר" answers 429 and the order stays ready', async () => {

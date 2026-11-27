@@ -220,7 +220,7 @@ d('chip orders on the DB', () => {
     expect((await rowsOf(ids.order)).find((r) => r.item_id === owned)).toMatchObject({ chips_linked: 4, chips_count: 3 });
   });
 
-  it('ready only when every apartment of the order has its chips; collected drops every row; a closed order takes no more chips', async () => {
+  it('ready only when every apartment of the order has its chips; collected keeps its rows, closed (27/11/2026); a closed order takes no more chips', async () => {
     const owned = await itemOf(ids.order, apt.owned);
     await expect(db.markChipOrderReady(ids.order)).rejects.toThrow('chips_missing');
     for (const [aptNo, cid, n] of [[apt.empty, ids.empty, 2], [apt.rented, ids.rented, 1]] as const) {
@@ -241,7 +241,9 @@ d('chip orders on the DB', () => {
     );
     made.chips.push(...extra.items.map((c) => c.id));
     expect(await db.markChipOrderCollected(ids.order, admin, { via: 'management' })).toMatchObject({ collector_name: null });
-    expect(await rowsOf(ids.order)).toEqual([]);
+    // Since 27/11/2026 a handed-over web order stays in the tab (until then it left).
+    expect((await rowsOf(ids.order)).every((r) => r.status === 'collected')).toBe(true);
+    expect((await rowsOf(ids.order)).length).toBeGreaterThan(0);
     await expect(issueChipGroups(
       { contact_id: ids.owned, groups: [{ resident_role: 'owner', holder_name: 'דנה כהן', chip_type: 'physical', numbers: [`A${tag}6`], order_item_id: owned }] },
       admin,

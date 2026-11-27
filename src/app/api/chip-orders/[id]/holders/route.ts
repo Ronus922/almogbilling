@@ -10,6 +10,8 @@ import { getChipOrderSettings } from '@/lib/db/appSettings';
 import { formatIlsAfter } from '@/lib/chipOrders/model';
 import { RECEPTION_MAX_PAID_CHIPS } from '@/lib/chipOrders/reception';
 import { badOrderId, chipOrderErrorResponse } from '@/lib/chipOrders/routeErrors';
+import { mayWriteChipNote } from '@/lib/chipOrders/notes';
+import { noteWriter } from '@/lib/chipOrders/noteWriter';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -49,6 +51,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (bad) return bad;
   const body = await parseJsonBody(req, chipOrderWindowSaveSchema);
   if (!body.ok) return body.response;
+  if (body.data.guard_note !== undefined && !mayWriteChipNote('guard', noteWriter(actor))) {
+    return NextResponse.json({ error: 'אין הרשאה לכתוב הערה לשומר' }, { status: 403 });
+  }
   try {
     // The price per chip is read here, right before the save — never from the request.
     const { unitPrice } = await getChipOrderSettings();
@@ -58,6 +63,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         holders: body.data.holders.map((h) => ({ ...h, email: h.email || null })),
         removedHolderIds: body.data.removed_holder_ids ?? [],
         note: body.data.note,
+        // "הערה לשומר" (27/11/2026): this route already demands chips:edit +
+        // chips_orders_manage:edit — the writers of mayWriteChipNote('guard').
+        guardNote: body.data.guard_note,
         extraPayment: body.data.extra_payment ?? null,
       },
       { id: actor.id, name: actor.full_name ?? actor.username },

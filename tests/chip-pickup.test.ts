@@ -24,18 +24,18 @@ const H3 = '33333333-3333-4333-8333-333333333333';
 
 const ORDERS: PickupOrder[] = [
   {
-    id: 'o1', order_number: 1042, is_test: false, apartments: ['12', '14'], total: 3,
+    id: 'o1', order_number: 1042, is_test: false, apartments: ['12', '14'], total: 3, orderer_note: null, guard_note: null,
     people: [
       { key: H1, name: 'דנה כהן', apartment: '12', chips: [{ number: '7001', type: 'physical' }, { number: '7002', type: 'app' }] },
       { key: H2, name: 'שרה לוי', apartment: '14', chips: [{ number: '7003', type: 'physical' }] },
     ],
   },
   {
-    id: 'o2', order_number: 1043, is_test: true, apartments: ['120'], total: 1,
+    id: 'o2', order_number: 1043, is_test: true, apartments: ['120'], total: 1, orderer_note: null, guard_note: null,
     people: [{ key: PICKUP_ORDERER_KEY, name: 'Yossi Mizrahi', apartment: '120', chips: [{ number: '7004', type: 'physical' }] }],
   },
   {
-    id: 'o3', order_number: 1212, is_test: false, apartments: ['212'], total: 0,
+    id: 'o3', order_number: 1212, is_test: false, apartments: ['212'], total: 0, orderer_note: null, guard_note: null,
     people: [{ key: H3, name: 'רון אבני', apartment: '212', chips: [] }],
   },
 ];

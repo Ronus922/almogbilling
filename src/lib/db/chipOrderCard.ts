@@ -49,14 +49,32 @@ export interface CardOrder {
   card_page_request_uid: string | null;
   card_transaction_uid: string | null;
   card_failure_reason: string | null;
+  /** Decision 3.5 (27/11/2026): the order page's agreement boxes are recorded
+   *  on the order — "the details are correct" always, the renter commitment
+   *  when the order has a renter row. A web order opens no payment window
+   *  until both stand (consentMissing). */
+  terms_accepted: boolean;
+  renter_terms_ok: boolean;
 }
 
 const CARD_ORDER_SQL = `
   select o.id, o.order_number, o.status, o.source, o.is_test, o.total::float8 as total,
          (select coalesce(sum(i.chips_count), 0)::int from public.chip_order_items i where i.order_id = o.id) as chips,
          o.full_name, o.phone_e164, o.email,
-         o.card_status, o.card_env, o.card_page_request_uid, o.card_transaction_uid, o.card_failure_reason
+         o.card_status, o.card_env, o.card_page_request_uid, o.card_transaction_uid, o.card_failure_reason,
+         o.terms_accepted_at is not null as terms_accepted,
+         (o.renter_terms_accepted_at is not null
+           or not exists (select 1 from public.chip_order_holders h where h.order_id = o.id and h.role = 'tenant')) as renter_terms_ok
     from public.chip_orders o`;
+
+/** What the payment step answers while consentMissing. */
+export const CONSENT_REQUIRED = 'יש לסמן את תיבות האישור שמתחת לשדות התשלום לפני התשלום.';
+
+/** A web order whose agreement boxes are not recorded (decision 3.5) — the
+ *  server's own check of what the page's pay button already demands. */
+export function consentMissing(order: Pick<CardOrder, 'source' | 'terms_accepted' | 'renter_terms_ok'>): boolean {
+  return order.source === 'web' && (!order.terms_accepted || !order.renter_terms_ok);
+}
 
 /** The order behind a tracking token — the secret the browser that created the
  *  order holds — or null. */

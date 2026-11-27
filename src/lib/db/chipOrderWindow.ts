@@ -1,4 +1,5 @@
 import 'server-only';
+import { writeGuardNoteInTx } from '@/lib/db/chipOrderNotes';
 import { randomBytes } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { query, queryOne, withTransaction } from '@/lib/db';
@@ -46,6 +47,8 @@ export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindo
   const order = await queryOne<ChipOrderWindowOrder>(
     `select o.id, o.order_number, o.status, o.role, o.source, o.is_test, o.phone_verified, o.full_name, o.phone_e164, o.email,
             o.address, o.total::float8 as total, o.paid_at, o.due_at, o.created_at, o.internal_note,
+            o.orderer_note, o.guard_note, o.guard_note_by_name, o.guard_note_at,
+            o.delivery_note, o.delivery_note_by_name, o.delivery_note_at,
             o.payment_method, o.payment_recorded_by_name, o.payment_recorded_at,
             o.collected_at, o.collected_by_name, o.handed_over_by_name, o.handed_over_via,
             o.rejected_at, o.reject_reason, o.cancelled_by_name,
@@ -225,6 +228,8 @@ export interface WindowSaveInput {
   removedHolderIds?: string[];
   /** undefined = untouched. */
   note?: string | null;
+  /** "הערה לשומר" (27/11/2026) — undefined = untouched; null / empty clears it. */
+  guardNote?: string | null;
   /** How the EXTRA chips of this save are settled — new numbers beyond what
    *  the apartment line paid for online. Required when the save has any;
    *  ignored when it has none. The amount is what the window showed. */
@@ -687,6 +692,7 @@ export async function saveChipOrderWindow(
         [orderId, input.note?.trim() ? input.note.trim() : null],
       );
     }
+    if (input.guardNote !== undefined) await writeGuardNoteInTx(client, orderId, input.guardNote, actor);
     return { issued, updated, extra };
   });
 }

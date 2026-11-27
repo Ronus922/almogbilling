@@ -10,8 +10,10 @@ import type { ChipType } from '@/lib/types/chips';
 // and the chips of each. And nothing else — the shape below is the whole
 // answer of GET /api/chip-pickup, built field by field on the server
 // (src/lib/db/chipPickup.ts). A price, an amount, a payment detail, an email,
-// a phone, an address, a lease, a note or a test-mode control is not hidden on
-// this screen: it never leaves the server.
+// a phone, an address, a lease, the staff's internal note or a test-mode
+// control is not hidden on this screen: it never leaves the server. The two
+// notes meant for the guard are part of it (27/11/2026): the orderer's and
+// the staff's "הערה לשומר".
 
 /** One chip to hand over. A card has the number printed on it — the guard
  *  matches the card in hand against it. An APP chip is nothing the guard hands
@@ -45,6 +47,10 @@ export interface PickupOrder {
   people: PickupPerson[];
   /** Every chip of the order (the sum over its people). */
   total: number;
+  /** "הערת המזמין" — what the orderer wrote on the order page. */
+  orderer_note: string | null;
+  /** "הערה לשומר" — what the staff who prepared the chips wrote for the guard. */
+  guard_note: string | null;
 }
 
 /** The orderer of an order made before 20/11/2026 — it has no holder lines,

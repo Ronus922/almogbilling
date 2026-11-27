@@ -239,6 +239,7 @@ export async function POST(req: Request) {
     fullName: o.rows[0].fullName, phoneE164, email: o.email, address, role: o.rows[0].role,
     addressParts: { street: o.addressStreet, city: o.addressCity, zip: o.addressZip },
     renterTermsAccepted: hasRenter && o.acceptRenterTerms === true,
+    termsAccepted: o.acceptTerms === true,
     note: o.note ? o.note : null,
     isTest: test,
   };

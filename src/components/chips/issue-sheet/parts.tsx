@@ -237,6 +237,8 @@ export interface SavedChipLike {
   chip_number: string;
   chip_type: ChipType;
   status: ChipStatus;
+  /** Decision 3.6: why a disabled chip may not be switched on again. */
+  reactivation_lock?: string | null;
 }
 
 /**
@@ -422,6 +424,7 @@ export function ChipAllocation({
               const chip = quick.view(raw);
               const on = chip.status === 'active';
               const busy = quick.busyId === chip.id;
+              const lock = raw.reactivation_lock ?? null;
               return (
                 <div key={chip.id} className={cn('ci-chiprow', !on && 'ci-off')}>
                   {quick.edit?.chipId === chip.id ? (
@@ -446,11 +449,15 @@ export function ChipAllocation({
                   <span className="ci-kind">{chip.chip_type === 'app' ? <AppIco /> : <CardIco />}{chip.chip_type === 'app' ? 'אפליקציה' : 'כרטיס'}</span>
                   {earlier && <span className="ci-tag-mini" title="צ׳יפ קודם של אותו אדם בדירה — לא חלק מההזמנה">קודם</span>}
                   {extra && <span className="ci-tag-mini" title="צ׳יפ שנוסף מעבר לכמות ששולמה באתר, ושולם בקבלה — שייך להזמנת קבלה נפרדת" data-testid="chip-extra-tag">נוסף · קבלה</span>}
-                  <button type="button" className="ci-tgl" aria-pressed={on} aria-label={on ? `השבת את ${chip.chip_number}` : `החזר לפעיל את ${chip.chip_number}`}
-                    disabled={disabled || quick.busyId !== null} onClick={() => onToggle(raw)}>
+                  <button type="button" className="ci-tgl" aria-pressed={on}
+                    aria-label={on ? `השבת את ${chip.chip_number}` : lock ? `${chip.chip_number}: ${lock}` : `החזר לפעיל את ${chip.chip_number}`}
+                    title={!on && lock ? lock : undefined}
+                    data-locked={!on && lock ? 'true' : undefined}
+                    disabled={disabled || quick.busyId !== null || (!on && !!lock)} onClick={() => onToggle(raw)}>
                     {busy ? <Loader2 className="ci-spin h-3.5 w-3.5" /> : on ? 'פעיל' : 'מושבת'}
                     <span className="ci-sw" />
                   </button>
+                  {!on && lock && <span className="ci-lockwhy" data-testid="chip-reactivation-lock">{lock}</span>}
                 </div>
               );
             })}

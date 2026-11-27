@@ -1,3 +1,4 @@
+import { DELIVERY_NOTE_LABEL, GUARD_NOTE_LABEL, ORDERER_NOTE_LABEL } from './notes';
 import { e164ToLocal } from '@/lib/portal/phone';
 import { exportDate, exportDateTime, type ListExport } from '@/lib/export/list-export';
 import {
@@ -350,5 +351,9 @@ export const CHIP_ORDERS_EXPORT: ListExport<ChipOrderRow> = {
     { header: 'סטטוס', kind: 'text', width: 22, get: (r, now) => chipOrderRowStatusText(r, now) },
     { header: 'יעד להכנה', kind: 'ltr', width: 18, get: (r) => (r.due_at ? exportDateTime(r.due_at) : '') },
     { header: 'הזמנת בדיקה', kind: 'text', width: 13, get: (r) => (r.is_test ? 'כן' : 'לא') },
+    // The three notes (27/11/2026), each its own column.
+    { header: ORDERER_NOTE_LABEL, kind: 'text', width: 30, get: (r) => r.orderer_note ?? '' },
+    { header: GUARD_NOTE_LABEL, kind: 'text', width: 30, get: (r) => r.guard_note ?? '' },
+    { header: DELIVERY_NOTE_LABEL, kind: 'text', width: 30, get: (r) => r.delivery_note ?? '' },
   ],
 };

@@ -110,6 +110,25 @@ export interface ReceptionContext {
   lease_view: boolean;
   /** The reception saves this apartment's chips came from. */
   records: ReceptionRecordView[];
+  /** Decision 3.1 (27/11/2026): the apartment's OPEN web orders — one
+   *  read-only line each ("הזמנה מהאתר N — פתח") that opens its order window,
+   *  with the orderer's note and the guard note. Only for a viewer who may
+   *  open the Orders tab (chips_orders_manage:view); empty otherwise. */
+  web_orders?: ReceptionWebOrder[];
+}
+
+/** One open web order of the apartment, as the reception window shows it. */
+export interface ReceptionWebOrder {
+  order_id: string;
+  order_number: number;
+  /** The apartment line of the order — what opens its window. */
+  item_id: string;
+  status: 'paid' | 'approved' | 'ready';
+  is_test: boolean;
+  chips_count: number;
+  chips_linked: number;
+  orderer_note: string | null;
+  guard_note: string | null;
 }
 
 /** The reception saves a set of chips came from — what a holder block of the

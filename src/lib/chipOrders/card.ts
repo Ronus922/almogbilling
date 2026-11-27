@@ -141,6 +141,8 @@ export function sdkSaysPageExpired(response: unknown): boolean {
 export const CARD_TEXT = {
   /** Under the card boxes before the order is saved (they are not typeable yet). */
   idle: 'שדות הכרטיס ייפתחו מיד כשכל הפרטים שלמעלה יושלמו',
+  /** Saved, but the agreement boxes under the fields are not ticked yet (decision 3.5). */
+  consent: 'שדות הכרטיס ייפתחו אחרי סימון תיבות האישור שמתחת להם',
   /** The test link with no PayPlus sandbox configured (CI): the boxes never open. */
   testNoCard: 'מצב בדיקה בלי סליקה: שדות הכרטיס לא נפתחים, ולחיצה על התשלום מסיימת את הזמנת הבדיקה בלי חיוב.',
   /** The pay button opened the fields (they were not open yet) and stopped there. */

@@ -69,6 +69,7 @@ import { ChipListExports } from './ChipListExports';
 import { CHIPS_SEARCH_INPUT, ChipsToolbar } from './ChipsToolbar';
 import { ChipOrderStagePill } from './ChipOrderStatusPill';
 import { ChipOrderTags } from './ChipOrderTags';
+import { ChipOrderNotesIcon, DeliveryNoteField } from './ChipOrderNotes';
 
 // מס׳ הזמנה · מזמין · תגיות · דירה · כמות · תאריך הזמנה · תשלום · חשבונית · סטטוס
 // (· פעולה — with chips_orders_manage:edit)
@@ -93,6 +94,31 @@ import { ChipOrderTags } from './ChipOrderTags';
 // card is narrower.)
 const COLS = 'grid-cols-[64px_minmax(146px,1.5fr)_minmax(130px,1fr)_72px_56px_92px_minmax(88px,0.8fr)_minmax(96px,0.8fr)_minmax(126px,1.2fr)]';
 const COLS_ACT = 'grid-cols-[64px_minmax(146px,1.5fr)_minmax(130px,1fr)_72px_56px_92px_minmax(88px,0.8fr)_minmax(96px,0.8fr)_minmax(126px,1.2fr)_150px]';
+// FITS THE CARD (decision 3.5, 27/11/2026: no sideways scroll at 1280px and up,
+// the menu panel open). Where the card is narrower than the full table, the row
+// becomes two lines instead of scrolling: the order date goes under the order
+// number and the tags under the orderer — the same cells, placed in a second
+// grid row (CSS only, nothing is drawn twice), so every value still sits under
+// its own header, which moves with it. The other tracks keep one line and
+// narrower floors: with the action column 756 + 7 × 12.75 + 51 = 896.25px
+// (min 897px), without it 606 + 6 × 12.75 + 51 = 733.5px (min 734px). Below
+// those the table scrolls inside the card as before (1024px with the panel).
+const NARROW = {
+  act: {
+    cols: '@max-[1185px]:grid-cols-[64px_minmax(130px,1.5fr)_64px_56px_minmax(84px,0.8fr)_minmax(96px,0.8fr)_minmax(112px,1.2fr)_150px] @max-[1185px]:gap-y-1',
+    date: '@max-[1185px]:col-start-1 @max-[1185px]:row-start-2',
+    tags: '@max-[1185px]:col-start-2 @max-[1185px]:row-start-2',
+    span: '@max-[1185px]:row-span-2',
+    minW: 'min-w-[1186px] @max-[1185px]:min-w-[897px]',
+  },
+  plain: {
+    cols: '@max-[1023px]:grid-cols-[64px_minmax(130px,1.5fr)_64px_56px_minmax(84px,0.8fr)_minmax(96px,0.8fr)_minmax(112px,1.2fr)] @max-[1023px]:gap-y-1',
+    date: '@max-[1023px]:col-start-1 @max-[1023px]:row-start-2',
+    tags: '@max-[1023px]:col-start-2 @max-[1023px]:row-start-2',
+    span: '',
+    minW: 'min-w-[1024px] @max-[1023px]:min-w-[734px]',
+  },
+} as const;
 const COL = {
   number: 'text-center',
   orderer: 'text-start',
@@ -117,7 +143,7 @@ const HEAD_CELL = 'text-[12px] font-bold uppercase tracking-[0.02em] text-[var(-
 // a hairline and a soft shadow on its start side — what scrolls under it
 // reads as under.
 const ACT_CELL =
-  'sticky end-0 z-[1] -me-6 self-stretch pe-6 ps-3 flex items-center @max-[1185px]:border-s @max-[1185px]:border-[var(--chip-border)] @max-[1185px]:shadow-[10px_0_14px_-12px_rgba(20,27,52,0.28)]';
+  'sticky end-0 z-[1] -me-6 self-stretch pe-6 ps-3 flex items-center @max-[896px]:border-s @max-[896px]:border-[var(--chip-border)] @max-[896px]:shadow-[10px_0_14px_-12px_rgba(20,27,52,0.28)]';
 
 const DATE = new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', year: '2-digit' });
 
@@ -363,6 +389,8 @@ export function ChipOrdersPanel({
   const [acting, setActing] = useState(false);
   // "נאסף": who collected — one of the people of the order. Optional here.
   const [collector, setCollector] = useState<string | null>(null);
+  // "הערת מסירה" of "נאסף" (27/11/2026) — optional.
+  const [deliveryNote, setDeliveryNote] = useState('');
   // "ביטול וזיכוי": the order its confirmation is open for.
   const [cancelOf, setCancelOf] = useState<string | null>(null);
   const cancelFor = (o: ChipOrderRow) => (canAdmin && rowCancellable(o) ? () => setCancelOf(o.order_id) : null);
@@ -402,12 +430,15 @@ export function ChipOrdersPanel({
     if (!ask) return;
     setActing(true);
     try {
-      const named = ask.step === 'collected' && collector !== null;
+      const note = ask.step === 'collected' ? deliveryNote.trim() : '';
+      const body = ask.step === 'collected' && (collector !== null || note)
+        ? { ...(collector !== null ? { person: collector } : {}), ...(note ? { delivery_note: note } : {}) }
+        : null;
       const res = await fetch(`/api/chip-orders/${ask.row.order_id}/${ask.step}`, {
         method: 'POST',
         credentials: 'include',
-        headers: named ? { 'Content-Type': 'application/json' } : undefined,
-        body: named ? JSON.stringify({ person: collector }) : undefined,
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(data.error === 'not_found' ? 'ההזמנה לא נמצאה' : data.error ?? 'הפעולה נכשלה');
@@ -425,11 +456,14 @@ export function ChipOrdersPanel({
   const rowProps = (o: ChipOrderRow) => (onOpen ? { onClick: () => onOpen(o) } : {});
 
   const actionOf = (o: ChipOrderRow) => (canEdit ? chipOrderRowAction(o, summaries.get(o.order_id)) : null);
-  const askFor = (o: ChipOrderRow) => (step: StatusStep) => { setAsk({ step, row: o }); setCollector(null); setAskOpen(true); };
-  const cols = canEdit ? COLS_ACT : COLS;
+  const askFor = (o: ChipOrderRow) => (step: StatusStep) => { setAsk({ step, row: o }); setCollector(null); setDeliveryNote(''); setAskOpen(true); };
+  const narrow = canEdit ? NARROW.act : NARROW.plain;
+  const cols = cn(canEdit ? COLS_ACT : COLS, narrow.cols);
   const askApartments = ask ? summaries.get(ask.row.order_id)?.apartments ?? [] : [];
   // The people of the WHOLE order (all its apartment rows) — who may have collected it.
   const askCollectors = ask?.step === 'collected' ? chipOrderCollectors(items, ask.row.order_id) : [];
+  // "נאסף": what is handed over — each apartment line of the order with its people and card numbers.
+  const askLines = ask?.step === 'collected' ? items.filter((r) => r.order_id === ask.row.order_id) : [];
 
   return (
     // mb-16 with the action column: the card is the LAST thing on the page, and
@@ -517,7 +551,7 @@ export function ChipOrdersPanel({
             <Inbox className="h-5 w-5" />
           </span>
           <p className="text-[15px] font-bold text-[var(--chip-ink)]">אין הזמנות פתוחות</p>
-          <p className="text-[13px] font-medium text-[var(--chip-ink-soft)]">הזמנה מהאתר מופיעה כאן אחרי שהתשלום אושר, ויוצאת כשהיא נאספת או נדחית. הזמנה שנרשמה בקבלה, והזמנה שזוכתה, נשארות ברשימה.</p>
+          <p className="text-[13px] font-medium text-[var(--chip-ink-soft)]">הזמנה מהאתר מופיעה כאן אחרי שהתשלום אושר, ונשארת גם אחרי שנמסרה (עם הערת המסירה); הזמנה שנדחתה יוצאת. הזמנה שנרשמה בקבלה, והזמנה שזוכתה, נשארות ברשימה.</p>
         </div>
       ) : visible.length === 0 ? (
         // Search-empty is not table-empty (as in the chips tab).
@@ -532,18 +566,18 @@ export function ChipOrdersPanel({
         <>
           {/* Desktop table */}
           <div className="@container hidden overflow-x-auto sm:block">
-            <div className={canEdit ? 'min-w-[1186px]' : 'min-w-[1024px]'} data-testid="chip-orders-table">
+            <div className={narrow.minW} data-testid="chip-orders-table">
               <div data-testid="chip-orders-head" className={cn('grid items-center gap-3 border-b border-[var(--chip-border)] bg-[var(--chip-panel-alt)] px-6 py-[13px]', cols)}>
                 <Head col="number">מס׳ הזמנה</Head>
                 <Head col="orderer">מזמין</Head>
-                <Head col="tags">תגיות</Head>
+                <Head col="tags" className={narrow.tags}>תגיות</Head>
                 <Head col="apartment">דירה</Head>
                 <Head col="quantity">כמות</Head>
-                <Head col="date">תאריך הזמנה</Head>
+                <Head col="date" className={narrow.date}>תאריך הזמנה</Head>
                 <Head col="payment">תשלום</Head>
                 <Head col="invoice">חשבונית</Head>
                 <Head col="status">סטטוס</Head>
-                {canEdit && <Head col="action" className={cn(ACT_CELL, '-my-[13px] bg-[var(--chip-panel-alt)] py-[13px]')}>פעולה</Head>}
+                {canEdit && <Head col="action" className={cn(ACT_CELL, narrow.span, '-my-[13px] bg-[var(--chip-panel-alt)] py-[13px]')}>פעולה</Head>}
               </div>
               {visible.map((o) => {
                 const action = actionOf(o);
@@ -563,14 +597,19 @@ export function ChipOrdersPanel({
                       <span className="chip-num">{o.order_number}</span>
                     </span>
                     <span data-col="orderer" className={cn(COL.orderer, 'flex min-w-0 flex-col gap-[2px]')}>
-                      <Orderer row={o} onOpen={onOpen && (() => onOpen(o))} nameClass="text-[14.5px]" />
+                      <span className="flex min-w-0 items-start gap-2">
+                        <span className="flex min-w-0 flex-col gap-[2px]">
+                          <Orderer row={o} onOpen={onOpen && (() => onOpen(o))} nameClass="text-[14.5px]" />
+                        </span>
+                        <ChipOrderNotesIcon notes={o} testId="chip-order-row-notes" />
+                      </span>
                       {hits.length > 0 && (
                         <span className="truncate text-[12px] font-semibold text-[var(--chip-brand-ink)]" data-testid="chip-order-row-hit">
                           בעל צ׳יפ בהזמנה: {hits.join(', ')}
                         </span>
                       )}
                     </span>
-                    <span data-col="tags" className={cn(COL.tags, 'flex min-w-0 flex-wrap items-center gap-1.5')}>
+                    <span data-col="tags" className={cn(COL.tags, narrow.tags, 'flex min-w-0 flex-wrap items-center gap-1.5')}>
                       <ChipOrderTags tags={chipOrderRowTags(o)} />
                     </span>
                     <span data-col="apartment" className={cn(COL.apartment, 'min-w-0 text-[14px] font-bold text-[var(--chip-ink)] [overflow-wrap:anywhere]')}>
@@ -579,7 +618,7 @@ export function ChipOrdersPanel({
                     <span data-col="quantity" className={cn(COL.quantity, 'text-[14px] font-bold text-[var(--chip-ink-muted)]')}>
                       <span className="chip-num">{o.chips_count}</span>
                     </span>
-                    <span data-col="date" className={cn(COL.date, 'text-[13px] font-semibold text-[var(--chip-ink-muted)]')}>
+                    <span data-col="date" className={cn(COL.date, narrow.date, 'text-[13px] font-semibold text-[var(--chip-ink-muted)]')}>
                       <span className="chip-num">{DATE.format(new Date(o.created_at))}</span>
                     </span>
                     <span data-col="payment" className={cn(COL.payment, 'min-w-0')}>
@@ -599,7 +638,7 @@ export function ChipOrdersPanel({
                     {canEdit && (
                       <span
                         data-col="action"
-                        className={cn(COL.action, ACT_CELL, '-my-[12px] bg-[var(--chip-panel)] py-[12px] transition-colors', onOpen && 'group-hover:bg-[var(--chip-hover)]')}
+                        className={cn(COL.action, ACT_CELL, narrow.span, '-my-[12px] bg-[var(--chip-panel)] py-[12px] transition-colors', onOpen && 'group-hover:bg-[var(--chip-hover)]')}
                       >
                         {/* A collected order: "ביטול וזיכוי" in place of the "נאסף" label (the status column says it). */}
                         {(() => {
@@ -636,8 +675,11 @@ export function ChipOrdersPanel({
                     onOpen && 'cursor-pointer hover:bg-[var(--chip-hover)]',
                   )}
                 >
-                  <span className="flex min-w-0 flex-col gap-[2px]">
-                    <Orderer row={o} onOpen={onOpen && (() => onOpen(o))} nameClass="text-[15px]" />
+                  <span className="flex min-w-0 items-start justify-between gap-2">
+                    <span className="flex min-w-0 flex-col gap-[2px]">
+                      <Orderer row={o} onOpen={onOpen && (() => onOpen(o))} nameClass="text-[15px]" />
+                    </span>
+                    <ChipOrderNotesIcon notes={o} testId="chip-order-card-notes" />
                   </span>
                   {tags.length > 0 && (
                     <span className="flex flex-wrap items-center gap-1.5" data-testid="chip-order-card-tags">
@@ -681,7 +723,7 @@ export function ChipOrdersPanel({
 
       {/* "מוכן לאיסוף" / "נאסף" of a row — asked first. */}
       <AlertDialog open={askOpen} onOpenChange={(o) => { if (!acting) setAskOpen(o); }}>
-        <AlertDialogContent dir="rtl" className="chips-skin" data-testid="chip-order-row-confirm">
+        <AlertDialogContent dir="rtl" className="chips-skin max-h-[calc(100dvh-2rem)] overflow-y-auto p-6" data-testid="chip-order-row-confirm">
           <AlertDialogHeader>
             <AlertDialogTitle>
               {ask?.step === 'collected' ? `לסמן את הזמנה ${ask.row.order_number} כנאספה?` : `לסמן את הזמנה ${ask?.row.order_number ?? ''} כמוכנה לאיסוף?`}
@@ -693,6 +735,23 @@ export function ChipOrdersPanel({
               {askApartments.length > 1 && ` הסימון חל על ההזמנה כולה — דירות ${askApartments.join(', ')}.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {askLines.length > 0 && (
+            <div className="flex flex-col gap-1.5 rounded-[11px] bg-[var(--chip-panel-alt)] p-3 text-[13px] text-[var(--chip-ink-muted)]" data-testid="chip-order-row-confirm-summary">
+              {askLines.map((r) => (
+                <div key={r.item_id} className="flex flex-col gap-0.5">
+                  <span className="font-bold text-[var(--chip-ink)]">
+                    דירה <span className="chip-num">{r.apartment_number}</span>
+                    {r.people.length > 0 && <span className="font-semibold text-[var(--chip-ink-muted)]"> · {r.people.join(', ')}</span>}
+                  </span>
+                  {(r.chip_numbers ?? []).length > 0 && (
+                    <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+                      {(r.chip_numbers ?? []).map((n) => <span key={n} className="chip-num [overflow-wrap:anywhere]">{n}</span>)}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {askCollectors.length > 0 && (
             <div className="flex flex-col gap-2" data-testid="chip-order-row-collector">
               <span className="text-[13px] font-bold text-[var(--chip-ink)]">מי אסף את הצ׳יפים? <span className="font-semibold text-[var(--chip-ink-muted)]">(לא חובה)</span></span>
@@ -706,6 +765,9 @@ export function ChipOrdersPanel({
                 testId="chip-order-row-collector-option"
               />
             </div>
+          )}
+          {ask?.step === 'collected' && (
+            <DeliveryNoteField value={deliveryNote} onChange={setDeliveryNote} disabled={acting} testId="chip-order-row-delivery-note" />
           )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={acting} className="h-11 px-4">ביטול</AlertDialogCancel>
@@ -721,7 +783,7 @@ export function ChipOrdersPanel({
               )}
             >
               {acting && <Loader2 className="h-4 w-4 animate-spin" />}
-              {ask?.step === 'collected' ? 'סמן כנאסף' : 'סמן מוכן לאיסוף'}
+              {ask?.step === 'collected' ? 'אישור מסירה' : 'סמן מוכן לאיסוף'}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

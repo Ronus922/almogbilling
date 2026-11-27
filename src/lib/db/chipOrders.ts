@@ -1,4 +1,5 @@
 import 'server-only';
+import { cleanChipNote } from '@/lib/chipOrders/notes';
 import { randomBytes } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { query, queryOne, withTransaction } from '@/lib/db';
@@ -93,8 +94,11 @@ export interface NewOrderInput {
   addressParts?: { street: string; city: string; zip: string } | null;
   /** The renter commitment box was ticked (only when a renter row exists). */
   renterTermsAccepted?: boolean;
-  /** The orderer's "הערות" (21/11/2026) — stored as the order's note
-   *  (internal_note), which the issue window shows and edits as "הערה". */
+  /** The box "הפרטים נכונים ואני מאשר/ת את התנאים" was ticked (27/11/2026,
+   *  decision 3.5: the payment window opens only once it is recorded). */
+  termsAccepted?: boolean;
+  /** The orderer's "הערות" — "הערת המזמין" (orderer_note, 27/11/2026; until
+   *  then it was written into the staff's internal_note). */
   note?: string | null;
   ip: string | null;
   /** Test mode (a valid test link): the order is marked is_test and is later
@@ -203,12 +207,13 @@ export async function createChipOrder(input: NewOrderInput, settings: ChipOrderS
       await client.query<{ id: string; order_number: number }>(
         `insert into public.chip_orders
            (full_name, phone_e164, email, address, role, total, tracking_token, created_ip, is_test, phone_verified,
-            address_street, address_city, address_zip, renter_terms_accepted_at, internal_note)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, case when $14::boolean then now() else null end, $15)
+            address_street, address_city, address_zip, renter_terms_accepted_at, orderer_note, terms_accepted_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, case when $14::boolean then now() else null end, $15,
+                 case when $16::boolean then now() else null end)
          returning id, order_number`,
         [input.fullName, input.phoneE164, input.email, input.address, input.role, total, trackingToken, input.ip, input.isTest === true,
           input.phoneVerified === undefined ? null : input.phoneVerified, parts?.street ?? null, parts?.city ?? null, parts?.zip ?? null,
-          input.renterTermsAccepted === true, input.note?.trim() ? input.note.trim() : null],
+          input.renterTermsAccepted === true, cleanChipNote(input.note), input.termsAccepted === true],
       )
     ).rows[0];
 
@@ -305,11 +310,13 @@ export async function updatePendingChipOrder(
           set full_name = $2, phone_e164 = $3, email = $4, address = $5, role = $6, total = $7,
               address_street = $8, address_city = $9, address_zip = $10,
               renter_terms_accepted_at = case when $11::boolean then coalesce(renter_terms_accepted_at, now()) else null end,
-              internal_note = $12, updated_at = now()
+              orderer_note = $12,
+              terms_accepted_at = case when $13::boolean then coalesce(terms_accepted_at, now()) else null end,
+              updated_at = now()
         where id = $1`,
       [o.id, input.fullName, input.phoneE164, input.email, input.address, input.role, total,
         parts?.street ?? null, parts?.city ?? null, parts?.zip ?? null,
-        input.renterTermsAccepted === true, input.note?.trim() ? input.note.trim() : null],
+        input.renterTermsAccepted === true, cleanChipNote(input.note), input.termsAccepted === true],
     );
     await insertOrderLines(client, o.id, priced, { role: input.role, phoneE164: input.phoneE164 });
     return {
@@ -516,6 +523,12 @@ export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
             case when o.cancel_completed_at is null then o.payplus_reversal_kind end as payplus_reversal_kind,
             (o.cancel_completed_at is not null) as cancel_completed,
             o.closed_by_hand_step,
+            -- The three notes (27/11/2026) and the card numbers of the line —
+            -- what the row's note icons and the "נאסף" confirmation show.
+            o.orderer_note, o.guard_note, o.delivery_note, o.delivery_note_by_name, o.delivery_note_at,
+            array(select c.chip_number from public.chips c
+                   where c.order_item_id = i.id and c.status = 'active' and c.chip_type = 'physical'
+                   order by c.issued_at, c.chip_number) as chip_numbers,
             (select json_build_object('status', d.status, 'number', d.morning_docs->0->>'number', 'url', d.morning_docs->0->>'url')
                from public.chip_order_documents d
               where d.order_id = o.id and d.kind = 'invoice'
@@ -523,6 +536,9 @@ export async function listOpenChipOrderRows(): Promise<ChipOrderRow[]> {
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id
       where o.status in ${OPEN_SQL} or (o.source = 'reception' and o.status in ('collected', 'rejected'))
+         -- A web order handed over (27/11/2026): it stays, after the open
+         -- orders — its delivery note is read in its row and its window.
+         or (o.source = 'web' and o.status = 'collected')
          or (o.source = 'web' and o.refunded_at is not null)
          -- A web order PayPlus shows cancelled, or whose "ביטול וזיכוי" started
          -- (27/11/2026): it waits for an admin, also once it was collected.
@@ -741,7 +757,7 @@ async function resolveCollector(
 export async function markChipOrderCollected(
   id: string,
   by: { id: string; name: string },
-  opts: { via: ChipHandoverVia; collector?: string | null },
+  opts: { via: ChipHandoverVia; collector?: string | null; deliveryNote?: string | null },
 ): Promise<ChipHandover | null> {
   return withTransaction(async (client) => {
     const order = (
@@ -771,14 +787,20 @@ export async function markChipOrderCollected(
       );
       if ((any.rowCount ?? 0) === 0) throw new ChipOrderStateError('no_active_chips');
     }
+    // "הערת מסירה" (27/11/2026): written by whoever hands over, with the hand-over.
+    const deliveryNote = cleanChipNote(opts.deliveryNote);
     await client.query(
       `update public.chip_orders
           set status = 'collected', collected_at = now(),
               collected_by_name = $2, collected_holder_id = $3,
               handed_over_by = $4, handed_over_by_name = $5, handed_over_via = $6,
+              delivery_note = $7,
+              delivery_note_by = case when $7::text is null then null else $4::uuid end,
+              delivery_note_by_name = case when $7::text is null then null else $8 end,
+              delivery_note_at = case when $7::text is null then null else now() end,
               updated_at = now()
         where id = $1`,
-      [id, collector?.name ?? null, collector?.holderId ?? null, by.id, by.name, opts.via],
+      [id, collector?.name ?? null, collector?.holderId ?? null, by.id, by.name, opts.via, deliveryNote, by.name.slice(0, 120)],
     );
     await writeAuditInTx(client, {
       actorUserId: by.id,
@@ -793,6 +815,7 @@ export async function markChipOrderCollected(
         collector: collector ? (collector.holderId ? 'holder' : 'orderer') : null,
         collector_holder_id: collector?.holderId ?? null,
         collector_name: collector?.name ?? null,
+        delivery_note: deliveryNote,
       },
     });
     return { order_number: order.order_number, collector_name: collector?.name ?? null };

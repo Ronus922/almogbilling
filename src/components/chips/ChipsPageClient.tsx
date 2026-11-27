@@ -40,6 +40,9 @@ type IssueInitial = {
   orderItemId?: string | null;
 } | null;
 
+/** The toast of a link (a bell notification) to a chip that no longer exists. */
+export const CHIP_LINK_GONE = 'הצ׳יפ שההתראה מפנה אליו כבר לא קיים במערכת';
+
 function issueInitialFromChip(chip: Chip): IssueInitial {
   return {
     contactId: chip.contact_id,
@@ -273,7 +276,10 @@ export function ChipsPageClient({
       try {
         const res = await fetch(`/api/chips/${id}`, { credentials: 'include' });
         const data = (await res.json().catch(() => ({}))) as { chip?: ChipWithHolder; error?: string };
-        if (!res.ok || !data.chip) throw new Error(data.error ?? 'הצ׳יפ לא נמצא');
+        // A notification may point to a chip that was deleted since (27/11/2026:
+        // the toast said "not_found", the server's code, in English).
+        if (res.status === 404 || data.error === 'not_found') throw new Error(CHIP_LINK_GONE);
+        if (!res.ok || !data.chip) throw new Error(data.error ?? 'טעינת הצ׳יפ נכשלה');
         if (!cancelled) openIssueSheet(issueInitialFromChip(data.chip));
       } catch (e) {
         if (!cancelled) toast.error((e as Error).message);

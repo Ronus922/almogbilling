@@ -39,6 +39,30 @@ export class ChipNumberTakenError extends Error {
 
 /** Thrown on an invalid state transition (deactivate a non-active chip,
  *  reactivate a non-inactive chip). */
+/** Decision 3.6 (27/11/2026): a chip disabled with its order — the order was
+ *  cancelled ("ביטול וזיכוי", "בטל הזמנת קבלה", "דחה") or closed by hand — is
+ *  never switched on again. The message says why. */
+export class ChipReactivationLockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ChipReactivationLockedError';
+  }
+}
+
+/** Why a DISABLED chip may not be switched on again (null = it may): its line's
+ *  order was cancelled or closed by hand. Bound to the chip's order line, not
+ *  to its apartment: moving a disabled chip to another apartment does not
+ *  free it (security review, 27/11/2026). `ch` = the chips row. Shared by the
+ *  read (the toggle shows it) and by reactivateChip (which refuses). */
+const REACTIVATION_LOCK_SQL = `
+  (select case when o.closed_by_hand_at is not null then 'הצ׳יפ הושבת בסגירה ידנית של הזמנה ' || o.order_number
+               else 'הצ׳יפ הושבת בביטול הזמנה ' || o.order_number end || ' — אי אפשר להפעיל אותו מחדש'
+     from public.chip_order_items i
+     join public.chip_orders o on o.id = i.order_id
+    where ch.status = 'inactive' and i.id = ch.order_item_id
+      and (o.status = 'rejected' or o.cancel_completed_at is not null or o.closed_by_hand_at is not null)
+    limit 1)`;
+
 export class ChipStateError extends Error {
   constructor(message = 'invalid_chip_state') {
     super(message);
@@ -93,7 +117,8 @@ const CHIP_HOLDER_SELECT = `
     where h.contact_id = ch.contact_id
       and h.resident_role = ch.resident_role
       and (ch.resident_role not in ('other','staff') or h.holder_name = ch.holder_name)
-  ) as holder_chip_count`;
+  ) as holder_chip_count,
+  ${REACTIVATION_LOCK_SQL} as reactivation_lock`;
 
 const CHIP_FROM_JOINED = `
   from public.chips ch
@@ -645,6 +670,10 @@ export async function reactivateChip(
     ).rows[0];
     if (!cur) return null;
     if (cur.status !== 'inactive') throw new ChipStateError();
+    const lock = (
+      await client.query<{ lock: string | null }>(`select ${REACTIVATION_LOCK_SQL} as lock from public.chips ch where ch.id = $1`, [id])
+    ).rows[0]?.lock;
+    if (lock) throw new ChipReactivationLockedError(lock);
 
     try {
       await client.query(

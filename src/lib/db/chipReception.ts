@@ -13,6 +13,7 @@ import { priceLine } from '@/lib/chipOrders/model';
 import {
   RECEPTION_MAX_PAID_CHIPS, composeReceptionAddress, receptionAmount, sameAmount,
   type ReceptionOrderer, type ReceptionPaymentMethod, type ReceptionRecordView,
+  type ReceptionWebOrder,
 } from '@/lib/chipOrders/reception';
 import type { ChipWithHolder, IssueChipGroup, IssueChipsInput } from '@/lib/types/chips';
 
@@ -532,4 +533,21 @@ export async function createReceptionCardOrder(
     });
     return { id: created.id, order_number: created.order_number, tracking_token: token, total: price.lineTotal };
   });
+}
+
+/** Decision 3.1 (27/11/2026): the OPEN web orders of an apartment — paid
+ *  (being assigned) or ready — for the reception window's read-only lines. */
+export async function listOpenWebOrdersOfContact(contactId: string): Promise<ReceptionWebOrder[]> {
+  const r = await query<ReceptionWebOrder>(
+    `select o.id as order_id, o.order_number, i.id as item_id, o.status, o.is_test, i.chips_count,
+            (select count(*)::int from public.chips c where c.order_item_id = i.id and c.status = 'active') as chips_linked,
+            o.orderer_note, o.guard_note
+       from public.chip_order_items i
+       join public.chip_orders o on o.id = i.order_id
+      where i.contact_id = $1 and o.source = 'web' and o.status in ('paid', 'approved', 'ready')
+      order by o.paid_at nulls last, o.order_number
+      limit 20`,
+    [contactId],
+  );
+  return r.rows;
 }

@@ -185,6 +185,11 @@ test.describe('chip audit 27/11/2026', () => {
     await expect(issue.getByTestId('chip-order-section')).toBeVisible();
     await addChip(issue.getByTestId('chip-holder-block').first(), number);
     await issue.getByTestId('chip-issue-save').click();
+    // Decision 3.2 (27/11/2026): every chip of the order assigned — the save
+    // asks first. "לא עכשיו" only saves (what Ronen's "שמור" did on 27/11).
+    const ask = page.getByTestId('chip-order-ask-ready');
+    await expect(ask).toContainText('לסמן מוכן לאיסוף?');
+    await ask.getByTestId('chip-order-ask-ready-no').click();
     await expect(issue).toHaveCount(0);
     await expect(toast(page, 'הצ׳יפ הונפק')).toBeVisible();
 
@@ -203,7 +208,9 @@ test.describe('chip audit 27/11/2026', () => {
     await expect(guard.getByTestId('chip-pickup-refresh')).toBeVisible();
     await expect(pickupCard(guard, o.orderNumber)).toHaveCount(0);
 
-    // The issue window WITHOUT an order: the chip, no order section, no order line.
+    // The issue window WITHOUT an order: the chip, no order section — and
+    // (decision 3.1, 27/11/2026) a read-only line of the apartment's web order
+    // that opens its window.
     await page.goto('/chips');
     await page.getByRole('button', { name: 'הנפק צ׳יפ' }).click();
     await pickApartment(page, APT_RONEN);
@@ -211,7 +218,14 @@ test.describe('chip audit 27/11/2026', () => {
     await expect(issue.getByTestId('chip-order-section')).toHaveCount(0);
     await expect(issue.getByTestId('chip-reception-records')).toHaveCount(0);
     await expect(issue.getByTestId('chip-reception-record-cancel')).toHaveCount(0);
+    const line = issue.getByTestId('reception-web-order');
+    await expect(line).toHaveCount(1);
+    await expect(line).toContainText(`הזמנה מהאתר ${o.orderNumber}`);
+    await line.getByTestId('reception-web-order-open').click();
+    await expect(issue.getByTestId('chip-order-section')).toBeVisible();
+    await expect(issue.getByTestId('chip-order-section')).toContainText(String(o.orderNumber));
     await issue.getByTestId('chip-issue-close').click();
+    await expect(issue).toHaveCount(0);
 
     // A plain admin finds "ביטול וזיכוי" in the order's window.
     const admin = await pageAs(browser, people.admin.id);
@@ -238,7 +252,7 @@ test.describe('chip audit 27/11/2026', () => {
     expect((await pool.query(`select status from public.chips where chip_number = $1`, [number])).rows[0].status).toBe('active');
   });
 
-  test('the public page with two apartments in one order: a row per apartment, chips in one window, "מוכן לאיסוף" in one click → the guard screen shows both apartments and no price → "נמסר" collects it', async ({ page, browser }) => {
+  test('the public page with two apartments in one order: a row per apartment, chips in one window, "מוכן לאיסוף" in one click → the guard screen shows both apartments and no price → "נמסר" collects it — and the three notes travel the whole way (27/11/2026)', async ({ page, browser }) => {
     // Test mode on, through /settings, and back as it was at the end.
     const before = (await pool.query<{ value: unknown }>(`select value from public.app_settings where key = 'chip_orders_test_mode'`)).rows[0]?.value ?? null;
     try {
@@ -268,6 +282,9 @@ test.describe('chip audit 27/11/2026', () => {
       await pub.locator('#co-street').fill('רחוב בדיקה 4');
       await pub.locator('#co-city').fill('חיפה');
       await pub.locator('#co-zip').fill('3300000');
+      // "הערת המזמין" — what Ronen wrote on 27/11 and nobody saw.
+      const ordererNote = `למסור למשה ${tag}`;
+      await pub.locator('#co-note').fill(ordererNote);
       await pub.getByRole('checkbox', { name: /הפרטים שמסרתי הינם נכונים/ }).check();
       await pub.getByTestId('chip-order-pay').click();
       await expect(pub.getByTestId('chip-order-confirmation')).toBeVisible();
@@ -278,13 +295,23 @@ test.describe('chip audit 27/11/2026', () => {
           where o.id = (select i.order_id from public.chip_order_items i where i.contact_id = $1 limit 1)`, [made.contacts[APT_PUB1]])).rows[0]!;
       expect(order).toMatchObject({ status: 'paid', items: 2 });
 
-      // One row per apartment, the same order.
+      expect((await pool.query(`select orderer_note, internal_note from public.chip_orders where id = $1`, [order.id])).rows[0])
+        .toEqual({ orderer_note: ordererNote, internal_note: null });
+
+      // One row per apartment, the same order — the row's note icon opens the orderer's note.
       await page.goto('/chips?view=orders');
       for (const apt of [APT_PUB1, APT_PUB2]) {
         await expect(orderRow(page, apt).locator('[data-col="number"]')).toHaveText(String(order.order_number));
       }
+      await orderRow(page, APT_PUB1).getByTestId('chip-order-row-notes').hover();
+      await expect(page.getByTestId('chip-order-row-notes-popup')).toContainText(`הערת המזמין${ordererNote}`);
+      await page.mouse.move(0, 0);
       await orderRow(page, APT_PUB1).click();
       const issue = issueWindow(page);
+      // The window: the orderer's note, read only; the guard note is typed here.
+      await expect(issue.getByTestId('chip-order-orderer-note')).toContainText(ordererNote);
+      const guardNote = `להתקשר לפני המסירה ${tag}`;
+      await issue.getByTestId('chip-order-guard-note').fill(guardNote);
       const blocks = issue.getByTestId('chip-holder-block');
       await expect(blocks).toHaveCount(2);
       await addChip(blocks.nth(0), `AP${tag}1`);
@@ -301,14 +328,42 @@ test.describe('chip audit 27/11/2026', () => {
       await expect(mine.getByTestId('chip-pickup-apartments')).toHaveText(`דירות ${APT_PUB1}, ${APT_PUB2}`);
       await expect(mine.getByTestId('chip-pickup-total')).toHaveText('סה״כ 2 צ׳יפים');
       await expect(mine).not.toContainText('₪');
+      // Both notes meant for the guard, in full, on the card.
+      await expect(mine.getByTestId('chip-pickup-orderer-note')).toContainText(ordererNote);
+      await expect(mine.getByTestId('chip-pickup-guard-note')).toContainText(guardNote);
       await expect(mine.getByRole('button')).toHaveText(['נמסר']);
       await mine.getByTestId('chip-pickup-handover').click();
       const dialog = guard.getByTestId('chip-pickup-confirm');
+      // The confirmation: the apartments, the names and the card numbers; then the optional note.
+      const summary = dialog.getByTestId('chip-pickup-confirm-summary');
+      await expect(summary).toContainText(`דירות ${APT_PUB1}, ${APT_PUB2}`);
+      await expect(summary).toContainText('דייר שתי דירות');
+      await expect(summary).toContainText(`AP${tag}1`);
+      await expect(summary).toContainText(`AP${tag}2`);
+      await expect(dialog.getByRole('button', { name: 'ביטול' })).toBeVisible();
       await dialog.getByTestId('chip-pickup-collector').first().click();
+      const deliveryNote = `נמסר לבת של הדייר ${tag}`;
+      await dialog.getByTestId('chip-pickup-delivery-note').fill(deliveryNote);
+      await expect(dialog.getByTestId('chip-pickup-confirm-button')).toHaveText('אישור מסירה');
       await dialog.getByTestId('chip-pickup-confirm-button').click();
       await expect(toast(guard, `הזמנה ${order.order_number} נמסרה`)).toBeVisible();
-      expect((await pool.query(`select status, handed_over_via from public.chip_orders where id = $1`, [order.id])).rows[0])
-        .toEqual({ status: 'collected', handed_over_via: 'pickup' });
+      expect((await pool.query(`select status, handed_over_via, delivery_note, delivery_note_by from public.chip_orders where id = $1`, [order.id])).rows[0])
+        .toEqual({ status: 'collected', handed_over_via: 'pickup', delivery_note: deliveryNote, delivery_note_by: people.guard.id });
+
+      // The staff see all three: the row (it stays in the tab, collected) and the window.
+      await page.goto('/chips?view=orders');
+      const done = orderRow(page, APT_PUB1);
+      await done.getByTestId('chip-order-row-notes').click();
+      const popup = page.getByTestId('chip-order-row-notes-popup');
+      await expect(popup.getByTestId('chip-order-row-notes-orderer')).toContainText(ordererNote);
+      await expect(popup.getByTestId('chip-order-row-notes-guard')).toContainText(guardNote);
+      await expect(popup.getByTestId('chip-order-row-notes-delivery')).toContainText(deliveryNote);
+      await expect(popup.getByTestId('chip-order-row-notes-delivery')).toContainText(people.guard.name);
+      await page.keyboard.press('Escape');
+      await done.click();
+      await expect(issue.getByTestId('chip-order-orderer-note')).toContainText(ordererNote);
+      await expect(issue.getByTestId('chip-order-guard-note')).toHaveValue(guardNote);
+      await expect(issue.getByTestId('chip-order-delivery-note')).toContainText(deliveryNote);
     } finally {
       if (before === null) await pool.query(`delete from public.app_settings where key = 'chip_orders_test_mode'`);
       else await pool.query(`update public.app_settings set value = $1::jsonb where key = 'chip_orders_test_mode'`, [JSON.stringify(before)]);
@@ -479,9 +534,9 @@ test.describe('chip audit 27/11/2026', () => {
   test('a notification\'s link to a chip that no longer exists: the page stays usable and says so', async ({ page }) => {
     await page.goto(`/chips?chip=${randomUUID()}`);
     await expect(page.getByRole('heading', { name: 'צ׳יפי כניסה' })).toBeVisible();
-    const t = page.locator('[data-sonner-toast]').first();
-    await expect(t).toBeVisible();
-    test.info().annotations.push({ type: 'toast', description: (await t.innerText()).trim() });
+    // Decision 3.7 (27/11/2026): in Hebrew — it said "not_found" until then.
+    await expect(toast(page, 'הצ׳יפ שההתראה מפנה אליו כבר לא קיים במערכת')).toBeVisible();
+    await expect(page.locator('[data-sonner-toast]').filter({ hasText: 'not_found' })).toHaveCount(0);
     await expect(issueWindow(page)).toHaveCount(0);
   });
 });

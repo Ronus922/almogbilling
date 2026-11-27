@@ -63,6 +63,7 @@
 //   warning "בוטל ב-PayPlus — נדרש ביטול וזיכוי", and nothing moves the order
 //   on until "ביטול וזיכוי" finishes it.
 
+import { DeliveryNoteField } from '../ChipOrderNotes';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
@@ -192,6 +193,8 @@ export function OrderTransaction({
   // "נאסף": asked first; who collected is optional.
   const [collectOpen, setCollectOpen] = useState(false);
   const [collector, setCollector] = useState<string | null>(null);
+  // "הערת מסירה" of "נאסף" (27/11/2026) — optional, as on the row and the guard's screen.
+  const [deliveryNote, setDeliveryNote] = useState('');
   // "ביטול וזיכוי" (27/11/2026): the shared confirmation (ReceptionCancelDialog).
   const [cancelOpen, setCancelOpen] = useState(false);
   // "סגירה ידנית" (27/11/2026): its confirmation (CloseByHandDialog).
@@ -664,7 +667,7 @@ export function OrderTransaction({
               disabled={disabled || busy !== null || !ready || refundPending}
               aria-current={collected ? 'step' : undefined}
               title={refundPending ? PENDING_REFUND : ready ? undefined : collected ? 'ההזמנה נאספה — זה השלב שלה כרגע' : rejected ? 'ההזמנה נדחתה' : 'אפשר לסמן „נאסף” רק אחרי „מוכן לאיסוף”'}
-              onClick={() => { setCollector(null); setModal('collect', true); }}>
+              onClick={() => { setCollector(null); setDeliveryNote(''); setModal('collect', true); }}>
               {busy === 'collected' ? <Loader2 className="ci-spin h-3.5 w-3.5" /> : <CheckAllIco />}
               נאסף
             </button>
@@ -754,7 +757,7 @@ export function OrderTransaction({
       </AlertDialog>
 
       <AlertDialog open={collectOpen} onOpenChange={(v) => { if (!busy) setModal('collect', v); }}>
-        <AlertDialogContent dir="rtl" data-testid="chip-order-collect-confirm">
+        <AlertDialogContent dir="rtl" className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-6" data-testid="chip-order-collect-confirm">
           <AlertDialogHeader>
             <AlertDialogTitle>לסמן את הזמנה {o.order_number} כנאספה?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -776,23 +779,22 @@ export function OrderTransaction({
               />
             </div>
           )}
+          <DeliveryNoteField value={deliveryNote} onChange={setDeliveryNote} disabled={busy !== null} testId="chip-order-collect-delivery-note" />
           <AlertDialogFooter>
             <AlertDialogCancel disabled={busy !== null} className="h-11 px-4">ביטול</AlertDialogCancel>
             <Button
               type="button"
               disabled={busy !== null}
               onClick={async () => {
-                const ok = await act(
-                  'collected',
-                  () => postJson(`/api/chip-orders/${o.id}/collected`, collector ? { person: collector } : undefined),
-                  'סומן כנאסף',
-                );
+                const note = deliveryNote.trim();
+                const body = collector || note ? { ...(collector ? { person: collector } : {}), ...(note ? { delivery_note: note } : {}) } : undefined;
+                const ok = await act('collected', () => postJson(`/api/chip-orders/${o.id}/collected`, body), 'סומן כנאסף');
                 if (ok) setModal('collect', false);
               }}
               className="h-11 gap-2 px-4"
             >
               {busy === 'collected' && <Loader2 className="h-4 w-4 animate-spin" />}
-              סמן כנאסף
+              אישור מסירה
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

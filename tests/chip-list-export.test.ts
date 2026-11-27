@@ -104,6 +104,38 @@ describe('the chips tab as a file', () => {
   });
 });
 
+describe('the Orders tab as a file', () => {
+  // 27/11/2026 — decision 3.5 (every header above its own data) and the three
+  // notes of an order, each in its own column.
+  it('every header sits above its own data — read back from the real workbook — and the three notes have their own columns', async () => {
+    const row = order({
+      status: 'collected', orderer_note: 'למסור למשה', guard_note: 'להתקשר לפני המסירה', delivery_note: 'נמסר לבת של דנה',
+      invoice_doc: { status: 'issued', number: '10951', url: null },
+    });
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await buildListWorkbook(CHIP_ORDERS_EXPORT, [row], NOW));
+    const ws = wb.worksheets[0]!;
+    const head = CHIP_ORDERS_EXPORT.columns.map((_, i) => ws.getRow(1).getCell(i + 1).value);
+    const data = CHIP_ORDERS_EXPORT.columns.map((_, i) => ws.getRow(2).getCell(i + 1).value);
+    expect(head).toEqual(CHIP_ORDERS_EXPORT.columns.map((c) => c.header));
+    expect(ws.getRow(1).cellCount).toBe(CHIP_ORDERS_EXPORT.columns.length);
+    const at = (h: string) => { expect(head, h).toContain(h); return data[head.indexOf(h)]; };
+    expect(at('מס׳ הזמנה')).toBe(1042);
+    expect(at('תאריך הזמנה')).toBe('23/11/2026');
+    expect(at('שם המזמין')).toBe('דנה כהן');
+    expect(at('טלפון')).toBe('0539300001');
+    expect(at('דירה')).toBe('12');
+    expect(at('בעלי הצ׳יפ')).toBe('דנה כהן, שרה לוי');
+    expect(at('כמות')).toBe(2);
+    expect(at('סה״כ (₪)')).toBe(100);
+    expect(at('חשבונית')).toBe('10951');
+    expect(at('הזמנת בדיקה')).toBe('לא');
+    expect(at('הערת המזמין')).toBe('למסור למשה');
+    expect(at('הערה לשומר')).toBe('להתקשר לפני המסירה');
+    expect(at('הערת מסירה')).toBe('נמסר לבת של דנה');
+  });
+});
+
 describe('text the embedded fonts can draw', () => {
   it('Hebrew, Latin, digits and the signs of the lists pass as they are', () => {
     const plain = 'דירה 12 · צ׳יפ מס׳ A1-B2 (סה״כ ₪1,250.50) – עד 24/11/2026 — ראו…';
@@ -198,7 +230,8 @@ describe('the PDF file of a list', () => {
 
     // Hebrew is painted back to front…
     expect(lines).toContain(rev('דנה כהן'));
-    expect(lines).toContain(rev('שם המזמין'));
+    // 17 columns since the three notes (27/11/2026): a two-word header may break.
+    expect(lines.some((l) => l === rev('שם המזמין') || l === rev('המזמין'))).toBe(true);
     // …a phone, a foreign phone with its "+", a date, an amount and a number are not.
     for (const asIs of ['0539300001', '+447911123456', '23/11/2026', '26/11/2026 10:00', '1042', '52.5', '100', '7']) {
       expect(lines, asIs).toContain(asIs);
@@ -214,22 +247,30 @@ describe('the PDF file of a list', () => {
     expect(hasText('Mizrahi')).toBe(true);
     expect(hasText(rev('Yossi'))).toBe(false);
     // The tags in words; a cell with nothing to say is a dash.
-    expect(hasText(` ,${rev('בדיקה')}`), 'בדיקה,').toBe(true);
+    expect(hasText(`,${rev('בדיקה')}`), 'בדיקה,').toBe(true);
     expect(hasText(rev('אומת')), 'אומת').toBe(true);
     expect(lines).toContain('—');
 
     // Right to left: the first column is the right-most, every next one further left.
     // (The header row = the lines on the baseline of one of its labels — a
     // header that breaks has its FIRST words there, the end of its visual form.)
-    const headY = painted.find((p) => p.text === rev('שם המזמין'))!.y;
+    const headY = painted.find((p) => p.text === rev('דירה'))!.y;
     const headRow = painted.filter((p) => Math.abs(p.y - headY) < 0.01);
     expect(headRow).toHaveLength(CHIP_ORDERS_EXPORT.columns.length);
+    // Two broken headers may begin with the same word ("הערת המזמין", "הערת
+    // מסירה"): each column takes the right-most label not taken yet.
+    const taken = new Set<number>();
     const headerX = CHIP_ORDERS_EXPORT.columns.map((c) => {
       // "סה״כ (₪)": the sign and the brackets are not plain Hebrew
-      const hits = headRow.filter((p) => p.text !== null && p.text !== '' && toVisual(c.header).endsWith(p.text));
-      expect(hits, c.header).toHaveLength(1);
-      return hits[0]!.x;
+      const hits = headRow
+        .map((p, i) => ({ p, i }))
+        .filter(({ p, i }) => !taken.has(i) && p.text !== null && p.text !== '' && toVisual(c.header).endsWith(p.text))
+        .sort((a, b) => b.p.x - a.p.x);
+      expect(hits.length, c.header).toBeGreaterThan(0);
+      taken.add(hits[0]!.i);
+      return hits[0]!.p.x;
     });
+    expect(taken.size).toBe(CHIP_ORDERS_EXPORT.columns.length);
     expect([...headerX].sort((a, b) => b - a)).toEqual(headerX);
 
     // The page number, in words.

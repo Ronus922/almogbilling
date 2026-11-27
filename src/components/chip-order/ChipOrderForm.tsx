@@ -122,6 +122,9 @@ interface SavedOrder {
   leases: Map<number, { file: File; key: string }>;
   /** The orderer's phone as the processor wants it (3-D Secure). */
   holderPhone: string;
+  /** The agreement boxes were ticked in that save (decision 3.5, 27/11/2026):
+   *  the server opens no payment window for the order before they are. */
+  consented: boolean;
   /** The rows as saved — the confirmation's summary. */
   confirmed: ConfirmedRow[];
 }
@@ -593,6 +596,7 @@ export function ChipOrderForm({
           total: priced,
           unitPrice: chips > 0 ? priced / chips : pricing.unitPrice,
           hash: sentHash,
+          consented: v.agree && (!v.rows.some((r) => r.role === 'tenant') || v.agreeRent),
           leases,
           holderPhone: cardHolderPhone(toPortalE164(v.phone)),
           confirmed: v.rows.map((r) => ({ apartment: r.apt, name: r.name.trim(), role: r.role, qty: r.qty })),
@@ -659,6 +663,9 @@ export function ChipOrderForm({
   /** After an automatic save: the card fields follow the saved order — opened
    *  the first time, opened again when its total (or the order) changed. */
   async function syncSession(order: SavedOrder): Promise<void> {
+    // Before the agreement boxes are ticked the server opens no window: the
+    // fields open with the save that records them.
+    if (!order.consented) return;
     const p = phaseRef.current;
     if (p === 'opening') {
       reopenWanted.current = true;
@@ -925,7 +932,7 @@ export function ChipOrderForm({
     : secure3d ? CARD_TEXT.secure3d
       : phase === 'opening' ? CARD_TEXT.loading
         : phase === 'verifying' ? CARD_TEXT.verifying
-          : cardNote ?? (phase === 'none' ? CARD_TEXT.idle : null);
+          : cardNote ?? (phase === 'none' ? (saved && !saved.consented ? CARD_TEXT.consent : CARD_TEXT.idle) : null);
   const buttonBusy = busy || PHASE_BUSY.includes(phase);
   const buttonText = CARD_BUTTON[phase];
 

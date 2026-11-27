@@ -314,6 +314,8 @@ describe('the Orders tab as a file: Excel, the print view and the PDF share thes
     expect(CHIP_ORDERS_EXPORT.columns.map((c) => c.header)).toEqual([
       'מס׳ הזמנה', 'תאריך הזמנה', 'שם המזמין', 'טלפון', 'תגיות', 'דירה', 'בעלי הצ׳יפ', 'כמות', 'סה״כ (₪)', 'תשלום', 'חשבונית',
       'סטטוס', 'יעד להכנה', 'הזמנת בדיקה',
+      // The three notes of an order (27/11/2026), each its own column.
+      'הערת המזמין', 'הערה לשומר', 'הערת מסירה',
     ]);
     // "הזמנות צ׳יפים", not "… פתוחות": the tab lists the reception orders too, and those are collected.
     expect(CHIP_ORDERS_EXPORT).toMatchObject({ title: 'הזמנות צ׳יפים', sheet: 'הזמנות צ׳יפים', file: 'chip-orders' });
@@ -351,7 +353,7 @@ describe('the Orders tab as a file: Excel, the print view and the PDF share thes
     // An order with no tag: the tags cell is blank, not an empty text — and so
     // are its payment (a row of the former processor) and its invoice (none).
     expect(cells(2)).toEqual([
-      1042, '23/11/2026', 'דנה כהן', '0539300001', null, '012', 'דנה כהן, שרה לוי', 3, 157.5, null, null, 'שויכו 1 מתוך 3', '26/11/2026 10:00', 'לא',
+      1042, '23/11/2026', 'דנה כהן', '0539300001', null, '012', 'דנה כהן, שרה לוי', 3, 157.5, null, null, 'שויכו 1 מתוך 3', '26/11/2026 10:00', 'לא', null, null, null,
     ]);
     // A name typed like a formula opens as text — also where it stands in for
     // the people of an order with no holder lines; a foreign phone keeps its
@@ -360,15 +362,15 @@ describe('the Orders tab as a file: Excel, the print view and the PDF share thes
     const formula = '\'=HYPERLINK("http://x","y")';
     expect(cells(3)).toEqual([
       1043, '23/11/2026', formula, '\'+447911123456', 'בדיקה, טלפון לא אומת, הודעה נכשלה', '14', formula, 1, 50, 'בדיקה, ללא חיוב', null,
-      'מוכן לאיסוף', null, 'כן',
+      'מוכן לאיסוף', null, 'כן', null, null, null,
     ]);
     // The reception order: tagged "קבלה", paid in cash, its invoice number, collected, a blank phone and a blank due date.
     expect(cells(4)).toEqual([
-      1044, '23/11/2026', 'אורח בדיקה', null, 'קבלה', '20', 'אורח בדיקה', 2, 100, 'מזומן', '10023', 'נאסף', null, 'לא',
+      1044, '23/11/2026', 'אורח בדיקה', null, 'קבלה', '20', 'אורח בדיקה', 2, 100, 'מזומן', '10023', 'נאסף', null, 'לא', null, null, null,
     ]);
     // The refunded web order: "זוכה", and no invoice number (its document failed).
     expect(cells(5)).toEqual([
-      1045, '23/11/2026', 'דנה כהן', '0539300001', null, '30', 'דנה כהן', 1, 50, 'זוכה', null, 'נדחה', null, 'לא',
+      1045, '23/11/2026', 'דנה כהן', '0539300001', null, '30', 'דנה כהן', 1, 50, 'זוכה', null, 'נדחה', null, 'לא', null, null, null,
     ]);
     expect(ws.rowCount).toBe(5);
     // The apartment stays text ("012" keeps its zero); the amount is a number with two decimals.

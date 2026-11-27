@@ -21,8 +21,10 @@ export type ChipOrderStatus =
   | 'collected'
   | 'rejected';
 
-/** Open = still in the Orders tab: paid (assigning) or ready. A row leaves the
- *  tab once collected or rejected. */
+/** Open = paid (assigning) or ready: chips may still be issued and notes
+ *  written. A rejected web order leaves the Orders tab; a collected one stays
+ *  there, after the open orders (27/11/2026 — its delivery note is read in
+ *  its row). */
 const OPEN_CHIP_ORDER_STATUSES: readonly ChipOrderStatus[] = ['paid', 'approved', 'ready'];
 
 export function isOpenChipOrder(status: ChipOrderStatus): boolean {
@@ -262,8 +264,8 @@ export function isChipOrderOverdue(
 /** awaiting "ממתין לשיוך" · partial "שויכו X מתוך Y" · assigned "שויך" ·
  *  ready "מוכן לאיסוף" · collected "נאסף" · rejected "נדחה" · cancelled "בוטל"
  *  (the last four are the order's own status). X counts ACTIVE chips only. A
- *  collected order is in the Orders tab only when it is a reception order —
- *  paid and handed over in one go. `cancelled` is a RECEPTION order that was
+ *  collected order stays in the Orders tab (a reception order from
+ *  25/11/2026, a web order from 27/11/2026). `cancelled` is a RECEPTION order that was
  *  cancelled (25/11/2026): stored with the status `rejected`, shown "בוטל",
  *  and it stays in the tab; `rejected` is a web order that was rejected. */
 export type ChipOrderStage = 'awaiting' | 'partial' | 'assigned' | 'ready' | 'collected' | 'rejected' | 'cancelled';
@@ -300,8 +302,8 @@ export function chipOrderStageLabel(stage: ChipOrderStage, linked: number, order
 // ── Shapes the staff screen reads ──────────────────────────────────────────
 
 /** One row of /chips → "הזמנות": ONE APARTMENT of an open order (13/11/2026;
- *  until then a row was a whole order) — or of a reception order, which stays
- *  in the tab although it is collected (25/11/2026). */
+ *  until then a row was a whole order) — or of a collected one, which stays
+ *  in the tab (a reception order from 25/11/2026, a web order from 27/11/2026). */
 export interface ChipOrderRow {
   item_id: string;
   order_id: string;
@@ -331,6 +333,15 @@ export interface ChipOrderRow {
   /** A reception order made for EXTRA chips of a web order (chips added in
    *  that order's window beyond what was paid online): the web order's number. */
   extra_of_order_number: number | null;
+  /** The three notes of the order (27/11/2026, notes.ts) — the row's note
+   *  icons and the exports. Optional: a tab left open across a deploy. */
+  orderer_note?: string | null;
+  guard_note?: string | null;
+  delivery_note?: string | null;
+  delivery_note_by_name?: string | null;
+  delivery_note_at?: string | null;
+  /** The card numbers of the line's ACTIVE physical chips (the "נאסף" confirmation). */
+  chip_numbers?: string[];
   paid_at: string | null;
   due_at: string | null;
   created_at: string;
@@ -493,6 +504,15 @@ export interface ChipOrderWindowOrder {
   due_at: string | null;
   created_at: string;
   internal_note: string | null;
+  /** The three notes (27/11/2026, notes.ts): the orderer's (the public form),
+   *  the guard note (who and when), the delivery note (who and when). */
+  orderer_note: string | null;
+  guard_note: string | null;
+  guard_note_by_name: string | null;
+  guard_note_at: string | null;
+  delivery_note: string | null;
+  delivery_note_by_name: string | null;
+  delivery_note_at: string | null;
   /** A reception order: how it was paid ('cash_transfer'), who recorded the
    *  payment and when. All null on a web order. */
   payment_method: string | null;

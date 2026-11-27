@@ -58,7 +58,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const done = await markChipOrderCollected(
       id,
       { id: actor.id, name: actor.full_name ?? actor.username },
-      { via: 'pickup', collector: body.data.person },
+      { via: 'pickup', collector: body.data.person, deliveryNote: body.data.delivery_note ?? null },
     );
     if (!done) return NextResponse.json({ error: 'not_found' }, { status: 404 });
     return NextResponse.json({ ok: true });

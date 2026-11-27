@@ -245,7 +245,7 @@ d('issuing a chip at the reception, on the DB', () => {
     });
   });
 
-  it('the Orders tab lists a reception order although it is collected — after every open order — and a collected WEB order stays out', async () => {
+  it('the Orders tab lists a reception order although it is collected — after every open order — and so a collected WEB order (27/11/2026)', async () => {
     const web = await orders.createChipOrder(
       {
         fullName: 'מזמין מהאתר', phoneE164: '+972539322300', email: 'web@example.test', address: 'הרצל 1, חיפה 3300000', role: 'owner',
@@ -271,11 +271,14 @@ d('issuing a chip at the reception, on the DB', () => {
     expect(row.people).toEqual(['אורח ראשון', 'שוכר רשום']);
     // Every open row comes before every collected one.
     const firstCollected = rows.findIndex((r) => r.status === 'collected');
-    expect(rows.slice(firstCollected).every((r) => r.status === 'collected' && r.source === 'reception')).toBe(true);
+    expect(rows.slice(firstCollected).every((r) => r.status === 'collected' || r.status === 'rejected')).toBe(true);
 
-    // A web order that is collected leaves the tab, as always.
+    // A web order that is collected STAYS in the tab since 27/11/2026 (its
+    // delivery note is read there), among the closed ones; until then it left.
     await pool.query(`update public.chip_orders set status = 'collected', collected_at = now() where id = $1`, [web.id]);
-    expect((await orders.listOpenChipOrderRows()).some((r) => r.apartment_number === apt.web)).toBe(false);
+    const after = await orders.listOpenChipOrderRows();
+    expect(after.filter((r) => r.apartment_number === apt.web).map((r) => [r.source, r.status])).toEqual([['web', 'collected']]);
+    expect(after.findIndex((r) => r.apartment_number === apt.web)).toBeGreaterThanOrEqual(after.findIndex((r) => r.status === 'collected'));
   });
 
   it('no charge: NO order — a reception record keeps the details, and the chips point at it', async () => {

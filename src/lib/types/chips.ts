@@ -137,6 +137,9 @@ export interface ChipWithHolder extends Chip {
   /** How many chips this same person holds — (contact_id, resident_role), and
    *  for snapshot roles also the same holder_name. */
   holder_chip_count: number;
+  /** Decision 3.6 (27/11/2026): why this DISABLED chip may not be switched on
+   *  again — its order was cancelled or closed by hand. Null = it may. */
+  reactivation_lock?: string | null;
   /** Set only when the list query ran with a search term. */
   match_type?: ChipMatchType | null;
 }
