@@ -6,8 +6,9 @@ import { writeAudit } from '@/lib/db/audit';
 import { alertChipOrderAdmins } from './alerts';
 import { getCardOrderByNumber, listRecentCardSessions, recordCardFailure, recordCardPayment, type CardOrder } from '@/lib/db/chipOrderCard';
 import {
-  isApprovedCharge, lookupPaymentRequest, payplusConfigFor, type PayPlusConfig, type PayPlusMode, type PayPlusTransaction,
+  isApprovedCharge, lookupPaymentRequest, payplusConfigFor, viewTransactions, type PayPlusConfig, type PayPlusMode, type PayPlusTransaction,
 } from '@/lib/payplus/client';
+import { payplusChargeState } from './refund';
 
 // Chip orders — card payment through PayPlus: the rules both server paths
 // share (the callback and the lookup).
@@ -88,7 +89,47 @@ export type AppliedTransaction =
   /** A refused attempt — kept on the order when it still waits. */
   | { kind: 'failed' }
   /** Nothing of ours, or something that must not change an order. */
-  | { kind: 'ignored'; why: string };
+  | { kind: 'ignored'; why: string }
+  /** PayPlus could not be asked again before "paid" (decision 3.4): the order
+   *  keeps waiting, and a callback answers with an error so it is sent again. */
+  | { kind: 'unconfirmed' };
+
+/** What PayPlus shows NOW about a charge that would pay an order. */
+export type ChargeConfirmation =
+  | { kind: 'confirmed' }
+  /** cancelled — voided in full (no money moved); refunded — money went back;
+   *  not_approved — not an approved charge there; ambiguous — another live
+   *  charge and a refund nobody can tie to this one (refund.ts). */
+  | { kind: 'not_paid'; why: 'cancelled' | 'refunded' | 'not_approved' | 'ambiguous' }
+  | { kind: 'unknown' };
+
+/**
+ * Decision 3.4 (Ronen, 27/11/2026): before ANY path marks an order paid — the
+ * callback (on time, late or sent again), the order page's check, the hourly
+ * reconcile — the charge is read again from PayPlus, READ ONLY, whatever the
+ * notice or the session lookup said: Transactions/View by the transaction's
+ * own uid (approved, a charge, not cancelled), and the order's refunds by its
+ * number (payplusChargeState — a dashboard refund names the order number).
+ * Only `confirmed` pays the order. A refund PayPlus links only to the payment
+ * session is not looked for here (the session is the one being asked about);
+ * on a paid order the reversal check of every later notice finds it.
+ */
+export async function confirmChargeWithPayPlus(cfg: PayPlusConfig, tx: PayPlusTransaction, orderNumber: number): Promise<ChargeConfirmation> {
+  const viewed = await viewTransactions(cfg, { transactionUid: tx.uid });
+  if (viewed.kind === 'unknown') return { kind: 'unknown' };
+  const own = viewed.transactions.find((t) => t.uid === tx.uid);
+  if (!own) return { kind: 'unknown' };
+  if (own.cancelled) return { kind: 'not_paid', why: 'cancelled' };
+  if (own.statusCode !== '000' || own.type !== 'charge') return { kind: 'not_paid', why: 'not_approved' };
+  const state = await payplusChargeState(cfg, { transactionUid: tx.uid, orderNumber, pageRequestUid: null });
+  switch (state.kind) {
+    case 'charged': return { kind: 'confirmed' };
+    case 'cancelled': return { kind: 'not_paid', why: 'cancelled' };
+    case 'refunded': return { kind: 'not_paid', why: 'refunded' };
+    case 'ambiguous': return { kind: 'not_paid', why: 'ambiguous' };
+    case 'unknown': return { kind: 'unknown' };
+  }
+}
 
 /** What an admin reads as the reason of a refused attempt: the processor's own
  *  status code and text (never card data — none is read from the payload). */
@@ -144,6 +185,10 @@ const ANOMALY_TEXT: Record<string, string> = {
   amount_mismatch: 'התקבל חיוב בסכום שאינו סכום ההזמנה — ההזמנה לא סומנה „שולם”. יש לבדוק ב-PayPlus ולזכות.',
   wrong_environment: 'התקבל חיוב מסביבה שאינה של ההזמנה — לא הוחל.',
   no_session: 'התקבל חיוב שאינו שייך לאף חלון תשלום של ההזמנה — לא הוחל. יש לבדוק ב-PayPlus.',
+  payplus_cancelled: 'PayPlus מראה שהחיוב בוטל — ההזמנה לא סומנה „שולם” ולא הופק מסמך. אם צריך, המזמין משלם מחדש.',
+  payplus_refunded: 'PayPlus מראה זיכוי של החיוב — ההזמנה לא סומנה „שולם” ולא הופק מסמך. יש לבדוק ב-PayPlus.',
+  payplus_not_approved: 'PayPlus אינו מראה את החיוב כחיוב מאושר — ההזמנה לא סומנה „שולם” ולא הופק מסמך. יש לבדוק ב-PayPlus.',
+  payplus_ambiguous: 'PayPlus מראה יותר מחיוב אחד וזיכוי שלא ברור של איזה חיוב — ההזמנה לא סומנה „שולם” ולא הופק מסמך. יש לבדוק ב-PayPlus.',
 };
 
 /**
@@ -177,6 +222,31 @@ export async function applyPayPlusTransaction(cfg: PayPlusConfig, tx: PayPlusTra
   if (tx.currency && tx.currency !== 'ILS') {
     logger.error('[chip-order] payplus charge in a foreign currency — ignored', { orderNumber, source, currency: tx.currency });
     return { kind: 'ignored', why: 'currency' };
+  }
+
+  // Decision 3.4: an order that would become paid now is paid only once
+  // PayPlus, asked again, shows the charge approved and neither cancelled nor
+  // refunded. (The same transaction again on a paid order, and a second charge
+  // on one, go on below without asking.)
+  const current = await getCardOrderByNumber(orderNumber);
+  if (current && current.status === 'pending_payment' && current.card_transaction_uid !== tx.uid) {
+    let confirmed: ChargeConfirmation;
+    try {
+      confirmed = await confirmChargeWithPayPlus(cfg, tx, orderNumber);
+    } catch (e) {
+      logger.warn('[chip-order] payplus re-check before paid failed', { orderNumber, source, message: (e as Error).name });
+      confirmed = { kind: 'unknown' };
+    }
+    if (confirmed.kind === 'unknown') {
+      logger.warn('[chip-order] payplus did not confirm the charge before paid — the order keeps waiting', { orderNumber, source });
+      return { kind: 'unconfirmed' };
+    }
+    if (confirmed.kind === 'not_paid') {
+      const kind = `payplus_${confirmed.why}`;
+      logger.error('[chip-order] payplus shows the charge not standing — the order is NOT marked paid', { orderNumber, source, why: confirmed.why });
+      await auditAnomalyOnce(current.id, kind, tx, cfg, source);
+      return { kind: 'ignored', why: kind };
+    }
   }
 
   const outcome = await recordCardPayment({
@@ -267,6 +337,8 @@ export async function lookupCardPayment(
       const applied = await applyPayPlusTransaction(cfg, tx, 'payplus_lookup');
       if (applied.kind === 'paid') return { kind: 'paid', orderId: applied.orderId, transitioned: applied.transitioned };
       if (applied.kind === 'failed') refused = true;
+      // Voided in full in PayPlus (decision 3.4): no money moved — not a charge.
+      else if (applied.kind === 'ignored' && applied.why === 'payplus_cancelled') continue;
       else unknown = true; // approved-looking but not applied: a person must look
     }
   }
@@ -275,7 +347,7 @@ export async function lookupCardPayment(
 
 /** What a validated callback led to. `unconfirmed` — PayPlus could not be
  *  asked just now: the caller answers with an error so the notice is sent again. */
-export type AppliedCallback = AppliedTransaction | { kind: 'unconfirmed' };
+export type AppliedCallback = AppliedTransaction;
 
 /**
  * A callback whose signature was checked.

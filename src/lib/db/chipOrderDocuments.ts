@@ -116,6 +116,8 @@ export async function claimDueDocuments(limit: number, staleMinutes = 10, orderI
         where ((status = 'pending' and next_attempt_at <= now())
            or (status = 'issuing' and claimed_at < now() - make_interval(mins => $2)))
           and ($3::uuid is null or order_id = $3::uuid)
+          -- Never a document of an order closed by hand ("סגירה ידנית", 27/11/2026).
+          and not exists (select 1 from public.chip_orders o where o.id = order_id and o.closed_by_hand_at is not null)
         -- An invoice before the credit that cancels it (both due at once).
         order by next_attempt_at, created_at
         limit $1
@@ -158,6 +160,7 @@ export async function hasDueDocuments(staleMinutes = 10, orderId: string | null 
         where ((status = 'pending' and next_attempt_at <= now())
            or (status = 'issuing' and claimed_at < now() - make_interval(mins => $1)))
           and ($2::uuid is null or order_id = $2::uuid)
+          and not exists (select 1 from public.chip_orders o where o.id = order_id and o.closed_by_hand_at is not null)
      ) as due`,
     [staleMinutes, orderId],
   );
@@ -250,7 +253,9 @@ export async function releaseDocumentsOfOrder(orderId: string): Promise<number> 
     `update public.chip_order_documents
         set status = 'pending', next_attempt_at = now(),
             attempts = case when status = 'failed' then 0 else attempts end, updated_at = now()
-      where order_id = $1 and (status = 'failed' or (status = 'pending' and next_attempt_at > now()))`,
+      where order_id = $1 and (status = 'failed' or (status = 'pending' and next_attempt_at > now()))
+        -- Never a document of an order closed by hand ("סגירה ידנית", 27/11/2026).
+        and not exists (select 1 from public.chip_orders o where o.id = $1 and o.closed_by_hand_at is not null)`,
     [orderId],
   );
   return r.rowCount ?? 0;
@@ -270,7 +275,9 @@ export async function retryFailedDocuments(orderId: string): Promise<number> {
   const r = await query(
     `update public.chip_order_documents
         set status = 'pending', attempts = 0, next_attempt_at = now(), updated_at = now()
-      where order_id = $1 and status = 'failed'`,
+      where order_id = $1 and status = 'failed'
+        -- Never a document of an order closed by hand ("סגירה ידנית", 27/11/2026).
+        and not exists (select 1 from public.chip_orders o where o.id = $1 and o.closed_by_hand_at is not null)`,
     [orderId],
   );
   return r.rowCount ?? 0;

@@ -128,6 +128,9 @@ const APT_CONTACT = `995${tag}8`; // 26/11/2026: the contact box of the public f
 const APT_WEBCX = `995${tag}9`; // 27/11/2026: "ביטול וזיכוי" of a web order the card paid
 const APT_REV = `996${tag}1`; // 27/11/2026: a web order PayPlus showed cancelled
 const APT_TAB = `996${tag}2`; // 27/11/2026: "ביטול וזיכוי" in a contact's chips tab
+const APT_DLV = `996${tag}3`; // 27/11/2026 (evening): a delivered web order, through its chip
+const APT_L1 = `996${tag}4`; // 27/11/2026 (evening, 2.2): two renters' leases in one submit
+const APT_L2 = `996${tag}5`;
 const APT_LIMIT_MSG = 'ניתן להזמין עד 10 כרטיסים לדירה בהזמנה אחת. לכמות גדולה יותר יש לפנות להנהלת הבניין.';
 const PUB_NOTE = 'אני מבקש למסור את הכרטיסים לשכן מדירה 5';
 /** The contact card's box (26/11/2026): the contact details are the first row's. */
@@ -471,7 +474,7 @@ function fieldSizes(issue: Locator): Promise<string[]> {
 }
 
 test.beforeAll(async () => {
-  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2, APT_T1, APT_T2, APT_CH, APT_REC, APT_MGR, APT_NOORD, APT_EXTRA, APT_LEASE, APT_RDY, APT_TRANSFER, APT_LEGACY, APT_CARD, APT_CONTACT, APT_WEBCX, APT_REV, APT_TAB]) {
+  for (const apt of [APT, APT_B, APT_OLD, APT_PUB, APT_SKIP, APT_LAY, APT_LAY_B, APT_GONE, APT_TAKEN, APT_ROW, APT_ROW_B, APT_S1, APT_S2, APT_T1, APT_T2, APT_CH, APT_REC, APT_MGR, APT_NOORD, APT_EXTRA, APT_LEASE, APT_RDY, APT_TRANSFER, APT_LEGACY, APT_CARD, APT_CONTACT, APT_WEBCX, APT_REV, APT_TAB, APT_DLV, APT_L1, APT_L2]) {
     const c = await pool.query<{ id: string }>(`insert into public.contacts (apartment_number) values ($1) returning id`, [apt]);
     made.contacts[apt] = c.rows[0]!.id;
   }
@@ -790,7 +793,7 @@ test.describe.serial('staff: the issue window', () => {
     await expect(issue.getByRole('checkbox', { name: 'החיוב בוצע' })).toHaveCount(0);
     await expect(issue.getByTestId('chip-reception-payment')).toHaveCount(0);
     await expect(issue.getByTestId('chip-reception-orderer')).toHaveCount(0);
-    await expect(issue.getByLabel('הערה', { exact: true })).toBeVisible();
+    await expect(issue.getByLabel(/^הערה פנימית/)).toBeVisible();
     const readyBtn = section.getByRole('button', { name: 'מוכן לאיסוף' });
     const reason = section.getByTestId('chip-order-ready-reason');
     const saveBtn = issue.getByTestId('chip-issue-save');
@@ -942,16 +945,18 @@ test.describe.serial('staff: the issue window', () => {
     await expect(who).toHaveCount(4);
     await expect(who.nth(1)).toContainText('שרה שוכרת');
     for (const o of await who.all()) await expect(o).toHaveAttribute('aria-checked', 'false');
-    await expect(collect.getByRole('button', { name: 'סמן כנאסף' })).toBeEnabled(); // nobody has to be named
+    await expect(collect.getByRole('button', { name: 'אישור מסירה' })).toBeEnabled(); // nobody has to be named
     await who.nth(1).click();
     await expect(who.nth(1)).toHaveAttribute('aria-checked', 'true');
     expect(await status()).toBe('ready'); // nothing happened yet
-    await collect.getByRole('button', { name: 'סמן כנאסף' }).click();
+    await collect.getByRole('button', { name: 'אישור מסירה' }).click();
     await expect(issue).toHaveCount(0);
     await expect(toast(page, 'סומן כנאסף')).toBeVisible();
     await expect.poll(status).toBe('collected');
     expect((await pool.query(`select collected_by_name, handed_over_via from public.chip_orders where id = $1`, [order.id])).rows[0])
       .toEqual({ collected_by_name: 'שרה שוכרת', handed_over_via: 'management' });
+    // A handed-over web order leaves the tab (13/11/2026 — Ronen again,
+    // 27/11/2026 evening): it lives on in the chips tab, through its chips.
     await expect(orderRow(page, APT)).toHaveCount(0);
     await expect(orderRow(page, APT_B)).toHaveCount(0);
 
@@ -1126,7 +1131,7 @@ test.describe('staff: the look of the issue window', () => {
       // A wide window stretches the fields, never a sentence: a line of the
       // note stays as long as in the reference's 780px panel (676px), while
       // its box keeps the width of the row above it.
-      const note = await issue.getByLabel('הערה', { exact: true }).evaluate((el) => {
+      const note = await issue.getByLabel(/^הערה פנימית/).evaluate((el) => {
         const cs = getComputedStyle(el);
         return { box: el.getBoundingClientRect().width, line: el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) };
       });
@@ -1467,7 +1472,7 @@ test.describe('staff: issuing at the reception', () => {
     await expect(rb.getByTestId('chip-order-lease-link')).toHaveAttribute('href', leaseHref);
     await expect(gb.getByLabel('שם מלא')).toHaveValue('אורח קבלה');
     await expect(gb.getByTestId('chip-alloc-counter')).toHaveText('שויכו 1 מתוך 1');
-    for (const field of [rb.getByLabel('שם מלא'), rb.getByLabel('טלפון נייד'), rb.getByLabel('מייל'), gb.getByLabel('שם מלא'), rb.getByLabel(/^מספר צ׳יפ/), issue.getByLabel('הערה', { exact: true })]) {
+    for (const field of [rb.getByLabel('שם מלא'), rb.getByLabel('טלפון נייד'), rb.getByLabel('מייל'), gb.getByLabel('שם מלא'), rb.getByLabel(/^מספר צ׳יפ/), issue.getByLabel(/^הערה פנימית/)]) {
       await expect(field).toBeDisabled();
     }
     await expect(issue.getByRole('button', { name: 'הוסף בעל צ׳יפ' })).toBeDisabled();
@@ -1974,6 +1979,8 @@ test.describe.serial('staff: extra chips of a web order, and cancelling the rece
     await expect(save).toBeEnabled();
 
     await save.click();
+    // Every chip of the order assigned: the save asks first (decision 3.2, 27/11/2026).
+    await page.getByTestId('chip-order-ask-ready').getByTestId('chip-order-ask-ready-no').click();
     await expect(issue).toHaveCount(0); // a save closes the window (25/11/2026)
     const made1 = await expect.poll(async () => (await receptionOrder()).length).toBe(1).then(receptionOrder);
     const rec = made1[0]!;
@@ -2360,6 +2367,8 @@ test.describe('staff: the Orders tab', () => {
     await rowB.click();
     await addChip(blocks.nth(1), `RW${tag}2`);
     await issue.getByTestId('chip-issue-save').click();
+    // The order's last chip: the save asks first (decision 3.2) — "לא עכשיו" only saves.
+    await page.getByTestId('chip-order-ask-ready').getByTestId('chip-order-ask-ready-no').click();
     await expect(issue).toHaveCount(0);
 
     // Every chip of the order is issued and saved: only now the button is
@@ -2408,9 +2417,9 @@ test.describe('staff: the Orders tab', () => {
     await expect(dialog).toContainText(`לסמן את הזמנה ${o.orderNumber} כנאספה?`);
     await expect(dialog).toContainText('לא נשלחת הודעה למזמין');
     await expect(issue).toHaveCount(0);
-    await dialog.getByRole('button', { name: 'סמן כנאסף' }).click();
+    await dialog.getByRole('button', { name: 'אישור מסירה' }).click();
     await expect(dialog).toHaveCount(0);
-    // Collected = out of the open list: both cards leave.
+    // Collected = out of the tab: both cards leave (27/11/2026 evening, Ronen).
     await expect(page.getByTestId('chip-order-card').filter({ hasText: APT_ROW })).toHaveCount(0);
     await expect(page.getByTestId('chip-order-card').filter({ hasText: APT_ROW_B })).toHaveCount(0);
     expect(await status()).toBe('collected');
@@ -2485,10 +2494,12 @@ test.describe('staff: the Orders tab', () => {
     const dialog = page.getByRole('alertdialog');
     await expect(dialog).toContainText(`לסמן את הזמנה ${o.orderNumber} כנאספה?`);
     await expect(issue).toHaveCount(0);
-    await dialog.getByRole('button', { name: 'סמן כנאסף' }).click();
+    await dialog.getByRole('button', { name: 'אישור מסירה' }).click();
     await expect(dialog).toHaveCount(0);
     await expect(toast(page, 'סומן כנאסף')).toBeVisible();
     await expect.poll(status).toBe('collected');
+    // A handed-over web order leaves the tab (27/11/2026 evening, Ronen); the
+    // older orders keep their rows.
     await expect.poll(() => apiRowIndex(page, o.item)).toBe(-1);
     await expect(orderRow(page, APT_RDY)).toHaveCount(2);
     for (const x of older) expect(await apiRowIndex(page, x.item)).toBeGreaterThanOrEqual(0);
@@ -2540,7 +2551,7 @@ test.describe('staff: the Orders tab', () => {
     // number after the sum (26/11/2026).
     const headers = [
       'מס׳ הזמנה', 'תאריך הזמנה', 'שם המזמין', 'טלפון', 'תגיות', 'דירה', 'בעלי הצ׳יפ', 'כמות', 'סה״כ (₪)', 'תשלום', 'חשבונית', 'סטטוס',
-      'יעד להכנה', 'הזמנת בדיקה',
+      'יעד להכנה', 'הזמנת בדיקה', 'הערת המזמין', 'הערה לשומר', 'הערת מסירה',
     ];
     const excel = await download(page, 'chip-orders-export');
     expect(excel.name).toMatch(/^chip-orders_\d{4}-\d{2}-\d{2}\.xlsx$/);
@@ -2558,6 +2569,7 @@ test.describe('staff: the Orders tab', () => {
     expect(cells(2)).toEqual([
       s1.orderNumber, dateInIsrael(ordered), 'גדעון חיפוש', '0539300011', null, APT_S1, 'גדעון חיפוש, רינה שוכרת', 3, 150, null, null, 'ממתין לשיוך',
       expect.stringMatching(/^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/), 'לא',
+      null, null, null, // the three notes (27/11/2026) — none on this order
     ]);
 
     // "הדפסה": the print dialog opens on a print-only table of the same rows —
@@ -2590,7 +2602,7 @@ test.describe('staff: the Orders tab', () => {
     const lines = ink.map((p) => p.text);
     expect(lines).toContain(rev('הזמנות צ׳יפים')); // the title: the tab
     expect(lines.some((l) => /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2} /.test(l!) && l!.endsWith(rev('תאריך הפקה:'))), 'the date, in its reading order').toBe(true);
-    // Fourteen columns since 26/11/2026: a value wider than its column wraps at
+    // Seventeen columns since 27/11/2026: a value wider than its column wraps at
     // a space, so a name is read back word by word — every word painted back to
     // front, wherever its line broke (the people's list is "a, b").
     const words = new Set(lines.flatMap((l) => l!.split(' ')).map((w) => w.replace(/^,|,$/g, '')));
@@ -2642,8 +2654,34 @@ test.describe('staff: the Orders tab', () => {
       // and its invoice before the status (26/11/2026).
       const heads = table.getByTestId('chip-orders-head').locator('[data-col]');
       await expect(heads).toHaveText(['מס׳ הזמנה', 'מזמין', 'תגיות', 'דירה', 'כמות', 'תאריך הזמנה', 'תשלום', 'חשבונית', 'סטטוס', 'פעולה']);
-      const headX = await heads.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().right));
-      expect([...headX].sort((a, b) => b - a), 'the first column is the right-most').toEqual(headX);
+      // Right to left. Decision 3.5 (27/11/2026): where the card is narrower
+      // than the one-line row (the menu panel open, up to ~1600px) the row
+      // takes a second line — the date under the order number, the tags under
+      // the orderer; the other columns stay on the first line, in order.
+      const headLines = async () => {
+        const all = await heads.evaluateAll((els) => els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { col: el.getAttribute('data-col')!, right: r.right, top: Math.round(r.top) };
+        }));
+        // The action header spans both lines; a header below the order
+        // number's own box is on the second line.
+        const num = await heads.first().evaluate((el) => el.getBoundingClientRect().bottom);
+        const second = all.filter((h) => h.top >= num - 1);
+        return { first: all.filter((h) => !second.includes(h)), second, all };
+      };
+      const headOrder = async (at: string) => {
+        const { first, second, all } = await headLines();
+        const rights = first.map((h) => h.right);
+        expect([...rights].sort((a, b) => b - a), `the first column is the right-most ${at}`).toEqual(rights);
+        expect(first[0]!.col).toBe('number');
+        if (second.length === 0) return 'one line';
+        const at2 = (col: string) => all.find((h) => h.col === col)!.right;
+        expect(second.map((h) => h.col).sort(), `the second line ${at}`).toEqual(['date', 'tags']);
+        expect(Math.abs(at2('date') - at2('number')), `the date under the number ${at}`).toBeLessThanOrEqual(0.5);
+        expect(Math.abs(at2('tags') - at2('orderer')), `the tags under the orderer ${at}`).toBeLessThanOrEqual(0.5);
+        return 'two lines';
+      };
+      await headOrder('at 1440px');
 
       // The orderer's column: the name, the role and the phone under it — and
       // no tag. Every tag of the row stands in the tags column.
@@ -2671,11 +2709,25 @@ test.describe('staff: the Orders tab', () => {
       // Every value under its header — the cell in the header's track, with
       // the header's alignment, and its content where the label is. Measured
       // with the menu panel open and closed, and at a laptop's width.
+      // Decision 3.5 (27/11/2026): from 1280px up the table FITS its card —
+      // no sideways scroll inside it, the menu panel open (the row takes a
+      // second line instead: the date under the number, the tags under the orderer).
+      const fitsCard = () => table.evaluate((el) => ({ table: el.scrollWidth, card: el.parentElement!.clientWidth }));
+      const fits = async (at: string) => {
+        const m = await fitsCard();
+        expect(m.table, `the table fits its card ${at} (${m.table}px in ${m.card}px)`).toBeLessThanOrEqual(m.card);
+      };
       expect(await offItsHeader(table), 'at 1440px').toEqual([]);
+      await fits('at 1440px');
       await page.setViewportSize({ width: 1280, height: 800 });
       expect(await offItsHeader(table), 'at 1280px').toEqual([]);
+      await fits('at 1280px');
+      await headOrder('at 1280px');
       await page.setViewportSize({ width: 1920, height: 1000 });
       expect(await offItsHeader(table), 'at 1920px').toEqual([]);
+      await fits('at 1920px');
+      // A wide screen has room for the row on one line.
+      expect(await headOrder('at 1920px')).toBe('one line');
       // Narrower than the table (1024px with the menu panel open): the table
       // scrolls inside the card, and the columns still answer their headers —
       // the pinned action column too.
@@ -2779,11 +2831,14 @@ test.describe('staff: the Orders tab', () => {
     await search.fill(APT_CH);
     await expect(rows).toHaveCount(3);
     await expect(rows.nth(0)).toContainText(`EX${tag}1`);
-    const headers = ['מחזיק', 'דירה', 'תפקיד', 'מספר צ׳יפ', 'סוג', 'סטטוס', 'הונפק', 'מנפיק'];
+    // From 27/11/2026 the chip's order follows: its number and its three
+    // notes (empty here — these chips were issued without an order).
+    const headers = ['מחזיק', 'דירה', 'תפקיד', 'מספר צ׳יפ', 'סוג', 'סטטוס', 'הונפק', 'מנפיק', 'מס׳ הזמנה', 'הערת המזמין', 'הערה לשומר', 'הערת מסירה'];
+    const none = [null, null, null, null];
     const sheet = [
-      ['בעלים ייצוא', APT_CH, 'בעל דירה', `EX${tag}1`, 'כרטיס', 'פעיל', '03/11/2026', 'בודק ייצוא'],
-      ['בעלים ייצוא', APT_CH, 'בעל דירה', `EX${tag}2`, 'אפליקציה', 'לא פעיל', '02/11/2026', 'בודק ייצוא'],
-      ['אורח ייצוא', APT_CH, 'אורח', `EX${tag}3`, 'כרטיס', 'פעיל', '01/11/2026', 'בודק ייצוא'],
+      ['בעלים ייצוא', APT_CH, 'בעל דירה', `EX${tag}1`, 'כרטיס', 'פעיל', '03/11/2026', 'בודק ייצוא', ...none],
+      ['בעלים ייצוא', APT_CH, 'בעל דירה', `EX${tag}2`, 'אפליקציה', 'לא פעיל', '02/11/2026', 'בודק ייצוא', ...none],
+      ['אורח ייצוא', APT_CH, 'אורח', `EX${tag}3`, 'כרטיס', 'פעיל', '01/11/2026', 'בודק ייצוא', ...none],
     ];
 
     const excel = await download(page, 'chips-export');
@@ -3140,8 +3195,8 @@ test.describe.serial('test mode', () => {
     expect(posted[0]).not.toContain('"trackingToken"');
     expect(other).toEqual([]);
 
-    const row = (await pool.query<{ id: string; order_number: number; is_test: boolean; status: string; total: number; grow_process_id: string | null; rt: boolean; address_zip: string; internal_note: string | null; phone_verified: boolean | null; email: string | null; full_name: string }>(
-      `select id, order_number, is_test, status, total::float8 as total, grow_process_id, renter_terms_accepted_at is not null as rt, address_zip, internal_note, phone_verified, email, full_name
+    const row = (await pool.query<{ id: string; order_number: number; is_test: boolean; status: string; total: number; grow_process_id: string | null; rt: boolean; address_zip: string; internal_note: string | null; orderer_note: string | null; phone_verified: boolean | null; email: string | null; full_name: string }>(
+      `select id, order_number, is_test, status, total::float8 as total, grow_process_id, renter_terms_accepted_at is not null as rt, address_zip, internal_note, orderer_note, phone_verified, email, full_name
          from public.chip_orders where phone_e164 = $1 order by created_at desc limit 1`, [phoneE164],
     )).rows[0]!;
     // The orderer is stored exactly as before: the first row's name, and the contact phone + email.
@@ -3149,7 +3204,7 @@ test.describe.serial('test mode', () => {
     state.orderId = row.id;
     state.orderNumber = row.order_number;
     // phone_verified NULL = an order made with no phone code step (26/11/2026).
-    expect(row).toMatchObject({ is_test: true, status: 'paid', total: 8 * PRICE, grow_process_id: null, rt: true, address_zip: '3300000', internal_note: PUB_NOTE, phone_verified: null });
+    expect(row).toMatchObject({ is_test: true, status: 'paid', total: 8 * PRICE, grow_process_id: null, rt: true, address_zip: '3300000', orderer_note: PUB_NOTE, internal_note: null, phone_verified: null });
     expect((await pool.query(`select 1 from public.portal_otp_codes where phone_e164 = $1`, [phoneE164])).rowCount).toBe(0);
 
     // The server refuses an apartment past 10 over its rows (6 + 5) with the
@@ -3223,8 +3278,10 @@ test.describe.serial('test mode', () => {
     const section = issue.getByTestId('chip-order-section');
     await expect(section).toContainText('בדיקה, ללא חיוב');
     await expect(section).toContainText(`כרטיס בקרת כניסה — 8×${PRICE}₪`);
-    // The orderer's "הערות" is the window's "הערה", editable as always.
-    await expect(issue.getByLabel('הערה', { exact: true })).toHaveValue(PUB_NOTE);
+    // The orderer's "הערות" is the order's "הערת המזמין" (27/11/2026): read only in
+    // the window; the staff's internal note starts empty.
+    await expect(issue.getByTestId('chip-order-orderer-note')).toContainText(PUB_NOTE);
+    await expect(issue.getByLabel(/^הערה פנימית/)).toHaveValue('');
 
     for (let k = 1; k <= 7; k++) await addChip(owner, `T${tag}${k}`);
     await expect(owner.getByTestId('chip-alloc-counter')).toHaveText('שויכו 7 מתוך 7');
@@ -3233,6 +3290,7 @@ test.describe.serial('test mode', () => {
     // The save closes the window (25/11/2026) and the row behind it followed;
     // opened again, nothing waits any more.
     await issue.getByTestId('chip-issue-save').click();
+    await page.getByTestId('chip-order-ask-ready').getByTestId('chip-order-ask-ready-no').click(); // decision 3.2
     await expect(issue).toHaveCount(0);
     await expect(row.getByTestId('chip-order-stage')).toHaveText('שויך');
     await row.click();
@@ -3331,12 +3389,12 @@ test.describe.serial('test mode', () => {
     expect(saves).toHaveLength(3);
     expect(saves.map((s) => s.includes('"trackingToken"'))).toEqual([false, false, true]);
 
-    const row = (await pool.query<{ id: string; is_test: boolean; phone_verified: boolean | null; status: string; internal_note: string | null }>(
-      `select id, is_test, phone_verified, status, internal_note from public.chip_orders where phone_e164 = $1`, [skipE164],
+    const row = (await pool.query<{ id: string; is_test: boolean; phone_verified: boolean | null; status: string; orderer_note: string | null }>(
+      `select id, is_test, phone_verified, status, orderer_note from public.chip_orders where phone_e164 = $1`, [skipE164],
     )).rows;
     expect(row).toHaveLength(1); // one order, updated — never a second one
     skipState.orderId = row[0]!.id;
-    expect(row[0]).toMatchObject({ is_test: true, phone_verified: null, status: 'paid', internal_note: NOTE_AFTER });
+    expect(row[0]).toMatchObject({ is_test: true, phone_verified: null, status: 'paid', orderer_note: NOTE_AFTER });
     // No phone code at all.
     expect((await pool.query(`select 1 from public.portal_otp_codes where phone_e164 = $1`, [skipE164])).rowCount).toBe(0);
 
@@ -3469,6 +3527,82 @@ test.describe.serial('test mode', () => {
     await ctx.close();
   });
 
+  // 2.2 (Ronen, 27/11/2026): a lease stays in the browser until the order
+  // continues to payment, and travels with it — checked the moment it is
+  // chosen, named with a way to replace it, the upload's progress on the way.
+  test('the leases: checked the moment they are chosen, named with "החלפה", kept in the browser until the press — then ONE save carries both renters\' files (two apartments) with its progress line, and the order holds both', async ({ browser }) => {
+    const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] }, viewport: { width: 390, height: 844 } });
+    const page = await ctx.newPage();
+    const posts: string[] = [];
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/public/chip-order') posts.push(r.postDataBuffer()?.toString('latin1') ?? '');
+    });
+    await page.goto(new URL(state.link).pathname + new URL(state.link).search);
+    const digits = `05396${String(Date.now()).slice(-5)}`;
+    const rows = page.getByTestId('chip-order-line');
+    const renter = async (i: number, apt: string, name: string) => {
+      const row = rows.nth(i);
+      await row.getByRole('radio', { name: 'שוכר' }).click();
+      await row.getByLabel('שם מלא').fill(name);
+      await row.getByRole('button', { name: `דירה, שורה ${i + 1}` }).click();
+      await page.getByLabel('חיפוש לפי מספר דירה').fill(apt);
+      await page.getByLabel('חיפוש לפי מספר דירה').press('Enter');
+      await expect(row.getByRole('button', { name: `דירה, שורה ${i + 1}` })).toHaveText(`דירה ${apt}`);
+      await row.getByLabel('טלפון נייד').fill(digits);
+      await row.getByLabel('תאריך סיום החוזה').fill('2030-01-31');
+      return row;
+    };
+    const first = await renter(0, APT_L1, 'רונית שוכרת');
+    await first.getByLabel('מייל').fill('leases.e2e@example.test');
+    const file1 = first.getByLabel('חוזה, שורה 1');
+    // Not a PDF or a picture: said at once — nothing was pressed.
+    await file1.setInputFiles({ name: 'lease.exe', mimeType: 'application/octet-stream', buffer: Buffer.from('MZ e2e') });
+    await expect(first.locator('.cr-err')).toHaveText('החוזה חייב להיות PDF או תמונה');
+    // Too large: at once too.
+    await file1.setInputFiles({ name: 'big.pdf', mimeType: 'application/pdf', buffer: Buffer.alloc(11 * 1024 * 1024, 0x25) });
+    await expect(first.locator('.cr-err')).toContainText('הקובץ גדול מ-');
+    // A good one: its name and "החלפה", no message; another file replaces it.
+    await file1.setInputFiles({ name: 'חוזה ראשון.pdf', mimeType: 'application/pdf', buffer: PDF });
+    await expect(first.getByTestId('chip-order-lease-name')).toHaveText('חוזה ראשון.pdf');
+    await expect(first.locator('.cr-uplrep')).toHaveText('החלפה');
+    await expect(first.locator('.cr-err')).toHaveCount(0);
+    await file1.setInputFiles({ name: 'חוזה מעודכן.pdf', mimeType: 'application/pdf', buffer: PDF });
+    await expect(first.getByTestId('chip-order-lease-name')).toHaveText('חוזה מעודכן.pdf');
+    // A second renter, in another apartment, with a file of its own.
+    await page.getByRole('button', { name: 'הוספת דירה' }).click();
+    const second = await renter(1, APT_L2, 'דן שוכר');
+    await second.getByLabel('חוזה, שורה 2').setInputFiles({ name: 'חוזה שני.pdf', mimeType: 'application/pdf', buffer: PDF });
+    await page.locator('#co-street').fill('רחוב בדיקה 3');
+    await page.locator('#co-city').fill('חיפה');
+    await page.locator('#co-zip').fill('3300000');
+    await page.getByRole('checkbox', { name: /הפרטים שמסרתי הינם נכונים/ }).check();
+    await page.getByRole('checkbox', { name: /השוכר מתחייב להחזיר את הכרטיס/ }).check();
+    await page.waitForTimeout(1_500);
+    expect(posts, 'no file — nothing at all — reached the server before the press').toHaveLength(0);
+
+    // The press: the order goes with both files, the progress line meanwhile.
+    let release = () => {};
+    const held = new Promise<void>((r) => { release = r; });
+    await page.route('**/api/public/chip-order', async (route) => { await held; await route.continue(); });
+    await page.getByTestId('chip-order-pay').click();
+    await expect(page.getByTestId('chip-order-upload')).toContainText('שולחים את ההזמנה עם 2 קבצים');
+    await expect(page.getByTestId('chip-order-upload').locator('progress')).toBeVisible();
+    release();
+    await expect(page.getByTestId('chip-order-confirmation')).toBeVisible();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toContain('name="lease_0"');
+    expect(posts[0]).toContain('name="lease_1"');
+    const held2 = (await pool.query<{ apartment_number: string; full_name: string; has: boolean }>(
+      `select i.apartment_number, h.full_name, h.lease_file_key is not null as has
+         from public.chip_order_holders h join public.chip_order_items i on i.id = h.item_id
+        where i.apartment_number = any($1::text[]) and h.role = 'tenant' order by i.apartment_number`, [[APT_L1, APT_L2]])).rows;
+    expect(held2).toEqual([
+      { apartment_number: APT_L1, full_name: 'רונית שוכרת', has: true },
+      { apartment_number: APT_L2, full_name: 'דן שוכר', has: true },
+    ]);
+    await ctx.close();
+  });
+
   test('switching test mode off kills the link', async ({ page, browser }) => {
     await page.goto('/settings');
     const sw = page.getByTestId('chip-order-test-mode').getByRole('switch', { name: 'מצב בדיקה' });
@@ -3562,6 +3696,13 @@ test.describe.serial('"ביטול וזיכוי" of every order, and a cancellati
     await expect(issueWindow(manager).getByTestId('chip-order-section')).toBeVisible();
     await expect(issueWindow(manager).getByTestId('chip-order-cancel-reception')).toHaveCount(0);
     expect((await manager.request.post(`/api/chip-orders/${o.id}/cancel`, { data: { reason: 'ניסיון של מנהל' } })).status()).toBe(403);
+    // F3 (27/11/2026): nor "דחה" — on an order that took money it refunds, so
+    // it is greyed with the reason, and the route refuses it (nothing changes).
+    const managerReject = issueWindow(manager).getByTestId('chip-order-reject');
+    await expect(managerReject).toBeDisabled();
+    await expect(managerReject).toHaveAttribute('title', 'רק אדמין או סופר אדמין יכולים לדחות הזמנה ששולמה — הדחייה מחזירה את הכסף');
+    expect((await manager.request.post(`/api/chip-orders/${o.id}/reject`, { data: { reason: 'ניסיון של מנהל' } })).status()).toBe(403);
+    expect((await state(o.id)).status).toBe('paid');
 
     await page.goto('/chips?view=orders');
     const row = orderRow(page, APT_WEBCX);
@@ -3702,5 +3843,119 @@ test.describe.serial('"ביטול וזיכוי" of every order, and a cancellati
     const manager = await pageAs(browser, managerId);
     const mIssue = await openTab(manager);
     await expect(mIssue.getByTestId('chip-reception-record-cancel')).toHaveCount(0);
+  });
+
+  // 2.4 (Ronen, 27/11/2026): "פתח" on a web order of a contact's chips tab
+  // opens the order's window with the rights the user has, as on /chips.
+  test('a contact\'s chips tab: "פתח" on a web order opens its window with the user\'s own rights — an admin edits it (the note to the guard, its buttons); a user who may only VIEW chip orders reads it, and the server refuses the write', async ({ page, browser }) => {
+    const o = await cardOrder(APT_TAB, 'יעל לשונית', '+972539300074', { test: false });
+    const viewer = (await pool.query<{ id: string }>(
+      `insert into public.users (username, email, password_hash, full_name, role, is_active)
+       values ($1, $1, 'x', $2, 'manager', true) returning id`, [`chip-view-orders-${tag}@billing.local`, `צופה הזמנות ${tag}`])).rows[0]!.id;
+    made.users.push(viewer);
+    for (const [mod, edit] of [['chips', true], ['chips_orders_manage', false], ['dashboard', false]] as const) {
+      await pool.query(`insert into public.user_permissions (user_id, module, can_view, can_edit) values ($1, $2, true, $3)`, [viewer, mod, edit]);
+    }
+    const openOrder = async (p: Page) => {
+      await p.goto(`/dashboard?apt=${APT_TAB}`);
+      await p.getByRole('row').filter({ hasText: APT_TAB }).first().click();
+      await p.getByRole('button', { name: 'צ׳יפים', exact: true }).click();
+      await p.getByRole('button', { name: 'הנפק צ׳יפ' }).click();
+      const issue = issueWindow(p);
+      const line = issue.getByTestId('reception-web-order').filter({ hasText: String(o.order_number) });
+      await expect(line).toBeVisible();
+      await line.getByTestId('reception-web-order-open').click();
+      await expect(issue.getByTestId('chip-order-section')).toContainText(`הזמנה ${o.order_number}`);
+      return issue;
+    };
+    // An admin: the window is the one an Orders-tab row opens — editable.
+    const issue = await openOrder(page);
+    await expect(issue.locator('#order-guard-note')).toBeEnabled();
+    await expect(issue.getByTestId('chip-order-cancel-reception')).toBeVisible();
+    // View only: the same window, read only — and the route says no.
+    const v = await pageAs(browser, viewer);
+    const vIssue = await openOrder(v);
+    await expect(vIssue.locator('#order-guard-note')).toBeDisabled();
+    // Without chips_orders_manage:edit the order's buttons are not drawn at all — as on /chips.
+    await expect(vIssue.getByTestId('chip-order-section')).toBeVisible();
+    await expect(vIssue.getByTestId('chip-order-actions')).toHaveCount(0);
+    await expect(vIssue.getByTestId('chip-order-cancel-reception')).toHaveCount(0);
+    expect((await v.request.post(`/api/chip-orders/${o.id}/guard-note`, { data: { guard_note: 'ניסיון' } })).status()).toBe(403);
+    expect((await v.request.post(`/api/chip-orders/${o.id}/holders`, { data: { holders: [] } })).status()).toBe(403);
+    expect((await pool.query(`select guard_note from public.chip_orders where id = $1`, [o.id])).rows[0].guard_note).toBeNull();
+  });
+
+  // Ronen, 27/11/2026 (evening, 1.1–1.5): a delivered order leaves the Orders
+  // tab and lives on in the chips tab, through its chips.
+  test('a delivered web order: out of the Orders tab — its chip in the chips tab carries the order\'s number, which opens the order\'s window (an admin still finds "ביטול וזיכוי"), and the note icon with its notes; the tab\'s search finds it by the number, tagged "נמסרה"; one PayPlus showed cancelled stays in the tab', async ({ page }) => {
+    const o = await cardOrder(APT_DLV, 'נועה נמסרה', '+972539300075', { test: false, status: 'collected' });
+    await pool.query(
+      `update public.chip_orders set orderer_note = 'נא להתקשר לפני ההגעה', delivery_note = 'נמסר לבת', delivery_note_by_name = 'שומר בדיקה', delivery_note_at = now() where id = $1`,
+      [o.id],
+    );
+    const item = (await pool.query<{ id: string }>(`select id from public.chip_order_items where order_id = $1`, [o.id])).rows[0]!.id;
+    const chip = `DL${tag}1`;
+    await pool.query(
+      `insert into public.chips (chip_number, chip_type, contact_id, apartment_number, status, resident_role, holder_name, issued_at, issued_by_name, order_item_id)
+       values ($1, 'physical', $2, $3, 'active', 'owner', 'נועה נמסרה', now(), 'בודק מסירה', $4)`,
+      [chip, made.contacts[APT_DLV], APT_DLV, item],
+    );
+
+    // Out of the list the tab loads — asked of the route itself, then on the
+    // screen once that list has landed (an empty table is not proof alone).
+    const listed = (await (await page.request.get('/api/chip-orders')).json()) as { items: { order_id: string }[] };
+    expect(listed.items.some((r) => r.order_id === o.id)).toBe(false);
+    const tabLoaded = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/chip-orders' && new URL(r.url()).search === '' && r.ok());
+    await page.goto('/chips?view=orders');
+    await tabLoaded;
+    const search = page.getByTestId('chip-orders-search');
+    await expect(search).toBeVisible();
+    await expect(orderRow(page, APT_DLV)).toHaveCount(0);
+    // The search by its whole number reaches it, tagged "נמסרה".
+    await search.fill(String(o.order_number));
+    await expect(orderRow(page, APT_DLV)).toHaveCount(1);
+    await expect(orderRow(page, APT_DLV).getByTestId('chip-order-delivered-tag')).toHaveText('נמסרה');
+    await expect(orderRow(page, APT_DLV).getByTestId('chip-order-stage')).toHaveText('נאסף');
+    await search.fill('');
+    await expect(orderRow(page, APT_DLV)).toHaveCount(0);
+
+    // The chips tab: the chip carries its order.
+    await page.getByRole('tab', { name: /צ׳יפים/ }).click();
+    await page.getByPlaceholder('חפש לפי מספר צ׳יפ, מספר דירה או שם דייר').fill(chip);
+    // The search's own list landed (while it loads the table is a skeleton,
+    // which would take an open popover with it): this one chip only.
+    await expect(page.getByTestId('chips-table').getByTestId('chips-row')).toHaveCount(1);
+    const chipRow = page.getByTestId('chips-table').getByTestId('chips-row').filter({ hasText: chip });
+    await expect(chipRow.getByTestId('chips-row-order-link')).toHaveText(`הזמנה ${o.order_number}`);
+    // The icon opens on hover (a click right after the hover would toggle it
+    // closed): hovered, and its text read in one go.
+    await chipRow.getByTestId('chips-row-notes').hover();
+    const popup = page.getByTestId('chips-row-notes-popup');
+    await expect(popup.getByTestId('chips-row-notes-delivery')).toBeVisible();
+    const notes = await popup.evaluate((el) => ({
+      orderer: el.querySelector('[data-testid="chips-row-notes-orderer"]')?.textContent ?? '',
+      delivery: el.querySelector('[data-testid="chips-row-notes-delivery"]')?.textContent ?? '',
+    }));
+    expect(notes.orderer).toContain('נא להתקשר לפני ההגעה');
+    expect(notes.delivery).toContain('נמסר לבת');
+    expect(notes.delivery).toContain('שומר בדיקה');
+    await page.mouse.move(0, 0);
+    await expect(popup).toHaveCount(0);
+    // Its number opens the order's window — everything a delivered order has.
+    await chipRow.getByTestId('chips-row-order-link').click();
+    const issue = issueWindow(page);
+    await expect(issue.getByTestId('chip-order-section')).toContainText(`הזמנה ${o.order_number}`);
+    await expect(issue.getByTestId('chip-order-orderer-note')).toContainText('נא להתקשר לפני ההגעה');
+    await expect(issue.getByTestId('chip-order-cancel-reception')).toHaveText('ביטול וזיכוי');
+    await page.keyboard.press('Escape');
+    await expect(issue).toHaveCount(0);
+
+    // Delivered, and PayPlus showed it cancelled: not settled — it stays in the tab.
+    await cardOrder(APT_DLV, 'נועה נמסרה', '+972539300075', { test: false, status: 'collected', reversal: 'cancelled' });
+    await page.goto('/chips?view=orders');
+    const open = orderRow(page, APT_DLV);
+    await expect(open).toHaveCount(1);
+    await expect(open.getByTestId('chip-order-delivered-tag')).toHaveText('נמסרה');
+    await expect(open.getByTestId('chip-order-payplus-reversal')).toBeVisible();
   });
 });

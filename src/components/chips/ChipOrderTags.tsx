@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { AlertTriangle, ConciergeBell, PlusCircle, RotateCcw } from 'lucide-react';
+import { AlertTriangle, ConciergeBell, Hand, PackageCheck, PlusCircle, RotateCcw } from 'lucide-react';
 import { CHIP_ORDER_TAG_LABEL, type ChipOrderTag } from '@/lib/chipOrders/orderRows';
 import { ChipOrderTestBadge, ChipOrderUnverifiedPhoneBadge } from './ChipOrderStatusPill';
 
@@ -74,8 +74,43 @@ function ChipOrderPayPlusReversalBadge() {
   );
 }
 
+/** "נסגרה ידנית" (27/11/2026) — a super admin closed the order's stuck "ביטול
+ *  וזיכוי" by hand: nothing was sent to PayPlus or Morning for the step it
+ *  stopped at. Amber, for good — the window says who, when, why and which step. */
+function ChipOrderClosedByHandBadge() {
+  return (
+    <span
+      data-testid="chip-order-closed-by-hand-tag"
+      title="„ביטול וזיכוי” נסגר ידנית על ידי סופר אדמין — הפרטים בחלון ההזמנה"
+      className="inline-flex h-[24px] shrink-0 items-center gap-1 whitespace-nowrap rounded-[7px] border border-[var(--chip-amber-border)] bg-[var(--chip-amber-soft)] px-2.5 text-[12px] font-bold text-[var(--chip-amber-ink)]"
+    >
+      <Hand className="h-3.5 w-3.5" />
+      {CHIP_ORDER_TAG_LABEL.closed_by_hand}
+    </span>
+  );
+}
+
+/** "נמסרה" (27/11/2026) — a web order handed over: it left the Orders tab and
+ *  shows here when searched by its number, or while something on it is still
+ *  open (a cancellation in PayPlus, a stuck "ביטול וזיכוי", a Morning document
+ *  not issued). Green, like the hand-over it records. */
+function ChipOrderDeliveredBadge() {
+  return (
+    <span
+      data-testid="chip-order-delivered-tag"
+      title="ההזמנה נמסרה — מעכשיו היא מופיעה בלשונית „צ׳יפים” דרך הצ׳יפים שלה"
+      className="inline-flex h-[24px] shrink-0 items-center gap-1 whitespace-nowrap rounded-[7px] border border-[var(--chip-green-border)] bg-[var(--chip-green-soft)] px-2.5 text-[12px] font-bold text-[var(--chip-green-ink)]"
+    >
+      <PackageCheck className="h-3.5 w-3.5" />
+      {CHIP_ORDER_TAG_LABEL.delivered}
+    </span>
+  );
+}
+
 const TAG_BADGE: Record<ChipOrderTag, ComponentType> = {
   payplus_reversed: ChipOrderPayPlusReversalBadge,
+  closed_by_hand: ChipOrderClosedByHandBadge,
+  delivered: ChipOrderDeliveredBadge,
   reception: ChipOrderReceptionBadge,
   extra: ChipOrderExtraBadge,
   test: ChipOrderTestBadge,

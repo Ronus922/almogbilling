@@ -122,6 +122,9 @@ interface SavedOrder {
   leases: Map<number, { file: File; key: string }>;
   /** The orderer's phone as the processor wants it (3-D Secure). */
   holderPhone: string;
+  /** The agreement boxes were ticked in that save (decision 3.5, 27/11/2026):
+   *  the server opens no payment window for the order before they are. */
+  consented: boolean;
   /** The rows as saved — the confirmation's summary. */
   confirmed: ConfirmedRow[];
 }
@@ -367,6 +370,9 @@ export function ChipOrderForm({
   /** The pay button is saving / ending the order. */
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** The save that carries the lease files (2.2, 27/11/2026): how far the
+   *  upload is — the line above the pay button. Null when no file is on its way. */
+  const [upload, setUpload] = useState<{ files: number; pct: number } | null>(null);
   const [saved, setSavedState] = useState<SavedOrder | null>(null);
   /** The content whose automatic save failed — not saved again by itself. */
   const [failedHash, setFailedHash] = useState<string | null>(null);
@@ -438,7 +444,14 @@ export function ChipOrderForm({
   const unitPrice = saved?.unitPrice ?? pricing.unitPrice;
   const total = saved && !dirty ? saved.total : priceLine(totalQty, { unitPrice }).lineTotal;
   const locked = busy || PHASE_LOCKED.includes(phase);
+  // A chosen lease is checked the moment it is chosen (type, size, all files
+  // together — 2.2, 27/11/2026): its message shows at once, not after a press.
+  // A MISSING lease still waits for the press, like every other field.
+  const chosenFileErrors = Object.fromEntries(
+    Object.entries(problems).filter(([k]) => k.startsWith('file_') && rows.some((r) => r.file && `file_${r.key}` === k)),
+  );
   const errors: Record<string, string> = {
+    ...chosenFileErrors,
     ...(attempted ? problems : {}),
     ...(refused?.hash === hash ? refused.errors : {}),
     ...qtyErrors,
@@ -550,9 +563,24 @@ export function ChipOrderForm({
     });
     const fd = new FormData();
     fd.append('order', JSON.stringify({ ...body, rows: sentRows, ...(prev ? { trackingToken: prev.trackingToken } : {}) }));
-    v.rows.forEach((row, i) => {
-      if (row.role === 'tenant' && row.file && !('leaseKey' in sentRows[i])) fd.append(`lease_${i}`, row.file);
-    });
+    // THE FILES TRAVEL ONLY WITH THE SAVE THAT CONTINUES TO PAYMENT (2.2,
+    // Ronen 27/11/2026): while the resident fills the form, a chosen lease
+    // stays in the browser — the automatic saves of the details carry none.
+    // It is sent together with the order once the agreement boxes are ticked
+    // on a complete form: the save that records them is the one the card
+    // fields open with (a payment window is opened only for an order that
+    // holds every lease — the server checks it). A file the server already
+    // holds is named by its key instead.
+    const continuing = v.agree && (!v.rows.some((r) => r.role === 'tenant') || v.agreeRent);
+    let files = 0;
+    if (continuing) {
+      v.rows.forEach((row, i) => {
+        if (row.role === 'tenant' && row.file && !('leaseKey' in sentRows[i])) {
+          fd.append(`lease_${i}`, row.file);
+          files += 1;
+        }
+      });
+    }
 
     const fail = (message: string | null): null => {
       // The same content is not saved again by itself — the next change or press does.
@@ -574,7 +602,7 @@ export function ChipOrderForm({
     try {
       let res: Response;
       try {
-        res = await fetch('/api/public/chip-order', { method: 'POST', body: fd, headers: testHeaders });
+        res = await sendOrder(fd, files);
       } catch {
         return fail(CARD_TEXT.saveOffline);
       }
@@ -593,6 +621,7 @@ export function ChipOrderForm({
           total: priced,
           unitPrice: chips > 0 ? priced / chips : pricing.unitPrice,
           hash: sentHash,
+          consented: v.agree && (!v.rows.some((r) => r.role === 'tenant') || v.agreeRent),
           leases,
           holderPhone: cardHolderPhone(toPortalE164(v.phone)),
           confirmed: v.rows.map((r) => ({ apartment: r.apt, name: r.name.trim(), role: r.role, qty: r.qty })),
@@ -620,7 +649,32 @@ export function ChipOrderForm({
       return fail(onFields ? null : data.message ?? CARD_TEXT.saveFailed);
     } finally {
       setSaving(false);
+      setUpload(null);
     }
+  }
+
+  /** The save's request. With files it goes through XMLHttpRequest, whose
+   *  upload events feed the progress line (fetch reports none); its answer is
+   *  read exactly like fetch's. A network failure rejects. */
+  function sendOrder(fd: FormData, files: number): Promise<Response> {
+    if (files === 0) return fetch('/api/public/chip-order', { method: 'POST', body: fd, headers: testHeaders });
+    setUpload({ files, pct: 0 });
+    return new Promise<Response>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/public/chip-order');
+      for (const [name, value] of Object.entries(testHeaders)) xhr.setRequestHeader(name, value);
+      xhr.upload.onprogress = (e) => {
+        // 100% only once the server answered.
+        if (e.lengthComputable && e.total > 0) setUpload({ files, pct: Math.min(99, Math.round((e.loaded / e.total) * 100)) });
+      };
+      xhr.onload = () => {
+        if (xhr.status < 200 || xhr.status > 599) { reject(new Error('bad_status')); return; }
+        resolve(new Response(xhr.responseText, { status: xhr.status, headers: { 'Content-Type': 'application/json' } }));
+      };
+      xhr.onerror = () => reject(new Error('offline'));
+      xhr.onabort = () => reject(new Error('aborted'));
+      xhr.send(fd);
+    });
   }
 
   /** "סיים הזמנת בדיקה" on the server (a test order, no PayPlus sandbox) → the confirmation. */
@@ -659,6 +713,9 @@ export function ChipOrderForm({
   /** After an automatic save: the card fields follow the saved order — opened
    *  the first time, opened again when its total (or the order) changed. */
   async function syncSession(order: SavedOrder): Promise<void> {
+    // Before the agreement boxes are ticked the server opens no window: the
+    // fields open with the save that records them.
+    if (!order.consented) return;
     const p = phaseRef.current;
     if (p === 'opening') {
       reopenWanted.current = true;
@@ -925,7 +982,7 @@ export function ChipOrderForm({
     : secure3d ? CARD_TEXT.secure3d
       : phase === 'opening' ? CARD_TEXT.loading
         : phase === 'verifying' ? CARD_TEXT.verifying
-          : cardNote ?? (phase === 'none' ? CARD_TEXT.idle : null);
+          : cardNote ?? (phase === 'none' ? (saved && !saved.consented ? CARD_TEXT.consent : CARD_TEXT.idle) : null);
   const buttonBusy = busy || PHASE_BUSY.includes(phase);
   const buttonText = CARD_BUTTON[phase];
 
@@ -1028,9 +1085,17 @@ export function ChipOrderForm({
                         <span className="cr-lbl">חוזה / הסכם ניהול (PDF או תמונה)</span>
                         <label className={cn('cr-upl', r.file && 'cr-has', errors[`file_${r.key}`] && 'cr-bad')}>
                           <UploadIcon />
-                          <span>{r.file ? r.file.name : 'בחירת קובץ'}</span>
+                          <span data-testid="chip-order-lease-name">{r.file ? r.file.name : 'בחירת קובץ'}</span>
+                          {/* The chosen file stays in the browser until the
+                              order continues to payment; a tap picks another. */}
+                          {r.file && <span className="cr-uplrep">החלפה</span>}
                           <input type="file" accept={LEASE_FILE_ACCEPT} disabled={locked} aria-label={`חוזה, שורה ${i + 1}`}
-                            onChange={(e) => patchRow(r.key, { file: e.target.files?.[0] ?? null })} />
+                            onChange={(e) => {
+                              const next = e.target.files?.[0] ?? null;
+                              // Cancelling the picker keeps the file chosen before.
+                              if (next || !r.file) patchRow(r.key, { file: next });
+                              e.target.value = '';
+                            }} />
                         </label>
                         <Err msg={errors[`file_${r.key}`]} />
                       </div>
@@ -1189,6 +1254,16 @@ export function ChipOrderForm({
           )}
 
           {serverError && <div role="alert" className="cr-alert">{serverError}</div>}
+
+          {upload && (
+            <div className="cr-upnote" role="status" data-testid="chip-order-upload">
+              <span>
+                {upload.files === 1 ? 'שולחים את ההזמנה עם החוזה' : `שולחים את ההזמנה עם ${upload.files} קבצים`}
+                {' — '}<b className="cr-num">{upload.pct}%</b>
+              </span>
+              <progress className="cr-upbar" value={upload.pct} max={100} aria-label="התקדמות שליחת הקבצים" />
+            </div>
+          )}
 
           <button type="submit" className="cr-submit" disabled={buttonBusy || !agree || (hasRenter && !agreeRent)} data-testid="chip-order-pay">
             {buttonBusy ? <Loader2 className="h-[17px] w-[17px] cr-spin" /> : <LockIcon />}

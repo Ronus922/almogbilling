@@ -28,6 +28,15 @@ interface Props {
   /** Admin / super admin, by role — "ביטול וזיכוי" of a paid reception order
    *  on its line in the issue window (27/11/2026), as on /chips. */
   canAdminOrders?: boolean;
+  /** chips_orders_manage:edit — "פתח" on a web order of the issue window opens
+   *  the order's window with its buttons and saves; without it the window is
+   *  read only, exactly as an Orders-tab row opens it on /chips (27/11/2026,
+   *  2.4 — every route of the window refuses that user anyway). */
+  canEditOrders?: boolean;
+  /** Super admin — "סגירה ידנית" in that order window. */
+  canCloseByHand?: boolean;
+  /** contacts:edit — "עדכן בכרטיס הדייר" in that order window. */
+  canWriteContacts?: boolean;
 }
 
 interface ChipsPayload {
@@ -54,7 +63,9 @@ const ROLE_PILL: Record<ChipResidentRole, string> = {
   other: 'bg-[var(--chip-hover)] text-[var(--chip-ink-muted)]',
 };
 
-export function ChipsTab({ contactId, apartmentNumber, canEditChips, canAdminOrders = false }: Props) {
+export function ChipsTab({
+  contactId, apartmentNumber, canEditChips, canAdminOrders = false, canEditOrders = false, canCloseByHand = false, canWriteContacts = false,
+}: Props) {
   const [chips, setChips] = useState<ChipsPayload | null>(null);
   const [residents, setResidents] = useState<ContactResidents | null>(null);
   const [loading, setLoading] = useState(false);
@@ -214,6 +225,9 @@ export function ChipsTab({ contactId, apartmentNumber, canEditChips, canAdminOrd
         initial={{ contactId, apartmentNumber }}
         onIssued={() => setReloadKey((k) => k + 1)}
         canAdminOrders={canAdminOrders}
+        canEditOrders={canEditOrders}
+        canCloseByHand={canCloseByHand}
+        canWriteContacts={canWriteContacts}
       />
     </div>
   );

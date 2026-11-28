@@ -62,11 +62,12 @@ const ips = { a: `203.0.113.${(Date.now() % 200) + 20}` };
 const tokenOf = (link: string) => new URL(link).searchParams.get('test')!;
 const H = (token?: string): Record<string, string> => ({ 'x-real-ip': ips.a, ...(token ? { 'x-chip-order-test': token } : {}) });
 
-async function submitOrder(token?: string): Promise<Response> {
+async function submitOrder(token?: string, opts: { acceptTerms?: boolean; trackingToken?: string } = {}): Promise<Response> {
   const fd = new FormData();
   fd.append('order', JSON.stringify({
     phone: '0539400001', email: 'test-mode@example.test',
-    addressStreet: 'הרצל 1', addressCity: 'חיפה', addressZip: '3300000', acceptTerms: true,
+    addressStreet: 'הרצל 1', addressCity: 'חיפה', addressZip: '3300000', acceptTerms: opts.acceptTerms ?? true,
+    ...(opts.trackingToken ? { trackingToken: opts.trackingToken } : {}),
     rows: [{ role: 'owner', fullName: 'בדיקה בודקת', apartment: APT, chipsCount: 2, phone: '0539400001', email: '', leaseEndDate: null }],
   }));
   // The route refuses a body without a Content-Length — serialize it first.
@@ -180,6 +181,23 @@ d('chip orders — test mode (link token + routes)', () => {
     expect(afterQueue).toHaveLength(1);
     // Twice → nothing left to finish.
     expect((await finishOrder(data.trackingToken!, token)).status).toBe(409);
+  });
+
+  // Decision 3.5 (27/11/2026): the agreement boxes are checked on the server too.
+  it('3.5 — finish refuses an order saved without the agreement box (409 terms_required, still waiting); saved again with it ticked, it finishes', async () => {
+    const token = tokenOf((await testMode.issueTestLink(adminId)).link);
+    const res = await submitOrder(token, { acceptTerms: false });
+    expect(res.status).toBe(201);
+    const data = (await res.json()) as { trackingToken: string };
+    const row = (await pool.query<{ id: string }>(`select id from public.chip_orders where tracking_token = $1`, [data.trackingToken])).rows[0]!;
+    made.orders.push(row.id);
+    const refused = await finishOrder(data.trackingToken, token);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ ok: false, state: 'terms_required' });
+    expect((await pool.query(`select status from public.chip_orders where id = $1`, [row.id])).rows[0].status).toBe('pending_payment');
+    expect((await submitOrder(token, { acceptTerms: true, trackingToken: data.trackingToken })).status).toBe(200);
+    expect((await finishOrder(data.trackingToken, token)).status).toBe(200);
+    expect((await pool.query(`select status from public.chip_orders where id = $1`, [row.id])).rows[0].status).toBe('paid');
   });
 
   it('finish never touches an order made without the test link', async () => {

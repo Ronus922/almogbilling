@@ -33,7 +33,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const done = await markChipOrderCollected(
       id,
       { id: actor.id, name: actor.full_name ?? actor.username },
-      { via: 'management', collector: body.data.person ?? null },
+      { via: 'management', collector: body.data.person ?? null, deliveryNote: body.data.delivery_note ?? null },
     );
     if (!done) return NextResponse.json({ error: 'not_found' }, { status: 404 });
     return NextResponse.json({ ok: true });

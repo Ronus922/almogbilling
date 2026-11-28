@@ -1,4 +1,5 @@
 import 'server-only';
+import { writeGuardNoteInTx } from '@/lib/db/chipOrderNotes';
 import { randomBytes } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { query, queryOne, withTransaction } from '@/lib/db';
@@ -46,6 +47,8 @@ export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindo
   const order = await queryOne<ChipOrderWindowOrder>(
     `select o.id, o.order_number, o.status, o.role, o.source, o.is_test, o.phone_verified, o.full_name, o.phone_e164, o.email,
             o.address, o.total::float8 as total, o.paid_at, o.due_at, o.created_at, o.internal_note,
+            o.orderer_note, o.guard_note, o.guard_note_by_name, o.guard_note_at,
+            o.delivery_note, o.delivery_note_by_name, o.delivery_note_at,
             o.payment_method, o.payment_recorded_by_name, o.payment_recorded_at,
             o.collected_at, o.collected_by_name, o.handed_over_by_name, o.handed_over_via,
             o.rejected_at, o.reject_reason, o.cancelled_by_name,
@@ -68,6 +71,7 @@ export async function getChipOrderWindow(itemId: string): Promise<ChipOrderWindo
             case when o.cancel_completed_at is null then o.payplus_reversal_kind end as payplus_reversal_kind,
             o.payplus_reversal_at, (o.cancel_completed_at is not null) as cancel_completed,
             (o.cancel_requested_at is not null) as cancel_requested,
+            o.closed_by_hand_at, o.closed_by_hand_by_name, o.closed_by_hand_reason, o.closed_by_hand_step,
             (select x.order_number from public.chip_orders x where x.id = o.extra_of_order_id) as extra_of_order_number
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id
@@ -224,6 +228,8 @@ export interface WindowSaveInput {
   removedHolderIds?: string[];
   /** undefined = untouched. */
   note?: string | null;
+  /** "הערה לשומר" (27/11/2026) — undefined = untouched; null / empty clears it. */
+  guardNote?: string | null;
   /** How the EXTRA chips of this save are settled — new numbers beyond what
    *  the apartment line paid for online. Required when the save has any;
    *  ignored when it has none. The amount is what the window showed. */
@@ -323,14 +329,25 @@ export async function saveChipOrderWindow(
       await client.query<{
         status: ChipOrderStatus; order_number: number; is_test: boolean; role: ChipResidentRole; full_name: string; phone_e164: string | null;
         email: string | null; address: string | null; address_street: string | null; address_city: string | null; address_zip: string | null;
+        undoing: boolean;
       }>(
-        `select status, order_number, is_test, role, full_name, phone_e164, email, address, address_street, address_city, address_zip
+        `select status, order_number, is_test, role, full_name, phone_e164, email, address, address_street, address_city, address_zip,
+                -- The money is going back (27/11/2026): "ביטול וזיכוי" started,
+                -- a refund sent or recorded, or PayPlus showed the charge
+                -- cancelled / refunded — as the reception's own save checks.
+                (cancel_completed_at is null and (refunded_at is not null or refund_requested_at is not null
+                   or cancel_requested_at is not null or payplus_reversal_at is not null)) as undoing
            from public.chip_orders where id = $1 for update`,
         [orderId],
       )
     ).rows[0];
     if (!order) return null;
     if (!isOpenChipOrder(order.status)) throw new ChipOrderStateError('not_open');
+    // No NEW chip for an order whose money is going back: a chip works the
+    // moment it is issued. Edits of the people and the note still save.
+    if (order.undoing && input.holders.some((h) => h.new_chips.some((n) => n.number.trim() !== ''))) {
+      throw new ChipOrderStateError('order_undoing');
+    }
 
     const items = (
       await client.query<{ id: string; contact_id: string; apartment_number: string; chips_count: number; match_status: string; linked: number }>(
@@ -675,6 +692,7 @@ export async function saveChipOrderWindow(
         [orderId, input.note?.trim() ? input.note.trim() : null],
       );
     }
+    if (input.guardNote !== undefined) await writeGuardNoteInTx(client, orderId, input.guardNote, actor);
     return { issued, updated, extra };
   });
 }

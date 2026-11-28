@@ -4,6 +4,7 @@
  * returned before, so the UI copy is unchanged. New routes: add the schema
  * here and read the body with parseJsonBody (src/lib/http/body.ts).
  */
+import { chipNoteSchema, DELIVERY_NOTE_LABEL, GUARD_NOTE_LABEL } from '@/lib/chipOrders/notes';
 import { z } from 'zod';
 import { normalizeLegalContact, type LegalContact } from '@/lib/validation/legalContact';
 import { validatePhone } from '@/lib/validation';
@@ -629,7 +630,7 @@ export const chipOrderSubmitSchema = z.object({
     )
     .min(1, 'נדרשת לפחות שורה אחת')
     .max(20, 'עד 20 שורות בהזמנה אחת'),
-  /** "הערות" — optional; stored as the order's note (the issue window's "הערה"). */
+  /** "הערות" — optional; stored as "הערת המזמין" (orderer_note, 27/11/2026). */
   note: z.string().trim().max(CHIP_ORDER_LIMITS.customerNoteMax, `ההערה ארוכה מדי — עד ${CHIP_ORDER_LIMITS.customerNoteMax} תווים`).optional(),
 });
 
@@ -690,6 +691,8 @@ export const chipOrderWindowSaveSchema = z.object({
   /** Staff holders removed in the window (only one with no chips is removed). */
   removed_holder_ids: z.array(z.uuid()).max(40).optional(),
   note: z.string().max(2000, 'ההערה ארוכה מדי').nullable().optional(),
+  /** "הערה לשומר" (27/11/2026) — absent = untouched. */
+  guard_note: chipNoteSchema(GUARD_NOTE_LABEL),
   /** 25/11/2026 — how the EXTRA chips of the save are settled (new numbers
    *  beyond what an apartment line paid for online), as at the reception:
    *  cash or a bank transfer (26/11/2026: two options) makes a reception
@@ -718,16 +721,32 @@ export const chipOrderCancelBodySchema = z.object({
   reason: z.string({ error: 'נדרשת סיבת ביטול' }).trim().min(2, 'נדרשת סיבת ביטול').max(500, 'הסיבה ארוכה מדי').optional(),
 });
 
+/** POST /api/chip-orders/[id]/close-by-hand — "סגירה ידנית" (27/11/2026): why
+ *  the stuck "ביטול וזיכוי" is closed by hand. Required. */
+export const chipOrderCloseByHandBodySchema = z.object({
+  reason: z.string({ error: 'נדרשת סיבה לסגירה הידנית' }).trim().min(2, 'נדרשת סיבה לסגירה הידנית').max(500, 'הסיבה ארוכה מדי'),
+});
+
 /** POST /api/chip-pickup/[id]/handover — "נמסר" of the guard's pickup screen:
  *  the person of the order who showed an ID (a holder line id, or the
  *  orderer). Required here; whether it is a person of THIS order is checked
  *  against the database, never against the request. */
 export const chipPickupHandoverBodySchema = z.object({
   person: z.string({ error: 'יש לבחור מי אסף את הצ׳יפים' }).trim().refine(isPickupPersonKey, 'יש לבחור מי אסף את הצ׳יפים'),
+  /** "הערת מסירה" (27/11/2026) — optional. */
+  delivery_note: chipNoteSchema(DELIVERY_NOTE_LABEL),
 });
 
 /** POST /api/chip-orders/[id]/collected — "נאסף" of the management: the same
  *  person, OPTIONAL (a bare POST, as before, names nobody). */
 export const chipOrderCollectedBodySchema = z.object({
   person: z.string().trim().refine(isPickupPersonKey, 'האדם שנבחר אינו חלק מההזמנה').nullable().optional(),
+  /** "הערת מסירה" (27/11/2026) — optional. */
+  delivery_note: chipNoteSchema(DELIVERY_NOTE_LABEL),
+});
+
+/** POST /api/chip-orders/[id]/guard-note — "הערה לשומר" on its own (the
+ *  reception window's line of a web order, 27/11/2026). */
+export const chipOrderGuardNoteBodySchema = z.object({
+  guard_note: chipNoteSchema(GUARD_NOTE_LABEL),
 });

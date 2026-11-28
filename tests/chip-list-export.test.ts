@@ -70,7 +70,11 @@ async function pdfOf(input: ListPdfInput, name: string) {
 
 describe('the chips tab as a file', () => {
   it('the columns the table shows — the holder, the apartment and the role side by side', () => {
-    expect(CHIPS_EXPORT.columns.map((c) => c.header)).toEqual(['מחזיק', 'דירה', 'תפקיד', 'מספר צ׳יפ', 'סוג', 'סטטוס', 'הונפק', 'מנפיק']);
+    // From 27/11/2026: the chip's order — its number and its three notes.
+    expect(CHIPS_EXPORT.columns.map((c) => c.header)).toEqual([
+      'מחזיק', 'דירה', 'תפקיד', 'מספר צ׳יפ', 'סוג', 'סטטוס', 'הונפק', 'מנפיק',
+      'מס׳ הזמנה', 'הערת המזמין', 'הערה לשומר', 'הערת מסירה',
+    ]);
     expect(CHIPS_EXPORT).toMatchObject({ title: 'צ׳יפים', sheet: 'צ׳יפים', file: 'chips' });
     expect(exportFileName('chips', 'pdf', new Date(2026, 10, 4))).toBe('chips_2026-11-04.pdf');
     expect(exportFileName('chips', 'xlsx', new Date(2026, 0, 31))).toBe('chips_2026-01-31.xlsx');
@@ -79,7 +83,14 @@ describe('the chips tab as a file', () => {
   it('the workbook: the live registry name, the words of the table, a chip number that stays text', async () => {
     const rows = [
       // The registry name changed since the chip was issued: the table shows the live one.
-      chip({ id: 'a', holder_name: 'דנה לוי', live_holder_name: 'דנה כהן' }),
+      // A chip of an order (27/11/2026): the order's number and its notes.
+      chip({
+        id: 'a', holder_name: 'דנה לוי', live_holder_name: 'דנה כהן',
+        order_ref: {
+          item_id: 'i', order_number: 1021, source: 'web', contact_id: 'c', apartment_number: '12', full_name: 'דנה כהן', phone_e164: null,
+          orderer_note: 'נא להתקשר לפני', guard_note: null, delivery_note: 'נמסר לבת', delivery_note_by_name: 'שומר', delivery_note_at: '2026-11-27T18:00:00Z',
+        },
+      }),
       // A guest has no registry row: the name the chip was issued on.
       chip({
         id: 'b', chip_number: '=1+1', chip_type: 'app', status: 'inactive', resident_role: 'other', apartment_number: '007',
@@ -93,14 +104,46 @@ describe('the chips tab as a file', () => {
     expect(ws.views[0]?.rightToLeft).toBe(true);
     const cells = (n: number) => CHIPS_EXPORT.columns.map((_, i) => ws.getRow(n).getCell(i + 1).value);
     expect(cells(1)).toEqual(CHIPS_EXPORT.columns.map((c) => c.header));
-    expect(cells(2)).toEqual(['דנה כהן', '12', 'בעל דירה', '0012345678', 'כרטיס', 'פעיל', '24/11/2026', 'מנהל בדיקה']);
+    expect(cells(2)).toEqual(['דנה כהן', '12', 'בעל דירה', '0012345678', 'כרטיס', 'פעיל', '24/11/2026', 'מנהל בדיקה', '1021', 'נא להתקשר לפני', null, 'נמסר לבת']);
     // "אורח" is the screen name of the stored role `other`; a chip number typed
     // like a formula opens as text; nobody on record issued it = a blank cell.
-    expect(cells(3)).toEqual(['אורח מזדמן', '007', 'אורח', '\'=1+1', 'אפליקציה', 'לא פעיל', '03/09/2026', null]);
+    expect(cells(3)).toEqual(['אורח מזדמן', '007', 'אורח', '\'=1+1', 'אפליקציה', 'לא פעיל', '03/09/2026', null, null, null, null, null]);
     expect(ws.rowCount).toBe(3);
     // The apartment and the chip number stay text: their leading zeros survive.
     expect(ws.getRow(2).getCell(2).type).toBe(ExcelJS.ValueType.String);
     expect(ws.getRow(2).getCell(4).type).toBe(ExcelJS.ValueType.String);
+  });
+});
+
+describe('the Orders tab as a file', () => {
+  // 27/11/2026 — decision 3.5 (every header above its own data) and the three
+  // notes of an order, each in its own column.
+  it('every header sits above its own data — read back from the real workbook — and the three notes have their own columns', async () => {
+    const row = order({
+      status: 'collected', orderer_note: 'למסור למשה', guard_note: 'להתקשר לפני המסירה', delivery_note: 'נמסר לבת של דנה',
+      invoice_doc: { status: 'issued', number: '10951', url: null },
+    });
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await buildListWorkbook(CHIP_ORDERS_EXPORT, [row], NOW));
+    const ws = wb.worksheets[0]!;
+    const head = CHIP_ORDERS_EXPORT.columns.map((_, i) => ws.getRow(1).getCell(i + 1).value);
+    const data = CHIP_ORDERS_EXPORT.columns.map((_, i) => ws.getRow(2).getCell(i + 1).value);
+    expect(head).toEqual(CHIP_ORDERS_EXPORT.columns.map((c) => c.header));
+    expect(ws.getRow(1).cellCount).toBe(CHIP_ORDERS_EXPORT.columns.length);
+    const at = (h: string) => { expect(head, h).toContain(h); return data[head.indexOf(h)]; };
+    expect(at('מס׳ הזמנה')).toBe(1042);
+    expect(at('תאריך הזמנה')).toBe('23/11/2026');
+    expect(at('שם המזמין')).toBe('דנה כהן');
+    expect(at('טלפון')).toBe('0539300001');
+    expect(at('דירה')).toBe('12');
+    expect(at('בעלי הצ׳יפ')).toBe('דנה כהן, שרה לוי');
+    expect(at('כמות')).toBe(2);
+    expect(at('סה״כ (₪)')).toBe(100);
+    expect(at('חשבונית')).toBe('10951');
+    expect(at('הזמנת בדיקה')).toBe('לא');
+    expect(at('הערת המזמין')).toBe('למסור למשה');
+    expect(at('הערה לשומר')).toBe('להתקשר לפני המסירה');
+    expect(at('הערת מסירה')).toBe('נמסר לבת של דנה');
   });
 });
 
@@ -198,7 +241,8 @@ describe('the PDF file of a list', () => {
 
     // Hebrew is painted back to front…
     expect(lines).toContain(rev('דנה כהן'));
-    expect(lines).toContain(rev('שם המזמין'));
+    // 17 columns since the three notes (27/11/2026): a two-word header may break.
+    expect(lines.some((l) => l === rev('שם המזמין') || l === rev('המזמין'))).toBe(true);
     // …a phone, a foreign phone with its "+", a date, an amount and a number are not.
     for (const asIs of ['0539300001', '+447911123456', '23/11/2026', '26/11/2026 10:00', '1042', '52.5', '100', '7']) {
       expect(lines, asIs).toContain(asIs);
@@ -214,22 +258,30 @@ describe('the PDF file of a list', () => {
     expect(hasText('Mizrahi')).toBe(true);
     expect(hasText(rev('Yossi'))).toBe(false);
     // The tags in words; a cell with nothing to say is a dash.
-    expect(hasText(` ,${rev('בדיקה')}`), 'בדיקה,').toBe(true);
+    expect(hasText(`,${rev('בדיקה')}`), 'בדיקה,').toBe(true);
     expect(hasText(rev('אומת')), 'אומת').toBe(true);
     expect(lines).toContain('—');
 
     // Right to left: the first column is the right-most, every next one further left.
     // (The header row = the lines on the baseline of one of its labels — a
     // header that breaks has its FIRST words there, the end of its visual form.)
-    const headY = painted.find((p) => p.text === rev('שם המזמין'))!.y;
+    const headY = painted.find((p) => p.text === rev('דירה'))!.y;
     const headRow = painted.filter((p) => Math.abs(p.y - headY) < 0.01);
     expect(headRow).toHaveLength(CHIP_ORDERS_EXPORT.columns.length);
+    // Two broken headers may begin with the same word ("הערת המזמין", "הערת
+    // מסירה"): each column takes the right-most label not taken yet.
+    const taken = new Set<number>();
     const headerX = CHIP_ORDERS_EXPORT.columns.map((c) => {
       // "סה״כ (₪)": the sign and the brackets are not plain Hebrew
-      const hits = headRow.filter((p) => p.text !== null && p.text !== '' && toVisual(c.header).endsWith(p.text));
-      expect(hits, c.header).toHaveLength(1);
-      return hits[0]!.x;
+      const hits = headRow
+        .map((p, i) => ({ p, i }))
+        .filter(({ p, i }) => !taken.has(i) && p.text !== null && p.text !== '' && toVisual(c.header).endsWith(p.text))
+        .sort((a, b) => b.p.x - a.p.x);
+      expect(hits.length, c.header).toBeGreaterThan(0);
+      taken.add(hits[0]!.i);
+      return hits[0]!.p.x;
     });
+    expect(taken.size).toBe(CHIP_ORDERS_EXPORT.columns.length);
     expect([...headerX].sort((a, b) => b - a)).toEqual(headerX);
 
     // The page number, in words.

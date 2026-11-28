@@ -76,6 +76,7 @@ import {
 } from './issue-sheet/parts';
 import { OrderIssueSheet } from './issue-sheet/OrderIssueSheet';
 import { LeaseField, OrdererForm, ReceptionPayment, ReceptionRecords, UserIco } from './issue-sheet/reception';
+import { ReceptionWebOrders } from './issue-sheet/webOrders';
 import { ReceptionCardPanel, receptionCardReason, type ReceptionCardState } from './issue-sheet/receptionCard';
 
 // ── Contact search item (GET /api/contacts/search) ─────────────────────────
@@ -192,18 +193,35 @@ export interface IssueChipSheetProps {
   /** Admin / super admin — in an order's window: "בטל הזמנת קבלה", "זיכוי"
    *  and "הפק חשבונית שוב" (each route checks the role again). */
   canAdminOrders?: boolean;
+  /** Super admin — "סגירה ידנית" of a stuck "ביטול וזיכוי" in an order's
+   *  window (27/11/2026; the route checks the role again). */
+  canCloseByHand?: boolean;
 }
 
 export function IssueChipSheet(props: IssueChipSheetProps) {
-  const orderItemId = props.initial?.orderItemId ?? null;
-  return orderItemId
-    ? <OrderIssueSheet {...props} orderItemId={orderItemId} />
-    : <RegistryIssueSheet {...props} />;
+  // Decision 3.1 (27/11/2026): "פתח" on a web order of the window without an
+  // order switches this window to that order's — kept for the window that
+  // asked (its `initial`), dropped when the window closes.
+  const [opened, setOpened] = useState<{ itemId: string; initial: IssueChipSheetProps['initial'] } | null>(null);
+  const fromReception = opened && props.open && opened.initial === props.initial ? opened.itemId : null;
+  const orderItemId = props.initial?.orderItemId ?? fromReception;
+  if (orderItemId) {
+    return (
+      <OrderIssueSheet
+        {...props}
+        orderItemId={orderItemId}
+        onOpenChange={(v) => { if (!v) setOpened(null); props.onOpenChange(v); }}
+      />
+    );
+  }
+  return <RegistryIssueSheet {...props} onOpenOrder={(itemId) => setOpened({ itemId, initial: props.initial })} />;
 }
 
 // ── The window WITHOUT an order ─────────────────────────────────────────────
 
-function RegistryIssueSheet({ open, onOpenChange, initial, onIssued, canAdminOrders = false }: IssueChipSheetProps) {
+function RegistryIssueSheet({
+  open, onOpenChange, initial, onIssued, canAdminOrders = false, canEditOrders = false, onOpenOrder,
+}: IssueChipSheetProps & { onOpenOrder?: (itemId: string) => void }) {
   // Contact selection
   const [contactId, setContactId] = useState<string | null>(null);
   const [contactLabel, setContactLabel] = useState('');
@@ -959,6 +977,17 @@ function RegistryIssueSheet({ open, onOpenChange, initial, onIssued, canAdminOrd
               </Popover>
             )}
           </div>
+          {/* Decision 3.1: the apartment's open web orders, read only — "פתח" opens the order's window. */}
+          {contactId && onOpenOrder && (reception?.web_orders?.length ?? 0) > 0 && (
+            <ReceptionWebOrders
+              orders={reception?.web_orders ?? []}
+              canEditNote={canEditOrders}
+              // What "פתח" would drop: chip numbers typed in, a note, or a card
+              // charge under way (choosing the apartment itself loses nothing).
+              openBlocked={submitting || totalPending > 0 || notes.trim() !== '' || cardCharging || cardPaidReal}
+              onOpen={onOpenOrder}
+            />
+          )}
         </Section>
 
         {/* בעלי הצ׳יפ — one block per person */}

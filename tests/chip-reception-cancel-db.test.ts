@@ -321,9 +321,20 @@ d('cancelling a reception order, on the DB and through its route', () => {
     expect((await cancel('not-an-id', { reason: 'לא קיימת' })).status).toBe(404);
   });
 
-  it('a chip of a cancelled order can be switched back on by hand — it was disabled, not removed', async () => {
-    const back = await chipsDb.reactivateChip(first.chipIds[0]!, {}, actor('admin'));
-    expect(back?.status).toBe('active');
+  // Decision 3.6 (Ronen, 27/11/2026) — until then this test said the opposite:
+  // a chip of a cancelled order could be switched back on by hand.
+  it('3.6 — a chip disabled with its cancelled order is NEVER switched back on: refused with the reason, which the window\'s toggle reads; it stays disabled, not removed', async () => {
+    const chipId = first.chipIds[0]!;
+    await expect(chipsDb.reactivateChip(chipId, {}, actor('admin'))).rejects.toBeInstanceOf(chipsDb.ChipReactivationLockedError);
+    await expect(chipsDb.reactivateChip(chipId, {}, actor('manager'))).rejects.toThrow(`הצ׳יפ הושבת בביטול הזמנה ${first.orderNumber} — אי אפשר להפעיל אותו מחדש`);
+    expect((await chipRows([chipId]))[0]).toMatchObject({ status: 'inactive' });
+    const listed = (await chipsDb.listChips({ contact_id: made.contacts[APT(1)]! })).find((c) => c.id === chipId);
+    expect(listed?.reactivation_lock).toBe(`הצ׳יפ הושבת בביטול הזמנה ${first.orderNumber} — אי אפשר להפעיל אותו מחדש`);
+    // Moving the disabled chip to another apartment does not free it (security review, 27/11/2026).
+    const elsewhere = Object.values(made.contacts).find((id) => id !== made.contacts[APT(1)])!;
+    await pool.query(`update public.chips set contact_id = $2 where id = $1`, [chipId, elsewhere]);
+    await expect(chipsDb.reactivateChip(chipId, {}, actor('admin'))).rejects.toBeInstanceOf(chipsDb.ChipReactivationLockedError);
+    await pool.query(`update public.chips set contact_id = $2 where id = $1`, [chipId, made.contacts[APT(1)]]);
     // The order stays cancelled.
     expect((await orderRow(first.id)).status).toBe('rejected');
   });

@@ -8,6 +8,8 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   chips_missing: { status: 409, message: 'עדיין לא שויכו כל הצ׳יפים שהוזמנו' },
   not_ready: { status: 409, message: 'אפשר לסמן "נאסף" רק הזמנה שמוכנה לאיסוף' },
   not_rejectable: { status: 409, message: 'אפשר לדחות רק הזמנה שעדיין בשיוך' },
+  // F3 (27/11/2026): a rejection of an order that took money refunds it.
+  refund_admin_only: { status: 403, message: 'רק אדמין או סופר אדמין יכולים לדחות הזמנה ששולמה — הדחייה מחזירה את הכסף' },
   chips_active: { status: 409, message: 'להזמנה שויכו צ׳יפים פעילים — יש להשבית אותם בחלון ההנפקה לפני הדחייה' },
   not_open: { status: 409, message: 'ההזמנה כבר נאספה או נדחתה' },
   nothing_to_write: { status: 400, message: 'אין שם או טלפון לעדכן' },
@@ -27,6 +29,11 @@ const MESSAGES: Record<string, { status: number; message: string }> = {
   cancel_in_progress: { status: 409, message: '„ביטול וזיכוי” כבר רץ להזמנה הזו — נסו שוב בעוד כמה דקות' },
   reason_required: { status: 400, message: 'נדרשת סיבת ביטול' },
   payplus_reversed: { status: 409, message: 'PayPlus מראה שהחיוב בוטל או זוכה — ההזמנה לא מתקדמת עד „ביטול וזיכוי” של מנהל מערכת' },
+  // "סגירה ידנית" (27/11/2026).
+  not_stuck: { status: 409, message: 'סגירה ידנית אפשרית רק כש„ביטול וזיכוי” נעצר בשלב מסמך הזיכוי, או בשלב הזיכוי ב-PayPlus כשנדרשת בדיקה ידנית' },
+  document_issuing: { status: 409, message: 'מסמך של ההזמנה נמצא כרגע בהפקה במורנינג — נסו שוב בעוד כמה דקות' },
+  // 27/11/2026: a chip works the moment it is issued.
+  order_undoing: { status: 409, message: 'הכסף של ההזמנה הוחזר או בדרך חזרה („ביטול וזיכוי”, או ביטול / זיכוי ב-PayPlus) — אי אפשר להנפיק לה צ׳יפים חדשים' },
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

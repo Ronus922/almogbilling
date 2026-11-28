@@ -166,7 +166,7 @@ describe('what a block and a holder show again', () => {
   const record = (ref: string, kind: 'record' | 'order'): ReceptionRecordView => ({
     kind, ref, order_number: kind === 'order' ? 1042 : null, created_at: '2026-11-25T08:00:00Z', orderer_name: 'דנה כהן', orderer_phone: null,
     orderer_email: null, address: null, chips_count: 1, amount: kind === 'order' ? 50 : 0, by_name: 'מנהל', cancelled: false,
-    payment_method: kind === 'order' ? 'cash' : null, order_id: null, cancel_failed_step: null, cancel_error: null,
+    payment_method: kind === 'order' ? 'cash' : null, order_id: null, cancel_failed_step: null, cancel_error: null, closed_by_hand: false,
   });
 
   it('the email, the lease and its end date of a person: the first chip that has each', () => {

@@ -116,8 +116,9 @@ const post = (route: (req: Request) => Promise<Response>, path: string, body: un
   route(new Request(`http://localhost/api/public/chip-order/${path}`, { method: 'POST', headers, body: JSON.stringify(body) }));
 
 interface Made { id: string; number: number; trackingToken: string; total: number }
-async function makeOrder(opts: { isTest: boolean; chips?: number }): Promise<Made> {
+async function makeOrder(opts: { isTest: boolean; chips?: number; terms?: boolean }): Promise<Made> {
   const o = await orders.createChipOrder({
+    termsAccepted: opts.terms ?? true,
     fullName: 'דנה בדיקה', phoneE164: PHONE, email: 'card-test@example.test', address: 'הרצל 1, חיפה 3300000', role: 'owner',
     rows: [{ role: 'owner', fullName: 'דנה בדיקה', apartmentNumber: APT, chipsCount: opts.chips ?? 3, phoneE164: PHONE, email: null, lease: null, leaseEndDate: null }],
     addressParts: { street: 'הרצל 1', city: 'חיפה', zip: '3300000' },
@@ -287,6 +288,33 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
       `select order_id, env, amount::float8 as amount from public.chip_order_card_sessions where page_request_uid = $1`, [data.page_request_uid],
     )).rows;
     expect(stored).toEqual([{ order_id: o.id, env: 'sandbox', amount: 3 * unitPrice }]);
+  });
+
+  // Decision 3.5 (27/11/2026): the agreement boxes are checked on the server too.
+  it('3.5 — no payment window before the agreement boxes are recorded on the order: without "the details are correct" → 409 terms_required; with a renter row and no renter commitment → 409; both recorded → the window opens', async () => {
+    const o = await makeOrder({ isTest: true, terms: false });
+    createHostedFieldsSession.mockClear();
+    const res = await openSession(o);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ ok: false, state: 'terms_required' });
+    await pool.query(`update public.chip_orders set terms_accepted_at = now() where id = $1`, [o.id]);
+    await pool.query(`update public.chip_order_holders set role = 'tenant' where order_id = $1`, [o.id]);
+    const renter = await openSession(o);
+    expect(renter.status).toBe(409);
+    expect(await renter.json()).toMatchObject({ state: 'terms_required' });
+    expect(createHostedFieldsSession).not.toHaveBeenCalled();
+    await pool.query(`update public.chip_orders set renter_terms_accepted_at = now() where id = $1`, [o.id]);
+    // 2.2 (27/11/2026): and the renter's lease on the order.
+    const noLease = await openSession(o);
+    expect(noLease.status).toBe(409);
+    expect(await noLease.json()).toMatchObject({ state: 'lease_required' });
+    expect(createHostedFieldsSession).not.toHaveBeenCalled();
+    await pool.query(
+      `update public.chip_order_holders set lease_file_key = $2, lease_file_name = 'lease.pdf', lease_file_mime = 'application/pdf', lease_file_size = 1000 where order_id = $1`,
+      [o.id, `${crypto.randomUUID()}.pdf`],
+    );
+    expect((await openSession(o)).status).toBe(200);
+    expect(createHostedFieldsSession).toHaveBeenCalledTimes(1);
   });
 
   it('refuses when the price of the settings no longer gives the total the order was saved with', async () => {
@@ -737,6 +765,14 @@ d('chip orders — card payment (PayPlus hosted fields)', () => {
     expect((await rowOf(o.id)).status).toBe('pending_payment');
 
     sandboxConfig = null;
+    // 2.2 (27/11/2026): a renter row without its lease does not finish either.
+    await pool.query(`update public.chip_order_holders set role = 'tenant' where order_id = $1`, [o.id]);
+    await pool.query(`update public.chip_orders set renter_terms_accepted_at = now() where id = $1`, [o.id]);
+    const noLease = await post(finishRoute, 'test-finish', { trackingToken: o.trackingToken });
+    expect(noLease.status).toBe(409);
+    expect(await noLease.json()).toMatchObject({ ok: false, state: 'lease_required' });
+    expect((await rowOf(o.id)).status).toBe('pending_payment');
+    await pool.query(`update public.chip_order_holders set role = 'owner' where order_id = $1`, [o.id]);
     expect((await post(finishRoute, 'test-finish', { trackingToken: o.trackingToken })).status).toBe(200);
     await runAfter();
     const row = await rowOf(o.id);

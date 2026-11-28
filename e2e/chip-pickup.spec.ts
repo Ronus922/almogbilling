@@ -265,7 +265,10 @@ test.describe.serial('the guard\'s pickup screen', () => {
     expect(api.headers()['cache-control']).toContain('no-store');
     const body = (await api.json()) as { orders: Record<string, unknown>[] };
     const order = body.orders.find((o) => o.id === ready.id)!;
-    expect(Object.keys(order).sort()).toEqual(['apartments', 'id', 'is_test', 'order_number', 'people', 'total']);
+    // + the two notes the guard reads (27/11/2026): the orderer's and the one
+    // written for the guard — never the staff's internal note (SECRET.note).
+    expect(Object.keys(order).sort()).toEqual(['apartments', 'guard_note', 'id', 'is_test', 'order_number', 'orderer_note', 'people', 'total']);
+    expect(order).toMatchObject({ orderer_note: null, guard_note: null });
     expect(Object.keys((order.people as Record<string, unknown>[])[0]!).sort()).toEqual(['apartment', 'chips', 'key', 'name']);
     // The number of the app chip is not sent — only that there is one.
     expect(JSON.stringify(body)).not.toContain(num(3));

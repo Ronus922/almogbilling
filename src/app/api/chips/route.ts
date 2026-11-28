@@ -7,6 +7,7 @@ import { getChipOrderSettings } from '@/lib/db/appSettings';
 import { formatIlsAfter } from '@/lib/chipOrders/model';
 import { RECEPTION_MAX_PAID_CHIPS } from '@/lib/chipOrders/reception';
 import { isElevatedRole } from '@/lib/permissions/constants';
+import { hasPermission } from '@/lib/permissions/check';
 import { processDueDocuments } from '@/lib/chipOrders/documents';
 import { legacyChipBodyToInput, MAX_CHIPS_PER_GROUP } from '@/lib/chips/issueGroups';
 import {
@@ -96,10 +97,13 @@ function coerceText(value: unknown): string | null {
   return trimmed !== '' ? trimmed : null;
 }
 
-// GET /api/chips?tab&status&chip_type&contact_id&q (chips:view)
+// GET /api/chips?tab&status&chip_type&contact_id&q (chips:view). A viewer who
+// may see chip orders (chips_orders_manage:view) gets each chip's order too
+// (`order_ref`: its number and its three notes — 27/11/2026).
 export async function GET(req: NextRequest) {
+  let actor: Actor;
   try {
-    await requirePermission('chips', 'view');
+    actor = await requirePermission('chips', 'view');
   } catch (err) {
     const r = authErrorResponse(err);
     if (r) return r;
@@ -128,7 +132,8 @@ export async function GET(req: NextRequest) {
 
   const q = sp.get('q')?.trim() || undefined;
 
-  const items = await listChips({ tab, status, chip_type, contact_id, q });
+  const withOrders = hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'view');
+  const items = await listChips({ tab, status, chip_type, contact_id, q }, { withOrders });
   return NextResponse.json({ items });
 }
 

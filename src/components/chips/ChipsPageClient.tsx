@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import type { Chip, ChipWithHolder, ChipsKpis, ChipTab } from '@/lib/types/chips';
+import type { Chip, ChipOrderRef, ChipWithHolder, ChipsKpis, ChipTab } from '@/lib/types/chips';
 import { isSnapshotRole, resolveChipHolder } from '@/lib/chips/holder';
 import { ChipsKpiRow } from './ChipsKpiRow';
 import { ChipsTable } from './ChipsTable';
@@ -39,6 +39,9 @@ type IssueInitial = {
   /** Chip orders (13/11/2026): opened from an Orders-tab row — its line. */
   orderItemId?: string | null;
 } | null;
+
+/** The toast of a link (a bell notification) to a chip that no longer exists. */
+export const CHIP_LINK_GONE = 'הצ׳יפ שההתראה מפנה אליו כבר לא קיים במערכת';
 
 function issueInitialFromChip(chip: Chip): IssueInitial {
   return {
@@ -74,6 +77,7 @@ export function ChipsPageClient({
   canEditOrders = false,
   canWriteContacts = false,
   canAdminOrders = false,
+  canCloseByHand = false,
 }: {
   canEdit: boolean;
   /** chips_orders_manage:view — shows the "הזמנות" view (12/11/2026). Without
@@ -85,6 +89,9 @@ export function ChipsPageClient({
   /** Admin / super admin, by role — in an order's window: "בטל הזמנת קבלה",
    *  "זיכוי" and "הפק חשבונית שוב" (each route asks again: requireAdmin). */
   canAdminOrders?: boolean;
+  /** Super admin, by role — "סגירה ידנית" of a stuck "ביטול וזיכוי"
+   *  (27/11/2026; the route asks again). */
+  canCloseByHand?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -161,6 +168,18 @@ export function ChipsPageClient({
       holderName: row.full_name,
       holderPhone: chipOrderRowPhone(row) || null,
       orderItemId: row.item_id,
+    });
+  }
+
+  /** A chip's order number in the chips tab (27/11/2026) — the same window an
+   *  Orders-tab row opens; a delivered order is reached this way. */
+  function openChipOrder(ref: ChipOrderRef) {
+    openIssueSheet({
+      contactId: ref.contact_id,
+      apartmentNumber: ref.apartment_number,
+      holderName: ref.full_name,
+      holderPhone: chipOrderRowPhone(ref) || null,
+      orderItemId: ref.item_id,
     });
   }
 
@@ -269,7 +288,10 @@ export function ChipsPageClient({
       try {
         const res = await fetch(`/api/chips/${id}`, { credentials: 'include' });
         const data = (await res.json().catch(() => ({}))) as { chip?: ChipWithHolder; error?: string };
-        if (!res.ok || !data.chip) throw new Error(data.error ?? 'הצ׳יפ לא נמצא');
+        // A notification may point to a chip that was deleted since (27/11/2026:
+        // the toast said "not_found", the server's code, in English).
+        if (res.status === 404 || data.error === 'not_found') throw new Error(CHIP_LINK_GONE);
+        if (!res.ok || !data.chip) throw new Error(data.error ?? 'טעינת הצ׳יפ נכשלה');
         if (!cancelled) openIssueSheet(issueInitialFromChip(data.chip));
       } catch (e) {
         if (!cancelled) toast.error((e as Error).message);
@@ -482,6 +504,7 @@ export function ChipsPageClient({
           onRowClick={canEdit ? (chip) => openIssueSheet(issueInitialFromChip(chip)) : undefined}
           onHolderClick={(chip) => setHolderPanel(holderRefFromChip(chip))}
           onHolderFilter={(chip) => setHolderFilter(holderRefFromChip(chip))}
+          onOrderOpen={canEdit ? openChipOrder : undefined}
         />
       </div>
       </>)}
@@ -503,6 +526,7 @@ export function ChipsPageClient({
         canEditOrders={canEditOrders}
         canWriteContacts={canWriteContacts}
         canAdminOrders={canAdminOrders}
+        canCloseByHand={canCloseByHand}
       />
 
       {/* Holder view — all chips of one person (name → numbers); a chip row

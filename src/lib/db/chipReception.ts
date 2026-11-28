@@ -13,6 +13,7 @@ import { priceLine } from '@/lib/chipOrders/model';
 import {
   RECEPTION_MAX_PAID_CHIPS, composeReceptionAddress, receptionAmount, sameAmount,
   type ReceptionOrderer, type ReceptionPaymentMethod, type ReceptionRecordView,
+  type ReceptionWebOrder,
 } from '@/lib/chipOrders/reception';
 import type { ChipWithHolder, IssueChipGroup, IssueChipsInput } from '@/lib/types/chips';
 
@@ -254,14 +255,16 @@ export async function saveReceptionWindow(
               card_status: string | null; is_test: boolean; undoing: boolean;
             }>(
               `select id, order_number, total::float8 as total, status, source, payment_method, card_status, is_test,
-                      (refunded_at is not null or refund_requested_at is not null or cancel_requested_at is not null) as undoing
+                      (refunded_at is not null or refund_requested_at is not null or cancel_requested_at is not null
+                        -- …or PayPlus showed the charge cancelled / refunded (27/11/2026).
+                        or (payplus_reversal_at is not null and cancel_completed_at is null)) as undoing
                  from public.chip_orders where tracking_token = $1 for update`,
               [payment.card_token],
             )
           ).rows[0]
           : undefined;
-        // (27/11/2026) An order "ביטול וזיכוי" was started on — or refunded —
-        // while this window stayed open takes no chips.
+        // (27/11/2026) An order "ביטול וזיכוי" was started on — or refunded, or
+        // shown cancelled in PayPlus — while this window stayed open takes no chips.
         if (!paid || paid.source !== 'reception' || paid.payment_method !== 'card' || paid.card_status !== 'paid' || paid.status !== 'paid' || paid.undoing) {
           throw new ReceptionError('card_not_paid');
         }
@@ -433,7 +436,8 @@ export async function listReceptionRecords(contactId: string): Promise<Reception
             r.orderer_name, r.orderer_phone, r.orderer_email,
             nullif(concat_ws(', ', r.address_street, nullif(concat_ws(' ', r.address_city, r.address_zip), '')), '') as address,
             r.chips_count, 0::float8 as amount, r.created_by_name as by_name, false as cancelled,
-            null::text as payment_method, null::uuid as order_id, null::text as cancel_failed_step, null::text as cancel_error
+            null::text as payment_method, null::uuid as order_id, null::text as cancel_failed_step, null::text as cancel_error,
+            false as closed_by_hand
        from public.chip_reception_records r
       where r.contact_id = $1
      union all
@@ -441,7 +445,7 @@ export async function listReceptionRecords(contactId: string): Promise<Reception
             o.full_name, o.phone_e164, o.email, o.address,
             i.chips_count, i.line_total::float8 as amount, o.payment_recorded_by_name as by_name,
             (o.status = 'rejected') as cancelled, o.payment_method, o.id as order_id,
-            o.cancel_failed_step, o.cancel_error
+            o.cancel_failed_step, o.cancel_error, (o.closed_by_hand_at is not null) as closed_by_hand
        from public.chip_order_items i
        join public.chip_orders o on o.id = i.order_id
       -- A card payment that was never completed is not a save of the window.
@@ -529,4 +533,21 @@ export async function createReceptionCardOrder(
     });
     return { id: created.id, order_number: created.order_number, tracking_token: token, total: price.lineTotal };
   });
+}
+
+/** Decision 3.1 (27/11/2026): the OPEN web orders of an apartment — paid
+ *  (being assigned) or ready — for the reception window's read-only lines. */
+export async function listOpenWebOrdersOfContact(contactId: string): Promise<ReceptionWebOrder[]> {
+  const r = await query<ReceptionWebOrder>(
+    `select o.id as order_id, o.order_number, i.id as item_id, o.status, o.is_test, i.chips_count,
+            (select count(*)::int from public.chips c where c.order_item_id = i.id and c.status = 'active') as chips_linked,
+            o.orderer_note, o.guard_note
+       from public.chip_order_items i
+       join public.chip_orders o on o.id = i.order_id
+      where i.contact_id = $1 and o.source = 'web' and o.status in ('paid', 'approved', 'ready')
+      order by o.paid_at nulls last, o.order_number
+      limit 20`,
+    [contactId],
+  );
+  return r.rows;
 }

@@ -236,6 +236,19 @@
   .cr-upl input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
   .cr-upl.cr-has { border-style: solid; border-color: var(--cr-green-ink); background: var(--cr-green-soft); color: var(--cr-green-ink); }
   .cr-upl.cr-bad { border-color: #f87171; background: #fef2f2; }
+  /* "החלפה" next to the chosen file's name (2.2, 27/11/2026): the whole
+     control picks another file; this says so. Never shrinks. */
+  .cr-uplrep { flex: none; font-weight: 700; color: var(--cr-brand); text-decoration: underline; text-underline-offset: 2px; }
+  /* The order on its way with its files (2.2): the line above the pay button. */
+  .cr-upnote {
+    margin: 0 0 12px; display: flex; flex-direction: column; gap: 8px;
+    border: 1px solid #cfd7ff; background: var(--cr-brand-soft); border-radius: 12px; padding: 10px 14px;
+    font: 700 13.5px "Heebo", sans-serif; color: var(--cr-brand-ink);
+  }
+  .cr-upbar { appearance: none; width: 100%; height: 6px; border: 0; border-radius: 999px; background: #dfe5ff; overflow: hidden; }
+  .cr-upbar::-webkit-progress-bar { background: #dfe5ff; border-radius: 999px; }
+  .cr-upbar::-webkit-progress-value { background: var(--cr-brand); border-radius: 999px; transition: width .2s; }
+  .cr-upbar::-moz-progress-bar { background: var(--cr-brand); border-radius: 999px; }
 
   .cr-total {
     display: flex; align-items: center; justify-content: space-between; background: var(--cr-total); color: #fff;

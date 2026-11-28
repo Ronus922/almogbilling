@@ -21,8 +21,11 @@ export type ChipOrderStatus =
   | 'collected'
   | 'rejected';
 
-/** Open = still in the Orders tab: paid (assigning) or ready. A row leaves the
- *  tab once collected or rejected. */
+/** Open = paid (assigning) or ready: chips may still be issued and notes
+ *  written. A web order leaves the Orders tab once it is rejected or handed
+ *  over (the 13/11/2026 rule, Ronen again 27/11/2026 evening — a delivered
+ *  order lives on in the "צ׳יפים" tab through its chips), unless something on
+ *  it is not settled yet (listOpenChipOrderRows). */
 const OPEN_CHIP_ORDER_STATUSES: readonly ChipOrderStatus[] = ['paid', 'approved', 'ready'];
 
 export function isOpenChipOrder(status: ChipOrderStatus): boolean {
@@ -262,8 +265,8 @@ export function isChipOrderOverdue(
 /** awaiting "ממתין לשיוך" · partial "שויכו X מתוך Y" · assigned "שויך" ·
  *  ready "מוכן לאיסוף" · collected "נאסף" · rejected "נדחה" · cancelled "בוטל"
  *  (the last four are the order's own status). X counts ACTIVE chips only. A
- *  collected order is in the Orders tab only when it is a reception order —
- *  paid and handed over in one go. `cancelled` is a RECEPTION order that was
+ *  collected RECEPTION order stays in the Orders tab (25/11/2026); a collected
+ *  web order leaves it (27/11/2026 evening). `cancelled` is a RECEPTION order that was
  *  cancelled (25/11/2026): stored with the status `rejected`, shown "בוטל",
  *  and it stays in the tab; `rejected` is a web order that was rejected. */
 export type ChipOrderStage = 'awaiting' | 'partial' | 'assigned' | 'ready' | 'collected' | 'rejected' | 'cancelled';
@@ -301,7 +304,8 @@ export function chipOrderStageLabel(stage: ChipOrderStage, linked: number, order
 
 /** One row of /chips → "הזמנות": ONE APARTMENT of an open order (13/11/2026;
  *  until then a row was a whole order) — or of a reception order, which stays
- *  in the tab although it is collected (25/11/2026). */
+ *  in the tab once collected (25/11/2026); a delivered web order only while
+ *  it is not settled, or when the search names its number (27/11/2026). */
 export interface ChipOrderRow {
   item_id: string;
   order_id: string;
@@ -331,6 +335,15 @@ export interface ChipOrderRow {
   /** A reception order made for EXTRA chips of a web order (chips added in
    *  that order's window beyond what was paid online): the web order's number. */
   extra_of_order_number: number | null;
+  /** The three notes of the order (27/11/2026, notes.ts) — the row's note
+   *  icons and the exports. Optional: a tab left open across a deploy. */
+  orderer_note?: string | null;
+  guard_note?: string | null;
+  delivery_note?: string | null;
+  delivery_note_by_name?: string | null;
+  delivery_note_at?: string | null;
+  /** The card numbers of the line's ACTIVE physical chips (the "נאסף" confirmation). */
+  chip_numbers?: string[];
   paid_at: string | null;
   due_at: string | null;
   created_at: string;
@@ -363,6 +376,9 @@ export interface ChipOrderRow {
   payplus_reversal_kind?: 'cancelled' | 'refunded' | 'partial' | null;
   /** "ביטול וזיכוי" finished — nothing is left to run. */
   cancel_completed?: boolean;
+  /** "סגירה ידנית" (27/11/2026): the step a super admin closed by hand —
+   *  tagged "נסגרה ידנית" for good. Null = it was not. */
+  closed_by_hand_step?: CloseByHandStep | null;
 }
 
 /** One "פרטי הזמנה" section of the issue window: an OPEN order of the same
@@ -490,6 +506,15 @@ export interface ChipOrderWindowOrder {
   due_at: string | null;
   created_at: string;
   internal_note: string | null;
+  /** The three notes (27/11/2026, notes.ts): the orderer's (the public form),
+   *  the guard note (who and when), the delivery note (who and when). */
+  orderer_note: string | null;
+  guard_note: string | null;
+  guard_note_by_name: string | null;
+  guard_note_at: string | null;
+  delivery_note: string | null;
+  delivery_note_by_name: string | null;
+  delivery_note_at: string | null;
   /** A reception order: how it was paid ('cash_transfer'), who recorded the
    *  payment and when. All null on a web order. */
   payment_method: string | null;
@@ -545,6 +570,39 @@ export interface ChipOrderWindowOrder {
   cancel_completed: boolean;
   /** "ביטול וזיכוי" was started on it (it may have stopped at a step). */
   cancel_requested: boolean;
+  /** "סגירה ידנית" (27/11/2026): a super admin closed the stuck run by hand —
+   *  when, who, why, and at which step. Null = it was not. */
+  closed_by_hand_at: string | null;
+  closed_by_hand_by_name: string | null;
+  closed_by_hand_reason: string | null;
+  closed_by_hand_step: CloseByHandStep | null;
+}
+
+/** The step of "ביטול וזיכוי" a super admin closed by hand (27/11/2026). */
+export type CloseByHandStep = 'refund' | 'credit';
+
+/**
+ * Whether "סגירה ידנית" may close the order's run of "ביטול וזיכוי", and at
+ * which step (27/11/2026) — the one rule of the window and the server. Only a
+ * run that is stuck for good: Morning refused a document of the order (stopped
+ * at 'credit' with a document 'failed' — not Morning merely not connected, nor
+ * a document still waiting its turn), or the refund step needs a person —
+ * PayPlus did not answer a
+ * refund call and does not show it, refused it, or shows more than one charge
+ * (stopped at 'refund' with refund_status 'manual_required' and no refund
+ * recorded). Null = not now.
+ */
+export function closeByHandStep(o: {
+  cancel_requested: boolean; cancel_completed: boolean; cancel_failed_step: 'refund' | 'credit' | 'cancel' | null;
+  refund_status: string | null; refunded_at: string | Date | null;
+  /** A Morning document of the order is 'failed' (Morning refused it, or
+   *  every attempt ran out). */
+  document_failed: boolean;
+}): CloseByHandStep | null {
+  if (!o.cancel_requested || o.cancel_completed) return null;
+  if (o.cancel_failed_step === 'credit') return o.document_failed ? 'credit' : null;
+  if (o.cancel_failed_step === 'refund' && !o.refunded_at && o.refund_status === 'manual_required') return 'refund';
+  return null;
 }
 
 /** One Morning document row of an order, as the window shows it. */

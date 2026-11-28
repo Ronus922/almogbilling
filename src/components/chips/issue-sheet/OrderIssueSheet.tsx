@@ -51,6 +51,13 @@
 //     reception show in the person's block, tagged, and are not part of the
 //     order's count.
 
+import {
+  AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Button } from '@/components/ui/button';
+import { CHIP_NOTE_MAX, DELIVERY_NOTE_LABEL, GUARD_NOTE_LABEL, ORDERER_NOTE_LABEL } from '@/lib/chipOrders/notes';
+import { ChipNoteBlock, noteMeta } from '../ChipOrderNotes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ExternalLink } from 'lucide-react';
@@ -143,7 +150,8 @@ async function fetchWindow(orderItemId: string): Promise<ChipOrderWindow> {
 }
 
 export function OrderIssueSheet({
-  open, onOpenChange, onIssued, canEditOrders = false, canWriteContacts = false, canAdminOrders = false, orderItemId,
+  open, onOpenChange, onIssued, canEditOrders = false, canWriteContacts = false, canAdminOrders = false, canCloseByHand = false,
+  orderItemId,
 }: IssueChipSheetProps & { orderItemId: string }) {
   const [win, setWin] = useState<ChipOrderWindow | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -155,11 +163,17 @@ export function OrderIssueSheet({
   removedRef.current = removed;
   const [note, setNote] = useState('');
   const [noteOrig, setNoteOrig] = useState('');
+  // "הערה לשומר" (27/11/2026) — saved with "שמור שינויים", shown on the guard's screen.
+  const [guardNote, setGuardNote] = useState('');
+  const [guardNoteOrig, setGuardNoteOrig] = useState('');
   const [conflict, setConflict] = useState<{ blockKey: number; number: string } | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   /** The one click of "מוכן לאיסוף" is running (save, then ready). */
   const [readyBusy, setReadyBusy] = useState(false);
+  // Decision 3.2 (27/11/2026): "שמור שינויים" with every chip of the order
+  // assigned asks "לסמן מוכן לאיסוף?" first.
+  const [askReadyOpen, setAskReadyOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -190,6 +204,8 @@ export function OrderIssueSheet({
     setRemoved([]);
     setNote('');
     setNoteOrig('');
+    setGuardNote('');
+    setGuardNoteOrig('');
     setConflict(null);
     setServerError(null);
     setSubmitting(false);
@@ -229,6 +245,8 @@ export function OrderIssueSheet({
     if (fresh) {
       setNote(w.order.internal_note ?? '');
       setNoteOrig(w.order.internal_note ?? '');
+      setGuardNote(w.order.guard_note ?? '');
+      setGuardNoteOrig(w.order.guard_note ?? '');
       setRemoved([]);
       setConflict(null);
       setServerError(null);
@@ -293,6 +311,7 @@ export function OrderIssueSheet({
 
   const totalPending = useMemo(() => blocks.reduce((s, b) => s + effectivePending(b).length, 0), [blocks]);
   const noteChanged = note.trim() !== noteOrig.trim();
+  const guardNoteChanged = guardNote.trim() !== guardNoteOrig.trim();
   // Collected or rejected: nothing of the ORDER can change any more.
   const closed = !!win && !isOpenChipOrder(win.order.status);
   const frozen = submitting || closed;
@@ -309,7 +328,7 @@ export function OrderIssueSheet({
     return null;
   }
 
-  const changes = totalPending + blocks.filter(edited).length + removed.length + (noteChanged ? 1 : 0);
+  const changes = totalPending + blocks.filter(edited).length + removed.length + (noteChanged ? 1 : 0) + (guardNoteChanged ? 1 : 0);
   const blocksValid = blocks.every((b) => blockInvalid(b) === null);
   // An immediate action on a chip (the switch, a number fix) is its own
   // request: nothing is saved over it while it is still running.
@@ -369,7 +388,7 @@ export function OrderIssueSheet({
 
   // ── ESC layering ─────────────────────────────────────────────────────────
 
-  useEscapeKey(open && !confirmCloseOpen && !modalOpen && !quick.edit, () => requestClose());
+  useEscapeKey(open && !confirmCloseOpen && !askReadyOpen && !modalOpen && !quick.edit, () => requestClose());
   useEscapeKey(confirmCloseOpen, () => setConfirmCloseOpen(false));
 
   function requestClose() {
@@ -451,6 +470,7 @@ export function OrderIssueSheet({
           })),
           removed_holder_ids: removed,
           ...(noteChanged ? { note: note.trim() || null } : {}),
+          ...(guardNoteChanged ? { guard_note: guardNote.trim() || null } : {}),
           // How the extra chips are settled. The amount is what the window
           // shows; the server computes its own and refuses a save where the
           // two differ.
@@ -507,8 +527,20 @@ export function OrderIssueSheet({
    *  from 24/11/2026 it stayed open). The message is on the page, and the
    *  rows behind the window are loaded again. A save that fails keeps the
    *  window open, with its error. */
-  async function save() {
+  async function save(opts: { asked?: boolean } = {}) {
     if (!canSubmit) return;
+    // Every chip of the order assigned (with what this save adds): the order
+    // could be ready — asked, never assumed (Ronen pressed "שמור" on 27/11/2026
+    // with every chip assigned, and the order never reached the guard).
+    // Never for an order whose money is going back ("ביטול וזיכוי" started, a
+    // refund sent or recorded, PayPlus showed it cancelled) — as the server
+    // refuses new chips for it, "ready" is not offered either.
+    const undoing = !!win && !win.order.cancel_completed && (
+      !!win.order.refunded_at || win.order.refund_in_flight || win.order.cancel_requested || !!win.order.payplus_reversal_kind);
+    if (!opts.asked && canReady && !undoing) {
+      setAskReadyOpen(true);
+      return;
+    }
     setSubmitting(true);
     try {
       const n = await persist();
@@ -731,6 +763,7 @@ export function OrderIssueSheet({
               readyAction={{ can: canReady, busy: readyBusy, reason: readyReason, run: () => void markReady() }}
               canEditOrders={canEditOrders}
               canAdminOrders={canAdminOrders}
+              canCloseByHand={canCloseByHand}
               disabled={submitting}
               onGone={() => { onIssued(); onOpenChange(false); }}
               onReload={() => { reload(); onIssued(); }}
@@ -765,8 +798,29 @@ export function OrderIssueSheet({
                 />
               </div>
             )}
+            {/* The three notes of the order (27/11/2026), each with its own
+                label — and the staff's internal note, which is none of them. */}
+            {win.order.orderer_note && (
+              <ChipNoteBlock label={ORDERER_NOTE_LABEL} text={win.order.orderer_note} testId="chip-order-orderer-note" />
+            )}
             <div className="ci-fld ci-notefld">
-              <label htmlFor="order-note">הערה</label>
+              <label htmlFor="order-guard-note">
+                {GUARD_NOTE_LABEL} <span className="ci-lblnote">— מוצגת לשומר במסך „מסירת צ׳יפים”</span>
+              </label>
+              <textarea id="order-guard-note" value={guardNote} disabled={frozen || !canEditOrders} maxLength={CHIP_NOTE_MAX} rows={3}
+                placeholder="למשל: למסור רק למשה, הבן של בעל הדירה" data-testid="chip-order-guard-note"
+                onChange={(e) => { setDirty(true); setGuardNote(e.target.value); }} />
+            </div>
+            {win.order.delivery_note && (
+              <ChipNoteBlock
+                label={DELIVERY_NOTE_LABEL}
+                text={win.order.delivery_note}
+                meta={noteMeta(win.order.delivery_note_by_name, win.order.delivery_note_at)}
+                testId="chip-order-delivery-note"
+              />
+            )}
+            <div className="ci-fld ci-notefld">
+              <label htmlFor="order-note">הערה פנימית <span className="ci-lblnote">— לא מוצגת לשומר</span></label>
               <textarea id="order-note" value={note} disabled={frozen} maxLength={2000} placeholder="הערות פנימיות על ההנפקה..."
                 onChange={(e) => { setDirty(true); setNote(e.target.value); }} />
             </div>
@@ -775,6 +829,37 @@ export function OrderIssueSheet({
 
         {serverError && <div className="ci-alert" role="alert">{serverError}</div>}
       </IssueSheetFrame>
+
+      <AlertDialog open={askReadyOpen} onOpenChange={(v) => { if (!submitting) setAskReadyOpen(v); }}>
+        <AlertDialogContent dir="rtl" className="p-6" data-testid="chip-order-ask-ready">
+          <AlertDialogHeader>
+            <AlertDialogTitle>לסמן מוכן לאיסוף?</AlertDialogTitle>
+            <AlertDialogDescription>
+              כל הצ׳יפים של ההזמנה שויכו. „כן” שומר את השינויים, מסמן את ההזמנה מוכנה לאיסוף ושולח הודעה למזמין — וההזמנה עוברת למסך השומר.
+              „לא עכשיו” רק שומר.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              className="h-11 px-4"
+              disabled={submitting}
+              onClick={() => { setAskReadyOpen(false); void save({ asked: true }); }}
+              data-testid="chip-order-ask-ready-no"
+            >
+              לא עכשיו
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              className="h-11 px-4"
+              disabled={submitting}
+              onClick={() => { setAskReadyOpen(false); void markReady(); }}
+              data-testid="chip-order-ask-ready-yes"
+            >
+              כן, לסמן מוכן לאיסוף
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <DiscardDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}
         onDiscard={() => { setConfirmCloseOpen(false); onOpenChange(false); }} />

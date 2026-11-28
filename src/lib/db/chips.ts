@@ -39,6 +39,30 @@ export class ChipNumberTakenError extends Error {
 
 /** Thrown on an invalid state transition (deactivate a non-active chip,
  *  reactivate a non-inactive chip). */
+/** Decision 3.6 (27/11/2026): a chip disabled with its order — the order was
+ *  cancelled ("ביטול וזיכוי", "בטל הזמנת קבלה", "דחה") or closed by hand — is
+ *  never switched on again. The message says why. */
+export class ChipReactivationLockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ChipReactivationLockedError';
+  }
+}
+
+/** Why a DISABLED chip may not be switched on again (null = it may): its line's
+ *  order was cancelled or closed by hand. Bound to the chip's order line, not
+ *  to its apartment: moving a disabled chip to another apartment does not
+ *  free it (security review, 27/11/2026). `ch` = the chips row. Shared by the
+ *  read (the toggle shows it) and by reactivateChip (which refuses). */
+const REACTIVATION_LOCK_SQL = `
+  (select case when o.closed_by_hand_at is not null then 'הצ׳יפ הושבת בסגירה ידנית של הזמנה ' || o.order_number
+               else 'הצ׳יפ הושבת בביטול הזמנה ' || o.order_number end || ' — אי אפשר להפעיל אותו מחדש'
+     from public.chip_order_items i
+     join public.chip_orders o on o.id = i.order_id
+    where ch.status = 'inactive' and i.id = ch.order_item_id
+      and (o.status = 'rejected' or o.cancel_completed_at is not null or o.closed_by_hand_at is not null)
+    limit 1)`;
+
 export class ChipStateError extends Error {
   constructor(message = 'invalid_chip_state') {
     super(message);
@@ -93,7 +117,21 @@ const CHIP_HOLDER_SELECT = `
     where h.contact_id = ch.contact_id
       and h.resident_role = ch.resident_role
       and (ch.resident_role not in ('other','staff') or h.holder_name = ch.holder_name)
-  ) as holder_chip_count`;
+  ) as holder_chip_count,
+  ${REACTIVATION_LOCK_SQL} as reactivation_lock`;
+
+/** The chip's order, for the chips tab (ChipOrderRef): where its window opens
+ *  and its three notes. Null for a chip issued without an order. */
+const CHIP_ORDER_REF_SELECT = `
+  (select json_build_object(
+            'item_id', i.id, 'order_number', o.order_number, 'source', o.source,
+            'contact_id', i.contact_id, 'apartment_number', i.apartment_number,
+            'full_name', o.full_name, 'phone_e164', o.phone_e164,
+            'orderer_note', o.orderer_note, 'guard_note', o.guard_note, 'delivery_note', o.delivery_note,
+            'delivery_note_by_name', o.delivery_note_by_name, 'delivery_note_at', o.delivery_note_at)
+     from public.chip_order_items i
+     join public.chip_orders o on o.id = i.order_id
+    where i.id = ch.order_item_id) as order_ref`;
 
 const CHIP_FROM_JOINED = `
   from public.chips ch
@@ -157,7 +195,9 @@ async function insertChipEvent(
 
 // ── Reads ────────────────────────────────────────────────────────────────
 
-export async function listChips(filters: ChipListFilters): Promise<ChipWithHolder[]> {
+/** `withOrders` — the viewer may see chip orders (chips_orders_manage:view):
+ *  each chip of an order carries `order_ref` (the chips tab, 27/11/2026). */
+export async function listChips(filters: ChipListFilters, opts: { withOrders?: boolean } = {}): Promise<ChipWithHolder[]> {
   const where: string[] = [];
   const params: unknown[] = [];
   const term = filters.q?.trim();
@@ -242,7 +282,8 @@ export async function listChips(filters: ChipListFilters): Promise<ChipWithHolde
 
   const whereSql = where.length ? `where ${where.join(' and ')}` : '';
   const r = await query<ChipWithHolder>(
-    `select ${CHIP_COLUMNS_QUALIFIED}, ${CHIP_HOLDER_SELECT}, ${matchTypeSelect}
+    `select ${CHIP_COLUMNS_QUALIFIED}, ${CHIP_HOLDER_SELECT}, ${matchTypeSelect},
+            ${opts.withOrders ? CHIP_ORDER_REF_SELECT : 'null::json as order_ref'}
        ${CHIP_FROM_JOINED} ${whereSql} order by ${orderBy}`,
     params,
   );
@@ -645,6 +686,10 @@ export async function reactivateChip(
     ).rows[0];
     if (!cur) return null;
     if (cur.status !== 'inactive') throw new ChipStateError();
+    const lock = (
+      await client.query<{ lock: string | null }>(`select ${REACTIVATION_LOCK_SQL} as lock from public.chips ch where ch.id = $1`, [id])
+    ).rows[0]?.lock;
+    if (lock) throw new ChipReactivationLockedError(lock);
 
     try {
       await client.query(

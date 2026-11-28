@@ -2,7 +2,8 @@
 
 import { History, KeyRound, Search, UserX } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { ChipMatchType, ChipResidentRole, ChipWithHolder } from '@/lib/types/chips';
+import type { ChipMatchType, ChipOrderRef, ChipResidentRole, ChipWithHolder } from '@/lib/types/chips';
+import { ChipOrderNotesIcon } from './ChipOrderNotes';
 import { CHIP_STATUS_LABEL, CHIP_TYPE_LABEL, RESIDENT_ROLE_LABEL } from '@/lib/constants/chips';
 import { resolveChipHolder } from '@/lib/chips/holder';
 
@@ -141,6 +142,32 @@ function StatusPill({ chip }: { chip: ChipWithHolder }) {
   );
 }
 
+/** The order a chip was issued for (27/11/2026, Ronen): a delivered order
+ *  leaves the Orders tab and lives on here — its number opens the order's
+ *  window (as its Orders-tab row did; for a viewer who may open windows), and
+ *  the note icon lists its three notes. */
+function ChipOrderLink({ order, onOpen }: { order: ChipOrderRef; onOpen?: (order: ChipOrderRef) => void }) {
+  const label = <>הזמנה <span className="chip-num">{order.order_number}</span></>;
+  return (
+    <span className="flex min-w-0 items-center gap-1" data-testid="chips-row-order">
+      {onOpen ? (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onOpen(order); }}
+          title={`פתיחת חלון הזמנה ${order.order_number}`}
+          data-testid="chips-row-order-link"
+          className="relative inline-flex items-center rounded-[4px] text-[12.5px] font-bold text-[var(--chip-brand-ink)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--chip-brand)] after:absolute after:-inset-x-2 after:-inset-y-[13px] after:content-['']"
+        >
+          {label}
+        </button>
+      ) : (
+        <span className="text-[12.5px] font-semibold text-[var(--chip-ink-muted)]" data-testid="chips-row-order-number">{label}</span>
+      )}
+      <ChipOrderNotesIcon notes={order} testId="chips-row-notes" />
+    </span>
+  );
+}
+
 function formatDate(value: string): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '';
@@ -158,6 +185,7 @@ export function ChipsTable({
   onRowClick,
   onHolderClick,
   onHolderFilter,
+  onOrderOpen,
 }: {
   items: ChipWithHolder[];
   loading: boolean;
@@ -170,6 +198,9 @@ export function ChipsTable({
   onHolderClick: (chip: ChipWithHolder) => void;
   /** Click on the "N צ׳יפים" pill — filters the table to that person. */
   onHolderFilter: (chip: ChipWithHolder) => void;
+  /** Click on a chip's order number — the order's window. Absent: the number
+   *  is plain text (no chips:edit, as the rows). */
+  onOrderOpen?: (order: ChipOrderRef) => void;
 }) {
   if (loading) {
     return (
@@ -269,6 +300,7 @@ export function ChipsTable({
 
                 <span className="flex min-w-0 flex-col items-start gap-[3px]">
                   <ChipNumberTag chip={c} />
+                  {c.order_ref && <ChipOrderLink order={c.order_ref} onOpen={onOrderOpen} />}
                   {searchTerm && c.match_type && <MatchBadge type={c.match_type} />}
                 </span>
 
@@ -297,14 +329,17 @@ export function ChipsTable({
       <div className="space-y-2 p-4 sm:hidden">
         {items.map((c) => {
           const holder = resolveChipHolder(c);
-          return (
+          // A chip of an order: its order line sits under the card's button
+          // (a button cannot hold the order link), inside the same card.
+          const card = (
             <button
               key={c.id}
               type="button"
               disabled={!onRowClick}
               onClick={onRowClick ? () => onRowClick(c) : undefined}
               className={cn(
-                'flex w-full items-center gap-3 rounded-[13px] border border-[var(--chip-border)] bg-[var(--chip-panel)] p-4 text-start transition-colors',
+                'flex w-full items-center gap-3 p-4 text-start transition-colors',
+                c.order_ref ? 'rounded-t-[13px]' : 'rounded-[13px] border border-[var(--chip-border)] bg-[var(--chip-panel)]',
                 onRowClick && 'cursor-pointer hover:bg-[var(--chip-hover)]',
               )}
             >
@@ -336,6 +371,15 @@ export function ChipsTable({
 
               <StatusPill chip={c} />
             </button>
+          );
+          if (!c.order_ref) return card;
+          return (
+            <div key={c.id} className="rounded-[13px] border border-[var(--chip-border)] bg-[var(--chip-panel)]" data-testid="chips-card">
+              {card}
+              <div className="flex min-h-11 items-center border-t border-[var(--chip-border)] px-4 py-2">
+                <ChipOrderLink order={c.order_ref} onOpen={onOrderOpen} />
+              </div>
+            </div>
           );
         })}
       </div>

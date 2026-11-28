@@ -99,9 +99,10 @@ d('chip order window on the DB', () => {
       { role: 'tenant', full_name: 'שרה לוי', phone: '+972539300002', chips_count: 2, source: 'order', has_end: true },
       { role: 'owner', full_name: 'דנה כהן', phone: '+972539300001', chips_count: 1, source: 'order', has_end: false },
     ]);
-    const row = (await pool.query(`select address_street, address_city, address_zip, renter_terms_accepted_at is not null as rt, internal_note from public.chip_orders where id = $1`, [o.id])).rows[0];
-    // The orderer's "הערות" (21/11/2026) is the order's note, trimmed.
-    expect(row).toEqual({ address_street: 'הרצל 1', address_city: 'חיפה', address_zip: '3300000', rt: true, internal_note: 'אני מבקש למסור את הכרטיסים לשכן' });
+    const row = (await pool.query(`select address_street, address_city, address_zip, renter_terms_accepted_at is not null as rt, internal_note, orderer_note from public.chip_orders where id = $1`, [o.id])).rows[0];
+    // The orderer's "הערות" is "הערת המזמין" (27/11/2026), trimmed — its own
+    // column; the staff's internal note stays empty.
+    expect(row).toEqual({ address_street: 'הרצל 1', address_city: 'חיפה', address_zip: '3300000', rt: true, internal_note: null, orderer_note: 'אני מבקש למסור את הכרטיסים לשכן' });
   });
 
   it('the window: never for an unpaid order; one block per person once paid', async () => {
@@ -113,8 +114,10 @@ d('chip order window on the DB', () => {
     expect(w.holders.map((h) => [h.full_name, h.source, h.chips_count])).toEqual([['דנה כהן', 'order', 2], ['שרה לוי', 'order', 2], ['דנה כהן', 'order', 1]]);
     expect(w.clicked_item_id).toBe(ids.itemB);
     expect(w.order_all_linked).toBe(false);
-    // The orderer's note is the window's "הערה" (the next test edits it).
-    expect(w.order.internal_note).toBe('אני מבקש למסור את הכרטיסים לשכן');
+    // The orderer's note, read only in the window; the internal note is empty.
+    expect(w.order.orderer_note).toBe('אני מבקש למסור את הכרטיסים לשכן');
+    expect(w.order.internal_note).toBeNull();
+    expect(w.order).toMatchObject({ guard_note: null, delivery_note: null });
     ids.h0 = w.holders[0].id!;
     ids.h1 = w.holders[1].id!;
     ids.h2 = w.holders[2].id!;
@@ -138,6 +141,8 @@ d('chip order window on the DB', () => {
           new_chips: [{ number: num(3), chip_type: 'physical' }] },
       ],
       note: 'הערה פנימית',
+      // "הערה לשומר" (27/11/2026) — saved with the window, kept apart from the internal note.
+      guardNote: '  להתקשר לפני המסירה  ',
     }, admin, PRICE);
     expect(res).toEqual({ issued: 3, updated: 0, extra: null });
     const chips = (await pool.query(
@@ -148,6 +153,14 @@ d('chip order window on the DB', () => {
     ]);
     const w = (await win.getChipOrderWindow(ids.itemA))!;
     expect(w.order.internal_note).toBe('הערה פנימית');
+    expect(w.order).toMatchObject({ guard_note: 'להתקשר לפני המסירה', guard_note_by_name: admin.name, orderer_note: 'אני מבקש למסור את הכרטיסים לשכן' });
+    expect(w.order.guard_note_at).not.toBeNull();
+    // Every write of the note is audited, with the text before and after; the same text again writes nothing.
+    const audited = async () => (await pool.query(
+      `select actor_user_id, metadata from public.audit_log where entity_type = 'chip_order' and entity_id = $1 and action = 'guard_note_set' order by created_at`, [ids.order])).rows;
+    expect(await audited()).toEqual([{ actor_user_id: admin.id, metadata: { order_number: expect.any(Number), before: null, after: 'להתקשר לפני המסירה' } }]);
+    await win.saveChipOrderWindow(ids.order, { holders: [], guardNote: 'להתקשר לפני המסירה' }, admin, PRICE);
+    expect(await audited()).toHaveLength(1);
     expect(w.holders[0].chips.map((c) => c.chip_number)).toEqual([num(1), num(2)]);
     expect(w.items.find((i) => i.id === ids.itemB)!.chips_linked).toBe(1);
   });

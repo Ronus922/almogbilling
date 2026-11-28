@@ -33,7 +33,7 @@ import {
 } from '@/lib/chipOrders/reception';
 import { e164ToLocal } from '@/lib/portal/phone';
 import type { ChipLeaseRef } from '@/lib/types/chips';
-import { RECEPTION_CANCEL_LABEL, receptionCancelStoppedText } from '@/lib/chipOrders/receptionCancelText';
+import { CLOSED_BY_HAND_LABEL, RECEPTION_CANCEL_LABEL, receptionCancelStoppedText } from '@/lib/chipOrders/receptionCancelText';
 import { ReceptionCancelDialog } from '../ReceptionCancelDialog';
 import { AlertIco, CheckIco, Ico } from './parts';
 
@@ -321,7 +321,7 @@ export function ReceptionRecords({
               <span className="ci-num">{DAY.format(new Date(r.created_at))}</span>
               <span className={cn('ci-tag', r.cancelled ? 'ci-red' : r.kind === 'order' ? 'ci-green' : 'ci-grey')}>
                 {r.cancelled
-                  ? <>ההזמנה בוטלה · <span className="ci-num">{formatIlsAfter(r.amount)}</span></>
+                  ? <>ההזמנה בוטלה{r.closed_by_hand ? ` · ${CLOSED_BY_HAND_LABEL}` : ''} · <span className="ci-num">{formatIlsAfter(r.amount)}</span></>
                   : r.kind === 'order'
                     ? <>שולם <span className="ci-num">{formatIlsAfter(r.amount)}</span>{paidBy && <> · {paidBy}</>}</>
                     : RECEPTION_PAYMENT_LABEL.none}

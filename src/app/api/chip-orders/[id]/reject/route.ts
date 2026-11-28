@@ -1,5 +1,6 @@
 import { NextResponse, after } from 'next/server';
 import { requirePermission, type Actor } from '@/lib/auth/actor';
+import { isElevatedRole } from '@/lib/permissions/constants';
 import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { parseJsonBody } from '@/lib/http/body';
 import { chipOrderRejectBodySchema } from '@/lib/validation/requests';
@@ -17,7 +18,12 @@ import { logger } from '@/lib/logger';
 export const runtime = 'nodejs';
 
 // POST /api/chip-orders/[id]/reject (chips_orders_manage:edit) — "דחה" with a
-// reason. The status changes first (committed); then the money:
+// reason. An order that took money — every real order: the tab shows paid
+// orders only — is rejected by an ADMIN or SUPER ADMIN only, by role (F3,
+// Ronen 27/11/2026): the rejection refunds it, exactly like "ביטול וזיכוי".
+// Anyone else may reject a TEST order that was never charged (403
+// refund_admin_only otherwise, checked on the locked order — nothing changes).
+// The status changes first (committed); then the money:
 //   - paid BY CARD → the steps of "ביטול וזיכוי" (runCancelAndCredit, 27/11/2026
 //     — the one refund of the module: PayPlus is asked first, a refund is never
 //     sent twice): the refund, the Morning credit document (never for a test
@@ -44,7 +50,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   let rejected;
   try {
-    rejected = await rejectChipOrder(id, body.data.reason);
+    rejected = await rejectChipOrder(id, body.data.reason, { mayRefund: isElevatedRole(actor.role) });
     if (!rejected) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   } catch (err) {
     return chipOrderErrorResponse(err, 'POST /api/chip-orders/:id/reject');

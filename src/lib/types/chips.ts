@@ -137,8 +137,35 @@ export interface ChipWithHolder extends Chip {
   /** How many chips this same person holds — (contact_id, resident_role), and
    *  for snapshot roles also the same holder_name. */
   holder_chip_count: number;
+  /** Decision 3.6 (27/11/2026): why this DISABLED chip may not be switched on
+   *  again — its order was cancelled or closed by hand. Null = it may. */
+  reactivation_lock?: string | null;
   /** Set only when the list query ran with a search term. */
   match_type?: ChipMatchType | null;
+  /** The order the chip was issued for (chips.order_item_id) — the chips tab
+   *  shows its number (a link to the order's window) and its notes (Ronen,
+   *  27/11/2026: a delivered order lives on through its chips). Only in the
+   *  list, and only for a viewer who may see chip orders
+   *  (chips_orders_manage:view); absent / null otherwise. */
+  order_ref?: ChipOrderRef | null;
+}
+
+/** What the chips tab needs of a chip's order: where its window opens (the
+ *  order line, the apartment, the orderer — as an Orders-tab row opens it)
+ *  and its three notes. */
+export interface ChipOrderRef {
+  item_id: string;
+  order_number: number;
+  source: 'web' | 'reception';
+  contact_id: string;
+  apartment_number: string;
+  full_name: string;
+  phone_e164: string | null;
+  orderer_note: string | null;
+  guard_note: string | null;
+  delivery_note: string | null;
+  delivery_note_by_name: string | null;
+  delivery_note_at: string | null;
 }
 
 /** One holder group inside a multi-person issue request: one person (role +

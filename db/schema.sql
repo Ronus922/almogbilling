@@ -2087,6 +2087,21 @@ CREATE TABLE public.chip_orders (
     cancel_completed_at timestamp with time zone,
     payplus_reversal_at timestamp with time zone,
     payplus_reversal_kind text,
+    closed_by_hand_at timestamp with time zone,
+    closed_by_hand_by uuid,
+    closed_by_hand_by_name text,
+    closed_by_hand_reason text,
+    closed_by_hand_step text,
+    orderer_note text,
+    guard_note text,
+    guard_note_by uuid,
+    guard_note_by_name text,
+    guard_note_at timestamp with time zone,
+    delivery_note text,
+    delivery_note_by uuid,
+    delivery_note_by_name text,
+    delivery_note_at timestamp with time zone,
+    terms_accepted_at timestamp with time zone,
     CONSTRAINT chip_orders_address_check CHECK ((((source = 'reception'::text) AND (address IS NULL)) OR ((address IS NOT NULL) AND ((length(btrim(address)) >= 2) AND (length(btrim(address)) <= 300))))),
     CONSTRAINT chip_orders_address_city_check CHECK (((address_city IS NULL) OR ((length(btrim(address_city)) >= 2) AND (length(btrim(address_city)) <= 100)))),
     CONSTRAINT chip_orders_address_street_check CHECK (((address_street IS NULL) OR ((length(btrim(address_street)) >= 2) AND (length(btrim(address_street)) <= 200)))),
@@ -2105,6 +2120,7 @@ CREATE TABLE public.chip_orders (
     CONSTRAINT chip_orders_card_status_check CHECK (((card_status IS NULL) OR (card_status = ANY (ARRAY['started'::text, 'paid'::text, 'failed'::text])))),
     CONSTRAINT chip_orders_card_text_check CHECK ((((card_approval_number IS NULL) OR ((length(card_approval_number) >= 1) AND (length(card_approval_number) <= 40))) AND ((card_transaction_uid IS NULL) OR ((length(card_transaction_uid) >= 8) AND (length(card_transaction_uid) <= 80))) AND ((card_page_request_uid IS NULL) OR ((length(card_page_request_uid) >= 8) AND (length(card_page_request_uid) <= 80))))),
     CONSTRAINT chip_orders_card_web_check CHECK (((card_status IS NULL) OR (source = ANY (ARRAY['web'::text, 'reception'::text])))),
+    CONSTRAINT chip_orders_closed_by_hand_check CHECK ((((closed_by_hand_at IS NULL) AND (closed_by_hand_by IS NULL) AND (closed_by_hand_by_name IS NULL) AND (closed_by_hand_reason IS NULL) AND (closed_by_hand_step IS NULL)) OR ((closed_by_hand_at IS NOT NULL) AND (cancel_completed_at IS NOT NULL) AND (closed_by_hand_by_name IS NOT NULL) AND (length(closed_by_hand_by_name) <= 120) AND (closed_by_hand_reason IS NOT NULL) AND ((length(btrim(closed_by_hand_reason)) >= 2) AND (length(btrim(closed_by_hand_reason)) <= 500)) AND (closed_by_hand_step = ANY (ARRAY['refund'::text, 'credit'::text]))))),
     CONSTRAINT chip_orders_collected_by_name_check CHECK (((collected_by_name IS NULL) OR ((length(btrim(collected_by_name)) >= 1) AND (length(btrim(collected_by_name)) <= 120)))),
     CONSTRAINT chip_orders_email_check CHECK ((((source = 'reception'::text) AND (email IS NULL)) OR ((email IS NOT NULL) AND ((length(btrim(email)) >= 3) AND (length(btrim(email)) <= 254))))),
     CONSTRAINT chip_orders_extra_of_check CHECK (((extra_of_order_id IS NULL) OR ((source = 'reception'::text) AND (extra_of_order_id <> id)))),
@@ -2112,6 +2128,7 @@ CREATE TABLE public.chip_orders (
     CONSTRAINT chip_orders_handed_over_via_check CHECK (((handed_over_via IS NULL) OR (handed_over_via = ANY (ARRAY['pickup'::text, 'management'::text])))),
     CONSTRAINT chip_orders_handover_check CHECK ((((handed_over_via IS NULL) AND (handed_over_by_name IS NULL) AND (collected_by_name IS NULL) AND (collected_holder_id IS NULL)) OR ((handed_over_via IS NOT NULL) AND (handed_over_by_name IS NOT NULL) AND (status = 'collected'::text) AND ((handed_over_via <> 'pickup'::text) OR (collected_by_name IS NOT NULL))))),
     CONSTRAINT chip_orders_internal_note_check CHECK (((internal_note IS NULL) OR (length(internal_note) <= 2000))),
+    CONSTRAINT chip_orders_notes_check CHECK ((((orderer_note IS NULL) OR ((length(btrim(orderer_note)) >= 1) AND (length(btrim(orderer_note)) <= 500))) AND ((guard_note IS NULL) OR (((length(btrim(guard_note)) >= 1) AND (length(btrim(guard_note)) <= 500)) AND (guard_note_at IS NOT NULL))) AND ((guard_note_at IS NULL) = (guard_note_by_name IS NULL)) AND ((guard_note_by_name IS NULL) OR (length(guard_note_by_name) <= 120)) AND ((delivery_note IS NULL) OR (((length(btrim(delivery_note)) >= 1) AND (length(btrim(delivery_note)) <= 500)) AND (delivery_note_at IS NOT NULL))) AND ((delivery_note_at IS NULL) = (delivery_note_by_name IS NULL)) AND ((delivery_note_by_name IS NULL) OR (length(delivery_note_by_name) <= 120)))),
     CONSTRAINT chip_orders_paid_fields_check CHECK (((status = 'pending_payment'::text) OR ((paid_at IS NOT NULL) AND ((grow_transaction_id IS NOT NULL) OR is_test OR (source = 'reception'::text) OR (NOT (card_status IS DISTINCT FROM 'paid'::text)))))),
     CONSTRAINT chip_orders_payment_method_check CHECK (((payment_method IS NULL) OR (payment_method = ANY (ARRAY['cash_transfer'::text, 'cash'::text, 'bank_transfer'::text, 'card'::text])))),
     CONSTRAINT chip_orders_payplus_reversal_check CHECK ((((payplus_reversal_at IS NULL) = (payplus_reversal_kind IS NULL)) AND ((payplus_reversal_kind IS NULL) OR (payplus_reversal_kind = ANY (ARRAY['cancelled'::text, 'refunded'::text, 'partial'::text]))) AND ((payplus_reversal_at IS NULL) OR (card_status = 'paid'::text)))),
@@ -2265,6 +2282,27 @@ COMMENT ON COLUMN public.chip_orders.card_last4 IS 'The last four digits of the 
 --
 
 COMMENT ON COLUMN public.chip_orders.refund_via IS 'Where the refund came from: admin ("זיכוי"), reject ("דחה"), reception_cancel ("בטל הזמנת קבלה"), payplus (made in the PayPlus dashboard, reported by its callback).';
+
+
+--
+-- Name: COLUMN chip_orders.orderer_note; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.orderer_note IS 'הערת המזמין — the notes field of the public order form (27/11/2026). Read only for the staff; shown in the order window, the orders table, the reception window and the guard''s pickup screen.';
+
+
+--
+-- Name: COLUMN chip_orders.guard_note; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.guard_note IS 'הערה לשומר — written by the staff who prepare or issue the chips, until the order is handed over (27/11/2026). Shown on the guard''s pickup screen.';
+
+
+--
+-- Name: COLUMN chip_orders.delivery_note; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.chip_orders.delivery_note IS 'הערת מסירה — written at the hand-over (the guard''s "נמסר" or the staff''s "נאסף", 27/11/2026).';
 
 
 --
@@ -8238,6 +8276,14 @@ ALTER TABLE ONLY public.chip_orders
 
 
 --
+-- Name: chip_orders chip_orders_closed_by_hand_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_orders
+    ADD CONSTRAINT chip_orders_closed_by_hand_by_fkey FOREIGN KEY (closed_by_hand_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: chip_orders chip_orders_collected_holder_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8246,11 +8292,27 @@ ALTER TABLE ONLY public.chip_orders
 
 
 --
+-- Name: chip_orders chip_orders_delivery_note_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_orders
+    ADD CONSTRAINT chip_orders_delivery_note_by_fkey FOREIGN KEY (delivery_note_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: chip_orders chip_orders_extra_of_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.chip_orders
     ADD CONSTRAINT chip_orders_extra_of_order_id_fkey FOREIGN KEY (extra_of_order_id) REFERENCES public.chip_orders(id) ON DELETE SET NULL;
+
+
+--
+-- Name: chip_orders chip_orders_guard_note_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.chip_orders
+    ADD CONSTRAINT chip_orders_guard_note_by_fkey FOREIGN KEY (guard_note_by) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -9585,5 +9647,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261125223806'),
     ('20261125224435'),
     ('20261126220000'),
-    ('20261126225119')
+    ('20261126225119'),
+    ('20261127090000'),
+    ('20261127130538')
 ;

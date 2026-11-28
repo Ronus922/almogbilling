@@ -4,7 +4,7 @@ import { authErrorResponse } from '@/lib/auth/apiGuard';
 import { isElevatedRole } from '@/lib/permissions/constants';
 import { hasPermission } from '@/lib/permissions/check';
 import { getChipOrderSettings } from '@/lib/db/appSettings';
-import { listReceptionRecords } from '@/lib/db/chipReception';
+import { listOpenWebOrdersOfContact, listReceptionRecords } from '@/lib/db/chipReception';
 import type { ReceptionContext } from '@/lib/chipOrders/reception';
 import { liveCardConfig, testCardConfig } from '@/lib/chipOrders/cardPayment';
 
@@ -37,9 +37,11 @@ export async function GET(req: NextRequest) {
   if (contactId && !UUID_RE.test(contactId)) {
     return NextResponse.json({ error: 'invalid_contact_id' }, { status: 400 });
   }
-  const [settings, records] = await Promise.all([
+  const ordersView = hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'view');
+  const [settings, records, webOrders] = await Promise.all([
     getChipOrderSettings(),
     contactId ? listReceptionRecords(contactId) : Promise.resolve([]),
+    contactId && ordersView ? listOpenWebOrdersOfContact(contactId) : Promise.resolve([]),
   ]);
   const body: ReceptionContext = {
     unit_price: settings.unitPrice,
@@ -48,6 +50,7 @@ export async function GET(req: NextRequest) {
     card_test: isElevatedRole(actor.role) && testCardConfig() !== null,
     lease_view: hasPermission(actor.role, actor.permissions, 'chips_orders_manage', 'view'),
     records,
+    web_orders: webOrders,
   };
   return NextResponse.json(body);
 }

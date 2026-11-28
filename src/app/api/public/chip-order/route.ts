@@ -38,6 +38,20 @@ export const dynamic = 'force-dynamic';
 // for payment, nothing was charged on it, and it is of the request's kind
 // (test / real). The agreement boxes gate the payment in the page, not this save.
 //
+// THE LEASE FILES COME WITH THE ORDER, NEVER ALONE (2.2, Ronen 27/11/2026).
+// There is no upload endpoint: a lease reaches the server only inside this
+// save, and is stored only as part of the order. The page keeps a chosen file
+// in the browser while the details are filled, and sends it with the save
+// that records the agreement boxes — the one the card fields open with. So a
+// save that does NOT record them (an automatic save of the details) may leave
+// a renter row without its lease; a save that does must hold every lease (a
+// new file, or the key of the one the server holds). A payment window — and a
+// test order's finish — is refused while any renter row of the order lacks
+// its lease (leaseMissing, payplus/session and test-finish). Every file is
+// checked again here (type by its bytes, size, all together), the ceilings
+// below stay, and an order never paid is deleted with its files after 48
+// hours (deleteChipOrderWithLeases, the hourly purge).
+//
 // THE PRICE IS COMPUTED HERE from the settings, never read from the browser:
 // total = all chips × the price of the settings. Up to
 // CHIP_ORDER_LIMITS.maxChipsPerApartment chips per apartment, over all its
@@ -118,10 +132,12 @@ export async function POST(req: Request) {
     if (!phoneLimit.allowed) return err(429, 'יותר מדי הזמנות למספר הזה. נסו שוב מאוחר יותר.');
   }
 
-  // Row rules: a phone for every row, and a lease + its end date for every
-  // renter row (a new file, or — on an update — the one the server holds).
-  // One apartment orders at most maxChipsPerApartment chips over all its rows.
+  // Row rules: a phone for every row, and a lease end date for every renter
+  // row — and its lease (a new file, or — on an update — the one the server
+  // holds) once this save records the agreement (see the header). One
+  // apartment orders at most maxChipsPerApartment chips over all its rows.
   const today = new Date().toISOString().slice(0, 10);
+  const continuing = o.acceptTerms === true && (!o.rows.some((r) => needsLease(r.role)) || o.acceptRenterTerms === true);
   const perApartment = new Map<string, number>();
   const rowPhones: string[] = [];
   for (const [i, r] of o.rows.entries()) {
@@ -133,7 +149,7 @@ export async function POST(req: Request) {
       if (!r.leaseEndDate) return err(400, `נדרש תאריך סיום חוזה (שורה ${i + 1}).`);
       if (r.leaseEndDate < today) return err(400, `תאריך סיום החוזה כבר עבר (שורה ${i + 1}).`);
       const file = form.get(`lease_${i}`);
-      if (!(file instanceof File) && !(updating && r.leaseKey)) return err(400, `נדרש לצרף חוזה או הסכם ניהול (שורה ${i + 1}).`);
+      if (continuing && !(file instanceof File) && !(updating && r.leaseKey)) return err(400, `נדרש לצרף חוזה או הסכם ניהול (שורה ${i + 1}).`);
     }
   }
   for (const count of perApartment.values()) {
@@ -239,6 +255,7 @@ export async function POST(req: Request) {
     fullName: o.rows[0].fullName, phoneE164, email: o.email, address, role: o.rows[0].role,
     addressParts: { street: o.addressStreet, city: o.addressCity, zip: o.addressZip },
     renterTermsAccepted: hasRenter && o.acceptRenterTerms === true,
+    termsAccepted: o.acceptTerms === true,
     note: o.note ? o.note : null,
     isTest: test,
   };

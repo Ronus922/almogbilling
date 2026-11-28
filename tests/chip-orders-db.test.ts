@@ -35,7 +35,7 @@ vi.mock('@/lib/db', () => ({
 
 const db = await import('@/lib/db/chipOrders');
 const { recordCardPayment, setCardSession } = await import('@/lib/db/chipOrderCard');
-const { issueChipGroups, deactivateChip } = await import('@/lib/db/chips');
+const { issueChipGroups, deactivateChip, listChips } = await import('@/lib/db/chips');
 const { issueCode, verifyCode } = await import('@/lib/db/portal/otp');
 const { DEFAULT_CHIP_ORDER_SETTINGS } = await import('@/lib/chipOrders/model');
 
@@ -64,6 +64,17 @@ async function payByCard(orderId: string, transactionUid = `tx-db-${tag}-${order
     env: 'production', orderNumber: s.orderNumber, transactionUid, pageRequestUid: s.session,
     amount: s.total, approvalNumber: '0012345', last4: '4242',
   }, 'payplus_callback', at);
+}
+/** Morning issued every document of the order (stood in for: the DB has no
+ *  Morning) — a delivered order with a document still waiting stays in the
+ *  Orders tab (27/11/2026). */
+async function documentsIssued(orderId: string) {
+  await pool.query(
+    `update public.chip_order_documents set status = 'issued', issued_at = now(), claimed_at = null, last_error = null,
+            morning_docs = '[{"number":"10000"}]'::jsonb
+      where order_id = $1 and status <> 'issued'`,
+    [orderId],
+  );
 }
 /** A document row of an order (Morning, 26/11/2026) blocks deleting it: gone
  *  first, by the order's id. Absent on a database without that table. */
@@ -220,7 +231,7 @@ d('chip orders on the DB', () => {
     expect((await rowsOf(ids.order)).find((r) => r.item_id === owned)).toMatchObject({ chips_linked: 4, chips_count: 3 });
   });
 
-  it('ready only when every apartment of the order has its chips; collected drops every row; a closed order takes no more chips', async () => {
+  it('ready only when every apartment of the order has its chips; collected leaves the tab (13/11/2026, Ronen again 27/11/2026); a closed order takes no more chips', async () => {
     const owned = await itemOf(ids.order, apt.owned);
     await expect(db.markChipOrderReady(ids.order)).rejects.toThrow('chips_missing');
     for (const [aptNo, cid, n] of [[apt.empty, ids.empty, 2], [apt.rented, ids.rented, 1]] as const) {
@@ -233,7 +244,7 @@ d('chip orders on the DB', () => {
     expect(await db.markChipOrderReady(ids.order)).toBe(true);
     await expect(db.markChipOrderReady(ids.order)).rejects.toThrow('not_assigning');
     expect((await rowsOf(ids.order)).every((r) => r.status === 'ready')).toBe(true);
-    await expect(db.rejectChipOrder(ids.order, 'x')).rejects.toThrow('not_rejectable');
+    await expect(db.rejectChipOrder(ids.order, 'x', { mayRefund: true })).rejects.toThrow('not_rejectable');
     // A replacement chip may still be linked while the order is ready.
     const extra = await issueChipGroups(
       { contact_id: ids.owned, groups: [{ resident_role: 'owner', holder_name: 'דנה כהן', chip_type: 'physical', numbers: [`A${tag}5`], order_item_id: owned }] },
@@ -241,11 +252,108 @@ d('chip orders on the DB', () => {
     );
     made.chips.push(...extra.items.map((c) => c.id));
     expect(await db.markChipOrderCollected(ids.order, admin, { via: 'management' })).toMatchObject({ collector_name: null });
+    // A handed-over web order leaves the tab (Ronen, 27/11/2026 evening, back
+    // to the 13/11/2026 rule — it lives on in the chips tab, through its
+    // chips) — once its invoice is issued (a document still waiting keeps it).
+    const queued = (await pool.query(`select count(*)::int as n from public.chip_order_documents where order_id = $1 and status <> 'issued'`, [ids.order])).rows[0].n;
+    if (queued > 0) expect((await rowsOf(ids.order)).length).toBeGreaterThan(0);
+    await documentsIssued(ids.order);
     expect(await rowsOf(ids.order)).toEqual([]);
     await expect(issueChipGroups(
       { contact_id: ids.owned, groups: [{ resident_role: 'owner', holder_name: 'דנה כהן', chip_type: 'physical', numbers: [`A${tag}6`], order_item_id: owned }] },
       admin,
     )).rejects.toThrow('order_not_open');
+  });
+
+  // Ronen, 27/11/2026 (evening, 1.1–1.5): a delivered web order leaves the
+  // Orders tab — except while something on it is not settled — and is still
+  // reached by its number; its chips carry it in the chips tab.
+  it('a delivered web order leaves the Orders tab unless it is not settled — a PayPlus cancellation, a stuck "ביטול וזיכוי", a refund with no answer or a manual one, a Morning document not issued — and leaves once settled ("סגירה ידנית" settles all); its number still finds it, never while it waits for payment; its chip carries the order in the chips tab', async () => {
+    const o = await db.createChipOrder(
+      {
+        fullName: 'דנה כהן', phoneE164: PHONE, email: 'dana@example.test', address: 'הרצל 1 חיפה', role: 'owner', ip: null,
+        lines: [{ apartmentNumber: apt.owned, chipsCount: 1, lease: null, leaseEndDate: null }],
+      },
+      DEFAULT_CHIP_ORDER_SETTINGS,
+    );
+    made.orders.push(o.id);
+    // Waiting for payment: not even by its number.
+    expect(await db.listChipOrderRowsByNumber(o.orderNumber)).toEqual([]);
+    await payByCard(o.id);
+    const issued = await issueChipGroups(
+      { contact_id: ids.owned, groups: [{ resident_role: 'owner', holder_name: 'דנה כהן', chip_type: 'physical', numbers: [`D${tag}1`], order_item_id: await itemOf(o.id, apt.owned) }] },
+      admin,
+    );
+    made.chips.push(...issued.items.map((c) => c.id));
+    expect(await db.markChipOrderReady(o.id)).toBe(true);
+    expect((await rowsOf(o.id)).length).toBe(1);
+    await db.markChipOrderCollected(o.id, admin, { via: 'management', deliveryNote: 'נמסר לבת' });
+    await pool.query(`update public.chip_orders set orderer_note = 'נא להתקשר לפני' where id = $1`, [o.id]);
+
+    const inTab = async () => (await rowsOf(o.id)).length;
+    // The card's invoice, queued at the payment: until Morning issues it, the
+    // delivered order stays in the tab.
+    expect((await pool.query(`select kind, status from public.chip_order_documents where order_id = $1`, [o.id])).rows).toEqual([{ kind: 'invoice', status: 'pending' }]);
+    expect(await inTab()).toBe(1);
+    await documentsIssued(o.id);
+    expect(await inTab()).toBe(0);
+    // The search by number reaches it, whatever its stage.
+    expect((await db.listChipOrderRowsByNumber(o.orderNumber)).map((r) => [r.order_id, r.status, r.orderer_note, r.delivery_note]))
+      .toEqual([[o.id, 'collected', 'נא להתקשר לפני', 'נמסר לבת']]);
+    expect(await db.listChipOrderRowsByNumber(999_999_999)).toEqual([]);
+
+    const set = (sql: string) => pool.query(`update public.chip_orders set ${sql} where id = $1`, [o.id]);
+    // PayPlus shows the charge cancelled, nothing finished it yet.
+    await set(`payplus_reversal_at = now(), payplus_reversal_kind = 'cancelled'`);
+    expect(await inTab()).toBe(1);
+    // "ביטול וזיכוי" stopped on a failed step.
+    await set(`cancel_requested_at = now(), cancel_requested_by_name = 'מנהל', cancel_request_reason = 'בדיקה',
+               cancel_failed_step = 'credit', cancel_error = 'מורנינג לא ענה'`);
+    expect(await inTab()).toBe(1);
+    // Finished (the warning goes with it): settled.
+    await set(`cancel_failed_step = null, cancel_error = null, cancel_completed_at = now(),
+               payplus_reversal_at = null, payplus_reversal_kind = null`);
+    expect(await inTab()).toBe(0);
+    // A refund sent with no answer yet; then one that must be returned by hand.
+    await set(`refund_requested_at = now()`);
+    expect(await inTab()).toBe(1);
+    await set(`refund_requested_at = null, refund_status = 'manual_required'`);
+    expect(await inTab()).toBe(1);
+    await set(`refund_status = null`);
+    expect(await inTab()).toBe(0);
+    // A Morning document not issued yet — waiting, then failed — and issued.
+    const doc = (await pool.query<{ id: string }>(
+      `insert into public.chip_order_documents (order_id, kind, payment_key, ref, amount, payment_method)
+       values ($1, 'invoice', $2, $3, 50, 'card') returning id`,
+      [o.id, `tab-${tag}-${o.id}`, `TAB${tag}`],
+    )).rows[0]!.id;
+    expect(await inTab()).toBe(1);
+    await pool.query(`update public.chip_order_documents set status = 'failed', last_error = 'x' where id = $1`, [doc]);
+    expect(await inTab()).toBe(1);
+    await pool.query(
+      `update public.chip_order_documents set status = 'issued', issued_at = now(), last_error = null, morning_docs = '[{"number":"10001"}]'::jsonb where id = $1`,
+      [doc],
+    );
+    expect(await inTab()).toBe(0);
+    // "סגירה ידנית" settles even a document it stopped (failed for good).
+    await pool.query(`update public.chip_order_documents set status = 'failed', issued_at = null, morning_docs = '[]'::jsonb, last_error = 'נסגרה ידנית' where id = $1`, [doc]);
+    expect(await inTab()).toBe(1);
+    await set(`closed_by_hand_at = now(), closed_by_hand_by_name = 'סופר', closed_by_hand_reason = 'בדיקה', closed_by_hand_step = 'credit'`);
+    expect(await inTab()).toBe(0);
+
+    // The chips tab (1.2): the chip carries its order — the number, where its
+    // window opens, the three notes — for a viewer who may see orders only.
+    const withOrders = (await listChips({ contact_id: ids.owned }, { withOrders: true })).find((c) => c.chip_number === `D${tag}1`)!;
+    expect(withOrders.order_ref).toMatchObject({
+      order_number: o.orderNumber, item_id: await itemOf(o.id, apt.owned), contact_id: ids.owned, apartment_number: apt.owned,
+      source: 'web', full_name: 'דנה כהן', orderer_note: 'נא להתקשר לפני', guard_note: null, delivery_note: 'נמסר לבת',
+      delivery_note_by_name: admin.name,
+    });
+    expect(withOrders.order_ref?.delivery_note_at).toBeTruthy();
+    const without = (await listChips({ contact_id: ids.owned })).find((c) => c.chip_number === `D${tag}1`)!;
+    expect(without.order_ref ?? null).toBeNull();
+    // A chip issued without an order carries none.
+    expect((await listChips({ contact_id: ids.owned }, { withOrders: true })).filter((c) => !c.order_item_id).every((c) => c.order_ref === null)).toBe(true);
   });
 
   // 25/11/2026 (Ronen, on production): "מוכן לאיסוף" pressed in the window,
@@ -312,7 +420,7 @@ d('chip orders on the DB', () => {
     expect(ctx.sections.some((x) => x.order_id === other)).toBe(false);
     const otherCtx = (await db.getChipOrderSheetContext(await itemOf(other, apt.owned)))!;
     expect(otherCtx.sections.map((x) => x.order_id)).toEqual([other]);
-    for (const id of [first, other, repeat]) await db.rejectChipOrder(id, 'ניקוי');
+    for (const id of [first, other, repeat]) await db.rejectChipOrder(id, 'ניקוי', { mayRefund: true });
   });
 
   it('"עדכן בכרטיס הדייר": ONLY name + phone, into the slot of the order\'s role, never clearing; refused once the order is closed', async () => {
@@ -339,7 +447,7 @@ d('chip orders on the DB', () => {
 
     const ctx = (await db.getChipOrderSheetContext(item))!;
     expect(ctx.sections[0]).toMatchObject({ role: 'tenant', lease_file_name: 'חוזה.pdf', lease_end_date: '2027-06-30' });
-    await db.rejectChipOrder(o.id, 'בדיקה');
+    await db.rejectChipOrder(o.id, 'בדיקה', { mayRefund: true });
     await expect(db.writeOrderHolderToRegistry(item, { name: 'x', phone: null })).rejects.toThrow('not_open');
     expect(await db.writeOrderHolderToRegistry('00000000-0000-4000-8000-000000000000', { name: 'x', phone: null })).toBeNull();
   });
@@ -358,7 +466,7 @@ d('chip orders on the DB', () => {
       admin,
     );
     made.chips.push(first.items[0]!.id);
-    await expect(db.rejectChipOrder(o.id, 'בדיקה')).rejects.toThrow('chips_active');
+    await expect(db.rejectChipOrder(o.id, 'בדיקה', { mayRefund: true })).rejects.toThrow('chips_active');
     await deactivateChip(first.items[0]!.id, { reason: 'lost' }, admin);
     const replacement = await issueChipGroups(
       { contact_id: ids.empty, groups: [{ resident_role: 'other', holder_name: 'רונית לוי', chip_type: 'physical', numbers: [`R${tag}2`], order_item_id: item }] },
@@ -369,7 +477,7 @@ d('chip orders on the DB', () => {
     await deactivateChip(replacement.items[0]!.id, { reason: 'returned' }, admin);
     await expect(db.markChipOrderReady(o.id)).rejects.toThrow('chips_missing');
     // A card-paid order carries no Grow reference; the refund is done in PayPlus.
-    expect(await db.rejectChipOrder(o.id, 'בדיקה')).toMatchObject({ total: 50, grow_transaction_id: null, is_test: false });
+    expect(await db.rejectChipOrder(o.id, 'בדיקה', { mayRefund: true })).toMatchObject({ total: 50, grow_transaction_id: null, is_test: false });
   });
 
   it('a tenant order: document_review, lease stored; reject keeps the reason and records the refund state', async () => {
@@ -387,7 +495,7 @@ d('chip orders on the DB', () => {
     expect((await payByCard(o.id)).kind).toBe('paid');
     const item = (await pool.query(`select match_status, lease_file_name from public.chip_order_items where order_id = $1`, [o.id])).rows[0];
     expect(item).toMatchObject({ match_status: 'document_review', lease_file_name: 'חוזה.pdf' });
-    const rej = await db.rejectChipOrder(o.id, 'החוזה לא בתוקף');
+    const rej = await db.rejectChipOrder(o.id, 'החוזה לא בתוקף', { mayRefund: true });
     expect(rej).toMatchObject({ total: 50, grow_transaction_id: null, grow_transaction_token: null, is_test: false });
     await db.setChipOrderRefund(o.id, 'manual_required', 'נדרש זיכוי ידני ב-PayPlus');
     const after = (await pool.query(`select status, reject_reason, refund_status from public.chip_orders where id = $1`, [o.id])).rows[0];

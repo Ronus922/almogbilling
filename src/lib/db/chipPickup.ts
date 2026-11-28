@@ -8,9 +8,12 @@ import type { ChipType } from '@/lib/types/chips';
 // This module is the only thing the two routes of /api/chip-pickup read an
 // order through, and it selects what the guard needs to hand chips over and
 // nothing more: an order's number, its apartment numbers, the names of its
-// people and their active chip numbers. No price, amount or payment detail, no
-// email, phone or address, no lease, no note — those columns are not in any
-// query below, so no change to the screen can put them in a response. The
+// people and their active chip numbers — and, from 27/11/2026 (Ronen), the two
+// notes meant for the guard: "הערת המזמין" (orderer_note) and "הערה לשומר"
+// (guard_note). No price, amount or payment detail, no refund, no email, phone
+// or address, no lease, and never the staff's internal note — those columns
+// are not in any query below, so no change to the screen can put them in a
+// response. The
 // static gate (scripts/check-api-auth.mjs) keeps the wide chip modules out of
 // those routes.
 //
@@ -20,7 +23,7 @@ import type { ChipType } from '@/lib/types/chips';
 /** More ready orders than a lobby ever holds; a bound on the answer. */
 const READY_LIMIT = 300;
 
-interface OrderRow { id: string; order_number: number; is_test: boolean; full_name: string }
+interface OrderRow { id: string; order_number: number; is_test: boolean; full_name: string; orderer_note: string | null; guard_note: string | null }
 interface ItemRow { id: string; order_id: string; apartment_number: string; has_people: boolean }
 interface HolderRow { id: string; order_id: string; item_id: string; full_name: string }
 interface ChipRow { chip_number: string | null; chip_type: ChipType; order_id: string; item_id: string; holder_id: string | null }
@@ -42,7 +45,7 @@ interface ChipRow { chip_number: string | null; chip_type: ChipType; order_id: s
 export async function listReadyPickupOrders(): Promise<PickupOrder[]> {
   const orders = (
     await query<OrderRow>(
-      `select id, order_number, is_test, full_name
+      `select id, order_number, is_test, full_name, orderer_note, guard_note
          from public.chip_orders
         where status = 'ready'
           -- PayPlus showed it cancelled / refunded (27/11/2026): nothing to hand over.
@@ -131,6 +134,8 @@ export async function listReadyPickupOrders(): Promise<PickupOrder[]> {
       apartments,
       people,
       total: people.reduce((sum, p) => sum + p.chips.length, 0),
+      orderer_note: o.orderer_note,
+      guard_note: o.guard_note,
     };
   });
 }

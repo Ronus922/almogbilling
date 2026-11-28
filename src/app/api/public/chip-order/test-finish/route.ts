@@ -5,6 +5,7 @@ import { checkRateLimit } from '@/lib/auth/rateLimit';
 import { getClientIp } from '@/lib/http/clientIp';
 import { appUrl } from '@/lib/config';
 import { markTestChipOrderPaid } from '@/lib/db/chipOrders';
+import { CONSENT_REQUIRED, consentMissing, getCardOrderByToken, LEASE_REQUIRED, leaseMissing } from '@/lib/db/chipOrderCard';
 import { afterChipOrderPaid } from '@/lib/chipOrders/payment';
 import { isTestRequest } from '@/lib/chipOrders/testMode';
 import { testCardConfig } from '@/lib/chipOrders/cardPayment';
@@ -42,6 +43,15 @@ export async function POST(req: Request) {
   const body = await parseJsonBody(req, chipOrderTestFinishBodySchema);
   if (!body.ok) return body.response;
 
+  // Decision 3.5: the agreement boxes, recorded on the order, before it is "paid".
+  const current = await getCardOrderByToken(body.data.trackingToken);
+  if (current && consentMissing(current)) {
+    return NextResponse.json({ ok: false, message: CONSENT_REQUIRED, state: 'terms_required' }, { status: 409, headers: H });
+  }
+  // 2.2: and every renter's lease is on it.
+  if (current && leaseMissing(current)) {
+    return NextResponse.json({ ok: false, message: LEASE_REQUIRED, state: 'lease_required' }, { status: 409, headers: H });
+  }
   const orderId = await markTestChipOrderPaid(body.data.trackingToken);
   if (!orderId) {
     return NextResponse.json({ ok: false, message: 'הזמנת הבדיקה לא נמצאה או שכבר הושלמה.' }, { status: 409, headers: H });

@@ -93,7 +93,7 @@ const APT2 = `996${RUN.slice(-5)}2`;
 const CARD = { four: '7391', month: '09', year: '31', bin: '458013', id: '318547290', holder: 'Holder Distinct' };
 const PDF = Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(64, 0x20)]);
 
-const made = { contacts: [] as string[], orders: [] as string[] };
+const made = { contacts: [] as string[], orders: [] as string[], notifications: [] as string[] };
 const updateBuckets = new Set<string>();
 let adminId = '';
 let token = '';
@@ -143,6 +143,21 @@ const charged = (o: { number: number; total: number }, uid: string, over: Record
     card_bin: CARD.bin, card_holder_name: CARD.holder, ...over,
   },
 });
+/** What Transactions/View answers for a transaction uid (decision 3.4,
+ *  27/11/2026: a charge is read again here before an order is marked paid).
+ *  Unset → the charge as PayPlus shows it right after it went through:
+ *  approved, not cancelled. */
+const view = new Map<string, Answer>();
+/** …and for a more_info (the order's refunds). Unset → none. */
+const viewByMoreInfo = new Map<string, Answer>();
+const NO_TRANSACTIONS: Answer = () => reply(200, { results: { status: 'error', code: 1, description: 'no transactions' }, data: {} });
+const viewed = (uid: string, o: { number: number; total: number }, over: Record<string, unknown> = {}): Answer => () => reply(200, {
+  results: { status: 'success', code: 0, description: 'operation has been success' },
+  data: [{ transaction: {
+    transaction_uid: uid, transaction_type: 'Charge', status_code: '000', transaction_is_cancelled: false,
+    amount: o.total, more_info: String(o.number), ...over,
+  } }],
+});
 let generatedSeq = 0;
 const generatedUid = (n: number) => `${RUN}-a1a1-4b2b-8c3c-${String(n).padStart(12, '0')}`;
 const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -163,6 +178,14 @@ const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit
     return answer ? answer() : reply(500, { message: 'no answer set for this session in the test' });
   }
   if (url.pathname.startsWith('/api/v1.0/PaymentPages/Disable/')) return reply(200, { results: { status: 'success', code: 0 } });
+  if (url.pathname === '/api/v1.0/Transactions/View') {
+    if (typeof body.transaction_uid === 'string') {
+      const answer = view.get(body.transaction_uid);
+      return answer ? answer() : viewed(body.transaction_uid, { number: 0, total: 1 }, { more_info: null })();
+    }
+    const answer = viewByMoreInfo.get(String(body.more_info));
+    return answer ? answer() : NO_TRANSACTIONS();
+  }
   throw new Error(`unexpected PayPlus path in a test: ${url.pathname}`);
 });
 const ipnAsked = () => sent.filter((s) => s.path === '/api/v1.0/PaymentPages/ipn').map((s) => String(s.body.payment_request_uid));
@@ -181,12 +204,12 @@ const headersOf = (test: boolean, extra: Record<string, string> = {}): Record<st
   'x-real-ip': IP, ...(test ? { 'x-chip-order-test': token } : {}), ...extra,
 });
 
-interface RowIn { chipsCount: number; role?: 'owner' | 'tenant'; fullName?: string; apartment?: string; lease?: boolean; leaseKey?: string }
+interface RowIn { chipsCount: number; role?: 'owner' | 'tenant'; fullName?: string; apartment?: string; lease?: boolean; leaseFile?: File; leaseKey?: string }
 /** POST /api/public/chip-order — multipart, as the page sends it. */
 async function save(rows: RowIn[], opts: { test: boolean; trackingToken?: string; extra?: Record<string, unknown> }): Promise<Response> {
   const fd = new FormData();
   fd.append('order', JSON.stringify({
-    phone: PHONE_LOCAL, email: 'live-card@example.test',
+    phone: PHONE_LOCAL, email: 'live-card@example.test', acceptTerms: true,
     addressStreet: 'הרצל 1', addressCity: 'חיפה', addressZip: '3300000',
     ...(opts.trackingToken ? { trackingToken: opts.trackingToken } : {}),
     rows: rows.map((r) => ({
@@ -196,7 +219,7 @@ async function save(rows: RowIn[], opts: { test: boolean; trackingToken?: string
     })),
     ...opts.extra,
   }));
-  rows.forEach((r, i) => { if (r.lease) fd.append(`lease_${i}`, new File([PDF], `lease-${i}.pdf`, { type: 'application/pdf' })); });
+  rows.forEach((r, i) => { if (r.lease) fd.append(`lease_${i}`, r.leaseFile ?? new File([PDF], `lease-${i}.pdf`, { type: 'application/pdf' })); });
   if (opts.trackingToken) updateBuckets.add(`chip-order:update:order:${createHash('sha256').update(opts.trackingToken).digest('hex').slice(0, 24)}`);
   const encoded = new Response(fd);
   const body = Buffer.from(await encoded.arrayBuffer());
@@ -220,6 +243,7 @@ interface Made { id: string; number: number; trackingToken: string; total: numbe
 /** An order straight on the DB (the form's own path is tested on its own). */
 async function makeOrder(opts: { isTest: boolean; chips?: number }): Promise<Made> {
   const o = await orders.createChipOrder({
+    termsAccepted: true,
     fullName: 'דנה בדיקה', phoneE164: PHONE, email: 'live-card@example.test', address: 'הרצל 1, חיפה 3300000', role: 'owner',
     rows: [{ role: 'owner', fullName: 'דנה בדיקה', apartmentNumber: APT1, chipsCount: opts.chips ?? 2, phoneE164: PHONE, email: null, lease: null, leaseEndDate: null }],
     addressParts: { street: 'הרצל 1', city: 'חיפה', zip: '3300000' },
@@ -276,11 +300,11 @@ function notice(o: Made, session: string | null, over: { amount?: number } = {})
 interface OrderRow {
   id: string; status: string; source: string; is_test: boolean; phone_verified: boolean | null; total: number; full_name: string;
   card_status: string | null; card_env: string | null; card_page_request_uid: string | null; card_transaction_uid: string | null;
-  card_last4: string | null; internal_note: string | null;
+  card_last4: string | null; internal_note: string | null; orderer_note: string | null;
 }
 const rowOf = async (id: string): Promise<OrderRow> => (await pool.query<OrderRow>(
   `select id, status, source, is_test, phone_verified, total::float8 as total, full_name, card_status, card_env,
-          card_page_request_uid, card_transaction_uid, card_last4, internal_note
+          card_page_request_uid, card_transaction_uid, card_last4, internal_note, orderer_note
      from public.chip_orders where id = $1`, [id],
 )).rows[0]!;
 const exists = async (id: string) => ((await pool.query(`select 1 from public.chip_orders where id = $1`, [id])).rowCount ?? 0) > 0;
@@ -354,6 +378,7 @@ d('chip orders — real card payment in production, the form without a phone cod
       await pool.query(`delete from public.chip_orders where id = $1`, [id]);
     }
     for (const id of made.contacts) await pool.query(`delete from public.contacts where id = $1`, [id]);
+    for (const id of made.notifications) await pool.query(`delete from public.notifications where id = $1`, [id]);
     await pool.query(`delete from public.auth_rate_limits where bucket = any($1::text[])`, [[
       ...updateBuckets, `chip-order:save:ip:${IP}`, `chip-order:submit:ip:${IP}`, `chip-order:submit:phone:${PHONE}`,
       `chip-order:card-session:ip:${IP}`, `chip-order:card-status:ip:${IP}`,
@@ -375,6 +400,8 @@ d('chip orders — real card payment in production, the form without a phone cod
     ]]);
     sent.length = 0;
     ipn.clear();
+    view.clear();
+    viewByMoreInfo.clear();
     afterQueue.length = 0;
     removedLeases.length = 0;
     logged.length = 0;
@@ -438,7 +465,7 @@ d('chip orders — real card payment in production, the form without a phone cod
       ok: true, test: true, orderNumber: first.orderNumber, total: 4 * (PRICE + 5), trackingToken: first.trackingToken,
       cardPayment: true, leaseKeys: [null, null],
     });
-    expect(await rowOf(first.id)).toMatchObject({ status: 'pending_payment', total: 4 * (PRICE + 5), full_name: 'יוסי חדש', internal_note: 'הערה חדשה', phone_verified: null });
+    expect(await rowOf(first.id)).toMatchObject({ status: 'pending_payment', total: 4 * (PRICE + 5), full_name: 'יוסי חדש', orderer_note: 'הערה חדשה', internal_note: null, phone_verified: null });
     expect(await holdersOf(first.id)).toEqual([
       { full_name: 'יוסי חדש', chips_count: 3, role: 'owner', lease_file_key: null, apartment_number: APT1 },
       { full_name: 'רונית שנייה', chips_count: 1, role: 'owner', lease_file_key: null, apartment_number: APT2 },
@@ -521,6 +548,56 @@ d('chip orders — real card payment in production, the form without a phone cod
     expect(removedLeases).toContainEqual([keyA]);
     expect(removedLeases.flat()).not.toContain(keyB);
     expect((await holdersOf(a.id)).map((h) => h.lease_file_key)).toEqual([null]);
+  });
+
+  // 2.2 (Ronen, 27/11/2026): a lease reaches the server only with the order,
+  // when the resident continues to payment — never before, never alone.
+  it('2.2 — the lease travels with the order: a save of the details before the agreement keeps renter rows with no lease (nothing uploaded); no payment window opens while a renter lacks the lease (409 lease_required); the save that records the agreement must hold every lease — two renters in two apartments in ONE submit, each file checked again — and then the window opens', async () => {
+    await setSettings({ unitPrice: PRICE, ordersOpen: false });
+    const people = (extra: Partial<RowIn> = {}): RowIn[] => [
+      { role: 'tenant', chipsCount: 1, ...extra },
+      { role: 'tenant', chipsCount: 1, apartment: APT2, fullName: 'שרה בדיקה', ...extra },
+    ];
+    // The details, the boxes not ticked yet: accepted with no file.
+    const draft = await createdFrom(await save(people(), { test: true, extra: { acceptTerms: false } }));
+    expect(uploadChipOrderLease).not.toHaveBeenCalled();
+    expect(draft.leaseKeys).toEqual([null, null]);
+    expect((await holdersOf(draft.id)).map((h) => [h.apartment_number, h.lease_file_key])).toEqual([[APT1, null], [APT2, null]]);
+
+    // The agreement on the order (as a tab of an older page could leave it),
+    // the leases still missing: no payment window, PayPlus never asked.
+    await pool.query(`update public.chip_orders set terms_accepted_at = now(), renter_terms_accepted_at = now() where id = $1`, [draft.id]);
+    const refused = await openSession(draft, true);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ ok: false, state: 'lease_required', message: 'נדרש לצרף חוזה או הסכם ניהול לכל שוכר לפני התשלום.' });
+    expect(generated()).toEqual([]);
+
+    // The save that continues to payment without the files: refused, row by row.
+    let res = await save(people(), { test: true, trackingToken: draft.trackingToken, extra: { acceptRenterTerms: true } });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ ok: false, message: 'נדרש לצרף חוזה או הסכם ניהול (שורה 1).' });
+    // A file that is not what its name says: refused on the server too, nothing stored.
+    const fake = new File([Buffer.from('this is not a pdf at all')], 'lease.pdf', { type: 'application/pdf' });
+    res = await save([{ role: 'tenant', chipsCount: 1, lease: true }, { role: 'tenant', chipsCount: 1, apartment: APT2, fullName: 'שרה בדיקה', lease: true, leaseFile: fake }],
+      { test: true, trackingToken: draft.trackingToken, extra: { acceptRenterTerms: true } });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { message: string }).message).toContain('(שורה 2)');
+    expect(uploadChipOrderLease).not.toHaveBeenCalled();
+    expect((await holdersOf(draft.id)).map((h) => h.lease_file_key)).toEqual([null, null]);
+
+    // Both leases in ONE submit, with the agreement: each on its own row.
+    res = await save(people({ lease: true }), { test: true, trackingToken: draft.trackingToken, extra: { acceptRenterTerms: true } });
+    expect(res.status).toBe(200);
+    const keys = ((await res.json()) as { leaseKeys: (string | null)[] }).leaseKeys;
+    expect(keys).toHaveLength(2);
+    expect(keys.every((k) => typeof k === 'string' && /^[0-9a-f-]{36}\.pdf$/.test(k))).toBe(true);
+    expect(new Set(keys).size).toBe(2);
+    expect(uploadChipOrderLease).toHaveBeenCalledTimes(2);
+    expect((await holdersOf(draft.id)).map((h) => [h.apartment_number, h.lease_file_key])).toEqual([[APT1, keys[0]], [APT2, keys[1]]]);
+
+    // Every lease on the order: the window opens.
+    expect((await openSession(draft, true)).status).toBe(200);
+    expect(generated()).toHaveLength(1);
   });
 
   it('a new total on an order that had a payment session asks PayPlus first: no answer → 502 and nothing changes; nothing charged → that session is DISABLED and the save goes through; the same total → PayPlus is not asked', async () => {
@@ -804,6 +881,134 @@ d('chip orders — real card payment in production, the form without a phone cod
     expect(askedAbout(sTest)).toMatchObject({ origin: ORIGIN.sandbox, apiKey: DEV.api });
     // The messages are the caller's (the cron route): nothing was queued here.
     expect(afterQueue).toHaveLength(0);
+  });
+
+  // ── Decision 3.4 (Ronen, 27/11/2026): read again before "paid" ─────────
+  // Before an order is marked paid — by a callback (on time, late or sent
+  // again), the order page's check or the hourly reconcile — the charge is
+  // read again from PayPlus (Transactions/View by its uid, and the order's
+  // refunds by its number). Only an approved charge that is neither cancelled
+  // nor refunded there pays the order; otherwise it keeps waiting, with no
+  // Morning document. Whatever the notice or the session lookup said.
+
+  const viewAsked = (uid: string) => sent.some((s) => s.path === '/api/v1.0/Transactions/View' && s.body.transaction_uid === uid);
+  const docsOf = async (id: string) => Number((await pool.query(
+    `select count(*)::int as n from public.chip_order_documents where order_id = $1`, [id])).rows[0].n);
+  /** The admins' alerts about the order — their ids go on the list of rows to remove. */
+  const alertsOf = async (id: string) => {
+    const ids = (await pool.query<{ id: string }>(
+      `select id from public.notifications where type = 'chip_order_alert' and source_entity_id = $1`, [id])).rows.map((r) => r.id);
+    for (const n of ids) if (!made.notifications.includes(n)) made.notifications.push(n);
+    return ids;
+  };
+
+  it('3.4 — the callback was lost, the charge is approved in PayPlus: the reconcile reads it again (Transactions/View) and only then marks the order paid — the invoice is queued', async () => {
+    const real = await makeOrder({ isTest: false });
+    const s = await withSession(real, 'production', 20);
+    ipn.set(s, charged(real, s));
+    const r = await reconcilePendingCardOrders();
+    expect(r.paidOrderIds).toContain(real.id);
+    expect(viewAsked(`tx-${RUN}-lk-${real.number}`)).toBe(true);
+    expect(await rowOf(real.id)).toMatchObject({ status: 'paid', card_status: 'paid', card_transaction_uid: `tx-${RUN}-lk-${real.number}` });
+    expect(await docsOf(real.id)).toBe(1);
+  });
+
+  it('3.4 — the callback was lost and the charge was CANCELLED in the PayPlus dashboard: the reconcile does NOT mark the order paid — no Morning document, one anomaly, one alert per admin, and a second run changes nothing', async () => {
+    const real = await makeOrder({ isTest: false });
+    const s = await withSession(real, 'production', 20);
+    ipn.set(s, charged(real, s));
+    const uid = `tx-${RUN}-lk-${real.number}`;
+    view.set(uid, viewed(uid, real, { transaction_is_cancelled: true }));
+    const r = await reconcilePendingCardOrders();
+    expect(r.paidOrderIds).not.toContain(real.id);
+    expect(viewAsked(uid)).toBe(true);
+    expect(await rowOf(real.id)).toMatchObject({ status: 'pending_payment', card_status: 'started', card_transaction_uid: null });
+    expect(await docsOf(real.id)).toBe(0);
+    expect(await auditCount(real.id, 'paid')).toBe(0);
+    expect(await auditCount(real.id, 'card_payment_anomaly')).toBe(1);
+    const alerts = await alertsOf(real.id);
+    expect(alerts.length).toBeGreaterThan(0);
+    await reconcilePendingCardOrders();
+    expect(await rowOf(real.id)).toMatchObject({ status: 'pending_payment' });
+    expect(await auditCount(real.id, 'card_payment_anomaly')).toBe(1);
+    expect(await alertsOf(real.id)).toHaveLength(alerts.length);
+  });
+
+  it('3.4 — PayPlus shows the transaction as something other than an approved CHARGE (a refund under the same uid, or a declined status): the order is not paid, no Morning document, one anomaly', async () => {
+    for (const over of [{ transaction_type: 'Refund' }, { status_code: '006' }]) {
+      const real = await makeOrder({ isTest: false });
+      const s = await withSession(real, 'production', 20);
+      ipn.set(s, charged(real, s));
+      const uid = `tx-${RUN}-lk-${real.number}`;
+      view.set(uid, viewed(uid, real, over));
+      const r = await reconcilePendingCardOrders();
+      expect(r.paidOrderIds, JSON.stringify(over)).not.toContain(real.id);
+      expect(viewAsked(uid)).toBe(true);
+      expect(await rowOf(real.id)).toMatchObject({ status: 'pending_payment', card_transaction_uid: null });
+      expect(await docsOf(real.id)).toBe(0);
+      expect(await auditCount(real.id, 'paid')).toBe(0);
+      expect(await auditCount(real.id, 'card_payment_anomaly')).toBe(1);
+    }
+  });
+
+  it('3.4 — the order page checks the payment after the charge was cancelled in the dashboard: not paid, no document — and a new payment window may open (nothing is charged)', async () => {
+    await armLive();
+    const real = await makeOrder({ isTest: false });
+    const s = await sessionOf(real, false);
+    ipn.set(s, charged(real, s));
+    const uid = `tx-${RUN}-lk-${real.number}`;
+    view.set(uid, viewed(uid, real, { transaction_is_cancelled: true }));
+    const res = await askStatus(real, false);
+    expect(await res.json()).toMatchObject({ ok: true, state: 'pending', charged: 'no' });
+    expect(await rowOf(real.id)).toMatchObject({ status: 'pending_payment', card_transaction_uid: null });
+    expect(await docsOf(real.id)).toBe(0);
+    expect(afterQueue).toHaveLength(0);
+    await alertsOf(real.id);
+    const next = await openSession(real, false);
+    expect(next.status).toBe(200);
+    expect(disabled()).toContain(s);
+  });
+
+  it('3.4 — a LATE callback that names its session arrives after the charge was REFUNDED in the dashboard: not paid, no document, no message', async () => {
+    await armLive();
+    const real = await makeOrder({ isTest: false });
+    const s = await sessionOf(real, false);
+    const n = notice(real, s);
+    viewByMoreInfo.set(String(real.number), () => reply(200, {
+      results: { status: 'success', code: 0 },
+      data: [{ transaction: {
+        transaction_uid: `rf-${RUN}-${real.number}`, transaction_type: 'Refund', status_code: '000', transaction_is_cancelled: false,
+        amount: real.total, more_info: String(real.number),
+      } }],
+    }));
+    const res = await callback(n, { env: 'production', key: PROD.secret });
+    expect(res.status).toBe(200);
+    expect(viewAsked(n.transaction.uid)).toBe(true);
+    expect(await rowOf(real.id)).toMatchObject({ status: 'pending_payment', card_transaction_uid: null });
+    expect(await docsOf(real.id)).toBe(0);
+    expect(afterQueue).toHaveLength(0);
+    expect(await auditCount(real.id, 'card_payment_anomaly')).toBe(1);
+    await alertsOf(real.id);
+  });
+
+  it('3.4 — a callback while PayPlus does not answer the second reading: 503 (PayPlus sends it again) and the order keeps waiting; the resend, with PayPlus showing the charge approved, pays it — the invoice once', async () => {
+    await armLive();
+    const real = await makeOrder({ isTest: false });
+    const s = await sessionOf(real, false);
+    const n = notice(real, s);
+    view.set(n.transaction.uid, () => reply(500, { message: 'down' }));
+    expect((await callback(n, { env: 'production', key: PROD.secret })).status).toBe(503);
+    expect(await rowOf(real.id)).toMatchObject({ status: 'pending_payment', card_transaction_uid: null });
+    expect(await docsOf(real.id)).toBe(0);
+    view.delete(n.transaction.uid);
+    expect((await callback(n, { env: 'production', key: PROD.secret })).status).toBe(200);
+    expect(await rowOf(real.id)).toMatchObject({ status: 'paid', card_transaction_uid: n.transaction.uid });
+    expect(await docsOf(real.id)).toBe(1);
+    expect(afterQueue).toHaveLength(1);
+    // The same notice once more: nothing new.
+    expect((await callback(n, { env: 'production', key: PROD.secret })).status).toBe(200);
+    expect(await docsOf(real.id)).toBe(1);
+    expect(afterQueue).toHaveLength(1);
   });
 
   it('purge: an unpaid real order older than 48 hours is LOOKED UP over every session it had (here one 3 hours old) before anything is deleted', async () => {

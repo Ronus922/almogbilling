@@ -89,12 +89,14 @@ const APT = `982${tag}1`;
 const orders = await import('@/lib/db/chipOrders');
 const { setCardSession, recordCardPayment } = await import('@/lib/db/chipOrderCard');
 const { issueChipGroups } = await import('@/lib/db/chips');
-const { getChipOrderWindow } = await import('@/lib/db/chipOrderWindow');
+const { getChipOrderWindow, saveChipOrderWindow } = await import('@/lib/db/chipOrderWindow');
 const { listReadyPickupOrders } = await import('@/lib/db/chipPickup');
 const { DEFAULT_CHIP_ORDER_SETTINGS } = await import('@/lib/chipOrders/model');
 const { chipOrderRowTags, CHIP_ORDER_TAG_LABEL } = await import('@/lib/chipOrders/orderRows');
 const cancelRoute = await import('@/app/api/chip-orders/[id]/cancel/route');
 const { POST: rejectRoute } = await import('@/app/api/chip-orders/[id]/reject/route');
+const { POST: closeByHandRoute } = await import('@/app/api/chip-orders/[id]/close-by-hand/route');
+const { claimDueDocuments, retryFailedDocuments } = await import('@/lib/db/chipOrderDocuments');
 const { POST: callbackRoute } = await import('@/app/api/public/chip-order/payplus/callback/route');
 const { processDueDocuments } = await import('@/lib/chipOrders/documents');
 const { __resetMorningTokenForTests } = await import('@/lib/morning/client');
@@ -120,6 +122,9 @@ const pp = {
   cancelled: new Set<string>(),
   /** Refund transactions Transactions/View finds by more_info. */
   refundsByMoreInfo: new Map<string, { uid: string; amount: number }[]>(),
+  /** CHARGES Transactions/View finds by more_info — a second charge of the
+   *  same order (27/11/2026: the duplicate-charge case). */
+  chargesByMoreInfo: new Map<string, { uid: string; amount: number }[]>(),
   /** Transactions/View does not answer (HTTP 500). */
   viewDown: false,
   /** The refund call: 'ok' | 'refused' | 'no_answer'. */
@@ -179,11 +184,14 @@ const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit
       });
     }
     const mi = String(body.more_info);
-    const list = pp.refundsByMoreInfo.get(mi) ?? [];
+    const list = [
+      ...(pp.chargesByMoreInfo.get(mi) ?? []).map((r) => ({ ...r, type: 'Charge' })),
+      ...(pp.refundsByMoreInfo.get(mi) ?? []).map((r) => ({ ...r, type: 'Refund' })),
+    ];
     if (list.length === 0) return reply(200, { results: { status: 'error', code: 1, description: 'no transactions' }, data: {} });
     return reply(200, {
       results: { status: 'success', code: 0, description: 'operation has been success' },
-      data: list.map((r) => ({ transaction: { transaction_uid: r.uid, transaction_type: 'Refund', status_code: '000', transaction_is_cancelled: false, amount: r.amount, more_info: mi }, data: {} })),
+      data: list.map((r) => ({ transaction: { transaction_uid: r.uid, transaction_type: r.type, status_code: '000', transaction_is_cancelled: pp.cancelled.has(r.uid), amount: r.amount, more_info: mi }, data: {} })),
     });
   }
   if (path === 'Transactions/RefundByTransactionUID') {
@@ -246,6 +254,8 @@ const cancel = (orderId: string, body: Record<string, unknown>) =>
   cancelRoute.POST(json(`/api/chip-orders/${orderId}/cancel`, body), { params: Promise.resolve({ id: orderId }) });
 const preview = (orderId: string) =>
   cancelRoute.GET(new Request(`http://localhost/api/chip-orders/${orderId}/cancel`), { params: Promise.resolve({ id: orderId }) });
+const closeByHand = (orderId: string, body: unknown) =>
+  closeByHandRoute(json(`/api/chip-orders/${orderId}/close-by-hand`, body), { params: Promise.resolve({ id: orderId }) });
 const reject = (orderId: string, body: unknown) =>
   rejectRoute(json(`/api/chip-orders/${orderId}/reject`, body), { params: Promise.resolve({ id: orderId }) });
 const sign = (body: string, key: string) => createHmac('sha256', key).update(body).digest('base64');
@@ -387,6 +397,7 @@ d('the one refund of the chip module — web orders, "דחה", and what PayPlus 
     __resetMorningProfileForTests();
     pp.cancelled.clear();
     pp.refundsByMoreInfo.clear();
+    pp.chargesByMoreInfo.clear();
     pp.viewDown = false;
     pp.refund = 'ok';
     calls.length = 0;
@@ -591,17 +602,30 @@ d('the one refund of the chip module — web orders, "דחה", and what PayPlus 
 
   // ── "דחה" ────────────────────────────────────────────────────────────────
 
-  it('"דחה" of a card-paid web order (a manager) runs the same steps: PayPlus asked first, one refund, the credit — and the rejection message', async () => {
+  // F3 (Ronen, 27/11/2026): a rejection of an order that took money refunds
+  // it — admins and super admins only, exactly like "ביטול וזיכוי".
+  it('"דחה" of a card-paid web order is admins\' only: a manager with every chips permission gets 403 and NOTHING happens (still paid, PayPlus never asked, no audit); an admin\'s runs the same steps as "ביטול וזיכוי": PayPlus asked first, one refund, the credit — and the rejection message', async () => {
     const o = await paidOrder();
     await invoiceIssued(o);
     as('manager');
+    const refused = await reject(o.id, { reason: 'אין מלאי' });
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { error: string }).error).toBe('רק אדמין או סופר אדמין יכולים לדחות הזמנה ששולמה — הדחייה מחזירה את הכסף');
+    await runAfter();
+    expect(await rowOf(o.id)).toMatchObject({ status: 'paid', reject_reason: null, refund_status: null });
+    expect(payplus('Transactions/View')).toEqual([]);
+    expect(refundCalls()).toEqual([]);
+    expect((await pool.query(`select 1 from public.audit_log where entity_type = 'chip_order' and entity_id = $1 and action = 'rejected'`, [o.id])).rowCount).toBe(0);
+    expect((await messagesOf(o.id)).some((m) => m.kind === 'rejected')).toBe(false);
+
+    as('super');
     const res = await reject(o.id, { reason: 'אין מלאי' });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, refund_status: 'refunded', failed_step: null });
     expect(payplus('Transactions/View').length).toBeGreaterThan(0);
     expect(refundCalls(o.tx)).toHaveLength(1);
     const row = await rowOf(o.id);
-    expect(row).toMatchObject({ status: 'rejected', reject_reason: 'אין מלאי', refund_via: 'reject', refund_status: 'refunded', refunded_by: users.manager!.id });
+    expect(row).toMatchObject({ status: 'rejected', reject_reason: 'אין מלאי', refund_via: 'reject', refund_status: 'refunded', refunded_by: users.super!.id });
     expect(row.cancel_completed_at).toBeInstanceOf(Date);
     expect((await docsOf(o.id)).map((x) => [x.kind, x.status])).toEqual([['invoice', 'issued'], ['credit', 'issued']]);
     await runAfter();
@@ -611,7 +635,7 @@ d('the one refund of the chip module — web orders, "דחה", and what PayPlus 
   it('"דחה" while PayPlus does not answer: the order is rejected and stops at the refund (manual_required, the step shown); an admin\'s "המשך" finishes it — one refund in all', async () => {
     const o = await paidOrder();
     await invoiceIssued(o);
-    as('manager');
+    as('super');
     pp.viewDown = true;
     const res = await reject(o.id, { reason: 'אין מלאי' });
     expect(await res.json()).toMatchObject({ ok: true, refund_status: 'manual_required', failed_step: 'refund' });
@@ -624,6 +648,28 @@ d('the one refund of the chip module — web orders, "דחה", and what PayPlus 
     expect(run.ok).toBe(true);
     expect(refundCalls(o.tx)).toHaveLength(1);
     expect(await rowOf(o.id)).toMatchObject({ status: 'rejected', reject_reason: 'אין מלאי', refund_status: 'refunded', refund_via: 'admin' });
+  });
+
+  it('F3: a manager may still reject a TEST order that was never charged (nothing to refund — "לא נדרש (בדיקה)"), never one paid in the sandbox (that refunds the test card) nor a real one', async () => {
+    const t = await orders.createChipOrder({
+      fullName: 'דנה בדיקה', phoneE164: PHONE, email: EMAIL, address: 'הרצל 1, חיפה 3300000', role: 'owner',
+      rows: [{ role: 'owner', fullName: 'דנה בדיקה', apartmentNumber: APT, chipsCount: 1, phoneE164: PHONE, email: null, lease: null, leaseEndDate: null }],
+      addressParts: { street: 'הרצל 1', city: 'חיפה', zip: '3300000' },
+      ip: '198.51.100.8', isTest: true,
+    }, SETTINGS);
+    made.orders.push(t.id);
+    expect(await orders.markTestChipOrderPaid(t.trackingToken)).toBe(t.id);
+    as('manager');
+    const res = await reject(t.id, { reason: 'בדיקה' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, refund_status: 'not_required' });
+    expect(await rowOf(t.id)).toMatchObject({ status: 'rejected', refund_status: 'not_required' });
+    expect(refundCalls()).toEqual([]);
+    // Paid in the sandbox: a rejection would refund the test card — admins only.
+    const sandbox = await paidOrder({ isTest: true });
+    expect((await reject(sandbox.id, { reason: 'בדיקה' })).status).toBe(403);
+    expect((await rowOf(sandbox.id)).status).toBe('paid');
+    expect(refundCalls()).toEqual([]);
   });
 
   // ── What PayPlus reports ─────────────────────────────────────────────────
@@ -729,6 +775,226 @@ d('the one refund of the chip module — web orders, "דחה", and what PayPlus 
     expect((await callback(refundNotice(uid, 25, null))).status).toBe(200);
     expect((await callback(refundNotice(uid, 25, null))).status).toBe(200);
     expect((await alertsLike(`chip_refund_unmatched:${uid}:%`)).map((a) => a.user_id)).toEqual(await activeAdmins());
+  });
+
+  // ── 27/11/2026 audit: a second charge on the order, and chips after the money went back ──
+
+  it('a SECOND charge on the order refunded in the PayPlus dashboard (what the duplicate-charge alert asks for): PayPlus shows two charges, so a refund by the order number cannot be told apart — the callback marks nothing and tells every admin once; "ביטול וזיכוי" stops at the refund step: nothing sent, nothing recorded, no credit document', async () => {
+    const o = await paidOrder({ chips: 1 });
+    await invoiceIssued(o);
+    const dup = `tx-${RUN}-dup-1`;
+    const dashRefund = `rf-dup-${RUN}-1`;
+    pp.chargesByMoreInfo.set(String(o.number), [{ uid: o.tx, amount: o.total }, { uid: dup, amount: o.total }]);
+    pp.refundsByMoreInfo.set(String(o.number), [{ uid: dashRefund, amount: o.total }]);
+    expect((await callback(refundNotice(dashRefund, o.total, String(o.number)))).status).toBe(200);
+    expect((await callback(refundNotice(dashRefund, o.total, String(o.number)))).status).toBe(200);
+    expect(await rowOf(o.id)).toMatchObject({ status: 'paid', payplus_reversal_kind: null, payplus_reversal_at: null, refunded_at: null });
+    expect(await audits(o.id, 'payplus_reversal_seen')).toEqual([]);
+    expect((await alertsLike(`chip_payplus_ambiguous:${o.id}%`)).map((a) => a.user_id)).toEqual(await activeAdmins());
+    expect((await docsOf(o.id)).map((x) => x.kind)).toEqual(['invoice']);
+
+    as('super');
+    const run = (await (await cancel(o.id, { reason: 'הלקוח ביטל' })).json()) as { ok: boolean; failed_step: string | null; message: string | null };
+    expect(run).toMatchObject({ ok: false, failed_step: 'refund' });
+    expect(run.message).toContain('יותר מחיוב אחד');
+    expect(refundCalls()).toEqual([]);
+    expect(await rowOf(o.id)).toMatchObject({
+      status: 'paid', refunded_at: null, refund_transaction_uid: null, refund_status: 'manual_required', cancel_failed_step: 'refund', cancel_completed_at: null,
+    });
+    expect((await docsOf(o.id)).map((x) => x.kind)).toEqual(['invoice']);
+  });
+
+  it('a second charge after OUR refund got no answer: the ambiguity keeps the "never sent again" mark; once PayPlus shows our own refund covering the charge, the dashboard refund of the other charge no longer matters — recorded, credited, closed, nothing sent again', async () => {
+    const o = await paidOrder({ chips: 1 });
+    await invoiceIssued(o);
+    pp.refund = 'no_answer';
+    as('super');
+    expect(((await (await cancel(o.id, { reason: 'הלקוח ביטל' })).json()) as { failed_step: string }).failed_step).toBe('refund');
+    const mark = (await rowOf(o.id)).refund_requested_at;
+    expect(mark).toBeInstanceOf(Date);
+    expect(refundCalls(o.tx)).toHaveLength(1);
+    // A duplicate charge, refunded in the dashboard; our refund not visible yet.
+    pp.chargesByMoreInfo.set(String(o.number), [{ uid: o.tx, amount: o.total }, { uid: `tx-${RUN}-dup-3`, amount: o.total }]);
+    pp.refundsByMoreInfo.set(String(o.number), [{ uid: `rf-dup-${RUN}-3`, amount: o.total }]);
+    await pool.query(`update public.chip_orders set refund_requested_at = refund_requested_at - interval '5 minutes' where id = $1`, [o.id]);
+    const stopped = (await (await cancel(o.id, {})).json()) as { failed_step: string; message: string };
+    expect(stopped).toMatchObject({ failed_step: 'refund' });
+    expect(stopped.message).toContain('יותר מחיוב אחד');
+    expect((await rowOf(o.id)).refund_requested_at).toEqual(new Date(mark!.getTime() - 5 * 60_000));
+    expect(refundCalls(o.tx)).toHaveLength(1);
+    // PayPlus now shows OUR refund (its answer was lost) — it covers the charge.
+    pp.refundsByMoreInfo.set(`refund:${o.number}`, [{ uid: `rf-ours-${RUN}-3`, amount: o.total }]);
+    const done = (await (await cancel(o.id, {})).json()) as { ok: boolean };
+    expect(done.ok).toBe(true);
+    expect(refundCalls(o.tx)).toHaveLength(1);
+    expect(await rowOf(o.id)).toMatchObject({ status: 'rejected', refund_status: 'refunded', refund_transaction_uid: `rf-ours-${RUN}-3` });
+    expect((await docsOf(o.id)).map((x) => [x.kind, x.status])).toEqual([['invoice', 'issued'], ['credit', 'issued']]);
+  });
+
+  it('a second charge with NOTHING refunded in the dashboard: "ביטול וזיכוי" refunds the order\'s own charge, by its id, once', async () => {
+    const o = await paidOrder({ chips: 1 });
+    await invoiceIssued(o);
+    pp.chargesByMoreInfo.set(String(o.number), [{ uid: o.tx, amount: o.total }, { uid: `tx-${RUN}-dup-2`, amount: o.total }]);
+    as('super');
+    expect(((await (await cancel(o.id, { reason: 'הלקוח ביטל' })).json()) as { ok: boolean }).ok).toBe(true);
+    expect(refundCalls().map((c) => c.body.transaction_uid)).toEqual([o.tx]);
+    expect(await rowOf(o.id)).toMatchObject({ status: 'rejected', refund_status: 'refunded', refund_via: 'admin' });
+  });
+
+  it('once the money is on its way back — "ביטול וזיכוי" started, a refund recorded, or PayPlus showed it cancelled — the order\'s window issues NO new chip (an edit of a name still saves); an ordinary paid order still takes its chips', async () => {
+    const save = async (o: Made, number: string | null) => {
+      const holder = (await pool.query<{ id: string }>(`select id from public.chip_order_holders where order_id = $1 order by position limit 1`, [o.id])).rows[0]!;
+      return saveChipOrderWindow(o.id, {
+        holders: [{
+          id: holder.id, item_id: o.itemId, role: 'owner', full_name: number ? 'דנה בדיקה' : 'דנה בדיקה שינוי', phone: PHONE, email: null,
+          new_chips: number ? [{ number, chip_type: 'physical' }] : [],
+        }],
+      }, admin, PRICE);
+    };
+    const fine = await paidOrder({ chips: 1 });
+    expect((await save(fine, `W${tag}1`))!.issued).toBe(1);
+
+    // "ביטול וזיכוי" started and stopped (PayPlus could not be asked).
+    const started = await paidOrder({ chips: 1 });
+    pp.viewDown = true;
+    as('super');
+    expect(((await (await cancel(started.id, { reason: 'הלקוח ביטל' })).json()) as { failed_step: string }).failed_step).toBe('refund');
+    pp.viewDown = false;
+    await expect(save(started, `W${tag}2`)).rejects.toThrow('order_undoing');
+    expect(await save(started, null)).toMatchObject({ issued: 0 });
+    expect((await pool.query(`select full_name from public.chip_order_holders where order_id = $1 order by position limit 1`, [started.id])).rows[0].full_name)
+      .toBe('דנה בדיקה שינוי');
+
+    // PayPlus showed it cancelled (the callback's warning).
+    const reversed = await paidOrder({ chips: 1 });
+    pp.cancelled.add(reversed.tx);
+    expect((await callback(cancelNotice(reversed))).status).toBe(200);
+    expect((await rowOf(reversed.id)).payplus_reversal_kind).toBe('cancelled');
+    await expect(save(reversed, `W${tag}3`)).rejects.toThrow('order_undoing');
+
+    // A refund recorded, the credit step stopped (Morning refused): no chip either.
+    const refunded = await paidOrder({ chips: 1 });
+    await pool.query(
+      `update public.chip_orders set refunded_at = now(), refunded_amount = total, refund_status = 'refunded', refund_via = 'admin',
+              refund_transaction_uid = $2 where id = $1`, [refunded.id, `rf-${RUN}-undo`]);
+    await expect(save(refunded, `W${tag}4`)).rejects.toThrow('order_undoing');
+    expect((await pool.query(`select count(*)::int as n from public.chips where chip_number = any($1::text[])`,
+      [[`W${tag}2`, `W${tag}3`, `W${tag}4`]])).rows[0].n).toBe(0);
+  });
+
+  // ── "סגירה ידנית" (27/11/2026) ───────────────────────────────────────────
+
+  it('"סגירה ידנית" of a refund that got no answer: super admin only, a reason required — nothing sent to PayPlus or Morning; the order cancelled, its chip disabled, the run finished, marked for good with who, why and the step, audited; "ביטול וזיכוי" is not offered again', async () => {
+    const o = await paidOrder({ chips: 1 });
+    await invoiceIssued(o);
+    const chips = await issueChips(o, 1);
+    pp.refund = 'no_answer';
+    as('super');
+    expect(((await (await cancel(o.id, { reason: 'הלקוח ביטל' })).json()) as { failed_step: string }).failed_step).toBe('refund');
+    expect(await rowOf(o.id)).toMatchObject({ refund_status: 'manual_required', cancel_failed_step: 'refund' });
+    expect((await rowOf(o.id)).refund_requested_at).toBeInstanceOf(Date);
+
+    // An admin (not super), a manager, nobody — refused; no reason — 400.
+    const username = `close-admin-${tag}`;
+    const a = await pool.query<{ id: string }>(
+      `insert into public.users (username, email, password_hash, full_name, role, is_active) values ($1, $2, 'x', 'אדמין סגירה', 'admin', true) returning id`,
+      [username, `${username}@example.test`],
+    );
+    made.users.push(a.rows[0]!.id);
+    users.admin = { id: a.rows[0]!.id, username, email: null, full_name: 'אדמין סגירה', role: 'admin' };
+    for (const [key, status] of [['admin', 403], ['manager', 403], [null, 401]] as const) {
+      as(key);
+      expect((await closeByHand(o.id, { reason: 'בדקתי ב-PayPlus' })).status, String(key)).toBe(status);
+    }
+    as('super');
+    expect((await closeByHand(o.id, {})).status).toBe(400);
+    expect((await closeByHand(o.id, { reason: ' ' })).status).toBe(400);
+
+    calls.length = 0;
+    morningDocs.length = 0;
+    const res = await closeByHand(o.id, { reason: 'הזיכוי בוצע בממשק PayPlus' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, order_number: o.number, step: 'refund', chips_disabled: 1, documents_stopped: 0 });
+    expect(calls).toEqual([]);
+    const row = (await pool.query<{
+      status: string; reject_reason: string; cancel_completed_at: Date | null; cancel_failed_step: string | null;
+      closed_by_hand_at: Date | null; closed_by_hand_by: string; closed_by_hand_by_name: string; closed_by_hand_reason: string; closed_by_hand_step: string;
+    }>(`select status, reject_reason, cancel_completed_at, cancel_failed_step, closed_by_hand_at, closed_by_hand_by, closed_by_hand_by_name,
+               closed_by_hand_reason, closed_by_hand_step from public.chip_orders where id = $1`, [o.id])).rows[0]!;
+    expect(row).toMatchObject({
+      status: 'rejected', reject_reason: 'הלקוח ביטל', cancel_failed_step: null, closed_by_hand_by: admin.id,
+      closed_by_hand_by_name: 'e2e-admin', closed_by_hand_reason: 'הזיכוי בוצע בממשק PayPlus', closed_by_hand_step: 'refund',
+    });
+    expect(row.cancel_completed_at).toBeInstanceOf(Date);
+    expect(row.closed_by_hand_at).toBeInstanceOf(Date);
+    expect(await chipRows(chips)).toEqual(['inactive']);
+    const audit = await audits(o.id, 'cancel_closed_by_hand');
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ actor_user_id: admin.id, metadata: { step: 'refund', reason: 'הזיכוי בוצע בממשק PayPlus', refund_unanswered: true, chips_disabled: 1 } });
+    // The window and the row say so, for good; nothing is offered again.
+    expect((await getChipOrderWindow(o.itemId))!.order).toMatchObject({ closed_by_hand_step: 'refund', closed_by_hand_by_name: 'e2e-admin', cancel_completed: true });
+    const r = (await orders.listOpenChipOrderRows()).find((x) => x.order_id === o.id)!;
+    expect(chipOrderRowTags(r)).toContain('closed_by_hand');
+    expect(CHIP_ORDER_TAG_LABEL.closed_by_hand).toBe('נסגרה ידנית');
+    expect((await cancel(o.id, { reason: 'שוב' })).status).toBe(409);
+    expect((await closeByHand(o.id, { reason: 'שוב' })).status).toBe(409);
+    // A late notice from PayPlus about it changes nothing.
+    pp.refundsByMoreInfo.set(`refund:${o.number}`, [{ uid: `rf-late-${RUN}`, amount: o.total }]);
+    expect((await callback(refundNotice(`rf-late-${RUN}`, o.total, `refund:${o.number}`))).status).toBe(200);
+    expect(await rowOf(o.id)).toMatchObject({ payplus_reversal_kind: null, refunded_at: null });
+    expect(morningDocs).toEqual([]);
+  });
+
+  it('"סגירה ידנית" of a credit Morning did not issue: the waiting credit document is stopped — not issued by the queue once Morning is back, not by "הפק שוב" — and the order closes; the refund that was made stays recorded', async () => {
+    const o = await paidOrder({ chips: 1 });
+    await invoiceIssued(o);
+    // Morning is gone: the refund goes through, the credit cannot be issued.
+    delete fakeEnv.MORNING_API_KEY_ID;
+    delete fakeEnv.MORNING_API_KEY_SECRET;
+    __resetMorningTokenForTests();
+    as('super');
+    expect(((await (await cancel(o.id, { reason: 'הלקוח ביטל' })).json()) as { failed_step: string }).failed_step).toBe('credit');
+    expect(await rowOf(o.id)).toMatchObject({ refund_status: 'refunded', cancel_failed_step: 'credit' });
+    expect((await docsOf(o.id)).map((x) => [x.kind, x.status])).toEqual([['invoice', 'issued'], ['credit', 'pending']]);
+    // Morning merely not connected: a retry will issue it — not closed by hand.
+    expect((await closeByHand(o.id, { reason: 'מסמך הזיכוי יופק ידנית במורנינג' })).status).toBe(409);
+    // Morning refused it (as failDocument leaves the row once Morning says no).
+    await pool.query(
+      `update public.chip_order_documents set status = 'failed', last_error = 'מורנינג סירב להפיק את המסמך' where order_id = $1 and kind = 'credit'`, [o.id]);
+
+    const res = await closeByHand(o.id, { reason: 'מסמך הזיכוי יופק ידנית במורנינג' });
+    expect(await res.json()).toMatchObject({ ok: true, step: 'credit', documents_stopped: 1 });
+    expect((await docsOf(o.id)).map((x) => [x.kind, x.status])).toEqual([['invoice', 'issued'], ['credit', 'failed']]);
+    // Morning is back: the queue, "הפק שוב" and a direct run issue nothing for it.
+    fakeEnv.MORNING_API_KEY_ID = 'morning-id-refund-test';
+    fakeEnv.MORNING_API_KEY_SECRET = 'morning-secret-refund-test';
+    __resetMorningTokenForTests();
+    morningDocs.length = 0;
+    expect(await retryFailedDocuments(o.id)).toBe(0);
+    expect(await claimDueDocuments(10, 10, o.id)).toEqual([]);
+    await processDueDocuments(10, o.id);
+    expect(morningDocs).toEqual([]);
+    expect((await docsOf(o.id)).map((x) => [x.kind, x.status])).toEqual([['invoice', 'issued'], ['credit', 'failed']]);
+    expect(await rowOf(o.id)).toMatchObject({ status: 'rejected', refund_status: 'refunded', cancel_failed_step: null });
+  });
+
+  it('"סגירה ידנית" is refused where a retry can still settle it: an order whose run never started, a refund step that stopped only because PayPlus could not be asked, and a run holding the order right now', async () => {
+    as('super');
+    const fresh = await paidOrder();
+    expect((await closeByHand(fresh.id, { reason: 'ניסיון' })).status).toBe(409);
+    const asked = await paidOrder();
+    pp.viewDown = true;
+    expect(((await (await cancel(asked.id, { reason: 'הלקוח ביטל' })).json()) as { failed_step: string }).failed_step).toBe('refund');
+    pp.viewDown = false;
+    expect((await rowOf(asked.id)).refund_status).toBeNull();
+    expect((await closeByHand(asked.id, { reason: 'ניסיון' })).status).toBe(409);
+    const busy = await paidOrder();
+    pp.refund = 'no_answer';
+    await cancel(busy.id, { reason: 'הלקוח ביטל' });
+    await pool.query(`update public.chip_orders set cancel_running_until = now() + interval '5 minutes' where id = $1`, [busy.id]);
+    expect((await closeByHand(busy.id, { reason: 'ניסיון' })).status).toBe(409);
+    await pool.query(`update public.chip_orders set cancel_running_until = null where id = $1`, [busy.id]);
+    expect((await closeByHand(busy.id, { reason: 'בדקתי ב-PayPlus' })).status).toBe(200);
   });
 
   it('no request of this file ever left for anywhere but the PayPlus and Morning stubs', () => {

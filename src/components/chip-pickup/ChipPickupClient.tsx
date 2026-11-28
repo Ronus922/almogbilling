@@ -31,6 +31,8 @@ import { cn } from '@/lib/utils';
 import { CollectorPicker } from '@/components/chips/CollectorPicker';
 import { CHIP_ORDER_TEST_LABEL } from '@/lib/chipOrders/model';
 import { chipsCountText, filterPickupOrders, pickupCollectors, type PickupOrder } from '@/lib/chipOrders/pickup';
+import { GUARD_NOTE_LABEL, ORDERER_NOTE_LABEL } from '@/lib/chipOrders/notes';
+import { ChipNoteBlock, DeliveryNoteField } from '@/components/chips/ChipOrderNotes';
 
 /** The list refreshes by itself this often while the screen is in front — an
  *  order the management marks ready shows up without a reload. */
@@ -52,6 +54,8 @@ export function ChipPickupClient() {
   const [target, setTarget] = useState<PickupOrder | null>(null);
   const [open, setOpen] = useState(false);
   const [person, setPerson] = useState<string | null>(null);
+  // "הערת מסירה" (27/11/2026) — optional, saved with the hand-over.
+  const [deliveryNote, setDeliveryNote] = useState('');
   const [saving, setSaving] = useState(false);
   // What the list is asking for. A load is asked for by bumping `tick` — from
   // a click, a timer or the end of a hand-over, never from inside an effect.
@@ -120,6 +124,7 @@ export function ChipPickupClient() {
   function ask(order: PickupOrder) {
     setTarget(order);
     setPerson(null);
+    setDeliveryNote('');
     setOpen(true);
   }
 
@@ -131,7 +136,7 @@ export function ChipPickupClient() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ person }),
+        body: JSON.stringify({ person, ...(deliveryNote.trim() ? { delivery_note: deliveryNote.trim() } : {}) }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (res.status === 401 || res.status === 403) { lockOut(); return; }
@@ -277,6 +282,13 @@ export function ChipPickupClient() {
               ))}
             </ul>
 
+            {(o.orderer_note || o.guard_note) && (
+              <div className="flex flex-col gap-2" data-testid="chip-pickup-notes">
+                {o.orderer_note && <ChipNoteBlock label={ORDERER_NOTE_LABEL} text={o.orderer_note} testId="chip-pickup-orderer-note" />}
+                {o.guard_note && <ChipNoteBlock label={GUARD_NOTE_LABEL} text={o.guard_note} testId="chip-pickup-guard-note" />}
+              </div>
+            )}
+
             {o.total === 0 && (
               <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800" data-testid="chip-pickup-no-chips">
                 להזמנה אין צ׳יפים פעילים למסירה — יש לפנות להנהלה.
@@ -291,7 +303,7 @@ export function ChipPickupClient() {
       </div>
 
       <AlertDialog open={open} onOpenChange={(v) => { if (!saving) setOpen(v); }}>
-        <AlertDialogContent dir="rtl" className="p-6" data-testid="chip-pickup-confirm">
+        <AlertDialogContent dir="rtl" className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-6" data-testid="chip-pickup-confirm">
           <AlertDialogHeader>
             <AlertDialogTitle>מסירת הזמנה {target?.order_number ?? ''}</AlertDialogTitle>
             <AlertDialogDescription>
@@ -299,6 +311,28 @@ export function ChipPickupClient() {
               {target ? ` יימסרו ${chipsCountText(target.total)}.` : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {target && (
+            // What is handed over: the apartment(s), and each person's card numbers.
+            <div className="flex flex-col gap-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700" data-testid="chip-pickup-confirm-summary">
+              <span className="font-bold text-slate-900">
+                {apartmentsText(target.apartments)} <span dir="ltr" className="tabular-nums">{target.apartments.join(', ')}</span>
+              </span>
+              <ul className="flex flex-col gap-1">
+                {target.people.filter((p) => p.chips.length > 0).map((p, i) => (
+                  <li key={`${p.key}-${i}`} className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <span className="font-semibold text-slate-900">{p.name}</span>
+                    <span className="flex flex-wrap gap-1.5">
+                      {p.chips.map((c, k) => (
+                        <span key={c.number ?? `app-${k}`} dir={c.number !== null ? 'ltr' : undefined} className="font-mono tabular-nums [overflow-wrap:anywhere]">
+                          {c.number ?? 'אפליקציה'}
+                        </span>
+                      ))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <CollectorPicker
             people={collectors}
             value={person}
@@ -307,6 +341,7 @@ export function ChipPickupClient() {
             showApartment={(target?.apartments.length ?? 0) > 1}
             testId="chip-pickup-collector"
           />
+          <DeliveryNoteField value={deliveryNote} onChange={setDeliveryNote} disabled={saving} testId="chip-pickup-delivery-note" />
           <AlertDialogFooter>
             <AlertDialogCancel disabled={saving} className="h-11 px-4">ביטול</AlertDialogCancel>
             <Button type="button" disabled={saving || !person} onClick={() => void handOver()} className="h-11 gap-2 px-4" data-testid="chip-pickup-confirm-button">
